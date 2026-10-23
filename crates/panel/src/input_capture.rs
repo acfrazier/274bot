@@ -1,10 +1,10 @@
 //! Game input capture: native keyboard queue, ImGui shifted-key adapter,
 //! hover-independent key ownership, and hovered new-input streaming.
 
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use dear_imgui_rs::{Io, Key, Ui};
-use frontend_core::surface::{map_image_to_applet, InputEv};
+use frontend_core::surface::{map_image_to_applet, InputEv, InputSender, SlotInput};
 use frontend_core::{GameInputEvent, MapDesk};
 use winit::keyboard::{Key as WinitKey, KeyLocation, NamedKey};
 
@@ -395,17 +395,37 @@ impl KeyboardOwner {
     }
 }
 
-/// Which surface received one mouse button's press. The matching
-/// release belongs to that surface, wherever the pointer is when the
-/// button goes up.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Where one mouse button started, including the exact slot input channel.
 enum PressOrigin {
-    Game,
+    Unowned,
     Paint,
+    Game(GameMouseOwner),
 }
 
-/// One frame's mouse-button edges, in the order [`stream_capture`]
-/// stages them.
+struct GameMouseOwner {
+    slot: String,
+    input: Arc<SlotInput>,
+    sender: InputSender,
+}
+
+/// The slot that can receive a new game press this frame.
+#[derive(Clone, Copy)]
+pub(crate) struct MouseTarget<'a> {
+    pub(crate) slot: &'a str,
+    pub(crate) input: &'a Arc<SlotInput>,
+}
+
+/// One frame of pointer and mouse-button state for the shared gate.
+pub(crate) struct MouseFrame<'a> {
+    pub(crate) target: Option<MouseTarget<'a>>,
+    pub(crate) sender: Option<InputSender>,
+    pub(crate) image_hovered: bool,
+    pub(crate) pointer_in_paint: bool,
+    pub(crate) applet_point: Option<(i32, i32)>,
+    pub(crate) buttons: MouseButtons,
+}
+
+/// One frame's mouse-button edges.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct MouseButtons {
     pub(crate) left_down: bool,
@@ -413,67 +433,163 @@ pub(crate) struct MouseButtons {
     pub(crate) left_up: bool,
     pub(crate) right_up: bool,
 }
+#[derive(Clone, Copy)]
+struct MouseButtonInput {
+    button: i32,
+    down: bool,
+    up: bool,
+}
 
-/// Routes mouse buttons between the script paint and the game under
-/// it by where each press started. One instance lives at the frame
-/// owner, outside either Game-pane layout, so the single-bot pane
-/// and the focused grid cell share it. A press inside the paint
-/// never reaches the game, and neither does its release. A press on
-/// the game keeps its release even when the pointer has moved over
-/// the paint, or the paint has gone, by the time the button goes up.
-#[derive(Debug, Default)]
+/// Routes each mouse button to the surface and slot that received its press.
+/// One gate is shared by both Game panes. It does not use release position
+/// to select an owner.
+#[derive(Default)]
 pub(crate) struct PaintMouseGate {
     left: Option<PressOrigin>,
     right: Option<PressOrigin>,
 }
 
 impl PaintMouseGate {
-    /// Filter one hovered capture frame's button edges for the game.
-    /// `pointer_in_paint` is the pointer's place this frame. It
-    /// decides a press that starts now. It never decides a release:
-    /// the press that started the button decides the release.
-    pub(crate) fn route(&mut self, pointer_in_paint: bool, buttons: MouseButtons) -> MouseButtons {
-        let (left_down, left_up) = Self::route_button(
+    /// Stage button events for the slot that received each press.
+    ///
+    /// A slot change ends the old slot's hold on this frame. A physical
+    /// release ends the hold when the slot stays the same.
+    pub(crate) fn route(
+        &mut self,
+        map_desk: &mut MapDesk,
+        frame: MouseFrame<'_>,
+        mut slot_is_live: impl FnMut(&str, &Arc<SlotInput>) -> bool,
+    ) {
+        let left_cancelled = Self::take_changed(&mut self.left, frame.target);
+        let right_cancelled = Self::take_changed(&mut self.right, frame.target);
+        let cancelled = [left_cancelled, right_cancelled];
+        for (index, owner) in cancelled.iter().enumerate() {
+            let Some(owner) = owner.as_ref() else {
+                continue;
+            };
+            if !slot_is_live(&owner.slot, &owner.input) {
+                continue;
+            }
+            let already_released = cancelled[..index]
+                .iter()
+                .flatten()
+                .any(|other| Self::same_owner(other, owner));
+            if !already_released {
+                let _ = map_desk.stage_captured_input_to(&owner.sender, InputEv::Up);
+            }
+        }
+
+        Self::route_button(
+            map_desk,
             &mut self.left,
-            pointer_in_paint,
-            buttons.left_down,
-            buttons.left_up,
+            MouseButtonInput {
+                button: 1,
+                down: frame.buttons.left_down,
+                up: frame.buttons.left_up,
+            },
+            &frame,
+            &mut slot_is_live,
         );
-        let (right_down, right_up) = Self::route_button(
+        Self::route_button(
+            map_desk,
             &mut self.right,
-            pointer_in_paint,
-            buttons.right_down,
-            buttons.right_up,
+            MouseButtonInput {
+                button: 2,
+                down: frame.buttons.right_down,
+                up: frame.buttons.right_up,
+            },
+            &frame,
+            &mut slot_is_live,
         );
-        MouseButtons {
-            left_down,
-            right_down,
-            left_up,
-            right_up,
+    }
+
+    /// Forget presses after capture or the pane closes. The host input
+    /// detach releases any button that it still holds.
+    pub(crate) fn clear(&mut self) {
+        self.left = None;
+        self.right = None;
+    }
+
+    fn take_changed(
+        origin: &mut Option<PressOrigin>,
+        target: Option<MouseTarget<'_>>,
+    ) -> Option<GameMouseOwner> {
+        let changed = matches!(
+            origin.as_ref(),
+            Some(PressOrigin::Game(owner)) if !Self::matches_target(owner, target)
+        );
+        if changed {
+            match origin.take() {
+                Some(PressOrigin::Game(owner)) => Some(owner),
+                _ => None,
+            }
+        } else {
+            None
         }
     }
 
     fn route_button(
+        map_desk: &mut MapDesk,
         origin: &mut Option<PressOrigin>,
-        pointer_in_paint: bool,
-        down: bool,
-        up: bool,
-    ) -> (bool, bool) {
-        if down {
-            // A new press replaces any origin whose release this gate
-            // never saw (the pane was not capture-hovered that frame),
-            // so a stale origin cannot route the new press's release.
-            *origin = Some(if pointer_in_paint {
-                PressOrigin::Paint
+        button: MouseButtonInput,
+        frame: &MouseFrame<'_>,
+        slot_is_live: &mut impl FnMut(&str, &Arc<SlotInput>) -> bool,
+    ) {
+        if button.down {
+            if let Some(PressOrigin::Game(owner)) = origin.take() {
+                if slot_is_live(&owner.slot, &owner.input) {
+                    let _ = map_desk.stage_captured_input_to(&owner.sender, InputEv::Up);
+                }
+            }
+            *origin = if frame.pointer_in_paint {
+                Some(PressOrigin::Paint)
+            } else if frame.image_hovered {
+                match (frame.target, frame.sender.as_ref(), frame.applet_point) {
+                    (Some(target), Some(sender), Some((x, y))) => {
+                        let owner = GameMouseOwner {
+                            slot: target.slot.to_owned(),
+                            input: Arc::clone(target.input),
+                            sender: sender.duplicate(),
+                        };
+                        let staged = map_desk.stage_captured_input_to(
+                            &owner.sender,
+                            InputEv::Down {
+                                button: button.button,
+                                x,
+                                y,
+                            },
+                        );
+                        Some(if staged {
+                            PressOrigin::Game(owner)
+                        } else {
+                            PressOrigin::Unowned
+                        })
+                    }
+                    _ => Some(PressOrigin::Unowned),
+                }
             } else {
-                PressOrigin::Game
-            });
+                Some(PressOrigin::Unowned)
+            };
         }
-        let game_owned = *origin == Some(PressOrigin::Game);
-        if up {
-            *origin = None;
+        if button.up {
+            if let Some(PressOrigin::Game(owner)) = origin.take() {
+                if slot_is_live(&owner.slot, &owner.input) {
+                    let _ = map_desk.stage_captured_input_to(&owner.sender, InputEv::Up);
+                }
+            } else {
+                *origin = None;
+            }
         }
-        (down && game_owned, up && game_owned)
+    }
+
+    fn matches_target(owner: &GameMouseOwner, target: Option<MouseTarget<'_>>) -> bool {
+        target.is_some_and(|target| {
+            owner.slot == target.slot && Arc::ptr_eq(&owner.input, target.input)
+        })
+    }
+
+    fn same_owner(left: &GameMouseOwner, right: &GameMouseOwner) -> bool {
+        left.slot == right.slot && Arc::ptr_eq(&left.input, &right.input)
     }
 }
 

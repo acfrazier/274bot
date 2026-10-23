@@ -162,9 +162,21 @@ impl Rig {
     /// One frame with the pointer at `spot` and the left button `down`.
     /// `pointer` is what the `Pumps` driver stages for the Game image.
     fn frame_at(&mut self, spot: [f32; 2], down: bool, pointer: Pointer) -> bool {
+        self.frame_buttons_at(spot, down, false, pointer)
+    }
+
+    /// One frame with both physical mouse-button states.
+    fn frame_buttons_at(
+        &mut self,
+        spot: [f32; 2],
+        left_down: bool,
+        right_down: bool,
+        pointer: Pointer,
+    ) -> bool {
         let io = self.ctx.io_mut();
         io.add_mouse_pos_event(spot);
-        io.add_mouse_button_event(MouseButton::Left, down);
+        io.add_mouse_button_event(MouseButton::Left, left_down);
+        io.add_mouse_button_event(MouseButton::Right, right_down);
         self.ctx
             .prepare_frame(FramePrepareOptions::new(DISPLAY, 1.0 / 60.0).renderer_has_textures());
         let title = game_window_title(self.state.session.focused_name().as_deref());
@@ -781,10 +793,98 @@ fn captured_input_is_submitted_once_per_frame(drive: Drive) {
     );
     rig.frame(Pointer::Away);
     let later = drain(&rx);
-    assert!(later.is_empty(), "a later empty frame replays {later:?}");
+    match drive {
+        Drive::UiFrame => assert!(
+            matches!(later.as_slice(), [InputEv::Up]),
+            "the physical release routes outside the image, got {later:?}"
+        ),
+        Drive::Pumps => assert!(
+            later.is_empty(),
+            "the pump-only driver stages no physical release, got {later:?}"
+        ),
+    }
+    rig.frame(Pointer::Away);
+    assert!(
+        drain(&rx).is_empty(),
+        "a later empty frame does not replay the release"
+    );
 }
 
 scenario!(captured_input, captured_input_is_submitted_once_per_frame);
+
+/// The single Game view and Grid both release a captured mouse button
+/// outside the image to the slot that received its press.
+#[test]
+fn game_and_grid_panes_release_mouse_buttons_outside_the_image() {
+    for grid in [false, true] {
+        for (name, left, right, button) in [("left", true, false, 1), ("right", false, true, 2)] {
+            let pane = if grid { "grid" } else { "game" };
+            let label = format!("mouse-up-{pane}-{name}");
+            let (mut session, _dir) = session_with_play(&label, &["alice"]);
+            session.multibox = grid;
+            session.wall.grid = grid;
+            session.focus.lock().unwrap().capture = true;
+            let Some(mut rig) = Rig::new(Drive::UiFrame, session) else {
+                return;
+            };
+            publish_ingame(rig.session(), "alice");
+            for _ in 0..3 {
+                assert!(!rig.frame(Pointer::Away));
+            }
+            let (sender, probe) = InputSender::probe();
+            rig.session().map_desk.set_input_sender(Some(sender));
+            let image = rig.game_centre.expect("the Game window is open");
+            let mut image_hovered = false;
+            for _ in 0..8 {
+                assert!(!rig.frame_buttons_at(image, false, false, Pointer::Over));
+                if drain(&probe)
+                    .iter()
+                    .any(|event| matches!(event, InputEv::Move { .. }))
+                {
+                    image_hovered = true;
+                    break;
+                }
+            }
+            assert!(image_hovered, "{pane}: the pointer reaches the Game Image");
+
+            assert!(!rig.frame_buttons_at(image, left, right, Pointer::Over));
+            let press = drain(&probe);
+            assert!(
+                press.iter().any(
+                    |event| matches!(event, InputEv::Down { button: got, .. } if *got == button)
+                ),
+                "{pane} {name}: the press reaches its slot, got {press:?}"
+            );
+
+            let outside = [2.0, 2.0];
+            assert!(!rig.frame_buttons_at(outside, left, right, Pointer::Away));
+            assert!(
+                drain(&probe).is_empty(),
+                "{pane} {name}: moving outside does not release the held button"
+            );
+            if grid {
+                rig.session()
+                    .fleet_model
+                    .staged_filter_mut()
+                    .push_str("zzz");
+                rig.session()
+                    .submit(OperatorCommand::SetFleetFilter, Targets::Application);
+                assert!(!rig.frame_buttons_at(outside, left, right, Pointer::Away));
+                assert!(
+                    drain(&probe).is_empty(),
+                    "grid {name}: hiding the cell does not end the hold"
+                );
+            }
+
+            assert!(!rig.frame_buttons_at(outside, false, false, Pointer::Away));
+            assert_eq!(
+                drain(&probe),
+                [InputEv::Up],
+                "{pane} {name}: the physical off-image release reaches the press slot"
+            );
+        }
+    }
+}
 
 /// The rail caps a frame drew (`name: brief`), in their drawn order.
 fn drawn_caps<'a>(text: &str, names: &[&'a str]) -> Vec<&'a str> {

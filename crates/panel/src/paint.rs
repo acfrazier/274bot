@@ -2117,21 +2117,24 @@ mod tests {
     use frontend_core::{GameInputEvent, MapDesk};
 
     use crate::input_capture::{
-        discard_unconsumed_native_capture, stream_capture, MouseButtons, PaintMouseGate,
+        discard_unconsumed_native_capture, stream_capture, MouseButtons, MouseFrame, MouseTarget,
+        PaintMouseGate,
     };
 
-    /// The Game panes' input order with the real capture path behind
-    /// it: the Game Image item, the paint overlay, the mouse gate,
-    /// then `stream_capture`. The staged events go through an
-    /// `InputSender` into a `SlotInput` and a `GameShell`, as they do
-    /// for the focused slot. Keyboard ownership is not modelled
-    /// here. It lives at the frame owner, outside both panes, and
-    /// its own tests cover it. A left press in this GPU-less window
-    /// would also flip keyboard availability for one frame and
-    /// release the drag through that path, which would hide the
-    /// mouse routing these tests measure. Both panes share this
-    /// order and this gate. Scale 1.0 is the single-bot pane's
-    /// native blit. Scale 0.5 is a focused grid cell's fitted blit.
+    /// This fixture uses the input order shared by both Game panes.
+    /// It draws the Game Image, then the paint overlay. It stages
+    /// image movement, then routes button edges through the shared
+    /// gate. The staged events pass through `InputSender` and
+    /// `SlotInput` into `GameShell`. This matches the focused slot's
+    /// consumer path.
+    ///
+    /// Keyboard ownership runs at the frame owner, outside both
+    /// panes, and this fixture does not model it. A left press can
+    /// change keyboard availability and release a drag through that
+    /// separate path. The gate tests cover the left-button rule.
+    ///
+    /// Scale 1.0 is the single-bot pane's native blit. Scale 0.5 is a
+    /// focused grid cell's fitted blit.
     struct PaneCapture {
         ctx: dear_imgui_rs::Context,
         overlay: PaintOverlay,
@@ -2143,6 +2146,7 @@ mod tests {
         shell: GameShell,
         scale: f32,
         min: [f32; 2],
+        last_image_hovered: bool,
         show_paint: bool,
     }
 
@@ -2171,6 +2175,7 @@ mod tests {
                 shell: GameShell::new(),
                 scale,
                 min: [0.0; 2],
+                last_image_hovered: false,
                 show_paint: true,
             };
             // The product Game window is docked and cannot undock.
@@ -2208,6 +2213,7 @@ mod tests {
             self.ctx
                 .io_mut()
                 .add_mouse_button_event(dear_imgui_rs::MouseButton::Right, right);
+            let mut image_hovered = false;
             self.map.begin_game_input_frame();
             {
                 let ui = self.ctx.frame();
@@ -2225,7 +2231,7 @@ mod tests {
                         let size = [765.0 * self.scale, 503.0 * self.scale];
                         ui.image(dear_imgui_rs::TextureId::new(0), size);
                         self.min = ui.item_rect_min();
-                        let image_hovered = ui.is_item_hovered();
+                        image_hovered = ui.is_item_hovered();
                         let view = if self.show_paint {
                             Some(self.frame.view())
                         } else {
@@ -2233,47 +2239,79 @@ mod tests {
                         };
                         let _ = self.overlay.frame(ui, None, view, self.min, size);
                         let inside = self.overlay.pointer_inside_panel();
+                        let buttons = MouseButtons {
+                            left_down: ui.is_mouse_clicked(dear_imgui_rs::MouseButton::Left),
+                            right_down: ui.is_mouse_clicked(dear_imgui_rs::MouseButton::Right),
+                            left_up: ui.is_mouse_released(dear_imgui_rs::MouseButton::Left),
+                            right_up: ui.is_mouse_released(dear_imgui_rs::MouseButton::Right),
+                        };
+                        let applet_point = if image_hovered {
+                            frontend_core::surface::map_image_to_applet(
+                                mouse[0] - self.min[0],
+                                mouse[1] - self.min[1],
+                                size[0],
+                                size[1],
+                            )
+                        } else {
+                            None
+                        };
                         if image_hovered {
-                            let buttons = self.gate.route(
-                                inside,
-                                MouseButtons {
-                                    left_down: ui
-                                        .is_mouse_clicked(dear_imgui_rs::MouseButton::Left),
-                                    right_down: ui
-                                        .is_mouse_clicked(dear_imgui_rs::MouseButton::Right),
-                                    left_up: ui.is_mouse_released(dear_imgui_rs::MouseButton::Left),
-                                    right_up: ui
-                                        .is_mouse_released(dear_imgui_rs::MouseButton::Right),
-                                },
-                            );
                             stream_capture(
                                 &mut self.map,
                                 mouse[0] - self.min[0],
                                 mouse[1] - self.min[1],
                                 size[0],
                                 size[1],
-                                buttons.left_down,
-                                buttons.right_down,
-                                buttons.left_up,
-                                buttons.right_up,
+                                false,
+                                false,
+                                false,
+                                false,
                                 &[],
                             );
                         }
+                        let sender = if image_hovered
+                            && !inside
+                            && applet_point.is_some()
+                            && (buttons.left_down || buttons.right_down)
+                        {
+                            self.map.duplicate_input_sender()
+                        } else {
+                            None
+                        };
+                        let target = Some(MouseTarget {
+                            slot: "alice",
+                            input: &self.input,
+                        });
+                        self.gate.route(
+                            &mut self.map,
+                            MouseFrame {
+                                target,
+                                sender,
+                                image_hovered,
+                                pointer_in_paint: inside,
+                                applet_point,
+                                buttons,
+                            },
+                            |slot, input| {
+                                slot == "alice" && std::sync::Arc::ptr_eq(input, &self.input)
+                            },
+                        );
                     });
             }
             self.ctx.render();
+            self.last_image_hovered = image_hovered;
             let events: Vec<InputEv> = self
                 .map
                 .staged_game_input_for_test()
                 .into_iter()
-                .filter_map(|event| match event {
+                .filter_map(|(event, _)| match event {
                     GameInputEvent::Captured(event) => Some(event),
                     GameInputEvent::Wire(_) => None,
                 })
                 .collect();
-            for event in self.map.staged_game_input_for_test() {
+            for (event, target) in self.map.staged_game_input_for_test() {
                 if let GameInputEvent::Captured(event) = event {
-                    assert!(self.tx.send(event), "send captured input");
+                    assert!(target.unwrap_or(&self.tx).send(event));
                 }
             }
             self.input.drain(&mut self.shell);
@@ -2324,6 +2362,48 @@ mod tests {
                 assert!(
                     events.iter().any(|e| matches!(e, InputEv::Up)),
                     "scale {scale} {name}: the release inside the paint reaches the game. Events {events:?}"
+                );
+                assert_eq!(
+                    capture.shell.mouse_button, 0,
+                    "scale {scale} {name}: the physical release ends the hold"
+                );
+            }
+        }
+    }
+
+    /// A game press keeps its release after the pointer leaves the Game Image.
+    #[test]
+    fn a_game_press_released_outside_the_image_releases_the_game() {
+        let _guard = crate::test_support::imgui_context_guard();
+        for scale in [1.0, 0.5] {
+            for (name, left, right, held) in [("left", true, false, 1), ("right", false, true, 2)] {
+                let mut capture = PaneCapture::new(scale);
+                let game = capture.point(300.0, 100.0);
+                let outside_image = capture.point(800.0, 600.0);
+                capture.settle(game);
+
+                let events = capture.step(game, left, right);
+                assert!(
+                    events.iter().any(
+                        |event| matches!(event, InputEv::Down { button, .. } if *button == held)
+                    ),
+                    "scale {scale} {name}: the press reaches the game. Events {events:?}"
+                );
+                assert_eq!(capture.shell.mouse_button, held);
+
+                capture.step(outside_image, left, right);
+                assert!(
+                    !capture.last_image_hovered,
+                    "scale {scale} {name}: the held pointer is outside the Game Image"
+                );
+                let events = capture.step(outside_image, false, false);
+                assert!(
+                    !capture.last_image_hovered,
+                    "scale {scale} {name}: the release is outside the Game Image"
+                );
+                assert!(
+                    events.iter().any(|event| matches!(event, InputEv::Up)),
+                    "scale {scale} {name}: the off-image release reaches the game. Events {events:?}"
                 );
                 assert_eq!(
                     capture.shell.mouse_button, 0,

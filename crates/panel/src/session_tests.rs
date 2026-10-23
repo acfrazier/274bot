@@ -31,7 +31,7 @@ use frontend_core::scripts::{
     CardSource, CompiledCardId, LoadShape, LoadStage, Loadouts, ScriptChoice, ScriptRunState,
 };
 use frontend_core::surface::InputSender;
-use frontend_core::surface::{FrameBuf, SlotInput};
+use frontend_core::surface::{FrameBuf, InputEv, SlotInput};
 use frontend_core::test_support::session::{
     assignment_key, clear_vault, core_vault_debug_rows, install_vault, vault_debug_rows,
     vault_upsert, with_assignment, with_lamp_auto, with_lamp_skill, with_random_events,
@@ -5813,6 +5813,41 @@ fn closing_game_pane_leaves_capture_pref_on() {
         !s.map_desk.input_connected(),
         "drain drops while the pane is closed"
     );
+}
+
+#[test]
+fn closing_game_pane_releases_a_captured_mouse_hold() {
+    let input = SlotInput::new();
+    let mut s = Session::new();
+    s.core.set_spawn_workers(false);
+    s.core.set_play(Some(empty_play()));
+    s.core.insert_slot_io(
+        "alice",
+        SlotIo {
+            input: Arc::clone(&input),
+            pixels: FrameBuf::new(),
+        },
+    );
+    s.set_focus_for_test("alice");
+    s.set_game_pane_open(true);
+    s.set_capture(true);
+    let sender = s
+        .map_desk
+        .duplicate_input_sender()
+        .expect("capture is attached to the focused slot");
+    assert!(sender.send(InputEv::Down {
+        button: 2,
+        x: 10,
+        y: 20,
+    }));
+    let mut shell = client::client::GameShell::new();
+    input.drain(&mut shell);
+    assert_eq!(shell.mouse_button, 2);
+
+    s.set_game_pane_open(false);
+    input.drain(&mut shell);
+    assert_eq!(shell.mouse_button, 0);
+    assert!(!s.map_desk.input_connected());
 }
 
 #[test]
