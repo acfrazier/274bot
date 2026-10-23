@@ -327,11 +327,7 @@ impl PackedSearchTable {
         }
     }
 
-    pub(super) fn try_grow(
-        &mut self,
-        heap: &mut PackedMinMaxHeap,
-        maximum_capacity: usize,
-    ) -> Result<bool, SearchCursorError> {
+    pub(super) fn try_grow(&mut self, maximum_capacity: usize) -> Result<bool, SearchCursorError> {
         let old_capacity = self.slots.len();
         if old_capacity >= maximum_capacity {
             return Ok(false);
@@ -372,9 +368,6 @@ impl PackedSearchTable {
                 links[buckets + id] = self.links[self.buckets + id];
             }
         }
-        heap.entries
-            .try_reserve_exact(new_capacity.saturating_sub(heap.entries.len()))
-            .map_err(|_| SearchCursorError::Allocation)?;
         #[cfg(unix)]
         self.slots.try_grow(new_capacity, self.next_unused)?;
         #[cfg(not(unix))]
@@ -1934,7 +1927,8 @@ mod packed_search_tests {
     fn packed_growth_keeps_the_expanding_node_and_queued_parents_stable() {
         super::super::drive_to_completion(async {
             let mut table = PackedSearchTable::try_new_capacity(32).expect("small table");
-            let mut heap = PackedMinMaxHeap::try_new(32).expect("small heap");
+            let mut heap = PackedMinMaxHeap::try_new(64).expect("bounded heap");
+            let heap_storage = heap.entries.as_ptr();
             let grown_buckets = PackedSearchTable::bucket_count_for(64);
             let origin = (0..100)
                 .map(tile)
@@ -1961,7 +1955,9 @@ mod packed_search_tests {
                 table.tombstone(id).await;
             }
             let old_current = current;
-            assert!(table.try_grow(&mut heap, 64).expect("grow packed table"));
+            assert!(table.try_grow(64).expect("grow packed table"));
+            assert_eq!(heap.entries.as_ptr(), heap_storage);
+            assert_eq!(heap.capacity(), 64);
             assert_eq!(table.buckets, grown_buckets);
             assert_eq!(current, old_current, "the local expanding id stays valid");
             assert_eq!(table.slot(current).tile(), origin);
