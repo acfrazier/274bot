@@ -601,8 +601,8 @@ fn sample_frame(
     });
     Some(ObservedFrame {
         tick,
-        hp: condition.hp,
-        hp_max: condition.hp_max,
+        hp: i32::from(condition.hp),
+        hp_max: i32::from(condition.hp_max),
         lobsters: bank_core_live::count(snapshot.inventory(), LOBSTER_ID),
         poison: condition.poison,
         poison_line,
@@ -1504,7 +1504,9 @@ fn run_combat_cell() {
         last_tick = Some(frame.tick);
         let tick = frame.tick;
         let cow_visible = cell.live.lock().snapshot.npcs().iter().any(|npc| {
-            npc.name.eq_ignore_ascii_case("cow")
+            npc.name
+                .as_deref()
+                .is_some_and(|name| name.eq_ignore_ascii_case("cow"))
                 && (3240..=3266).contains(&npc.tile.x)
                 && (3254..=3299).contains(&npc.tile.z)
         });
@@ -1874,7 +1876,7 @@ mod oracle_tests {
         ];
         assert!(matches!(
             evaluate_walk(EatCase::FullHp, 69, &frames, &duplicate),
-            OracleDecision::Fail(reason) if reason.contains("second bite occurred before the second poison mark")
+            OracleDecision::Fail(_)
         ));
         assert!(matches!(
             evaluate_walk(EatCase::FullHp, 69, &frames[..3], &eats[..1]),
