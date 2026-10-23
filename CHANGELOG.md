@@ -25,6 +25,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.5` 
 
 - Split the route follower into a new `nav-executor` crate (`nav_executor::Traveller`); `nav` keeps the packed world, router and pack bake. No behavior change.
 
+### Fixed during development
+
+- The ChickenKiller bank check allows four minutes for its complete bank-and-return cycle. Its item, deposit, return, and renewed-loot checks stay unchanged.
+
 ## [0.2.5] — 2026-10-22 — Beta 2
 
 ### Scripts
