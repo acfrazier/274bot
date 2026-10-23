@@ -174,9 +174,10 @@ fn service_delays(session: &OperatorSession<()>) -> String {
 fn live_host_capacity_warning_appears_under_real_load_and_clears() {
     assert_eq!(std::env::var("LIVE").as_deref(), Ok("1"));
     assert_eq!(std::env::var("BOT_CPU").as_deref(), Ok("1"));
-    // Pin this thread's bot home for the whole smoke: the profile options
-    // below read `~/.274bot/servers.json` and create it when absent, and the
-    // session log and script stores resolve under the same home.
+    // Pin this thread's bot home for the whole smoke, so the session log and
+    // the script stores resolve under the scratch home. The profile options
+    // below still read and create `servers.json` under the process `HOME`
+    // (`ProfileEnvironment::capture`), so run this smoke under `isohome`.
     let _iso = IsolatedStores::enter("capacity-smoke");
     // The operator log is installed before any bot starts, as in the panel.
     frontend_core::log::global();
