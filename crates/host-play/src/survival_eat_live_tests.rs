@@ -161,7 +161,7 @@ impl LiveObserver {
         let drain = self.pump.drain_client(client);
         host::publish_snapshot(&mut self.snapshot, client, drain);
         if client.ingame && !self.was_ingame {
-            self.final_login_tick = Some(u32::from(self.snapshot.tick()));
+            self.final_login_tick = Some(self.snapshot.tick());
         }
         self.was_ingame = client.ingame;
     }
@@ -454,12 +454,12 @@ fn start_cell(
             if live.tele_sent
                 && live.snapshot.tile() == Some((destination.x, destination.z, destination.level))
             {
-                let tick = u32::from(live.snapshot.tick());
+                let tick = live.snapshot.tick();
                 live.arrived_tick.get_or_insert(tick);
             }
             if let Some(LiveAction::Poison) = live.action.take() {
                 let accepted = interact::cheat(client, "~poison 27") == client::CheatSend::Sent;
-                let tick = u32::from(live.snapshot.tick());
+                let tick = live.snapshot.tick();
                 live.sent = Some(SentAction { tick, accepted });
             }
         },
@@ -498,19 +498,20 @@ fn wait_for_destination(cell: &LiveCell) -> Result<u32, String> {
         };
         let (arrived_tick, snapshot_tick) = {
             let live = cell.live.lock();
-            (live.arrived_tick, u32::from(live.snapshot.tick()))
+            (live.arrived_tick, live.snapshot.tick())
         };
         if phase == Prep::PrerequisiteFailed || phase == Prep::Failed {
             return Err(format!("preparation ended in {phase:?}: {failure:?}"));
         }
-        if let Some(status) = status {
-            if status.ingame
-                && status.scene_state == 2
-                && arrived_tick.is_some()
-                && status.condition.tick == snapshot_tick
+        match (status, arrived_tick) {
+            (Some(status), Some(arrived))
+                if status.ingame
+                    && status.scene_state == 2
+                    && status.condition.tick == snapshot_tick =>
             {
-                return Ok(arrived_tick.expect("checked above"));
+                return Ok(arrived);
             }
+            _ => {}
         }
         if Instant::now() >= deadline {
             return Err(format!(
@@ -606,7 +607,7 @@ fn sample_frame(
     let live = cell.live.lock();
     let snapshot = &live.snapshot;
     let tick = condition.tick;
-    if tick != u32::from(snapshot.tick()) {
+    if tick != snapshot.tick() {
         return None;
     }
     let raw_chat = snapshot
@@ -1287,12 +1288,14 @@ fn walk_receipt(
     cell: &LiveCell,
     case: EatCase,
     setup_tick: u32,
-    seed_tick: Option<u32>,
     poison_send: Option<SentAction>,
     frames: &[ObservedFrame],
     failure: Option<(&str, String)>,
     walk_state: &Arc<Mutex<WalkState>>,
 ) -> Value {
+    let seed_tick = poison_send
+        .filter(|sent| sent.accepted)
+        .map(|sent| sent.tick);
     let raw_actions = captured_actions(&cell.capture);
     let eats = eat_actions(&raw_actions);
     let walk_state = walk_state.lock();
@@ -1482,7 +1485,6 @@ fn run_walk_case(case: EatCase) {
         &cell,
         case,
         setup_tick,
-        seed_tick,
         poison_send,
         &frames,
         failure
