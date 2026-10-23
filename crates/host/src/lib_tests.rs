@@ -1964,6 +1964,130 @@ fn parked_remote_animation_matches_twenty_ms_at_focus() {
     );
 }
 
+/// MAP_ANIM and projectiles use the same state as the zone decoder. Compare
+/// their state before first focus against a client that draws every 20 ms.
+fn scene_effects_at_focus(period_ms: u64, draw_each_frame: bool) -> Vec<u64> {
+    use client::config::{SeqType, SpotType};
+    use client::dash3d::{ClientProj, MapSpotAnim};
+
+    let mut c = Client::new(cfg());
+    c.cache = Arc::new(Cache {
+        seqs: [12, 120]
+            .into_iter()
+            .map(|num_frames| SeqType {
+                num_frames,
+                frames: Some(vec![-1; num_frames as usize]),
+                delay: Some(vec![4; num_frames as usize]),
+                ..Default::default()
+            })
+            .collect(),
+        spots: (0..2)
+            .map(|seq| SpotType {
+                seq: Some(seq),
+                ..Default::default()
+            })
+            .collect(),
+        ..Default::default()
+    });
+    c.error_loading = false;
+    c.ingame = true;
+    c.scene_state = 2;
+    c.set_draw(draw_each_frame);
+    let mut renderer = Renderer::new(false);
+    let mut slot = SlotLoop::new();
+    let t0 = Instant::now();
+    let mut sends = 0;
+    // The first effect models the twelve-frame smokepuff. The second
+    // remains active at focus and has a delayed start.
+    c.spotanims
+        .push(MapSpotAnim::new(0, 0, 6464, 6464, 0, 0, 0));
+    c.spotanims
+        .push(MapSpotAnim::new(1, 0, 6592, 6464, 0, 0, 15));
+    let mut projectile = ClientProj::new(1, 0, 6464, 0, 6464, 10, 100, 15, 0, 0, 0);
+    projectile.bind_seq(&c.cache);
+    projectile.set_target(6848.0, 0.0, 6464.0, 10);
+    c.projectiles.push(projectile);
+    for elapsed in (0..=1200).step_by(period_ms as usize) {
+        slot.pacing_now = Some(t0 + Duration::from_millis(elapsed));
+        Host::client_frame(
+            &mut c,
+            &mut slot,
+            "scene-clock",
+            None,
+            None,
+            &mut sends,
+            None,
+        );
+        if draw_each_frame {
+            renderer.mainredraw(&mut c);
+        }
+    }
+    let mut state = Vec::new();
+    c.spotanims.for_each(|spot| {
+        assert_ne!(
+            spot.spotanim, 0,
+            "the old map smoke must finish before focus"
+        );
+        state.extend([spot.anim_frame as u64, spot.anim_cycle as u64]);
+    });
+    assert_eq!(
+        state.len(),
+        2,
+        "the delayed long effect must still be active"
+    );
+    c.projectiles.for_each(|projectile| {
+        state.extend([
+            projectile.x.to_bits(),
+            projectile.y.to_bits(),
+            projectile.z.to_bits(),
+            projectile.anim_frame as u64,
+            projectile.anim_cycle as u64,
+        ]);
+    });
+    assert_eq!(state.len(), 7, "the in-flight projectile must remain");
+    // First draw must only present the recovered state, not age it twice.
+    c.set_draw(true);
+    renderer.mainredraw(&mut c);
+    let spot = c.spotanims.head().unwrap();
+    assert_eq!([spot.anim_frame as u64, spot.anim_cycle as u64], state[..2]);
+    let projectile = c.projectiles.head().unwrap();
+    assert_eq!(projectile.x.to_bits(), state[2]);
+    state
+}
+
+#[test]
+fn parked_map_smoke_and_projectile_match_twenty_ms_at_first_draw() {
+    let _cpu = force_cpu_backend();
+    assert_eq!(
+        scene_effects_at_focus(600, false),
+        scene_effects_at_focus(20, true),
+        "map effects and projectile flight must not depend on drawing"
+    );
+}
+
+#[test]
+fn late_twenty_ms_frames_recover_elapsed_entity_cycles() {
+    let mut c = Client::new(cfg());
+    c.error_loading = false;
+    c.ingame = true;
+    let mut slot = SlotLoop::new();
+    let t0 = Instant::now();
+    let mut sends = 0;
+    for frame in 0..=100 {
+        slot.pacing_now = Some(t0 + Duration::from_millis(frame * 22));
+        Host::client_frame(
+            &mut c,
+            &mut slot,
+            "late-frame",
+            None,
+            None,
+            &mut sends,
+            None,
+        );
+    }
+    assert_eq!(c.loop_cycle, 111, "busy slots recover late frames too");
+}
+
 #[test]
 fn entity_catchup_retains_fractional_time_and_counts_early_wakes_once() {
     let mut c = Client::new(cfg());
@@ -2039,8 +2163,8 @@ fn entity_catchup_does_not_read_packets_write_wire_or_replay_nonentity_timers() 
     }
     let mut slot = SlotLoop::new();
     let t0 = Instant::now();
-    slot.advance_parked_entities(&mut c, t0);
-    slot.advance_parked_entities(&mut c, t0 + Duration::from_millis(600));
+    slot.recover_entity_cycles(&mut c, t0);
+    slot.recover_entity_cycles(&mut c, t0 + Duration::from_millis(600));
     assert_eq!(c.loop_cycle, 29);
     assert_eq!(
         (c.reboot_timer, c.logout_timer, c.shell.idle_cycles),
