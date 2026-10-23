@@ -496,6 +496,21 @@ mod tests {
                 why: CureWhy::BelowLine,
             },
         );
+        // The usable credit is capped at `5 * min(12, 10 - 7) = 15` by the
+        // eat line (`food_credit`), not the nominal 60.
+        assert_case(
+            &tables,
+            Some(condition(10, 10, mark6, food(5, 12))),
+            Exposure::None,
+            CurePoison::WhenNeeded,
+            &ordinary,
+            11,
+            CureDecision::Drink {
+                item: ordinary_id,
+                kind: PotionKind::Antipoison,
+                why: CureWhy::Lethal,
+            },
+        );
         assert_case(
             &tables,
             Some(condition(75, 99, mark5, FoodSummary::default())),
