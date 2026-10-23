@@ -245,7 +245,7 @@ pub struct Traveller {
 }
 
 impl Traveller {
-    /// A traveller with the default budget of 60 ticks per hop.
+    /// An idle traveller with no active follow run.
     pub fn new() -> Self {
         Self {
             follow: None,

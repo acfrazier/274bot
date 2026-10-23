@@ -5365,6 +5365,7 @@ fn s2b_admission_per_bot_layouts() {
     // inline Option<RunKey> values (64 B): macOS SlotScript measures 4608 B.
     // Neither fence retains a scene or allocates a per-bot heap payload.
     // Entrance evidence adds a 48 B RouteQuestContext and an 8 B provider-byte
+    // account to NavBot's retained QuestEvidence.
     // Removing the legacy-grid fields shrank Traveller by 88 B (904 B to
     // 816 B), so the measured NavBot exact pin falls from 3760 B to 3672 B.
     // Rust 1.98.1 is pinned for the workspace and CI. These are lib-test
