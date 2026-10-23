@@ -105,11 +105,6 @@ impl PreferenceError {
         }
     }
 
-    #[cfg(any(test, feature = "test-support"))]
-    fn from_io(path: impl Into<String>, error: io::Error) -> Self {
-        Self::caused(path, error.to_string())
-    }
-
     /// The preference key or file path associated with this error.
     pub fn path(&self) -> &str {
         &self.path
@@ -513,7 +508,7 @@ struct Shared {
     held: Mutex<Held>,
 }
 
-/// A fixture-only cache for the legacy synchronous preference helpers.
+/// A fixture-only cache for synchronous preference helpers.
 #[cfg(any(test, feature = "test-support"))]
 #[derive(Default)]
 struct Held {
@@ -674,30 +669,6 @@ impl Preferences {
         })
     }
 
-    /// [`Self::update`] for an operator command that reports its outcome:
-    /// the same reads, merges and bounded waits, but when a wait ends
-    /// with the read or the write still queued on the writer thread, the
-    /// rest of the update is handed back ([`Update::Queued`]) instead of
-    /// failing. The service settles what it queued whatever the caller
-    /// does; [`QueuedUpdate::poll`] reports the update's terminal (and
-    /// reads and merges again after a conflict). So a slow or busy disk
-    /// delays the outcome; it never turns a write that later lands into a
-    /// failure.
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn begin_update(
-        &self,
-        merge: impl FnMut(&mut Map<String, Value>) -> io::Result<()> + Send + 'static,
-    ) -> io::Result<Update> {
-        let merge: BoxedMerge = Box::new(merge);
-        let mut run = self.begin_run(merge)?;
-        Ok(match self.drive(&mut run, Some(FRONTEND_TIMEOUT)) {
-            Some(result) => {
-                result?;
-                Update::Durable
-            }
-            None => Update::Queued(QueuedUpdate::legacy(self.clone(), run)),
-        })
-    }
 
     /// Queue the update's first read (a save's read: see
     /// [`LocalStateService::start_readback`]).
@@ -923,9 +894,6 @@ fn preference_changes(
     Ok(changes)
 }
 
-/// The merge held only by the fixture compatibility adapter.
-#[cfg(any(test, feature = "test-support"))]
-type BoxedMerge = Box<dyn FnMut(&mut Map<String, Value>) -> io::Result<()> + Send>;
 
 /// One fixture-only preferences update in progress: its read, then write.
 #[cfg(any(test, feature = "test-support"))]
@@ -958,71 +926,36 @@ impl std::fmt::Debug for Update {
     }
 }
 
-enum QueuedKind {
-    Service(RequestId),
-    #[cfg(any(test, feature = "test-support"))]
-    Legacy(UpdateRun<BoxedMerge>),
-}
 
 /// A watch on one process-service-owned preference request. Dropping the
 /// watch only unsubscribes; it does not cancel the accepted intent.
 pub struct QueuedUpdate {
     preferences: Preferences,
-    kind: QueuedKind,
+    request: RequestId,
 }
 
 impl QueuedUpdate {
     fn service(preferences: Preferences, request: RequestId) -> Self {
         Self {
             preferences,
-            kind: QueuedKind::Service(request),
+            request,
         }
     }
 
-    #[cfg(any(test, feature = "test-support"))]
-    fn legacy(preferences: Preferences, run: UpdateRun<BoxedMerge>) -> Self {
-        Self {
-            preferences,
-            kind: QueuedKind::Legacy(run),
-        }
-    }
-
-    /// The request ID, if this watch represents an accepted service request.
-    pub fn request_id(&self) -> Option<RequestId> {
-        match &self.kind {
-            QueuedKind::Service(request) => Some(*request),
-            #[cfg(any(test, feature = "test-support"))]
-            QueuedKind::Legacy(run) => match run.stage {
-                Stage::Writing(request) => Some(request),
-                Stage::Reading(_) => None,
-            },
-        }
+    /// The identity of this accepted service request.
+    pub fn request_id(&self) -> RequestId {
+        self.request
     }
 
     /// Check without waiting for the request's retained terminal result.
     pub fn poll(&mut self) -> Option<Result<(), PreferenceError>> {
-        match &mut self.kind {
-            QueuedKind::Service(request) => self.preferences.poll_preference(*request),
-            #[cfg(any(test, feature = "test-support"))]
-            QueuedKind::Legacy(run) => self.preferences.drive(run, None).map(|result| {
-                result.map_err(|error| {
-                    PreferenceError::from_io(self.preferences.path().display().to_string(), error)
-                })
-            }),
-        }
+        self.preferences.poll_preference(self.request)
     }
 
     /// Test-only bounded wait for a request terminal.
     #[cfg(any(test, feature = "test-support"))]
     pub fn wait(&mut self, wait: Duration) -> Option<Result<(), PreferenceError>> {
-        match &mut self.kind {
-            QueuedKind::Service(request) => self.preferences.wait_preference(*request, wait),
-            QueuedKind::Legacy(run) => self.preferences.drive(run, Some(wait)).map(|result| {
-                result.map_err(|error| {
-                    PreferenceError::from_io(self.preferences.path().display().to_string(), error)
-                })
-            }),
-        }
+        self.preferences.wait_preference(self.request, wait)
     }
 }
 
