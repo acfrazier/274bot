@@ -2400,6 +2400,7 @@ fn script_section(ui: &Ui, session: &mut Session) {
             ui.text_disabled(line);
         }
     }
+    script_parameter_draft_recovery(ui, session);
     let avail = ui.content_region_avail()[0];
     let (w, stack) = scaled_button_row_layout(ui, avail, 3);
     {
@@ -3712,6 +3713,21 @@ fn script_parameter_text_input(
     }
 }
 
+/// Hidden drafts remain recoverable after closing prefs or changing cards.
+fn script_parameter_draft_recovery(ui: &Ui, session: &mut Session) {
+    let Some(profile) = session.focused_name() else {
+        return;
+    };
+    if !session.scripts.has_parameter_draft(&profile) {
+        return;
+    }
+    ui.text_wrapped("Unsaved settings prevent Start. In Script prefs, press Enter to save a field or Escape to discard it.");
+    if ui.button("Discard unsaved settings") {
+        session.scripts.stage_profile_parameter_discard(&profile);
+        session.submit_script_command(OperatorCommand::DiscardParameterText, Targets::Application);
+    }
+}
+
 /// Script prefs window: text buffers and commit state are shared with TUI.
 fn script_parameter_editors(ui: &Ui, session: &mut Session) {
     session.refresh_walk_permissions();
@@ -3736,6 +3752,8 @@ fn script_parameter_editors(ui: &Ui, session: &mut Session) {
         script_parameter_rows(ui, session, &selection, profile, schema.as_ref(), bag);
     }
     session.script_param_schema = schema;
+    // A new draft must not move the active field out of the visible rows.
+    script_parameter_draft_recovery(ui, session);
 }
 
 /// Fill `schema` with the selected card's fields and return its bag, or say
@@ -4095,7 +4113,7 @@ fn script_prefs_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
             }
             ui.spacing();
             ui.text_wrapped(
-                "Edits are validated and saved before live delivery. Native cards report applied, pending boundary, or restart required; Load scripts receive the complete bag.",
+                "Text fields: Enter saves, Escape discards. Leaving a field saves a valid edit. Other controls save immediately. A failed save restores the saved value. Native cards can require a restart.",
             );
             ui.spacing();
             if edit_parameters_enabled() {

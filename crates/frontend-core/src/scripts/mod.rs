@@ -649,8 +649,9 @@ struct StagedReloadTarget {
 }
 
 #[derive(Debug)]
-pub(crate) struct StagedParameterDiscard {
-    pub(crate) key: ParameterEditKey,
+pub(crate) enum StagedParameterDiscard {
+    Field(ParameterEditKey),
+    Profile(String),
 }
 
 #[derive(Debug)]
@@ -1050,7 +1051,13 @@ impl Scripts {
 
     /// Stage the focused parameter edit for `DiscardParameterText`.
     pub fn stage_parameter_discard(&mut self, key: ParameterEditKey) {
-        self.staged_parameter_discard = Some(StagedParameterDiscard { key });
+        self.staged_parameter_discard = Some(StagedParameterDiscard::Field(key));
+    }
+
+    /// Stage all drafts for one profile, including cards no longer displayed.
+    /// Accepted writes still block Start until their terminal result.
+    pub fn stage_profile_parameter_discard(&mut self, profile: &str) {
+        self.staged_parameter_discard = Some(StagedParameterDiscard::Profile(profile.to_owned()));
     }
 
     pub(crate) fn take_staged_parameter_discard(&mut self) -> Option<StagedParameterDiscard> {
@@ -1433,7 +1440,13 @@ impl Scripts {
         value: Value,
     ) -> Result<(), String> {
         self.legacy.set_value(source.to_script(), name, id, value);
-        self.legacy.save()
+        self.legacy.save()?;
+        crate::log::global().process_line(
+            api::hostlog::Source::Script,
+            api::hostlog::Level::Info,
+            &format!("saved legacy script settings: {name} field {id}"),
+        );
+        Ok(())
     }
 
     /// Disjoint library, legacy store and inject bag for live Start.
@@ -2437,7 +2450,7 @@ impl Scripts {
     ) -> Result<Option<OperationId>, script::StartLoadError> {
         if self.parameter_edit_blocks_start(profile) {
             return Err(script::StartLoadError::Waiting(
-                "settings edit is uncommitted or its save has not settled".into(),
+                "Settings are uncommitted or saving. In Script prefs, press Enter to save a field or discard unsaved settings.".into(),
             ));
         }
         if core.play().is_none() {

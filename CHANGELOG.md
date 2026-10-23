@@ -8,6 +8,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.5` 
 ### Panel and TUI
 
 - Switching the log view from "all bots" back to "bot" shows the focused bot's lines again, in the panel and the TUI. In 0.2.4 and 0.2.5 it kept showing every bot's lines.
+- Script settings no longer leave Start blocked after a failed save. Failed
+  saves restore the saved value and can be retried. The panel explains how
+  to save text edits and offers **Discard unsaved settings**, including edits
+  hidden by a closed tab or a different script. The panel and TUI wait for
+  settings saves before Start, and each successful save writes a log line.
 
 ### Scripts
 

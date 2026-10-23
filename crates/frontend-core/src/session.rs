@@ -3364,6 +3364,14 @@ impl<Io> OperatorSession<Io> {
         let result = match written.result {
             Ok(()) if !written.superseded || own_setting => {
                 self.operations.set(written.op, &member, Outcome::Completed);
+                if settings {
+                    crate::log::global().slot_line(
+                        &member,
+                        api::hostlog::Source::Script,
+                        api::hostlog::Level::Info,
+                        &format!("saved script settings; op#{}", written.op.0),
+                    );
+                }
                 if tracked {
                     let saved = if durable_row {
                         SaveResult::Saved
