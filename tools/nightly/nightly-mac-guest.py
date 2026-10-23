@@ -122,7 +122,10 @@ def should_skip(kind: str, relative: Path, name: str) -> bool:
         return (name in common or name == ".claude" or
                 (len(parts) >= 2 and parts[-2:] == (".claude", "worktrees")))
     if kind == "engine":
-        if name in {".git", ".DS_Store", "runtime", "node_modules", ".cache"}:
+        if name in {".git", ".DS_Store", "runtime", "node_modules"}:
+            return True
+        # The engine reads packed server maps from this runtime artifact directory.
+        if name == ".cache" and parts != ("engine", "data", "pack", ".cache"):
             return True
         if name.startswith("db.sqlite"):
             return True
@@ -229,7 +232,7 @@ def write_sha256sums(root: Path) -> None:
     rows: List[str] = []
     files = sorted(
         (path for path in root.rglob("*") if path.is_file() and not path.is_symlink()
-         and path != root / "SHA256SUMS"),
+         and path not in (root / "SHA256SUMS", root / "DONE")),
         key=lambda path: path.relative_to(root).as_posix(),
     )
     for path in files:
@@ -261,7 +264,7 @@ def verify_sha256sums(root: Path) -> None:
         if path.is_symlink():
             continue
         if path.is_file():
-            if path != manifest:
+            if path not in (manifest, root / "DONE"):
                 actual[path.relative_to(root).as_posix()] = path
         elif not path.is_dir():
             raise NightlyError(f"unsupported run output type: {path}")

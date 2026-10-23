@@ -62,6 +62,32 @@ class SourcePinTests(unittest.TestCase):
             self.assertEqual(metadata["branches"], pins)
 
 
+class EngineStagingTests(unittest.TestCase):
+    def test_preserves_runtime_map_artifacts_but_not_disposable_engine_data(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "source"
+            entries = (
+                "engine/data/pack/.cache/maps-server.zip",
+                "engine/.cache/unrelated",
+                "engine/node_modules/package",
+                "engine/db.sqlite",
+                "engine/data/players/account",
+                "runtime/pids/engine.pid",
+            )
+            for relative in entries:
+                path = source / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(relative, encoding="utf-8")
+            destination = root / "staged"
+
+            nightly.copy_tree(source, destination, kind="engine")
+
+            self.assertEqual((destination / entries[0]).read_text(encoding="utf-8"), entries[0])
+            for relative in entries[1:]:
+                self.assertFalse((destination / relative).exists(), relative)
+
+
 class GuestBootstrapTests(unittest.TestCase):
     def test_bootstrap_copies_staged_submodule_mirrors_into_guest(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -148,6 +174,8 @@ class RunArchiveTests(unittest.TestCase):
         nested.mkdir()
         (nested / "SHA256SUMS").write_text("nested file\n", encoding="utf-8")
         nightly.write_sha256sums(run)
+        # The source runner writes its completion marker after its manifest.
+        (run / "DONE").write_text("completed\n", encoding="utf-8")
         return run
 
     def test_export_and_publish_checksums_and_preserves_existing_runs(self):
@@ -170,6 +198,19 @@ class RunArchiveTests(unittest.TestCase):
             self.assertEqual([path.name for path in repeated], ["2026-10-23-dev-abcdef123-mac-r2"])
             for destination in published + repeated:
                 nightly.verify_sha256sums(destination)
+                self.assertEqual((destination / "DONE").read_text(encoding="utf-8"), "completed\n")
+
+    def test_only_the_root_completion_marker_is_outside_source_manifest(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            run = self.make_run(root, "run")
+            nightly.verify_sha256sums(run)
+            original = (run / "SHA256SUMS").read_text(encoding="utf-8")
+            (run / "nested/DONE").write_text("unlisted data\n", encoding="utf-8")
+
+            with self.assertRaisesRegex(nightly.NightlyError, "coverage mismatch"):
+                nightly.verify_sha256sums(run)
+            self.assertEqual((run / "SHA256SUMS").read_text(encoding="utf-8"), original)
 
     def test_publish_rejects_unlisted_or_changed_run_files(self):
         with tempfile.TemporaryDirectory() as temporary:

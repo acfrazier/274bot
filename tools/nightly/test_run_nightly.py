@@ -1063,6 +1063,18 @@ class QuestJobTests(unittest.TestCase):
         self.assertEqual((quest["game_port"], quest["http_port"], quest["label"]), (47594, 3080, "Engine B"))
         self.assertEqual(quest["tick_ms"], None)
 
+    def test_isolated_cells_keep_the_configured_guest_root_without_other_host_environment(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            with mock.patch.object(rn, "ISOHOME", "/tmp/isohome"), \
+                    mock.patch.dict(os.environ, {"ISOHOME_ROOT": str(root / "isohome"),
+                                                 "UNRELATED_SECRET": "not-for-the-cell"}):
+                env = rn.cell_env(root / "home", root / "tmp", root / "evidence", "walk", "nm")
+
+            self.assertEqual(env["ISOHOME_ROOT"], str(root / "isohome"))
+            self.assertEqual(env["ISOHOME_DIR"], str(root / "home"))
+            self.assertNotIn("UNRELATED_SECRET", env)
+
     def test_only_the_non_windows_quest_cell_environment_gets_300_ms(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
