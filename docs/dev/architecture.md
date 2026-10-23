@@ -697,10 +697,17 @@ Admission and native actions read the current stamped fact, not private poison
 memory. Reconnect starts at the reset session tick and current client chat cursor.
 It hides the fact until a complete live frame with selected combat tables exists.
 Missing tables leave food and cures unknown, not known empty.
-Unknown poison stays unknown through 33 consecutive clean observed ticks.
-It clears on the next clean tick, with an accepted input inside the window.
+Unknown poison stays unknown through 33 consecutive clean observed ticks after
+the last host-dispatched interaction. It clears on the next clean tick, with
+an accepted input inside the window. Each outgoing operation, use or interface
+action restarts the count while poison is unknown. The slot observes actual
+packets through the existing outgoing decoder before the next socket flush.
+Movement packets prove accepted input but do not restart the count.
 The bound includes the 30-tick timer, one queued-damage tick and the existing
 two-tick observation margin. Modal and guardian holds reset the window.
+Continuous interactions therefore retain unknown poison. A pause or movement-only
+run can finish the window. Native manual input inside the client loop is outside
+this host-dispatch observation until the T1.4 client-adapter transport cutover.
 
 Map-cache census retains at most 1,030 root summaries. Completion transfers that
 allocation without a replacement. A new scan releases previous census storage

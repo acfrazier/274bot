@@ -1445,7 +1445,6 @@ fn spawn_slot_thread(
                         // observe; its hold freezes script tick and nav follow.
                         move |c, _ignored, run_sends, status: &RandomStatus, run_policy| {
                             let name = &obs_name;
-                            let idle_cycles_before = c.shell.idle_cycles;
                             if !c.ingame {
                                 // The live title pump owns offline script/latch
                                 // synchronization. A hosted title click is only
@@ -1542,6 +1541,8 @@ fn spawn_slot_thread(
                                     api::condition::BotCondition::default()
                                 }
                             };
+                            let condition_dispatch = slot_navs.lock().unwrap().get(name)
+                                .and_then(|bot| bot.condition.dispatch_checkpoint(c));
                             api::hostlog::set_tick(nav_snapshot.tick());
                             debug_replies.observe(name, &nav_snapshot);
                             // `script_observe_with_npc_boxes` below reaps the
@@ -1957,13 +1958,12 @@ fn spawn_slot_thread(
                                     observer(c, name);
                                 }
                             }
-                            // Driver::note_input_activity resets this existing
-                            // client counter only after an accepted game-input
-                            // send. Include Traveller and manual/guardian sends
-                            // without another retained counter or a callback box.
-                            if idle_cycles_before > 0 && c.shell.idle_cycles == 0 {
+                            // Inspect actual queued packets before mainloop's
+                            // next flush. This spans scripts, wires and Traveller.
+                            // Guardian dispatch is already covered by status.hold.
+                            if let Some(checkpoint) = condition_dispatch {
                                 if let Some(bot) = slot_navs.lock().unwrap().get_mut(name) {
-                                    bot.condition.accepted_click();
+                                    bot.condition.observe_dispatch(c, checkpoint);
                                 }
                             }
                             // Busy flag for the idle scheduler: a slot with
