@@ -81,8 +81,9 @@ pub(super) use script_snapshot::{slot_arrival_reach, with_script_snapshot_input_
 #[path = "script_interact.rs"]
 mod script_interact;
 pub(super) use script_interact::{
-    dispatch_native_bank_deposit, dispatch_script_interact_cached_scoped, BankDepositDispatch,
-    InteractContext,
+    dispatch_native_bank_deposit, dispatch_native_server_ordered,
+    dispatch_script_interact_cached_scoped, BankDepositDispatch, InteractContext,
+    OrderedDispatchContext,
 };
 #[cfg(test)]
 pub(super) use script_interact::{
@@ -106,15 +107,16 @@ pub(super) fn poll_inspection_for_test(navs: &Arc<Mutex<HashMap<String, NavBot>>
 
 #[path = "script_observe.rs"]
 mod script_observe;
+#[cfg(test)]
+pub(super) use script_observe::{
+    delay_ordered_drain_for_test, drain_observed_host_interacts, install_dispatch_barrier,
+    install_ordered_dispatch_hook, post_script_snapshot, script_observe, script_observe_cached,
+    script_observe_with_npc_boxes, take_script_interacts, DispatchBarrier,
+};
 pub(super) use script_observe::{
     deliver_channel_events, nav_world_state_for_observe, observe_script_inv,
     project_npc_boxes_for_isolate_snapshot, projected_npc_boxes,
     script_observe_cached_with_channels, ScriptObservation,
-};
-#[cfg(test)]
-pub(super) use script_observe::{
-    drain_observed_host_interacts, install_dispatch_barrier, post_script_snapshot, script_observe,
-    script_observe_cached, script_observe_with_npc_boxes, take_script_interacts, DispatchBarrier,
 };
 /// Per-uid script cell on the wall. Encode/post/drain take the slot lock
 /// only — the wall map lock is held briefly for lookup/insert.

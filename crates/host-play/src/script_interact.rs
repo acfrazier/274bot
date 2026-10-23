@@ -246,6 +246,112 @@ pub(crate) fn dispatch_native_bank_deposit(
     }
 }
 
+/// Borrowed authority-independent inputs for one exclusive ordered drain.
+pub(crate) struct OrderedDispatchContext<'a> {
+    pub snapshot: &'a GameSnapshot,
+    pub selected: Option<&'a api::game_data::SelectedGameData>,
+    pub tick: u64,
+    pub input: Option<&'a host::SlotInput>,
+}
+
+/// Dispatch both sealed modes through the same API planner and encrypted sink.
+pub(crate) fn dispatch_native_server_ordered(
+    driver: &mut dyn Driver,
+    context: OrderedDispatchContext<'_>,
+    authority: &script::native::HostAuthority,
+    envelope: &script::surface::ServerOrderedEnvelope,
+) -> api::interact::server_ordered::ServerOrderedDispatch {
+    use api::interact::server_ordered::{
+        InputLineage, ServerOrderedDispatch, ServerOrderedDispatchContext, ServerOrderedError,
+        ServerOrderedInputs,
+    };
+    use script::surface::ServerOrderedPayload;
+
+    let request_id = authority.request_id().get();
+    let row_count = match envelope.payload() {
+        ServerOrderedPayload::Content(request) => request.row_count(),
+        ServerOrderedPayload::Advanced(operations) => operations.len() as u8,
+    };
+    let Some(input) = context.input else {
+        return ServerOrderedDispatch::refused(
+            request_id,
+            context.tick,
+            row_count,
+            0,
+            ServerOrderedError::ObservationUnavailable,
+        );
+    };
+    let observed = input.with_server_ordered_input(|state| state.snapshot());
+    let mut live = || {
+        authority
+            .live()
+            .then_some(())
+            .ok_or(ServerOrderedError::Cancelled)
+    };
+    match envelope.payload() {
+        ServerOrderedPayload::Content(request) => {
+            let row_count = request.row_count();
+            let Some(selected) = context.selected else {
+                return ServerOrderedDispatch::refused(
+                    request_id,
+                    context.tick,
+                    row_count,
+                    0,
+                    ServerOrderedError::ContractUnavailable,
+                );
+            };
+            let Ok(pin) = selected.selected_pin() else {
+                return ServerOrderedDispatch::refused(
+                    request_id,
+                    context.tick,
+                    row_count,
+                    0,
+                    ServerOrderedError::ContractUnavailable,
+                );
+            };
+            let Ok(catalog) = selected.server_ordered_catalog(&pin) else {
+                return ServerOrderedDispatch::refused(
+                    request_id,
+                    context.tick,
+                    row_count,
+                    0,
+                    ServerOrderedError::ContractUnavailable,
+                );
+            };
+            let _lineage = input.input_lineage(InputLineage::ContentRequest(request_id));
+            ServerOrderedInputs::dispatch(
+                catalog,
+                &pin,
+                context.snapshot,
+                driver,
+                request,
+                ServerOrderedDispatchContext {
+                    request_id,
+                    dispatch_tick: context.tick,
+                    input: observed,
+                    debug: None,
+                    authority: &mut live,
+                },
+            )
+        }
+        ServerOrderedPayload::Advanced(operations) => {
+            let _lineage = input.input_lineage(InputLineage::AdvancedRequest(request_id));
+            ServerOrderedInputs::dispatch_advanced(
+                context.snapshot,
+                driver,
+                operations,
+                ServerOrderedDispatchContext {
+                    request_id,
+                    dispatch_tick: context.tick,
+                    input: observed,
+                    debug: envelope.debug_catalog(),
+                    authority: &mut live,
+                },
+            )
+        }
+    }
+}
+
 #[cfg(test)]
 #[expect(
     clippy::too_many_arguments,

@@ -549,6 +549,7 @@ pub struct SlotInput {
     /// Guardian / `!up` gate set by the slot thread before consume.
     /// Default true so capture-off catalog slots still consume script mouse.
     host_consume_allowed: AtomicBool,
+    pub(crate) input_observation: crate::input_observation::InputObservation,
 }
 
 impl SlotInput {
@@ -566,6 +567,7 @@ impl SlotInput {
             authority: NativeInputAuthority::new(),
             mouse: Mutex::new(MouseState::new()),
             host_consume_allowed: AtomicBool::new(true),
+            input_observation: Default::default(),
         })
     }
 
@@ -669,12 +671,16 @@ impl SlotInput {
             match ev {
                 InputEv::Move { x, y } if enabled => shell.apply_mouse_move(x, y),
                 InputEv::Down { button, x, y } if enabled => {
+                    self.foreign_local_input();
                     shell.apply_mouse_down(button, x, y);
                     mouse.held = MouseOwner::User;
                     mouse.pending = MouseOwner::User;
                 }
                 InputEv::Up => Self::release_user_mouse(shell, &mut mouse),
                 InputEv::Key { down, ch } if !down || (enabled && user.keyboard_enabled) => {
+                    if down {
+                        self.foreign_local_input();
+                    }
                     shell.apply_key(down, 0, ch);
                     user.note_key(ch, down);
                 }
@@ -846,6 +852,7 @@ impl SlotInput {
                 if mouse.pending != MouseOwner::None || matches!(mouse.held, MouseOwner::User) {
                     continue;
                 }
+                self.foreign_local_input();
                 shell.apply_mouse_down(ev.button, ev.x, ev.y);
                 let owner = MouseOwner::Script {
                     generation: ev.generation,
