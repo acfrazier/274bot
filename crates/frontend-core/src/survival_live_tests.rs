@@ -387,18 +387,17 @@ impl Script for GuardWalkScript {
                     }
                     PoisonState::Unknown { .. } | PoisonState::Clear => {}
                 }
-                if condition.session == SessionMark::Dead
-                    || (condition.hp_known && condition.hp == 0)
+                if (condition.session == SessionMark::Dead
+                    || (condition.hp_known && condition.hp == 0))
+                    && trace.death_tick.is_none()
                 {
-                    if trace.death_tick.is_none() {
-                        trace.death_tick = Some(condition.tick);
-                        trace.event(
-                            "death",
-                            state_frame,
-                            condition.tick,
-                            json!({ "hp": condition.hp, "session": format!("{:?}", condition.session) }),
-                        );
-                    }
+                    trace.death_tick = Some(condition.tick);
+                    trace.event(
+                        "death",
+                        state_frame,
+                        condition.tick,
+                        json!({ "hp": condition.hp, "session": format!("{:?}", condition.session) }),
+                    );
                 }
             }
         }
@@ -779,7 +778,7 @@ fn run_guard_cure_live(
                     line.text == DRINK_LINE
                         && trace
                             .seed_chat_sequence
-                            .map_or(true, |sequence| line.sequence > sequence)
+                            .is_none_or(|sequence| line.sequence > sequence)
                 });
                 if trace.seed_tick.is_some() && trace.drink_line_tick.is_none() && fresh_drink_line
                 {

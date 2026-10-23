@@ -5633,6 +5633,7 @@ fn s2b_admission_per_bot_layouts() {
     // stall diagnostic adds 16 B to Traveller (original send tile and tick
     // across resends): NavBot measures 3776 B, with no new heap payload and
     // no SlotScript growth.
+    // SURVIVAL-1.4 adds one byte of cure_poison, padded to 8 by alignment: NavBot is 3784 B.
     // Rust 1.98.1 is pinned for the workspace and CI. These are lib-test
     // layouts: test-only inspection budgets and bank fixtures are included.
     // Linux's std::sync::Mutex is 8 B smaller than macOS's for each of the
@@ -5649,7 +5650,7 @@ fn s2b_admission_per_bot_layouts() {
             std::mem::size_of::<script::combat::Combat>(),
             std::mem::size_of::<script::combat::WalkGuard>()
         ),
-        (3776, 4616, 512, 264)
+        (3784, 4616, 512, 264)
     );
     #[cfg(all(
         target_os = "linux",
@@ -5664,7 +5665,7 @@ fn s2b_admission_per_bot_layouts() {
             std::mem::size_of::<script::combat::Combat>(),
             std::mem::size_of::<script::combat::WalkGuard>()
         ),
-        (3776, 4496, 512, 264)
+        (3784, 4496, 512, 264)
     );
     assert!(std::mem::size_of::<script::combat::Combat>() <= 512);
     assert!(std::mem::size_of::<script::combat::WalkGuard>() <= 264);
