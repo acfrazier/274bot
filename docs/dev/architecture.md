@@ -755,7 +755,9 @@ this host-dispatch observation until the T1.4 client-adapter transport cutover.
 Its one decision body checks a held cure before every food branch, including
 food-only walks. Combat applies the same policy before all eating branches.
 Both consumers add one next poison fire to their eating lines and reject
-a bite at full hitpoints. They retain their existing drink and food receipts.
+a bite at full hitpoints. Strange fruit shares the content's food clock:
+after a bite at T, neither consumer sends fruit before T+3. Its receipt
+does not overwrite a pending health-food receipt.
 The Gatherer boundary-eating path is separate until the runner survival step lands.
 
 The vault stores the Survival and supplies profile group. `SetSurvival` saves
@@ -768,6 +770,10 @@ The live mirror proof reads the real host policy after that per-frame copy.
 Its read-only post-host-frame observer exists only with `test-support`; product
 builds have neither its storage nor its callback. A pre-copy read cannot prove
 the one-frame deadline and is rejected by the proof oracle.
+The arm and host mirrors must occur at or after the durable save, within one frame.
+The native policy must appear at the next observed game tick after the host
+mirror. Its frame must fall within the sampled frames for that tick.
+The guard's accepted antipoison must follow the host mirror's snapshot tick.
 
 The survival eating oracles compare a captured action's explicit `snapshot_tick`
 with the slot condition's tick through one checked time-window helper. The host
@@ -775,6 +781,8 @@ script counter is a different clock; it is neither a fallback nor an offset.
 All three eating cells use that helper for bite and heal deadlines. An action
 without a snapshot clock fails the oracle. Saved walk receipts can be read back
 and judged by the same oracle without changing their original evidence.
+Each live receipt records its git commit. Combat proof matches the native
+fight action id as well as the run, since one run can contain several fights.
 
 Map-cache census retains at most 1,030 root summaries. Completion transfers that
 allocation without a replacement. A new scan releases previous census storage

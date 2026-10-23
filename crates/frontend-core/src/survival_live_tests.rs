@@ -151,8 +151,7 @@ impl Trace {
             return;
         };
         if tick == next_tick {
-            self.native_next_tick_first_frame
-                .get_or_insert(frame);
+            self.native_next_tick_first_frame.get_or_insert(frame);
             self.native_next_tick_last_frame = Some(frame);
         }
     }

@@ -3873,7 +3873,7 @@ fn profile_form_draws_the_survival_section() {
     );
     assert!(text.contains("Cure poison"), "the row draws:\n{text}");
     assert!(
-        text.contains("When needed: drink in combat or protected walks"),
+        text.contains("When needed: drink for health in combat or protected walks"),
         "the saved default's label draws:\n{text}"
     );
 }

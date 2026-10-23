@@ -50,6 +50,7 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.5` 
   eat also drink a held cure before their next bite.
 - When a bot is poisoned, fighting and walk protection count the next poison hit before they decide to eat. A bot at full hitpoints no longer eats food that would heal nothing.
 - A new profile setting group, Survival and supplies, holds Cure poison: when needed (default), always, or never.
+- Strange fruit waits for the food delay after a bite. A pending bite no longer prevents the fruit's cure from being observed.
 
 ### Nav
 
