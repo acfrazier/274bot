@@ -91,7 +91,7 @@
         "test": 0
       }
     },
-    "nav": {
+    "nav-planner": {
       "clippy::assertions_on_constants": {
         "non_test": 0,
         "test": 2

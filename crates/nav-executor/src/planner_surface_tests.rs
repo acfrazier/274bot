@@ -1,11 +1,11 @@
-use nav::test_support::source_scan::{
+use nav_planner::test_support::source_scan::{
     scan_package, scan_sources, scan_text, FindingKind, PathKind, ScanReport, Scope, SourceMap,
     SourcePath,
 };
 use std::path::{Path, PathBuf};
 
 // S2 changes this one root from `nav` to `nav_planner`.
-const PLANNER_ROOT: &str = "nav";
+const PLANNER_ROOT: &str = "nav_planner";
 
 const PRODUCTION_ALLOW: &[&str] = &[
     "contract::RoutePlanLease",
@@ -123,8 +123,8 @@ fn executor_names_only_the_planner_surface_lists() {
 #[test]
 fn listed_aliases_and_grouped_paths_resolve_to_allowed_items() {
     let report = scan_fixture(
-        "use nav::executor_adapter::plan_leg_count as lc;\
-         use nav::{contract::RoutePlanLease, router::{Leg, Route}};\
+        "use nav_planner::executor_adapter::plan_leg_count as lc;\
+         use nav_planner::{contract::RoutePlanLease, router::{Leg, Route}};\
          fn f(plan: &RoutePlanLease) { let _ = lc(plan); let _ = Route::Walk; let _ = Leg::Walk; }",
     );
     assert!(report.findings.is_empty(), "{:#?}", report.findings);
@@ -137,31 +137,31 @@ fn listed_aliases_and_grouped_paths_resolve_to_allowed_items() {
 
 #[test]
 fn planner_root_alias_does_not_hide_an_unlisted_path() {
-    let report = scan_fixture("use nav as p; fn f() { p::router::find(..); }");
+    let report = scan_fixture("use nav_planner as p; fn f() { p::router::find(..); }");
     let violations = surface_violations(&report);
     assert_eq!(violations.len(), 1, "{violations:#?}");
-    assert_eq!(violations[0].path, "nav::router::find");
+    assert_eq!(violations[0].path, "nav_planner::router::find");
 }
 
 #[test]
 fn the_scanner_import_is_allowed_only_in_test_scope() {
     let test_report =
-        scan_fixture("#[cfg(test)] mod tests { use nav::test_support::source_scan; }");
+        scan_fixture("#[cfg(test)] mod tests { use nav_planner::test_support::source_scan; }");
     assert!(
         surface_violations(&test_report).is_empty(),
         "{:#?}",
         surface_violations(&test_report)
     );
 
-    let production_report = scan_fixture("use nav::test_support::source_scan;");
+    let production_report = scan_fixture("use nav_planner::test_support::source_scan;");
     let violations = surface_violations(&production_report);
     assert_eq!(violations.len(), 1, "{violations:#?}");
-    assert_eq!(violations[0].path, "nav::test_support::source_scan");
+    assert_eq!(violations[0].path, "nav_planner::test_support::source_scan");
 }
 
 #[test]
 fn every_planner_glob_fails_even_when_its_module_is_listed() {
-    let report = scan_fixture("use nav::router::*;");
+    let report = scan_fixture("use nav_planner::router::*;");
     let violations = surface_violations(&report);
     assert_eq!(violations.len(), 1, "{violations:#?}");
     assert_eq!(violations[0].kind, PathKind::Glob);
@@ -170,24 +170,24 @@ fn every_planner_glob_fails_even_when_its_module_is_listed() {
 #[test]
 fn planner_scan_rejects_the_equivalent_action_path_fixtures() {
     let cases = [
-        "use nav::producer::Producer;",
-        "use nav::producer;",
-        "use nav::producer as p; fn f() { p::build(); }",
-        "pub use nav::contract::RouteView;",
-        "use nav::router::find;",
-        "use nav::executor_adapter::anything_not_listed;",
-        "macro_rules! m { () => { nav::producer::build() }; }",
-        "fn f() { let _ = nav::producer::build; }",
-        "use nav::*;",
-        "#[cfg(any(test, unix))] mod m { use nav::producer::Producer; }",
-        "use nav::producer::*;",
-        "macro_rules! m { () => { use nav::{producer::Producer}; }; }",
-        "use nav as p; fn f() { p::producer::build(); }",
-        "extern crate nav as n; fn f() { n::producer::build(); }",
-        "fn f<T: nav::producer::Bound>(value: nav::producer::Value) { let nav::producer::Variant = value; }",
-        "#[nav::producer::capability] fn f() {}",
+        "use nav_planner::producer::Producer;",
+        "use nav_planner::producer;",
+        "use nav_planner::producer as p; fn f() { p::build(); }",
+        "pub use nav_planner::contract::RouteView;",
+        "use nav_planner::router::find;",
+        "use nav_planner::executor_adapter::anything_not_listed;",
+        "macro_rules! m { () => { nav_planner::producer::build() }; }",
+        "fn f() { let _ = nav_planner::producer::build; }",
+        "use nav_planner::*;",
+        "#[cfg(any(test, unix))] mod m { use nav_planner::producer::Producer; }",
+        "use nav_planner::producer::*;",
+        "macro_rules! m { () => { use nav_planner::{producer::Producer}; }; }",
+        "use nav_planner as p; fn f() { p::producer::build(); }",
+        "extern crate nav_planner as n; fn f() { n::producer::build(); }",
+        "fn f<T: nav_planner::producer::Bound>(value: nav_planner::producer::Value) { let nav_planner::producer::Variant = value; }",
+        "#[nav_planner::producer::capability] fn f() {}",
         "macro_rules! m { () => { $crate::producer::build() }; }",
-        "macro_rules! m { () => { nav::$root::build() }; }",
+        "macro_rules! m { () => { nav_planner::$root::build() }; }",
     ];
     for (index, source) in cases.iter().enumerate() {
         let report = scan_fixture(source);
@@ -203,7 +203,7 @@ fn planner_scan_rejects_the_equivalent_action_path_fixtures() {
 fn test_scope_accepts_only_list_b_and_cfg_attr_fails_closed() {
     let test_list = scan_fixture(
         "#[cfg(all(test, target_os = \"macos\"))] mod tests {\
-         use nav::test_support::family; use nav::test_support::window;\
+         use nav_planner::test_support::family; use nav_planner::test_support::window;\
          }",
     );
     assert!(
@@ -212,7 +212,7 @@ fn test_scope_accepts_only_list_b_and_cfg_attr_fails_closed() {
         surface_violations(&test_list)
     );
 
-    let production_window = scan_fixture("use nav::test_support::window;");
+    let production_window = scan_fixture("use nav_planner::test_support::window;");
     assert_eq!(surface_violations(&production_window).len(), 1);
 
     let cfg_attr = scan_fixture("#[cfg_attr(feature = \"x\", cfg(test))] mod m {}");
@@ -231,11 +231,11 @@ fn production_scope_rejects_removed_list_c_items() {
         "tile::chebyshev",
         "arrival::arrived",
     ] {
-        let source = format!("use nav::{path};");
+        let source = format!("use nav_planner::{path};");
         let report = scan_fixture(&source);
         let violations = surface_violations(&report);
         assert_eq!(violations.len(), 1, "{path}: {violations:#?}");
-        assert_eq!(violations[0].path, format!("nav::{path}"));
+        assert_eq!(violations[0].path, format!("nav_planner::{path}"));
     }
 }
 
@@ -248,7 +248,7 @@ fn attached_test_path_scope_and_unattached_files_are_enforced() {
     );
     attached_test.insert(
         PathBuf::from("src/x_tests.rs"),
-        "use nav::test_support::family;".to_owned(),
+        "use nav_planner::test_support::family;".to_owned(),
     );
     let report = scan_sources(&attached_test, "nav-executor", &[PLANNER_ROOT], &[]);
     assert!(report.findings.is_empty(), "{:#?}", report.findings);
@@ -261,14 +261,14 @@ fn attached_test_path_scope_and_unattached_files_are_enforced() {
     );
     production.insert(
         PathBuf::from("src/x_tests.rs"),
-        "use nav::producer::Producer;".to_owned(),
+        "use nav_planner::producer::Producer;".to_owned(),
     );
     let report = scan_sources(&production, "nav-executor", &[PLANNER_ROOT], &[]);
     assert_eq!(surface_violations(&report).len(), 1);
 
     production.insert(
         PathBuf::from("src/stray.rs"),
-        "use nav::producer::Producer;".to_owned(),
+        "use nav_planner::producer::Producer;".to_owned(),
     );
     let report = scan_sources(&production, "nav-executor", &[PLANNER_ROOT], &[]);
     assert!(report
@@ -282,30 +282,30 @@ fn build_script_is_a_production_root() {
     let mut files = SourceMap::new();
     files.insert(
         PathBuf::from("build.rs"),
-        "use nav::producer::Producer;".to_owned(),
+        "use nav_planner::producer::Producer;".to_owned(),
     );
     let report = scan_sources(&files, "nav-executor", &[PLANNER_ROOT], &[]);
     assert!(report.findings.is_empty(), "{:#?}", report.findings);
     let violations = surface_violations(&report);
     assert_eq!(violations.len(), 1, "{violations:#?}");
-    assert_eq!(violations[0].path, "nav::producer::Producer");
+    assert_eq!(violations[0].path, "nav_planner::producer::Producer");
 }
 
 #[test]
 fn section_469_examples_are_enforced() {
     let aliased_allowed = scan_fixture(
-        "use nav::executor_adapter::plan_leg_count as lc; fn f(x: &RoutePlanLease) { let _ = lc(x); }",
+        "use nav_planner::executor_adapter::plan_leg_count as lc; fn f(x: &RoutePlanLease) { let _ = lc(x); }",
     );
     assert!(surface_violations(&aliased_allowed).is_empty());
 
     let grouped_allowed =
-        scan_fixture("use nav::{contract::RoutePlanLease, router::{Leg, Route}};");
+        scan_fixture("use nav_planner::{contract::RoutePlanLease, router::{Leg, Route}};");
     assert!(surface_violations(&grouped_allowed).is_empty());
 
-    let root_alias_disallowed = scan_fixture("use nav as p; fn f() { p::router::find(); }");
+    let root_alias_disallowed = scan_fixture("use nav_planner as p; fn f() { p::router::find(); }");
     let violations = surface_violations(&root_alias_disallowed);
     assert_eq!(violations.len(), 1, "{violations:#?}");
-    assert_eq!(violations[0].path, "nav::router::find");
+    assert_eq!(violations[0].path, "nav_planner::router::find");
 }
 
 #[test]
@@ -316,13 +316,13 @@ fn macro_dynamic_paths_and_macro_root_aliases_are_rejected() {
         .iter()
         .any(|finding| finding.kind == FindingKind::UnsupportedMacroForm));
 
-    let root_alias = scan_fixture("macro_rules! m { () => { use nav as p; }; }");
+    let root_alias = scan_fixture("macro_rules! m { () => { use nav_planner as p; }; }");
     assert!(root_alias
         .findings
         .iter()
         .any(|finding| finding.kind == FindingKind::UnsupportedMacroForm));
 
-    let extern_crate = scan_fixture("macro_rules! m { () => { extern crate nav; }; }");
+    let extern_crate = scan_fixture("macro_rules! m { () => { extern crate nav_planner; }; }");
     assert!(extern_crate
         .findings
         .iter()

@@ -17,10 +17,10 @@ use client::client::Client;
 use client::util::jstring::JString;
 use host::{self, Pump};
 use host_play::{ProfileOptions, ScriptStartHandle, SharedClientTemplate};
-use nav::router::{find_with, FindOptions, Leg};
-use nav::transport::TransportKind;
-use nav::world::NavWorld;
-use nav::WorldState;
+use nav_planner::router::{find_with, FindOptions, Leg};
+use nav_planner::transport::TransportKind;
+use nav_planner::world::NavWorld;
+use nav_planner::WorldState;
 use scenario::{
     Proof, RunnerStatus, Scenario, ScenarioRunner, ScenarioSettings, Seed, Step, StepKind, Wait,
 };
@@ -3257,7 +3257,7 @@ fn bank_candidates(
                 .banks()
                 .iter()
                 .filter(|stand| {
-                    nav::bank_fetch::bank_access_tiles(&world.collision, stand)
+                    nav_planner::bank_fetch::bank_access_tiles(&world.collision, stand)
                         .any(|tile| tile == bank.tile)
                 })
                 .map(|stand| tile_from_world(stand.tile))

@@ -42,11 +42,11 @@ use super::script_runtime::BankPickWorkObservation;
 use api::interact;
 use api::snapshot::{GameSnapshot, WorldTile};
 use client::client::{Client, MiniMenuAction};
-use nav::bank_fetch::{plan_bank_fetch, BankStep};
-use nav::pack::BankAccess;
-use nav::router::{FindOptions, Leg, MissingReq, Route};
-use nav::world::NavWorld;
-use nav::WorldState;
+use nav_planner::bank_fetch::{plan_bank_fetch, BankStep};
+use nav_planner::pack::BankAccess;
+use nav_planner::router::{FindOptions, Leg, MissingReq, Route};
+use nav_planner::world::NavWorld;
+use nav_planner::WorldState;
 use parking_lot::Mutex;
 use script::work_admission::WorkService;
 use vault::{Profile, ProfileSettings};
@@ -904,7 +904,7 @@ pub fn live_bankbudget_fetch_from_the_street() {
         .expect("baked 289 navpack for live BankBudget");
     let bytes = std::fs::read(&pack).expect("read baked pack");
     let full = Arc::new(NavWorld::from_bytes(&bytes).expect("load baked pack"));
-    let (collision, graph, stands) = nav::pack::decode(&bytes).expect("decode baked pack");
+    let (collision, graph, stands) = nav_planner::pack::decode(&bytes).expect("decode baked pack");
     drop(bytes);
     let booths = Arc::new(NavWorld::from_parts(
         collision,
@@ -2535,7 +2535,7 @@ impl Script for BankPickBurstScript {
                         candidate_goals: None,
                         loc_id: None,
                         radius: 0,
-                        arrival: nav::arrival::ArrivalKind::Reach,
+                        arrival: nav_planner::arrival::ArrivalKind::Reach,
                         options: script::native::WalkOptions::default(),
                         required_after: tick.cx.evidence(),
                         evidence: None,
@@ -3357,7 +3357,7 @@ fn bank_pick_burst_guest_json(
             "explicit_bank": BANK_PICK_BURST_BANK,
             "preferences": "default",
             "walk_options": "default",
-            "production_search_settle_budget": nav::router::NODE_BUDGET,
+            "production_search_settle_budget": nav_planner::router::NODE_BUDGET,
         },
         "query": {
             "started_at_ms": guest.burst.query_started_at_ms,
@@ -3839,7 +3839,7 @@ pub fn live_ten_guest_shared_bank_pick_full_retry_burst() {
             "api": "production native script::bank::Select",
             "explicit_bank": BANK_PICK_BURST_BANK,
             "real_origin": tile_tuple(BANK_PICK_BURST_ORIGIN),
-            "query_settle_budget": nav::router::NODE_BUDGET,
+            "query_settle_budget": nav_planner::router::NODE_BUDGET,
             "result_policy": "all ten must return the selected bank with Reachable",
         },
         "selection_outcomes_observed": {

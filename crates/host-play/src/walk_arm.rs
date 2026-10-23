@@ -3,11 +3,11 @@ use std::sync::{Arc, Mutex};
 
 use api::interact::Driver;
 use api::snapshot::{GameSnapshot, WorldTile};
-use nav::router::{FindOptions, Route};
-use nav::tile::Tile;
-use nav::world::NavWorld;
-use nav::WorldState;
 use nav_executor::{TravelOptions, TravelOutcome, Traveller};
+use nav_planner::router::{FindOptions, Route};
+use nav_planner::tile::Tile;
+use nav_planner::world::NavWorld;
+use nav_planner::WorldState;
 
 use crate::admission::{Admission, RouteBasis};
 use crate::script_runtime::{session_freezes_follow, step_bank_fetch_on_bot, NavBot};
@@ -44,7 +44,7 @@ pub struct WalkArm {
 #[cfg(feature = "test-support")]
 impl WalkArm {
     /// Build an idle arm with the supplied essence-mine return session.
-    pub fn with_latched_essence(session: Option<nav::essence::EssenceSession>) -> Self {
+    pub fn with_latched_essence(session: Option<nav_planner::essence::EssenceSession>) -> Self {
         let mut traveller = Traveller::new();
         traveller.set_essence(session);
         Self {
@@ -61,7 +61,7 @@ impl WalkArm {
     }
 
     /// The latched essence-mine return session, if one is known.
-    pub fn essence(&self) -> Option<nav::essence::EssenceSession> {
+    pub fn essence(&self) -> Option<nav_planner::essence::EssenceSession> {
         self.traveller.essence()
     }
 
@@ -122,7 +122,7 @@ pub struct WalkRoute {
 /// last published snapshot facts, fail-closed [`WorldState::empty`] when
 /// none. `bank` is the account's bank memory rows ([`crate::Play::bank_rows`])
 /// the BankBudget session is planned over
-/// ([`nav::bank_fetch::planning_rows`]): a `Session` or `Unknown`
+/// ([`nav_planner::bank_fetch::planning_rows`]): a `Session` or `Unknown`
 /// bank that lacks a missing item is `NoPath`; a `Hint` plans the one
 /// verifying trip, which the open bank settles.
 /// On success the caller's picked dest is stored by the arm's route;
@@ -137,7 +137,7 @@ pub fn arm_walk_on(
     dest: Tile,
     options: FindOptions,
     state: &WorldState,
-    bank: &nav::bank_fetch::BankRows,
+    bank: &nav_planner::bank_fetch::BankRows,
     mut admission: Admission,
     travellers: &WalkArms,
     focused: Option<&str>,
@@ -195,7 +195,7 @@ pub fn arm_walk_on(
             )
         },
         || {
-            nav::router::find_blocking_zones(
+            nav_planner::router::find_blocking_zones(
                 &world.collision,
                 &world.graph,
                 from_w,
@@ -393,7 +393,7 @@ fn bank_stand_route_active(arm: &WalkArm) -> bool {
     arm.bank_fetch.as_ref().is_some_and(|pending| {
         matches!(
             pending.steps.front(),
-            Some(nav::bank_fetch::BankStep::Walk { x, z, level })
+            Some(nav_planner::bank_fetch::BankStep::Walk { x, z, level })
                 if route.dest.x == *x && route.dest.z == *z && route.dest.level == *level
         )
     })

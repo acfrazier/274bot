@@ -2,7 +2,7 @@
 //! delivery and native drain, the route-work service and `step_nav_bot`.
 use super::*;
 use client::dash3d::CollisionFlag;
-use nav::bank_fetch::BankRows;
+use nav_planner::bank_fetch::BankRows;
 use script::native::walk::Walk;
 use script::native::{
     ActionError, ActionHandle, NativeTick, Script, ScriptFailure, ScriptFlow, WalkEnd, WalkEvent,
@@ -25,7 +25,7 @@ struct Walker {
     target: Option<WorldTile>,
     later_target: Option<WorldTile>,
     radius: u16,
-    arrival: nav::arrival::ArrivalKind,
+    arrival: nav_planner::arrival::ArrivalKind,
     options: script::native::WalkOptions,
     candidate_goals: Option<script::native::WalkGoals>,
     result: Option<Result<WalkReceipt, ActionError>>,
@@ -222,7 +222,7 @@ fn native_near_walk_after_compat_tile_walk_uses_arrival_endpoint() {
         target.x,
         target.z,
         target.level,
-        nav::router::FindOptions::default(),
+        nav_planner::router::FindOptions::default(),
         1,
         900,
         true,
@@ -241,7 +241,7 @@ fn native_near_walk_after_compat_tile_walk_uses_arrival_endpoint() {
         let mut shared = rig.shared.lock();
         shared.target = Some(target);
         shared.radius = 1;
-        shared.arrival = nav::arrival::ArrivalKind::Reach;
+        shared.arrival = nav_planner::arrival::ArrivalKind::Reach;
     }
 
     rig.observe(1);
@@ -283,7 +283,7 @@ fn candidate_walk_returns_and_settles_the_chosen_goal() {
     {
         let mut shared = rig.shared.lock();
         shared.target = Some(tile(20));
-        shared.arrival = nav::contract::ArrivalKind::Area;
+        shared.arrival = nav_planner::contract::ArrivalKind::Area;
         shared.candidate_goals =
             Some(script::native::WalkGoals::new(vec![tile(8), tile(4)]).unwrap());
     }
@@ -312,7 +312,7 @@ fn candidate_walk_keeps_preferred_stand_and_reports_its_tier() {
         {
             let mut shared = rig.shared.lock();
             shared.target = Some(tile(20));
-            shared.arrival = nav::contract::ArrivalKind::Area;
+            shared.arrival = nav_planner::contract::ArrivalKind::Area;
             shared.candidate_goals = Some(
                 script::native::WalkGoals::with_preferred(vec![preferred, tile(4)], &[preferred])
                     .unwrap(),
@@ -348,7 +348,7 @@ fn candidate_walk_rejects_a_radius_instead_of_changing_its_meaning() {
     {
         let mut shared = rig.shared.lock();
         shared.radius = 1;
-        shared.arrival = nav::contract::ArrivalKind::Area;
+        shared.arrival = nav_planner::contract::ArrivalKind::Area;
         shared.candidate_goals = Some(
             script::native::WalkGoals::new(vec![WorldTile {
                 x: 4,
@@ -535,18 +535,18 @@ fn stale_and_legacy_follow_failures_do_not_acquire_native_detail() {
 
 fn zoned_open_world() -> NavWorld {
     let mut world = open_world(40, 1);
-    let zones = vec![nav::zones::Zone::npc(
+    let zones = vec![nav_planner::zones::Zone::npc(
         WorldTile {
             x: 2,
             z: 0,
             level: 0,
         },
         0,
-        nav::zones::ZoneClass::Always,
+        nav_planner::zones::ZoneClass::Always,
         u16::MAX,
         0,
     )];
-    let kinds = vec![nav::zones::ZoneKind::new(
+    let kinds = vec![nav_planner::zones::ZoneKind::new(
         "test-barrier",
         "Test barrier",
         123,
@@ -554,7 +554,7 @@ fn zoned_open_world() -> NavWorld {
         false,
         false,
     )];
-    let table = nav::zones::ZoneTable::from_parts(
+    let table = nav_planner::zones::ZoneTable::from_parts(
         zones,
         kinds,
         vec![],
@@ -573,19 +573,55 @@ fn catalog_open_world() -> NavWorld {
     let mut world = open_world(40, 10);
     let tile = |x, z| WorldTile { x, z, level: 0 };
     let mut zones = vec![
-        nav::zones::Zone::npc(tile(2, 0), 0, nav::zones::ZoneClass::Always, u16::MAX, 0),
-        nav::zones::Zone::npc(tile(10, 2), 1, nav::zones::ZoneClass::Always, u16::MAX, 0),
-        nav::zones::Zone::npc(tile(20, 2), 1, nav::zones::ZoneClass::Always, u16::MAX, 0),
-        nav::zones::Zone::npc(tile(10, 6), 1, nav::zones::ZoneClass::Always, u16::MAX, 0),
-        nav::zones::Zone::npc(tile(20, 6), 1, nav::zones::ZoneClass::Always, u16::MAX, 0),
-        nav::zones::Zone::npc(tile(30, 0), 0, nav::zones::ZoneClass::Always, u16::MAX, 0),
+        nav_planner::zones::Zone::npc(
+            tile(2, 0),
+            0,
+            nav_planner::zones::ZoneClass::Always,
+            u16::MAX,
+            0,
+        ),
+        nav_planner::zones::Zone::npc(
+            tile(10, 2),
+            1,
+            nav_planner::zones::ZoneClass::Always,
+            u16::MAX,
+            0,
+        ),
+        nav_planner::zones::Zone::npc(
+            tile(20, 2),
+            1,
+            nav_planner::zones::ZoneClass::Always,
+            u16::MAX,
+            0,
+        ),
+        nav_planner::zones::Zone::npc(
+            tile(10, 6),
+            1,
+            nav_planner::zones::ZoneClass::Always,
+            u16::MAX,
+            0,
+        ),
+        nav_planner::zones::Zone::npc(
+            tile(20, 6),
+            1,
+            nav_planner::zones::ZoneClass::Always,
+            u16::MAX,
+            0,
+        ),
+        nav_planner::zones::Zone::npc(
+            tile(30, 0),
+            0,
+            nav_planner::zones::ZoneClass::Always,
+            u16::MAX,
+            0,
+        ),
     ];
     zones[0].group = 0;
     for zone in &mut zones[1..5] {
         zone.group = 1;
     }
     zones[5].group = 2;
-    let kinds = vec![nav::zones::ZoneKind::new(
+    let kinds = vec![nav_planner::zones::ZoneKind::new(
         "test-barrier",
         "Test barrier",
         123,
@@ -594,10 +630,10 @@ fn catalog_open_world() -> NavWorld {
         false,
     )];
     let groups = vec![
-        nav::zones::ZoneGroup::new(
+        nav_planner::zones::ZoneGroup::new(
             "white-wolf-mountain",
             "White Wolf Mountain",
-            nav::router::AvoidRect {
+            nav_planner::router::AvoidRect {
                 min_x: 2,
                 max_x: 2,
                 min_z: 0,
@@ -606,10 +642,10 @@ fn catalog_open_world() -> NavWorld {
             },
             vec![0].into_boxed_slice(),
         ),
-        nav::zones::ZoneGroup::new(
+        nav_planner::zones::ZoneGroup::new(
             "draynor-jail-guards",
             "Draynor jail guards",
-            nav::router::AvoidRect {
+            nav_planner::router::AvoidRect {
                 min_x: 9,
                 max_x: 21,
                 min_z: 1,
@@ -618,10 +654,10 @@ fn catalog_open_world() -> NavWorld {
             },
             vec![1, 2, 3, 4].into_boxed_slice(),
         ),
-        nav::zones::ZoneGroup::new(
+        nav_planner::zones::ZoneGroup::new(
             "death-plateau-throwers",
             "Death Plateau thrower trolls",
-            nav::router::AvoidRect {
+            nav_planner::router::AvoidRect {
                 min_x: 30,
                 max_x: 30,
                 min_z: 0,
@@ -631,7 +667,7 @@ fn catalog_open_world() -> NavWorld {
             vec![5].into_boxed_slice(),
         ),
     ];
-    let table = nav::zones::ZoneTable::from_parts(
+    let table = nav_planner::zones::ZoneTable::from_parts(
         zones,
         kinds,
         groups,
@@ -649,18 +685,18 @@ fn catalog_open_world() -> NavWorld {
 
 fn add_selection_zone(
     world: &mut NavWorld,
-    zone: nav::zones::Zone,
-    carve: Option<nav::router::AvoidRect>,
+    zone: nav_planner::zones::Zone,
+    carve: Option<nav_planner::router::AvoidRect>,
 ) {
     let carves = carve.map_or_else(Vec::new, |carve| vec![(0, carve)]);
-    let (npc_id, vislevel) = if zone.class == nav::zones::ZoneClass::LevelRule {
+    let (npc_id, vislevel) = if zone.class == nav_planner::zones::ZoneClass::LevelRule {
         (0, zone.cap / 2)
     } else {
         (-1, 0)
     };
-    let table = nav::zones::ZoneTable::from_parts(
+    let table = nav_planner::zones::ZoneTable::from_parts(
         vec![zone],
-        vec![nav::zones::ZoneKind::new(
+        vec![nav_planner::zones::ZoneKind::new(
             "test-danger",
             "Test danger",
             npc_id,
@@ -682,9 +718,9 @@ fn add_selection_zone(
 
 fn selection_zone_world(
     target: WorldTile,
-    zone: nav::zones::Zone,
-    carve: Option<nav::router::AvoidRect>,
-    wilderness: nav::transport::WildernessRules,
+    zone: nav_planner::zones::Zone,
+    carve: Option<nav_planner::router::AvoidRect>,
+    wilderness: nav_planner::transport::WildernessRules,
 ) -> NavWorld {
     let mut world = open_world_at(target.x - 8, target.z - 8, 32, 32);
     world.graph.wilderness = wilderness;
@@ -759,7 +795,7 @@ fn selection_danger(
     target: WorldTile,
     loc_id: Option<i32>,
     radius: u16,
-    arrival: nav::contract::ArrivalKind,
+    arrival: nav_planner::contract::ArrivalKind,
 ) -> Result<(), String> {
     use script::native::{WalkDanger, WalkDangerQuery};
 
@@ -773,8 +809,8 @@ fn selection_danger(
     }
 }
 
-fn avoid_rect(min_x: i32, max_x: i32, min_z: i32, max_z: i32) -> nav::router::AvoidRect {
-    nav::router::AvoidRect {
+fn avoid_rect(min_x: i32, max_x: i32, min_z: i32, max_z: i32) -> nav_planner::router::AvoidRect {
+    nav_planner::router::AvoidRect {
         min_x,
         max_x,
         min_z,
@@ -2214,8 +2250,8 @@ fn host_walk(rig: &Rig, x: i32, retarget: bool) -> bool {
         x,
         0,
         0,
-        nav::router::FindOptions {
-            zones: nav::zones::ZoneExempt::all(),
+        nav_planner::router::FindOptions {
+            zones: nav_planner::zones::ZoneExempt::all(),
             ..Default::default()
         },
         0,
@@ -2363,7 +2399,7 @@ fn native_cross_exemption_is_scoped_to_one_walk() {
     assert_eq!(second.end, WalkEnd::Refused);
     assert_eq!(
         second.blocked.as_deref(),
-        Some(&[nav::zones::ZoneKey::Zone(0)][..])
+        Some(&[nav_planner::zones::ZoneKey::Zone(0)][..])
     );
     assert!(second
         .detail
@@ -2447,7 +2483,7 @@ fn native_admission_global_and_walk_danger_permissions_and_forbid() {
 
 #[test]
 fn selection_query_uses_live_loc_access_tiles_and_zone_carves() {
-    use nav::contract::ArrivalKind;
+    use nav_planner::contract::ArrivalKind;
 
     let target = WorldTile {
         x: 20,
@@ -2458,9 +2494,9 @@ fn selection_query_uses_live_loc_access_tiles_and_zone_carves() {
     let snapshot = selection_snapshot(target, 3, 0, None);
     let fully_zoned = selection_zone_world(
         target,
-        nav::zones::Zone::hazard(all_approaches, 0, 0),
+        nav_planner::zones::Zone::hazard(all_approaches, 0, 0),
         None,
-        nav::transport::WildernessRules::default(),
+        nav_planner::transport::WildernessRules::default(),
     );
     assert_eq!(
         selection_danger(
@@ -2477,9 +2513,9 @@ fn selection_query_uses_live_loc_access_tiles_and_zone_carves() {
 
     let center_only = selection_zone_world(
         target,
-        nav::zones::Zone::hazard(avoid_rect(20, 20, 20, 20), 0, 0),
+        nav_planner::zones::Zone::hazard(avoid_rect(20, 20, 20, 20), 0, 0),
         None,
-        nav::transport::WildernessRules::default(),
+        nav_planner::transport::WildernessRules::default(),
     );
     assert_eq!(
         selection_danger(
@@ -2501,14 +2537,14 @@ fn selection_query_uses_live_loc_access_tiles_and_zone_carves() {
     };
     let carved = selection_zone_world(
         target,
-        nav::zones::Zone::hazard(all_approaches, 0, 0),
+        nav_planner::zones::Zone::hazard(all_approaches, 0, 0),
         Some(avoid_rect(
             north_access.x,
             north_access.x,
             north_access.z,
             north_access.z,
         )),
-        nav::transport::WildernessRules::default(),
+        nav_planner::transport::WildernessRules::default(),
     );
     assert_eq!(
         selection_danger(
@@ -2552,14 +2588,14 @@ fn selection_query_uses_live_loc_access_tiles_and_zone_carves() {
 
     let diagonal_only = selection_zone_world(
         target,
-        nav::zones::Zone::hazard(all_approaches, 0, 0),
+        nav_planner::zones::Zone::hazard(all_approaches, 0, 0),
         Some(avoid_rect(
             target.x - 1,
             target.x - 1,
             target.z - 1,
             target.z - 1,
         )),
-        nav::transport::WildernessRules::default(),
+        nav_planner::transport::WildernessRules::default(),
     );
     assert_eq!(
         selection_danger(
@@ -2584,9 +2620,9 @@ fn selection_safe_access_goals_restrict_mixed_live_loc_stands() {
     let denied = at(19, 20);
     let world = selection_zone_world(
         target,
-        nav::zones::Zone::hazard(avoid_rect(19, 19, 20, 20), 0, 0),
+        nav_planner::zones::Zone::hazard(avoid_rect(19, 19, 20, 20), 0, 0),
         None,
-        nav::transport::WildernessRules::default(),
+        nav_planner::transport::WildernessRules::default(),
     );
     let snapshot = selection_snapshot(target, 3, 0, None);
     let navs = Arc::new(Mutex::new(HashMap::new()));
@@ -2599,7 +2635,12 @@ fn selection_safe_access_goals_restrict_mixed_live_loc_stands() {
     );
 
     assert_eq!(
-        query.check(target, Some(1276), 1, nav::contract::ArrivalKind::Reach),
+        query.check(
+            target,
+            Some(1276),
+            1,
+            nav_planner::contract::ArrivalKind::Reach
+        ),
         WalkDanger::Allowed,
         "one safe live loc stand keeps the mixed-stand resource eligible"
     );
@@ -2608,7 +2649,7 @@ fn selection_safe_access_goals_restrict_mixed_live_loc_stands() {
             target,
             Some(1276),
             1,
-            nav::contract::ArrivalKind::Reach,
+            nav_planner::contract::ArrivalKind::Reach,
             None,
         )
         .unwrap()
@@ -2639,9 +2680,9 @@ fn selection_safe_access_goals_preserve_allowed_and_uncovered_stands() {
     let denied = at(19, 20);
     let world = selection_zone_world(
         target,
-        nav::zones::Zone::hazard(avoid_rect(19, 19, 20, 20), 0, 0),
+        nav_planner::zones::Zone::hazard(avoid_rect(19, 19, 20, 20), 0, 0),
         None,
-        nav::transport::WildernessRules::default(),
+        nav_planner::transport::WildernessRules::default(),
     );
     let snapshot = selection_snapshot(target, 3, 0, None);
 
@@ -2672,7 +2713,7 @@ fn selection_safe_access_goals_preserve_allowed_and_uncovered_stands() {
                     target,
                     Some(1276),
                     1,
-                    nav::contract::ArrivalKind::Reach,
+                    nav_planner::contract::ArrivalKind::Reach,
                     None
                 ),
                 Ok(None)
@@ -2698,7 +2739,7 @@ fn selection_safe_access_goals_preserve_allowed_and_uncovered_stands() {
                 target,
                 Some(1276),
                 1,
-                nav::contract::ArrivalKind::Reach,
+                nav_planner::contract::ArrivalKind::Reach,
                 Some(&existing)
             ),
             Ok(None)
@@ -2722,9 +2763,9 @@ fn selection_safe_access_goals_filter_existing_goal_tiers() {
     let uncovered_fallback = at(50, 50);
     let world = selection_zone_world(
         target,
-        nav::zones::Zone::hazard(avoid_rect(19, 19, 20, 20), 0, 0),
+        nav_planner::zones::Zone::hazard(avoid_rect(19, 19, 20, 20), 0, 0),
         None,
-        nav::transport::WildernessRules::default(),
+        nav_planner::transport::WildernessRules::default(),
     );
     let navs = Arc::new(Mutex::new(HashMap::new()));
     let query =
@@ -2745,7 +2786,7 @@ fn selection_safe_access_goals_filter_existing_goal_tiers() {
             target,
             Some(1276),
             1,
-            nav::contract::ArrivalKind::Reach,
+            nav_planner::contract::ArrivalKind::Reach,
             Some(&existing),
         )
         .unwrap()
@@ -2764,9 +2805,9 @@ fn selection_safe_access_goals_reject_empty_and_oversized_restrictions() {
     let target = at(20, 20);
     let world = selection_zone_world(
         target,
-        nav::zones::Zone::hazard(avoid_rect(19, 22, 19, 22), 0, 0),
+        nav_planner::zones::Zone::hazard(avoid_rect(19, 22, 19, 22), 0, 0),
         None,
-        nav::transport::WildernessRules::default(),
+        nav_planner::transport::WildernessRules::default(),
     );
     let snapshot = selection_snapshot(target, 3, 0, None);
     let navs = Arc::new(Mutex::new(HashMap::new()));
@@ -2783,7 +2824,7 @@ fn selection_safe_access_goals_reject_empty_and_oversized_restrictions() {
                 target,
                 Some(1276),
                 1,
-                nav::contract::ArrivalKind::Reach,
+                nav_planner::contract::ArrivalKind::Reach,
                 None
             ),
             Err(WalkGoalsError::Empty)
@@ -2795,7 +2836,7 @@ fn selection_safe_access_goals_reject_empty_and_oversized_restrictions() {
     let mut large_world = open_world(60, 60);
     add_selection_zone(
         &mut large_world,
-        nav::zones::Zone::hazard(avoid_rect(30, 30, 30, 30), 0, 0),
+        nav_planner::zones::Zone::hazard(avoid_rect(30, 30, 30, 30), 0, 0),
         None,
     );
     let large_query = crate::walk_permissions::SelectionDangerQuery::new(
@@ -2811,7 +2852,7 @@ fn selection_safe_access_goals_reject_empty_and_oversized_restrictions() {
                 large_target,
                 None,
                 40,
-                nav::contract::ArrivalKind::Area,
+                nav_planner::contract::ArrivalKind::Area,
                 None
             ),
             Err(WalkGoalsError::TooMany {
@@ -2834,7 +2875,7 @@ fn native_typed_walk_restricts_mixed_live_loc_stands_through_route_and_follow() 
     let mut world = open_world(40, 40);
     add_selection_zone(
         &mut world,
-        nav::zones::Zone::hazard(avoid_rect(19, 19, 20, 20), 0, 0),
+        nav_planner::zones::Zone::hazard(avoid_rect(19, 19, 20, 20), 0, 0),
         None,
     );
     let world = Arc::new(world);
@@ -2857,7 +2898,12 @@ fn native_typed_walk_restricts_mixed_live_loc_stands_through_route_and_follow() 
         None,
     );
     assert_eq!(
-        query.check(target, Some(1276), 1, nav::contract::ArrivalKind::Reach),
+        query.check(
+            target,
+            Some(1276),
+            1,
+            nav_planner::contract::ArrivalKind::Reach
+        ),
         WalkDanger::Allowed,
         "a safe legal live stand leaves the resource selectable"
     );
@@ -2866,7 +2912,7 @@ fn native_typed_walk_restricts_mixed_live_loc_stands_through_route_and_follow() 
             target,
             Some(1276),
             1,
-            nav::contract::ArrivalKind::Reach,
+            nav_planner::contract::ArrivalKind::Reach,
             None,
         )
         .unwrap()
@@ -2878,7 +2924,7 @@ fn native_typed_walk_restricts_mixed_live_loc_stands_through_route_and_follow() 
         let mut shared = rig.shared.lock();
         shared.target = Some(target);
         shared.radius = 0;
-        shared.arrival = nav::contract::ArrivalKind::Area;
+        shared.arrival = nav_planner::contract::ArrivalKind::Area;
         shared.candidate_goals = Some(safe_goals);
     }
     rig.observe_with_here(1, start);
@@ -2897,7 +2943,7 @@ fn native_typed_walk_restricts_mixed_live_loc_stands_through_route_and_follow() 
             }
         } else {
             for leg in &route.legacy_route().expect("legacy route backing").legs {
-                if let nav::router::Leg::Walk { tiles } = leg {
+                if let nav_planner::router::Leg::Walk { tiles } = leg {
                     positions.extend_from_slice(tiles);
                 }
             }
@@ -2935,7 +2981,7 @@ fn native_typed_walk_restricts_mixed_live_loc_stands_through_route_and_follow() 
 
 #[test]
 fn selection_query_uses_area_and_reach_candidates_off_scene() {
-    use nav::contract::ArrivalKind;
+    use nav_planner::contract::ArrivalKind;
 
     let target = WorldTile {
         x: 20,
@@ -2957,9 +3003,9 @@ fn selection_query_uses_area_and_reach_candidates_off_scene() {
         flags[left] |= CollisionFlag::W_E as u32;
         flags[right] |= CollisionFlag::W_W as u32;
     }
-    let (walk, blocked) = nav::collision::pack_walk(&flags);
+    let (walk, blocked) = nav_planner::collision::pack_walk(&flags);
     let mut world = NavWorld::from_parts(
-        nav::collision::WorldCollision {
+        nav_planner::collision::WorldCollision {
             origin,
             width: WIDTH,
             height: HEIGHT,
@@ -2967,7 +3013,7 @@ fn selection_query_uses_area_and_reach_candidates_off_scene() {
             blocked,
             flags: None,
         },
-        nav::transport::TransportGraph::default(),
+        nav_planner::transport::TransportGraph::default(),
         Vec::new(),
     );
     let safe_alternative = WorldTile {
@@ -2977,7 +3023,7 @@ fn selection_query_uses_area_and_reach_candidates_off_scene() {
     };
     add_selection_zone(
         &mut world,
-        nav::zones::Zone::hazard(avoid_rect(18, 22, 18, 22), 0, 0),
+        nav_planner::zones::Zone::hazard(avoid_rect(18, 22, 18, 22), 0, 0),
         Some(avoid_rect(
             safe_alternative.x,
             safe_alternative.x,
@@ -3000,19 +3046,21 @@ fn selection_query_uses_area_and_reach_candidates_off_scene() {
 
 #[test]
 fn selection_query_reuses_combat_and_wilderness_zone_activity() {
-    use nav::contract::ArrivalKind;
+    use nav_planner::contract::ArrivalKind;
 
     let target = WorldTile {
         x: 20,
         z: 20,
         level: 0,
     };
-    let rule = || nav::zones::Zone::npc(target, 0, nav::zones::ZoneClass::LevelRule, 10, 0);
+    let rule = || {
+        nav_planner::zones::Zone::npc(target, 0, nav_planner::zones::ZoneClass::LevelRule, 10, 0)
+    };
     let no_wilderness = selection_zone_world(
         target,
         rule(),
         None,
-        nav::transport::WildernessRules::default(),
+        nav_planner::transport::WildernessRules::default(),
     );
     let low_combat = selection_snapshot(target, 3, 0, None);
     let high_combat = selection_snapshot(target, 51, 0, None);
@@ -3040,8 +3088,8 @@ fn selection_query_reuses_combat_and_wilderness_zone_activity() {
         "the packed combat cap makes the zone inactive above its threshold"
     );
 
-    let wilderness = nav::transport::WildernessRules {
-        zones: vec![nav::transport::WildernessZone {
+    let wilderness = nav_planner::transport::WildernessRules {
+        zones: vec![nav_planner::transport::WildernessZone {
             x1: target.x,
             z1: target.z,
             x2: target.x,
@@ -3111,7 +3159,12 @@ fn selection_query_and_native_walk_share_effective_card_danger_permissions() {
             );
             assert_eq!(
                 matches!(
-                    query.check(query_tile, None, 0, nav::contract::ArrivalKind::Area),
+                    query.check(
+                        query_tile,
+                        None,
+                        0,
+                        nav_planner::contract::ArrivalKind::Area
+                    ),
                     WalkDanger::Allowed
                 ),
                 permitted,
@@ -3192,7 +3245,12 @@ fn selection_query_checks_packed_draynor_jail_tree_against_safe_tiles() {
         None,
     );
     assert_eq!(
-        query.check(target, Some(1276), 1, nav::contract::ArrivalKind::Reach),
+        query.check(
+            target,
+            Some(1276),
+            1,
+            nav_planner::contract::ArrivalKind::Reach
+        ),
         WalkDanger::Denied {
             zone: "Draynor jail guards"
         },
@@ -3200,7 +3258,12 @@ fn selection_query_checks_packed_draynor_jail_tree_against_safe_tiles() {
     );
 
     let table = world.graph.zones.as_ref().expect("packed zone table");
-    let filter = nav::zones::ZoneFilter::new(table, Some(3), &[], &nav::zones::ZoneExempt::NONE);
+    let filter = nav_planner::zones::ZoneFilter::new(
+        table,
+        Some(3),
+        &[],
+        &nav_planner::zones::ZoneExempt::NONE,
+    );
     let safe_tile = (target.x - 32..=target.x + 32)
         .flat_map(|x| {
             (target.z - 32..=target.z + 32).map(move |z| WorldTile {
@@ -3218,7 +3281,7 @@ fn selection_query_checks_packed_draynor_jail_tree_against_safe_tiles() {
         })
         .expect("a safe packed alternative near Draynor");
     assert_eq!(
-        query.check(safe_tile, None, 0, nav::contract::ArrivalKind::Area),
+        query.check(safe_tile, None, 0, nav_planner::contract::ArrivalKind::Area),
         WalkDanger::Allowed,
         "a safe packed alternative remains eligible"
     );
@@ -3323,7 +3386,7 @@ fn sherlock_bool_walk_inherits_committed_bits_while_isolate_wiring_stays_frozen(
         let options = crate::walk_permissions::compiled_options(
             &rig.navs,
             "alice",
-            nav::router::FindOptions::default(),
+            nav_planner::router::FindOptions::default(),
         );
         assert_eq!(options.allow_teleports, compiled);
         assert_eq!(options.allow_wilderness, compiled);
@@ -3392,7 +3455,7 @@ fn compat_catalog_exclusions_use_baked_group_geometry_and_rules() {
         .iter()
         .map(|member| {
             let zone = &table.zones()[usize::from(*member)];
-            nav::router::AvoidRect {
+            nav_planner::router::AvoidRect {
                 min_x: zone.min_x,
                 max_x: zone.max_x,
                 min_z: zone.min_z,
@@ -3428,7 +3491,7 @@ fn compat_catalog_exclusions_use_baked_group_geometry_and_rules() {
             .avoid_wire
             .push(InspectAvoidWire::Catalog(id.to_string()));
         crate::script_runtime::resolve_route_exclusions(
-            nav::router::FindOptions::default(),
+            nav_planner::router::FindOptions::default(),
             &world,
             from,
             to,
@@ -3489,7 +3552,7 @@ fn compat_named_exclusions_reject_unknown_and_nonfrozen_catalog_names() {
         .push(InspectAvoidWire::Catalog("no-such-zone".to_string()));
     assert_eq!(
         crate::script_runtime::resolve_route_exclusions(
-            nav::router::FindOptions::default(),
+            nav_planner::router::FindOptions::default(),
             &world,
             from,
             from,
@@ -3505,7 +3568,7 @@ fn compat_named_exclusions_reject_unknown_and_nonfrozen_catalog_names() {
     ));
     assert_eq!(
         crate::script_runtime::resolve_route_exclusions(
-            nav::router::FindOptions::default(),
+            nav_planner::router::FindOptions::default(),
             &world,
             from,
             from,
@@ -3520,7 +3583,7 @@ fn compat_named_exclusions_reject_unknown_and_nonfrozen_catalog_names() {
     unknown_cross.cross.push(Arc::from("no-such-zone"));
     assert_eq!(
         crate::script_runtime::resolve_route_exclusions(
-            nav::router::FindOptions::default(),
+            nav_planner::router::FindOptions::default(),
             &world,
             from,
             from,
@@ -3537,7 +3600,7 @@ fn compat_named_exclusions_reject_unknown_and_nonfrozen_catalog_names() {
     };
     assert_eq!(
         crate::script_runtime::resolve_route_exclusions(
-            nav::router::FindOptions::default(),
+            nav_planner::router::FindOptions::default(),
             &world,
             from,
             from,
@@ -3565,7 +3628,7 @@ fn compat_catalog_exclusions_reject_groups_without_baked_geometry() {
         .push(InspectAvoidWire::Catalog("white-wolf-mountain".to_string()));
     assert_eq!(
         crate::script_runtime::resolve_route_exclusions(
-            nav::router::FindOptions::default(),
+            nav_planner::router::FindOptions::default(),
             &world,
             from,
             from,
@@ -3771,7 +3834,7 @@ fn manual_cancellation_detail_clears_when_the_next_walk_arms() {
             8,
             0,
             0,
-            nav::router::FindOptions::default(),
+            nav_planner::router::FindOptions::default(),
             0,
             true,
             99,
@@ -4944,9 +5007,9 @@ fn water_area_world(separating_wall: bool) -> NavWorld {
             flags[z * SIZE + 10] |= CollisionFlag::SQ_BLOCKED as u32;
         }
     }
-    let (walk, blocked) = nav::collision::pack_walk(&flags);
+    let (walk, blocked) = nav_planner::collision::pack_walk(&flags);
     NavWorld::from_parts(
-        nav::collision::WorldCollision {
+        nav_planner::collision::WorldCollision {
             origin: WorldTile {
                 x: 0,
                 z: 0,
@@ -4958,7 +5021,7 @@ fn water_area_world(separating_wall: bool) -> NavWorld {
             blocked,
             flags: None,
         },
-        nav::transport::TransportGraph::default(),
+        nav_planner::transport::TransportGraph::default(),
         Vec::new(),
     )
 }
@@ -4969,7 +5032,7 @@ fn water_area_rig(separating_wall: bool, radius: u16) -> Rig {
         let mut shared = rig.shared.lock();
         shared.target = Some(WATER_CENTER);
         shared.radius = radius;
-        shared.arrival = nav::arrival::ArrivalKind::Area;
+        shared.arrival = nav_planner::arrival::ArrivalKind::Area;
     }
     for tile in [
         WATER_CENTER,
@@ -5100,7 +5163,7 @@ fn reach_walk_keeps_adjacent_solid_target_arrival() {
         let mut shared = rig.shared.lock();
         shared.target = Some(target);
         shared.radius = 1;
-        shared.arrival = nav::arrival::ArrivalKind::Reach;
+        shared.arrival = nav_planner::arrival::ArrivalKind::Reach;
     }
     let x = (target.x - rig.client.map_build_base_x) as usize;
     let z = (target.z - rig.client.map_build_base_z) as usize;
@@ -5173,17 +5236,17 @@ fn area_route_refresh_keeps_mode_through_native_receipt() {
         &rig.snapshot,
         WATER_CENTER,
         40,
-        nav::router::FindOptions {
+        nav_planner::router::FindOptions {
             allow_teleports: !basis.options.allow_teleports,
             allow_wilderness: !basis.options.allow_wilderness,
             allow_bank_fetch: !basis.options.allow_bank_fetch,
-            ..nav::router::FindOptions::default()
+            ..nav_planner::router::FindOptions::default()
         },
         request_id,
         crate::script_runtime::ScriptRouteExclusions::default(),
         Some(authority),
         None,
-        nav::arrival::ArrivalKind::Area,
+        nav_planner::arrival::ArrivalKind::Area,
         false,
     ));
     assert!(
@@ -5216,7 +5279,7 @@ fn area_route_refresh_keeps_mode_through_native_receipt() {
             bot.route_arrival,
         )
     };
-    assert_eq!(arrival, nav::arrival::ArrivalKind::Area);
+    assert_eq!(arrival, nav_planner::arrival::ArrivalKind::Area);
     assert_eq!(goal, WATER_SHORE);
     rig.step_at(goal);
     rig.observe_at(2, goal);
@@ -5227,7 +5290,7 @@ fn area_route_refresh_keeps_mode_through_native_receipt() {
 #[ignore = "requires WORLD_NAV_PACK pointing to the real 289 nav pack"]
 fn real_catherby_water_centroid_accepts_area_shore_but_preserves_reach_refusal() {
     use crate::ScriptRouteRequest;
-    use nav::arrival::ArrivalKind;
+    use nav_planner::arrival::ArrivalKind;
 
     let pack = std::env::var_os("WORLD_NAV_PACK").expect("WORLD_NAV_PACK is required");
     let world = Arc::new(NavWorld::load_pack(std::path::Path::new(&pack)).unwrap());
@@ -5686,15 +5749,15 @@ mod s2b_admission_contract {
         let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
         let npc = data.npc_by_config("icewarrior").unwrap();
         world.graph.zones = Some(
-            nav::zones::ZoneTable::from_parts(
-                vec![nav::zones::Zone::npc(
+            nav_planner::zones::ZoneTable::from_parts(
+                vec![nav_planner::zones::Zone::npc(
                     tile(120),
                     1,
-                    nav::zones::ZoneClass::Always,
+                    nav_planner::zones::ZoneClass::Always,
                     u16::MAX,
                     0,
                 )],
-                vec![nav::zones::ZoneKind::new(
+                vec![nav_planner::zones::ZoneKind::new(
                     "ice",
                     "Ice warrior",
                     npc.id,
@@ -6059,9 +6122,9 @@ mod s2b_admission_contract {
         assert!(shared.lock().receipt.is_some());
     }
 
-    fn oversized_route_refusal() -> nav::producer::OwnerResultRefusal {
-        let maximum = nav::producer::OWNER_RESULT_MAX_BYTES;
-        let ledger = nav::producer::OwnerResultLedger::with_limits(maximum * 2, maximum);
+    fn oversized_route_refusal() -> nav_planner::producer::OwnerResultRefusal {
+        let maximum = nav_planner::producer::OWNER_RESULT_MAX_BYTES;
+        let ledger = nav_planner::producer::OwnerResultLedger::with_limits(maximum * 2, maximum);
         match ledger.try_reserve_bytes(maximum + 1) {
             Err(error) => error,
             Ok(_) => panic!("the oversized route result must refuse owner custody"),
@@ -6070,8 +6133,8 @@ mod s2b_admission_contract {
 
     fn expected_oversized_route_refusal() -> script::native::WalkRefusal {
         script::native::WalkRefusal::RouteTooLarge {
-            required_bytes: nav::producer::OWNER_RESULT_MAX_BYTES + 1,
-            maximum_bytes: nav::producer::OWNER_RESULT_MAX_BYTES,
+            required_bytes: nav_planner::producer::OWNER_RESULT_MAX_BYTES + 1,
+            maximum_bytes: nav_planner::producer::OWNER_RESULT_MAX_BYTES,
         }
     }
 

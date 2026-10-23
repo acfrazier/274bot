@@ -1475,7 +1475,7 @@ dependencies = [
  "host-play",
  "image",
  "libc",
- "nav",
+ "nav-planner",
  "scenario",
  "serde",
  "serde_json",
@@ -1691,7 +1691,7 @@ dependencies = [
  "host",
  "host-play",
  "libc",
- "nav",
+ "nav-planner",
  "parking_lot",
  "png",
  "scenario",
@@ -2074,8 +2074,8 @@ dependencies = [
  "host",
  "libc",
  "native-tls",
- "nav",
  "nav-executor",
+ "nav-planner",
  "parking_lot",
  "png",
  "rand_core",
@@ -2695,7 +2695,17 @@ dependencies = [
 ]
 
 [[package]]
-name = "nav"
+name = "nav-executor"
+version = "0.2.6"
+dependencies = [
+ "api",
+ "client",
+ "nav-planner",
+ "thiserror 2.0.20",
+]
+
+[[package]]
+name = "nav-planner"
 version = "0.2.6"
 dependencies = [
  "allocation-counter",
@@ -2708,16 +2718,6 @@ dependencies = [
  "serde_json",
  "sha2",
  "syn 2.0.119",
- "thiserror 2.0.20",
-]
-
-[[package]]
-name = "nav-executor"
-version = "0.2.6"
-dependencies = [
- "api",
- "client",
- "nav",
  "thiserror 2.0.20",
 ]
 
@@ -3398,7 +3398,7 @@ dependencies = [
  "frontend-core",
  "host-play",
  "libc",
- "nav",
+ "nav-planner",
  "objc2 0.5.2",
  "objc2-app-kit 0.2.2",
  "objc2-foundation 0.2.2",
@@ -4174,8 +4174,8 @@ dependencies = [
  "api",
  "client",
  "image",
- "nav",
  "nav-executor",
+ "nav-planner",
  "script",
  "serde",
  "serde_json",
@@ -4239,7 +4239,7 @@ dependencies = [
  "deno_core",
  "flatbuffers",
  "libc",
- "nav",
+ "nav-planner",
  "parking_lot",
  "rand",
  "rustyscript",
@@ -5564,7 +5564,7 @@ dependencies = [
  "host",
  "host-play",
  "libc",
- "nav",
+ "nav-planner",
  "ratatui",
  "serde_json",
 ]

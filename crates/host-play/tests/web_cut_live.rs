@@ -17,11 +17,11 @@ use api::interact;
 use api::snapshot::{GameSnapshot, WorldTile};
 use host::Pump;
 use host_play::{ProfileOptions, ServerProfile, SharedClientTemplate};
-use nav::router::{find_with, FindOptions, Leg, Route};
-use nav::transport::TransportKind;
-use nav::world::NavWorld;
-use nav::WorldState;
 use nav_executor::{TravelEvent, TravelOptions, TravelOutcome, Traveller};
+use nav_planner::router::{find_with, FindOptions, Leg, Route};
+use nav_planner::transport::TransportKind;
+use nav_planner::world::NavWorld;
+use nav_planner::WorldState;
 use serde_json::{json, Value};
 
 const MAGE_ARENA_ORIGIN: WorldTile = WorldTile {
@@ -862,7 +862,7 @@ fn live_fresh_accounts_cross_both_mage_arena_webs_with_content_actions() {
             "scenario": scenario,
             "account": &username,
             "revision": 289,
-            "nav_format": nav::pack::FORMAT_ID,
+            "nav_format": nav_planner::pack::FORMAT_ID,
             "nav_sha256": identity.nav_sha256.clone(),
             "nav_pack": std::env::var("WORLD_NAV_PACK").expect("WORLD_NAV_PACK"),
             "engine_dir": std::env::var("WORLD_ENGINE_DIR").expect("WORLD_ENGINE_DIR"),

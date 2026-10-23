@@ -2,13 +2,13 @@ use std::fmt;
 use std::sync::atomic::Ordering;
 
 use api::snapshot::WorldTile;
-use nav::bank_fetch::{plan_bank_fetch, BankFetchError, BankRows};
-use nav::map::identity::Digest;
-use nav::map::spatial::{snap_walkable, GameTile};
-use nav::router::{FindOptions, Leg, Route};
-use nav::tile::Tile;
-use nav::world::NavWorld;
-use nav::WorldState;
+use nav_planner::bank_fetch::{plan_bank_fetch, BankFetchError, BankRows};
+use nav_planner::map::identity::Digest;
+use nav_planner::map::spatial::{snap_walkable, GameTile};
+use nav_planner::router::{FindOptions, Leg, Route};
+use nav_planner::tile::Tile;
+use nav_planner::world::NavWorld;
+use nav_planner::WorldState;
 
 use super::catalogue::{safe_standable, tile, world_tile};
 use super::Catalogue;
@@ -290,8 +290,8 @@ impl fmt::Display for WalkOutcome<'_> {
             .legs
             .iter()
             .map(|leg| match leg {
-                nav::router::Leg::Walk { tiles } => tiles.len().saturating_sub(1),
-                nav::router::Leg::Transport { .. } => 0,
+                nav_planner::router::Leg::Walk { tiles } => tiles.len().saturating_sub(1),
+                nav_planner::router::Leg::Transport { .. } => 0,
             })
             .sum();
         write!(
@@ -301,7 +301,7 @@ impl fmt::Display for WalkOutcome<'_> {
         )?;
         let mut separator = "";
         for leg in &route.legs {
-            if let nav::router::Leg::Transport { edge } = leg {
+            if let nav_planner::router::Leg::Transport { edge } = leg {
                 write!(
                     f,
                     "{separator}{:?}:{}@({},{},{})",
@@ -918,7 +918,7 @@ fn blocking_zones_for_walk(
     mut options: FindOptions,
     slot: &WalkSlotRequest<'_>,
     arms: &WalkArms,
-) -> Option<Vec<nav::zones::ZoneKey>> {
+) -> Option<Vec<nav_planner::zones::ZoneKey>> {
     options.essence = arms
         .lock()
         .unwrap()
@@ -926,7 +926,7 @@ fn blocking_zones_for_walk(
         .and_then(|arm| arm.lock().unwrap().essence());
     let from = world_tile(origin);
     let destination = world_tile(destination);
-    let direct = nav::router::find_blocking_zones(
+    let direct = nav_planner::router::find_blocking_zones(
         &world.collision,
         &world.graph,
         from,
@@ -939,7 +939,7 @@ fn blocking_zones_for_walk(
     if direct.is_some() || !options.allow_bank_fetch {
         return direct;
     }
-    let missing = nav::router::find_missing_item_reqs_with_avoid(
+    let missing = nav_planner::router::find_missing_item_reqs_with_avoid(
         &world.collision,
         &world.graph,
         from,
@@ -951,7 +951,7 @@ fn blocking_zones_for_walk(
     match plan_bank_fetch(
         &missing,
         slot.state,
-        &nav::bank_fetch::planning_rows(slot.bank.origin, &slot.bank.rows, &missing),
+        &nav_planner::bank_fetch::planning_rows(slot.bank.origin, &slot.bank.rows, &missing),
         world.banks(),
         from,
         &world.collision,
@@ -1048,7 +1048,7 @@ impl MapCommand {
         if result.is_err() {
             // Diagnose a legal item-gated route before an all-exempt zone
             // detour: a cheaper unsafe walk must not hide an unpaid fare.
-            if let Some(missing) = nav::router::find_missing_item_reqs(
+            if let Some(missing) = nav_planner::router::find_missing_item_reqs(
                 &world.collision,
                 &world.graph,
                 world_tile(self.origin),
@@ -1060,8 +1060,8 @@ impl MapCommand {
                     world,
                     state,
                     missing.into_iter().filter_map(|req| match req {
-                        nav::router::MissingReq::Carry { id, count } => Some((id, count)),
-                        nav::router::MissingReq::WearAny { .. } => None,
+                        nav_planner::router::MissingReq::Carry { id, count } => Some((id, count)),
+                        nav_planner::router::MissingReq::WearAny { .. } => None,
                     }),
                 );
                 if let Some(detail) = shortfalls {
@@ -1116,7 +1116,7 @@ impl MapCommand {
             Ok(route) => Ok(route),
             Err(_) if !state.map_members => {
                 let members_state = state.clone().with_map_members(true);
-                if nav::router::find_with(
+                if nav_planner::router::find_with(
                     &world.collision,
                     &world.graph,
                     world_tile(self.origin),

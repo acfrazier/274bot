@@ -3487,7 +3487,7 @@ pub fn is_arrived<P: ArrivalProbe, V: std::ops::Deref<Target = P>>(
 /// same level within the Chebyshev `radius` of `centre`. There is no
 /// path-to-centre requirement. The caller supplies the standability it
 /// means: live walks pass the loaded scene's reach word, packed goals pass
-/// the bake (`nav::contract::CollisionView::arrived`). A negative radius
+/// the bake (`nav_planner::contract::CollisionView::arrived`). A negative radius
 /// never arrives.
 pub fn arrived_in_area(
     here: WorldTile,

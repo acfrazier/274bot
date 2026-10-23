@@ -1950,7 +1950,7 @@ fn assert_resource_return(
     request: &script::native::WalkRequest,
     anchor: WorldTile,
 ) {
-    assert_eq!(request.arrival, nav::contract::ArrivalKind::Area);
+    assert_eq!(request.arrival, nav_planner::contract::ArrivalKind::Area);
     assert_eq!(request.radius, 1);
     assert_eq!(request.target.level, anchor.level);
     let region = api::gather_methods::SceneRegionInput {

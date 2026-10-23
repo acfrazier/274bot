@@ -3,7 +3,7 @@
 //! same checked list prevents a Path from authoring a coordinate outside the
 //! baked pack without making compiled scripts depend on the router crate.
 
-const REQUIRED_289: &str = include_str!("../../../nav/src/required-content-289.tsv");
+const REQUIRED_289: &str = include_str!("../../../nav-planner/src/required-content-289.tsv");
 
 pub fn covered_289(x: i32, z: i32) -> bool {
     if x < 0 || z < 0 {

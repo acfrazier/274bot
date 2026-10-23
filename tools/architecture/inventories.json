@@ -2661,10 +2661,10 @@
   "violations": [],
   "test_exceptions": [
     {
-      "id": "test_import_exception|crates/script/src/combat/risk/tests.rs|cfg(test)::module:tests|nav::router::AvoidRect|exact_test_fixture_oracle_import",
+      "id": "test_import_exception|crates/script/src/combat/risk/tests.rs|cfg(test)::module:tests|nav_planner::router::AvoidRect|exact_test_fixture_oracle_import",
       "category": "test_import_exception",
       "path": "crates/script/src/combat/risk/tests.rs",
-      "symbol": "nav::router::AvoidRect",
+      "symbol": "nav_planner::router::AvoidRect",
       "cfg_or_target": "cfg(test)::module:tests",
       "owner": "T5",
       "reason": "F0 baseline test-import exception; remove at T5.1.",
@@ -2672,10 +2672,10 @@
       "classification": "exact_test_fixture_oracle_import"
     },
     {
-      "id": "test_import_exception|crates/script/src/combat/risk/tests.rs|cfg(test)::module:tests|nav::router::Leg|exact_test_fixture_oracle_import",
+      "id": "test_import_exception|crates/script/src/combat/risk/tests.rs|cfg(test)::module:tests|nav_planner::router::Leg|exact_test_fixture_oracle_import",
       "category": "test_import_exception",
       "path": "crates/script/src/combat/risk/tests.rs",
-      "symbol": "nav::router::Leg",
+      "symbol": "nav_planner::router::Leg",
       "cfg_or_target": "cfg(test)::module:tests",
       "owner": "T5",
       "reason": "F0 baseline test-import exception; remove at T5.1.",
@@ -2683,10 +2683,10 @@
       "classification": "exact_test_fixture_oracle_import"
     },
     {
-      "id": "test_import_exception|crates/script/src/combat/risk/tests.rs|cfg(test)::module:tests|nav::router::Route|exact_test_fixture_oracle_import",
+      "id": "test_import_exception|crates/script/src/combat/risk/tests.rs|cfg(test)::module:tests|nav_planner::router::Route|exact_test_fixture_oracle_import",
       "category": "test_import_exception",
       "path": "crates/script/src/combat/risk/tests.rs",
-      "symbol": "nav::router::Route",
+      "symbol": "nav_planner::router::Route",
       "cfg_or_target": "cfg(test)::module:tests",
       "owner": "T5",
       "reason": "F0 baseline test-import exception; remove at T5.1.",
@@ -2694,10 +2694,10 @@
       "classification": "exact_test_fixture_oracle_import"
     },
     {
-      "id": "test_import_exception|crates/script/src/combat/risk/tests.rs|cfg(test)::module:tests|nav::transport::TransportEdge|exact_test_fixture_oracle_import",
+      "id": "test_import_exception|crates/script/src/combat/risk/tests.rs|cfg(test)::module:tests|nav_planner::transport::TransportEdge|exact_test_fixture_oracle_import",
       "category": "test_import_exception",
       "path": "crates/script/src/combat/risk/tests.rs",
-      "symbol": "nav::transport::TransportEdge",
+      "symbol": "nav_planner::transport::TransportEdge",
       "cfg_or_target": "cfg(test)::module:tests",
       "owner": "T5",
       "reason": "F0 baseline test-import exception; remove at T5.1.",
@@ -2705,10 +2705,10 @@
       "classification": "exact_test_fixture_oracle_import"
     },
     {
-      "id": "test_import_exception|crates/script/src/combat/risk/tests.rs|cfg(test)::module:tests|nav::transport::TransportKind|exact_test_fixture_oracle_import",
+      "id": "test_import_exception|crates/script/src/combat/risk/tests.rs|cfg(test)::module:tests|nav_planner::transport::TransportKind|exact_test_fixture_oracle_import",
       "category": "test_import_exception",
       "path": "crates/script/src/combat/risk/tests.rs",
-      "symbol": "nav::transport::TransportKind",
+      "symbol": "nav_planner::transport::TransportKind",
       "cfg_or_target": "cfg(test)::module:tests",
       "owner": "T5",
       "reason": "F0 baseline test-import exception; remove at T5.1.",
@@ -2716,10 +2716,10 @@
       "classification": "exact_test_fixture_oracle_import"
     },
     {
-      "id": "test_import_exception|crates/script/src/combat/risk/tests.rs|cfg(test)::module:tests|nav::transport::WildernessRules|exact_test_fixture_oracle_import",
+      "id": "test_import_exception|crates/script/src/combat/risk/tests.rs|cfg(test)::module:tests|nav_planner::transport::WildernessRules|exact_test_fixture_oracle_import",
       "category": "test_import_exception",
       "path": "crates/script/src/combat/risk/tests.rs",
-      "symbol": "nav::transport::WildernessRules",
+      "symbol": "nav_planner::transport::WildernessRules",
       "cfg_or_target": "cfg(test)::module:tests",
       "owner": "T5",
       "reason": "F0 baseline test-import exception; remove at T5.1.",
@@ -2727,10 +2727,10 @@
       "classification": "exact_test_fixture_oracle_import"
     },
     {
-      "id": "test_import_exception|crates/script/src/combat/risk/tests.rs|cfg(test)::module:tests|nav::transport::WildernessZone|exact_test_fixture_oracle_import",
+      "id": "test_import_exception|crates/script/src/combat/risk/tests.rs|cfg(test)::module:tests|nav_planner::transport::WildernessZone|exact_test_fixture_oracle_import",
       "category": "test_import_exception",
       "path": "crates/script/src/combat/risk/tests.rs",
-      "symbol": "nav::transport::WildernessZone",
+      "symbol": "nav_planner::transport::WildernessZone",
       "cfg_or_target": "cfg(test)::module:tests",
       "owner": "T5",
       "reason": "F0 baseline test-import exception; remove at T5.1.",
@@ -2738,10 +2738,10 @@
       "classification": "exact_test_fixture_oracle_import"
     },
     {
-      "id": "test_import_exception|crates/script/src/combat/risk/tests.rs|cfg(test)::module:tests|nav::zones::Zone|exact_test_fixture_oracle_import",
+      "id": "test_import_exception|crates/script/src/combat/risk/tests.rs|cfg(test)::module:tests|nav_planner::zones::Zone|exact_test_fixture_oracle_import",
       "category": "test_import_exception",
       "path": "crates/script/src/combat/risk/tests.rs",
-      "symbol": "nav::zones::Zone",
+      "symbol": "nav_planner::zones::Zone",
       "cfg_or_target": "cfg(test)::module:tests",
       "owner": "T5",
       "reason": "F0 baseline test-import exception; remove at T5.1.",
@@ -2749,10 +2749,10 @@
       "classification": "exact_test_fixture_oracle_import"
     },
     {
-      "id": "test_import_exception|crates/script/src/combat/risk/tests.rs|cfg(test)::module:tests|nav::zones::ZoneClass|exact_test_fixture_oracle_import",
+      "id": "test_import_exception|crates/script/src/combat/risk/tests.rs|cfg(test)::module:tests|nav_planner::zones::ZoneClass|exact_test_fixture_oracle_import",
       "category": "test_import_exception",
       "path": "crates/script/src/combat/risk/tests.rs",
-      "symbol": "nav::zones::ZoneClass",
+      "symbol": "nav_planner::zones::ZoneClass",
       "cfg_or_target": "cfg(test)::module:tests",
       "owner": "T5",
       "reason": "F0 baseline test-import exception; remove at T5.1.",
@@ -2760,10 +2760,10 @@
       "classification": "exact_test_fixture_oracle_import"
     },
     {
-      "id": "test_import_exception|crates/script/src/combat/risk/tests.rs|cfg(test)::module:tests|nav::zones::ZoneKind|exact_test_fixture_oracle_import",
+      "id": "test_import_exception|crates/script/src/combat/risk/tests.rs|cfg(test)::module:tests|nav_planner::zones::ZoneKind|exact_test_fixture_oracle_import",
       "category": "test_import_exception",
       "path": "crates/script/src/combat/risk/tests.rs",
-      "symbol": "nav::zones::ZoneKind",
+      "symbol": "nav_planner::zones::ZoneKind",
       "cfg_or_target": "cfg(test)::module:tests",
       "owner": "T5",
       "reason": "F0 baseline test-import exception; remove at T5.1.",
@@ -2771,10 +2771,10 @@
       "classification": "exact_test_fixture_oracle_import"
     },
     {
-      "id": "test_import_exception|crates/script/src/combat/risk/tests.rs|cfg(test)::module:tests|nav::zones::ZoneTable|exact_test_fixture_oracle_import",
+      "id": "test_import_exception|crates/script/src/combat/risk/tests.rs|cfg(test)::module:tests|nav_planner::zones::ZoneTable|exact_test_fixture_oracle_import",
       "category": "test_import_exception",
       "path": "crates/script/src/combat/risk/tests.rs",
-      "symbol": "nav::zones::ZoneTable",
+      "symbol": "nav_planner::zones::ZoneTable",
       "cfg_or_target": "cfg(test)::module:tests",
       "owner": "T5",
       "reason": "F0 baseline test-import exception; remove at T5.1.",
@@ -2782,10 +2782,10 @@
       "classification": "exact_test_fixture_oracle_import"
     },
     {
-      "id": "test_import_exception|crates/script/src/gatherer/runner.rs|cfg(test)::tests|nav::collision::WorldCollision|exact_test_fixture_oracle_import",
+      "id": "test_import_exception|crates/script/src/gatherer/runner.rs|cfg(test)::tests|nav_planner::collision::WorldCollision|exact_test_fixture_oracle_import",
       "category": "test_import_exception",
       "path": "crates/script/src/gatherer/runner.rs",
-      "symbol": "nav::collision::WorldCollision",
+      "symbol": "nav_planner::collision::WorldCollision",
       "cfg_or_target": "cfg(test)::tests",
       "owner": "T5",
       "reason": "F0 baseline test-import exception; remove at T5.1.",
@@ -2793,10 +2793,10 @@
       "classification": "exact_test_fixture_oracle_import"
     },
     {
-      "id": "test_import_exception|crates/script/src/gatherer/runner.rs|cfg(test)::tests|nav::collision::pack_walk|exact_test_fixture_oracle_import",
+      "id": "test_import_exception|crates/script/src/gatherer/runner.rs|cfg(test)::tests|nav_planner::collision::pack_walk|exact_test_fixture_oracle_import",
       "category": "test_import_exception",
       "path": "crates/script/src/gatherer/runner.rs",
-      "symbol": "nav::collision::pack_walk",
+      "symbol": "nav_planner::collision::pack_walk",
       "cfg_or_target": "cfg(test)::tests",
       "owner": "T5",
       "reason": "F0 baseline test-import exception; remove at T5.1.",
@@ -2804,10 +2804,10 @@
       "classification": "exact_test_fixture_oracle_import"
     },
     {
-      "id": "test_import_exception|crates/script/src/gatherer/runner.rs|cfg(test)::tests|nav::paint::flood_component_id|exact_test_fixture_oracle_import",
+      "id": "test_import_exception|crates/script/src/gatherer/runner.rs|cfg(test)::tests|nav_planner::paint::flood_component_id|exact_test_fixture_oracle_import",
       "category": "test_import_exception",
       "path": "crates/script/src/gatherer/runner.rs",
-      "symbol": "nav::paint::flood_component_id",
+      "symbol": "nav_planner::paint::flood_component_id",
       "cfg_or_target": "cfg(test)::tests",
       "owner": "T5",
       "reason": "F0 baseline test-import exception; remove at T5.1.",
@@ -2815,10 +2815,10 @@
       "classification": "exact_test_fixture_oracle_import"
     },
     {
-      "id": "test_import_exception|crates/script/src/gatherer/runner.rs|cfg(test)::tests|nav::router::local_step_component|exact_test_fixture_oracle_import",
+      "id": "test_import_exception|crates/script/src/gatherer/runner.rs|cfg(test)::tests|nav_planner::router::local_step_component|exact_test_fixture_oracle_import",
       "category": "test_import_exception",
       "path": "crates/script/src/gatherer/runner.rs",
-      "symbol": "nav::router::local_step_component",
+      "symbol": "nav_planner::router::local_step_component",
       "cfg_or_target": "cfg(test)::tests",
       "owner": "T5",
       "reason": "F0 baseline test-import exception; remove at T5.1.",
@@ -2826,10 +2826,10 @@
       "classification": "exact_test_fixture_oracle_import"
     },
     {
-      "id": "test_import_exception|crates/script/src/gatherer/select.rs|cfg(test)::function:test_real_nav_world|nav::world::NavWorld|exact_test_fixture_oracle_import",
+      "id": "test_import_exception|crates/script/src/gatherer/select.rs|cfg(test)::function:test_real_nav_world|nav_planner::world::NavWorld|exact_test_fixture_oracle_import",
       "category": "test_import_exception",
       "path": "crates/script/src/gatherer/select.rs",
-      "symbol": "nav::world::NavWorld",
+      "symbol": "nav_planner::world::NavWorld",
       "cfg_or_target": "cfg(test)::function:test_real_nav_world",
       "owner": "T5",
       "reason": "F0 baseline test-import exception; remove at T5.1.",
@@ -2837,10 +2837,10 @@
       "classification": "exact_test_fixture_oracle_import"
     },
     {
-      "id": "test_import_exception|crates/script/src/gatherer/select.rs|cfg(test)::function:test_real_nav_world|nav::world::NavWorld::load_pack|exact_test_fixture_oracle_import",
+      "id": "test_import_exception|crates/script/src/gatherer/select.rs|cfg(test)::function:test_real_nav_world|nav_planner::world::NavWorld::load_pack|exact_test_fixture_oracle_import",
       "category": "test_import_exception",
       "path": "crates/script/src/gatherer/select.rs",
-      "symbol": "nav::world::NavWorld::load_pack",
+      "symbol": "nav_planner::world::NavWorld::load_pack",
       "cfg_or_target": "cfg(test)::function:test_real_nav_world",
       "owner": "T5",
       "reason": "F0 baseline test-import exception; remove at T5.1.",
@@ -2848,10 +2848,10 @@
       "classification": "exact_test_fixture_oracle_import"
     },
     {
-      "id": "test_import_exception|crates/script/src/gatherer/select.rs|cfg(test)::tests|nav::arrival::area_has_standable_goal|exact_test_fixture_oracle_import",
+      "id": "test_import_exception|crates/script/src/gatherer/select.rs|cfg(test)::tests|nav_planner::arrival::area_has_standable_goal|exact_test_fixture_oracle_import",
       "category": "test_import_exception",
       "path": "crates/script/src/gatherer/select.rs",
-      "symbol": "nav::arrival::area_has_standable_goal",
+      "symbol": "nav_planner::arrival::area_has_standable_goal",
       "cfg_or_target": "cfg(test)::tests",
       "owner": "T5",
       "reason": "F0 baseline test-import exception; remove at T5.1.",
@@ -2859,10 +2859,10 @@
       "classification": "exact_test_fixture_oracle_import"
     },
     {
-      "id": "test_import_exception|crates/script/src/gatherer/select.rs|cfg(test)::tests|nav::collision::WorldCollision|exact_test_fixture_oracle_import",
+      "id": "test_import_exception|crates/script/src/gatherer/select.rs|cfg(test)::tests|nav_planner::collision::WorldCollision|exact_test_fixture_oracle_import",
       "category": "test_import_exception",
       "path": "crates/script/src/gatherer/select.rs",
-      "symbol": "nav::collision::WorldCollision",
+      "symbol": "nav_planner::collision::WorldCollision",
       "cfg_or_target": "cfg(test)::tests",
       "owner": "T5",
       "reason": "F0 baseline test-import exception; remove at T5.1.",
@@ -2870,10 +2870,10 @@
       "classification": "exact_test_fixture_oracle_import"
     },
     {
-      "id": "test_import_exception|crates/script/src/gatherer/select.rs|cfg(test)::tests|nav::collision::pack_walk|exact_test_fixture_oracle_import",
+      "id": "test_import_exception|crates/script/src/gatherer/select.rs|cfg(test)::tests|nav_planner::collision::pack_walk|exact_test_fixture_oracle_import",
       "category": "test_import_exception",
       "path": "crates/script/src/gatherer/select.rs",
-      "symbol": "nav::collision::pack_walk",
+      "symbol": "nav_planner::collision::pack_walk",
       "cfg_or_target": "cfg(test)::tests",
       "owner": "T5",
       "reason": "F0 baseline test-import exception; remove at T5.1.",
@@ -2881,10 +2881,10 @@
       "classification": "exact_test_fixture_oracle_import"
     },
     {
-      "id": "test_import_exception|crates/script/src/gatherer/select.rs|cfg(test)::tests|nav::named_banks::resolve|exact_test_fixture_oracle_import",
+      "id": "test_import_exception|crates/script/src/gatherer/select.rs|cfg(test)::tests|nav_planner::named_banks::resolve|exact_test_fixture_oracle_import",
       "category": "test_import_exception",
       "path": "crates/script/src/gatherer/select.rs",
-      "symbol": "nav::named_banks::resolve",
+      "symbol": "nav_planner::named_banks::resolve",
       "cfg_or_target": "cfg(test)::tests",
       "owner": "T5",
       "reason": "FIX-025 named fishing-site real-pack parity oracle; remove with the T5.1 fixture migration.",
@@ -2892,10 +2892,10 @@
       "classification": "exact_test_fixture_oracle_import"
     },
     {
-      "id": "test_import_exception|crates/script/src/gatherer/select.rs|cfg(test)::tests|nav::router::FindOptions::default|exact_test_fixture_oracle_import",
+      "id": "test_import_exception|crates/script/src/gatherer/select.rs|cfg(test)::tests|nav_planner::router::FindOptions::default|exact_test_fixture_oracle_import",
       "category": "test_import_exception",
       "path": "crates/script/src/gatherer/select.rs",
-      "symbol": "nav::router::FindOptions::default",
+      "symbol": "nav_planner::router::FindOptions::default",
       "cfg_or_target": "cfg(test)::tests",
       "owner": "T5",
       "reason": "F0 baseline test-import exception; remove at T5.1.",
@@ -2903,10 +2903,10 @@
       "classification": "exact_test_fixture_oracle_import"
     },
     {
-      "id": "test_import_exception|crates/script/src/gatherer/select.rs|cfg(test)::tests|nav::router::RouteError::BudgetExhausted|exact_test_fixture_oracle_import",
+      "id": "test_import_exception|crates/script/src/gatherer/select.rs|cfg(test)::tests|nav_planner::router::RouteError::BudgetExhausted|exact_test_fixture_oracle_import",
       "category": "test_import_exception",
       "path": "crates/script/src/gatherer/select.rs",
-      "symbol": "nav::router::RouteError::BudgetExhausted",
+      "symbol": "nav_planner::router::RouteError::BudgetExhausted",
       "cfg_or_target": "cfg(test)::tests",
       "owner": "T5",
       "reason": "FIX-025 named fishing-site real-pack parity oracle; remove with the T5.1 fixture migration.",
@@ -2914,10 +2914,10 @@
       "classification": "exact_test_fixture_oracle_import"
     },
     {
-      "id": "test_import_exception|crates/script/src/gatherer/select.rs|cfg(test)::tests|nav::router::RouteError::NoPath|exact_test_fixture_oracle_import",
+      "id": "test_import_exception|crates/script/src/gatherer/select.rs|cfg(test)::tests|nav_planner::router::RouteError::NoPath|exact_test_fixture_oracle_import",
       "category": "test_import_exception",
       "path": "crates/script/src/gatherer/select.rs",
-      "symbol": "nav::router::RouteError::NoPath",
+      "symbol": "nav_planner::router::RouteError::NoPath",
       "cfg_or_target": "cfg(test)::tests",
       "owner": "T5",
       "reason": "FIX-025 named fishing-site real-pack parity oracle; remove with the T5.1 fixture migration.",
@@ -2925,10 +2925,10 @@
       "classification": "exact_test_fixture_oracle_import"
     },
     {
-      "id": "test_import_exception|crates/script/src/gatherer/select.rs|cfg(test)::tests|nav::router::RouteError|exact_test_fixture_oracle_import",
+      "id": "test_import_exception|crates/script/src/gatherer/select.rs|cfg(test)::tests|nav_planner::router::RouteError|exact_test_fixture_oracle_import",
       "category": "test_import_exception",
       "path": "crates/script/src/gatherer/select.rs",
-      "symbol": "nav::router::RouteError",
+      "symbol": "nav_planner::router::RouteError",
       "cfg_or_target": "cfg(test)::tests",
       "owner": "T5",
       "reason": "FIX-025 named fishing-site real-pack parity oracle; remove with the T5.1 fixture migration.",
@@ -2936,10 +2936,10 @@
       "classification": "exact_test_fixture_oracle_import"
     },
     {
-      "id": "test_import_exception|crates/script/src/gatherer/select.rs|cfg(test)::tests|nav::router::Route|exact_test_fixture_oracle_import",
+      "id": "test_import_exception|crates/script/src/gatherer/select.rs|cfg(test)::tests|nav_planner::router::Route|exact_test_fixture_oracle_import",
       "category": "test_import_exception",
       "path": "crates/script/src/gatherer/select.rs",
-      "symbol": "nav::router::Route",
+      "symbol": "nav_planner::router::Route",
       "cfg_or_target": "cfg(test)::tests",
       "owner": "T5",
       "reason": "FIX-025 named fishing-site real-pack parity oracle; remove with the T5.1 fixture migration.",
@@ -2947,10 +2947,10 @@
       "classification": "exact_test_fixture_oracle_import"
     },
     {
-      "id": "test_import_exception|crates/script/src/gatherer/select.rs|cfg(test)::tests|nav::router::find_first_with|exact_test_fixture_oracle_import",
+      "id": "test_import_exception|crates/script/src/gatherer/select.rs|cfg(test)::tests|nav_planner::router::find_first_with|exact_test_fixture_oracle_import",
       "category": "test_import_exception",
       "path": "crates/script/src/gatherer/select.rs",
-      "symbol": "nav::router::find_first_with",
+      "symbol": "nav_planner::router::find_first_with",
       "cfg_or_target": "cfg(test)::tests",
       "owner": "T5",
       "reason": "F0 baseline test-import exception; remove at T5.1.",
@@ -2958,10 +2958,10 @@
       "classification": "exact_test_fixture_oracle_import"
     },
     {
-      "id": "test_import_exception|crates/script/src/gatherer/select.rs|cfg(test)::tests|nav::world::NavWorld|exact_test_fixture_oracle_import",
+      "id": "test_import_exception|crates/script/src/gatherer/select.rs|cfg(test)::tests|nav_planner::world::NavWorld|exact_test_fixture_oracle_import",
       "category": "test_import_exception",
       "path": "crates/script/src/gatherer/select.rs",
-      "symbol": "nav::world::NavWorld",
+      "symbol": "nav_planner::world::NavWorld",
       "cfg_or_target": "cfg(test)::tests",
       "owner": "T5",
       "reason": "F0 baseline test-import exception; remove at T5.1.",
@@ -2969,10 +2969,10 @@
       "classification": "exact_test_fixture_oracle_import"
     },
     {
-      "id": "test_import_exception|crates/script/src/gatherer/select.rs|cfg(test)::tests|nav::world_state::WorldState::empty|exact_test_fixture_oracle_import",
+      "id": "test_import_exception|crates/script/src/gatherer/select.rs|cfg(test)::tests|nav_planner::world_state::WorldState::empty|exact_test_fixture_oracle_import",
       "category": "test_import_exception",
       "path": "crates/script/src/gatherer/select.rs",
-      "symbol": "nav::world_state::WorldState::empty",
+      "symbol": "nav_planner::world_state::WorldState::empty",
       "cfg_or_target": "cfg(test)::tests",
       "owner": "T5",
       "reason": "F0 baseline test-import exception; remove at T5.1.",
@@ -2980,10 +2980,10 @@
       "classification": "exact_test_fixture_oracle_import"
     },
     {
-      "id": "test_import_exception|crates/script/src/gatherer/select.rs|cfg(test)::tests|nav::world_state::WorldState|exact_test_fixture_oracle_import",
+      "id": "test_import_exception|crates/script/src/gatherer/select.rs|cfg(test)::tests|nav_planner::world_state::WorldState|exact_test_fixture_oracle_import",
       "category": "test_import_exception",
       "path": "crates/script/src/gatherer/select.rs",
-      "symbol": "nav::world_state::WorldState",
+      "symbol": "nav_planner::world_state::WorldState",
       "cfg_or_target": "cfg(test)::tests",
       "owner": "T5",
       "reason": "FIX-025 named fishing-site real-pack parity oracle; remove with the T5.1 fixture migration.",
@@ -2991,10 +2991,10 @@
       "classification": "exact_test_fixture_oracle_import"
     },
     {
-      "id": "test_import_exception|crates/script/tests/cook_location_shape.rs|integration-test|nav::named_banks::resolve|exact_test_fixture_oracle_import",
+      "id": "test_import_exception|crates/script/tests/cook_location_shape.rs|integration-test|nav_planner::named_banks::resolve|exact_test_fixture_oracle_import",
       "category": "test_import_exception",
       "path": "crates/script/tests/cook_location_shape.rs",
-      "symbol": "nav::named_banks::resolve",
+      "symbol": "nav_planner::named_banks::resolve",
       "cfg_or_target": "integration-test",
       "owner": "T5",
       "reason": "F0 baseline test-import exception; remove at T5.1.",
@@ -3002,10 +3002,10 @@
       "classification": "exact_test_fixture_oracle_import"
     },
     {
-      "id": "test_import_exception|crates/script/tests/gather_sites_reach.rs|integration-test|nav::WorldState|exact_test_fixture_oracle_import",
+      "id": "test_import_exception|crates/script/tests/gather_sites_reach.rs|integration-test|nav_planner::WorldState|exact_test_fixture_oracle_import",
       "category": "test_import_exception",
       "path": "crates/script/tests/gather_sites_reach.rs",
-      "symbol": "nav::WorldState",
+      "symbol": "nav_planner::WorldState",
       "cfg_or_target": "integration-test",
       "owner": "T5",
       "reason": "F0 baseline test-import exception; remove at T5.1.",
@@ -3013,10 +3013,10 @@
       "classification": "exact_test_fixture_oracle_import"
     },
     {
-      "id": "test_import_exception|crates/script/tests/gather_sites_reach.rs|integration-test|nav::quest_gates::QuestEvidence|exact_test_fixture_oracle_import",
+      "id": "test_import_exception|crates/script/tests/gather_sites_reach.rs|integration-test|nav_planner::quest_gates::QuestEvidence|exact_test_fixture_oracle_import",
       "category": "test_import_exception",
       "path": "crates/script/tests/gather_sites_reach.rs",
-      "symbol": "nav::quest_gates::QuestEvidence",
+      "symbol": "nav_planner::quest_gates::QuestEvidence",
       "cfg_or_target": "integration-test",
       "owner": "T5",
       "reason": "Real-pack gated-entrance fixture supplies observed quest evidence; remove at T5.1.",
@@ -3024,10 +3024,10 @@
       "classification": "exact_test_fixture_oracle_import"
     },
     {
-      "id": "test_import_exception|crates/script/tests/gather_sites_reach.rs|integration-test|nav::quest_gates::QuestFamilyId|exact_test_fixture_oracle_import",
+      "id": "test_import_exception|crates/script/tests/gather_sites_reach.rs|integration-test|nav_planner::quest_gates::QuestFamilyId|exact_test_fixture_oracle_import",
       "category": "test_import_exception",
       "path": "crates/script/tests/gather_sites_reach.rs",
-      "symbol": "nav::quest_gates::QuestFamilyId",
+      "symbol": "nav_planner::quest_gates::QuestFamilyId",
       "cfg_or_target": "integration-test",
       "owner": "T5",
       "reason": "Real-pack gated-entrance fixture supplies the selected quest family; remove at T5.1.",
@@ -3035,10 +3035,10 @@
       "classification": "exact_test_fixture_oracle_import"
     },
     {
-      "id": "test_import_exception|crates/script/tests/gather_sites_reach.rs|integration-test|nav::world_state::QUEST_COMPLETE_COLOUR|exact_test_fixture_oracle_import",
+      "id": "test_import_exception|crates/script/tests/gather_sites_reach.rs|integration-test|nav_planner::world_state::QUEST_COMPLETE_COLOUR|exact_test_fixture_oracle_import",
       "category": "test_import_exception",
       "path": "crates/script/tests/gather_sites_reach.rs",
-      "symbol": "nav::world_state::QUEST_COMPLETE_COLOUR",
+      "symbol": "nav_planner::world_state::QUEST_COMPLETE_COLOUR",
       "cfg_or_target": "integration-test",
       "owner": "T5",
       "reason": "Real-pack gated-entrance fixture uses the decoded completion colour; remove at T5.1.",
@@ -3046,10 +3046,10 @@
       "classification": "exact_test_fixture_oracle_import"
     },
     {
-      "id": "test_import_exception|crates/script/tests/gather_sites_reach.rs|integration-test|nav::pack::decode_flags_sidecar|exact_test_fixture_oracle_import",
+      "id": "test_import_exception|crates/script/tests/gather_sites_reach.rs|integration-test|nav_planner::pack::decode_flags_sidecar|exact_test_fixture_oracle_import",
       "category": "test_import_exception",
       "path": "crates/script/tests/gather_sites_reach.rs",
-      "symbol": "nav::pack::decode_flags_sidecar",
+      "symbol": "nav_planner::pack::decode_flags_sidecar",
       "cfg_or_target": "integration-test",
       "owner": "T5",
       "reason": "F0 baseline test-import exception; remove at T5.1.",
@@ -3057,10 +3057,10 @@
       "classification": "exact_test_fixture_oracle_import"
     },
     {
-      "id": "test_import_exception|crates/script/tests/gather_sites_reach.rs|integration-test|nav::router::FindOptions|exact_test_fixture_oracle_import",
+      "id": "test_import_exception|crates/script/tests/gather_sites_reach.rs|integration-test|nav_planner::router::FindOptions|exact_test_fixture_oracle_import",
       "category": "test_import_exception",
       "path": "crates/script/tests/gather_sites_reach.rs",
-      "symbol": "nav::router::FindOptions",
+      "symbol": "nav_planner::router::FindOptions",
       "cfg_or_target": "integration-test",
       "owner": "T5",
       "reason": "F0 baseline test-import exception; remove at T5.1.",
@@ -3068,10 +3068,10 @@
       "classification": "exact_test_fixture_oracle_import"
     },
     {
-      "id": "test_import_exception|crates/script/tests/gather_sites_reach.rs|integration-test|nav::router::TargetError|exact_test_fixture_oracle_import",
+      "id": "test_import_exception|crates/script/tests/gather_sites_reach.rs|integration-test|nav_planner::router::TargetError|exact_test_fixture_oracle_import",
       "category": "test_import_exception",
       "path": "crates/script/tests/gather_sites_reach.rs",
-      "symbol": "nav::router::TargetError",
+      "symbol": "nav_planner::router::TargetError",
       "cfg_or_target": "integration-test",
       "owner": "T5",
       "reason": "F0 baseline test-import exception; remove at T5.1.",
@@ -3079,10 +3079,10 @@
       "classification": "exact_test_fixture_oracle_import"
     },
     {
-      "id": "test_import_exception|crates/script/tests/gather_sites_reach.rs|integration-test|nav::router::find_many_with|exact_test_fixture_oracle_import",
+      "id": "test_import_exception|crates/script/tests/gather_sites_reach.rs|integration-test|nav_planner::router::find_many_with|exact_test_fixture_oracle_import",
       "category": "test_import_exception",
       "path": "crates/script/tests/gather_sites_reach.rs",
-      "symbol": "nav::router::find_many_with",
+      "symbol": "nav_planner::router::find_many_with",
       "cfg_or_target": "integration-test",
       "owner": "T5",
       "reason": "F0 baseline test-import exception; remove at T5.1.",
@@ -3090,10 +3090,10 @@
       "classification": "exact_test_fixture_oracle_import"
     },
     {
-      "id": "test_import_exception|crates/script/tests/gather_sites_reach.rs|integration-test|nav::world::NavWorld|exact_test_fixture_oracle_import",
+      "id": "test_import_exception|crates/script/tests/gather_sites_reach.rs|integration-test|nav_planner::world::NavWorld|exact_test_fixture_oracle_import",
       "category": "test_import_exception",
       "path": "crates/script/tests/gather_sites_reach.rs",
-      "symbol": "nav::world::NavWorld",
+      "symbol": "nav_planner::world::NavWorld",
       "cfg_or_target": "integration-test",
       "owner": "T5",
       "reason": "F0 baseline test-import exception; remove at T5.1.",
@@ -3101,10 +3101,10 @@
       "classification": "exact_test_fixture_oracle_import"
     },
     {
-      "id": "test_import_exception|crates/script/tests/named_bank_locations.rs|integration-test|nav::named_banks::resolve|exact_test_fixture_oracle_import",
+      "id": "test_import_exception|crates/script/tests/named_bank_locations.rs|integration-test|nav_planner::named_banks::resolve|exact_test_fixture_oracle_import",
       "category": "test_import_exception",
       "path": "crates/script/tests/named_bank_locations.rs",
-      "symbol": "nav::named_banks::resolve",
+      "symbol": "nav_planner::named_banks::resolve",
       "cfg_or_target": "integration-test",
       "owner": "T5",
       "reason": "F0 baseline test-import exception; remove at T5.1.",
@@ -3112,10 +3112,10 @@
       "classification": "exact_test_fixture_oracle_import"
     },
     {
-      "id": "test_import_exception|crates/script/tests/path_schema.rs|integration-test|nav::WorldState|exact_test_fixture_oracle_import",
+      "id": "test_import_exception|crates/script/tests/path_schema.rs|integration-test|nav_planner::WorldState|exact_test_fixture_oracle_import",
       "category": "test_import_exception",
       "path": "crates/script/tests/path_schema.rs",
-      "symbol": "nav::WorldState",
+      "symbol": "nav_planner::WorldState",
       "cfg_or_target": "integration-test",
       "owner": "T5",
       "reason": "F0 baseline test-import exception; remove at T5.1.",
@@ -3123,10 +3123,10 @@
       "classification": "exact_test_fixture_oracle_import"
     },
     {
-      "id": "test_import_exception|crates/script/tests/path_schema.rs|integration-test|nav::pack::decode_flags_sidecar|exact_test_fixture_oracle_import",
+      "id": "test_import_exception|crates/script/tests/path_schema.rs|integration-test|nav_planner::pack::decode_flags_sidecar|exact_test_fixture_oracle_import",
       "category": "test_import_exception",
       "path": "crates/script/tests/path_schema.rs",
-      "symbol": "nav::pack::decode_flags_sidecar",
+      "symbol": "nav_planner::pack::decode_flags_sidecar",
       "cfg_or_target": "integration-test",
       "owner": "T5",
       "reason": "F0 baseline test-import exception; remove at T5.1.",
@@ -3134,10 +3134,10 @@
       "classification": "exact_test_fixture_oracle_import"
     },
     {
-      "id": "test_import_exception|crates/script/tests/path_schema.rs|integration-test|nav::router::FindOptions|exact_test_fixture_oracle_import",
+      "id": "test_import_exception|crates/script/tests/path_schema.rs|integration-test|nav_planner::router::FindOptions|exact_test_fixture_oracle_import",
       "category": "test_import_exception",
       "path": "crates/script/tests/path_schema.rs",
-      "symbol": "nav::router::FindOptions",
+      "symbol": "nav_planner::router::FindOptions",
       "cfg_or_target": "integration-test",
       "owner": "T5",
       "reason": "F0 baseline test-import exception; remove at T5.1.",
@@ -3145,10 +3145,10 @@
       "classification": "exact_test_fixture_oracle_import"
     },
     {
-      "id": "test_import_exception|crates/script/tests/path_schema.rs|integration-test|nav::router::Leg|exact_test_fixture_oracle_import",
+      "id": "test_import_exception|crates/script/tests/path_schema.rs|integration-test|nav_planner::router::Leg|exact_test_fixture_oracle_import",
       "category": "test_import_exception",
       "path": "crates/script/tests/path_schema.rs",
-      "symbol": "nav::router::Leg",
+      "symbol": "nav_planner::router::Leg",
       "cfg_or_target": "integration-test",
       "owner": "T5",
       "reason": "F0 baseline test-import exception; remove at T5.1.",
@@ -3156,10 +3156,10 @@
       "classification": "exact_test_fixture_oracle_import"
     },
     {
-      "id": "test_import_exception|crates/script/tests/path_schema.rs|integration-test|nav::router::find_with|exact_test_fixture_oracle_import",
+      "id": "test_import_exception|crates/script/tests/path_schema.rs|integration-test|nav_planner::router::find_with|exact_test_fixture_oracle_import",
       "category": "test_import_exception",
       "path": "crates/script/tests/path_schema.rs",
-      "symbol": "nav::router::find_with",
+      "symbol": "nav_planner::router::find_with",
       "cfg_or_target": "integration-test",
       "owner": "T5",
       "reason": "F0 baseline test-import exception; remove at T5.1.",
@@ -3167,10 +3167,10 @@
       "classification": "exact_test_fixture_oracle_import"
     },
     {
-      "id": "test_import_exception|crates/script/tests/path_schema.rs|integration-test|nav::transport::TransportKind|exact_test_fixture_oracle_import",
+      "id": "test_import_exception|crates/script/tests/path_schema.rs|integration-test|nav_planner::transport::TransportKind|exact_test_fixture_oracle_import",
       "category": "test_import_exception",
       "path": "crates/script/tests/path_schema.rs",
-      "symbol": "nav::transport::TransportKind",
+      "symbol": "nav_planner::transport::TransportKind",
       "cfg_or_target": "integration-test",
       "owner": "T5",
       "reason": "F0 baseline test-import exception; remove at T5.1.",
@@ -3178,10 +3178,10 @@
       "classification": "exact_test_fixture_oracle_import"
     },
     {
-      "id": "test_import_exception|crates/script/tests/path_schema.rs|integration-test|nav::world::NavWorld|exact_test_fixture_oracle_import",
+      "id": "test_import_exception|crates/script/tests/path_schema.rs|integration-test|nav_planner::world::NavWorld|exact_test_fixture_oracle_import",
       "category": "test_import_exception",
       "path": "crates/script/tests/path_schema.rs",
-      "symbol": "nav::world::NavWorld",
+      "symbol": "nav_planner::world::NavWorld",
       "cfg_or_target": "integration-test",
       "owner": "T5",
       "reason": "F0 baseline test-import exception; remove at T5.1.",
@@ -3189,10 +3189,10 @@
       "classification": "exact_test_fixture_oracle_import"
     },
     {
-      "id": "test_import_exception|crates/script/tests/path_schema.rs|integration-test|nav::zones::ZoneExempt|exact_test_fixture_oracle_import",
+      "id": "test_import_exception|crates/script/tests/path_schema.rs|integration-test|nav_planner::zones::ZoneExempt|exact_test_fixture_oracle_import",
       "category": "test_import_exception",
       "path": "crates/script/tests/path_schema.rs",
-      "symbol": "nav::zones::ZoneExempt",
+      "symbol": "nav_planner::zones::ZoneExempt",
       "cfg_or_target": "integration-test",
       "owner": "T5",
       "reason": "F0 baseline test-import exception; remove at T5.1.",
@@ -3200,10 +3200,10 @@
       "classification": "exact_test_fixture_oracle_import"
     },
     {
-      "id": "test_import_exception|crates/script/src/combat/risk/tests.rs|cfg(test)::module:tests|nav::producer::route_view|exact_test_fixture_oracle_import",
+      "id": "test_import_exception|crates/script/src/combat/risk/tests.rs|cfg(test)::module:tests|nav_planner::producer::route_view|exact_test_fixture_oracle_import",
       "category": "test_import_exception",
       "path": "crates/script/src/combat/risk/tests.rs",
-      "symbol": "nav::producer::route_view",
+      "symbol": "nav_planner::producer::route_view",
       "cfg_or_target": "cfg(test)::module:tests",
       "owner": "T5",
       "reason": "T5.1 risk fixture: the frozen facade has no public constructor for a borrowed route view over a synthetic backend route, so the fixture serves its retained raw routes through the owner-boundary producer under its facade lease (\u00a721 \u00a75.3 combat/risk/tests.rs fixture scope); plan publication under T5.W(route) replaces the route-view producer.",

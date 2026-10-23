@@ -21,7 +21,7 @@ use frontend_core::test_support::tui::{
 use frontend_core::test_support::{FixtureProfile, IsolatedStores};
 use host_play::profile::ProfileEnvironment;
 use host_play::{Play, SlotArm, WalkArm};
-use nav::router::FindOptions;
+use nav_planner::router::FindOptions;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -123,7 +123,8 @@ fn publish_map_walk_snapshot(
         actions: Vec::new(),
         component_id: -1,
     }]);
-    let state = nav::WorldState::from_snapshot(&snapshot).with_map_members(core.map_members());
+    let state =
+        nav_planner::WorldState::from_snapshot(&snapshot).with_map_members(core.map_members());
     core.publish_test_snapshot(name, snapshot, state);
 }
 
@@ -1929,9 +1930,9 @@ mod bank_fetch_fixtures {
     use client::config::if_type::ComponentType;
     use client::config::{Cache, IfType, IfTypeMut, LocType, ObjType};
     use client::io::ServerProt;
-    use nav::pack::BankAccess;
-    use nav::transport::{TransportEdge, TransportGraph, TransportKind};
-    use nav::world::NavWorld;
+    use nav_planner::pack::BankAccess;
+    use nav_planner::transport::{TransportEdge, TransportGraph, TransportKind};
+    use nav_planner::world::NavWorld;
 
     pub fn bank_client() -> Client {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -2094,9 +2095,9 @@ mod bank_fetch_fixtures {
         let mut graph = TransportGraph::default();
         graph.at.entry(edge.at).or_default().push(0);
         graph.edges.push(edge);
-        let (walk, blocked) = nav::collision::pack_walk(&flags);
+        let (walk, blocked) = nav_planner::collision::pack_walk(&flags);
         NavWorld::from_parts(
-            nav::collision::WorldCollision {
+            nav_planner::collision::WorldCollision {
                 origin: WorldTile {
                     x: 0,
                     z: 0,
@@ -2109,7 +2110,7 @@ mod bank_fetch_fixtures {
                 flags: None,
             },
             graph,
-            vec![nav::pack::BankStand {
+            vec![nav_planner::pack::BankStand {
                 name: "Bank booth".into(),
                 tile: WorldTile {
                     x: 0,
@@ -2414,8 +2415,8 @@ fn player_at_plane_one_follow_uses_level() {
     use api::snapshot::WorldTile;
     use bank_fetch_fixtures::bank_client;
     use host_play::{player_here_tile, step_walk_arm_bank_fetch, PendingBankFetch};
-    use nav::bank_fetch::BankStep;
-    use nav::router::Route;
+    use nav_planner::bank_fetch::BankStep;
+    use nav_planner::router::Route;
     use std::collections::VecDeque;
 
     let mut c = bank_client();
@@ -2483,8 +2484,8 @@ fn follow_tick_pumps_bank_budget_step() {
     use api::snapshot::WorldTile;
     use bank_fetch_fixtures::{bank_client, knife_nav_world};
     use host_play::PendingBankFetch;
-    use nav::bank_fetch::BankStep;
-    use nav::router::Route;
+    use nav_planner::bank_fetch::BankStep;
+    use nav_planner::router::Route;
     use std::collections::VecDeque;
 
     let mut c = bank_client();
@@ -2553,8 +2554,8 @@ fn bank_stand_subroute_does_not_emit_operator_terminal_receipt() {
     use bank_fetch_fixtures::bank_client;
     use frontend_core::log::{global, LogScope, LogView};
     use host_play::PendingBankFetch;
-    use nav::bank_fetch::BankStep;
-    use nav::router::{Leg, Route};
+    use nav_planner::bank_fetch::BankStep;
+    use nav_planner::router::{Leg, Route};
     use std::collections::VecDeque;
 
     let log = global();
@@ -2659,8 +2660,8 @@ fn operator_walk_logs_one_terminal_receipt_for_arrival_and_abort() {
     use api::snapshot::WorldTile;
     use bank_fetch_fixtures::bank_client;
     use frontend_core::log::{global, LogScope, LogView};
-    use nav::router::{Leg, Route};
-    use nav::transport::{TransportEdge, TransportKind};
+    use nav_planner::router::{Leg, Route};
+    use nav_planner::transport::{TransportEdge, TransportKind};
 
     let log = global();
 

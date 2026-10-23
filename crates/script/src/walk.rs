@@ -230,7 +230,7 @@ const MAX_AVOID: usize = 16;
 /// Frozen ids accepted for compat `avoidZones`; their geometry is resolved
 /// by host-play once the walk's endpoints and combat level are known.
 pub(crate) fn known_avoid_catalog_id(id: &str) -> bool {
-    nav::contract::AVOID_CATALOG_IDS.contains(&id)
+    nav_planner::contract::AVOID_CATALOG_IDS.contains(&id)
 }
 
 /// Why `avoid` cannot route, if it cannot: an unknown catalog id, a
