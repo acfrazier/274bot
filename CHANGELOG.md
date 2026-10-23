@@ -40,6 +40,13 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.5` 
 - Apply to all now logs one script-settings info line for each profile that it saves.
 - The panel clears a script-setting error from the dock banner when the operator discards the draft or fixes the field.
 
+#### Scripts
+
+- Server-ordered requests now account for a cheat or manual minimap walk
+  before the next request starts, including the last packet in a client flush.
+  A pending manual packet no longer makes a valid request report a transport
+  failure or lets a dependent content request use stale input ownership.
+
 ## [0.2.5] — 2026-10-22 — Beta 2
 
 ### Scripts

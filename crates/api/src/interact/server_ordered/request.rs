@@ -1228,6 +1228,7 @@ fn emit_packet(
             reason: error.into(),
             wire_events: 0,
         })?;
+    driver.finish_pending_packet();
     (context.authority)().map_err(|reason| EmitFailure {
         reason,
         wire_events: 0,
@@ -1274,6 +1275,7 @@ fn emit_knife_click(
     revision: ClientRevision,
     context: &mut ServerOrderedDispatchContext<'_>,
 ) -> Result<u8, EmitFailure> {
+    driver.finish_pending_packet();
     (context.authority)().map_err(|reason| EmitFailure {
         reason,
         wire_events: 0,

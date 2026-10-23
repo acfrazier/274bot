@@ -202,6 +202,10 @@ content expectation. Accepted foreign local edits invalidate it even when
 they write no packet. Counts can exceed five and never control admission.
 The engine owns input deferral. The native emission frame still charges its
 own existing batch allowance, not another producer's slot-wide traffic.
+The client completes any open packet observation before its socket flush.
+The drain also completes a previous producer's packet before changing lineage
+or capturing a request's input proof. Each row counts only its own commits.
+These observation boundaries do not change packet bytes or cipher steps.
 
 Native content needs no external declaration. The advanced Rust envelope
 requires a private, run-bound permit. No production permit issuer, script

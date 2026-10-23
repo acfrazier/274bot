@@ -32,7 +32,9 @@ struct ObservationState {
 
 /// A poisoned observation lock still yields its state: a panicking observer must never wedge the slot.
 fn lock_unpoisoned(state: &Mutex<ObservationState>) -> MutexGuard<'_, ObservationState> {
-    state.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    state
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 impl Default for InputObservation {

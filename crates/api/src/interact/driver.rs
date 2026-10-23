@@ -90,6 +90,10 @@ pub trait Driver {
     /// Emit one typed packet using this driver's bound revision.
     /// Required in every build, including opt-in test recorders.
     fn send_packet(&mut self, packet: &Send) -> Result<(), crate::prot::PacketError>;
+    /// Complete observation of the previous producer's packet without writing bytes.
+    /// Call before changing input lineage or measuring a new row's commits.
+    /// Recording drivers have no deferred packet observation.
+    fn finish_pending_packet(&mut self) {}
     /// Return the monotonic count of packets committed to the normal encrypted sink.
     /// Drivers without a real sink return `None`; action costs are not a substitute.
     fn packet_commit_count(&self) -> Option<u64> {
@@ -233,6 +237,9 @@ impl Driver for Client {
 
     fn send_packet(&mut self, packet: &Send) -> Result<(), crate::prot::PacketError> {
         packet.write_for_revision(self.revision(), &mut self.out)
+    }
+    fn finish_pending_packet(&mut self) {
+        self.out.finish_packet();
     }
     fn packet_commit_count(&self) -> Option<u64> {
         self.out.committed_packet_count()
