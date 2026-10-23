@@ -1,7 +1,7 @@
 //! Dijkstra routing over the whole-world collision bake (`WorldCollision`)
 //! and the content-derived transport graph (`TransportGraph`), plus the
-//! legacy step-grid A* kept under [`find_on_grid`] for the traveller and
-//! live harnesses until the collision+transport router replaces them.
+//! legacy step-grid A* kept under [`find_on_grid`] for fixture tests;
+//! production travel uses the collision+transport router.
 //!
 //! One Dijkstra minimizes **total ticks**: a walk step costs the search's
 //! run rate ([`CostModel::running`]: 0.5 ticks/tile, 2 tiles/tick) and a
