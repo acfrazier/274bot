@@ -208,6 +208,7 @@ pub(crate) struct Ledger {
     pub interaction_request: Option<NonZeroU64>,
     pub bank_pick: Option<BankPickReceipt>,
     pub bank_pick_request: Option<NonZeroU64>,
+    // Keep the 72-byte terminal envelope lazy instead of widening every native ledger.
     pub server_ordered: Option<Box<super::ServerOrderedCompletion>>,
     pub server_ordered_request: Option<NonZeroU64>,
     pub assess_owner: Option<Arc<Owner>>,

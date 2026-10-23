@@ -1931,3 +1931,80 @@ fn ordered_advanced_cheat_without_shared_catalog_refuses_the_whole_request() {
     assert_eq!((receipt.dispatched_prefix, receipt.wire_events), (0, 0));
     assert_no_cipher_movement(&rig);
 }
+
+#[test]
+fn ordered_current_numeric_npc_proofs_refuse_the_whole_knife_request() {
+    let mut rig = Rig::new();
+    {
+        let cache = Arc::get_mut(&mut rig.client.cache).unwrap();
+        cache.npcs.resize_with(10, client::config::NpcType::default);
+        cache.npcs[9] = client::config::NpcType {
+            id: 9,
+            name: "Target".into(),
+            op: vec![None, Some("Attack".into())],
+            ..Default::default()
+        };
+    }
+    let mut npc = client::dash3d::ClientNpc::default();
+    npc.entity.x = 8 * 128;
+    npc.entity.z = 5 * 128;
+    npc.r#type = Some(9);
+    rig.client.npc[7] = Some(Box::new(npc));
+    rig.client.npc_ids = vec![7];
+    rig.client.npc_count = 1;
+    rig.client.gens.npc += 1;
+    let mut request = knife_request(&mut rig, true);
+    let reference =
+        ExactNpcReference::from_snapshot(&rig.snapshot, &rig.snapshot.npcs()[0], 2).unwrap();
+    if let ServerOrderedRequest::KnifeArm { shape, .. } = &mut request {
+        *shape = KnifeArmShape::Continuing {
+            click: ExactLocOrNpcRef::Npc(reference),
+        };
+    }
+    rig.start([Emission::Content(request)]);
+    rig.pump(1);
+    rig.pump(2);
+    let receipt = rig.receipt();
+    assert_eq!(
+        receipt.terminal,
+        Some(ServerOrderedError::ContractUnavailable)
+    );
+    assert_eq!((receipt.dispatched_prefix, receipt.wire_events), (0, 0));
+    assert_no_cipher_movement(&rig);
+}
+
+#[test]
+fn ordered_unbound_selected_pin_refuses_start_before_any_encrypted_input() {
+    let mut valid = Rig::new();
+    valid.start([Emission::Content(close_request())]);
+    valid.pump(1);
+    valid.pump(2);
+    assert_eq!(valid.receipt().wire_events, 1);
+
+    // Deserialization alone does not authenticate a generated artifact.
+    // The normal selected-data loader binds its pin; this value has none.
+    let selected: api::game_data::SelectedGameData =
+        serde_json::from_slice(include_bytes!("../../api/data/game-data/289.json")).unwrap();
+    let expected = format!("{:?}", selected.selected_pin().unwrap_err());
+    let mut rig = Rig::new();
+    let slot = script_slot_or_insert(&rig.scripts, "so3-wire");
+    let error = slot
+        .lock()
+        .unwrap()
+        .start_test_script(
+            Box::new(OrderedScript {
+                pending: [Emission::Content(close_request())].into_iter().collect(),
+                handle: None,
+                results: Arc::clone(&rig.results),
+            }),
+            Some(Arc::new(selected)),
+        )
+        .unwrap_err();
+    assert_eq!(error, expected);
+    rig.pump(1);
+    rig.pump(2);
+    let results = rig.results.lock().unwrap();
+    assert!(results.receipts.is_empty());
+    assert!(results.errors.is_empty());
+    assert_no_cipher_movement(&rig);
+}
