@@ -45,13 +45,13 @@ The **Nav config** button opens the walking options.
 
 The **Routing** group holds the walk permissions: **allow teleports**,
 **allow wilderness** and **allow bank fetch**. Bank fetch applies to manual
-**WalkTo** only. The settings are global except where stated. Scripts that
-come from rs2b0t always allow wilderness and bank fetch.
+**WalkTo** only. The settings are global except where stated.
+rs2b0t-compatible scripts always allow wilderness and bank fetch.
 
 **Danger routing** decides if a walk may pass dangerous monsters. Its levels
-are **Never**, **When survivable** and **Always**. The middle level reads
-`Not available yet: acts as Never.` Until it works, it refuses like
-**Never**. With **Always**, the window warns
+are **Never**, **When survivable** and **Always**. While the middle level is
+held, a note under the control reads `Not available yet: acts as Never.`
+Until it works, it refuses like **Never**. With **Always**, the window warns
 `Global danger-zone override is enabled.`
 
 Two notices explain the scope. Read them once, then click **Dismiss walk

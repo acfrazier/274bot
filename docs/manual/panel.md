@@ -8,18 +8,19 @@
 ## What the window holds
 
 The game view shows the bot you focused. The right strip holds the
-controls in collapsible sections: the bot state, **fleet**, resources, the
-profile, the **script**, **debug** and the **log**. The **script** section
+controls in collapsible sections: **status**, **fleet**, **resource**,
+**profile**, **script**, **debug** and **log**. The **script** section
 starts closed. Click its heading to open it.
 
 The top rows hold the buttons you use most. **Log in** connects the focused
-bot, and **Logout** disconnects it. **WalkTo** opens the map. **Fleet**
-opens the wide view of all your bots. Below them sit **General config**,
-**Nav config**, **Loadouts** and **Script prefs**, then the **Profiles**
-button. **MultiBox** and **Grid** toggle the many-bots views.
-
-Each button opens its window. If the window is already open, the button
-brings it to the front.
+bot, and **Logout** disconnects it. **WalkTo** toggles the map: an open map
+closes. **Fleet** opens the wide view of all your bots. Below them sit
+**General config**, **Nav config**, **Loadouts** and **Script prefs**, then
+the **Profiles** button. **MultiBox** and **Grid** toggle the many-bots views.
++
+Each of **Fleet**, **Log**, **General config**, **Nav config**,
+**Loadouts**, **Script prefs** and **Profiles** opens its window. If the
+window is already open, the button brings it to the front.
 
 The **debug** section appears only when you run against your own game
 server. It never appears on the public server.
@@ -30,7 +31,13 @@ Click a bot's name in the **Fleet** window to focus it. With one bot
 loaded, it is already focused.
 
 ## Send one bot on foot
-
++
+1. If the map is closed, click **WalkTo** to open it. Pick a tile.
+2. Click **Send** to choose who walks. The Send window offers **Focused bot**
+   and **Group**; leave it on **Focused bot** for one bot.
+3. Click **Walk** to walk the focused bot there. The map closes and the bot
+   walks.
++
 The footer also holds **Route through danger zones**. Tick it to allow one
 walk past dangerous monsters. It starts unticked each time **WalkTo**
 opens. While **Danger routing** is **Always**, the tick is replaced by a
@@ -57,6 +64,6 @@ the checkbox. The file lives under `~/.274bot/logs/`.
 
 | You see | Cause | What to do |
 | --- | --- | --- |
-| A button does nothing while the vault is locked | Most buttons need an open vault and a focused profile. | Unlock the vault and focus a profile. |
+| **Log in** or **Logout** stays dimmed | The vault is locked or no profile is focused. **Logout** also needs the focused bot connected, queued or guard-parked. | Unlock the vault and focus a profile. |
 | The map reads `terrain not baked · catalogue only` | The ground pictures are not baked yet. | Click **Bake terrain**. |
 | The panel closes at once on Linux with "importing the supplied dmabufs failed" | The computer has two graphics chips. | Start it with `WGPU_POWER_PREF=high ./panel-play`. See the [known issues](../known-issues.toml). |
