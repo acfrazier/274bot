@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use api::bank_memory::BankMemory;
+use api::condition::BotCondition;
 use api::interact::{ActionSpec, Driver, Interactions, OpTarget, SendResult};
 use api::quest_progress::EvidenceStamp;
 use api::snapshot::{GameSnapshot, ReadContext, SnapshotView, WorldTile};
@@ -497,13 +498,13 @@ pub(crate) fn tick_walk_guard<D: Driver>(
     driver: &mut D,
     snapshot: &GameSnapshot,
     guard: &mut Option<script::combat::WalkGuard>,
+    condition: Option<&BotCondition>,
     account: Option<&str>,
-    condition: Option<&api::condition::BotCondition>,
     cure_policy: script::survival::CurePoison,
 ) -> Option<GuardOp> {
     let guard = guard.as_mut()?;
     let view = guard_view(snapshot);
-    let op = guard.tick_with_policy(&view, condition, cure_policy)?;
+    let op = guard.tick(&view, condition, cure_policy)?;
     if apply_guard_op(driver, snapshot, &op, account) {
         guard.admitted(&op, &view);
     }
@@ -1122,14 +1123,16 @@ pub(crate) fn step_nav_bot<D: Driver>(
                         )
                     });
                     let guard_op = if bot.walk_guard_off.is_none() {
+                        let condition = bot
+                            .condition
+                            .current()
+                            .filter(|fact| fact.tick == snapshot.tick());
                         tick_walk_guard(
                             driver,
                             snapshot,
                             &mut bot.walk_guard,
+                            condition,
                             Some(name),
-                            bot.condition
-                                .current()
-                                .filter(|condition| condition.tick == snapshot.tick()),
                             script::survival::CurePoison::WhenNeeded,
                         )
                     } else {

@@ -826,11 +826,15 @@ where
                         target: None,
                     },
                 };
+                // The replay's own line already charges the poison term
+                // (`intended` above), so it passes no second fire here, or
+                // one fire would count twice.
                 if let Some(id) = policy::eat_choice(
                     &frame,
                     tables,
                     &schedule,
                     Some(intended / 2),
+                    0,
                     hp,
                     cap,
                     tick as u16,

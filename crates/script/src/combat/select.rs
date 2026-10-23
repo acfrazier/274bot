@@ -15,6 +15,19 @@ pub struct Lines {
     pub drink_gate: i32,
 }
 
+impl Lines {
+    /// Raise every line by one poison fire's damage. One fire can land on
+    /// any accessible tick, so a bot at a raised line can fall to the base
+    /// line before its next decision.
+    pub fn with_poison(self, poison_fire: i32) -> Lines {
+        Lines {
+            emergency: self.emergency.saturating_add(poison_fire),
+            eat: self.eat.saturating_add(poison_fire),
+            drink_gate: self.drink_gate.saturating_add(poison_fire),
+        }
+    }
+}
+
 /// Derived food/emergency/drink thresholds. Unknown danger uses the same
 /// conservative half-max threshold for all three, never a fabricated zero.
 pub fn lines(danger: Option<i32>, hp_max: i32) -> Lines {

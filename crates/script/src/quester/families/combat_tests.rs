@@ -1522,7 +1522,7 @@ fn prep_abort_without_engaged_actor_uses_heaviest_live_threat_and_eats_as_hp_fal
     });
     let first = with_step_context(&snapshot, &mut ledger, 13, |cx| {
         let view = cx.tick.cx.snapshot();
-        let op = guard.tick(&view);
+        let op = guard.tick(&view, cx.tick.cx.condition(), crate::survival::CurePoison::WhenNeeded);
         if let Some(op) = op.as_ref() {
             guard.admitted(op, &view);
         }
@@ -1560,7 +1560,7 @@ fn prep_abort_without_engaged_actor_uses_heaviest_live_threat_and_eats_as_hp_fal
         lobster.name.as_deref(),
     );
     let falling_hp = with_step_context(&snapshot, &mut ledger, 14, |cx| {
-        guard.tick(&cx.tick.cx.snapshot())
+        guard.tick(&cx.tick.cx.snapshot(), cx.tick.cx.condition(), crate::survival::CurePoison::WhenNeeded)
     });
     assert!(matches!(falling_hp, Some(GuardOp::Eat { .. })));
 }

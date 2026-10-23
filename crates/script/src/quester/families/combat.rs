@@ -925,7 +925,7 @@ impl NativeMachine for AbortHold {
         self.observe_threat_free(cx.evidence().tick, live_attacker);
         if let Some(guard) = self.guard.as_mut() {
             if let Some(op) =
-                guard.tick_with_policy(&snapshot, cx.condition(), CurePoison::WhenNeeded)
+                guard.tick(&snapshot, cx.condition(), CurePoison::WhenNeeded)
             {
                 if matches!(&op, GuardOp::Unprotectable { .. }) {
                     self.protect_unavailable = true;

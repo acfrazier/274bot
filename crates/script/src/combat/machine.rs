@@ -512,7 +512,13 @@ impl NativeMachine for Combat {
                 self.shield(&frame),
                 self.antifire(tick),
             );
-            let lines = select::lines(danger, arbiter::stat(&frame, 3).1);
+            let poison_fire = crate::survival::math::poison_fire(
+                cx.condition(),
+                &self.threats,
+                &self.tables,
+                tick,
+            );
+            let lines = select::lines(danger, arbiter::stat(&frame, 3).1).with_poison(poison_fire);
             let food_available = self.emergency_food_available(&frame, danger);
             self.safety_end(&frame, tick, danger, lines.emergency, food_available);
             self.counters.locked = self.counters.locked.saturating_add(1);
@@ -1816,7 +1822,14 @@ impl Combat {
             food.eat_delay_arg.is_some() && self.schedule.food_ready(food, tick)
         })
     }
-    fn eat(&self, plan: &mut TickPlan, frame: &Frame<'_>, tick: u16, danger: Option<i32>) {
+    fn eat(
+        &self,
+        plan: &mut TickPlan,
+        frame: &Frame<'_>,
+        tick: u16,
+        danger: Option<i32>,
+        poison_fire: i32,
+    ) {
         if plan.contains(RowKind::Eat)
             || self.pending_row(RowKind::Eat)
             || !self.request.allow.food
@@ -1825,9 +1838,16 @@ impl Combat {
             return;
         }
         let (hp, max) = arbiter::stat(frame, 3);
-        let Some(choice) =
-            policy::eat_choice(frame, &self.tables, &self.schedule, danger, hp, max, tick)
-        else {
+        let Some(choice) = policy::eat_choice(
+            frame,
+            &self.tables,
+            &self.schedule,
+            danger,
+            poison_fire,
+            hp,
+            max,
+            tick,
+        ) else {
             return;
         };
         let ordinary = choice.ordinary;
@@ -2014,7 +2034,9 @@ impl Combat {
             self.shield(frame),
             self.antifire(tick),
         );
-        let mut lines = select::lines(danger, hp_max);
+        let poison_fire =
+            crate::survival::math::poison_fire(cx.condition(), &self.threats, &self.tables, tick);
+        let mut lines = select::lines(danger, hp_max).with_poison(poison_fire);
         let food_available = self.emergency_food_available(frame, danger);
         self.safety_end(frame, tick, danger, lines.emergency, food_available);
         if self.cure_row(&mut plan, frame, tick, danger, lines.eat, cx) {
@@ -2040,10 +2062,10 @@ impl Combat {
             if plan.len == 0
                 && self.flags & TERMINAL_FOOD == 0
                 && hp > 0
-                && danger != Some(0)
+                && (danger != Some(0) || poison_fire > 0)
                 && hp <= lines.eat
             {
-                self.eat(&mut plan, frame, tick, danger);
+                self.eat(&mut plan, frame, tick, danger, poison_fire);
             }
             if plan.len == 0 && !self.pending_row(RowKind::Prayer) {
                 self.ranged_sweep(&mut plan, frame, tick, cx);
@@ -2071,8 +2093,8 @@ impl Combat {
                 }
                 return Ok(plan);
             }
-            if hp > 0 && danger != Some(0) && hp <= lines.eat {
-                self.eat(&mut plan, frame, tick, danger);
+            if hp > 0 && (danger != Some(0) || poison_fire > 0) && hp <= lines.eat {
+                self.eat(&mut plan, frame, tick, danger, poison_fire);
             }
             if plan.len == 0 && self.pending_walk.is_none() {
                 self.walk(tile, tick, cx)?;
@@ -2080,8 +2102,8 @@ impl Combat {
             return Ok(plan);
         }
         // Emergency uses the original danger, before free reducers project it.
-        if danger != Some(0) && hp <= lines.emergency {
-            self.eat(&mut plan, frame, tick, danger);
+        if (danger != Some(0) || poison_fire > 0) && hp <= lines.emergency {
+            self.eat(&mut plan, frame, tick, danger, poison_fire);
         }
         if plan.closed(&self.tables) {
             return Ok(plan);
@@ -2152,13 +2174,13 @@ impl Combat {
                     self.antifire(tick),
                     style,
                 );
-                lines = select::lines(danger, hp_max);
+                lines = select::lines(danger, hp_max).with_poison(poison_fire);
             }
         }
         let wanted_varp = wanted.map(|row| row.varp);
         let protection_wanted = wanted_varp.is_some();
-        if !plan.closed(&self.tables) && danger != Some(0) && hp <= lines.eat {
-            self.eat(&mut plan, frame, tick, danger);
+        if !plan.closed(&self.tables) && (danger != Some(0) || poison_fire > 0) && hp <= lines.eat {
+            self.eat(&mut plan, frame, tick, danger, poison_fire);
         }
         if plan.closed(&self.tables) {
             return Ok(plan);
