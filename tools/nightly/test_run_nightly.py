@@ -2300,6 +2300,110 @@ class Rs2b0tApiDriftTests(unittest.TestCase):
             self.assertEqual(info["status"], "unavailable")
             self.assertNotEqual(info["status"], "unchanged")
 
+    def test_quiet_lock_before_fetch_is_unavailable_and_starts_no_fetch(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            upstream = self.make_repo(root, "upstream")
+            frozen = self.commit_api(upstream, "api v1", "v1")
+            catalog = self.make_repo(root, "catalog")
+            self.commit_api(catalog, "catalog seed", "seed")
+            tree = self.make_tree(root, str(upstream), frozen)
+            lock = root / "MAC-QUIET.lock"
+            lock.write_text("quiet\n", encoding="utf-8")
+            old_lock = rn.QUIET_LOCK
+            old_reason = rn._quiet_lock_reason
+            rn.QUIET_LOCK = lock
+            rn._quiet_lock_reason = None
+            try:
+                with mock.patch.object(rn, "log", lambda _message: None):
+                    info = rn.check_rs2b0t_api_drift(tree, catalog)
+            finally:
+                rn.QUIET_LOCK = old_lock
+                rn._quiet_lock_reason = old_reason
+            self.assertEqual(info["status"], "unavailable")
+            self.assertIn("quiet lock held", info.get("reason") or "")
+            self.assertNotIn("unchanged", rn.api_drift_md_line(info))
+            fetched = subprocess.run(
+                ["git", "rev-parse", rn.RS2B0T_UPSTREAM_REF], cwd=catalog,
+                capture_output=True, text=True)
+            self.assertNotEqual(fetched.returncode, 0)
+
+    @unittest.skipIf(os.name == "nt", "the fake git uses a POSIX shell and sleep")
+    def test_fetch_timeout_kills_the_process_tree(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            upstream = self.make_repo(root, "upstream")
+            self.commit_api(upstream, "api v1", "v1")
+            catalog = self.make_repo(root, "catalog")
+            self.commit_api(catalog, "catalog seed", "seed")
+            real_git = shutil.which("git")
+            self.assertTrue(real_git)
+            pid_file = root / "grandchild.pid"
+            if pid_file.exists():
+                pid_file.unlink()
+            fake_bin = root / "fakebin"
+            fake_bin.mkdir()
+            fake_git = fake_bin / "git"
+            fake_git.write_text(
+                "#!/bin/sh\n"
+                'for a in "$@"; do if [ "$a" = "fetch" ]; then\n'
+                f'  sleep 60 &\n  echo $! > "{pid_file}"\n  wait\n  exit 0\nfi; done\n'
+                f'exec "{real_git}" "$@"\n',
+                encoding="utf-8")
+            fake_git.chmod(0o755)
+            old_path = os.environ.get("PATH", "")
+            os.environ["PATH"] = f"{fake_bin}{os.pathsep}{old_path}"
+            try:
+                with self.assertRaises(RuntimeError) as ctx:
+                    rn.fetch_upstream_main(catalog, str(upstream), timeout=2)
+            finally:
+                os.environ["PATH"] = old_path
+            self.assertIn("timed out", str(ctx.exception))
+            grandchild = int(pid_file.read_text(encoding="utf-8").strip())
+            time.sleep(0.5)
+            try:
+                with self.assertRaises(OSError):
+                    os.kill(grandchild, 0)
+            finally:
+                try:
+                    os.kill(grandchild, 9)
+                except OSError:
+                    pass
+
+    def test_git_log_failure_is_unavailable(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            upstream = self.make_repo(root, "upstream")
+            frozen = self.commit_api(upstream, "api v1", "v1")
+            self.commit_api(upstream, "api v2", "v2")
+            catalog = self.make_repo(root, "catalog")
+            self.commit_api(catalog, "catalog seed", "seed")
+            tree = self.make_tree(root, str(upstream), frozen)
+            real_git = shutil.which("git")
+            self.assertTrue(real_git)
+            fake_bin = root / "fakebin"
+            fake_bin.mkdir()
+            fake_git = fake_bin / "git"
+            fake_git.write_text(
+                "#!/bin/sh\n"
+                'for a in "$@"; do if [ "$a" = "log" ]; then\n'
+                '  echo "fake log failure: boom" >&2\n  exit 9\nfi; done\n'
+                f'exec "{real_git}" "$@"\n',
+                encoding="utf-8")
+            fake_git.chmod(0o755)
+            old_path = os.environ.get("PATH", "")
+            os.environ["PATH"] = f"{fake_bin}{os.pathsep}{old_path}"
+            try:
+                info = rn.check_rs2b0t_api_drift(tree, catalog)
+            finally:
+                os.environ["PATH"] = old_path
+            self.assertEqual(info["status"], "unavailable")
+            self.assertIn("9", info.get("reason") or "")
+            self.assertIn("boom", info.get("reason") or "")
+            line = rn.api_drift_md_line(info)
+            self.assertTrue(line.startswith("rs2b0t API: UNAVAILABLE ("))
+            self.assertNotIn("CHANGED", line)
+
     def test_run_branch_summary_carries_the_drift_line(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
