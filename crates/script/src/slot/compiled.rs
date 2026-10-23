@@ -407,7 +407,13 @@ pub(super) fn frame_context<'a>(
         budget: &mut runtime.budget,
         eligible: !ctx.compiled.hold,
         observed_walk_outcome_seq: runtime.observed_walk_outcome.seq(),
-        observed_walk_cancel_reason: runtime.observed_walk_outcome.cancel_reason(),
+        observed_walk_cancel_reason: if runtime.observed_walk_outcome.seq()
+            == runtime.takeover_consumed_seq
+        {
+            crate::native::WalkCancelReason::None
+        } else {
+            runtime.observed_walk_outcome.cancel_reason()
+        },
     }
 }
 

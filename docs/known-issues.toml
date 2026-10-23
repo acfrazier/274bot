@@ -233,9 +233,24 @@ text = """A script notices that you moved the bot yourself only while it is
   with a walk to its spot."""
 first = "0.2.0"
 listed = "0.2.5"
+fixed = "0.2.6"
 target = "none"
 severity = "medium"
-owner = "host lifecycle"
+owner = "T2.rest native family rewrites"
+
+[[item]]
+id = "manual-movement-in-place-limits"
+kind = "known-issue"
+area = "Scripts"
+text = """With "Pause script on manual movement" off, a script that acts in place
+  can continue after you move the bot yourself. This affects rs2b0t scripts
+  without a Gather or Combat session and built-in scripts other than Quester
+  fights. With the setting on, any running rs2b0t script pauses. A built-in
+  script pauses while it walks or acts, but not between actions."""
+first = "0.2.6"
+target = "none"
+severity = "medium"
+owner = "T2.rest native family rewrites"
 
 [[item]]
 id = "flaxrunner-spinner-bank-checks"

@@ -59,6 +59,105 @@ fn tick(slot: &mut SlotScript) {
 }
 
 #[test]
+fn resume_consumes_the_takeover_for_a_step_that_continues() {
+    struct InPlaceOwner;
+
+    impl crate::native::NativeMachine for InPlaceOwner {
+        type Args = ();
+        type Output = ();
+
+        fn begin(
+            _: (),
+            _: &mut crate::native::ActionContext<'_>,
+        ) -> Result<Self, crate::native::ActionError> {
+            Ok(Self)
+        }
+
+        fn poll(
+            &mut self,
+            _: &mut crate::native::ActionContext<'_>,
+        ) -> std::task::Poll<Result<(), crate::native::ActionError>> {
+            std::task::Poll::Pending
+        }
+    }
+
+    struct InPlaceStep {
+        watch: Option<crate::native::ManualTakeoverWatch>,
+        owner: Option<crate::native::ActionHandle<InPlaceOwner>>,
+        terminal_count: Arc<AtomicU64>,
+    }
+
+    impl Script for InPlaceStep {
+        fn tick(&mut self, tick: &mut NativeTick<'_>) -> Result<ScriptFlow, ScriptFailure> {
+            if self.watch.is_none() {
+                self.watch = Some(crate::native::ManualTakeoverWatch::begin(&tick.cx));
+            }
+            if self.owner.is_none() {
+                self.owner = Some(
+                    tick.actions
+                        .begin::<InPlaceOwner>((), &mut tick.cx)
+                        .unwrap(),
+                );
+            }
+            if self
+                .watch
+                .as_ref()
+                .expect("the step records its first frame")
+                .interrupted(&tick.cx)
+            {
+                self.terminal_count.fetch_add(1, Ordering::Relaxed);
+                Ok(ScriptFlow::Complete)
+            } else {
+                Ok(ScriptFlow::Continue)
+            }
+        }
+    }
+
+    let terminal_count = Arc::new(AtomicU64::new(0));
+    let mut slot = SlotScript::new();
+    slot.bind_incarnation(102_421);
+    slot.start_test_script(
+        Box::new(InPlaceStep {
+            watch: None,
+            owner: None,
+            terminal_count: Arc::clone(&terminal_count),
+        }),
+        Some(selected()),
+    )
+    .unwrap();
+
+    tick(&mut slot);
+    assert_eq!(slot.state(), RunState::Running);
+    assert!(
+        slot.live_native_owner(),
+        "the fixture owns a live native action"
+    );
+
+    assert!(slot.observe_walk_outcome(1, crate::native::WalkCancelReason::UserInput, None));
+    slot.pause();
+    assert_eq!(slot.state(), RunState::Paused);
+    slot.resume();
+    assert_eq!(slot.state(), RunState::Running);
+    tick(&mut slot);
+    assert_eq!(
+        terminal_count.load(Ordering::Relaxed),
+        0,
+        "Resume consumes the takeover before the continued step polls",
+    );
+
+    assert!(slot.observe_walk_outcome(2, crate::native::WalkCancelReason::UserInput, None));
+    tick(&mut slot);
+    assert_eq!(terminal_count.load(Ordering::Relaxed), 1);
+    assert_eq!(slot.state(), RunState::Idle);
+    tick(&mut slot);
+    assert_eq!(
+        terminal_count.load(Ordering::Relaxed),
+        1,
+        "the second takeover ends the step only once",
+    );
+}
+
+#[test]
 fn grinch_start_admits_one_compiled_gather_session_without_an_isolate() {
     let mut slot = SlotScript::new();
     slot.bind_incarnation(102_419);

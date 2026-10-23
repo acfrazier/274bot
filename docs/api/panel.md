@@ -658,8 +658,9 @@ groups): the durable walk permissions — teleports, wilderness
 and bank fetch (all default off) plus **Danger routing**, a full-width drop-down
 (Never, When survivable (the default), Always; When survivable shows the note
 `Not available yet: acts as Never.` under it and admits routes as Never) — **Pause script on
-manual movement** (default on; it also pauses the script behind a Gatherer or
-combat session), and debug paints / labels. A script allows danger zones for its
+manual movement** (default on; manual movement pauses any running rs2b0t
+script, or a built-in script with an active walk or native action), and debug
+paints / labels. A script allows danger zones for its
 own walks in its Script prefs Walk permissions; a single WalkTo walk is allowed
 with its own checkbox (below). WalkTo map holds **ask before baking terrain**.
 The Quest Paths folder loader (folder, reload) sits under the Quester card's
