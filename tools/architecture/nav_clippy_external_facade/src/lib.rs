@@ -9,27 +9,19 @@ pub type SendAlias = api::prot::Send;
 
 pub mod values {
     pub mod static_value {
-        pub static S: api::prot::Send = api::prot::Send {
-            prot: client::io::client_prot::ClientProt::NO_TIMEOUT,
-            value: 0,
-        };
+        pub static S: std::sync::LazyLock<api::prot::Send> =
+            std::sync::LazyLock::new(api::prot::Send::close_modal);
     }
 
     pub mod const_value {
-        pub const C: api::prot::Send = api::prot::Send {
-            prot: client::io::client_prot::ClientProt::NO_TIMEOUT,
-            value: 0,
-        };
+        pub const C: api::prot::PacketLength = api::prot::PacketLength::Fixed(0);
     }
 
     pub mod associated_value {
         pub struct S;
 
         impl S {
-            pub const C: api::prot::Send = api::prot::Send {
-                prot: client::io::client_prot::ClientProt::NO_TIMEOUT,
-                value: 0,
-            };
+            pub const C: api::prot::PacketLength = api::prot::PacketLength::Fixed(0);
         }
     }
 }
