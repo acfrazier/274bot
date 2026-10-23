@@ -315,8 +315,8 @@ fn boot_draws_the_fleet_without_map_demand() {
     let all = text(&rows);
     assert!(rows[0].contains("274bot"), "title: {all}");
     assert!(
-        all.contains("no profiles: nothing to mark or log in"),
-        "an empty fleet says there is nothing to act on: {all}"
+        all.contains("no profiles: press N to add one"),
+        "an empty fleet explains how to add a profile: {all}"
     );
     assert_eq!(
         app.map_catalogue_status,
