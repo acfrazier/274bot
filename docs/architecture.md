@@ -439,9 +439,10 @@ ordinary slice never grows or rehashes a complete proof.
 Both paths reserve the frontier's complete settle-cap capacity once, without
 initializing unused entries. Only live entries are written. The synchronous
 path still grows its record table on demand, but never reallocates the heap
-to follow that table. This avoids allocator copies of unused heap capacity
-that can commit pages the search never needs. Admission already charges
-the complete heap backing, not its observed committed pages.
+to follow that table. In the macOS probe, heap reallocation during table
+growth committed up to a whole new heap block, depending on earlier
+allocations. One reservation removes that reallocation. Admission already
+charges the complete heap backing, not its observed committed pages.
 
 The frontier starts as a binary min-heap. Only bounded-frontier eviction
 converts it to a min-max heap, in place and with one checkpoint per parent.

@@ -1196,8 +1196,10 @@ fn small_single_search_keeps_record_allocations_proportional_to_visited_tiles() 
     let collision = bake(40, 1, &[]);
     let graph = TransportGraph::default();
     let state = WorldState::empty();
-    // The heap reserves its bound without initializing entries. Keep the
-    // remaining peak within the prior 4 KiB visited-record allowance.
+    // The heap reserves its bound without initializing entries.
+    // The measured peak minus the heap reservation is 3,003 bytes.
+    // The 4 KiB allowance leaves 1,093 bytes (36.4%) headroom.
+    // The pre-fix peak was 3,186 bytes.
     let heap_reservation = super::resources::packed_search_storage_bound(super::NODE_BUDGET)
         .unwrap()
         - super::resources::packed_predecessor_storage_bound(super::NODE_BUDGET).unwrap();
@@ -1235,8 +1237,10 @@ fn small_first_goal_diagnosis_keeps_record_allocations_proportional_to_visited_t
     let graph = TransportGraph::default();
     let state = WorldState::empty();
     let mut result = None;
-    // Count the uninitialized heap reservation separately from the prior
-    // 2 KiB visited-record allowance (1,199 measured bytes before reservation).
+    // The heap reserves its bound without initializing entries.
+    // The measured peak minus the heap reservation is 1,175 bytes.
+    // The 2 KiB allowance leaves 873 bytes (74.3%) headroom.
+    // The pre-fix peak was 1,199 bytes.
     let heap_reservation = super::resources::packed_search_storage_bound(super::NODE_BUDGET)
         .unwrap()
         - super::resources::packed_predecessor_storage_bound(super::NODE_BUDGET).unwrap();
