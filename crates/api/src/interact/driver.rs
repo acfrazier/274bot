@@ -75,8 +75,9 @@ pub trait Driver {
     /// the value `interact_with_loc` matches via `type_code2`. Test
     /// drivers return `None` so [`op_loc`] falls back to the loc id.
     fn loc_typecode(&self, scene_x: i32, scene_z: i32) -> Option<i32>;
-    /// The outbound packet sink (ISAAC-encrypted writes only).
-    fn out(&mut self) -> &mut dyn Out;
+    /// Emit one typed packet using this driver's bound revision.
+    /// Required in every build, including opt-in test recorders.
+    fn send_packet(&mut self, packet: &Send) -> Result<(), crate::prot::PacketError>;
     /// Optional real-sink instrumentation, not an estimate from action costs.
     fn packet_checkpoint(&self) -> Option<Box<PacketCheckpoint>> {
         None
@@ -213,8 +214,8 @@ impl Driver for Client {
         (gd != 0).then_some(gd)
     }
 
-    fn out(&mut self) -> &mut dyn Out {
-        &mut self.out
+    fn send_packet(&mut self, packet: &Send) -> Result<(), crate::prot::PacketError> {
+        packet.write_for_revision(self.revision(), &mut self.out)
     }
 
     fn packet_checkpoint(&self) -> Option<Box<PacketCheckpoint>> {
@@ -411,15 +412,13 @@ pub fn op_loc<D: Driver + ?Sized>(driver: &mut D, x: i32, z: i32, loc_id: i32) -
 
 /// Close the open modal (`CLOSE_MODAL`).
 pub fn close_modal<D: Driver + ?Sized>(driver: &mut D) -> bool {
-    let revision = driver.revision();
-    let accepted = Send::close_modal().write_for_revision(revision, driver.out());
+    let accepted = driver.send_packet(&Send::close_modal()).is_ok();
     mark_input_activity(driver, accepted)
 }
 
 /// Answer a count dialog with `amount` (`RESUME_P_COUNTDIALOG`).
 pub fn answer_count<D: Driver + ?Sized>(driver: &mut D, amount: i32) -> bool {
-    let revision = driver.revision();
-    if !Send::count_dialog(amount).write_for_revision(revision, driver.out()) {
+    if driver.send_packet(&Send::count_dialog(amount)).is_err() {
         return false;
     }
     driver.count_dialog_submitted();

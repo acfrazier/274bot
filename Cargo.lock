@@ -171,6 +171,7 @@ name = "api"
 version = "0.2.5"
 dependencies = [
  "allocation-counter",
+ "api",
  "client",
  "flate2",
  "parking_lot",
