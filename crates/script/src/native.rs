@@ -637,6 +637,27 @@ pub struct ActionContext<'a> {
     /// The host's cancel reason for `observed_walk_outcome_seq`.
     pub(crate) observed_walk_cancel_reason: WalkCancelReason,
 }
+/// Track manual takeover outcomes relative to one native step's begin.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ManualTakeoverWatch {
+    baseline: u64,
+}
+
+impl ManualTakeoverWatch {
+    /// Capture the latest observed walk outcome when the step begins.
+    pub fn begin(cx: &ActionContext<'_>) -> Self {
+        Self {
+            baseline: cx.observed_walk_outcome_seq,
+        }
+    }
+
+    /// Return true when a later outcome carries the `UserInput` reason.
+    pub fn interrupted(&self, cx: &ActionContext<'_>) -> bool {
+        cx.observed_walk_outcome_seq != self.baseline
+            && cx.observed_walk_cancel_reason == WalkCancelReason::UserInput
+    }
+}
+
 /// Revocable owner identity; no caller can mint a lease.
 pub struct QuietReadLease {
     owner: Arc<owner::Owner>,
