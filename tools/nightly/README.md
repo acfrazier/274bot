@@ -180,8 +180,8 @@ Only some branches, cells or a different parallelism (as user `bot`, outside the
 ```sh
 cd /srv/nightly
 PATH=$HOME/.cargo/bin:$PATH python3 runner/tools/nightly/run_nightly.py \
-  --branch release/0.2.5 --cells shop_buyout_aubury,walk --parallel 2
-python3 runner/tools/nightly/run_nightly.py --list --tree trees/release-0.2.5   # cell list only
+  --branch release/0.2.6 --cells shop_buyout_aubury,walk --parallel 2
+python3 runner/tools/nightly/run_nightly.py --list --tree trees/release-0.2.6   # cell list only
 ```
 
 Settings can also go in `/etc/274bot-nightly.env` on the VM (read by the unit):
@@ -216,6 +216,8 @@ starts a private Engine Q in the clone. Both jobs' clients run in the guest.
 The host fetches each branch in `branches.conf` from `NIGHTLY_MAC_SOURCE_REPO`.
 It pins every branch to the fetched commit before it starts the guest jobs.
 The status file records the branch commits and the Tart session ID.
+Scheduled runs take both branches from that file: the latest release first,
+then `dev`. Do not pass `--branch` for the calendar launch.
 
 Run a hand night through the granted launcher:
 

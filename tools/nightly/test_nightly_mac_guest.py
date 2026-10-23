@@ -37,11 +37,18 @@ def make_source(root: Path) -> Path:
     git("add", ".", cwd=source)
     git("-c", "user.name=nightly-test", "-c", "user.email=nightly@example.invalid",
         "commit", "-qm", "initial", cwd=source)
-    git("branch", "release/0.2.5", cwd=source)
+    git("branch", "release/0.2.6", cwd=source)
     return source
 
 
 class SourcePinTests(unittest.TestCase):
+    def test_defaults_to_configured_release_then_dev(self):
+        self.assertIsNone(nightly.parse_args([]).branch)
+        self.assertEqual(
+            nightly.read_branches(HERE / "branches.conf", None),
+            ["release/0.2.6", "dev"],
+        )
+
     def test_pins_each_branch_to_the_fetched_commit(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -49,9 +56,9 @@ class SourcePinTests(unittest.TestCase):
             input_root = root / "input"
             input_root.mkdir()
 
-            pins = nightly.pin_sources(str(source), ["release/0.2.5", "dev"], input_root)
+            pins = nightly.pin_sources(str(source), ["release/0.2.6", "dev"], input_root)
 
-            self.assertEqual(set(pins), {"release/0.2.5", "dev"})
+            self.assertEqual(set(pins), {"release/0.2.6", "dev"})
             for branch, commit in pins.items():
                 self.assertEqual(
                     git("--git-dir", str(input_root / "source.git"), "rev-parse",
@@ -364,7 +371,7 @@ class NightlyOrchestrationTests(unittest.TestCase):
         (runner / "tools/nightly").mkdir(parents=True)
         for name in ("run_nightly.py", "nightly-mac-guest.py"):
             (runner / "tools/nightly" / name).write_text("# test runner\n", encoding="utf-8")
-        (runner / "tools/nightly/branches.conf").write_text("release/0.2.5\ndev\n", encoding="utf-8")
+        (runner / "tools/nightly/branches.conf").write_text("release/0.2.6\ndev\n", encoding="utf-8")
         catalog = root / "catalog"
         catalog.mkdir()
         for engine, script in (("engine-a", "start-289.sh"), ("engine-q", "start-289q.sh")):
@@ -409,7 +416,8 @@ class NightlyOrchestrationTests(unittest.TestCase):
                 return vm
 
             controller = nightly.NightlyOrchestrator(
-                settings, ["release/0.2.5", "dev"], vm_factory=vm_factory
+                settings, nightly.read_branches(settings.runner / "tools/nightly/branches.conf", None),
+                vm_factory=vm_factory
             )
             self.assertEqual(controller.run(), 0)
             vm = created[0]
@@ -420,7 +428,7 @@ class NightlyOrchestrationTests(unittest.TestCase):
             self.assertEqual(len(vm.run_calls), 5)
             self.assertEqual(
                 [key for _command, key in vm.run_calls],
-                ["bootstrap", "release-0.2.5-main", "release-0.2.5-quest", "dev-main", "dev-quest"],
+                ["bootstrap", "release-0.2.6-main", "release-0.2.6-quest", "dev-main", "dev-quest"],
             )
             jobs = {key: command for command, key in vm.run_calls[1:]}
             job_env = {}
@@ -431,13 +439,13 @@ class NightlyOrchestrationTests(unittest.TestCase):
                 expected_mode = "remote" if key.endswith("-main") else "local"
                 self.assertEqual(env["NIGHTLY_ENGINE"], expected_mode)
                 self.assertEqual(env["NIGHTLY_FRESH_TREES"], "1")
-            self.assertIn("engine-pristine", job_env["release-0.2.5-main"]["NIGHTLY_ENGINE_PRISTINE"])
-            self.assertTrue(job_env["release-0.2.5-main"]["NIGHTLY_ISOHOME"].endswith("/toolchains/bin/isohome"))
-            self.assertIn("engine-q-pristine", job_env["release-0.2.5-quest"]["NIGHTLY_ENGINE_PRISTINE"])
-            self.assertEqual(job_env["release-0.2.5-main"]["NIGHTLY_GAME_PORT"], "44594")
-            self.assertEqual(job_env["release-0.2.5-main"]["NIGHTLY_HTTP_PORT"], "1080")
-            self.assertEqual(job_env["release-0.2.5-quest"]["NIGHTLY_GAME_PORT"], "44694")
-            self.assertEqual(job_env["release-0.2.5-quest"]["NIGHTLY_HTTP_PORT"], "1180")
+            self.assertIn("engine-pristine", job_env["release-0.2.6-main"]["NIGHTLY_ENGINE_PRISTINE"])
+            self.assertTrue(job_env["release-0.2.6-main"]["NIGHTLY_ISOHOME"].endswith("/toolchains/bin/isohome"))
+            self.assertIn("engine-q-pristine", job_env["release-0.2.6-quest"]["NIGHTLY_ENGINE_PRISTINE"])
+            self.assertEqual(job_env["release-0.2.6-main"]["NIGHTLY_GAME_PORT"], "44594")
+            self.assertEqual(job_env["release-0.2.6-main"]["NIGHTLY_HTTP_PORT"], "1080")
+            self.assertEqual(job_env["release-0.2.6-quest"]["NIGHTLY_GAME_PORT"], "44694")
+            self.assertEqual(job_env["release-0.2.6-quest"]["NIGHTLY_HTTP_PORT"], "1180")
             run = settings.runs / "2026-10-23-dev-abcdef123-mac"
             self.assertEqual((run / "summary.json").read_text(encoding="utf-8"), '{"result":"PASS"}\n')
             self.assertFalse(settings.lock_dir.exists())
