@@ -365,7 +365,7 @@ The synchronous GPU workspace wait remains a T4.4 limitation.
 | `paint.rs` | nav-paint buffers | no imgui, no client draw |
 | `quest_gates.rs` | quest-stage gates on transport edges | typed gates over selected progress signals |
 | `router.rs` | world-space Dijkstra | exact-coordinate compact storage, shared synchronous/cooperative kernel, total-ticks cost and gated edges |
-| `router/grid.rs` | legacy grid A-star | `find_on_grid` for `nav-executor` `Traveller` and harness |
+| `router/grid.rs` | compatibility step-grid A-star | retained for fixture tests; production travel uses the collision+transport router |
 | `router/resources.rs` | resource labels on walk nodes | change only at paid hops |
 | `tile.rs` | tile coords and distance | x, z, level |
 | `transport.rs` | transport graph orchestration | types, ordering, shared cost and geometry |
@@ -397,7 +397,6 @@ The synchronous GPU workspace wait remains a T4.4 limitation.
 | `traveller/walk.rs` | walk-hop execution and reporting | walk targeting |
 | `traveller/transport_hop.rs` | transport-hop execution | approach and door execution |
 | `traveller/npc_hop.rs` | NPC-backed Boat/Npc/Glider approach and recovery | live scene operability, reachable-cost selection, bounded retry |
-| `traveller/legacy_grid.rs` | legacy-grid execution | via the stable grid API |
 
 #### Shared bounded routing
 
