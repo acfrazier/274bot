@@ -486,6 +486,9 @@ impl From<PacketError> for ServerOrderedError {
 }
 
 /// One exact receipt for a server-ordered content or advanced request.
+///
+/// Receipt contract: `tick-manipulation-spec-r4.md`, section 3.1.
+/// Run and session identity stay in the completion envelope.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ServerOrderedDispatch {
     /// The one request identity used by the owner and completion envelope.
