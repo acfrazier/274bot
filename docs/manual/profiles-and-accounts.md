@@ -51,12 +51,19 @@ printf '%s\n' "$PASS" | ./tui-play --profile rs2b2t --vault-pass-stdin
 Without a terminal and without that flag, `tui-play` stops and prints
 `no terminal to ask for the vault passphrase on; pipe it in and pass --vault-pass-stdin`.
 
-A new vault holds no profile, so `tui-play` stops after it creates the vault. See
+A new vault holds no profile. The terminal app then opens its **New profile**
+form so that you can add the first one. See
 [Use the terminal app instead](install-and-first-run.md#use-the-terminal-app-instead).
 
 ## Add, change or remove a profile
 
-You do this in the panel. The terminal app has no profile editor.
+You change or remove a profile in the panel. To add one, you can also use
+the terminal app: press `N` in the Fleet pane (or run **New profile** from
+the command palette), type the username and the account's own password,
+then press Enter to save. Its other options take their defaults. Change
+them later in the panel.
+
+In the panel:
 
 1. Click **Profiles**. The window lists your profiles under **Vault profiles**.
 2. To add a profile, click **New profile**. To change one, click **Edit** next to
@@ -92,9 +99,9 @@ On a saved profile, **Log in automatically**, **random events**, **Policies**,
 
 - **Log in** logs in the selected bot. It is dimmed until the vault is unlocked
   and a profile is selected.
-- **Logout** sits next to it. It works while the bot is logged in, waiting in the
-  login queue, or stopped by the repeat guard (below). After **Logout**, the bot
-  stays logged out until you click **Log in**.
+- **Log out** sits next to it. It works while the bot is logged in, waiting in
+  the login queue, or stopped by the repeat guard (below). After **Log out**,
+  the bot stays logged out until you click **Log in**.
 - For many bots, use the **Log in** and **Log out** buttons of the **Fleet**
   toolbar. They act on the marked bots. With no marks, they act on every loaded
   bot that the filter shows. The toolbar then lists those bots by name and waits

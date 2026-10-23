@@ -533,8 +533,8 @@ and **drag-reorderable** (order in `panel-ui.json`). Default order:
 is drawn after them and is not reorderable.
 Login / WalkTo / config stay at the top.
 
-**Log in** / **Logout** sit above WalkTo (always shown; disabled while
-the vault is locked or no profile is focused. Logout also needs the
+**Log in** / **Log out** sit above WalkTo (always shown; disabled while
+the vault is locked or no profile is focused. Log out also needs the
 focused slot ingame). WalkTo is full-width under that row, then
 **General config** / **Nav config** / **Loadouts** (wraps so labels are
 not clipped). **Profile** is below those buttons and above **debug**
