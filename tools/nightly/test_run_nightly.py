@@ -23,6 +23,7 @@ Run on Linux or Windows with the standard library only:
 """
 
 import json
+import hashlib
 import gc
 import os
 import shutil
@@ -887,8 +888,77 @@ class ReceiptTests(unittest.TestCase):
         self.assertIn("runner cap 1200s reached", result.first_failure)
 
 
+class EnginePreflightTests(unittest.TestCase):
+    EXPECTED = "5f8a00094e8eb02dd00d703e99a073071d0349a8731f43dffa0bdaae36fa6c69"
+    RESPONSE = bytes.fromhex(
+        "00000000de5b33456026f8fe075503099a13636eca2717bd368f17921b1fb6b2a7129379cbff3b0d"
+    )
+
+    def run_check(self, *, body=None, error=None):
+        opener = mock.Mock()
+        if error is None:
+            response = mock.MagicMock()
+            response.__enter__.return_value = response
+            response.read.return_value = body
+            opener.open.return_value = response
+        else:
+            opener.open.side_effect = error
+
+        with mock.patch.object(rn.urllib.request, "build_opener", return_value=opener), \
+                mock.patch.object(rn.socket, "create_connection") as create_connection, \
+                mock.patch.object(rn, "ENGINE_HOST", "127.0.0.1"), \
+                mock.patch.object(rn, "GAME_PORT", 47594), \
+                mock.patch.object(rn, "HTTP_PORT", 3080), \
+                mock.patch.object(rn, "ENGINE_LABEL", "Engine B"), \
+                mock.patch.object(rn, "ENGINE_CRC_SHA256", self.EXPECTED):
+            game_socket = mock.Mock()
+            create_connection.return_value = game_socket
+            result = rn.engine_check()
+        return result + (create_connection, game_socket, opener)
+
+    def test_approved_engine_b_identity_passes(self):
+        self.assertEqual(hashlib.sha256(self.RESPONSE).hexdigest(), self.EXPECTED)
+        ok, detail, connect, game_socket, opener = self.run_check(body=self.RESPONSE)
+        self.assertTrue(ok)
+        self.assertIn("Engine B at 127.0.0.1:47594/3080", detail)
+        self.assertIn("sha256 5f8a00094e8eb02d", detail)
+        opener.open.assert_called_once_with("http://127.0.0.1:3080/crc", timeout=15)
+        connect.assert_called_once_with(("127.0.0.1", 47594), timeout=15)
+        game_socket.close.assert_called_once()
+
+    def test_wrong_digest_is_an_identity_mismatch(self):
+        body = self.RESPONSE[:-1] + bytes((self.RESPONSE[-1] ^ 1,))
+        ok, detail, connect, _game_socket, _opener = self.run_check(body=body)
+        self.assertFalse(ok)
+        self.assertIn("identity mismatch", detail)
+        with mock.patch.object(rn, "ENGINE_LABEL", "Engine B"):
+            reason = rn.remote_engine_failure(detail)
+        self.assertIn("Engine B identity mismatch", reason)
+        self.assertNotIn("not reachable", reason)
+        connect.assert_not_called()
+
+    def test_wrong_length_is_an_identity_mismatch(self):
+        ok, detail, connect, _game_socket, _opener = self.run_check(body=self.RESPONSE[:-1])
+        self.assertFalse(ok)
+        self.assertIn("identity mismatch", detail)
+        self.assertIn("39 bytes", detail)
+        connect.assert_not_called()
+
+    def test_connection_failure_is_not_an_identity_mismatch(self):
+        ok, detail, connect, _game_socket, _opener = self.run_check(
+            error=OSError("connection refused")
+        )
+        self.assertFalse(ok)
+        self.assertIn("connection refused", detail)
+        self.assertNotIn("identity mismatch", detail)
+        with mock.patch.object(rn, "ENGINE_LABEL", "Engine B"):
+            reason = rn.remote_engine_failure(detail)
+        self.assertEqual(reason, f"Engine B not reachable: {detail}")
+        connect.assert_not_called()
+
+
 class RevisionDefaultsTests(unittest.TestCase):
-    def test_289_defaults_are_the_values_the_script_always_used(self):
+    def test_289_defaults_keep_non_windows_identity_and_pin_windows_engine_b(self):
         linux = rn.revision_defaults("289", False)
         self.assertEqual(linux["profile"], "local-289")
         self.assertEqual(linux["unpack_dir"], "unpack-289")
@@ -896,7 +966,17 @@ class RevisionDefaultsTests(unittest.TestCase):
         self.assertEqual(
             linux["engine_crc_sha256"],
             "687190c8ef08bb94a1422f4262d62bb7a76a55dfe0634ea43f0e63e0235dc623")
-        self.assertEqual(rn.revision_defaults("289", True)["run_suffix"], "-windows")
+        windows = rn.revision_defaults("289", True)
+        self.assertEqual(windows["run_suffix"], "-windows")
+        self.assertEqual(
+            windows["engine_crc_sha256"],
+            "5f8a00094e8eb02dd00d703e99a073071d0349a8731f43dffa0bdaae36fa6c69")
+        for job in ("main", "quest"):
+            with self.subTest(job=job):
+                settings = rn.job_defaults(job, True, "289", Path("C:/nightly"))
+                self.assertEqual(settings["label"], "Engine B")
+                self.assertEqual(settings["game_port"], 47594)
+                self.assertEqual(settings["http_port"], 3080)
 
     def test_274_defaults_select_the_274_lane(self):
         linux = rn.revision_defaults("274", False)
