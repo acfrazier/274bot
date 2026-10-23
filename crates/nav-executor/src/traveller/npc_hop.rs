@@ -12,6 +12,17 @@ pub(super) struct NpcRecovery {
     pub detail: Option<&'static str>,
 }
 
+fn npc_hop_block_reason(detail: &'static str) -> NpcHopBlockReason {
+    match detail {
+        "tracked target missing" => NpcHopBlockReason::TrackedTargetMissing,
+        "no reachable operable stand" => NpcHopBlockReason::NoReachableOperableStand,
+        "approach route refused" => NpcHopBlockReason::ApproachRouteRefused,
+        "reach failure" => NpcHopBlockReason::ReachFailure,
+        "unrecognized journey dialogue" => NpcHopBlockReason::UnrecognizedJourneyDialogue,
+        _ => unreachable!("every NPC hop recovery detail has a typed block reason"),
+    }
+}
+
 fn cardinal_stand(snapshot: &GameSnapshot, npc: &NpcView, stand: WorldTile) -> bool {
     if stand.level != npc.network.level || !scene_standable(snapshot, stand) {
         return false;
@@ -158,17 +169,21 @@ impl FollowRun {
             unreachable!()
         };
         let missing = find_transport_target_instance(snapshot, edge, hop.npc_index).is_none();
-        if let Some(detail) = missing
-            .then_some("tracked target missing")
-            .or(hop.npc_recovery.detail)
-        {
+        let reason = if missing {
+            Some(NpcHopBlockReason::TrackedTargetMissing)
+        } else {
+            hop.npc_recovery.detail.map(npc_hop_block_reason)
+        };
+        if let Some(reason) = reason {
             TravelOutcome::Blocked {
                 at: here(snapshot),
                 leg: self.leg_index,
-                detail: format!(
-                    "npc hop {}: {detail}; {} attempts, leg budget {} ticks exhausted",
-                    edge.loc_id, hop.tries, self.budget
-                ),
+                why: BlockedWhy::NpcHopExpired {
+                    loc_id: edge.loc_id,
+                    reason,
+                    attempts: hop.tries,
+                    budget: self.budget,
+                },
             }
         } else {
             TravelOutcome::Stalled {
@@ -227,7 +242,9 @@ impl FollowRun {
         hop.npc_index = Some(npc.index);
         hop.npc_recovery.detail = None;
         if here != stand || !npc_interaction_ready(snapshot, here, npc) {
-            let old = hop.approach.as_mut().unwrap();
+            let Some(old) = hop.approach.as_mut() else {
+                unreachable!("NPC approach selection requires its current approach state");
+            };
             if old.tile == stand && old.at == npc.network && !old.retry_pending {
                 return Poll::Watching;
             }
@@ -300,10 +317,10 @@ impl FollowRun {
             return Poll::Terminal(TravelOutcome::Blocked {
                 at: here(snapshot),
                 leg: self.leg_index,
-                detail: format!(
-                    "npc hop {} gave up after {} attempts: reach failure",
-                    edge.loc_id, hop.tries
-                ),
+                why: BlockedWhy::NpcReachRetriesExhausted {
+                    loc_id: edge.loc_id,
+                    attempts: hop.tries,
+                },
             });
         }
         if let Some(index) = hop.npc_index {

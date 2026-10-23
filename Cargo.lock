@@ -2717,6 +2717,7 @@ dependencies = [
  "api",
  "client",
  "nav",
+ "thiserror 2.0.20",
 ]
 
 [[package]]

@@ -955,6 +955,15 @@ progress and `Some(TravelOutcome)` at a terminal state
 call. `TravelOptions { close_enough, budget_ticks_per_hop, max_hops,
 teleports, edges, quest_evidence, on_leg, on_event }`.
 
+`Blocked { at, leg, why }` carries a typed `nav_executor::BlockedWhy`.
+Each reason keeps the previous diagnostic text through `Display`.
+Consumers match the reason variant when they need a decision, rather than
+parse its text.
+
+The shared `host_play::WalkArm` exposes `current_aim()` and `essence()` for
+overlay and route-planning reads. Its `traveller` field remains public for
+existing struct literals, but readers use these accessors.
+
 Arrival radius is the Chebyshev distance treated as arrived at a hop
 target. `close_enough` defaults to 2. Legs with an exact planned
 `takeoff` settle at radius 0 on the planned landing; teleport hops accept

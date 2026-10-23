@@ -93,7 +93,7 @@ impl FrameContext<'_> {
         match arm {
             Some(arm) => {
                 let arm = arm.lock().unwrap();
-                (arm.route.as_deref().cloned(), arm.traveller.current_aim())
+                (arm.route.as_deref().cloned(), arm.current_aim())
             }
             None => (None, None),
         }

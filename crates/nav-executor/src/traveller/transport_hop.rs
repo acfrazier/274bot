@@ -107,16 +107,6 @@ pub(super) fn uses_held_on_loc(edge: &TransportEdge) -> bool {
     edge.option == 0 && !edge.item_req.is_empty()
 }
 
-/// The block message's target word: "npc" for NPC-backed edges, "loc" for
-/// every loc-targeted kind.
-pub(super) fn target_word(edge: &TransportEdge) -> &'static str {
-    if npc_backed(edge) {
-        "npc"
-    } else {
-        "loc"
-    }
-}
-
 /// Dock sailors / cart drivers: `loc_id` is the npc.pack type. Boat was
 /// packed as `TransportKind::Boat` with that id; looking it up as a loc
 /// (Port Sarim seaman 378) is why live Follow died on the pier.
@@ -196,25 +186,28 @@ pub(super) fn current_web_action<'a>(
     snapshot: &GameSnapshot,
     edge: &TransportEdge,
     edges: Option<&'a [TransportEdge]>,
-) -> Result<&'a TransportEdge, &'static str> {
-    let edges = edges.ok_or("the packed transport edge list is unavailable")?;
+) -> Result<&'a TransportEdge, WebCutFailure> {
+    let edges = edges.ok_or(WebCutFailure::PackedTransportEdgesUnavailable)?;
     let state = nav::world_state::WorldState::from_snapshot(snapshot);
     nav::executor_adapter::select_web_action(edges.iter(), edge, |candidate| {
         state.allows(candidate)
     })
-    .ok_or("neither a worn slash blade nor a carried knife qualifies")
+    .ok_or(WebCutFailure::NoQualifyingSlashTool)
 }
 
 pub(super) fn web_action_failure(
     at: WorldTile,
     leg: usize,
     edge: &TransportEdge,
-    reason: &str,
+    reason: WebCutFailure,
 ) -> TravelOutcome {
     TravelOutcome::Blocked {
         at,
         leg,
-        detail: format!("slashable web loc {} cannot be cut: {reason}", edge.loc_id),
+        why: BlockedWhy::SlashableWebCannotBeCut {
+            loc_id: edge.loc_id,
+            reason,
+        },
     }
 }
 
@@ -515,10 +508,9 @@ impl FollowRun {
                         return Poll::Terminal(TravelOutcome::Blocked {
                             at: here,
                             leg: self.leg_index,
-                            detail: format!(
-                                "slashable web loc {} disappeared before retrying its observed cut failure",
-                                edge.loc_id
-                            ),
+                            why: BlockedWhy::SlashableWebMissingOnRetry {
+                                loc_id: edge.loc_id,
+                            },
                         });
                     }
                     self.transport = Some(hop);
@@ -654,14 +646,11 @@ impl FollowRun {
                         Poll::Terminal(TravelOutcome::Blocked {
                             at: here,
                             leg: self.leg_index,
-                            detail: format!(
-                                "transport {} {} is not within 3 tiles of ({}, {}, {}) in the loaded scene",
-                                target_word(&edge),
-                                edge.loc_id,
-                                edge.at.x,
-                                edge.at.z,
-                                edge.at.level
-                            ),
+                            why: BlockedWhy::TransportTargetOutOfRange {
+                                kind: edge.kind,
+                                loc_id: edge.loc_id,
+                                at: edge.at,
+                            },
                         })
                     } else {
                         self.transport = Some(hop);
@@ -753,12 +742,12 @@ impl FollowRun {
                         options.edges,
                         snapshot.chat_options(),
                     ) {
-                        if let Some(detail) = door_hop_choice_blocked(&edge, snapshot, choice) {
+                        if let Some(why) = door_hop_choice_blocked(&edge, snapshot, choice) {
                             fire_leg(options, &hop.leg, LegPhase::Failed);
                             return Poll::Terminal(TravelOutcome::Blocked {
                                 at: here,
                                 leg: self.leg_index,
-                                detail,
+                                why,
                             });
                         }
                         match ix.answer_choice(choice) {
@@ -785,7 +774,7 @@ impl FollowRun {
                         return Poll::Terminal(TravelOutcome::Blocked {
                             at: here,
                             leg: self.leg_index,
-                            detail: "unrecognized journey dialogue".into(),
+                            why: BlockedWhy::UnrecognizedJourneyDialogue,
                         });
                     } else {
                         hop.npc_recovery.detail = Some("unrecognized journey dialogue");
@@ -1253,10 +1242,10 @@ impl FollowRun {
                     return Some(TravelOutcome::Blocked {
                         at: here,
                         leg: self.leg_index,
-                        detail: format!(
-                            "troll door loc {} has no standable tile within 1 of {tile:?} in the loaded scene",
-                            edge.loc_id
-                        ),
+                        why: BlockedWhy::TrollDoorApproachUnavailable {
+                            loc_id: edge.loc_id,
+                            tile,
+                        },
                     });
                 }
                 return None;
@@ -1284,10 +1273,10 @@ impl FollowRun {
                 return Some(TravelOutcome::Blocked {
                     at: here,
                     leg: self.leg_index,
-                    detail: format!(
-                        "troll door loc {} is not at {tile:?} in the loaded scene",
-                        edge.loc_id
-                    ),
+                    why: BlockedWhy::TrollDoorMissing {
+                        loc_id: edge.loc_id,
+                        tile,
+                    },
                 });
             }
             return None;

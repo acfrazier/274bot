@@ -2,7 +2,10 @@
 
 mod traveller;
 
-pub use traveller::{HopFailure, LegPhase, TravelEvent, TravelOptions, TravelOutcome, Traveller};
+pub use traveller::{
+    BlockedWhy, HopFailure, LegPhase, NpcHopBlockReason, TravelEvent, TravelLegCallback,
+    TravelOptions, TravelOutcome, Traveller, WebCutFailure,
+};
 
 #[cfg(test)]
 mod planner_surface_tests;

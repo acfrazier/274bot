@@ -23,6 +23,10 @@ use super::records::{
 use super::{MapError, Rows, Text};
 use api::work::{Checkpoint, StepContext, WorkCharge, WorkPhase};
 use client::config::{LocType, NpcType};
+#[expect(
+    clippy::disallowed_types,
+    reason = "read-only revision value for cache loading does not perform an action"
+)]
 use client::io::ClientRevision;
 use client::map_cache::MAP_SQUARE_SIZE;
 use client::map_cache::{LocPlacement, MapIndexEntry, MAP_PLANES};

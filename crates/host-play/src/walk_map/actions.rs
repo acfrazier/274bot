@@ -923,7 +923,7 @@ fn blocking_zones_for_walk(
         .lock()
         .unwrap()
         .get(slot.name)
-        .and_then(|arm| arm.lock().unwrap().traveller.essence());
+        .and_then(|arm| arm.lock().unwrap().essence());
     let from = world_tile(origin);
     let destination = world_tile(destination);
     let direct = nav::router::find_blocking_zones(
