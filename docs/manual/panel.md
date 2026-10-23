@@ -17,7 +17,7 @@ bot, and **Logout** disconnects it. **WalkTo** toggles the map: an open map
 closes. **Fleet** opens the wide view of all your bots. Below them sit
 **General config**, **Nav config**, **Loadouts** and **Script prefs**, then
 the **Profiles** button. **MultiBox** and **Grid** toggle the many-bots views.
-+
+
 Each of **Fleet**, **Log**, **General config**, **Nav config**,
 **Loadouts**, **Script prefs** and **Profiles** opens its window. If the
 window is already open, the button brings it to the front.
@@ -31,13 +31,13 @@ Click a bot's name in the **Fleet** window to focus it. With one bot
 loaded, it is already focused.
 
 ## Send one bot on foot
-+
+
 1. If the map is closed, click **WalkTo** to open it. Pick a tile.
 2. Click **Send** to choose who walks. The Send window offers **Focused bot**
    and **Group**; leave it on **Focused bot** for one bot.
 3. Click **Walk** to walk the focused bot there. The map closes and the bot
    walks.
-+
+
 The footer also holds **Route through danger zones**. Tick it to allow one
 walk past dangerous monsters. It starts unticked each time **WalkTo**
 opens. While **Danger routing** is **Always**, the tick is replaced by a
