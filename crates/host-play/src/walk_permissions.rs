@@ -932,12 +932,12 @@ mod tests {
         .preferences()
     }
 
-    struct HeldHydration {
+    struct HeldGate {
         release: Option<std::sync::mpsc::Sender<()>>,
         released: bool,
     }
 
-    impl HeldHydration {
+    impl HeldGate {
         fn release(&mut self) {
             if let Some(release) = self.release.take() {
                 self.released = true;
@@ -946,7 +946,7 @@ mod tests {
         }
     }
 
-    impl Drop for HeldHydration {
+    impl Drop for HeldGate {
         fn drop(&mut self) {
             self.release();
         }
@@ -957,7 +957,7 @@ mod tests {
     ) -> (
         Arc<super::super::local_state::LocalStateService>,
         super::super::local_state::Preferences,
-        HeldHydration,
+        HeldGate,
     ) {
         use std::sync::mpsc;
         use std::time::Duration;
@@ -974,19 +974,19 @@ mod tests {
                 super::super::local_state::StateRoot::new(scratch.home.join(".274bot")),
                 read_stall,
             );
-        let held = HeldHydration {
+        let held = HeldGate {
             release: Some(release_tx),
             released: false,
         };
-        entered_rx
-            .recv_timeout(Duration::from_secs(5))
-            .expect("the initial hydration read reached its gate");
+        entered_rx.recv_timeout(Duration::from_secs(5)).expect(
+            "loadouts hydration is held; preferences hydration queues behind it",
+        );
         let preferences = service.preferences();
         (service, preferences, held)
     }
 
     fn completes_before_release<T: Send + 'static>(
-        held: &mut HeldHydration,
+        held: &mut HeldGate,
         operation: impl FnOnce() -> T + Send + 'static,
     ) -> T {
         use std::sync::mpsc;
@@ -1003,12 +1003,12 @@ mod tests {
             Err(error) => {
                 held.release();
                 let _ = worker.join();
-                panic!("walk permission path waited for hydration release: {error}");
+                panic!("walk permission path waited for the held gate: {error}");
             }
         };
         assert!(
             !held.released,
-            "the walk permission path must finish before hydration release"
+            "the walk permission path must finish before the held gate releases"
         );
         worker.join().expect("walk permission path worker panicked");
         result
@@ -1025,7 +1025,7 @@ mod tests {
     }
 
     fn another_bot_acquires_navs_before_release(
-        held: &mut HeldHydration,
+        held: &mut HeldGate,
         navs: &Arc<Mutex<HashMap<String, super::super::NavBot>>>,
     ) {
         use std::sync::mpsc;
@@ -1043,16 +1043,144 @@ mod tests {
             Ok(()) => {
                 assert!(
                     !held.released,
-                    "another bot must acquire navs before hydration release"
+                    "another bot must acquire navs before the held gate releases"
                 );
                 worker.join().expect("navs acquisition worker panicked");
             }
             Err(error) => {
                 held.release();
                 let _ = worker.join();
-                panic!("another bot could not acquire navs during hydration: {error}");
+                panic!("another bot could not acquire navs while the gate was held: {error}");
             }
         }
+    }
+    #[test]
+    fn compiled_options_finishes_before_stale_readback_behind_held_write() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        let scratch = script::IsolatedEnv::enter("compiled-options-stale-write");
+        let root = super::super::local_state::StateRoot::new(scratch.home.join(".274bot"));
+        std::fs::create_dir_all(root.path()).expect("create the test preference directory");
+        let stored_walk = serde_json::json!({
+            "allow_teleports": true,
+            "allow_wilderness": true,
+            "allow_bank_fetch": true,
+            "allow_danger_zones": true,
+            "survivable_routing": false,
+        });
+        let bytes = serde_json::to_vec(&serde_json::json!({
+            "nav": stored_walk.clone(),
+        }))
+        .expect("encode known walk preferences");
+        vault::write_private_file(&root.preferences_file(), &bytes)
+            .expect("write known non-default walk preferences");
+        let service = super::super::local_state::LocalStateService::open_process(root);
+        let preferences = service.preferences();
+        preferences
+            .reload()
+            .expect("hydrate the known walk preferences");
+        let expected_globals = WalkGlobals {
+            allow_teleports: true,
+            allow_wilderness: true,
+            allow_bank_fetch: true,
+            allow_danger_zones: true,
+            survivable_routing: false,
+        };
+        assert_eq!(
+            preferences.walk_globals().expect("read hydrated walk globals"),
+            expected_globals
+        );
+
+        let (entered_tx, entered_rx) = mpsc::sync_channel(1);
+        let (release_tx, release_rx) = mpsc::channel();
+        let release_rx = Mutex::new(release_rx);
+        let first = AtomicBool::new(true);
+        service.set_write_stall_for_test(Arc::new(move || {
+            if first.swap(false, Ordering::SeqCst) {
+                let _ = entered_tx.send(());
+                let _ = release_rx.lock().unwrap().recv();
+            }
+        }));
+        let super::super::local_state::Update::Queued(mut write) = preferences
+            .begin_set("held_write_marker", true.into())
+            .expect("accept the writer-stall patch")
+        else {
+            panic!("the changed marker must queue a real preference write");
+        };
+        let mut held = HeldGate {
+            release: Some(release_tx),
+            released: false,
+        };
+        entered_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("the preference writer reached the held file-write gate");
+
+        let (readback_queued_before, completed_before) =
+            service.preference_readback_state_for_test();
+        assert!(
+            !readback_queued_before,
+            "the preference lease has no pre-existing readback demand"
+        );
+        service.expire_preference_cache_for_test();
+        let navs = Arc::new(Mutex::new(HashMap::from([(
+            "alice".into(),
+            super::super::NavBot {
+                walk_globals_store: Some(preferences.clone()),
+                native_permissions: Some(WalkPermissions::default()),
+                ..Default::default()
+            },
+        )])));
+        let compiled_navs = Arc::clone(&navs);
+        let compiled = completes_before_release(&mut held, move || {
+            measured_walk_call("compiled_options-stale-write", || {
+                compiled_options(&compiled_navs, "alice", FindOptions::default())
+            })
+        });
+        assert!(compiled.allow_teleports);
+        assert!(compiled.allow_wilderness);
+        assert!(!compiled.allow_bank_fetch);
+        assert!(compiled.zones.is_all());
+        let (readback_queued_after, completed_during_write) =
+            service.preference_readback_state_for_test();
+        assert!(
+            readback_queued_after,
+            "the stale cached lease must queue a readback behind the held write"
+        );
+        assert_eq!(
+            completed_during_write, completed_before,
+            "the writer stall must prevent the queued readback from completing"
+        );
+        another_bot_acquires_navs_before_release(&mut held, &navs);
+
+        held.release();
+        assert_eq!(
+            write.wait(Duration::from_secs(5)),
+            Some(Ok(())),
+            "the held write settles after release"
+        );
+        assert!(
+            service.wait_preference_readbacks_for_test(
+                completed_before + 1,
+                Duration::from_secs(5),
+            ),
+            "the stale readback completes after the writer is released"
+        );
+        let document = preferences
+            .document()
+            .expect("the completed readback leaves a coherent cached document");
+        assert_eq!(document["held_write_marker"], true);
+        assert_eq!(document["nav"], stored_walk);
+        assert_eq!(
+            preferences.walk_globals().expect("read refreshed walk globals"),
+            expected_globals
+        );
+        let (_, completed_after) = service.preference_readback_state_for_test();
+        assert!(
+            completed_after > completed_before,
+            "a real preference readback completed after writer release"
+        );
     }
 
     #[test]
