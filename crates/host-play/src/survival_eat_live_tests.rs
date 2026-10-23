@@ -522,21 +522,34 @@ fn varp(snapshot: &GameSnapshot, index: i32) -> i32 {
 fn route_sample(play: &super::Play, account: &str) -> Option<RouteSample> {
     let navs = play.navs.lock().unwrap_or_else(|error| error.into_inner());
     let bot = navs.get(account)?;
-    let route = bot.route.as_deref()?;
-    let walking_tiles = route
-        .legs
-        .iter()
-        .map(|leg| match leg {
-            nav::router::Leg::Walk { tiles } => tiles.len(),
-            nav::router::Leg::Transport { .. } => 0,
-        })
-        .sum();
+    let (legs, walking_tiles) = match bot.route_projection()? {
+        super::walk_map::RouteProjectionPath::Legacy(route) => (
+            route.legs.len(),
+            route
+                .legs
+                .iter()
+                .map(|leg| match leg {
+                    nav::router::Leg::Walk { tiles } => tiles.len(),
+                    nav::router::Leg::Transport { .. } => 0,
+                })
+                .sum(),
+        ),
+        super::walk_map::RouteProjectionPath::Compact(view) => (
+            view.leg_count(),
+            view.legs()
+                .map(|leg| match leg {
+                    nav::contract::LegView::Walk(tiles) => tiles.len(),
+                    nav::contract::LegView::Transport(_) => 0,
+                })
+                .sum(),
+        ),
+    };
     Some(RouteSample {
         request_id: bot.route_request_id,
         generation: bot.route_generation,
         guard_active: bot.walk_guard.is_some(),
         native_owner: bot.native_walk.is_some(),
-        legs: route.legs.len(),
+        legs,
         walking_tiles,
     })
 }

@@ -406,6 +406,21 @@ impl Play {
         self.game_data = Some(data);
     }
 }
+
+#[cfg(any(test, feature = "test-support"))]
+impl ScriptNavPaint {
+    /// Read the per-frame host policy only while a native guarded route is live.
+    pub fn native_walk_cure_poison_for_test(
+        &self,
+        name: &str,
+    ) -> Option<script::survival::CurePoison> {
+        let navs = self.navs.lock().ok()?;
+        let bot = navs.get(name)?;
+        bot.native_walk.as_ref().filter(|owner| owner.live())?;
+        bot.walk_guard.as_ref()?;
+        bot.has_route().then_some(bot.cure_poison)
+    }
+}
 impl Play {
     /// Install a read-only harness observer before spawning slots. It runs once
     /// after native execution and same-frame walk completion for each received

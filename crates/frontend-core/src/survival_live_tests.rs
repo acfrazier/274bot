@@ -17,7 +17,7 @@ use api::snapshot::{GameSnapshot, WorldTile};
 use host::Pump;
 use host_play::{
     mint_live_entries, mint_live_names, run_with_template, InstancePermit, ProfileOptions,
-    SharedClientTemplate, SlotArm,
+    ScriptNavPaint, SharedClientTemplate, SlotArm,
 };
 use parking_lot::Mutex;
 use scenario::{Proof, RunnerStatus, ScenarioRunner, Step, StepKind, Wait};
@@ -73,6 +73,8 @@ struct Trace {
     native_when_needed_tick: Option<u32>,
     arm_never_frame: Option<u64>,
     arm_when_needed_frame: Option<u64>,
+    host_never_frame: Option<u64>,
+    host_when_needed_frame: Option<u64>,
     setting_operation: Option<u64>,
     setting_submit_tick: Option<u32>,
     setting_submit_frame: Option<u64>,
@@ -192,6 +194,7 @@ impl Trace {
                 "native_never_frame": self.native_never_frame,
                 "native_never_tick": self.native_never_tick,
                 "arm_never_frame": self.arm_never_frame,
+                "host_never_frame": self.host_never_frame,
                 "operation": self.setting_operation,
                 "submit_frame": self.setting_submit_frame,
                 "durable_frame": self.durable_frame,
@@ -200,6 +203,7 @@ impl Trace {
                 "disk_policy": self.disk_policy,
                 "disk_error": self.disk_error,
                 "arm_when_needed_frame": self.arm_when_needed_frame,
+                "host_when_needed_frame": self.host_when_needed_frame,
                 "native_when_needed_tick": self.native_when_needed_tick,
                 "native_when_needed_frame": self.native_when_needed_frame,
                 "onset_policy": self.onset_policy,
@@ -254,6 +258,7 @@ struct LiveState {
     last_tile: Option<WorldTile>,
     last_hitmark_cycles: [i32; 4],
     arm: Option<Arc<SlotArm>>,
+    host_policy_probe: Option<ScriptNavPaint>,
     action: Option<FixtureAction>,
     previous_food_count: Option<i32>,
     previous_dose_count: Option<i32>,
@@ -273,10 +278,12 @@ struct GuardWalkScript {
 
 impl Script for GuardWalkScript {
     fn tick(&mut self, tick: &mut NativeTick<'_>) -> Result<ScriptFlow, ScriptFailure> {
-        let snapshot_tick = u32::try_from(tick.cx.evidence().tick).expect("bounded live tick");
         let condition = tick.cx.condition().copied();
         let policy = tick.cx.cure_poison();
-        let state_frame = self.state.lock().frame_count;
+        let (state_frame, snapshot_tick) = {
+            let state = self.state.lock();
+            (state.frame_count, state.snapshot.tick())
+        };
 
         {
             let mut trace = self.trace.lock();
@@ -701,6 +708,7 @@ fn run_guard_cure_live(
         last_tile: None,
         last_hitmark_cycles: [-1; 4],
         arm: None,
+        host_policy_probe: None,
         action: None,
         previous_food_count: None,
         previous_dose_count: None,
@@ -730,9 +738,34 @@ fn run_guard_cure_live(
                 .snapshot
                 .local_player()
                 .map(|player| player.player.network);
+            let host_policy = state
+                .host_policy_probe
+                .as_ref()
+                .and_then(|probe| probe.native_walk_cure_poison_for_test(name));
 
             {
                 let mut trace = frame_trace.lock();
+                if host_policy == Some(ScriptCurePoison::Never) && trace.host_never_frame.is_none()
+                {
+                    trace.host_never_frame = Some(frame_number);
+                    trace.event(
+                        "host-guard-policy-never-observed",
+                        frame_number,
+                        tick,
+                        json!({ "policy": "never" }),
+                    );
+                }
+                if host_policy == Some(ScriptCurePoison::WhenNeeded)
+                    && trace.host_when_needed_frame.is_none()
+                {
+                    trace.host_when_needed_frame = Some(frame_number);
+                    trace.event(
+                        "host-guard-policy-mirrored",
+                        frame_number,
+                        tick,
+                        json!({ "policy": "when_needed" }),
+                    );
+                }
                 if ingame && !state.was_ingame {
                     trace.login_ticks.push(tick);
                     trace.final_login_tick = Some(tick);
@@ -885,6 +918,7 @@ fn run_guard_cure_live(
     )
     .map_err(|error| format!("start Engine A Play: {error}"))?;
     state.lock().runner.set_obj_names(play.obj_names());
+    state.lock().host_policy_probe = Some(play.script_nav_paint());
 
     let mut session: OperatorSession<()> = OperatorSession::new(InstancePermit::SkipLock);
     session.declare_headless_render();
@@ -1131,6 +1165,7 @@ fn run_guard_cure_live(
                 && trace.walk_end.as_deref() == Some("Arrived")
                 && trace.arm_when_needed_frame.is_some()
                 && trace.native_when_needed_frame.is_some()
+                && trace.host_when_needed_frame.is_some()
         };
         if done {
             break;
@@ -1267,7 +1302,13 @@ fn verify_guard_cure(trace: &Trace) -> Result<(), String> {
     let arm_never_frame = trace
         .arm_never_frame
         .ok_or("SlotArm never observed Never")?;
-    if native_never_frame > onset_frame || arm_never_frame > onset_frame {
+    let host_never_frame = trace
+        .host_never_frame
+        .ok_or("host guard never observed Never")?;
+    if native_never_frame > onset_frame
+        || arm_never_frame > onset_frame
+        || host_never_frame > onset_frame
+    {
         return Err(format!(
             "Never baseline was not observed by onset: native={native_never_frame}, arm={arm_never_frame}, onset={onset_frame}"
         ));
@@ -1288,9 +1329,12 @@ fn verify_guard_cure(trace: &Trace) -> Result<(), String> {
     let native_frame = trace
         .native_when_needed_frame
         .ok_or("NativeTick never observed WhenNeeded")?;
-    if durable_frame.abs_diff(arm_frame) > 1 || durable_frame.abs_diff(native_frame) > 1 {
+    let host_frame = trace
+        .host_when_needed_frame
+        .ok_or("host guard never mirrored WhenNeeded")?;
+    if durable_frame.abs_diff(arm_frame) > 1 || durable_frame.abs_diff(host_frame) > 1 {
         return Err(format!(
-            "running policy missed one-frame mirror: durable={durable_frame}, arm={arm_frame}, native={native_frame}"
+            "running policy missed one-frame mirror: durable={durable_frame}, arm={arm_frame}, host={host_frame}, native_poll={native_frame}"
         ));
     }
     if trace.drink_line_tick.is_none()
@@ -1402,6 +1446,8 @@ mod oracle_tests {
             native_when_needed_tick: Some(135),
             arm_never_frame: Some(10),
             arm_when_needed_frame: Some(31),
+            host_never_frame: Some(10),
+            host_when_needed_frame: Some(31),
             setting_operation: Some(2),
             setting_submit_tick: Some(132),
             setting_submit_frame: Some(28),
@@ -1496,9 +1542,16 @@ mod oracle_tests {
         late_arm.arm_when_needed_frame = Some(32);
         assert!(verify_guard_cure(&late_arm).is_err());
 
-        let mut late_native = passing_trace();
-        late_native.native_when_needed_frame = Some(32);
-        assert!(verify_guard_cure(&late_native).is_err());
+        let mut late_host = passing_trace();
+        late_host.host_when_needed_frame = Some(32);
+        assert!(verify_guard_cure(&late_host).is_err());
+    }
+
+    #[test]
+    fn oracle_accepts_the_next_native_game_tick_after_the_host_frame_mirror() {
+        let mut trace = passing_trace();
+        trace.native_when_needed_frame = Some(57);
+        assert!(verify_guard_cure(&trace).is_ok());
     }
 
     #[test]
