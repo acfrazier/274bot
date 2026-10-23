@@ -330,9 +330,10 @@ impl PaintOverlay {
     }
 
     /// Whether the pointer was inside the drawn paint panel on the
-    /// last [`frame`](Self::frame) call. While it is, the caller must
-    /// not forward mouse buttons to the game: the press is the
-    /// paint's (a button, the toggle, a tab, or the panel itself).
+    /// last [`frame`](Self::frame) call. A press that starts while
+    /// this is true is the paint's (a button, the toggle, a tab, or
+    /// the panel itself) and must not reach the game. A release is
+    /// not decided here. It follows the press that started it.
     pub fn pointer_inside_panel(&self) -> bool {
         self.pointer_inside_panel
     }
@@ -2109,6 +2110,286 @@ mod tests {
         let (_, forwarded, _, inside) = pane_press(&mut ctx, &mut overlay, &frame, toggle);
         assert!(overlay.collapsed, "the toggle press collapses the paint");
         assert!(inside && !forwarded, "the toggle press stays in the paint");
+    }
+
+    use client::client::GameShell;
+    use frontend_core::surface::{InputEv, InputSender, SlotInput};
+    use frontend_core::{GameInputEvent, MapDesk};
+
+    use crate::input_capture::{
+        discard_unconsumed_native_capture, stream_capture, MouseButtons, PaintMouseGate,
+    };
+
+    /// The Game panes' input order with the real capture path behind
+    /// it: the Game Image item, the paint overlay, the mouse gate,
+    /// then `stream_capture`. The staged events go through an
+    /// `InputSender` into a `SlotInput` and a `GameShell`, as they do
+    /// for the focused slot. Keyboard ownership is not modelled
+    /// here. It lives at the frame owner, outside both panes, and
+    /// its own tests cover it. A left press in this GPU-less window
+    /// would also flip keyboard availability for one frame and
+    /// release the drag through that path, which would hide the
+    /// mouse routing these tests measure. Both panes share this
+    /// order and this gate. Scale 1.0 is the single-bot pane's
+    /// native blit. Scale 0.5 is a focused grid cell's fitted blit.
+    struct PaneCapture {
+        ctx: dear_imgui_rs::Context,
+        overlay: PaintOverlay,
+        frame: PaintFrame,
+        map: MapDesk,
+        gate: PaintMouseGate,
+        input: std::sync::Arc<SlotInput>,
+        tx: InputSender,
+        shell: GameShell,
+        scale: f32,
+        min: [f32; 2],
+        show_paint: bool,
+    }
+
+    impl PaneCapture {
+        fn new(scale: f32) -> Self {
+            discard_unconsumed_native_capture();
+            let input = SlotInput::new();
+            input.set_enabled(true);
+            let tx = InputSender::connect(&input);
+            let mut map = MapDesk::default();
+            map.set_input_sender(Some(tx.duplicate()));
+            let frame = paint(Some("Helper"), &["status"])
+                .with_strip("s", &["One", "Two"], "One", Some("ok"), Some("Helper"))
+                .with_rail("r", &["First", "Second"], "First")
+                .with_tab_band("t", &["Alpha", "Beta"], "Alpha")
+                .with_host_controls()
+                .frame_for_run("alice", ScriptRunState::Running);
+            let mut capture = Self {
+                ctx: crate::test_support::imgui_context(),
+                overlay: PaintOverlay::new(),
+                frame,
+                map,
+                gate: PaintMouseGate::default(),
+                input,
+                tx,
+                shell: GameShell::new(),
+                scale,
+                min: [0.0; 2],
+                show_paint: true,
+            };
+            // The product Game window is docked and cannot undock.
+            // Do not let this GPU-less standalone window steal a
+            // Game Image press as an ImGui window-move gesture.
+            capture
+                .ctx
+                .io_mut()
+                .set_config_windows_move_from_title_bar_only(true);
+            capture
+                .ctx
+                .io_mut()
+                .set_config_flags(dear_imgui_rs::ConfigFlags::DOCKING_ENABLE);
+            capture.step([890.0, 690.0], false, false);
+            capture.step([890.0, 690.0], false, false);
+            capture
+        }
+
+        /// An applet-space point on the scaled Game Image.
+        fn point(&self, x: f32, y: f32) -> [f32; 2] {
+            [self.min[0] + x * self.scale, self.min[1] + y * self.scale]
+        }
+
+        /// One frame with the pointer at `mouse` and the given
+        /// physical button states. Returns the events staged for the
+        /// game this frame.
+        fn step(&mut self, mouse: [f32; 2], left: bool, right: bool) -> Vec<InputEv> {
+            self.ctx.prepare_frame(
+                FramePrepareOptions::new([900.0, 700.0], 1.0 / 60.0).renderer_has_textures(),
+            );
+            self.ctx.io_mut().add_mouse_pos_event(mouse);
+            self.ctx
+                .io_mut()
+                .add_mouse_button_event(dear_imgui_rs::MouseButton::Left, left);
+            self.ctx
+                .io_mut()
+                .add_mouse_button_event(dear_imgui_rs::MouseButton::Right, right);
+            self.map.begin_game_input_frame();
+            {
+                let ui = self.ctx.frame();
+                let dock = ui.dockspace_over_main_viewport_with_flags(
+                    dear_imgui_rs::Id::from(1u32),
+                    dear_imgui_rs::DockNodeFlags::NO_UNDOCKING,
+                );
+                ui.set_next_window_dock_id(dock);
+                let _ = ui
+                    .window("Game")
+                    .flags(dear_imgui_rs::WindowFlags::NO_MOVE)
+                    .position([0.0, 0.0], dear_imgui_rs::Condition::Always)
+                    .size([900.0, 700.0], dear_imgui_rs::Condition::Always)
+                    .build(|| {
+                        let size = [765.0 * self.scale, 503.0 * self.scale];
+                        ui.image(dear_imgui_rs::TextureId::new(0), size);
+                        self.min = ui.item_rect_min();
+                        let image_hovered = ui.is_item_hovered();
+                        let view = if self.show_paint {
+                            Some(self.frame.view())
+                        } else {
+                            None
+                        };
+                        let _ = self.overlay.frame(ui, None, view, self.min, size);
+                        let inside = self.overlay.pointer_inside_panel();
+                        if image_hovered {
+                            let buttons = self.gate.route(
+                                inside,
+                                MouseButtons {
+                                    left_down: ui
+                                        .is_mouse_clicked(dear_imgui_rs::MouseButton::Left),
+                                    right_down: ui
+                                        .is_mouse_clicked(dear_imgui_rs::MouseButton::Right),
+                                    left_up: ui.is_mouse_released(dear_imgui_rs::MouseButton::Left),
+                                    right_up: ui
+                                        .is_mouse_released(dear_imgui_rs::MouseButton::Right),
+                                },
+                            );
+                            stream_capture(
+                                &mut self.map,
+                                mouse[0] - self.min[0],
+                                mouse[1] - self.min[1],
+                                size[0],
+                                size[1],
+                                buttons.left_down,
+                                buttons.right_down,
+                                buttons.left_up,
+                                buttons.right_up,
+                                &[],
+                            );
+                        }
+                    });
+            }
+            self.ctx.render();
+            let events: Vec<InputEv> = self
+                .map
+                .staged_game_input_for_test()
+                .into_iter()
+                .filter_map(|event| match event {
+                    GameInputEvent::Captured(event) => Some(event),
+                    GameInputEvent::Wire(_) => None,
+                })
+                .collect();
+            for event in self.map.staged_game_input_for_test() {
+                if let GameInputEvent::Captured(event) = event {
+                    assert!(self.tx.send(event), "send captured input");
+                }
+            }
+            self.input.drain(&mut self.shell);
+            events
+        }
+
+        /// Click the game once and let the window-focus change
+        /// settle, so the measured drag starts from a steady state.
+        fn settle(&mut self, outside: [f32; 2]) {
+            self.step(outside, false, false);
+            self.step(outside, true, false);
+            self.step(outside, false, false);
+            self.step(outside, false, false);
+            self.step(outside, false, false);
+            assert_eq!(self.shell.mouse_button, 0, "the settling click ended");
+        }
+    }
+
+    /// A press that starts on the game, then releases inside the
+    /// paint, still sends its release to the game. The game does not
+    /// stay held after the physical button goes up.
+    #[test]
+    fn a_game_press_released_inside_the_paint_releases_the_game() {
+        let _guard = crate::test_support::imgui_context_guard();
+        for scale in [1.0, 0.5] {
+            for (name, left, right, held) in [("left", true, false, 1), ("right", false, true, 2)] {
+                let mut capture = PaneCapture::new(scale);
+                let outside = capture.point(300.0, 100.0);
+                let inside = capture.point(400.0, 430.0);
+                capture.settle(outside);
+                let events = capture.step(outside, left, right);
+                assert!(
+                    events
+                        .iter()
+                        .any(|e| matches!(e, InputEv::Down { button, .. } if *button == held)),
+                    "scale {scale} {name}: the press reaches the game. Events {events:?}"
+                );
+                assert_eq!(
+                    capture.shell.mouse_button, held,
+                    "scale {scale} {name}: the game holds the button"
+                );
+                let held_events = capture.step(inside, left, right);
+                assert_eq!(
+                    capture.shell.mouse_button, held,
+                    "scale {scale} {name}: the drag over the paint stays held. Events {held_events:?}"
+                );
+                let events = capture.step(inside, false, false);
+                assert!(
+                    events.iter().any(|e| matches!(e, InputEv::Up)),
+                    "scale {scale} {name}: the release inside the paint reaches the game. Events {events:?}"
+                );
+                assert_eq!(
+                    capture.shell.mouse_button, 0,
+                    "scale {scale} {name}: the physical release ends the hold"
+                );
+            }
+        }
+    }
+
+    /// A press that starts on the paint sends nothing to the game,
+    /// and its release over the game sends nothing either. The game
+    /// gets no release for a press it never saw.
+    #[test]
+    fn a_paint_press_released_over_the_game_sends_nothing_to_the_game() {
+        let _guard = crate::test_support::imgui_context_guard();
+        for scale in [1.0, 0.5] {
+            for (name, left, right) in [("left", true, false), ("right", false, true)] {
+                let mut capture = PaneCapture::new(scale);
+                let outside = capture.point(300.0, 100.0);
+                let inside = capture.point(400.0, 430.0);
+                capture.settle(outside);
+                capture.step(inside, false, false);
+                let events = capture.step(inside, left, right);
+                assert!(
+                    !events.iter().any(|e| matches!(e, InputEv::Down { .. })),
+                    "scale {scale} {name}: the paint press sends no Down. Events {events:?}"
+                );
+                assert_eq!(capture.shell.mouse_button, 0);
+                capture.step(outside, left, right);
+                let events = capture.step(outside, false, false);
+                assert!(
+                    !events.iter().any(|e| matches!(e, InputEv::Up)),
+                    "scale {scale} {name}: the release over the game sends no Up. Events {events:?}"
+                );
+                assert_eq!(
+                    capture.shell.mouse_button, 0,
+                    "scale {scale} {name}: the game never held the button"
+                );
+            }
+        }
+    }
+
+    /// Stop clears the paint. A game press that is still held when
+    /// the paint goes away keeps its release afterwards.
+    #[test]
+    fn a_game_press_keeps_its_release_after_the_paint_goes_away() {
+        let _guard = crate::test_support::imgui_context_guard();
+        for scale in [1.0, 0.5] {
+            let mut capture = PaneCapture::new(scale);
+            let outside = capture.point(300.0, 100.0);
+            let inside = capture.point(400.0, 430.0);
+            capture.settle(outside);
+            capture.step(outside, false, true);
+            assert_eq!(
+                capture.shell.mouse_button, 2,
+                "scale {scale}: the game holds the right button"
+            );
+            capture.show_paint = false;
+            capture.step(inside, false, true);
+            let events = capture.step(inside, false, false);
+            assert!(
+                events.iter().any(|e| matches!(e, InputEv::Up)),
+                "scale {scale}: the release reaches the game after the paint went away. Events {events:?}"
+            );
+            assert_eq!(capture.shell.mouse_button, 0);
+        }
     }
 
     /// One overlay frame over `frame` at an explicit display and
