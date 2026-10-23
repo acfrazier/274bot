@@ -11,6 +11,14 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.5` 
 - Player and NPC movement, action poses, map effects, projectile flight, and
   cutscene cameras keep their animation time between bot views and after late
   frames. Old smoke no longer starts only when a bot’s game view is first drawn.
+- Script settings no longer leave Start blocked after a failed or cancelled
+  save. Failed saves restore the saved value, show the error at the field,
+  and can be retried. The panel names the card and field of hidden unsaved
+  edits and offers **Discard unsaved settings**. Script prefs labels wrap,
+  number fields show their valid ranges, and invalid values show an error
+  before the form closes. The panel and TUI wait for settings saves before
+  Start. Each successful save logs the card, field, old and new values,
+  action and operation id.
 
 ### Scripts
 
@@ -24,6 +32,13 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.5` 
 ### Nav
 
 - Split the route follower into a new `nav-executor` crate (`nav_executor::Traveller`); `nav` keeps the packed world, router and pack bake. No behavior change.
+
+### Fixed during development
+
+#### Panel and TUI
+
+- Apply to all now logs one script-settings info line for each profile that it saves.
+- The panel clears a script-setting error from the dock banner when the operator discards the draft or fixes the field.
 
 ## [0.2.5] — 2026-10-22 — Beta 2
 

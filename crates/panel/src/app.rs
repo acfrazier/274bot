@@ -2400,6 +2400,7 @@ fn script_section(ui: &Ui, session: &mut Session) {
             ui.text_disabled(line);
         }
     }
+    script_parameter_draft_recovery(ui, session);
     let avail = ui.content_region_avail()[0];
     let (w, stack) = scaled_button_row_layout(ui, avail, 3);
     {
@@ -3644,7 +3645,7 @@ fn script_parameter_text_input(
     options: &[String],
     current: Option<serde_json::Value>,
 ) {
-    let label = def.display_label();
+    script_parameter_label(ui, def, &mut session.script_parameter_label);
     let initial_text = current
         .as_ref()
         .map(format_setting_value)
@@ -3658,7 +3659,8 @@ fn script_parameter_text_input(
             &initial_text,
             current.clone(),
         );
-        ui.input_text(format!("{label}##param-{id}", id = def.id()), text)
+        ui.set_next_item_width(-1.0);
+        ui.input_text(format!("##param-{id}", id = def.id()), text)
             .build()
     };
     let active = ui.is_item_active();
@@ -3703,12 +3705,59 @@ fn script_parameter_text_input(
             );
         }
     }
+}
+
+/// Labels and number bounds have their own wrapped rows, never the clipped
+/// label area to the right of an ImGui input.
+fn script_parameter_label(ui: &Ui, def: SettingView<'_>, text: &mut String) {
+    use std::fmt::Write as _;
+    ui.text_wrapped(def.display_label());
+    if def.ty() == "number" {
+        text.clear();
+        let _ = match def.bounds() {
+            (Some(min), Some(max), _) => write!(text, "Valid range: {min}–{max}"),
+            (Some(min), None, _) => write!(text, "Minimum: {min}"),
+            (None, Some(max), _) => write!(text, "Maximum: {max}"),
+            (None, None, _) => return,
+        };
+        ui.text_wrapped(text);
+    }
+}
+
+fn script_parameter_error(
+    ui: &Ui,
+    session: &Session,
+    profile: Option<&str>,
+    selection: &ScriptChoice,
+    field: &str,
+) {
     if let Some(error) = session
         .scripts
-        .parameter_text_error_for(profile, selection, def.id())
+        .parameter_text_error_for(profile, selection, field)
     {
-        ui.same_line();
-        ui.text_colored(ERROR, error);
+        let _color = ui.push_style_color(dear_imgui_rs::StyleColor::Text, ERROR);
+        ui.text_wrapped(error);
+    }
+}
+
+/// Hidden drafts remain recoverable after closing prefs or changing cards.
+fn script_parameter_draft_recovery(ui: &Ui, session: &mut Session) {
+    use std::fmt::Write as _;
+    let Some(profile) = session.focused_name() else {
+        return;
+    };
+    if !session.scripts.has_parameter_draft(&profile) {
+        return;
+    }
+    ui.text_wrapped("Unsaved settings prevent Start. In Script prefs, press Enter to save a field or Escape to discard it.");
+    for (card, field, reason) in session.scripts.parameter_draft_details(&profile) {
+        session.script_parameter_label.clear();
+        let _ = write!(session.script_parameter_label, "{card}: {field}: {reason}");
+        ui.text_wrapped(&session.script_parameter_label);
+    }
+    if ui.button("Discard unsaved settings") {
+        session.scripts.stage_profile_parameter_discard(&profile);
+        session.submit_script_command(OperatorCommand::DiscardParameterText, Targets::Application);
     }
 }
 
@@ -3736,6 +3785,8 @@ fn script_parameter_editors(ui: &Ui, session: &mut Session) {
         script_parameter_rows(ui, session, &selection, profile, schema.as_ref(), bag);
     }
     session.script_param_schema = schema;
+    // A new draft must not move the active field out of the visible rows.
+    script_parameter_draft_recovery(ui, session);
 }
 
 /// Fill `schema` with the selected card's fields and return its bag, or say
@@ -3826,7 +3877,7 @@ fn script_parameter_rows(
                 ui.text(group);
             }
         }
-        let label = def.display_label().to_string();
+        let label = def.display_label();
         let resolved = frontend_core::scripts::resolve_parameter_options(
             def,
             &bag,
@@ -3835,7 +3886,8 @@ fn script_parameter_rows(
         );
         let array_editable = parameter_array_editor_enabled(def, &bag, &resolved);
         if def.options_from().is_some() && resolved.is_empty() && !array_editable {
-            ui.text_disabled(unavailable_parameter_text(&label, def, &bag, &resolved));
+            ui.text_wrapped(unavailable_parameter_text(label, def, &bag, &resolved));
+            script_parameter_error(ui, session, profile.as_deref(), selection, def.id());
             if session.script_parameter_filter_id.as_deref() == Some(def.id()) {
                 session.script_parameter_filter.clear();
                 session.script_parameter_filter_id = None;
@@ -3844,6 +3896,7 @@ fn script_parameter_rows(
         }
         match def.ty() {
             "boolean" => {
+                script_parameter_label(ui, def, &mut session.script_parameter_label);
                 let global = permission_global;
                 let mut value = bag
                     .get(def.id())
@@ -3859,7 +3912,7 @@ fn script_parameter_rows(
                             "Allow for this script even when the global setting is off.",
                         );
                     }
-                    if ui.checkbox(&label, &mut value) {
+                    if ui.checkbox(format!("Enabled##param-{}", def.id()), &mut value) {
                         persist_profile_setting(
                             session,
                             selection,
@@ -3882,7 +3935,7 @@ fn script_parameter_rows(
                 );
             }
             "string" if !resolved.is_empty() => {
-                ui.text(&label);
+                script_parameter_label(ui, def, &mut session.script_parameter_label);
                 let opts = resolved.selectable();
                 let stored = bag
                     .get(def.id())
@@ -3945,7 +3998,7 @@ fn script_parameter_rows(
                 }
             }
             "string[]" if array_editable => {
-                ui.text(&label);
+                script_parameter_label(ui, def, &mut session.script_parameter_label);
                 let mut selected: Vec<String> = bag
                     .get(def.id())
                     .and_then(|value| value.as_array())
@@ -3966,7 +4019,11 @@ fn script_parameter_rows(
                     let _off =
                         (!on && !resolved.is_selectable_index(index)).then(|| ui.begin_disabled());
                     let shown = resolved.label_for(opt);
-                    if ui.checkbox(format!("{shown}##param-{id}-{opt}", id = def.id()), &mut on) {
+                    let toggled =
+                        ui.checkbox(format!("##param-{id}-{opt}", id = def.id()), &mut on);
+                    ui.same_line();
+                    ui.text_wrapped(shown);
+                    if toggled || ui.is_item_clicked() {
                         changed |= resolved.toggle_array_choice(&mut selected, index);
                     }
                 }
@@ -3988,12 +4045,13 @@ fn script_parameter_rows(
                 );
             }
             _ => {
-                ui.text_disabled(format!("{label} (unsupported type {})", def.ty()));
+                ui.text_wrapped(format!("{label} (unsupported type {})", def.ty()));
             }
         }
         if let Some(help) = def.help() {
             ui.set_item_tooltip(help);
         }
+        script_parameter_error(ui, session, profile.as_deref(), selection, def.id());
     }
     if session.focused_name().is_some() {
         apply_to_all_section(ui, session);
@@ -4095,7 +4153,7 @@ fn script_prefs_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
             }
             ui.spacing();
             ui.text_wrapped(
-                "Edits are validated and saved before live delivery. Native cards report applied, pending boundary, or restart required; Load scripts receive the complete bag.",
+                "Text fields: Enter saves, Escape discards. Leaving a field saves a valid edit. Other controls save immediately. A failed save restores the saved value. Native cards can require a restart.",
             );
             ui.spacing();
             if edit_parameters_enabled() {

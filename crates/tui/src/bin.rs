@@ -2379,6 +2379,51 @@ impl TuiSession {
         }
     }
 
+    /// Keep terminal write errors beside the field that submitted them.
+    fn refresh_params_errors(&mut self, app: &mut TuiApp) {
+        if !app.params_state.open {
+            return;
+        }
+        let (Some(profile), Some(selection)) = (app.focused_name(), app.params_card()) else {
+            return;
+        };
+        app.params_state.save_errors.retain(|(field, _)| {
+            self.scripts
+                .parameter_text_error_for(Some(&profile), &selection, field)
+                .is_some()
+        });
+        let mut changed = false;
+        for def in app.params_schema.as_ref().iter() {
+            let Some(error) =
+                self.scripts
+                    .parameter_text_error_for(Some(&profile), &selection, def.id())
+            else {
+                continue;
+            };
+            if let Some((_, kept)) = app
+                .params_state
+                .save_errors
+                .iter_mut()
+                .find(|(field, _)| field == def.id())
+            {
+                if kept != error {
+                    error.clone_into(kept);
+                    changed = true;
+                }
+            } else {
+                app.params_state
+                    .save_errors
+                    .push((def.id().to_owned(), error.to_owned()));
+                changed = true;
+            }
+        }
+        if changed {
+            // Cancellation has no writer failure event, but still restores
+            // the durable bag just as a failed write does.
+            self.refresh_params_bag(app);
+        }
+    }
+
     /// Freeze Apply to all for the params popup's card and ask to confirm.
     fn prepare_settings_sync(&mut self, app: &mut TuiApp) {
         let Some(profile) = app.focused_name() else {
@@ -2970,6 +3015,7 @@ impl TuiSession {
         if app.params_state.open && app.params_schema.as_ref().is_empty() {
             app.params_state.open = false;
         }
+        self.refresh_params_errors(app);
         app.rs2b0t_catalog_open = self.rs2b0t_catalog_open;
         app.script_load_last_dir = self.script_load_last_dir.clone();
         if !app.rs2b0t_catalog_open {

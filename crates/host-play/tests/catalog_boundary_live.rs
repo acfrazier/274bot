@@ -23,11 +23,11 @@ const GNOME_WEST_MAGICS: (i32, i32, i32) = GNOME_SOUTH_BANK_MAGIC_STAND;
 fn steel_pickaxe_id() -> i32 {
     r289_item_id("rune_pickaxe")
 }
-/// The frozen 96410ec5 reference catalog. `ClimbingBoots` was introduced there
-/// and is absent from the two historical catalogs the support matrix freezes
-/// (100ad/8e7), so this card's frozen-schema checks read 964 directly instead
-/// of asserting the card into an older ledger.
+/// The current frozen 96410ec5 reference catalog. CookBot's source hash is
+/// shared with the support-matrix row, while this registry hash identifies 964.
 const REFERENCE_COMMIT_964: &str = "96410ec5c779f3d8fe537268cae1a21c0174d16c";
+const REFERENCE_REGISTRY_SHA_964: &str =
+    "7342e41e4708be662c2477052ba182e2f4839b1ed23ec09f739300bc745ebe21";
 
 fn r289_item_id(alias: &str) -> i32 {
     api::game_data::for_revision(client::io::ClientRevision::R289)
@@ -191,6 +191,18 @@ fn verify_registry_identity(root: &Path, catalog: &CatalogLedger) -> Result<Path
     }
     Ok(path)
 }
+fn verify_reference_registry_identity(root: &Path) -> Result<PathBuf, String> {
+    let path = safe_catalog_path(root, "src/bot/scripts/index.ts")?;
+    let actual = hash_file(&path)?;
+    if actual != REFERENCE_REGISTRY_SHA_964 {
+        return Err(format!(
+            "964 reference registry SHA-256 mismatch for {}: expected {}, got {actual}",
+            path.display(),
+            REFERENCE_REGISTRY_SHA_964
+        ));
+    }
+    Ok(path)
+}
 
 fn witness<'a>(
     case: CoreCase,
@@ -226,6 +238,8 @@ struct LiveState {
     witness: Option<CoreWitness>,
     start_error: Option<String>,
     start_count: u32,
+    fire_mode: bool,
+    fire_seen_tick: Option<u32>,
 }
 
 impl LiveState {
@@ -267,6 +281,22 @@ impl LiveState {
             observation,
             start_preparation.as_ref(),
         )?;
+        if self.fire_mode {
+            let logs = observation.item_id(r289_item_id("logs"));
+            let tinderbox = observation.item_id(r289_item_id("tinderbox"));
+            if logs != 1 || tinderbox != 1 {
+                return Err(format!(
+                    "Fire Start baseline tick {} needs exactly one seeded Logs and Tinderbox, got logs={logs} tinderbox={tinderbox}",
+                    observation.tick
+                ));
+            }
+            if fire_near_player(observation) {
+                return Err(format!(
+                    "Fire Start baseline tick {} already has a Fire within 2 tiles; cannot attribute the lit Fire to this CookBot",
+                    observation.tick
+                ));
+            }
+        }
         self.baseline = Some(observation.clone());
         self.witness = Some(CoreWitness::new_with_start_preparation(
             self.case,
@@ -279,6 +309,10 @@ impl LiveState {
                 "phase": "baseline-after-preparation",
                 "scenario": self.case,
                 "account": self.account,
+                "fire_inventory_seed": self.fire_mode.then(|| json!({
+                    "logs": observation.item_id(r289_item_id("logs")),
+                    "tinderbox": observation.item_id(r289_item_id("tinderbox")),
+                })),
                 "observation": observation,
             })
         );
@@ -288,6 +322,13 @@ impl LiveState {
     fn frame(&mut self, client: &mut client::client::Client, hold: bool) {
         let observation = self.publish(client);
         let at_start = self.runner.on_start_script();
+        if self.fire_mode
+            && self.start_count == 1
+            && self.fire_seen_tick.is_none()
+            && fire_near_player(&observation)
+        {
+            self.fire_seen_tick = Some(observation.tick);
+        }
         if at_start && self.baseline.is_none() {
             if let Err(error) = self.capture_baseline(&observation) {
                 self.start_error = Some(error);
@@ -530,6 +571,125 @@ fn prepare_catalog_card(
         identity,
     ))
 }
+fn fire_near_player(observation: &Observation) -> bool {
+    let Some((x, z, level)) = observation.tile else {
+        return false;
+    };
+    observation.loc_facts.iter().any(|loc| {
+        loc.name
+            .as_deref()
+            .is_some_and(|name| name.eq_ignore_ascii_case("Fire"))
+            && loc.level == level
+            && (loc.x - x).abs().max((loc.z - z).abs()) <= 2
+    })
+}
+
+fn inventory_seed_step(
+    name: &'static str,
+    command: &'static str,
+    item_id: i32,
+    budget_ticks: u32,
+) -> scenario::Step {
+    scenario::Step {
+        name,
+        kind: scenario::StepKind::Perform {
+            send: Box::new(move |client, _| api::interact::cheat(client, command).is_sent()),
+        },
+        wait: scenario::Wait {
+            arm: scenario::Proof::ItemId {
+                id: item_id,
+                count: 1,
+            },
+            budget_ticks,
+        },
+    }
+}
+
+fn fire_proof_step(name: &'static str, arm: scenario::Proof, budget_ticks: u32) -> scenario::Step {
+    scenario::Step {
+        name,
+        kind: scenario::StepKind::Perform {
+            send: Box::new(|_, _| true),
+        },
+        wait: scenario::Wait { arm, budget_ticks },
+    }
+}
+
+fn prepare_cook_bot_fire_scenario(
+    scenario: &mut scenario::Scenario,
+    logs_id: i32,
+    tinderbox_id: i32,
+    salmon_id: i32,
+) -> Result<(), String> {
+    let budget_ticks = scenario
+        .steps
+        .iter()
+        .find(|step| step.name == "watch Cooking XP from the Catherby Range after Start")
+        .map(|step| step.wait.budget_ticks)
+        .ok_or_else(|| "CookBot scenario has no established Cooking XP watch budget".to_string())?;
+    let start_index = scenario
+        .steps
+        .iter()
+        .position(|step| matches!(&step.kind, scenario::StepKind::StartScript))
+        .ok_or_else(|| "CookBot scenario has no catalog Start step".to_string())?;
+    let start_step = scenario.steps.remove(start_index);
+    scenario.steps.truncate(start_index);
+    scenario.steps.push(inventory_seed_step(
+        "seed one Logs in the account inventory",
+        "give logs 1",
+        logs_id,
+        budget_ticks,
+    ));
+    scenario.steps.push(inventory_seed_step(
+        "seed one Tinderbox in the account inventory",
+        "give tinderbox 1",
+        tinderbox_id,
+        budget_ticks,
+    ));
+    scenario.steps.push(start_step);
+    scenario.steps.extend([
+        fire_proof_step(
+            "watch Firemaking XP from CookBot lighting its seeded Logs",
+            scenario::Proof::StatXpGain { id: 11, min: 1 },
+            budget_ticks,
+        ),
+        fire_proof_step(
+            "watch CookBot consume its seeded Logs",
+            scenario::Proof::ItemIdAtMost {
+                id: logs_id,
+                count: 0,
+            },
+            budget_ticks,
+        ),
+        fire_proof_step(
+            "watch Cooking XP from CookBot Fire",
+            scenario::Proof::StatXpGain { id: 7, min: 1 },
+            budget_ticks,
+        ),
+        fire_proof_step(
+            "watch CookBot produce cooked salmon",
+            scenario::Proof::ItemId {
+                id: salmon_id,
+                count: 1,
+            },
+            budget_ticks,
+        ),
+    ]);
+    scenario.name = "cook_bot_fire";
+    scenario.proof = scenario::Proof::ItemId {
+        id: salmon_id,
+        count: 1,
+    };
+    Ok(())
+}
+
+fn settings_string<'a>(identity: &'a Value, key: &str) -> Option<&'a str> {
+    identity
+        .pointer("/settings")
+        .and_then(Value::as_object)
+        .and_then(|settings| settings.get(key))
+        .and_then(Value::as_str)
+}
 
 /// Accumulated CoreWitness plus latest observation for catalog FAIL/timeout
 /// receipts. Does not change success, deadline, or lifecycle policy.
@@ -563,11 +723,25 @@ fn run_cell() -> Result<(), String> {
     let commit = required("CATALOG_COMMIT")?;
     let case = CoreCase::parse(&required("CATALOG_SCENARIO")?)?;
     validate_case_catalog(case, &commit)?;
+    let reference_catalog = commit == REFERENCE_COMMIT_964;
+    if reference_catalog && (revision != 289 || case != CoreCase::CookBot) {
+        return Err("the 964 reference live path is limited to R289 CookBot".into());
+    }
     let nav_pack = PathBuf::from(required("CATALOG_NAV_PACK")?);
     let matrix = support_matrix()?;
-    let catalog = catalog_ledger(&matrix, &commit)?;
-    let row = ledger_card(&matrix, &commit, revision, case)?;
-    let registry_path = verify_registry_identity(&root, catalog)?;
+    let ledger_commit = if reference_catalog {
+        CATALOG_COMMIT_B
+    } else {
+        commit.as_str()
+    };
+    let catalog = catalog_ledger(&matrix, ledger_commit)?;
+    let row = ledger_card(&matrix, ledger_commit, revision, case)?;
+    let registry_path = if reference_catalog {
+        verify_reference_registry_identity(&root)?
+    } else {
+        verify_registry_identity(&root, catalog)?
+    };
+    let registry_sha256 = hash_file(&registry_path)?;
 
     let mut scenario = scenario::get(case.scenario_name())
         .ok_or_else(|| format!("scenario registry has no {}", case.scenario_name()))?;
@@ -588,6 +762,24 @@ fn run_cell() -> Result<(), String> {
     let (profile, template) = selected_profile(revision, nav_pack, root.clone(), temp.path())?;
     let (pending, card_identity) =
         prepare_catalog_card(&root, temp.path(), &row, case, scenario_inject)?;
+    let fire_mode = settings_string(&card_identity, "surface") == Some("Fire");
+    if fire_mode {
+        if case != CoreCase::CookBot
+            || settings_string(&card_identity, "fish") != Some("Raw salmon")
+            || settings_string(&card_identity, "location") != Some("Catherby")
+            || settings_string(&card_identity, "logType") != Some("Logs")
+        {
+            return Err(
+                "the CookBot Fire proof requires Raw salmon, Catherby, and Logs settings".into(),
+            );
+        }
+        prepare_cook_bot_fire_scenario(
+            &mut scenario,
+            r289_item_id("logs"),
+            r289_item_id("tinderbox"),
+            r289_item_id("salmon"),
+        )?;
+    }
     let names = host_play::mint_live_names(1);
     let account = names
         .first()
@@ -618,6 +810,8 @@ fn run_cell() -> Result<(), String> {
         witness: None,
         start_error: None,
         start_count: 0,
+        fire_mode,
+        fire_seen_tick: None,
     }));
     let frame_state = Arc::clone(&state);
     let mut play = host_play::run_with_template(
@@ -652,11 +846,20 @@ fn run_cell() -> Result<(), String> {
             "nav_pack": profile.nav_pack(),
             "nav_sha256": nav_sha256,
             "catalog_commit": commit,
-            "catalog_identity": catalog.identity,
-            "catalog_read_only_path": catalog.read_only_path,
+            "catalog_identity": if reference_catalog {
+                "current frozen 96410ec5 reference (CookBot-only)"
+            } else {
+                catalog.identity.as_str()
+            },
+            "catalog_read_only_path": if reference_catalog {
+                root.display().to_string()
+            } else {
+                catalog.read_only_path.clone()
+            },
+            "catalog_support_matrix_commit": catalog.commit,
             "catalog_root": root,
             "registry_path": registry_path,
-            "registry_sha256": catalog.registry_sha256,
+            "registry_sha256": registry_sha256,
             "card": card_identity,
             "account": account,
             "engine_speed_ms": null,
@@ -719,6 +922,26 @@ fn run_cell() -> Result<(), String> {
                 let Some(witness) = state.witness.as_ref() else {
                     break Err("scenario passed without a Start baseline".into());
                 };
+                if state.fire_mode {
+                    let Some(fire_seen_tick) = state.fire_seen_tick else {
+                        let diagnostic = failure_diagnostic(case, &state.snapshot, &state.names);
+                        break Err(format!(
+                            "CookBot Fire proofs passed without a named Fire within 2 tiles; evidence={:?}; diagnostic={diagnostic}",
+                            state.runner.evidence()
+                        ));
+                    };
+                    let evidence = format!("{:?}", state.runner.evidence());
+                    break Ok(json!({
+                        "scenario": "cook_bot_fire",
+                        "fire_seen_near_player_tick": fire_seen_tick,
+                        "runner": evidence,
+                        "proofs": [
+                            "seeded one Logs and one Tinderbox in the account inventory before Start",
+                            "Firemaking XP increased and the seeded Logs were consumed",
+                            "Cooking XP increased and cooked salmon appeared",
+                        ],
+                    }));
+                }
                 if let Ok(core) = witness.qualify() {
                     let evidence = format!("{:?}", state.runner.evidence());
                     break Ok(json!({

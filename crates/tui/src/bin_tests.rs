@@ -4927,6 +4927,89 @@ fn tui_params_edit_the_focused_profile_and_apply_to_all_skips_other_cards() {
     session.core.play_for_test().unwrap().script_stop("bob");
 }
 
+#[test]
+#[cfg(unix)]
+fn failed_typed_parameter_saves_restore_the_value_and_show_the_field_error() {
+    use crossterm::event::KeyCode;
+    use std::os::unix::fs::PermissionsExt;
+
+    for (tag, definition, old, new) in [
+        (
+            "picker",
+            "{ type: 'string', default: 'Range', label: 'Cook on', options: ['Range', 'Fire'] }",
+            serde_json::json!("Range"),
+            serde_json::json!("Fire"),
+        ),
+        (
+            "checkbox",
+            "{ type: 'boolean', default: true, label: 'Cook on' }",
+            serde_json::json!(true),
+            serde_json::json!(false),
+        ),
+    ] {
+        let iso = IsolatedStores::enter(&format!("tui-typed-failure-{tag}"));
+        let (mut session, mut app) = tui_with_profiles(&iso, &["alice"]);
+        let path = iso.dir().join("settings.ts");
+        std::fs::write(
+            &path,
+            format!(
+                "export const SETTINGS = {{ value: {definition} }};\nexport default class T extends LoopingBot {{ override loop() {{}} }}\n"
+            ),
+        ).unwrap();
+        let card = session.scripts.load_card(&path).unwrap();
+        assign(&mut session, "alice", &card);
+        focus_member(&mut session, &mut app, "alice");
+        dispatch(&mut session, &mut app, AppAction::ScriptParams);
+        assert_eq!(app.params_bag.get("value"), Some(&old));
+        let gate = session.core.write_gate();
+        let held = gate.lock().unwrap();
+        press(&mut session, &mut app, KeyCode::Char(' '));
+        assert_eq!(app.params_bag.get("value"), Some(&new));
+        std::fs::set_permissions(iso.dir(), std::fs::Permissions::from_mode(0o500)).unwrap();
+        drop(held);
+        session.core.flush_writes();
+        session.pump(&mut app);
+        std::fs::set_permissions(iso.dir(), std::fs::Permissions::from_mode(0o700)).unwrap();
+        assert_eq!(
+            app.params_bag.get("value"),
+            Some(&old),
+            "{tag}: durable value"
+        );
+        let error = session
+            .scripts
+            .parameter_text_error_for(Some("alice"), &app.params_card().unwrap(), "value")
+            .expect("keep the writer error")
+            .to_owned();
+        assert!(!error.is_empty());
+        for (width, height) in [(80, 24), (120, 40)] {
+            let mut terminal =
+                ratatui::Terminal::new(ratatui::backend::TestBackend::new(width, height)).unwrap();
+            headed_frame(&mut session, &mut app, &mut terminal, &mut Vec::new()).unwrap();
+            let rendered = terminal.backend().buffer();
+            let popup = crate::script_params::ParamsPane::popup_rect(rendered.area);
+            let mut visible = String::new();
+            for y in popup.top() + 1..popup.bottom() - 1 {
+                for x in popup.left() + 1..popup.right() - 1 {
+                    visible.push_str(rendered[(x, y)].symbol());
+                }
+                visible.push('\n');
+            }
+            let compact = visible
+                .chars()
+                .filter(|ch| ch.is_alphanumeric())
+                .collect::<String>();
+            let field_error = format!("Cook on: {error}")
+                .chars()
+                .filter(|ch| ch.is_alphanumeric())
+                .collect::<String>();
+            assert!(
+                compact.contains(&field_error),
+                "{tag} {width}x{height}: the failed control shows its full error\n{visible}\nexpected {field_error}"
+            );
+        }
+    }
+}
+
 /// Start with a prior load failure lists it on the strip; a newer front-end
 /// error replaces it; the Start settling Ready leaves that error shown.
 #[test]
