@@ -1251,6 +1251,10 @@
       "owner": "T1"
     },
     {
+      "path": "crates/host-play/src/survival_eat_live_tests.rs",
+      "owner": "T1"
+    },
+    {
       "path": "crates/host-play/src/slot_condition_live_tests.rs",
       "owner": "T1"
     },
@@ -7164,6 +7168,10 @@
     },
     {
       "path": "crates/frontend-core/tests/command_book_alloc.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/frontend-core/src/survival_live_tests.rs",
       "owner": "T3"
     },
     {

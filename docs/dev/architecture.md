@@ -751,6 +751,19 @@ Continuous interactions therefore retain unknown poison. A pause or movement-onl
 run can finish the window. Native manual input inside the client loop is outside
 this host-dispatch observation until the T1.4 client-adapter transport cutover.
 
+`WalkGuard::tick` takes the same-frame condition and the current cure policy.
+Its one decision body checks a held cure before every food branch, including
+food-only walks. Combat applies the same policy before all eating branches.
+Both consumers add one next poison fire to their eating lines and reject
+a bite at full hitpoints. They retain their existing drink and food receipts.
+The Gatherer boundary-eating path is separate until the runner survival step lands.
+
+The vault stores the Survival and supplies profile group. `SetSurvival` saves
+that group through the profile writer. Only a durable write updates the slot's
+atomic mirror and writes its audit line. Each observed frame reads that mirror
+once, then posts the policy to native action contexts and the host walk guard.
+The script policy type remains `script::survival::CurePoison`.
+
 Map-cache census retains at most 1,030 root summaries. Completion transfers that
 allocation without a replacement. A new scan releases previous census storage
 first. Mutation generations fence census, publication and bounded pruning. Entry
