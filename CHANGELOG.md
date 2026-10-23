@@ -20,6 +20,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.5` 
 - Examine and Cancel from a game-world menu no longer count as manual movement.
 - Grinch makes one fresh return attempt if its walk back to the Start tile
   stalls. A second stall still stops the script and keeps the failure detail.
+- Catalog scripts with many imports, including JiveKQ, no longer fail Start
+  when the host is busy. Scripts that never finish loading still fail Start.
 
 ### Nav
 
