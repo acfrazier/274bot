@@ -137,14 +137,15 @@ app show the same text in lower case.
 
 ## Read the login codes about your account
 
-When the game refuses a login, the app shows `login code N:` and the second line
-of the game's message. It does not show the first line. After a refusal the bot
-tries again by itself, after 5 seconds unless the row says otherwise.
+When the game refuses a login, the bot's state line shows `login code N:` and the
+second line of the game's message. The game screen of that bot shows both lines
+while it waits. After a refusal the bot tries again by itself, after 5 seconds
+unless the row says otherwise.
 
 | What you see | What it means | What to do |
 | --- | --- | --- |
 | `login code 3: Invalid username or password.` | The game refused the **user** or **pass**. | Fix them in **Profiles** and click **Save**. The next attempt uses the saved password. |
-| `login code 4: Please check your message-centre for details.` | The game disabled the account. The first line, which the app does not show, is `Your account has been disabled.` | Read the account's message centre for the reason. 274bot cannot lift a disabled account. |
+| `login code 4: Please check your message-centre for details.` | The game disabled the account. The first line, shown on the game screen but not in the state line, is `Your account has been disabled.` | Read the account's message centre for the reason. 274bot cannot lift a disabled account. |
 | `login code 5: Try again in 60 secs...` | The game says the account is already logged in. | Close the other session. The bot tries again after 60 seconds. |
 | `login code 9: Too many connections from your address.` | The game refused the login for too many connections from your address. | Close other game connections from your address. |
 | `login code 12: Please subscribe, or use a different world.` | The world needs a members account, and the account is not one. | Pick a free world in the profile's **world** option. See [Choose a world](servers-and-worlds.md#choose-a-world). |
