@@ -42,12 +42,14 @@ fn scratch(test: &str) -> Scratch {
     Scratch { dir, _iso: iso }
 }
 
-/// A driver over the state root `state`. Opening restores the Quest Paths
+/// A driver over the state root `dir/state`. Opening restores the Quest Paths
 /// source into the process-wide registry, so it waits for a test that
-/// owns that source.
-fn open_driver(state: &Path) -> HeadlessDriver {
+/// owns that source. The guarded [`Scratch`] it takes keeps every
+/// home-relative write inside the test: no caller can pass a bare path and
+/// let the guard drop first.
+fn open_driver(dir: &Scratch) -> HeadlessDriver {
     let _source = crate::quester_paths::registry_source_test_lock();
-    HeadlessDriver::open(state, InstancePermit::skip())
+    HeadlessDriver::open(&dir.join("state"), InstancePermit::skip())
 }
 
 /// A real vault file at `dir/vault` holding `names`.
@@ -84,7 +86,7 @@ fn play() -> PlayConfig {
 /// [`Scratch`] it takes keeps every home-relative write inside the test.
 fn driver_in(dir: &Scratch, names: &[&str]) -> HeadlessDriver {
     let vault = vault_with(dir, names);
-    let mut d = open_driver(&dir.join("state"));
+    let mut d = open_driver(dir);
     d.session_mut().set_spawn_workers(false);
     let unlock = d
         .unlock(vault, PASSPHRASE, &play())
@@ -408,7 +410,7 @@ fn preferences_file_now(d: &HeadlessDriver) -> Option<serde_json::Value> {
 fn unlock_with_a_wrong_passphrase_is_refused_and_keeps_the_vault() {
     let dir = scratch("unlock-wrong");
     let vault = vault_with(&dir, &["alice"]);
-    let mut d = open_driver(&dir.join("state"));
+    let mut d = open_driver(&dir);
     let wrong = d
         .unlock(vault.clone(), "not-the-passphrase", &play())
         .expect("admitted");
@@ -440,7 +442,7 @@ fn unlock_with_a_wrong_passphrase_is_refused_and_keeps_the_vault() {
 fn create_vault_makes_a_new_vault_file_that_a_new_session_unlocks() {
     let dir = scratch("create-vault");
     let vault = dir.join("new-vault");
-    let mut d = open_driver(&dir.join("state"));
+    let mut d = open_driver(&dir);
     let create = d
         .unlock(vault.clone(), PASSPHRASE, &play())
         .expect("admitted");
@@ -452,7 +454,7 @@ fn create_vault_makes_a_new_vault_file_that_a_new_session_unlocks() {
     assert!(vault.is_file(), "CreateVault wrote the vault file");
     drop(d);
 
-    let mut again = open_driver(&dir.join("state"));
+    let mut again = open_driver(&dir);
     let unlock = again.unlock(vault, PASSPHRASE, &play()).expect("admitted");
     assert_eq!(
         again.report(unlock.request()).map(CommandReport::command),
@@ -465,7 +467,7 @@ fn create_vault_makes_a_new_vault_file_that_a_new_session_unlocks() {
 fn reset_vault_deletes_the_locked_file_and_refuses_while_unlocked() {
     let dir = scratch("reset-vault");
     let vault = vault_with(&dir, &["alice"]);
-    let mut d = open_driver(&dir.join("state"));
+    let mut d = open_driver(&dir);
     d.session_mut().stage_vault_reset(vault.clone());
     let reset = d
         .submit(OperatorCommand::ResetVault, Targets::Application)
@@ -491,7 +493,7 @@ fn reset_vault_deletes_the_locked_file_and_refuses_while_unlocked() {
 #[test]
 fn a_vault_row_with_nothing_staged_is_refused_not_done() {
     let dir = scratch("vault-unstaged");
-    let mut d = open_driver(&dir.join("state"));
+    let mut d = open_driver(&dir);
     let unlock = d
         .submit(OperatorCommand::UnlockVault, Targets::Application)
         .expect("admitted");
@@ -546,7 +548,7 @@ fn preference_rows_write_the_file_and_a_new_session_reads_them_back() {
     assert_eq!(file["session_log_file"], serde_json::Value::Bool(true));
     assert_eq!(file["map_bake"], serde_json::Value::String("always".into()));
     // A new session over the same state root.
-    let again = open_driver(&dir.join("state"));
+    let again = open_driver(&dir);
     assert_eq!(
         again
             .session()
@@ -1295,7 +1297,7 @@ fn the_order_follows_create_rename_delete_and_survives_a_restart() {
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
     drop(d);
-    let mut again = open_driver(&dir.join("state"));
+    let mut again = open_driver(&dir);
     again.session_mut().set_spawn_workers(false);
     again
         .unlock(dir.join("vault"), PASSPHRASE, &play())
@@ -1738,7 +1740,7 @@ fn a_600_profile_order_is_durable_and_restores_after_a_restart() {
     assert!(per_profile < 32.0, "{per_profile} bytes per profile");
     d.session_mut().flush_writes();
     drop(d);
-    let mut again = open_driver(&dir.join("state"));
+    let mut again = open_driver(&dir);
     again.session_mut().set_spawn_workers(false);
     again
         .unlock(dir.join("vault"), PASSPHRASE, &play())
@@ -1797,7 +1799,7 @@ fn a_held_or_failed_rename_keeps_the_saved_place() {
     assert_eq!(stored_order(&d), saved);
     d.session_mut().flush_writes();
     drop(d);
-    let mut again = open_driver(&dir.join("state"));
+    let mut again = open_driver(&dir);
     again.session_mut().set_spawn_workers(false);
     again
         .unlock(dir.join("vault"), PASSPHRASE, &play())
@@ -2651,7 +2653,7 @@ fn a_deleted_profiles_member_is_pruned_and_its_uid_never_reused() {
     assert_eq!(stored_uids_settled(&mut d).len(), 3);
     assert_eq!(stored_order(&d), ["alice", "bob", "dave"]);
     drop(d);
-    let mut again = open_driver(&dir.join("state"));
+    let mut again = open_driver(&dir);
     again.session_mut().set_spawn_workers(false);
     again
         .unlock(dir.join("vault"), PASSPHRASE, &play())
@@ -2730,7 +2732,7 @@ fn a_pending_or_failed_deletion_keeps_the_saved_place() {
         "the stored order never changed"
     );
     drop(d);
-    let mut again = open_driver(&dir.join("state"));
+    let mut again = open_driver(&dir);
     again.session_mut().set_spawn_workers(false);
     again
         .unlock(dir.join("vault"), PASSPHRASE, &play())
@@ -2804,7 +2806,7 @@ fn a_failed_large_marked_move_leaves_the_stored_order_exactly_as_before() {
     );
     d.session_mut().flush_writes();
     drop(d);
-    let mut again = open_driver(&dir.join("state"));
+    let mut again = open_driver(&dir);
     again.session_mut().set_spawn_workers(false);
     again
         .unlock(dir.join("vault"), PASSPHRASE, &play())
