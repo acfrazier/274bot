@@ -8492,7 +8492,7 @@ fn relax_packed<'table, 'heap, 'pending, B: Budget>(
                     *pending_after_limit = true;
                     return Ok(());
                 }
-                Err(()) => match table.try_grow(heap, maximum_table_capacity) {
+                Err(()) => match table.try_grow(maximum_table_capacity) {
                     Ok(true) => {}
                     Ok(false) => return Err(SearchStop::Budget),
                     Err(_) => return Err(SearchStop::Allocation),
@@ -8577,7 +8577,10 @@ async fn search_kernel_budget<B: Budget>(
             };
         }
     };
-    let Some(mut heap) = PackedMinMaxHeap::try_new(came_from.capacity()) else {
+    // Reserve the bounded heap once, as the cooperative path already does.
+    // Growing its Vec with the table can copy untouched spare capacity and
+    // commit pages that the live frontier never uses.
+    let Some(mut heap) = PackedMinMaxHeap::try_new(maximum_table_capacity) else {
         return KernelOutcome {
             stop: SearchStop::Budget,
             ..KernelOutcome::empty()

@@ -1192,11 +1192,15 @@ fn find_exhausts_the_node_budget_before_giving_up() {
 }
 
 #[test]
-fn small_single_search_allocates_for_visited_tiles_not_the_node_budget() {
+fn small_single_search_keeps_record_allocations_proportional_to_visited_tiles() {
     let collision = bake(40, 1, &[]);
     let graph = TransportGraph::default();
     let state = WorldState::empty();
-    // The larger measured peak is 3,186 bytes; 4 KiB leaves 910 bytes (28.6%) of headroom.
+    // The heap reserves its bound without initializing entries. Keep the
+    // remaining peak within the prior 4 KiB visited-record allowance.
+    let heap_reservation = super::resources::packed_search_storage_bound(super::NODE_BUDGET)
+        .unwrap()
+        - super::resources::packed_predecessor_storage_bound(super::NODE_BUDGET).unwrap();
     for (destination, reachable) in [(tile(5, 5, 0), false), (tile(2, 0, 0), true)] {
         let mut result = None;
         let allocations = allocation_counter::measure(|| {
@@ -1219,19 +1223,23 @@ fn small_single_search_allocates_for_visited_tiles_not_the_node_budget() {
             assert!(matches!(result, Err(RouteError::NoPath)));
         }
         assert!(
-            allocations.bytes_max <= 4 * 1024,
-            "small single search retained maximum-budget storage: {allocations:?}"
+            allocations.bytes_max <= u64::try_from(heap_reservation).unwrap() + 4 * 1024,
+            "small single search retained maximum-budget record storage: {allocations:?}"
         );
     }
 }
 
 #[test]
-fn small_first_goal_diagnosis_allocates_for_visited_tiles_not_the_proof_budget() {
+fn small_first_goal_diagnosis_keeps_record_allocations_proportional_to_visited_tiles() {
     let collision = bake(40, 1, &[]);
     let graph = TransportGraph::default();
     let state = WorldState::empty();
     let mut result = None;
-    // The measured peak is 1,199 bytes; 2 KiB leaves 849 bytes (70.8%) of headroom.
+    // Count the uninitialized heap reservation separately from the prior
+    // 2 KiB visited-record allowance (1,199 measured bytes before reservation).
+    let heap_reservation = super::resources::packed_search_storage_bound(super::NODE_BUDGET)
+        .unwrap()
+        - super::resources::packed_predecessor_storage_bound(super::NODE_BUDGET).unwrap();
     let allocations = allocation_counter::measure(|| {
         result = Some(find_first_missing_item_reqs_with_avoid(
             &collision,
@@ -1246,8 +1254,8 @@ fn small_first_goal_diagnosis_allocates_for_visited_tiles_not_the_proof_budget()
     });
     assert!(result.expect("the measured diagnosis runs").is_none());
     assert!(
-        allocations.bytes_max <= 2 * 1024,
-        "small first-goal diagnosis retained maximum-proof storage: {allocations:?}"
+        allocations.bytes_max <= u64::try_from(heap_reservation).unwrap() + 2 * 1024,
+        "small first-goal diagnosis retained maximum-proof record storage: {allocations:?}"
     );
 }
 
@@ -1696,6 +1704,41 @@ fn many_targets_keep_shortcuts_duplicates_budget_and_deadline_distinct() {
 }
 
 #[test]
+fn synchronous_search_reserves_the_bounded_heap_before_records_grow() {
+    const BUDGET: usize = 16_386;
+    let wc = bake(BUDGET, 1, &[]);
+    let graph = TransportGraph::default();
+    let state = WorldState::empty();
+    let heap_capacity = super::PackedSearchTable::capacity_for(BUDGET).unwrap();
+    for x in [2, BUDGET - 1] {
+        let target = tile(x as i32, 0, 0);
+        let targets = [target];
+        let search = find_many_with_avoid_bounded(
+            &wc,
+            &graph,
+            tile(0, 0, 0),
+            &targets,
+            FindOptions::default(),
+            &state,
+            &[],
+            BUDGET,
+        );
+        assert_eq!(search.route(0).unwrap().dest, target);
+        assert_eq!(search.settled(), x + 1);
+        let scratch = search.scratch_capacities();
+        assert_eq!(
+            scratch.heap, heap_capacity,
+            "reserve once from the settle bound, not from the growing record table"
+        );
+        if x == 2 {
+            assert!(scratch.distances < 16);
+        } else {
+            assert!(scratch.distances > 16_384);
+        }
+    }
+}
+
+#[test]
 fn first_target_search_stops_before_an_unreachable_sibling_floods_the_map() {
     let wc = bake(100, 1, &[]);
     let graph = TransportGraph::default();
@@ -1720,7 +1763,10 @@ fn first_target_search_stops_before_an_unreachable_sibling_floods_the_map() {
     assert!(scratch.distances < 16);
     assert!(scratch.predecessors < 16);
     assert!(scratch.settled < 16);
-    assert!(scratch.heap < 16);
+    assert_eq!(
+        scratch.heap,
+        super::PackedSearchTable::capacity_for(super::NODE_BUDGET).unwrap()
+    );
 }
 
 /// A goal whose only route needs more settles than the old scene-sized
@@ -2874,8 +2920,12 @@ fn first_target_rc_booth_stays_in_the_frozen_search_ballpark_on_real_289_pack() 
         "first-goal search must not flood the packed world"
     );
     assert!(
-        scratch.distances + scratch.predecessors + scratch.settled + scratch.heap < 16_384,
-        "first-goal scratch must stay near the short route, got {scratch:?}"
+        scratch.distances + scratch.predecessors + scratch.settled < 16_384,
+        "first-goal records must stay near the short route, got {scratch:?}"
+    );
+    assert_eq!(
+        scratch.heap,
+        super::PackedSearchTable::capacity_for(super::NODE_BUDGET).unwrap()
     );
 }
 
