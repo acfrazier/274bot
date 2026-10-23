@@ -667,7 +667,10 @@ pub fn run_prepared_has_setup_cheats(scenario: &Scenario) -> bool {
     scenario.steps[..start].iter().any(|step| match &step.kind {
         // After as_run_prepared, pre-Start steps are no-op ack observes only.
         StepKind::Perform { .. } => !step.name.starts_with("acknowledge prepared"),
-        StepKind::Repeat { .. } | StepKind::DrainDialogs { .. } | StepKind::Relog => true,
+        StepKind::Repeat { .. }
+        | StepKind::NativeSeedDeposit { .. }
+        | StepKind::DrainDialogs { .. }
+        | StepKind::Relog => true,
         _ => false,
     })
 }
