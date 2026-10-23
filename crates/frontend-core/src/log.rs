@@ -360,12 +360,10 @@ impl LogView {
         &self.scope
     }
 
-    /// Point the view at `slot` (or the process ring for `None`) unless it
-    /// shows everything. Allocates only when the slot actually changes.
+    /// Point the view at `slot` (or the process ring for `None`), including
+    /// when it showed every bot. Allocates only when the slot actually
+    /// changes.
     pub fn follow_slot(&mut self, slot: Option<&str>) {
-        if self.scope.is_all() {
-            return;
-        }
         let same = match (self.scope.slot_name(), slot) {
             (Some(current), Some(slot)) => current == slot,
             (None, None) => self.scope.is_process(),
