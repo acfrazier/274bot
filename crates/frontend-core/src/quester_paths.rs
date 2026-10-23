@@ -326,9 +326,8 @@ impl QuesterPathsController {
     }
 
     /// Persist (when requested), apply and reload a changed source. The
-    /// settings apply once the write is accepted; a write still queued
-    /// when the bounded wait ends comes back [`Update::Queued`] for the
-    /// command to settle from.
+    /// settings apply once the write is accepted. A pending write returns
+    /// [`Update::Queued`] for the command to settle from the service-owned result.
     pub(crate) fn apply_changed(
         &mut self,
         preferences: &UiPreferences,

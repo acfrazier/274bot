@@ -28,7 +28,10 @@ fn scratch(test: &str) -> PathBuf {
 /// owns that source.
 fn open_driver(state: &Path) -> HeadlessDriver {
     let _source = crate::quester_paths::registry_source_test_lock();
-    HeadlessDriver::open(state, InstancePermit::skip())
+    let mut driver = HeadlessDriver::open(state, InstancePermit::skip());
+    driver.session.preferences().unwrap().reload().unwrap();
+    driver.poll();
+    driver
 }
 
 #[test]
