@@ -248,7 +248,21 @@ function fixture(split: (text: string, width: number) => string[] = text => [tex
         '%tutorial = ^newbie_basics_instructor_designed_character;',
     ].join('\n'));
     files.set('scripts/skill_fletching/scripts/cut_logs.rs2', [
-        '[label,fletch_log]',
+        '[opheldu,_category_22]',
+        'switch_obj(last_useitem) {',
+        'case knife : @fletch_log(last_item);',
+        'case tinderbox : @light_logs_inv(last_slot);',
+        '}',
+        '[label,fletch_log](obj $log)',
+        'db_find(fletch_bow_table:log, $log);',
+        'def_dbrow $data = db_findnext;',
+        'if ($data = null) {',
+        'return;',
+        '}',
+        'def_int $shaft_count = db_getfield($data, fletch_bow_table:shafts, 0);',
+        'if ($shaft_count < 1) {',
+        'return;',
+        '}',
         '~skill_multi3();',
         'if ($product = null) {',
         'return;',
@@ -258,6 +272,37 @@ function fixture(split: (text: string, width: number) => string[] = text => [tex
         '[queue,fletch_logs]',
         'inv_del(inv, $log, 1);',
     ].join('\n'));
+    files.set('scripts/skill_fletching/configs/cut_logs/cut_logs.dbrow', [
+        '[fletching_normal]',
+        'table=fletch_bow_table',
+        'data=log,logs',
+        'data=shafts,15',
+        'data=objchoices,shortbow,longbow',
+        '[fletching_oak]',
+        'table=fletch_bow_table',
+        'data=log,oak_logs',
+        'data=objchoices,oak_shortbow,oak_longbow',
+    ].join('\n'));
+    files.set('scripts/skill_firemaking/configs/firemaking.obj', [
+        '[logs]',
+        'name=Logs',
+        'category=category_22',
+        '[oak_logs]',
+        'name=Oak logs',
+        'category=category_22',
+    ].join('\n'));
+    files.set('scripts/skill_cooking/scripts/gnome_cooking/cutting_fruit.rs2', [
+        '[opheldu,knife]',
+        'switch_obj(last_useitem) {',
+        'case lemon : @slice_or_dice_interface(last_useitem);',
+        'case default :',
+        'if (oc_category(last_useitem) = category_22) {',
+        '@fletch_log(last_useitem);',
+        '}',
+        '}',
+    ].join('\n'));
+    files.set('pack/obj.pack', '946=knife\n1511=logs\n1521=oak_logs\n');
+    files.set('pack/category.pack', '182=category_22\n');
 
     const save = () => {
         for (const [file, text] of files) {
@@ -400,6 +445,13 @@ try {
     assert.equal(catalog.banker_page.continue_component_alias, 'chat1:com_3');
     assert.equal(catalog.bank.mode_varp.id, 7);
     assert.equal(catalog.numeric_locs[0].operation, 2);
+    assert.deepEqual(catalog.knife.knife, { alias: 'knife', id: 946 }, 'the knife fact joins the OPHELDU case alias to its packed id');
+    assert.deepEqual(catalog.knife.logs, [{ alias: 'logs', id: 1511 }], 'only the shafts Make-path log row is admitted');
+    assert.ok(catalog.knife.sources.length > 0, 'the knife fact cites its recipe spans');
+    assert.ok(catalog.knife.sources.some(source => source.file === 'scripts/skill_fletching/scripts/cut_logs.rs2'), 'the knife fact cites the category recipe');
+    assert.ok(catalog.knife.sources.some(source => source.file === 'scripts/skill_cooking/scripts/gnome_cooking/cutting_fruit.rs2'), 'the knife fact cites the knife-specific delegation');
+    assert.ok(catalog.knife.sources.some(source => source.file === 'scripts/skill_fletching/configs/cut_logs/cut_logs.dbrow'), 'the knife fact cites the admitted log row');
+    assert.ok(catalog.knife.sources.some(source => source.file === 'pack/obj.pack'), 'the knife fact cites its pack joins');
     assert.equal(catalog.entries.find(entry => entry.key === 'bank_withdraw_x')?.deadline_ticks, 2);
     assert.equal(catalog.entries.find(entry => entry.key === 'bank_deposit_all')?.deadline_ticks, null);
     assert.equal(catalog.entries.find(entry => entry.key === 'bank_close_terminal')?.recovery_count, 1);
@@ -531,6 +583,35 @@ const refusals: readonly [string, (sample: ServerOrderedTestFixture) => void, Re
         sample.files.set(file, sample.files.get(file)!.replace('p_countdialog;', '~unchecked_count_helper();\np_countdialog;'));
         sample.save();
     }, /bank_withdraw count prompt is not a synchronous label path/],
+    ['missing knife pack alias', sample => {
+        sample.files.set('pack/obj.pack', sample.files.get('pack/obj.pack')!.replace(/^946=knife\n/m, ''));
+        sample.save();
+    }, /missing or invalid pack\/obj\.pack alias knife/],
+    ['ambiguous knife log row', sample => {
+        const file = 'scripts/skill_fletching/configs/cut_logs/cut_logs.dbrow';
+        sample.files.set(file, sample.files.get(file)!.replace('data=log,logs\n', 'data=log,logs\ndata=log,logs\n'));
+        sample.save();
+    }, /does not name one log/],
+    ['no log recipe reaches Make', sample => {
+        const file = 'scripts/skill_fletching/configs/cut_logs/cut_logs.dbrow';
+        sample.files.set(file, sample.files.get(file)!.replace('data=shafts,15\n', ''));
+        sample.save();
+    }, /no log recipe reaches the Make menu/],
+    ['admitted log leaves the recipe category', sample => {
+        const file = 'scripts/skill_firemaking/configs/firemaking.obj';
+        sample.files.set(file, sample.files.get(file)!.replace('[logs]\nname=Logs\ncategory=category_22', '[logs]\nname=Logs\ncategory=logs'));
+        sample.save();
+    }, /is not in the OPHELDU recipe category/],
+    ['knife delegation no longer reaches fletch_log', sample => {
+        const file = 'scripts/skill_cooking/scripts/gnome_cooking/cutting_fruit.rs2';
+        sample.files.set(file, sample.files.get(file)!.replace('@fletch_log(last_useitem);', '~displaymessage(^dm_default);'));
+        sample.save();
+    }, /no longer delegates its category to fletch_log/],
+    ['admitted log bypasses the knife delegation', sample => {
+        const file = 'scripts/skill_cooking/scripts/gnome_cooking/cutting_fruit.rs2';
+        sample.files.set(file, sample.files.get(file)!.replace('case lemon :', 'case logs :\ncase lemon :'));
+        sample.save();
+    }, /bypasses the knife category delegation/],
 ];
 
 for (const [label, mutate, expected] of refusals) {
