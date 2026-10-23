@@ -11,6 +11,8 @@ use super::select;
 use super::tables::{CombatTables, PotionKind, PrayerRole};
 use super::threats::ThreatSet;
 use crate::native::WalkRequest;
+use crate::survival::cure::{self, CureDecision, CureInputs, CurePoison};
+use api::condition::BotCondition;
 use api::game_data::PrayerFact;
 use api::selected::ClientRevision;
 use api::snapshot::SnapshotView;
@@ -46,6 +48,7 @@ pub enum GuardOp {
     },
     Drink {
         name: Arc<str>,
+        kind: PotionKind,
     },
     Eat {
         name: Arc<str>,
@@ -146,6 +149,7 @@ pub struct WalkGuard {
     flags: u8,
     drink_points: u8,
     drink_doses: u8,
+    drink_kind: PotionKind,
     eat_id: i32,
     eat_count: u16,
     eat_hp: i16,
@@ -157,9 +161,10 @@ const FLAG_SEEN: u8 = 2;
 const FLAG_FOOD_ALLOWED: u8 = 4;
 const FLAG_NO_POINTS_REPORTED: u8 = 8;
 const FLAG_FOOD_ONLY: u8 = 16;
+const FLAG_CURE_FRUIT: u8 = 32;
 
-// Pickup expands the shared Schedule to nine slots and u16 masks; the merged
-// food guard needs 264 bytes without adding any guard fields for abort upkeep.
+// A11 bounds the cure receipt state to four bytes; keep this shared guard
+// owner within its existing 264-byte ceiling.
 const _: () = assert!(std::mem::size_of::<WalkGuard>() <= 264);
 
 static TABLES: LazyLock<Option<Arc<CombatTables>>> = LazyLock::new(|| {
@@ -292,6 +297,7 @@ impl WalkGuard {
                 | if food_only { FLAG_FOOD_ONLY } else { 0 },
             drink_points: 0,
             drink_doses: 0,
+            drink_kind: PotionKind::Prayer,
             eat_id: 0,
             eat_count: 0,
             eat_hp: 0,
@@ -373,36 +379,50 @@ impl WalkGuard {
                 self.follow_until = tick.wrapping_add(1);
                 self.flags |= FLAG_FOLLOW;
             }
-            GuardOp::Drink { .. } => {
+            GuardOp::Drink { kind, .. } => {
                 let (points, _) = arbiter::stat(&frame, PRAYER_STAT);
                 self.drink_points =
                     u8::try_from(points.clamp(0, i32::from(u8::MAX))).unwrap_or(u8::MAX);
                 self.drink_doses = u8::try_from(
-                    arbiter::doses(&frame, &self.tables, PotionKind::Prayer)
-                        .clamp(0, i16::from(u8::MAX)),
+                    arbiter::doses(&frame, &self.tables, *kind).clamp(0, i16::from(u8::MAX)),
                 )
                 .unwrap_or(u8::MAX);
+                self.drink_kind = *kind;
+                self.flags &= !FLAG_CURE_FRUIT;
                 self.schedule
                     .admitted(OpKind::Drink, tick, 0, false, InputEffect::Standard);
             }
             GuardOp::Eat { name } => {
-                let Some((id, food)) = frame.inventory.iter().find_map(|row| {
-                    let food = self.tables.food(row.def.id)?;
+                let Some(row) = frame.inventory.iter().find(|row| {
                     row.def
                         .name
                         .as_deref()
                         .is_some_and(|got| got.eq_ignore_ascii_case(name.as_ref()))
-                        .then_some((row.def.id, food))
                 }) else {
                     return;
                 };
-                let (hp, _) = arbiter::stat(&frame, HITPOINTS_STAT);
-                self.schedule
-                    .admitted(OpKind::Eat, tick, 0, false, InputEffect::Food(food));
-                self.eat_admission_tick = tick;
-                self.eat_id = id;
-                self.eat_count = food_count(&frame, id);
-                self.eat_hp = hp.clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16;
+                let id = row.def.id;
+                if let Some(food) = self.tables.food(id) {
+                    let (hp, _) = arbiter::stat(&frame, HITPOINTS_STAT);
+                    self.schedule
+                        .admitted(OpKind::Eat, tick, 0, false, InputEffect::Food(food));
+                    self.eat_admission_tick = tick;
+                    self.eat_id = id;
+                    self.eat_count = food_count(&frame, id);
+                    self.eat_hp = hp.clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16;
+                } else if self
+                    .tables
+                    .selected()
+                    .item_by_alias("macro_triffidfruit")
+                    .is_some_and(|fruit| fruit.id == id)
+                {
+                    self.schedule
+                        .admitted(OpKind::Drink, tick, 0, false, InputEffect::Standard);
+                    self.flags |= FLAG_CURE_FRUIT;
+                    self.eat_admission_tick = tick;
+                    self.eat_id = id;
+                    self.eat_count = food_count(&frame, id);
+                }
             }
             _ => {}
         }
@@ -411,6 +431,16 @@ impl WalkGuard {
     /// Observe threats and return at most one proposed interaction.
     /// Commit a sent proposal with [`Self::admitted`].
     pub fn tick(&mut self, snapshot: &SnapshotView<'_>) -> Option<GuardOp> {
+        self.tick_with_policy(snapshot, None, CurePoison::WhenNeeded)
+    }
+
+    /// Observe one tick with the slot-owned condition and current cure policy.
+    pub fn tick_with_policy(
+        &mut self,
+        snapshot: &SnapshotView<'_>,
+        condition: Option<&BotCondition>,
+        cure_policy: CurePoison,
+    ) -> Option<GuardOp> {
         let frame = Frame::borrow(*snapshot)?;
         let tick = frame.tick;
         if self.flags & FLAG_SEEN != 0 && tick == self.last_tick {
@@ -433,11 +463,14 @@ impl WalkGuard {
         let (points, base) = arbiter::stat(&frame, PRAYER_STAT);
         if self.flags & FLAG_FOOD_ONLY == 0 {
             self.observe_protect(&frame);
-            self.settle_drink(&frame, tick, points);
         }
+        self.settle_drink(&frame, tick, points);
         let danger = self
             .threats
             .danger(&frame, &self.tables, tick, false, false);
+        if let Some(op) = self.cure_op(&frame, condition, cure_policy, danger, tick) {
+            return Some(op);
+        }
         let eat_choice = if self.flags & FLAG_FOOD_ALLOWED != 0
             && !self.schedule.pending(OpKind::Eat)
             && self.schedule.unsettled[OpKind::Eat.index()] < 3
@@ -516,6 +549,40 @@ impl WalkGuard {
             component: wanted.button_com,
         })
     }
+    fn cure_op(
+        &self,
+        frame: &Frame<'_>,
+        condition: Option<&BotCondition>,
+        policy: CurePoison,
+        danger: Option<i32>,
+        tick: u16,
+    ) -> Option<GuardOp> {
+        let decision = cure::cure_choice(&CureInputs {
+            cond: condition,
+            danger,
+            exposure: crate::survival::math::exposure(&self.threats, &self.tables, tick),
+            policy,
+            route_refused_for_poison: false,
+            inventory: frame.inventory,
+            tables: &self.tables,
+            schedule: &self.schedule,
+            clue_reserve: false,
+            tick,
+            q_unknown: self.tables.unknown_poison_pulse(),
+            eat_floor: 0,
+        });
+        match decision {
+            CureDecision::Drink { item, kind, .. } => {
+                let name = item_name(frame, item)?;
+                Some(GuardOp::Drink { name, kind })
+            }
+            CureDecision::EatFruit { item, .. } => {
+                let name = item_name(frame, item)?;
+                Some(GuardOp::Eat { name })
+            }
+            CureDecision::None | CureDecision::Needed { .. } => None,
+        }
+    }
     /// Whether the current observed HP exceeds the guard's food line for its
     /// current live danger estimate. Unknown danger is never considered safe.
     pub fn safe_to_stop(&self, snapshot: &SnapshotView<'_>) -> bool {
@@ -578,7 +645,10 @@ impl WalkGuard {
             .find(|row| row.def.id == id)
             .and_then(|row| row.def.name.as_deref())
             .map(Arc::<str>::from)?;
-        Some(GuardOp::Drink { name })
+        Some(GuardOp::Drink {
+            name,
+            kind: PotionKind::Prayer,
+        })
     }
 
     fn eat_op(&self, frame: &Frame<'_>, choice: Option<policy::EatChoice>) -> Option<GuardOp> {
@@ -619,14 +689,42 @@ impl WalkGuard {
         if !self.schedule.pending(OpKind::Drink) {
             return;
         }
-        let doses = arbiter::doses(frame, &self.tables, PotionKind::Prayer);
-        let observed = points > i32::from(self.drink_points) || doses < i16::from(self.drink_doses);
+        if self.flags & FLAG_CURE_FRUIT != 0 {
+            let observed = food_count(frame, self.eat_id) < self.eat_count;
+            if observed {
+                self.schedule.settle(OpKind::Drink);
+                self.flags &= !FLAG_CURE_FRUIT;
+                self.eat_id = 0;
+                self.eat_count = 0;
+                self.eat_admission_tick = 0;
+            } else if self.schedule.ready(OpKind::Drink, tick) {
+                self.schedule.timeout(OpKind::Drink);
+                self.flags &= !FLAG_CURE_FRUIT;
+                self.eat_id = 0;
+                self.eat_count = 0;
+                self.eat_admission_tick = 0;
+            }
+            return;
+        }
+        let doses = arbiter::doses(frame, &self.tables, self.drink_kind);
+        let observed = (self.drink_kind == PotionKind::Prayer
+            && points > i32::from(self.drink_points))
+            || doses < i16::from(self.drink_doses);
         if observed {
             self.schedule.settle(OpKind::Drink);
         } else if self.schedule.ready(OpKind::Drink, tick) {
             self.schedule.timeout(OpKind::Drink);
         }
     }
+}
+
+fn item_name(frame: &Frame<'_>, id: i32) -> Option<Arc<str>> {
+    frame
+        .inventory
+        .iter()
+        .find(|row| row.def.id == id)
+        .and_then(|row| row.def.name.as_deref())
+        .map(Arc::<str>::from)
 }
 
 #[cfg(test)]
@@ -914,6 +1012,30 @@ mod tests {
                 container: ItemContainer::Inventory,
                 action_family: ItemActionFamily::Held,
                 slot: 0,
+                count: 1,
+                actions: vec![Some("Drink".into())],
+                component_id: 3214,
+            });
+            self.refresh();
+        }
+        fn add_antipoison(&mut self) {
+            let id = self.tables.potion(PotionKind::Antipoison).unwrap().doses[0]
+                .unwrap()
+                .id;
+            self.inventory.push(ItemView {
+                def: ItemDefView {
+                    id,
+                    name: Some("Antipoison".into()),
+                    stackable: false,
+                    members: true,
+                    base_value: 1,
+                    noted: false,
+                    certificate_link: -1,
+                    certificate_template: -1,
+                },
+                container: ItemContainer::Inventory,
+                action_family: ItemActionFamily::Held,
+                slot: self.inventory.len() as i32,
                 count: 1,
                 actions: vec![Some("Drink".into())],
                 component_id: 3214,
@@ -1891,6 +2013,267 @@ mod tests {
         );
     }
 
+    #[test]
+    fn guard_cure_before_emergency_bite() {
+        let mut scene = Scene::new(43);
+        scene.launch_known_melee_threat();
+        scene.add_food("lobster", 0, 1);
+        scene.add_antipoison();
+        let lines = {
+            let frame = Frame::borrow(scene.view_at(0)).unwrap();
+            let mut threats = ThreatSet::default();
+            threats.observe(&frame, &scene.tables, 0);
+            let danger = threats
+                .danger(&frame, &scene.tables, 0, false, false)
+                .expect("known melee danger");
+            select::lines(Some(danger), 40)
+        };
+        scene.stats[3].effective = lines.emergency;
+        scene.refresh();
+        let condition = BotCondition {
+            tick: 0,
+            session: api::condition::SessionMark::Live,
+            hp: u8::try_from(scene.stats[3].effective).unwrap(),
+            hp_max: 40,
+            hp_known: true,
+            poison: api::condition::PoisonState::Onset {
+                since: 0,
+                q: Some(11),
+                hit_since_line: false,
+            },
+            food: api::condition::FoodSummary::default(),
+            cures: api::condition::CureDoses::default(),
+        };
+        let request = scene.request();
+        for food_only in [false, true] {
+            let mut guard = if food_only {
+                WalkGuard::begin_food_only_with(
+                    &request,
+                    &scene.view_at(0),
+                    Arc::clone(&scene.tables),
+                )
+                .unwrap()
+            } else {
+                WalkGuard::begin_with(&request, &scene.view_at(0), Arc::clone(&scene.tables))
+                    .unwrap()
+            };
+            let op = guard
+                .tick_with_policy(&scene.view_at(0), Some(&condition), CurePoison::WhenNeeded)
+                .unwrap();
+            assert!(
+                matches!(
+                    op,
+                    GuardOp::Drink {
+                        kind: PotionKind::Antipoison,
+                        ..
+                    }
+                ),
+                "food_only={food_only}, got {op:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn food_only_guard_drinks_cure() {
+        let mut scene = Scene::new(43);
+        scene.stats[3].effective = 10;
+        scene.add_antipoison();
+        let condition = BotCondition {
+            tick: 0,
+            session: api::condition::SessionMark::Live,
+            hp: 10,
+            hp_max: 40,
+            hp_known: true,
+            poison: api::condition::PoisonState::Onset {
+                since: 0,
+                q: Some(11),
+                hit_since_line: false,
+            },
+            food: api::condition::FoodSummary::default(),
+            cures: api::condition::CureDoses::default(),
+        };
+        let mut guard = WalkGuard::begin_food_only_with(
+            &scene.request(),
+            &scene.view(),
+            Arc::clone(&scene.tables),
+        )
+        .unwrap();
+        assert!(matches!(
+            guard.tick_with_policy(&scene.view_at(0), Some(&condition), CurePoison::WhenNeeded),
+            Some(GuardOp::Drink {
+                kind: PotionKind::Antipoison,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn guard_drinks_at_line_before_first_mark() {
+        let mut scene = Scene::new(43);
+        scene.stats[3].effective = 60;
+        scene.stats[3].base = 99;
+        scene.add_antipoison();
+        scene.refresh();
+        let condition = BotCondition {
+            tick: 0,
+            session: api::condition::SessionMark::Live,
+            hp: 60,
+            hp_max: 99,
+            hp_known: true,
+            poison: api::condition::PoisonState::Onset {
+                since: 0,
+                q: Some(11),
+                hit_since_line: false,
+            },
+            food: api::condition::FoodSummary::default(),
+            cures: api::condition::CureDoses::default(),
+        };
+        let mut guard = WalkGuard::begin_food_only_with(
+            &scene.request(),
+            &scene.view(),
+            Arc::clone(&scene.tables),
+        )
+        .unwrap();
+        let op = guard
+            .tick_with_policy(&scene.view_at(0), Some(&condition), CurePoison::WhenNeeded)
+            .unwrap();
+        assert!(
+            matches!(
+                op,
+                GuardOp::Drink {
+                    kind: PotionKind::Antipoison,
+                    ..
+                }
+            ),
+            "the onset line must cure before the first poison mark: {op:?}"
+        );
+    }
+
+    #[test]
+    fn guard_without_poison_unchanged() {
+        let mut scene = Scene::new(43);
+        scene.launch_known_melee_threat();
+        scene.add_antipoison();
+        let mut guard = scene.begin().unwrap();
+        let op = guard.tick(&scene.view_at(0)).unwrap();
+        assert!(
+            matches!(op, GuardOp::IfButton { .. }),
+            "without a condition fact, the guard keeps its protection behavior: {op:?}"
+        );
+    }
+
+    #[test]
+    fn antipoison_receipt_settles_on_the_dose_drop() {
+        let mut scene = Scene::new(43);
+        scene.stats[3].effective = 10;
+        scene.add_antipoison();
+        let mut guard = WalkGuard::begin_food_only_with(
+            &scene.request(),
+            &scene.view(),
+            Arc::clone(&scene.tables),
+        )
+        .unwrap();
+        let active = BotCondition {
+            tick: 0,
+            session: api::condition::SessionMark::Live,
+            hp: 10,
+            hp_max: 40,
+            hp_known: true,
+            poison: api::condition::PoisonState::Onset {
+                since: 0,
+                q: Some(11),
+                hit_since_line: false,
+            },
+            food: api::condition::FoodSummary::default(),
+            cures: api::condition::CureDoses {
+                antipoison: 1,
+                ..api::condition::CureDoses::default()
+            },
+        };
+        let drink = guard
+            .tick_with_policy(&scene.view_at(0), Some(&active), CurePoison::WhenNeeded)
+            .unwrap();
+        assert!(matches!(
+            drink,
+            GuardOp::Drink {
+                kind: PotionKind::Antipoison,
+                ..
+            }
+        ));
+        guard.admitted(&drink, &scene.view_at(0));
+        assert!(guard.schedule.pending(OpKind::Drink));
+
+        let consumed_id = scene.tables.potion(PotionKind::Antipoison).unwrap().doses[0]
+            .unwrap()
+            .id;
+        scene.inventory.retain(|row| row.def.id != consumed_id);
+        scene.refresh();
+        let clear = BotCondition {
+            tick: 3,
+            poison: api::condition::PoisonState::Clear,
+            ..active
+        };
+        assert_eq!(
+            guard.tick_with_policy(&scene.view_at(3), Some(&clear), CurePoison::WhenNeeded),
+            None
+        );
+        assert!(!guard.schedule.pending(OpKind::Drink));
+    }
+
+    #[test]
+    fn strange_fruit_receipt_settles_on_the_count_drop() {
+        let mut scene = Scene::new(43);
+        scene.stats[3].effective = 10;
+        scene.add_food("macro_triffidfruit", 0, 1);
+        let fruit_id = scene
+            .tables
+            .selected()
+            .item_by_alias("macro_triffidfruit")
+            .unwrap()
+            .id;
+        let condition = BotCondition {
+            tick: 0,
+            session: api::condition::SessionMark::Live,
+            hp: 10,
+            hp_max: 40,
+            hp_known: true,
+            poison: api::condition::PoisonState::Onset {
+                since: 0,
+                q: Some(11),
+                hit_since_line: false,
+            },
+            food: api::condition::FoodSummary::default(),
+            cures: api::condition::CureDoses::default(),
+        };
+        let mut guard = WalkGuard::begin_food_only_with(
+            &scene.request(),
+            &scene.view_at(0),
+            Arc::clone(&scene.tables),
+        )
+        .unwrap();
+        let fruit = guard
+            .tick_with_policy(&scene.view_at(0), Some(&condition), CurePoison::WhenNeeded)
+            .unwrap();
+        assert!(matches!(
+            fruit,
+            GuardOp::Eat { ref name } if name.as_ref() == "Strange fruit"
+        ));
+        guard.admitted(&fruit, &scene.view_at(0));
+        assert!(guard.schedule.pending(OpKind::Drink));
+
+        scene.inventory.retain(|item| item.def.id != fruit_id);
+        scene.refresh();
+        let clear = BotCondition {
+            tick: 3,
+            poison: api::condition::PoisonState::Clear,
+            ..condition
+        };
+        assert_eq!(
+            guard.tick_with_policy(&scene.view_at(3), Some(&clear), CurePoison::WhenNeeded),
+            None
+        );
+        assert!(!guard.schedule.pending(OpKind::Drink));
+    }
     #[test]
     fn food_permission_defaults_true_and_can_disable_eating() {
         assert!(crate::native::WalkAllow::default().food);
