@@ -679,6 +679,8 @@ impl FollowRun {
                     ticks_waited: 0,
                     sent_tile: None,
                     sent_tick: snapshot.tick(),
+                    start_tile: here,
+                    first_sent_tick: snapshot.tick(),
                     tries: 0,
                     stall_idle_ticks: 0,
                     stall_idle_last_tick: None,
@@ -1158,6 +1160,9 @@ struct WalkHop {
     /// re-armed with `sent: false` and sent on the same poll (click-ahead).
     sent: bool,
     sent_tick: u32,
+    /// Original send for this aim, retained across stall-recovery resends.
+    start_tile: WorldTile,
+    first_sent_tick: u32,
     ticks_waited: u32,
     /// The player's tile when the hop's walk was sent. Used for
     /// Dropped vs Expired stall classification (`here == sent_tile` →

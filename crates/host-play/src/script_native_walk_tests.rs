@@ -5628,6 +5628,9 @@ fn s2b_admission_per_bot_layouts() {
     // account to NavBot's retained QuestEvidence.
     // Removing the legacy-grid fields shrank Traveller by 88 B (904 B to
     // 816 B), so the measured NavBot exact pin falls from 3760 B to 3672 B.
+    // +16 B: stall diagnostic: original send tile and tick across resends.
+    // Traveller measures 832 B, so NavBot measures 3688 B on macOS.
+    // Linux retains the same +16 B delta pending integration measurement.
     // Rust 1.98.1 is pinned for the workspace and CI. These are lib-test
     // layouts: test-only inspection budgets and bank fixtures are included.
     // Linux's std::sync::Mutex is 8 B smaller than macOS's for each of the
@@ -5644,7 +5647,7 @@ fn s2b_admission_per_bot_layouts() {
             std::mem::size_of::<script::combat::Combat>(),
             std::mem::size_of::<script::combat::WalkGuard>()
         ),
-        (3672, 4616, 512, 264)
+        (3688, 4616, 512, 264)
     );
     #[cfg(all(
         target_os = "linux",
@@ -5659,7 +5662,7 @@ fn s2b_admission_per_bot_layouts() {
             std::mem::size_of::<script::combat::Combat>(),
             std::mem::size_of::<script::combat::WalkGuard>()
         ),
-        (3672, 4496, 512, 264)
+        (3688, 4496, 512, 264)
     );
     assert!(std::mem::size_of::<script::combat::Combat>() <= 512);
     assert!(std::mem::size_of::<script::combat::WalkGuard>() <= 264);

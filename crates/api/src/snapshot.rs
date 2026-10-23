@@ -56,6 +56,10 @@ pub struct GameSnapshot {
     thieving_stun_tick: Option<u32>,
     #[serde(skip)]
     thieving_stun_stamp: Option<i32>,
+    #[serde(skip)]
+    last_scene_rebuild_tick: Option<u32>,
+    #[serde(skip)]
+    last_server_movement_tick: Option<u32>,
     players: Vec<PlayerView>,
     /// Whether the player family has posted at least once in this session.
     #[serde(skip)]
@@ -294,6 +298,8 @@ impl Default for GameSnapshot {
             taking_damage: false,
             thieving_stun_tick: None,
             thieving_stun_stamp: None,
+            last_scene_rebuild_tick: None,
+            last_server_movement_tick: None,
             players: Vec::new(),
             players_available: false,
             projectiles: Vec::with_capacity(MAX_PROJECTILES_PER_SNAPSHOT),
@@ -878,6 +884,18 @@ impl GameSnapshot {
     /// `PLAYER_INFO` (the host's `should_emit_tick` edge).
     pub fn tick(&self) -> u32 {
         self.tick
+    }
+
+    /// Latest observed tick at which scene loading began or the scene identity changed.
+    /// This is an observation time, not the client's collision-grid refresh time.
+    pub fn last_scene_rebuild_tick(&self) -> Option<u32> {
+        self.last_scene_rebuild_tick
+    }
+
+    /// Latest PLAYER_INFO observation that changed an already known server tile.
+    /// Render interpolation and scene-only refreshes do not advance this value.
+    pub fn last_server_movement_tick(&self) -> Option<u32> {
+        self.last_server_movement_tick
     }
 
     /// The inventory view `(obj id, count)` from the last inv rebuild.
