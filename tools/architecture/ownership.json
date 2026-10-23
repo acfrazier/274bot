@@ -5691,6 +5691,10 @@
       "owner": "T3"
     },
     {
+      "path": "crates/tui/src/new_profile.rs",
+      "owner": "T3"
+    },
+    {
       "path": "crates/tui/src/overlay.rs",
       "owner": "T3"
     },
@@ -5808,6 +5812,14 @@
     },
     {
       "path": "tools/architecture/run.sh",
+      "owner": "T1"
+    },
+    {
+      "path": "tools/docs-check/docs_check.py",
+      "owner": "T1"
+    },
+    {
+      "path": "tools/docs-check/test_docs_check.py",
       "owner": "T1"
     },
     {
@@ -7168,6 +7180,14 @@
     },
     {
       "path": "crates/frontend-core/src/scripts/paint.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/frontend-core/src/scripts/paint_layout.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/frontend-core/src/scripts/paint_style.rs",
       "owner": "T3"
     },
     {

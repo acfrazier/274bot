@@ -1562,6 +1562,70 @@
       "reason": "T3.3 script vocabulary seam."
     },
     {
+      "id": "seam_type|crates/frontend-core/src/scripts/paint_layout.rs|PaintLayout",
+      "path": "crates/frontend-core/src/scripts/paint_layout.rs",
+      "symbol": "PaintLayout",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "Paint slice A: the reused paint layout (its Vec buffers are kept across frames) that the panel reads through accessors."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/scripts/paint_layout.rs|PaintRect",
+      "path": "crates/frontend-core/src/scripts/paint_layout.rs",
+      "symbol": "PaintRect",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "Paint slice A: Copy rectangle of four f32 values, private fields."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/scripts/paint_layout.rs|ChromeItem",
+      "path": "crates/frontend-core/src/scripts/paint_layout.rs",
+      "symbol": "ChromeItem",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "Paint slice A: Copy layout item (index, PaintRect, cell count, text origin), private fields."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/scripts/paint_layout.rs|TabItem",
+      "path": "crates/frontend-core/src/scripts/paint_layout.rs",
+      "symbol": "TabItem",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "Paint slice A: Copy layout item (indexes, PaintRect, cell count, text origin), private fields."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/scripts/paint_layout.rs|PaintSlot",
+      "path": "crates/frontend-core/src/scripts/paint_layout.rs",
+      "symbol": "PaintSlot",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "Paint slice A: Copy layout slot (PaintRect and cell count), private fields."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/scripts/paint_layout.rs|RowItem",
+      "path": "crates/frontend-core/src/scripts/paint_layout.rs",
+      "symbol": "RowItem",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "Paint slice A: Copy layout row (index, PaintRect, cell count), private fields."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/scripts/paint_layout.rs|ButtonItem",
+      "path": "crates/frontend-core/src/scripts/paint_layout.rs",
+      "symbol": "ButtonItem",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "Paint slice A: Copy layout button (index, PaintRect, label cell count), private fields."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/scripts/paint_layout.rs|FooterLayout",
+      "path": "crates/frontend-core/src/scripts/paint_layout.rs",
+      "symbol": "FooterLayout",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "Paint slice A: Copy footer position (origin and cell count), private fields."
+    },
+    {
       "id": "seam_type|crates/frontend-core/src/scripts/loadouts.rs|Loadouts",
       "path": "crates/frontend-core/src/scripts/loadouts.rs",
       "symbol": "Loadouts",

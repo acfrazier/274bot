@@ -6402,7 +6402,6 @@ fn superheater_cases_register_exact_ids_and_bank_cycles() {
 fn chicken_killer_bank_registers_loot_count_feather_trip() {
     let bank = get("chicken_killer_bank").expect("chicken_killer_bank");
     assert_eq!(bank.settings.start_script, Some("ChickenKiller"));
-    assert_eq!(bank.settings.deadline, SCRIPT_GOLD_DEADLINE);
     let inject = settings_inject_map(bank.settings.script_settings_inject).unwrap();
     assert_eq!(
         inject.get("bankStrategy"),
@@ -6423,6 +6422,11 @@ fn chicken_killer_bank_registers_loot_count_feather_trip() {
         .iter()
         .position(|step| matches!(step.kind, StepKind::StartScript))
         .unwrap();
+    assert_eq!(
+        bank.steps[start + 1].wait.budget_ticks,
+        SCRIPT_GOLD_WATCH_TICKS
+    );
+    assert!(bank.steps[start + 1].name.starts_with("watch "));
     let seed = bank.steps[..start]
         .iter()
         .map(|step| step.wait.arm)
@@ -10352,7 +10356,6 @@ fn script_gold_watch_is_a_short_agentic_budget() {
     for name in [
         "bone_burier",
         "chicken_killer",
-        "chicken_killer_bank",
         "thiever",
         "alcher",
         "alcher_custom_alias",

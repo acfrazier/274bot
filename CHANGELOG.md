@@ -8,6 +8,7 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.5` 
 ### Panel and TUI
 
 - Switching the log view from "all bots" back to "bot" shows the focused bot's lines again, in the panel and the TUI. In 0.2.4 and 0.2.5 it kept showing every bot's lines.
+- A bot's **Start** in the panel runs the script its Script section shows. In 0.2.5, after **Assign** from Fleet, it could start an older pick from the script browser instead.
 - Player and NPC movement, action poses, map effects, projectile flight, and
   cutscene cameras keep their animation time between bot views and after late
   frames. Old smoke no longer starts only when a bot’s game view is first drawn.
@@ -19,6 +20,17 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.5` 
   before the form closes. The panel and TUI wait for settings saves before
   Start. Each successful save logs the card, field, old and new values,
   action and operation id.
+- Script paint in the panel now follows rs2b0t's layout. The paint has a title bar with the title in the script's accent colour, 16-pixel rows, and rs2b0t's colours. Pause and Stop are compact buttons side by side. Only the small square at the right end of the title bar collapses the paint. The built-in Gatherer and Sherlock scripts now show the same Pause and Stop buttons on their paint. With input capture on, a click on the paint no longer also clicks the game under it.
+- With input capture on, the slot that receives a game press also receives its release. This still holds if the pointer leaves the Game Image. A focus change releases the held button from the slot that received the press.
+- The terminal app can now add a profile. Start `tui-play` on an empty vault to open a **New profile**
+  form. Type the username and the account's own game password. Press Enter to save. The app rejects
+  an empty password and saves nothing. Press `N` in the Fleet pane to add another profile.
+  `tui-play --user NAME` selects only a profile already in the vault. It does not create a profile
+  with a random password. An unknown name stops with a message that names how to add it. If the
+  vault does not exist, `tui-play --user NAME` stops before it asks for a passphrase or creates a
+  vault.
+- The panel button and the terminal app's Fleet button now read **Log out**, as the panel's Fleet toolbar already did.
+- The panel's profile form also refuses to create a profile with an empty password, with the message `credentials: password required`, and saves nothing.
 
 ### Scripts
 
@@ -28,6 +40,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.5` 
 - Examine and Cancel from a game-world menu no longer count as manual movement.
 - Grinch makes one fresh return attempt if its walk back to the Start tile
   stalls. A second stall still stops the script and keeps the failure detail.
+- Catalog scripts with many imports, including JiveKQ, no longer fail Start
+  when the host is busy. Scripts that never finish loading still fail Start.
 
 ### Nav
 

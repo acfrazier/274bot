@@ -24,7 +24,8 @@ pub(crate) use modules::{remap_catalog_imports, shim_modules, BOT_MODULE, MAIN_M
 #[allow(unused_imports)]
 pub(crate) use modules::{remap_hash_bot, remap_rs2b0t_api};
 pub use paint::{
-    PaintChromeBand, ScriptPaint, ScriptPaintButton, HOST_PAUSE_CONTROL_ID, HOST_STOP_CONTROL_ID,
+    host_control_buttons, PaintChromeBand, ScriptPaint, ScriptPaintButton, HOST_PAUSE_CONTROL_ID,
+    HOST_STOP_CONTROL_ID,
 };
 
 #[cfg(feature = "load")]
