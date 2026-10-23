@@ -440,6 +440,9 @@ fn the_unlock_focus_is_a_fleet_member_and_starts_a_loaded_script() {
     vault.put(FixtureProfile::new("bob", "pw").uid(2));
     drop(vault);
     let mut s = Session::new();
+    s.preferences.reload().unwrap();
+    s.poll_panel_preferences();
+    assert!(s.panel_preferences_ready());
     s.persist_ui = false;
     s.core.set_spawn_workers(false);
     assert!(!s.multibox);
