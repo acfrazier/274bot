@@ -98,12 +98,18 @@ next quest. Two stops need your action:
 | --- | --- |
 | `quest list was not observed within 30 seconds: log out and log in normally outside the tutorial (finish it if needed), then Stop/Start Quester` | Do what the message says. |
 | `cancelled by user input` | You moved the bot while the Quester walked or acted, so it stopped. Click **Start**; [Pause, resume and stop](running-scripts.md#pause-resume-and-stop) explains. |
-## Reading a run
 
-Quester writes its run trace to the operator log (and to the per-session log file when enabled). `info` lines show the Path start, stage changes, step begins/skips/settles, acquisition-child activity, combat outcomes, and finish/Stop. `warn` lines name step failures and the parked reason. A skip line includes the `skip_if` predicate that evaluated true. Identical retry events are written once, with a later summary such as `(repeated 4 additional times)` rather than one line per retry. The trace retains at most 32 distinct events.
+The Log window shows the run in more detail. When a guide starts, the Log names
+the guide, where it loaded from, and a fingerprint of the exact file. Stage
+changes, step starts, step skips and step finishes follow. A skip line names the
+check that passed. Warnings name failed steps and the reason a run parked.
+Repeated retries fold into one line with a count. The trace keeps the last 32
+different events.
 
-Preparation may run acquisition recipes before an authored quest step begins. These use the same acquisition-child trace as an authored `acquire` step, including their final settle or failure. A root `step ... begin` line therefore appears only when that authored step actually starts, not while the provisioner is collecting its prerequisites. Items gated by `from_stage` stay out until their stage, so a quest that gates every item (Cook gates all three on `cook:1`) talks first and scans later.
-
+If a quest needs items first, the Quester collects them before the quest steps
+begin. Those lines look the same as the lines of a collect step. A step start
+line appears only when that step truly starts. Items that wait for a later stage
+stay out until then. Cook's Assistant talks to the cook first and collects later.
 
 ## Quester: run guides from a folder
 
@@ -111,55 +117,38 @@ The Quester can also run quest guides from a folder on your computer. With the
 Quester picked, **Script prefs** has a section **Quest Paths (all bots)**. Tick
 **Load quest Paths from folder**, enter the folder and click **Reload Paths**.
 The setting is off at first. The default folder is `~/.274bot/quester/paths/289`.
+274bot does not create it for you.
 
 The guides are for revision 289. New guides appear as drafts. In the terminal
 app, press `o` on the Overview screen to find the same two rows.
-[Quest guides](../quester-paths.md#loading-draft-paths-without-rebuilding)
-describes the file format.
-## Loading draft Paths without rebuilding
 
-In the panel, select the Quester card and open **Script prefs**. In the TUI, open
-**settings** (`o` on Overview). Enable **Load quest Paths from folder** and choose a
-folder. The setting is off by
-default. Changing it refreshes the picker. A saved enabled folder reloads
-automatically when selected game data is ready at startup. The default is
-`<profile data directory>/quester/paths/289`; a checkout's
-`crates/script/paths/289` also works. These documents are for revision **289**.
-The default folder is not created automatically.
-
-Put each Path in `<folder>/<id>.json`, with the same `id` inside the document.
-An optional `index.json` uses the shipped index's schema:
+Put each guide in `<folder>/<id>.json`. The `id` inside the file must match the
+file name. An optional `index.json` lists guides in the order they appear:
 
 ```json
 {"schema":1,"paths":[{"id":"cook","file":"cook.json"},{"id":"my-draft","file":"my-draft.json"}]}
 ```
 
-Bundled rows retain their shipped order. A valid folder document replaces the
-bundled document with the same id; new ids are appended as **draft** rows, in
-folder-index order when an index is present, then filename order for unindexed
-files. Picker labels and running status distinguish **folder** overrides and
-**draft** Paths from bundled ones. The active Path's source, SHA-256 digest,
-and initial step comment are written to the log when it starts. Folder status
-also shows the current step comment in the existing script chrome.
+A folder guide with the same name as a shipped guide replaces it. Other folder
+guides join the list as drafts. Drafts from the index come first, then the rest
+in file name order. The picker marks changed guides and drafts. When a guide
+starts, the Log names where it loaded from.
 
-Use **Reload Paths** to reread and validate the folder without starting a quest.
-Every Quester Start also rereads it. Stop/Start to run edits; Reload does not
-replace a Path that is already running. Delete an override and Reload (or Start)
-to restore the bundled document. Turning the setting off ignores the folder
-entirely.
+Click **Reload Paths** to read the folder again without starting a quest. Each
+start reads it too. To run an edit, stop the quest and start it again. A reload
+never swaps a guide that already runs. Delete a changed file and reload to get
+the shipped guide back. With the setting off, the folder is ignored.
 
-Files are limited to 1 MiB each. The loader sorts valid folder filenames and
-loads at most the first 256 in filename order; later files are omitted.
-Validation reports the filename, step, error code, and detail. An invalid
-override falls back to its bundled Path; an invalid draft remains visible but
-unavailable, with the validation error as its reason. Other documents still
-load. Shipped server-unavailable quests retain their server-content restriction.
+Each file must fit in 1 MiB. The loader reads the first 256 files in file name
+order and skips the rest. A bad file reports its name, its step, and the reason.
+A bad changed file falls back to the shipped guide. A bad draft stays in the
+list but cannot run. The rest still load. Guides the server cannot run stay
+unavailable. Linked files work if their target is a normal file. The report
+lists up to 32 problems, then a count of the rest. The terminal app shows the
+short form only. Full details are in the Logs.
 
-Symlinked JSON files are followed; the opened target must be a regular file
-within the size limit. The report is capped at 32 diagnostic lines and ends
-with an `N more` summary when details are omitted. The TUI shows only the
-summary; per-file details are available in Logs.
-
+[Quest guides](../scripting/quest-guides.md#quest-guide-files) describes the file
+format.
 ## Gatherer
 
 The Gatherer cuts trees, mines rock or fishes. It needs the tool for the job:
@@ -274,5 +263,5 @@ that you had on. It does not turn that one back on.
 | I want to… | Read |
 | --- | --- |
 | Start, pause and stop a script | [Run scripts on your bots](running-scripts.md) |
-| Write a quest guide for the Quester | [Quest guides](../quester-paths.md) |
+| Write a quest guide for the Quester | [Quest guides](../scripting/quest-guides.md) |
 | See what does not work yet | [Known issues](../known-issues.toml) |
