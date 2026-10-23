@@ -1445,6 +1445,7 @@ fn spawn_slot_thread(
                         // observe; its hold freezes script tick and nav follow.
                         move |c, _ignored, run_sends, status: &RandomStatus, run_policy| {
                             let name = &obs_name;
+                            let idle_cycles_before = c.shell.idle_cycles;
                             if !c.ingame {
                                 // The live title pump owns offline script/latch
                                 // synchronization. A hosted title click is only
@@ -1506,6 +1507,8 @@ fn spawn_slot_thread(
                                     // Before the first script tick of the
                                     // session (design-bank-snapshot §1.4).
                                     slot_bank.session_started();
+                                    slot_navs.lock().unwrap().entry(name.to_owned()).or_default()
+                                        .condition.session_started(nav_snapshot.tick(), slot_world.as_deref().and_then(crate::admission::condition_tables));
                                 } else {
                                     observe_client_session_exit(c, &arm_latch_obs);
                                     end_slot_session(
@@ -1518,6 +1521,9 @@ fn spawn_slot_thread(
                                         &observe_channels,
                                     );
                                     slot_bank.session_ended();
+                                    if let Some(bot) = slot_navs.lock().unwrap().get_mut(name) {
+                                        bot.condition.session_ended();
+                                    }
                                 }
                                 last_nav_step = None;
                             }
@@ -1525,6 +1531,15 @@ fn spawn_slot_thread(
                             // The open bank's rows reach the account memory
                             // here (design-bank-snapshot §1.3); a close saves.
                             slot_bank.observe_frame(&nav_snapshot);
+                            let condition = {
+                                let mut navs = slot_navs.lock().unwrap();
+                                if let Some(bot) = navs.get_mut(name) {
+                                    bot.condition.observe_frame(&nav_snapshot, &drain, status.hold);
+                                    bot.condition.published()
+                                } else {
+                                    api::condition::BotCondition::default()
+                                }
+                            };
                             api::hostlog::set_tick(nav_snapshot.tick());
                             debug_replies.observe(name, &nav_snapshot);
                             // `script_observe_with_npc_boxes` below reaps the
@@ -1741,6 +1756,7 @@ fn spawn_slot_thread(
                                         // click that bumps no family. Bool copy.
                                         s.tutorial_pending = nav_snapshot.tutorial_pending();
                                         s.random = if session_boundary { RandomStatus::default() } else { status.clone() };
+                                        s.condition = condition;
                                         publish_script_paint(s, paint.clone());
                                         here = nav_snapshot.tile();
                                         let (tx, tz, level) = here.unwrap_or((-1, -1, -1));
@@ -1937,6 +1953,15 @@ fn spawn_slot_thread(
                             if tick_edge {
                                 if let Some(observer) = &post_native_player_info {
                                     observer(c, name);
+                                }
+                            }
+                            // Driver::note_input_activity resets this existing
+                            // client counter only after an accepted game-input
+                            // send. Include Traveller and manual/guardian sends
+                            // without another retained counter or a callback box.
+                            if idle_cycles_before > 0 && c.shell.idle_cycles == 0 {
+                                if let Some(bot) = slot_navs.lock().unwrap().get_mut(name) {
+                                    bot.condition.accepted_click();
                                 }
                             }
                             // Busy flag for the idle scheduler: a slot with

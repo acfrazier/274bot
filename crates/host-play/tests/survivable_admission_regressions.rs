@@ -1,8 +1,9 @@
 //! Regressions from the S2b review: held defaults preserve router admission and fleeing is always possible.
+use api::condition::PoisonState;
 use api::selected::ClientRevision;
 use api::snapshot::WorldTile;
 use client::dash3d::CollisionFlag;
-use host_play::admission::{self, Admission, PoisonState, RiskInput};
+use host_play::admission::{self, Admission, RiskInput};
 use host_play::{DangerLevel, WalkGlobals, NET_AVAILABLE};
 use nav::collision::{pack_walk, WorldCollision};
 use nav::router::{find_with_avoid, FindOptions, Route};

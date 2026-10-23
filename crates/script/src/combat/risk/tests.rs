@@ -884,6 +884,139 @@ pub(super) fn assess_poison_state(poison: PoisonState, crossing: bool) -> Arc<Ro
     assess(fx.route(&walk), &context(&fx, &risks, &tables), value)
 }
 
+fn unattributed_onset() -> PoisonState {
+    PoisonState::Onset {
+        since: 0,
+        q: 0,
+        hit_since_line: false,
+        latched: false,
+    }
+}
+
+#[test]
+fn replay_onset_charges_unknown_pulse() {
+    let tables = tables();
+    let fx = Fixture::empty();
+    let walk = route(10, 20);
+    let mut value = input(90, 90, 0, &tables);
+    value.poison = unattributed_onset();
+
+    let result = super::replay::replay(
+        fx.path(&walk),
+        &RoutePlan::default(),
+        &value,
+        &tables,
+        WalkAllow::default(),
+        None,
+        |_, _, _, _, _| {},
+    )
+    .unwrap();
+    assert_eq!(result.hp_after, 79);
+}
+
+#[test]
+fn replay_hits_charges_onset_per_period() {
+    let tables = tables();
+    let fx = Fixture::empty();
+    let walk = route(10, 132);
+    let mut value = input(90, 90, 0, &tables);
+    value.poison = unattributed_onset();
+
+    let result = super::replay::replay(
+        fx.path(&walk),
+        &RoutePlan::default(),
+        &value,
+        &tables,
+        WalkAllow::default(),
+        None,
+        |_, _, _, _, _| {},
+    )
+    .unwrap();
+    // 123 tiles take 185 bounded replay ticks: fires at 0, 30, ..., 180.
+    assert!(result.passed);
+    assert_eq!(result.hp_after, 90 - 7 * 11);
+}
+
+#[test]
+fn replay_early_pass_refuses_onset() {
+    let tables = tables();
+    let fx = Fixture::empty();
+    let walk = route(10, 20);
+    let mut value = input(5, 5, 0, &tables);
+    value.poison = unattributed_onset();
+
+    let result = super::replay::replay(
+        fx.path(&walk),
+        &RoutePlan::default(),
+        &value,
+        &tables,
+        WalkAllow::default(),
+        None,
+        |_, _, _, _, _| {},
+    )
+    .unwrap();
+    assert!(!result.passed);
+    assert_eq!(result.failed_tick, Some(0));
+}
+
+#[test]
+fn replay_no_crossing_walk_refuses_onset_on_failed_baseline() {
+    let tables = tables();
+    let fx = Fixture::empty();
+    let risks = RiskTables::build(&tables);
+    let estimate = context(&fx, &risks, &tables);
+    let short_walk = route(10, 20);
+    let mut no_food = input(5, 5, 0, &tables);
+    no_food.poison = unattributed_onset();
+    let assessment = assess(fx.route(&short_walk), &estimate, no_food);
+    assert!(assessment.plan.crossings.is_empty());
+    assert_eq!(assessment.verdict, Verdict::Unsurvivable);
+
+    let long_walk = route(10, 252);
+    let mut carried_food = input(20, 30, 1, &tables);
+    carried_food.poison = unattributed_onset();
+    let assessment = assess(fx.route(&long_walk), &estimate, carried_food);
+    assert!(assessment.plan.crossings.is_empty());
+    assert_eq!(assessment.verdict, Verdict::FixableWith);
+}
+
+#[test]
+fn replay_refreshed_poisoned_charges_max_pulse() {
+    let tables = tables();
+    let fx = Fixture::empty();
+    let walk = route(10, 20);
+    let mut value = input(90, 90, 0, &tables);
+    value.poison = PoisonState::Poisoned {
+        per_tick: 3,
+        last_mark: 0,
+        hit_since_mark: true,
+    };
+
+    let result = super::replay::replay(
+        fx.path(&walk),
+        &RoutePlan::default(),
+        &value,
+        &tables,
+        WalkAllow::default(),
+        None,
+        |_, _, _, _, _| {},
+    )
+    .unwrap();
+    assert_eq!(result.hp_after, 79);
+    assert_eq!(
+        eat_line(
+            fx.path(&walk),
+            &RoutePlan::default(),
+            0,
+            &value,
+            &tables,
+            WalkAllow::default()
+        ),
+        Ok(23),
+        "a refreshed no-crossing floor uses the strongest pulse"
+    );
+}
+
 #[test]
 fn u9_compact_layout_and_limit_round_trips() {
     assert!(std::mem::size_of::<RiskInput>() <= 128);
@@ -1561,7 +1694,8 @@ fn u4_u14_poison_through_safe_gap_and_no_crossing_exemption() {
     let mut poisoned = input(90, 90, 0, &tables);
     poisoned.poison = PoisonState::Poisoned {
         per_tick: 1,
-        last_tick: 0,
+        last_mark: 0,
+        hit_since_mark: false,
     };
     let mut ticks = Vec::new();
     replay(
@@ -1612,7 +1746,7 @@ fn u4_u14_poison_through_safe_gap_and_no_crossing_exemption() {
 }
 
 #[test]
-fn u4_u14_no_crossing_poison_is_not_a_refusal_or_a_fetchable_food_fix() {
+fn u4_u14_no_crossing_poison_refuses_lethal_baseline_without_fetchable_food() {
     let tables = tables();
     let fx = Fixture::new(one_zone(&tables, 120, 1), WildernessRules::default());
     let risks = RiskTables::build(&tables);
@@ -1621,11 +1755,13 @@ fn u4_u14_no_crossing_poison_is_not_a_refusal_or_a_fetchable_food_fix() {
     let mut poisoned = input(10, 40, 0, &tables);
     poisoned.poison = PoisonState::Poisoned {
         per_tick: 11,
-        last_tick: 0,
+        last_mark: 0,
+        hit_since_mark: false,
     };
     let assessment = assess(fx.route(&safe), &cx, poisoned);
     assert!(assessment.plan.crossings.is_empty());
-    assert_eq!(assessment.verdict, Verdict::Survivable);
+    // A8: an empty crossing list cannot turn a lethal poison replay into safety.
+    assert_eq!(assessment.verdict, Verdict::Unsurvivable);
     assert_eq!(
         assessment.hp_after, 0,
         "retain the conservative poison replay"
@@ -1810,7 +1946,8 @@ fn r1_m2_pending_heal_waits_until_the_transport_delay_ends() {
     let mut value = input(10, 40, 2, &tables);
     value.poison = PoisonState::Poisoned {
         per_tick: 5,
-        last_tick: 0,
+        last_mark: 0,
+        hit_since_mark: false,
     };
     let plan = build_plan(path, fx.zones(), &risks, fx.wilderness(), &value).unwrap();
     let mut trace = Vec::new();
@@ -2594,7 +2731,8 @@ fn u5_b1_b3_live_classification_multi_and_input_limits() {
     let mut poisoned = input(10, 40, 0, &tables);
     poisoned.poison = PoisonState::Poisoned {
         per_tick: 6,
-        last_tick: 0,
+        last_mark: 0,
+        hit_since_mark: false,
     };
     assert!(
         estimated_floor(path, &weak, 1, &poisoned, &tables, WalkAllow::default())
@@ -3445,7 +3583,8 @@ fn t5w_assessment_yields_one_unit_and_drops_geometry_and_replay_state() {
     let mut poisoned = clear;
     poisoned.poison = PoisonState::Poisoned {
         per_tick: 1,
-        last_tick: 0,
+        last_mark: 0,
+        hit_since_mark: false,
     };
     let calls = Arc::new(AtomicUsize::new(0));
     let drops = Arc::new(AtomicUsize::new(0));

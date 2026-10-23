@@ -61,6 +61,8 @@ impl Runtime {
             .map_or(0, |owner| owner.id.get());
         let mut actions = NativeActions { _private: () };
         let mut cx = ActionContext {
+            condition: None,
+            poison_unknown_pulse: u8::MAX,
             evidence,
             pin: &self.pin,
             snapshot: SnapshotView::new(Some(snapshot), evidence).with_reach(self.reach.as_ref()),

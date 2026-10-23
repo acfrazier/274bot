@@ -4,11 +4,12 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use api::condition::PoisonState;
 use api::interact;
 use api::snapshot::{GameSnapshot, WorldTile};
 use client::client::Client;
 use host::Pump;
-use host_play::admission::{self, Admission, PoisonState, RiskInput};
+use host_play::admission::{self, Admission, RiskInput};
 use host_play::walk_map::{ActionError, ActionKind, FocusToken, MapContext, MapModel};
 use host_play::{ProfileOptions, SharedClientTemplate, SlotArm, WalkArms, WalkGlobals};
 use nav::map::identity::Digest;

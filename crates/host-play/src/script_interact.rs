@@ -334,6 +334,7 @@ where
     #[cfg(feature = "memory-profile")]
     memory_diagnostics::requests(name, reqs.as_ref());
     let mut wrote = false;
+    let mut accepted_game_input = false;
     let camera_yaws: Vec<i32> = reqs
         .as_ref()
         .iter()
@@ -368,6 +369,16 @@ where
     // Arms below bind a request field called `name`; this is the slot's.
     let slot = name;
     for req in reqs {
+        let previous_wrote = std::mem::take(&mut wrote);
+        let direct_game_input = !matches!(
+            &req,
+            InteractReq::Walk { .. }
+                | InteractReq::WalkNear { .. }
+                | InteractReq::WalkNearestBank
+                | InteractReq::InspectRoute { .. }
+                | InteractReq::SideTab { .. }
+                | InteractReq::Key { .. }
+        );
         match req {
             InteractReq::OpenBooth {
                 x,
@@ -1341,6 +1352,13 @@ where
             | InteractReq::ChannelClose { .. }
             | InteractReq::ChannelMessage { .. }
             | InteractReq::ChannelStatus { .. } => {}
+        }
+        accepted_game_input |= direct_game_input && wrote;
+        wrote |= previous_wrote;
+    }
+    if accepted_game_input {
+        if let Some(bot) = navs.lock().unwrap().get_mut(name) {
+            bot.condition.accepted_click();
         }
     }
     for yaw in camera_yaws {

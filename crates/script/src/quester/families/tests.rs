@@ -207,6 +207,8 @@ fn with_tick_output_reach<R>(
         prompt_port: None,
         actions: &mut actions,
         cx: crate::native::ActionContext {
+            condition: None,
+            poison_unknown_pulse: u8::MAX,
             evidence,
             observed_walk_outcome_seq: 0,
             observed_walk_cancel_reason: crate::native::WalkCancelReason::None,
@@ -232,6 +234,8 @@ fn with_tick_output_reach<R>(
             snapshot: Some(snapshot),
             obj_names: None,
             compiled: crate::CompiledTick {
+                condition: None,
+                poison_unknown_pulse: None,
                 walk_danger: Some(&crate::native::AllowWalkDanger),
                 selected: Some(&data),
                 reach: None,

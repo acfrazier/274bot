@@ -1312,7 +1312,7 @@ pub(crate) fn step_bank_fetch_on_bot<D: Driver>(
             admission.input = crate::admission::capture(
                 snapshot,
                 map_members,
-                admission.input.poison,
+                bot.condition.current(),
                 bot.walk_guard_off.is_some(),
             );
             *bot.admission.as_deref_mut().expect("active admission") = admission;
@@ -1480,7 +1480,7 @@ fn step_walk(
             admission.input = crate::admission::capture(
                 snapshot,
                 map_members,
-                admission.input.poison,
+                bot.condition.current(),
                 bot.walk_guard_off.is_some(),
             );
             *bot.admission.as_deref_mut().expect("active admission") = admission;

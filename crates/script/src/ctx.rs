@@ -39,6 +39,10 @@ pub struct CompiledTick<'a> {
     /// this tick (design-bank-snapshot §1.2): `None` in a bare ctx or when
     /// the host has no memory for the slot.
     pub bank_memory: Option<&'a api::bank_memory::BankMemory>,
+    /// This frame's complete, live condition. Never posted into an isolate.
+    pub condition: Option<api::condition::BotCondition>,
+    /// Strongest selected NPC poison pulse. `None` fails closed at the reader.
+    pub poison_unknown_pulse: Option<u8>,
     /// Packed world collision for off-scene Area arrival (resource return
     /// stands). `None` in a bare ctx or when the host has no nav pack.
     pub collision: Option<nav::contract::CollisionView<'a>>,

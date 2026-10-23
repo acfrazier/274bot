@@ -86,6 +86,7 @@ mod script_api_live_probe;
 mod script_channels;
 mod script_runtime;
 mod slot_bank_memory;
+mod slot_condition;
 mod walk_arm;
 mod walk_permissions;
 mod walk_plan;
@@ -614,6 +615,8 @@ mod bank_fetch_closed_live;
 mod bank_memory_live;
 #[cfg(any(test, all(feature = "live-harness", feature = "test-support")))]
 pub mod bank_npc_live;
+#[cfg(test)]
+mod slot_condition_live_tests;
 
 #[cfg(all(target_os = "linux", feature = "test-support"))]
 pub use script_runtime::measures_captured_native_bank_pick_cpu;

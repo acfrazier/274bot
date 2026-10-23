@@ -3,7 +3,7 @@ use super::super::frame::Frame;
 use super::super::request::{ActorKind, ActorRef};
 use super::super::tables::{CombatStat, CombatTables, PotionKind};
 use super::super::threats::{ProjectileFamily, ThreatSet};
-use super::consts::{LAG, POISON_PERIOD};
+use api::condition::PoisonState;
 use api::snapshot::{StatView, VarpView, WorldTile};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -45,21 +45,6 @@ impl From<Style> for super::super::threats::StyleObs {
         }
     }
 }
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PoisonState {
-    Unknown { since: u16 },
-    Clear,
-    Poisoned { per_tick: u8, last_tick: u16 },
-}
-
-impl Default for PoisonState {
-    fn default() -> Self {
-        Self::Unknown { since: 0 }
-    }
-}
-
-const _: () = assert!(std::mem::size_of::<PoisonState>() <= 8);
 
 /// A copied live threat row. `u16::MAX` means there is no attributed pending
 /// impact; `due()` keeps the sentinel out of callers' tick arithmetic.
@@ -488,157 +473,6 @@ fn capture_live(frame: &Frame<'_>, threats: &ThreatSet, input: &mut RiskInput) {
             due_tick,
         };
         input.live_len += 1;
-    }
-}
-
-/// The additional evidence required to turn a session's `Unknown` into
-/// `Clear`. Each field represents an observed phase fact, not elapsed silence.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct AcceptedClickWindow {
-    pub t: u16,
-    pub click_sent_at: u16,
-    pub map_aim_at_t: bool,
-    pub tile_progress_at_t: bool,
-    pub main_clear_t: bool,
-    pub main_clear_t_plus_1: bool,
-    pub chat_clear_t: bool,
-    pub chat_clear_t_plus_1: bool,
-    pub no_hold_t: bool,
-    pub no_hold_t_plus_1: bool,
-    pub snapshots_from: u16,
-    pub snapshots_through: u16,
-    pub snapshots_consecutive: bool,
-    pub poison_mark_seen_through_end: bool,
-}
-
-impl AcceptedClickWindow {
-    fn proves_timer_ran(self, since: u16) -> bool {
-        let Ok(period) = u16::try_from(POISON_PERIOD) else {
-            return false;
-        };
-        let Ok(lag) = u16::try_from(LAG) else {
-            return false;
-        };
-        let elapsed = self.t.wrapping_sub(since);
-        let expected_from = self.t.wrapping_sub(1);
-        let expected_through = self.t.wrapping_add(1).wrapping_add(lag);
-        elapsed >= period
-            && elapsed < 0x8000
-            && self.click_sent_at == self.t.wrapping_sub(1)
-            && self.map_aim_at_t
-            && self.tile_progress_at_t
-            && self.main_clear_t
-            && self.main_clear_t_plus_1
-            && self.chat_clear_t
-            && self.chat_clear_t_plus_1
-            && self.no_hold_t
-            && self.no_hold_t_plus_1
-            && self.snapshots_from == expected_from
-            && self.snapshots_through == expected_through
-            && self.snapshots_consecutive
-            && !self.poison_mark_seen_through_end
-    }
-}
-
-/// An already-captured state and its session-only evidence. This value reducer
-/// performs no observation, I/O, clock reads, or host operations.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub struct PoisonMemory {
-    pub state: PoisonState,
-    pub session_invalid: bool,
-    pub death_seen: bool,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PoisonEvent {
-    None,
-    Reconnect { tick: u16 },
-    Hitmark { kind: u16, value: u8, tick: u16 },
-    PoisonChat { tick: u16 },
-    ConfirmedAntipoisonDecrement,
-    DeathObserved,
-    RespawnObserved,
-}
-
-impl PoisonMemory {
-    pub const fn from_state(state: PoisonState) -> Self {
-        Self {
-            state,
-            session_invalid: false,
-            death_seen: false,
-        }
-    }
-
-    /// Apply one explicit event and optional full accepted-click evidence.
-    /// Silence does not decrement, expire, or clear a known poison reserve.
-    pub fn transition(
-        mut self,
-        event: PoisonEvent,
-        accepted_click: Option<AcceptedClickWindow>,
-    ) -> Self {
-        match event {
-            PoisonEvent::None => {}
-            PoisonEvent::Reconnect { tick } => {
-                self.state = PoisonState::Unknown { since: tick };
-                self.session_invalid = false;
-                self.death_seen = false;
-            }
-            PoisonEvent::Hitmark {
-                kind: 2,
-                value,
-                tick,
-            } => {
-                if !self.session_invalid {
-                    let per_tick = match self.state {
-                        PoisonState::Poisoned {
-                            per_tick: previous, ..
-                        } => previous.max(value),
-                        PoisonState::Unknown { .. } | PoisonState::Clear => value,
-                    };
-                    self.state = PoisonState::Poisoned {
-                        per_tick,
-                        last_tick: tick,
-                    };
-                }
-            }
-            PoisonEvent::Hitmark { kind: 0 | 1, .. } => {}
-            PoisonEvent::Hitmark { tick, .. } => {
-                self.state = PoisonState::Unknown { since: tick };
-                self.session_invalid = true;
-                self.death_seen = false;
-            }
-            PoisonEvent::PoisonChat { tick } => {
-                if !self.session_invalid {
-                    self.state = PoisonState::Unknown { since: tick };
-                }
-            }
-            PoisonEvent::ConfirmedAntipoisonDecrement if !self.session_invalid => {
-                self.state = PoisonState::Clear;
-                self.death_seen = false;
-            }
-            PoisonEvent::ConfirmedAntipoisonDecrement => {}
-            PoisonEvent::DeathObserved => self.death_seen = true,
-            PoisonEvent::RespawnObserved if self.death_seen && !self.session_invalid => {
-                self.state = PoisonState::Clear;
-                self.death_seen = false;
-            }
-            PoisonEvent::RespawnObserved => {}
-        }
-
-        if matches!(event, PoisonEvent::None)
-            && !self.session_invalid
-            && !self.death_seen
-            && matches!(self.state, PoisonState::Unknown { .. })
-            && accepted_click.is_some_and(|window| {
-                let PoisonState::Unknown { since } = self.state else {
-                    return false;
-                };
-                window.proves_timer_ran(since)
-            })
-        {
-            self.state = PoisonState::Clear;
-        }
-        self
     }
 }
 

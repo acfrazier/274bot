@@ -1,5 +1,5 @@
 use super::consts::{LAG, POISON_PERIOD};
-use super::input::{AcceptedClickWindow, PoisonEvent, PoisonMemory, PoisonState};
+use api::condition::{AcceptedClickWindow, PoisonEvent, PoisonMemory, PoisonState};
 
 fn tick(value: i32) -> u16 {
     u16::try_from(value).expect("poison timing constants fit in u16")
@@ -216,13 +216,10 @@ fn poison_mark_prevents_a_click_window_from_clearing_unknown() {
         },
         Some(accepted_window(t)),
     );
-    assert_eq!(
+    assert!(matches!(
         memory.state,
-        PoisonState::Poisoned {
-            per_tick: 1,
-            last_tick: t,
-        }
-    );
+        PoisonState::Poisoned { per_tick: 1, .. }
+    ));
 }
 
 #[test]
@@ -233,13 +230,10 @@ fn same_value_silent_refresh_and_more_marks_never_clear_positive_server_poison()
     let mut now = 0;
 
     advance_until_mark(&mut server, &mut memory, &mut now);
-    assert_eq!(
+    assert!(matches!(
         memory.state,
-        PoisonState::Poisoned {
-            per_tick: 1,
-            last_tick: now
-        }
-    );
+        PoisonState::Poisoned { per_tick: 1, .. }
+    ));
     assert_eq!(server.severity, 4);
 
     // The server applies max(4, 5) without a chat line or resetting its active timer.
@@ -269,67 +263,52 @@ fn same_value_silent_refresh_and_more_marks_never_clear_positive_server_poison()
 }
 
 #[test]
-fn higher_silent_refresh_and_later_lower_marks_keep_the_largest_damage_seen() {
+fn higher_silent_refresh_and_later_lower_marks_use_the_latest_pulse() {
     let mut server = IndependentServerPoison::default();
     server.refresh(5);
     let mut memory = PoisonMemory::from_state(PoisonState::Unknown { since: 0 });
     let mut now = 0;
     advance_until_mark(&mut server, &mut memory, &mut now);
-    assert_eq!(
+    assert!(matches!(
         memory.state,
-        PoisonState::Poisoned {
-            per_tick: 1,
-            last_tick: now
-        }
-    );
+        PoisonState::Poisoned { per_tick: 1, .. }
+    ));
 
     server.refresh(10);
     advance_until_mark(&mut server, &mut memory, &mut now);
     assert_eq!(server.severity, 9);
-    assert_eq!(
+    assert!(matches!(
         memory.state,
-        PoisonState::Poisoned {
-            per_tick: 2,
-            last_tick: now
-        }
-    );
+        PoisonState::Poisoned { per_tick: 2, .. }
+    ));
 
     for expected_severity in [8, 7, 6, 5] {
         advance_until_mark(&mut server, &mut memory, &mut now);
         assert_eq!(server.severity, expected_severity);
-        assert_eq!(
+        assert!(matches!(
             memory.state,
-            PoisonState::Poisoned {
-                per_tick: 2,
-                last_tick: now
-            }
-        );
+            PoisonState::Poisoned { per_tick: 2, .. }
+        ));
     }
     advance_until_mark(&mut server, &mut memory, &mut now);
     assert_eq!(server.severity, 4);
-    assert_eq!(
+    assert!(matches!(
         memory.state,
-        PoisonState::Poisoned {
-            per_tick: 2,
-            last_tick: now,
-        }
-    );
+        PoisonState::Poisoned { per_tick: 1, .. }
+    ));
 }
 
 #[test]
-fn two_hundred_accessible_silent_ticks_retain_the_largest_poison_reserve() {
+fn two_hundred_accessible_silent_ticks_retain_the_observed_poison_reserve() {
     let mut server = IndependentServerPoison::default();
     server.refresh(5);
     let mut memory = PoisonMemory::from_state(PoisonState::Unknown { since: 0 });
     let mut now = 0;
     advance_until_mark(&mut server, &mut memory, &mut now);
-    assert_eq!(
+    assert!(matches!(
         memory.state,
-        PoisonState::Poisoned {
-            per_tick: 1,
-            last_tick: now
-        }
-    );
+        PoisonState::Poisoned { per_tick: 1, .. }
+    ));
 
     for _ in 0..200 {
         now = now.wrapping_add(1);
@@ -340,13 +319,10 @@ fn two_hundred_accessible_silent_ticks_retain_the_largest_poison_reserve() {
         }
     }
     assert_eq!(server.severity, 0);
-    assert_eq!(
+    assert!(matches!(
         memory.state,
-        PoisonState::Poisoned {
-            per_tick: 1,
-            last_tick: tick(POISON_PERIOD)
-        }
-    );
+        PoisonState::Poisoned { per_tick: 1, .. }
+    ));
 }
 
 #[test]
@@ -359,13 +335,10 @@ fn five_one_point_marks_without_refresh_do_not_infer_expiration() {
         advance_until_mark(&mut server, &mut memory, &mut now);
     }
     assert_eq!(server.severity, 0);
-    assert_eq!(
+    assert!(matches!(
         memory.state,
-        PoisonState::Poisoned {
-            per_tick: 1,
-            last_tick: now
-        }
-    );
+        PoisonState::Poisoned { per_tick: 1, .. }
+    ));
 }
 
 #[test]
@@ -397,22 +370,23 @@ fn unsupported_mark_rejects_clear_evidence_until_a_new_session() {
     memory = memory.transition(PoisonEvent::Reconnect { tick: 60 }, None);
     assert_still_unknown(memory, 60);
     assert!(!memory.session_invalid);
-    memory = memory.transition(PoisonEvent::ConfirmedAntipoisonDecrement, None);
-    assert_eq!(memory.state, PoisonState::Clear);
+    memory = memory.transition(PoisonEvent::ProvenDrink { origin: 60 }, None);
+    assert_eq!(memory.state, PoisonState::Immune { until_lower: 180 });
     assert!(!memory.session_invalid);
 
-    memory = PoisonMemory::from_state(PoisonState::Poisoned {
-        per_tick: 4,
-        last_tick: 1,
-    });
-    memory = memory.transition(PoisonEvent::DeathObserved, None);
-    assert_eq!(
-        memory.state,
-        PoisonState::Poisoned {
-            per_tick: 4,
-            last_tick: 1,
-        }
+    memory = PoisonMemory::from_state(PoisonState::Clear).transition(
+        PoisonEvent::Hitmark {
+            kind: 2,
+            value: 4,
+            tick: 1,
+        },
+        None,
     );
+    memory = memory.transition(PoisonEvent::DeathObserved, None);
+    assert!(matches!(
+        memory.state,
+        PoisonState::Poisoned { per_tick: 4, .. }
+    ));
     memory = memory.transition(PoisonEvent::RespawnObserved, None);
     assert_eq!(memory.state, PoisonState::Clear);
 
@@ -421,26 +395,62 @@ fn unsupported_mark_rejects_clear_evidence_until_a_new_session() {
 }
 
 #[test]
-fn r1_m1_poison_chat_rearms_unknown_even_after_an_established_mark() {
+fn reducer_onset_then_mark() {
     let chat_tick = 25;
     let onset = PoisonMemory::from_state(PoisonState::Clear)
         .transition(PoisonEvent::PoisonChat { tick: chat_tick }, None);
-    assert_eq!(onset.state, PoisonState::Unknown { since: chat_tick });
+    assert!(!matches!(
+        onset.state,
+        PoisonState::Unknown { .. } | PoisonState::Clear
+    ));
 
-    let marked = PoisonMemory::from_state(PoisonState::Clear).transition(
+    let marked = onset.transition(
         PoisonEvent::Hitmark {
             kind: 2,
-            value: 3,
-            tick: 20,
+            value: 6,
+            tick: chat_tick.wrapping_add(1),
         },
         None,
     );
-    let after_chat = marked.transition(PoisonEvent::PoisonChat { tick: 25 }, None);
-    assert_eq!(after_chat.state, PoisonState::Unknown { since: 25 });
+    assert!(matches!(
+        marked.state,
+        PoisonState::Poisoned { per_tick: 6, .. }
+    ));
+
+    let after_chat = marked.transition(PoisonEvent::PoisonChat { tick: 30 }, None);
+    assert!(!matches!(
+        after_chat.state,
+        PoisonState::Unknown { .. } | PoisonState::Clear
+    ));
 }
 
 #[test]
-fn r1_m1_expired_poison_then_new_onset_refuses_until_the_first_new_mark() {
+fn reducer_smaller_mark_lowers_reserve() {
+    let memory = PoisonMemory::from_state(PoisonState::Clear)
+        .transition(
+            PoisonEvent::Hitmark {
+                kind: 2,
+                value: 6,
+                tick: 10,
+            },
+            None,
+        )
+        .transition(
+            PoisonEvent::Hitmark {
+                kind: 2,
+                value: 5,
+                tick: 40,
+            },
+            None,
+        );
+    assert!(matches!(
+        memory.state,
+        PoisonState::Poisoned { per_tick: 5, .. }
+    ));
+}
+
+#[test]
+fn reducer_new_onset_replaces_established_mark_until_next_fire() {
     let mut server = IndependentServerPoison::default();
     assert!(server.refresh(15));
     let mut memory = PoisonMemory::from_state(PoisonState::Clear)
@@ -452,23 +462,19 @@ fn r1_m1_expired_poison_then_new_onset_refuses_until_the_first_new_mark() {
     assert_eq!(server.severity, 0);
     assert!(matches!(
         memory.state,
-        PoisonState::Poisoned { per_tick: 3, .. }
+        PoisonState::Poisoned { per_tick: 1, .. }
     ));
     assert!(server.refresh(55), "a fresh onset emits the chat line");
     memory = memory.transition(PoisonEvent::PoisonChat { tick: now }, None);
-    assert_eq!(memory.state, PoisonState::Unknown { since: now });
-    assert_eq!(
-        super::tests::assess_poison_state(memory.state, true).verdict,
-        super::Verdict::Unknown(super::UnknownWhy::Poison)
-    );
-    advance_until_mark(&mut server, &mut memory, &mut now);
-    assert_eq!(
+    assert!(!matches!(
         memory.state,
-        PoisonState::Poisoned {
-            per_tick: 11,
-            last_tick: now,
-        }
-    );
+        PoisonState::Unknown { .. } | PoisonState::Clear
+    ));
+    advance_until_mark(&mut server, &mut memory, &mut now);
+    assert!(matches!(
+        memory.state,
+        PoisonState::Poisoned { per_tick: 11, .. }
+    ));
 }
 
 #[test]
@@ -481,7 +487,7 @@ fn unsupported_mark_stays_unknown_for_the_entire_session() {
         },
         None,
     );
-    let cured = bad.transition(PoisonEvent::ConfirmedAntipoisonDecrement, None);
+    let cured = bad.transition(PoisonEvent::ProvenDrink { origin: 12 }, None);
     assert_still_unknown(cured, 12);
     assert!(cured.session_invalid);
     let respawned = bad
