@@ -10,8 +10,11 @@ use api::condition::{
 };
 use api::host_log;
 use api::hostlog::{Category, Level};
+use api::interact::{Driver, PacketCheckpoint};
 use api::quest_progress::EvidenceStamp;
 use api::snapshot::{GameSnapshot, SnapshotView};
+use client::client::Client;
+use client::io::{map_client_prot, ClientProt};
 use host::DrainResult;
 use script::combat::frame::Frame;
 use script::combat::tables::CombatTables;
@@ -20,9 +23,61 @@ use script::combat::threats::ThreatSet;
 const POISON_LINE: &str = "You have been poisoned!";
 const DRINK_LINE: &str = "You drink some of your antipoison potion.";
 const FRUIT_LINE: &str = "You eat the fruit.";
-// poison.rs2:29,72-75: 30 ticks to the fire, then one queued-damage tick
-// (World.ts:701-704; Player.ts:903-911), plus the existing observation margin.
+// poison.rs2:29,72-75: after the last dispatched interaction, retain 30
+// ticks to the fire, one queued-damage tick (World.ts:701-704;
+// Player.ts:903-911), and the existing observation margin.
 const CLEAN_TICKS: u8 = (30 + 1 + script::combat::risk::consts::LAG) as u8;
+
+// Content operations, uses and interface actions can run or resume a script.
+// MoveClickHandler.ts:11-56 only rejects a delay or changes the path.
+const INTERACTIONS: &[ClientProt] = &[
+    ClientProt::OPOBJ1,
+    ClientProt::OPOBJ2,
+    ClientProt::OPOBJ3,
+    ClientProt::OPOBJ4,
+    ClientProt::OPOBJ5,
+    ClientProt::OPOBJT,
+    ClientProt::OPOBJU,
+    ClientProt::OPNPC1,
+    ClientProt::OPNPC2,
+    ClientProt::OPNPC3,
+    ClientProt::OPNPC4,
+    ClientProt::OPNPC5,
+    ClientProt::OPNPCT,
+    ClientProt::OPNPCU,
+    ClientProt::OPLOC1,
+    ClientProt::OPLOC2,
+    ClientProt::OPLOC3,
+    ClientProt::OPLOC4,
+    ClientProt::OPLOC5,
+    ClientProt::OPLOCT,
+    ClientProt::OPLOCU,
+    ClientProt::OPPLAYER1,
+    ClientProt::OPPLAYER2,
+    ClientProt::OPPLAYER3,
+    ClientProt::OPPLAYER4,
+    ClientProt::OPPLAYER5,
+    ClientProt::OPPLAYERT,
+    ClientProt::OPPLAYERU,
+    ClientProt::OPHELD1,
+    ClientProt::OPHELD2,
+    ClientProt::OPHELD3,
+    ClientProt::OPHELD4,
+    ClientProt::OPHELD5,
+    ClientProt::OPHELDT,
+    ClientProt::OPHELDU,
+    ClientProt::INV_BUTTON1,
+    ClientProt::INV_BUTTON2,
+    ClientProt::INV_BUTTON3,
+    ClientProt::INV_BUTTON4,
+    ClientProt::INV_BUTTON5,
+    ClientProt::INV_BUTTOND,
+    ClientProt::IF_BUTTON,
+    ClientProt::RESUME_PAUSEBUTTON,
+    ClientProt::RESUME_P_COUNTDIALOG,
+    ClientProt::CLOSE_MODAL,
+    ClientProt::TUT_CLICKSIDE,
+];
 
 #[derive(Default)]
 struct SettleWindow {
@@ -122,10 +177,45 @@ impl SlotCondition {
         self.q_unknown
     }
 
-    /// A host-dispatched click inside the current clean window. A packet send
-    /// alone does not prove a drink and never clears known poison.
-    pub(crate) fn accepted_click(&mut self) {
-        self.window.accepted = true;
+    /// Restart only the post-login window, never an established poison fact.
+    fn accepted_click(&mut self) {
+        if matches!(self.memory.state, PoisonState::Unknown { .. }) {
+            self.window.clean = 0;
+            self.window.accepted = true;
+        }
+    }
+
+    pub(crate) fn dispatch_checkpoint(&self, client: &Client) -> Option<PacketCheckpoint> {
+        (client.ingame && matches!(self.memory.state, PoisonState::Unknown { .. }))
+            .then(|| PacketCheckpoint::capture(client))
+    }
+
+    /// Observe actual packets queued by the slot's host dispatch, not requests
+    /// that preconditions may refuse or resolve to movement alone.
+    pub(crate) fn observe_dispatch(&mut self, client: &Client, checkpoint: PacketCheckpoint) {
+        let revision = client.revision();
+        let mut interaction = false;
+        let mut movement = false;
+        let complete = client.trace_packets(checkpoint, &mut |opcode| {
+            interaction |= INTERACTIONS
+                .iter()
+                .any(|&packet| map_client_prot(revision, packet).id == i32::from(opcode));
+            movement |= [
+                ClientProt::MOVE_GAMECLICK,
+                ClientProt::MOVE_MINIMAPCLICK,
+                ClientProt::MOVE_OPCLICK,
+            ]
+            .iter()
+            .any(|&packet| map_client_prot(revision, packet).id == i32::from(opcode));
+        });
+        if !complete {
+            // An incomplete trace cannot prove that the run stayed clean.
+            self.window = SettleWindow::default();
+        } else if interaction {
+            self.accepted_click();
+        } else if movement {
+            self.window.accepted = true;
+        }
     }
 
     fn transition(&mut self, event: PoisonEvent) {

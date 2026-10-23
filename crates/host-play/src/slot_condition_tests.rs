@@ -713,6 +713,220 @@ fn login_poison_mark_at_last_settle_tick_prevents_clear() {
 }
 
 #[test]
+fn interaction_at_clean_tick_30_restarts_login_settle() {
+    let mut owner = owner();
+    owner.accepted_click();
+    for tick in 1..=30 {
+        owner.observe_frame(&frame(tick), &drain(true, true), false);
+    }
+    owner.accepted_click();
+    for tick in 31..=63 {
+        owner.observe_frame(&frame(tick), &drain(true, true), false);
+        assert_eq!(
+            owner.current().unwrap().poison,
+            PoisonState::Unknown { since: 0 },
+            "tick {tick} must cover the delayed login fire"
+        );
+    }
+    owner.observe_frame(&frame(64), &drain(true, true), false);
+    assert_eq!(owner.current().unwrap().poison, PoisonState::Clear);
+}
+
+#[test]
+fn delayed_login_mark_never_follows_false_clear() {
+    let mut owner = owner();
+    owner.accepted_click();
+    for tick in 1..=30 {
+        owner.observe_frame(&frame(tick), &drain(true, true), false);
+    }
+    owner.accepted_click();
+    // A content delay covers the original timer fire. Its mark arrives
+    // after the old window would clear, but inside the restarted window.
+    for tick in 31..=39 {
+        owner.observe_frame(&frame(tick), &drain(true, true), false);
+        assert_eq!(
+            owner.current().unwrap().poison,
+            PoisonState::Unknown { since: 0 },
+            "tick {tick} must not claim poison is clear before the mark"
+        );
+    }
+    let mut snapshot = frame(40);
+    hit(&mut snapshot, 2, 6, 1);
+    owner.observe_frame(&snapshot, &drain(true, true), false);
+    assert_eq!(
+        owner.current().unwrap().poison,
+        PoisonState::Poisoned {
+            per_tick: 6,
+            last_mark: 40,
+            hit_since_mark: false,
+        }
+    );
+}
+
+fn outgoing_client(revision: client::io::ClientRevision) -> Client {
+    let mut client = Client::new_with_revision(
+        client::client::ClientConfig {
+            host: "127.0.0.1".into(),
+            port: 0,
+            cache_dir: String::new(),
+            members: true,
+            lowmem: true,
+        },
+        revision,
+    );
+    client.ingame = true;
+    client.out.random = Some(client::io::Isaac::new(&[1, 2, 3, 4]));
+    client
+}
+
+fn queue_packet(client: &mut Client, packet: ClientProt) {
+    let selected = map_client_prot(client.revision(), packet);
+    client.out.p1_enc(selected.id);
+    let length = if selected.length == -1 {
+        client.out.p1(5);
+        5
+    } else {
+        selected.length
+    };
+    for _ in 0..length {
+        client.out.p1(0);
+    }
+}
+
+#[test]
+fn outgoing_interactions_restart_only_unknown_login_poison() {
+    // Cover operations, item/widget uses, inventory controls and interface
+    // continuations through the real encrypted outgoing decoder.
+    for packet in [
+        ClientProt::OPLOC1,
+        ClientProt::OPNPC5,
+        ClientProt::OPOBJ3,
+        ClientProt::OPPLAYER2,
+        ClientProt::OPHELD2,
+        ClientProt::OPLOCU,
+        ClientProt::OPNPCT,
+        ClientProt::OPOBJU,
+        ClientProt::OPPLAYERT,
+        ClientProt::OPHELDT,
+        ClientProt::OPHELDU,
+        ClientProt::INV_BUTTON1,
+        ClientProt::INV_BUTTON5,
+        ClientProt::INV_BUTTOND,
+        ClientProt::IF_BUTTON,
+        ClientProt::RESUME_PAUSEBUTTON,
+        ClientProt::RESUME_P_COUNTDIALOG,
+        ClientProt::CLOSE_MODAL,
+        ClientProt::TUT_CLICKSIDE,
+    ] {
+        let mut client = outgoing_client(client::io::ClientRevision::R289);
+        let mut owner = owner();
+        owner.accepted_click();
+        for tick in 1..=30 {
+            owner.observe_frame(&frame(tick), &drain(true, true), false);
+        }
+        let checkpoint = owner.dispatch_checkpoint(&client).unwrap();
+        queue_packet(&mut client, packet);
+        owner.observe_dispatch(&client, checkpoint);
+        for tick in 31..=63 {
+            owner.observe_frame(&frame(tick), &drain(true, true), false);
+            assert_eq!(
+                owner.current().unwrap().poison,
+                PoisonState::Unknown { since: 0 },
+                "packet {packet:?} at tick 30 must extend the window through {tick}"
+            );
+        }
+        owner.observe_frame(&frame(64), &drain(true, true), false);
+        assert_eq!(owner.current().unwrap().poison, PoisonState::Clear);
+        assert!(owner.dispatch_checkpoint(&client).is_none());
+
+        let mut snapshot = frame(65);
+        hit(&mut snapshot, 2, 6, 1);
+        owner.observe_frame(&snapshot, &drain(true, true), false);
+        assert!(owner.dispatch_checkpoint(&client).is_none());
+        assert!(matches!(
+            owner.current().unwrap().poison,
+            PoisonState::Poisoned { per_tick: 6, .. }
+        ));
+    }
+}
+
+#[test]
+fn walk_only_packets_finish_login_settle_without_restarting() {
+    for packet in [
+        ClientProt::MOVE_GAMECLICK,
+        ClientProt::MOVE_MINIMAPCLICK,
+        ClientProt::MOVE_OPCLICK,
+    ] {
+        let mut client = outgoing_client(client::io::ClientRevision::R289);
+        let mut owner = owner();
+        for tick in 1..=33 {
+            let checkpoint = owner.dispatch_checkpoint(&client).unwrap();
+            queue_packet(&mut client, packet);
+            owner.observe_dispatch(&client, checkpoint);
+            owner.observe_frame(&frame(tick), &drain(true, true), false);
+            assert_eq!(
+                owner.current().unwrap().poison,
+                PoisonState::Unknown { since: 0 }
+            );
+        }
+        owner.observe_frame(&frame(34), &drain(true, true), false);
+        assert_eq!(
+            owner.current().unwrap().poison,
+            PoisonState::Clear,
+            "movement {packet:?} must not postpone the clean run"
+        );
+    }
+}
+
+#[test]
+fn empty_dispatch_and_telemetry_do_not_restart_login_settle() {
+    let mut client = outgoing_client(client::io::ClientRevision::R289);
+    let mut owner = owner();
+    owner.accepted_click();
+    for tick in 1..=34 {
+        let checkpoint = owner.dispatch_checkpoint(&client).unwrap();
+        if tick % 2 == 0 {
+            queue_packet(&mut client, ClientProt::EVENT_CAMERA_POSITION);
+            queue_packet(&mut client, ClientProt::NO_TIMEOUT);
+        }
+        owner.observe_dispatch(&client, checkpoint);
+        owner.observe_frame(&frame(tick), &drain(true, true), false);
+    }
+    assert_eq!(owner.current().unwrap().poison, PoisonState::Clear);
+}
+
+#[test]
+fn repeated_interactions_keep_login_poison_unknown() {
+    let mut client = outgoing_client(client::io::ClientRevision::R289);
+    let mut owner = owner();
+    for tick in 1..=100 {
+        if tick % 10 == 1 {
+            let checkpoint = owner.dispatch_checkpoint(&client).unwrap();
+            queue_packet(&mut client, ClientProt::IF_BUTTON);
+            owner.observe_dispatch(&client, checkpoint);
+        }
+        owner.observe_frame(&frame(tick), &drain(true, true), false);
+        assert_eq!(
+            owner.current().unwrap().poison,
+            PoisonState::Unknown { since: 0 }
+        );
+    }
+}
+
+#[test]
+fn condition_dispatch_checkpoint_and_trace_allocate_nothing() {
+    let client = outgoing_client(client::io::ClientRevision::R289);
+    let mut owner = owner();
+    let measured = allocation_counter::measure(|| {
+        for _ in 0..1000 {
+            let checkpoint = owner.dispatch_checkpoint(&client).unwrap();
+            owner.observe_dispatch(&client, checkpoint);
+        }
+    });
+    assert_eq!(measured.bytes_total, 0);
+}
+
+#[test]
 fn guardian_hold_on_wake_resets_clean_window_and_click() {
     let mut owner = owner();
     owner.accepted_click();
@@ -729,6 +943,19 @@ fn guardian_hold_on_wake_resets_clean_window_and_click() {
     ));
     owner.accepted_click();
     owner.observe_frame(&frame(49), &drain(true, true), false);
+    assert!(matches!(
+        owner.current().unwrap().poison,
+        PoisonState::Unknown { .. }
+    ));
+    // The new interaction also restarts the run after the hold.
+    for tick in 50..=81 {
+        owner.observe_frame(&frame(tick), &drain(true, true), false);
+        assert!(matches!(
+            owner.current().unwrap().poison,
+            PoisonState::Unknown { .. }
+        ));
+    }
+    owner.observe_frame(&frame(82), &drain(true, true), false);
     assert_eq!(owner.current().unwrap().poison, PoisonState::Clear);
 }
 

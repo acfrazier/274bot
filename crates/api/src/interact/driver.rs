@@ -7,11 +7,23 @@ pub const RUN_ORB_OFF: i32 = 152;
 /// Lumbridge courtyard hop (`tele` arg). Same as rs2b0t `mainlandAccount`.
 pub const OFF_ISLAND_TELE: &str = "0,50,50,20,20";
 
-/// Diagnostic checkpoint of the actual encrypted packet sink. Captured only
-/// when interaction tracing is enabled; never part of per-bot retained state.
+/// Checkpoint of the actual encrypted packet sink. The checkpoint retains only
+/// its cursor and cipher, never payload bytes or per-bot state.
 pub struct PacketCheckpoint {
     start: usize,
     cipher: Option<client::io::Isaac>,
+}
+
+impl PacketCheckpoint {
+    /// Capture a real client's current outgoing cursor and cipher without
+    /// allocating. Consume this checkpoint with [`Driver::trace_packets`]
+    /// before the client's next socket flush.
+    pub fn capture(client: &Client) -> Self {
+        Self {
+            start: client.out.pos,
+            cipher: client.out.random.clone(),
+        }
+    }
 }
 
 /// The send-side driver the kernel writes through. `Client` implements it
@@ -218,10 +230,7 @@ impl Driver for Client {
     }
 
     fn packet_checkpoint(&self) -> Option<Box<PacketCheckpoint>> {
-        Some(Box::new(PacketCheckpoint {
-            start: self.out.pos,
-            cipher: self.out.random.clone(),
-        }))
+        Some(Box::new(PacketCheckpoint::capture(self)))
     }
 
     fn trace_packets(&self, mut checkpoint: PacketCheckpoint, visit: &mut dyn FnMut(u8)) -> bool {
