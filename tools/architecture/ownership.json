@@ -5815,6 +5815,14 @@
       "owner": "T1"
     },
     {
+      "path": "tools/docs-check/docs_check.py",
+      "owner": "T1"
+    },
+    {
+      "path": "tools/docs-check/test_docs_check.py",
+      "owner": "T1"
+    },
+    {
       "path": "tools/game-data/cache-identity.ts",
       "owner": "T2"
     },

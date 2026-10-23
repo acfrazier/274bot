@@ -52,6 +52,22 @@ Each rule ends with a test you can apply when you review a page.
 14. **Use the glossary words.** Do not swap in a synonym. If a word is missing
     from the glossary, add it in the same change.
 
+## Check a page
+
+Run these two commands from the repository root before you open a pull request:
+
+```
+python3 -B tools/docs-check/test_docs_check.py
+python3 -B tools/docs-check/docs_check.py
+```
+
+The first runs the checker's own tests. The second checks every page against
+`tools/docs-check/baseline.json` and prints each finding as
+`path:line: rule: message`. When a count goes down, the checker prints
+`baseline can shrink`; run `python3 -B tools/docs-check/docs_check.py --update`
+to record it. Use `--update` only for lowering or recording the baseline in
+the same change that explains it, never to hide a new violation.
+
 ## CHANGELOG entries
 
 CHANGELOG entries follow the same rules. Write what changed for the person
