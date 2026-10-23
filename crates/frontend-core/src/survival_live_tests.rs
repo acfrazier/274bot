@@ -141,6 +141,8 @@ impl Trace {
         json!({
             "scenario": "L-GUARD-CURE",
             "account": self.account,
+            "outcome": if failure.is_none() { "PASS" } else { "FAIL" },
+            "map_members": true,
             "failure": failure,
             "ticks": {
                 "login_transitions": self.login_ticks,
@@ -271,7 +273,7 @@ struct GuardWalkScript {
 
 impl Script for GuardWalkScript {
     fn tick(&mut self, tick: &mut NativeTick<'_>) -> Result<ScriptFlow, ScriptFailure> {
-        let snapshot_tick = tick.cx.snapshot().tick();
+        let snapshot_tick = u32::try_from(tick.cx.evidence().tick).expect("bounded live tick");
         let condition = tick.cx.condition().copied();
         let policy = tick.cx.cure_poison();
         let state_frame = self.state.lock().frame_count;
@@ -323,6 +325,7 @@ impl Script for GuardWalkScript {
                             trace.onset_policy = Some(script_policy_name(policy).to_owned());
                             trace.onset_walk_pending = self.handle.is_some();
                             trace.route_progress_at_onset = Some(trace.route_progress);
+                            let route_progress = trace.route_progress;
                             trace.event(
                                 "poison-onset",
                                 state_frame,
@@ -336,7 +339,7 @@ impl Script for GuardWalkScript {
                                     "antipoison": condition.cures.antipoison,
                                     "policy": script_policy_name(policy),
                                     "walk_pending": self.handle.is_some(),
-                                    "route_progress": trace.route_progress,
+                                    "route_progress": route_progress,
                                 }),
                             );
                         }
@@ -607,7 +610,7 @@ fn run_guard_cure_live(
     vault
         .upsert(Profile {
             username: account.to_owned(),
-            password,
+            password: password.into(),
             uid: 274_279_111,
             settings,
         })
@@ -725,18 +728,19 @@ fn run_guard_cure_live(
             let current_tile = state
                 .snapshot
                 .local_player()
-                .map(|player| player.value.player.network);
+                .map(|player| player.player.network);
 
             {
                 let mut trace = frame_trace.lock();
                 if ingame && !state.was_ingame {
                     trace.login_ticks.push(tick);
                     trace.final_login_tick = Some(tick);
+                    let login_count = trace.login_ticks.len();
                     trace.event(
                         "login-ready",
                         frame_number,
                         tick,
-                        json!({ "login_count": trace.login_ticks.len() }),
+                        json!({ "login_count": login_count }),
                     );
                 }
                 if let (Some(previous), Some(tile)) = (state.previous_food_count, Some(food_count))
@@ -794,7 +798,7 @@ fn run_guard_cure_live(
                     }
                 }
                 if trace.seed_tick.is_some() {
-                    if let Some(marks) = state.snapshot.hitmarks() {
+                    if let Some(marks) = state.snapshot.hitmarks().copied() {
                         for (index, mark) in marks.marks.iter().enumerate() {
                             if mark.kind != 2
                                 || mark.cycle <= marks.loop_cycle
@@ -805,7 +809,7 @@ fn run_guard_cure_live(
                             state.last_hitmark_cycles[index] = mark.cycle;
                             if trace.first_mark_tick.is_none() {
                                 trace.first_mark_tick = Some(tick);
-                                trace.first_mark_damage = Some(mark.value);
+                                trace.first_mark_damage = u8::try_from(mark.value).ok();
                             }
                             if trace.raw_poison_marks.len() < 16 {
                                 trace.raw_poison_marks.push(json!({
@@ -1306,22 +1310,12 @@ fn verify_guard_cure(trace: &Trace) -> Result<(), String> {
     if drink_tick > immune_tick || dose_tick > immune_tick {
         return Err("drink line and dose drop did not precede the Immune condition".into());
     }
-    if trace
-        .first_mark_damage
-        .is_some_and(|damage| damage != FIRST_POISON_DAMAGE)
-    {
+    if let Some(mark_tick) = trace.first_mark_tick {
         return Err(format!(
-            "first poison mark damage was {:?}, expected {FIRST_POISON_DAMAGE}",
-            trace.first_mark_damage
+            "poison mark at {mark_tick} followed a fresh-timer seed despite the cure"
         ));
     }
-    if let Some(mark_tick) = trace.first_mark_tick {
-        if drink_tick >= mark_tick || dose_tick >= mark_tick {
-            return Err(format!(
-                "first poison mark at {mark_tick} was not preceded by Drink and dose use"
-            ));
-        }
-    } else if immune_tick.saturating_sub(onset) >= POISON_TICKS_TO_FIRST_FIRE {
+    if immune_tick.saturating_sub(onset) >= POISON_TICKS_TO_FIRST_FIRE {
         return Err(format!(
             "Immune at {immune_tick} was not observed before the first-fire boundary after onset {onset}"
         ));
@@ -1516,5 +1510,15 @@ mod oracle_tests {
         blocked.walk_end = Some("Blocked".into());
         blocked.walk_arrived = false;
         assert!(verify_guard_cure(&blocked).is_err());
+    }
+
+    #[test]
+    fn oracle_rejects_poison_marks_after_a_fresh_timer_cure() {
+        for tick in [135, 162] {
+            let mut trace = passing_trace();
+            trace.first_mark_tick = Some(tick);
+            trace.first_mark_damage = Some(6);
+            assert!(verify_guard_cure(&trace).is_err());
+        }
     }
 }
