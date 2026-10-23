@@ -3042,6 +3042,119 @@ fn paint_controls_follow_the_lifecycle_state() {
     assert!(paint.frame().view().activate(0).is_none());
 }
 
+/// Publish a native paint frame on `name`'s status row, as the slot's
+/// observe does after a native script publishes it.
+fn publish_native_paint(
+    d: &HeadlessDriver,
+    name: &str,
+    paint: std::sync::Arc<script::shim::ScriptPaint>,
+) {
+    let play = d.session().play().expect("play");
+    let mut rows = play.statuses.lock().expect("status rows");
+    let row = rows
+        .iter_mut()
+        .find(|row| row.username == name)
+        .expect("status row");
+    row.script_paint = Some(paint);
+}
+
+/// Press Pause, Resume and Stop on one native paint frame (its two
+/// host controls are buttons 0 and 1) and check each press through
+/// the lifecycle rows, as the front ends submit them.
+fn native_paint_controls_case(test: &str, paint: std::sync::Arc<script::shim::ScriptPaint>) {
+    let mut d = paint_driver(test, &["alice"]);
+    publish_native_paint(&d, "alice", paint);
+    d.poll();
+    let running = shown(&d, "alice");
+    assert_eq!(
+        labels(&running),
+        vec![("Pause".to_string(), true), ("Stop".to_string(), true)],
+        "the native paint shows Pause and Stop"
+    );
+    let pause = activate(&mut d, &running, 0, "alice").expect("pause applies");
+    assert_eq!(command_of(&d, &pause), OperatorCommand::PauseScript);
+    settle(&mut d, pause.request());
+    assert_eq!(terminal(&d, pause.request(), "alice"), Some(done()));
+    assert_eq!(d.session().script_state("alice"), ScriptRunState::Paused);
+
+    let paused = shown(&d, "alice");
+    assert_eq!(
+        labels(&paused),
+        vec![("Resume".to_string(), true), ("Stop".to_string(), true)],
+        "the retained native paint shows Resume while paused"
+    );
+    let resume = activate(&mut d, &paused, 0, "alice").expect("resume applies");
+    assert_eq!(command_of(&d, &resume), OperatorCommand::ResumeScript);
+    settle(&mut d, resume.request());
+    assert_eq!(terminal(&d, resume.request(), "alice"), Some(done()));
+    assert_eq!(d.session().script_state("alice"), ScriptRunState::Running);
+
+    let again = shown(&d, "alice");
+    let stop = activate(&mut d, &again, 1, "alice").expect("stop applies");
+    assert_eq!(command_of(&d, &stop), OperatorCommand::StopScript);
+    settle(&mut d, stop.request());
+    assert_eq!(terminal(&d, stop.request(), "alice"), Some(done()));
+    wait_state(&mut d, "alice", ScriptRunState::Idle);
+    assert!(
+        d.session().script_paint("alice").is_none(),
+        "Stop clears the published native paint"
+    );
+}
+
+/// L5: the real native Gatherer paint frame, published on a running
+/// slot, pauses, resumes and stops that run through the lifecycle
+/// rows.
+#[test]
+fn native_gatherer_paint_controls_pause_resume_and_stop() {
+    use std::sync::Arc;
+    let data = script::gatherer::status::StatusData {
+        skill: "Woodcutting",
+        method: Arc::from("normal"),
+        phase: "gathering",
+        area: Arc::from("Start"),
+        target: Arc::from("Tree"),
+        tool: Arc::from("Bronze axe"),
+        bait: 0,
+        food: 0,
+        coins: 0,
+        yielded: 0,
+        dropped: 0,
+        deposited: 0,
+        trips: 0,
+        xp: 0,
+        xp_per_hour: None,
+        bank: Arc::from(""),
+        last_progress: 0,
+        deaths: 0,
+        recoveries: 0,
+        recovery_step: 0,
+        absent: 0,
+        zone_gated: 0,
+        excluded_targets: Arc::from(""),
+        last_event: Arc::from(""),
+    };
+    native_paint_controls_case(
+        "native-gatherer-paint",
+        script::gatherer::status::paint(&data),
+    );
+}
+
+/// L5: the frame the native Sherlock publishes (its card title, its
+/// status lines, the host controls, and the run number it stamps as
+/// the frame generation), published on a running slot, pauses,
+/// resumes and stops that run the same way.
+#[test]
+fn native_sherlock_paint_controls_pause_resume_and_stop() {
+    let paint = std::sync::Arc::new(script::shim::ScriptPaint {
+        title: Some("Sherlock".into()),
+        lines: vec!["Waiting for a clue".into(), "Clues solved: 0".into()],
+        buttons: script::shim::host_control_buttons(),
+        generation: 7,
+        ..Default::default()
+    });
+    native_paint_controls_case("native-sherlock-paint", paint);
+}
+
 /// Every place a Start can wait before its slot runs it.
 #[derive(Clone, Copy, Debug)]
 enum Waiting {

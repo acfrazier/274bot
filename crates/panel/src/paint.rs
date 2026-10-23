@@ -205,6 +205,11 @@ pub struct PaintOverlay {
     /// The frame's layout, refilled each frame. Its buffers are reused,
     /// so a steady frame allocates nothing.
     layout: PaintLayout,
+    /// Whether the pointer was inside the drawn paint panel on the
+    /// last frame. The Game panes read this after the overlay: a
+    /// press inside the panel belongs to the paint, so its mouse
+    /// buttons are not also streamed to the game under it.
+    pointer_inside_panel: bool,
     /// The paint's title + rows submitted this frame (empty while
     /// collapsed or when no paint is showing). The GPU-less tests assert
     /// on this mirror of the window text. Its strings are refilled in
@@ -262,6 +267,7 @@ impl PaintOverlay {
         Self {
             collapsed: false,
             layout: PaintLayout::new(),
+            pointer_inside_panel: false,
             #[cfg(test)]
             lines: Vec::new(),
             #[cfg(test)]
@@ -323,6 +329,14 @@ impl PaintOverlay {
         self.upload_calls
     }
 
+    /// Whether the pointer was inside the drawn paint panel on the
+    /// last [`frame`](Self::frame) call. While it is, the caller must
+    /// not forward mouse buttons to the game: the press is the
+    /// paint's (a button, the toggle, a tab, or the panel itself).
+    pub fn pointer_inside_panel(&self) -> bool {
+        self.pointer_inside_panel
+    }
+
     /// Draw the focused slot's paint over the Game Image. `min`/`size`
     /// are the Image widget's display rect. No-op without a paint. Returns
     /// the advertised button id clicked this frame, if any.
@@ -345,6 +359,7 @@ impl PaintOverlay {
         }
         self.canvas_dest = None;
         self.canvas_dirty = None;
+        self.pointer_inside_panel = false;
 
         let structured = paint.filter(|p| {
             p.title().is_some()
@@ -450,6 +465,7 @@ impl PaintOverlay {
             cell_screen,
         };
         let panel_rect = screen_rect(self.layout.panel(), min, s);
+        self.pointer_inside_panel = hovered(ui, panel_rect);
         let _clip = dl.push_clip_rect(
             [panel_rect[0], panel_rect[1]],
             [panel_rect[2], panel_rect[3]],
@@ -476,11 +492,12 @@ impl PaintOverlay {
                 } else if over {
                     fill_rect(&dl, rect, rgba(style::WIDGET));
                 }
+                let origin = item.text_origin();
                 painter.text(
-                    screen_point(item.rect().x() + style::TAB_TEXT_DX, title_text_y, min, s),
+                    screen_point(origin[0], origin[1], min, s),
                     if active { accent } else { rgba(style::FG_DIM) },
                     name,
-                    usize::MAX,
+                    item.cells(),
                     true,
                 );
                 #[cfg(test)]
@@ -587,20 +604,16 @@ impl PaintOverlay {
                 } else if over {
                     fill_rect(&dl, rect, rgba(style::WIDGET));
                 }
+                let origin = item.text_origin();
                 painter.text(
-                    screen_point(
-                        item.rect().x() + style::TAB_TEXT_DX,
-                        item.rect().y() + style::TAB_TEXT_DY,
-                        min,
-                        s,
-                    ),
+                    screen_point(origin[0], origin[1], min, s),
                     if active {
                         rgba(style::WHITE)
                     } else {
                         rgba(style::FG_DIM)
                     },
                     name,
-                    usize::MAX,
+                    item.cells(),
                     false,
                 );
                 #[cfg(test)]
@@ -640,23 +653,16 @@ impl PaintOverlay {
                     } else if over {
                         fill_rect(&dl, rect, rgba(style::WIDGET));
                     }
-                    let cells = ((item.rect().w() - style::RAIL_TEXT_DX) / cell_w)
-                        .floor()
-                        .max(0.0) as usize;
+                    let origin = item.text_origin();
                     painter.text(
-                        screen_point(
-                            item.rect().x() + style::RAIL_TEXT_DX,
-                            item.rect().y() + item.rect().h() * 0.35,
-                            min,
-                            s,
-                        ),
+                        screen_point(origin[0], origin[1], min, s),
                         if active {
                             rgba(style::WHITE)
                         } else {
                             rgba(style::FG_DIM)
                         },
                         name,
-                        cells,
+                        item.cells(),
                         false,
                     );
                     #[cfg(test)]
@@ -1967,6 +1973,255 @@ mod tests {
             Some(&PaintFrameHit::Button(1)),
             "the drawn Stop control reports its click"
         );
+    }
+
+    /// One frame in the Game panes' input order: the Game Image item,
+    /// then the paint overlay, then the capture decision the panes
+    /// make (the gate and anchor read at the Image; the frame's left
+    /// click reaches the game only while the pointer is outside the
+    /// paint panel). Returns the paint hit, whether the click would
+    /// be forwarded to the game, the Image's top-left corner, and
+    /// whether the pointer is inside the panel.
+    fn pane_capture_frame(
+        ctx: &mut dear_imgui_rs::Context,
+        overlay: &mut PaintOverlay,
+        frame: &PaintFrame,
+        mouse: [f32; 2],
+        left_down: bool,
+    ) -> (Option<(PaintFrameHit, u64)>, bool, [f32; 2], bool) {
+        prepare_frame(ctx);
+        ctx.io_mut().add_mouse_pos_event(mouse);
+        ctx.io_mut()
+            .add_mouse_button_event(dear_imgui_rs::MouseButton::Left, left_down);
+        let mut out = (None, false, [0.0; 2], false);
+        {
+            let ui = ctx.frame();
+            let _ = ui
+                .window("Game")
+                .position([0.0, 0.0], dear_imgui_rs::Condition::Always)
+                .size([900.0, 700.0], dear_imgui_rs::Condition::Always)
+                .build(|| {
+                    ui.image(dear_imgui_rs::TextureId::new(0), [765.0, 503.0]);
+                    let min = ui.item_rect_min();
+                    let image_hovered = ui.is_item_hovered();
+                    let hit = overlay.frame(ui, None, Some(frame.view()), min, [765.0, 503.0]);
+                    let inside = overlay.pointer_inside_panel();
+                    let forwarded = image_hovered
+                        && ui.is_mouse_clicked(dear_imgui_rs::MouseButton::Left)
+                        && !inside;
+                    out = (hit, forwarded, min, inside);
+                });
+        }
+        ctx.render();
+        out
+    }
+
+    /// Hover then press `point` in the pane order, as an operator's
+    /// click arrives. Returns the press frame's pane decision.
+    fn pane_press(
+        ctx: &mut dear_imgui_rs::Context,
+        overlay: &mut PaintOverlay,
+        frame: &PaintFrame,
+        point: [f32; 2],
+    ) -> (Option<(PaintFrameHit, u64)>, bool, [f32; 2], bool) {
+        let _ = pane_capture_frame(ctx, overlay, frame, point, false);
+        let pressed = pane_capture_frame(ctx, overlay, frame, point, true);
+        let _ = pane_capture_frame(ctx, overlay, frame, point, false);
+        pressed
+    }
+
+    /// M1: with input capture on, a press on Pause, Stop, a strip tab
+    /// or the toggle — anywhere inside the paint panel — is the
+    /// paint's alone. The same press outside the panel still reaches
+    /// the game.
+    #[test]
+    fn a_press_inside_the_paint_never_clicks_the_game() {
+        let _guard = crate::test_support::imgui_context_guard();
+        let mut ctx = crate::test_support::imgui_context();
+        let mut overlay = PaintOverlay::new();
+        let frame = paint(Some("Helper"), &["status"])
+            .with_strip(
+                "k",
+                &["Statistics", "Options"],
+                "Statistics",
+                Some("ok"),
+                Some("Helper"),
+            )
+            .with_host_controls()
+            .frame_for_run("alice", ScriptRunState::Running);
+        let away = [890.0, 690.0];
+        let _ = pane_capture_frame(&mut ctx, &mut overlay, &frame, away, false);
+        let (_, _, min, _) = pane_capture_frame(&mut ctx, &mut overlay, &frame, away, false);
+        let buttons = overlay.button_hits.clone();
+        assert_eq!(buttons.len(), 2, "Pause and Stop are drawn");
+        let centre = |rect: [f32; 4]| [(rect[0] + rect[2]) / 2.0, (rect[1] + rect[3]) / 2.0];
+
+        // A press on the game, outside the panel, is forwarded.
+        let outside = [min[0] + 300.0, min[1] + 100.0];
+        let (hit, forwarded, _, inside) = pane_press(&mut ctx, &mut overlay, &frame, outside);
+        assert_eq!(hit, None, "no paint control is pressed outside");
+        assert!(!inside, "the pointer is outside the panel");
+        assert!(forwarded, "a press outside the paint reaches the game");
+
+        // Pause and Stop belong to the paint alone.
+        for (index, rect) in buttons.iter().enumerate() {
+            let (hit, forwarded, _, inside) =
+                pane_press(&mut ctx, &mut overlay, &frame, centre(*rect));
+            assert_eq!(
+                hit.as_ref().map(|(hit, _)| hit),
+                Some(&PaintFrameHit::Button(index)),
+                "the press hits the paint control"
+            );
+            assert!(inside, "the control is inside the panel");
+            assert!(!forwarded, "the press never also clicks the game");
+        }
+
+        // A strip tab belongs to the paint alone.
+        let tab = overlay
+            .chrome_hits
+            .iter()
+            .find(|(kind, _)| *kind == ChromeHit::Strip(1))
+            .map(|(_, rect)| *rect)
+            .expect("Options tab rect");
+        let (hit, forwarded, _, inside) = pane_press(&mut ctx, &mut overlay, &frame, centre(tab));
+        assert_eq!(
+            hit.as_ref().map(|(hit, _)| hit),
+            Some(&PaintFrameHit::Select {
+                key: "strip:k".into(),
+                name: "Options".into(),
+            }),
+            "the press selects the tab"
+        );
+        assert!(inside && !forwarded, "the tab press stays in the paint");
+
+        // The panel body itself, away from every control, also holds
+        // the press back from the game under it.
+        let body = [min[0] + 400.0, min[1] + 430.0];
+        let (hit, forwarded, _, inside) = pane_press(&mut ctx, &mut overlay, &frame, body);
+        assert_eq!(hit, None, "no control is pressed on the panel body");
+        assert!(
+            inside && !forwarded,
+            "the panel body press stays in the paint"
+        );
+
+        // The toggle square collapses the paint and forwards nothing.
+        let toggle = [min[0] + 504.0, min[1] + 355.0];
+        let (_, forwarded, _, inside) = pane_press(&mut ctx, &mut overlay, &frame, toggle);
+        assert!(overlay.collapsed, "the toggle press collapses the paint");
+        assert!(inside && !forwarded, "the toggle press stays in the paint");
+    }
+
+    /// One overlay frame over `frame` at an explicit display and
+    /// blit size, with an optional pointer. Returns the hit.
+    fn frame_at_scale(
+        ctx: &mut dear_imgui_rs::Context,
+        overlay: &mut PaintOverlay,
+        frame: &PaintFrame,
+        display: [f32; 2],
+        size: [f32; 2],
+        mouse: Option<[f32; 2]>,
+        left_down: bool,
+    ) -> Option<(PaintFrameHit, u64)> {
+        ctx.prepare_frame(FramePrepareOptions::new(display, 1.0 / 60.0).renderer_has_textures());
+        if let Some(mouse) = mouse {
+            ctx.io_mut().add_mouse_pos_event(mouse);
+        }
+        ctx.io_mut()
+            .add_mouse_button_event(dear_imgui_rs::MouseButton::Left, left_down);
+        let mut hit = None;
+        {
+            let ui = ctx.frame();
+            let _ = ui
+                .window("Game")
+                .position([0.0, 0.0], dear_imgui_rs::Condition::Always)
+                .size(display, dear_imgui_rs::Condition::Always)
+                .build(|| {
+                    hit = overlay.frame(ui, None, Some(frame.view()), [0.0, 0.0], size);
+                });
+        }
+        ctx.render();
+        hit
+    }
+
+    /// M2: a paint whose tab bands fill the dock (5, 6 and the
+    /// isolate's limit of 16) still draws Pause and Stop inside the
+    /// chatbox at scales 1.0, 1.5 and 2.0, and Pause reports its
+    /// press.
+    #[test]
+    fn host_controls_stay_visible_with_many_tab_bands_at_each_scale() {
+        let _guard = crate::test_support::imgui_context_guard();
+        for bands in [5usize, 6, 16] {
+            for scale in [1.0_f32, 1.5, 2.0] {
+                let mut ctx = crate::test_support::imgui_context();
+                crate::app::apply_ui_scale(ctx.style_mut(), scale);
+                let mut overlay = PaintOverlay::new();
+                let mut fixture = paint(Some("T"), &["row one", "row two"]);
+                for band in 0..bands {
+                    fixture = fixture.with_tab_band(&format!("b{band}"), &["A", "B"], "A");
+                }
+                let frame = fixture
+                    .with_host_controls()
+                    .frame_for_run("alice", ScriptRunState::Running);
+                let display = [900.0 * scale, 700.0 * scale];
+                let size = [765.0 * scale, 503.0 * scale];
+                let _ = frame_at_scale(&mut ctx, &mut overlay, &frame, display, size, None, false);
+                assert_eq!(
+                    overlay.button_hits.len(),
+                    2,
+                    "bands {bands} scale {scale}: Pause and Stop are both drawn"
+                );
+                let chat = chatbox_rect([0.0, 0.0], size);
+                let top = overlay.button_hits[0][1];
+                for rect in &overlay.button_hits {
+                    assert!(
+                        rect[0] >= chat[0] - 0.5
+                            && rect[2] <= chat[0] + chat[2] + 0.5
+                            && rect[1] >= chat[1] - 0.5
+                            && rect[3] <= chat[1] + chat[3] + 0.5,
+                        "bands {bands} scale {scale}: the control stays in the chatbox: {rect:?} chat {chat:?}"
+                    );
+                    assert!(
+                        (rect[3] - rect[1] - 16.0 * scale).abs() < 0.5,
+                        "bands {bands} scale {scale}: the control is 16 px high: {rect:?}"
+                    );
+                    assert_eq!(rect[1], top, "bands {bands} scale {scale}: one row");
+                }
+                let pause = overlay.button_hits[0];
+                let centre = [(pause[0] + pause[2]) / 2.0, (pause[1] + pause[3]) / 2.0];
+                let _ = frame_at_scale(
+                    &mut ctx,
+                    &mut overlay,
+                    &frame,
+                    display,
+                    size,
+                    Some(centre),
+                    false,
+                );
+                let hit = frame_at_scale(
+                    &mut ctx,
+                    &mut overlay,
+                    &frame,
+                    display,
+                    size,
+                    Some(centre),
+                    true,
+                );
+                assert_eq!(
+                    hit.as_ref().map(|(hit, _)| hit),
+                    Some(&PaintFrameHit::Button(0)),
+                    "bands {bands} scale {scale}: the drawn Pause reports its press"
+                );
+                let _ = frame_at_scale(
+                    &mut ctx,
+                    &mut overlay,
+                    &frame,
+                    display,
+                    size,
+                    Some(centre),
+                    false,
+                );
+            }
+        }
     }
 
     /// One overlay frame over `frame` at the native blit in the corner.
