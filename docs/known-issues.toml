@@ -51,6 +51,12 @@ target = "none"
 severity = "medium"
 owner = "T2.rest hunt"
 
+[[item.earlier]]
+until = "0.2.5"
+text = """The JiveKBD hunting script (King Black Dragon) does not yet bring back
+  Dragon bones reliably. In testing it ran out of food at the dragon and went to
+  the bank without the bones. A fix is planned for 0.2.5."""
+
 [[item]]
 id = "windows-map-bake-resume"
 kind = "not-in-release"
@@ -145,6 +151,11 @@ target = "none"
 severity = "medium"
 owner = "event-driven runtime endpoint"
 
+[[item.earlier]]
+until = "0.2.6"
+text = """`Bank.depositAllMatching` checks about one item per game tick, so large
+  deposits can be slow. A fix is planned for 0.2.6."""
+
 [[item]]
 id = "grinch-bank-fixed-waits"
 kind = "not-in-release"
@@ -169,6 +180,14 @@ first = "0.2.5"
 target = "none"
 severity = "medium"
 owner = "nav"
+
+[[item.earlier]]
+until = "0.2.6"
+text = """A bot can't get through a door that another player closes again on every
+  tick, when that player's moves are handled before the bot's. The bot tries
+  the door until its retries run out and then stops at the door. Finding
+  another way around, changing worlds when allowed, and a clear "door held
+  shut" result are planned for 0.2.6."""
 
 [[item]]
 id = "sherlock-compat-clue-machine"
