@@ -1054,7 +1054,7 @@ fn client_frame_releases_held_keys_when_capture_disabled() {
 fn client_frame_preserves_pre_mainloop_menu_intent_and_human_minimap_packet() {
     use client::client::MiniMenuAction;
     for (x, y, expected) in [
-        (30, 51, Some(ManualMoveIntent::WorldMenu)),
+        (30, 51, None),
         (30, 20, None),
         (648, 83, Some(ManualMoveIntent::Minimap)),
     ] {

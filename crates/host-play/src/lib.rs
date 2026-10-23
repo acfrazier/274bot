@@ -590,6 +590,9 @@ mod combat_proof;
 mod combat_live_proof_tests;
 
 #[cfg(test)]
+mod manual_takeover_compat_live_tests;
+
+#[cfg(test)]
 #[path = "walk_guard_live_tests.rs"]
 mod walk_guard_live_tests;
 

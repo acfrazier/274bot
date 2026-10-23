@@ -9,6 +9,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.5` 
 
 - Switching the log view from "all bots" back to "bot" shows the focused bot's lines again, in the panel and the TUI. In 0.2.4 and 0.2.5 it kept showing every bot's lines.
 
+### Scripts
+
+- "Pause script on manual movement" now also pauses a running script that acts
+  in place, including rs2b0t scripts. Resume continues from the pause.
+- Examine and Cancel from a game-world menu no longer count as manual movement.
+
 ### Nav
 
 - Split the route follower into a new `nav-executor` crate (`nav_executor::Traveller`); `nav` keeps the packed world, router and pack bake. No behavior change.

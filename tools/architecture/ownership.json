@@ -975,6 +975,10 @@
       "owner": "T1"
     },
     {
+      "path": "crates/host-play/src/manual_takeover_compat_live_tests.rs",
+      "owner": "T1"
+    },
+    {
       "path": "crates/host-play/src/map_bind.rs",
       "owner": "T5"
     },
