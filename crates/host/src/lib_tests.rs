@@ -2065,6 +2065,68 @@ fn parked_map_smoke_and_projectile_match_twenty_ms_at_first_draw() {
     );
 }
 
+/// Compare cutscene camera easing after a parked interval with the state from
+/// a client that ran and drew every 20 ms.
+fn cutscene_camera_at_focus(period_ms: u64, draw_each_frame: bool) -> [i32; 5] {
+    let mut c = Client::new(cfg());
+    c.error_loading = false;
+    c.ingame = true;
+    c.scene_state = 2;
+    c.set_draw(draw_each_frame);
+    c.cinema_cam = true;
+    c.cam_move_to_lx = 8;
+    c.cam_move_to_lz = 9;
+    c.cam_move_to_hei = 0;
+    c.cam_move_to_rate = 5;
+    c.cam_move_to_rate2 = 0;
+    c.cam_look_at_lx = 2;
+    c.cam_look_at_lz = 3;
+    c.cam_look_at_hei = 0;
+    c.cam_look_at_rate = 2;
+    c.cam_look_at_rate2 = 0;
+
+    let mut renderer = Renderer::new(false);
+    let mut slot = SlotLoop::new();
+    let t0 = Instant::now();
+    let mut sends = 0;
+    for elapsed in (0..=1200).step_by(period_ms as usize) {
+        slot.pacing_now = Some(t0 + Duration::from_millis(elapsed));
+        Host::client_frame(
+            &mut c,
+            &mut slot,
+            "cutscene-camera",
+            None,
+            None,
+            &mut sends,
+            None,
+        );
+        if draw_each_frame {
+            renderer.mainredraw(&mut c);
+        }
+    }
+
+    let before_first_draw = [c.cam_x, c.cam_y, c.cam_z, c.cam_pitch, c.cam_yaw];
+    c.set_draw(true);
+    renderer.mainredraw(&mut c);
+    let first_draw = [c.cam_x, c.cam_y, c.cam_z, c.cam_pitch, c.cam_yaw];
+    assert_eq!(
+        first_draw, before_first_draw,
+        "the first draw must only present the recovered camera state"
+    );
+    first_draw
+}
+
+#[test]
+fn parked_cutscene_camera_matches_twenty_ms_at_first_draw() {
+    let _cpu = force_cpu_backend();
+    let focused = cutscene_camera_at_focus(20, true);
+    let parked = cutscene_camera_at_focus(600, false);
+    assert_eq!(
+        parked, focused,
+        "cutscene camera state must not depend on drawing"
+    );
+}
+
 #[test]
 fn late_twenty_ms_frames_recover_elapsed_entity_cycles() {
     let mut c = Client::new(cfg());
