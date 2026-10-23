@@ -96,9 +96,10 @@ On a saved profile, **Log in automatically**, **random events**, **Policies**,
   login queue, or stopped by the repeat guard (below). After **Logout**, the bot
   stays logged out until you click **Log in**.
 - For many bots, use the **Log in** and **Log out** buttons of the **Fleet**
-  toolbar. They act on the marked bots. With no marks, they act on every loaded
-  bot that the filter shows. The toolbar then lists those bots by name and waits
-  for you to click **Confirm**.
+  toolbar. See [Work with many bots](fleet-and-groups.md). They act on the
+  marked bots. With no marks, they act on every loaded bot that the filter
+  shows. The toolbar then lists those bots by name and waits for you to click
+  **Confirm**.
 - In the terminal app, press `i` (Log in) or `u` (Log out) on the Overview
   screen. In the Fleet pane, `m` loads and logs in the marked bots and `U` logs
   them out.

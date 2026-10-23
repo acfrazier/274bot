@@ -9,7 +9,7 @@ it, or work on its code.
 | --- | --- |
 | Install it and run it for the first time | [Install and first run](manual/install-and-first-run.md) |
 | Fix a first-start problem | [Troubleshooting in FIRST-START.md](../FIRST-START.md#troubleshooting) |
-| Learn the window and what its buttons do | [Panel guide](api/panel.md) |
+| Learn the window and what its buttons do | [Use the panel window](manual/panel.md) |
 | Run bots in a terminal, for example on a server | [Terminal app guide](api/tui.md) |
 | Add, change or remove accounts | [Manage your accounts and log in](manual/profiles-and-accounts.md) |
 | Move accounts over from rs2b0t | [Import your accounts from rs2b0t](manual/importing-from-rs2b0t.md) |
@@ -19,6 +19,8 @@ it, or work on its code.
 | Look up the exact login limits or the vault file format | [Login limits](api/login.md) and [Vault](api/vault.md) |
 | Start, pause and stop scripts, and set their options | [Run scripts on your bots](manual/running-scripts.md) |
 | Learn what the Quester, Gatherer, Grinch and Sherlock do, and their settings | [The built-in scripts](manual/built-in-scripts.md) |
+| Control many bots together, walk them as a group, move them to another world | [Work with many bots](manual/fleet-and-groups.md) |
+| Change the app, walking and script options | [Change the settings](manual/settings.md) |
 | Send bots across the map | [Navigation](api/nav.md) |
 | Upgrade from 0.1.9.1 | [Upgrade guide](upgrade-0.2.0.md) |
 | See what changed in each release | [CHANGELOG](../CHANGELOG.md) |
