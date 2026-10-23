@@ -11,7 +11,8 @@ it, or work on its code.
 | Fix a first-start problem | [Troubleshooting in FIRST-START.md](../FIRST-START.md#troubleshooting) |
 | Learn the window and what its buttons do | [Panel guide](api/panel.md) |
 | Run bots in a terminal, for example on a server | [Terminal app guide](api/tui.md) |
-| Add, change or move accounts, including from rs2b0t | [Manage your accounts and log in](manual/profiles-and-accounts.md) |
+| Add, change or remove accounts | [Manage your accounts and log in](manual/profiles-and-accounts.md) |
+| Move accounts over from rs2b0t | [Import your accounts from rs2b0t](manual/importing-from-rs2b0t.md) |
 | Understand why a bot waits to log in | [The login messages](manual/profiles-and-accounts.md#read-the-login-messages) |
 | Choose a game server, world or revision | [Choose a game server and a world](manual/servers-and-worlds.md) |
 | Look up every setting of a server entry | [Server reference](reference/server-profiles.md) |

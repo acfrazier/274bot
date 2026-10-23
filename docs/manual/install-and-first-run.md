@@ -57,13 +57,13 @@ listed in [FIRST-START.md](../../FIRST-START.md#system-requirements).
    disappears, the bot is in the game. If the banner stays on the queue for a
    while, see [the login messages](profiles-and-accounts.md#read-the-login-messages).
 7. **Start a script.** In the panel, click the heading **script** to open it.
-   Click **Browse…**. The window **Scripts** opens. Click a script. A window may
-   ask for your rs2b0t folder. Click **Not now** if you do not use rs2b0t. Then
-   click **Start**. The **status** line under the buttons changes to `starting`
-   and then to `running` or a phase such as `working`. **Pause** stops the
-   script for a while and becomes **Resume**. **Stop** ends it. **Script prefs**,
-   below **WalkTo**, opens the script's settings. The button is dimmed for a
-   script that has none.
+   Click **Browse…**. If no rs2b0t folder is set yet, a window asks for it at
+   once and takes the focus. Click **Not now** if you do not use rs2b0t. Then
+   click a script in the **Scripts** window and click **Start**. The **status**
+   line under the buttons changes to `starting` and then to `running` or a phase
+   such as `working`. **Pause** stops the script for a while and becomes
+   **Resume**. **Stop** ends it. **Script prefs**, below **WalkTo**, opens the
+   script's settings. The button is dimmed for a script that has none.
 
 The panel does not make an account for you. An empty vault stays empty until you
 save a profile.
@@ -80,20 +80,32 @@ To skip step 3, tick **Log in automatically** for the profile. See
 ## Use the terminal app instead
 
 `tui-play` runs the same bots in a terminal, which suits a server with no
-screen. Run `./tui-play --profile rs2b2t`. It asks for the vault passphrase in
-the terminal and does not show what you type. A new vault asks twice. It then
-logs in the first profile in the vault.
+screen. It logs in the first profile of the vault, so the vault must already
+hold a profile. The terminal app has no profile editor. Create your profiles in
+the panel first, or
+[import them from rs2b0t](importing-from-rs2b0t.md).
 
-The terminal app has no profile editor. Create your profiles in the panel first,
-or [import them from rs2b0t](profiles-and-accounts.md#import-accounts-from-rs2b0t).
-Do not add an account with `--user NAME`. It creates a profile with a random
-password, not your game password.
+Then run `./tui-play --profile rs2b2t`. It asks for the vault passphrase in the
+terminal and does not show what you type. It then logs in the first profile in
+the vault.
+
+With a new vault, `tui-play` asks for the passphrase twice and creates the vault.
+It then stops and prints:
+
+```
+vault has no profiles (start tui-play with --user <name> to create one)
+```
+
+Do not follow that advice for a real account. `--user NAME` creates a profile
+with a random password, not your game password. Create the profile in the panel
+instead, then run `tui-play` again.
 
 ## Where to go next
 
 | I want to… | Read |
 | --- | --- |
-| Add more accounts, change a password or move accounts over from rs2b0t | [Manage your accounts and log in](profiles-and-accounts.md) |
+| Add more accounts or change a password | [Manage your accounts and log in](profiles-and-accounts.md) |
+| Move accounts over from rs2b0t | [Import your accounts from rs2b0t](importing-from-rs2b0t.md) |
 | Use another server or another world | [Choose a game server and a world](servers-and-worlds.md) |
 | Look up a word | [Glossary](glossary.md) |
 | Find every other page | [docs/README.md](../README.md) |

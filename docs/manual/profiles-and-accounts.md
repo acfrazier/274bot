@@ -1,9 +1,9 @@
 # Manage your accounts and log in
 
 > **Who this is for:** you run one or more game accounts in 274bot. When you
-> finish, your accounts are saved in the vault, you can log them in and out, and
-> you can read every message the app shows while a bot waits to log in. You can
-> also bring over your accounts from rs2b0t.
+> finish, your accounts are saved in the vault and you can log them in and out.
+> You can also read the messages the app shows while a bot waits to log in. To
+> bring over your accounts from rs2b0t, see the end of this page.
 
 ## How 274bot stores your accounts
 
@@ -51,6 +51,9 @@ printf '%s\n' "$PASS" | ./tui-play --profile rs2b2t --vault-pass-stdin
 Without a terminal and without that flag, `tui-play` stops and prints
 `no terminal to ask for the vault passphrase on; pipe it in and pass --vault-pass-stdin`.
 
+A new vault holds no profile, so `tui-play` stops after it creates the vault. See
+[Use the terminal app instead](install-and-first-run.md#use-the-terminal-app-instead).
+
 ## Add, change or remove a profile
 
 You do this in the panel. The terminal app has no profile editor.
@@ -75,7 +78,7 @@ offers **Discard** and **Keep editing**.
 | **Log in automatically** | Logs the bot in as soon as it starts, and again after a disconnect. | off |
 | **world (next slot start)** | The world this profile uses. Shown only for a server with a world list, such as rs2b2t. | auto |
 | **random events** | On: 274bot handles random events. Off: it shows their status and does not handle or hold them. | on |
-| **Policies** | How the bot answers each hostile random event. Only Flee works. Saved Fight or Ignore choices act as Flee. | Flee |
+| **Policies** | How the bot answers each hostile random event. Only Flee works, and a saved Fight or Ignore acts as Flee. | Flee |
 | **lamp auto** | Claims a genie lamp reward without asking you. | on |
 | lamp skill drop-down | The skill a genie lamp trains. | strength |
 | **clue duel partner** | The other account's name, for the Duel Arena crossing in clue 3554. | empty |
@@ -93,7 +96,9 @@ On a saved profile, **Log in automatically**, **random events**, **Policies**,
   login queue, or stopped by the repeat guard (below). After **Logout**, the bot
   stays logged out until you click **Log in**.
 - For many bots, use the **Log in** and **Log out** buttons of the **Fleet**
-  toolbar. They act on the marked bots.
+  toolbar. They act on the marked bots. With no marks, they act on every loaded
+  bot that the filter shows. The toolbar then lists those bots by name and waits
+  for you to click **Confirm**.
 - In the terminal app, press `i` (Log in) or `u` (Log out) on the Overview
   screen. In the Fleet pane, `m` loads and logs in the marked bots and `U` logs
   them out.
@@ -103,8 +108,8 @@ bot that runs a script still logs in by itself.
 
 Bots log in one at a time, at least 1.2 seconds apart. They go in the order they
 asked, except that the bot you have selected goes first. 274bot also allows at
-most 29 logins from your address in any 60 seconds. That keeps it under the
-public server's limit.
+most 29 login attempts from your address in a row. The count starts again after
+60 seconds with no attempt. That keeps it under the public server's limit.
 
 If the game drops a bot that has **Log in automatically** on, or that runs a
 script, 274bot logs it in again. After three unexpected drops within ten minutes,
@@ -123,18 +128,47 @@ app show the same text in lower case.
 | `…: next in line, another bot is logging in` | The bot is first, and one other login is still under way. | Wait. |
 | `…: next in line, previous login is finishing` | The last login timed out and is closing. | Wait. |
 | `…: next in line, pacing logins` | The bot waits out the pause between logins. | Wait. |
-| `…: next in line, login rate cooldown (29 attempts), next try in 41 s` | 274bot counted 29 login attempts from your address in the last minute. | Wait. The text counts down. |
+| `…: next in line, login rate cooldown (29 attempts), next try in 41 s` | 274bot counted 29 login attempts from your address with no quiet minute between them. A full minute with no attempt starts the count again. | Wait. The text counts down. |
+| `…: next in line, login rate cooldown (29 attempts) after the current login` | The same limit, while another login is still under way. The wait has no end time yet. | Wait. The countdown appears when that login ends. |
 | `…: next in line, device login limit` | The same profile logged in several times in a few seconds. | Wait. |
 | `…: next in line, server: too many login attempts` | The server refused a login for going too fast. | Wait. The wait grows after each refusal. |
 | `logging in…`, `loading scene…` | The login is under way. | Wait. |
-| `login code 3: Invalid username or password.` | The game refused the **user** or **pass**. | Fix them in **Profiles** and click **Save**. The next attempt uses the saved password. |
-| `login code 5: Try again in 60 secs...` | The game says the account is already logged in. | Close the other session. The bot tries again after 60 seconds. |
-| `login code 7: Please use a different world.` | The world is full. | See the next row. |
-| `login code 16: Please wait 1 minute and try again.` | The game refused too many attempts. | Wait. The bot waits longer after each refusal. |
-| `login Error connecting to server. (connect: …)` | The bot could not reach the server. | Check your internet connection, then wait. The bot waits longer after each failure, up to a minute. |
 | `logged out (Log in to connect)` | The bot is logged out. | Click **Log in**. |
 
-### A full world
+## Read the login codes about your account
+
+When the game refuses a login, the app shows `login code N:` and the second line
+of the game's message. It does not show the first line. After a refusal the bot
+tries again by itself, after 5 seconds unless the row says otherwise.
+
+| What you see | What it means | What to do |
+| --- | --- | --- |
+| `login code 3: Invalid username or password.` | The game refused the **user** or **pass**. | Fix them in **Profiles** and click **Save**. The next attempt uses the saved password. |
+| `login code 4: Please check your message-centre for details.` | The game disabled the account. The first line, which the app does not show, is `Your account has been disabled.` | Read the account's message centre for the reason. 274bot cannot lift a disabled account. |
+| `login code 5: Try again in 60 secs...` | The game says the account is already logged in. | Close the other session. The bot tries again after 60 seconds. |
+| `login code 9: Too many connections from your address.` | The game refused the login for too many connections from your address. | Close other game connections from your address. |
+| `login code 12: Please subscribe, or use a different world.` | The world needs a members account, and the account is not one. | Pick a free world in the profile's **world** option. See [Choose a world](servers-and-worlds.md#choose-a-world). |
+| `login code 16: Please wait 1 minute and try again.` | The game refused too many attempts. | Wait. The bot waits longer after each refusal. |
+| `login code 17: To play on this world move to a free area first` | The account stands in a members-only area, and the world is a free one. | Log in on a members world and walk the character out of that area. |
+| `Your profile will be transferred in: 12 seconds` | The game says you only just left another world. | Wait. The bot tries again when the countdown ends. |
+
+## Read the login codes about the server
+
+| What you see | What it means | What to do |
+| --- | --- | --- |
+| `login code 6: Wrong RSA key; check this world's login key.` | The key the server uses for logins is not the key 274bot has. | A public server: 274bot fetches the key again once. Your own server: check its `login_key` in [Edit the server list](servers-and-worlds.md#edit-the-server-list). |
+| `login code 7: Please use a different world.` | The world is full. | See [A full world](#a-full-world). |
+| `login code 8: Login server offline.` | The game's login service is not answering. | Wait. |
+| `login code 10: Bad session id.` | The server refused the login handshake. | Wait. |
+| `login code 11: Please try again.` | The server asks for another attempt. | Wait. |
+| `login code 13: Please try using a different world.` | The game could not complete the login. | On a server with a world list, pick another world in the profile's **world** option. |
+| `login code 14: Please wait 1 minute and try again.` | The server is being updated. | Wait. The bot tries again after 5 seconds, sooner than the message asks. |
+| `login code 20: Please try using a different world.` | The game did not accept the login server. | On a server with a world list, pick another world in the profile's **world** option. |
+| `login code N: Please try using a different world.` | The game sent a code 274bot has no text for. The app shows its number. | Wait. If it repeats, pick another world. |
+| `login Error connecting to server. (connect: …)` | The bot could not reach the server. | Check your internet connection, then wait. The bot waits longer after each failure, up to a minute. |
+| `login Please try using a different world. (…: connection closed before the server answered)` | The server closed the connection without an answer. | Wait. The bot waits longer after each failure, up to a minute. |
+
+## A full world
 
 A full world also writes a line to the log. For example:
 `world full (code 7) on w2 w2.rs2b2t.com:443 (auto world); next attempt w3 w3.rs2b2t.com:443 now, through the login queue`.
@@ -146,56 +180,5 @@ To change the world of a profile, see
 
 ## Import accounts from rs2b0t
 
-Use this to copy your accounts, and each account's script and script settings,
-from rs2b0t into the vault. The import writes nothing until you confirm.
-
-1. In rs2b0t, open **Settings** and export your profiles. The file is called
-   `rs2b0t-profiles.json`. It holds your passwords in plain text.
-2. In 274bot, unlock the vault. Click **Browse…** once. If a window asks for your
-   rs2b0t folder, choose it. The import needs it to carry over scripts and their
-   settings. If you clicked **Not now** earlier, click **Import catalog…** in the
-   **Scripts** window.
-3. Click **Profiles**, then **Import from rs2b0t…**.
-4. Type the path of the file and click **Preview**. The preview lists every
-   account, what it carries over, and what it leaves out, each with a reason.
-5. For accounts that are already in the vault, choose **Skip (keep them)** or
-   **Overwrite**.
-6. Click **Import**. A report lists every account. It says `not confirmed` for a
-   write that was not saved.
-7. When every account you chose is saved, **Delete export file…** appears. It asks
-   you to tick **I understand** before it deletes the file. Click **Done**.
-
-In the terminal app, press Ctrl-P or `:` and choose **Import rs2b0t profiles…**.
-Type the path and press Enter. In the preview, `o` switches between Skip and
-Overwrite, `u` switches importing unusable accounts, Enter or `y` imports, and
-`b` or Esc goes back. In the report, `d` offers to delete the file and `y`
-confirms.
-
-### What the import carries over
-
-| In rs2b0t | In 274bot |
-| --- | --- |
-| Username and password | A new profile. The password goes only into the vault. |
-| World 1 to 3 | The profile's world, used when the server's world list has it. |
-| Selected script | The profile's script, if your rs2b0t folder has a script with that name that runs in 274bot. |
-| Script settings | That script's settings for the profile. Numbers are read the way rs2b0t reads them and limited to the setting's range. |
-| Lamp skill, clue duel partner | The same options on the profile. |
-| Renderer off or on | The profile's display off, or back on. |
-| Tabs and groups | Not carried over. 274bot has none. |
-| Account-wide defaults for the bank, run energy and route drawing | Not carried over. Set the bank choices in each script's settings. Route drawing and teleports are app-wide options in **Nav config**. |
-| Loadouts and price books | Not carried over. 274bot has one **Loadouts** list for all accounts. |
-
-An account that the game's login cannot carry is `unusable`: a username longer
-than 12 characters, an empty password or one longer than 20 characters, or a line
-break or a character beyond Latin-1 in either. The import leaves these out unless
-you tick **Import unusable accounts**. It never shortens a username or password.
-
-**Overwrite** writes the password, the world and the settings the file carries.
-It keeps every other setting of the profile. For script settings, the preview
-shows `[new]`, `[unchanged]` or `[was …]` after each value. Importing the same
-file twice writes nothing the second time. Bots that are running use an imported
-password and world at their next login, and imported script settings at their
-next Start.
-
-If the preview says the file is not an rs2b0t profile export, you picked the
-wrong file. Choose the file rs2b0t exported.
+To copy your accounts from rs2b0t into the vault, with each account's script and
+script settings, see [Import your accounts from rs2b0t](importing-from-rs2b0t.md).

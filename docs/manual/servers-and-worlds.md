@@ -1,9 +1,9 @@
 # Choose a game server and a world
 
-> **Who this is for:** you want to start 274bot on a server other than the one
-> in the first run, pick the world each account uses, or run against a game
-> server on your own computer. When you finish, you know which server the app is
-> on and which world each bot logs in to.
+> **Who this is for:** you want to start 274bot on another server, pick the world
+> each account uses, or run against a game server on your own computer. When you
+> finish, you know which server the app is on and which world each bot logs in
+> to.
 
 ## See which server you are on
 
