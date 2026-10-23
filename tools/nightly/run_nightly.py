@@ -79,7 +79,7 @@ DEFAULT_ROOT = r"C:\274bot-nightly" if IS_WINDOWS else (
 ROOT = Path(os.environ.get("NIGHTLY_ROOT", DEFAULT_ROOT))
 REPO_URL = os.environ.get("NIGHTLY_REPO", "https://github.com/acfrazier/274bot")
 RUNNER_REPO = HERE.parent.parent
-NAV_274_REQUIRED_CONTENT = RUNNER_REPO / "crates" / "nav" / "src" / "required-content-274.tsv"
+NAV_274_REQUIRED_CONTENT = RUNNER_REPO / "crates" / "nav-planner" / "src" / "required-content-274.tsv"
 
 
 # Engine A is the non-Windows revision-289 pack. Engine B has its own
@@ -1322,7 +1322,7 @@ def apply_274_inventory_overlay(tree: Path) -> None:
     """
     if REVISION != "274":
         return
-    target = tree / "crates" / "nav" / "src" / "required-content-274.tsv"
+    target = tree / "crates" / "nav-planner" / "src" / "required-content-274.tsv"
     if not NAV_274_REQUIRED_CONTENT.is_file():
         raise RuntimeError(f"revision-274 nav inventory missing: {NAV_274_REQUIRED_CONTENT}")
     if not target.is_file():

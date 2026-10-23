@@ -244,7 +244,7 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.5` 
   routes check the quest, keys and worn slave kit that the content requires.
 - The bundled navigation data has a new format. The app rebuilds it
   automatically. If you use navigation data that you baked yourself, bake it
-  again before use with `cargo run -p nav-planner --bin nav-pack`.
+  again before use with `cargo run -p nav --bin nav-pack`.
 
 - The built-in Elkoy and rune-essence navigation checks start beside the
   transport NPC and seed only their required quest. They no longer start
