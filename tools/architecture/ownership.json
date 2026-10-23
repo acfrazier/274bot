@@ -6639,6 +6639,14 @@
       "owner": "T1"
     },
     {
+      "path": "vendor/fr-client-rust/crates/client/tests/common/gpu_serial.rs",
+      "owner": "T4"
+    },
+    {
+      "path": "vendor/fr-client-rust/crates/client/tests/common/scene_fixture.rs",
+      "owner": "T4"
+    },
+    {
       "path": "vendor/fr-client-rust/crates/client/tests/config_types.rs",
       "owner": "T1"
     },
@@ -6889,6 +6897,18 @@
     {
       "path": "vendor/fr-client-rust/crates/client/tests/runtime_cache.rs",
       "owner": "T1"
+    },
+    {
+      "path": "vendor/fr-client-rust/crates/client/tests/scene_hook_omit.rs",
+      "owner": "T4"
+    },
+    {
+      "path": "vendor/fr-client-rust/crates/client/tests/scene_hook_result.rs",
+      "owner": "T4"
+    },
+    {
+      "path": "vendor/fr-client-rust/crates/client/tests/scene_hook_standalone_omit.rs",
+      "owner": "T4"
     },
     {
       "path": "vendor/fr-client-rust/crates/client/tests/seq_delay.rs",
