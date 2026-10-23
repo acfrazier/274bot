@@ -5807,6 +5807,10 @@
       "owner": "T2"
     },
     {
+      "path": "tools/game-data/extractors/npc-transforms.ts",
+      "owner": "T2"
+    },
+    {
       "path": "tools/game-data/extractors/quest-starts.ts",
       "owner": "T2"
     },
@@ -5815,11 +5819,23 @@
       "owner": "T2"
     },
     {
+      "path": "tools/game-data/extractors/server-ordered.ts",
+      "owner": "T2"
+    },
+    {
       "path": "tools/game-data/generate.test.ts",
       "owner": "T2"
     },
     {
       "path": "tools/game-data/generate.ts",
+      "owner": "T2"
+    },
+    {
+      "path": "tools/game-data/npc-transforms.test.ts",
+      "owner": "T2"
+    },
+    {
+      "path": "tools/game-data/server-ordered.test.ts",
       "owner": "T2"
     },
     {
