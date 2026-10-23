@@ -1,6 +1,6 @@
 # Changelog
 
-All notable public changes to 274bot. Host workspace crate versions are `0.2.4` and
+All notable public changes to 274bot. Host workspace crate versions are `0.2.5` and
 `publish = false` (not on crates.io). Git tags are `0.1.0`, `0.1.1`, …
 
 ## Unreleased
@@ -8,6 +8,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
 ### Nav
 
 - Split the route follower into a new `nav-executor` crate (`nav_executor::Traveller`); `nav` keeps the packed world, router and pack bake. No behavior change.
+
+## [0.2.5] — 2026-10-22 — Beta 2
 
 ### Scripts
 
@@ -17,32 +19,37 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
 - Script paint: scripts that use the standard paint-controls helper now show
   working Pause/Resume and Stop buttons. Resume remains available while
   paused. The panel and TUI use the same controls.
+- Script paint buttons in the panel now use the same text size as the
+  paint rows on scaled displays. Release 0.2.4 drew the button labels
+  too large at display scaling above 100 %.
 - Starting a script now stops at once with a clear message when the saved
   loadout list it needs is empty, or when a script file it depends on is
   missing. Other start problems are still retried.
-- Ground-item interactions keep the selected item ID through dispatch. Items
+- Ground-item interactions keep the item type the script selected. Items
   with the same name on one tile, such as Halloween masks, no longer substitute
-  for the selected type. Requests without an ID retain name-and-tile lookup.
-  Native collection, hunt keys, clue key-keeper drops and trail-end rewards all
-  retain the selected row's ID.
-- Exact ground Take actions settle from inventory and ground evidence within
-  four later observed game ticks after dispatch. Lost races do not penalize
-  the item tile. Native scripts can report confirmed progress and wait for
-  relevant evidence without disabling scheduler or connection checks.
-- Native ground-item selections reject more than 32 IDs, so later items
-  cannot bypass the selected-ID exclusion bitset.
-- Grinch is a native Gathering card that collects selected visible holiday
+  for the selected type. Requests without an item type still find the item by
+  name and tile. Native collection, hunt keys, clue key-keeper drops and
+  trail-end rewards all keep the selected item type.
+- A pick-up of an exact ground item is confirmed within four later game ticks,
+  from what the pack and the ground show. If the bot loses the race for an
+  item, it does not avoid that item's tile afterwards. Built-in scripts can
+  report confirmed progress and wait for what they need without switching off
+  the checks that keep the script and its connection healthy.
+- A built-in script's ground-item selection holds at most 32 item types. A
+  longer list is refused as a whole, so no item can skip the script's list of
+  excluded items.
+- Grinch is a built-in Gathering script that collects selected visible holiday
   items around its Start tile. All 18 base choices default on. Set a radius
   from 1 through 16 tiles, use the nearest reachable or a named bank, and
   deposit only selected items before returning to the exact Start tile.
-  Empty waits stay visible as Waiting; duplicate refusals exclude only that
+  Empty waits stay visible as Waiting; duplicate refusals skip only that
   item until the next Start. Saved settings apply on the next Start.
-- Grinch uses the player's network tile, not the rendered tile, for its Start
-  tile and return arrival. A confirmed walking arrival no longer fails while
-  the rendered player catches up.
-- Native script failures keep their stop reason visible in the TUI status
-  pane after the run stops. This includes Grinch stopping with a full pack
-  that contains no selected item to deposit.
+- Grinch uses the bot's real position, not the position drawn on screen, for
+  its Start tile and for knowing it has returned. A confirmed walking arrival
+  no longer fails while the drawn player catches up.
+- When a built-in script stops with an error, the TUI status pane keeps the
+  reason visible after the run ends. This includes Grinch stopping with a full
+  pack that has no selected item to deposit.
 
 ### Banking
 
@@ -63,22 +70,20 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
   instead of preferring built-in graphics. This can help on desktops with
   two graphics chips. If "importing the supplied dmabufs failed" still
   appears, start it with `WGPU_POWER_PREF=high ./panel-play`.
-- Panel and TUI now share `frontend-core` live scenario preparation, runner
-  state and proof gates; screenshot capture and TUI proof output remain
-  surface-specific.
-- Every panel action that changes state goes through the shared command
-  path that the TUI and the headless driver also use. This includes Start,
-  the draw switches, the Nav config grants, session log, map bake, Quest
-  Paths, marks, the filter, the vault and Quit. Each action returns a typed
-  report.
-- Fleet Assign & restart reports its paced Starts through completion, after
-  the assignment is durable.
+- The panel and the TUI now prepare, run and judge the built-in live checks
+  with the same code. Only screenshot capture and TUI output still differ.
+- Every panel action that changes something now runs the same way as in the
+  TUI. This includes Start, the draw switches, the Nav config grants, session
+  log, map bake, Quest Paths, marks, the filter, the vault and Quit. Each
+  action reports its result.
+- Fleet Assign & restart reports its spaced-out Starts until they finish,
+  after the assignment is saved.
 - Saved draw preferences (capture input, sidecar and focused 50 fps), the
   render-all and background-bots acknowledgements, the map-bake choice and
   the session log file are written only when you change them. Saving the
   panel's own window state no longer rewrites them.
-- A capture frame that fills the input queue is reported, instead of
-  dropping events silently.
+- When one frame of mouse and keyboard input for the game view overflows the
+  input queue, the panel now reports it instead of dropping events silently.
 
 ### Fleet
 
@@ -95,8 +100,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
   down**). Name and Status remain temporary view sorts. Load all logs in bots
   in that order, a new profile goes to the end, a renamed profile keeps its
   place and removing a bot from the wall keeps its place. The order is saved
-  as `profile_order` in the shared preferences; a reorder whose write fails
-  is reported and the last saved order comes back.
+  with your other preferences; a reorder that cannot be saved is reported and
+  the last saved order comes back.
 - Choose each bot's own card, the focused bot's card, or a pinned card (the
   panel's card picker; `c` in the TUI). Choosing a card does not start a
   script or change a bot's assignment.
@@ -157,14 +162,18 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
 
 ### Random events
 
-- The Guardian starts lost-tool recovery after it observes tool removal or a handle in inventory or equipment.
+- Random-event handling starts lost-tool recovery after it observes tool removal or a handle in inventory or equipment.
 - Shared axe and pick swing messages no longer start recovery.
+- The Guardian no longer gives up fleeing a hostile random event while a
+  thieving stun stops the bot from moving. Release 0.2.4 counted the
+  stunned ticks as failed fleeing and handed control back within the
+  event NPC's reach.
 
 ### TUI
 
 - Marks, the fleet filter, log saving, the session log file, the Nav and
-  danger-routing settings, map bake, Quest Paths, vault unlock and Quit go
-  through the same command path as the panel.
+  danger-routing settings, map bake, Quest Paths, vault unlock and Quit now
+  run the same way as in the panel.
 
 ### Map baking
 
@@ -172,10 +181,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
   tile instead of failing with "Access is denied".
 ### Gatherer
 
-- At every fishing site, the Gatherer keeps its preferred observation stand
-  when that stand is reachable. Otherwise, it chooses a reachable alternative.
+- At every fishing site, the Gatherer keeps its preferred standing spot
+  when that spot is reachable. Otherwise, it chooses a reachable alternative.
   This applies to the initial approach and the return after banking. It fixes
-  the Catherby failure from the Fishing Guild when the preferred stand is on
+  the Catherby failure from the Fishing Guild when the preferred spot is on
   the Water Obelisk island. A bot already on that island can still use it.
 - Gatherers at Draynor no longer stop Blocked beside the jail, where guards
   killed the idle bots. Resource selection allows danger zones when either
@@ -199,9 +208,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
 - The Gatherer now offers both Grand Tree mine sites, the Desert Mining
   Camp's surface and lower mine, and Taverley Dungeon's lava eels. Their
   routes check the quest, keys and worn slave kit that the content requires.
-- The bundled map pack now uses format 17. The app rebuilds it automatically.
-  If you use a map pack you baked yourself, rebake it before use with
-  `cargo run -p nav --bin nav-pack`.
+- The bundled navigation data has a new format. The app rebuilds it
+  automatically. If you use navigation data that you baked yourself, bake it
+  again before use with `cargo run -p nav --bin nav-pack`.
 
 - The built-in Elkoy and rune-essence navigation checks start beside the
   transport NPC and seed only their required quest. They no longer start
@@ -219,11 +228,18 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
   changes to one of these settings wait for the disk, the later change
   applies. If you close 274bot before the disk confirms a change, 274bot can
   lose that change or a part of it. Check the setting after the next start.
+- The panel no longer stops during startup with "Background work is
+  unavailable" after one minute.
 
 #### Profiles
 
 - Deleting a profile no longer leaves the result of the delete waiting
   forever; it now reports when the delete is saved.
+
+#### Navigation
+
+- A long route search no longer uses up to about 1.5 MB more memory than
+  in 0.2.4 on some runs.
 
 #### Banking
 
@@ -234,20 +250,21 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
 
 - Fixed five Path errors. Demon Slayer now waits for Silverlight's delayed
   handoff. Pirate's Treasure estimates its rum and apron at their full-stock
-  prices of 30 gp and 2 gp; its message-scroll journal read still needs S7
-  runtime journal-root handling. Sea Slug no longer reacquires Swamp paste
+  prices of 30 gp and 2 gp; reading its message scroll from the quest journal
+  still does not work. Sea Slug no longer reacquires Swamp paste
   after Holgart takes it. Prince Ali Rescue clears only nearby guards before
   talking to Keli. Gertrude's Cat includes the fence landing tile and walks
   its yard waypoints in order. Monk's Friend skips the ring-stone walk near
   the ladder or inside the cave.
 - Demon Slayer: the Quester no longer stops at Delrith's incantation menu; it
   chooses the phrase Gypsy Aris teaches.
-- Totem of Ikov records the 30 gp Brimhaven passage fare, and Path smoke
-  fixtures may start at an explicit seeded stand such as a bank instead of
-  requiring the Path's authored start anchor.
-- An initial wall-facing `Interact` or `UseOn` loc walk retries once from
-  the wall tile after a typed `NoPath` receipt. The retry stays pending
-  across action-budget exhaustion; other walk failures remain terminal.
+- Totem of Ikov records the 30 gp Brimhaven passage fare, and quest-guide
+  test runs may start at a chosen spot such as a bank instead of the guide's
+  own start point.
+- When a script's first step toward an object on a wall (Interact or Use on)
+  finds no path, it retries once from the wall tile. The retry carries over if
+  the bot runs out of actions that tick; other walk failures still end the
+  step.
 
 #### Scenario checks
 
@@ -262,11 +279,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
   engine copy with log-only receipts. Respawn checks also add map rows.
   The shared engines and content do not change.
 
-- Scenario wait budgets and the receipt `ticks` count now use observed game
-  ticks, not dirty snapshots. Repeated steps send at most once per game
-  tick.
-- Game-tick counts now advance only for applied `PLAYER_INFO` packets;
-  unrelated player-family invalidations no longer inflate scenario receipts.
+- The live checks' wait limits and the tick count in their results now count
+  game ticks the bot observed, not every refresh of its game state. Repeated
+  steps send at most once per game tick.
+- Game ticks are now counted only when the server's per-tick player update
+  arrives; other changes to player data no longer inflate the tick counts in
+  live-check results.
 - The Gatherer lifecycle check accepts planned restarts only at the measured
   ten-bot size. Other sizes fail with a message that the restart limit was not measured for that size.
   An observation that ends during a planned Stop records the qualified
@@ -297,6 +315,98 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.4` 
 - The FireGiant bank check now prepares a level-40 Rune kit and eight Lobsters,
   with time for the full trip at normal game speed. It still requires earned
   loot in the bank, a return to the dungeon, and further combat.
+
+#### Script paint
+
+- The Pause and Stop buttons stay visible when a script's paint rows fill
+  the chat area. Before this fix, a script with many rows could push Stop
+  out of view.
+
+### Not in this release
+
+- Native bank sorting (`sortBank`), quest-junk discovery (`findQuestJunk`), pack
+  purging at a bank (`purgePackAtBank`) and coin withdrawal (`withdrawCoins`)
+  are **Planned**, not included here. These calls still report `not impl`;
+  moving existing banking into the native seat does not implement them. 0.2.4
+  has the same problem.
+- Caller-supplied bank-cost routers (`nearestWalkableBank`,
+  `nearestWalkableBankAsync`, `bankCostForFinder`, `bankCostForNavigator`) and
+  random bank pacing (`bankPace`, `bankPaceTicks`) remain deliberately
+  unavailable. The host does not recreate the foreign router or random pacing.
+  0.2.4 has the same problem.
+- The JiveKBD hunting script (King Black Dragon) does not yet bring back Dragon
+  bones reliably. In long fights it can run out of food before the dragon dies
+  and return to the bank without the bones. A fix is planned with the native
+  hunting rewrite. 0.2.4 has the same problem.
+- When Grinch banks, it uses the shared bank trip, which still waits up to a
+  fixed time for some bank steps. These waits are planned to become game-timed.
+- A bot can't get through a door that another player closes again on every tick,
+  when that player's moves are handled before the bot's. The bot tries the door
+  until its retries run out and then stops at the door. Finding another way
+  around, changing worlds when allowed, and a clear "door held shut" result are
+  planned for 0.2.6.
+- Sherlock was meant to be a native clue solver. In practice it runs on the clue
+  machine ported for rs2b0t clue scripts, so it is available only in builds that
+  include the JS script runtime (every release build does). A native clue solver
+  is planned. 0.1.8 to 0.2.4 have the same problem.
+- The northern Desert Mining Camp mine stays hidden. Its minecart needs dialogue
+  and a chance-gated crossing that the bot does not yet support. There are still
+  85 hidden gathering sites on revision 289 and 66 on 274.
+
+### Known issues
+
+- **Panel (Linux):** on a desktop with two graphics chips (for example a Ryzen
+  with built-in graphics plus a separate graphics card), the panel can close
+  right after it starts with "importing the supplied dmabufs failed". Start it
+  with `WGPU_POWER_PREF=high ./panel-play` until this is fixed. 0.2.0.2 to 0.2.4
+  have the same problem.
+- **Navigation:** With the default Danger routing setting, **When survivable**,
+  bots can refuse walks and bank trips through dangerous monsters instead of
+  checking whether the account can survive the trip. For example, a bot at Rock
+  Crabs can report that no bank is reachable instead of walking to Seers'
+  Village. **Workaround:** set Nav → Danger routing to **Always** (allow danger
+  zones). This permits dangerous routes. Use it only when the account can handle
+  the monsters on the route. 0.2.0 to 0.2.4 have the same problem.
+- **Quester:** The Quester has routes for 20 of the 68 quests. Routes for the
+  other quests are planned in waves. 0.2.0 to 0.2.4 have the same problem.
+- **Scripts:** The Brimhaven Agility Arena script can stop at a plank or pillar
+  it cannot use. The cause is under investigation. 0.2.0 to 0.2.4 have the same
+  problem.
+- **Banking:** `Bank.depositAllMatching` checks about one item per game tick, so
+  large deposits can be slow. A fix is planned for 0.2.6. 0.2.4 has the same
+  problem.
+- **Scripts:** The rs2b0t Thiever script waits about three game ticks longer
+  than the game requires after each stun, so it gains Thieving XP more slowly
+  than it could. A fix is planned with the native thieving rework. 0.2.4 has the
+  same problem.
+- **Gatherer:** The lower Desert Mining Camp mine supports Power mode only and
+  requires The Tourist Trap complete. Bank mode refuses this site because the
+  bot cannot remove the slave kit to leave the camp.
+- **Scripts:** A script notices that you moved the bot yourself only while it is
+  walking, or while an rs2b0t script runs a Gather or Combat session. If you
+  move the bot while it fights or gathers in place, "Pause script on manual
+  movement" does not pause the script, the script does not stop, and it carries
+  on. A Quester fight notices your movement only when the fight began with a
+  walk to its spot. 0.2.0 to 0.2.4 have the same problem.
+- **Scripts:** In the FlaxRunner script, the Spinner banking step does not check
+  whether the walk to the Seers' Village bank or the bank opening succeeded
+  before it tries to deposit. If either step fails once, the deposit does
+  nothing for that trip and the trip counter still increases. The script retries
+  on the next loop, so work continues, but a trip can be wasted. The fix belongs
+  to the upstream script.
+- **Scripts:** The rs2b0t HerbloreSecondaries script does not eat while it
+  walks, and its eat rule refuses a lobster above 5 hitpoints because the
+  12-point heal does not fit a low-Hitpoints account. On a low-level account the
+  red spiders' eggs trip through Edgeville dungeon can kill the bot with food
+  still in its pack. Run this script on an account with mid-level combat stats
+  (the script's own tests use level 40) until the script is fixed upstream.
+- **Scripts:** The rs2b0t GnomeMagicChopper script looks for the Gnome
+  Stronghold bank's north staircase in the wrong place, a few tiles from the
+  real stairs. If its first walk to the bank fails and it switches to the north
+  staircase, that bank trip can fail. The south staircase works, and the script
+  usually recovers on a later trip. If a fletching bank trip gets stuck, move
+  the bot beside the south staircase and restart the script. The fix belongs to
+  the upstream script.
 
 ## [0.2.4] — 2026-10-20 — Beta 1 patch
 

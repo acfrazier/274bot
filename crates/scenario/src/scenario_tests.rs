@@ -1202,7 +1202,7 @@ fn herblore_eggs_deposit_watch_covers_natural_cycle_only() {
     let eggs = get("herblore_secondaries").expect("herblore_secondaries");
     assert_eq!(
         eggs.settings.deadline, HERBLORE_EGG_DEADLINE,
-        "420s retains the estimated egg cycle wall; the 600- and 240-game-tick waits can exceed it together"
+        "600s covers the measured level-40 cycle (622-627 game ticks, one run past 656); the 600- and 240-game-tick waits can exceed it together"
     );
     let deposit = eggs
         .steps
@@ -1267,6 +1267,73 @@ fn herblore_eggs_deposit_watch_covers_natural_cycle_only() {
     assert_eq!(
         further.wait.budget_ticks, SCRIPT_GOLD_WATCH_TICKS,
         "further-egg arm is not loosened"
+    );
+}
+
+#[test]
+fn herblore_eggs_seeds_upstream_combat_levels_before_dungeon_tele() {
+    // FIX-025-F-HERBLORE: at fresh-account levels (HP 10) the bot died to
+    // Skeleton/Thug hits during the single return walk, because the script
+    // cannot eat mid-walk (no Sustain hook) and its heal-fit rule refuses a
+    // 12-heal lobster above HP 5. Upstream's eggs e2e runs this script on a
+    // level-40 account; this cell must seed the same account levels so its
+    // egg/bank/return proofs do not gate on hit-roll chance.
+    let eggs = get("herblore_secondaries").expect("herblore_secondaries");
+    let start = eggs
+        .steps
+        .iter()
+        .position(|step| matches!(step.kind, StepKind::StartScript))
+        .expect("eggs Start");
+    let seed = eggs.steps[..start]
+        .iter()
+        .position(|step| step.name == "seed upstream combat levels before the dungeon trip")
+        .expect("combat seed before Start");
+    let StepKind::Perform { send } = &eggs.steps[seed].kind else {
+        panic!("combat seed is a native fixture operation");
+    };
+    let mut client = native_seed_client();
+    assert!(send(&mut client, &GameSnapshot::new()));
+    for stat in [
+        "attack",
+        "strength",
+        "defence",
+        "hitpoints",
+        "agility",
+        "herblore",
+    ] {
+        assert!(
+            emitted_has(&client, &format!("setstat {stat} 40")),
+            "{stat} matches the upstream e2e account level 40"
+        );
+    }
+    assert_eq!(
+        eggs.steps[seed].wait.arm,
+        Proof::Stat {
+            id: HITPOINTS_STAT,
+            min: 40
+        },
+        "the seed is acknowledged at 40 hitpoints before anything hostile"
+    );
+    let drain = eggs.steps[..start]
+        .iter()
+        .position(|step| {
+            step.name == "drain setstat level-up dialogs before the hostile-field teleport"
+        })
+        .expect("setstat drain before Start");
+    assert!(matches!(
+        eggs.steps[drain].kind,
+        StepKind::DrainDialogs { choice: 1 }
+    ));
+    assert_eq!(eggs.steps[drain].wait.arm, Proof::NoActiveContinue);
+    let tele = eggs.steps[..start]
+        .iter()
+        .position(|step| {
+            step.name == "tele to the Edgeville dungeon egg field with lobster food before Start"
+        })
+        .expect("egg field teleport before Start");
+    assert!(
+        seed < drain && drain < tele,
+        "seed levels, drain level-up dialogs, then the dungeon teleport: seed={seed} drain={drain} tele={tele}"
     );
 }
 
@@ -10757,7 +10824,7 @@ fn nav_routes_is_ten_borrowed_ods_with_item_seed() {
 
 #[test]
 fn pair_cells_register_two_visible_actors_and_shared_start() {
-    for (name, card, dest) in [
+    for (name, card, dest, deadline) in [
         (
             "nature_crafter_air",
             "NatureCrafter",
@@ -10766,6 +10833,7 @@ fn pair_cells_register_two_visible_actors_and_shared_start() {
                 z: 3288,
                 level: 0,
             },
+            SCRIPT_GOLD_DEADLINE,
         ),
         (
             "mule_crafter_air",
@@ -10775,6 +10843,7 @@ fn pair_cells_register_two_visible_actors_and_shared_start() {
                 z: 3288,
                 level: 0,
             },
+            SCRIPT_GOLD_DEADLINE,
         ),
         (
             "flax_runner",
@@ -10784,6 +10853,7 @@ fn pair_cells_register_two_visible_actors_and_shared_start() {
                 z: 3444,
                 level: 0,
             },
+            FLAX_RUNNER_DEADLINE,
         ),
         (
             "duel_arena",
@@ -10793,6 +10863,7 @@ fn pair_cells_register_two_visible_actors_and_shared_start() {
                 z: 3274,
                 level: 0,
             },
+            SCRIPT_GOLD_DEADLINE,
         ),
     ] {
         let s = get(name).unwrap_or_else(|| panic!("{name} must be registered"));
@@ -10804,7 +10875,7 @@ fn pair_cells_register_two_visible_actors_and_shared_start() {
         );
         assert_eq!(s.settings.start_script, Some(card));
         assert_eq!(s.settings.inject_companion_as, None);
-        assert_eq!(s.settings.deadline, SCRIPT_GOLD_DEADLINE);
+        assert_eq!(s.settings.deadline, deadline, "{name} deadline");
         assert_eq!(s.settings.terminal_shot, Some(name));
         assert!(
             s.settings.full_rate,

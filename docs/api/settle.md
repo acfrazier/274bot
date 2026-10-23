@@ -1,5 +1,8 @@
 # Settle: pollable evidence an interaction landed
 
+> **Developer reference.** This page is for people who change 274bot.
+> To use 274bot, start at the [README](../../README.md); to find another page, see the [docs index](../README.md).
+
 `api::settle` is the pollable settle model. The host (or a scenario/nav
 layer) polls one `Settle` per tick; nothing blocks.
 

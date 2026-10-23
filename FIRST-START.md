@@ -1,196 +1,159 @@
 # First start
 
-274bot talks to a **local Lost City engine** first. Choose one immutable
-entry from `~/.274bot/servers.json` for the process. First use creates
-`local-274`, `local-289`, and `rs2b2t`; `public-289` remains an alias for
-`rs2b2t`. The public profile uses WSS + HTTPS on its rs2b2t roster and
-requires separate live login verification.
-This repo does not ship Jagex assets and does not promise
-automatic asset distribution beyond the client’s ordinary `/crc` + jag
-fetch into the configured cache/unpack directory.
+> **Who this is for:** you downloaded a 274bot package and want to see it run.
+> At the end you have a bot logged in to the public server, ready for a script.
 
-## Downloaded packages
+## What you need
 
-The macOS app opens on **rs2b2t**. Standalone binaries (macOS, Windows and
-Linux) use `./panel-play --profile rs2b2t` or `./tui-play --profile
-rs2b2t` (`.exe` on Windows). Keep the adjacent `nav/` and `map/`
-directories; the macOS app contains its own resources. Initial distributed
-navigation and WalkTo map terrain target the public 289 cache: the first
-WalkTo open installs the shipped terrain when your client cache matches it,
-and otherwise asks before baking terrain locally. A custom local engine with
-different cache bytes needs a matching source build or explicit external
-navigation pack.
+- The package for your system: macOS on Apple Silicon, Windows (64-bit) or
+  Linux (64-bit). Get it from the
+  [Releases page](https://github.com/acfrazier/274bot/releases/latest).
+- Your own account on the public game server, **rs2b2t**.
+- An internet connection. The first start downloads the game files.
 
-On Linux (glibc 2.39 or newer), `panel-play` needs an X11 or Wayland session
-and Vulkan: the Vulkan loader plus a GPU driver, or Mesa lavapipe for software
-rendering. `BOT_CPU=1` draws the game view on the CPU; the window still uses
-Vulkan. On Ubuntu 24.04 the libraries come from `libasound2t64 libssl3t64
+You do not need Rust or a game server of your own.
+
+### System requirements
+
+**macOS.** `panel-play` and `tui-play` need Apple Silicon running macOS 11.0 or
+later.
+
+**Windows.** `panel-play` uses Vulkan and falls back to Direct3D 12 when Vulkan
+has no working GPU. It prefers the power-saving GPU, which on a laptop with two
+GPUs is the integrated one that drives the screen. To choose otherwise, set
+`WGPU_BACKEND=dx12` (or `vulkan`) and `WGPU_POWER_PREF=high` before you start it.
+Windows also needs the Microsoft Visual C++ x64 runtime (`VCRUNTIME140.dll` and
+`VCRUNTIME140_1.dll`).
+
+**Linux.** You need glibc 2.39 or newer. `panel-play` needs an X11 or Wayland
+session and Vulkan: the Vulkan loader plus a GPU driver, or Mesa lavapipe for
+software rendering. `BOT_CPU=1` draws the game view on the CPU; the window still
+uses Vulkan. On Ubuntu 24.04 the libraries come from `libasound2t64 libssl3t64
 libx11-6 libx11-xcb1 libxcursor1 libxi6 libxkbcommon0 libxkbcommon-x11-0
 libwayland-client0 libwayland-cursor0 libvulkan1 mesa-vulkan-drivers`.
-`tui-play` needs only glibc and OpenSSL 3 (`libssl3t64`).
+`tui-play` needs only glibc and OpenSSL 3 (`libssl3t64`). The panel follows the
+system's choice of graphics chip; `WGPU_POWER_PREF=low`, `high` or `none`
+overrides that.
 
-On Linux, the panel follows the system's choice of graphics chip.
-`WGPU_POWER_PREF=low`, `high` or `none` overrides this default.
-If the panel closes with "importing the supplied dmabufs failed",
-start it with `WGPU_POWER_PREF=high ./panel-play`.
+## Your first run
 
-On macOS, `panel-play` and `tui-play` need Apple Silicon running macOS 11.0 or later.
+### macOS
 
-On Windows, `panel-play` uses Vulkan and falls back to Direct3D 12 when
-Vulkan has no working GPU. It prefers the power-saving GPU, which on a laptop
-with two GPUs is the integrated one driving the screen. To choose otherwise,
-set `WGPU_BACKEND=dx12` (or `vulkan`) and `WGPU_POWER_PREF=high` before
-starting it. On some laptops `WGPU_POWER_PREF=high` makes the window stall
-for minutes at startup while the dedicated GPU's Direct3D driver loads. Windows also needs the Microsoft Visual C++ x64 runtime (`VCRUNTIME140.dll` and `VCRUNTIME140_1.dll`).
+1. Double-click the downloaded `.zip` file to unpack it.
+2. Open `274bot.app`. The app starts on the rs2b2t server.
+Then continue with [In the app](#in-the-app), which starts at step 3.
 
-No Rust toolchain or local engine is needed for the public package. Game assets
-are fetched from the configured public server, and catalog scripts still come
-from your chosen rs2b0t checkout. Public login requires your own account.
+The `.zip` also holds `panel-play` and `tui-play`. They need the `nav` and `map`
+folders next to them. The app has its own copies.
 
-Upgrading from 0.1.9.1: read "Upgrading from 0.1.9.1" in the release notes
-(the same text is in `CHANGELOG.md` and `docs/upgrade-0.2.0.md` in the
-repository). Server profiles, the vault passphrase prompt, local engine paths,
-self-baked navigation packs and the graphics defaults changed.
+### Windows
 
-## Toolchain
+1. Unpack the downloaded `.zip` file (right-click it, then **Extract All**).
+2. In File Explorer, open the unpacked folder, type `powershell` in the address
+   bar and press Enter. Run:
 
-- Rust **1.98.1** (`rust-toolchain.toml` in this repo and in
-  `vendor/fr-client-rust`).
-- Git with submodules:
-  `git clone --recurse-submodules https://github.com/acfrazier/274bot.git`
-- A local engine for the revision you will run:
-  - **274:** game TCP `:43594`, HTTP `/crc` on `:80`
-  - **289:** game TCP `:44594`, HTTP `/crc` on `:1080`
-- Set `ENGINE_DIR`, pass `--engine`, or configure `login_key.engine_dir` in
-  `~/.274bot/servers.json`. Resolution order is `--engine`, `ENGINE_DIR`, then
-  the saved profile path. New `servers.json` files leave the local engine path
-  unset; selecting a local profile without one fails fast with setup guidance.
+   ```
+   .\panel-play.exe --profile rs2b2t
+   ```
 
-## Cache and nav pack
+   To start with a double-click later, make a shortcut to `panel-play.exe` and
+   add `--profile rs2b2t` after the path in the shortcut's **Target** box.
+Then continue with [In the app](#in-the-app), which starts at step 3.
 
-The **local** packed-cache source is `$ENGINE_DIR/data/pack/client`
-(`--cache` overrides). Ordinary preparation negotiates `/crc`, checks packed
-JAGs, and downloads missing assets from the selected engine.
+Keep the `nav` and `map` folders next to `panel-play.exe`.
 
-If the cache directory is empty, run
-[`scripts/fetch-cache.sh`](scripts/fetch-cache.sh) (copies from
-`$ENGINE_DIR` if files exist, otherwise tells you to boot once against the
-local engine). That script does not download assets from the public
-internet for you.
+### Linux
 
-The **rs2b2t** snapshot root is **`~/.274bot/unpack-289`** by default.
-The local-274 default is `~/.274bot/unpack`; there is no public 274 profile.
-A successful ordinary first preparation retains all eight checked packed
-JAGs and the complete decoded model, animation, map and MIDI archives in
-that root. Retained selections are namespaced by revision, the negotiated
-`/crc` table, and the full raw `versionlist` SHA-256.
+1. Unpack the download: `tar xzf 274bot-<version>-linux-x64.tar.gz`.
+2. Open a terminal in the unpacked folder and run:
 
-Every later preparation still negotiates `/crc`, validates the selected
-packed JAGs and snapshot integrity, and recomputes the canonical decoded
-identity from the actual bytes. Matching retained assets avoid another
-full download or decode. Missing, incomplete or corrupt assets are repaired;
-changed negotiation/version inputs select a new snapshot. Each prepared
-profile uses its own immutable `.runtime-*` copy, removed when its last
-owner is dropped; retained snapshots survive ordinary process exit.
-Dead runtime copies and interrupted-publication staging folders left by crashes
-or explicit exits are swept on the next preparation without deleting a live
-process's copy.
+   ```
+   ./panel-play --profile rs2b2t
+   ```
 
-The three most recently used verified snapshot namespaces per revision are
-kept, with recency refreshed on every successful preparation, including reuse.
-This lets you switch between servers without downloading their assets again,
-while bounding abandoned copies. A copy a live process may still read or write
-is never removed, even outside that bound; liveness uses a conservative PID
-probe, so an unknown result counts as alive. Snapshots in the old layout
-directly under `unpack-289/<version>/` are neither read nor removed.
-Reusing individual files across negotiation keys is out of scope: a new or
-evicted negotiation key refills from validated entries.
+Then continue with [In the app](#in-the-app), which starts at step 3.
 
-If saving retained assets fails (for example, the destination is read-only),
-startup warns once and continues using the verified private runtime copy.
-Without a saved snapshot, the next launch will need to download the assets again.
+Keep the `nav` and `map` folders next to `panel-play`.
 
-The standalone `unpack-cache` layout remains separate: its child folder is
-the first 8 bytes of SHA-256(`versionlist`), encoded as 16 hex characters,
-not a hash of the `/crc` table.
+### In the app
 
-Nav pack: an ordinary application build bakes and stages the selected
-**build-time** revision’s pack next to the binary
-(`target/<profile>/nav/289/` by default via `BOT_NAV_REVISION`, default
-**289**), so WalkTo has a bound nav world with no manual step. Missing
-canonical inputs fail the build (`BOT_NAV_BUILD=skip` opts out;
-`BOT_NAV_REVISION=274` builds 274). Runtime profile revision and
-build-time nav revision should match the world you play. `nav-pack` stays
-for custom bakes: `cargo run -p nav --bin nav-pack` over the content maps
-tree (output `$NAV_PACK` or `~/.274bot/274bot.navpack`, magic `274V`,
-version byte **17**; v16 and older are `BadVersion` and must be rebaked).
-Details: [docs/api/nav.md](docs/api/nav.md).
+These steps are the same on every system.
 
-Catalog scripts (optional): set **`$RS2B0T`** or pass `--catalog` to an
-rs2b0t checkout so panel/TUI can Browse/Start catalog cards.
+3. **Wait for the loading bar.** A bar and a line such as **Checking game files**
+   show what the app is doing. The first start downloads the game files and takes
+   longer. Later starts reuse them.
+4. **Create your vault.** The vault is the encrypted file that holds your
+   accounts. In the panel on the right, type a passphrase into **new vault
+   passphrase** and click **Create vault**. The passphrase must have at least one
+   character that is not a space. It is not your game password. If you lose it,
+   the only way back in is **Reset vault**, which deletes the vault and every
+   saved account.
+5. **Add your account.** Click **Profiles**, then **New profile**. Type your game
+   username and password, then click **Save**. The window shows **Saved** and the
+   new profile is selected. The app does not make an account for you.
+6. **Log in.** Click **Log in** in the panel on the right. The bot's status shows
+   **waiting in login queue** and then **logging in**. When the game appears, you
+   are in. To skip this click next time, tick **Log in automatically** in the
+   **Profiles** window.
+7. **Start a script.** Click **Browse…** and click a script. The first time, a
+   window may ask for your rs2b0t folder; click **Not now** if you have none. Then
+   click **Start**. **Pause** and **Stop** sit next to it. **Script prefs** opens
+   the script's settings.
 
-## Local (TCP)
+Next time, open the app, type your passphrase, click **Unlock vault** and click
+**Log in**.
 
-```bash
-# The vault passphrase is typed at the prompt (panel window / terminal); it is
-# never an environment variable or a flag. See docs/api/vault.md.
-# Set ENGINE_DIR to the engine root for the selected local revision.
-export ENGINE_DIR=/absolute/path/to/engine
-# optional: export RS2B0T=/path/to/rs2b0t
+## Where 274bot keeps its files
 
-cargo run --release -p panel --bin panel-play -- --profile local-289
-# headless twin:
-cargo run --release -p tui --bin tui-play -- --profile local-289
-# 274 (set ENGINE_DIR to the 274 engine root):
-# BOT_NAV_REVISION=274 cargo run --release -p panel --bin panel-play -- --profile local-274
-```
+274bot keeps its files in the `.274bot` folder inside your home folder
+(`C:\Users\<you>\.274bot` on Windows).
 
-A first `tui-play` run with no `--user` stops with "vault has no profiles"
-instead of seeding an account: pass `--user NAME` to create the first one
-(`host-play --user` also creates missing accounts with a fresh random game
-password). The panel never auto-creates an account: an empty first-run vault
-stays empty until you type a username/password and Save.
+| File or folder | What it is |
+| --- | --- |
+| `vault-prod` | Your vault, with your accounts |
+| `unpack-289` | The game files that the first start downloaded |
+| `servers.json` | The list of game servers |
+| `panel-ui.json` | Your window layout and choices |
 
-Live harness (FAIL + exit 1, waits `ingame && scene_state==2`):
+## Troubleshooting
 
-```bash
-cargo run --release -p panel --bin panel-play -- --profile local-289 --live script_bone_burier
-cargo run --release -p tui --bin tui-play -- --profile local-289 --live script_bone_burier
-```
+| What you see | Why | What to do |
+| --- | --- | --- |
+| Windows says `VCRUNTIME140.dll` or `VCRUNTIME140_1.dll` is missing | The Microsoft Visual C++ runtime is not installed. | Install the Microsoft Visual C++ x64 Redistributable, then start the app again. |
+| The panel closes right after it starts on Linux with "importing the supplied dmabufs failed" | Your computer has two graphics chips. | Start it with `WGPU_POWER_PREF=high ./panel-play --profile rs2b2t`. |
+| The window freezes for minutes at start on a Windows laptop | `WGPU_POWER_PREF=high` is set, and the laptop's dedicated GPU driver is slow to load. | Remove `WGPU_POWER_PREF` or set it to `low`. |
+| The app says a local profile "needs an engine directory" | You started `panel-play` without `--profile`. | Start it with `--profile rs2b2t`. |
+| An error appears instead of the loading bar, or the bar never finishes | The app cannot download the game files. | Check your internet connection and firewall, then start the app again. |
+| "wrong passphrase" | The passphrase differs from the one you created. | Type it exactly as you created it. If you forgot it, click **Reset vault** and confirm. This deletes every saved account. |
+| **Profiles** shows "vault is empty — New profile then Save", or `tui-play` stops with "vault has no profiles" | You have not saved an account yet. | In `panel-play`, click **Profiles**, then **New profile**. `tui-play` uses the same vault. |
+| The status line stays on "waiting in login queue" | Bots log in one at a time, with a pause between logins. | Wait. A status such as "waiting in login queue (1/3): next in line, login rate cooldown (29 attempts), next try in 41 s" tells you how long. |
+| The bot cannot log in and the log says "world full" | The world has no room. | A profile set to **auto** world tries the next world by itself. A profile set to one world stays there; set its world to **auto** in **Profiles**. |
+| WalkTo asks "Bake WalkTo map terrain?" | Your game files differ from the ones the package was built with. | Click **Bake now**. It runs once, takes about 15 seconds, and later starts reuse it. **Not now** keeps a map without terrain. |
+| WalkTo shows "no nav pack — run nav-pack" | The `nav` folder is missing next to the app. | Unpack the package again and keep its folders together. |
+| A bot refuses to walk, or says no bank is reachable, near dangerous monsters | **Danger routing** is on **When survivable**, which acts as **Never** (Nav config shows "When survivable (not available yet: acts as Never)"), so walks through dangerous monsters are refused. | Open **Nav config** and set **Danger routing** to **Always**. Use this only when the account can handle the monsters. |
 
-`CLIENT_CHEAT`, TutSkip, mainland hop, and the debug dest strip are
-**local-only**.
+More problems are listed under "Known issues" in the
+[CHANGELOG](https://github.com/acfrazier/274bot/blob/main/CHANGELOG.md).
 
-Without `--profile`, plain local still resolves to **274** (legacy
-default). Prefer naming the profile.
+## Terminal app
 
-## rs2b2t (WSS + HTTPS)
+`tui-play` runs the same bots in a terminal, which suits a server with no
+screen. Run `./tui-play --profile rs2b2t`. It asks for the vault passphrase in
+the terminal. See the
+[terminal app guide](https://github.com/acfrazier/274bot/blob/main/docs/api/tui.md).
 
-After local golds work. Use a real password (not username-as-password). Do
-not expect `give` / TutSkip / `tele` to work on the public world.
+## Upgrading from 0.1.9.1
 
-```bash
-# host-play and tui-play ask for the vault passphrase on the terminal; the panel
-# asks in its unlock window. A new vault needs a non-empty passphrase after
-# trimming surrounding whitespace; strength is the user's choice.
+Read "Upgrading from 0.1.9.1" in the release notes. The same text is in
+`CHANGELOG.md` and in the
+[upgrade guide](https://github.com/acfrazier/274bot/blob/main/docs/upgrade-0.2.0.md).
+Server profiles, the vault passphrase prompt, local engine paths, self-baked
+navigation packs and the graphics defaults changed.
 
-cargo run --release -p host-play -- --rs2b2t --user YOUR_NAME
-cargo run --release -p panel --bin panel-play -- --rs2b2t
-cargo run --release -p tui --bin tui-play -- --rs2b2t
-# Equivalent: --profile rs2b2t (public-289 is a compatibility name alias)
-```
+## Build from source
 
-`rs2b2t` fetches `/crc` and jags over **HTTPS :443** into the shared
-`~/.274bot/unpack-289` directory (tries the next listed asset world when
-the first is unavailable). The game stream uses **WSS** (`binary`
-subprotocol) on the account's selected rs2b2t world (w1/w2/w3 by default).
-Panel Profiles selects each account's world (`auto` or a listed world). Auto retries the
-next world promptly on \"world full\"; pinned accounts do not move.
-`tui-play --world 3` chooses w3 only for accounts stored as auto.
-Local stays TCP on the profile's game/asset ports.
-Vault defaults: `~/.274bot/vault-prod` for `rs2b2t`; local-274 uses
-`~/.274bot/vault`; local-289 uses `~/.274bot/vault-289`. `--vault PATH` still
-wins. Unit tests do not verify public login.
+To build 274bot yourself or use your own game server, see
+[CONTRIBUTING.md](https://github.com/acfrazier/274bot/blob/main/CONTRIBUTING.md).
 
 ## Credits
 

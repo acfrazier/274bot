@@ -1,5 +1,8 @@
 # Interact: acting through `Driver` and `Interactions`
 
+> **Developer reference.** This page is for people who change 274bot.
+> To use 274bot, start at the [README](../../README.md); to find another page, see the [docs index](../README.md).
+
 Actions go through `api::interact`. The send boundary is the `Driver` trait;
 `Interactions` is the orchestration layer above it (target identity,
 label→opcode resolution, refusal reasons). A `true` return means the driver

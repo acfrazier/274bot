@@ -1,5 +1,8 @@
 # Snapshot: the full world read model
 
+> **Developer reference.** This page is for people who change 274bot.
+> To use 274bot, start at the [README](../../README.md); to find another page, see the [docs index](../README.md).
+
 World reads come from `api::snapshot` (the gen-stamped `GameSnapshot`) and
 `api::snapshot::ReadContext` (the query-facing read surface). Reads borrow
 the last rebuild — nothing deep-copies the world per read.

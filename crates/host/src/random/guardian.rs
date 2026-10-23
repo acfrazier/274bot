@@ -32,6 +32,14 @@ const EVADE_CLEANUP_TICKS: u8 = 22;
 /// range have a shorter no-distance-progress budget below. Neither rule proves
 /// despawn: the angry plant extends its lifetime (`macro_event_triffid.rs2:35`).
 const EVADE_GIVE_UP_TICKS: u16 = 1_002;
+/// A thieving stun blocks every walk at the server. The fail script applies
+/// the stun for the pickpocket row's `stun_ticks` (Man 8:
+/// `pickpocket.dbrow:10`; the largest row is 10: `pickpocket.dbrow:145`) and
+/// arms the `stunned` walktrigger (`thieving.rs2:48-51`). Each movement
+/// attempt inside that window receives the second message and walks the
+/// player onto its own tile (`movecheck.rs2:1-6`). A flee tick the server
+/// blocked this way is not distance-progress evidence.
+const STUNNED_MARKERS: &[&str] = &["You've been stunned!", "You're stunned!"];
 /// NPC packets use the preferred 15-tile radius (`info.ts:310`, `build.ts:57`).
 const NPC_VIEW_RADIUS: i32 = 15;
 
@@ -441,21 +449,9 @@ impl Guardian {
                 .first()
                 .map(|l| l.sequence)
                 .unwrap_or(self.chat_seen);
-            let wrong_talk = snap
-                .chat_lines()
-                .iter()
-                .take_while(|l| l.sequence > self.chat_seen)
-                .any(|l| WRONG_TALK_MARKERS.iter().any(|w| l.text.contains(w)));
-            let plant_growing = snap
-                .chat_lines()
-                .iter()
-                .take_while(|l| l.sequence > self.chat_seen)
-                .any(|l| l.text.contains(PLANT_GROWING_MARKER));
-            let plant_rejected = snap
-                .chat_lines()
-                .iter()
-                .take_while(|l| l.sequence > self.chat_seen)
-                .any(|l| l.text.contains(PLANT_REJECTION_MARKER));
+            let wrong_talk = self.fresh_chat_has(snap, WRONG_TALK_MARKERS);
+            let plant_growing = self.fresh_chat_has(snap, &[PLANT_GROWING_MARKER]);
+            let plant_rejected = self.fresh_chat_has(snap, &[PLANT_REJECTION_MARKER]);
             let plant_before_chat = self.plant.clone();
             if self.in_flight && wrong_talk {
                 if let Some(index) = self.in_flight_index {
@@ -697,6 +693,44 @@ impl Guardian {
         }
     }
 
+    /// Whether a server game message newer than `after_sequence`
+    /// matches `matches`. Every caller matches server text, never
+    /// player text. The stun lines, the two plant lines, the
+    /// wrong-talk rejection line, and the lost-tool refit rejection
+    /// line are content `mes` messages. The snapshot row
+    /// is `ChatLineView { type_, username, text, sequence }`
+    /// (`crates/api/src/snapshot/views.rs:481-486`). A `mes`
+    /// reaches the client as `MESSAGE_GAME` and is stored as type 0
+    /// with an empty sender (`client.rs:6425`; the operation path
+    /// stores the same form at `client.rs:5994`); the snapshot maps
+    /// an empty sender to `None` (`decode.rs:362-363`). Public chat
+    /// from another player is type 2 with a sender
+    /// (`actor_289.rs:613`) and a private message is type 3 or 7
+    /// (`client.rs:5899-5903`). Player text is not a server signal,
+    /// so only type 0 with no sender counts. Chat rows are newest
+    /// first with descending sequences (`snapshot.rs:1103-1106`),
+    /// so the scan stops at the cutoff.
+    fn server_chat_has_after(
+        snap: &GameSnapshot,
+        after_sequence: i32,
+        matches: impl Fn(&str) -> bool,
+    ) -> bool {
+        snap.chat_lines()
+            .iter()
+            .take_while(|l| l.sequence > after_sequence)
+            .filter(|l| l.type_ == 0 && l.username.is_none())
+            .any(|l| matches(&l.text))
+    }
+
+    /// Whether a fresh server game message contains a marker. This
+    /// runs before the tick's chat scan advances `chat_seen`, so
+    /// every caller sees the same batch.
+    fn fresh_chat_has(&self, snap: &GameSnapshot, markers: &[&str]) -> bool {
+        Self::server_chat_has_after(snap, self.chat_seen, |text| {
+            markers.iter().any(|marker| text.contains(marker))
+        })
+    }
+
     /// Remember hostile spawn sightings even before they target this player.
     /// Dryads delay one tick between `npc_add` and `opplayer2`
     /// (`macro_event_dryad.rs2:10-18`); the engine's immutable chase anchor is
@@ -806,7 +840,12 @@ impl Guardian {
                             state.furthest_distance = distance;
                             state.no_progress_ticks = 0;
                         } else if same_actor && engaged && !outside && state.maxrange.is_some() {
-                            state.no_progress_ticks = state.no_progress_ticks.saturating_add(1);
+                            // A stunned tick neither increments nor resets:
+                            // the server cancelled the walk, so the route
+                            // had no chance to progress or to fail.
+                            if !self.fresh_chat_has(snap, STUNNED_MARKERS) {
+                                state.no_progress_ticks = state.no_progress_ticks.saturating_add(1);
+                            }
                         } else {
                             state.no_progress_ticks = 0;
                         }
@@ -2374,13 +2413,14 @@ impl Guardian {
     /// Each handle accepts every head tier of its part kind. The default
     /// switch branch sends `dm_default`, "Nothing interesting happens."
     /// (`macro_event_lost_axe.rs2:41-45`; `macro_event_lost_pickaxe.rs2:42-46`;
-    /// `displaymessage.enum:5`).
+    /// `displaymessage.enum:5`). Only the server line counts. A player
+    /// line with the same text must not stop the repair.
     fn observe_lost_tool_refit_rejection(&mut self, snap: &GameSnapshot) {
         let Some(after_sequence) = self.tool_refit_after_sequence else {
             return;
         };
-        let rejected = snap.chat_lines().iter().any(|line| {
-            line.sequence > after_sequence && line.text.trim() == "Nothing interesting happens."
+        let rejected = Self::server_chat_has_after(snap, after_sequence, |text| {
+            text.trim() == "Nothing interesting happens."
         });
         if rejected {
             self.tool_refit_after_sequence = None;
