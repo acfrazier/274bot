@@ -611,7 +611,6 @@ pub(super) struct ParameterEdit {
     validated_text: String,
     baseline_text: String,
     baseline_value: Option<Value>,
-    last_attempted: Option<Value>,
     pending: Option<(OperationId, Value, String)>,
     error: Option<String>,
     dirty: bool,
@@ -625,7 +624,6 @@ impl ParameterEdit {
             validated_text: text.to_owned(),
             baseline_text: text.to_owned(),
             baseline_value,
-            last_attempted: None,
             pending: None,
             error: None,
             dirty: false,
@@ -888,9 +886,8 @@ impl Scripts {
             .and_then(|edit| edit.error.as_deref())
     }
 
-    /// Queue one profile save for a committed field. Both UI front ends call
-    /// this after shared text validation; failed attempts remain deduplicated
-    /// until a different value is committed.
+    /// Queue one profile save for a committed field. Only an in-flight save
+    /// deduplicates a repeated value. A failed save can be retried.
     pub(crate) fn commit_parameter_value<Io>(
         &mut self,
         core: &mut OperatorSession<Io>,
@@ -902,15 +899,10 @@ impl Scripts {
     ) -> Result<ParameterCommit, String> {
         let selection = selection.as_script();
         let existing = self.parameter_edits.get(key);
-        if existing.is_some_and(|edit| edit.last_attempted.as_ref() == Some(&value)) {
-            let edit = self.parameter_edits.get(key).expect("checked edit");
-            if let Some((op, _, _)) = edit.pending {
-                return Ok(ParameterCommit::Pending(op));
+        if let Some((op, pending_value, _)) = existing.and_then(|edit| edit.pending.as_ref()) {
+            if pending_value == &value {
+                return Ok(ParameterCommit::Pending(*op));
             }
-            if let Some(error) = edit.error.as_ref() {
-                return Err(error.clone());
-            }
-            return Ok(ParameterCommit::Unchanged);
         }
         if current.as_ref() == Some(&value) && existing.is_none_or(|edit| edit.pending.is_none()) {
             self.parameter_edits.remove(key);
@@ -933,7 +925,6 @@ impl Scripts {
                 edit.text.clone_from(&raw);
                 edit.validated_text.clone_from(&raw);
             }
-            edit.last_attempted = Some(value.clone());
             edit.pending = None;
             edit.error = None;
             edit.dirty = true;
@@ -973,9 +964,13 @@ impl Scripts {
                 let Some(card) = self.js.get(*source, lookup).cloned() else {
                     return self.parameter_save_failed(key, "parameters unavailable");
                 };
-                self.legacy
-                    .set_value(*source, &card.name, field, value.clone());
-                self.legacy.save().map(|()| None)
+                self.set_legacy_value(
+                    super::CardSource::from_script(*source),
+                    &card.name,
+                    field,
+                    value.clone(),
+                )
+                .map(|()| None)
             }
             (None, script::ScriptSel::Compiled(_)) => {
                 return self.parameter_save_failed(key, "parameters: select a profile first");
@@ -1003,7 +998,10 @@ impl Scripts {
     ) -> Result<T, String> {
         if let Some(edit) = self.parameter_edits.get_mut(key) {
             edit.error = Some(error.to_owned());
-            edit.dirty = true;
+            edit.text.clone_from(&edit.baseline_text);
+            edit.validated_text.clone_from(&edit.baseline_text);
+            edit.dirty = false;
+            edit.pending = None;
         }
         Err(error.to_owned())
     }
@@ -1018,6 +1016,27 @@ impl Scripts {
                 self.parameter_edits.remove(key);
             }
         }
+    }
+
+    /// Whether this profile has an uncommitted draft, including a hidden card.
+    pub fn has_parameter_draft(&self, profile: &str) -> bool {
+        self.parameter_edits.iter().any(|(key, edit)| {
+            key.profile.as_deref() == Some(profile) && edit.dirty && edit.pending.is_none()
+        })
+    }
+
+    pub(crate) fn discard_profile_parameter_text(&mut self, profile: &str) {
+        self.parameter_edits.retain(|key, edit| {
+            if key.profile.as_deref() != Some(profile) {
+                return true;
+            }
+            if edit.pending.is_some() {
+                edit.discard_after_pending = true;
+                true
+            } else {
+                false
+            }
+        });
     }
 
     pub(crate) fn parameter_edit_blocks_start(&self, profile: &str) -> bool {
@@ -1061,13 +1080,17 @@ impl Scripts {
                 edit.dirty = edit.text != edit.baseline_text;
             } else if failed {
                 edit.error = Some(failed_reason.unwrap_or_default());
-                edit.dirty = edit.text != edit.baseline_text;
+                edit.text.clone_from(&edit.baseline_text);
+                edit.validated_text.clone_from(&edit.baseline_text);
+                edit.dirty = false;
                 if discard {
                     return false;
                 }
             } else if cancelled {
                 edit.error = Some("settings save was cancelled".into());
-                edit.dirty = edit.text != edit.baseline_text;
+                edit.text.clone_from(&edit.baseline_text);
+                edit.validated_text.clone_from(&edit.baseline_text);
+                edit.dirty = false;
                 if discard {
                     return false;
                 }
@@ -1091,11 +1114,7 @@ fn validate_edit(
     match &result {
         Ok(value) => {
             edit.dirty = edit.pending.is_some() || edit.baseline_value.as_ref() != Some(value);
-            if edit
-                .last_attempted
-                .as_ref()
-                .is_some_and(|previous| previous != value)
-            {
+            if !edit.dirty {
                 edit.error = None;
             }
         }
