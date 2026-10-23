@@ -6027,6 +6027,10 @@
       "owner": "T1"
     },
     {
+      "path": "tools/nightly/test_engine_q_config.py",
+      "owner": "T1"
+    },
+    {
       "path": "tools/nightly/test_latency_proxy.py",
       "owner": "T1"
     },
