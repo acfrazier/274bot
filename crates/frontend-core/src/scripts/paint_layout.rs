@@ -14,9 +14,10 @@
 
 use super::paint::PaintView;
 use super::paint_style::{
-    BUTTON_GAP, BUTTON_H, BUTTON_PAD, BUTTON_ROW_ADVANCE, BUTTON_TOP_GAP, FOOTER_H, FOOTER_TEXT_DY,
-    LINE, PAD, PANEL_RECT, RAIL_INSET, RAIL_W, STRIP_TAB_INSET, TAB_GAP, TAB_H, TAB_INSET, TAB_PAD,
-    TAB_TRAIL, TAB_X0, TITLE_H, TOGGLE_W,
+    BUTTON_GAP, BUTTON_H, BUTTON_PAD, BUTTON_ROW_ADVANCE, BUTTON_TOP_GAP, FOOTER_H, LINE, PAD,
+    PANEL_RECT, RAIL_INSET, RAIL_TEXT_DX, RAIL_TEXT_TOP_FRAC, RAIL_W, STRIP_TAB_INSET, TAB_GAP,
+    TAB_H, TAB_INSET, TAB_PAD, TAB_TEXT_DX, TAB_TEXT_DY, TAB_TRAIL, TAB_X0, TEXT_DY, TITLE_H,
+    TITLE_TEXT_DY, TOGGLE_W,
 };
 
 /// One applet-space rectangle.
@@ -64,11 +65,16 @@ impl PaintRect {
     }
 }
 
-/// One named chrome entry: a strip tab or a rail entry.
+/// One named chrome entry: a strip tab or a rail entry. The layout
+/// bounds the entry to its strip or rail area and gives it the cell
+/// count its name may use, so a renderer only draws
+/// [`clipped_prefix`] of the name at the text origin.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ChromeItem {
     name_index: usize,
     rect: PaintRect,
+    cells: usize,
+    text_origin: [f32; 2],
 }
 
 impl ChromeItem {
@@ -81,14 +87,29 @@ impl ChromeItem {
     pub fn rect(&self) -> PaintRect {
         self.rect
     }
+
+    /// The cells the name may use, the ellipsis included when the
+    /// name is clipped.
+    pub fn cells(&self) -> usize {
+        self.cells
+    }
+
+    /// The name's text origin, in applet pixels.
+    pub fn text_origin(&self) -> [f32; 2] {
+        self.text_origin
+    }
 }
 
-/// One tabs-band entry.
+/// One tabs-band entry. The layout bounds the entry to the panel
+/// and gives it the cell count its name may use, so a renderer only
+/// draws [`clipped_prefix`] of the name at the text origin.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TabItem {
     band_index: usize,
     name_index: usize,
     rect: PaintRect,
+    cells: usize,
+    text_origin: [f32; 2],
 }
 
 impl TabItem {
@@ -105,6 +126,17 @@ impl TabItem {
     /// The entry's rectangle, and its click target.
     pub fn rect(&self) -> PaintRect {
         self.rect
+    }
+
+    /// The cells the name may use, the ellipsis included when the
+    /// name is clipped.
+    pub fn cells(&self) -> usize {
+        self.cells
+    }
+
+    /// The name's text origin, in applet pixels.
+    pub fn text_origin(&self) -> [f32; 2] {
+        self.text_origin
     }
 }
 
@@ -429,24 +461,45 @@ impl PaintLayout {
 
         if let Some(strip) = view.strip() {
             let brand = strip.brand().or_else(|| view.title()).unwrap_or("");
-            let brand_reserve = if brand.is_empty() {
+            let brand_chars = brand.chars().count();
+            let brand_reserve = if brand_chars == 0 {
                 TOGGLE_W
             } else {
-                text_cells(brand, cell) + PAD + TOGGLE_W
+                brand_chars as f32 * cell + PAD + TOGGLE_W
             };
+            // The strip tabs stop at the toggle. They also leave the
+            // brand its smallest readable place — one char plus the
+            // ellipsis, or the whole brand when it is shorter — so an
+            // over-long strip clips its last tab with an ellipsis and
+            // drops the tabs after it instead of covering the brand.
+            let brand_min = brand_chars.min(2) as f32 * cell;
+            let strip_limit = self.toggle.x - brand_min;
             let tab_h = (TITLE_H - 2.0 * STRIP_TAB_INSET).max(1.0);
             let mut x = px + PAD;
             for (name_index, name) in strip.names().iter().enumerate() {
-                let w = (text_cells(name, cell) + TAB_PAD).max(1.0);
+                if x >= strip_limit {
+                    break;
+                }
+                let natural = (text_cells(name, cell) + TAB_PAD).max(1.0);
+                let w = natural.min(strip_limit - x);
+                let cells = cells_in(w - TAB_PAD, cell);
+                if w < natural && cells == 0 {
+                    break;
+                }
                 self.strip_tabs.push(ChromeItem {
                     name_index,
                     rect: PaintRect::new(x, py + STRIP_TAB_INSET, w, tab_h),
+                    cells,
+                    text_origin: [x + TAB_TEXT_DX, py + TITLE_TEXT_DY],
                 });
                 x += w;
             }
             // The brand slot ends one PAD short of the panel's right
             // edge (frozen `stripSegments`). Its width reserves the
-            // brand text, one PAD, and the toggle square.
+            // brand text, one PAD, and the toggle square. When the
+            // tabs reach their limit the brand starts there and clips
+            // to the cells left before the toggle, which the limit
+            // keeps at the minimum above, so it never disappears.
             let brand_x = x.max(px + pw - PAD - brand_reserve);
             if strip.status().is_some() {
                 let slot = PaintRect::new(x, py, (brand_x - x).max(0.0), TITLE_H);
@@ -455,9 +508,9 @@ impl PaintLayout {
                     cells: cells_in(slot.w, cell).saturating_sub(1),
                 });
             }
-            if !brand.is_empty() {
+            if brand_chars > 0 {
                 self.strip_brand = Some(PaintSlot {
-                    rect: PaintRect::new(brand_x, py, brand_reserve, TITLE_H),
+                    rect: PaintRect::new(brand_x, py, (px + pw - PAD - brand_x).max(0.0), TITLE_H),
                     cells: cells_in(self.toggle.x - brand_x, cell),
                 });
             }
@@ -471,13 +524,28 @@ impl PaintLayout {
             if band.names().is_empty() {
                 continue;
             }
+            // A band's entries stop at the body's right edge. The
+            // last entry that reaches it clips with an ellipsis; the
+            // entries after it are not laid out.
+            let band_limit = px + pw - PAD;
             let mut x = px + TAB_X0;
             for (name_index, name) in band.names().iter().enumerate() {
-                let w = (text_cells(name, cell) + TAB_PAD).max(1.0);
+                if x >= band_limit {
+                    break;
+                }
+                let natural = (text_cells(name, cell) + TAB_PAD).max(1.0);
+                let w = natural.min(band_limit - x);
+                let cells = cells_in(w - TAB_PAD, cell);
+                if w < natural && cells == 0 {
+                    break;
+                }
+                let rect = PaintRect::new(x, content_top + TAB_INSET, w, TAB_H);
                 self.tabs.push(TabItem {
                     band_index,
                     name_index,
-                    rect: PaintRect::new(x, content_top + TAB_INSET, w, TAB_H),
+                    rect,
+                    cells,
+                    text_origin: [rect.x + TAB_TEXT_DX, rect.y + TAB_TEXT_DY],
                 });
                 x += w + TAB_GAP;
             }
@@ -504,14 +572,17 @@ impl PaintLayout {
             self.rail_rect = Some(area);
             let slot_h = rail_h / rail.names().len() as f32;
             for name_index in 0..rail.names().len() {
+                let rect = PaintRect::new(
+                    area.x,
+                    content_top + slot_h * name_index as f32,
+                    area.w,
+                    slot_h,
+                );
                 self.rail.push(ChromeItem {
                     name_index,
-                    rect: PaintRect::new(
-                        area.x,
-                        content_top + slot_h * name_index as f32,
-                        area.w,
-                        slot_h,
-                    ),
+                    rect,
+                    cells: cells_in(rect.w - RAIL_TEXT_DX, cell),
+                    text_origin: [rect.x + RAIL_TEXT_DX, rect.y + rect.h * RAIL_TEXT_TOP_FRAC],
                 });
             }
         }
@@ -529,14 +600,19 @@ impl PaintLayout {
         }
         // Buttons get at most the rows that fit the content area. A
         // paint with more buttons than rows drops its last script
-        // buttons first. The host controls are never dropped for a
-        // script button.
+        // buttons first. The host controls are never dropped: a
+        // paint that advertises them always keeps at least their
+        // row, even when tab bands or text rows have already used
+        // the whole content area. That row then ends at the content
+        // bottom (below), over the place the bands and rows wanted.
+        let has_host = self.button_plans.iter().any(|plan| plan.is_host);
         let avail_h = content_bottom - content_top - BUTTON_TOP_GAP;
-        let max_button_rows = if avail_h < BUTTON_H {
+        let fit_rows = if avail_h < BUTTON_H {
             0
         } else {
             1 + ((avail_h - BUTTON_H) / BUTTON_ROW_ADVANCE) as usize
         };
+        let max_button_rows = if has_host { fit_rows.max(1) } else { fit_rows };
         let mut button_rows = flow_buttons(
             &self.button_plans,
             &mut self.buttons,
@@ -548,8 +624,7 @@ impl PaintLayout {
             let drop_at = self
                 .button_plans
                 .iter()
-                .rposition(|plan| plan.keep && !plan.is_host)
-                .or_else(|| self.button_plans.iter().rposition(|plan| plan.keep));
+                .rposition(|plan| plan.keep && !plan.is_host);
             match drop_at {
                 Some(at) => self.button_plans[at].keep = false,
                 None => break,
@@ -571,11 +646,14 @@ impl PaintLayout {
             // The flow sits under the text rows when it fits there.
             // When it does not fit, it moves up to end at the content
             // bottom, and the text rows that would pass under it are
-            // not drawn.
-            let flow_top = natural_top
-                .min(content_bottom - flow_h)
-                .max(content_top + BUTTON_TOP_GAP);
+            // not drawn. The reserved host row of a paint whose tab
+            // bands pass the content bottom ends there too: it never
+            // starts above the body, and the tab bands that would
+            // pass under it are dropped, so no band entry keeps a
+            // click target under the controls.
+            let flow_top = natural_top.min(content_bottom - flow_h).max(py + TITLE_H);
             visible = visible.min(cells_in(flow_top - BUTTON_TOP_GAP - content_top, LINE));
+            self.tabs.retain(|tab| tab.rect.bottom() <= flow_top + 0.01);
             for button in &mut self.buttons {
                 button.rect.y += flow_top;
             }
@@ -595,7 +673,7 @@ impl PaintLayout {
             self.footer = Some(FooterLayout {
                 origin: [
                     px + pw - PAD - drawn as f32 * cell,
-                    panel_bottom - FOOTER_H + FOOTER_TEXT_DY,
+                    panel_bottom - FOOTER_H + TEXT_DY,
                 ],
                 cells,
             });
@@ -777,6 +855,249 @@ mod tests {
         assert!(
             layout.rows().len() < 9,
             "the rows that would pass under the controls are not drawn"
+        );
+    }
+
+    /// The isolate admits 16 tab bands. Five bands already use the
+    /// whole content area at this cell width. Pause and Stop stay
+    /// laid out for 5, 6 and 16 bands, with and without a footer:
+    /// their row ends at the content bottom, and no tab entry or
+    /// text row keeps a place under it.
+    #[test]
+    fn host_controls_stay_visible_with_five_or_more_tab_bands_in_the_layout() {
+        for bands in [5usize, 6, 16] {
+            for footer in [false, true] {
+                let mut paint = TestPaint::new(Some("T"), &["row one", "row two", "row three"]);
+                for band in 0..bands {
+                    paint = paint.with_tab_band(&format!("b{band}"), &["A", "B"], "A");
+                }
+                if footer {
+                    paint = paint.with_footer("by x");
+                }
+                let paint = paint.with_host_controls();
+                let frame = paint.frame_for_run("alice", ScriptRunState::Running);
+                let mut layout = PaintLayout::new();
+                layout.compute(frame.view(), false, CELL);
+                let buttons = layout.buttons();
+                assert_eq!(
+                    buttons.len(),
+                    2,
+                    "bands {bands} footer {footer}: Pause and Stop are both laid out"
+                );
+                let content_bottom = layout.panel().bottom() - if footer { 16.0 } else { 0.0 };
+                let flow_top = buttons[0].rect().y();
+                for button in buttons {
+                    let rect = button.rect();
+                    assert_eq!(rect.h(), 16.0, "bands {bands} footer {footer}");
+                    assert_eq!(rect.y(), flow_top, "bands {bands} footer {footer}: one row");
+                    assert!(
+                        (rect.bottom() - content_bottom).abs() <= 0.01,
+                        "bands {bands} footer {footer}: the row ends at the content bottom: {rect:?}"
+                    );
+                    assert!(
+                        rect.y() >= layout.title_bar().bottom(),
+                        "bands {bands} footer {footer}: the row stays in the body: {rect:?}"
+                    );
+                    for tab in layout.tabs() {
+                        let tab = tab.rect();
+                        assert!(
+                            tab.bottom() <= rect.y() + 0.01
+                                || tab.right() <= rect.x()
+                                || rect.right() <= tab.x(),
+                            "bands {bands} footer {footer}: no tab entry under a control: tab {tab:?} control {rect:?}"
+                        );
+                    }
+                }
+                for row in layout.rows() {
+                    assert!(
+                        row.rect().bottom() <= flow_top + 0.01,
+                        "bands {bands} footer {footer}: no row under the controls: {:?}",
+                        row.rect()
+                    );
+                }
+                if bands == 16 {
+                    assert!(
+                        layout.tabs().len() < bands * 2,
+                        "footer {footer}: the bands that pass under the controls are dropped"
+                    );
+                }
+            }
+        }
+    }
+
+    /// An over-long strip clips its last visible tab with an
+    /// ellipsis, drops the tabs after it, and still shows the brand
+    /// as a prefix plus an ellipsis. A strip that fits keeps every
+    /// name whole.
+    #[test]
+    fn strip_tabs_and_the_brand_clip_with_an_ellipsis() {
+        let names = [
+            "StatisticsPageOne",
+            "StatisticsPageTwo",
+            "StatisticsPageSix",
+            "StatisticsPageTen",
+            "StatisticsPageMax",
+        ];
+        let brand = "JiveCraftingBySomeone";
+        let paint = TestPaint::new(Some("T"), &["row"]).with_strip(
+            "k",
+            &names,
+            names[0],
+            Some("walking"),
+            Some(brand),
+        );
+        let layout = compute_layout(&paint);
+        let tabs = layout.strip_tabs();
+        assert!(
+            !tabs.is_empty() && tabs.len() < names.len(),
+            "the strip drops the tabs past its limit: {tabs:?}"
+        );
+        for tab in tabs {
+            assert!(
+                tab.rect().right() <= layout.toggle().x() + 0.01,
+                "no strip tab passes the toggle: {:?}",
+                tab.rect()
+            );
+            let name = names[tab.name_index()];
+            let (prefix, ellipsis) = clipped_prefix(name, tab.cells());
+            assert!(
+                name.starts_with(prefix),
+                "a tab draws a prefix of its name: {prefix:?} of {name:?}"
+            );
+            if tab.rect().right() >= layout.toggle().x() - 2.0 * CELL - 0.01 {
+                assert!(ellipsis, "the tab at the strip limit clips: {name:?}");
+            }
+        }
+        let slot = layout.strip_brand().expect("brand slot");
+        assert!(
+            slot.cells() >= 2,
+            "the brand keeps at least one char plus the ellipsis: {} cells",
+            slot.cells()
+        );
+        assert_eq!(
+            clipped_prefix(brand, slot.cells()),
+            ("J", true),
+            "the brand draws its first char plus the ellipsis at the minimum"
+        );
+        assert!(
+            slot.rect().right() <= layout.panel().right() - 8.0 + 0.01,
+            "the brand slot stays inside the panel: {:?}",
+            slot.rect()
+        );
+
+        let fits = TestPaint::new(Some("T"), &["row"]).with_strip(
+            "k",
+            &["Statistics", "Options"],
+            "Statistics",
+            Some("ok"),
+            Some("JiveCrafting"),
+        );
+        let layout = compute_layout(&fits);
+        for (tab, name) in layout.strip_tabs().iter().zip(["Statistics", "Options"]) {
+            assert_eq!(
+                clipped_prefix(name, tab.cells()),
+                (name, false),
+                "a strip tab that fits draws whole"
+            );
+        }
+        let slot = layout.strip_brand().expect("brand slot");
+        assert_eq!(
+            clipped_prefix("JiveCrafting", slot.cells()),
+            ("JiveCrafting", false),
+            "a brand that fits draws whole"
+        );
+    }
+
+    /// A tabs band wider than the panel clips its last visible entry
+    /// with an ellipsis at the body's right edge and drops the
+    /// entries after it.
+    #[test]
+    fn tab_band_entries_clip_with_an_ellipsis_at_the_panel_edge() {
+        let names = [
+            "FirstLongTabName",
+            "SecondLongTabName",
+            "ThirdLongTab",
+            "FourthLongTabName",
+            "FifthLongTabName",
+        ];
+        let paint = TestPaint::new(Some("T"), &["row"]).with_tab_band("t", &names, names[0]);
+        let layout = compute_layout(&paint);
+        let tabs = layout.tabs();
+        assert!(
+            !tabs.is_empty() && tabs.len() < names.len(),
+            "the band drops the entries past the panel: {tabs:?}"
+        );
+        for tab in tabs {
+            assert!(
+                tab.rect().right() <= layout.panel().right() - 8.0 + 0.01,
+                "no entry passes the body's right edge: {:?}",
+                tab.rect()
+            );
+        }
+        let last = tabs.last().expect("a last visible entry");
+        let (prefix, ellipsis) = clipped_prefix(names[last.name_index()], last.cells());
+        assert!(
+            ellipsis && names[last.name_index()].starts_with(prefix),
+            "the last visible entry draws a prefix plus the ellipsis: {prefix:?}"
+        );
+    }
+
+    /// The rail's text cells and text origin come from the layout,
+    /// with the same epsilon rule as the button labels: at a 6.2 px
+    /// cell the 62 px text area holds exactly ten cells, where a
+    /// plain floor of the float quotient gives nine.
+    #[test]
+    fn rail_items_carry_their_text_cells_and_origin() {
+        let paint = TestPaint::new(Some("T"), &["row"]).with_rail(
+            "r",
+            &["OverviewLongName", "Supplies"],
+            "OverviewLongName",
+        );
+        let frame = paint.frame();
+        let mut layout = PaintLayout::new();
+        layout.compute(frame.view(), false, 6.2);
+        let items = layout.rail();
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].cells(), 10, "the rail text area holds ten cells");
+        assert_eq!(
+            clipped_prefix("OverviewLongName", items[0].cells()),
+            ("OverviewL", true),
+            "a long rail name clips with an ellipsis"
+        );
+        for item in items {
+            let rect = item.rect();
+            let origin = item.text_origin();
+            assert_eq!(origin[0], rect.x() + 6.0, "the text starts 6 px in");
+            assert_eq!(
+                origin[1],
+                rect.y() + rect.h() * 0.35,
+                "the text top is 0.35 of the entry height"
+            );
+        }
+    }
+
+    /// The footer text sits in its 16 px row at the same 2 px offset
+    /// as a body row's text, so its glyphs end at the panel bottom
+    /// instead of running 2 px past it into the border.
+    #[test]
+    fn footer_text_stays_inside_the_panel_bottom_border() {
+        let paint = TestPaint::new(Some("T"), &["row"]).with_footer("Jive scripts");
+        let layout = compute_layout(&paint);
+        let footer = layout.footer().expect("footer place");
+        let panel_bottom = layout.panel().bottom();
+        assert_eq!(
+            footer.origin()[1],
+            panel_bottom - 16.0 + crate::scripts::paint_style::TEXT_DY,
+            "the footer text top is TEXT_DY below its row top"
+        );
+        assert_eq!(crate::scripts::paint_style::TEXT_DY, 2.0);
+        // A body row's glyph line is the row height less TEXT_DY;
+        // the footer's line therefore ends at the panel bottom.
+        let row = layout.rows()[0].rect();
+        assert_eq!(
+            footer.origin()[1] + (row.h() - crate::scripts::paint_style::TEXT_DY),
+            panel_bottom,
+            "the footer glyph line ends at the panel bottom, inside the border"
         );
     }
 

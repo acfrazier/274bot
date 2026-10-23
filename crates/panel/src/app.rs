@@ -1083,6 +1083,11 @@ fn focused_paint(session: &Session) -> Option<Option<PaintFrame>> {
     Some(session.core.script_paint(name))
 }
 
+/// Draw the focused slot's script paint over the Game Image and apply
+/// its hit, if any. Returns whether the pointer is inside the drawn
+/// paint panel: the panes then hold back the frame's mouse buttons
+/// from the game, so a press on the paint never also clicks the game
+/// under it.
 fn overlay_script_paint(
     ui: &Ui,
     gpu: &mut Gpu,
@@ -1090,7 +1095,7 @@ fn overlay_script_paint(
     paint: Option<Option<PaintFrame>>,
     min: [f32; 2],
     size: [f32; 2],
-) {
+) -> bool {
     match paint {
         Some(paint) => {
             if let Some((hit, generation)) = state.paint.frame(
@@ -1111,8 +1116,12 @@ fn overlay_script_paint(
                     }
                 }
             }
+            state.paint.pointer_inside_panel()
         }
-        None => state.paint.release_canvas(gpu),
+        None => {
+            state.paint.release_canvas(gpu);
+            false
+        }
     }
 }
 
@@ -1432,7 +1441,11 @@ fn game_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
         }
         let view = state.game_view.as_ref().expect("game view initialized");
         ui.image(view.tex_id, size);
+        // The capture gate and anchor belong to the Image item. Read
+        // them now: after the overlays the last submitted item is no
+        // longer guaranteed to be the Image.
         let min = ui.item_rect_min();
+        let image_hovered = ui.is_item_hovered();
         #[cfg(feature = "render-diagnostics")]
         {
             let fb = ui.io().display_framebuffer_scale();
@@ -1454,23 +1467,24 @@ fn game_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
         // Script-paint overlay: the focused slot's paint renders in an
         // ImGui window over the chatbox rect — never on the game texture.
         let paint = focused_paint(&state.session);
-        overlay_script_paint(ui, gpu, state, paint, min, size);
+        let pointer_in_paint = overlay_script_paint(ui, gpu, state, paint, min, size);
         // Capture: only map/enqueue while on and hovered;
         // capture off skips the coord math entirely (tx is
-        // also None).
-        if capture && ui.is_item_hovered() {
+        // also None). While the pointer is inside the paint panel
+        // the press belongs to the paint, so this frame's mouse
+        // buttons do not reach the game under it.
+        if capture && image_hovered {
             let mouse = ui.io().mouse_pos();
-            let min = ui.item_rect_min();
             stream_capture(
                 &mut state.session.map_desk,
                 mouse[0] - min[0],
                 mouse[1] - min[1],
                 size[0],
                 size[1],
-                ui.is_mouse_clicked(MouseButton::Left),
-                ui.is_mouse_clicked(MouseButton::Right),
-                ui.is_mouse_released(MouseButton::Left),
-                ui.is_mouse_released(MouseButton::Right),
+                ui.is_mouse_clicked(MouseButton::Left) && !pointer_in_paint,
+                ui.is_mouse_clicked(MouseButton::Right) && !pointer_in_paint,
+                ui.is_mouse_released(MouseButton::Left) && !pointer_in_paint,
+                ui.is_mouse_released(MouseButton::Right) && !pointer_in_paint,
                 &[],
             );
             state.keyboard.capture_keys(ui, &mut state.session.map_desk);
@@ -1586,34 +1600,35 @@ fn grid_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
                 after[1] + ((remain_h - size[1]) * 0.5).max(0.0),
             ]);
             body_clicked = cell_body(ui, gpu, state, name, size, draw);
+            // As in the single-bot pane: the capture gate and anchor
+            // belong to the cell's Image item, read before the
+            // overlays draw over it.
             let image_min = ui.item_rect_min();
-            if is_focused && capture && ui.is_item_hovered() {
+            let image_hovered = ui.is_item_hovered();
+            state.queue_cards.frame(ui, name, row.queue(), image_min);
+            let pointer_in_paint = if is_focused {
+                overlay_script_paint(ui, gpu, state, focused_paint.take(), image_min, size)
+            } else {
+                false
+            };
+            // The paint runs before capture: while the pointer is
+            // inside its panel the press belongs to the paint, so
+            // this frame's mouse buttons do not reach the game.
+            if is_focused && capture && image_hovered {
                 let mouse = ui.io().mouse_pos();
-                let min = image_min;
                 stream_capture(
                     &mut state.session.map_desk,
-                    mouse[0] - min[0],
-                    mouse[1] - min[1],
+                    mouse[0] - image_min[0],
+                    mouse[1] - image_min[1],
                     size[0],
                     size[1],
-                    ui.is_mouse_clicked(MouseButton::Left),
-                    ui.is_mouse_clicked(MouseButton::Right),
-                    ui.is_mouse_released(MouseButton::Left),
-                    ui.is_mouse_released(MouseButton::Right),
+                    ui.is_mouse_clicked(MouseButton::Left) && !pointer_in_paint,
+                    ui.is_mouse_clicked(MouseButton::Right) && !pointer_in_paint,
+                    ui.is_mouse_released(MouseButton::Left) && !pointer_in_paint,
+                    ui.is_mouse_released(MouseButton::Right) && !pointer_in_paint,
                     &[],
                 );
                 state.keyboard.capture_keys(ui, &mut state.session.map_desk);
-            }
-            state.queue_cards.frame(ui, name, row.queue(), image_min);
-            if is_focused {
-                overlay_script_paint(
-                    ui,
-                    gpu,
-                    state,
-                    focused_paint.take(),
-                    ui.item_rect_min(),
-                    size,
-                );
             }
         } else if is_focused {
             state.paint.release_canvas(gpu);

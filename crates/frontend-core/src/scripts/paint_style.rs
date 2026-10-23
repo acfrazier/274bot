@@ -27,11 +27,10 @@ pub const TITLE_TEXT_DY: f32 = 3.0;
 pub const TOGGLE_W: f32 = 20.0;
 /// The toggle glyph's left edge inside the toggle square.
 pub const TOGGLE_TEXT_DX: f32 = 7.0;
-/// The last body row's height when the paint advertises a footer.
+/// The last body row's height when the paint advertises a footer. The
+/// footer text sits in this row at [`TEXT_DY`], as a body row's text
+/// does, so its glyphs end inside the panel's bottom border.
 pub const FOOTER_H: f32 = 16.0;
-/// The footer text top inside its row, below the row top. This is the
-/// offset the panel used before this layout (a quarter of the row).
-pub const FOOTER_TEXT_DY: f32 = 4.0;
 
 /// The rail column width. The body starts one [`PAD`] right of it.
 pub const RAIL_W: f32 = 72.0;
@@ -39,6 +38,9 @@ pub const RAIL_W: f32 = 72.0;
 pub const RAIL_INSET: f32 = 2.0;
 /// The rail entry text's left edge inside its entry rect.
 pub const RAIL_TEXT_DX: f32 = 6.0;
+/// The rail entry text's top inside its entry rect, as a fraction of
+/// the entry's height.
+pub const RAIL_TEXT_TOP_FRAC: f32 = 0.35;
 /// The active rail entry's marker width.
 pub const RAIL_MARKER_W: f32 = 2.0;
 
