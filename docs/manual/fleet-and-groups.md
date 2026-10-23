@@ -84,7 +84,7 @@ reason `this server has one world`.
 ## In the terminal app
 
 The terminal app shares the marks, filter and sort. Its Fleet pane holds
-the **Load+login** and **Logout** buttons. **Start fleet** and **Stop
+the **Load+login** and **Log out** buttons. **Start fleet** and **Stop
 fleet** sit on the Script screen, with keys `T` and `E`.
 
 The Fleet pane keys are `c` for the card, `s` for the sort, `a` to mark

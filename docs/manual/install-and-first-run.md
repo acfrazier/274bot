@@ -80,9 +80,9 @@ To skip step 3, tick **Log in automatically** for the profile. See
 ## Use the terminal app instead
 
 `tui-play` runs the same bots in a terminal, which suits a server with no
-screen. It logs in the first profile of the vault. You can create profiles
-in the panel first, add them in the terminal app with **New profile**
-(below), or [import them from rs2b0t](importing-from-rs2b0t.md).
+screen. You can create profiles in the panel first, add them in the
+terminal app with **New profile** (below), or
+[import them from rs2b0t](importing-from-rs2b0t.md).
 
 Run `./tui-play --profile rs2b2t`. It asks for the vault passphrase in the
 terminal and does not show what you type. It then logs in the first profile

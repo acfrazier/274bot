@@ -57,11 +57,11 @@ form so that you can add the first one. See
 
 ## Add, change or remove a profile
 
-You change or remove a profile in the panel. To add one, you can also use
-the terminal app: press `N` in the Fleet pane (or run **New profile** from
-the command palette), type the username and the account's own password,
-then press Enter to save. Its other options take their defaults. Change
-them later in the panel.
+You change or remove a profile in the panel. You can also add one in the
+terminal app: press `N` in the Fleet pane, or run **New profile** from the
+command palette. Type the username and the account's own password, then
+press Enter to save. Its other options take their defaults. Change them
+later in the panel.
 
 In the panel:
 
@@ -71,7 +71,8 @@ In the panel:
 3. Fill in **user** and **pass**. Set the options you want (table below).
 4. Click **Save**. The window shows `Saved <name>.` and selects the profile. If the
    username is empty, the form shows `credentials: username required` and
-   `nothing was saved.`
+   `nothing was saved.` A new profile with an empty password shows
+   `credentials: password required` and saves nothing.
 5. To rename a profile, change **user** in its form and click **Save**.
 6. To remove a profile, click the red **✕** next to its name. The window
    **Delete profile?** asks you to tick **I understand** and click **Delete**. A bot
