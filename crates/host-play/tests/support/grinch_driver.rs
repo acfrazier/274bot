@@ -1395,7 +1395,7 @@ struct ActorState {
     competitor_takes: Vec<PendingCompetitorTake>,
 }
 
-fn fresh_account_relogger() -> ScenarioRunner {
+pub(super) fn fresh_account_relogger() -> ScenarioRunner {
     let side_tab = Proof::SideTabAvailable { index: 3 };
     ScenarioRunner::with_world(
         Scenario {

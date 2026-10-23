@@ -5628,8 +5628,11 @@ fn s2b_admission_per_bot_layouts() {
     // account to NavBot's retained QuestEvidence.
     // Removing the legacy-grid fields shrank Traveller by 88 B (904 B to
     // 816 B), so the measured NavBot exact pin falls from 3760 B to 3672 B.
-    // SURVIVAL-1.1 adds the 104 B inline SlotCondition owner: NavBot is
-    // 3776 B (+104 B), with no new heap payload and no SlotScript growth.
+    // Nav split S3's typed NPC hop reason shrank NavBot by 16 B (3656 B).
+    // SURVIVAL-1.1 adds the 104 B inline SlotCondition owner, and the walk
+    // stall diagnostic adds 16 B to Traveller (original send tile and tick
+    // across resends): NavBot measures 3776 B, with no new heap payload and
+    // no SlotScript growth.
     // Rust 1.98.1 is pinned for the workspace and CI. These are lib-test
     // layouts: test-only inspection budgets and bank fixtures are included.
     // Linux's std::sync::Mutex is 8 B smaller than macOS's for each of the
@@ -5646,7 +5649,7 @@ fn s2b_admission_per_bot_layouts() {
             std::mem::size_of::<script::combat::Combat>(),
             std::mem::size_of::<script::combat::WalkGuard>()
         ),
-        (3760, 4616, 512, 264)
+        (3776, 4616, 512, 264)
     );
     #[cfg(all(
         target_os = "linux",
@@ -5661,7 +5664,7 @@ fn s2b_admission_per_bot_layouts() {
             std::mem::size_of::<script::combat::Combat>(),
             std::mem::size_of::<script::combat::WalkGuard>()
         ),
-        (3760, 4496, 512, 264)
+        (3776, 4496, 512, 264)
     );
     assert!(std::mem::size_of::<script::combat::Combat>() <= 512);
     assert!(std::mem::size_of::<script::combat::WalkGuard>() <= 264);
