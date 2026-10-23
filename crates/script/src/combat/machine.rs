@@ -14,6 +14,7 @@ use super::tables::{CombatTab, CombatTables, PotionKind, PrayerRole};
 use super::threats::{StyleObs, ThreatSet};
 use crate::native::{ActionContext, ActionError, NativeMachine, WalkEnd, WalkRequest};
 use crate::shim::InteractReq;
+use crate::survival::cure::{self, CureDecision, CureInputs, CurePoison};
 use api::prayer::PrayerObservation;
 use api::snapshot::ItemView;
 use std::num::NonZeroU64;
@@ -1448,7 +1449,7 @@ impl Combat {
                 RowKind::Wear if !fight => self.prep_failures |= 4 << (u32::from(row.aux) * 3),
                 RowKind::Retaliate if !fight => self.flags |= PREP_RETALIATE,
                 RowKind::Drink => {
-                    if !fight {
+                    if !fight && row.aux <= PotionKind::Antifire as u8 {
                         self.prep_failures |= 1 << (POTION_PREP_SHIFT + u32::from(row.aux));
                     }
                     if potion_kind(row.aux) == PotionKind::Antifire {
@@ -1544,47 +1545,48 @@ impl Combat {
                 continue;
             }
             let kind = op_kind(row.kind);
-            let settled =
-                match row.kind {
-                    RowKind::Eat => arbiter::count(frame, row.id) < i32::from(pending.baseline),
-                    RowKind::Drink => {
-                        arbiter::doses(frame, &self.tables, potion_kind(row.aux)) < pending.baseline
-                    }
-                    RowKind::Prayer => self.prayer_varp(row.id).is_some_and(|varp| {
-                        frame.varps.iter().any(|value| {
-                            value.index == varp && value.value == i32::from(row.aux != 0)
-                        })
-                    }),
-                    RowKind::Wear => frame
-                        .equipment
+            let settled = match row.kind {
+                RowKind::Eat => arbiter::count(frame, row.id) < i32::from(pending.baseline),
+                RowKind::CureFruit => arbiter::count(frame, row.id) < i32::from(pending.baseline),
+                RowKind::Drink => {
+                    arbiter::doses(frame, &self.tables, potion_kind(row.aux)) < pending.baseline
+                }
+                RowKind::Prayer => self.prayer_varp(row.id).is_some_and(|varp| {
+                    frame
+                        .varps
                         .iter()
-                        .any(|item| item.slot == i32::from(row.aux) && item.def.id == row.id),
-                    RowKind::Style => self.style_varp().is_some_and(|varp| {
-                        frame.varps.iter().any(|value| {
-                            value.index == varp && value.value == i32::from(row.aux & 3)
-                        })
-                    }),
-                    RowKind::Retaliate => frame.varps.iter().any(|value| {
-                        value.index == super::OPTION_NODEF && value.value == i32::from(row.aux == 0)
-                    }),
-                    RowKind::Attack => {
-                        self.engaged
-                            .is_some_and(|actor| actor_token(actor) == row.id)
-                            && (self.schedule.interaction == Interaction::Installed
-                                || self.engaged.is_some_and(|actor| {
-                                    frame
-                                        .in_combat
-                                        .target
-                                        .is_some_and(|target| actor.matches(target))
-                                }))
-                            && (!self.schedule.clear_valid
-                                || (reached(tick, self.schedule.last_clear)
-                                    && tick != self.schedule.last_clear))
-                    }
-                    RowKind::Pickup => self.ammo_count(frame) > self.ranged().pickup_baseline,
-                    RowKind::Cast | RowKind::Arm => false,
-                    RowKind::Empty => false,
-                };
+                        .any(|value| value.index == varp && value.value == i32::from(row.aux != 0))
+                }),
+                RowKind::Wear => frame
+                    .equipment
+                    .iter()
+                    .any(|item| item.slot == i32::from(row.aux) && item.def.id == row.id),
+                RowKind::Style => self.style_varp().is_some_and(|varp| {
+                    frame
+                        .varps
+                        .iter()
+                        .any(|value| value.index == varp && value.value == i32::from(row.aux & 3))
+                }),
+                RowKind::Retaliate => frame.varps.iter().any(|value| {
+                    value.index == super::OPTION_NODEF && value.value == i32::from(row.aux == 0)
+                }),
+                RowKind::Attack => {
+                    self.engaged
+                        .is_some_and(|actor| actor_token(actor) == row.id)
+                        && (self.schedule.interaction == Interaction::Installed
+                            || self.engaged.is_some_and(|actor| {
+                                frame
+                                    .in_combat
+                                    .target
+                                    .is_some_and(|target| actor.matches(target))
+                            }))
+                        && (!self.schedule.clear_valid
+                            || (reached(tick, self.schedule.last_clear)
+                                && tick != self.schedule.last_clear))
+                }
+                RowKind::Pickup => self.ammo_count(frame) > self.ranged().pickup_baseline,
+                RowKind::Cast | RowKind::Arm | RowKind::Empty => false,
+            };
             if settled {
                 self.pending[slot] = PendingRow::default();
                 match row.kind {
@@ -1597,6 +1599,7 @@ impl Combat {
                             self.counters.antifire = self.counters.antifire.saturating_add(1);
                             self.flags |= ANTIFIRE;
                         }
+                        PotionKind::Antipoison | PotionKind::SuperAntipoison => {}
                         _ => self.counters.boost = self.counters.boost.saturating_add(1),
                     },
                     RowKind::Pickup => self.counters.ammo = self.counters.ammo.saturating_add(1),
@@ -1614,11 +1617,11 @@ impl Combat {
                 let window = match row.kind {
                     RowKind::Eat => EAT_OBSERVATION_WINDOW_TICKS,
                     RowKind::Drink
+                    | RowKind::CureFruit
                     | RowKind::Wear
                     | RowKind::Retaliate
                     | RowKind::Style
                     | RowKind::Pickup => 4,
-                    RowKind::Prayer if row.aux == 0 => 4,
                     RowKind::Prayer | RowKind::Attack => 8,
                     RowKind::Cast => 10,
                     RowKind::Arm => unreachable!("arm receipts settle independently"),
@@ -1747,6 +1750,40 @@ impl Combat {
         }
         plan.push(row, reserve, &self.tables)
     }
+    fn cure_row(
+        &self,
+        plan: &mut TickPlan,
+        frame: &Frame<'_>,
+        tick: u16,
+        danger: Option<i32>,
+        eat_floor: i32,
+        cx: &ActionContext<'_>,
+    ) -> bool {
+        let decision = cure::cure_choice(&CureInputs {
+            cond: cx.condition(),
+            danger,
+            exposure: crate::survival::math::exposure(&self.threats, &self.tables, tick),
+            policy: CurePoison::WhenNeeded,
+            route_refused_for_poison: false,
+            inventory: frame.inventory,
+            tables: &self.tables,
+            schedule: &self.schedule,
+            clue_reserve: false,
+            tick,
+            q_unknown: cx.poison_unknown_pulse(),
+            eat_floor,
+        });
+        let row = match decision {
+            CureDecision::Drink { item, kind, .. } => {
+                PlanRow::new(RowKind::Drink, item, kind as u8)
+            }
+            CureDecision::EatFruit { item, .. } => PlanRow::new(RowKind::CureFruit, item, 0),
+            CureDecision::None | CureDecision::Needed { .. } => return false,
+        };
+        let _ = self.push(plan, row);
+        true
+    }
+
     fn emergency_food_available(&self, frame: &Frame<'_>, danger: Option<i32>) -> bool {
         if !self.request.allow.food {
             return false;
@@ -1980,6 +2017,9 @@ impl Combat {
         let mut lines = select::lines(danger, hp_max);
         let food_available = self.emergency_food_available(frame, danger);
         self.safety_end(frame, tick, danger, lines.emergency, food_available);
+        if self.cure_row(&mut plan, frame, tick, danger, lines.eat, cx) {
+            return Ok(plan);
+        }
         if self.phase == Phase::WindDown {
             let obs = prayer_observation(frame);
             if self.baseline_on & BASELINE_READY == 0 {
@@ -3001,6 +3041,11 @@ impl Combat {
                         arbiter::count(frame, row.id).min(i32::from(i16::MAX)) as i16;
                     held(frame.inventory, row.id, "Eat")?
                 }
+                RowKind::CureFruit => {
+                    baselines[index] =
+                        arbiter::count(frame, row.id).min(i32::from(i16::MAX)) as i16;
+                    held(frame.inventory, row.id, "Eat")?
+                }
                 RowKind::Drink => {
                     baselines[index] = arbiter::doses(frame, &self.tables, potion_kind(row.aux));
                     held(frame.inventory, row.id, "Drink")?
@@ -3182,7 +3227,7 @@ fn weapon_prep_item(style: Style) -> PrepItem {
 fn op_kind(kind: RowKind) -> OpKind {
     match kind {
         RowKind::Eat => OpKind::Eat,
-        RowKind::Drink => OpKind::Drink,
+        RowKind::Drink | RowKind::CureFruit => OpKind::Drink,
         RowKind::Prayer => OpKind::Prayer,
         RowKind::Wear => OpKind::Wear,
         RowKind::Style => OpKind::Style,
@@ -3205,6 +3250,8 @@ fn potion_kind(code: u8) -> PotionKind {
         4 => PotionKind::Ranging,
         5 => PotionKind::Magic,
         6 => PotionKind::Antifire,
+        7 => PotionKind::Antipoison,
+        8 => PotionKind::SuperAntipoison,
         _ => unreachable!("planned potion kind"),
     }
 }

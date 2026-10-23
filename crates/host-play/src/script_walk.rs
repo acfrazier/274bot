@@ -126,7 +126,7 @@ pub(crate) fn apply_guard_op(
             });
             (sent, "if-button", Some(*component))
         }
-        GuardOp::Drink { name } => {
+        GuardOp::Drink { name, .. } => {
             let sent = snapshot
                 .inventory()
                 .iter()
@@ -498,10 +498,12 @@ pub(crate) fn tick_walk_guard<D: Driver>(
     snapshot: &GameSnapshot,
     guard: &mut Option<script::combat::WalkGuard>,
     account: Option<&str>,
+    condition: Option<&api::condition::BotCondition>,
+    cure_policy: script::survival::CurePoison,
 ) -> Option<GuardOp> {
     let guard = guard.as_mut()?;
     let view = guard_view(snapshot);
-    let op = guard.tick(&view)?;
+    let op = guard.tick_with_policy(&view, condition, cure_policy)?;
     if apply_guard_op(driver, snapshot, &op, account) {
         guard.admitted(&op, &view);
     }
@@ -1119,10 +1121,17 @@ pub(crate) fn step_nav_bot<D: Driver>(
                                     && route.destination().level == *level
                         )
                     });
-                    // A later route may follow while the old off-click is
-                    // watched, but cannot raise a protect that debt could clear.
                     let guard_op = if bot.walk_guard_off.is_none() {
-                        tick_walk_guard(driver, snapshot, &mut bot.walk_guard, Some(name))
+                        tick_walk_guard(
+                            driver,
+                            snapshot,
+                            &mut bot.walk_guard,
+                            Some(name),
+                            bot.condition
+                                .current()
+                                .filter(|condition| condition.tick == snapshot.tick()),
+                            script::survival::CurePoison::WhenNeeded,
+                        )
                     } else {
                         None
                     };
