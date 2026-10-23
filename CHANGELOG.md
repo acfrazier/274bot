@@ -234,8 +234,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.5` 
 
 #### Navigation
 
-- Route searches no longer copy unused queue space when the search grows.
-  This prevents avoidable memory growth that depended on earlier data loads.
+- A long route search no longer uses up to about 1.5 MB more memory than
+  in 0.2.4 on some runs.
 
 #### Banking
 

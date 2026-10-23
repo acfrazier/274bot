@@ -8578,8 +8578,9 @@ async fn search_kernel_budget<B: Budget>(
         }
     };
     // Reserve the bounded heap once, as the cooperative path already does.
-    // Growing its Vec with the table can copy untouched spare capacity and
-    // commit pages that the live frontier never uses.
+    // In the macOS probe, heap growth with the record table committed up to
+    // a whole new heap block, depending on earlier allocations
+    // (FLOOR-025-SCRATCH-DIAG).
     let Some(mut heap) = PackedMinMaxHeap::try_new(maximum_table_capacity) else {
         return KernelOutcome {
             stop: SearchStop::Budget,
