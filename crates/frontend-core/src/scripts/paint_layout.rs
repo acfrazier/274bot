@@ -260,9 +260,14 @@ impl Default for PaintRect {
     }
 }
 
-/// The cells that fit in `width` at `cell_w`, never negative.
+/// The cells that fit in `width` at `cell_w`, never negative. The
+/// epsilon keeps a width built as `n * cell_w` (a button's label area)
+/// from flooring to `n - 1` cells through float rounding: at cell
+/// widths just above a whole pixel the quotient can land at
+/// 3.9999998 for n = 4. The PAINT-SLICE-A headed check first drew a
+/// "Stop" label as "St…" that way.
 fn cells_in(width: f32, cell_w: f32) -> usize {
-    let cells = (width / cell_w).floor();
+    let cells = (width / cell_w + 1e-4).floor();
     if cells > 0.0 {
         cells as usize
     } else {
@@ -696,6 +701,29 @@ mod tests {
         assert_eq!(pause.w(), 5.0 * CELL + 18.0, "Pause width = 5 cells + 18");
         assert_eq!(stop.x(), pause.right() + 6.0, "Stop follows Pause by 6 px");
         assert_eq!(stop.w(), 4.0 * CELL + 18.0, "Stop width = 4 cells + 18");
+    }
+
+    /// A button sized from its label keeps the whole label at a
+    /// measured-style cell width. The PAINT-SLICE-A headed check first
+    /// drew "Stop" as "St…": the shot's glyph starts are 14 window px
+    /// apart at scale 2 (a 7.0 px cell), and at cell widths just above
+    /// 7.0 — this test's 7.0016656 is one — `(4 * cell + 18 - 18) /
+    /// cell` rounds to 3.9999998 and floored to three cells.
+    #[test]
+    fn button_labels_fit_their_buttons_at_the_measured_cell_width() {
+        let paint = TestPaint::new(Some("Helper"), &["status"]).with_host_controls();
+        let frame = paint.frame_for_run("alice", ScriptRunState::Running);
+        let mut layout = PaintLayout::new();
+        layout.compute(frame.view(), false, 7.0016656);
+        let buttons = layout.buttons();
+        assert_eq!(buttons.len(), 2);
+        assert_eq!(buttons[0].label_cells(), 5, "Pause keeps five cells");
+        assert_eq!(buttons[1].label_cells(), 4, "Stop keeps four cells");
+        assert_eq!(
+            clipped_prefix("Stop", buttons[1].label_cells()),
+            ("Stop", false),
+            "the Stop label draws whole"
+        );
     }
 
     /// Design test 3 at layout level: a Jive-like paint that fills the
