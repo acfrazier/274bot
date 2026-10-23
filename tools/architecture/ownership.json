@@ -39,6 +39,10 @@
       "owner": "T2"
     },
     {
+      "path": "crates/api/src/condition.rs",
+      "owner": "T5"
+    },
+    {
       "path": "crates/api/src/content.rs",
       "owner": "T5"
     },
@@ -1236,6 +1240,18 @@
     },
     {
       "path": "crates/host-play/src/slot_bank_memory.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/host-play/src/slot_condition.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/host-play/src/slot_condition_tests.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/host-play/src/slot_condition_live_tests.rs",
       "owner": "T1"
     },
     {
@@ -4709,6 +4725,18 @@
     {
       "path": "crates/script/src/task_clock.rs",
       "owner": "T1"
+    },
+    {
+      "path": "crates/script/src/survival/mod.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/src/survival/condition.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/src/survival/math.rs",
+      "owner": "T2"
     },
     {
       "path": "crates/script/src/teleport.rs",

@@ -8315,8 +8315,9 @@ impl Out for Sink {
 // Keep both measured 16-byte reductions pinned.
 #[test]
 fn executor_state_size_pins() {
-    assert_eq!(std::mem::size_of::<Traveller>(), 800);
-    assert_eq!(std::mem::size_of::<FollowRun>(), 760);
+    // +16 B: stall diagnostic: original send tile and tick across resends.
+    assert_eq!(std::mem::size_of::<Traveller>(), 816);
+    assert_eq!(std::mem::size_of::<FollowRun>(), 776);
 }
 const BLOCKED_DISPLAY_TILE: WorldTile = WorldTile {
     x: 12,

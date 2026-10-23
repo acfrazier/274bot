@@ -8,6 +8,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.5` 
 ### Panel and TUI
 
 - Switching the log view from "all bots" back to "bot" shows the focused bot's lines again, in the panel and the TUI. In 0.2.4 and 0.2.5 it kept showing every bot's lines.
+- Player and NPC movement, action poses, map effects, projectile flight, and
+  cutscene cameras keep their animation time between bot views and after late
+  frames. Old smoke no longer starts only when a bot’s game view is first drawn.
 
 ### Scripts
 
@@ -15,6 +18,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.5` 
   any running rs2b0t script. It also pauses a built-in script while it acts in
   place, such as fighting or gathering. Resume continues the script.
 - Examine and Cancel from a game-world menu no longer count as manual movement.
+- Grinch makes one fresh return attempt if its walk back to the Start tile
+  stalls. A second stall still stops the script and keeps the failure detail.
 
 ### Nav
 

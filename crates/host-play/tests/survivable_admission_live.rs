@@ -8,7 +8,7 @@ use api::interact;
 use api::snapshot::{GameSnapshot, WorldTile};
 use client::client::Client;
 use host::Pump;
-use host_play::admission::{self, Admission, PoisonState, RiskInput};
+use host_play::admission::{self, Admission, RiskInput};
 use host_play::walk_map::{ActionError, ActionKind, FocusToken, MapContext, MapModel};
 use host_play::{ProfileOptions, SharedClientTemplate, SlotArm, WalkArms, WalkGlobals};
 use nav::map::identity::Digest;
@@ -75,7 +75,7 @@ fn pump_once(client: &mut Client, snapshot: &mut GameSnapshot, pump: &mut Pump) 
     client.mainloop();
     host::publish_snapshot(snapshot, client, pump.drain_client(client));
     if snapshot.ingame() && snapshot.attached() {
-        let input = admission::capture(snapshot, false, PoisonState::default(), false);
+        let input = admission::capture(snapshot, false, None, false);
         if input.hp_max > 0 {
             assert_ne!(
                 input.hp,
@@ -105,7 +105,7 @@ fn wait_for(
             snapshot.tile(),
             snapshot.scene_state(),
             snapshot.inventory_size(),
-            admission::capture(snapshot, false, PoisonState::default(), false)
+            admission::capture(snapshot, false, None, false)
         );
         std::thread::sleep(Duration::from_millis(20));
     }
@@ -341,11 +341,11 @@ fn real_unknown_poison_explicit_forbid_then_opt_in_and_default_escape() {
         assert!(interact::cheat(&mut client, command).is_sent());
     }
     wait_for(&mut client, &mut snapshot, &mut pump, |s| {
-        let input = admission::capture(s, profile.map_members(), PoisonState::default(), false);
+        let input = admission::capture(s, profile.map_members(), None, false);
         s.scene_state() == 2 && input.hp == 99 && !input.missing_facts
     });
     let state = WorldState::from_snapshot(&snapshot).with_map_members(profile.map_members());
-    let input = admission::capture(&snapshot, state.map_members, PoisonState::default(), false);
+    let input = admission::capture(&snapshot, state.map_members, None, false);
     let (origin, destination) = endpoint_fixture(&world, &state, input);
     interact::seed_at(&mut client, origin.level, origin.x, origin.z);
     wait_for(&mut client, &mut snapshot, &mut pump, |s| {
@@ -366,7 +366,7 @@ fn real_unknown_poison_explicit_forbid_then_opt_in_and_default_escape() {
     );
     let arms = WalkArms::default();
     let state = WorldState::from_snapshot(&snapshot).with_map_members(profile.map_members());
-    let input = admission::capture(&snapshot, state.map_members, PoisonState::default(), false);
+    let input = admission::capture(&snapshot, state.map_members, None, false);
     let strict_options = FindOptions::default();
     let strict = model
         .confirm(
@@ -550,8 +550,7 @@ fn real_unknown_poison_explicit_forbid_then_opt_in_and_default_escape() {
             }),
         "real risk hostlog line must be recorded: {receipt}"
     );
-    let final_input =
-        admission::capture(&snapshot, state.map_members, PoisonState::default(), false);
+    let final_input = admission::capture(&snapshot, state.map_members, None, false);
     receipt["observed_path"] = json!(path);
     receipt["final_tile"] = json!(snapshot.tile());
     receipt["final_hp"] = json!(final_input.hp);
@@ -582,8 +581,7 @@ fn real_unknown_poison_explicit_forbid_then_opt_in_and_default_escape() {
             strict_options,
         )
         .expect("default escape map command");
-    let escape_input =
-        admission::capture(&snapshot, state.map_members, PoisonState::default(), false);
+    let escape_input = admission::capture(&snapshot, state.map_members, None, false);
     let escaped = command
         .walk_on(
             &world,
@@ -641,8 +639,7 @@ fn real_unknown_poison_explicit_forbid_then_opt_in_and_default_escape() {
         );
         std::thread::sleep(Duration::from_millis(20));
     }
-    let escape_final =
-        admission::capture(&snapshot, state.map_members, PoisonState::default(), false);
+    let escape_final = admission::capture(&snapshot, state.map_members, None, false);
     assert_eq!(snapshot.tile(), Some((origin.x, origin.z, origin.level)));
     assert!(escape_path.len() > 1);
     assert!(escape_final.hp > 0);
@@ -772,7 +769,7 @@ impl CompatLive {
         if !snapshot.ingame() || !snapshot.attached() || snapshot.scene_state() != 2 {
             return;
         }
-        let input = admission::capture(snapshot, self.members, PoisonState::default(), false);
+        let input = admission::capture(snapshot, self.members, None, false);
         if input.hp_max > 0 && input.hp == 0 {
             self.failure = Some(format!("compat live death at {:?}", snapshot.tile()));
             return;
@@ -938,12 +935,7 @@ fn real_compat_v1_crossing_and_own_sustain_at_45_and_14_hp() {
                     state.phase,
                     state.snapshot.scene_state(),
                     state.snapshot.inventory_size(),
-                    admission::capture(
-                        &state.snapshot,
-                        state.members,
-                        PoisonState::default(),
-                        false
-                    )
+                    admission::capture(&state.snapshot, state.members, None, false)
                 );
             }
             std::thread::sleep(Duration::from_millis(20));
@@ -1015,12 +1007,7 @@ fn real_compat_v1_crossing_and_own_sustain_at_45_and_14_hp() {
         std::fs::create_dir_all(&cell_dir).expect("create compat evidence");
         let receipt = {
             let state = state.lock().expect("fixture state");
-            let input = admission::capture(
-                &state.snapshot,
-                state.members,
-                PoisonState::default(),
-                false,
-            );
+            let input = admission::capture(&state.snapshot, state.members, None, false);
             let food = state
                 .snapshot
                 .inventory()

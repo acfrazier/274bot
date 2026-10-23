@@ -398,6 +398,13 @@ pub(super) fn frame_context<'a>(
             .with_reach(ctx.compiled.reach)
             .with_bank_memory(ctx.compiled.bank_memory)
             .with_world_members(ctx.compiled.world_members),
+        condition: ctx.compiled.condition.filter(|fact| {
+            fact.session == api::condition::SessionMark::Live
+                && ctx
+                    .snapshot
+                    .is_some_and(|snapshot| snapshot.tick() == fact.tick)
+        }),
+        poison_unknown_pulse: ctx.compiled.poison_unknown_pulse.unwrap_or(u8::MAX),
         retained,
         action_id: 0,
         active_now: runtime.clock.now(now).as_duration(),
@@ -518,6 +525,8 @@ impl CompiledRun {
                         reach: ctx.compiled.reach,
                         reach_flood: ctx.compiled.reach_flood,
                         bank_memory: ctx.compiled.bank_memory,
+                        condition: ctx.compiled.condition,
+                        poison_unknown_pulse: ctx.compiled.poison_unknown_pulse,
                         world_members: ctx.compiled.world_members,
                         collision: ctx.compiled.collision,
                         walk_danger: ctx.compiled.walk_danger,

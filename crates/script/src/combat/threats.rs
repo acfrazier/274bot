@@ -1958,4 +1958,66 @@ mod tests {
             None
         );
     }
+
+    #[test]
+    fn exposure_from_real_tables() {
+        use api::condition::Exposure;
+        use api::selected::ClientRevision;
+
+        let tables =
+            CombatTables::build(api::game_data::for_revision(ClientRevision::R289).unwrap())
+                .unwrap();
+        let mut threats = ThreatSet::default();
+        for (ident, pulse) in [(108, 3), (191, 11)] {
+            let mut row = Threat::new(
+                actor(ActorKind::Npc, 1),
+                ident,
+                StyleObs::Melee,
+                4,
+                Some(1),
+                0,
+            );
+            row.set_fact_live(true);
+            threats.rows[0] = row;
+            assert_eq!(
+                crate::survival::math::exposure(&threats, &tables, 0),
+                Exposure::Attributable { max_pulse: pulse }
+            );
+        }
+
+        let mut magic = Threat::new(
+            actor(ActorKind::Npc, 2),
+            108,
+            StyleObs::Magic,
+            4,
+            Some(1),
+            0,
+        );
+        magic.set_fact_live(true);
+        threats.rows[1] = magic;
+        assert_eq!(
+            crate::survival::math::exposure(&threats, &tables, 0),
+            Exposure::Unknown
+        );
+
+        let mut missing = ThreatSet::default();
+        let mut unknown = Threat::new(
+            actor(ActorKind::Npc, 3),
+            i32::MAX,
+            StyleObs::Melee,
+            4,
+            Some(1),
+            0,
+        );
+        unknown.set_fact_live(true);
+        missing.rows[0] = unknown;
+        assert_eq!(
+            crate::survival::math::exposure(&missing, &tables, 0),
+            Exposure::Unknown
+        );
+        assert_eq!(
+            crate::survival::math::exposure(&ThreatSet::default(), &tables, 0),
+            Exposure::None
+        );
+    }
 }

@@ -4376,6 +4376,54 @@ fn full_snapshot_counts_player_info_not_player_invalidations() {
     assert_eq!(snap.tick(), 3, "count every PLAYER_INFO between rebuilds");
 }
 
+#[test]
+fn walk_diagnostic_history_uses_observed_scene_and_server_movement() {
+    let mut c = client_with_npc();
+    c.ingame = true;
+    c.scene_state = 2;
+    c.map_build_base_x = 3200;
+    c.map_build_base_z = 3200;
+    c.local_player = Some(ClientPlayer::at(4, 5));
+    c.bump_gens(ServerProt::REBUILD_NORMAL);
+    c.bump_gens(ServerProt::PLAYER_INFO);
+    let mut snap = GameSnapshot::new();
+    snap.rebuild(&c);
+    assert_eq!(snap.last_scene_rebuild_tick(), Some(1));
+    assert_eq!(snap.last_server_movement_tick(), None);
+
+    let player = c.local_player.as_mut().unwrap();
+    player.route_x[0] = 5;
+    player.entity.x += 128;
+    c.bump_gens(ServerProt::PLAYER_INFO);
+    snap.rebuild(&c);
+    assert_eq!(snap.last_server_movement_tick(), Some(2));
+
+    // Rendering and loc refreshes do not imply server movement or a new scene.
+    c.local_player.as_mut().unwrap().entity.x += 128;
+    c.gens.scene += 1;
+    snap.rebuild(&c);
+    assert_eq!(snap.last_scene_rebuild_tick(), Some(1));
+    assert_eq!(snap.last_server_movement_tick(), Some(2));
+
+    c.scene_state = 1;
+    c.map_build_base_x = 3192;
+    c.local_player.as_mut().unwrap().route_x[0] = 13;
+    c.bump_gens(ServerProt::REBUILD_NORMAL);
+    c.bump_gens(ServerProt::PLAYER_INFO);
+    snap.rebuild(&c);
+    assert_eq!(snap.last_scene_rebuild_tick(), Some(3));
+    assert_eq!(snap.last_server_movement_tick(), Some(2));
+    c.scene_state = 2;
+    c.bump_gens(ServerProt::PLAYER_INFO);
+    snap.rebuild(&c);
+    assert_eq!(snap.last_scene_rebuild_tick(), Some(3));
+    assert_eq!(snap.last_server_movement_tick(), Some(2));
+
+    snap.reset_session(c.gens);
+    assert_eq!(snap.last_scene_rebuild_tick(), None);
+    assert_eq!(snap.last_server_movement_tick(), None);
+}
+
 /// The scene family reads `attached` from the socket (the §3.1 "socket
 /// state" mapping): no stream → not attached; a connected `ClientStream`
 /// → attached. The flag copies every rebuild like `ingame`/`scene_state`.

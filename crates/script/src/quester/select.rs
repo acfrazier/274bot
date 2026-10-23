@@ -220,6 +220,8 @@ mod tests {
         let mut ledger = None;
         let mut budget = TickBudget::default();
         let cx = ActionContext {
+            condition: None,
+            poison_unknown_pulse: u8::MAX,
             evidence: stamp(),
             pin: &pin,
             snapshot: view,
