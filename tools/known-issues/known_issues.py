@@ -8,9 +8,11 @@ than X. ``first`` is the first affected release, or the release under
 development when no shipped release has the problem; ``listed`` differs only
 when the item was found after ``first`` had shipped. The commit that
 fixes an item sets ``fixed`` to the release carrying the fix; items are never
-deleted, so checks of already published releases keep passing. Never edit the
-``### Known issues`` / ``### Not in this release`` blocks in ``CHANGELOG.md``
-by hand; regenerate them instead:
+deleted, so checks of already published releases keep passing. For the same
+reason, rewording an item that a published release lists keeps the old text in
+an ``[[item.earlier]]`` table whose ``until`` is the first release with the new
+wording. Never edit the ``### Known issues`` / ``### Not in this release``
+blocks in ``CHANGELOG.md`` by hand; regenerate them instead:
 
     python3 tools/known-issues/known_issues.py render --release 0.2.6
     python3 tools/known-issues/known_issues.py check --release 0.2.6
@@ -110,7 +112,7 @@ def load_ledger(path, order):
         for key in required:
             if key not in entry or str(entry[key]).strip() == "":
                 raise ValueError(f"{path}: item is missing {key!r}: {entry!r}")
-        unknown = sorted(set(entry) - set(required) - {"fixed", "listed"})
+        unknown = sorted(set(entry) - set(required) - {"fixed", "listed", "earlier"})
         if unknown:
             raise ValueError(
                 f"{path}: item {entry.get('id')!r} has unknown "
@@ -164,6 +166,28 @@ def load_ledger(path, order):
                 raise ValueError(
                     f"{path}: item {entry['id']!r} 'listed' release {listed!r} "
                     f"is not earlier than 'fixed' {fixed!r}")
+        earlier = []
+        for wording in entry.get("earlier", []):
+            if set(wording) != {"until", "text"} or str(wording["text"]).strip() == "":
+                raise ValueError(
+                    f"{path}: item {entry['id']!r} has an 'earlier' wording "
+                    f"without exactly 'until' and a non-empty 'text': {wording!r}")
+            until = str(wording["until"]).strip()
+            version_key(until)
+            if until not in names:
+                raise ValueError(
+                    f"{path}: item {entry['id']!r} names an unknown "
+                    f"'earlier' until release {until!r}")
+            if not newer_than(names, until, listed):
+                raise ValueError(
+                    f"{path}: item {entry['id']!r} 'earlier' until release "
+                    f"{until!r} is not later than 'listed' {listed!r}")
+            earlier.append((until, " ".join(str(wording["text"]).split())))
+        earlier.sort(key=lambda wording: names.index(wording[0]))
+        if len({until for until, _ in earlier}) != len(earlier):
+            raise ValueError(
+                f"{path}: item {entry['id']!r} has two 'earlier' wordings "
+                f"with the same until release")
         items.append({
             "id": str(entry["id"]),
             "kind": str(entry["kind"]),
@@ -175,6 +199,7 @@ def load_ledger(path, order):
             "severity": str(entry["severity"]),
             "owner": str(entry["owner"]),
             "fixed": fixed,
+            "earlier": earlier,
         })
     return items
 
@@ -289,6 +314,17 @@ def wrap_bullet(body):
     return wrapper.fill(body)
 
 
+def item_text(item, release, order):
+    """The item's wording at ``release``: the first ``earlier`` wording whose
+    ``until`` release comes after ``release``, else ``text``. Rewording an item
+    that a published release already lists keeps the old wording there as an
+    ``earlier`` entry, so ``check`` of that release keeps passing."""
+    for until, text in item["earlier"]:
+        if newer_than(order, until, release):
+            return text
+    return item["text"]
+
+
 def render_release(items, order, release):
     """Render both CHANGELOG blocks for ``release``; skip empty blocks."""
     blocks = []
@@ -298,7 +334,7 @@ def render_release(items, order, release):
         for item in items:
             if item["kind"] != kind or not applies(item, release, order):
                 continue
-            body = item["text"]
+            body = item_text(item, release, order)
             if kind == KNOWN_ISSUE:
                 body = f"**{item['area']}:** {body}"
             sentence = carried_sentence(item["first"], release, order)
