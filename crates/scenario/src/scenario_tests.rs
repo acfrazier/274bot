@@ -230,6 +230,10 @@ fn attach_loopback(client: &mut Client) -> (std::net::TcpListener, std::net::Tcp
 }
 
 fn plant_bank_side(client: &mut Client, id: i32, count: i32) {
+    plant_bank_side_op(client, id, count, "Deposit All");
+}
+
+fn plant_bank_side_op(client: &mut Client, id: i32, count: i32, op: &str) {
     use client::config::if_type::{ComponentType, IfType, IfTypeMut};
     client.set_iface(
         700,
@@ -247,7 +251,7 @@ fn plant_bank_side(client: &mut Client, id: i32, count: i32) {
             id: 701,
             layer_id: 700,
             r#type: ComponentType::TYPE_INV,
-            iop: [Some("Deposit All".into()), None, None, None, None],
+            iop: [Some(op.into()), None, None, None, None],
             ..Default::default()
         },
     );
@@ -262,6 +266,34 @@ fn plant_bank_side(client: &mut Client, id: i32, count: i32) {
     client.side_modal_id = 700;
 }
 
+/// One 274-format `UPDATE_INV_FULL` payload: `g2` component, `g1`
+/// entry count, then per entry a `g2` raw id (obj id + 1) and a `g1`
+/// count, with 255 promoting the count to `g4`.
+fn inv_full_packet(component: i32, entries: &[(i32, i32)]) -> client::io::Packet {
+    let mut bytes = vec![(component >> 8) as u8, component as u8, entries.len() as u8];
+    for (raw_id, count) in entries {
+        bytes.push((raw_id >> 8) as u8);
+        bytes.push(*raw_id as u8);
+        if *count >= 255 {
+            bytes.push(255);
+            bytes.extend_from_slice(&count.to_be_bytes());
+        } else {
+            bytes.push(*count as u8);
+        }
+    }
+    client::io::Packet::new(bytes)
+}
+
+/// `plant_bank_side` plus the side component's full inventory
+/// packet, so the snapshot carries a bank-side packet generation
+/// (the readiness signal a real bank open publishes).
+fn plant_bank_side_full(client: &mut Client, id: i32, count: i32) {
+    use client::io::ServerProt;
+    plant_bank_side(client, id, count);
+    let mut full = inv_full_packet(701, &[(id + 1, count)]);
+    client.handle_packet(ServerProt::UPDATE_INV_FULL, &mut full);
+}
+
 fn deposit_step(scenario: &Scenario, id: i32, count: i32) -> &Step {
     scenario
         .steps
@@ -270,7 +302,7 @@ fn deposit_step(scenario: &Scenario, id: i32, count: i32) -> &Step {
             matches!(
                 (&step.kind, &step.wait.arm),
                 (
-                    StepKind::Repeat { .. },
+                    StepKind::NativeSeedDeposit { .. },
                     Proof::BankItemId {
                         id: wait_id,
                         count: wait_count
@@ -280,27 +312,34 @@ fn deposit_step(scenario: &Scenario, id: i32, count: i32) -> &Step {
         })
         .unwrap_or_else(|| {
             panic!(
-                "{} deposits obj {id} x{count} through a Repeat wait",
+                "{} deposits obj {id} x{count} through a native seed-deposit wait",
                 scenario.name
             )
         })
 }
 
-fn send_deposit(name: &str, id: i32, count: i32, side_id: i32, side_count: i32) -> (bool, i32) {
-    use api::snapshot::Family;
-    let mut client = native_seed_client();
-    plant_bank_side(&mut client, side_id, side_count);
-    let _peer = attach_loopback(&mut client);
+/// Rebuild a snapshot from a planted client and assert the deposit
+/// readiness signals all report ready: open loaded main table,
+/// raised side root, observed side packet generation.
+fn ready_bank_snapshot(client: &Client) -> GameSnapshot {
     let mut snapshot = GameSnapshot::new();
-    assert!(snapshot.rebuild_family(&client, Family::BankSide));
+    snapshot.rebuild(client);
+    assert!(snapshot.bank_component_id() >= 0, "bank must be open");
+    assert!(snapshot.bank_loaded(), "main bank table must be loaded");
+    assert!(snapshot.modals().side >= 0, "side root must be raised");
     assert!(
-        snapshot.rebuild(&client) || !snapshot.bank_side().is_empty(),
-        "bank-side rows must rebuild from the planted deposit component"
+        snapshot.bank_side_packet_generation().is_some(),
+        "a side packet generation must be observed"
     );
-    if snapshot.bank_side().is_empty() {
-        client.bump_gens(client::io::ServerProt::UPDATE_INV_FULL);
-        assert!(snapshot.rebuild_family(&client, Family::BankSide));
-    }
+    snapshot
+}
+
+fn send_deposit(name: &str, id: i32, count: i32, side_id: i32, side_count: i32) -> (bool, i32) {
+    let mut client = native_seed_client();
+    plant_loaded_empty_bank(&mut client);
+    plant_bank_side_full(&mut client, side_id, side_count);
+    let _peer = attach_loopback(&mut client);
+    let snapshot = ready_bank_snapshot(&client);
     assert_eq!(
         snapshot
             .bank_side()
@@ -312,11 +351,19 @@ fn send_deposit(name: &str, id: i32, count: i32, side_id: i32, side_count: i32) 
     );
     let scenario = get(name).unwrap_or_else(|| panic!("{name} is registered"));
     let step = deposit_step(&scenario, id, count);
-    let StepKind::Repeat { send } = &step.kind else {
-        panic!("{name} deposit must be a Repeat step");
+    let StepKind::NativeSeedDeposit {
+        unnoted_id,
+        quantity,
+        note_id,
+    } = step.kind
+    else {
+        panic!("{name} deposit must be a native seed-deposit step");
     };
-    let ok = send(&mut client, &snapshot);
-    (ok, client.menu_param_a.first().copied().unwrap_or(-1))
+    let sent = matches!(
+        native_seed_deposit_attempt(&mut client, &snapshot, unnoted_id, quantity, note_id),
+        Ok(SeedDepositProgress::DepositSent)
+    );
+    (sent, client.menu_param_a.first().copied().unwrap_or(-1))
 }
 
 #[test]
@@ -721,18 +768,240 @@ fn herblore_native_deposit_soft_waits_open_unloaded_bank() {
 
     let scenario = get("herblore_secondaries").expect("herblore_secondaries");
     let step = deposit_step(&scenario, LOBSTER_ID, HERBLORE_EGG_FOOD_SEED);
-    let StepKind::Repeat { send } = &step.kind else {
-        panic!("deposit must be Repeat");
+    let StepKind::NativeSeedDeposit {
+        unnoted_id,
+        quantity,
+        note_id,
+    } = step.kind
+    else {
+        panic!("deposit must be a native seed-deposit step");
     };
     let before_out = client.out.pos;
-    assert!(
-        send(&mut client, &snapshot),
+    assert_eq!(
+        native_seed_deposit_attempt(&mut client, &snapshot, unnoted_id, quantity, note_id),
+        Ok(SeedDepositProgress::BankPending),
         "open unloaded bank must soft-wait, not hard-reject like headed eggs"
     );
     assert_eq!(
         client.out.pos, before_out,
         "soft-wait must not emit a deposit op while bank_side is unpublished"
     );
+}
+
+/// NIGHTLY-FIX-1023 C5: the seed deposit must tell pending bank-side
+/// data apart from a real failure, and each real failure branch must
+/// name itself. The five cases: loaded main table with pending side
+/// data, missing expected seed after readiness, absent Deposit All,
+/// send rejection, completed deposit.
+#[test]
+fn native_seed_deposit_attempt_names_each_branch() {
+    use client::io::ServerProt;
+
+    // Pending side data, no side root yet: the main table is loaded
+    // but the deposit pane has not been raised. Soft-wait, no send.
+    let mut client = native_seed_client();
+    plant_loaded_empty_bank(&mut client);
+    let _peer = attach_loopback(&mut client);
+    let mut snapshot = GameSnapshot::new();
+    snapshot.rebuild(&client);
+    assert!(snapshot.bank_loaded(), "main table must be loaded");
+    assert!(snapshot.modals().side < 0, "side root must still be down");
+    let before_out = client.out.pos;
+    assert_eq!(
+        native_seed_deposit_attempt(&mut client, &snapshot, COINS_ID, 200, None),
+        Ok(SeedDepositProgress::BankPending)
+    );
+    assert_eq!(client.out.pos, before_out, "pending must not send");
+
+    // Pending side data, rows visible but no side packet observed:
+    // link-array rows alone are not readiness.
+    let mut client = native_seed_client();
+    plant_loaded_empty_bank(&mut client);
+    plant_bank_side(&mut client, COINS_ID, 200);
+    let _peer = attach_loopback(&mut client);
+    let mut snapshot = GameSnapshot::new();
+    snapshot.rebuild(&client);
+    assert!(snapshot.bank_loaded(), "main table must be loaded");
+    assert_eq!(
+        snapshot
+            .bank_side()
+            .iter()
+            .map(|item| item.def.id)
+            .collect::<Vec<_>>(),
+        vec![COINS_ID],
+        "planted rows are visible before any side packet"
+    );
+    assert!(
+        snapshot.bank_side_packet_generation().is_none(),
+        "no side packet has been observed yet"
+    );
+    let before_out = client.out.pos;
+    assert_eq!(
+        native_seed_deposit_attempt(&mut client, &snapshot, COINS_ID, 200, None),
+        Ok(SeedDepositProgress::BankPending)
+    );
+    assert_eq!(client.out.pos, before_out, "pending must not send");
+
+    // Missing expected seed after readiness: the side packet is in,
+    // but it carries a hammer, not the coin seed. Hard failure that
+    // names the missing-row branch.
+    let mut client = native_seed_client();
+    plant_loaded_empty_bank(&mut client);
+    plant_bank_side_full(&mut client, HAMMER_ID, 1);
+    let _peer = attach_loopback(&mut client);
+    let snapshot = ready_bank_snapshot(&client);
+    let before_out = client.out.pos;
+    let failure =
+        native_seed_deposit_attempt(&mut client, &snapshot, COINS_ID, 200, None).unwrap_err();
+    assert_eq!(failure, SeedDepositFailure::MissingRow { inv_id: COINS_ID });
+    assert!(
+        failure.to_string().contains("no bank-side row"),
+        "failure text must name the branch: {failure}"
+    );
+    assert_eq!(client.out.pos, before_out, "missing row must not send");
+
+    // Absent Deposit All: the row exists after readiness, but its
+    // component offers only Deposit 1.
+    let mut client = native_seed_client();
+    plant_loaded_empty_bank(&mut client);
+    plant_bank_side_op(&mut client, COINS_ID, 200, "Deposit 1");
+    let mut side_full = inv_full_packet(701, &[(COINS_ID + 1, 200)]);
+    client.handle_packet(ServerProt::UPDATE_INV_FULL, &mut side_full);
+    let _peer = attach_loopback(&mut client);
+    let snapshot = ready_bank_snapshot(&client);
+    let before_out = client.out.pos;
+    let failure =
+        native_seed_deposit_attempt(&mut client, &snapshot, COINS_ID, 200, None).unwrap_err();
+    assert_eq!(
+        failure,
+        SeedDepositFailure::MissingOperation { inv_id: COINS_ID }
+    );
+    assert!(
+        failure.to_string().contains("no Deposit All operation"),
+        "failure text must name the branch: {failure}"
+    );
+    assert_eq!(
+        client.out.pos, before_out,
+        "missing operation must not send"
+    );
+
+    // Send rejection: readiness and the row are real, but the client
+    // has no stream, so dispatch refuses before any bytes go out.
+    let mut client = native_seed_client();
+    plant_loaded_empty_bank(&mut client);
+    plant_bank_side_full(&mut client, COINS_ID, 200);
+    client.bump_gens(ServerProt::UPDATE_INV_FULL);
+    let snapshot = ready_bank_snapshot(&client);
+    assert!(!snapshot.attached(), "no loopback stream is attached");
+    assert_eq!(
+        native_seed_deposit_attempt(&mut client, &snapshot, COINS_ID, 200, None),
+        Err(SeedDepositFailure::SendRefused {
+            inv_id: COINS_ID,
+            reason: SendReason::NotAttached,
+        })
+    );
+
+    // Completed deposit: the fresh bank already holds the seed and
+    // the pack is empty. Nothing is sent.
+    let mut client = native_seed_client();
+    plant_loaded_empty_bank(&mut client);
+    client.set_iface_mut(
+        601,
+        client::config::if_type::IfTypeMut {
+            link_obj_type: Some(vec![COINS_ID + 1, 0]),
+            link_obj_number: Some(vec![200, 0]),
+            ..Default::default()
+        },
+    );
+    let mut full = inv_full_packet(601, &[(COINS_ID + 1, 200)]);
+    client.handle_packet(ServerProt::UPDATE_INV_FULL, &mut full);
+    let _peer = attach_loopback(&mut client);
+    let mut snapshot = GameSnapshot::new();
+    snapshot.rebuild(&client);
+    assert!(
+        (Proof::BankItemId {
+            id: COINS_ID,
+            count: 200
+        })
+        .check(&snapshot, None),
+        "the fresh bank must already hold the seed"
+    );
+    let before_out = client.out.pos;
+    assert_eq!(
+        native_seed_deposit_attempt(&mut client, &snapshot, COINS_ID, 200, None),
+        Ok(SeedDepositProgress::AlreadyDeposited)
+    );
+    assert_eq!(client.out.pos, before_out, "completed must not re-send");
+
+    // Ready bank, row and operation present, stream attached: the
+    // deposit dispatch goes out for the exact seed row.
+    let mut client = native_seed_client();
+    plant_loaded_empty_bank(&mut client);
+    plant_bank_side_full(&mut client, COINS_ID, 200);
+    let _peer = attach_loopback(&mut client);
+    let snapshot = ready_bank_snapshot(&client);
+    assert_eq!(
+        native_seed_deposit_attempt(&mut client, &snapshot, COINS_ID, 200, None),
+        Ok(SeedDepositProgress::DepositSent)
+    );
+    assert_eq!(
+        client.menu_param_a.first().copied().unwrap_or(-1),
+        COINS_ID,
+        "the dispatch must address the coin row"
+    );
+}
+
+/// The branch name must reach the runner failure text, which is the
+/// receipt message. A ready bank whose side packet carries no coin
+/// seed fails by branch, not by a bare driver rejection.
+#[test]
+fn native_seed_deposit_runner_failure_names_the_missing_row_branch() {
+    let deposit = native_bank_deposit(
+        "deposit the coin seed through the bank window",
+        vec![NativeSeed {
+            unnoted_id: COINS_ID,
+            debug_alias: "coins",
+            note_alias: None,
+            quantity: 200,
+            note_id: None,
+        }],
+    )
+    .remove(0);
+    let scenario = Scenario {
+        name: "native_seed_deposit_missing_row",
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: false,
+        },
+        steps: vec![deposit],
+        proof: Proof::BankItemId {
+            id: COINS_ID,
+            count: 200,
+        },
+        companions: vec![],
+        settings: ScenarioSettings::default(),
+    };
+    let mut runner = ScenarioRunner::with_world(scenario, None);
+    runner.set_scene_settle(Duration::ZERO);
+
+    let mut client = native_seed_client();
+    let _peer = attach_loopback(&mut client);
+    plant_loaded_empty_bank(&mut client);
+    plant_bank_side_full(&mut client, HAMMER_ID, 1);
+    runner.tick(&mut client);
+    match runner.status() {
+        RunnerStatus::Failed(message) => {
+            assert!(
+                message.contains("no bank-side row for item 995"),
+                "runner failure must name the deposit branch: {message}"
+            );
+            assert!(
+                !message.contains("driver rejected the send"),
+                "the branch replaces the bare rejection: {message}"
+            );
+        }
+        other => panic!("missing seed row must fail the run, got {other:?}"),
+    }
 }
 
 /// An already loaded bank must remain usable by the following deposit.
@@ -939,7 +1208,7 @@ fn herblore_seed_bank_waits_for_one_open_ack_before_deposit() {
 
     let mut full = Packet::new(vec![2, 89, 0]);
     client.handle_packet(ServerProt::UPDATE_INV_FULL, &mut full);
-    plant_bank_side(&mut client, NOTED_LOBSTER_ID, HERBLORE_EGG_FOOD_SEED);
+    plant_bank_side_full(&mut client, NOTED_LOBSTER_ID, HERBLORE_EGG_FOOD_SEED);
     client.bump_gens(ServerProt::UPDATE_INV_FULL);
     runner.tick(&mut client);
     assert_eq!(runner.status(), RunnerStatus::Running { step: 1, total: 2 });
@@ -1426,7 +1695,7 @@ fn production_native_seed_proofs_bound_exact_counts_before_start() {
                 matches!(
                     (&step.kind, &step.wait.arm),
                     (
-                        StepKind::Repeat { .. },
+                        StepKind::NativeSeedDeposit { .. },
                         Proof::BankItemId { id, count }
                     ) if *id == unnoted_id && *count == note_count
                 )
@@ -1508,7 +1777,7 @@ fn production_native_seed_proofs_bound_exact_counts_before_start() {
             matches!(
                 (&step.kind, &step.wait.arm),
                 (
-                    StepKind::Repeat { .. },
+                    StepKind::NativeSeedDeposit { .. },
                     Proof::BankItemId {
                         id: COINS_ID,
                         count: HERBLORE_NEWT_COIN_SEED
@@ -7422,21 +7691,88 @@ fn ardy_thiever_fight_prepares_food_and_attacks_a_real_guard_before_start() {
         .iter()
         .find(|step| step.wait.arm == Proof::NpcNameTargetingLocal { name: "Guard" })
         .expect("a real Guard must target the player before Start");
-    let StepKind::Perform { send } = &attack.kind else {
-        panic!("the fixture sends one ordinary Attack");
+    let StepKind::Repeat { send } = &attack.kind else {
+        panic!("the fixture Attack must re-admit once per game tick");
     };
+    assert_eq!(
+        attack.wait.budget_ticks, 150,
+        "the admission wait stays bounded by the step budget"
+    );
     let mut client = native_seed_client();
     let _peer = attach_loopback(&mut client);
     let mut snapshot = GameSnapshot::new();
     snapshot.rebuild(&client);
-    assert!(!send(&mut client, &snapshot));
+    // No Guard in this snapshot: admission waits for a later one
+    // instead of failing, and invents no combat.
+    assert!(send(&mut client, &snapshot));
     assert_eq!(client.out.pos, 0, "no Guard means no invented combat");
     plant_named_banker(&mut client, "Guard", 21, 20);
     std::sync::Arc::get_mut(&mut client.cache).unwrap().npcs[0].op =
         vec![Some("Attack".into()), None, None, None, None];
+    // The only Guard is busy with another player (face_entity player
+    // slot 7): not eligible, so admission waits and sends nothing.
+    client.npc[1].as_mut().unwrap().entity.face_entity = 32_768 + 7;
+    let snapshot = rebuild_npc_chat_snapshot(&mut client);
+    assert!(send(&mut client, &snapshot));
+    assert_eq!(client.out.pos, 0, "a busy Guard must not be attacked");
+    // The Guard moved out of admission range: still a wait, no send.
+    client.npc[1].as_mut().unwrap().entity.face_entity = -1;
+    client.npc[1].as_mut().unwrap().entity.x = 28 * 128;
+    let snapshot = rebuild_npc_chat_snapshot(&mut client);
+    assert!(send(&mut client, &snapshot));
+    assert_eq!(client.out.pos, 0, "a Guard past range must not be attacked");
+    // Back in range and free: the real Guard receives one Attack,
+    // and a repeat send on the next tick does not re-Attack it
+    // while the fixture waits for it to target the player.
+    client.npc[1].as_mut().unwrap().entity.x = 21 * 128;
     let snapshot = rebuild_npc_chat_snapshot(&mut client);
     assert!(send(&mut client, &snapshot));
     assert!(client.out.pos > 0, "the real Guard receives an NPC Attack");
+    let after_attack = client.out.pos;
+    assert!(send(&mut client, &snapshot));
+    assert_eq!(
+        client.out.pos, after_attack,
+        "the sent Attack must not be re-sent while its Guard is still free"
+    );
+    // The sent Guard engaged another player before targeting this
+    // one: admission releases it and waits for a free Guard again.
+    client.npc[1].as_mut().unwrap().entity.face_entity = 32_768 + 7;
+    let snapshot = rebuild_npc_chat_snapshot(&mut client);
+    assert!(send(&mut client, &snapshot));
+    assert_eq!(
+        client.out.pos, after_attack,
+        "a released busy Guard must not be attacked"
+    );
+    client.npc[1].as_mut().unwrap().entity.face_entity = -1;
+    let snapshot = rebuild_npc_chat_snapshot(&mut client);
+    assert!(send(&mut client, &snapshot));
+    assert!(
+        client.out.pos > after_attack,
+        "a free Guard after release receives a fresh Attack"
+    );
+
+    // Negative: a real dispatch refusal still fails the send. With
+    // no stream attached, the interaction refuses before dispatch.
+    let scenario = get("ardy_thiever_fight").unwrap();
+    let attack = scenario
+        .steps
+        .iter()
+        .find(|step| step.wait.arm == Proof::NpcNameTargetingLocal { name: "Guard" })
+        .expect("a real Guard must target the player before Start");
+    let StepKind::Repeat { send } = &attack.kind else {
+        panic!("the fixture Attack must re-admit once per game tick");
+    };
+    let mut client = native_seed_client();
+    plant_named_banker(&mut client, "Guard", 21, 20);
+    std::sync::Arc::get_mut(&mut client.cache).unwrap().npcs[0].op =
+        vec![Some("Attack".into()), None, None, None, None];
+    let snapshot = rebuild_npc_chat_snapshot(&mut client);
+    assert!(!snapshot.attached(), "no loopback stream is attached");
+    assert!(
+        !send(&mut client, &snapshot),
+        "a refused Attack dispatch must fail the fixture send"
+    );
+    assert_eq!(client.out.pos, 0, "a refused dispatch sends no Attack");
 }
 
 #[test]
@@ -8324,7 +8660,7 @@ fn flax_aio_and_secondary_cases_register_collection_cycles() {
             matches!(
                 (&step.kind, &step.wait.arm),
                 (
-                    StepKind::Repeat { .. },
+                    StepKind::NativeSeedDeposit { .. },
                     Proof::BankItemId {
                         id: LOBSTER_ID,
                         count: HERBLORE_EGG_FOOD_SEED
@@ -13650,7 +13986,7 @@ fn shop_buyout_npc_opener_does_not_retalk_after_choice_before_bank_loaded() {
     );
 
     plant_loaded_empty_bank(&mut client);
-    plant_bank_side(&mut client, COINS_ID, SHOP_BUYOUT_COIN_SEED);
+    plant_bank_side_full(&mut client, COINS_ID, SHOP_BUYOUT_COIN_SEED);
     client.bump_gens(ServerProt::UPDATE_INV_FULL);
     runner.tick(&mut client);
     assert_eq!(

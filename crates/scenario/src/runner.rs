@@ -1007,13 +1007,18 @@ impl ScenarioRunner {
             if dirty && !hold {
                 self.step_route(client);
             }
-            // A `Repeat` step sends at most once per observed game tick
-            // (one `PLAYER_INFO`). Frontend polls run at the client-cycle
-            // rate, so an unguarded repeat floods the engine's per-tick
-            // input budget and delays the next step's command behind the
-            // repeats. The first send of a step goes out at once
+            // A `Repeat` step (and the native seed deposit, which
+            // re-attempts the same way) sends at most once per
+            // observed game tick (one `PLAYER_INFO`). Frontend polls
+            // run at the client-cycle rate, so an unguarded repeat
+            // floods the engine's per-tick input budget and delays
+            // the next step's command behind the repeats. The first
+            // send of a step goes out at once
             // (`repeat_sent_game_tick` is `None`).
-            let repeat = matches!(self.current_step().kind, StepKind::Repeat { .. });
+            let repeat = matches!(
+                self.current_step().kind,
+                StepKind::Repeat { .. } | StepKind::NativeSeedDeposit { .. }
+            );
             let repeat_ready = !repeat || self.repeat_sent_game_tick != Some(self.snapshot.tick());
             if !self.step_sent && repeat_ready {
                 self.fire_nav_step_sustains(client);
@@ -1035,7 +1040,10 @@ impl ScenarioRunner {
                 // game-tick budget keeps counting.
                 self.step_sent = !matches!(
                     self.current_step().kind,
-                    StepKind::DrainDialogs { .. } | StepKind::Relog | StepKind::Repeat { .. }
+                    StepKind::DrainDialogs { .. }
+                        | StepKind::Relog
+                        | StepKind::Repeat { .. }
+                        | StepKind::NativeSeedDeposit { .. }
                 );
                 if self.step_sent {
                     self.game_ticks_waited = 0;
@@ -1865,6 +1873,20 @@ impl ScenarioRunner {
                     Err("driver rejected the send".into())
                 }
             }
+            StepKind::NativeSeedDeposit {
+                unnoted_id,
+                quantity,
+                note_id,
+            } => match crate::native_seed_deposit_attempt(
+                client,
+                &self.snapshot,
+                *unnoted_id,
+                *quantity,
+                *note_id,
+            ) {
+                Ok(_) => Ok(()),
+                Err(failure) => Err(failure.to_string()),
+            },
             StepKind::DrainDialogs { choice } => {
                 let mut ix = Interactions::new(&self.snapshot, client);
                 if self.snapshot.chat_continue_component_id() != -1 {
