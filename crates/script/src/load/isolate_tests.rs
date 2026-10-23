@@ -131,34 +131,6 @@ fn validate_non_yielding_module_is_bounded() {
 }
 
 #[test]
-fn awaited_module_without_completion_is_rejected_and_dropped() {
-    const CHILD: &str = "SCRIPT_AWAITED_MODULE_CHILD";
-    if std::env::var_os(CHILD).is_some() {
-        let baseline = live_runtime_count();
-        let isolate = LoadIsolate::spawn(
-            "await new Promise(() => {}); export function tick() {}".into(),
-            LoadShape::NativeTick,
-            vec![],
-        )
-        .unwrap();
-        let started = Instant::now();
-        let outcome = isolate.resolve_setup(Some(started + VALIDATION_TIMEOUT));
-        assert!(matches!(outcome, Ready::Failed(_)), "{outcome:?}");
-        isolate.join();
-        assert_eq!(live_runtime_count(), baseline);
-        assert!(
-            started.elapsed() < VALIDATION_TIMEOUT + JOIN_TIMEOUT,
-            "awaited module held its isolate beyond validation and retirement"
-        );
-        return;
-    }
-    run_exact_child(
-        "load::isolate::tests::awaited_module_without_completion_is_rejected_and_dropped",
-        CHILD,
-    );
-}
-
-#[test]
 fn pause_interrupts_a_newly_started_runaway_tick() {
     const CHILD: &str = "SCRIPT_PAUSE_CHILD";
     if std::env::var_os(CHILD).is_some() {

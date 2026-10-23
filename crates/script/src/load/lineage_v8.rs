@@ -861,10 +861,15 @@ pub(crate) fn block_on_event_loop(
         runtime.block_on_event_loop(options, timeout)
     })
 }
-/// Module resolution, compilation and evaluation share setup's deadline,
-/// not the runtime's 50 ms budget for a yielding tick. The setup owner can
-/// still terminate non-yielding V8 execution; this timer rejects an awaited
-/// module that never settles without changing the runtime's tick budget.
+
+/// Module resolution, compilation and evaluation get their own
+/// `SETUP_TIMEOUT` (10 s) timer, started when the load starts rather than from
+/// the setup owner's remaining deadline. The timer bounds a load that waits on
+/// a pending host async operation: deno_core rejects a top-level await that
+/// never settles before the timer can fire, and a pending operation sees
+/// termination only when this timer next wakes this future. The 50 ms runtime
+/// budget still bounds a yielding tick, and the setup owner still interrupts
+/// non-yielding V8 execution.
 pub(crate) fn load_modules(
     runtime: &mut Runtime,
     main: &rustyscript::Module,
