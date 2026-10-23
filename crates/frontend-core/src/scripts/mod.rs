@@ -2364,9 +2364,10 @@ impl Scripts {
             .map_err(ScriptStartError::from)
     }
 
-    /// Operator Start on `profile`: its pending Browse selection, then the
-    /// shared Browse selection, then the front end's heading, then its
-    /// assignment. Another profile's draft never reaches this Start.
+    /// Operator Start on `profile`: the card its Script section shows (its
+    /// pending Browse selection, then the front end's heading, then its
+    /// assignment). The shared Browse selection is not this profile's card
+    /// and never reaches this Start, nor does another profile's draft.
     /// Refused while the profile's script is active.
     pub(crate) fn start_selected<Io>(
         &mut self,
@@ -2385,12 +2386,6 @@ impl Scripts {
             .pending_browse
             .get(profile)
             .map(|sel| sel.as_script().clone())
-            .or_else(|| {
-                self.browse_selection
-                    .as_ref()
-                    .map(ScriptChoice::as_script)
-                    .cloned()
-            })
             .or_else(|| heading.cloned())
             .or_else(|| Self::assignment(core, profile).and_then(|a| sel_from_assignment(&a)))
             .ok_or_else(|| ScriptStartError::refused("no assignment"))?;
