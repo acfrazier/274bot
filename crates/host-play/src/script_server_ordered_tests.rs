@@ -1869,7 +1869,7 @@ fn ordered_invalid_request_shapes_fail_at_admission_without_cipher_or_payload_mo
     for rows in [0, 6] {
         let mut rig = Rig::new();
         rig.start([Emission::Advanced {
-            operations: vec![Send::close_modal(); rows],
+            operations: (0..rows).map(|_| Send::close_modal()).collect(),
             debug: None,
         }]);
         rig.pump(1);
