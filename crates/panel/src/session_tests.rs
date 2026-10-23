@@ -6894,6 +6894,50 @@ fn set_random_event_policy_persists_without_spawning() {
 }
 
 #[test]
+fn set_survival_persists_and_mirrors_running_arm() {
+    let path = tmp_vault("survival-settings-arm.vault");
+    let mut s = Session::new();
+    install_vault(
+        &mut s.core,
+        VaultFixture::create(&path, "test-passphrase-01"),
+    );
+    vault_upsert(&mut s.core, profile("alice", "pw", 42));
+    let mut play = frontend_core::test_support::empty_play(&host_play::PlayOptions {
+        host: "127.0.0.1".into(),
+        transport: client::Transport::Tcp,
+        port: 43594,
+        cache_dir: "/tmp".into(),
+        lowmem: true,
+        mainland: false,
+    });
+    let arm = SlotArm::new(42, false);
+    // The arm's mirrored byte: 0 = when needed, 1 = always, 2 = never
+    // (the script policy's fixed encoding).
+    assert_eq!(
+        arm.cure_poison.load(Ordering::Relaxed),
+        0,
+        "default: cure when needed"
+    );
+    play.attach_arm("alice", Arc::clone(&arm));
+    s.core.set_play(Some(play));
+    assert!(s.set_survival("alice", frontend_core::CurePoison::Never));
+    s.core.flush_writes();
+    assert_eq!(
+        arm.cure_poison.load(Ordering::Relaxed),
+        2,
+        "the choice must reach the live arm without respawn"
+    );
+    assert_eq!(
+        s.core.profile("alice").unwrap().survival().cure_poison(),
+        frontend_core::CurePoison::Never,
+        "the choice persists on the profile"
+    );
+    assert!(s.set_survival("alice", frontend_core::CurePoison::Always));
+    s.core.flush_writes();
+    assert_eq!(arm.cure_poison.load(Ordering::Relaxed), 1);
+}
+
+#[test]
 fn set_random_settings_mirrors_running_arm() {
     let path = tmp_vault("random-settings-arm.vault");
     let mut s = Session::new();

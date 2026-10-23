@@ -4735,6 +4735,10 @@
       "owner": "T2"
     },
     {
+      "path": "crates/script/src/survival/cure.rs",
+      "owner": "T2"
+    },
+    {
       "path": "crates/script/src/survival/math.rs",
       "owner": "T2"
     },
