@@ -444,6 +444,13 @@ impl ArmMirror {
     pub fn script_settings(card: String, live: Option<LiveSettings>) -> Self {
         Self(ArmMirrorKind::ScriptSettings { card, live })
     }
+    pub(crate) fn script_settings_identity(&self) -> Option<String> {
+        match &self.0 {
+            ArmMirrorKind::ScriptSettings { card, .. } => Some(card.clone()),
+            ArmMirrorKind::NativeSettings { id, .. } => Some(script::compiled_identity_key(*id)),
+            _ => None,
+        }
+    }
 
     pub fn native_settings(
         id: crate::scripts::CompiledCardId,
@@ -625,6 +632,9 @@ pub struct OperatorSession<Io> {
     saves: SaveBook,
     /// Settled script-parameter writes, drained by the script coordinator.
     settings_writes: Vec<SettingsWrite>,
+    /// Details for each queued script-settings operation, until it settles.
+    script_settings_logs: HashMap<OperationId, String>,
+
     /// Command-backed script assignment writes, drained by the script coordinator.
     script_assignment_writes: VecDeque<ScriptAssignmentWrite>,
     /// Load Starts whose setup has not settled, by slot.
@@ -748,6 +758,8 @@ impl<Io> OperatorSession<Io> {
             deliveries: Vec::new(),
             write_failures: Vec::new(),
             saves: SaveBook::default(),
+            script_settings_logs: HashMap::new(),
+
             settings_writes: Vec::new(),
             script_assignment_writes: VecDeque::new(),
             starts: HashMap::new(),
@@ -1223,6 +1235,32 @@ impl<Io> OperatorSession<Io> {
 
     pub(crate) fn set_outcome(&mut self, op: OperationId, slot: &str, outcome: Outcome) {
         self.operations.set(op, slot, outcome);
+    }
+    pub(crate) fn track_script_settings_log(&mut self, op: OperationId, details: String) {
+        self.script_settings_logs.insert(op, details);
+    }
+
+    pub(crate) fn log_legacy_script_settings(
+        &mut self,
+        card: &str,
+        action: &str,
+        field: &str,
+        old_value: Option<&serde_json::Value>,
+        new_value: &serde_json::Value,
+    ) -> OperationId {
+        let op = self.open_operation(ActionKind::SaveProfile);
+        self.operations.set(op, "legacy", Outcome::Completed);
+        let old_value =
+            old_value.map_or_else(|| "<unset>".to_owned(), serde_json::Value::to_string);
+        crate::log::global().process_line(
+            Source::Script,
+            Level::Info,
+            &format!(
+                "saved script settings; profile legacy; card {card}; action {action}; field {field}; old {old_value}; new {new_value}; op#{}",
+                op.0
+            ),
+        );
+        op
     }
 
     /// Failure text of `id`, for a front end's error line.
@@ -3307,9 +3345,11 @@ impl<Io> OperatorSession<Io> {
     }
 
     fn settle_write(&mut self, written: Written) {
+        let setting_log = self.script_settings_logs.remove(&written.op);
         let Some(mut pending) = self.writes.remove(&written.op) else {
             return;
         };
+
         // Profiles whose newest queued write this is: only those may be put
         // back on failure, so an older failure cannot undo a newer edit.
         let mut newest = Vec::new();
@@ -3341,10 +3381,11 @@ impl<Io> OperatorSession<Io> {
         }
         let member = pending.member;
         let script_assignment = matches!(&pending.mirror.0, ArmMirrorKind::ScriptAssignment);
-        let settings = matches!(
+        let script_settings = matches!(
             &pending.mirror.0,
-            ArmMirrorKind::ScriptSettings { .. } | ArmMirrorKind::Remember(Some(_))
+            ArmMirrorKind::ScriptSettings { .. } | ArmMirrorKind::NativeSettings { .. }
         );
+
         // A superseded write (later writes in this commit wrote every row it
         // did) is durable only inside their rows. If the commit succeeded, it
         // still settles on its own when it carries a setting (a live effect
@@ -3364,14 +3405,20 @@ impl<Io> OperatorSession<Io> {
         let result = match written.result {
             Ok(()) if !written.superseded || own_setting => {
                 self.operations.set(written.op, &member, Outcome::Completed);
-                if settings {
-                    crate::log::global().slot_line(
-                        &member,
-                        api::hostlog::Source::Script,
-                        api::hostlog::Level::Info,
-                        &format!("saved script settings; op#{}", written.op.0),
-                    );
+                if script_settings {
+                    if let Some(details) = setting_log.as_deref() {
+                        crate::log::global().slot_line(
+                            &member,
+                            Source::Script,
+                            Level::Info,
+                            &format!(
+                                "saved script settings; profile {member}; {details}; op#{}",
+                                written.op.0
+                            ),
+                        );
+                    }
                 }
+
                 if tracked {
                     let saved = if durable_row {
                         SaveResult::Saved
@@ -3475,7 +3522,7 @@ impl<Io> OperatorSession<Io> {
                     op: written.op,
                     result,
                 });
-        } else if settings {
+        } else if script_settings {
             self.settings_writes
                 .push(SettingsWrite::new(written.op, member, result));
         }

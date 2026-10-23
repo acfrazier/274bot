@@ -613,6 +613,8 @@ pub(super) struct ParameterEdit {
     baseline_value: Option<Value>,
     pending: Option<(OperationId, Value, String)>,
     error: Option<String>,
+    card_label: String,
+    field_label: String,
     dirty: bool,
     discard_after_pending: bool,
 }
@@ -626,8 +628,59 @@ impl ParameterEdit {
             baseline_value,
             pending: None,
             error: None,
+            card_label: String::new(),
+            field_label: String::new(),
             dirty: false,
             discard_after_pending: false,
+        }
+    }
+
+    fn remember_labels(&mut self, card: &str, field: &str) {
+        if self.card_label.is_empty() {
+            self.card_label.push_str(card);
+        }
+        if self.field_label.is_empty() {
+            self.field_label.push_str(field);
+        }
+    }
+}
+
+fn card_label_for_key(js: &script::JsLibrary, key: &ParameterEditKey) -> Option<String> {
+    if let Some(name) = key.card.strip_prefix("compiled:") {
+        return script::compiled_id(name)
+            .and_then(script::compiled_card)
+            .map(|card| card.name.to_owned());
+    }
+    let (source, lookup) = key.card.split_once(':')?;
+    let source = script::parse_source_kind(source)?;
+    js.get(source, lookup).map(|card| card.name.clone())
+}
+
+fn setting_labels_for_selection(
+    js: &script::JsLibrary,
+    selection: &script::ScriptSel,
+    field: &str,
+) -> Option<(String, String)> {
+    match selection {
+        script::ScriptSel::Compiled(id) => {
+            let card = script::compiled_card(*id)?;
+            let schema = (card.schema)();
+            let field = schema.iter().find(|setting| setting.id == field)?;
+            Some((
+                card.name.to_owned(),
+                super::SettingView::new(field).display_label().to_owned(),
+            ))
+        }
+        script::ScriptSel::Loaded(source, lookup) => {
+            let card = js.get(*source, lookup)?;
+            let setting = card
+                .settings_schema
+                .iter()
+                .find(|setting| setting.id == field)?;
+            Some((
+                card.name.clone(),
+                super::SettingView::new(setting).display_label().to_owned(),
+            ))
         }
     }
 }
@@ -751,12 +804,18 @@ impl Scripts {
         initial_text: &str,
         baseline_value: Option<Value>,
     ) -> &mut String {
+        let js = &self.js;
         let edit = edit_mut_or_insert(
             &mut self.parameter_edits,
             key,
             initial_text,
             &baseline_value,
         );
+        if edit.card_label.is_empty() {
+            if let Some(card_label) = card_label_for_key(js, key) {
+                edit.card_label = card_label;
+            }
+        }
         if edit.pending.is_none() && !edit.dirty && edit.baseline_text != initial_text {
             edit.text.clear();
             edit.text.push_str(initial_text);
@@ -779,6 +838,7 @@ impl Scripts {
         baseline_value: Option<Value>,
     ) -> &mut String {
         let selection = selection.as_script();
+        let js = &self.js;
         let (cache, scope, edits) = (
             &mut self.parameter_key_cache,
             &mut self.parameter_key_scope,
@@ -786,6 +846,13 @@ impl Scripts {
         );
         let key = cached_parameter_key(cache, scope, profile, selection, field);
         let edit = edit_mut_or_insert(edits, key, initial_text, &baseline_value);
+        if edit.card_label.is_empty() || edit.field_label.is_empty() {
+            if let Some((card_label, field_label)) =
+                setting_labels_for_selection(js, selection, field)
+            {
+                edit.remember_labels(&card_label, &field_label);
+            }
+        }
         if edit.pending.is_none() && !edit.dirty && edit.baseline_text != initial_text {
             edit.text.clear();
             edit.text.push_str(initial_text);
@@ -808,12 +875,21 @@ impl Scripts {
         options: &[String],
     ) -> Result<Value, String> {
         let def = def.def();
+        let field_label = super::SettingView::new(def).display_label();
+        let js = &self.js;
         let edit = edit_mut_or_insert(
             &mut self.parameter_edits,
             key,
             baseline_text,
             &baseline_value,
         );
+        if edit.card_label.is_empty() {
+            let card_label =
+                card_label_for_key(js, key).unwrap_or_else(|| "Script settings".to_owned());
+            edit.remember_labels(&card_label, field_label);
+        } else if edit.field_label.is_empty() {
+            edit.field_label.push_str(field_label);
+        }
         validate_edit(edit, def, options)
     }
 
@@ -827,7 +903,9 @@ impl Scripts {
         options: &[String],
     ) -> Result<Value, String> {
         let def = def.def();
+        let field_label = super::SettingView::new(def).display_label();
         let selection = selection.as_script();
+        let js = &self.js;
         let (baseline_text, baseline_value) = baseline;
         let (cache, scope, edits) = (
             &mut self.parameter_key_cache,
@@ -836,6 +914,13 @@ impl Scripts {
         );
         let key = cached_parameter_key(cache, scope, profile, selection, field);
         let edit = edit_mut_or_insert(edits, key, baseline_text, &baseline_value);
+        if edit.card_label.is_empty() || edit.field_label.is_empty() {
+            if let Some((card_label, _)) = setting_labels_for_selection(js, selection, field) {
+                edit.remember_labels(&card_label, field_label);
+            } else {
+                edit.remember_labels("Script settings", field_label);
+            }
+        }
         validate_edit(edit, def, options)
     }
 
@@ -850,12 +935,23 @@ impl Scripts {
             return Err("parameter edit identity changed".to_string());
         }
         let key = staged.key;
+        let field_label = super::SettingView::new(&staged.definition).display_label();
+        let js = &self.js;
         let edit = edit_mut_or_insert(
             &mut self.parameter_edits,
             &key,
             &staged.baseline_text,
             &staged.baseline_value,
         );
+        if edit.card_label.is_empty() || edit.field_label.is_empty() {
+            if let Some((card_label, _)) =
+                setting_labels_for_selection(js, staged.selection.as_script(), &staged.field)
+            {
+                edit.remember_labels(&card_label, field_label);
+            } else {
+                edit.remember_labels("Script settings", field_label);
+            }
+        }
         let value = validate_edit(edit, &staged.definition, &staged.options)?;
         Ok((
             key,
@@ -879,11 +975,10 @@ impl Scripts {
         field: &str,
     ) -> Option<&str> {
         let selection = selection.as_script();
-        self.parameter_key_cache
+        self.parameter_edits
             .iter()
-            .find(|key| key.matches(profile, selection, field))
-            .and_then(|key| self.parameter_edits.get(key))
-            .and_then(|edit| edit.error.as_deref())
+            .find(|(key, _)| key.matches(profile, selection, field))
+            .and_then(|(_, edit)| edit.error.as_deref())
     }
 
     /// Queue one profile save for a committed field. Only an in-flight save
@@ -908,19 +1003,31 @@ impl Scripts {
             self.parameter_edits.remove(key);
             return Ok(ParameterCommit::Unchanged);
         }
-        let (raw, baseline_text) = existing
-            .map(|edit| (edit.text.clone(), edit.baseline_text.clone()))
-            .unwrap_or_else(|| {
-                (
-                    script::format_setting_value(&value),
-                    current
-                        .as_ref()
-                        .map(script::format_setting_value)
-                        .unwrap_or_default(),
-                )
-            });
+        let raw = script::format_setting_value(&value);
+        let baseline_text = current
+            .as_ref()
+            .map(script::format_setting_value)
+            .unwrap_or_default();
+        let labels_missing = self
+            .parameter_edits
+            .get(key)
+            .is_none_or(|edit| edit.card_label.is_empty() || edit.field_label.is_empty());
+        let labels = if labels_missing {
+            setting_labels_for_selection(&self.js, selection, field)
+        } else {
+            None
+        };
         {
             let edit = edit_mut_or_insert(&mut self.parameter_edits, key, &baseline_text, &current);
+            if edit.card_label.is_empty() || edit.field_label.is_empty() {
+                if let Some((card_label, field_label)) = labels.as_ref() {
+                    edit.remember_labels(card_label, field_label);
+                } else {
+                    edit.remember_labels("Script settings", "setting");
+                }
+            }
+            edit.baseline_text.clone_from(&baseline_text);
+            edit.baseline_value = current.clone();
             if edit.text != raw {
                 edit.text.clone_from(&raw);
                 edit.validated_text.clone_from(&raw);
@@ -965,9 +1072,11 @@ impl Scripts {
                     return self.parameter_save_failed(key, "parameters unavailable");
                 };
                 self.set_legacy_value(
+                    core,
                     super::CardSource::from_script(*source),
                     &card.name,
                     field,
+                    current.clone(),
                     value.clone(),
                 )
                 .map(|()| None)
@@ -1022,6 +1131,30 @@ impl Scripts {
     pub fn has_parameter_draft(&self, profile: &str) -> bool {
         self.parameter_edits.iter().any(|(key, edit)| {
             key.profile.as_deref() == Some(profile) && edit.dirty && edit.pending.is_none()
+        })
+    }
+    /// Describe every unsaved field without allocating on the draw path.
+    pub fn parameter_draft_details<'a>(
+        &'a self,
+        profile: &'a str,
+    ) -> impl Iterator<Item = (&'a str, &'a str, &'a str)> + 'a {
+        self.parameter_edits.iter().filter_map(move |(key, edit)| {
+            if key.profile.as_deref() != Some(profile) || !edit.dirty || edit.pending.is_some() {
+                return None;
+            }
+            Some((
+                if edit.card_label.is_empty() {
+                    "Script settings"
+                } else {
+                    &edit.card_label
+                },
+                if edit.field_label.is_empty() {
+                    "Setting"
+                } else {
+                    &edit.field_label
+                },
+                edit.error.as_deref().unwrap_or("valid unsaved value"),
+            ))
         })
     }
 
