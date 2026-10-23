@@ -62,6 +62,7 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.5` 
 - Survival and script-setting audit lines use the values before and after
   the durable commit, including when one commit batches edits. Failed writes
   and superseded same-setting edits do not add audit lines.
+- The Cure poison labels now limit **When needed** to combat and protected walks and do not claim a poison status row.
 
 #### Panel and TUI
 
