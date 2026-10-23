@@ -105,7 +105,7 @@ text = """With the default Danger routing setting, **When survivable**, bots can
   monsters on the route."""
 first = "0.2.0"
 listed = "0.2.5"
-target = "0.2.6"
+target = "none"
 severity = "medium"
 owner = "S2c"
 
@@ -117,7 +117,7 @@ text = """The Quester has routes for 20 of the 68 quests. Routes for the other
   quests are planned in waves."""
 first = "0.2.0"
 listed = "0.2.5"
-target = "0.2.6"
+target = "none"
 severity = "medium"
 owner = "Quester waves"
 
@@ -129,7 +129,7 @@ text = """The Brimhaven Agility Arena script can stop at a plank or pillar it
   cannot use. The cause is under investigation."""
 first = "0.2.0"
 listed = "0.2.5"
-target = "0.2.6"
+target = "none"
 severity = "medium"
 owner = "T2.rest agility"
 
@@ -138,10 +138,10 @@ id = "bank-deposit-callback-delay"
 kind = "known-issue"
 area = "Banking"
 text = """`Bank.depositAllMatching` checks about one item per game tick, so large
-  deposits can be slow. A fix is planned for 0.2.6."""
+  deposits can be slow. A fix is planned for a later release."""
 first = "0.2.4"
 listed = "0.2.5"
-target = "0.2.6"
+target = "none"
 severity = "medium"
 owner = "event-driven runtime endpoint"
 
@@ -164,9 +164,9 @@ text = """A bot can't get through a door that another player closes again on eve
   tick, when that player's moves are handled before the bot's. The bot tries
   the door until its retries run out and then stops at the door. Finding
   another way around, changing worlds when allowed, and a clear "door held
-  shut" result are planned for 0.2.6."""
+  shut" result are planned for a later release."""
 first = "0.2.5"
-target = "0.2.6"
+target = "none"
 severity = "medium"
 owner = "nav"
 
@@ -297,3 +297,15 @@ first = "0.2.5"
 target = "none"
 severity = "low"
 owner = "scripts-misc"
+
+[[item]]
+id = "walkto-fleet-marks-stale"
+kind = "known-issue"
+area = "Panel"
+text = """If WalkTo is open while you change Fleet marks, WalkTo keeps the earlier
+  selection until you click **Walk N bots**. **Workaround:** after changing
+  Fleet marks, click **Walk N bots**, or close and reopen WalkTo."""
+first = "0.2.6"
+target = "none"
+severity = "low"
+owner = "panel"
