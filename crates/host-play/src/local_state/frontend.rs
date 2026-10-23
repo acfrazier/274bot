@@ -237,10 +237,7 @@ mod preference_error_tests {
 
     #[test]
     fn cancellation_and_missing_result_have_distinct_variants() {
-        let cancelled = PreferenceError::cancelled(
-            "panel-ui.json",
-            "request cancelled (Shutdown)",
-        );
+        let cancelled = PreferenceError::cancelled("panel-ui.json", "request cancelled (Shutdown)");
         let missing = PreferenceError::result_not_retained("panel-ui.json");
 
         assert!(matches!(&cancelled, PreferenceError::Cancelled { .. }));
@@ -754,18 +751,13 @@ impl Preferences {
         let path = || self.path().display().to_string();
         match poll {
             PreferenceWatchPoll::Pending => None,
-            PreferenceWatchPoll::Missing => {
-                Some(Err(PreferenceError::result_not_retained(path())))
-            }
+            PreferenceWatchPoll::Missing => Some(Err(PreferenceError::result_not_retained(path()))),
             PreferenceWatchPoll::Settled(Settlement::Completed(_)) => Some(Ok(())),
             PreferenceWatchPoll::Settled(Settlement::Failed(code)) => {
                 Some(Err(PreferenceError::from_code(path(), code)))
             }
             PreferenceWatchPoll::Settled(Settlement::Cancelled(cancellation)) => Some(Err(
-                PreferenceError::cancelled(
-                    path(),
-                    format!("request cancelled ({cancellation:?})"),
-                ),
+                PreferenceError::cancelled(path(), format!("request cancelled ({cancellation:?})")),
             )),
         }
     }

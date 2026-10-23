@@ -4006,8 +4006,13 @@ fn preference_byte_limit_refuses_before_queue_capacity_and_releases_credit() {
         small.push(queued);
     }
     assert_eq!(
-        preferences.begin_set("queue_overflow", true.into()).unwrap_err().code(),
-        Some(ErrorCode::Busy { domain: LocalStateDomain::Preferences }),
+        preferences
+            .begin_set("queue_overflow", true.into())
+            .unwrap_err()
+            .code(),
+        Some(ErrorCode::Busy {
+            domain: LocalStateDomain::Preferences
+        }),
         "queue capacity is separate from aggregate intent bytes"
     );
     assert!(PreferencePatch::set(
@@ -4020,7 +4025,8 @@ fn preference_byte_limit_refuses_before_queue_capacity_and_releases_credit() {
     for queued in &mut small {
         assert_eq!(queued.wait(WAIT), Some(Ok(())));
     }
-    let Update::Queued(mut large_after_release) = preferences.begin_set("bulk", bulk()).unwrap() else {
+    let Update::Queued(mut large_after_release) = preferences.begin_set("bulk", bulk()).unwrap()
+    else {
         panic!("settlement releases enough intent bytes for another large patch");
     };
     assert_eq!(large_after_release.wait(WAIT), Some(Ok(())));
@@ -4031,7 +4037,10 @@ fn preference_byte_limit_refuses_before_queue_capacity_and_releases_credit() {
     assert!(preferences.value("second").is_none());
     assert_eq!(preferences.value("next"), Some(true.into()));
     for index in 0..OPERATOR_QUEUE_CAP {
-        assert_eq!(preferences.value(&format!("small_{index}")), Some(true.into()));
+        assert_eq!(
+            preferences.value(&format!("small_{index}")),
+            Some(true.into())
+        );
     }
     assert!(preferences.value("queue_overflow").is_none());
 }
@@ -4061,7 +4070,8 @@ fn fix_r1_shutdown_finishes_a_cold_preference_before_the_nonzero_bound() {
         .recv_timeout(WAIT)
         .expect("the loadouts read holds the preferences store cold");
     let preferences = service.preferences();
-    let mut patch = PreferencePatch::member(&["nav", "allow_teleports"], Some(true.into())).unwrap();
+    let mut patch =
+        PreferencePatch::member(&["nav", "allow_teleports"], Some(true.into())).unwrap();
     patch
         .set_member(&["nav", "allow_wilderness"], Some(true.into()))
         .unwrap();
@@ -4095,7 +4105,11 @@ fn fix_r1_shutdown_finishes_a_cold_preference_before_the_nonzero_bound() {
     let state = ledger.0.state.lock();
     let store = state.stores.get(&StoreKey::Preferences).unwrap();
     assert_eq!(
-        store.settled.iter().filter(|entry| entry.request == request).count(),
+        store
+            .settled
+            .iter()
+            .filter(|entry| entry.request == request)
+            .count(),
         1,
         "the accepted patch settles exactly once"
     );
@@ -4106,7 +4120,10 @@ fn fix_r1_shutdown_finishes_a_cold_preference_before_the_nonzero_bound() {
     assert_eq!(commits[0].identity().account().profile(), "operator");
     assert_eq!(commits[0].action(), CommitAction::PreferencesWrite);
     assert_eq!(commits[0].origin(), AuditOrigin::Submitted { request });
-    assert!(lines.lock().unwrap().is_empty(), "no duplicate terminal line");
+    assert!(
+        lines.lock().unwrap().is_empty(),
+        "no duplicate terminal line"
+    );
     let saved: serde_json::Value =
         serde_json::from_slice(&std::fs::read(root.preferences_file()).unwrap()).unwrap();
     assert_eq!(
@@ -4125,10 +4142,12 @@ fn fix_r1_semantic_noop_rewrite_has_one_saved_state_info_line() {
     let commits = audits(preferences.service());
     let publications = Arc::new(AtomicUsize::new(0));
     let counted = Arc::clone(&publications);
-    preferences.service().set_write_hook(Arc::new(move |path, bytes| {
-        counted.fetch_add(1, Ordering::SeqCst);
-        vault::write_private_file(path, bytes)
-    }));
+    preferences
+        .service()
+        .set_write_hook(Arc::new(move |path, bytes| {
+            counted.fetch_add(1, Ordering::SeqCst);
+            vault::write_private_file(path, bytes)
+        }));
     let Update::Queued(mut watch) = preferences
         .begin_patch(
             PreferencePatch::member(&["nav", "allow_teleports"], Some(true.into())).unwrap(),
@@ -4138,7 +4157,11 @@ fn fix_r1_semantic_noop_rewrite_has_one_saved_state_info_line() {
         panic!("the semantic no-op is accepted");
     };
     assert_eq!(watch.wait(WAIT), Some(Ok(())));
-    assert_eq!(publications.load(Ordering::SeqCst), 1, "the file is rewritten");
+    assert_eq!(
+        publications.load(Ordering::SeqCst),
+        1,
+        "the file is rewritten"
+    );
     let commits = commits.lock().unwrap();
     assert_eq!(commits.len(), 1, "every actual rewrite logs one info line");
     assert_eq!(commits[0].identity().account().profile(), "operator");

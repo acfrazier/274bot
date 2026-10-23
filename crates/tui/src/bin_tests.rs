@@ -3638,10 +3638,7 @@ fn session_file_toggle_is_saved_and_applied_through_the_command() {
             frontend_core::log_file::session_log_setting(&session.preferences),
             on
         );
-        assert_eq!(
-            frontend_core::log_file::session_log_path().is_some(),
-            on
-        );
+        assert_eq!(frontend_core::log_file::session_log_path().is_some(), on);
         let settled_status = current_sink_status();
         assert_eq!(app.log.status.as_deref(), Some(settled_status.as_str()));
     }

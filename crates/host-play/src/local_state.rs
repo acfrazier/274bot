@@ -1196,7 +1196,10 @@ impl LocalStateService {
     #[cfg(test)]
     pub(crate) fn expire_preference_cache_for_test(&self) {
         let mut state = self.shared.state.lock();
-        let store = state.stores.get_mut(&StoreKey::Preferences).expect("preferences are open");
+        let store = state
+            .stores
+            .get_mut(&StoreKey::Preferences)
+            .expect("preferences are open");
         let FileState::Read(cached) = &mut store.file else {
             panic!("the preference cache must be hydrated before expiry");
         };
@@ -1209,8 +1212,39 @@ impl LocalStateService {
     #[cfg(test)]
     pub(crate) fn preference_readback_state_for_test(&self) -> (bool, u64) {
         let state = self.shared.state.lock();
-        let store = state.stores.get(&StoreKey::Preferences).expect("preferences are open");
+        let store = state
+            .stores
+            .get(&StoreKey::Preferences)
+            .expect("preferences are open");
         (store.readback != Readback::Idle, store.readbacks)
+    }
+
+    /// Wait for existing preference read demand without queuing another read.
+    #[cfg(test)]
+    pub(crate) fn wait_preference_readbacks_for_test(
+        &self,
+        target: u64,
+        timeout: Duration,
+    ) -> bool {
+        let deadline = Instant::now() + timeout;
+        let mut state = self.shared.state.lock();
+        loop {
+            let store = state
+                .stores
+                .get(&StoreKey::Preferences)
+                .expect("preferences are open");
+            if store.readbacks >= target {
+                return true;
+            }
+            if self
+                .shared
+                .settled
+                .wait_until(&mut state, deadline)
+                .timed_out()
+            {
+                return false;
+            }
+        }
     }
 
     /// Publish every file write through `hook` instead of the real file.
