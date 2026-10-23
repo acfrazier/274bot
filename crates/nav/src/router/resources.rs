@@ -674,7 +674,7 @@ impl PackedMinMaxHeap {
             min_max: false,
         })
     }
-    /// Grow to the record table's capacity without reallocating the heap.
+    /// Grow to the record table's capacity without reallocating the heap in place.
     ///
     /// Each growth allocates an exact-capacity buffer, copies only live entries,
     /// then drops the old buffer.
@@ -703,6 +703,9 @@ impl PackedMinMaxHeap {
     // caller's bounded expansion or transport unit.
     pub(super) fn push(&mut self, table: &mut PackedSearchTable, node: u32, parent: u32) {
         let position = self.entries.len();
+        // The caller grows the heap with the record table before a push
+        // (`try_grow_to`), so a push never reallocates the buffer in place.
+        debug_assert!(position < self.entries.capacity());
         self.entries.push(PackedHeapEntry::new(node, parent));
         table.slot_mut(node).set_open(position);
         if self.min_max {

@@ -244,8 +244,6 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.5` 
 
 - A long route search no longer uses up to about 1.5 MB more memory than
   in 0.2.4 on some runs.
-- Synchronous route searches no longer reserve the maximum heap at the start.
-  They grow heap capacity with the record table and copy only live entries.
 
 #### Banking
 
