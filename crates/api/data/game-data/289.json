@@ -13934,6 +13934,11 @@
           "sha256": "b28b1157c007690d9a7d1fc02bcb51bb4d45929997a71585ac9c0bdda35776d2"
         },
         {
+          "path": "pack/obj.pack",
+          "bytes": 96738,
+          "sha256": "b5e97146856661a96b2f78690da7f366fed1e871637a0982d4a5ebfa30ac2bf7"
+        },
+        {
           "path": "pack/param.pack",
           "bytes": 4698,
           "sha256": "5000136e59d80917ded02dc94bbf8a129d3ae4339ae09e081bf23021ca74515b"
@@ -21839,6 +21844,11 @@
           "sha256": "19d0b3e4756f0b93df2a776949ce053a528cfb62c5df8121378c1af8ee7c2003"
         },
         {
+          "path": "scripts/skill_firemaking/configs/firemaking.obj",
+          "bytes": 3168,
+          "sha256": "6327a3d102598aa2f43debe1bad7f4140f79c09ae4e6126fa8975e4ce823d1fe"
+        },
+        {
           "path": "scripts/skill_firemaking/scripts/achey.rs2",
           "bytes": 1960,
           "sha256": "037dc92b1328c30a2a5c6a4801f863db6b34ef7edc1a3ccf11cf7745b424e859"
@@ -21922,6 +21932,11 @@
           "path": "scripts/skill_fishing/scripts/fishing_spots/waterfall.rs2",
           "bytes": 3082,
           "sha256": "1628331197c14e4d11c74a0e26243c2cf930cc2750eb6215e3a5ad12a05b50db"
+        },
+        {
+          "path": "scripts/skill_fletching/configs/cut_logs/cut_logs.dbrow",
+          "bytes": 1135,
+          "sha256": "dbf5b82f7800319bc0abb10a61bacc396b1442c68c15404c53de7ed878868c95"
         },
         {
           "path": "scripts/skill_fletching/scripts/arrows.rs2",
@@ -104197,9 +104212,63 @@
         ]
       }
     ],
+    "knife": {
+      "knife": {
+        "alias": "knife",
+        "id": 946
+      },
+      "logs": [
+        {
+          "alias": "logs",
+          "id": 1511
+        }
+      ],
+      "sources": [
+        {
+          "file": "pack/category.pack",
+          "first": 183,
+          "last": 183
+        },
+        {
+          "file": "pack/obj.pack",
+          "first": 947,
+          "last": 947
+        },
+        {
+          "file": "pack/obj.pack",
+          "first": 1512,
+          "last": 1512
+        },
+        {
+          "file": "scripts/skill_cooking/scripts/gnome_cooking/cutting_fruit.rs2",
+          "first": 1,
+          "last": 15
+        },
+        {
+          "file": "scripts/skill_firemaking/configs/firemaking.obj",
+          "first": 87,
+          "last": 104
+        },
+        {
+          "file": "scripts/skill_fletching/configs/cut_logs/cut_logs.dbrow",
+          "first": 1,
+          "last": 7
+        },
+        {
+          "file": "scripts/skill_fletching/scripts/cut_logs.rs2",
+          "first": 2,
+          "last": 16
+        },
+        {
+          "file": "scripts/skill_fletching/scripts/cut_logs.rs2",
+          "first": 18,
+          "last": 78
+        }
+      ]
+    },
     "npc_transforms": {
       "schema": 1,
-      "evidence_sha256": "aca9dde5cbeef911f9f0a59eaa344512b10af74727c43965cfc00aaad941cfc9",
+      "evidence_sha256": "af857f57555fe5afc366698c09bfd524e9b7c170fab24e64f71b16b01b26e271",
       "operations": []
     }
   },

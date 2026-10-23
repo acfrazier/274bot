@@ -106,13 +106,8 @@ pub enum ButtonType {
 }
 
 /// Kind-specific properties borrowed from the verified selected catalog.
-/// ```compile_fail
-/// let _: api::interact::server_ordered::ComponentProperties =
-///     serde_json::from_str("{}").unwrap();
-/// ```
-/// ```compile_fail
-/// let _ = api::interact::server_ordered::ComponentProperties::Unused {};
-/// ```
+/// External code cannot construct, deserialize, or clone these properties;
+/// only the catalog's private wire decoder builds them.
 #[derive(Debug)]
 pub struct ComponentProperties {
     inner: ComponentPropertyValues,
@@ -607,6 +602,31 @@ impl ContractIdentity {
     }
 }
 
+/// Read-only selected knife and normal-log identities for the KnifeArm request.
+#[derive(Debug)]
+pub struct KnifeContract {
+    knife: ContractIdentity,
+    logs: Vec<ContractIdentity>,
+    sources: Vec<SourceSpan>,
+}
+
+impl KnifeContract {
+    /// Borrow the exact selected knife identity.
+    pub fn knife(&self) -> &ContractIdentity {
+        &self.knife
+    }
+
+    /// Borrow the selected normal-log identities accepted by this recipe.
+    pub fn logs(&self) -> &[ContractIdentity] {
+        &self.logs
+    }
+
+    /// Borrow the selected item-role source citations.
+    pub fn sources(&self) -> &[SourceSpan] {
+        &self.sources
+    }
+}
+
 /// A numeric location operation admitted by selected content.
 /// ```compile_fail
 /// let _: api::interact::server_ordered::NumericLocContract =
@@ -806,6 +826,22 @@ mod wire {
         id: i32,
     }
 
+    impl DecodeFact for ContractIdentity {
+        fn decode<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+            IdentityWire::deserialize(deserializer)
+        }
+    }
+
+    #[derive(Deserialize)]
+    #[serde(remote = "KnifeContract", deny_unknown_fields)]
+    pub(super) struct KnifeWire {
+        #[serde(with = "IdentityWire")]
+        knife: ContractIdentity,
+        #[serde(deserialize_with = "decode_list")]
+        logs: Vec<ContractIdentity>,
+        sources: Vec<SourceSpan>,
+    }
+
     #[derive(Deserialize)]
     #[serde(remote = "BankContract", deny_unknown_fields)]
     pub(super) struct BankWire {
@@ -858,6 +894,8 @@ pub(crate) struct CatalogWire {
     banker_page: Option<BankerPageProof>,
     #[serde(with = "wire::BankWire")]
     bank: BankContract,
+    #[serde(with = "wire::KnifeWire")]
+    knife: KnifeContract,
     #[serde(deserialize_with = "wire::decode_list")]
     numeric_locs: Vec<NumericLocContract>,
     #[serde(with = "npc_transforms::EvidenceWire")]
@@ -920,6 +958,11 @@ impl ServerOrderedCatalog {
     /// Borrow exact mode and operation facts for bank preflight.
     pub fn bank(&self) -> &BankContract {
         self.facts.bank()
+    }
+
+    /// Borrow selected knife and normal-log role identities.
+    pub fn knife(&self) -> &KnifeContract {
+        self.facts.knife()
     }
 
     /// Borrow the selected location numeric-operation allowlist.
@@ -1004,6 +1047,11 @@ impl CatalogWire {
     /// Borrow exact mode and operation facts for bank preflight.
     pub fn bank(&self) -> &BankContract {
         &self.bank
+    }
+
+    /// Borrow selected knife and normal-log role identities.
+    pub fn knife(&self) -> &KnifeContract {
+        &self.knife
     }
 
     /// Borrow the selected location numeric-operation allowlist.
@@ -1143,6 +1191,22 @@ impl CatalogWire {
                     || loc.operation != 2
                     || loc.action != "open_bank"
                     || loc.sources.is_empty()
+            })
+        {
+            return Err(ContractError::InvalidContract);
+        }
+        if self.knife.knife.alias.is_empty()
+            || self.knife.knife.id < 0
+            || self.knife.sources.is_empty()
+            || self.knife.logs.is_empty()
+            || self.knife.logs.iter().enumerate().any(|(index, identity)| {
+                identity.alias.is_empty()
+                    || identity.id < 0
+                    || identity.alias == self.knife.knife.alias
+                    || identity.id == self.knife.knife.id
+                    || self.knife.logs[..index]
+                        .iter()
+                        .any(|other| other.alias == identity.alias || other.id == identity.id)
             })
         {
             return Err(ContractError::InvalidContract);
