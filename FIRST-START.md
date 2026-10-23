@@ -95,10 +95,10 @@ These steps are the same on every system.
    **waiting in login queue** and then **logging in**. When the game appears, you
    are in. To skip this click next time, tick **Log in automatically** in the
    **Profiles** window.
-7. **Start a script.** Click **Browse…** and click a script. The first time, a
-   window may ask for your rs2b0t folder; click **Not now** if you have none. Then
-   click **Start**. **Pause** and **Stop** sit next to it. **Script prefs** opens
-   the script's settings.
+7. **Start a script.** Click the closed **script** heading to open it, then click
+   **Browse…**. The first time, a window may ask for your rs2b0t folder; click
+   **Not now** if you have none. Then click a script and click **Start**. **Pause**
+   and **Stop** sit next to it. **Script prefs** opens the script's settings.
 
 Next time, open the app, type your passphrase, click **Unlock vault** and click
 **Log in**.
