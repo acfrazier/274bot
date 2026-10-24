@@ -3010,6 +3010,224 @@ fn unlock_defers_automatic_focus_until_preferences_are_ready() {
 }
 
 #[test]
+fn operator_focus_before_preference_adoption_keeps_walk_target() {
+    for path in ["select", "chooser", "multibox", "existing", "first-profile"] {
+        let _iso = IsolatedStores::enter(&format!("panel-startup-focus-{path}"));
+        let (mut session, vault) = multibox_unlock_fixture();
+        session.preferences.reload().unwrap();
+        session.preferences_ready = false;
+        assert!(session.unlock_at(&vault, "test-passphrase-01"));
+        assert!(session.startup_focus_pending.is_some());
+        match path {
+            "select" => session.select("bob"),
+            "chooser" => session.pick_profile("bob"),
+            "multibox" => {
+                session.set_multibox(true);
+                session.pick_profile("bob");
+            }
+            "existing" => {
+                session.select("bob");
+                session.focus_when_ready(super::StartupFocus::Restore);
+                session.focus_existing("bob").unwrap();
+            }
+            "first-profile" => {
+                session.focus_when_ready(super::StartupFocus::SavedProfile("alice".into()));
+                session.select("bob");
+            }
+            _ => unreachable!(),
+        }
+        assert_eq!(session.focused_name().as_deref(), Some("bob"), "{path}");
+        let world = open_world(4, 4);
+        session.select_picker_tile(
+            &world,
+            Tile {
+                x: 2,
+                z: 2,
+                level: 0,
+            },
+        );
+        session.confirm_picker_walk(&world);
+        assert!(
+            session.panel_preferences_ready(),
+            "{path}: WalkTo adopts preferences"
+        );
+        let report = session
+            .core
+            .commands()
+            .reports()
+            .find(|report| report.command() == frontend_core::OperatorCommand::WalkTo)
+            .expect("WalkTo command report");
+        let bob = session.core.profile_identity_or_synthetic("bob");
+        assert!(
+            report
+                .member(frontend_core::command::Subject::Profile(bob))
+                .is_some(),
+            "{path}: the command must target the operator's selection: {report:?}"
+        );
+        assert_eq!(session.focused_name().as_deref(), Some("bob"), "{path}");
+        session.poll_panel_preferences();
+        assert!(session.startup_focus_pending.is_none(), "{path}");
+        assert_eq!(session.focused_name().as_deref(), Some("bob"), "{path}");
+    }
+}
+
+#[test]
+fn walk_preference_adoption_does_not_apply_startup_focus_mid_command() {
+    let _iso = IsolatedStores::enter("panel-command-startup-focus");
+    let (mut session, vault) = multibox_unlock_fixture();
+    session.preferences.reload().unwrap();
+    session.preferences_ready = false;
+    assert!(session.unlock_at(&vault, "test-passphrase-01"));
+    // A captured command context is not an operator focus decision. Keep the
+    // automatic restore pending while exercising lazy policy adoption.
+    session.set_focus_for_test("bob");
+    let world = open_world(4, 4);
+    session.select_picker_tile(
+        &world,
+        Tile {
+            x: 2,
+            z: 2,
+            level: 0,
+        },
+    );
+    session.confirm_picker_walk(&world);
+    assert!(session.panel_preferences_ready());
+    let report = session
+        .core
+        .commands()
+        .reports()
+        .find(|report| report.command() == frontend_core::OperatorCommand::WalkTo)
+        .expect("WalkTo command report");
+    let bob = session.core.profile_identity_or_synthetic("bob");
+    assert!(
+        report
+            .member(frontend_core::command::Subject::Profile(bob))
+            .is_some(),
+        "lazy preference adoption must not replace the captured target: {report:?}"
+    );
+    assert_eq!(session.focused_name().as_deref(), Some("bob"));
+    assert!(session.startup_focus_pending.is_some());
+    session.poll_panel_preferences();
+    assert_eq!(session.focused_name().as_deref(), Some("alice"));
+    assert!(session.startup_focus_pending.is_none());
+}
+
+#[test]
+fn removing_the_focused_bot_cancels_startup_focus() {
+    let _iso = IsolatedStores::enter("panel-remove-startup-focus");
+    let (mut session, vault) = multibox_unlock_fixture();
+    session.preferences.reload().unwrap();
+    session.preferences_ready = false;
+    assert!(session.unlock_at(&vault, "test-passphrase-01"));
+    session.select("alice");
+    session.focus_when_ready(super::StartupFocus::SavedProfile("alice".into()));
+    session.rail_remove("alice");
+    assert!(session.focused_name().is_none());
+    session.poll_panel_preferences();
+    assert!(
+        session.focused_name().is_none(),
+        "startup must not reload the removed focus"
+    );
+    assert!(session.startup_focus_pending.is_none());
+}
+
+fn fleet_login_profile(session: &mut Session, name: &str) {
+    session.pump_status();
+    session.fleet_model.clear_marks_for_test();
+    let identity = session.core.profile_identity(name).unwrap();
+    session.fleet_model.set_mark_for_test(identity, true);
+    session.plan_fleet_action(frontend_core::FleetAction::Login);
+    if session.core.fleet_plan().is_some() {
+        session.confirm_fleet_plan();
+    }
+    session.pump_status();
+}
+
+#[test]
+fn fleet_login_focus_cancels_pending_startup_restore() {
+    let _iso = IsolatedStores::enter("panel-fleet-startup-focus");
+    let (mut session, vault) = multibox_unlock_fixture();
+    session.preferences.reload().unwrap();
+    session.preferences_ready = false;
+    assert!(session.unlock_at(&vault, "test-passphrase-01"));
+    assert!(session.startup_focus_pending.is_some());
+    fleet_login_profile(&mut session, "bob");
+    assert_eq!(session.core.selected(), Some("bob"));
+    assert_eq!(session.focused_name().as_deref(), Some("bob"));
+    session.poll_panel_preferences();
+    assert_eq!(session.core.selected(), Some("bob"));
+    assert_eq!(
+        session.focus.lock().unwrap().focused.as_deref(),
+        Some("bob")
+    );
+    assert_eq!(session.core.members(), ["bob"]);
+    assert!(session.startup_focus_pending.is_none());
+}
+
+#[test]
+fn removing_unfocused_restore_target_cancels_startup_restore() {
+    for saved_profile in [false, true] {
+        let _iso = IsolatedStores::enter("panel-remove-unfocused-startup");
+        let (mut session, vault) = multibox_unlock_fixture();
+        session.preferences.reload().unwrap();
+        session.preferences_ready = false;
+        assert!(session.unlock_at(&vault, "test-passphrase-01"));
+        fleet_login_profile(&mut session, "bob");
+        fleet_login_profile(&mut session, "alice");
+        assert_eq!(session.core.selected(), Some("bob"));
+        assert!(session.core.members().iter().any(|name| name == "alice"));
+        // Keep removal independent of the Fleet selection cancellation.
+        session.focus_when_ready(if saved_profile {
+            super::StartupFocus::SavedProfile("alice".into())
+        } else {
+            super::StartupFocus::Restore
+        });
+        session.rail_remove("alice");
+        assert!(!session.core.members().iter().any(|name| name == "alice"));
+        session.poll_panel_preferences();
+        assert_eq!(session.core.members(), ["bob"]);
+        assert_eq!(session.core.selected(), Some("bob"));
+        assert!(session.startup_focus_pending.is_none());
+    }
+}
+
+#[test]
+fn deleting_pending_saved_profile_cancels_startup_restore() {
+    let _iso = IsolatedStores::enter("panel-delete-startup-focus");
+    let (mut session, vault) = multibox_unlock_fixture();
+    session.preferences.reload().unwrap();
+    session.preferences_ready = false;
+    assert!(session.unlock_at(&vault, "test-passphrase-01"));
+    session.focus_when_ready(super::StartupFocus::SavedProfile("alice".into()));
+    assert!(session.vault_remove("alice"));
+    assert!(!session.profile_names().iter().any(|name| name == "alice"));
+    session.poll_panel_preferences();
+    assert!(session.core.members().is_empty());
+    assert!(session.core.selected().is_none());
+    assert!(session.focus.lock().unwrap().focused.is_none());
+    assert!(session.startup_focus_pending.is_none());
+}
+
+#[test]
+fn deleting_other_profile_keeps_pending_saved_profile_restore() {
+    let _iso = IsolatedStores::enter("panel-delete-other-startup-focus");
+    let (mut session, vault) = multibox_unlock_fixture();
+    session.preferences.reload().unwrap();
+    session.preferences_ready = false;
+    assert!(session.unlock_at(&vault, "test-passphrase-01"));
+    session.focus_when_ready(super::StartupFocus::SavedProfile("bob".into()));
+    assert!(session.vault_remove("alice"));
+    assert!(session.startup_focus_pending.is_some());
+    session.poll_panel_preferences();
+    assert_eq!(session.core.selected(), Some("bob"));
+    assert_eq!(
+        session.focus.lock().unwrap().focused.as_deref(),
+        Some("bob")
+    );
+    assert_eq!(session.core.members(), ["bob"]);
+}
+
+#[test]
 fn multibox_profile_pick_restores_that_profiles_script_heading() {
     let (mut session, path) = multibox_unlock_fixture();
     hydrate_panel_preferences(&mut session);
