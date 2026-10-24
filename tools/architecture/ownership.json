@@ -511,6 +511,14 @@
       "owner": "T3"
     },
     {
+      "path": "crates/frontend-core/src/login_notice.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/frontend-core/src/login_notice_tests.rs",
+      "owner": "T3"
+    },
+    {
       "path": "crates/frontend-core/src/map_bake.rs",
       "owner": "T3"
     },
@@ -660,6 +668,10 @@
     },
     {
       "path": "crates/frontend-core/tests/fleet_plan_alloc.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/frontend-core/tests/login_notice_refused.rs",
       "owner": "T3"
     },
     {

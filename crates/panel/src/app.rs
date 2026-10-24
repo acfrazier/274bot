@@ -2046,10 +2046,23 @@ fn capacity_banner(ui: &Ui, session: &Session) {
     }
 }
 
+/// The top lines: a panel message first, then the focused bot's current
+/// login notice, then (with no panel message) startup progress or the
+/// bot's live state. The notice outlives the retry's state changes, so the
+/// state line shows under it; when the state line says the same failure,
+/// the notice says it once.
 fn banner(ui: &Ui, session: &Session, progress: Option<StartupProgressView>) {
+    let detail = session.core.fleet_view().detail();
     if let Some(err) = &session.error {
         ui.text_colored(ERROR, err);
-    } else if session.profile_preparing() {
+    }
+    if let Some(notice) = detail.and_then(|detail| detail.row().login_notice()) {
+        ui.text_colored(ERROR, sentence_case(notice));
+    }
+    if session.error.is_some() {
+        return;
+    }
+    if session.profile_preparing() {
         if let Some(progress) = progress {
             loading_banner(ui, progress.phase, &progress.progress);
         } else {
@@ -2059,8 +2072,11 @@ fn banner(ui: &Ui, session: &Session, progress: Option<StartupProgressView>) {
                 &ProgressView::steps(ProgressStage::SelectingServerProfile, 0, 1),
             );
         }
-    } else if let Some(detail) = session.core.fleet_view().detail() {
-        slot_banner(ui, detail);
+    } else if let Some(detail) = detail {
+        // An error state line that says the notice's failure is not repeated.
+        if detail.row().login_notice() != Some(detail.state()) {
+            slot_banner(ui, detail);
+        }
     }
 }
 
@@ -4733,10 +4749,12 @@ fn status_detail_rows(ui: &Ui, d: &frontend_core::SlotDetail, walk: &str, mem: &
     if let Some(random) = d.random() {
         kv_row(ui, "random", random);
     }
-    if !d.row().phase().is_error() {
-        if let Some(error) = d.row().error() {
-            kv_row(ui, "last error", error);
-        }
+    // The current login notice takes the history row's place while it
+    // stands (the terminal app's status pane does the same).
+    if let Some(notice) = d.login_notice_line() {
+        ui.text_colored(ERROR, notice);
+    } else if let Some(error) = d.row().last_error() {
+        kv_row(ui, "last error", error);
     }
     if let Some(op) = d.row().last_op() {
         kv_row(ui, "operation", &op.to_string());
