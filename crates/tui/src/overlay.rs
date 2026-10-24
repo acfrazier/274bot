@@ -405,7 +405,13 @@ impl TuiApp {
                     Ok(()) => (None, self.run_command(command)),
                     Err(reason) => {
                         state.note = Some(reason);
-                        (Some(Modal::Palette(state)), AppAction::None)
+                        // The palette shows the reason in its note; a
+                        // command that runs an operator command is also
+                        // refused at the command boundary.
+                        let refused = command
+                            .refusal(self, reason)
+                            .map_or(AppAction::None, AppAction::Refused);
+                        (Some(Modal::Palette(state)), refused)
                     }
                 };
             }
@@ -443,7 +449,7 @@ impl TuiApp {
                 (None, AppAction::Quit)
             }
             ConfirmKind::RestartSettings { .. } => (None, AppAction::ScriptRestartSettings),
-            ConfirmKind::FleetPlan { .. } => (None, AppAction::RunFleetPlan),
+            ConfirmKind::FleetPlan { action, .. } => (None, AppAction::RunFleetPlan(action)),
         }
     }
 
@@ -480,10 +486,7 @@ impl TuiApp {
             }
             ContextItem::Run(command) => match command.availability(self) {
                 Ok(()) => self.run_command(command),
-                Err(reason) => {
-                    self.error = Some(format!("{}: {reason}", command.label(self)));
-                    AppAction::None
-                }
+                Err(reason) => self.unavailable(command, reason),
             },
         }
     }

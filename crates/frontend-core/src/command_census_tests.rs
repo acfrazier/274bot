@@ -797,7 +797,13 @@ const SURFACE: &[(&str, Decision)] = &[
             "the vault prompt's pass: unlock the existing vault or create a new one",
         ),
     ),
-    ("panel/session.rs::Session::reset_vault", Row(C::ResetVault)),
+    (
+        "panel/session.rs::Session::start_vault",
+        Rows(
+            &[C::UnlockVault, C::CreateVault],
+            "refuses the vault prompt's pass before it submits (no bound profile): Unlock when the vault file exists, Create when it does not",
+        ),
+    ),
     // --- panel: fleet view ---
     (
         "panel/fleet.rs::table",
@@ -1118,9 +1124,13 @@ const SURFACE: &[(&str, Decision)] = &[
     (
         "tui/bin.rs::TuiSession::run_fleet_plan",
         Rows(
-            &[C::SwitchWorld(1)],
-            "Confirm submits the waiting plan's own command (`FleetPlan::command`, `Targets::Plan`): the row follows the plan's action, and Switch world's row is issued only through a plan",
+            &[C::SwitchWorld(1), C::PlanFleetAction(crate::fleet_plan::FleetAction::Start)],
+            "Confirm submits the waiting plan's own command (`FleetPlan::command`, `Targets::Plan`): the row follows the plan's action, and Switch world's row is issued only through a plan; with no plan waiting, the confirmed action's PlanFleetAction is refused at the command boundary",
         ),
+    ),
+    (
+        "tui/commands.rs::Command::operator_command",
+        Excluded("names the operator command a palette command runs, for the refusal line of an unavailable one; issues none"),
     ),
     (
         "tui/bin.rs::TuiSession::script_start",

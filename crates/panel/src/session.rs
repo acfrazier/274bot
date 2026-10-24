@@ -1792,11 +1792,18 @@ impl Session {
     }
 
     /// Unlock (or first-run create) the default vault and start the play.
+    /// A vault path that cannot be resolved refuses the Create the prompt
+    /// then offers (`vault_unlock_prompt` treats it as no vault file).
     pub fn unlock(&mut self, pass: &str) -> bool {
         let path = match self.vault_path() {
             Ok(path) => path,
             Err(error) => {
-                self.error = Some(format!("server profile: {error}"));
+                self.refuse_command(
+                    OperatorCommand::CreateVault,
+                    &[],
+                    None,
+                    &format!("server profile: {error}"),
+                );
                 return false;
             }
         };
@@ -1854,7 +1861,12 @@ impl Session {
         let path = match self.vault_path() {
             Ok(path) => path,
             Err(error) => {
-                self.error = Some(format!("server profile: {error}"));
+                self.refuse_command(
+                    OperatorCommand::ResetVault,
+                    &[],
+                    None,
+                    &format!("server profile: {error}"),
+                );
                 return false;
             }
         };
@@ -1869,7 +1881,12 @@ impl Session {
             .ensure_profile_bound()
             .and_then(|()| self.require_bot_operation())
         {
-            self.error = Some(msg.to_string());
+            let command = if path.is_file() {
+                OperatorCommand::UnlockVault
+            } else {
+                OperatorCommand::CreateVault
+            };
+            self.refuse_command(command, &[], None, &msg.to_string());
             return false;
         }
         match self.start_play(path, pass) {

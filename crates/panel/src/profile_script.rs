@@ -221,13 +221,15 @@ impl Session {
         self.apply_script_notice();
     }
 
-    /// Product UI catalog refresh.
+    /// Product UI catalog refresh. With no catalog root to read, the refresh
+    /// is refused at the shared command boundary, like every other refusal.
     pub fn begin_refresh_catalog(&mut self) {
-        match self.catalog_root() {
-            Ok(Some(root)) => self.begin_refresh_catalog_at(&root),
-            Ok(None) => self.error = Some("Refresh catalog: no catalog configured".into()),
-            Err(error) => self.error = Some(format!("Refresh catalog: {error}")),
-        }
+        let reason = match self.catalog_root() {
+            Ok(Some(root)) => return self.begin_refresh_catalog_at(&root),
+            Ok(None) => "Refresh catalog: no catalog configured".to_owned(),
+            Err(error) => format!("Refresh catalog: {error}"),
+        };
+        self.refuse_command(OperatorCommand::ImportCatalog, &[], None, &reason);
     }
 
     pub(crate) fn begin_refresh_catalog_at(&mut self, root: &Path) {

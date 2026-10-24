@@ -6622,42 +6622,52 @@ fn profile_import_bar(ui: &Ui, session: &mut Session, width: f32, entered: bool)
                             .map(|(index, name, command)| (index, name.to_owned(), command))
                             .collect::<Vec<_>>();
                         for (index, name, planned_command) in planned {
-                            match planned_command {
+                            let staged = match planned_command {
                                 OperatorCommand::CreateProfile => {
-                                    if let Err(error) =
-                                        session.profile_import.stage_create_account(index)
-                                    {
-                                        session.error = Some(error.to_string());
-                                        break;
-                                    }
-                                    let _ = session.submit(
-                                        OperatorCommand::CreateProfile,
-                                        Targets::Application,
-                                    );
+                                    session.profile_import.stage_create_account(index)
                                 }
                                 OperatorCommand::SaveProfile => {
-                                    if let Err(error) =
-                                        session.profile_import.stage_save_account(index)
-                                    {
-                                        session.error = Some(error.to_string());
-                                        break;
-                                    }
-                                    let _ = session.submit(
-                                        OperatorCommand::SaveProfile,
-                                        Targets::Profile(&name),
-                                    );
+                                    session.profile_import.stage_save_account(index)
                                 }
                                 _ => {
-                                    session.error = Some(format!(
-                                        "Profile import account {name} has an unsupported writer."
-                                    ));
+                                    session.refuse_command(
+                                        planned_command,
+                                        &[&name],
+                                        None,
+                                        &format!(
+                                            "Profile import account {name} has an unsupported writer."
+                                        ),
+                                    );
                                     break;
                                 }
+                            };
+                            if let Err(error) = staged {
+                                session.refuse_command(
+                                    planned_command,
+                                    &[&name],
+                                    None,
+                                    &error.to_string(),
+                                );
+                                break;
                             }
+                            let targets = if planned_command == OperatorCommand::CreateProfile {
+                                Targets::Application
+                            } else {
+                                Targets::Profile(&name)
+                            };
+                            let _ = session.submit(planned_command, targets);
                             session.profile_import.cancel_staged_account(index);
                         }
                     }
-                    Err(error) => session.error = Some(error.to_string()),
+                    // Import replans the preview against the current vault
+                    // before any account row exists; a refused replan is
+                    // refused as the preview it repeats.
+                    Err(error) => session.refuse_command(
+                        OperatorCommand::PreviewProfileImport,
+                        &[],
+                        None,
+                        &error.to_string(),
+                    ),
                 }
                 changed = true;
             }

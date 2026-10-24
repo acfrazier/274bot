@@ -15,7 +15,7 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use frontend_core::MarkOp;
 
-use crate::app::{AppAction, TuiApp};
+use crate::app::{AppAction, Refusal, TuiApp};
 use crate::commands::{
     script_key_command, Command, Group, CHAT_KEYS, FLEET_KEYS, MAP_KEYS, OVERVIEW_KEYS,
 };
@@ -304,13 +304,27 @@ impl TuiApp {
         self.focus_pane(order[next]);
     }
 
+    /// `command` is unavailable for `reason`. A command that runs an
+    /// operator command is refused at the shared command boundary
+    /// ([`AppAction::Refused`]: one log line, the reason on the message
+    /// line); a command that only changes the screen says why on the
+    /// message line.
+    pub(crate) fn unavailable(&mut self, command: Command, reason: &str) -> AppAction {
+        match command.refusal(self, reason) {
+            Some(refusal) => AppAction::Refused(refusal),
+            None => {
+                self.error = Some(format!("{}: {reason}", command.label(self)));
+                AppAction::None
+            }
+        }
+    }
+
     /// Run `command` if it is available now; otherwise say why on the
     /// message line. A fleet action goes to core as a plan; the dispatcher
     /// asks for confirmation only when the plan says so.
     pub fn run_command(&mut self, command: Command) -> AppAction {
         if let Err(reason) = command.availability(self) {
-            self.error = Some(format!("{}: {reason}", command.label(self)));
-            return AppAction::None;
+            return self.unavailable(command, reason);
         }
         match command {
             Command::Help => self.open_modal(Modal::Help(HelpState::default())),
@@ -521,16 +535,21 @@ impl TuiApp {
 
     /// Enter or a click on universe row `index`: focus a loaded bot, or
     /// say why an unloaded profile cannot be focused.
-    fn focus_row(&mut self, index: usize) -> AppAction {
+    pub(crate) fn focus_row(&mut self, index: usize) -> AppAction {
         let Some(row) = self.fleet_model.rows().get(index) else {
             return AppAction::None;
         };
         if !row.loaded() {
-            self.error = Some(format!(
-                "{} is not loaded: mark it and press m to log in",
-                row.name()
-            ));
-            return AppAction::None;
+            return AppAction::Refused(Refusal {
+                command: frontend_core::OperatorCommand::Select,
+                bot: Some(row.name().to_owned()),
+                reason: format!(
+                    "{} is not loaded: mark it and press m to log in",
+                    row.name()
+                )
+                .into(),
+                need: None,
+            });
         }
         let name = row.name().to_owned();
         let action = self.select_bot(&name);
@@ -680,7 +699,14 @@ impl TuiApp {
                 self.error = Some(reason.into());
                 return AppAction::SettingsDraftEdited(edit);
             }
-            SettingsKey::Refused(reason) => self.error = Some(reason.into()),
+            SettingsKey::Refused(reason) => {
+                return AppAction::Refused(Refusal {
+                    command: frontend_core::OperatorCommand::SetGuardian,
+                    bot: self.settings_profile.clone(),
+                    reason: reason.into(),
+                    need: None,
+                });
+            }
             SettingsKey::WalkGlobal(preference) => {
                 let pending = frontend_core::WalkGlobalsView::new(
                     self.nav,
