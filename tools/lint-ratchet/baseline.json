@@ -91,6 +91,16 @@
         "test": 0
       }
     },
+    "nav-bake": {
+      "clippy::too_many_arguments": {
+        "non_test": 8,
+        "test": 0
+      },
+      "clippy::type_complexity": {
+        "non_test": 1,
+        "test": 0
+      }
+    },
     "nav-planner": {
       "clippy::assertions_on_constants": {
         "non_test": 0,
@@ -113,25 +123,11 @@
         "test": 0
       },
       "clippy::too_many_arguments": {
-        "non_test": 48,
+        "non_test": 38,
         "test": 3
       },
       "clippy::type_complexity": {
-        "non_test": 2,
-        "test": 0
-      },
-      "unused_imports": {
         "non_test": 1,
-        "test": 0
-      }
-    },
-    "nav-executor": {
-      "clippy::too_many_arguments": {
-        "non_test": 0,
-        "test": 0
-      },
-      "clippy::type_complexity": {
-        "non_test": 0,
         "test": 0
       }
     },

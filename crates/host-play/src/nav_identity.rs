@@ -12,8 +12,8 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::OnceLock;
 
 /// One shipped navpack identity, analogue of `known-cache-identities.json`.
-/// The schema and its writer live in [`nav_planner::bundle`].
-pub use nav_planner::bundle::NavIdentityRow as BundledNavIdentity;
+/// The runtime schema lives in [`nav_planner::manifest`].
+pub use nav_planner::manifest::NavIdentityRow as BundledNavIdentity;
 
 /// Origin of the loaded navigation pack.
 #[derive(Debug, Clone, PartialEq, Eq)]

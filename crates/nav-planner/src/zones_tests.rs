@@ -293,13 +293,13 @@ fn transition_queries_goals_only_for_active_unexempted_entries() {
     ] {
         let filter = ZoneFilter::new(&table, Some(combat), &[tile(0, 0, 0)], &exemptions);
         let called = std::cell::Cell::new(0);
-        let blocked: Vec<_> = filter
+        let blocked = filter
             .blocking_transition_at(&wilderness, tile(0, 0, 0), to, &|| {
                 called.set(called.get() + 1);
                 true
             })
-            .collect();
-        assert!(blocked.is_empty(), "{to:?}");
+            .count();
+        assert_eq!(blocked, 0, "{to:?}");
         assert_eq!(called.get(), queries, "{to:?}");
     }
 

@@ -21,6 +21,7 @@ api = { path = "../api", features = ["test-support"] }
 frontend-core = { path = "../frontend-core", features = ["test-support"] }
 host = { path = "../host" }
 host-play = { path = "../host-play", features = ["test-support", "live-probe"] }
+nav-bake = { path = "../nav-bake" }
 
 [[bin]]
 name = "tui-play"
