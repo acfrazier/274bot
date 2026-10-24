@@ -1464,7 +1464,7 @@ fn loc_config_facts(
         let mut flush = |cur: &mut Option<(i32, Option<String>, Option<i32>)>| {
             if let Some((id, category, stage)) = cur.take() {
                 match out.get(&id) {
-                    Some(prev) if *prev != (category.clone(), stage) => {
+                    Some(prev) if prev.0 != category || prev.1 != stage => {
                         out.remove(&id);
                         conflicted.insert(id);
                     }

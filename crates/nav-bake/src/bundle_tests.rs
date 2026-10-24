@@ -244,7 +244,7 @@ fn current_format_stamp_without_manifest_pois_or_input_hashes_is_stale() {
             .contains("manifest")
     );
 
-    let mut empty_input_hash = baked.clone();
+    let mut empty_input_hash = baked;
     empty_input_hash.inputs[0].sha256 = String::new();
     assert!(
         invalid_input_detail(&empty_input_hash.covers(&expectation(&inputs)).unwrap_err())
@@ -377,7 +377,7 @@ fn generated_rows_win_over_superseded_checked_in_rows() {
         relative_path: "prebuilt/274bot.navpack".into(),
     };
     let (rows, notes) =
-        merge_identity_rows(vec![generated.clone()], vec![superseded, kept.clone()]);
+        merge_identity_rows(vec![generated], vec![superseded, kept.clone()]);
     assert_eq!(rows.len(), 2);
     assert_eq!(rows[0], kept);
     assert_eq!(rows[1].nav_sha256, "aa".repeat(32));

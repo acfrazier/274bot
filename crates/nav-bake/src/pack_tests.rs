@@ -297,7 +297,7 @@ fn flags_sidecar_rejects_truncated_header_and_partial_payload() {
         Err(PackError::Truncated)
     ));
     // Three of four payload bytes after a valid word-aligned start.
-    let mut almost = full.clone();
+    let mut almost = full;
     almost.pop();
     assert!(matches!(
         decode_flags_sidecar(&almost),
@@ -354,7 +354,7 @@ fn flags_sidecar_bulk_matches_scalar_on_errors_and_roundtrip() {
         let scalar = decode_flags_sidecar_scalar_ref(bad);
         assert_eq!(format!("{bulk:?}"), format!("{scalar:?}"));
     }
-    let mut partial = good.clone();
+    let mut partial = good;
     partial.push(0x42); // breaks word alignment
     assert_eq!(
         format!("{:?}", decode_flags_sidecar(&partial)),
@@ -440,7 +440,7 @@ fn reach_sidecar_rejects_bad_magic_version_and_truncated_payload() {
         decode_reach_sidecar(&partial),
         Err(PackError::Truncated)
     ));
-    let mut extra = full.clone();
+    let mut extra = full;
     extra.push(0);
     assert!(matches!(
         decode_reach_sidecar(&extra),
@@ -496,7 +496,7 @@ fn canlight_sidecar_roundtrips_and_rejects_bad_magic_version_truncation() {
         decode_canlight_sidecar(&bytes[..10]),
         Err(PackError::Truncated)
     ));
-    let mut extra = bytes.clone();
+    let mut extra = bytes;
     extra.push(0);
     assert!(matches!(
         decode_canlight_sidecar(&extra),
@@ -2714,7 +2714,7 @@ fn v13_decode_refuses_unbound_or_malformed_quest_gates() {
         matches!(decode(&empty_window), Err(PackError::BadLength(_))),
         "a [4,3] window admits no value"
     );
-    let mut bad_flag = bytes.clone();
+    let mut bad_flag = bytes;
     bad_flag[max_at - 1] = 2;
     assert!(matches!(decode(&bad_flag), Err(PackError::BadLength(_))));
 }
