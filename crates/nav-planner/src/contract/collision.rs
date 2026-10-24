@@ -86,7 +86,7 @@ impl<'a> CollisionView<'a> {
         if d == (0, 0) {
             return false;
         }
-        crate::router::step_ok(self.collision, from, d)
+        crate::movement::step_ok(self.collision, from, d)
     }
 
     /// Packed-bake Reach or Area arrival. Reach is production

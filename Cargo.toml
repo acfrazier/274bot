@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/host", "crates/vault", "crates/api", "crates/host-play", "crates/frontend-core", "crates/e2e", "crates/panel", "crates/nav-planner", "crates/nav-executor", "crates/script", "crates/scenario", "crates/tui", "tools/seat-model"]
+members = ["crates/host", "crates/vault", "crates/api", "crates/host-play", "crates/frontend-core", "crates/e2e", "crates/panel", "crates/nav-planner", "crates/nav-executor", "crates/nav-bake", "crates/script", "crates/scenario", "crates/tui", "tools/seat-model"]
 
 [workspace.lints.clippy]
 undocumented_unsafe_blocks = "warn"
@@ -56,7 +56,7 @@ debug = "line-tables-only"
 debug = false
 opt-level = 1
 
-# host-play's build script bakes the navigation pack through the `nav` crate.
+# host-play's build script bakes navigation through the `nav-bake` crate.
 # Build scripts default to opt-level 0, which made a bake take about 46 s instead
 # of 9 s (measured 2026-10-05); the baked files are byte-identical either way.
 # Registry build deps in dev still get `package."*"` above, which takes precedence.

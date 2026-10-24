@@ -970,8 +970,8 @@ fn navigation_and_scatter_use_the_selected_shared_world_and_keep_it_after_disk_e
         wildy_cap: None,
         quest_gates: None,
     });
-    let bytes = nav_planner::pack::encode(&collision, &graph, &[]).unwrap();
-    let flags = nav_planner::pack::encode_flags_sidecar(origin, 2, 1, &[0; 8]);
+    let bytes = nav_bake::pack::encode(&collision, &graph, &[]).unwrap();
+    let flags = nav_bake::pack::encode_flags_sidecar(origin, 2, 1, &[0; 8]);
     let pack = fixture.0.join("selected.navpack");
     let flags_path = fixture.0.join("selected.navflags");
     std::fs::write(&pack, &bytes).unwrap();
@@ -1076,7 +1076,7 @@ fn tiny_v8_pack() -> Vec<u8> {
     use nav_planner::collision::{pack_walk, WorldCollision};
     use nav_planner::transport::TransportGraph;
     let (walk, blocked) = pack_walk(&[0; 8]);
-    nav_planner::pack::encode(
+    nav_bake::pack::encode(
         &WorldCollision {
             origin: WorldTile {
                 x: 3200,
@@ -1104,7 +1104,7 @@ fn tiny_v8_reach(pack: &[u8]) -> Vec<u8> {
         level: 0,
     };
     let digest: [u8; 32] = Sha256::digest(pack).into();
-    nav_planner::pack::encode_reach_sidecar(origin, 2, 1, &[0u64], &digest)
+    nav_bake::pack::encode_reach_sidecar(origin, 2, 1, &[0u64], &digest)
 }
 
 fn fixture_canlight_policy() -> [u8; 32] {
@@ -1122,7 +1122,7 @@ fn tiny_v8_canlight(pack: &[u8]) -> (Vec<u8>, String) {
     let digest: [u8; 32] = Sha256::digest(pack).into();
     let policy = fixture_canlight_policy();
     let binding = nav_planner::canlight::header_binding(&digest, &policy);
-    let bytes = nav_planner::pack::encode_canlight_sidecar(origin, 2, 1, &[0u64], &binding);
+    let bytes = nav_bake::pack::encode_canlight_sidecar(origin, 2, 1, &[0u64], &binding);
     (bytes, nav_planner::pack::sha256_hex(&policy))
 }
 
@@ -1580,7 +1580,7 @@ fn packaged_v16_bundle_supersedes_a_stale_v10_home_pack() {
 fn revision_274_without_sidecar_is_legacy_and_decodes_once() {
     let fixture = Fixture::new();
     let bytes =
-        nav_planner::pack::encode_grid(&nav_planner::grid::StepGrid::fixture_door_corridor());
+        nav_bake::pack::encode_grid(&nav_planner::grid::StepGrid::fixture_door_corridor());
     let pack = fixture.0.join("legacy.navpack");
     std::fs::write(&pack, &bytes).unwrap();
     let mut options = fixture.options(274);

@@ -7,6 +7,30 @@ use sha2::{Digest, Sha256};
 
 const HASH_CHUNK_SIZE: usize = 1024 * 1024;
 
+/// One shipped navigation identity, written by the baker or a release packager.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NavIdentityRow {
+    #[serde(default)]
+    pub content_id: Option<String>,
+    #[serde(default)]
+    pub source_sha256: Option<String>,
+    pub revision: u16,
+    pub cache_id: String,
+    pub format: String,
+    pub nav_sha256: String,
+    pub flags_sha256: Option<String>,
+    #[serde(default)]
+    pub reach_sha256: Option<String>,
+    #[serde(default)]
+    pub canlight_sha256: Option<String>,
+    #[serde(default)]
+    pub canlight_identity: Option<String>,
+    #[serde(default)]
+    pub pois_sha256: Option<String>,
+    pub relative_path: String,
+}
+
 /// Cache archives that define one immutable client content identity.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -108,41 +132,6 @@ pub struct NavManifest {
 }
 
 impl NavManifest {
-    /// Capture the pack identity and its zone-table counts.
-    #[allow(clippy::too_many_arguments)]
-    pub fn capture(
-        revision: u16,
-        cache: &CacheManifest,
-        nav: &[u8],
-        flags: Option<&[u8]>,
-        reach: Option<&[u8]>,
-        canlight: Option<&[u8]>,
-        pois: Option<&[u8]>,
-        zone_count: u32,
-        zone_npc_count: u32,
-    ) -> Result<Self, String> {
-        validate_revision(revision)?;
-        if cache.revision != revision {
-            return Err(format!(
-                "cache manifest revision {} does not match selected revision {revision}",
-                cache.revision
-            ));
-        }
-        Ok(Self {
-            revision,
-            cache_id: cache.identity(),
-            nav_sha256: hash_bytes(nav),
-            zone_count,
-            zone_npc_count,
-            flags_sha256: flags.map(hash_bytes),
-            reach_sha256: reach.map(hash_bytes),
-            canlight_sha256: canlight.map(hash_bytes),
-            pois_sha256: pois.map(hash_bytes),
-            content_id: None,
-            source_sha256: None,
-        })
-    }
-
     /// Verify the pack identity and its zone-table counts from the decoded
     /// table supplied by the caller.
     #[allow(clippy::too_many_arguments)]
@@ -158,18 +147,25 @@ impl NavManifest {
         zone_count: u32,
         zone_npc_count: u32,
     ) -> Result<(), String> {
-        let actual = Self::capture(
-            revision,
-            cache,
-            nav,
-            flags,
-            reach,
-            canlight,
-            pois,
-            zone_count,
-            zone_npc_count,
-        )?;
-        if actual != *self {
+        validate_revision(revision)?;
+        if cache.revision != revision {
+            return Err(format!(
+                "cache manifest revision {} does not match selected revision {revision}",
+                cache.revision
+            ));
+        }
+        if self.revision != revision
+            || self.cache_id != cache.identity()
+            || self.nav_sha256 != hash_bytes(nav)
+            || self.zone_count != zone_count
+            || self.zone_npc_count != zone_npc_count
+            || self.flags_sha256 != flags.map(hash_bytes)
+            || self.reach_sha256 != reach.map(hash_bytes)
+            || self.canlight_sha256 != canlight.map(hash_bytes)
+            || self.pois_sha256 != pois.map(hash_bytes)
+            || self.content_id.is_some()
+            || self.source_sha256.is_some()
+        {
             return Err(
                 "navigation/profile mismatch: revision, cache identity or pack/flags content differs"
                     .into(),

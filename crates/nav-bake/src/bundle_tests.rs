@@ -338,7 +338,7 @@ fn fingerprints_cover_the_tree_and_detect_edits() {
 
 #[test]
 fn generated_rows_win_over_superseded_checked_in_rows() {
-    let generated = NavIdentityRow {
+    let generated = manifest::NavIdentityRow {
         revision: 289,
         cache_id: "cache".into(),
         content_id: None,
@@ -352,11 +352,11 @@ fn generated_rows_win_over_superseded_checked_in_rows() {
         pois_sha256: None,
         relative_path: "nav/289/274bot.navpack".into(),
     };
-    let superseded = NavIdentityRow {
+    let superseded = manifest::NavIdentityRow {
         nav_sha256: "bb".repeat(32),
         ..generated.clone()
     };
-    let kept = NavIdentityRow {
+    let kept = manifest::NavIdentityRow {
         revision: 274,
         cache_id: "other".into(),
         content_id: None,

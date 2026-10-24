@@ -555,7 +555,7 @@ pub fn bind_content(path: &Path) -> InputDigest {
             InputDigest::unresolved_at(path, "content path is a file, not a directory")
         }
         PathClass::Dir(canonical) => {
-            let inputs = nav_planner::bake::content_inputs(&canonical);
+            let inputs = nav_bake::bake::content_inputs(&canonical);
             let maps = bind_input(&inputs.maps_dir);
             let doors = bind_input(&inputs.doors_dir);
             let gates = bind_input(&inputs.gates);

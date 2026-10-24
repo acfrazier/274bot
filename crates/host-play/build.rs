@@ -39,16 +39,16 @@
 
 use std::path::{Path, PathBuf};
 
-use nav_planner::bake::{
+use nav_bake::bake::{
     config_jag_for, content_inputs, decoded_identity_from_snapshot, generator_identity,
     pois_generator_identity, verify_cache_manifest_from_fingerprints, BakeRequest,
     GENERATOR_SOURCES, POIS_GENERATOR_SOURCES,
 };
-use nav_planner::bundle::{
+use nav_bake::bundle::{
     artifact_layout, fingerprints, merge_identity_rows, resource_root_for_build, BakeStamp,
-    NavIdentityRow, StampExpectation,
+    StampExpectation,
 };
-use nav_planner::manifest::CacheManifest;
+use nav_planner::manifest::{self as modname, CacheManifest};
 use nav_planner::pack::FORMAT_ID;
 /// Environment inputs, all re-checked by cargo before this script is skipped.
 const ENV_KEYS: [&str; 7] = [
@@ -161,7 +161,7 @@ fn main() {
     // derived transports, and the canonical mapsquares themselves. The baker
     // skips what is absent, so they are required here — before a warm staged
     // stamp can be accepted, not only when this build has to bake.
-    match nav_planner::bundle::missing_content_inputs(revision, &content_dir) {
+    match nav_bake::bundle::missing_content_inputs(revision, &content_dir) {
         Ok(missing) if missing.is_empty() => {}
         Ok(missing) => fail(&incomplete_content(revision, &content_dir, &missing)),
         Err(e) => fail(&e),
@@ -185,7 +185,7 @@ fn main() {
         Ok(rows) => rows,
         Err(e) => fail(&e),
     };
-    let captured_manifest = match nav_planner::bundle::cache_manifest_from_fingerprints(
+    let captured_manifest = match nav_bake::bundle::cache_manifest_from_fingerprints(
         revision,
         &cache_dir,
         &input_fingerprints,
@@ -245,7 +245,7 @@ fn main() {
             "decoded navigation cache: {e}; supply BOT_NAV_SNAPSHOT_ROOT with a complete matching offline snapshot"
         ))
     });
-    let source_sha256 = nav_planner::bundle::source_digest_from_fingerprints(
+    let source_sha256 = nav_bake::bundle::source_digest_from_fingerprints(
         &content_dir,
         &[&config_jag],
         &input_fingerprints,
@@ -316,7 +316,7 @@ fn main() {
         .and_then(|stamp| stamp.covers(&expectation).ok())
     {
         Some(()) => (
-            NavIdentityRow {
+            modname::NavIdentityRow {
                 revision,
                 cache_id: cache_id.clone(),
                 content_id: staged.as_ref().expect("stamp").content_id.clone(),
@@ -362,7 +362,7 @@ fn main() {
         Ok(rows) => rows,
         Err(e) => fail(&e),
     };
-    let final_manifest = match nav_planner::bundle::cache_manifest_from_fingerprints(
+    let final_manifest = match nav_bake::bundle::cache_manifest_from_fingerprints(
         revision,
         &cache_dir,
         &final_inputs,
@@ -402,7 +402,7 @@ fn main() {
 #[allow(clippy::too_many_arguments)]
 fn bake_and_stage(
     revision: u16,
-    inputs: &nav_planner::bake::ContentInputs,
+    inputs: &nav_bake::bake::ContentInputs,
     config_jag: &Path,
     cache: &CacheManifest,
     manifest_source: Option<&Path>,
@@ -410,15 +410,15 @@ fn bake_and_stage(
     pois_generator: &str,
     cache_id: &str,
     content_id: &str,
-    input_fingerprints: &[nav_planner::bundle::InputFingerprint],
+    input_fingerprints: &[nav_bake::bundle::InputFingerprint],
     resource_root: &Path,
-    layout: &nav_planner::bundle::ArtifactLayout,
+    layout: &nav_bake::bundle::ArtifactLayout,
     stale_reason: Option<&str>,
-) -> Result<NavIdentityRow, String> {
+) -> Result<modname::NavIdentityRow, String> {
     if let Some(reason) = stale_reason {
         println!("cargo:warning=nav bundle: rebaking ({reason})");
     }
-    let baked = nav_planner::bake::bake_world(&BakeRequest {
+    let baked = nav_bake::bake::bake_world(&BakeRequest {
         revision: Some(revision),
         maps_dir: &inputs.maps_dir,
         doors_dir: &inputs.doors_dir,
@@ -527,7 +527,7 @@ fn bake_and_stage(
         pois.len(),
         pack_path.display()
     );
-    Ok(NavIdentityRow {
+    Ok(modname::NavIdentityRow {
         revision,
         cache_id: cache_id.to_string(),
         content_id: manifest.content_id.clone(),
@@ -548,8 +548,8 @@ fn bake_and_stage(
 /// not generate.
 fn publish(
     out_dir: &Path,
-    checked_in: Vec<NavIdentityRow>,
-    generated: Vec<NavIdentityRow>,
+    checked_in: Vec<modname::NavIdentityRow>,
+    generated: Vec<modname::NavIdentityRow>,
 ) -> usize {
     let (rows, notes) = merge_identity_rows(generated, checked_in);
     for note in notes {
@@ -604,12 +604,12 @@ fn env_path(key: &str) -> Option<PathBuf> {
     Some(PathBuf::from(home).join(rest))
 }
 
-fn read_rows(path: &Path) -> Vec<NavIdentityRow> {
+fn read_rows(path: &Path) -> Vec<modname::NavIdentityRow> {
     let bytes = match std::fs::read(path) {
         Ok(bytes) => bytes,
         Err(e) => fail(&format!("navigation identities {}: {e}", path.display())),
     };
-    match serde_json::from_slice::<Vec<NavIdentityRow>>(&bytes) {
+    match serde_json::from_slice::<Vec<modname::NavIdentityRow>>(&bytes) {
         Ok(rows) => rows,
         Err(e) => fail(&format!("navigation identities {}: {e}", path.display())),
     }

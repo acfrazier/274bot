@@ -89,7 +89,7 @@ impl UpgradeHome {
             level: 0,
         };
         let (walk, blocked) = pack_walk(&[0; 8]);
-        let bundle = nav_planner::pack::encode(
+        let bundle = nav_bake::pack::encode(
             &WorldCollision {
                 origin,
                 width: 2,
@@ -104,10 +104,10 @@ impl UpgradeHome {
         .unwrap();
         std::fs::write(resources.join("274bot.navpack"), &bundle).unwrap();
         let bundle_digest = Digest::of(&bundle).0;
-        let reach = nav_planner::pack::encode_reach_sidecar(origin, 2, 1, &[0u64], &bundle_digest);
+        let reach = nav_bake::pack::encode_reach_sidecar(origin, 2, 1, &[0u64], &bundle_digest);
         std::fs::write(resources.join("274bot.navreach"), &reach).unwrap();
         let policy = nav_planner::canlight::identity_digest(289, b"fixture-bank-zones", &[0u64]);
-        let canlight = nav_planner::pack::encode_canlight_sidecar(
+        let canlight = nav_bake::pack::encode_canlight_sidecar(
             origin,
             2,
             1,

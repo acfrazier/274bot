@@ -26,6 +26,7 @@ host-play = { path = "../host-play" }
 vault = { path = "../vault" }
 api = { path = "../api" }
 nav-planner = { path = "../nav-planner" }
+nav-bake = { path = "../nav-bake" }
 scenario = { path = "../scenario" }
 client = { workspace = true }
 serde = { version = "=1.0.219", features = ["derive"] }

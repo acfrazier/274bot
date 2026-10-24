@@ -149,7 +149,7 @@ fn production_area_arrival(
 /// Production step validity: `nav_planner::router::step_ok` as Gatherer's retreat
 /// flood calls it (`gatherer/runner.rs:185`), on the mover's own plane.
 fn production_step(collision: &WorldCollision, from: WorldTile, d: (i32, i32)) -> bool {
-    crate::router::step_ok(collision, from, d)
+    crate::movement::step_ok(collision, from, d)
 }
 
 /// Every tile of the `half`-radius window around `centre` on `centre`'s
