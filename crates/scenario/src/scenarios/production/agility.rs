@@ -474,7 +474,11 @@ pub(crate) fn brimhaven_agility_scenario() -> Scenario {
         ),
         (
             "watch the first Tag prompt for the next pillar",
-            Proof::Chat {
+            // The content sends this prompt as two consecutive messages and
+            // can send it while the preceding obstacle-XP watch still runs,
+            // so the baseline comes from that watch's start, not this
+            // step's. A prompt from before the XP watch stays stale.
+            Proof::FreshChatSincePreviousStep {
                 needle: "tag the next",
             },
         ),

@@ -158,14 +158,13 @@ pub enum Proof {
     Stat { id: i32, min: i32 },
     /// `stat(id) <= max`: sustain polls (energy/HP below a refill line).
     StatAtMost { id: i32, max: i32 },
-    /// A `MESSAGE_GAME`/`MESSAGE_PRIVATE` line containing `needle`
-    /// anywhere in the snapshot's chat history ring, not only the newest
-    /// line: content that sends one sentence as two consecutive messages
-    /// (the agility-arena first-tag prompt is `... tag the next` then
-    /// `pillar!`) must not hide the matching line behind its successor.
-    /// History semantics: a matching line from earlier in the run also
-    /// satisfies this arm. A step that needs a line newer than its own
-    /// start (a post-relog `getvar` reply) uses [`Proof::FreshChat`]
+    /// The newest `MESSAGE_GAME`/`MESSAGE_PRIVATE` line contains `needle`.
+    /// Newest-line only: a matching line that a later line has covered does
+    /// not satisfy this arm, and a line already at the head when the step
+    /// began does. A step that needs a line newer than a baseline (a
+    /// post-relog `getvar` reply, or a two-message burst whose first line a
+    /// second message covers in the same poll) uses [`Proof::FreshChat`],
+    /// [`Proof::FreshTutorial`], or [`Proof::FreshChatSincePreviousStep`]
     /// instead.
     Chat { needle: &'static str },
     /// A fresh post-relog `get tutorial: 1000` reply newer than the
@@ -184,6 +183,18 @@ pub enum Proof {
     /// `getvar` reply must come from this arm. The runner captures the baseline
     /// at step start; a bare [`Proof::check`] without it fails closed.
     FreshChat { needle: &'static str },
+    /// A chat line containing `needle` that is newer than the chat baseline
+    /// the runner latched when the *previous* step began. A watch chain can
+    /// need a line that content may send while the preceding watch is still
+    /// running: the agility-arena first-tag prompt can arrive during the
+    /// obstacle-XP watch, before the prompt watch begins, and its second
+    /// line covers the matching first line at the head. A baseline from
+    /// this step's own start would miss that prompt; a whole-history scan
+    /// would also accept a prompt from before the previous watch. When
+    /// this arm is the first step, the baseline falls back to this step's
+    /// start. A bare [`Proof::check`] without the runner baseline fails
+    /// closed.
+    FreshChatSincePreviousStep { needle: &'static str },
     /// A fresh system-chat quest-completion line and the exact visible
     /// completion-scroll text in the expected main-interface root/component.
     /// The runner captures the chat baseline when the step begins; a bare
@@ -304,7 +315,9 @@ pub(crate) fn world_speed_confirmation_after(
 }
 
 /// Whether a chat line newer than `baseline` contains `needle`. Backs
-/// [`Proof::FreshChat`]; the runner supplies the step-start baseline.
+/// [`Proof::FreshChat`] (step-start baseline) and
+/// [`Proof::FreshChatSincePreviousStep`] (previous-step baseline); the
+/// runner supplies the baseline.
 pub(crate) fn fresh_chat_contains(snap: &GameSnapshot, baseline: i32, needle: &str) -> bool {
     snap.chat_lines()
         .iter()
@@ -428,6 +441,9 @@ impl Proof {
                 crate::tutorial::TUTORIAL_CHAT_NEEDLE
             ),
             Proof::FreshChat { needle } => format!("fresh_chat(contains \"{needle}\")"),
+            Proof::FreshChatSincePreviousStep { needle } => {
+                format!("fresh_chat_since_previous_step(contains \"{needle}\")")
+            }
             Proof::FreshQuestCompletion {
                 chat_needle,
                 main_root_component_id,
@@ -743,21 +759,15 @@ impl Proof {
                 .is_some_and(|v| v.value == *value),
             Proof::Stat { id, min } => stat_value(snap, *id).is_some_and(|v| v >= *min),
             Proof::StatAtMost { id, max } => stat_value(snap, *id).is_some_and(|v| v <= *max),
-            // The whole history ring, not only `snap.chat()` (the newest
-            // line): a two-message burst puts the matching line one slot
-            // behind the head before any poll can see it on top. The head
-            // fallback keeps a snapshot whose ring was not rebuilt (only
-            // the head latched) behaving as before.
-            Proof::Chat { needle } => {
-                snap.chat_lines()
-                    .iter()
-                    .any(|line| line.text.contains(needle))
-                    || snap.chat().is_some_and(|c| c.contains(needle))
-            }
+            // Newest line only (`snap.chat()` is the ring head). A line a
+            // later message has covered does not satisfy this arm; the
+            // fresh arms below scan the ring against a runner baseline.
+            Proof::Chat { needle } => snap.chat().is_some_and(|c| c.contains(needle)),
             // Freshness needs the runner's post-relog baseline (see
             // `ScenarioRunner::holds`); a bare snapshot check fails closed.
             Proof::FreshTutorial => false,
             Proof::FreshChat { .. } => false,
+            Proof::FreshChatSincePreviousStep { .. } => false,
             // Fresh chat plus an exact visible quest scroll needs the
             // runner's step-start baseline and full widget observation.
             Proof::FreshQuestCompletion { .. } => false,
@@ -2397,11 +2407,13 @@ mod tests {
     }
 
     #[test]
-    fn chat_scans_the_whole_history_ring_not_only_the_newest_line() {
+    fn chat_does_not_scan_covered_history_but_the_fresh_baseline_sees_the_burst() {
         // The agility-arena first-tag prompt is two consecutive content
         // messages (`agilityarena.rs2:72-73`): the matching sentence,
-        // then `pillar!`. In ring order (newest first) the needle sits
-        // one slot behind the head and a head-only check never sees it.
+        // then `pillar!`. `Proof::Chat` reads only the newest line, so it
+        // must not pass on the covered first line. The fresh arms scan the
+        // ring only above a runner baseline, so the burst passes when it
+        // arrived after the baseline and fails when it is at or below it.
         let line = |text: &str, sequence| ChatLineView {
             type_: 0,
             username: None,
@@ -2417,25 +2429,58 @@ mod tests {
             ),
         ]);
         assert!(
-            Proof::Chat {
+            !Proof::FreshChatSincePreviousStep {
                 needle: "tag the next"
             }
             .check(&s, None),
-            "the two-line burst must satisfy the first-tag watch"
+            "a bare snapshot check cannot prove a line is newer than the baseline"
+        );
+        assert!(
+            super::fresh_chat_contains(&s, 9, "tag the next"),
+            "the two-line burst newer than the baseline must satisfy the watch"
+        );
+        assert!(
+            !super::fresh_chat_contains(&s, 10, "tag the next"),
+            "a matching line at the baseline sequence is stale history"
+        );
+        assert!(
+            !super::fresh_chat_contains(&s, 11, "tag the next"),
+            "a matching line below the baseline sequence is stale history"
+        );
+        assert_eq!(
+            Proof::FreshChatSincePreviousStep {
+                needle: "tag the next"
+            }
+            .name(),
+            "fresh_chat_since_previous_step(contains \"tag the next\")"
+        );
+
+        // No tag prompt newer than the baseline: the watch stays unsatisfied.
+        s.seed_chat_lines(vec![line("pillar!", 11), line("You hop the spikes.", 10)]);
+        assert!(!super::fresh_chat_contains(&s, 9, "tag the next"));
+        s.seed_chat_lines(vec![]);
+        assert!(!super::fresh_chat_contains(&s, 9, "tag the next"));
+    }
+
+    #[test]
+    fn chat_misses_a_line_covered_by_the_next_message() {
+        let mut c = seeded();
+        c.add_chat(
+            0,
+            "You get tickets by tagging more than one pillar in a row, tag the next",
+            "",
+        );
+        c.add_chat(0, "pillar!", "");
+        c.bump_gens(ServerProt::MESSAGE_GAME);
+        let s = snap(&mut c);
+        assert!(
+            !Proof::Chat {
+                needle: "tag the next"
+            }
+            .check(&s, None),
+            "Proof::Chat is newest-line only and must miss the covered line"
         );
         assert!(Proof::Chat { needle: "pillar!" }.check(&s, None));
-
-        // No tag prompt in the history: the watch stays unsatisfied.
-        s.seed_chat_lines(vec![line("pillar!", 11), line("You hop the spikes.", 10)]);
-        assert!(!Proof::Chat {
-            needle: "tag the next"
-        }
-        .check(&s, None));
-        s.seed_chat_lines(vec![]);
-        assert!(!Proof::Chat {
-            needle: "tag the next"
-        }
-        .check(&s, None));
     }
 
     #[test]
