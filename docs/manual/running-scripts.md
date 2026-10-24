@@ -150,7 +150,7 @@ By default, each bot starts its own saved script. A bot that already runs a
 script is skipped with `already active`. A bot with no saved script fails with
 `no assignment`.
 Bots start one after another, so some show `queued 2/5` for a while. The
-[panel guide](../api/panel.md#fleet-toolbar) describes the toolbar.
+[many-bots guide](fleet-and-groups.md) describes the toolbar.
 
 ## Read the status
 

@@ -15,10 +15,10 @@ use super::super::{
 };
 use super::ShippedMap;
 use crate::map_producer::{map_artifact_policies, NativeMapProducer};
-use nav::map::formats::{ImageManifest, PayloadReceipt, ShippedImages, TileReceipt};
-use nav::map::identity::Digest;
-use nav::map::spatial::TileKey;
-use nav::map::Rows;
+use nav_planner::map::formats::{ImageManifest, PayloadReceipt, ShippedImages, TileReceipt};
+use nav_planner::map::identity::Digest;
+use nav_planner::map::spatial::TileKey;
+use nav_planner::map::Rows;
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -816,11 +816,11 @@ fn real_content_map_demand_capture() {
     // the decoded snapshot's versionlist and computes its content identity;
     // the navpack sidecar binds that identity to the canonical source cache.
     let input = PreparedMapInput::offline(revision, &jag_dir, &snapshot_root).unwrap();
-    let cache = nav::manifest::CacheManifest::capture(revision, &jag_dir).unwrap();
-    let nav_manifest_path = nav::manifest::nav_manifest_path(&navpack);
-    let nav_manifest: nav::manifest::NavManifest =
+    let cache = nav_planner::manifest::CacheManifest::capture(revision, &jag_dir).unwrap();
+    let nav_manifest_path = nav_planner::manifest::nav_manifest_path(&navpack);
+    let nav_manifest: nav_planner::manifest::NavManifest =
         serde_json::from_slice(&fs::read(nav_manifest_path).unwrap()).unwrap();
-    let navpack_sha256 = nav::manifest::hash_file(&navpack).unwrap();
+    let navpack_sha256 = nav_planner::manifest::hash_file(&navpack).unwrap();
     let content_id = input.content().to_string();
     nav_manifest
         .verify_pack(revision, &cache, &navpack_sha256, Some(content_id.as_str()))
@@ -835,7 +835,7 @@ fn real_content_map_demand_capture() {
         match expected {
             Some(expected) => {
                 assert_eq!(
-                    nav::manifest::hash_file(&sidecar).unwrap(),
+                    nav_planner::manifest::hash_file(&sidecar).unwrap(),
                     expected,
                     "reference navpack sidecar {}",
                     sidecar.display()

@@ -177,6 +177,37 @@ fn session(test: &str, profiles: &[(&str, i32, bool)]) -> OperatorSession<u32> {
     session
 }
 
+#[test]
+fn new_profile_form_refuses_an_empty_password() {
+    let iso = crate::test_support::IsolatedStores::enter("profile-editor-empty-password");
+    let mut core = session("profile-editor-empty-password", &[]);
+    let scripts = crate::scripts::Scripts::new(
+        script::JsLibrary::with_cache(
+            iso.dir().join("js-scripts.json"),
+            iso.dir().join("js-cache"),
+        ),
+        script::ScriptSettingsStore::at(iso.dir().join("script-settings.json")),
+    );
+    let mut editor = crate::ProfileEditor::new();
+    editor.open(&core, "");
+    editor.username_mut().push_str("alice");
+
+    assert_eq!(
+        editor.save(&mut core, &scripts, OperatorCommand::CreateProfile),
+        Err(crate::SaveRefused::Refused)
+    );
+    assert_eq!(
+        editor
+            .save_state()
+            .notice()
+            .and_then(|notice| notice.error()),
+        Some("credentials: password required")
+    );
+    assert!(core.profile("alice").is_none(), "nothing was saved");
+    core.flush_writes();
+    assert!(core.profile("alice").is_none(), "nothing was queued");
+}
+
 fn arm(session: &OperatorSession<u32>, name: &str) -> Arc<SlotArm> {
     session.play().unwrap().arm(name).expect("live arm")
 }

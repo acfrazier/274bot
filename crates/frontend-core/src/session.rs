@@ -960,7 +960,7 @@ impl<Io> OperatorSession<Io> {
     pub fn with_slot_world_state<R>(
         &self,
         name: &str,
-        f: impl FnOnce(&api::snapshot::GameSnapshot, &nav::WorldState) -> R,
+        f: impl FnOnce(&api::snapshot::GameSnapshot, &nav_planner::WorldState) -> R,
     ) -> Option<R> {
         self.frames.with_world_state(name, f)
     }
@@ -1251,7 +1251,7 @@ impl<Io> OperatorSession<Io> {
         &mut self,
         name: &str,
         snapshot: api::snapshot::GameSnapshot,
-        world_state: nav::WorldState,
+        world_state: nav_planner::WorldState,
     ) {
         self.frames
             .publish_test_snapshot(name, snapshot, world_state);
@@ -2119,7 +2119,7 @@ impl<Io> OperatorSession<Io> {
     }
 
     /// `name`'s known bank rows (empty without a play).
-    pub fn bank_rows(&self, name: &str) -> nav::bank_fetch::BankRows {
+    pub fn bank_rows(&self, name: &str) -> nav_planner::bank_fetch::BankRows {
         self.play
             .as_ref()
             .map(|play| play.bank_rows(name))
@@ -2127,7 +2127,7 @@ impl<Io> OperatorSession<Io> {
     }
 
     /// The bound navigation world, once loaded.
-    pub fn nav_world(&self) -> Option<Arc<nav::world::NavWorld>> {
+    pub fn nav_world(&self) -> Option<Arc<nav_planner::world::NavWorld>> {
         self.play.as_ref()?.world()
     }
 

@@ -2,8 +2,8 @@ use super::harness::{native_pick_action, HeldDriver};
 use super::*;
 use api::named_banks::NamedBank;
 use client::dash3d::CollisionFlag;
-use nav::collision::{pack_walk, WorldCollision};
-use nav::transport::TransportGraph;
+use nav_planner::collision::{pack_walk, WorldCollision};
+use nav_planner::transport::TransportGraph;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 fn tile(x: i32, z: i32) -> WorldTile {
@@ -431,10 +431,10 @@ fn typed_select_routes_before_using_a_closer_air_fallback_with_compatibility_bou
             flags: None,
         },
         TransportGraph::default(),
-        vec![nav::pack::BankStand {
+        vec![nav_planner::pack::BankStand {
             name: "Bank booth".into(),
             tile: public.tile,
-            access: nav::pack::BankAccess::Booth { op: 2 },
+            access: nav_planner::pack::BankAccess::Booth { op: 2 },
         }],
     ));
     let (mut slot, action) = native_pick_action(banks.clone(), tile(8, 8), None, true);
@@ -532,10 +532,10 @@ fn typed_select_routes_before_using_a_closer_air_fallback_with_compatibility_bou
 fn native_bank_access_resolves_teller_and_object_metadata() {
     let flags = vec![0; 4 * 16 * 16];
     let (walk, blocked) = pack_walk(&flags);
-    let teller = nav::pack::BankStand {
+    let teller = nav_planner::pack::BankStand {
         name: "Gundai".to_owned(),
         tile: tile(8, 8),
-        access: nav::pack::BankAccess::Npc {
+        access: nav_planner::pack::BankAccess::Npc {
             name: "Gundai".to_owned(),
             op: 4,
             choose: None,
@@ -552,10 +552,10 @@ fn native_bank_access_resolves_teller_and_object_metadata() {
         },
         TransportGraph::default(),
         vec![
-            nav::pack::BankStand {
+            nav_planner::pack::BankStand {
                 name: "Bank booth".to_owned(),
                 tile: tile(7, 8),
-                access: nav::pack::BankAccess::Booth { op: 2 },
+                access: nav_planner::pack::BankAccess::Booth { op: 2 },
             },
             teller,
         ],
@@ -623,15 +623,15 @@ fn native_bank_access_declared_teller_does_not_require_packed_geometry() {
     for stands in [
         Vec::new(),
         vec![
-            nav::pack::BankStand {
+            nav_planner::pack::BankStand {
                 name: "Bank booth".to_owned(),
                 tile: definition.tile,
-                access: nav::pack::BankAccess::Booth { op: 2 },
+                access: nav_planner::pack::BankAccess::Booth { op: 2 },
             },
-            nav::pack::BankStand {
+            nav_planner::pack::BankStand {
                 name: "Other teller".to_owned(),
                 tile: definition.tile,
-                access: nav::pack::BankAccess::Npc {
+                access: nav_planner::pack::BankAccess::Npc {
                     name: "Other teller".to_owned(),
                     op: 1,
                     choose: None,
@@ -884,7 +884,7 @@ mod bank_pick_capture {
     };
     use super::*;
     use api::identity::{ProcessIncarnation, Settlement, SlotKey};
-    use nav::router::{SearchCursor, SearchPreflight, SearchRequest, SearchRequestShape};
+    use nav_planner::router::{SearchCursor, SearchPreflight, SearchRequest, SearchRequestShape};
     use std::fmt::Debug;
     use std::num::NonZeroU64;
     use std::sync::mpsc;
@@ -915,7 +915,7 @@ mod bank_pick_capture {
         );
         super::super::make_bank_pick_request(
             request_id,
-            nav::producer::lease(world).unwrap(),
+            nav_planner::producer::lease(world).unwrap(),
             facts,
             from,
             FindOptions::default(),
@@ -1129,7 +1129,7 @@ mod bank_pick_capture {
             );
             let retained = result.owner_result_bytes().unwrap();
             eprintln!("bank_pick_result_bytes label={label} bytes={retained}");
-            let reservation = nav::producer::OwnerResultLedger::shared()
+            let reservation = nav_planner::producer::OwnerResultLedger::shared()
                 .try_reserve_bytes(retained)
                 .unwrap();
             drop(reservation.hold(result));
@@ -1169,7 +1169,7 @@ mod bank_pick_capture {
             }
         };
         eprintln!("bank_pick_result_bytes label={label} bytes={result_bytes}");
-        let reservation = nav::producer::OwnerResultLedger::shared()
+        let reservation = nav_planner::producer::OwnerResultLedger::shared()
             .try_reserve_bytes(result_bytes)
             .expect("captured result fits exact owner custody");
         let result = match service.lock().consume(&ticket).unwrap() {
@@ -1501,7 +1501,7 @@ mod bank_pick_capture {
         );
         let request = super::super::make_bank_pick_request(
             request_id,
-            nav::producer::lease(&world).unwrap(),
+            nav_planner::producer::lease(&world).unwrap(),
             facts,
             from,
             FindOptions::default(),
@@ -1645,7 +1645,7 @@ mod bank_pick_capture {
 
     #[test]
     fn bank_pick_result_limit_rejects_oversize_without_clipping() {
-        let maximum = nav::producer::OWNER_RESULT_MAX_BYTES;
+        let maximum = nav_planner::producer::OWNER_RESULT_MAX_BYTES;
         assert!(super::super::bank_pick_result_within_bound(maximum));
         assert!(!super::super::bank_pick_result_within_bound(maximum + 1));
     }
@@ -1685,8 +1685,8 @@ mod bank_pick_capture {
             scope,
             &job,
             ticket,
-            nav::producer::OWNER_RESULT_MAX_BYTES + 1,
-            nav::producer::OwnerResultLedger::shared(),
+            nav_planner::producer::OWNER_RESULT_MAX_BYTES + 1,
+            nav_planner::producer::OwnerResultLedger::shared(),
         )
         .is_none());
         drop(job);
@@ -1733,7 +1733,7 @@ mod bank_pick_capture {
         };
         assert!(bytes > 0);
 
-        let full_ledger = nav::producer::OwnerResultLedger::with_limits(bytes - 1, bytes);
+        let full_ledger = nav_planner::producer::OwnerResultLedger::with_limits(bytes - 1, bytes);
         super::super::consume_completed_bank_pick(
             &navs,
             "test",
@@ -1759,7 +1759,7 @@ mod bank_pick_capture {
             Ok(Some(Settlement::Completed(_)))
         ));
 
-        let ledger = nav::producer::OwnerResultLedger::with_limits(bytes, bytes);
+        let ledger = nav_planner::producer::OwnerResultLedger::with_limits(bytes, bytes);
         super::super::consume_completed_bank_pick(
             &navs, "test", scope, job, ticket, bytes, &service, &ledger,
         );
@@ -1848,7 +1848,7 @@ mod bank_pick_capture {
                     .unwrap()
                     .route_generation += 1;
             }
-            let ledger = nav::producer::OwnerResultLedger::with_limits(bytes, bytes);
+            let ledger = nav_planner::producer::OwnerResultLedger::with_limits(bytes, bytes);
             super::super::consume_completed_bank_pick(
                 &navs, "test", scope, job, ticket, bytes, &service, &ledger,
             );
@@ -1928,7 +1928,7 @@ mod bank_pick_capture {
         );
         worker.stage = super::super::BankPickStage::Search;
         worker.pending_many_results =
-            Some(vec![Err(nav::router::TargetError::NoPath)].into_boxed_slice());
+            Some(vec![Err(nav_planner::router::TargetError::NoPath)].into_boxed_slice());
         assert_eq!(Arc::strong_count(&shared_state), state_refs + 1);
         assert!(worker.cursor.is_some());
         assert!(worker.pending_many_results.is_some());
@@ -1954,7 +1954,7 @@ mod bank_pick_capture {
     #[test]
     fn preflight_token_mismatch_fails_closed() {
         let world = world(false);
-        let lease = nav::producer::lease(&world).unwrap();
+        let lease = nav_planner::producer::lease(&world).unwrap();
         let state = Arc::new(WorldState::default());
         let preflight = SearchCursor::preflight(
             SearchRequestShape::Single {
@@ -1976,7 +1976,7 @@ mod bank_pick_capture {
         };
         assert!(matches!(
             SearchCursor::new_preflighted(request, lease, state, preflight),
-            Err(nav::router::SearchCursorError::PreflightMismatch)
+            Err(nav_planner::router::SearchCursorError::PreflightMismatch)
         ));
     }
 
@@ -2037,7 +2037,7 @@ mod bank_pick_capture {
         );
         let request = super::super::make_bank_pick_request(
             1,
-            nav::producer::lease(&world).unwrap(),
+            nav_planner::producer::lease(&world).unwrap(),
             facts,
             from,
             FindOptions::default(),
@@ -2091,7 +2091,7 @@ mod bank_pick_capture {
         assert_eq!(worker.input.charge, charge);
         assert!(matches!(
             &worker.search_request,
-            Some(nav::router::SearchRequest::Single { .. })
+            Some(nav_planner::router::SearchRequest::Single { .. })
         ));
         assert!(worker.cursor.is_none());
         assert!(worker.target_buffer.is_none());

@@ -859,7 +859,7 @@ fn the_packed_coord_contract_is_copied_and_off_contract_tokens_idle() {
             level: 1
         })
     );
-    // The landed `nav::canlight` vector, plus both ends of each bound.
+    // The landed `nav_planner::canlight` vector, plus both ends of each bound.
     assert_eq!(
         decode_trail_coord("0_50_53_50_24"),
         Some(Tile {

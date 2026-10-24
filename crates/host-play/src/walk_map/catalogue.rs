@@ -5,13 +5,15 @@ use std::sync::Arc;
 use crate::map_cache::ReadyCatalogue;
 use api::snapshot::WorldTile;
 use client::dash3d::CollisionFlag;
-use nav::map::formats::{ClientPois, Coverage, ServiceIdentity, ServicePois, MAX_POIS};
-use nav::map::identity::{CatalogueIdentity, Digest};
-use nav::map::poi::{CapabilityEvidence, Eligibility, EntityKind, PoiKind, PoiRecord, SourceSpace};
-use nav::map::{MapError, Text};
-use nav::tile::Tile;
-use nav::transport::{TransportEdge, TransportKind};
-use nav::world::NavWorld;
+use nav_planner::map::formats::{ClientPois, Coverage, ServiceIdentity, ServicePois, MAX_POIS};
+use nav_planner::map::identity::{CatalogueIdentity, Digest};
+use nav_planner::map::poi::{
+    CapabilityEvidence, Eligibility, EntityKind, PoiKind, PoiRecord, SourceSpace,
+};
+use nav_planner::map::{MapError, Text};
+use nav_planner::tile::Tile;
+use nav_planner::transport::{TransportEdge, TransportKind};
+use nav_planner::world::NavWorld;
 
 pub const BANK_API_NOTE: &str = "Map-discovered bank. Frozen bank API roster is separate: nearestBank may omit map discoveries, including Canifis. Walking here does not change that roster or prove banking eligibility.";
 const MAX_ENTRIES: usize = 16384;
@@ -566,7 +568,7 @@ impl<'a> Entry<'a> {
     }
     /// Legacy packed anchors are corroboration only. Compare their raw plane to
     /// the raw source LOC, not its normalized bridge plane. They never add rows.
-    pub fn packed_banks(self) -> impl Iterator<Item = &'a nav::pack::BankStand> {
+    pub fn packed_banks(self) -> impl Iterator<Item = &'a nav_planner::pack::BankStand> {
         self.catalogue.world.banks().iter().filter(move |bank| {
             self.records().any(|r| {
                 let raw = match r.key.source {
@@ -580,8 +582,8 @@ impl<'a> Entry<'a> {
                     && bank.tile.level == i32::from(raw)
                     && matches!(
                         (&bank.access, r.key.entity),
-                        (nav::pack::BankAccess::Booth { .. }, EntityKind::Loc)
-                            | (nav::pack::BankAccess::Npc { .. }, EntityKind::Npc)
+                        (nav_planner::pack::BankAccess::Booth { .. }, EntityKind::Loc)
+                            | (nav_planner::pack::BankAccess::Npc { .. }, EntityKind::Npc)
                     )
             })
         })

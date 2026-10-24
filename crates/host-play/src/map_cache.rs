@@ -16,17 +16,17 @@ use api::work::{
 };
 use client::map_cache::MAP_PLANES;
 use client::unpack::PreparedRuntimeCache;
-use nav::map::cache::{
+use nav_planner::map::cache::{
     ArtifactIdentity, BakeStage, Checkpoint, CompletedUnit, ReadyCatalogue as NavReadyCatalogue,
     ReadyImages as NavReadyImages, UnitKey, CHECKPOINT_SCHEMA,
 };
-use nav::map::formats::{
+use nav_planner::map::formats::{
     CatalogueManifest, ClientPois, ImageManifest, PayloadReceipt, ShippedCatalogue, ShippedImages,
     TileReceipt, MAX_IMAGE_BYTES, MAX_IMAGE_TILES, MAX_JSON_BYTES, MAX_PNG_BYTES,
 };
-use nav::map::identity::{CatalogueIdentity, Digest, ImageIdentity, CATALOGUE_SCHEMA};
-use nav::map::raster::CHECKPOINT_BATCH_TILES;
-use nav::map::MapError;
+use nav_planner::map::identity::{CatalogueIdentity, Digest, ImageIdentity, CATALOGUE_SCHEMA};
+use nav_planner::map::raster::CHECKPOINT_BATCH_TILES;
+use nav_planner::map::MapError;
 use parking_lot::Mutex;
 use script::work_admission::WorkService;
 use serde::{Deserialize, Serialize};
@@ -1574,7 +1574,7 @@ impl ReadyImages {
 
     pub fn read_tile_into(
         &self,
-        key: nav::map::spatial::TileKey,
+        key: nav_planner::map::spatial::TileKey,
         buffer: &mut Vec<u8>,
     ) -> Result<Option<usize>, MapCacheError> {
         Ok(self.inner.read_tile_into(key, buffer)?)
@@ -1585,7 +1585,7 @@ impl ReadyImages {
     /// or fails its manifest receipt is an error.
     pub fn read_tile_arc(
         &self,
-        key: nav::map::spatial::TileKey,
+        key: nav_planner::map::spatial::TileKey,
     ) -> Result<Option<Arc<[u8]>>, MapCacheError> {
         Ok(self.inner.read_tile_arc(key)?)
     }
@@ -2015,12 +2015,12 @@ impl BakeRequest {
     /// so the returned paths cannot outlive that lease.
     pub fn client_input<'a>(
         &'a self,
-    ) -> Result<nav::map::producer::ClientMapInput<'a>, MapCacheError> {
+    ) -> Result<nav_planner::map::producer::ClientMapInput<'a>, MapCacheError> {
         let input = self
             .descriptor
             .input()
             .ok_or(MapCacheError::NoPreparedCache)?;
-        nav::map::producer::ClientMapInput::new(
+        nav_planner::map::producer::ClientMapInput::new(
             input.revision(),
             input.content(),
             input.jag_dir(),
@@ -2524,7 +2524,7 @@ impl BakeWriter {
             identity,
             stage: plan.stage,
             planned_units: plan.planned_units,
-            completed: nav::map::Rows::new(Vec::new())?,
+            completed: nav_planner::map::Rows::new(Vec::new())?,
         });
         let bytes = checkpoint
             .completed
@@ -2630,7 +2630,7 @@ impl BakeWriter {
         }
         verification.next += 1;
         if verification.next == self.checkpoint.completed.as_slice().len() {
-            self.checkpoint.completed = nav::map::Rows::new(verification.completed)?;
+            self.checkpoint.completed = nav_planner::map::Rows::new(verification.completed)?;
             self.bytes = verification.bytes;
         } else {
             self.verification = Some(verification);
@@ -5600,10 +5600,12 @@ pub mod fixture;
 mod tests {
     use super::fixture::{fixture_png, synthetic_client_snapshot, wait_for_status};
     use super::*;
-    use nav::map::formats::{ColorFormat, Coverage, CoverageLevel, ImageManifest, PlaneBounds};
-    use nav::map::identity::IMAGE_SCHEMA;
-    use nav::map::poi::PoiRecord;
-    use nav::map::spatial::{TileKey, WorldBounds, TILE_GUTTER, TILE_INTERIOR};
+    use nav_planner::map::formats::{
+        ColorFormat, Coverage, CoverageLevel, ImageManifest, PlaneBounds,
+    };
+    use nav_planner::map::identity::IMAGE_SCHEMA;
+    use nav_planner::map::poi::PoiRecord;
+    use nav_planner::map::spatial::{TileKey, WorldBounds, TILE_GUTTER, TILE_INTERIOR};
     use std::io::{BufRead, BufReader, Read};
     use std::process::{Command, Stdio};
     use std::sync::atomic::AtomicUsize;
@@ -6022,9 +6024,9 @@ mod tests {
                     npc_placements: CoverageLevel::Unavailable,
                     bank_services: CoverageLevel::Limited,
                     place_labels: CoverageLevel::Unavailable,
-                    unresolved: nav::map::Rows::new(Vec::new())?,
+                    unresolved: nav_planner::map::Rows::new(Vec::new())?,
                 },
-                records: nav::map::Rows::<PoiRecord, 4096>::new(Vec::new())?,
+                records: nav_planner::map::Rows::<PoiRecord, 4096>::new(Vec::new())?,
             })
         }
 
@@ -6039,7 +6041,7 @@ mod tests {
                     east: 3328,
                     north: 3328,
                 },
-                planes: nav::map::Rows::new(vec![PlaneBounds {
+                planes: nav_planner::map::Rows::new(vec![PlaneBounds {
                     plane: 0,
                     bounds: WorldBounds {
                         west: 3200,
@@ -6052,7 +6054,7 @@ mod tests {
                 interior: TILE_INTERIOR,
                 gutter: TILE_GUTTER,
                 color: ColorFormat::Rgba8Unorm,
-                tiles: nav::map::Rows::new(std::mem::take(&mut self.tiles))?,
+                tiles: nav_planner::map::Rows::new(std::mem::take(&mut self.tiles))?,
             })
         }
 
@@ -8470,9 +8472,9 @@ mod tests {
                     npc_placements: CoverageLevel::Unavailable,
                     bank_services: CoverageLevel::Limited,
                     place_labels: CoverageLevel::Unavailable,
-                    unresolved: nav::map::Rows::new(Vec::new()).unwrap(),
+                    unresolved: nav_planner::map::Rows::new(Vec::new()).unwrap(),
                 },
-                records: nav::map::Rows::new(Vec::new()).unwrap(),
+                records: nav_planner::map::Rows::new(Vec::new()).unwrap(),
             }
             .encode()
             .unwrap();

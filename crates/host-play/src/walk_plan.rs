@@ -5,13 +5,13 @@ use std::sync::Arc;
 
 use api::bank_memory::Origin;
 use api::snapshot::WorldTile;
-use nav::bank_fetch::{plan_bank_fetch, planning_rows, BankFetch, BankStep};
-use nav::contract::{LegView, NavLease, RoutePlanLease, RouteView};
-use nav::router::{
+use nav_planner::bank_fetch::{plan_bank_fetch, planning_rows, BankFetch, BankStep};
+use nav_planner::contract::{LegView, NavLease, RoutePlanLease, RouteView};
+use nav_planner::router::{
     find_missing_item_reqs_with_avoid, find_with_avoid, AvoidRect, FindOptions, Route,
 };
-use nav::world::NavWorld;
-use nav::WorldState;
+use nav_planner::world::NavWorld;
+use nav_planner::WorldState;
 
 /// One route without expanding compact plans into legacy leg vectors.
 #[expect(
@@ -89,8 +89,8 @@ impl RoutePath {
     pub(crate) fn first_tile(&self) -> Option<WorldTile> {
         match self {
             Self::Legacy(route) => match route.legs.first()? {
-                nav::router::Leg::Walk { tiles } => tiles.first().copied(),
-                nav::router::Leg::Transport { edge } => Some(edge.at),
+                nav_planner::router::Leg::Walk { tiles } => tiles.first().copied(),
+                nav_planner::router::Leg::Transport { edge } => Some(edge.at),
             },
             Self::Compact { plan, lease, .. } => match plan.view(lease).ok()?.leg(0).ok()? {
                 LegView::Walk(tiles) => tiles.first().copied(),

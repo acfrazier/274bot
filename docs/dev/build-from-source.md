@@ -9,7 +9,7 @@
 
 A Rust bot host over the bot-host client fork. One OS thread per `Client` on a 20 ms loop, shared unpacked type tables, a login FIFO, AES-256-GCM vaulted profiles, and an agent API (snapshot → query → interact → settle). **`panel-play`** is the first-class operator window (ImGui over a panel-owned winit + wgpu loop): profile picker, status, WalkTo picker, game blit, click-through capture, MultiBox rail/grid, script chrome, `--live` harness. **`tui-play`** is the same `Play` session with raster Off (ratatui; VPS-cheap). **`host-play`** is the headless CLI over the same kernel. A host-scoped **random-event guardian** Talk-to + continues the five dialog randoms (toggle default on).
 
-The headed client draws with a **wgpu GPU** renderer in the submodule (CPU Pix3D is `BOT_CPU=1`). Nav is a baked collision + transport pack (`crates/nav`, magic `274V`, version byte **17**; v16 and older are `BadVersion` and must be rebaked), Dijkstra router (`crates/nav`), and pollable `Traveller::follow` (`crates/nav-executor`) driven from WalkTo and from scripts. Compiled script cards tick on the `PLAYER_INFO` edge; loaded JS/TS runs in an isolate with the host compatibility prelude. The compiled cards in-tree are **Quester**, **Gatherer** and **Sherlock** (see the [README](../../README.md)) — WalkTo itself is host nav, not a farming script.
+The headed client draws with a **wgpu GPU** renderer in the submodule (CPU Pix3D is `BOT_CPU=1`). Nav is a baked collision + transport pack (`crates/nav-planner`, magic `274V`, version byte **17**; v16 and older are `BadVersion` and must be rebaked), Dijkstra router (`crates/nav-planner`), and pollable `Traveller::follow` (`crates/nav-executor`) driven from WalkTo and from scripts. Compiled script cards tick on the `PLAYER_INFO` edge; loaded JS/TS runs in an isolate with the host compatibility prelude. The compiled cards in-tree are **Quester**, **Gatherer** and **Sherlock** (see the [README](../../README.md)) — WalkTo itself is host nav, not a farming script.
 
 ## What it is not
 
@@ -50,7 +50,9 @@ cargo run --release -p panel --bin panel-play -- --profile local-289
 # Asks for the vault passphrase on the terminal; a new vault asks twice.
 cargo run --release -p host-play -- --profile local-289 --user test
 
-# TUI: same vault, raster Off (no GPU). Same passphrase prompt; from a script use
+# TUI: same vault, raster Off (no GPU). Its `--user` only selects a profile
+# already in the vault (the host-play run above created `test`); it creates
+# none. Same passphrase prompt; from a script use
 # `printf '%s\n' "$PASS" | tui-play --vault-pass-stdin ...` (see docs/api/vault.md).
 cargo run --release -p tui --bin tui-play -- --profile local-289 --user test
 
@@ -70,17 +72,17 @@ cargo run --release -p panel --bin panel-play -- --profile local-289 --live stre
 cargo run --release -p panel --bin panel-play -- --profile local-289 --live stress50_full
 
 # Unit tests (no engine). Local CI: fmt + clippy -D + test on host *and* vendor/fr-client-rust (no LIVE=1).
-cargo test -p nav --offline
+cargo test -p nav-planner --offline
 cargo test -p api --offline
 ```
 
 `--release` matters: a debug `cargo run` looks frozen and spikes RAM. Headed default is the GPU renderer; `BOT_CPU=1` forces CpuPix3D. 274bot defaults to **lowmem**. Renderer-off / `set_draw(false)` still runs `mainloop` and collision, but does not decode loc meshes. **Music / SFX** sets `Profile.settings.lowmem = false` for that username.
 
-The panel only starts the **focused** vault profile; switching the combo starts a parked name once. Last focus persists in `~/.274bot/panel-ui.json`. Credentials are **2×2**: Save/Clear then Log in/Logout. Unlocking the vault starts the **first** profile as a live slot; MultiBox raises the running set as a sidecar rail or a grid. The fleet toolbar (at the top of the rail, in the side panel's fleet section in Grid or without MultiBox, and in the Fleet window) acts on the marked bots, or on every loaded bot shown after asking first: Start, Stop, Assign, Assign & restart, Log in, Log out, Walk, Switch world and Copy settings to. Auto-login defaults **off** per profile.
+The panel only starts the **focused** vault profile; switching the combo starts a parked name once. Last focus persists in `~/.274bot/panel-ui.json`. Credentials are **2×2**: Save/Clear then Log in/Log out. Unlocking the vault starts the **first** profile as a live slot; MultiBox raises the running set as a sidecar rail or a grid. The fleet toolbar (at the top of the rail, in the side panel's fleet section in Grid or without MultiBox, and in the Fleet window) acts on the marked bots, or on every loaded bot shown after asking first: Start, Stop, Assign, Assign & restart, Log in, Log out, Walk, Switch world and Copy settings to. Auto-login defaults **off** per profile.
 
 **Coming from rs2b0t:** export your profiles from rs2b0t's Settings, then use **Import from rs2b0t…** in the panel's Profiles window (or **Import rs2b0t profiles…** in the TUI palette) to bring over your accounts, their worlds, selected scripts, script parameters, genie lamp skill and clue duel partner, after a preview. Details and the full mapping: [docs/api/vault.md](../api/vault.md#importing-profiles-from-rs2b0t).
 
-**panel-play does not auto-create an account**: an empty first-run vault stays empty until you type a username/password and Save. `host-play` and `tui-play` create requested missing users with fresh 20-character game passwords. **The vault passphrase is never taken from the environment or command line**: the panel asks in its unlock window, `host-play` and `tui-play` ask on the terminal (hidden; a new vault asks twice), and all three read one line from a pipe with `--vault-pass-stdin`. A **new** vault needs a non-empty passphrase after trimming surrounding whitespace; strength is the user's choice. An **existing** vault opens with the passphrase it was created with, however short. `BOT_VAULT_PASS` and `--vault-pass` were removed (see [docs/api…
+**panel-play does not auto-create an account**: an empty first-run vault stays empty until you type a username/password and Save. Only `host-play` creates requested missing users with fresh 20-character game passwords. `tui-play --user` only selects a profile already in the vault and creates none; an empty vault opens its New profile form instead. **The vault passphrase is never taken from the environment or command line**: the panel asks in its unlock window, `host-play` and `tui-play` ask on the terminal (hidden; a new vault asks twice), and all three read one line from a pipe with `--vault-pass-stdin`. A **new** vault needs a non-empty passphrase after trimming surrounding whitespace; strength is the user's choice. An **existing** vault opens with the passphrase it was created with, however short. `BOT_VAULT_PASS` and `--vault-pass` were removed (see [docs/api…
 
 **Scripts:** panel **Browse / Load / Reload / Start / Pause / Stop** are live; the fleet toolbar adds bulk **Start / Stop**. Catalog **Refresh catalog** (with confirm when running/paused bots are affected). Successful Start persists a per-profile script assignment and settings bag in the vault. Transpile is content-addressed under `~/.274bot/js-cache` (raw-source SHA-256). WalkTo on the main chrome is host nav, not a script card. Catalog scripts come from your configured `$RS2B0T` / `--catalog` checkout; this repository does not copy their source. Details: [docs/api/script.md](../api/script.md).
 
@@ -109,7 +111,7 @@ table and the build-time identity rules: [docs/api/nav.md](../api/nav.md).
 `nav-pack` stays for deliberate developer/custom-input bakes over a Server tree:
 
 ```bash
-cargo run -p nav --bin nav-pack
+cargo run -p nav-planner --bin nav-pack
 ```
 
 Output: `$NAV_PACK` or `~/.274bot/274bot.navpack` (magic `274V`, version byte **17**).
@@ -130,7 +132,7 @@ See [the navigation API guide](../api/nav.md) for the full wire format and bake 
 
 **External v17 packs keep their baked routing data.** The app rebuilds the bundled pack automatically.
 It does not derive a pack that you baked yourself from the current content tree.
-Rebake it with `cargo run -p nav --bin nav-pack` after content or format changes to refresh its routing data.
+Rebake it with `cargo run -p nav-planner --bin nav-pack` after content or format changes to refresh its routing data.
 
 ## Live tests and suite runner
 
@@ -150,7 +152,7 @@ The nav real-map qualification tests are `#[ignore]`d. They need the content tre
 : "${ENGINE_DIR:?set ENGINE_DIR to the 289 engine root}"
 NAV_CONTENT_ROOT="$ENGINE_DIR/../content" \
 NAV_CACHE="$ENGINE_DIR/data/pack/client/config" \
-cargo test -p nav --lib -- --ignored
+cargo test -p nav-planner --lib -- --ignored
 ```
 
 Nav, panel and scenario twins live in `crates/e2e`. Login, RSS and null-raster twins live in `crates/host-play`. The memory fleet harness is in [docs/dev/harness.md](harness.md). `cargo test` here does not run Fairy-Ring client integration tests.

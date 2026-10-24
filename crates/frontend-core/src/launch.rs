@@ -354,15 +354,15 @@ impl BoundProfile {
     }
 
     /// The navigation world, once loaded.
-    pub fn world(&self) -> Option<Arc<nav::world::NavWorld>> {
+    pub fn world(&self) -> Option<Arc<nav_planner::world::NavWorld>> {
         self.0.world()
     }
 
     /// Navigation pack identity for map bindings, if the profile published one.
-    pub fn nav_identity(&self) -> Option<nav::map::identity::Digest> {
-        self.0
-            .nav_identity()
-            .and_then(|identity| nav::map::identity::Digest::from_hex(&identity.nav_sha256).ok())
+    pub fn nav_identity(&self) -> Option<nav_planner::map::identity::Digest> {
+        self.0.nav_identity().and_then(|identity| {
+            nav_planner::map::identity::Digest::from_hex(&identity.nav_sha256).ok()
+        })
     }
 
     /// Path to the profile's bound map-flags sidecar.
@@ -1331,6 +1331,24 @@ impl ProfileLauncher {
                 .map(|selection| selection.vault_path().to_path_buf()),
             None => Ok(legacy),
         }
+    }
+
+    /// The vault path the configured profile will bind with, resolved as
+    /// [`Self::bind_with`] resolves it (`saved_revision` as given), without
+    /// binding: no engine key is read and no cache is prepared.
+    pub fn unbound_vault_path(
+        &self,
+        saved_revision: Option<u16>,
+    ) -> Result<std::path::PathBuf, ProfileError> {
+        if let Some(profile) = &self.bound {
+            return Ok(profile.vault_path().to_path_buf());
+        }
+        let (options, environment) = self.inputs()?;
+        options
+            .0
+            .resolve_with_env(saved_revision, &environment.0)
+            .map(|selection| selection.vault_path().to_path_buf())
+            .map_err(|error| ProfileError(ProfileFault::Resolve(error)))
     }
 
     /// The catalogue root: the bound profile's, else the configured one at

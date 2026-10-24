@@ -1,7 +1,7 @@
 //! Ordinary application builds own the navigation artifact.
 //!
 //! A default build bakes (or reuses) the selected release revision's nav pack
-//! and flags with the shared baker ([`nav::bake`]), stages them under the
+//! and flags with the shared baker ([`nav_planner::bake`]), stages them under the
 //! install resource root the running binary resolves — the cargo profile
 //! directory for a plain executable, `Contents/Resources` for a macOS bundle,
 //! `BOT_NAV_RESOURCE_DIR` when a packager stages elsewhere — and publishes
@@ -19,7 +19,7 @@
 //! bake consumes implicitly — the pack id tables, the files of each recursive
 //! script scan (one row per file, so a missing child fails even when its
 //! directory keeps siblings), the bank booth config and the revision's
-//! canonical mapsquares ([`nav::bundle::required_content_inputs`]) — on every
+//! canonical mapsquares ([`nav_planner::bundle::required_content_inputs`]) — on every
 //! build, before a warm staged artifact set is accepted. A deliberate content
 //! edit or addition is not judged here; it flows through the ordinary input
 //! fingerprints and rebakes. The developer CLI keeps its tolerant behavior.
@@ -39,17 +39,17 @@
 
 use std::path::{Path, PathBuf};
 
-use nav::bake::{
+use nav_planner::bake::{
     config_jag_for, content_inputs, decoded_identity_from_snapshot, generator_identity,
     pois_generator_identity, verify_cache_manifest_from_fingerprints, BakeRequest,
     GENERATOR_SOURCES, POIS_GENERATOR_SOURCES,
 };
-use nav::bundle::{
+use nav_planner::bundle::{
     artifact_layout, fingerprints, merge_identity_rows, resource_root_for_build, BakeStamp,
     NavIdentityRow, StampExpectation,
 };
-use nav::manifest::CacheManifest;
-use nav::pack::FORMAT_ID;
+use nav_planner::manifest::CacheManifest;
+use nav_planner::pack::FORMAT_ID;
 /// Environment inputs, all re-checked by cargo before this script is skipped.
 const ENV_KEYS: [&str; 7] = [
     "BOT_NAV_BUILD",
@@ -70,7 +70,7 @@ fn main() {
 
     // The bake generator identity is part of the artifact stamp: any change to
     // the baker or the pack format invalidates staged artifacts.
-    let nav_dir = manifest_dir.join("../nav");
+    let nav_dir = manifest_dir.join("../nav-planner");
     let mut sources = Vec::new();
     for relative in GENERATOR_SOURCES {
         let path = nav_dir.join(relative);
@@ -161,7 +161,7 @@ fn main() {
     // derived transports, and the canonical mapsquares themselves. The baker
     // skips what is absent, so they are required here — before a warm staged
     // stamp can be accepted, not only when this build has to bake.
-    match nav::bundle::missing_content_inputs(revision, &content_dir) {
+    match nav_planner::bundle::missing_content_inputs(revision, &content_dir) {
         Ok(missing) if missing.is_empty() => {}
         Ok(missing) => fail(&incomplete_content(revision, &content_dir, &missing)),
         Err(e) => fail(&e),
@@ -185,7 +185,7 @@ fn main() {
         Ok(rows) => rows,
         Err(e) => fail(&e),
     };
-    let captured_manifest = match nav::bundle::cache_manifest_from_fingerprints(
+    let captured_manifest = match nav_planner::bundle::cache_manifest_from_fingerprints(
         revision,
         &cache_dir,
         &input_fingerprints,
@@ -245,7 +245,7 @@ fn main() {
             "decoded navigation cache: {e}; supply BOT_NAV_SNAPSHOT_ROOT with a complete matching offline snapshot"
         ))
     });
-    let source_sha256 = nav::bundle::source_digest_from_fingerprints(
+    let source_sha256 = nav_planner::bundle::source_digest_from_fingerprints(
         &content_dir,
         &[&config_jag],
         &input_fingerprints,
@@ -280,12 +280,12 @@ fn main() {
         println!("cargo:rerun-if-changed={}", staged.display());
     }
 
-    let staged_pack_sha256 = nav::manifest::hash_file(&pack_path).ok();
-    let staged_flags_sha256 = nav::manifest::hash_file(&flags_path).ok();
-    let staged_reach_sha256 = nav::manifest::hash_file(&reach_path).ok();
-    let staged_canlight_sha256 = nav::manifest::hash_file(&canlight_path).ok();
-    let staged_manifest_sha256 = nav::manifest::hash_file(&manifest_path).ok();
-    let staged_pois_sha256 = nav::manifest::hash_file(&pois_path).ok();
+    let staged_pack_sha256 = nav_planner::manifest::hash_file(&pack_path).ok();
+    let staged_flags_sha256 = nav_planner::manifest::hash_file(&flags_path).ok();
+    let staged_reach_sha256 = nav_planner::manifest::hash_file(&reach_path).ok();
+    let staged_canlight_sha256 = nav_planner::manifest::hash_file(&canlight_path).ok();
+    let staged_manifest_sha256 = nav_planner::manifest::hash_file(&manifest_path).ok();
+    let staged_pois_sha256 = nav_planner::manifest::hash_file(&pois_path).ok();
     let expectation = StampExpectation {
         revision,
         format: FORMAT_ID,
@@ -362,11 +362,14 @@ fn main() {
         Ok(rows) => rows,
         Err(e) => fail(&e),
     };
-    let final_manifest =
-        match nav::bundle::cache_manifest_from_fingerprints(revision, &cache_dir, &final_inputs) {
-            Ok(manifest) => manifest,
-            Err(e) => fail(&e),
-        };
+    let final_manifest = match nav_planner::bundle::cache_manifest_from_fingerprints(
+        revision,
+        &cache_dir,
+        &final_inputs,
+    ) {
+        Ok(manifest) => manifest,
+        Err(e) => fail(&e),
+    };
     if input_fingerprints != final_inputs || manifest != final_manifest {
         fail("cache/content inputs changed during navigation preparation");
     }
@@ -399,7 +402,7 @@ fn main() {
 #[allow(clippy::too_many_arguments)]
 fn bake_and_stage(
     revision: u16,
-    inputs: &nav::bake::ContentInputs,
+    inputs: &nav_planner::bake::ContentInputs,
     config_jag: &Path,
     cache: &CacheManifest,
     manifest_source: Option<&Path>,
@@ -407,15 +410,15 @@ fn bake_and_stage(
     pois_generator: &str,
     cache_id: &str,
     content_id: &str,
-    input_fingerprints: &[nav::bundle::InputFingerprint],
+    input_fingerprints: &[nav_planner::bundle::InputFingerprint],
     resource_root: &Path,
-    layout: &nav::bundle::ArtifactLayout,
+    layout: &nav_planner::bundle::ArtifactLayout,
     stale_reason: Option<&str>,
 ) -> Result<NavIdentityRow, String> {
     if let Some(reason) = stale_reason {
         println!("cargo:warning=nav bundle: rebaking ({reason})");
     }
-    let baked = nav::bake::bake_world(&BakeRequest {
+    let baked = nav_planner::bake::bake_world(&BakeRequest {
         revision: Some(revision),
         maps_dir: &inputs.maps_dir,
         doors_dir: &inputs.doors_dir,
@@ -458,7 +461,7 @@ fn bake_and_stage(
         &resource_root.join(&layout.relative_manifest),
         &nav_manifest_bytes,
     )?;
-    let manifest_sha256 = nav::manifest::hash_bytes(&nav_manifest_bytes);
+    let manifest_sha256 = nav_planner::manifest::hash_bytes(&nav_manifest_bytes);
 
     let flags_sha256 = manifest
         .flags_sha256

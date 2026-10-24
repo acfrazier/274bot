@@ -18,9 +18,9 @@ use std::time::Duration;
 use api::snapshot::WorldTile;
 use common::{fail, live, options, profiles, wait_ingame};
 use host_play::run_with_io;
-use nav::router::find;
-use nav::transport::TransportKind;
-use nav::world::NavWorld;
+use nav_planner::router::find;
+use nav_planner::transport::TransportKind;
+use nav_planner::world::NavWorld;
 use scenario::default_pack_path;
 
 /// The stronghold spirit tree (loc 1293) placement tile.
@@ -61,7 +61,7 @@ fn nav_spirit() {
     if trees.len() < 8 {
         fail(&format!(
             "nav_spirit: pack carries {} SpiritTree edges, need >= 8 \
-             (rebake with `cargo run -p nav --bin nav-pack`)",
+             (rebake with `cargo run -p nav-planner --bin nav-pack`)",
             trees.len()
         ));
     }
@@ -79,7 +79,7 @@ fn nav_spirit() {
                 route.dest, VARROCK_TREE
             ));
         }
-        if nav::debug_enabled() {
+        if nav_planner::debug_enabled() {
             println!(
                 "nav_spirit: stronghold tree -> varrock tree routed ({:.0} ticks, {} legs)",
                 route.ticks,

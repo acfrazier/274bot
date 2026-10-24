@@ -384,6 +384,12 @@ const CORE: &[(&str, Decision)] = &[
     ("scripts/paint.rs::map_applet_rect", Excluded(FORMAT)),
     ("scripts/paint.rs::CanvasCache::store", Excluded(PROJECTION)),
     ("scripts/paint.rs::CanvasCache::clear", Excluded(PROJECTION)),
+    (
+        "scripts/paint_layout.rs::PaintLayout::compute",
+        Excluded(PROJECTION),
+    ),
+    ("scripts/paint_layout.rs::clipped_prefix", Excluded(FORMAT)),
+    ("scripts/paint_style.rs::parse_accent", Excluded(FORMAT)),
     // scripts/paths.rs: operator file locations.
     ("scripts/paths.rs::bot_home", Excluded(PATH_READ)),
     ("scripts/paths.rs::bot_file", Excluded(PATH_READ)),
@@ -613,6 +619,10 @@ const CORE: &[(&str, Decision)] = &[
     ),
     ("session/map.rs::MapDesk::stage_game_input", Staged(C::GameInput)),
     (
+        "session/map.rs::MapDesk::stage_captured_input_to",
+        Staged(C::GameInput),
+    ),
+    (
         "session/map.rs::MapDesk::set_input_sender",
         Excluded("device plumbing: attaches the capture channel; no operator decision"),
     ),
@@ -841,6 +851,14 @@ const SURFACE: &[(&str, Decision)] = &[
     ),
     ("panel/input_capture.rs::maybe_send_click", Excluded(GAME_INPUT_STAGING)),
     ("panel/input_capture.rs::stream_capture", Excluded(GAME_INPUT_STAGING)),
+    (
+        "panel/input_capture.rs::PaintMouseGate::route",
+        Excluded(GAME_INPUT_STAGING),
+    ),
+    (
+        "panel/input_capture.rs::PaintMouseGate::route_button",
+        Excluded(GAME_INPUT_STAGING),
+    ),
     (
         "panel/session.rs::Session::maybe_drain_getvar_dialogue",
         Excluded(GAME_INPUT_STAGING),
@@ -1128,6 +1146,17 @@ const SURFACE: &[(&str, Decision)] = &[
                 C::DeleteProfileImportExport,
             ],
             "the Preview action may fill the catalog; its branches edit the path, choose preview options, confirm profile writes, return to the path, stage or cancel deletion, and confirm export deletion",
+        ),
+    ),
+    (
+        "tui/bin.rs::TuiSession::new_profile_key",
+        Rows(
+            &[
+                C::EditProfileDraft(ProfileDraftField::Username),
+                C::EditProfileDraft(ProfileDraftField::Password),
+                C::CloseProfileForm(FormClose::Form),
+            ],
+            "the New profile overlay keys: typing stages the focused field's draft edit, Enter saves through `new_profile_save` (the CreateProfile handler), Esc closes the form",
         ),
     ),
     (

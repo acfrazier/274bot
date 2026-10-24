@@ -4,32 +4,28 @@
 //! chatbox rect — never a second ImGui window and never pixels on the
 //! 765×503 game texture. Canvas ops rasterize to a small cached transparent
 //! texture over the applet, using the same native font as measureText.
+//!
+//! The style and the layout live in `frontend-core`
+//! (`scripts::paint_style`, `scripts::PaintLayout`). This module only
+//! draws: it measures one cell width, asks the layout for the frame's
+//! applet-space rectangles, maps each one with `min + v * s`, draws
+//! fills, borders and text on the draw list, and hit-tests the same
+//! rectangles. Every label takes the body font size on the draw list,
+//! so no text is scaled twice on a scaled display.
 
-use dear_imgui_rs::{MouseButton, StyleVar, TextureId, Ui};
-use frontend_core::scripts::{map_applet_rect, CanvasCache, CanvasOps, CanvasRaster, PaintView};
+use dear_imgui_rs::{DrawListMut, MouseButton, TextureId, Ui};
+use frontend_core::scripts::paint_style as style;
+use frontend_core::scripts::{
+    clipped_prefix, map_applet_rect, CanvasCache, CanvasOps, CanvasRaster, PaintLayout, PaintRect,
+    PaintView,
+};
 
 use crate::game_view::{FrameGpu, APPLET_H, APPLET_W};
-use crate::theme::{ui_scale, ACCENT, BG_DEEP, PANEL_FONT_SIZE, TEXT, TEXT_DIM};
+use crate::theme::PANEL_FONT_SIZE;
 
 /// Applet-space chatbox rect `(x, y, w, h)` the client reserves for game
 /// chat on the 765×503 stage.
-pub const CHATBOX: [f32; 4] = [8.0, 345.0, 506.0, 150.0];
-
-/// Native structured-paint chrome at 1× (applet display = 765×503).
-const PAD_X: f32 = 6.0;
-const HEADER_Y: f32 = 2.0;
-const LINE_STEP: f32 = 14.0;
-const ROW_H_FLOOR: f32 = 16.0;
-
-/// Source paint chrome at 1× applet space (see frozen `Paint.ts`).
-const TITLE_H_1X: f32 = 20.0;
-const TAB_H_1X: f32 = 18.0;
-const TAB_INSET_1X: f32 = 3.0;
-const TAB_TRAIL_1X: f32 = 2.0;
-const FOOTER_LINE_1X: f32 = 16.0;
-const RAIL_W_1X: f32 = 72.0;
-const STRIP_TAB_PAD_1X: f32 = 14.0;
-const STATUS_FG: [f32; 4] = [0.435, 0.878, 0.545, 1.0];
+pub const CHATBOX: [f32; 4] = style::PANEL_RECT;
 
 /// One script-paint interaction the overlay detected this frame.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -64,71 +60,133 @@ pub fn paint_uniform_scale(size: [f32; 2]) -> f32 {
         .max(0.01)
 }
 
-fn text_width(ui: &Ui, font_sz: f32, text: &str) -> f32 {
+/// The measured cell width in applet pixels: the width of "0" at the
+/// body font size. The layout counts every text width in these cells.
+fn cell_width(ui: &Ui) -> f32 {
     ui.current_font()
-        .calc_text_size(font_sz, f32::MAX, 0.0, text)[0]
+        .calc_text_size(PANEL_FONT_SIZE, f32::MAX, 0.0, "0")[0]
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-struct StripSlot {
-    x: f32,
-    w: f32,
+/// An sRGB palette colour as the draw list's float colour.
+fn rgba(colour: [u8; 4]) -> [f32; 4] {
+    [
+        colour[0] as f32 / 255.0,
+        colour[1] as f32 / 255.0,
+        colour[2] as f32 / 255.0,
+        colour[3] as f32 / 255.0,
+    ]
 }
 
-#[derive(Debug, Clone, PartialEq)]
-struct StripSegments {
-    tabs: Vec<StripSlot>,
-    status: StripSlot,
-    brand: StripSlot,
+/// An opaque sRGB colour as the draw list's float colour.
+fn rgb(colour: [u8; 3]) -> [f32; 4] {
+    [
+        colour[0] as f32 / 255.0,
+        colour[1] as f32 / 255.0,
+        colour[2] as f32 / 255.0,
+        1.0,
+    ]
 }
 
-/// Title-row slots: tabs from the left, brand hard right, status in the gap
-/// (mirrors frozen `paintLogic.stripSegments`).
-fn strip_segments(w: f32, tab_widths: &[f32], brand_width: f32, pad: f32) -> StripSegments {
-    let mut tabs = Vec::with_capacity(tab_widths.len());
-    let mut x = pad;
-    for &tw in tab_widths {
-        tabs.push(StripSlot { x, w: tw });
-        x += tw;
-    }
-    let brand_x = x.max(w - pad - brand_width);
-    StripSegments {
-        tabs,
-        status: StripSlot {
-            x,
-            w: (brand_x - x).max(0.0),
-        },
-        brand: StripSlot {
-            x: brand_x,
-            w: brand_width,
-        },
-    }
+/// Map one applet-space rect to screen corners `[min_x, min_y, max_x,
+/// max_y]` at the Game Image's display rect.
+fn screen_rect(rect: PaintRect, min: [f32; 2], s: f32) -> [f32; 4] {
+    [
+        min[0] + rect.x() * s,
+        min[1] + rect.y() * s,
+        min[0] + rect.right() * s,
+        min[1] + rect.bottom() * s,
+    ]
 }
 
-fn clip_text_to_width(ui: &Ui, font_sz: f32, text: &str, max_w: f32) -> String {
-    if text.is_empty() || max_w <= 0.0 {
-        return String::new();
-    }
-    if text_width(ui, font_sz, text) <= max_w {
-        return text.to_string();
-    }
-    const ELL: &str = "…";
-    let mut end = text.len();
-    while end > 0 {
-        let clipped = format!("{}{}", &text[..end], ELL);
-        if text_width(ui, font_sz, &clipped) <= max_w {
-            return clipped;
+/// Map one applet-space point to a screen point.
+fn screen_point(x: f32, y: f32, min: [f32; 2], s: f32) -> [f32; 2] {
+    [min[0] + x * s, min[1] + y * s]
+}
+
+fn fill_rect(dl: &DrawListMut<'_>, rect: [f32; 4], colour: [f32; 4]) {
+    dl.add_rect([rect[0], rect[1]], [rect[2], rect[3]], colour)
+        .filled(true)
+        .build();
+}
+
+fn border_rect(dl: &DrawListMut<'_>, rect: [f32; 4], colour: [f32; 4], thickness: f32) {
+    dl.add_rect([rect[0], rect[1]], [rect[2], rect[3]], colour)
+        .thickness(thickness)
+        .build();
+}
+
+fn hovered(ui: &Ui, rect: [f32; 4]) -> bool {
+    ui.is_mouse_hovering_rect([rect[0], rect[1]], [rect[2], rect[3]])
+}
+
+/// One frame's text painter: the draw list, the body font size and the
+/// screen cell width every paint text item shares.
+struct Painter<'u> {
+    ui: &'u Ui,
+    dl: &'u DrawListMut<'u>,
+    font_sz: f32,
+    cell_screen: f32,
+}
+
+impl Painter<'_> {
+    /// Draw `text` at screen point `pos`, clipped to `cells` cells. A
+    /// clipped text draws its prefix and then "…" in the last cell, so
+    /// a reader always sees that text was cut. `bold` draws the text
+    /// twice, one physical pixel apart (the panel has no bold face).
+    /// Returns the drawn width in screen pixels.
+    fn text(&self, pos: [f32; 2], colour: [f32; 4], text: &str, cells: usize, bold: bool) -> f32 {
+        let (prefix, ellipsis) = clipped_prefix(text, cells);
+        if prefix.is_empty() && !ellipsis {
+            return 0.0;
         }
-        end = text[..end]
-            .char_indices()
-            .next_back()
-            .map(|(i, _)| i)
-            .unwrap_or(0);
-        if end == 0 {
-            break;
+        let font = self.ui.current_font();
+        let mut drawn = 0usize;
+        if !prefix.is_empty() {
+            self.dl
+                .add_text_with_font(font, self.font_sz, pos, colour, prefix, 0.0, None);
+            if bold {
+                self.dl.add_text_with_font(
+                    font,
+                    self.font_sz,
+                    [pos[0] + 1.0, pos[1]],
+                    colour,
+                    prefix,
+                    0.0,
+                    None,
+                );
+            }
+            drawn = prefix.chars().count();
         }
+        if ellipsis {
+            let at = [pos[0] + drawn as f32 * self.cell_screen, pos[1]];
+            self.dl
+                .add_text_with_font(font, self.font_sz, at, colour, "…", 0.0, None);
+            if bold {
+                self.dl.add_text_with_font(
+                    font,
+                    self.font_sz,
+                    [at[0] + 1.0, at[1]],
+                    colour,
+                    "…",
+                    0.0,
+                    None,
+                );
+            }
+            drawn += 1;
+        }
+        drawn as f32 * self.cell_screen + if bold { 1.0 } else { 0.0 }
     }
-    ELL.to_string()
+}
+
+/// One chrome entry a test can find again: which band and name a hit
+/// rect belongs to. Production frames keep no such list. They build a
+/// selection's store key only on the click itself.
+#[cfg(test)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ChromeHit {
+    Strip(usize),
+    Tabs { band: usize, name: usize },
+    Rail(usize),
 }
 
 struct CanvasGpu {
@@ -144,17 +202,33 @@ pub struct PaintOverlay {
     /// `true` = title-only (rs2b0t `paint:collapsed`). View-local: reset
     /// when the paint goes away.
     collapsed: bool,
+    /// The frame's layout, refilled each frame. Its buffers are reused,
+    /// so a steady frame allocates nothing.
+    layout: PaintLayout,
+    /// Whether the pointer was inside the drawn paint panel on the
+    /// last frame. The Game panes read this after the overlay: a
+    /// press inside the panel belongs to the paint, so its mouse
+    /// buttons are not also streamed to the game under it.
+    pointer_inside_panel: bool,
     /// The paint's title + rows submitted this frame (empty while
     /// collapsed or when no paint is showing). The GPU-less tests assert
-    /// on this mirror of the window text.
+    /// on this mirror of the window text. Its strings are refilled in
+    /// place, so the mirror itself allocates nothing on a steady frame.
+    #[cfg(test)]
     lines: Vec<String>,
+    #[cfg(test)]
+    lines_len: usize,
     /// Advertised button labels drawn this frame (empty while collapsed).
     #[cfg(test)]
     button_labels: Vec<String>,
+    #[cfg(test)]
+    button_labels_len: usize,
     /// Screen-space button rects `(min, max)` for GPU-less click tests.
+    #[cfg(test)]
     button_hits: Vec<[f32; 4]>,
-    /// Chrome hit targets: `(store key, advertised name, rect)`.
-    chrome_hits: Vec<(String, String, [f32; 4])>,
+    /// Chrome hit targets for GPU-less click tests.
+    #[cfg(test)]
+    chrome_hits: Vec<(ChromeHit, [f32; 4])>,
     #[cfg(test)]
     strip_status_label_rect: Option<[f32; 4]>,
     #[cfg(test)]
@@ -172,14 +246,39 @@ pub struct PaintOverlay {
     upload_calls: u32,
 }
 
+/// Refill `slots` entry `len` with `text`, reusing its buffer, and
+/// count it. A frame ends by truncating to the count it wrote.
+#[cfg(test)]
+fn mirror_text(slots: &mut Vec<String>, len: &mut usize, text: &str) {
+    match slots.get_mut(*len) {
+        Some(slot) => {
+            if slot != text {
+                slot.clear();
+                slot.push_str(text);
+            }
+        }
+        None => slots.push(text.to_owned()),
+    }
+    *len += 1;
+}
+
 impl PaintOverlay {
     pub fn new() -> Self {
         Self {
             collapsed: false,
+            layout: PaintLayout::new(),
+            pointer_inside_panel: false,
+            #[cfg(test)]
             lines: Vec::new(),
             #[cfg(test)]
+            lines_len: 0,
+            #[cfg(test)]
             button_labels: Vec::new(),
+            #[cfg(test)]
+            button_labels_len: 0,
+            #[cfg(test)]
             button_hits: Vec::new(),
+            #[cfg(test)]
             chrome_hits: Vec::new(),
             #[cfg(test)]
             strip_status_label_rect: None,
@@ -195,6 +294,13 @@ impl PaintOverlay {
             #[cfg(test)]
             upload_calls: 0,
         }
+    }
+
+    /// Close this frame's test mirrors at the counts the frame wrote.
+    #[cfg(test)]
+    fn finish_mirrors(&mut self) {
+        self.lines.truncate(self.lines_len);
+        self.button_labels.truncate(self.button_labels_len);
     }
 
     /// Unregister the cached canvas texture (Stop / owner teardown).
@@ -223,6 +329,15 @@ impl PaintOverlay {
         self.upload_calls
     }
 
+    /// Whether the pointer was inside the drawn paint panel on the
+    /// last [`frame`](Self::frame) call. A press that starts while
+    /// this is true is the paint's (a button, the toggle, a tab, or
+    /// the panel itself) and must not reach the game. A release is
+    /// not decided here. It follows the press that started it.
+    pub fn pointer_inside_panel(&self) -> bool {
+        self.pointer_inside_panel
+    }
+
     /// Draw the focused slot's paint over the Game Image. `min`/`size`
     /// are the Image widget's display rect. No-op without a paint. Returns
     /// the advertised button id clicked this frame, if any.
@@ -234,18 +349,18 @@ impl PaintOverlay {
         min: [f32; 2],
         size: [f32; 2],
     ) -> Option<(PaintFrameHit, u64)> {
-        self.lines.clear();
-        #[cfg(test)]
-        self.button_labels.clear();
-        self.button_hits.clear();
-        self.chrome_hits.clear();
         #[cfg(test)]
         {
+            self.lines_len = 0;
+            self.button_labels_len = 0;
+            self.button_hits.clear();
+            self.chrome_hits.clear();
             self.strip_status_label_rect = None;
             self.strip_brand_label_rect = None;
         }
         self.canvas_dest = None;
         self.canvas_dirty = None;
+        self.pointer_inside_panel = false;
 
         let structured = paint.filter(|p| {
             p.title().is_some()
@@ -265,6 +380,8 @@ impl PaintOverlay {
             } else {
                 self.last_ops.clear();
             }
+            #[cfg(test)]
+            self.finish_mirrors();
             return None;
         }
 
@@ -321,325 +438,312 @@ impl PaintOverlay {
             }
         }
 
-        let paint = structured?;
-        let s = paint_uniform_scale(size);
-        let [x, y, w, h] = chatbox_rect(min, size);
-        let scale = ui_scale(ui);
-        let row_h = (ui.frame_height() / scale).max(ROW_H_FLOOR) * s;
-        let line_step = LINE_STEP * s;
-        let pad = PAD_X * s;
-        let header_y = HEADER_Y * s;
-        let font_sz = (PANEL_FONT_SIZE * s).max(1.0);
-        let title_h = (TITLE_H_1X * s).max(1.0);
-        let tab_row_h = ((TAB_INSET_1X + TAB_H_1X + TAB_TRAIL_1X) * s).max(1.0);
-        let footer_h = if paint.footer().is_some() {
-            (FOOTER_LINE_1X * s).max(1.0)
-        } else {
-            0.0
+        let Some(paint) = structured else {
+            #[cfg(test)]
+            self.finish_mirrors();
+            return None;
         };
-        let has_strip = paint.strip().is_some();
-        let header_h = if has_strip { title_h } else { row_h };
-        let height = if self.collapsed { header_h } else { h };
-        let toggle = [x + w - header_h, y, x + w, y + header_h];
-        if has_strip {
-            if ui.is_mouse_hovering_rect([toggle[0], toggle[1]], [toggle[2], toggle[3]])
-                && ui.is_mouse_clicked(MouseButton::Left)
-            {
-                self.collapsed = !self.collapsed;
-            }
-        } else if ui.is_mouse_hovering_rect([x, y], [x + w, y + row_h])
-            && ui.is_mouse_clicked(MouseButton::Left)
-        {
+        let s = paint_uniform_scale(size);
+        let font_sz = (PANEL_FONT_SIZE * s).max(1.0);
+        let cell_w = cell_width(ui);
+        let cell_screen = cell_w * s;
+        let accent = rgb(paint.accent_rgb().unwrap_or(style::DEFAULT_ACCENT));
+        self.layout.compute(paint, self.collapsed, cell_w);
+        // Collapse acts on mouse down, only inside the toggle square.
+        // A click flips the state and this same frame draws the result.
+        let toggle_rect = screen_rect(self.layout.toggle(), min, s);
+        let toggle_hovered = hovered(ui, toggle_rect);
+        if toggle_hovered && ui.is_mouse_clicked(MouseButton::Left) {
             self.collapsed = !self.collapsed;
+            self.layout.compute(paint, self.collapsed, cell_w);
         }
+        let clicked = ui.is_mouse_clicked(MouseButton::Left);
         let dl = ui.get_window_draw_list();
-        let _clip = dl.push_clip_rect([x, y], [x + w, y + height], true);
-        dl.add_rect(
-            [x, y],
-            [x + w, y + height],
-            [BG_DEEP[0], BG_DEEP[1], BG_DEEP[2], 0.92],
-        )
-        .filled(true)
-        .build();
-        dl.add_rect([x, y], [x + w, y + height], ACCENT)
-            .thickness(s)
-            .build();
-        let font = ui.current_font();
-        let glyph = if self.collapsed { "+" } else { "–" };
-        let mut chrome_click: Option<(String, String)> = None;
-        let mut content_top = y + header_h;
+        let painter = Painter {
+            ui,
+            dl: &dl,
+            font_sz,
+            cell_screen,
+        };
+        let panel_rect = screen_rect(self.layout.panel(), min, s);
+        self.pointer_inside_panel = hovered(ui, panel_rect);
+        let _clip = dl.push_clip_rect(
+            [panel_rect[0], panel_rect[1]],
+            [panel_rect[2], panel_rect[3]],
+            true,
+        );
+        fill_rect(&dl, panel_rect, rgba(style::BG));
+        let title_rect = screen_rect(self.layout.title_bar(), min, s);
+        fill_rect(&dl, title_rect, rgba(style::TITLE_BG));
+        border_rect(&dl, panel_rect, rgba(style::BORDER), s);
+        border_rect(&dl, title_rect, rgba(style::BORDER), s);
+        let title_text_y = self.layout.title_bar().y() + style::TITLE_TEXT_DY;
+        let mut chrome_click: Option<PaintFrameHit> = None;
+        let mut button_click: Option<usize> = None;
+
         if let Some(strip) = paint.strip() {
-            let mid = y + header_h * 0.5;
-            let text_y = mid - font_sz * 0.35;
-            let box_y = y + 2.0 * s;
-            let box_h = (header_h - 4.0 * s).max(1.0);
-            let brand = strip.brand().or(paint.title()).unwrap_or("");
-            let brand_reserve = if brand.is_empty() {
-                header_h
-            } else {
-                text_width(ui, font_sz, brand) + pad + header_h
-            };
-            let tab_widths: Vec<f32> = strip
-                .names()
-                .iter()
-                .map(|name| (text_width(ui, font_sz, name) + STRIP_TAB_PAD_1X * s).max(1.0))
-                .collect();
-            let seg = strip_segments(w, &tab_widths, brand_reserve, pad);
-            for (name, slot) in strip.names().iter().zip(seg.tabs.iter()) {
-                let tx = x + slot.x;
-                let tw = slot.w;
-                let hit = [tx, box_y, tx + tw, box_y + box_h];
+            for at in 0..self.layout.strip_tabs().len() {
+                let item = self.layout.strip_tabs()[at];
+                let name = &strip.names()[item.name_index()];
+                let rect = screen_rect(item.rect(), min, s);
                 let active = strip.selected() == name.as_str();
-                let hovered = ui.is_mouse_hovering_rect([hit[0], hit[1]], [hit[2], hit[3]]);
-                if active || hovered {
-                    dl.add_rect([hit[0], hit[1]], [hit[2], hit[3]], [0.28, 0.28, 0.34, 0.95])
-                        .filled(true)
-                        .build();
+                let over = hovered(ui, rect);
+                if active {
+                    fill_rect(&dl, rect, rgba(style::WIDGET_HOT));
+                } else if over {
+                    fill_rect(&dl, rect, rgba(style::WIDGET));
                 }
-                dl.add_text_with_font(
-                    font,
-                    font_sz,
-                    [tx + 7.0 * s, text_y],
-                    if active { ACCENT } else { TEXT_DIM },
+                let origin = item.text_origin();
+                painter.text(
+                    screen_point(origin[0], origin[1], min, s),
+                    if active { accent } else { rgba(style::FG_DIM) },
                     name,
-                    0.0,
-                    None,
+                    item.cells(),
+                    true,
                 );
-                let key = format!("strip:{}", strip.id());
-                self.chrome_hits.push((key.clone(), name.clone(), hit));
-                if hovered && ui.is_mouse_clicked(MouseButton::Left) {
-                    chrome_click = Some((key, name.clone()));
+                #[cfg(test)]
+                self.chrome_hits
+                    .push((ChromeHit::Strip(item.name_index()), rect));
+                if over && clicked {
+                    chrome_click = Some(PaintFrameHit::Select {
+                        key: format!("strip:{}", strip.id()),
+                        name: name.clone(),
+                    });
                 }
             }
-            if let Some(status) = strip.status() {
-                if seg.status.w > 0.0 {
-                    let slot_x = x + seg.status.x;
-                    let clipped = clip_text_to_width(ui, font_sz, status, seg.status.w);
-                    let draw_w = text_width(ui, font_sz, &clipped);
-                    let status_x = slot_x + (seg.status.w - draw_w).max(0.0);
-                    let _status_clip =
-                        dl.push_clip_rect([slot_x, y], [slot_x + seg.status.w, y + header_h], true);
-                    dl.add_text_with_font(
-                        font,
-                        font_sz,
-                        [status_x, text_y],
-                        STATUS_FG,
-                        &clipped,
-                        0.0,
-                        None,
-                    );
-                    #[cfg(test)]
-                    if !clipped.is_empty() {
-                        self.strip_status_label_rect =
-                            Some([status_x, text_y, status_x + draw_w, text_y + font_sz]);
-                    }
+            if let (Some(status), Some(slot)) = (strip.status(), self.layout.strip_status()) {
+                let pos = screen_point(slot.rect().x(), title_text_y, min, s);
+                let _drawn = painter.text(pos, rgba(style::STATUS), status, slot.cells(), false);
+                #[cfg(test)]
+                if _drawn > 0.0 {
+                    self.strip_status_label_rect =
+                        Some([pos[0], pos[1], pos[0] + _drawn, pos[1] + font_sz]);
                 }
             }
-            if !brand.is_empty() {
-                let slot_x = x + seg.brand.x;
-                // The reserve includes the collapse square; text starts at its left edge.
-                let brand_x = slot_x;
-                let _brand_clip =
-                    dl.push_clip_rect([slot_x, y], [slot_x + seg.brand.w, y + header_h], true);
-                dl.add_text_with_font(font, font_sz, [brand_x, text_y], ACCENT, brand, 0.0, None);
-                self.lines.push(brand.to_string());
+            let brand = strip.brand().or_else(|| paint.title()).unwrap_or("");
+            if let Some(slot) = self.layout.strip_brand() {
+                let pos = screen_point(slot.rect().x(), title_text_y, min, s);
+                let _drawn = painter.text(pos, accent, brand, slot.cells(), true);
                 #[cfg(test)]
                 {
-                    let brand_w = text_width(ui, font_sz, brand);
+                    mirror_text(&mut self.lines, &mut self.lines_len, brand);
                     self.strip_brand_label_rect =
-                        Some([brand_x, text_y, brand_x + brand_w, text_y + font_sz]);
+                        Some([pos[0], pos[1], pos[0] + _drawn, pos[1] + font_sz]);
                 }
             }
-            dl.add_text_with_font(
-                font,
-                font_sz,
-                [toggle[0] + 7.0 * s, y + header_y],
-                TEXT_DIM,
-                glyph,
-                0.0,
-                None,
-            );
-        } else {
-            let header = match paint.title() {
-                Some(t) => format!("{glyph} {t}"),
-                None => glyph.to_string(),
-            };
-            dl.add_text_with_font(
-                font,
-                font_sz,
-                [x + pad, y + header_y],
-                ACCENT,
-                &header,
-                0.0,
-                None,
+        } else if let Some(title) = paint.title() {
+            painter.text(
+                screen_point(
+                    self.layout.title_bar().x() + style::PAD,
+                    title_text_y,
+                    min,
+                    s,
+                ),
+                accent,
+                title,
+                self.layout.title_cells(),
+                true,
             );
         }
-        let mut button_click: Option<usize> = None;
+        painter.text(
+            screen_point(
+                self.layout.toggle().x() + style::TOGGLE_TEXT_DX,
+                title_text_y,
+                min,
+                s,
+            ),
+            if toggle_hovered {
+                rgba(style::FG)
+            } else {
+                rgba(style::FG_DIM)
+            },
+            if self.collapsed { "+" } else { "-" },
+            usize::MAX,
+            false,
+        );
+
         if !self.collapsed {
-            if !has_strip {
-                if let Some(title) = paint.title() {
-                    self.lines.push(title.to_owned());
-                }
-            }
-            for band in paint.tabs() {
-                if band.names().is_empty() {
-                    continue;
-                }
-                let ty = content_top + TAB_INSET_1X * s;
-                let mut tx = x + 4.0 * s;
-                for name in band.names() {
-                    let tw = (text_width(ui, font_sz, name) + STRIP_TAB_PAD_1X * s).max(1.0);
-                    let hit = [tx, ty, tx + tw, ty + TAB_H_1X * s];
-                    let active = band.selected() == name.as_str();
-                    let hovered = ui.is_mouse_hovering_rect([hit[0], hit[1]], [hit[2], hit[3]]);
-                    if active || hovered {
-                        dl.add_rect([hit[0], hit[1]], [hit[2], hit[3]], [0.28, 0.28, 0.34, 0.95])
-                            .filled(true)
-                            .build();
+            #[cfg(test)]
+            {
+                if paint.strip().is_none() {
+                    if let Some(title) = paint.title() {
+                        mirror_text(&mut self.lines, &mut self.lines_len, title);
                     }
-                    dl.add_text_with_font(
-                        font,
-                        font_sz,
-                        [tx + 7.0 * s, ty + TAB_H_1X * s * 0.45],
-                        if active { ACCENT } else { TEXT_DIM },
-                        name,
-                        0.0,
-                        None,
+                }
+                for row in paint.lines() {
+                    mirror_text(&mut self.lines, &mut self.lines_len, row);
+                }
+                for button in paint.buttons() {
+                    mirror_text(
+                        &mut self.button_labels,
+                        &mut self.button_labels_len,
+                        button.label(),
                     );
-                    let key = format!("tabs:{}", band.id());
-                    self.chrome_hits.push((key.clone(), name.clone(), hit));
-                    if hovered && ui.is_mouse_clicked(MouseButton::Left) {
-                        chrome_click = Some((key, name.clone()));
-                    }
-                    tx += tw + 2.0 * s;
-                }
-                content_top += tab_row_h;
-            }
-            let content_bottom = y + height - footer_h;
-            let rail_w = paint
-                .rail()
-                .filter(|r| !r.names().is_empty())
-                .map(|_| (RAIL_W_1X * s).max(1.0))
-                .unwrap_or(0.0);
-            let body_left = x + pad + rail_w;
-            let body_w = (w - pad * 2.0 - rail_w).max(1.0);
-            if let Some(rail) = paint.rail() {
-                if !rail.names().is_empty() {
-                    let rail_body_h = (content_bottom - content_top).max(1.0);
-                    let slot_h = (rail_body_h / rail.names().len() as f32).max(line_step);
-                    for (i, name) in rail.names().iter().enumerate() {
-                        let ry = content_top + slot_h * i as f32;
-                        let hit = [
-                            x + 2.0 * s,
-                            ry,
-                            x + rail_w - 2.0 * s,
-                            (ry + slot_h).min(content_bottom),
-                        ];
-                        let active = rail.selected() == name.as_str();
-                        let hovered = ui.is_mouse_hovering_rect([hit[0], hit[1]], [hit[2], hit[3]]);
-                        if active || hovered {
-                            dl.add_rect(
-                                [hit[0], hit[1]],
-                                [hit[2], hit[3]],
-                                [0.28, 0.28, 0.34, 0.95],
-                            )
-                            .filled(true)
-                            .build();
-                        }
-                        if active {
-                            dl.add_rect([hit[0], hit[1]], [hit[0] + 2.0 * s, hit[3]], ACCENT)
-                                .filled(true)
-                                .build();
-                        }
-                        dl.add_text_with_font(
-                            font,
-                            font_sz,
-                            [hit[0] + 6.0 * s, ry + slot_h * 0.35],
-                            if active { TEXT } else { TEXT_DIM },
-                            name,
-                            0.0,
-                            None,
-                        );
-                        let key = format!("rail:{}", rail.id());
-                        self.chrome_hits.push((key.clone(), name.clone(), hit));
-                        if hovered && ui.is_mouse_clicked(MouseButton::Left) {
-                            chrome_click = Some((key, name.clone()));
-                        }
-                    }
                 }
             }
-            // Reserve the host controls before the text rows. The rows
-            // stop at rows_bottom. A later button draws only when it
-            // leaves room for every host control after it. Pause and
-            // Stop stay drawn when the rows fill the dock.
-            let mut host_left = paint
-                .buttons()
-                .filter(|btn| btn.control().is_some())
-                .count();
-            let rows_bottom = (content_bottom - host_left as f32 * row_h).max(content_top);
-            let mut ty = content_top;
-            for row in paint.lines() {
-                self.lines.push(row.clone());
-                if ty + line_step <= rows_bottom {
-                    dl.add_text_with_font(font, font_sz, [body_left, ty], TEXT, row, 0.0, None);
-                    ty += line_step;
+            for at in 0..self.layout.tabs().len() {
+                let item = self.layout.tabs()[at];
+                let Some(band) = paint.tabs().nth(item.band_index()) else {
+                    continue;
+                };
+                let name = &band.names()[item.name_index()];
+                let rect = screen_rect(item.rect(), min, s);
+                let active = band.selected() == name.as_str();
+                let over = hovered(ui, rect);
+                if active {
+                    fill_rect(&dl, rect, rgba(style::WIDGET_HOT));
+                    fill_rect(
+                        &dl,
+                        [
+                            rect[0],
+                            rect[3] - style::TAB_UNDERLINE_H * s,
+                            rect[2],
+                            rect[3],
+                        ],
+                        accent,
+                    );
+                } else if over {
+                    fill_rect(&dl, rect, rgba(style::WIDGET));
                 }
-            }
-            // The rows take a physical font size on the draw list. A
-            // pushed font size is logical. Dear ImGui multiplies it by
-            // FontScaleDpi. Divide by the display scale so that the
-            // label glyphs match the body glyphs at every scale.
-            let _font = ui.push_font_with_size(None, font_sz / scale);
-            let fp = ui.clone_style().frame_padding();
-            let _pad = ui.push_style_var(StyleVar::FramePadding([
-                (fp[0] / scale * s).max(0.0),
-                (fp[1] / scale * s).max(0.0),
-            ]));
-            for (index, btn) in paint.buttons().enumerate() {
+                let origin = item.text_origin();
+                painter.text(
+                    screen_point(origin[0], origin[1], min, s),
+                    if active {
+                        rgba(style::WHITE)
+                    } else {
+                        rgba(style::FG_DIM)
+                    },
+                    name,
+                    item.cells(),
+                    false,
+                );
                 #[cfg(test)]
-                self.button_labels.push(btn.label().to_owned());
-                let is_host = btn.control().is_some();
-                if is_host {
-                    host_left = host_left.saturating_sub(1);
-                }
-                let limit = content_bottom - host_left as f32 * row_h;
-                if is_host && ty + row_h > limit {
-                    ty = (limit - row_h).max(y);
-                }
-                if ty + row_h <= limit {
-                    ui.set_cursor_screen_pos([body_left, ty]);
-                    let hit = [body_left, ty, body_left + body_w, ty + row_h];
-                    self.button_hits.push(hit);
-                    // A host control the run does not take now draws
-                    // disabled and reports no click.
-                    let _off = (!btn.enabled()).then(|| ui.begin_disabled());
-                    let _id = ui.push_id(index as i32);
-                    let pressed = ui.button_with_size(btn.label(), [body_w, row_h]);
-                    let hovered = ui.is_mouse_hovering_rect([hit[0], hit[1]], [hit[2], hit[3]]);
-                    if btn.enabled()
-                        && (pressed || (hovered && ui.is_mouse_clicked(MouseButton::Left)))
-                    {
-                        button_click = Some(index);
-                    }
-                    ty += row_h;
+                self.chrome_hits.push((
+                    ChromeHit::Tabs {
+                        band: item.band_index(),
+                        name: item.name_index(),
+                    },
+                    rect,
+                ));
+                if over && clicked {
+                    chrome_click = Some(PaintFrameHit::Select {
+                        key: format!("tabs:{}", band.id()),
+                        name: name.clone(),
+                    });
                 }
             }
-            if let Some(footer) = paint.footer() {
-                let footer_w = text_width(ui, font_sz, footer);
-                dl.add_text_with_font(
-                    font,
-                    font_sz,
-                    [x + w - pad - footer_w, content_bottom + footer_h * 0.25],
-                    TEXT_DIM,
+            if let Some(rail) = paint.rail() {
+                for at in 0..self.layout.rail().len() {
+                    let item = self.layout.rail()[at];
+                    let name = &rail.names()[item.name_index()];
+                    let rect = screen_rect(item.rect(), min, s);
+                    let active = rail.selected() == name.as_str();
+                    let over = hovered(ui, rect);
+                    if active {
+                        fill_rect(&dl, rect, rgba(style::WIDGET_HOT));
+                        fill_rect(
+                            &dl,
+                            [
+                                rect[0],
+                                rect[1],
+                                rect[0] + style::RAIL_MARKER_W * s,
+                                rect[3],
+                            ],
+                            accent,
+                        );
+                    } else if over {
+                        fill_rect(&dl, rect, rgba(style::WIDGET));
+                    }
+                    let origin = item.text_origin();
+                    painter.text(
+                        screen_point(origin[0], origin[1], min, s),
+                        if active {
+                            rgba(style::WHITE)
+                        } else {
+                            rgba(style::FG_DIM)
+                        },
+                        name,
+                        item.cells(),
+                        false,
+                    );
+                    #[cfg(test)]
+                    self.chrome_hits
+                        .push((ChromeHit::Rail(item.name_index()), rect));
+                    if over && clicked {
+                        chrome_click = Some(PaintFrameHit::Select {
+                            key: format!("rail:{}", rail.id()),
+                            name: name.clone(),
+                        });
+                    }
+                }
+            }
+            for at in 0..self.layout.rows().len() {
+                let item = self.layout.rows()[at];
+                painter.text(
+                    screen_point(item.rect().x(), item.rect().y() + style::TEXT_DY, min, s),
+                    rgba(style::FG),
+                    &paint.lines()[item.index()],
+                    item.cells(),
+                    false,
+                );
+            }
+            // Buttons act on mouse down only, inside their rect. A host
+            // control the run does not take now draws with a dim label
+            // and reports no click.
+            for at in 0..self.layout.buttons().len() {
+                let item = self.layout.buttons()[at];
+                let Some(button) = paint.buttons().nth(item.index()) else {
+                    continue;
+                };
+                let rect = screen_rect(item.rect(), min, s);
+                let over = hovered(ui, rect);
+                fill_rect(
+                    &dl,
+                    rect,
+                    if button.enabled() && over {
+                        rgba(style::WIDGET_HOT)
+                    } else {
+                        rgba(style::WIDGET)
+                    },
+                );
+                border_rect(&dl, rect, rgba(style::BORDER), s);
+                painter.text(
+                    screen_point(
+                        item.rect().x() + style::BUTTON_TEXT_DX,
+                        item.rect().y() + style::BUTTON_TEXT_DY,
+                        min,
+                        s,
+                    ),
+                    if button.enabled() {
+                        rgba(style::FG)
+                    } else {
+                        rgba(style::FG_DIM)
+                    },
+                    button.label(),
+                    item.label_cells(),
+                    false,
+                );
+                #[cfg(test)]
+                self.button_hits.push(rect);
+                if button.enabled() && over && clicked {
+                    button_click = Some(item.index());
+                }
+            }
+            if let (Some(footer), Some(place)) = (paint.footer(), self.layout.footer()) {
+                let origin = place.origin();
+                painter.text(
+                    screen_point(origin[0], origin[1], min, s),
+                    rgba(style::FG_DIM),
                     footer,
-                    0.0,
-                    None,
+                    place.cells(),
+                    false,
                 );
             }
         }
-        if chrome_click.is_some() {
-            chrome_click
-                .map(|(key, name)| (PaintFrameHit::Select { key, name }, paint.generation()))
+        #[cfg(test)]
+        self.finish_mirrors();
+        if let Some(hit) = chrome_click {
+            Some((hit, paint.generation()))
         } else {
             button_click.map(|index| (PaintFrameHit::Button(index), paint.generation()))
         }
@@ -732,7 +836,9 @@ impl Default for PaintOverlay {
 mod tests {
     use dear_imgui_rs::FramePrepareOptions;
 
-    use super::{chatbox_rect, paint_uniform_scale, PaintFrameHit, PaintOverlay, CHATBOX, PAD_X};
+    use super::{
+        chatbox_rect, paint_uniform_scale, ChromeHit, PaintFrameHit, PaintOverlay, CHATBOX,
+    };
     use crate::test_support::headless_gpu;
     use frontend_core::test_support::paint::{caption_raster, TestPaint};
 
@@ -850,26 +956,39 @@ mod tests {
         ctx.render();
     }
 
+    /// The toggle square's centre for a frame at `[10, 20]` on a native
+    /// 765x503 blit: the chatbox is `[18, 365, 506, 150]`, so the 20 px
+    /// square at its top right is `[504, 365, 524, 385]`.
+    const TOGGLE_CENTER: [f32; 2] = [514.0, 375.0];
+
     #[test]
     fn collapse_click_hides_body_and_shrinks_to_title_height() {
         let _guard = crate::test_support::imgui_context_guard();
         let mut ctx = crate::test_support::imgui_context();
         let mut overlay = PaintOverlay::new();
         let p = paint(Some("BoneBurier"), &["a row", "second row"]);
-        // The title row spans the chatbox top strip: hover it, then press.
+        // A press on the title text does not collapse the paint.
         let title = [30.0, 380.0];
         paint_click_frame(&mut ctx, &mut overlay, &p, Some(title), false);
         assert!(!overlay.collapsed, "expanded by default");
         paint_click_frame(&mut ctx, &mut overlay, &p, Some(title), true);
-        assert!(overlay.collapsed, "`–` collapses to title-only");
+        assert!(
+            !overlay.collapsed,
+            "only the toggle square collapses the paint"
+        );
         paint_click_frame(&mut ctx, &mut overlay, &p, Some(title), false);
+        // The `-` toggle square collapses to title-only.
+        paint_click_frame(&mut ctx, &mut overlay, &p, Some(TOGGLE_CENTER), false);
+        paint_click_frame(&mut ctx, &mut overlay, &p, Some(TOGGLE_CENTER), true);
+        assert!(overlay.collapsed, "`-` collapses to title-only");
+        paint_click_frame(&mut ctx, &mut overlay, &p, Some(TOGGLE_CENTER), false);
         assert!(
             overlay.lines.is_empty(),
             "collapsed: body rows are not shown"
         );
         assert!(overlay.collapsed);
-        // The `+` bar expands again.
-        paint_click_frame(&mut ctx, &mut overlay, &p, Some(title), true);
+        // The `+` toggle square expands again.
+        paint_click_frame(&mut ctx, &mut overlay, &p, Some(TOGGLE_CENTER), true);
         assert!(!overlay.collapsed, "`+` expands back");
         assert_eq!(
             overlay.lines,
@@ -967,15 +1086,15 @@ mod tests {
         );
         assert!(!overlay.collapsed, "button click is not collapse");
         paint_click_frame(&mut ctx, &mut overlay, &p, Some(center), false);
-        let title = [30.0, 380.0];
-        paint_click_frame(&mut ctx, &mut overlay, &p, Some(title), true);
-        assert!(overlay.collapsed, "title click still collapses");
+        paint_click_frame(&mut ctx, &mut overlay, &p, Some(TOGGLE_CENTER), false);
+        paint_click_frame(&mut ctx, &mut overlay, &p, Some(TOGGLE_CENTER), true);
+        assert!(overlay.collapsed, "toggle click still collapses");
         assert!(
             overlay.button_labels.is_empty(),
             "collapsed hides paint widgets"
         );
-        paint_click_frame(&mut ctx, &mut overlay, &p, Some(title), false);
-        paint_click_frame(&mut ctx, &mut overlay, &p, Some(title), true);
+        paint_click_frame(&mut ctx, &mut overlay, &p, Some(TOGGLE_CENTER), false);
+        paint_click_frame(&mut ctx, &mut overlay, &p, Some(TOGGLE_CENTER), true);
         assert!(!overlay.collapsed);
         assert_eq!(overlay.button_labels, vec!["Go bank".to_string()]);
     }
@@ -1269,12 +1388,16 @@ mod tests {
         let native_hit = overlay.button_hits[0];
         let native_chat = chatbox_rect([10.0, 20.0], [765.0, 503.0]);
         assert!(
-            (native_hit[0] - (native_chat[0] + PAD_X)).abs() < 0.5,
-            "native pad anchors the hit left edge"
+            (native_hit[0] - (native_chat[0] + 8.0)).abs() < 0.5,
+            "native inset anchors the hit left edge"
         );
         assert!(
-            (native_hit[2] - (native_chat[0] + native_chat[2] - PAD_X)).abs() < 0.5,
-            "native pad anchors the hit right edge"
+            (native_hit[3] - native_hit[1] - 16.0).abs() < 0.5,
+            "the compact button is 16 px high at native scale"
+        );
+        assert!(
+            native_hit[2] < native_chat[0] + native_chat[2] - 100.0,
+            "the compact button does not span the body width"
         );
 
         prepare_frame(&mut ctx);
@@ -1301,12 +1424,14 @@ mod tests {
         let s = paint_uniform_scale([382.5, 251.5]);
         assert!((s - 0.5).abs() < 0.001);
         assert!(
-            (half_hit[0] - (half_chat[0] + PAD_X * s)).abs() < 0.5,
-            "half-scale pad left ({half_hit:?} vs chat {half_chat:?})"
+            (half_hit[0] - (half_chat[0] + 8.0 * s)).abs() < 0.5,
+            "half-scale inset left ({half_hit:?} vs chat {half_chat:?})"
         );
+        let native_w = native_hit[2] - native_hit[0];
+        let half_w = half_hit[2] - half_hit[0];
         assert!(
-            (half_hit[2] - (half_chat[0] + half_chat[2] - PAD_X * s)).abs() < 0.5,
-            "half-scale pad right"
+            (half_w - native_w * s).abs() < 1.0,
+            "button hit width scales with the cell ({half_w} vs {native_w}*{s})"
         );
         let native_h = native_hit[3] - native_hit[1];
         let half_h = half_hit[3] - half_hit[1];
@@ -1446,15 +1571,6 @@ mod tests {
     }
 
     #[test]
-    fn strip_segments_reserves_brand_before_toggle() {
-        let seg = super::strip_segments(506.0, &[60.0, 50.0], 90.0, 8.0);
-        assert!(seg.status.w > 0.0);
-        assert_eq!(seg.brand.x + seg.brand.w, 506.0 - 8.0);
-        let tight = super::strip_segments(253.0, &[30.0, 25.0], 45.0, 4.0);
-        assert!(tight.brand.x >= tight.status.x);
-    }
-
-    #[test]
     fn strip_status_brand_label_rects_disjoint_native_and_half_grid() {
         let _guard = crate::test_support::imgui_context_guard();
         let mut ctx = crate::test_support::imgui_context();
@@ -1470,13 +1586,13 @@ mod tests {
                     "status {status:?} overlaps brand at scale {size:?}: {status_rect:?} vs {brand_rect:?}"
                 );
                 let chat = chatbox_rect(min, size);
-                let toggle_left =
-                    chat[0] + chat[2] - (super::TITLE_H_1X * paint_uniform_scale(size)).max(1.0);
+                let toggle_left = chat[0] + chat[2]
+                    - frontend_core::scripts::paint_style::TOGGLE_W * paint_uniform_scale(size);
                 assert!(
                     brand_rect[2] <= toggle_left,
                     "brand overlaps collapse control at {size:?}: {brand_rect:?}, toggle starts {toggle_left}"
                 );
-                for (_key, _name, hit) in &overlay.chrome_hits {
+                for (_kind, hit) in &overlay.chrome_hits {
                     assert!(
                         hit[2] <= brand_rect[0] + 0.5,
                         "tab hit must stay left of brand: {hit:?} brand_x={}",
@@ -1511,14 +1627,14 @@ mod tests {
             overlay
                 .chrome_hits
                 .iter()
-                .any(|(k, n, _)| k == "strip:k" && n == "Options"),
+                .any(|(kind, _)| *kind == ChromeHit::Strip(1)),
             "strip advertises both page targets"
         );
         let hit = overlay
             .chrome_hits
             .iter()
-            .find(|(_, n, _)| n == "Options")
-            .map(|(_, _, r)| *r)
+            .find(|(kind, _)| *kind == ChromeHit::Strip(1))
+            .map(|(_, r)| *r)
             .expect("Options hit rect");
         let center = [(hit[0] + hit[2]) / 2.0, (hit[1] + hit[3]) / 2.0];
         prepare_frame(&mut ctx);
@@ -1559,9 +1675,10 @@ mod tests {
         let half = [382.5_f32, 251.5];
         let chat = chatbox_rect([0.0, 0.0], half);
         let s = paint_uniform_scale(half);
-        // Title strip center at half scale (row_h ≈ frame_height * s).
+        // Toggle square centre at half scale: the square is 20 applet
+        // px at the title bar's right end.
         prepare_frame(&mut ctx);
-        let title = [chat[0] + chat[2] * 0.5, chat[1] + 4.0 * s];
+        let title = [chat[0] + chat[2] - 10.0 * s, chat[1] + 10.0 * s];
         ctx.io_mut().add_mouse_pos_event(title);
         ctx.io_mut()
             .add_mouse_button_event(dear_imgui_rs::MouseButton::Left, false);
@@ -1596,7 +1713,7 @@ mod tests {
         ctx.render();
         assert!(
             overlay.collapsed,
-            "title click inside the scaled strip collapses"
+            "a click inside the scaled toggle square collapses"
         );
         assert!(overlay.lines.is_empty());
     }
@@ -1835,7 +1952,7 @@ mod tests {
             overlay.button_hits
         );
         let chat = chatbox_rect([10.0, 20.0], [765.0, 503.0]);
-        let footer_top = chat[1] + chat[3] - super::FOOTER_LINE_1X;
+        let footer_top = chat[1] + chat[3] - frontend_core::scripts::paint_style::FOOTER_H;
         for hit in &overlay.button_hits {
             assert!(
                 hit[0] >= chat[0] && hit[2] <= chat[0] + chat[2] && hit[1] >= chat[1],
@@ -1847,8 +1964,9 @@ mod tests {
             );
         }
         assert!(
-            overlay.button_hits[1][1] >= overlay.button_hits[0][3] - 0.5,
-            "Stop keeps its place below Pause"
+            (overlay.button_hits[1][1] - overlay.button_hits[0][1]).abs() < 0.5
+                && overlay.button_hits[1][0] > overlay.button_hits[0][2],
+            "Stop sits beside Pause on the same row"
         );
         let hit = press(&mut ctx, &mut overlay, &frame, 1);
         assert_eq!(
@@ -1856,6 +1974,806 @@ mod tests {
             Some(&PaintFrameHit::Button(1)),
             "the drawn Stop control reports its click"
         );
+    }
+
+    /// One frame in the Game panes' input order: the Game Image item,
+    /// then the paint overlay, then the capture decision the panes
+    /// make (the gate and anchor read at the Image; the frame's left
+    /// click reaches the game only while the pointer is outside the
+    /// paint panel). Returns the paint hit, whether the click would
+    /// be forwarded to the game, the Image's top-left corner, and
+    /// whether the pointer is inside the panel.
+    fn pane_capture_frame(
+        ctx: &mut dear_imgui_rs::Context,
+        overlay: &mut PaintOverlay,
+        frame: &PaintFrame,
+        mouse: [f32; 2],
+        left_down: bool,
+    ) -> (Option<(PaintFrameHit, u64)>, bool, [f32; 2], bool) {
+        prepare_frame(ctx);
+        ctx.io_mut().add_mouse_pos_event(mouse);
+        ctx.io_mut()
+            .add_mouse_button_event(dear_imgui_rs::MouseButton::Left, left_down);
+        let mut out = (None, false, [0.0; 2], false);
+        {
+            let ui = ctx.frame();
+            let _ = ui
+                .window("Game")
+                .position([0.0, 0.0], dear_imgui_rs::Condition::Always)
+                .size([900.0, 700.0], dear_imgui_rs::Condition::Always)
+                .build(|| {
+                    ui.image(dear_imgui_rs::TextureId::new(0), [765.0, 503.0]);
+                    let min = ui.item_rect_min();
+                    let image_hovered = ui.is_item_hovered();
+                    let hit = overlay.frame(ui, None, Some(frame.view()), min, [765.0, 503.0]);
+                    let inside = overlay.pointer_inside_panel();
+                    let forwarded = image_hovered
+                        && ui.is_mouse_clicked(dear_imgui_rs::MouseButton::Left)
+                        && !inside;
+                    out = (hit, forwarded, min, inside);
+                });
+        }
+        ctx.render();
+        out
+    }
+
+    /// Hover then press `point` in the pane order, as an operator's
+    /// click arrives. Returns the press frame's pane decision.
+    fn pane_press(
+        ctx: &mut dear_imgui_rs::Context,
+        overlay: &mut PaintOverlay,
+        frame: &PaintFrame,
+        point: [f32; 2],
+    ) -> (Option<(PaintFrameHit, u64)>, bool, [f32; 2], bool) {
+        let _ = pane_capture_frame(ctx, overlay, frame, point, false);
+        let pressed = pane_capture_frame(ctx, overlay, frame, point, true);
+        let _ = pane_capture_frame(ctx, overlay, frame, point, false);
+        pressed
+    }
+
+    /// M1: with input capture on, a press on Pause, Stop, a strip tab
+    /// or the toggle — anywhere inside the paint panel — is the
+    /// paint's alone. The same press outside the panel still reaches
+    /// the game.
+    #[test]
+    fn a_press_inside_the_paint_never_clicks_the_game() {
+        let _guard = crate::test_support::imgui_context_guard();
+        let mut ctx = crate::test_support::imgui_context();
+        let mut overlay = PaintOverlay::new();
+        let frame = paint(Some("Helper"), &["status"])
+            .with_strip(
+                "k",
+                &["Statistics", "Options"],
+                "Statistics",
+                Some("ok"),
+                Some("Helper"),
+            )
+            .with_host_controls()
+            .frame_for_run("alice", ScriptRunState::Running);
+        let away = [890.0, 690.0];
+        let _ = pane_capture_frame(&mut ctx, &mut overlay, &frame, away, false);
+        let (_, _, min, _) = pane_capture_frame(&mut ctx, &mut overlay, &frame, away, false);
+        let buttons = overlay.button_hits.clone();
+        assert_eq!(buttons.len(), 2, "Pause and Stop are drawn");
+        let centre = |rect: [f32; 4]| [(rect[0] + rect[2]) / 2.0, (rect[1] + rect[3]) / 2.0];
+
+        // A press on the game, outside the panel, is forwarded.
+        let outside = [min[0] + 300.0, min[1] + 100.0];
+        let (hit, forwarded, _, inside) = pane_press(&mut ctx, &mut overlay, &frame, outside);
+        assert_eq!(hit, None, "no paint control is pressed outside");
+        assert!(!inside, "the pointer is outside the panel");
+        assert!(forwarded, "a press outside the paint reaches the game");
+
+        // Pause and Stop belong to the paint alone.
+        for (index, rect) in buttons.iter().enumerate() {
+            let (hit, forwarded, _, inside) =
+                pane_press(&mut ctx, &mut overlay, &frame, centre(*rect));
+            assert_eq!(
+                hit.as_ref().map(|(hit, _)| hit),
+                Some(&PaintFrameHit::Button(index)),
+                "the press hits the paint control"
+            );
+            assert!(inside, "the control is inside the panel");
+            assert!(!forwarded, "the press never also clicks the game");
+        }
+
+        // A strip tab belongs to the paint alone.
+        let tab = overlay
+            .chrome_hits
+            .iter()
+            .find(|(kind, _)| *kind == ChromeHit::Strip(1))
+            .map(|(_, rect)| *rect)
+            .expect("Options tab rect");
+        let (hit, forwarded, _, inside) = pane_press(&mut ctx, &mut overlay, &frame, centre(tab));
+        assert_eq!(
+            hit.as_ref().map(|(hit, _)| hit),
+            Some(&PaintFrameHit::Select {
+                key: "strip:k".into(),
+                name: "Options".into(),
+            }),
+            "the press selects the tab"
+        );
+        assert!(inside && !forwarded, "the tab press stays in the paint");
+
+        // The panel body itself, away from every control, also holds
+        // the press back from the game under it.
+        let body = [min[0] + 400.0, min[1] + 430.0];
+        let (hit, forwarded, _, inside) = pane_press(&mut ctx, &mut overlay, &frame, body);
+        assert_eq!(hit, None, "no control is pressed on the panel body");
+        assert!(
+            inside && !forwarded,
+            "the panel body press stays in the paint"
+        );
+
+        // The toggle square collapses the paint and forwards nothing.
+        let toggle = [min[0] + 504.0, min[1] + 355.0];
+        let (_, forwarded, _, inside) = pane_press(&mut ctx, &mut overlay, &frame, toggle);
+        assert!(overlay.collapsed, "the toggle press collapses the paint");
+        assert!(inside && !forwarded, "the toggle press stays in the paint");
+    }
+
+    use client::client::GameShell;
+    use frontend_core::surface::{InputEv, InputSender, SlotInput};
+    use frontend_core::{GameInputEvent, MapDesk};
+
+    use crate::input_capture::{
+        discard_unconsumed_native_capture, stream_capture, MouseButtons, MouseFrame, MouseTarget,
+        PaintMouseGate,
+    };
+
+    /// This fixture uses the input order shared by both Game panes.
+    /// It draws the Game Image, then the paint overlay. It stages
+    /// image movement, then routes button edges through the shared
+    /// gate. The staged events pass through `InputSender` and
+    /// `SlotInput` into `GameShell`. This matches the focused slot's
+    /// consumer path.
+    ///
+    /// Keyboard ownership runs at the frame owner, outside both
+    /// panes, and this fixture does not model it. A left press can
+    /// change keyboard availability and release a drag through that
+    /// separate path. The gate tests cover the left-button rule.
+    ///
+    /// Scale 1.0 is the single-bot pane's native blit. Scale 0.5 is a
+    /// focused grid cell's fitted blit.
+    struct PaneCapture {
+        ctx: dear_imgui_rs::Context,
+        overlay: PaintOverlay,
+        frame: PaintFrame,
+        map: MapDesk,
+        gate: PaintMouseGate,
+        input: std::sync::Arc<SlotInput>,
+        tx: InputSender,
+        shell: GameShell,
+        scale: f32,
+        min: [f32; 2],
+        last_image_hovered: bool,
+        show_paint: bool,
+    }
+
+    impl PaneCapture {
+        fn new(scale: f32) -> Self {
+            discard_unconsumed_native_capture();
+            let input = SlotInput::new();
+            input.set_enabled(true);
+            let tx = InputSender::connect(&input);
+            let mut map = MapDesk::default();
+            map.set_input_sender(Some(tx.duplicate()));
+            let frame = paint(Some("Helper"), &["status"])
+                .with_strip("s", &["One", "Two"], "One", Some("ok"), Some("Helper"))
+                .with_rail("r", &["First", "Second"], "First")
+                .with_tab_band("t", &["Alpha", "Beta"], "Alpha")
+                .with_host_controls()
+                .frame_for_run("alice", ScriptRunState::Running);
+            let mut capture = Self {
+                ctx: crate::test_support::imgui_context(),
+                overlay: PaintOverlay::new(),
+                frame,
+                map,
+                gate: PaintMouseGate::default(),
+                input,
+                tx,
+                shell: GameShell::new(),
+                scale,
+                min: [0.0; 2],
+                last_image_hovered: false,
+                show_paint: true,
+            };
+            // The product Game window is docked and cannot undock.
+            // Do not let this GPU-less standalone window steal a
+            // Game Image press as an ImGui window-move gesture.
+            capture
+                .ctx
+                .io_mut()
+                .set_config_windows_move_from_title_bar_only(true);
+            capture
+                .ctx
+                .io_mut()
+                .set_config_flags(dear_imgui_rs::ConfigFlags::DOCKING_ENABLE);
+            capture.step([890.0, 690.0], false, false);
+            capture.step([890.0, 690.0], false, false);
+            capture
+        }
+
+        /// An applet-space point on the scaled Game Image.
+        fn point(&self, x: f32, y: f32) -> [f32; 2] {
+            [self.min[0] + x * self.scale, self.min[1] + y * self.scale]
+        }
+
+        /// One frame with the pointer at `mouse` and the given
+        /// physical button states. Returns the events staged for the
+        /// game this frame.
+        fn step(&mut self, mouse: [f32; 2], left: bool, right: bool) -> Vec<InputEv> {
+            self.ctx.prepare_frame(
+                FramePrepareOptions::new([900.0, 700.0], 1.0 / 60.0).renderer_has_textures(),
+            );
+            self.ctx.io_mut().add_mouse_pos_event(mouse);
+            self.ctx
+                .io_mut()
+                .add_mouse_button_event(dear_imgui_rs::MouseButton::Left, left);
+            self.ctx
+                .io_mut()
+                .add_mouse_button_event(dear_imgui_rs::MouseButton::Right, right);
+            let mut image_hovered = false;
+            self.map.begin_game_input_frame();
+            {
+                let ui = self.ctx.frame();
+                let dock = ui.dockspace_over_main_viewport_with_flags(
+                    dear_imgui_rs::Id::from(1u32),
+                    dear_imgui_rs::DockNodeFlags::NO_UNDOCKING,
+                );
+                ui.set_next_window_dock_id(dock);
+                let _ = ui
+                    .window("Game")
+                    .flags(dear_imgui_rs::WindowFlags::NO_MOVE)
+                    .position([0.0, 0.0], dear_imgui_rs::Condition::Always)
+                    .size([900.0, 700.0], dear_imgui_rs::Condition::Always)
+                    .build(|| {
+                        let size = [765.0 * self.scale, 503.0 * self.scale];
+                        ui.image(dear_imgui_rs::TextureId::new(0), size);
+                        self.min = ui.item_rect_min();
+                        image_hovered = ui.is_item_hovered();
+                        let view = if self.show_paint {
+                            Some(self.frame.view())
+                        } else {
+                            None
+                        };
+                        let _ = self.overlay.frame(ui, None, view, self.min, size);
+                        let inside = self.overlay.pointer_inside_panel();
+                        let buttons = MouseButtons {
+                            left_down: ui.is_mouse_clicked(dear_imgui_rs::MouseButton::Left),
+                            right_down: ui.is_mouse_clicked(dear_imgui_rs::MouseButton::Right),
+                            left_up: ui.is_mouse_released(dear_imgui_rs::MouseButton::Left),
+                            right_up: ui.is_mouse_released(dear_imgui_rs::MouseButton::Right),
+                        };
+                        let applet_point = if image_hovered {
+                            frontend_core::surface::map_image_to_applet(
+                                mouse[0] - self.min[0],
+                                mouse[1] - self.min[1],
+                                size[0],
+                                size[1],
+                            )
+                        } else {
+                            None
+                        };
+                        if image_hovered {
+                            stream_capture(
+                                &mut self.map,
+                                mouse[0] - self.min[0],
+                                mouse[1] - self.min[1],
+                                size[0],
+                                size[1],
+                                false,
+                                false,
+                                false,
+                                false,
+                                &[],
+                            );
+                        }
+                        let sender = if image_hovered
+                            && !inside
+                            && applet_point.is_some()
+                            && (buttons.left_down || buttons.right_down)
+                        {
+                            self.map.duplicate_input_sender()
+                        } else {
+                            None
+                        };
+                        let target = Some(MouseTarget {
+                            slot: "alice",
+                            input: &self.input,
+                        });
+                        self.gate.route(
+                            &mut self.map,
+                            MouseFrame {
+                                target,
+                                sender,
+                                image_hovered,
+                                pointer_in_paint: inside,
+                                applet_point,
+                                buttons,
+                            },
+                            |slot, input| {
+                                slot == "alice" && std::sync::Arc::ptr_eq(input, &self.input)
+                            },
+                        );
+                    });
+            }
+            self.ctx.render();
+            self.last_image_hovered = image_hovered;
+            let events: Vec<InputEv> = self
+                .map
+                .staged_game_input_for_test()
+                .into_iter()
+                .filter_map(|(event, _)| match event {
+                    GameInputEvent::Captured(event) => Some(event),
+                    GameInputEvent::Wire(_) => None,
+                })
+                .collect();
+            for (event, target) in self.map.staged_game_input_for_test() {
+                if let GameInputEvent::Captured(event) = event {
+                    assert!(target.unwrap_or(&self.tx).send(event));
+                }
+            }
+            self.input.drain(&mut self.shell);
+            events
+        }
+
+        /// Click the game once and let the window-focus change
+        /// settle, so the measured drag starts from a steady state.
+        fn settle(&mut self, outside: [f32; 2]) {
+            self.step(outside, false, false);
+            self.step(outside, true, false);
+            self.step(outside, false, false);
+            self.step(outside, false, false);
+            self.step(outside, false, false);
+            assert_eq!(self.shell.mouse_button, 0, "the settling click ended");
+        }
+    }
+
+    /// A press that starts on the game, then releases inside the
+    /// paint, still sends its release to the game. The game does not
+    /// stay held after the physical button goes up.
+    #[test]
+    fn a_game_press_released_inside_the_paint_releases_the_game() {
+        let _guard = crate::test_support::imgui_context_guard();
+        for scale in [1.0, 0.5] {
+            for (name, left, right, held) in [("left", true, false, 1), ("right", false, true, 2)] {
+                let mut capture = PaneCapture::new(scale);
+                let outside = capture.point(300.0, 100.0);
+                let inside = capture.point(400.0, 430.0);
+                capture.settle(outside);
+                let events = capture.step(outside, left, right);
+                assert!(
+                    events
+                        .iter()
+                        .any(|e| matches!(e, InputEv::Down { button, .. } if *button == held)),
+                    "scale {scale} {name}: the press reaches the game. Events {events:?}"
+                );
+                assert_eq!(
+                    capture.shell.mouse_button, held,
+                    "scale {scale} {name}: the game holds the button"
+                );
+                let held_events = capture.step(inside, left, right);
+                assert_eq!(
+                    capture.shell.mouse_button, held,
+                    "scale {scale} {name}: the drag over the paint stays held. Events {held_events:?}"
+                );
+                let events = capture.step(inside, false, false);
+                assert!(
+                    events.iter().any(|e| matches!(e, InputEv::Up)),
+                    "scale {scale} {name}: the release inside the paint reaches the game. Events {events:?}"
+                );
+                assert_eq!(
+                    capture.shell.mouse_button, 0,
+                    "scale {scale} {name}: the physical release ends the hold"
+                );
+            }
+        }
+    }
+
+    /// A game press keeps its release after the pointer leaves the Game Image.
+    #[test]
+    fn a_game_press_released_outside_the_image_releases_the_game() {
+        let _guard = crate::test_support::imgui_context_guard();
+        for scale in [1.0, 0.5] {
+            for (name, left, right, held) in [("left", true, false, 1), ("right", false, true, 2)] {
+                let mut capture = PaneCapture::new(scale);
+                let game = capture.point(300.0, 100.0);
+                let outside_image = capture.point(800.0, 600.0);
+                capture.settle(game);
+
+                let events = capture.step(game, left, right);
+                assert!(
+                    events.iter().any(
+                        |event| matches!(event, InputEv::Down { button, .. } if *button == held)
+                    ),
+                    "scale {scale} {name}: the press reaches the game. Events {events:?}"
+                );
+                assert_eq!(capture.shell.mouse_button, held);
+
+                capture.step(outside_image, left, right);
+                assert!(
+                    !capture.last_image_hovered,
+                    "scale {scale} {name}: the held pointer is outside the Game Image"
+                );
+                let events = capture.step(outside_image, false, false);
+                assert!(
+                    !capture.last_image_hovered,
+                    "scale {scale} {name}: the release is outside the Game Image"
+                );
+                assert!(
+                    events.iter().any(|event| matches!(event, InputEv::Up)),
+                    "scale {scale} {name}: the off-image release reaches the game. Events {events:?}"
+                );
+                assert_eq!(
+                    capture.shell.mouse_button, 0,
+                    "scale {scale} {name}: the physical release ends the hold"
+                );
+            }
+        }
+    }
+
+    /// A press that starts on the paint sends nothing to the game,
+    /// and its release over the game sends nothing either. The game
+    /// gets no release for a press it never saw.
+    #[test]
+    fn a_paint_press_released_over_the_game_sends_nothing_to_the_game() {
+        let _guard = crate::test_support::imgui_context_guard();
+        for scale in [1.0, 0.5] {
+            for (name, left, right) in [("left", true, false), ("right", false, true)] {
+                let mut capture = PaneCapture::new(scale);
+                let outside = capture.point(300.0, 100.0);
+                let inside = capture.point(400.0, 430.0);
+                capture.settle(outside);
+                capture.step(inside, false, false);
+                let events = capture.step(inside, left, right);
+                assert!(
+                    !events.iter().any(|e| matches!(e, InputEv::Down { .. })),
+                    "scale {scale} {name}: the paint press sends no Down. Events {events:?}"
+                );
+                assert_eq!(capture.shell.mouse_button, 0);
+                capture.step(outside, left, right);
+                let events = capture.step(outside, false, false);
+                assert!(
+                    !events.iter().any(|e| matches!(e, InputEv::Up)),
+                    "scale {scale} {name}: the release over the game sends no Up. Events {events:?}"
+                );
+                assert_eq!(
+                    capture.shell.mouse_button, 0,
+                    "scale {scale} {name}: the game never held the button"
+                );
+            }
+        }
+    }
+
+    /// Stop clears the paint. A game press that is still held when
+    /// the paint goes away keeps its release afterwards.
+    #[test]
+    fn a_game_press_keeps_its_release_after_the_paint_goes_away() {
+        let _guard = crate::test_support::imgui_context_guard();
+        for scale in [1.0, 0.5] {
+            let mut capture = PaneCapture::new(scale);
+            let outside = capture.point(300.0, 100.0);
+            let inside = capture.point(400.0, 430.0);
+            capture.settle(outside);
+            capture.step(outside, false, true);
+            assert_eq!(
+                capture.shell.mouse_button, 2,
+                "scale {scale}: the game holds the right button"
+            );
+            capture.show_paint = false;
+            capture.step(inside, false, true);
+            let events = capture.step(inside, false, false);
+            assert!(
+                events.iter().any(|e| matches!(e, InputEv::Up)),
+                "scale {scale}: the release reaches the game after the paint went away. Events {events:?}"
+            );
+            assert_eq!(capture.shell.mouse_button, 0);
+        }
+    }
+
+    /// One overlay frame over `frame` at an explicit display and
+    /// blit size, with an optional pointer. Returns the hit.
+    fn frame_at_scale(
+        ctx: &mut dear_imgui_rs::Context,
+        overlay: &mut PaintOverlay,
+        frame: &PaintFrame,
+        display: [f32; 2],
+        size: [f32; 2],
+        mouse: Option<[f32; 2]>,
+        left_down: bool,
+    ) -> Option<(PaintFrameHit, u64)> {
+        ctx.prepare_frame(FramePrepareOptions::new(display, 1.0 / 60.0).renderer_has_textures());
+        if let Some(mouse) = mouse {
+            ctx.io_mut().add_mouse_pos_event(mouse);
+        }
+        ctx.io_mut()
+            .add_mouse_button_event(dear_imgui_rs::MouseButton::Left, left_down);
+        let mut hit = None;
+        {
+            let ui = ctx.frame();
+            let _ = ui
+                .window("Game")
+                .position([0.0, 0.0], dear_imgui_rs::Condition::Always)
+                .size(display, dear_imgui_rs::Condition::Always)
+                .build(|| {
+                    hit = overlay.frame(ui, None, Some(frame.view()), [0.0, 0.0], size);
+                });
+        }
+        ctx.render();
+        hit
+    }
+
+    /// M2: a paint whose tab bands fill the dock (5, 6 and the
+    /// isolate's limit of 16) still draws Pause and Stop inside the
+    /// chatbox at scales 1.0, 1.5 and 2.0, and Pause reports its
+    /// press.
+    #[test]
+    fn host_controls_stay_visible_with_many_tab_bands_at_each_scale() {
+        let _guard = crate::test_support::imgui_context_guard();
+        for bands in [5usize, 6, 16] {
+            for scale in [1.0_f32, 1.5, 2.0] {
+                let mut ctx = crate::test_support::imgui_context();
+                crate::app::apply_ui_scale(ctx.style_mut(), scale);
+                let mut overlay = PaintOverlay::new();
+                let mut fixture = paint(Some("T"), &["row one", "row two"]);
+                for band in 0..bands {
+                    fixture = fixture.with_tab_band(&format!("b{band}"), &["A", "B"], "A");
+                }
+                let frame = fixture
+                    .with_host_controls()
+                    .frame_for_run("alice", ScriptRunState::Running);
+                let display = [900.0 * scale, 700.0 * scale];
+                let size = [765.0 * scale, 503.0 * scale];
+                let _ = frame_at_scale(&mut ctx, &mut overlay, &frame, display, size, None, false);
+                assert_eq!(
+                    overlay.button_hits.len(),
+                    2,
+                    "bands {bands} scale {scale}: Pause and Stop are both drawn"
+                );
+                let chat = chatbox_rect([0.0, 0.0], size);
+                let top = overlay.button_hits[0][1];
+                for rect in &overlay.button_hits {
+                    assert!(
+                        rect[0] >= chat[0] - 0.5
+                            && rect[2] <= chat[0] + chat[2] + 0.5
+                            && rect[1] >= chat[1] - 0.5
+                            && rect[3] <= chat[1] + chat[3] + 0.5,
+                        "bands {bands} scale {scale}: the control stays in the chatbox: {rect:?} chat {chat:?}"
+                    );
+                    assert!(
+                        (rect[3] - rect[1] - 16.0 * scale).abs() < 0.5,
+                        "bands {bands} scale {scale}: the control is 16 px high: {rect:?}"
+                    );
+                    assert_eq!(rect[1], top, "bands {bands} scale {scale}: one row");
+                }
+                let pause = overlay.button_hits[0];
+                let centre = [(pause[0] + pause[2]) / 2.0, (pause[1] + pause[3]) / 2.0];
+                let _ = frame_at_scale(
+                    &mut ctx,
+                    &mut overlay,
+                    &frame,
+                    display,
+                    size,
+                    Some(centre),
+                    false,
+                );
+                let hit = frame_at_scale(
+                    &mut ctx,
+                    &mut overlay,
+                    &frame,
+                    display,
+                    size,
+                    Some(centre),
+                    true,
+                );
+                assert_eq!(
+                    hit.as_ref().map(|(hit, _)| hit),
+                    Some(&PaintFrameHit::Button(0)),
+                    "bands {bands} scale {scale}: the drawn Pause reports its press"
+                );
+                let _ = frame_at_scale(
+                    &mut ctx,
+                    &mut overlay,
+                    &frame,
+                    display,
+                    size,
+                    Some(centre),
+                    false,
+                );
+            }
+        }
+    }
+
+    /// One overlay frame over `frame` at the native blit in the corner.
+    fn frame_native(
+        ctx: &mut dear_imgui_rs::Context,
+        overlay: &mut PaintOverlay,
+        frame: &PaintFrame,
+    ) {
+        prepare_frame(ctx);
+        {
+            let ui = ctx.frame();
+            let _ = ui
+                .window("Game")
+                .position([0.0, 0.0], dear_imgui_rs::Condition::Always)
+                .size([900.0, 700.0], dear_imgui_rs::Condition::Always)
+                .build(|| {
+                    overlay.frame(ui, None, Some(frame.view()), [0.0, 0.0], [765.0, 503.0]);
+                });
+        }
+        ctx.render();
+    }
+
+    /// Design test 2: Pause and Stop share one compact row at scale 1.
+    /// The exact width formula (label cells x cell width + 18) is
+    /// pinned in the frontend-core layout test with a fixed cell
+    /// width. This test pins what the renderer draws.
+    #[test]
+    fn pause_and_stop_share_one_compact_row() {
+        let _guard = crate::test_support::imgui_context_guard();
+        let mut ctx = crate::test_support::imgui_context();
+        let mut overlay = PaintOverlay::new();
+        let frame = paint(Some("Helper"), &["status"])
+            .with_host_controls()
+            .frame_for_run("alice", ScriptRunState::Running);
+        frame_native(&mut ctx, &mut overlay, &frame);
+        assert_eq!(overlay.button_labels, vec!["Pause", "Stop"]);
+        assert_eq!(overlay.button_hits.len(), 2);
+        let pause = overlay.button_hits[0];
+        let stop = overlay.button_hits[1];
+        assert!(
+            (pause[3] - pause[1] - 16.0).abs() < 0.5 && (stop[3] - stop[1] - 16.0).abs() < 0.5,
+            "both controls are 16 px high: {pause:?} {stop:?}"
+        );
+        assert!(
+            (pause[1] - stop[1]).abs() < 0.5,
+            "both controls share one row top: {pause:?} {stop:?}"
+        );
+        assert!(
+            (pause[0] - 16.0).abs() < 0.5,
+            "Pause left = 16 (the dock at 8 plus the 8 px inset): {pause:?}"
+        );
+        let pause_w = pause[2] - pause[0];
+        assert!(
+            (48.0..=58.0).contains(&pause_w),
+            "Pause width is 5 cells + 18 at the panel face's cell width: {pause_w}"
+        );
+        assert!(
+            (stop[0] - pause[2] - 6.0).abs() < 0.5,
+            "Stop left = Pause right + 6: {pause:?} {stop:?}"
+        );
+    }
+
+    /// The sRGB bytes of the first glyph vertex colour inside `area`,
+    /// read back from the frame's draw lists. Filled rects use the
+    /// atlas white pixel, so their triangles have no UV range and do
+    /// not count as glyphs.
+    fn glyph_colours(ctx: &mut dear_imgui_rs::Context, area: [f32; 4]) -> Vec<[i32; 3]> {
+        let draw_data = ctx.render();
+        let mut colours = Vec::new();
+        for list in draw_data.draw_lists() {
+            let verts = list.vtx_buffer();
+            for tri in list.idx_buffer().as_chunks::<3>().0 {
+                let vs = [
+                    &verts[tri[0] as usize],
+                    &verts[tri[1] as usize],
+                    &verts[tri[2] as usize],
+                ];
+                let u_range = vs.iter().map(|v| v.uv[0]).fold(f32::NEG_INFINITY, f32::max)
+                    - vs.iter().map(|v| v.uv[0]).fold(f32::INFINITY, f32::min);
+                let v_range = vs.iter().map(|v| v.uv[1]).fold(f32::NEG_INFINITY, f32::max)
+                    - vs.iter().map(|v| v.uv[1]).fold(f32::INFINITY, f32::min);
+                if u_range <= 0.0 || v_range <= 0.0 {
+                    continue;
+                }
+                let cx = vs.iter().map(|v| v.pos[0]).sum::<f32>() / 3.0;
+                let cy = vs.iter().map(|v| v.pos[1]).sum::<f32>() / 3.0;
+                if cx >= area[0] && cx < area[2] && cy >= area[1] && cy < area[3] {
+                    let col = vs[0].col;
+                    colours.push([
+                        (col & 0xff) as i32,
+                        ((col >> 8) & 0xff) as i32,
+                        ((col >> 16) & 0xff) as i32,
+                    ]);
+                }
+            }
+        }
+        colours
+    }
+
+    /// Design test 5: the title text takes the script's accent. A paint
+    /// without an accent uses rs2b0t's default (122, 208, 255).
+    #[test]
+    fn paint_title_uses_the_script_accent() {
+        let _guard = crate::test_support::imgui_context_guard();
+        for (accent, want) in [(Some("#5be05b"), [91, 224, 91]), (None, [122, 208, 255])] {
+            let mut ctx = crate::test_support::imgui_context();
+            let mut overlay = PaintOverlay::new();
+            let mut p = paint(Some("ChickenKiller"), &["Runtime 0:01"]);
+            if let Some(accent) = accent {
+                p = p.with_accent(accent);
+            }
+            prepare_frame(&mut ctx);
+            {
+                let ui = ctx.frame();
+                let _ = ui
+                    .window("Game")
+                    .position([0.0, 0.0], dear_imgui_rs::Condition::Always)
+                    .size([900.0, 700.0], dear_imgui_rs::Condition::Always)
+                    .build(|| {
+                        let paint_frame = p.frame();
+                        overlay.frame(
+                            ui,
+                            None,
+                            Some(paint_frame.view()),
+                            [0.0, 0.0],
+                            [765.0, 503.0],
+                        );
+                    });
+            }
+            // The title bar at the native blit, left of the toggle.
+            let chat = chatbox_rect([0.0, 0.0], [765.0, 503.0]);
+            let area = [chat[0], chat[1], chat[0] + chat[2] - 20.0, chat[1] + 20.0];
+            let colours = glyph_colours(&mut ctx, area);
+            assert!(
+                !colours.is_empty(),
+                "title glyphs appear in the draw list for accent {accent:?}"
+            );
+            for colour in &colours {
+                for ch in 0..3 {
+                    assert!(
+                        (colour[ch] - want[ch]).abs() <= 2,
+                        "accent {accent:?}: title glyph colour {colour:?}, want {want:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// Design test 6: a steady paint frame allocates nothing. The
+    /// layout and every test mirror reuse their buffers, and no string
+    /// is built per frame.
+    #[test]
+    fn steady_paint_frame_allocates_nothing() {
+        let _guard = crate::test_support::imgui_context_guard();
+        let mut ctx = crate::test_support::imgui_context();
+        let mut overlay = PaintOverlay::new();
+        let frame = TestPaint::new(
+            Some("JiveCrafting"),
+            &["Crafting level 40", "XP gained 1200", "Runtime 0:05:01"],
+        )
+        .with_accent("#e05be0")
+        .with_strip(
+            "k",
+            &["Statistics", "Options"],
+            "Statistics",
+            Some("walking to the bank"),
+            Some("JiveCrafting"),
+        )
+        .with_rail("r", &["Overview", "Supplies"], "Overview")
+        .with_footer("by Jive")
+        .with_host_controls()
+        .frame_for_run("alice", ScriptRunState::Running);
+        // Warm frames grow the reused buffers once.
+        frame_native(&mut ctx, &mut overlay, &frame);
+        frame_native(&mut ctx, &mut overlay, &frame);
+        let mut delta = usize::MAX;
+        prepare_frame(&mut ctx);
+        {
+            let ui = ctx.frame();
+            let _ = ui
+                .window("Game")
+                .position([0.0, 0.0], dear_imgui_rs::Condition::Always)
+                .size([900.0, 700.0], dear_imgui_rs::Condition::Always)
+                .build(|| {
+                    let before = crate::test_alloc::alloc_calls();
+                    overlay.frame(ui, None, Some(frame.view()), [0.0, 0.0], [765.0, 503.0]);
+                    delta = crate::test_alloc::alloc_calls() - before;
+                });
+        }
+        ctx.render();
+        assert_eq!(delta, 0, "allocation calls during a steady paint frame");
     }
 
     /// A click captured on alice's paint never controls bob once the

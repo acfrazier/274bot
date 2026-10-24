@@ -1,7 +1,7 @@
 //! Content-backed route witness for the released Tourist Trap crossing.
 use api::snapshot::WorldTile;
-use nav::router::{find_with, FindOptions, Leg, RouteError};
-use nav::zones::ZoneExempt;
+use nav_planner::router::{find_with, FindOptions, Leg, RouteError};
+use nav_planner::zones::ZoneExempt;
 
 #[test]
 #[ignore = "requires WORLD_NAV_PACK pointing at the selected 289 content pack"]
@@ -36,7 +36,7 @@ fn desert_captain_cross_grants_only_required_ugthanki() {
         ]
     );
     let pack = std::fs::read(std::env::var_os("WORLD_NAV_PACK").unwrap()).unwrap();
-    let (collision, graph, _) = nav::pack::decode(&pack).unwrap();
+    let (collision, graph, _) = nav_planner::pack::decode(&pack).unwrap();
     let table = graph.zones.as_ref().unwrap();
     let keys: Vec<_> = names
         .iter()
@@ -62,7 +62,7 @@ fn desert_captain_cross_grants_only_required_ugthanki() {
                 zones: ZoneExempt::named(keys).unwrap(),
                 ..Default::default()
             },
-            &nav::WorldState {
+            &nav_planner::WorldState {
                 combat_level: Some(combat),
                 map_members: true,
                 ..Default::default()
