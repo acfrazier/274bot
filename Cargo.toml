@@ -8,8 +8,8 @@ unwrap_used = "warn"
 # Suppression hygiene: `allow_attributes` forces `#[expect]` (an expectation
 # that stops firing is an error), and `allow_attributes_without_reason`
 # requires every suppression to justify itself. The six approved lints below
-# are the current ratchet set. Only `vault` opts in (`[lints] workspace = true`
-# in its manifest); a crate opts in when a refactor reaches it.
+# are the current ratchet set. `vault`, `nav-planner`, and `nav-bake` opt in
+# (`[lints] workspace = true` in their manifests). A refactored crate stays opted in.
 # These denies apply to test code too: clippy 1.98 offers no per-lint
 # `allow-*-in-tests` knob for any of them (only `unwrap_used` is scoped to
 # non-test code, via `allow-unwrap-in-tests` in clippy.toml), so opted-in

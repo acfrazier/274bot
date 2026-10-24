@@ -225,8 +225,8 @@ impl TileReceipt {
         {
             return Err(MapError::Invalid("PNG header"));
         }
-        let width = u32::from_be_bytes(bytes[16..20].try_into().unwrap());
-        let height = u32::from_be_bytes(bytes[20..24].try_into().unwrap());
+        let width = u32::from_be_bytes(bytes[16..20].try_into().expect("PNG header length was checked"));
+        let height = u32::from_be_bytes(bytes[20..24].try_into().expect("PNG header length was checked"));
         if width != TILE_PIXELS || height != TILE_PIXELS || bytes[24..29] != [8, 6, 0, 0, 0] {
             return Err(MapError::Invalid(
                 "PNG dimensions/format (258x258 RGBA8 noninterlaced)",
@@ -612,8 +612,8 @@ impl ServicePois {
             return Err(MapError::Invalid("navpois magic"));
         }
         super::version("navpois", u16::from(bytes[4]), NAVPOIS_VERSION)?;
-        let length = u32::from_le_bytes(bytes[5..9].try_into().unwrap()) as usize;
-        let count = u32::from_le_bytes(bytes[9..13].try_into().unwrap()) as usize;
+        let length = u32::from_le_bytes(bytes[5..9].try_into().expect("navpois header length was checked")) as usize;
+        let count = u32::from_le_bytes(bytes[9..13].try_into().expect("navpois header length was checked")) as usize;
         if length > MAX_JSON_BYTES || count > MAX_POIS {
             return Err(MapError::Limit("navpois header"));
         }

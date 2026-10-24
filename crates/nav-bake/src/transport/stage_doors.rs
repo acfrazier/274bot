@@ -1530,7 +1530,7 @@ fn names_terminal(src: &Sources, block: &Block) -> bool {
 /// is not an opener and is not counted. A handler declared twice, a loc
 /// whose names carry more than one block, or an opener that crosses
 /// nowhere is counted and left out.
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments, reason = "Derivation needs content indexes, collision, quest facts, and audit outputs.")]
 pub(super) fn stage_door_edges(
     content_root: &Path,
     ids: &HashMap<String, i32>,

@@ -376,7 +376,7 @@ impl ZoneTable {
     /// `wild` on every row is recomputed from the supplied packed Wilderness
     /// rectangles and the row's bounding geometry. Shape indices are
     /// canonicalized to zone order so the v12 wire has a stable row order.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments, reason = "Validates every packed zone table against its grid and Wilderness rules.")]
     pub fn from_parts(
         mut zones: Vec<Zone>,
         kinds: Vec<ZoneKind>,

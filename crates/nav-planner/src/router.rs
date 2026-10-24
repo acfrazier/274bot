@@ -4130,7 +4130,7 @@ pub fn find_with_avoid(
 /// [`find_with_avoid`] with an injectable node-expansion cap. Production
 /// inspect uses [`find_with_avoid`] (the default [`NODE_BUDGET`]); tests
 /// may pass a smaller bound to distinguish `BudgetExhausted` from `NoPath`.
-#[allow(clippy::too_many_arguments)] // collision/graph/tiles/opts/state/avoid/budget surface
+#[expect(clippy::too_many_arguments, reason = "Keeps collision, transports, targets, policy, and search limits separate.")]
 pub fn find_with_avoid_bounded(
     collision: &WorldCollision,
     graph: &TransportGraph,
@@ -4405,7 +4405,7 @@ pub fn find_first_with_fallback(
 /// ([`find_with_avoid`]). The backward proofs ignore the rectangles: they
 /// over-approximate reachability, so a goal they prove unreachable stays
 /// unreachable with the rectangles too.
-#[allow(clippy::too_many_arguments)] // search surface plus avoid rects
+#[expect(clippy::too_many_arguments, reason = "Keeps collision, transports, targets, policy, and search limits separate.")]
 pub fn find_first_with_fallback_avoid(
     collision: &WorldCollision,
     graph: &TransportGraph,
@@ -4494,7 +4494,7 @@ async fn goal_zone_key_cooperative(
 /// An open proof always leaves the full forward-search budget intact.
 const ZONE_GOAL_PROOF_STEPS: usize = 64;
 
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments, reason = "Keeps collision, transports, targets, policy, and search limits separate.")]
 fn zone_goal_proof(
     collision: &WorldCollision,
     graph: &TransportGraph,
@@ -4581,7 +4581,7 @@ async fn zone_goal_proof_cooperative(
     Ok(closure.report(ReverseProof::Open))
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments, reason = "Keeps collision, transports, targets, policy, and search limits separate.")]
 fn first_search(
     collision: &WorldCollision,
     graph: &TransportGraph,
@@ -4835,7 +4835,7 @@ fn merge_fallback(current: &mut Option<FallbackRoute>, candidate: FallbackRoute)
 /// forward search, so a strict proof never hides a relaxed route. Each goal
 /// set's `budget` holds until its own proof shows it reachable, then
 /// `reachable_budget` applies ([`FirstGoals`]).
-#[allow(clippy::too_many_arguments)] // search surface plus relaxation/avoid/budgets
+#[expect(clippy::too_many_arguments, reason = "Keeps collision, transports, targets, policy, and search limits separate.")]
 fn first_search_core(
     collision: &WorldCollision,
     graph: &TransportGraph,
@@ -5080,7 +5080,7 @@ pub fn find_many_with<'a>(
 }
 
 /// Shared bounded search. Duplicate targets retain separate input rows.
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments, reason = "Keeps collision, transports, targets, policy, and search limits separate.")]
 pub fn find_many_with_avoid_bounded<'a>(
     collision: &WorldCollision,
     graph: &'a TransportGraph,
@@ -5099,7 +5099,7 @@ pub fn find_many_with_avoid_bounded<'a>(
 /// As above, with a caller-supplied completion deadline. The wall-clock
 /// bound is caller policy; the search checks it every 256 heap pops and at
 /// exit, reports unsettled targets, and leaves fallback choice to the caller.
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments, reason = "Keeps collision, transports, targets, policy, and search limits separate.")]
 pub fn find_many_with_avoid_bounded_until<'a>(
     collision: &WorldCollision,
     graph: &'a TransportGraph,
@@ -5226,7 +5226,7 @@ pub fn find_many_with_avoid_bounded_until<'a>(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments, reason = "Keeps collision, transports, targets, policy, and search limits separate.")]
 fn many_search<'a>(
     collision: &WorldCollision,
     graph: &'a TransportGraph,
@@ -5338,7 +5338,7 @@ fn many_search<'a>(
 /// route after lifting zone restrictions. The strict search must fail with
 /// `NoPath`, and an all-zone-exempt search must find a route before its
 /// transitions can serve as the witness.
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments, reason = "Keeps collision, transports, targets, policy, and search limits separate.")]
 pub fn find_blocking_zones(
     collision: &WorldCollision,
     graph: &TransportGraph,
@@ -5405,7 +5405,7 @@ pub fn find_blocking_zones(
 /// Multi-goal refusal attribution uses the union of reachable frontiers for
 /// the selected target set, grouped by active destination zones. A goal's
 /// own zones allow arrival, never transit to targets outside those zones.
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments, reason = "Keeps collision, transports, targets, policy, and search limits separate.")]
 pub fn find_first_blocking_zones(
     collision: &WorldCollision,
     graph: &TransportGraph,
@@ -5457,7 +5457,7 @@ pub fn find_first_blocking_zones(
     blocking_zone_keys(graph.zones.as_ref()?, blockers)
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments, reason = "Keeps collision, transports, targets, policy, and search limits separate.")]
 fn blocking_frontier(
     collision: &WorldCollision,
     graph: &TransportGraph,
@@ -5882,7 +5882,7 @@ pub fn find_missing_item_reqs_with_avoid(
 
 /// [`find_missing_item_reqs_with_avoid`] with an injectable node-expansion
 /// cap. Production inspect uses the default-budget form.
-#[allow(clippy::too_many_arguments)] // collision/graph/tiles/opts/state/avoid/budget surface
+#[expect(clippy::too_many_arguments, reason = "Keeps collision, transports, targets, policy, and search limits separate.")]
 pub fn find_missing_item_reqs_with_avoid_bounded(
     collision: &WorldCollision,
     graph: &TransportGraph,
@@ -5937,7 +5937,7 @@ pub fn find_missing_item_reqs_with_avoid_bounded(
 /// reachable), so a goal set costs what its strict search may, never one
 /// diagnosis per goal. The `Unknown` stage-gate retry and the `None` cases
 /// are [`find_missing_item_reqs`]'s.
-#[allow(clippy::too_many_arguments)] // first-goal search surface plus avoid rects
+#[expect(clippy::too_many_arguments, reason = "Keeps collision, transports, targets, policy, and search limits separate.")]
 pub fn find_first_missing_item_reqs_with_avoid(
     collision: &WorldCollision,
     graph: &TransportGraph,
@@ -7681,7 +7681,7 @@ impl KernelOutcome {
         }
     }
 
-    #[allow(clippy::too_many_arguments)] // the kernel's scratch tables plus its stop facts
+    #[expect(clippy::too_many_arguments, reason = "Finishing borrows the kernel scratch tables and records its stop facts.")]
     fn finish<B: Budget>(
         came_from: PackedSearchTable,
         heap: &PackedMinMaxHeap,
@@ -8160,7 +8160,7 @@ impl<'a> ReverseClosure<'a> {
 
 /// Run one single-target kernel with the supplied zone filter and rebuild
 /// its route when the selected goal settles.
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments, reason = "Keeps collision, transports, targets, policy, and search limits separate.")]
 fn run_single_search(
     collision: &WorldCollision,
     graph: &TransportGraph,
@@ -8222,7 +8222,7 @@ fn run_single_search(
 /// the wilderness zone; `state` gates every transport edge (walked or
 /// teleported) on its requirements — an edge the state cannot prove is not
 /// relaxed.
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments, reason = "Keeps collision, transports, targets, policy, and search limits separate.")]
 fn find_bounded_impl(
     collision: &WorldCollision,
     graph: &TransportGraph,
@@ -8344,7 +8344,7 @@ thread_local! {
 /// keeping every positive requirement and quest-stage gate strict. `budget`
 /// caps each search; `goals` decide whether it continues after each settled
 /// node (first-goal searches also bound their goal sets and backward proofs).
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments, reason = "Keeps collision, transports, targets, policy, and search limits separate.")]
 async fn search_kernel(
     collision: &WorldCollision,
     graph: &TransportGraph,

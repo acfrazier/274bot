@@ -946,7 +946,7 @@ impl MotionFacts {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments, reason = "Derivation needs movement sources, content indexes, collision, and audit outputs.")]
 pub(super) fn forced_move_edges(
     root: &Path,
     src: &Sources,

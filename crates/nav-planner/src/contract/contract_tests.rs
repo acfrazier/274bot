@@ -1486,7 +1486,7 @@ fn transport_legs_report_the_router_edges_and_the_production_admission_facts() {
     );
     // The returned token is a router fact: without hop 1's return, hop 2
     // stays shut even though everything else is proven.
-    let mut no_return = first.clone();
+    let mut no_return = first;
     no_return.item_returns.clear();
     let (collision2, graph2) = two_door_world(no_return, second.clone());
     assert_eq!(
