@@ -69,6 +69,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.6` 
   A missing seed or refused deposit still fails.
   Their receipts retain deposit attempts, proof ticks and inventory revisions.
 
+#### Client
+
+- The game client no longer crashes when its stored frame time is ahead of the current time.
+
 #### Survival
 
 - Strange fruit waits for the game's food delay after a bite. Eating the fruit also delays the next combat attack.
