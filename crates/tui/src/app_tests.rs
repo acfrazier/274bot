@@ -1715,7 +1715,7 @@ fn background_notice_needs_an_explicit_got_it() {
     app.background_notice = None;
     assert!(
         matches!(&app.on_key(ch('n')), AppAction::Refused(refusal)
-            if refusal.command == frontend_core::OperatorCommand::AcknowledgeNotice),
+            if refusal.command == Some(frontend_core::OperatorCommand::AcknowledgeNotice)),
         "no notice, nothing to dismiss: the command is refused"
     );
 }
@@ -1794,7 +1794,7 @@ fn script_commands_are_reachable_at_80x24() {
     assert!(matches!(
         &app.on_key(ch('C')),
         AppAction::Refused(refusal)
-            if refusal.command == frontend_core::OperatorCommand::CancelReload
+            if refusal.command == Some(frontend_core::OperatorCommand::CancelReload)
     ));
     app.reload_confirm = true;
     assert_eq!(app.on_key(ch('C')), AppAction::ScriptReloadCancel);

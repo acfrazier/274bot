@@ -61,7 +61,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 #[path = "../../host-play/tests/support/map_fixture.rs"]
-mod map_fixture;
+pub(super) mod map_fixture;
 use map_fixture::MapFixture;
 #[path = "../../host-play/tests/support/upgrade_home.rs"]
 mod upgrade_home;
@@ -9284,4 +9284,60 @@ fn the_panels_own_refusals_log_at_the_command_boundary() {
     assert!(refusal_logged(&format!(
         "command refused: ImportCatalog on no bots: {refused}"
     )));
+}
+
+/// PANEL-STATE-GAP-1023 (R3-M1, panel): the refusal of a profile whose
+/// first save is still being written waits for that save. It stays while
+/// the write is held and clears on the first frame after the save is
+/// durable, long before its timeout.
+#[test]
+fn a_still_saving_refusal_clears_when_the_save_finishes() {
+    let path = tmp_vault("saving-clears.vault");
+    let mut s = Session::new();
+    s.core.set_spawn_workers(false);
+    s.core.set_play(Some(empty_play()));
+    let mut vault = VaultFixture::create(&path, "test-passphrase-01");
+    vault.put(profile("alice", "pw", 42));
+    install_vault(&mut s.core, vault);
+    let gate = s.core.write_gate();
+    let held = gate.lock().unwrap();
+    assert!(s
+        .submit(
+            frontend_core::OperatorCommand::OpenNewProfileForm,
+            frontend_core::Targets::Application,
+        )
+        .is_some());
+    *s.profile_editor.username_mut() = "bob".into();
+    assert!(s
+        .submit(
+            frontend_core::OperatorCommand::EditProfileDraft(
+                frontend_core::command::ProfileDraftField::Username,
+            ),
+            frontend_core::Targets::Application,
+        )
+        .is_some());
+    *s.profile_editor.password_mut() = "pw".into();
+    assert!(s
+        .submit(
+            frontend_core::OperatorCommand::EditProfileDraft(
+                frontend_core::command::ProfileDraftField::Password,
+            ),
+            frontend_core::Targets::Application,
+        )
+        .is_some());
+    assert!(s.save_credentials());
+
+    let refused = "bob: profile is still saving";
+    let before = s.core.refusals();
+    assert!(!s.load("bob"), "Load is refused while bob saves");
+    assert_eq!(s.core.refusals(), before + 1);
+    assert_eq!(s.error.as_deref(), Some(refused));
+    s.pump_status();
+    assert_eq!(s.error.as_deref(), Some(refused), "the save is still held");
+
+    drop(held);
+    s.core.flush_writes();
+    s.pump_status();
+    assert!(!s.core.profile_saving("bob"));
+    assert_eq!(s.error, None, "the finished save resolved the message");
 }

@@ -144,7 +144,7 @@ impl ContextItem {
                 let mut label = command.label(app).to_string();
                 if let Err(reason) = command.availability(app) {
                     label.push_str(" - ");
-                    label.push_str(reason);
+                    label.push_str(reason.text());
                 }
                 label
             }
@@ -404,14 +404,14 @@ impl TuiApp {
                 return match command.availability(self) {
                     Ok(()) => (None, self.run_command(command)),
                     Err(reason) => {
-                        state.note = Some(reason);
-                        // The palette shows the reason in its note; a
-                        // command that runs an operator command is also
-                        // refused at the command boundary.
-                        let refused = command
-                            .refusal(self, reason)
-                            .map_or(AppAction::None, AppAction::Refused);
-                        (Some(Modal::Palette(state)), refused)
+                        // The palette keeps its note; the refusal is the
+                        // same one a key makes (message line, its need, and
+                        // the command-boundary log line).
+                        state.note = Some(reason.text());
+                        (
+                            Some(Modal::Palette(state)),
+                            self.unavailable(command, reason),
+                        )
                     }
                 };
             }

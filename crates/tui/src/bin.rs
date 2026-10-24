@@ -55,8 +55,9 @@ use frontend_core::{
 #[cfg(test)]
 use host_play::{PlayOptions, SharedClientTemplate};
 
-use crate::app::{AppAction, ChatData, MapCatalogueStatus, TuiApp};
+use crate::app::{AppAction, ChatData, ErrorNeed, MapCatalogueStatus, TuiApp};
 use crate::chat::ChatAction;
+use crate::commands::Unavailable;
 use crate::loadouts::LoadoutsIntent;
 use crate::overlay::{ConfirmKind, Modal};
 use crate::profile_import::ImportAction;
@@ -365,7 +366,7 @@ pub struct TuiSession {
     auto_world: Option<u16>,
     pub error: Option<String>,
     /// The banner message's expiry clock ([`Self::expire_error`]).
-    error_expiry: frontend_core::ErrorExpiry,
+    error_expiry: frontend_core::ErrorExpiry<ErrorNeed>,
     /// All profile names (for the strip's slot list), in vault order.
     names: Vec<String>,
     /// Hop a fresh slot to the mainland once in a loaded scene (the TUI's own
@@ -2199,7 +2200,7 @@ impl TuiSession {
                 app,
                 OperatorCommand::StartScript,
                 &[],
-                Some(frontend_core::ErrorNeed::FocusedBot),
+                Unavailable::NoFocusedBot.need(),
                 "script: no focused profile",
             );
             return;
@@ -2503,7 +2504,7 @@ impl TuiSession {
                 app,
                 OperatorCommand::SaveScriptSettings(frontend_core::command::CardKind::Native),
                 &[],
-                Some(frontend_core::ErrorNeed::FocusedBot),
+                Unavailable::NoFocusedBot.need(),
                 "parameters: no focused profile",
             );
             return;
@@ -2827,6 +2828,16 @@ impl TuiSession {
     /// saved.
     fn persist_settings(&mut self, app: &mut TuiApp) {
         let Some(name) = app.settings_profile.clone() else {
+            // The popup opened with no bot focused, so it has no profile to
+            // save the edit on; the next pump binds the bot focused later.
+            let missing = Unavailable::NoFocusedBot;
+            self.refuse_command(
+                app,
+                OperatorCommand::SetGuardian,
+                &[],
+                missing.need(),
+                &format!("settings: {}", missing.text()),
+            );
             return;
         };
         let changed_policies = self
@@ -3087,18 +3098,22 @@ impl TuiSession {
 
     /// Refuse `command` before the app can submit it (nothing focused,
     /// nothing picked). The refusal logs at the shared command boundary like
-    /// every other refused command, shows on the message line, and the line
-    /// clears when the action that supplies `need` happens
-    /// ([`Self::clear_resolved_error`]).
+    /// every other refused command, then shows like [`Self::show_refusal`].
     fn refuse_command(
         &mut self,
         app: &mut TuiApp,
         command: OperatorCommand,
         bots: &[&str],
-        need: Option<frontend_core::ErrorNeed>,
+        need: Option<ErrorNeed>,
         reason: &str,
     ) {
         self.core.refuse_unsubmitted(command, bots, reason);
+        self.show_refusal(app, need, reason);
+    }
+
+    /// Show `reason` on the message line; the line clears when the action
+    /// that supplies `need` happens ([`Self::clear_resolved_error`]).
+    fn show_refusal(&mut self, app: &mut TuiApp, need: Option<ErrorNeed>, reason: &str) {
         app.error = Some(reason.to_owned());
         if let Some(need) = need {
             self.error_expiry.waits_for(need, reason);
@@ -3112,17 +3127,7 @@ impl TuiSession {
         let Some(need) = self.error_expiry.waiting_need() else {
             return;
         };
-        let focused = app.focused_name();
-        let met = match need {
-            frontend_core::ErrorNeed::FocusedBot => focused.is_some(),
-            frontend_core::ErrorNeed::FocusedBotCard => focused
-                .as_deref()
-                .is_some_and(|name| self.scripts.heading(&self.core, name).is_some()),
-            frontend_core::ErrorNeed::PickedCard => app.script_sel.is_some(),
-            frontend_core::ErrorNeed::CheckedBots => {
-                app.walk_send.checked_count(app.fleet_model.marks()) > 0
-            }
-        };
+        let met = need.met(app);
         self.error_expiry.resolve(&mut app.error, |_| met);
     }
 
@@ -4404,13 +4409,16 @@ fn dispatch(session: &mut TuiSession, app: &mut TuiApp, action: AppAction) {
         AppAction::Quit => session.quit(app),
         AppAction::Refused(refusal) => {
             let bot = refusal.bot.as_deref();
-            session.refuse_command(
-                app,
-                refusal.command,
-                bot.as_slice(),
-                refusal.need,
-                &refusal.reason,
-            );
+            match refusal.command {
+                Some(command) => session.refuse_command(
+                    app,
+                    command,
+                    bot.as_slice(),
+                    refusal.need,
+                    &refusal.reason,
+                ),
+                None => session.show_refusal(app, refusal.need, &refusal.reason),
+            }
         }
         AppAction::Focus(name) => {
             session.focus(&name);

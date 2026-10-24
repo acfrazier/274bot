@@ -5777,18 +5777,118 @@ fn the_delete_prompt_keeps_a_stable_width_so_both_buttons_stay_on_screen() {
     assert_prompt_holds_on_screen(&mut ui, super::PROFILE_DELETE_POPUP);
 }
 
-#[test]
-fn unlock_sends_the_passphrase_exactly_as_typed() {
-    let mut session = crate::session::Session::new();
-    session.pass_scratch.push_str("  spaced pass ");
-    super::submit_vault_pass(&mut session, true);
-    let sent = session.take_requested_unlock().expect("unlock requested");
-    assert_eq!(sent.as_str(), "  spaced pass ");
+/// One frame of the vault prompt's Create vault (`exists` false) or Unlock
+/// vault button in a plain window. With `press`, ImGui is asked to activate
+/// the button by its id, which presses it on the next frame exactly as a
+/// click does and never while it is greyed out. Returns whether the button
+/// was drawn greyed out (disabled).
+fn vault_pass_button_frame(
+    ctx: &mut dear_imgui_rs::Context,
+    session: &mut crate::session::Session,
+    exists: bool,
+    press: bool,
+) -> bool {
+    use dear_imgui_rs::sys;
 
-    // Create still needs something besides spaces.
+    let label = if exists {
+        c"Unlock vault"
+    } else {
+        c"Create vault"
+    };
+    ctx.prepare_frame(
+        dear_imgui_rs::FramePrepareOptions::new([800.0, 600.0], 1.0 / 60.0).renderer_has_textures(),
+    );
+    let ui = ctx.frame();
+    let mut disabled = None;
+    ui.window("##vault-prompt")
+        .position([0.0, 0.0], dear_imgui_rs::Condition::Always)
+        .size([320.0, 240.0], dear_imgui_rs::Condition::Always)
+        .flags(
+            WindowFlags::NO_TITLE_BAR
+                | WindowFlags::NO_RESIZE
+                | WindowFlags::NO_MOVE
+                | WindowFlags::NO_SAVED_SETTINGS
+                | WindowFlags::NO_SCROLLBAR,
+        )
+        .build(|| {
+            if press {
+                // SAFETY: the frame's context is bound and `label` is a
+                // NUL-terminated static string.
+                ui.with_bound_context(|| unsafe {
+                    sys::igActivateItemByID(sys::igGetID_Str(label.as_ptr()));
+                });
+            }
+            super::vault_pass_button(ui, session, exists);
+            // SAFETY: the frame's context is bound; the item ImGui reads
+            // back is the one just submitted in this window.
+            disabled = Some(ui.with_bound_context(|| unsafe {
+                assert_eq!(
+                    sys::igGetItemID(),
+                    sys::igGetID_Str(label.as_ptr()),
+                    "the button is the last item"
+                );
+                sys::igGetItemFlags() & sys::ImGuiItemFlags_Disabled as sys::ImGuiItemFlags != 0
+            }));
+        });
+    ctx.render();
+    disabled.expect("the vault button draws")
+}
+
+/// Press the vault button as a click does: asked on one frame, pressed on
+/// the next, shown on the one after.
+fn press_vault_pass_button(
+    ctx: &mut dear_imgui_rs::Context,
+    session: &mut crate::session::Session,
+    exists: bool,
+) {
+    vault_pass_button_frame(ctx, session, exists, true);
+    vault_pass_button_frame(ctx, session, exists, false);
+    vault_pass_button_frame(ctx, session, exists, false);
+}
+
+/// Create vault and Unlock vault are greyed out while the typed passphrase
+/// cannot be sent (Create: empty once trimmed; Unlock: empty), so no click
+/// on them is dropped without a refusal. A usable passphrase is sent
+/// exactly as typed.
+#[test]
+fn the_vault_buttons_are_greyed_out_until_the_passphrase_can_be_sent() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut ctx = dock_host_context();
+    let mut session = crate::session::Session::new();
+    for (exists, typed, usable) in [
+        (false, "", false),
+        (false, "   ", false),
+        (false, " new pass ", true),
+        (true, "", false),
+        (true, "   ", true),
+        (true, "  spaced pass ", true),
+    ] {
+        session.pass_scratch.clear();
+        session.pass_scratch.push_str(typed);
+        assert_eq!(
+            vault_pass_button_frame(&mut ctx, &mut session, exists, false),
+            !usable,
+            "vault file exists: {exists}, typed {typed:?}"
+        );
+    }
+
+    session.pass_scratch.clear();
     session.pass_scratch.push_str("   ");
-    super::submit_vault_pass(&mut session, false);
+    let refusals = session.core.refusals();
+    press_vault_pass_button(&mut ctx, &mut session, false);
     assert!(session.take_requested_unlock().is_none());
+    assert_eq!(
+        session.core.refusals(),
+        refusals,
+        "a greyed-out button records nothing"
+    );
+
+    session.pass_scratch.clear();
+    session.pass_scratch.push_str("  spaced pass ");
+    press_vault_pass_button(&mut ctx, &mut session, true);
+    let sent = session.take_requested_unlock().expect("unlock requested");
+    assert_eq!(sent.as_str(), "  spaced pass ", "sent exactly as typed");
+    assert!(session.pass_scratch.is_empty());
 }
 
 /// Content width of the docked Nav config window at scale 1: the width the

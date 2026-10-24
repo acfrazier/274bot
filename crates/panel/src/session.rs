@@ -863,6 +863,18 @@ impl WalkSendState {
     }
 }
 
+/// What a refusal on the banner waits for: the action that supplies it
+/// clears the message at once ([`Session::clear_resolved_error`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ErrorNeed {
+    /// A bot has the focus.
+    FocusedBot,
+    /// The focused bot has a script card.
+    FocusedBotCard,
+    /// The first save of the profile called this has finished.
+    ProfileSaved(String),
+}
+
 pub struct Session {
     /// Shared focus policy; slot threads read it every frame (observe) to
     /// apply `client.set_draw(draw_for_slot(&focus, name))`, so only the
@@ -875,7 +887,7 @@ pub struct Session {
     /// Last vault/connection error shown in the banner.
     pub error: Option<String>,
     /// The banner message's expiry clock ([`Self::expire_error`]).
-    error_expiry: frontend_core::ErrorExpiry,
+    error_expiry: frontend_core::ErrorExpiry<ErrorNeed>,
     /// BOT_MAINLAND=1 / host-play --mainland; not a panel checkbox.
     pub mainland: Arc<AtomicBool>,
     /// The log section's filtered view and controls over the shared
@@ -2402,7 +2414,7 @@ impl Session {
         &mut self,
         command: OperatorCommand,
         bots: &[&str],
-        need: Option<frontend_core::ErrorNeed>,
+        need: Option<ErrorNeed>,
         reason: &str,
     ) {
         self.core.refuse_unsubmitted(command, bots, reason);
@@ -2414,21 +2426,18 @@ impl Session {
 
     /// Clear the banner message when the need it waits for now holds: the
     /// action that resolves a message clears it at once, whichever action it
-    /// was (a focus change, a card pick). Called after a focus change and
-    /// once per frame.
+    /// was (a focus change, a focused bot's card, a finished save).
+    /// Called after a focus change and once per frame.
     pub(crate) fn clear_resolved_error(&mut self) {
         let Some(need) = self.error_expiry.waiting_need() else {
             return;
         };
-        let focused = self.focused_name();
         let met = match need {
-            frontend_core::ErrorNeed::FocusedBot => focused.is_some(),
-            frontend_core::ErrorNeed::FocusedBotCard => focused
-                .as_deref()
-                .is_some_and(|name| self.scripts.heading(&self.core, name).is_some()),
-            frontend_core::ErrorNeed::PickedCard => self.script_sel.is_some(),
-            // The terminal app's walk group list; the panel never waits on it.
-            frontend_core::ErrorNeed::CheckedBots => false,
+            ErrorNeed::FocusedBot => self.focused_name().is_some(),
+            ErrorNeed::FocusedBotCard => self
+                .focused_name()
+                .is_some_and(|name| self.scripts.heading(&self.core, &name).is_some()),
+            ErrorNeed::ProfileSaved(name) => !self.core.profile_saving(name),
         };
         self.error_expiry.resolve(&mut self.error, |_| met);
     }
@@ -2550,15 +2559,15 @@ impl Session {
     }
 
     /// Queue a host-owned rail cheat on the focused slot through the
-    /// `DebugCommand` row. No-op without play/focus; these controls are not
-    /// Debug-tab reply probes.
+    /// `DebugCommand` row; these controls are not Debug-tab reply probes. The
+    /// rail draws every cheat button disabled while
+    /// [`Self::debug_send_target`] has no bot to give (no focus, no play
+    /// session), so a click always gets one and the early return is not
+    /// reachable by a click.
     pub fn cheat_focused(&mut self, cmd: &str) {
-        let Some(name) = self.focused_name() else {
+        let Ok(name) = self.debug_send_target().map(str::to_owned) else {
             return;
         };
-        if !self.core.has_play() {
-            return;
-        }
         self.map_desk.stage_internal_debug_command(cmd);
         self.submit(OperatorCommand::DebugCommand, Targets::Profile(&name));
     }
@@ -2607,15 +2616,14 @@ impl Session {
 
     /// Send one Debug command to the displayed focused bot. Marked sends use
     /// [`send_debug_command_marked_snapshot`] so every shared mark is counted.
-    /// The host queue and client encoder retain final cheat admission.
+    /// The host queue and client encoder retain final cheat admission. The
+    /// Debug panel draws Send disabled with the reason
+    /// [`Self::debug_send_target`] gives, so a click never gets an `Err` here.
     pub fn send_debug_command(&mut self, cmd: &str) -> Result<(), String> {
-        if !self.debug_ui() {
-            return Err("Debug commands require a Local profile".into());
-        }
-        let name = self.focused_name().ok_or("Pick a focused bot")?;
-        if !self.core.has_play() {
-            return Err("No active play session".into());
-        }
+        let name = self
+            .debug_send_target()
+            .map(str::to_owned)
+            .map_err(String::from)?;
         self.map_desk.stage_debug_command(cmd, None);
         let submitted = self
             .submit(OperatorCommand::DebugCommand, Targets::Profile(&name))
@@ -2667,6 +2675,25 @@ impl Session {
     pub fn debug_ui(&self) -> bool {
         self.profile_class() == ProfileClass::Local
     }
+
+    /// The focused bot a Debug command goes to, or why it has none: a Local
+    /// profile, a focused bot and a play session. The Debug controls draw
+    /// disabled with that reason (the rail's TutSkip, Lumbridge and Teles
+    /// destinations, the Debug panel's Send and the maxme button), and their
+    /// handlers ([`Self::cheat_focused`], [`Self::send_debug_command`]) take
+    /// the bot from this same answer, so a click never reaches their early
+    /// exits.
+    pub(crate) fn debug_send_target(&self) -> Result<&str, &'static str> {
+        if !self.debug_ui() {
+            return Err("Debug commands require a Local profile");
+        }
+        let name = self.core.selected().ok_or("Pick a focused bot")?;
+        if !self.core.has_play() {
+            return Err("No active play session");
+        }
+        Ok(name)
+    }
+
     /// WalkTo Teleport uses the host's Local+loopback rule on this session's
     /// play connection when present, otherwise the bound target and play host.
     pub fn map_teleport_authorized(&self) -> bool {
@@ -2692,7 +2719,10 @@ impl Session {
         self.core.profile(&name).and_then(|p| p.tutorial_skipped())
     }
 
-    /// Persist TutSkip on the focused vault profile (debugprefs).
+    /// Persist TutSkip on the focused vault profile (debugprefs). The button
+    /// is drawn only for a focused profile ([`Self::focused_tutorial_skipped`]
+    /// reads `Some(false)` only with one), so a click always has one and the
+    /// early return is not reachable by a click.
     pub fn mark_tutorial_skipped(&mut self) {
         let Some(name) = self.focused_name() else {
             return;
@@ -3199,7 +3229,7 @@ impl Session {
             self.refuse_command(
                 command,
                 &[name],
-                None,
+                Some(ErrorNeed::ProfileSaved(name.to_owned())),
                 &format!("{name}: profile is still saving"),
             );
         }
@@ -3459,7 +3489,10 @@ impl Session {
     }
 
     /// Explicit Relog-now through the login FIFO. Running or queued script
-    /// work requires a second confirming click.
+    /// work requires a second confirming click. The button is drawn only for a
+    /// focused bot with a memory notice ([`Self::focused_memory_notice`]
+    /// needs the focus), so a click always has one and the early return is
+    /// not reachable by a click.
     pub fn request_focused_memory_relog(&mut self) -> bool {
         let Some(name) = self.focused_name() else {
             return false;
@@ -4490,7 +4523,7 @@ impl Session {
             self.refuse_command(
                 OperatorCommand::StartScript,
                 &[],
-                Some(frontend_core::ErrorNeed::FocusedBot),
+                Some(ErrorNeed::FocusedBot),
                 "script: no focused profile",
             );
             return;
@@ -4502,7 +4535,11 @@ impl Session {
     }
 
     /// Pause the focused slot's script, or Resume when it is Paused (the
-    /// button label follows [`script_pause_enabled`]).
+    /// button label follows [`script_pause_enabled`]). The button is enabled
+    /// only for a state `script_pause_enabled` accepts, and
+    /// [`Self::focused_script_state`] is `Idle` with no focused bot or no play
+    /// session, so a click always has both and neither early exit is
+    /// reachable by a click.
     pub fn script_toggle_pause(&mut self) {
         let Some(name) = self.focused_name() else {
             return;
@@ -4517,7 +4554,11 @@ impl Session {
         }
     }
 
-    /// Stop the focused slot's script (teardown hook, instance dropped).
+    /// Stop the focused slot's script (teardown hook, instance dropped). The
+    /// Stop button is enabled for an active state (which needs a focused bot
+    /// and a play session) or for a Start still queued for the selected bot,
+    /// so a click always has a focused bot; without a play session the queued
+    /// Start is still cancelled.
     pub fn script_stop(&mut self) {
         let Some(name) = self.focused_name() else {
             return;
@@ -4534,7 +4575,11 @@ impl Session {
     /// slot. The core decides what it does: a script-local one-shot click,
     /// or a host Pause/Resume/Stop control bound to the profile and run the
     /// frame was read for (a control shown for another profile or an ended
-    /// run is refused, not retargeted).
+    /// run is refused, not retargeted). The paint is drawn only for the
+    /// focused bot, a button reports a hit only while it is enabled (the check
+    /// `PaintView::activate` repeats on the same frame), and the index comes
+    /// from that frame's own button list, so neither early return is
+    /// reachable by a click.
     pub fn script_paint_activate(&mut self, frame: &PaintFrame, index: usize) {
         let Some(name) = self.focused_name() else {
             return;
@@ -4546,7 +4591,8 @@ impl Session {
         self.submit(OperatorCommand::ScriptPaintInput, Targets::Profile(&name));
     }
 
-    /// Persistent strip/rail/tabs selection on the focused slot.
+    /// Persistent strip/rail/tabs selection on the focused slot. The paint is
+    /// drawn only for the focused bot, so a click always has one.
     pub fn script_paint_select(&mut self, key: &str, select_name: &str, generation: u64) {
         let Some(name) = self.focused_name() else {
             return;
@@ -4635,6 +4681,10 @@ pub use windows::PanelWindow;
 #[cfg(test)]
 #[path = "session_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "silent_exit_tests.rs"]
+mod silent_exit_tests;
 
 #[cfg(test)]
 mod fleet_hold_tests {
