@@ -1,5 +1,7 @@
 use super::*;
-use nav_planner::canlight::canlight_at;
+use nav_planner::canlight::{
+    canlight_at, expected_header_binding, header_binding, policy_digest,
+};
 use crate::collision::bake_from_maps;
 use api::obj_names::LocDefs;
 use client::config::LocType;
@@ -556,3 +558,29 @@ fn missing_loc_def_is_conservative_one_by_one_exclude() {
     ));
 }
 
+#[test]
+fn same_sized_sidecar_with_new_bank_policy_has_a_new_binding() {
+    let pack = [0xCDu8; 32];
+    let old_policy = policy_digest(289, b"old-zones");
+    let new_policy = policy_digest(289, b"new-zones");
+    assert_eq!(old_policy.len(), new_policy.len());
+    let old = header_binding(&pack, &old_policy);
+    let new = header_binding(&pack, &new_policy);
+    assert_ne!(old, new);
+    let origin = WorldTile {
+        x: 3200,
+        z: 3200,
+        level: 0,
+    };
+    let bits = [0u64; 1];
+    let a = crate::pack::encode_canlight_sidecar(origin, 2, 1, &bits, &old);
+    let b = crate::pack::encode_canlight_sidecar(origin, 2, 1, &bits, &new);
+    assert_eq!(a.len(), b.len());
+    let da = nav_planner::pack::decode_canlight_sidecar(&a).unwrap();
+    let expected_new = expected_header_binding(
+        &nav_planner::pack::sha256_hex(&pack),
+        &nav_planner::pack::sha256_hex(&new_policy),
+    )
+    .unwrap();
+    assert_ne!(da.binding, expected_new);
+}

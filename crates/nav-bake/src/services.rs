@@ -19,11 +19,19 @@ use nav_planner::map::{Rows, Text};
 use crate::pack::{parse_loc_fields, parse_map_line, section};
 use sha2::{Digest as _, Sha256};
 
-/// Baker sources whose bytes join the navpois generator identity. These labels
-/// are workspace-relative; pack and flags bytes do not depend on these files.
-pub const POIS_GENERATOR_SOURCES: [&str; 2] = [
+/// Workspace-relative producer, parser and schema sources for navpois identity.
+/// This identity also binds service-only changes when pack bytes are unchanged.
+pub const POIS_GENERATOR_SOURCES: [&str; 10] = [
     "crates/nav-bake/src/services.rs",
+    "crates/nav-bake/src/pack.rs",
+    "crates/nav-bake/src/pack/config_parse.rs",
+    "crates/nav-bake/src/pack/mapsquare.rs",
+    "crates/nav-planner/src/collision.rs",
+    "crates/nav-planner/src/map.rs",
+    "crates/nav-planner/src/map/formats.rs",
+    "crates/nav-planner/src/map/identity.rs",
     "crates/nav-planner/src/map/poi.rs",
+    "crates/nav-planner/src/map/services.rs",
 ];
 pub const POIS_GENERATOR_ID: &str = "navpois-1";
 

@@ -588,7 +588,7 @@ pub fn merge_identity_rows(
 /// Install resource root for a build: `BOT_NAV_RESOURCE_DIR` when set (a
 /// macOS bundle's `Contents/Resources`, an installer staging dir), otherwise
 /// the cargo profile directory the built binaries land in — which is exactly
-/// the directory [`crate::bundle`] consumers resolve at runtime for an
+/// the directory runtime resource consumers resolve for an
 /// ordinary executable. `out_dir` is the build script's `OUT_DIR`.
 pub fn resource_root_for_build(out_dir: &Path,
 override_dir: Option<&Path>,) -> Result<PathBuf, crate::GenerationError> { if let Some(dir) = override_dir {

@@ -28,13 +28,13 @@ fn the_289_config_jag_is_inside_the_cache_and_274_beside_it() {
 
 #[test]
 fn generator_identity_tracks_the_manual_id_format_and_sources() {
-    let base = generator_identity(&[("src/pack.rs", "fn a() {}")]);
+    let base = generator_identity(&[("crates/nav-bake/src/pack.rs", "fn a() {}")]);
     assert_eq!(base.len(), 64);
     assert!(base.chars().all(|c| c.is_ascii_hexdigit()));
-    assert_ne!(base, generator_identity(&[("src/pack.rs", "fn b() {}")]));
+    assert_ne!(base, generator_identity(&[("crates/nav-bake/src/pack.rs", "fn b() {}")]));
     assert_ne!(
         base,
-        generator_identity(&[("src/collision.rs", "fn a() {}")])
+        generator_identity(&[("crates/nav-bake/src/collision.rs", "fn a() {}")])
     );
     // Order and labels are part of the identity.
     assert_ne!(
@@ -45,20 +45,20 @@ fn generator_identity_tracks_the_manual_id_format_and_sources() {
 
 #[test]
 fn router_source_bytes_invalidate_a_warm_reach_stamp() {
-    // bake_reach floods with router::step_ok; a movement change must not
-    // keep a warm-stamped 274R sidecar while pack/flags stamps still match.
+    // Reach production and routing share the movement primitive, not search code.
+    assert!(!GENERATOR_SOURCES.contains(&"crates/nav-planner/src/router.rs"));
     assert!(
-        GENERATOR_SOURCES.contains(&"src/router.rs"),
-        "GENERATOR_SOURCES must include the step_ok-owning source"
+        GENERATOR_SOURCES.contains(&"crates/nav-planner/src/movement.rs"),
+        "the shared movement primitive must invalidate generated reach bits"
     );
-    assert!(GENERATOR_SOURCES.contains(&"src/paint.rs"));
+    assert!(GENERATOR_SOURCES.contains(&"crates/nav-planner/src/paint.rs"));
     assert!(
-        GENERATOR_SOURCES.contains(&"src/canlight.rs"),
-        "GENERATOR_SOURCES must include the canlight-owning source"
+        GENERATOR_SOURCES.contains(&"crates/nav-bake/src/canlight.rs"),
+        "the canlight producer must invalidate generated masks"
     );
     assert!(
-        GENERATOR_SOURCES.contains(&"src/transport/condparse.rs"),
-        "GENERATOR_SOURCES must include the transport condparse-owning source"
+        GENERATOR_SOURCES.contains(&"crates/nav-bake/src/transport/condparse.rs"),
+        "the transport condition parser must invalidate generated edges"
     );
 
     let baseline: Vec<(&str, &str)> = GENERATOR_SOURCES
@@ -67,24 +67,24 @@ fn router_source_bytes_invalidate_a_warm_reach_stamp() {
         .collect();
     let mut router_only = baseline.clone();
     for (label, text) in &mut router_only {
-        if *label == "src/router.rs" {
+        if *label == "crates/nav-planner/src/movement.rs" {
             *text = "fn step_ok_changed() {}";
         }
     }
     assert_eq!(
         router_only
             .iter()
-            .find(|(path, _)| *path == "src/paint.rs")
+            .find(|(path, _)| *path == "crates/nav-planner/src/paint.rs")
             .map(|(_, text)| *text),
         Some("fn a() {}"),
-        "paint.rs bytes stay the same; only router.rs changes"
+        "paint bytes stay the same; only the shared movement rule changes"
     );
 
     let warm = generator_identity(&baseline);
     let after_router = generator_identity(&router_only);
     assert_ne!(
         warm, after_router,
-        "router.rs bytes join generator_identity"
+        "shared movement bytes join generator_identity"
     );
 
     let input_sha = "56".repeat(32);
