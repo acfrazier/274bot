@@ -19,9 +19,11 @@ use client::dash3d::{CollisionFlag, LocAngle, LocShape};
 use client::io::JagFile;
 use sha2::{Digest, Sha256};
 
-use crate::canlight::{self, BANK_ZONES_REL};
+use crate::canlight;
+use nav_planner::canlight::{header_binding, identity_digest, BANK_ZONES_REL};
 use crate::collision::bake_from_maps;
 use crate::manifest::capture_nav_manifest;
+use crate::services::StepStrategy;
 use nav_planner::collision::WorldCollision;
 use nav_planner::manifest::{CacheManifest, NavManifest};
 use crate::pack::{
@@ -326,53 +328,10 @@ struct MobileReach {
     strategy: StepStrategy,
 }
 
-/// Engine `CollisionType` of a walking NPC (`PathingEntity.getCollisionStrategy`),
-/// tested per tile by `CollisionStrategy.canMove`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum StepStrategy {
-    /// `normal` and `passthru`, and the stand-in for `indoors`/`outdoors`:
-    /// those add a roof test to the same mask test, and the bake carries no
-    /// roof flag, so NORMAL reaches a superset of their tiles.
-    Normal,
-    /// `blocked`: only onto blocked ground (`FLOOR`), still stopped by walls,
-    /// scenery and ground decor.
-    Blocked,
-    /// `blocked+normal` (`CollisionType.LINE_OF_SIGHT`): only projectile-
-    /// blocking walls and scenery stop it; ground and ordinary scenery don't.
-    LineOfSight,
-}
-
-impl StepStrategy {
-    fn of(restrict: crate::services::MoveRestrict) -> Option<Self> {
-        use crate::services::MoveRestrict;
-        match restrict {
-            MoveRestrict::Normal
-            | MoveRestrict::Passthru
-            | MoveRestrict::Indoors
-            | MoveRestrict::Outdoors => Some(Self::Normal),
-            MoveRestrict::Blocked => Some(Self::Blocked),
-            MoveRestrict::BlockedNormal => Some(Self::LineOfSight),
-            MoveRestrict::Nomove => None,
-        }
-    }
-
-    /// `CollisionStrategy.canMove(collision, tileFlag, blockFlag)`.
-    fn can_move(self, tile: u32, block: u32) -> bool {
-        const FLOOR: u32 = 0x20_0000;
-        // Walls (`0xff`) and scenery (`0x100`); `<< 9` turns each into its
-        // projectile-blocker bit.
-        const LINE_OF_SIGHT_MOVEMENT: u32 = 0x1ff;
-        match self {
-            Self::Normal => tile & block == 0,
-            Self::Blocked => tile & block & !FLOOR == 0 && tile & FLOOR != 0,
-            Self::LineOfSight => tile & ((block & LINE_OF_SIGHT_MOVEMENT) << 9) == 0,
-        }
-    }
-}
 
 fn derive_zone_table(content_root: &Path,
 collision: &WorldCollision,
-graph: &crate::transport::TransportGraph,
+graph: &nav_planner::transport::TransportGraph,
 npc_types: &[client::config::NpcType],
 door_ids: &HashSet<i32>,
 opened_door_ids: &HashSet<i32>,) -> Result<DerivedZones, crate::GenerationError> { let inputs = crate::services::collect_hunter_inputs(
@@ -606,8 +565,8 @@ for mut row in pending {
     zones.push(row.zone);
 }
 
-let mut groups = Vec::with_capacity(nav_planner::zones::curated::GROUPS.len());
-for spec in nav_planner::zones::curated::GROUPS {
+let mut groups = Vec::with_capacity(crate::zones::GROUPS.len());
+for spec in crate::zones::GROUPS {
     let group_index = u16::try_from(groups.len())
         .map_err(|_| "zone group count exceeds the packed limit".to_string())?;
     let mut members = Vec::new();
@@ -1386,9 +1345,9 @@ let reach_bytes = encode_reach_sidecar(
 );
 let revision_for_policy = request.revision.unwrap_or(274);
 let canlight_identity_digest =
-    canlight::identity_digest(revision_for_policy, &bank_zones_bytes, &canlight_bits);
+    identity_digest(revision_for_policy, &bank_zones_bytes, &canlight_bits);
 let canlight_identity = sha256_hex(&canlight_identity_digest);
-let canlight_binding = canlight::header_binding(&pack_digest, &canlight_identity_digest);
+let canlight_binding = header_binding(&pack_digest, &canlight_identity_digest);
 let canlight_bytes = encode_canlight_sidecar(
     collision.origin,
     collision.width,

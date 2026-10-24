@@ -17,7 +17,7 @@ fn tile(x: i32, z: i32, level: i32) -> WorldTile {
 fn seers_street_walks_to_rock_crabs_on_foot() {
     // Task 4: Seers street (2725,3485) -> rock crabs (2710,3720) is on
     // foot after the L0 stamper rebake. Requires the pack: run
-    // `cargo run -p nav-planner --bin nav-pack` first. GitHub has neither pack
+    // `cargo run -p nav-bake --bin nav-pack` first. GitHub has neither pack
     // nor Server content — skip, do not panic.
     let Some(world) = NavWorld::load_default_pack_or_skip() else {
         return;

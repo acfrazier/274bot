@@ -14,7 +14,7 @@ fn manifest_content_id_mismatch_rejects_the_pack() {
             .collect(),
     };
     let mut manifest =
-        nav_bake::manifest::capture_nav_manifest(revision, &cache, &bytes, None, None, None, None, 0, 0).unwrap();
+        capture_nav_manifest(revision, &cache, &bytes, None, None, None, None, 0, 0).unwrap();
     assert!(
         manifest.content_id.is_none(),
         "capture without a decoded identity stays unset"
@@ -79,7 +79,7 @@ fn manifest_verification_binds_decoded_zone_counts() {
     };
     let bytes = b"nav";
     let manifest =
-        nav_bake::manifest::capture_nav_manifest(revision, &cache, bytes, None, None, None, None, 3, 2).unwrap();
+        capture_nav_manifest(revision, &cache, bytes, None, None, None, None, 3, 2).unwrap();
 
     assert_eq!(manifest.zone_count, 3);
     assert_eq!(manifest.zone_npc_count, 2);

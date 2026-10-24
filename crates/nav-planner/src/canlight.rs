@@ -16,7 +16,7 @@ use sha2::{Digest, Sha256};
 use crate::collision::WorldCollision;
 
 /// Manual policy identity. Bump when the static mask rules change in a way
-/// source bytes in [`crate::bake::GENERATOR_SOURCES`] should not have to
+/// source bytes in `nav_bake::bake::GENERATOR_SOURCES` should not have to
 /// carry alone (the sidecar header binding includes this id).
 pub const POLICY_ID: &str = "canlight-1";
 /// Algorithm label mixed into the policy digest. Describes the static

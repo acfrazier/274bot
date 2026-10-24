@@ -8,6 +8,7 @@ pub mod manifest;
 pub mod pack;
 pub mod services;
 pub mod transport;
+mod zones;
 
 /// Failure at a navigation-generation boundary.
 #[derive(Debug, thiserror::Error)]

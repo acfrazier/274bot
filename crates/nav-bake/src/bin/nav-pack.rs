@@ -31,11 +31,11 @@
 //! transport graph derives from the Server content tree (the maps dir's
 //! parent): door/ladder/stairs/agility edges, with boats and teleport
 //! spells counted and skipped on stderr. The bank stand table
-//! ([`nav_planner::pack::derive_banks`]) bakes from the same content tree: every
+//! ([`nav_bake::pack::derive_banks`]) bakes from the same content tree: every
 //! `bankbooth` loc placement with the Use-quickly op, plus NPC tellers
 //! (`category=bank_teller`) from jm2 NPC placements. Rebake whenever the
 //! Server content changes — packs older than v17 are rejected with `BadVersion`.
-//! The derivation itself lives in [`nav_planner::bake`], shared with the ordinary
+//! The derivation itself lives in [`nav_bake::bake`], shared with the ordinary
 //! application build (`host-play`'s build script), which bakes and stages the
 //! selected revision automatically; this CLI stays for deliberate
 //! developer/custom-input bakes.
