@@ -1020,6 +1020,9 @@ impl ScenarioRunner {
                 StepKind::Repeat { .. } | StepKind::NativeSeedDeposit { .. }
             );
             let repeat_ready = !repeat || self.repeat_sent_game_tick != Some(self.snapshot.tick());
+            if dirty {
+                self.trace_seed_deposit("observation");
+            }
             if !self.step_sent && repeat_ready {
                 self.fire_nav_step_sustains(client);
                 if let Err(msg) = self.send_current(client) {
@@ -1857,6 +1860,39 @@ impl ScenarioRunner {
         }
     }
 
+    // Temporary NIGHTLY-TRIAGE-1024 probe. Removed with the settlement fix.
+    fn trace_seed_deposit(&self, result: &str) {
+        use std::io::Write;
+        let StepKind::NativeSeedDeposit { unnoted_id, note_id, .. } = self.current_step().kind else {
+            return;
+        };
+        let Some(root) = std::env::var_os("LIVE_EVIDENCE_DIR") else {
+            return;
+        };
+        let count = |rows: &[api::snapshot::ItemView], id| {
+            rows.iter().filter(|row| row.def.id == id).map(|row| row.count).sum::<i32>()
+        };
+        let inv_id = note_id.unwrap_or(unnoted_id);
+        let fact = serde_json::json!({
+            "cell": self.scenario.name,
+            "tick": self.snapshot.tick(),
+            "item": inv_id,
+            "result": result,
+            "proof": self.holds(self.current_step().wait.arm),
+            "pack": count(self.snapshot.inventory(), inv_id),
+            "side": count(self.snapshot.bank_side(), inv_id),
+            "bank": count(self.snapshot.bank(), unnoted_id),
+            "loaded": self.snapshot.bank_loaded(),
+            "main_gen": self.snapshot.bank_snapshot_generation(),
+            "pack_gen": self.snapshot.inventory_packet_generation(),
+            "side_gen": self.snapshot.bank_side_packet_generation(),
+        });
+        std::fs::create_dir_all(&root).unwrap();
+        let mut file = std::fs::OpenOptions::new().create(true).append(true)
+            .open(std::path::Path::new(&root).join("seed-deposit-attempts.jsonl")).unwrap();
+        writeln!(file, "{fact}").unwrap();
+    }
+
     /// Send the current step's action once. `Perform` runs its closure;
     /// `Walk` and `Follow` arm the whole-world route (`find_with` over the
     /// collision + transport graph) and drive `Traveller::follow`.
@@ -1885,29 +1921,7 @@ impl ScenarioRunner {
                     *quantity,
                     *note_id,
                 );
-                let inv_id = note_id.unwrap_or(*unnoted_id);
-                let count = |rows: &[api::snapshot::ItemView], id| {
-                    rows.iter()
-                        .filter(|row| row.def.id == id)
-                        .map(|row| row.count)
-                        .sum::<i32>()
-                };
-                api::host_log!(
-                    api::hostlog::Category::BankOp,
-                    api::hostlog::Level::Info,
-                    "[DEBUG-seed-settle] cell={} tick={} item={} result={result:?} proof={} pack={} side={} bank={} loaded={} main_gen={:?} pack_gen={:?} side_gen={:?}",
-                    self.scenario.name,
-                    self.snapshot.tick(),
-                    inv_id,
-                    self.holds(self.current_step().wait.arm),
-                    count(self.snapshot.inventory(), inv_id),
-                    count(self.snapshot.bank_side(), inv_id),
-                    count(self.snapshot.bank(), *unnoted_id),
-                    self.snapshot.bank_loaded(),
-                    self.snapshot.bank_snapshot_generation(),
-                    self.snapshot.inventory_packet_generation(),
-                    self.snapshot.bank_side_packet_generation(),
-                );
+                self.trace_seed_deposit(&format!("{result:?}"));
                 result.map(|_| ()).map_err(|failure| failure.to_string())
             }
             StepKind::DrainDialogs { choice } => {
