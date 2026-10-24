@@ -47,8 +47,13 @@ const KQ_LAIR: WorldTile = WorldTile {
 /// local-visibility witness terms can require a third trip.
 const KQ_WATCHDOG: Duration = Duration::from_secs(2_094);
 /// Selected-revision Kalphite Queen drops which cannot be confused with the
-/// seeded loadout.  Ammunition is deliberately excluded: recovered arrows
-/// are not boss-loot evidence.
+/// seeded loadout. Ammunition is deliberately excluded: recovered arrows
+/// are not boss-loot evidence. Banking a listed drop is an observation,
+/// never a gate: the Queen's table rolls `random(128)` and 22 of those
+/// rolls drop items outside this list (mithril, iron, and rune arrows and
+/// the amulet of power; `lostcity-289/content/scripts/drop
+/// tables/scripts/kalphite_queen.rs2:80-87,100-103`), so a sequence of
+/// legitimate kills can bank no listed item (JIVE-KQ-1024 round 3).
 const KQ_LOOT_IDS: &[i32] = &[
     1245, 565, 1452, 560, 3140, 1249, 554, 985, 987, 3053, 379, 561, 1462, 413, 1359, 1113, 830,
     1247, 1347, 2366, 1617, 1621, 1619, 1623, 246,
@@ -217,6 +222,19 @@ impl ClueFleetWitness {
     }
 }
 
+/// The first observation that cleared one slot's `survived` latch: the
+/// snapshot tick, the observed hitpoints, the world tile, and the newest
+/// chat line in that snapshot, if any. Recorded once, at the transition,
+/// so a real death is diagnosable from the receipt alone. The earlier
+/// witness kept only the false latch, and one run's receipt could not
+/// distinguish a death from an unreceived stat (INT-BATCH-1024E).
+struct KqSurvivalClear {
+    tick: u32,
+    hp: i32,
+    tile: Option<(i32, i32, i32)>,
+    chat: Option<String>,
+}
+
 #[derive(Default)]
 struct KqSlotWitness {
     name: Option<String>,
@@ -259,9 +277,16 @@ struct KqSlotWitness {
     camelot_escape: bool,
     duel_escape: bool,
     ring_spent: bool,
+    /// Listed-loot observations only (see [`KQ_LOOT_IDS`]). Which drop a
+    /// kill rolls is a chance outcome, so these fields never gate the
+    /// run. The fleet value reaches the receipt through
+    /// [`KqFleetWitness::terminal_summary`].
     loot_ground: Option<i32>,
     loot_collected: bool,
     loot_banked: bool,
+    /// The first received-stats observation of hitpoints 0, if one ever
+    /// cleared `survived`. Read-only reporting state.
+    survival_cleared: Option<KqSurvivalClear>,
     bank_returns: u8,
     bank_return_latched: bool,
     safely_banked: bool,
@@ -322,7 +347,28 @@ impl KqFleetWitness {
             slot.strength_baseline = Some(pair_xp(snap, 2));
             slot.ranged_baseline = Some(pair_xp(snap, 4));
         }
-        slot.survived &= pair_effective_stat(snap, 3) > 0;
+        // Survival clears only on hitpoints observed from stats the
+        // server has sent since login. An absent row, or the client's
+        // zero-filled arrays before the first stat packets, is a
+        // missing observation, never a death (`pair_observed_hp`).
+        // The first clearing observation is kept for the receipt.
+        if let Some(hp) = pair_observed_hp(snap).filter(|&hp| hp <= 0) {
+            if slot.survived && slot.survival_cleared.is_none() {
+                slot.survival_cleared = Some(KqSurvivalClear {
+                    tick: snap.tick(),
+                    hp,
+                    tile: snap.tile(),
+                    // The chat ring is newest first
+                    // (`snapshot.rs`, `chat_lines`).
+                    chat: snap
+                        .chat_lines()
+                        .first()
+                        .map(|line| line.text.clone())
+                        .filter(|text| !text.is_empty()),
+                });
+            }
+            slot.survived = false;
+        }
         slot.last_tile = snap.tile();
         slot.last_tick = snap.tick();
         slot.last_bank_component = snap.bank_component_id();
@@ -605,15 +651,25 @@ impl KqFleetWitness {
             .any(|slot| slot.food_eaten && slot.xp_after_food)
     }
 
-    fn first_loot_bank(&self) -> bool {
+    /// The first witnessed kill and every member's first fresh bank
+    /// return. Banking a listed drop is not a term here: which drop a
+    /// kill rolls is a chance outcome (see [`KQ_LOOT_IDS`]), so the
+    /// fleet records it through [`Self::loot_banked_observed`] and
+    /// never waits for it.
+    fn first_kill_bank(&self) -> bool {
         self.slots
             .iter()
             .all(|slot| slot.disappearances >= 1 && slot.bank_returns >= 1)
             && self.slots.iter().any(|slot| slot.kills >= 1)
-            && self
-                .slots
-                .iter()
-                .any(|slot| slot.loot_ground.is_some() && slot.loot_collected && slot.loot_banked)
+    }
+
+    /// Any member was seen banking a listed Queen drop it had observed
+    /// on the ground and collected. An observation for the receipt,
+    /// like `restock_overlap`. It never gates the run.
+    fn loot_banked_observed(&self) -> bool {
+        self.slots
+            .iter()
+            .any(|slot| slot.loot_ground.is_some() && slot.loot_collected && slot.loot_banked)
     }
 
     fn second_descent(&self) -> bool {
@@ -622,15 +678,16 @@ impl KqFleetWitness {
             .all(|slot| slot.lair_entries >= 2 && slot.second_attack)
     }
 
-    /// Every gated fleet outcome holds. `restock_overlap` is not a
-    /// term here: it depends on chance, so the run records it as an
-    /// observation and never waits for it. The gates stay the kills,
-    /// the escapes, the disappearances, and the second safe bank.
-    /// The coordinated finish follows in the scenario steps.
+    /// Every gated fleet outcome holds. `restock_overlap` and
+    /// `loot_banked` are not terms here: both depend on chance, so the
+    /// run records them as observations and never waits for either.
+    /// The gates stay the kills, the escapes, the disappearances, and
+    /// the second safe bank. The coordinated finish follows in the
+    /// scenario steps.
     fn complete(&self) -> bool {
         self.first_descent()
             && self.first_combat()
-            && self.first_loot_bank()
+            && self.first_kill_bank()
             && self.second_descent()
             && self.slots.iter().all(|slot| {
                 slot.camelot_escape
@@ -670,45 +727,91 @@ impl KqFleetWitness {
             && self.slots[1..].iter().all(|slot| slot.finish_closed)
     }
 
-    /// Read-only terminal summary for the receipt: the fleet terms
-    /// still unmet, the `restock_overlap` observation, then each
-    /// slot's last observed tile, snapshot tick, and bank component
-    /// with the witness latches it still lacks. Two deadline
-    /// failures (this task's first series run 1 and
+    /// Read-only terminal summary for the receipt: every required
+    /// term still unmet, the `restock_overlap` and `loot_banked`
+    /// observations, the first survival-clearing observation per
+    /// slot, then each slot's last observed tile, snapshot tick, and
+    /// bank component with the witness latches it still lacks. Two
+    /// deadline failures (this task's first series run 1 and
     /// SCRIPT-SPLIT-INT's candidate run) stalled on the final
     /// composite witness with no retained record of which term was
     /// false. This summary rides the receipt on a failure and on a
     /// pass, so the next failure is diagnosable from the receipt
     /// alone and a pass still records its observation values.
-    /// `restock_overlap` appears only as its observed value. It
-    /// never appears in the unmet list, because it is not a gate.
-    /// It reads witness state only and changes nothing.
+    /// `restock_overlap` and `loot_banked` appear only as observed
+    /// values. Neither appears in the unmet list or in a slot's
+    /// missing list, because neither is a gate.
+    ///
+    /// The unmet list names the unmet fleet phases and, for the
+    /// per-slot terms of [`Self::complete`] that no phase already
+    /// implies, one `s{index}:{term}` entry per slot that lacks it.
+    /// One integration receipt printed `unmet=[]` while `complete()`
+    /// was false on one slot's `survived` (INT-BATCH-1024E). With
+    /// the per-slot entries, the unmet list is empty only when
+    /// `complete()` holds and the finish is not outstanding. It
+    /// reads witness state only and changes nothing.
     fn terminal_summary(&self) -> String {
-        let mut phases: Vec<&str> = Vec::new();
+        let mut unmet: Vec<String> = Vec::new();
         if !self.identities_ready() {
-            phases.push("identities");
+            unmet.push("identities".to_string());
         }
         if self.premature_departure {
-            phases.push("premature_departure");
+            unmet.push("premature_departure".to_string());
         }
         if !self.first_descent() {
-            phases.push("first_descent");
+            unmet.push("first_descent".to_string());
         }
         if !self.first_combat() {
-            phases.push("first_combat");
+            unmet.push("first_combat".to_string());
         }
-        if !self.first_loot_bank() {
-            phases.push("first_loot_bank");
+        if !self.first_kill_bank() {
+            unmet.push("first_kill_bank".to_string());
         }
         if !self.second_descent() {
-            phases.push("second_descent");
+            unmet.push("second_descent".to_string());
         }
         if !self.slots.iter().any(|slot| slot.kills >= 2) {
-            phases.push("any_kills>=2");
+            unmet.push("any_kills>=2".to_string());
         }
         if self.finish_started && !self.finish_ready() {
-            phases.push("safe_finish");
+            unmet.push("safe_finish".to_string());
         }
+        // The per-slot conjuncts of `complete()`, qualified by slot.
+        // The phases above already imply the other per-slot latches
+        // (packs, ropes, parties, combat gains, second attacks), so
+        // those stay in each slot's own missing list below.
+        for (index, slot) in self.slots.iter().enumerate() {
+            for (met, name) in [
+                (slot.camelot_escape, "camelot_escape"),
+                (slot.duel_escape, "duel_escape"),
+                (slot.ring_spent, "ring_spent"),
+                (slot.disappearances >= 2, "disappearances>=2"),
+                (slot.safely_banked, "safely_banked"),
+                (slot.survived, "survived"),
+            ] {
+                if !met {
+                    unmet.push(format!("s{index}:{name}"));
+                }
+            }
+        }
+        let mut survival_cleared: Vec<String> = Vec::new();
+        for (index, slot) in self.slots.iter().enumerate() {
+            if let Some(clear) = &slot.survival_cleared {
+                let tile = match clear.tile {
+                    Some((x, z, level)) => format!("{x},{z},{level}"),
+                    None => "?".to_string(),
+                };
+                survival_cleared.push(format!(
+                    "s{index}:tick={}:hp={}:tile={tile}:chat={:?}",
+                    clear.tick, clear.hp, clear.chat,
+                ));
+            }
+        }
+        let survival_cleared = if survival_cleared.is_empty() {
+            "none".to_string()
+        } else {
+            survival_cleared.join(";")
+        };
         let mut slots = String::new();
         for (index, slot) in self.slots.iter().enumerate() {
             let mut missing: Vec<String> = Vec::new();
@@ -737,12 +840,9 @@ impl KqFleetWitness {
             want(slot.camelot_escape, "camelot_escape");
             want(slot.duel_escape, "duel_escape");
             want(slot.ring_spent, "ring_spent");
+            want(slot.disappearances >= 2, "disappearances>=2");
             want(slot.safely_banked, "safely_banked");
             want(slot.survived, "survived");
-            want(
-                slot.loot_ground.is_some() && slot.loot_collected && slot.loot_banked,
-                "loot_banked",
-            );
             if self.finish_started && !slot.finish_closed {
                 missing.push("finish_bank_closed".to_string());
             }
@@ -765,9 +865,11 @@ impl KqFleetWitness {
             ));
         }
         format!(
-            "kq_witness unmet=[{}] restock_overlap={} ropes(leader2={} surface={} upper={}){}",
-            phases.join(" "),
+            "kq_witness unmet=[{}] restock_overlap={} loot_banked={} survival_cleared={} ropes(leader2={} surface={} upper={}){}",
+            unmet.join(" "),
             self.restock_overlap,
+            self.loot_banked_observed(),
+            survival_cleared,
             self.leader_had_two_ropes,
             self.surface_rope_valid,
             self.upper_rope_valid,
@@ -1525,6 +1627,35 @@ fn pair_effective_stat(snap: &GameSnapshot, id: i32) -> i32 {
         .unwrap_or(0)
 }
 
+/// Hitpoints (stat 3) observed from stats the server has sent since
+/// login, or `None` when this snapshot carries no such observation.
+///
+/// The received signal is the snapshot's own: the native snapshot
+/// treats the stat table as observed only when it is non-empty and no
+/// used skill posts base 0 (`crates/api/src/snapshot/native.rs`,
+/// `NativeSnapshot::stats`). That test separates a sent table from the
+/// client's initial state, because the client arrays start at 0
+/// (`vendor/fr-client-rust/crates/client/src/client/client.rs`,
+/// `stat_base_level: vec![0; Skill::count]`) and a stat packet writes
+/// a base of at least 1 for the skill it carries (the same file's
+/// `UPDATE_STAT` arm: `let mut base: i32 = 1`). A stat rebuild alone
+/// does not prove receipt: it copies all 25 rows from those arrays
+/// (`crates/api/src/snapshot/decode.rs`, `rebuild_stat`), zeros
+/// included, and a scene rebuild re-arms it. A dead account still
+/// passes the signal: death sets hitpoints effective 0, never its
+/// base. Unlike [`pair_effective_stat`], an absent hitpoints row is
+/// missing data here, not 0.
+fn pair_observed_hp(snap: &GameSnapshot) -> Option<i32> {
+    let stats = snap.stats();
+    if stats.is_empty() || stats.iter().any(|row| row.used && row.base <= 0) {
+        return None;
+    }
+    stats
+        .iter()
+        .find(|row| row.index == 3 && row.used && row.base > 0)
+        .map(|row| row.effective)
+}
+
 fn pair_xp(snap: &GameSnapshot, id: i32) -> i32 {
     snap.stats()
         .iter()
@@ -2215,10 +2346,12 @@ fn kq_terminal_summary(
 }
 
 /// Four-account max-stat JiveKQ gold: all members share one minted roster,
-/// provision from Shantay, descend together, kill both Queen phases, collect
-/// one non-loadout drop, and carry it through the next fresh bank. JiveKQ is
-/// not Start-enabled in 0.1.9 (its catalog card is dim); this witness Starts
-/// it past the dim for the Beta 1 qualification (see [`KQ_LEADER_ROPES`]).
+/// provision from Shantay, descend together, kill both Queen phases, and
+/// return through the next fresh bank. A listed drop banked on the way is
+/// recorded in the receipt, never required (see [`KQ_LOOT_IDS`]). JiveKQ
+/// is not Start-enabled in 0.1.9 (its catalog card is dim); this witness
+/// Starts it past the dim for the Beta 1 qualification (see
+/// [`KQ_LEADER_ROPES`]).
 pub(crate) fn jive_kq_four_scenario() -> Scenario {
     let witness = Arc::new(Mutex::new(KqFleetWitness::default()));
     let prep_barrier = PairPrepBarrier::new(3);
@@ -2321,15 +2454,15 @@ pub(crate) fn jive_kq_four_scenario() -> Scenario {
             budget_ticks: 2400,
         },
     });
-    let loot_witness = Arc::clone(&witness);
+    let kill_bank_witness = Arc::clone(&witness);
     steps.push(Step {
-        name: "observe alive-zero-absent kill and natural ground-inventory-bank loot",
+        name: "observe alive-zero-absent kill and first fresh bank return",
         kind: StepKind::Await {
-            evidence: "kq_kill_natural_non_arrow_ground_inventory_bank",
+            evidence: "kq_kill_first_fresh_bank_return",
             ready: Box::new(move |snap| {
-                let mut witness = loot_witness.lock().expect("KQ witness mutex");
+                let mut witness = kill_bank_witness.lock().expect("KQ witness mutex");
                 witness.observe(0, snap);
-                witness.first_loot_bank()
+                witness.first_kill_bank()
             }),
             summary: kq_terminal_summary(&witness),
         },
@@ -2739,7 +2872,7 @@ mod duel_round_trip_tests {
 mod kq_finish_tests {
     use super::{jive_kq_four_scenario, KqFleetWitness, KQ_BANK};
     use crate::{Proof, StepKind};
-    use api::snapshot::GameSnapshot;
+    use api::snapshot::{ChatLineView, GameSnapshot, StatView};
 
     /// One fleet member at the Shantay bank in a loaded scene, with its
     /// bank open (component 5382, loaded) or closed. The closed form
@@ -2763,6 +2896,39 @@ mod kq_finish_tests {
     fn started_witness() -> KqFleetWitness {
         let mut witness = KqFleetWitness::default();
         witness.start();
+        witness
+    }
+
+    /// One bank snapshot carrying a stat table with the given
+    /// hitpoints row (`Some((effective, base))`), or no hitpoints row
+    /// at all (`None`). An attack row is present in both forms, as a
+    /// received table posts every used skill.
+    fn with_hitpoints(hp: Option<(i32, i32)>) -> GameSnapshot {
+        fn row(index: i32, name: &str, effective: i32, base: i32) -> StatView {
+            StatView {
+                index,
+                name: name.to_string(),
+                effective,
+                base,
+                xp: 14_391_160,
+                used: true,
+            }
+        }
+        let mut snap = at_bank(false);
+        let mut rows = vec![row(0, "Attack", 99, 99)];
+        if let Some((effective, base)) = hp {
+            rows.push(row(3, "Hitpoints", effective, base));
+        }
+        snap.seed_stats(rows);
+        snap
+    }
+
+    /// A started witness whose slot `index` has its identity and lives,
+    /// the state a member is in once its name is observed after Start.
+    fn living_witness(index: usize) -> KqFleetWitness {
+        let mut witness = started_witness();
+        witness.slots[index].name = Some(format!("member{index}"));
+        witness.slots[index].survived = true;
         witness
     }
 
@@ -2970,10 +3136,10 @@ mod kq_finish_tests {
         );
     }
 
-    /// The terminal summary names the unmet fleet phases, each
-    /// account's last tile, tick, and bank state, and the latches
-    /// that account still lacks. Terms drop out as they are met:
-    /// a met term must not stay in the summary, and an unmet one
+    /// The terminal summary names the unmet fleet phases and per-slot
+    /// terms, each account's last tile, tick, and bank state, and the
+    /// latches that account still lacks. Terms drop out as they are
+    /// met: a met term must not stay in the summary, and an unmet one
     /// must not vanish from it.
     #[test]
     fn terminal_summary_names_unmet_witnesses_and_last_slot_states() {
@@ -2983,9 +3149,11 @@ mod kq_finish_tests {
             "identities",
             "first_descent",
             "first_combat",
-            "first_loot_bank",
+            "first_kill_bank",
             "second_descent",
             "any_kills>=2",
+            "s0:survived",
+            "s3:safely_banked",
         ] {
             assert!(summary.contains(unmet), "unmet {unmet}: {summary}");
         }
@@ -2999,8 +3167,20 @@ mod kq_finish_tests {
             "restock overlap is an observation, never an unmet term: {summary}"
         );
         assert!(
+            !unmet_list.contains("loot"),
+            "banked loot is an observation, never an unmet term: {summary}"
+        );
+        assert!(
             summary.contains("restock_overlap=false"),
             "the summary records the observed value: {summary}"
+        );
+        assert!(
+            summary.contains("loot_banked=false"),
+            "the summary records the observed value: {summary}"
+        );
+        assert!(
+            summary.contains("survival_cleared=none"),
+            "no slot has an observed death: {summary}"
         );
         assert!(summary.contains("s1<?> tile=? tick=0 bank=?"), "{summary}");
         assert!(summary.contains("safely_banked"), "{summary}");
@@ -3041,8 +3221,9 @@ mod kq_finish_tests {
 
     /// A fleet witness set to every gated term of
     /// [`KqFleetWitness::complete`]: two descents, combat in both
-    /// forms, banked loot, both escapes, two disappearances, a
-    /// second witnessed kill, and the second safe bank.
+    /// forms, both escapes, two disappearances, a second witnessed
+    /// kill, and the second safe bank. The listed-loot fields are set
+    /// too, so the receipt observation reads true.
     fn complete_witness() -> KqFleetWitness {
         let mut witness = started_witness();
         witness.leader_had_two_ropes = true;
@@ -3099,16 +3280,18 @@ mod kq_finish_tests {
         );
         let summary = witness.terminal_summary();
         assert!(
-            summary.starts_with("kq_witness unmet=[] restock_overlap=false"),
+            summary.starts_with(
+                "kq_witness unmet=[] restock_overlap=false loot_banked=true survival_cleared=none"
+            ),
             "{summary}"
         );
 
         witness.restock_overlap = true;
         assert!(witness.complete());
         assert!(
-            witness
-                .terminal_summary()
-                .starts_with("kq_witness unmet=[] restock_overlap=true"),
+            witness.terminal_summary().starts_with(
+                "kq_witness unmet=[] restock_overlap=true loot_banked=true survival_cleared=none"
+            ),
             "{}",
             witness.terminal_summary()
         );
@@ -3142,5 +3325,184 @@ mod kq_finish_tests {
         );
         witness.slots[3].disappearances = 2;
         assert!(witness.complete());
+    }
+
+    /// Banked listed loot is a chance outcome, not a gate: a witness
+    /// with every gated term and no listed loot at all completes and
+    /// its summary records `loot_banked=false`. The kill and the
+    /// first bank return still gate in both loot states.
+    #[test]
+    fn completion_passes_without_listed_loot_and_records_it() {
+        let mut witness = complete_witness();
+        for slot in &mut witness.slots {
+            slot.loot_ground = None;
+            slot.loot_collected = false;
+            slot.loot_banked = false;
+        }
+        assert!(
+            witness.complete(),
+            "every gated term holds; the chance drop must not gate"
+        );
+        let summary = witness.terminal_summary();
+        assert!(
+            summary.starts_with("kq_witness unmet=[] restock_overlap=false loot_banked=false"),
+            "{summary}"
+        );
+        assert_eq!(
+            summary.matches("loot_banked").count(),
+            1,
+            "loot appears only as the fleet observation, never as a slot term: {summary}"
+        );
+
+        witness.slots[1].loot_ground = Some(565);
+        witness.slots[1].loot_collected = true;
+        witness.slots[1].loot_banked = true;
+        assert!(witness.complete());
+        assert!(
+            witness
+                .terminal_summary()
+                .contains("loot_banked=true survival_cleared=none"),
+            "{}",
+            witness.terminal_summary()
+        );
+
+        for slot in &mut witness.slots {
+            slot.kills = 0;
+        }
+        assert!(
+            !witness.first_kill_bank() && !witness.complete(),
+            "a witnessed kill still gates, banked loot or not"
+        );
+        for slot in &mut witness.slots {
+            slot.kills = 2;
+        }
+        witness.slots[2].bank_returns = 0;
+        assert!(
+            !witness.first_kill_bank() && !witness.complete(),
+            "every first fresh bank return still gates, banked loot or not"
+        );
+        witness.slots[2].bank_returns = 2;
+        assert!(witness.complete());
+    }
+
+    /// Survival clears only on hitpoints 0 observed from stats the
+    /// server has sent. A missing hitpoints row, the client's
+    /// zero-filled row, and a snapshot with no stat table at all are
+    /// missing observations and leave survival set, with no clear
+    /// record. Positive received hitpoints leave it set. Received
+    /// hitpoints 0 clears it and keeps the first clearing
+    /// observation for the receipt.
+    #[test]
+    fn survival_clears_only_on_received_zero_hitpoints() {
+        for snap in [
+            at_bank(false),
+            with_hitpoints(None),
+            with_hitpoints(Some((0, 0))),
+            with_hitpoints(Some((50, 99))),
+        ] {
+            let mut witness = living_witness(1);
+            witness.observe(1, &snap);
+            assert!(
+                witness.slots[1].survived,
+                "no received hitpoints 0 in this snapshot"
+            );
+            assert!(
+                witness.slots[1].survival_cleared.is_none(),
+                "a missing observation is not a death record"
+            );
+            assert!(
+                witness.terminal_summary().contains("survival_cleared=none"),
+                "{}",
+                witness.terminal_summary()
+            );
+        }
+
+        let mut dead = with_hitpoints(Some((0, 99)));
+        dead.seed_tick(3_481);
+        dead.seed_chat_lines(vec![ChatLineView {
+            type_: 0,
+            username: None,
+            text: "Oh dear, you are dead!".to_string(),
+            sequence: 7,
+        }]);
+        let mut witness = living_witness(1);
+        witness.observe(1, &dead);
+        assert!(
+            !witness.slots[1].survived,
+            "received hitpoints 0 clears survival"
+        );
+        let clear = witness.slots[1]
+            .survival_cleared
+            .as_ref()
+            .expect("the clearing observation is recorded");
+        assert_eq!(clear.tick, 3_481);
+        assert_eq!(clear.hp, 0);
+        assert_eq!(clear.tile, Some((KQ_BANK.x, KQ_BANK.z, KQ_BANK.level)));
+        assert_eq!(clear.chat.as_deref(), Some("Oh dear, you are dead!"));
+        let summary = witness.terminal_summary();
+        assert!(
+            summary.contains(
+                "survival_cleared=s1:tick=3481:hp=0:tile=3308,3120,0:chat=Some(\"Oh dear, you are dead!\")"
+            ),
+            "{summary}"
+        );
+
+        // Only the first clearing observation is kept.
+        let mut later = with_hitpoints(Some((0, 99)));
+        later.seed_tick(3_500);
+        witness.observe(1, &later);
+        let clear = witness.slots[1]
+            .survival_cleared
+            .as_ref()
+            .expect("the record stays");
+        assert_eq!(clear.tick, 3_481, "the first clear is the record");
+    }
+
+    /// The unmet list names the per-slot term that blocks completion,
+    /// so it is never empty while `complete()` is false on a per-slot
+    /// term alone. The integration receipt printed `unmet=[]` with
+    /// one slot's `survived` false (INT-BATCH-1024E).
+    #[test]
+    fn terminal_summary_names_the_per_slot_term_that_blocks_completion() {
+        let mut witness = complete_witness();
+        assert!(witness.complete());
+        witness.slots[3].survived = false;
+        assert!(!witness.complete(), "survival still gates");
+        let summary = witness.terminal_summary();
+        let unmet_list = summary
+            .split("unmet=[")
+            .nth(1)
+            .and_then(|rest| rest.split(']').next())
+            .expect("unmet list in summary");
+        assert_eq!(
+            unmet_list, "s3:survived",
+            "the one false term is named with its slot: {summary}"
+        );
+
+        witness.slots[3].survived = true;
+        witness.slots[0].camelot_escape = false;
+        witness.slots[2].disappearances = 1;
+        assert!(!witness.complete());
+        let summary = witness.terminal_summary();
+        let unmet_list = summary
+            .split("unmet=[")
+            .nth(1)
+            .and_then(|rest| rest.split(']').next())
+            .expect("unmet list in summary");
+        assert_eq!(
+            unmet_list, "s0:camelot_escape s2:disappearances>=2",
+            "every false per-slot term is named with its slot: {summary}"
+        );
+
+        witness.slots[0].camelot_escape = true;
+        witness.slots[2].disappearances = 2;
+        assert!(witness.complete());
+        assert!(
+            witness
+                .terminal_summary()
+                .starts_with("kq_witness unmet=[]"),
+            "the list is empty only once completion holds: {}",
+            witness.terminal_summary()
+        );
     }
 }
