@@ -21,14 +21,13 @@ pub fn capture_nav_manifest(
     zone_npc_count: u32,
 ) -> Result<NavManifest, GenerationError> {
     if revision != 274 && revision != 289 {
-        return Err(format!("unsupported revision {revision}; use 274 or 289").into());
+        return Err(GenerationError::UnsupportedRevision { revision });
     }
     if cache.revision != revision {
-        return Err(format!(
-            "cache manifest revision {} does not match selected revision {revision}",
-            cache.revision
-        )
-        .into());
+        return Err(GenerationError::CacheManifestRevisionMismatch {
+            manifest_revision: cache.revision,
+            selected_revision: revision,
+        });
     }
     Ok(NavManifest {
         revision,

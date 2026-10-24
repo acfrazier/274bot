@@ -19,6 +19,91 @@ use nav_planner::pack::PackError;
 const SQUARE: i32 = 64;
 const LEVELS: i32 = 4;
 
+/// Typed failures from parsing or deriving the canlight sidecar.
+#[derive(Debug, thiserror::Error)]
+pub enum CanlightError {
+    /// A bank-zone table declaration is unsupported.
+    #[error("bank_zones line {line}: expected table=coord_pair_table, got {row}")]
+    BankZonesTableMismatch { line: usize, row: String },
+    /// A bank-zone data row does not have the expected comma-separated form.
+    #[error("bank_zones line {line}: malformed data row")]
+    BankZonesMalformedDataRow { line: usize },
+    /// A bank-zone data row declares a kind other than coord_pair.
+    #[error("bank_zones line {line}: expected data=coord_pair, got {row}")]
+    BankZonesDataKindMismatch { line: usize, row: String },
+    /// A coord_pair row does not contain both packed coordinates.
+    #[error("bank_zones line {line}: coord_pair needs two packed coords")]
+    BankZonesPairMissingCoordinate { line: usize },
+    /// A bank-zone row is not a recognized table or data declaration.
+    #[error("bank_zones line {line}: unexpected {row}")]
+    BankZonesUnexpectedRow { line: usize, row: String },
+    /// The bank-zone source lacks its table header.
+    #[error("bank_zones.dbrow has no [bank_zones] / coord_pair_table header")]
+    BankZonesHeaderMissing,
+    /// The bank-zone source contains no coordinate pairs.
+    #[error("bank_zones.dbrow has no coord_pair rows")]
+    BankZonesNoPairs,
+    /// A packed coordinate does not have the five required components.
+    #[error("packed coord {token:?} is not level_mapX_mapZ_localX_localZ")]
+    PackedCoordinateMalformed { token: String },
+    /// One packed coordinate component is not an integer.
+    #[error("packed coord {token:?} has a non-integer {component}")]
+    PackedCoordinateComponentInvalid {
+        token: String,
+        component: &'static str,
+    },
+    /// A packed coordinate has an unsupported plane.
+    #[error("packed coord {token:?} has level {level} outside 0..=3")]
+    PackedCoordinateLevelInvalid { token: String, level: i32 },
+    /// A packed coordinate has an out-of-range local coordinate.
+    #[error("packed coord {token:?} has a local coordinate outside 0..64")]
+    PackedCoordinateLocalInvalid { token: String },
+    /// Raw flags do not match the collision geometry.
+    #[error("canlight flags length {actual} does not match collision geometry {width}x{height}x4")]
+    FlagsLengthMismatch {
+        actual: usize,
+        width: usize,
+        height: usize,
+    },
+    /// The bake was called without any bank-zone rows.
+    #[error("canlight bake requires parsed bank_zones")]
+    BankZonesRequired,
+    /// The maps directory could not be read.
+    #[error("canlight maps {path}: {source}")]
+    MapsDirectoryRead {
+        path: std::path::PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    /// A maps-directory entry could not be read.
+    #[error("canlight maps {path}: {source}")]
+    MapsDirectoryEntryRead {
+        path: std::path::PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    /// A maps-directory filename is not in mapsquare form.
+    #[error("{path}: not an m<x>_<z> mapsquare")]
+    InvalidMapsquareName { path: std::path::PathBuf },
+    /// The maps directory contains no mapsquares.
+    #[error("canlight maps {path}: no m<x>_<z>.jm2 mapsquares")]
+    MapsDirectoryEmpty { path: std::path::PathBuf },
+    /// A mapsquare could not be read.
+    #[error("canlight {path}: {source}")]
+    MapsquareRead {
+        path: std::path::PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    /// A mapsquare could not be parsed as a pack.
+    #[error("canlight {path}: {source}")]
+    MapsquareInvalid {
+        path: std::path::PathBuf,
+        #[source]
+        source: PackError,
+    },
+}
+
 /// One inclusive `inzone` AABB from `bank_zones.dbrow`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BankZone {
@@ -42,14 +127,15 @@ impl BankZone {
 /// Parse `bank_zones.dbrow`. Missing pairs, unknown rows, or a malformed
 /// packed coord fail closed.
 pub fn parse_bank_zones(text: &str) -> Result<Vec<BankZone>, GenerationError> {
-    parse_bank_zones_inner(text).map_err(Into::into)
+    parse_bank_zones_inner(text).map_err(GenerationError::Canlight)
 }
 
-fn parse_bank_zones_inner(text: &str) -> Result<Vec<BankZone>, String> {
+fn parse_bank_zones_inner(text: &str) -> Result<Vec<BankZone>, CanlightError> {
     let mut zones = Vec::new();
     let mut saw_header = false;
     for (index, raw) in text.lines().enumerate() {
         let line = raw.trim();
+        let line_number = index + 1;
         if line.is_empty() || line.starts_with("//") {
             continue;
         }
@@ -59,10 +145,10 @@ fn parse_bank_zones_inner(text: &str) -> Result<Vec<BankZone>, String> {
         }
         if let Some(rest) = line.strip_prefix("table=") {
             if rest.trim() != "coord_pair_table" {
-                return Err(format!(
-                    "bank_zones line {}: expected table=coord_pair_table, got {line}",
-                    index + 1
-                ));
+                return Err(CanlightError::BankZonesTableMismatch {
+                    line: line_number,
+                    row: line.to_owned(),
+                });
             }
             saw_header = true;
             continue;
@@ -70,19 +156,18 @@ fn parse_bank_zones_inner(text: &str) -> Result<Vec<BankZone>, String> {
         if let Some(rest) = line.strip_prefix("data=") {
             let rest = rest.trim();
             let Some((kind, pair)) = rest.split_once(',') else {
-                return Err(format!("bank_zones line {}: malformed data row", index + 1));
+                return Err(CanlightError::BankZonesMalformedDataRow { line: line_number });
             };
             if kind.trim() != "coord_pair" {
-                return Err(format!(
-                    "bank_zones line {}: expected data=coord_pair, got {line}",
-                    index + 1
-                ));
+                return Err(CanlightError::BankZonesDataKindMismatch {
+                    line: line_number,
+                    row: line.to_owned(),
+                });
             }
             let Some((from, to)) = pair.split_once(',') else {
-                return Err(format!(
-                    "bank_zones line {}: coord_pair needs two packed coords",
-                    index + 1
-                ));
+                return Err(CanlightError::BankZonesPairMissingCoordinate {
+                    line: line_number,
+                });
             };
             zones.push(BankZone {
                 from: unpack_packed_coord_inner(from.trim())?,
@@ -90,13 +175,16 @@ fn parse_bank_zones_inner(text: &str) -> Result<Vec<BankZone>, String> {
             });
             continue;
         }
-        return Err(format!("bank_zones line {}: unexpected {line}", index + 1));
+        return Err(CanlightError::BankZonesUnexpectedRow {
+            line: line_number,
+            row: line.to_owned(),
+        });
     }
     if !saw_header {
-        return Err("bank_zones.dbrow has no [bank_zones] / coord_pair_table header".into());
+        return Err(CanlightError::BankZonesHeaderMissing);
     }
     if zones.is_empty() {
-        return Err("bank_zones.dbrow has no coord_pair rows".into());
+        return Err(CanlightError::BankZonesNoPairs);
     }
     Ok(zones)
 }
@@ -104,17 +192,19 @@ fn parse_bank_zones_inner(text: &str) -> Result<Vec<BankZone>, String> {
 /// Packed coord `level_mapX_mapZ_localX_localZ` → world tile
 /// (`map*64 + local`).
 pub fn unpack_packed_coord(token: &str) -> Result<WorldTile, GenerationError> {
-    unpack_packed_coord_inner(token).map_err(Into::into)
+    unpack_packed_coord_inner(token).map_err(GenerationError::Canlight)
 }
 
-fn unpack_packed_coord_inner(token: &str) -> Result<WorldTile, String> {
+fn unpack_packed_coord_inner(token: &str) -> Result<WorldTile, CanlightError> {
     let mut parts = token.split('_');
-    let mut next = |name: &str| -> Result<i32, String> {
-        let part = parts.next().ok_or_else(|| {
-            format!("packed coord {token:?} is not level_mapX_mapZ_localX_localZ")
+    let mut next = |component: &'static str| -> Result<i32, CanlightError> {
+        let part = parts.next().ok_or_else(|| CanlightError::PackedCoordinateMalformed {
+            token: token.to_owned(),
         })?;
-        part.parse::<i32>()
-            .map_err(|_| format!("packed coord {token:?} has a non-integer {name}"))
+        part.parse::<i32>().map_err(|_| CanlightError::PackedCoordinateComponentInvalid {
+            token: token.to_owned(),
+            component,
+        })
     };
     let level = next("level")?;
     let map_x = next("mapX")?;
@@ -122,19 +212,20 @@ fn unpack_packed_coord_inner(token: &str) -> Result<WorldTile, String> {
     let local_x = next("localX")?;
     let local_z = next("localZ")?;
     if parts.next().is_some() {
-        return Err(format!(
-            "packed coord {token:?} is not level_mapX_mapZ_localX_localZ"
-        ));
+        return Err(CanlightError::PackedCoordinateMalformed {
+            token: token.to_owned(),
+        });
     }
     if !(0..LEVELS).contains(&level) {
-        return Err(format!(
-            "packed coord {token:?} has level {level} outside 0..=3"
-        ));
+        return Err(CanlightError::PackedCoordinateLevelInvalid {
+            token: token.to_owned(),
+            level,
+        });
     }
     if !(0..SQUARE).contains(&local_x) || !(0..SQUARE).contains(&local_z) {
-        return Err(format!(
-            "packed coord {token:?} has a local coordinate outside 0..64"
-        ));
+        return Err(CanlightError::PackedCoordinateLocalInvalid {
+            token: token.to_owned(),
+        });
     }
     Ok(WorldTile {
         x: map_x * SQUARE + local_x,
@@ -153,7 +244,8 @@ pub fn bake_canlight(
     loc_defs: &LocDefs,
     zones: &[BankZone],
 ) -> Result<Vec<u64>, GenerationError> {
-    bake_canlight_inner(collision, flags, maps_dir, loc_defs, zones).map_err(Into::into)
+    bake_canlight_inner(collision, flags, maps_dir, loc_defs, zones)
+        .map_err(GenerationError::Canlight)
 }
 
 fn bake_canlight_inner(
@@ -162,19 +254,18 @@ fn bake_canlight_inner(
     maps_dir: &Path,
     loc_defs: &LocDefs,
     zones: &[BankZone],
-) -> Result<Vec<u64>, String> {
+) -> Result<Vec<u64>, CanlightError> {
     let plane = collision.width.saturating_mul(collision.height);
     let cells = plane.saturating_mul(4);
     if flags.len() != cells {
-        return Err(format!(
-            "canlight flags length {} does not match collision geometry {}x{}x4",
-            flags.len(),
-            collision.width,
-            collision.height
-        ));
+        return Err(CanlightError::FlagsLengthMismatch {
+            actual: flags.len(),
+            width: collision.width,
+            height: collision.height,
+        });
     }
     if zones.is_empty() {
-        return Err("canlight bake requires parsed bank_zones".into());
+        return Err(CanlightError::BankZonesRequired);
     }
     let squares = list_mapsquares(maps_dir)?;
     let covered = coverage_plane(collision, &squares);
@@ -213,12 +304,18 @@ fn bake_canlight_inner(
     }
     Ok(bits)
 }
-fn list_mapsquares(maps_dir: &Path) -> Result<Vec<(i32, i32)>, String> {
+fn list_mapsquares(maps_dir: &Path) -> Result<Vec<(i32, i32)>, CanlightError> {
     let mut squares = Vec::new();
-    let entries = std::fs::read_dir(maps_dir)
-        .map_err(|e| format!("canlight maps {}: {e}", maps_dir.display()))?;
+    let entries =
+        std::fs::read_dir(maps_dir).map_err(|source| CanlightError::MapsDirectoryRead {
+            path: maps_dir.to_path_buf(),
+            source,
+        })?;
     for entry in entries {
-        let entry = entry.map_err(|e| format!("canlight maps {}: {e}", maps_dir.display()))?;
+        let entry = entry.map_err(|source| CanlightError::MapsDirectoryEntryRead {
+            path: maps_dir.to_path_buf(),
+            source,
+        })?;
         let path = entry.path();
         if path.extension().and_then(|s| s.to_str()) != Some("jm2") {
             continue;
@@ -230,14 +327,13 @@ fn list_mapsquares(maps_dir: &Path) -> Result<Vec<(i32, i32)>, String> {
             .strip_prefix('m')
             .and_then(|n| n.split_once('_'))
             .and_then(|(x, z)| Some((x.parse::<i32>().ok()?, z.parse::<i32>().ok()?)))
-            .ok_or_else(|| format!("{}: not an m<x>_<z> mapsquare", path.display()))?;
+            .ok_or_else(|| CanlightError::InvalidMapsquareName { path })?;
         squares.push(coords);
     }
     if squares.is_empty() {
-        return Err(format!(
-            "canlight maps {}: no m<x>_<z>.jm2 mapsquares",
-            maps_dir.display()
-        ));
+        return Err(CanlightError::MapsDirectoryEmpty {
+            path: maps_dir.to_path_buf(),
+        });
     }
     squares.sort_unstable();
     Ok(squares)
@@ -271,13 +367,20 @@ fn stamp_active_loc_coverage(
     squares: &[(i32, i32)],
     loc_defs: &LocDefs,
     unsafe_locs: &mut [bool],
-) -> Result<(), String> {
+) -> Result<(), CanlightError> {
     for &(square_x, square_z) in squares {
         let path = maps_dir.join(format!("m{square_x}_{square_z}.jm2"));
-        let text = std::fs::read_to_string(&path)
-            .map_err(|e| format!("canlight {}: {e}", path.display()))?;
+        let text = std::fs::read_to_string(&path).map_err(|source| {
+            CanlightError::MapsquareRead {
+                path: path.clone(),
+                source,
+            }
+        })?;
         stamp_square_active_locs(collision, square_x, square_z, &text, loc_defs, unsafe_locs)
-            .map_err(|e| format!("canlight {}: {e}", path.display()))?;
+            .map_err(|source| CanlightError::MapsquareInvalid {
+                path: path.clone(),
+                source,
+            })?;
     }
     Ok(())
 }

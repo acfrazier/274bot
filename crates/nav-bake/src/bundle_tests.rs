@@ -3,10 +3,10 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use super::*;
 
-fn invalid_input_detail(error: &crate::GenerationError) -> &str {
+fn stale_stamp_error(error: crate::GenerationError) -> crate::StaleStampError {
     match error {
-        crate::GenerationError::InvalidInput(detail) => detail,
-        other => panic!("expected invalid input, got {other:?}"),
+        crate::GenerationError::StaleStamp(error) => error,
+        other => panic!("expected stale-stamp error, got {other:?}"),
     }
 }
 
@@ -89,72 +89,318 @@ fn a_matching_stamp_covers_and_every_change_is_stale() {
 
     let mut changed = expectation(&inputs);
     changed.cache_id = "cache-2";
-    assert!(invalid_input_detail(&baked.covers(&changed).unwrap_err()).contains("cache identity"));
+    assert_eq!(
+        stale_stamp_error(baked.covers(&changed).unwrap_err()),
+        crate::StaleStampError::CacheIdentityChanged
+    );
 
     let mut changed = expectation(&inputs);
     changed.generator = "gen-2";
-    assert!(invalid_input_detail(&baked.covers(&changed).unwrap_err()).contains("generator"));
+    assert_eq!(
+        stale_stamp_error(baked.covers(&changed).unwrap_err()),
+        crate::StaleStampError::GeneratorChanged
+    );
 
     let mut changed = expectation(&inputs);
     changed.format = "274V9";
-    assert!(invalid_input_detail(&baked.covers(&changed).unwrap_err()).contains("format"));
+    assert_eq!(
+        stale_stamp_error(baked.covers(&changed).unwrap_err()),
+        crate::StaleStampError::FormatMismatch {
+            stamped: "274V16".into(),
+            selected: "274V9".into(),
+        }
+    );
 
     let mut changed = expectation(&inputs);
     changed.revision = 274;
-    assert!(invalid_input_detail(&baked.covers(&changed).unwrap_err()).contains("revision"));
+    assert_eq!(
+        stale_stamp_error(baked.covers(&changed).unwrap_err()),
+        crate::StaleStampError::RevisionMismatch {
+            stamped: 289,
+            selected: 274,
+        }
+    );
 
-    let mut changed = expectation(&inputs);
-    changed.staged_pack_bytes = None;
-    assert!(invalid_input_detail(&baked.covers(&changed).unwrap_err()).contains("missing"));
+    for (artifact, path, changed_size) in [
+        (crate::StagedArtifact::Pack, "nav/289/274bot.navpack", 12),
+        (crate::StagedArtifact::Flags, "nav/289/274bot.navflags", 8),
+        (crate::StagedArtifact::Reach, "nav/289/274bot.navreach", 10),
+        (
+            crate::StagedArtifact::Canlight,
+            "nav/289/274bot.navcanlight",
+            6,
+        ),
+    ] {
+        let mut changed = expectation(&inputs);
+        match artifact {
+            crate::StagedArtifact::Pack => changed.staged_pack_bytes = Some(changed_size),
+            crate::StagedArtifact::Flags => changed.staged_flags_bytes = Some(changed_size),
+            crate::StagedArtifact::Reach => changed.staged_reach_bytes = Some(changed_size),
+            crate::StagedArtifact::Canlight => {
+                changed.staged_canlight_bytes = Some(changed_size)
+            }
+            _ => unreachable!("only staged size fields are enumerated"),
+        }
+        let stamped_bytes = match artifact {
+            crate::StagedArtifact::Pack => 11,
+            crate::StagedArtifact::Flags => 7,
+            crate::StagedArtifact::Reach => 9,
+            crate::StagedArtifact::Canlight => 5,
+            _ => unreachable!("only staged size fields are enumerated"),
+        };
+        assert_eq!(
+            stale_stamp_error(baked.covers(&changed).unwrap_err()),
+            crate::StaleStampError::StagedArtifactSizeMismatch {
+                artifact,
+                path: path.into(),
+                actual_bytes: changed_size,
+                stamped_bytes,
+            }
+        );
+    }
 
-    let mut changed = expectation(&inputs);
-    changed.staged_flags_bytes = Some(8);
-    assert!(invalid_input_detail(&baked.covers(&changed).unwrap_err()).contains("bytes"));
-
-    let mut changed = expectation(&inputs);
-    changed.staged_reach_bytes = None;
-    assert!(invalid_input_detail(&baked.covers(&changed).unwrap_err()).contains("reach"));
-
-    let mut changed = expectation(&inputs);
-    changed.staged_canlight_bytes = None;
-    assert!(invalid_input_detail(&baked.covers(&changed).unwrap_err()).contains("canlight"));
+    for (artifact, path) in [
+        (crate::StagedArtifact::Pack, "nav/289/274bot.navpack"),
+        (crate::StagedArtifact::Flags, "nav/289/274bot.navflags"),
+        (crate::StagedArtifact::Reach, "nav/289/274bot.navreach"),
+        (crate::StagedArtifact::Canlight, "nav/289/274bot.navcanlight"),
+    ] {
+        let mut changed = expectation(&inputs);
+        match artifact {
+            crate::StagedArtifact::Pack => changed.staged_pack_bytes = None,
+            crate::StagedArtifact::Flags => changed.staged_flags_bytes = None,
+            crate::StagedArtifact::Reach => changed.staged_reach_bytes = None,
+            crate::StagedArtifact::Canlight => changed.staged_canlight_bytes = None,
+            _ => unreachable!("only staged size fields are enumerated"),
+        }
+        assert_eq!(
+            stale_stamp_error(baked.covers(&changed).unwrap_err()),
+            crate::StaleStampError::StagedArtifactMissing {
+                artifact,
+                path: path.into(),
+            }
+        );
+    }
 
     let mut changed = expectation(&inputs);
     changed.staged_pois_bytes = None;
-    assert!(invalid_input_detail(&baked.covers(&changed).unwrap_err()).contains("navpois"));
+    assert_eq!(
+        stale_stamp_error(baked.covers(&changed).unwrap_err()),
+        crate::StaleStampError::StagedArtifactMissing {
+            artifact: crate::StagedArtifact::NavPois,
+            path: "nav/289/274bot.navpois".into(),
+        }
+    );
 
     let mut changed = expectation(&inputs);
-    changed.staged_pois_sha256 =
-        Some("0000000000000000000000000000000000000000000000000000000000000000");
-    assert!(invalid_input_detail(&baked.covers(&changed).unwrap_err()).contains("digest"));
+    changed.staged_pois_bytes = Some(4);
+    assert_eq!(
+        stale_stamp_error(baked.covers(&changed).unwrap_err()),
+        crate::StaleStampError::NavPoisSizeMismatch {
+            actual_bytes: 4,
+            stamped_bytes: 3,
+        }
+    );
+
+    let mut no_stamped_pois_bytes = baked.clone();
+    no_stamped_pois_bytes.pois_bytes = None;
+    assert_eq!(
+        stale_stamp_error(no_stamped_pois_bytes.covers(&expectation(&inputs)).unwrap_err()),
+        crate::StaleStampError::NavPoisBytesMissingFromStamp
+    );
+
+    let mut changed = expectation(&inputs);
+    changed.staged_pois_sha256 = None;
+    assert_eq!(
+        stale_stamp_error(baked.covers(&changed).unwrap_err()),
+        crate::StaleStampError::StagedDigestMissing {
+            artifact: crate::StagedArtifact::NavPois,
+        }
+    );
+
+    for artifact in [
+        crate::StagedArtifact::Pack,
+        crate::StagedArtifact::Flags,
+        crate::StagedArtifact::Reach,
+        crate::StagedArtifact::Canlight,
+        crate::StagedArtifact::Manifest,
+    ] {
+        let mut changed = expectation(&inputs);
+        match artifact {
+            crate::StagedArtifact::Pack => changed.staged_pack_sha256 = None,
+            crate::StagedArtifact::Flags => changed.staged_flags_sha256 = None,
+            crate::StagedArtifact::Reach => changed.staged_reach_sha256 = None,
+            crate::StagedArtifact::Canlight => changed.staged_canlight_sha256 = None,
+            crate::StagedArtifact::Manifest => changed.staged_manifest_sha256 = None,
+            crate::StagedArtifact::NavPois => unreachable!("navpois uses a separate digest gate"),
+        }
+        assert_eq!(
+            stale_stamp_error(baked.covers(&changed).unwrap_err()),
+            crate::StaleStampError::StagedDigestMissing { artifact }
+        );
+    }
+
+    let mut no_manifest_digest = baked.clone();
+    no_manifest_digest.manifest_sha256 = None;
+    assert_eq!(
+        stale_stamp_error(no_manifest_digest.covers(&expectation(&inputs)).unwrap_err()),
+        crate::StaleStampError::ManifestDigestMissingFromStamp
+    );
+
     let mut changed = expectation(&inputs);
     changed.staged_pack_sha256 = Some(STAMP_INPUT_SHA256);
-    assert!(invalid_input_detail(&baked.covers(&changed).unwrap_err()).contains("digest"));
+    assert_eq!(
+        stale_stamp_error(baked.covers(&changed).unwrap_err()),
+        crate::StaleStampError::StagedDigestMismatch {
+            artifact: crate::StagedArtifact::Pack,
+        }
+    );
     let mut changed = expectation(&inputs);
     changed.staged_flags_sha256 = Some(STAMP_INPUT_SHA256);
-    assert!(invalid_input_detail(&baked.covers(&changed).unwrap_err()).contains("digest"));
+    assert_eq!(
+        stale_stamp_error(baked.covers(&changed).unwrap_err()),
+        crate::StaleStampError::StagedDigestMismatch {
+            artifact: crate::StagedArtifact::Flags,
+        }
+    );
     let mut changed = expectation(&inputs);
     changed.staged_reach_sha256 = Some(STAMP_INPUT_SHA256);
-    assert!(invalid_input_detail(&baked.covers(&changed).unwrap_err()).contains("digest"));
+    assert_eq!(
+        stale_stamp_error(baked.covers(&changed).unwrap_err()),
+        crate::StaleStampError::StagedDigestMismatch {
+            artifact: crate::StagedArtifact::Reach,
+        }
+    );
     let mut changed = expectation(&inputs);
     changed.staged_canlight_sha256 = Some(STAMP_INPUT_SHA256);
-    assert!(invalid_input_detail(&baked.covers(&changed).unwrap_err()).contains("digest"));
+    assert_eq!(
+        stale_stamp_error(baked.covers(&changed).unwrap_err()),
+        crate::StaleStampError::StagedDigestMismatch {
+            artifact: crate::StagedArtifact::Canlight,
+        }
+    );
     let mut changed = expectation(&inputs);
     changed.staged_manifest_sha256 = Some(STAMP_INPUT_SHA256);
-    assert!(invalid_input_detail(&baked.covers(&changed).unwrap_err()).contains("digest"));
+    assert_eq!(
+        stale_stamp_error(baked.covers(&changed).unwrap_err()),
+        crate::StaleStampError::StagedDigestMismatch {
+            artifact: crate::StagedArtifact::Manifest,
+        }
+    );
+    let mut changed = expectation(&inputs);
+    changed.staged_pois_sha256 = Some("00");
+    assert_eq!(
+        stale_stamp_error(baked.covers(&changed).unwrap_err()),
+        crate::StaleStampError::StagedDigestMismatch {
+            artifact: crate::StagedArtifact::NavPois,
+        }
+    );
+
+    let mut changed = expectation(&inputs);
+    changed.staged_pack_sha256 = None;
+    assert_eq!(
+        stale_stamp_error(baked.covers(&changed).unwrap_err()),
+        crate::StaleStampError::StagedDigestMissing {
+            artifact: crate::StagedArtifact::Pack,
+        }
+    );
+    let mut changed = expectation(&inputs);
+    changed.staged_flags_sha256 = None;
+    assert_eq!(
+        stale_stamp_error(baked.covers(&changed).unwrap_err()),
+        crate::StaleStampError::StagedDigestMissing {
+            artifact: crate::StagedArtifact::Flags,
+        }
+    );
+    let mut changed = expectation(&inputs);
+    changed.staged_reach_sha256 = None;
+    assert_eq!(
+        stale_stamp_error(baked.covers(&changed).unwrap_err()),
+        crate::StaleStampError::StagedDigestMissing {
+            artifact: crate::StagedArtifact::Reach,
+        }
+    );
+    let mut changed = expectation(&inputs);
+    changed.staged_canlight_sha256 = None;
+    assert_eq!(
+        stale_stamp_error(baked.covers(&changed).unwrap_err()),
+        crate::StaleStampError::StagedDigestMissing {
+            artifact: crate::StagedArtifact::Canlight,
+        }
+    );
+    let mut changed = expectation(&inputs);
+    changed.staged_manifest_sha256 = None;
+    assert_eq!(
+        stale_stamp_error(baked.covers(&changed).unwrap_err()),
+        crate::StaleStampError::StagedDigestMissing {
+            artifact: crate::StagedArtifact::Manifest,
+        }
+    );
+
     let mut changed = expectation(&inputs);
     changed.staged_manifest_bytes = None;
-    assert!(invalid_input_detail(&baked.covers(&changed).unwrap_err()).contains("manifest"));
+    assert_eq!(
+        stale_stamp_error(baked.covers(&changed).unwrap_err()),
+        crate::StaleStampError::ManifestBytesMissingFromDisk
+    );
+    let mut no_manifest_bytes = baked.clone();
+    no_manifest_bytes.manifest_bytes = None;
+    assert_eq!(
+        stale_stamp_error(no_manifest_bytes.covers(&expectation(&inputs)).unwrap_err()),
+        crate::StaleStampError::ManifestBytesMissingFromStamp
+    );
+    let mut changed = expectation(&inputs);
+    changed.staged_manifest_bytes = Some(14);
+    assert_eq!(
+        stale_stamp_error(baked.covers(&changed).unwrap_err()),
+        crate::StaleStampError::ManifestSizeMismatch {
+            actual_bytes: 14,
+            stamped_bytes: 13,
+        }
+    );
+    let mut no_manifest_path = baked.clone();
+    no_manifest_path.relative_manifest = None;
+    assert_eq!(
+        stale_stamp_error(no_manifest_path.covers(&expectation(&inputs)).unwrap_err()),
+        crate::StaleStampError::ManifestPathMissingFromStamp
+    );
+    let mut no_pois_digest = baked.clone();
+    no_pois_digest.pois_sha256 = None;
+    assert_eq!(
+        stale_stamp_error(no_pois_digest.covers(&expectation(&inputs)).unwrap_err()),
+        crate::StaleStampError::NavPoisDigestMissingFromStamp
+    );
+    let mut changed = expectation(&inputs);
+    changed.pois_generator = "pois-2";
+    assert_eq!(
+        stale_stamp_error(baked.covers(&changed).unwrap_err()),
+        crate::StaleStampError::NavPoisGeneratorChanged {
+            stamped: Some("pois-1".into()),
+            expected: "pois-2".into(),
+        }
+    );
+
+    let mut no_pois_generator = baked.clone();
+    no_pois_generator.pois_generator = None;
+    assert_eq!(
+        stale_stamp_error(no_pois_generator.covers(&expectation(&inputs)).unwrap_err()),
+        crate::StaleStampError::NavPoisGeneratorChanged {
+            stamped: None,
+            expected: "pois-1".into(),
+        }
+    );
+
     let modified = [InputFingerprint {
         path: "/content/maps/m1.jm2".into(),
         bytes: 10,
         modified_nanos: 6,
         sha256: STAMP_INPUT_SHA256.into(),
     }];
-
-    assert!(
-        invalid_input_detail(&baked.covers(&expectation(&modified)).unwrap_err())
-            .contains("changed")
+    assert_eq!(
+        stale_stamp_error(baked.covers(&expectation(&modified)).unwrap_err()),
+        crate::StaleStampError::CanonicalInputChanged {
+            path: "/content/maps/m1.jm2".into(),
+        }
     );
     let same_metadata_replacement = [InputFingerprint {
         path: "/content/maps/m1.jm2".into(),
@@ -162,15 +408,19 @@ fn a_matching_stamp_covers_and_every_change_is_stale() {
         modified_nanos: 5,
         sha256: "99".repeat(32),
     }];
-    assert!(invalid_input_detail(
-        &baked
-            .covers(&expectation(&same_metadata_replacement))
-            .unwrap_err()
-    )
-    .contains("changed"));
+    assert_eq!(
+        stale_stamp_error(
+            baked
+                .covers(&expectation(&same_metadata_replacement))
+                .unwrap_err()
+        ),
+        crate::StaleStampError::CanonicalInputChanged {
+            path: "/content/maps/m1.jm2".into(),
+        }
+    );
 
     let added = [
-        modified[0].clone(),
+        inputs[0].clone(),
         InputFingerprint {
             path: "/content/maps/m2.jm2".into(),
             bytes: 1,
@@ -178,9 +428,12 @@ fn a_matching_stamp_covers_and_every_change_is_stale() {
             sha256: STAMP_INPUT_SHA256.into(),
         },
     ];
-    assert!(
-        invalid_input_detail(&baked.covers(&expectation(&added)).unwrap_err())
-            .contains("inputs changed")
+    assert_eq!(
+        stale_stamp_error(baked.covers(&expectation(&added)).unwrap_err()),
+        crate::StaleStampError::CanonicalInputCountMismatch {
+            stamped: 1,
+            present: 2,
+        }
     );
 }
 
@@ -218,7 +471,13 @@ fn legacy_v8_stamp_without_manifest_or_input_hashes_is_stale() {
     let err = stamp
         .covers(&expectation(&stamp.inputs))
         .expect_err("pre-N4 stamp is stale");
-    assert!(invalid_input_detail(&err).contains("format"), "{err}");
+    assert_eq!(
+        stale_stamp_error(err),
+        crate::StaleStampError::FormatMismatch {
+            stamped: "274V8".into(),
+            selected: "274V16".into(),
+        }
+    );
 }
 
 #[test]
@@ -230,25 +489,27 @@ fn current_format_stamp_without_manifest_pois_or_input_hashes_is_stale() {
 
     let mut no_pois = baked.clone();
     no_pois.pois_sha256 = None;
-    assert!(
-        invalid_input_detail(&no_pois.covers(&expectation(&inputs)).unwrap_err())
-            .contains("navpois")
+    assert_eq!(
+        stale_stamp_error(no_pois.covers(&expectation(&inputs)).unwrap_err()),
+        crate::StaleStampError::NavPoisDigestMissingFromStamp
     );
 
     let mut no_manifest = baked.clone();
     no_manifest.manifest_sha256 = None;
     no_manifest.manifest_bytes = None;
     no_manifest.relative_manifest = None;
-    assert!(
-        invalid_input_detail(&no_manifest.covers(&expectation(&inputs)).unwrap_err())
-            .contains("manifest")
+    assert_eq!(
+        stale_stamp_error(no_manifest.covers(&expectation(&inputs)).unwrap_err()),
+        crate::StaleStampError::ManifestBytesMissingFromStamp
     );
 
     let mut empty_input_hash = baked;
     empty_input_hash.inputs[0].sha256 = String::new();
-    assert!(
-        invalid_input_detail(&empty_input_hash.covers(&expectation(&inputs)).unwrap_err())
-            .contains("changed")
+    assert_eq!(
+        stale_stamp_error(empty_input_hash.covers(&expectation(&inputs)).unwrap_err()),
+        crate::StaleStampError::CanonicalInputChanged {
+            path: "/content/maps/m1.jm2".into(),
+        }
     );
 }
 
@@ -262,6 +523,20 @@ fn content_digest_detects_same_size_replacement() {
     std::fs::write(&file, b"two").unwrap();
     assert_ne!(first, super::source_digest(&root, &[]).unwrap());
     std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn missing_source_fingerprint_is_a_typed_input_error() {
+    let root = Path::new("/content");
+    let source = Path::new("/content/config");
+    let inputs: [InputFingerprint; 0] = [];
+
+    assert!(matches!(
+        source_digest_from_fingerprints(root, &[source], &inputs),
+        Err(crate::GenerationError::SourceInput(
+            crate::SourceInputError::NotFingerprinted { path }
+        )) if path.as_path() == source
+    ));
 }
 
 #[test]
@@ -337,7 +612,17 @@ fn fingerprints_cover_the_tree_and_detect_edits() {
     let second = fingerprints(&nested, &[&extra]).unwrap();
     assert_ne!(first, second);
 
-    assert!(fingerprints(&root.join("missing"), &[]).is_err());
+    let missing = root.join("missing");
+    assert!(matches!(
+        fingerprints(&missing, &[]),
+        Err(crate::GenerationError::SourceInput(
+            crate::SourceInputError::Io {
+                context: crate::SourceInputContext::BakeInputDirectory,
+                path,
+                source,
+            }
+        )) if path == missing && source.kind() == std::io::ErrorKind::NotFound
+    ));
     std::fs::remove_file(&extra).unwrap();
     std::fs::remove_dir_all(&root).unwrap();
 }

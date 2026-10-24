@@ -29,15 +29,18 @@ fn manifest_content_id_mismatch_rejects_the_pack() {
     let err = manifest
         .verify_pack(revision, &cache, &nav_hash, Some("cdb2f161"))
         .unwrap_err();
-    assert!(
-        err.contains("decoded content identity"),
-        "runtime verification must refuse a pack with no decoded identity: {err}"
+    assert_eq!(
+        err,
+        "navigation/profile mismatch: pack has no decoded content identity provenance"
     );
     manifest.content_id = Some("cdb2f161".into());
     let err = manifest
         .verify_pack(revision, &cache, &nav_hash, Some("cdb2f161"))
         .expect_err("decoded identity alone must not certify the baker inputs");
-    assert!(err.contains("source provenance"), "{err}");
+    assert_eq!(
+        err,
+        "navigation/profile mismatch: missing or malformed source provenance; rebake the pack"
+    );
     manifest.source_sha256 = Some("ab".repeat(32));
     let mut equivalent_transfer = cache.clone();
     equivalent_transfer
@@ -89,4 +92,29 @@ fn manifest_verification_binds_decoded_zone_counts() {
     assert!(manifest
         .verify(revision, &cache, bytes, None, None, None, None, 2, 2)
         .is_err());
+}
+
+#[test]
+fn manifest_capture_failures_have_typed_causes() {
+    let cache = CacheManifest {
+        revision: 289,
+        archives: [("versionlist".to_string(), "6dcb".repeat(16))]
+            .into_iter()
+            .collect(),
+    };
+    let unsupported =
+        capture_nav_manifest(300, &cache, b"nav", None, None, None, None, 0, 0).unwrap_err();
+    assert!(matches!(
+        unsupported,
+        crate::GenerationError::UnsupportedRevision { revision: 300 }
+    ));
+    let mismatch =
+        capture_nav_manifest(274, &cache, b"nav", None, None, None, None, 0, 0).unwrap_err();
+    assert!(matches!(
+        mismatch,
+        crate::GenerationError::CacheManifestRevisionMismatch {
+            manifest_revision: 289,
+            selected_revision: 274
+        }
+    ));
 }

@@ -99,11 +99,17 @@ pub fn pois_generator_identity_from_crate() -> Result<String, crate::GenerationE
     let workspace_root = crate_root
         .parent()
         .and_then(Path::parent)
-        .ok_or_else(|| "navpois generator workspace root is unavailable".to_string())?;
+        .ok_or(crate::GenerationError::PoisGeneratorWorkspaceUnavailable)?;
     let mut sources = Vec::new();
     for relative in POIS_GENERATOR_SOURCES {
-        let text = std::fs::read_to_string(workspace_root.join(relative))
-            .map_err(|e| format!("navpois generator source {relative}: {e}"))?;
+        let path = workspace_root.join(relative);
+        let text = std::fs::read_to_string(&path).map_err(|source| {
+            crate::GenerationError::SourceInput(crate::SourceInputError::Io {
+                context: crate::SourceInputContext::PoisGeneratorSource,
+                path: std::path::PathBuf::from(relative),
+                source,
+            })
+        })?;
         sources.push((relative, text));
     }
     let refs: Vec<(&str, &str)> = sources
@@ -141,10 +147,11 @@ pub fn produce_navpois(
         generator_sha256: request.generator_sha256,
         policy,
     };
-    let document = build_document(request, identity)?;
+    let document = build_document(request, identity)
+        .map_err(|detail| crate::GenerationError::PoisSourceInvalid { detail })?;
     let bytes = document
         .encode_navpois()
-        .map_err(|e| format!("navpois encode: {e}"))?;
+        .map_err(|source| crate::GenerationError::PoisEncodeFailed { source })?;
     Ok(ProducedPois {
         coverage: document.coverage,
         bytes,
