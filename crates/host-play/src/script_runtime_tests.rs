@@ -1327,9 +1327,9 @@ fn walk_refusal_guard_is_released_only_by_an_accepted_post() {
             },
             Default::default(),
             |input, native| {
-                super::post_script_snapshot(
-                    slot, &navs, "alice", seq, input, native, false, false, false,
-                )
+                super::post_script_snapshot(slot, &navs, "alice", seq, |slot| {
+                    slot.post_snapshot_delta(input, native, false)
+                })
             },
         )
     };

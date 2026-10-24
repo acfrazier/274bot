@@ -127,17 +127,9 @@ pub(crate) fn post_script_snapshot(
     navs: &Arc<Mutex<HashMap<String, NavBot>>>,
     name: &str,
     walk_seq: u64,
-    input: &script::native::snapshot_source::SnapshotInput<'_>,
-    native: script::native::snapshot_source::NativeFactsInput<'_>,
-    force_banks: bool,
-    wake_waits: bool,
-    preserve_inv: bool,
+    post: impl FnOnce(&mut SlotScript) -> bool,
 ) -> bool {
-    let accepted = if wake_waits {
-        slot.post_snapshot_wake(input, native, force_banks, preserve_inv)
-    } else {
-        slot.post_snapshot_delta(input, native, force_banks)
-    };
+    let accepted = post(slot);
     if accepted {
         if let Some(bot) = navs.lock().unwrap().get_mut(name) {
             bot.mark_walk_outcome_posted(walk_seq);
@@ -877,11 +869,18 @@ pub(crate) fn script_observe_cached_with_channels(
                             navs,
                             name,
                             walk_seq,
-                            input,
-                            native,
-                            force_banks,
-                            wake_waits,
-                            inv.is_none() && input.inv_size == 0,
+                            |slot| {
+                                if wake_waits {
+                                    slot.post_snapshot_wake(
+                                        input,
+                                        native,
+                                        force_banks,
+                                        inv.is_none() && input.inv_size == 0,
+                                    )
+                                } else {
+                                    slot.post_snapshot_delta(input, native, force_banks)
+                                }
+                            },
                         )
                     },
                 );
