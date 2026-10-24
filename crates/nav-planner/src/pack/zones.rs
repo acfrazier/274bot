@@ -9,7 +9,6 @@ use super::{read_i32, read_key, read_u16, read_u32, read_u64, read_u8, PackError
 
 pub const MAX_PACKED_INDEX: usize = 32_767;
 
-
 pub(super) fn read_table<R: PackRead>(
     r: &mut R,
     origin: WorldTile,
@@ -260,4 +259,3 @@ fn read_class(value: u8) -> Result<ZoneClass, PackError> {
         ))),
     }
 }
-

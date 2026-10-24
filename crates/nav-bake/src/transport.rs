@@ -56,8 +56,8 @@ use gates::*;
 use gliders::*;
 use index::*;
 pub(crate) use index::{
-    loc_ids_by_name, loc_positions, npc_ids_by_name, npc_positions, NpcPlacement, Placement,
-    visit_loc_configs, visit_npc_configs,
+    loc_ids_by_name, loc_positions, npc_ids_by_name, npc_positions, visit_loc_configs,
+    visit_npc_configs, NpcPlacement, Placement,
 };
 use levers::*;
 use magic_guild::*;

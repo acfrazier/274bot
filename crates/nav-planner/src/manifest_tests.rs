@@ -1,6 +1,5 @@
 use super::{hash_bytes, hash_bytes_with_progress, hash_file_with_progress, HASH_CHUNK_SIZE};
 
-
 #[test]
 fn streamed_hash_matches_bytes_at_a_chunk_boundary_without_early_completion() {
     let path = std::env::temp_dir().join(format!(

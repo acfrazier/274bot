@@ -65,8 +65,8 @@ mod banks;
 mod mapsquare;
 mod sidecars;
 mod zones;
-pub use banks::{BankAccess, BankStand};
 use banks::read_bank_stands;
+pub use banks::{BankAccess, BankStand};
 pub use mapsquare::walkable_dots;
 pub use sidecars::{
     decode_canlight_sidecar, decode_flags_sidecar, decode_flags_sidecar_arc, decode_reach_sidecar,
@@ -280,7 +280,6 @@ impl<R: BufRead> PackRead for BoundedReader<'_, R> {
     }
 }
 
-
 /// Deserialize a 274N grid, validating magic, version, and lengths.
 pub fn decode_grid(bytes: &[u8]) -> Result<StepGrid, PackError> {
     let mut r = Cursor::new(bytes);
@@ -380,9 +379,6 @@ pub fn load_grid(path: &Path) -> Result<StepGrid, PackError> {
     let bytes = std::fs::read(path).map_err(PackError::Io)?;
     decode_grid(&bytes)
 }
-
-
-
 
 /// Deserialize the whole-world pack, validating magic, version, and lengths.
 /// The `at` and zone bucket indices are rebuilt from their packed tables.
@@ -592,7 +588,6 @@ fn kind_from_u8(b: u8) -> Result<TransportKind, PackError> {
         _ => Err(PackError::BadLength(format!("unknown transport kind {b}"))),
     }
 }
-
 
 /// Wire byte → `Option<DoorDir>` (`0` = None), rejecting unknown values.
 fn dir_from_u8(b: u8) -> Result<Option<DoorDir>, PackError> {

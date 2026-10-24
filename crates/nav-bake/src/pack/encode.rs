@@ -542,10 +542,7 @@ fn write_bound(out: &mut Vec<u8>, bound: Option<i32>) {
     }
 }
 
-fn write_wilderness_rules(
-    out: &mut Vec<u8>,
-    rules: &WildernessRules,
-) -> Result<(), PackError> {
+fn write_wilderness_rules(out: &mut Vec<u8>, rules: &WildernessRules) -> Result<(), PackError> {
     out.extend_from_slice(
         &u32::try_from(rules.zones.len())
             .map_err(|_| PackError::BadLength("wilderness zone count exceeds u32".into()))?
@@ -560,4 +557,3 @@ fn write_wilderness_rules(
     out.extend_from_slice(&rules.offset.to_le_bytes());
     Ok(())
 }
-

@@ -20,21 +20,21 @@ use client::io::JagFile;
 use sha2::{Digest, Sha256};
 
 use crate::canlight;
-use nav_planner::canlight::{header_binding, identity_digest, BANK_ZONES_REL};
 use crate::collision::bake_from_maps;
 use crate::manifest::capture_nav_manifest;
-use crate::services::StepStrategy;
-use nav_planner::collision::WorldCollision;
-use nav_planner::manifest::{CacheManifest, NavManifest};
 use crate::pack::{
     derive_banks, encode, encode_canlight_sidecar, encode_flags_sidecar, encode_reach_sidecar,
 };
-use nav_planner::pack::{sha256_hex, FORMAT_ID};
-use nav_planner::paint::bake_reach;
+use crate::services::StepStrategy;
 use crate::transport::{
     assert_transmitted_varp_reqs, derive_transports_for_bake, require_members_guards,
     require_wilderness_teleport_legality,
 };
+use nav_planner::canlight::{header_binding, identity_digest, BANK_ZONES_REL};
+use nav_planner::collision::WorldCollision;
+use nav_planner::manifest::{CacheManifest, NavManifest};
+use nav_planner::pack::{sha256_hex, FORMAT_ID};
+use nav_planner::paint::bake_reach;
 use nav_planner::zones::{Zone, ZoneClass, ZoneGroup, ZoneKind, ZoneTable, NO_GROUP, NO_SHAPE};
 
 /// Door loc configs under `content/scripts/doors/configs`.
@@ -159,110 +159,140 @@ pub fn content_inputs(content_dir: &Path) -> ContentInputs {
 /// The loc-definition jag of a revision-bound cache directory: revision 289
 /// keeps `config` inside the cache directory, revision 274 reads the server
 /// `data/pack/config` beside the `client/` cache directory.
-pub fn config_jag_for(revision: u16, cache_dir: &Path) -> Result<PathBuf, crate::GenerationError> { if revision == 289 {
-    Ok(cache_dir.join("config"))
-} else {
-    cache_dir
-        .parent()
-        .map(|parent| parent.join("config"))
-        .ok_or_else(|| crate::GenerationError::InvalidInput("revision 274 cache path has no data/pack parent".into()))
-} }
+pub fn config_jag_for(revision: u16, cache_dir: &Path) -> Result<PathBuf, crate::GenerationError> {
+    if revision == 289 {
+        Ok(cache_dir.join("config"))
+    } else {
+        cache_dir
+            .parent()
+            .map(|parent| parent.join("config"))
+            .ok_or_else(|| {
+                crate::GenerationError::InvalidInput(
+                    "revision 274 cache path has no data/pack parent".into(),
+                )
+            })
+    }
+}
 
 /// Load and verify a bound cache manifest: manifest revision, every cache
 /// archive's bytes, and the selected loc-definition jag belonging to that
 /// verified cache.
-pub fn verify_cache_manifest(revision: u16,
-cache_dir: &Path,
-manifest_path: &Path,
-config_jag: &Path,) -> Result<CacheManifest, crate::GenerationError> { let bytes = std::fs::read(manifest_path)
-    .map_err(|e| format!("cache manifest {}: {e}", manifest_path.display()))?;
-let manifest: CacheManifest = serde_json::from_slice(&bytes)
-    .map_err(|e| format!("cache manifest {}: {e}", manifest_path.display()))?;
-manifest.verify(revision, cache_dir)?;
-let expected_config = manifest
-    .archives
-    .get("config")
-    .ok_or_else(|| "cache manifest has no config archive".to_string())?;
-let actual_config = nav_planner::manifest::hash_file(config_jag)?;
-if &actual_config != expected_config {
-    return Err(crate::GenerationError::InvalidInput(format!("selected config {} does not belong to the verified revision {revision} cache",
-    config_jag.display())));
+pub fn verify_cache_manifest(
+    revision: u16,
+    cache_dir: &Path,
+    manifest_path: &Path,
+    config_jag: &Path,
+) -> Result<CacheManifest, crate::GenerationError> {
+    let bytes = std::fs::read(manifest_path)
+        .map_err(|e| format!("cache manifest {}: {e}", manifest_path.display()))?;
+    let manifest: CacheManifest = serde_json::from_slice(&bytes)
+        .map_err(|e| format!("cache manifest {}: {e}", manifest_path.display()))?;
+    manifest.verify(revision, cache_dir)?;
+    let expected_config = manifest
+        .archives
+        .get("config")
+        .ok_or_else(|| "cache manifest has no config archive".to_string())?;
+    let actual_config = nav_planner::manifest::hash_file(config_jag)?;
+    if &actual_config != expected_config {
+        return Err(crate::GenerationError::InvalidInput(format!(
+            "selected config {} does not belong to the verified revision {revision} cache",
+            config_jag.display()
+        )));
+    }
+    Ok(manifest)
 }
-Ok(manifest) }
 
 /// Verify a bound cache manifest using hashes already captured for a caller's
 /// complete input snapshot.
-pub fn verify_cache_manifest_from_fingerprints(revision: u16,
-cache_dir: &Path,
-manifest_path: &Path,
-config_jag: &Path,
-inputs: &[crate::bundle::InputFingerprint],) -> Result<CacheManifest, crate::GenerationError> { let bytes = std::fs::read(manifest_path)
-    .map_err(|e| format!("cache manifest {}: {e}", manifest_path.display()))?;
-let manifest: CacheManifest = serde_json::from_slice(&bytes)
-    .map_err(|e| format!("cache manifest {}: {e}", manifest_path.display()))?;
-if manifest.revision != revision {
-    return Err(crate::GenerationError::InvalidInput(format!("cache manifest revision {} does not match selected revision {revision}",
-    manifest.revision)));
+pub fn verify_cache_manifest_from_fingerprints(
+    revision: u16,
+    cache_dir: &Path,
+    manifest_path: &Path,
+    config_jag: &Path,
+    inputs: &[crate::bundle::InputFingerprint],
+) -> Result<CacheManifest, crate::GenerationError> {
+    let bytes = std::fs::read(manifest_path)
+        .map_err(|e| format!("cache manifest {}: {e}", manifest_path.display()))?;
+    let manifest: CacheManifest = serde_json::from_slice(&bytes)
+        .map_err(|e| format!("cache manifest {}: {e}", manifest_path.display()))?;
+    if manifest.revision != revision {
+        return Err(crate::GenerationError::InvalidInput(format!(
+            "cache manifest revision {} does not match selected revision {revision}",
+            manifest.revision
+        )));
+    }
+    let captured = crate::bundle::cache_manifest_from_fingerprints(revision, cache_dir, inputs)?;
+    if manifest != captured {
+        return Err(crate::GenerationError::InvalidInput(format!(
+            "cache manifest does not match cache bytes at {}",
+            cache_dir.display()
+        )));
+    }
+    let expected_config = manifest
+        .archives
+        .get("config")
+        .ok_or_else(|| "cache manifest has no config archive".to_string())?;
+    let actual_config = &crate::bundle::fingerprint_for_path(inputs, config_jag)?.sha256;
+    if actual_config != expected_config {
+        return Err(crate::GenerationError::InvalidInput(format!(
+            "selected config {} does not belong to the verified revision {revision} cache",
+            config_jag.display()
+        )));
+    }
+    Ok(manifest)
 }
-let captured = crate::bundle::cache_manifest_from_fingerprints(revision, cache_dir, inputs)?;
-if manifest != captured {
-    return Err(crate::GenerationError::InvalidInput(format!("cache manifest does not match cache bytes at {}",
-    cache_dir.display())));
-}
-let expected_config = manifest
-    .archives
-    .get("config")
-    .ok_or_else(|| "cache manifest has no config archive".to_string())?;
-let actual_config = &crate::bundle::fingerprint_for_path(inputs, config_jag)?.sha256;
-if actual_config != expected_config {
-    return Err(crate::GenerationError::InvalidInput(format!("selected config {} does not belong to the verified revision {revision} cache",
-    config_jag.display())));
-}
-Ok(manifest) }
 
 /// Strict read-only decoded identity for offline packaging. The snapshot
 /// must match the selected versionlist; no endpoint is contacted.
-pub fn decoded_identity(revision: u16,
-cache_dir: &Path,
-snapshot_root: &Path,) -> Result<String, crate::GenerationError> { let versionlist = std::fs::read(cache_dir.join("versionlist")).map_err(|e| e.to_string())?;
-let version = client::unpack::version_hash(&versionlist);
-let before = CacheManifest::capture(revision, cache_dir)?;
-let result = client::content_identity::compute_decoded_content_identity(
-    revision,
-    cache_dir,
-    snapshot_root.join(version),
-)
-.map_err(|e| e.to_string())?
-.content_id_hex();
-if before != CacheManifest::capture(revision, cache_dir)? {
-    return Err("cache changed during offline identity preparation".into());
+pub fn decoded_identity(
+    revision: u16,
+    cache_dir: &Path,
+    snapshot_root: &Path,
+) -> Result<String, crate::GenerationError> {
+    let versionlist = std::fs::read(cache_dir.join("versionlist")).map_err(|e| e.to_string())?;
+    let version = client::unpack::version_hash(&versionlist);
+    let before = CacheManifest::capture(revision, cache_dir)?;
+    let result = client::content_identity::compute_decoded_content_identity(
+        revision,
+        cache_dir,
+        snapshot_root.join(version),
+    )
+    .map_err(|e| e.to_string())?
+    .content_id_hex();
+    if before != CacheManifest::capture(revision, cache_dir)? {
+        return Err("cache changed during offline identity preparation".into());
+    }
+    Ok(result)
 }
-Ok(result) }
 /// Compute a decoded identity after verifying the cache against a captured
 /// input-fingerprint set. The decoded snapshot is not in that set, so callers
 /// must recompute and compare this identity before publishing.
-pub fn decoded_identity_from_snapshot(revision: u16,
-cache_dir: &Path,
-snapshot_root: &Path,
-inputs: &[crate::bundle::InputFingerprint],
-expected_manifest: &CacheManifest,) -> Result<String, crate::GenerationError> { let manifest = crate::bundle::cache_manifest_from_fingerprints(revision, cache_dir, inputs)?;
-if &manifest != expected_manifest {
-    return Err("cache inputs changed before offline identity preparation".into());
+pub fn decoded_identity_from_snapshot(
+    revision: u16,
+    cache_dir: &Path,
+    snapshot_root: &Path,
+    inputs: &[crate::bundle::InputFingerprint],
+    expected_manifest: &CacheManifest,
+) -> Result<String, crate::GenerationError> {
+    let manifest = crate::bundle::cache_manifest_from_fingerprints(revision, cache_dir, inputs)?;
+    if &manifest != expected_manifest {
+        return Err("cache inputs changed before offline identity preparation".into());
+    }
+    let versionlist_path = cache_dir.join("versionlist");
+    let versionlist = std::fs::read(&versionlist_path).map_err(|e| e.to_string())?;
+    let versionlist_fingerprint = crate::bundle::fingerprint_for_path(inputs, &versionlist_path)?;
+    if nav_planner::manifest::hash_bytes(&versionlist) != versionlist_fingerprint.sha256 {
+        return Err("cache versionlist changed during offline identity preparation".into());
+    }
+    let version = client::unpack::version_hash(&versionlist);
+    Ok(client::content_identity::compute_decoded_content_identity(
+        revision,
+        cache_dir,
+        snapshot_root.join(version),
+    )
+    .map_err(|e| e.to_string())?
+    .content_id_hex())
 }
-let versionlist_path = cache_dir.join("versionlist");
-let versionlist = std::fs::read(&versionlist_path).map_err(|e| e.to_string())?;
-let versionlist_fingerprint = crate::bundle::fingerprint_for_path(inputs, &versionlist_path)?;
-if nav_planner::manifest::hash_bytes(&versionlist) != versionlist_fingerprint.sha256 {
-    return Err("cache versionlist changed during offline identity preparation".into());
-}
-let version = client::unpack::version_hash(&versionlist);
-Ok(client::content_identity::compute_decoded_content_identity(
-    revision,
-    cache_dir,
-    snapshot_root.join(version),
-)
-.map_err(|e| e.to_string())?
-.content_id_hex()) }
 
 /// One bake request: canonical inputs for a single revision.
 pub struct BakeRequest<'a> {
@@ -345,422 +375,441 @@ struct MobileReach {
     strategy: StepStrategy,
 }
 
+fn derive_zone_table(
+    content_root: &Path,
+    collision: &WorldCollision,
+    graph: &nav_planner::transport::TransportGraph,
+    npc_types: &[client::config::NpcType],
+    door_ids: &HashSet<i32>,
+    opened_door_ids: &HashSet<i32>,
+) -> Result<DerivedZones, crate::GenerationError> {
+    let inputs =
+        crate::services::collect_hunter_inputs(content_root, npc_types, door_ids, opened_door_ids)?;
+    let definitions: HashMap<_, _> = inputs
+        .definitions
+        .iter()
+        .map(|definition| (definition.npc_id, definition))
+        .collect();
 
-fn derive_zone_table(content_root: &Path,
-collision: &WorldCollision,
-graph: &nav_planner::transport::TransportGraph,
-npc_types: &[client::config::NpcType],
-door_ids: &HashSet<i32>,
-opened_door_ids: &HashSet<i32>,) -> Result<DerivedZones, crate::GenerationError> { let inputs = crate::services::collect_hunter_inputs(
-    content_root,
-    npc_types,
-    door_ids,
-    opened_door_ids,
-)?;
-let definitions: HashMap<_, _> = inputs
-    .definitions
-    .iter()
-    .map(|definition| (definition.npc_id, definition))
-    .collect();
-
-let mut used_ids = HashSet::new();
-for spawn in &inputs.spawns {
-    if definitions
-        .get(&spawn.npc_id)
-        .is_some_and(|definition| definition.huntrange > 0)
-    {
-        used_ids.insert(spawn.npc_id);
-    }
-}
-let mut kinds = Vec::with_capacity(used_ids.len() + nav_planner::zones::curated::HAZARDS.len());
-let mut kind_indices = HashMap::with_capacity(used_ids.len());
-for definition in &inputs.definitions {
-    if !used_ids.contains(&definition.npc_id) {
-        continue;
-    }
-    let vislevel = u16::try_from(definition.vislevel)
-        .map_err(|_| format!("hunter NPC {} has invalid combat level", definition.id))?;
-    let kind_index = u16::try_from(kinds.len())
-        .map_err(|_| "zone kind count exceeds the packed limit".to_string())?;
-    kind_indices.insert(definition.npc_id, kind_index);
-    kinds.push(ZoneKind::new(
-        definition.id.as_str(),
-        format!("{} (L{})", definition.display_name, definition.vislevel),
-        definition.npc_id,
-        vislevel,
-        definition
-            .find_newmode
-            .to_ascii_lowercase()
-            .starts_with("applayer"),
-        definition.vis_off,
-    ));
-}
-
-let open_door_faces = openable_door_faces(&inputs.openable_doors)?;
-let mut pending = Vec::with_capacity(used_ids.len());
-for spawn in &inputs.spawns {
-    let Some(definition) = definitions.get(&spawn.npc_id).copied() else {
-        return Err(crate::GenerationError::InvalidInput(format!("map spawn references hunter id {} without a config",
-        spawn.npc_id)));
-    };
-    if definition.huntrange < 1 {
-        continue;
-    }
-    // NPCs hunt on their raw spawn plane even on link-below tiles.
-    // The engine remaps loc/land collision, not GameMap::loadNpcs.
-    let class = match definition.check_nottoostrong.to_ascii_lowercase().as_str() {
-        "off" => ZoneClass::Always,
-        "outside_wilderness" => ZoneClass::LevelRule,
-        other => {
-            return Err(crate::GenerationError::InvalidInput(format!("hunter NPC {} has unsupported check_nottoostrong={other}",
-            definition.id)))
+    let mut used_ids = HashSet::new();
+    for spawn in &inputs.spawns {
+        if definitions
+            .get(&spawn.npc_id)
+            .is_some_and(|definition| definition.huntrange > 0)
+        {
+            used_ids.insert(spawn.npc_id);
         }
-    };
-    let cap = if class == ZoneClass::Always {
-        u16::MAX
-    } else {
-        u16::try_from(definition.vislevel)
-            .ok()
-            .and_then(|level| level.checked_mul(2))
-            .ok_or_else(|| format!("hunter NPC {} has invalid combat cap", definition.id))?
-    };
-    let trigger = definition.find_newmode.to_ascii_lowercase();
-    let ap = if trigger.starts_with("applayer") {
-        true
-    } else if trigger.starts_with("opplayer") {
-        false
-    } else {
-        return Err(crate::GenerationError::InvalidInput(format!("hunter NPC {} has unsupported find_newmode={trigger}",
-        definition.id)));
-    };
-    let kind = *kind_indices
-        .get(&spawn.npc_id)
-        .ok_or_else(|| format!("hunter NPC {} has no kind row", definition.id))?;
-    let tile = WorldTile {
-        x: spawn.x,
-        z: spawn.z,
-        level: i32::from(spawn.level),
-    };
-    let size = definition.size;
-    if size < 1 {
-        return Err(crate::GenerationError::InvalidInput(format!("hunter NPC {} has invalid size {size}",
-        definition.id)));
     }
-    let (zone, shape_bits, mobile_reach) = if definition.stationary() && !ap {
-        let width = u8::try_from(size)
-            .ok()
-            .filter(|size| *size <= 6)
-            .ok_or_else(|| {
-                format!(
-                    "stationary melee hunter {} exceeds the 6x6 footprint limit",
+    let mut kinds = Vec::with_capacity(used_ids.len() + nav_planner::zones::curated::HAZARDS.len());
+    let mut kind_indices = HashMap::with_capacity(used_ids.len());
+    for definition in &inputs.definitions {
+        if !used_ids.contains(&definition.npc_id) {
+            continue;
+        }
+        let vislevel = u16::try_from(definition.vislevel)
+            .map_err(|_| format!("hunter NPC {} has invalid combat level", definition.id))?;
+        let kind_index = u16::try_from(kinds.len())
+            .map_err(|_| "zone kind count exceeds the packed limit".to_string())?;
+        kind_indices.insert(definition.npc_id, kind_index);
+        kinds.push(ZoneKind::new(
+            definition.id.as_str(),
+            format!("{} (L{})", definition.display_name, definition.vislevel),
+            definition.npc_id,
+            vislevel,
+            definition
+                .find_newmode
+                .to_ascii_lowercase()
+                .starts_with("applayer"),
+            definition.vis_off,
+        ));
+    }
+
+    let open_door_faces = openable_door_faces(&inputs.openable_doors)?;
+    let mut pending = Vec::with_capacity(used_ids.len());
+    for spawn in &inputs.spawns {
+        let Some(definition) = definitions.get(&spawn.npc_id).copied() else {
+            return Err(crate::GenerationError::InvalidInput(format!(
+                "map spawn references hunter id {} without a config",
+                spawn.npc_id
+            )));
+        };
+        if definition.huntrange < 1 {
+            continue;
+        }
+        // NPCs hunt on their raw spawn plane even on link-below tiles.
+        // The engine remaps loc/land collision, not GameMap::loadNpcs.
+        let class = match definition.check_nottoostrong.to_ascii_lowercase().as_str() {
+            "off" => ZoneClass::Always,
+            "outside_wilderness" => ZoneClass::LevelRule,
+            other => {
+                return Err(crate::GenerationError::InvalidInput(format!(
+                    "hunter NPC {} has unsupported check_nottoostrong={other}",
                     definition.id
-                )
-            })?;
-        let bits = stationary_melee_shape(collision, tile, width, &open_door_faces)
-            .map_err(|error| format!("hunter NPC {}: {error}", definition.id))?;
-        (
-            Zone::shaped_npc(tile, width, width, class, cap, kind, NO_SHAPE),
-            Some(bits),
-            None,
-        )
-    } else if definition.stationary() && ap {
-        let (min_x, min_z, max_x, max_z) =
-            stationary_ranged_bounds(tile, size, definition.huntrange, definition.attackrange)
-                .map_err(|error| format!("hunter NPC {}: {error}", definition.id))?;
-        let mut zone = Zone::npc(tile, 0, class, cap, kind);
-        zone.min_x = min_x;
-        zone.min_z = min_z;
-        zone.max_x = max_x;
-        zone.max_z = max_z;
-        (zone, None, None)
-    } else {
-        let wander = if definition.never_wanders {
-            0
-        } else {
-            definition.wanderrange
-        };
-        let acquisition = wander.checked_add(definition.huntrange).ok_or_else(|| {
-            format!("hunter NPC {} acquisition radius overflows", definition.id)
-        })?;
-        let tether_range = if ap { definition.attackrange } else { 1 };
-        let tether = definition
-            .maxrange
-            .checked_add(tether_range)
-            .ok_or_else(|| format!("hunter NPC {} tether range overflows", definition.id))?;
-        let radius = u8::try_from(acquisition.min(tether))
-            .map_err(|_| format!("hunter NPC {} radius exceeds u8", definition.id))?;
-        // A chase holds the NPC's footprint next to a target that is still
-        // inside the tether, and a non-wandering NPC stays wherever its last
-        // chase ended, so it can hunt from anywhere in that envelope.
-        let move_radius = tether
-            .checked_add(size)
-            .ok_or_else(|| format!("hunter NPC {} chase radius overflows", definition.id))?
-            .max(wander);
-        let strategy = StepStrategy::of(definition.move_restrict).ok_or_else(|| {
-            format!("hunter NPC {} walks but has no step rule", definition.id)
-        })?;
-        let reach = MobileReach {
-            size,
-            move_radius,
-            hunt_range: definition.huntrange,
-            line_of_sight: definition.check_lineofsight,
-            strategy,
-        };
-        (Zone::npc(tile, radius, class, cap, kind), None, Some(reach))
-    };
-    // The engine checks LOS from the NPC's current tile. Keep positive-
-    // wander hunters conservative; carve only for nomove or zero-wander
-    // hunters around their spawn tile.
-    let carve_visibility = ap
-        && definition.check_lineofsight
-        && (definition.stationary() || definition.wanderrange == 0);
-    pending.push(PendingZone {
-        zone,
-        npc_id: spawn.npc_id,
-        shape_bits,
-        carve_visibility,
-        // Spawn-centred visibility carving already narrows zero-wander
-        // ranged hunters; every other moving hunter gets its reach flood.
-        mobile_reach: mobile_reach.filter(|_| !carve_visibility),
-    });
-}
-pending.sort_unstable_by_key(|row| {
-    (
-        row.zone.level,
-        row.zone.spawn_z,
-        row.zone.spawn_x,
-        row.npc_id,
-    )
-});
-
-let npc_count = pending.len();
-let always_count = pending
-    .iter()
-    .filter(|row| row.zone.class == ZoneClass::Always)
-    .count();
-let level_rule_count = npc_count - always_count;
-let mut zones = Vec::with_capacity(npc_count + nav_planner::zones::curated::HAZARDS.len());
-let mut shapes = Vec::new();
-let mut carves = Vec::new();
-for mut row in pending {
-    if let Some(bits) = row.shape_bits {
-        row.zone.shape = u16::try_from(shapes.len())
-            .map_err(|_| "zone shape count exceeds the packed limit".to_string())?;
-        shapes.push(bits);
-    }
-    let level = i32::from(row.zone.level);
-    let (min_x, min_z, max_x, max_z) = (
-        row.zone.min_x,
-        row.zone.min_z,
-        row.zone.max_x,
-        row.zone.max_z,
-    );
-    // Closed openable doors are not permanent cover or walls. Keep the
-    // conservative rectangle wherever such a door could affect LOS or
-    // the hunter's movement.
-    if row.carve_visibility
-        && !openable_door_within(&inputs.openable_doors, level, min_x, min_z, max_x, max_z)
-    {
-        append_ranged_visibility_carves(collision, &row.zone, zones.len(), &mut carves)?;
-    }
-    if let Some(reach) = row.mobile_reach {
-        // The hunter can stand anywhere within its move radius, so a door
-        // that could open or close a passage for it anywhere there counts.
-        let envelope = reach.move_radius + reach.size;
-        let (min_x, min_z, max_x, max_z) = (
-            min_x.min(row.zone.spawn_x - envelope),
-            min_z.min(row.zone.spawn_z - envelope),
-            max_x.max(row.zone.spawn_x + envelope),
-            max_z.max(row.zone.spawn_z + envelope),
-        );
-        if !openable_door_within(&inputs.openable_doors, level, min_x, min_z, max_x, max_z)
-            && !openable_door_within(&inputs.opened_doors, level, min_x, min_z, max_x, max_z)
-        {
-            append_mobile_reach_carves(collision, &row.zone, reach, zones.len(), &mut carves)?;
-        }
-    }
-    zones.push(row.zone);
-}
-
-let mut groups = Vec::with_capacity(crate::zones::GROUPS.len());
-for spec in crate::zones::GROUPS {
-    let group_index = u16::try_from(groups.len())
-        .map_err(|_| "zone group count exceeds the packed limit".to_string())?;
-    let mut members = Vec::new();
-    for (index, zone) in zones.iter_mut().enumerate() {
-        let npc_id = kinds[usize::from(zone.kind)].npc_id;
-        if spec.npc_ids.contains(&npc_id)
-            && spec.rect.contains(WorldTile {
-                x: zone.spawn_x,
-                z: zone.spawn_z,
-                level: i32::from(zone.level),
-            })
-        {
-            if zone.group != NO_GROUP {
-                return Err(crate::GenerationError::InvalidInput(format!("zone {}@{},{},{} belongs to more than one curated group",
-                kinds[usize::from(zone.kind)].id,
-                zone.spawn_x,
-                zone.spawn_z,
-                zone.level)));
+                )))
             }
-            zone.group = group_index;
-            members.push(
-                u16::try_from(index)
-                    .map_err(|_| "zone count exceeds the packed limit".to_string())?,
-            );
+        };
+        let cap = if class == ZoneClass::Always {
+            u16::MAX
+        } else {
+            u16::try_from(definition.vislevel)
+                .ok()
+                .and_then(|level| level.checked_mul(2))
+                .ok_or_else(|| format!("hunter NPC {} has invalid combat cap", definition.id))?
+        };
+        let trigger = definition.find_newmode.to_ascii_lowercase();
+        let ap = if trigger.starts_with("applayer") {
+            true
+        } else if trigger.starts_with("opplayer") {
+            false
+        } else {
+            return Err(crate::GenerationError::InvalidInput(format!(
+                "hunter NPC {} has unsupported find_newmode={trigger}",
+                definition.id
+            )));
+        };
+        let kind = *kind_indices
+            .get(&spawn.npc_id)
+            .ok_or_else(|| format!("hunter NPC {} has no kind row", definition.id))?;
+        let tile = WorldTile {
+            x: spawn.x,
+            z: spawn.z,
+            level: i32::from(spawn.level),
+        };
+        let size = definition.size;
+        if size < 1 {
+            return Err(crate::GenerationError::InvalidInput(format!(
+                "hunter NPC {} has invalid size {size}",
+                definition.id
+            )));
         }
+        let (zone, shape_bits, mobile_reach) = if definition.stationary() && !ap {
+            let width = u8::try_from(size)
+                .ok()
+                .filter(|size| *size <= 6)
+                .ok_or_else(|| {
+                    format!(
+                        "stationary melee hunter {} exceeds the 6x6 footprint limit",
+                        definition.id
+                    )
+                })?;
+            let bits = stationary_melee_shape(collision, tile, width, &open_door_faces)
+                .map_err(|error| format!("hunter NPC {}: {error}", definition.id))?;
+            (
+                Zone::shaped_npc(tile, width, width, class, cap, kind, NO_SHAPE),
+                Some(bits),
+                None,
+            )
+        } else if definition.stationary() && ap {
+            let (min_x, min_z, max_x, max_z) =
+                stationary_ranged_bounds(tile, size, definition.huntrange, definition.attackrange)
+                    .map_err(|error| format!("hunter NPC {}: {error}", definition.id))?;
+            let mut zone = Zone::npc(tile, 0, class, cap, kind);
+            zone.min_x = min_x;
+            zone.min_z = min_z;
+            zone.max_x = max_x;
+            zone.max_z = max_z;
+            (zone, None, None)
+        } else {
+            let wander = if definition.never_wanders {
+                0
+            } else {
+                definition.wanderrange
+            };
+            let acquisition = wander.checked_add(definition.huntrange).ok_or_else(|| {
+                format!("hunter NPC {} acquisition radius overflows", definition.id)
+            })?;
+            let tether_range = if ap { definition.attackrange } else { 1 };
+            let tether = definition
+                .maxrange
+                .checked_add(tether_range)
+                .ok_or_else(|| format!("hunter NPC {} tether range overflows", definition.id))?;
+            let radius = u8::try_from(acquisition.min(tether))
+                .map_err(|_| format!("hunter NPC {} radius exceeds u8", definition.id))?;
+            // A chase holds the NPC's footprint next to a target that is still
+            // inside the tether, and a non-wandering NPC stays wherever its last
+            // chase ended, so it can hunt from anywhere in that envelope.
+            let move_radius = tether
+                .checked_add(size)
+                .ok_or_else(|| format!("hunter NPC {} chase radius overflows", definition.id))?
+                .max(wander);
+            let strategy = StepStrategy::of(definition.move_restrict).ok_or_else(|| {
+                format!("hunter NPC {} walks but has no step rule", definition.id)
+            })?;
+            let reach = MobileReach {
+                size,
+                move_radius,
+                hunt_range: definition.huntrange,
+                line_of_sight: definition.check_lineofsight,
+                strategy,
+            };
+            (Zone::npc(tile, radius, class, cap, kind), None, Some(reach))
+        };
+        // The engine checks LOS from the NPC's current tile. Keep positive-
+        // wander hunters conservative; carve only for nomove or zero-wander
+        // hunters around their spawn tile.
+        let carve_visibility = ap
+            && definition.check_lineofsight
+            && (definition.stationary() || definition.wanderrange == 0);
+        pending.push(PendingZone {
+            zone,
+            npc_id: spawn.npc_id,
+            shape_bits,
+            carve_visibility,
+            // Spawn-centred visibility carving already narrows zero-wander
+            // ranged hunters; every other moving hunter gets its reach flood.
+            mobile_reach: mobile_reach.filter(|_| !carve_visibility),
+        });
     }
-    if members.is_empty() {
-        return Err(crate::GenerationError::InvalidInput(format!("curated zone group {} matched no hunter spawn",
-        spec.id)));
+    pending.sort_unstable_by_key(|row| {
+        (
+            row.zone.level,
+            row.zone.spawn_z,
+            row.zone.spawn_x,
+            row.npc_id,
+        )
+    });
+
+    let npc_count = pending.len();
+    let always_count = pending
+        .iter()
+        .filter(|row| row.zone.class == ZoneClass::Always)
+        .count();
+    let level_rule_count = npc_count - always_count;
+    let mut zones = Vec::with_capacity(npc_count + nav_planner::zones::curated::HAZARDS.len());
+    let mut shapes = Vec::new();
+    let mut carves = Vec::new();
+    for mut row in pending {
+        if let Some(bits) = row.shape_bits {
+            row.zone.shape = u16::try_from(shapes.len())
+                .map_err(|_| "zone shape count exceeds the packed limit".to_string())?;
+            shapes.push(bits);
+        }
+        let level = i32::from(row.zone.level);
+        let (min_x, min_z, max_x, max_z) = (
+            row.zone.min_x,
+            row.zone.min_z,
+            row.zone.max_x,
+            row.zone.max_z,
+        );
+        // Closed openable doors are not permanent cover or walls. Keep the
+        // conservative rectangle wherever such a door could affect LOS or
+        // the hunter's movement.
+        if row.carve_visibility
+            && !openable_door_within(&inputs.openable_doors, level, min_x, min_z, max_x, max_z)
+        {
+            append_ranged_visibility_carves(collision, &row.zone, zones.len(), &mut carves)?;
+        }
+        if let Some(reach) = row.mobile_reach {
+            // The hunter can stand anywhere within its move radius, so a door
+            // that could open or close a passage for it anywhere there counts.
+            let envelope = reach.move_radius + reach.size;
+            let (min_x, min_z, max_x, max_z) = (
+                min_x.min(row.zone.spawn_x - envelope),
+                min_z.min(row.zone.spawn_z - envelope),
+                max_x.max(row.zone.spawn_x + envelope),
+                max_z.max(row.zone.spawn_z + envelope),
+            );
+            if !openable_door_within(&inputs.openable_doors, level, min_x, min_z, max_x, max_z)
+                && !openable_door_within(&inputs.opened_doors, level, min_x, min_z, max_x, max_z)
+            {
+                append_mobile_reach_carves(collision, &row.zone, reach, zones.len(), &mut carves)?;
+            }
+        }
+        zones.push(row.zone);
     }
-    groups.push(ZoneGroup::new(
-        spec.id,
-        spec.label,
-        spec.rect,
-        members.into_boxed_slice(),
-    ));
+
+    let mut groups = Vec::with_capacity(crate::zones::GROUPS.len());
+    for spec in crate::zones::GROUPS {
+        let group_index = u16::try_from(groups.len())
+            .map_err(|_| "zone group count exceeds the packed limit".to_string())?;
+        let mut members = Vec::new();
+        for (index, zone) in zones.iter_mut().enumerate() {
+            let npc_id = kinds[usize::from(zone.kind)].npc_id;
+            if spec.npc_ids.contains(&npc_id)
+                && spec.rect.contains(WorldTile {
+                    x: zone.spawn_x,
+                    z: zone.spawn_z,
+                    level: i32::from(zone.level),
+                })
+            {
+                if zone.group != NO_GROUP {
+                    return Err(crate::GenerationError::InvalidInput(format!(
+                        "zone {}@{},{},{} belongs to more than one curated group",
+                        kinds[usize::from(zone.kind)].id,
+                        zone.spawn_x,
+                        zone.spawn_z,
+                        zone.level
+                    )));
+                }
+                zone.group = group_index;
+                members.push(
+                    u16::try_from(index)
+                        .map_err(|_| "zone count exceeds the packed limit".to_string())?,
+                );
+            }
+        }
+        if members.is_empty() {
+            return Err(crate::GenerationError::InvalidInput(format!(
+                "curated zone group {} matched no hunter spawn",
+                spec.id
+            )));
+        }
+        groups.push(ZoneGroup::new(
+            spec.id,
+            spec.label,
+            spec.rect,
+            members.into_boxed_slice(),
+        ));
+    }
+
+    let npc_kind_count = kinds.len();
+    for hazard in nav_planner::zones::curated::HAZARDS {
+        let kind_index = u16::try_from(kinds.len())
+            .map_err(|_| "zone kind count exceeds the packed limit".to_string())?;
+        kinds.push(ZoneKind::new(hazard.id, hazard.label, -1, 0, false, false));
+        zones.push(Zone::hazard(hazard.rect, hazard.level, kind_index));
+    }
+    let table = ZoneTable::from_parts(
+        zones,
+        kinds,
+        groups,
+        carves,
+        shapes,
+        collision.origin,
+        u32::try_from(collision.width).map_err(|_| "zone grid width exceeds u32".to_string())?,
+        u32::try_from(collision.height).map_err(|_| "zone grid height exceeds u32".to_string())?,
+        &graph.wilderness,
+    )
+    .map_err(|error| format!("invalid derived zone table: {error}"))?;
+    Ok(DerivedZones {
+        npc_count,
+        npc_kind_count,
+        always_count,
+        level_rule_count,
+        shaped_count: table.shapes().len(),
+        total_npc_spawns: inputs.total_npc_spawns,
+        table,
+    })
 }
 
-let npc_kind_count = kinds.len();
-for hazard in nav_planner::zones::curated::HAZARDS {
-    let kind_index = u16::try_from(kinds.len())
-        .map_err(|_| "zone kind count exceeds the packed limit".to_string())?;
-    kinds.push(ZoneKind::new(hazard.id, hazard.label, -1, 0, false, false));
-    zones.push(Zone::hazard(hazard.rect, hazard.level, kind_index));
+fn stationary_ranged_bounds(
+    spawn: WorldTile,
+    size: i32,
+    hunt_range: i32,
+    attack_range: i32,
+) -> Result<(i32, i32, i32, i32), crate::GenerationError> {
+    let footprint_max_x = spawn
+        .x
+        .checked_add(size - 1)
+        .ok_or_else(|| "stationary hunter footprint overflows x".to_string())?;
+    let footprint_max_z = spawn
+        .z
+        .checked_add(size - 1)
+        .ok_or_else(|| "stationary hunter footprint overflows z".to_string())?;
+    let min_x = spawn
+        .x
+        .checked_sub(hunt_range)
+        .ok_or_else(|| "stationary hunter acquisition bounds overflow x".to_string())?
+        .max(
+            spawn
+                .x
+                .checked_sub(attack_range)
+                .ok_or_else(|| "stationary hunter attack bounds overflow x".to_string())?,
+        );
+    let min_z = spawn
+        .z
+        .checked_sub(hunt_range)
+        .ok_or_else(|| "stationary hunter acquisition bounds overflow z".to_string())?
+        .max(
+            spawn
+                .z
+                .checked_sub(attack_range)
+                .ok_or_else(|| "stationary hunter attack bounds overflow z".to_string())?,
+        );
+    let max_x = spawn
+        .x
+        .checked_add(hunt_range)
+        .ok_or_else(|| "stationary hunter acquisition bounds overflow x".to_string())?
+        .min(
+            footprint_max_x
+                .checked_add(attack_range)
+                .ok_or_else(|| "stationary hunter attack bounds overflow x".to_string())?,
+        );
+    let max_z = spawn
+        .z
+        .checked_add(hunt_range)
+        .ok_or_else(|| "stationary hunter acquisition bounds overflow z".to_string())?
+        .min(
+            footprint_max_z
+                .checked_add(attack_range)
+                .ok_or_else(|| "stationary hunter attack bounds overflow z".to_string())?,
+        );
+    if min_x > max_x || min_z > max_z {
+        return Err("stationary hunter range intersection is empty".into());
+    }
+    Ok((min_x, min_z, max_x, max_z))
 }
-let table = ZoneTable::from_parts(
-    zones,
-    kinds,
-    groups,
-    carves,
-    shapes,
-    collision.origin,
-    u32::try_from(collision.width).map_err(|_| "zone grid width exceeds u32".to_string())?,
-    u32::try_from(collision.height).map_err(|_| "zone grid height exceeds u32".to_string())?,
-    &graph.wilderness,
-)
-.map_err(|error| format!("invalid derived zone table: {error}"))?;
-Ok(DerivedZones {
-    npc_count,
-    npc_kind_count,
-    always_count,
-    level_rule_count,
-    shaped_count: table.shapes().len(),
-    total_npc_spawns: inputs.total_npc_spawns,
-    table,
-}) }
-
-fn stationary_ranged_bounds(spawn: WorldTile,
-size: i32,
-hunt_range: i32,
-attack_range: i32,) -> Result<(i32, i32, i32, i32), crate::GenerationError> { let footprint_max_x = spawn
-    .x
-    .checked_add(size - 1)
-    .ok_or_else(|| "stationary hunter footprint overflows x".to_string())?;
-let footprint_max_z = spawn
-    .z
-    .checked_add(size - 1)
-    .ok_or_else(|| "stationary hunter footprint overflows z".to_string())?;
-let min_x = spawn
-    .x
-    .checked_sub(hunt_range)
-    .ok_or_else(|| "stationary hunter acquisition bounds overflow x".to_string())?
-    .max(
-        spawn
-            .x
-            .checked_sub(attack_range)
-            .ok_or_else(|| "stationary hunter attack bounds overflow x".to_string())?,
-    );
-let min_z = spawn
-    .z
-    .checked_sub(hunt_range)
-    .ok_or_else(|| "stationary hunter acquisition bounds overflow z".to_string())?
-    .max(
-        spawn
-            .z
-            .checked_sub(attack_range)
-            .ok_or_else(|| "stationary hunter attack bounds overflow z".to_string())?,
-    );
-let max_x = spawn
-    .x
-    .checked_add(hunt_range)
-    .ok_or_else(|| "stationary hunter acquisition bounds overflow x".to_string())?
-    .min(
-        footprint_max_x
-            .checked_add(attack_range)
-            .ok_or_else(|| "stationary hunter attack bounds overflow x".to_string())?,
-    );
-let max_z = spawn
-    .z
-    .checked_add(hunt_range)
-    .ok_or_else(|| "stationary hunter acquisition bounds overflow z".to_string())?
-    .min(
-        footprint_max_z
-            .checked_add(attack_range)
-            .ok_or_else(|| "stationary hunter attack bounds overflow z".to_string())?,
-    );
-if min_x > max_x || min_z > max_z {
-    return Err("stationary hunter range intersection is empty".into());
-}
-Ok((min_x, min_z, max_x, max_z)) }
 
 /// Keep the range-derived index bounds, subtracting only cells hidden from the
 /// NPC's spawn tile. The engine's HuntIterator casts from the player to the
 /// NPC's current tile; the caller limits this spawn-centred approximation to
 /// `nomove` and zero-wander NPCs.
 /// Horizontal runs keep the existing packed carve representation compact.
-fn append_ranged_visibility_carves(collision: &WorldCollision,
-zone: &Zone,
-index: usize,
-carves: &mut Vec<(u16, nav_planner::router::AvoidRect)>,) -> Result<(), crate::GenerationError> { use api::line_of_sight::{has_line_of_sight_local, Footprint};
+fn append_ranged_visibility_carves(
+    collision: &WorldCollision,
+    zone: &Zone,
+    index: usize,
+    carves: &mut Vec<(u16, nav_planner::router::AvoidRect)>,
+) -> Result<(), crate::GenerationError> {
+    use api::line_of_sight::{has_line_of_sight_local, Footprint};
 
-if collision.flags.is_none() {
-    return Err("ranged visibility carving requires raw baked collision flags".into());
-}
-let index = u16::try_from(index).map_err(|_| "zone carve index exceeds u16")?;
-let level = i32::from(zone.level);
-let npc = Footprint {
-    lx: zone.spawn_x,
-    lz: zone.spawn_z,
-    size: 1,
-};
-let visible = |x, z| {
-    has_line_of_sight_local(
-        &|x, z| Some(collision.flag(x, z, level) as i32),
-        Footprint {
-            lx: x,
-            lz: z,
-            size: 1,
-        },
-        npc,
-    )
-};
-for z in zone.min_z..=zone.max_z {
-    let mut x = zone.min_x;
-    while x <= zone.max_x {
-        if visible(x, z) {
-            x += 1;
-            continue;
-        }
-        let min_x = x;
-        while x < zone.max_x && !visible(x + 1, z) {
-            x += 1;
-        }
-        carves.push((
-            index,
-            nav_planner::router::AvoidRect {
-                min_x,
-                max_x: x,
-                min_z: z,
-                max_z: z,
-                level: Some(level),
-            },
-        ));
-        x += 1;
+    if collision.flags.is_none() {
+        return Err("ranged visibility carving requires raw baked collision flags".into());
     }
+    let index = u16::try_from(index).map_err(|_| "zone carve index exceeds u16")?;
+    let level = i32::from(zone.level);
+    let npc = Footprint {
+        lx: zone.spawn_x,
+        lz: zone.spawn_z,
+        size: 1,
+    };
+    let visible = |x, z| {
+        has_line_of_sight_local(
+            &|x, z| Some(collision.flag(x, z, level) as i32),
+            Footprint {
+                lx: x,
+                lz: z,
+                size: 1,
+            },
+            npc,
+        )
+    };
+    for z in zone.min_z..=zone.max_z {
+        let mut x = zone.min_x;
+        while x <= zone.max_x {
+            if visible(x, z) {
+                x += 1;
+                continue;
+            }
+            let min_x = x;
+            while x < zone.max_x && !visible(x + 1, z) {
+                x += 1;
+            }
+            carves.push((
+                index,
+                nav_planner::router::AvoidRect {
+                    min_x,
+                    max_x: x,
+                    min_z: z,
+                    max_z: z,
+                    level: Some(level),
+                },
+            ));
+            x += 1;
+        }
+    }
+    Ok(())
 }
-Ok(()) }
 
 /// Whether an openable (closed) door stands within the inclusive box grown by
 /// one tile on `level`.
@@ -936,152 +985,167 @@ fn mobile_acquisition(collision: &WorldCollision, zone: &Zone, reach: MobileReac
 /// Subtract every cell of a moving hunter's rectangle that
 /// [`mobile_acquisition`] rules out. Identical horizontal runs on consecutive
 /// rows merge into one rectangle to keep the packed carve list compact.
-fn append_mobile_reach_carves(collision: &WorldCollision,
-zone: &Zone,
-reach: MobileReach,
-index: usize,
-carves: &mut Vec<(u16, nav_planner::router::AvoidRect)>,) -> Result<(), crate::GenerationError> { if collision.flags.is_none() {
-    return Err("mobile hunter reach carving requires raw baked collision flags".into());
-}
-let index = u16::try_from(index).map_err(|_| "zone carve index exceeds u16")?;
-let level = i32::from(zone.level);
-let member = mobile_acquisition(collision, zone, reach);
-let width = (zone.max_x - zone.min_x + 1) as usize;
-// (min_x, max_x, carve position) of the runs that end on the previous row.
-let mut open_runs: Vec<(i32, i32, usize)> = Vec::new();
-for z in zone.min_z..=zone.max_z {
-    let row = &member[(z - zone.min_z) as usize * width..][..width];
-    let mut next_runs = Vec::new();
-    let mut x = zone.min_x;
-    while x <= zone.max_x {
-        if row[(x - zone.min_x) as usize] {
-            x += 1;
-            continue;
-        }
-        let run_min = x;
-        while x < zone.max_x && !row[(x + 1 - zone.min_x) as usize] {
-            x += 1;
-        }
-        let position = match open_runs
-            .iter()
-            .find(|(min_x, max_x, _)| *min_x == run_min && *max_x == x)
-        {
-            Some(&(_, _, position)) => {
-                carves[position].1.max_z = z;
-                position
+fn append_mobile_reach_carves(
+    collision: &WorldCollision,
+    zone: &Zone,
+    reach: MobileReach,
+    index: usize,
+    carves: &mut Vec<(u16, nav_planner::router::AvoidRect)>,
+) -> Result<(), crate::GenerationError> {
+    if collision.flags.is_none() {
+        return Err("mobile hunter reach carving requires raw baked collision flags".into());
+    }
+    let index = u16::try_from(index).map_err(|_| "zone carve index exceeds u16")?;
+    let level = i32::from(zone.level);
+    let member = mobile_acquisition(collision, zone, reach);
+    let width = (zone.max_x - zone.min_x + 1) as usize;
+    // (min_x, max_x, carve position) of the runs that end on the previous row.
+    let mut open_runs: Vec<(i32, i32, usize)> = Vec::new();
+    for z in zone.min_z..=zone.max_z {
+        let row = &member[(z - zone.min_z) as usize * width..][..width];
+        let mut next_runs = Vec::new();
+        let mut x = zone.min_x;
+        while x <= zone.max_x {
+            if row[(x - zone.min_x) as usize] {
+                x += 1;
+                continue;
             }
-            None => {
-                carves.push((
-                    index,
-                    nav_planner::router::AvoidRect {
-                        min_x: run_min,
-                        max_x: x,
-                        min_z: z,
-                        max_z: z,
-                        level: Some(level),
-                    },
-                ));
-                carves.len() - 1
+            let run_min = x;
+            while x < zone.max_x && !row[(x + 1 - zone.min_x) as usize] {
+                x += 1;
             }
-        };
-        next_runs.push((run_min, x, position));
-        x += 1;
+            let position = match open_runs
+                .iter()
+                .find(|(min_x, max_x, _)| *min_x == run_min && *max_x == x)
+            {
+                Some(&(_, _, position)) => {
+                    carves[position].1.max_z = z;
+                    position
+                }
+                None => {
+                    carves.push((
+                        index,
+                        nav_planner::router::AvoidRect {
+                            min_x: run_min,
+                            max_x: x,
+                            min_z: z,
+                            max_z: z,
+                            level: Some(level),
+                        },
+                    ));
+                    carves.len() - 1
+                }
+            };
+            next_runs.push((run_min, x, position));
+            x += 1;
+        }
+        open_runs = next_runs;
     }
-    open_runs = next_runs;
+    Ok(())
 }
-Ok(()) }
 
-fn stationary_melee_shape(collision: &WorldCollision,
-spawn: WorldTile,
-size: u8,
-openable_door_faces: &HashSet<(i32, i32, i32, u8)>,) -> Result<u64, crate::GenerationError> { let side = u32::from(size) + 2;
-if side * side > u64::BITS {
-    return Err("stationary melee hunter footprint exceeds the 8x8 shape limit".into());
+fn stationary_melee_shape(
+    collision: &WorldCollision,
+    spawn: WorldTile,
+    size: u8,
+    openable_door_faces: &HashSet<(i32, i32, i32, u8)>,
+) -> Result<u64, crate::GenerationError> {
+    let side = u32::from(size) + 2;
+    if side * side > u64::BITS {
+        return Err("stationary melee hunter footprint exceeds the 8x8 shape limit".into());
+    }
+    let mut mask = 0u64;
+    for dz in 0..u32::from(size) {
+        for dx in 0..u32::from(size) {
+            set_shape_cell(&mut mask, dx + 1, dz + 1, side)?;
+        }
+    }
+    let size_i32 = i32::from(size);
+    for offset in 0..size_i32 {
+        let west_z = spawn
+            .z
+            .checked_add(offset)
+            .ok_or_else(|| "stationary melee footprint overflows z".to_string())?;
+        if face_is_open(
+            collision,
+            openable_door_faces,
+            spawn.x,
+            west_z,
+            spawn.level,
+            CollisionFlag::W_W as u8,
+        ) {
+            set_shape_cell(&mut mask, 0, u32::try_from(offset + 1).unwrap(), side)?;
+        }
+        let east_x = spawn
+            .x
+            .checked_add(size_i32 - 1)
+            .ok_or_else(|| "stationary melee footprint overflows x".to_string())?;
+        if face_is_open(
+            collision,
+            openable_door_faces,
+            east_x,
+            west_z,
+            spawn.level,
+            CollisionFlag::W_E as u8,
+        ) {
+            set_shape_cell(
+                &mut mask,
+                u32::from(size) + 1,
+                u32::try_from(offset + 1).unwrap(),
+                side,
+            )?;
+        }
+        let south_x = spawn
+            .x
+            .checked_add(offset)
+            .ok_or_else(|| "stationary melee footprint overflows x".to_string())?;
+        if face_is_open(
+            collision,
+            openable_door_faces,
+            south_x,
+            spawn.z,
+            spawn.level,
+            CollisionFlag::W_S as u8,
+        ) {
+            set_shape_cell(&mut mask, u32::try_from(offset + 1).unwrap(), 0, side)?;
+        }
+        let north_z = spawn
+            .z
+            .checked_add(size_i32 - 1)
+            .ok_or_else(|| "stationary melee footprint overflows z".to_string())?;
+        if face_is_open(
+            collision,
+            openable_door_faces,
+            south_x,
+            north_z,
+            spawn.level,
+            CollisionFlag::W_N as u8,
+        ) {
+            set_shape_cell(
+                &mut mask,
+                u32::try_from(offset + 1).unwrap(),
+                u32::from(size) + 1,
+                side,
+            )?;
+        }
+    }
+    Ok(mask)
 }
-let mut mask = 0u64;
-for dz in 0..u32::from(size) {
-    for dx in 0..u32::from(size) {
-        set_shape_cell(&mut mask, dx + 1, dz + 1, side)?;
-    }
-}
-let size_i32 = i32::from(size);
-for offset in 0..size_i32 {
-    let west_z = spawn
-        .z
-        .checked_add(offset)
-        .ok_or_else(|| "stationary melee footprint overflows z".to_string())?;
-    if face_is_open(
-        collision,
-        openable_door_faces,
-        spawn.x,
-        west_z,
-        spawn.level,
-        CollisionFlag::W_W as u8,
-    ) {
-        set_shape_cell(&mut mask, 0, u32::try_from(offset + 1).unwrap(), side)?;
-    }
-    let east_x = spawn
-        .x
-        .checked_add(size_i32 - 1)
-        .ok_or_else(|| "stationary melee footprint overflows x".to_string())?;
-    if face_is_open(
-        collision,
-        openable_door_faces,
-        east_x,
-        west_z,
-        spawn.level,
-        CollisionFlag::W_E as u8,
-    ) {
-        set_shape_cell(
-            &mut mask,
-            u32::from(size) + 1,
-            u32::try_from(offset + 1).unwrap(),
-            side,
-        )?;
-    }
-    let south_x = spawn
-        .x
-        .checked_add(offset)
-        .ok_or_else(|| "stationary melee footprint overflows x".to_string())?;
-    if face_is_open(
-        collision,
-        openable_door_faces,
-        south_x,
-        spawn.z,
-        spawn.level,
-        CollisionFlag::W_S as u8,
-    ) {
-        set_shape_cell(&mut mask, u32::try_from(offset + 1).unwrap(), 0, side)?;
-    }
-    let north_z = spawn
-        .z
-        .checked_add(size_i32 - 1)
-        .ok_or_else(|| "stationary melee footprint overflows z".to_string())?;
-    if face_is_open(
-        collision,
-        openable_door_faces,
-        south_x,
-        north_z,
-        spawn.level,
-        CollisionFlag::W_N as u8,
-    ) {
-        set_shape_cell(
-            &mut mask,
-            u32::try_from(offset + 1).unwrap(),
-            u32::from(size) + 1,
-            side,
-        )?;
-    }
-}
-Ok(mask) }
 
-fn set_shape_cell(mask: &mut u64, x: u32, z: u32, width: u32) -> Result<(), crate::GenerationError> { let bit = z
-    .checked_mul(width)
-    .and_then(|row| row.checked_add(x))
-    .filter(|bit| *bit < u64::BITS)
-    .ok_or_else(|| "stationary melee mask bit is out of range".to_string())?;
-*mask |= 1u64 << bit;
-Ok(()) }
+fn set_shape_cell(
+    mask: &mut u64,
+    x: u32,
+    z: u32,
+    width: u32,
+) -> Result<(), crate::GenerationError> {
+    let bit = z
+        .checked_mul(width)
+        .and_then(|row| row.checked_add(x))
+        .filter(|bit| *bit < u64::BITS)
+        .ok_or_else(|| "stationary melee mask bit is out of range".to_string())?;
+    *mask |= 1u64 << bit;
+    Ok(())
+}
 
 fn face_is_open(
     collision: &WorldCollision,
@@ -1128,321 +1192,343 @@ fn collision_walk_byte(collision: &WorldCollision, x: i32, z: i32, level: i32) -
     collision.walk.get(index).copied().unwrap_or(0)
 }
 
-fn openable_door_faces(doors: &[crate::services::OpenableDoor],) -> Result<HashSet<(i32, i32, i32, u8)>, crate::GenerationError> { let mut faces = HashSet::with_capacity(doors.len().saturating_mul(2));
-for door in doors {
-    if i32::from(door.shape) != LocShape::WALL_STRAIGHT {
-        continue;
+fn openable_door_faces(
+    doors: &[crate::services::OpenableDoor],
+) -> Result<HashSet<(i32, i32, i32, u8)>, crate::GenerationError> {
+    let mut faces = HashSet::with_capacity(doors.len().saturating_mul(2));
+    for door in doors {
+        if i32::from(door.shape) != LocShape::WALL_STRAIGHT {
+            continue;
+        }
+        let (tile_flag, opposite_flag, dx, dz) = match i32::from(door.rotation) {
+            angle if angle == LocAngle::WEST => {
+                (CollisionFlag::W_W as u8, CollisionFlag::W_E as u8, -1, 0)
+            }
+            angle if angle == LocAngle::NORTH => {
+                (CollisionFlag::W_N as u8, CollisionFlag::W_S as u8, 0, 1)
+            }
+            angle if angle == LocAngle::EAST => {
+                (CollisionFlag::W_E as u8, CollisionFlag::W_W as u8, 1, 0)
+            }
+            angle if angle == LocAngle::SOUTH => {
+                (CollisionFlag::W_S as u8, CollisionFlag::W_N as u8, 0, -1)
+            }
+            _ => continue,
+        };
+        faces.insert((door.x, door.z, door.level, tile_flag));
+        let Some(neighbor_x) = door.x.checked_add(dx) else {
+            return Err("openable door face overflows x".into());
+        };
+        let Some(neighbor_z) = door.z.checked_add(dz) else {
+            return Err("openable door face overflows z".into());
+        };
+        faces.insert((neighbor_x, neighbor_z, door.level, opposite_flag));
     }
-    let (tile_flag, opposite_flag, dx, dz) = match i32::from(door.rotation) {
-        angle if angle == LocAngle::WEST => {
-            (CollisionFlag::W_W as u8, CollisionFlag::W_E as u8, -1, 0)
-        }
-        angle if angle == LocAngle::NORTH => {
-            (CollisionFlag::W_N as u8, CollisionFlag::W_S as u8, 0, 1)
-        }
-        angle if angle == LocAngle::EAST => {
-            (CollisionFlag::W_E as u8, CollisionFlag::W_W as u8, 1, 0)
-        }
-        angle if angle == LocAngle::SOUTH => {
-            (CollisionFlag::W_S as u8, CollisionFlag::W_N as u8, 0, -1)
-        }
-        _ => continue,
-    };
-    faces.insert((door.x, door.z, door.level, tile_flag));
-    let Some(neighbor_x) = door.x.checked_add(dx) else {
-        return Err("openable door face overflows x".into());
-    };
-    let Some(neighbor_z) = door.z.checked_add(dz) else {
-        return Err("openable door face overflows z".into());
-    };
-    faces.insert((neighbor_x, neighbor_z, door.level, opposite_flag));
+    Ok(faces)
 }
-Ok(faces) }
 
 /// Bake the whole world for one request. Every `.jm2` under the maps dir
 /// bakes or the call fails; non-`.jm2` files are metadata and skipped.
-pub fn bake_world(request: &BakeRequest<'_>) -> Result<BakedNav, crate::GenerationError> { let content_root = request.maps_dir.parent().unwrap_or(Path::new("."));
-let owned_fingerprints = request
-    .input_fingerprints
-    .is_none()
-    .then(|| crate::bundle::fingerprints(content_root, &[request.config_jag]))
-    .transpose()?;
-let source_fingerprints = request
-    .input_fingerprints
-    .or(owned_fingerprints.as_deref())
-    .expect("one bake input snapshot is present");
-let source_before = crate::bundle::source_digest_from_fingerprints(
-    content_root,
-    &[request.config_jag],
-    source_fingerprints,
-)?;
-let mut notes = Vec::new();
+pub fn bake_world(request: &BakeRequest<'_>) -> Result<BakedNav, crate::GenerationError> {
+    let content_root = request.maps_dir.parent().unwrap_or(Path::new("."));
+    let owned_fingerprints = request
+        .input_fingerprints
+        .is_none()
+        .then(|| crate::bundle::fingerprints(content_root, &[request.config_jag]))
+        .transpose()?;
+    let source_fingerprints = request
+        .input_fingerprints
+        .or(owned_fingerprints.as_deref())
+        .expect("one bake input snapshot is present");
+    let source_before = crate::bundle::source_digest_from_fingerprints(
+        content_root,
+        &[request.config_jag],
+        source_fingerprints,
+    )?;
+    let mut notes = Vec::new();
 
-// Openable wall door loc ids from the Server door configs.
-let mut door_ids = HashSet::new();
-// Closed door id -> the id it becomes when opened, from the same configs.
-let mut door_open_ids = HashMap::new();
-let mut parsed_door_configs = Vec::with_capacity(DOOR_CONFIGS.len() + 1);
-let mut config_failed = 0usize;
-for name in DOOR_CONFIGS {
-    let path = request.doors_dir.join(name);
-    match std::fs::read_to_string(&path) {
+    // Openable wall door loc ids from the Server door configs.
+    let mut door_ids = HashSet::new();
+    // Closed door id -> the id it becomes when opened, from the same configs.
+    let mut door_open_ids = HashMap::new();
+    let mut parsed_door_configs = Vec::with_capacity(DOOR_CONFIGS.len() + 1);
+    let mut config_failed = 0usize;
+    for name in DOOR_CONFIGS {
+        let path = request.doors_dir.join(name);
+        match std::fs::read_to_string(&path) {
+            Ok(text) => {
+                door_ids.extend(crate::pack::parse_door_config(&text));
+                door_open_ids.extend(crate::pack::parse_door_open_ids(&text, &HashMap::new()));
+                parsed_door_configs.push(path);
+            }
+            Err(e) => {
+                if request.require_all_door_configs {
+                    return Err(crate::GenerationError::InvalidInput(format!(
+                        "door config {}: {e}",
+                        path.display()
+                    )));
+                }
+                notes.push(format!("skipping {name}: {e}"));
+                config_failed += 1;
+            }
+        }
+    }
+    // Fence gates (`scripts/general_use/configs/gates.loc`) join the door
+    // set so their tiles do not stamp blocked in the bake. The configured ids
+    // and source paths are passed to `door_edges` to avoid deriving them twice.
+    match std::fs::read_to_string(request.gates) {
         Ok(text) => {
             door_ids.extend(crate::pack::parse_door_config(&text));
             door_open_ids.extend(crate::pack::parse_door_open_ids(&text, &HashMap::new()));
-            parsed_door_configs.push(path);
+            parsed_door_configs.push(request.gates.to_path_buf());
         }
         Err(e) => {
             if request.require_all_door_configs {
-                return Err(crate::GenerationError::InvalidInput(format!("door config {}: {e}", path.display())));
+                return Err(crate::GenerationError::InvalidInput(format!(
+                    "gates config {}: {e}",
+                    request.gates.display()
+                )));
             }
-            notes.push(format!("skipping {name}: {e}"));
+            notes.push(format!("skipping gates.loc: {e}"));
             config_failed += 1;
         }
     }
-}
-// Fence gates (`scripts/general_use/configs/gates.loc`) join the door
-// set so their tiles do not stamp blocked in the bake. The configured ids
-// and source paths are passed to `door_edges` to avoid deriving them twice.
-match std::fs::read_to_string(request.gates) {
-    Ok(text) => {
-        door_ids.extend(crate::pack::parse_door_config(&text));
-        door_open_ids.extend(crate::pack::parse_door_open_ids(&text, &HashMap::new()));
-        parsed_door_configs.push(request.gates.to_path_buf());
+    if config_failed == DOOR_CONFIGS.len() + 1 {
+        return Err(crate::GenerationError::InvalidInput(format!(
+            "no door configs parsed (need {} in {} plus {})",
+            DOOR_CONFIGS.join(", "),
+            request.doors_dir.display(),
+            request.gates.display()
+        )));
     }
-    Err(e) => {
-        if request.require_all_door_configs {
-            return Err(crate::GenerationError::InvalidInput(format!("gates config {}: {e}", request.gates.display())));
+    // Open states of those doors: a player can close one placed open.
+    let opened_door_ids: HashSet<i32> = door_open_ids
+        .iter()
+        .filter(|(closed, _)| door_ids.contains(*closed))
+        .map(|(_, open)| *open)
+        .collect();
+
+    // Loc/NPC definitions from the client cache: collision uses loc defs;
+    // navpois validates NPC/loc ids and operations against the same tables.
+    let (loc_defs, npc_types, loc_types) = match std::fs::read(request.config_jag) {
+        Ok(bytes) => {
+            let cache = Cache::unpack(&JagFile::new(bytes));
+            let loc_defs = LocDefs::from_locs(&cache.locs);
+            (loc_defs, cache.npcs, cache.locs)
         }
-        notes.push(format!("skipping gates.loc: {e}"));
-        config_failed += 1;
-    }
-}
-if config_failed == DOOR_CONFIGS.len() + 1 {
-    return Err(crate::GenerationError::InvalidInput(format!("no door configs parsed (need {} in {} plus {})",
-    DOOR_CONFIGS.join(", "),
-    request.doors_dir.display(),
-    request.gates.display())));
-}
-// Open states of those doors: a player can close one placed open.
-let opened_door_ids: HashSet<i32> = door_open_ids
-    .iter()
-    .filter(|(closed, _)| door_ids.contains(*closed))
-    .map(|(_, open)| *open)
-    .collect();
+        Err(e) => {
+            return Err(crate::GenerationError::InvalidInput(format!(
+                "cannot load loc defs from {}: {e}",
+                request.config_jag.display()
+            )))
+        }
+    };
 
-// Loc/NPC definitions from the client cache: collision uses loc defs;
-// navpois validates NPC/loc ids and operations against the same tables.
-let (loc_defs, npc_types, loc_types) = match std::fs::read(request.config_jag) {
-    Ok(bytes) => {
-        let cache = Cache::unpack(&JagFile::new(bytes));
-        let loc_defs = LocDefs::from_locs(&cache.locs);
-        (loc_defs, cache.npcs, cache.locs)
-    }
-    Err(e) => {
-        return Err(crate::GenerationError::InvalidInput(format!("cannot load loc defs from {}: {e}",
-        request.config_jag.display())))
-    }
-};
+    // Whole-world collision bake (the walkability source of truth).
+    let mut collision = bake_from_maps(request.maps_dir, &loc_defs, &door_ids)
+        .map_err(|e| format!("collision bake failed: {e}"))?;
+    let walkable = walkable_tiles(&collision);
 
-// Whole-world collision bake (the walkability source of truth).
-let mut collision = bake_from_maps(request.maps_dir, &loc_defs, &door_ids)
-    .map_err(|e| format!("collision bake failed: {e}"))?;
-let walkable = walkable_tiles(&collision);
-
-// The transport graph from the Server content tree (maps/scripts/pack
-// all live under the maps dir's parent); door edge from/to snap to the
-// nearest walkable tile on the collision just baked.
-let content_root = request.maps_dir.parent().unwrap_or(Path::new("."));
-let selected = request
-    .revision
-    .map(|revision| {
-        let revision = match revision {
-            274 => api::selected::ClientRevision::R274,
-            289 => api::selected::ClientRevision::R289,
-            other => return Err(crate::GenerationError::InvalidInput(format!("unsupported quest-family revision {other}"))),
-        };
-        let data = api::game_data::for_revision(revision)?;
-        data.quest_identity_for_bake()
-            .map_err(|error| format!("quest family: {error:?}"))
-    })
-    .transpose()?;
-let quest_source = selected
-    .as_ref()
-    .map(|(facts, identity)| crate::transport::QuestSource {
-        family: nav_planner::quest_gates::QuestFamilyId::new(identity.sha256, identity.schema),
-        facts,
-    });
-let (mut graph, audit) = derive_transports_for_bake(
-    content_root,
-    &loc_defs,
-    &collision,
-    &door_ids,
-    &parsed_door_configs,
-    quest_source.as_ref(),
-);
-assert_transmitted_varp_reqs(content_root, &graph);
-require_wilderness_teleport_legality(content_root, &graph)?;
-require_members_guards(content_root, &graph, &audit)?;
-let derived_zones = derive_zone_table(
-    content_root,
-    &collision,
-    &graph,
-    &npc_types,
-    &door_ids,
-    &opened_door_ids,
-)?;
-let zone_count = u32::try_from(derived_zones.table.zones().len())
-    .map_err(|_| "zone count exceeds the manifest range".to_string())?;
-let zone_npc_count = u32::try_from(derived_zones.npc_count)
-    .map_err(|_| "NPC zone count exceeds the manifest range".to_string())?;
-let group_count = derived_zones.table.groups().len();
-let hazard_count = nav_planner::zones::curated::HAZARDS.len();
-let npc_kind_count = derived_zones.npc_kind_count;
-let npc_count = derived_zones.npc_count;
-let always_count = derived_zones.always_count;
-let level_rule_count = derived_zones.level_rule_count;
-let shaped_count = derived_zones.shaped_count;
-let total_npc_spawns = derived_zones.total_npc_spawns;
-let carve_count = derived_zones.table.carves().len();
-graph.zones = Some(derived_zones.table);
-notes.push(format!(
+    // The transport graph from the Server content tree (maps/scripts/pack
+    // all live under the maps dir's parent); door edge from/to snap to the
+    // nearest walkable tile on the collision just baked.
+    let content_root = request.maps_dir.parent().unwrap_or(Path::new("."));
+    let selected = request
+        .revision
+        .map(|revision| {
+            let revision = match revision {
+                274 => api::selected::ClientRevision::R274,
+                289 => api::selected::ClientRevision::R289,
+                other => {
+                    return Err(crate::GenerationError::InvalidInput(format!(
+                        "unsupported quest-family revision {other}"
+                    )))
+                }
+            };
+            let data = api::game_data::for_revision(revision)?;
+            data.quest_identity_for_bake()
+                .map_err(|error| format!("quest family: {error:?}"))
+        })
+        .transpose()?;
+    let quest_source = selected
+        .as_ref()
+        .map(|(facts, identity)| crate::transport::QuestSource {
+            family: nav_planner::quest_gates::QuestFamilyId::new(identity.sha256, identity.schema),
+            facts,
+        });
+    let (mut graph, audit) = derive_transports_for_bake(
+        content_root,
+        &loc_defs,
+        &collision,
+        &door_ids,
+        &parsed_door_configs,
+        quest_source.as_ref(),
+    );
+    assert_transmitted_varp_reqs(content_root, &graph);
+    require_wilderness_teleport_legality(content_root, &graph)?;
+    require_members_guards(content_root, &graph, &audit)?;
+    let derived_zones = derive_zone_table(
+        content_root,
+        &collision,
+        &graph,
+        &npc_types,
+        &door_ids,
+        &opened_door_ids,
+    )?;
+    let zone_count = u32::try_from(derived_zones.table.zones().len())
+        .map_err(|_| "zone count exceeds the manifest range".to_string())?;
+    let zone_npc_count = u32::try_from(derived_zones.npc_count)
+        .map_err(|_| "NPC zone count exceeds the manifest range".to_string())?;
+    let group_count = derived_zones.table.groups().len();
+    let hazard_count = nav_planner::zones::curated::HAZARDS.len();
+    let npc_kind_count = derived_zones.npc_kind_count;
+    let npc_count = derived_zones.npc_count;
+    let always_count = derived_zones.always_count;
+    let level_rule_count = derived_zones.level_rule_count;
+    let shaped_count = derived_zones.shaped_count;
+    let total_npc_spawns = derived_zones.total_npc_spawns;
+    let carve_count = derived_zones.table.carves().len();
+    graph.zones = Some(derived_zones.table);
+    notes.push(format!(
     "zones: {zone_count} ({npc_count} NPC, {hazard_count} hazard), \
      {npc_kind_count} NPC kinds, {group_count} groups, {shaped_count} stationary melee shapes; \
      {total_npc_spawns} map NPC spawns counted; {always_count} Always / {level_rule_count} LevelRule; \
      {carve_count} carves"
 ));
-if audit.converted != 0 {
-    notes.push(format!(
-        "converted {} non-transmitted varp requirements to completed journal gates",
-        audit.converted
-    ));
-}
-if !audit.omitted.is_empty() {
-    let mut omitted: Vec<_> = audit.omitted.into_iter().collect();
-    omitted.sort_unstable_by_key(|(id, _)| *id);
-    notes.push(format!("omitted non-transmitted varp-gated edges without a unique completed journal proof: {omitted:?}"));
-}
-
-// The bank stand table from the same content tree (every `bankbooth`
-// placement with Use-quickly, plus `category=bank_teller` NPC stands).
-let banks = derive_banks(content_root);
-
-let bank_zones_path = content_root.join(BANK_ZONES_REL);
-let bank_zones_bytes = std::fs::read(&bank_zones_path)
-    .map_err(|e| format!("canlight bank_zones {}: {e}", bank_zones_path.display()))?;
-let bank_zones_text = std::str::from_utf8(&bank_zones_bytes)
-    .map_err(|e| format!("canlight bank_zones {}: {e}", bank_zones_path.display()))?;
-let zones = canlight::parse_bank_zones(bank_zones_text)?;
-let flags_ref = collision
-    .flags
-    .as_ref()
-    .expect("bake_from_maps always stamps raw flags");
-let canlight_bits =
-    canlight::bake_canlight(&collision, flags_ref, request.maps_dir, &loc_defs, &zones)?;
-
-// The raw baked flags ride in the sidecar; the v16 pack carries only
-// the packed walk surface (the router's resident form).
-let flags = collision
-    .flags
-    .take()
-    .expect("bake_from_maps always stamps raw flags");
-let flags_bytes =
-    encode_flags_sidecar(collision.origin, collision.width, collision.height, &flags);
-let bytes = encode(&collision, &graph, &banks)
-    .map_err(|error| format!("pack encode failed: {error}"))?;
-let reach_bits = bake_reach(&collision, &graph);
-let pack_digest: [u8; 32] = Sha256::digest(&bytes).into();
-let reach_bytes = encode_reach_sidecar(
-    collision.origin,
-    collision.width,
-    collision.height,
-    &reach_bits,
-    &pack_digest,
-);
-let revision_for_policy = request.revision.unwrap_or(274);
-let canlight_identity_digest =
-    identity_digest(revision_for_policy, &bank_zones_bytes, &canlight_bits);
-let canlight_identity = sha256_hex(&canlight_identity_digest);
-let canlight_binding = header_binding(&pack_digest, &canlight_identity_digest);
-let canlight_bytes = encode_canlight_sidecar(
-    collision.origin,
-    collision.width,
-    collision.height,
-    &canlight_bits,
-    &canlight_binding,
-);
-if request.input_fingerprints.is_none() {
-    let source_after_inputs = crate::bundle::fingerprints(content_root, &[request.config_jag])?;
-    let source_after = crate::bundle::source_digest_from_fingerprints(
-        content_root,
-        &[request.config_jag],
-        &source_after_inputs,
-    )?;
-    if source_before != source_after {
-        return Err("baker inputs changed during preparation".into());
+    if audit.converted != 0 {
+        notes.push(format!(
+            "converted {} non-transmitted varp requirements to completed journal gates",
+            audit.converted
+        ));
     }
-}
-let pois = match (request.revision, request.cache, request.content_id) {
-    (Some(revision), Some(_), Some(content_id)) => {
-        let content = nav_planner::map::identity::Digest::from_hex(content_id)
-            .map_err(|_| "decoded content identity is not SHA-256 hex".to_string())?;
-        let source = nav_planner::map::identity::Digest::from_hex(&source_before)
-            .map_err(|_| "source digest is not SHA-256 hex".to_string())?;
-        let generator = nav_planner::map::identity::Digest::from_hex(
-            &crate::services::pois_generator_identity_from_crate()?,
-        )
-        .map_err(|_| "navpois generator identity is not SHA-256 hex".to_string())?;
-        Some(
-            crate::services::produce_navpois(&crate::services::ProduceRequest {
-                revision,
-                content_root,
-                npcs: &npc_types,
-                locs: &loc_types,
-                content_id: content,
-                nav_sha256: nav_planner::map::identity::Digest(pack_digest),
-                source_sha256: source,
-                generator_sha256: generator,
-            })?
-            .bytes,
-        )
+    if !audit.omitted.is_empty() {
+        let mut omitted: Vec<_> = audit.omitted.into_iter().collect();
+        omitted.sort_unstable_by_key(|(id, _)| *id);
+        notes.push(format!("omitted non-transmitted varp-gated edges without a unique completed journal proof: {omitted:?}"));
     }
-    _ => None,
-};
-let mut manifest = match (request.revision, request.cache) {
-    (Some(revision), Some(cache)) => Some(capture_nav_manifest(revision,
-    cache,
-    &bytes,
-    Some(&flags_bytes),
-    Some(&reach_bytes),
-    Some(&canlight_bytes),
-    pois.as_deref(),
-    zone_count,
-    zone_npc_count,)?),
-    (None, None) => None,
-    _ => return Err("a bound bake needs both a revision and its cache manifest".into()),
-};
-if let Some(manifest) = &mut manifest {
-    manifest.source_sha256 = Some(source_before);
-};
-Ok(BakedNav {
-    pack: bytes,
-    flags: flags_bytes,
-    reach: reach_bytes,
-    canlight: canlight_bytes,
-    pois,
-    canlight_identity,
-    manifest,
-    summary: BakeSummary {
-        mapsquares: squares_baked(request.maps_dir),
-        width: collision.width,
-        height: collision.height,
-        walkable,
-        edges: graph.edges.len(),
-        banks: banks.len(),
-    },
-    notes,
-}) }
+
+    // The bank stand table from the same content tree (every `bankbooth`
+    // placement with Use-quickly, plus `category=bank_teller` NPC stands).
+    let banks = derive_banks(content_root);
+
+    let bank_zones_path = content_root.join(BANK_ZONES_REL);
+    let bank_zones_bytes = std::fs::read(&bank_zones_path)
+        .map_err(|e| format!("canlight bank_zones {}: {e}", bank_zones_path.display()))?;
+    let bank_zones_text = std::str::from_utf8(&bank_zones_bytes)
+        .map_err(|e| format!("canlight bank_zones {}: {e}", bank_zones_path.display()))?;
+    let zones = canlight::parse_bank_zones(bank_zones_text)?;
+    let flags_ref = collision
+        .flags
+        .as_ref()
+        .expect("bake_from_maps always stamps raw flags");
+    let canlight_bits =
+        canlight::bake_canlight(&collision, flags_ref, request.maps_dir, &loc_defs, &zones)?;
+
+    // The raw baked flags ride in the sidecar; the v16 pack carries only
+    // the packed walk surface (the router's resident form).
+    let flags = collision
+        .flags
+        .take()
+        .expect("bake_from_maps always stamps raw flags");
+    let flags_bytes =
+        encode_flags_sidecar(collision.origin, collision.width, collision.height, &flags);
+    let bytes = encode(&collision, &graph, &banks)
+        .map_err(|error| format!("pack encode failed: {error}"))?;
+    let reach_bits = bake_reach(&collision, &graph);
+    let pack_digest: [u8; 32] = Sha256::digest(&bytes).into();
+    let reach_bytes = encode_reach_sidecar(
+        collision.origin,
+        collision.width,
+        collision.height,
+        &reach_bits,
+        &pack_digest,
+    );
+    let revision_for_policy = request.revision.unwrap_or(274);
+    let canlight_identity_digest =
+        identity_digest(revision_for_policy, &bank_zones_bytes, &canlight_bits);
+    let canlight_identity = sha256_hex(&canlight_identity_digest);
+    let canlight_binding = header_binding(&pack_digest, &canlight_identity_digest);
+    let canlight_bytes = encode_canlight_sidecar(
+        collision.origin,
+        collision.width,
+        collision.height,
+        &canlight_bits,
+        &canlight_binding,
+    );
+    if request.input_fingerprints.is_none() {
+        let source_after_inputs = crate::bundle::fingerprints(content_root, &[request.config_jag])?;
+        let source_after = crate::bundle::source_digest_from_fingerprints(
+            content_root,
+            &[request.config_jag],
+            &source_after_inputs,
+        )?;
+        if source_before != source_after {
+            return Err("baker inputs changed during preparation".into());
+        }
+    }
+    let pois = match (request.revision, request.cache, request.content_id) {
+        (Some(revision), Some(_), Some(content_id)) => {
+            let content = nav_planner::map::identity::Digest::from_hex(content_id)
+                .map_err(|_| "decoded content identity is not SHA-256 hex".to_string())?;
+            let source = nav_planner::map::identity::Digest::from_hex(&source_before)
+                .map_err(|_| "source digest is not SHA-256 hex".to_string())?;
+            let generator = nav_planner::map::identity::Digest::from_hex(
+                &crate::services::pois_generator_identity_from_crate()?,
+            )
+            .map_err(|_| "navpois generator identity is not SHA-256 hex".to_string())?;
+            Some(
+                crate::services::produce_navpois(&crate::services::ProduceRequest {
+                    revision,
+                    content_root,
+                    npcs: &npc_types,
+                    locs: &loc_types,
+                    content_id: content,
+                    nav_sha256: nav_planner::map::identity::Digest(pack_digest),
+                    source_sha256: source,
+                    generator_sha256: generator,
+                })?
+                .bytes,
+            )
+        }
+        _ => None,
+    };
+    let mut manifest = match (request.revision, request.cache) {
+        (Some(revision), Some(cache)) => Some(capture_nav_manifest(
+            revision,
+            cache,
+            &bytes,
+            Some(&flags_bytes),
+            Some(&reach_bytes),
+            Some(&canlight_bytes),
+            pois.as_deref(),
+            zone_count,
+            zone_npc_count,
+        )?),
+        (None, None) => None,
+        _ => return Err("a bound bake needs both a revision and its cache manifest".into()),
+    };
+    if let Some(manifest) = &mut manifest {
+        manifest.source_sha256 = Some(source_before);
+    };
+    Ok(BakedNav {
+        pack: bytes,
+        flags: flags_bytes,
+        reach: reach_bytes,
+        canlight: canlight_bytes,
+        pois,
+        canlight_identity,
+        manifest,
+        summary: BakeSummary {
+            mapsquares: squares_baked(request.maps_dir),
+            width: collision.width,
+            height: collision.height,
+            walkable,
+            edges: graph.edges.len(),
+            banks: banks.len(),
+        },
+        notes,
+    })
+}
 
 /// Count `.jm2` files under `maps_dir` (for the summary line).
 pub fn squares_baked(maps_dir: &Path) -> usize {

@@ -65,8 +65,18 @@ fn nav_manifest_binds_revision_cache_pack_and_optional_flags() {
     let dir = Fixture::new();
     fixture_cache(&dir.0);
     let cache = CacheManifest::capture(289, &dir.0).unwrap();
-    let manifest =
-        nav_bake::manifest::capture_nav_manifest(289, &cache, b"pack", Some(b"flags"), None, None, None, 0, 0).unwrap();
+    let manifest = nav_bake::manifest::capture_nav_manifest(
+        289,
+        &cache,
+        b"pack",
+        Some(b"flags"),
+        None,
+        None,
+        None,
+        0,
+        0,
+    )
+    .unwrap();
     manifest
         .verify(289, &cache, b"pack", Some(b"flags"), None, None, None, 0, 0)
         .unwrap();

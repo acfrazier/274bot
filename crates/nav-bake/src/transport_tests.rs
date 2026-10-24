@@ -6,9 +6,9 @@ use super::wilderness::{
 };
 use super::*;
 use crate::collision::bake_from_maps;
-use nav_planner::collision::WorldCollision;
 use client::config::{Cache, LocType};
 use client::io::JagFile;
+use nav_planner::collision::WorldCollision;
 
 const RUNE_JOURNAL_NAME: &str = "Fixture Rune Journal";
 const TREE_JOURNAL_NAME: &str = "Fixture Tree Journal";
@@ -1392,8 +1392,8 @@ fn selected_274_and_289_content_derives_the_keyed_hut_crossing() {
 
 #[test]
 fn straight_door_reverse_routes_out_when_behind_loc_is_scenery() {
-    use nav_planner::router::{find, Leg, RouteError};
     use client::dash3d::CollisionFlag;
+    use nav_planner::router::{find, Leg, RouteError};
 
     let fx = Fixture::new();
     fx.write("pack/loc.pack", "1530=loc_1530\n1531=loc_1531\n");
@@ -8984,7 +8984,10 @@ fn standable_wildy_on(
     None
 }
 
-fn teleport_takeoffs(start: WorldTile, route: &nav_planner::router::Route) -> Vec<(WorldTile, i32)> {
+fn teleport_takeoffs(
+    start: WorldTile,
+    route: &nav_planner::router::Route,
+) -> Vec<(WorldTile, i32)> {
     let mut cur = start;
     let mut out = Vec::new();
     for leg in &route.legs {
@@ -9007,7 +9010,11 @@ fn teleport_takeoffs(start: WorldTile, route: &nav_planner::router::Route) -> Ve
     out
 }
 
-fn assert_legal_teleports(graph: &TransportGraph, start: WorldTile, route: &nav_planner::router::Route) {
+fn assert_legal_teleports(
+    graph: &TransportGraph,
+    start: WorldTile,
+    route: &nav_planner::router::Route,
+) {
     for (from, cap) in teleport_takeoffs(start, route) {
         let level = graph.wilderness.level(from);
         assert!(
@@ -9747,7 +9754,6 @@ p_telejump(movecoord(coord, 0, 1, 0));
     );
 }
 
-
 #[test]
 fn direct_relative_climbs_scan_area_scripts_without_erasing_gates() {
     let fx = Fixture::new();
@@ -9786,9 +9792,11 @@ if (%quest = 2) { p_telejump(movecoord(coord, -549, 0, 756)); }
         op: vec![Some("Climb-down".into())],
         ..Default::default()
     }));
-    let graph = derive_transports(fx.path(),
-    &defs,
-    &bake_collision(&fx, &defs, &HashSet::new()),);
+    let graph = derive_transports(
+        fx.path(),
+        &defs,
+        &bake_collision(&fx, &defs, &HashSet::new()),
+    );
     let down = graph
         .edges
         .iter()

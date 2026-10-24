@@ -266,7 +266,8 @@ pub(super) fn diagonal_door_crossings(
         };
         // The door's own footprint is the `SQ_BLOCKED` base the open
         // removes; face walls and blocked ground stay.
-        let faces = collision.walkable_word(at.x, at.z, at.level) & !nav_planner::collision::SQ_BLOCKED;
+        let faces =
+            collision.walkable_word(at.x, at.z, at.level) & !nav_planner::collision::SQ_BLOCKED;
         let ground = collision.flag(at.x, at.z, at.level) & CollisionFlag::WR_GRND as u32;
         collision.standable(stand) && faces & mask == 0 && ground == 0
     };

@@ -265,7 +265,6 @@ impl WorldCollision {
     }
 }
 
-
 /// Derive the walkable word from the raw collision flags. Footprint and
 /// ground (`SQ_BLOCKED`) reject every `tryMove` direction because those
 /// masks share that base. Face flags (`W_N`/`W_S`/…) only reject the

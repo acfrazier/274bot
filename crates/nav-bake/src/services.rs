@@ -3,6 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
+use crate::pack::{parse_loc_fields, parse_map_line, section};
 use client::config::{LocType, NpcType};
 use nav_planner::collision::game_plane;
 use nav_planner::map::formats::{
@@ -16,7 +17,6 @@ use nav_planner::map::poi::{
 };
 use nav_planner::map::services::{pois_policy_digest, POIS_POLICY_ALGORITHM};
 use nav_planner::map::{Rows, Text};
-use crate::pack::{parse_loc_fields, parse_map_line, section};
 use sha2::{Digest as _, Sha256};
 
 /// Workspace-relative producer, parser and schema sources for navpois identity.
@@ -34,7 +34,6 @@ pub const POIS_GENERATOR_SOURCES: [&str; 10] = [
     "crates/nav-planner/src/map/services.rs",
 ];
 pub const POIS_GENERATOR_ID: &str = "navpois-1";
-
 
 /// Engine `CollisionType` of a walking NPC (`PathingEntity.getCollisionStrategy`),
 /// tested per tile by `CollisionStrategy.canMove`.

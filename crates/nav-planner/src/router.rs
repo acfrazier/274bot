@@ -41,9 +41,9 @@ use api::work::{Checkpoint, StepContext, WorkPhase};
 use client::dash3d::CollisionFlag;
 
 use crate::collision::WorldCollision;
-use crate::movement::step_ok;
 use crate::contract::{ContractError, NavLease, PackId, RouteView};
 use crate::essence::{EssenceSession, ESSENCE_MINE_EXIT_TICKS, ESSENCE_MINE_PORTALS};
+use crate::movement::step_ok;
 use crate::quest_gates::QuestFamilyMismatch;
 use crate::transport::{select_web_action, TransportEdge, TransportGraph};
 use crate::world_state::WorldState;
@@ -888,7 +888,6 @@ pub struct AvoidRect {
     /// `None` = every level.
     pub level: Option<i32>,
 }
-
 
 /// Which blocker-attribution rule a cooperative diagnosis uses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -4061,7 +4060,6 @@ const STEPS: [(i32, i32); 8] = [
     (-1, 1),
     (1, 1),
 ];
-
 
 /// Dijkstra over `collision` walk steps (each costing the search's run
 /// rate) and `graph` transport edges (each costing `edge.ticks`), all in
@@ -9032,7 +9030,6 @@ fn wildy_step_ok(
 ) -> bool {
     allow_wilderness || graph.wilderness.contains(cur) || !graph.wilderness.contains(next)
 }
-
 
 /// Return the component reachable from `origin` using baked client-style
 /// walk steps within the requested Chebyshev radius. This deliberately omits

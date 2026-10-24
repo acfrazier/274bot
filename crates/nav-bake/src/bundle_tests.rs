@@ -153,7 +153,8 @@ fn a_matching_stamp_covers_and_every_change_is_stale() {
     }];
 
     assert!(
-        invalid_input_detail(&baked.covers(&expectation(&modified)).unwrap_err()).contains("changed")
+        invalid_input_detail(&baked.covers(&expectation(&modified)).unwrap_err())
+            .contains("changed")
     );
     let same_metadata_replacement = [InputFingerprint {
         path: "/content/maps/m1.jm2".into(),
@@ -161,10 +162,12 @@ fn a_matching_stamp_covers_and_every_change_is_stale() {
         modified_nanos: 5,
         sha256: "99".repeat(32),
     }];
-    assert!(
-        invalid_input_detail(&baked.covers(&expectation(&same_metadata_replacement)).unwrap_err())
-            .contains("changed")
-    );
+    assert!(invalid_input_detail(
+        &baked
+            .covers(&expectation(&same_metadata_replacement))
+            .unwrap_err()
+    )
+    .contains("changed"));
 
     let added = [
         modified[0].clone(),

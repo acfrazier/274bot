@@ -106,7 +106,6 @@ pub(super) fn web_edges(
     }
 }
 
-
 /// Obj ids whose `.obj` block sets `slashattack_anim` to something other
 /// than `human_unarmedpunch` — the same test `~slash_checker` uses on the
 /// worn right hand. Unnamed pack rows are skipped.

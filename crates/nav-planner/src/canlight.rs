@@ -28,7 +28,6 @@ pub const BANK_ZONES_REL: &str = "scripts/skill_firemaking/configs/bank_zones.db
 
 const LEVELS: i32 = 4;
 
-
 /// Policy digest mixed into the canlight identity: policy id, algorithm id,
 /// revision, and the canonical `bank_zones.dbrow` bytes. Pack SHA and mask
 /// bytes are **not** included here; [`identity_digest`] adds the baked mask
@@ -84,7 +83,6 @@ pub fn expected_header_binding(
     Ok(header_binding(&pack, &policy))
 }
 
-
 /// Walk-buffer index of `tile`, `None` outside the grid or on unknown levels.
 pub fn canlight_cell_index(collision: &WorldCollision, tile: WorldTile) -> Option<usize> {
     if !(0..LEVELS).contains(&tile.level) {
@@ -110,7 +108,6 @@ pub fn canlight_at(bits: &[u64], collision: &WorldCollision, tile: WorldTile) ->
     bits.get(idx / 64)
         .is_some_and(|word| word & (1 << (idx % 64)) != 0)
 }
-
 
 #[cfg(test)]
 #[path = "canlight_tests.rs"]

@@ -78,7 +78,6 @@ fn graph(edges: Vec<TransportEdge>, teleports: Vec<TransportEdge>) -> TransportG
 }
 #[test]
 fn reach_sidecar_bits_equal_bake_reach_on_disconnected_and_courtyard_worlds() {
-    
     use sha2::{Digest, Sha256};
 
     let disconnected = (
@@ -116,7 +115,6 @@ fn reach_sidecar_bits_equal_bake_reach_on_disconnected_and_courtyard_worlds() {
 
 #[test]
 fn same_geometry_different_transport_does_not_reuse_reach_binding() {
-    
     use sha2::{Digest, Sha256};
 
     let c = disconnected_world();
