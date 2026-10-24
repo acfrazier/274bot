@@ -73,6 +73,47 @@ pub struct SeatResultValue<'a> {
     pub value: &'a [u8],
 }
 
+/// A rejected native seat-page projection, before any bytes reach the wire.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum SeatPageError {
+    #[error("seat live vector length {len} exceeds cap {MAX_SEAT_LIVE}")]
+    LiveTooLarge { len: usize },
+    #[error("seat result vector length {len} exceeds cap {MAX_SEAT_RESULTS}")]
+    ResultsTooLarge { len: usize },
+    #[error("seat live and result credits exceed cap {MAX_RESULTS}")]
+    CreditLimit,
+    #[error("seat live/detail count mismatch: {live} live, {details} details")]
+    LiveDetailCountMismatch { live: usize, details: usize },
+    #[error("seat live/detail id mismatch at index {index}")]
+    LiveDetailIdMismatch { index: usize },
+    #[error("seat live entry {id} is its own parent")]
+    OwnParent { id: u64 },
+    #[error("seat prompt args length {len} exceeds cap {MAX_SEAT_BINARY_BYTES}")]
+    PromptArgsTooLarge { len: usize },
+    #[error("seat live entry {id} has misaligned prompt sequence")]
+    PromptSequenceMismatch { id: u64 },
+    #[error("seat results are not strictly ordered by terminal sequence")]
+    UnorderedResults,
+    #[error("seat result value length {len} exceeds cap {MAX_SEAT_BINARY_BYTES}")]
+    ResultValueTooLarge { len: usize },
+    #[error("duplicate seat result value for {id}")]
+    DuplicateResultValue { id: u64 },
+    #[error("seat result value {id} has no matching terminal result")]
+    MissingTerminalResult { id: u64 },
+    #[error("seat result value {id} matches multiple terminal results")]
+    AmbiguousTerminalResult { id: u64 },
+    #[error("seat result value {id} requires a Done or Failed outcome")]
+    ResultValueOutcome { id: u64 },
+    #[error("duplicate live/terminal seat id")]
+    DuplicateSeatId,
+    #[error("local ArgsTooLarge refusal cannot be published on the seat wire")]
+    LocalArgsTooLargeRefusal,
+    #[error("Reset is not a seat-published terminal")]
+    ResetTerminal,
+    #[error("Terminated is not a seat-published terminal")]
+    TerminatedTerminal,
+}
+
 impl<'a> SeatPageInput<'a> {
     /// Validate and borrow one complete seat page and its revoke acknowledgement.
     pub fn new(
@@ -80,7 +121,7 @@ impl<'a> SeatPageInput<'a> {
         results: &'a [NativeSeatResult],
         live_details: &'a [SeatLiveDetails<'a>],
         mirror_revokes_consumed: u64,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, SeatPageError> {
         let page = Self {
             live,
             results,
@@ -93,7 +134,10 @@ impl<'a> SeatPageInput<'a> {
     }
 
     /// Attach optional result bytes and validate the complete page.
-    pub fn with_result_values(mut self, values: &'a [SeatResultValue<'a>]) -> Result<Self, String> {
+    pub fn with_result_values(
+        mut self,
+        values: &'a [SeatResultValue<'a>],
+    ) -> Result<Self, SeatPageError> {
         self.result_values = values;
         self.validate()?;
         Ok(self)
@@ -125,62 +169,54 @@ impl<'a> SeatPageInput<'a> {
     }
 
     /// Validate the complete seat page.
-    pub fn validate(&self) -> Result<(), String> {
+    pub fn validate(&self) -> Result<(), SeatPageError> {
         validate_seat_page(self)
     }
 }
 
-fn seat_terminal_publishable(terminal: SeatTerminal) -> Result<(), String> {
+fn seat_terminal_publishable(terminal: SeatTerminal) -> Result<(), SeatPageError> {
     match terminal {
         SeatTerminal::Refused(Refusal::ArgsTooLarge) => {
-            Err("local ArgsTooLarge refusal cannot be published on the seat wire".into())
+            Err(SeatPageError::LocalArgsTooLargeRefusal)
         }
         SeatTerminal::Aborted(AbortReason::Reset) => {
-            Err("Reset is not a seat-published terminal".into())
+            Err(SeatPageError::ResetTerminal)
         }
         SeatTerminal::Aborted(AbortReason::Terminated) => {
-            Err("Terminated is not a seat-published terminal".into())
+            Err(SeatPageError::TerminatedTerminal)
         }
         _ => Ok(()),
     }
 }
 
-fn validate_seat_page(page: &SeatPageInput<'_>) -> Result<(), String> {
+fn validate_seat_page(page: &SeatPageInput<'_>) -> Result<(), SeatPageError> {
     if page.live.len() > MAX_SEAT_LIVE {
-        return Err(format!(
-            "seat live vector length {} exceeds cap {MAX_SEAT_LIVE}",
-            page.live.len()
-        ));
+        return Err(SeatPageError::LiveTooLarge {
+            len: page.live.len(),
+        });
     }
     if page.results.len() > MAX_SEAT_RESULTS {
-        return Err(format!(
-            "seat result vector length {} exceeds cap {MAX_SEAT_RESULTS}",
-            page.results.len()
-        ));
+        return Err(SeatPageError::ResultsTooLarge {
+            len: page.results.len(),
+        });
     }
     if page.live.len() + page.results.len() > MAX_RESULTS {
-        return Err(format!(
-            "seat live and result credits exceed cap {MAX_RESULTS}"
-        ));
+        return Err(SeatPageError::CreditLimit);
     }
     let mut ids = [0u64; MAX_RESULTS];
     let mut id_count = 0usize;
     if page.live_details.len() != page.live.len() {
-        return Err(format!(
-            "seat live/detail count mismatch: {} live, {} details",
-            page.live.len(),
-            page.live_details.len()
-        ));
+        return Err(SeatPageError::LiveDetailCountMismatch {
+            live: page.live.len(),
+            details: page.live_details.len(),
+        });
     }
     for (index, (entry, details)) in page.live.iter().zip(page.live_details).enumerate() {
         if entry.id != details.id {
-            return Err(format!("seat live/detail id mismatch at index {index}"));
+            return Err(SeatPageError::LiveDetailIdMismatch { index });
         }
         if entry.parent == Some(entry.id) {
-            return Err(format!(
-                "seat live entry {} is its own parent",
-                entry.id.get()
-            ));
+            return Err(SeatPageError::OwnParent { id: entry.id.get() });
         }
         ids[id_count] = entry.id.get();
         id_count += 1;
@@ -190,25 +226,23 @@ fn validate_seat_page(page: &SeatPageInput<'_>) -> Result<(), String> {
                     && entry.decisions_consumed.checked_add(1) == Some(prompt.sequence.get()) =>
             {
                 if prompt.args.len() > MAX_SEAT_BINARY_BYTES {
-                    return Err(format!(
-                        "seat prompt args length {} exceeds cap {MAX_SEAT_BINARY_BYTES}",
-                        prompt.args.len()
-                    ));
+                    return Err(SeatPageError::PromptArgsTooLarge {
+                        len: prompt.args.len(),
+                    });
                 }
             }
             None if entry.prompt.is_none() => {}
             _ => {
-                return Err(format!(
-                    "seat live entry {} has misaligned prompt sequence",
-                    entry.id.get()
-                ))
+                return Err(SeatPageError::PromptSequenceMismatch {
+                    id: entry.id.get(),
+                })
             }
         }
     }
     let mut previous_seq = 0;
     for result in page.results.iter() {
         if result.seq == 0 || result.seq <= previous_seq {
-            return Err("seat results are not strictly ordered by terminal sequence".into());
+            return Err(SeatPageError::UnorderedResults);
         }
         ids[id_count] = result.id.get();
         id_count += 1;
@@ -217,46 +251,39 @@ fn validate_seat_page(page: &SeatPageInput<'_>) -> Result<(), String> {
     }
     for (index, result_value) in page.result_values.iter().enumerate() {
         if result_value.value.len() > MAX_SEAT_BINARY_BYTES {
-            return Err(format!(
-                "seat result value length {} exceeds cap {MAX_SEAT_BINARY_BYTES}",
-                result_value.value.len()
-            ));
+            return Err(SeatPageError::ResultValueTooLarge {
+                len: result_value.value.len(),
+            });
         }
         if page.result_values[..index]
             .iter()
             .any(|previous| previous.id == result_value.id)
         {
-            return Err(format!(
-                "duplicate seat result value for {}",
-                result_value.id.get()
-            ));
+            return Err(SeatPageError::DuplicateResultValue {
+                id: result_value.id.get(),
+            });
         }
         let mut matching = page
             .results
             .iter()
             .filter(|result| result.id == result_value.id);
-        let result = matching.next().ok_or_else(|| {
-            format!(
-                "seat result value {} has no matching terminal result",
-                result_value.id.get()
-            )
+        let result = matching.next().ok_or(SeatPageError::MissingTerminalResult {
+            id: result_value.id.get(),
         })?;
         if matching.next().is_some() {
-            return Err(format!(
-                "seat result value {} matches multiple terminal results",
-                result_value.id.get()
-            ));
+            return Err(SeatPageError::AmbiguousTerminalResult {
+                id: result_value.id.get(),
+            });
         }
         if !matches!(result.outcome, SeatTerminal::Done | SeatTerminal::Failed) {
-            return Err(format!(
-                "seat result value {} requires a Done or Failed outcome",
-                result_value.id.get()
-            ));
+            return Err(SeatPageError::ResultValueOutcome {
+                id: result_value.id.get(),
+            });
         }
     }
     ids[..id_count].sort_unstable();
     if ids[..id_count].windows(2).any(|pair| pair[0] == pair[1]) {
-        return Err("duplicate live/terminal seat id".into());
+        return Err(SeatPageError::DuplicateSeatId);
     }
     Ok(())
 }

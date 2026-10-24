@@ -1992,7 +1992,7 @@ fn queue_bank_decision(
     sequence: DecisionSequence,
     answer: Value,
 ) -> Result<(), String> {
-    let answer = crate::channel::encode(&answer)?;
+    let answer = crate::channel::encode(&answer).map_err(|error| error.to_string())?;
     if answer.len() > isolate_fb::MAX_SEAT_BINARY_BYTES {
         return Err(format!(
             "native bank decision exceeds {} bytes",
@@ -5753,7 +5753,7 @@ pub(crate) mod tests {
             },
         ];
         HOST.with(|host| host.borrow_mut().ops = placed);
-        let skipped = MaybeInteractReq::Skip(crate::shim::RejectedRow("a number".into()));
+        let skipped = MaybeInteractReq::Skip(crate::shim::RejectedRow::new("a number".into()));
         let rows = vec![js(2), skipped, js(5)];
         assert_eq!(
             merge_ops(rows),

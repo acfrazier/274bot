@@ -76,36 +76,24 @@ impl RaisedPrayers {
 /// One prayer varp's requested state, shared by toggle and clear operations.
 /// Its only caller is the `load` isolate's prayer machine.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(
-    not(feature = "load"),
-    expect(dead_code, reason = "only caller is the `load` isolate prayer machine")
-)]
-pub(crate) struct PrayerToggle {
+pub struct PrayerToggle {
     varp: i32,
     want: OnArg,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(
-    not(feature = "load"),
-    expect(dead_code, reason = "only caller is the `load` isolate prayer machine")
-)]
-pub(crate) enum ToggleProgress {
+pub enum ToggleProgress {
     Matched,
     Pending,
     TimedOut,
 }
 
-#[cfg_attr(
-    not(feature = "load"),
-    expect(dead_code, reason = "only caller is the `load` isolate prayer machine")
-)]
 impl PrayerToggle {
-    pub(crate) const fn new(varp: i32, want: OnArg) -> Self {
+    pub const fn new(varp: i32, want: OnArg) -> Self {
         Self { varp, want }
     }
 
     /// Apply the shared observed-varp-before-timeout rule.
-    pub(crate) fn progress(
+    pub fn progress(
         self,
         observation: &PrayerObservation,
         timed_out: bool,
@@ -129,10 +117,16 @@ impl PrayerToggle {
 /// callers commit it with [`PrayerSweep::accepted`] after admission and,
 /// where receipts exist, after its dispatch receipt is accepted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct SweepClick {
+pub struct SweepClick {
     pub(crate) index: usize,
     pub(crate) varp: i32,
     pub(crate) button_com: i32,
+}
+
+impl SweepClick {
+    pub const fn button_com(&self) -> i32 {
+        self.button_com
+    }
 }
 
 /// The completion counters for one observed prayer sweep.
@@ -149,14 +143,14 @@ pub struct PrayerSweepReport {
 /// batches, callers accept only the accepted receipt prefix. Timeout masks are
 /// caller-owned so each independently-dispatched row can expire on its own.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub(crate) struct PrayerSweep {
+pub struct PrayerSweep {
     cursor: u8,
     pending: u32,
     report: PrayerSweepReport,
 }
 
 impl PrayerSweep {
-    pub(crate) const fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             cursor: 0,
             pending: 0,
@@ -178,7 +172,7 @@ impl PrayerSweep {
     /// Settle each admitted click independently. `timed_out` and the returned
     /// mask use one bit per overlay varp offset from `PRAYER_VARP0`. A matching
     /// off observation wins; a timeout advances the best-effort sweep.
-    pub(crate) fn observe(&mut self, observation: &PrayerObservation, timed_out: u32) -> u32 {
+    pub fn observe(&mut self, observation: &PrayerObservation, timed_out: u32) -> u32 {
         let mut settled = 0;
         for index in 0..PRAYER_COUNT {
             let bit = 1_u32 << index;
@@ -201,7 +195,7 @@ impl PrayerSweep {
     /// Active off-click candidates in selected order. The iterator is
     /// allocation-free; callers may take a capacity-limited prefix, then call
     /// `accepted` for its host/receipt-accepted prefix only.
-    pub(crate) fn candidates<'a>(
+    pub fn candidates<'a>(
         &'a self,
         data: &'a SelectedGameData,
         observation: &'a PrayerObservation,
@@ -225,7 +219,7 @@ impl PrayerSweep {
 
     /// Commit one row of an accepted prefix. False means the candidate is
     /// stale, out of order, already pending, or not an overlay varp.
-    pub(crate) fn accepted(&mut self, click: SweepClick) -> bool {
+    pub fn accepted(&mut self, click: SweepClick) -> bool {
         let Some(bit) = Self::bit(click.varp) else {
             return false;
         };
@@ -242,11 +236,11 @@ impl PrayerSweep {
     }
 
     /// One pending bit per overlay varp offset from `PRAYER_VARP0`.
-    pub(crate) const fn pending_mask(&self) -> u32 {
+    pub const fn pending_mask(&self) -> u32 {
         self.pending
     }
 
-    pub(crate) const fn report(&self) -> PrayerSweepReport {
+    pub const fn report(&self) -> PrayerSweepReport {
         self.report
     }
 }

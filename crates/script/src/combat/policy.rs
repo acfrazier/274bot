@@ -49,8 +49,7 @@ pub fn wanted_protect<'a>(
 
 /// Hunt's isolate keeps just the fields the protect picker uses. This adapter
 /// feeds the same native rule without constructing or copying a GameSnapshot.
-#[cfg(feature = "load")]
-pub(crate) fn wanted_protect_hunt<'a>(
+pub fn wanted_protect_hunt<'a>(
     threats: &ThreatSet,
     local_player_index: usize,
     projectiles: impl Iterator<Item = (i32, Option<usize>)>,

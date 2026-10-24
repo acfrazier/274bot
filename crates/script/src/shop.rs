@@ -126,10 +126,7 @@ impl NativeObservation {
         };
         Self {
             tick: scene.session_tick(),
-            session: Session {
-                epoch: scene.epoch(),
-                login: scene.login_mark(),
-            },
+            session: Session::new(scene.epoch(), scene.login_mark()),
             chat_seq: seq_of(false),
             cant_reach_seq: seq_of(true),
             ingame: session.ingame().unwrap_or(false),
@@ -217,21 +214,22 @@ fn choose_keeper(
                 .as_deref()
                 .is_some_and(|n| n.trim().eq_ignore_ascii_case(name))
         })
-        .map(|row| shop_open::Candidate {
-            name: row.name.as_deref().unwrap_or_default(),
-            action: row
-                .actions
-                .iter()
-                .find(|op| op.eq_ignore_ascii_case("trade"))
-                .map(|op| &**op),
-            index: row.index,
-            tile: WorldTile {
-                x: if row.size >= 1 { row.nx } else { row.x },
-                z: if row.size >= 1 { row.nz } else { row.z },
-                level: row.level,
-            },
-            size: row.size,
-            distance: row.distance,
+        .map(|row| {
+            shop_open::Candidate::new(
+                row.name.as_deref().unwrap_or_default(),
+                row.actions
+                    .iter()
+                    .find(|op| op.eq_ignore_ascii_case("trade"))
+                    .map(|op| &**op),
+                row.index,
+                WorldTile {
+                    x: if row.size >= 1 { row.nx } else { row.x },
+                    z: if row.size >= 1 { row.nz } else { row.z },
+                    level: row.level,
+                },
+                row.size,
+                row.distance,
+            )
         });
     shop_open::choose_keeper(candidates, view)
 }
@@ -349,7 +347,7 @@ impl Family for Shop {
                 let Some(keeper) = probe.keeper.resolve() else {
                     return refused;
                 };
-                shop.name = keeper.name;
+                shop.name = keeper.into_name();
                 shop.phase = Phase::WaitBoundary;
                 let facts = probe.facts();
                 if probe.shop_open {
@@ -589,16 +587,16 @@ impl Shop {
             Some(tick),
             format_args!(
                 "npc={} index={} route={:?} deadline={:?}",
-                keeper.name,
-                keeper.index,
-                keeper.route,
+                keeper.name(),
+                keeper.index(),
+                keeper.route(),
                 self.open.deadline()
             ),
         );
         cx.emit(InteractReq::Npc {
-            name: keeper.name.clone(),
-            action: keeper.action.clone(),
-            index: Some(keeper.index),
+            name: keeper.name().to_owned(),
+            action: keeper.action().to_owned(),
+            index: Some(keeper.index()),
         });
     }
 
@@ -948,16 +946,15 @@ struct Probe<'a> {
 impl Probe<'_> {
     /// The facts the shared open core decides from.
     fn facts(&self) -> Facts {
-        Facts {
-            tick: self.tick,
-            session: self.session,
-            chat_seq: self.chat_seq,
-            cant_reach_seq: self.cant_reach_seq,
-            usable: self.shop_open && self.has_stock && !self.stock.is_empty(),
-            trade_taken: self
-                .tick
+        Facts::new(
+            self.tick,
+            self.session,
+            self.chat_seq,
+            self.cant_reach_seq,
+            self.shop_open && self.has_stock && !self.stock.is_empty(),
+            self.tick
                 .is_some_and(|tick| trade_emitted_on(observed::with(Scene::epoch), tick)),
-        }
+        )
     }
 }
 
@@ -1087,8 +1084,8 @@ mod tests {
         assert!(choose_keeper(&[], "Shop keeper", None).is_none());
         // No live flood: the nearest Trade row by straight-line distance.
         let nearest = choose_keeper(&rows, " shop keeper ", None).unwrap();
-        assert_eq!((nearest.index, nearest.route), (4, KeeperRoute::Unknown(2)));
-        assert_eq!(nearest.action, "Trade");
+        assert_eq!((nearest.index(), nearest.route()), (4, KeeperRoute::Unknown(2)));
+        assert_eq!(nearest.action(), "Trade");
     }
 
     fn shop(kind: Kind, name: &str, requested: i32, phase: Phase) -> Shop {

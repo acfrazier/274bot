@@ -3,13 +3,11 @@
 //! (`on_is_up`). `tick` runs on the caller's pump at a game-tick edge and
 //! must return; panics are caught, never abort the process.
 
-#[cfg(feature = "load")]
 #[path = "slot/api.rs"]
 mod api_seat;
-#[cfg(feature = "load")]
 #[path = "slot/bank.rs"]
 mod bank_seat;
-pub(crate) mod compiled;
+pub mod compiled;
 mod pending;
 use crate::native::{Interrupt, RetainedMemory, ScriptFailure, ScriptFlow, StopReason};
 pub use compiled::{prepare_config, CompiledDelivery};
@@ -519,9 +517,7 @@ pub struct SlotScript {
     /// current hold. Cleared when the folded batch is consumed after resume.
     #[cfg(feature = "load")]
     held_channel_refusals: Vec<u64>,
-    #[cfg(feature = "load")]
     api: Option<Box<api_seat::ApiSeat>>,
-    #[cfg(feature = "load")]
     bank: Option<Box<bank_seat::BankSeat>>,
     retained: Option<Arc<std::sync::Mutex<RetainedMemory>>>,
     native_runtime: crate::native::ledger::Runtime,
@@ -675,9 +671,7 @@ impl SlotScript {
             seat_lifecycle: Vec::new(),
             #[cfg(feature = "load")]
             held_channel_refusals: Vec::new(),
-            #[cfg(feature = "load")]
             api: None,
-            #[cfg(feature = "load")]
             bank: None,
             retained: None,
             native_runtime: Default::default(),

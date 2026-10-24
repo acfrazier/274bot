@@ -190,27 +190,27 @@ impl HostAction {
 
 /// Allocated only on first native admission. There is one foreground owner,
 /// one outstanding walk and a bounded outbox, not a second navigation runtime.
-pub(crate) struct Ledger {
-    pub owner: Option<Arc<Owner>>,
+pub struct Ledger {
+    pub(crate) owner: Option<Arc<Owner>>,
     next_id: u64,
-    pub outbox: Vec<HostAction>,
-    pub walk: Option<WalkReceipt>,
-    pub walk_events: Vec<WalkEvent>,
-    pub interaction: Option<InteractionReceipt>,
-    pub interaction_request: Option<NonZeroU64>,
-    pub bank_pick: Option<BankPickReceipt>,
-    pub bank_pick_request: Option<NonZeroU64>,
-    pub assess_owner: Option<Arc<Owner>>,
-    pub assess_receipt: Option<AssessReceipt>,
-    pub assess_request: Option<NonZeroU64>,
-    pub batch_receipts: [Option<InteractionReceipt>; 5],
+    pub(crate) outbox: Vec<HostAction>,
+    pub(crate) walk: Option<WalkReceipt>,
+    pub(crate) walk_events: Vec<WalkEvent>,
+    pub(crate) interaction: Option<InteractionReceipt>,
+    pub(crate) interaction_request: Option<NonZeroU64>,
+    pub(crate) bank_pick: Option<BankPickReceipt>,
+    pub(crate) bank_pick_request: Option<NonZeroU64>,
+    pub(crate) assess_owner: Option<Arc<Owner>>,
+    pub(crate) assess_receipt: Option<AssessReceipt>,
+    pub(crate) assess_request: Option<NonZeroU64>,
+    pub(crate) batch_receipts: [Option<InteractionReceipt>; 5],
     next_batch_receipt: usize,
-    pub quiet_since: Option<(NonZeroU64, NonZeroU64, Instant)>,
+    pub(crate) quiet_since: Option<(NonZeroU64, NonZeroU64, Instant)>,
     /// The open bank session (login run, snapshot session generation) known
     /// to be in Item withdraw mode: a native machine opened it (the server
     /// resets `%bankcert` on open) or pressed Item in it. It outlives one
     /// machine so a later verb in the same session skips the press.
-    pub bank_item_session: Option<(RunKey, u64)>,
+    pub(crate) bank_item_session: Option<(RunKey, u64)>,
 }
 
 impl Default for Ledger {
@@ -408,7 +408,7 @@ enum Seen {
 /// z (11 bits each), and the level (2 bits). Its spare high bits hold the
 /// shared scene-entry latch.
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
-pub(crate) struct SceneKey(u32);
+pub struct SceneKey(u32);
 
 impl SceneKey {
     fn observe(snapshot: Option<&api::snapshot::GameSnapshot>) -> Option<Self> {
@@ -422,7 +422,7 @@ impl SceneKey {
         ))
     }
 
-    pub(crate) fn from_parts(level: i32, origin: Option<(i32, i32)>) -> Self {
+    pub fn from_parts(level: i32, origin: Option<(i32, i32)>) -> Self {
         let level = (level as u32) & 0b11;
         let origin = origin.map_or(0, |(x, z)| {
             (1 << 22) | ((((x as u32) >> 3) & 0x7ff) << 11) | (((z as u32) >> 3) & 0x7ff)
@@ -447,14 +447,14 @@ impl SceneKey {
 /// Shared native/compat latch packed into SceneKey's spare high bits, so
 /// evidence wakes cannot clear scene entry without growing TickBudget.
 #[derive(Default)]
-pub(crate) struct SceneFence(SceneKey);
+pub struct SceneFence(SceneKey);
 
 impl SceneFence {
-    pub(crate) fn next_tick(&mut self) {
+    pub fn next_tick(&mut self) {
         self.0 .0 &= !SCENE_ENTERED_BIT;
     }
 
-    pub(crate) fn observe(&mut self, scene: Option<SceneKey>) {
+    pub fn observe(&mut self, scene: Option<SceneKey>) {
         let (seen, scene) = match scene {
             Some(scene) => (Seen::Scene, scene),
             None => (Seen::Outside, SceneKey::default()),
@@ -469,7 +469,7 @@ impl SceneFence {
             SceneKey((scene.0 & SCENE_KEY_MASK) | ((seen as u32) << SCENE_SEEN_SHIFT) | entered);
     }
 
-    pub(crate) fn entered_scene(&self) -> bool {
+    pub fn entered_scene(&self) -> bool {
         self.0 .0 & SCENE_ENTERED_BIT != 0
     }
 }
@@ -504,7 +504,6 @@ impl TickBudget {
         self.scene.entered_scene()
     }
 
-    #[cfg(feature = "load")]
     pub(super) fn transition_available(&self) -> bool {
         self.transitions < Self::MAX_TRANSITIONS
     }

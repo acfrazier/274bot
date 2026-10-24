@@ -205,8 +205,8 @@ fn create(
         revision: config.revision(),
         dirty: true,
         hygiene_pending: false,
-        death: crate::native::death::DeathLatch::from_watermark(retained.death_seq),
-        death_pending: retained.death_pending,
+        death: crate::native::death::DeathLatch::from_watermark(retained.death_seq()),
+        death_pending: retained.death_pending(),
         tables,
         ..Default::default()
     }))
@@ -318,12 +318,12 @@ impl Script for Sherlock {
             self.publish(tick.output);
             return Ok(ScriptFlow::Blocked(failure));
         }
-        if !tick.cx.eligible
+        if !tick.cx.eligible()
             || !tick
-                .frame
-                .snapshot
+                .frame()
+                .snapshot()
                 .is_some_and(|snapshot| snapshot.ingame() && snapshot.scene_state() == 2)
-            || hitpoints_zero(tick.frame.snapshot.map(|snapshot| snapshot.stats()))
+            || hitpoints_zero(tick.frame().snapshot().map(|snapshot| snapshot.stats()))
         {
             // Inactive, held and HP-zero frames never advance clue/combat work.
             // The latch still observes chat above, so a death while held is
@@ -456,8 +456,8 @@ impl Script for Sherlock {
 impl Sherlock {
     fn persist_death_state(&self, tick: &mut NativeTick<'_>) {
         let retained = tick.cx.retained().sherlock();
-        retained.death_seq = self.death.watermark();
-        retained.death_pending = self.death_pending;
+        retained.set_death_seq(self.death.watermark());
+        retained.set_death_pending(self.death_pending);
     }
 
     fn poll_clue_walk(&mut self, tick: &mut NativeTick<'_>) -> Poll<()> {
@@ -550,13 +550,13 @@ impl Sherlock {
     }
 
     fn tick_frame(&mut self, tick: &mut NativeTick<'_>, death_observed: bool) -> bool {
-        let Some(mut sink) = tick.frame.compiled.interacts.take() else {
+        let Some(mut sink) = tick.frame_mut().compiled_mut().interacts.take() else {
             return false;
         };
         let previous = (self.token, self.solved);
         self.pump(tick, &mut sink, death_observed);
         self.dirty |= previous != (self.token, self.solved);
-        tick.frame.compiled.interacts = Some(sink);
+        tick.frame_mut().compiled_mut().interacts = Some(sink);
         true
     }
 
@@ -625,11 +625,11 @@ impl Sherlock {
         sink: &mut Vec<InteractReq>,
         death_observed: bool,
     ) {
-        let selected = tick.frame.compiled.selected;
+        let selected = tick.frame().compiled().selected;
         let token = match self.token {
             Some(token) => token,
             None => {
-                let begin = crate::clue::dispatch(selected, &begin_payload(&tick.frame));
+                let begin = crate::clue::dispatch(selected, &begin_payload(tick.frame()));
                 let Some(started) = answered_token(&begin) else {
                     return;
                 };
@@ -638,7 +638,7 @@ impl Sherlock {
             }
         };
         let combat = self.outcome.take().map(Outcome::page);
-        let page = next_payload(&tick.frame, token, combat);
+        let page = next_payload(tick.frame(), token, combat);
         #[cfg(test)]
         record_combat_page(page.get("combat"));
         self.iterate(tick, page, sink, death_observed);
@@ -685,7 +685,7 @@ impl Sherlock {
         sink: &mut Vec<InteractReq>,
         death_observed: bool,
     ) {
-        let selected = tick.frame.compiled.selected;
+        let selected = tick.frame().compiled().selected;
         let mut resume = false;
         for _ in 0..CALLBACK_HANDOFFS {
             let Some(fields) = page.as_object_mut() else {
@@ -805,7 +805,7 @@ impl Sherlock {
                         self.end("clue-combat-verb");
                         return;
                     };
-                    self.outcome = Some(Outcome::failed(d.id));
+                    self.outcome = Some(Outcome::failed(d.id()));
                     return;
                 }
                 kind => {
@@ -822,7 +822,7 @@ impl Sherlock {
             return;
         };
         let Some(tables) = self.tables.as_ref() else {
-            self.outcome = Some(Outcome::failed(d.id));
+            self.outcome = Some(Outcome::failed(d.id()));
             return;
         };
         match tick
@@ -831,9 +831,9 @@ impl Sherlock {
         {
             Ok(handle) => {
                 self.fight = Some(Fight::Combat(handle));
-                self.combat_id = Some(d.id);
+                self.combat_id = Some(d.id());
                 let name = tables
-                    .npc(d.npc_type)
+                    .npc(d.npc_type())
                     .and_then(|row| row.display.as_deref())
                     .unwrap_or("guardian");
                 let status = Arc::<str>::from(format!("Fighting {name}"));
@@ -843,9 +843,9 @@ impl Sherlock {
                 }
             }
             Err(ActionError::Held | ActionError::Busy | ActionError::BudgetExhausted) => {
-                self.pending = Some((d.id, Arc::new(d.request())));
+                self.pending = Some((d.id(), Arc::new(d.request())));
             }
-            Err(_) => self.outcome = Some(Outcome::failed(d.id)),
+            Err(_) => self.outcome = Some(Outcome::failed(d.id())),
         }
     }
 
@@ -956,7 +956,7 @@ fn next_payload(ctx: &HostFrame<'_>, token: u64, combat: Option<Value>) -> Value
     page.insert("token".into(), json!(token));
     page.insert("generation".into(), json!(GENERATION));
     page.insert("held".into(), held_page(ctx));
-    page.insert("hold".into(), json!(ctx.compiled.hold));
+    page.insert("hold".into(), json!(ctx.compiled().hold));
     page.insert("combat_driver".into(), json!(true));
     if let Some(combat) = combat {
         page.insert("combat".into(), combat);
@@ -966,10 +966,10 @@ fn next_payload(ctx: &HostFrame<'_>, token: u64, combat: Option<Value>) -> Value
     page.insert("inv".into(), inv_page(ctx));
     page.insert("npcs".into(), npc_page(ctx));
     page.insert("equipment".into(), equipment_page(ctx));
-    if let Some((x, z, level)) = ctx.here {
+    if let Some((x, z, level)) = ctx.here() {
         page.insert("here".into(), json!({ "x": x, "z": z, "level": level }));
     }
-    let Some(snapshot) = ctx.snapshot else {
+    let Some(snapshot) = ctx.snapshot() else {
         return Value::Object(page);
     };
     if let Some(booth) = nearest_booth(ctx) {
@@ -1036,7 +1036,7 @@ fn next_payload(ctx: &HostFrame<'_>, token: u64, combat: Option<Value>) -> Value
 /// The posted pack page the identify reads: `(obj id, count)` pairs in slot
 /// order, and nothing else. An absent frame is an empty page, never an error.
 fn held_page(ctx: &HostFrame<'_>) -> Value {
-    let rows: &[api::snapshot::ItemView] = ctx.snapshot.map_or(&[], GameSnapshot::inventory);
+    let rows: &[api::snapshot::ItemView] = ctx.snapshot().map_or(&[], GameSnapshot::inventory);
     Value::Array(
         rows.iter()
             .map(|item| json!([item.def.id, item.count]))
@@ -1047,7 +1047,7 @@ fn held_page(ctx: &HostFrame<'_>) -> Value {
 /// The posted scene page: every placed loc on the observed frame with its
 /// native ops and, only when nearby, its current approach proof.
 fn loc_page(ctx: &HostFrame<'_>) -> Value {
-    let rows: &[api::snapshot::LocView] = ctx.snapshot.map_or(&[], GameSnapshot::locs);
+    let rows: &[api::snapshot::LocView] = ctx.snapshot().map_or(&[], GameSnapshot::locs);
     Value::Array(
         rows.iter()
             .map(|loc| {
@@ -1071,7 +1071,7 @@ fn loc_page(ctx: &HostFrame<'_>) -> Value {
 /// Keep it off distant rows and omit unknown geometry rather than posting a
 /// guessed false.
 fn loc_operable_here(ctx: &HostFrame<'_>, loc: &api::snapshot::LocView) -> Option<bool> {
-    let (x, z, level) = ctx.here?;
+    let (x, z, level) = ctx.here()?;
     let here = WorldTile { x, z, level };
     if loc.tile.level != level
         || (i64::from(loc.tile.x) - i64::from(x))
@@ -1081,7 +1081,7 @@ fn loc_operable_here(ctx: &HostFrame<'_>, loc: &api::snapshot::LocView) -> Optio
     {
         return None;
     }
-    let snapshot = ctx.snapshot?;
+    let snapshot = ctx.snapshot()?;
     api::query::loc_approach::can_operate_from(loc, snapshot.scene(), here)
 }
 
@@ -1090,8 +1090,8 @@ fn loc_operable_here(ctx: &HostFrame<'_>, loc: &api::snapshot::LocView) -> Optio
 /// `null`, exactly like the posted page it is marshalled from.
 fn ground_page(ctx: &HostFrame<'_>) -> Value {
     let rows: &[api::snapshot::GroundItemView] =
-        ctx.snapshot.map_or(&[], GameSnapshot::ground_items);
-    let names = ctx.obj_names;
+        ctx.snapshot().map_or(&[], GameSnapshot::ground_items);
+    let names = ctx.obj_names();
     Value::Array(
         rows.iter()
             .map(|item| {
@@ -1112,8 +1112,8 @@ fn ground_page(ctx: &HostFrame<'_>) -> Value {
 /// resolves and the positive count that occupies a slot. This is not a second
 /// inventory read — the identify page above is the same observed frame.
 fn inv_page(ctx: &HostFrame<'_>) -> Value {
-    let rows: &[api::snapshot::ItemView] = ctx.snapshot.map_or(&[], GameSnapshot::inventory);
-    let names = ctx.obj_names;
+    let rows: &[api::snapshot::ItemView] = ctx.snapshot().map_or(&[], GameSnapshot::inventory);
+    let names = ctx.obj_names();
     Value::Array(
         rows.iter()
             .map(|item| {
@@ -1133,7 +1133,7 @@ fn inv_page(ctx: &HostFrame<'_>) -> Value {
 /// Attack rides, the type id, the posted name and tile, the health pair the
 /// kill is read through, and the target pair `targets_me` compares.
 fn npc_page(ctx: &HostFrame<'_>) -> Value {
-    let rows: &[api::snapshot::NpcView] = ctx.snapshot.map_or(&[], GameSnapshot::npcs);
+    let rows: &[api::snapshot::NpcView] = ctx.snapshot().map_or(&[], GameSnapshot::npcs);
     Value::Array(
         rows.iter()
             .map(|npc| {
@@ -1162,8 +1162,8 @@ fn npc_page(ctx: &HostFrame<'_>) -> Value {
 /// `slot`, omit-if-absent the way the adapter's `clueEquipmentPage` is. A
 /// page that posted nothing is an empty list, never a second equipment read.
 fn equipment_page(ctx: &HostFrame<'_>) -> Value {
-    let rows: &[api::snapshot::ItemView] = ctx.snapshot.map_or(&[], GameSnapshot::equipment);
-    let names = ctx.obj_names;
+    let rows: &[api::snapshot::ItemView] = ctx.snapshot().map_or(&[], GameSnapshot::equipment);
+    let names = ctx.obj_names();
     Value::Array(
         rows.iter()
             .filter_map(|item| {
@@ -1188,7 +1188,7 @@ fn equipment_page(ctx: &HostFrame<'_>) -> Value {
 /// flood can prove one, the shared operability/approach facts. Only those
 /// small facts enter the clue page; the borrowed flood never crosses a wire.
 fn nearest_booth(ctx: &HostFrame<'_>) -> Option<Value> {
-    let snapshot = ctx.snapshot?;
+    let snapshot = ctx.snapshot()?;
     let loc = snapshot.nearest_use_quickly_booth()?;
     let mut row = Map::new();
     row.insert("x".into(), json!(loc.tile.x));
@@ -1207,7 +1207,7 @@ fn nearest_booth(ctx: &HostFrame<'_>) -> Option<Value> {
         row.insert("op".into(), json!(op));
     }
     row.insert("approach".into(), Value::Null);
-    if let (Some((x, z, level)), Some(flood)) = (ctx.here, ctx.compiled.reach_flood) {
+    if let (Some((x, z, level)), Some(flood)) = (ctx.here(), ctx.compiled().reach_flood) {
         if let Some(approach) = api::query::loc_approach::booth_approach(
             loc,
             snapshot.scene(),
@@ -1972,7 +1972,12 @@ mod tests {
             frame: host,
         };
         let flow = script.tick(&mut native).expect("Sherlock native tick");
-        let interacts = native.frame.compiled.interacts.take().unwrap_or_default();
+        let interacts = native
+            .frame_mut()
+            .compiled_mut()
+            .interacts
+            .take()
+            .unwrap_or_default();
         (flow, interacts)
     }
 
@@ -2137,8 +2142,8 @@ mod tests {
         };
         let mut output = crate::slot::compiled::TestOutput::default();
         script.publish(&mut output);
-        assert_eq!(output.paints.len(), 1, "one paint frame is published");
-        let ids: Vec<(&str, &str)> = output.paints[0]
+        assert_eq!(output.paints().len(), 1, "one paint frame is published");
+        let ids: Vec<(&str, &str)> = output.paints()[0]
             .buttons
             .iter()
             .map(|button| (button.id.as_str(), button.label.as_str()))

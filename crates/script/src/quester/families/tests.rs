@@ -21,7 +21,7 @@ impl NativeOutput for Output {
     fn log(&mut self, _: api::hostlog::Level, _: &str) {}
     fn settings_applied(&mut self, _: u64) {}
 }
-pub(crate) fn with_tick<R>(
+pub fn with_tick<R>(
     snapshot: &GameSnapshot,
     ledger: &mut Option<Box<ledger::Ledger>>,
     tick: u64,
