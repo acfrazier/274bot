@@ -10,9 +10,7 @@ fn u9_normal_slot_start_does_not_construct_risk_tables() {
 
     let mut slot = SlotScript::new();
     let source: Arc<str> = "export function tick() {}".into();
-    let family = resolve_api_family(&source)
-        .ok()
-        .map(|(_, family)| family);
+    let family = resolve_api_family(&source).ok().map(|(_, family)| family);
     slot.bind_surface_factory(Arc::new(surface::JsSurfaceFactory::default()));
     slot.start_surface(SurfaceStart {
         card: Arc::new(surface::JsStartCard {

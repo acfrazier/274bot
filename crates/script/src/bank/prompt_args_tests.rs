@@ -57,10 +57,8 @@
 //! exception: `bank::npc::Note::message` is already `pub` under `load`, so
 //! the `load`-gated test below calls the producer directly.
 
-#[cfg(feature = "load")]
 use serde_json::{json, Value};
 
-#[cfg(feature = "load")]
 /// Longest real r289 item display names: every entry is 20 bytes.
 /// Provenance: `crates/api/data/game-data/289.json` `items` (see module docs).
 const LONGEST_ITEMS: &[&str] = &[
@@ -71,44 +69,37 @@ const LONGEST_ITEMS: &[&str] = &[
     "Agility arena ticket",
 ];
 
-#[cfg(feature = "load")]
 /// Representative item id for the `match(name, id)` shape. The id encodes as
 /// one 8-byte number regardless of value, so any real id measures the same.
 /// Provenance: `289.json` alias `black_plateskirt_trim` id 3472.
 const LONGEST_ITEM_ID: i32 = 3472;
 
-#[cfg(feature = "load")]
 /// Longest frozen-catalog bank object name (13 bytes).
 /// Provenance: `bank-catalog.rs:19` and `289.json` `loc_names` id 2693.
 const LONGEST_BANK_OBJECT: &str = "Shantay chest";
 
-#[cfg(feature = "load")]
 /// Default booth name/op pair (10 + 11 bytes); longest opener combination.
 /// Provenance: `bank/seat_open.rs:1788-1790`.
 const BOOTH_NAME: &str = "Bank booth";
-#[cfg(feature = "load")]
+
 const BOOTH_OP: &str = "Use-quickly";
 
-#[cfg(feature = "load")]
 /// Longest real banker display (12 bytes).
 /// Provenance: `289.json` `npc_names` id 166.
 const LONGEST_BANKER: &str = "Gnome banker";
 
-#[cfg(feature = "load")]
 /// Real Shantay Pass stand from the frozen catalog.
 /// Provenance: `bank-catalog.rs:19` tile `(3308, 3120, 0)`.
 const STAND_X: i32 = 3308;
-#[cfg(feature = "load")]
+
 const STAND_Z: i32 = 3120;
 
-#[cfg(feature = "load")]
 fn encoded_len(args: &[Value]) -> usize {
     crate::channel::encode_arguments(args)
         .expect("bank prompt args stay in the bounded clone subset")
         .len()
 }
 
-#[cfg(feature = "load")]
 fn assert_fits(label: &str, args: &[Value]) -> usize {
     let len = encoded_len(args);
     assert!(
@@ -119,7 +110,6 @@ fn assert_fits(label: &str, args: &[Value]) -> usize {
     len
 }
 
-#[cfg(feature = "load")]
 #[test]
 fn bank_prompt_argument_census_fits_contract_bound() {
     let mut max = 0usize;
@@ -252,7 +242,7 @@ fn bank_prompt_argument_census_fits_contract_bound() {
 
 /// The replicated NPC lines above match the producer templates exactly.
 /// This calls the real `Note::message` formatter instead of re-encoding.
-#[cfg(feature = "load")]
+
 #[test]
 fn npc_log_lines_match_producer_templates() {
     use super::npc::Note;

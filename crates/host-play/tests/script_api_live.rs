@@ -365,8 +365,7 @@ fn start_fixture_at(
     journal: bool,
     start_tile: Option<WorldTile>,
 ) -> (Play, String, Arc<Mutex<Fixture>>) {
-    script::registry::install_cards(&script::sherlock::CARDS)
-        .expect("install canonical Sherlock card for live API fixtures");
+    script_js::install_cards().expect("install canonical Sherlock card for live API fixtures");
     api::hostlog::set_debug(true);
     assert!(api::hostlog::install_sink(&ADMISSION));
     let home = PathBuf::from(std::env::var_os("HOME").expect("throwaway HOME"));
@@ -505,13 +504,13 @@ fn gather_cell() {
     let (play, account, fixture) = start_fixture(false);
     fixture.lock().unwrap().started = true;
     let source = std::fs::read_to_string(
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../script/examples/gather_quest_v2.js"),
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../script-js/examples/gather_quest_v2.js"),
     )
     .expect("runnable sample");
     play.script_start_load(
         &account,
         source,
-        script::LoadShape::NativeTick,
+        script_js::LoadShape::NativeTick,
         None,
         vec![],
     )
@@ -645,7 +644,7 @@ fn journal_cell() {
     play.script_start_load(
         &account,
         JOURNAL_SCRIPT.into(),
-        script::LoadShape::NativeTick,
+        script_js::LoadShape::NativeTick,
         None,
         vec![],
     )
@@ -743,7 +742,7 @@ fn runtime_cell(restart: bool) {
         play.script_start_load(
             &account,
             RUNTIME_SOURCE.into(),
-            script::LoadShape::NativeTick,
+            script_js::LoadShape::NativeTick,
             None,
             vec![],
         )
@@ -773,7 +772,7 @@ fn runtime_cell(restart: bool) {
             "restart needs a new generation"
         );
     }
-    let status = script::load::isolate_capacity_status().unwrap();
+    let status = script_js::isolate_capacity_status().unwrap();
     assert_eq!(status.retiring_gameplay, 0, "physical join: {status:?}");
     no_drops(&account);
     save(
@@ -878,7 +877,8 @@ fn start_during_catalogue_refresh_cell() {
         "export default class Witness extends LoopingBot { loop() {} }\n",
     )
     .expect("write catalogue card");
-    let mut library = script::JsLibrary::with_cache(root.join("scripts.json"), root.join("cache"));
+    let mut library =
+        script_js::JsLibrary::with_cache(root.join("scripts.json"), root.join("cache"));
     library
         .register_rs2b0t(&root, &root.join("catalog-path"))
         .expect("register initial fixture");
@@ -1181,7 +1181,7 @@ fn gather_walk_variant(
     play.script_start_load(
         account,
         walk_options_source(allow_danger_zones),
-        script::LoadShape::NativeTick,
+        script_js::LoadShape::NativeTick,
         None,
         vec![],
     )

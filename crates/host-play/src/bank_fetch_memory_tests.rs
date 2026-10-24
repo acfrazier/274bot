@@ -418,10 +418,11 @@ fn a_compat_inspect_with_a_closed_bank_and_a_known_memory_is_bank_planned() {
             "request_id": request_id,
         }))
         .expect("inspect request decodes");
-        let reqs = script::isolate_fb::decode_interact_batch(
-            &script::isolate_fb::encode_interact_batch(&[request]),
-        )
-        .expect("inspect wire decodes");
+        let reqs =
+            script_js::wire::decode_interact_batch(&script_js::wire::encode_interact_batch(&[
+                request,
+            ]))
+            .expect("inspect wire decodes");
         dispatch_script_interact_cached(
             client,
             &closed,
@@ -500,7 +501,7 @@ export default class T extends LoopingBot {
             .unwrap()
             .start_load_with_loadouts_settled(
                 SRC.into(),
-                script::LoadShape::CompatClass,
+                script_js::LoadShape::CompatClass,
                 vec![],
                 &[],
             )

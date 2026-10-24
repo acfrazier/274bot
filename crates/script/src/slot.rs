@@ -986,6 +986,48 @@ impl SlotScript {
         self.seat_interact_delivery.len()
     }
 
+    /// Return the number of logs waiting for the host to take them.
+    #[cfg(feature = "test-hooks")]
+    pub fn pending_log_len_for_test(&self) -> usize {
+        self.pending_logs.len()
+    }
+
+    /// Count the real seat's currently admitted root requests.
+    #[cfg(feature = "test-hooks")]
+    pub fn seat_root_count_for_test(&self) -> usize {
+        self.seat.as_ref().map_or(0, |seat| {
+            seat.live()
+                .iter()
+                .filter(|entry| entry.parent.is_none())
+                .count()
+        })
+    }
+
+    /// Distinguish a missing request from an admitted root or child.
+    #[cfg(feature = "test-hooks")]
+    pub fn seat_parent_for_test(&self, id: RequestId) -> Option<Option<RequestId>> {
+        self.seat
+            .as_ref()?
+            .live()
+            .iter()
+            .find(|entry| entry.id == id)
+            .map(|entry| entry.parent)
+    }
+
+    /// Read the actual terminal outcome retained by the real seat.
+    #[cfg(feature = "test-hooks")]
+    pub fn seat_result_outcome_for_test(
+        &self,
+        id: RequestId,
+    ) -> Option<crate::native::seat::SeatTerminal> {
+        self.seat
+            .as_ref()?
+            .results()
+            .iter()
+            .find(|result| result.id == id)
+            .map(|result| result.outcome)
+    }
+
     fn arm_compiled_seat(&mut self, run: api::selected::RunKey, card: crate::CompiledId) {
         if run.slot_key().is_none() {
             return;

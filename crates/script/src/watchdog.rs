@@ -251,8 +251,9 @@ impl ProgressWatchdog {
         self.wait_inflight > 0
     }
 
-    #[cfg(test)]
-    pub(crate) fn wait_inflight(&self) -> u32 {
+    /// Test-only count used to compare held-fold and direct event ordering.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn wait_inflight(&self) -> u32 {
         self.wait_inflight
     }
 

@@ -7,8 +7,8 @@ use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 use vault::{assignment_key, ScriptAssignment};
 
+use crate::card::ScriptSource;
 use crate::registry::CompiledId;
-use crate::rs2b0t_registry::ScriptSource;
 
 pub const NOTHING_CHANGED_RELOAD: &str = "Nothing changed; nothing to reload";
 pub const NOTHING_CHANGED_CATALOG: &str = "Nothing changed.";

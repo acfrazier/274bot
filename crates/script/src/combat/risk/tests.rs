@@ -2904,7 +2904,6 @@ fn u9_cold_shared_tables_and_kind_build_measurement() {
     }
 }
 
-#[cfg(feature = "load")]
 #[test]
 #[ignore = "isolated cold construction-count probe; run explicitly"]
 fn u9_risk_assessment_reuses_one_immutable_table() {

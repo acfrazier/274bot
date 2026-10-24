@@ -1133,7 +1133,7 @@ fn run_compat_cell(spec: &CompatSpec) {
             if let Err(error) = play.script_start_load(
                 &account,
                 script.clone(),
-                script::LoadShape::CompatClass,
+                script_js::LoadShape::CompatClass,
                 None,
                 vec![],
             ) {

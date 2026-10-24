@@ -268,7 +268,7 @@ enum ScriptStartKind {
     },
     Load {
         js: String,
-        shape: script::LoadShape,
+        shape: script_js::LoadShape,
         bag: Option<serde_json::Map<String, serde_json::Value>>,
         siblings: Vec<(String, String)>,
     },

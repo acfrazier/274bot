@@ -6,9 +6,9 @@ use api::snapshot::WorldTile;
 use serde_json::Value;
 
 /// Existing compatibility approach bound, retained during seat activation.
-pub(crate) const WALK_BOUND_MS: u64 = 60_000;
+pub const WALK_BOUND_MS: u64 = 60_000;
 /// Existing compatibility item-snapshot bound, retained during seat activation.
-pub(crate) const BANK_READY_MS: u64 = 5_000;
+pub const BANK_READY_MS: u64 = 5_000;
 
 /// JS truthiness for values already converted at a callback boundary.
 pub fn truthy(value: &Value) -> bool {

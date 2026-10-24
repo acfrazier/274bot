@@ -1,12 +1,11 @@
-#![cfg(feature = "load")]
-
 use super::*;
-use crate::isolate_fb::{
-    DecodedSeatBatch, SeatCancelDecoded, SeatInteractDecoded, SeatMirrorRevoke, SeatStartInput,
-};
+use crate::interact::InteractReq;
 use crate::native::request::NativeKind;
 use crate::native::seat::SeatTerminal;
-use crate::shim::InteractReq;
+use crate::native::seat_rows::{
+    DecodedSeatBatch, SeatCancelDecoded, SeatDecisionInput, SeatInteractDecoded, SeatMachineEvent,
+    SeatMachineEventKind, SeatMirrorRevoke, SeatPageInput, SeatStartInput,
+};
 use api::script_contract::{AbortReason, CallbackCancelReason};
 
 fn id(raw: u64) -> RequestId {
@@ -168,7 +167,7 @@ fn typed_pending_hook_throw_completes_without_revoking_final_emission() {
     assert!(!seat.results()[0].authority_revoked);
     assert!(matches!(
         slot.seat_interact_delivery.as_slice(),
-        [crate::load::QueuedInteract {
+        [crate::interact::QueuedInteract {
             req: InteractReq::WalkTo { x: 4, z: 5, .. },
             observed_walk_outcome_seq: 11,
         }]
@@ -179,7 +178,6 @@ fn typed_pending_hook_throw_completes_without_revoking_final_emission() {
 /// decision, admits a child, then dispatches that child's own earlier push.
 #[test]
 fn typed_batch_watermark_decide_start_and_own_push_share_turn() {
-    use crate::isolate_fb::SeatDecisionInput;
     use api::script_contract::DecisionSequence;
 
     let mut slot = slot();
@@ -227,7 +225,7 @@ fn typed_batch_watermark_decide_start_and_own_push_share_turn() {
     assert_eq!(seat.take_answer(id(2)).unwrap().answer, [9]);
     assert!(matches!(
         slot.seat_interact_delivery.as_slice(),
-        [crate::load::QueuedInteract {
+        [crate::interact::QueuedInteract {
             req: InteractReq::WalkTo { x: 9, z: 10, .. },
             observed_walk_outcome_seq: 37,
         }]
@@ -238,7 +236,6 @@ fn typed_batch_watermark_decide_start_and_own_push_share_turn() {
 /// custody; the first callback I-family will supply a product hook producer.
 #[test]
 fn native_prompt_page_decision_and_late_copy_are_bounded_and_ordered() {
-    use crate::isolate_fb::{SeatDecisionInput, SeatPageInput};
     use api::script_contract::{DecisionSequence, PROMPT_ARGS_MAX_BYTES};
 
     let point = crate::native::PromptPoint::from_contract_row(
@@ -340,7 +337,9 @@ fn native_prompt_page_decision_and_late_copy_are_bounded_and_ordered() {
 /// settle through the seat before a captured final emission dispatches.
 #[test]
 fn carried_machine_phase_and_terminal_events_preserve_final_row_authority() {
-    use crate::machine::{MachineEvent, MachineEventKind};
+    use crate::native::seat_rows::{
+        SeatMachineEvent as MachineEvent, SeatMachineEventKind as MachineEventKind,
+    };
     use crate::native::NativePhase;
 
     let mut slot = slot();
@@ -384,7 +383,7 @@ fn carried_machine_phase_and_terminal_events_preserve_final_row_authority() {
     assert_eq!(seat.results()[0].outcome, SeatTerminal::Done);
     assert!(matches!(
         slot.seat_interact_delivery.as_slice(),
-        [crate::load::QueuedInteract {
+        [crate::interact::QueuedInteract {
             req: InteractReq::WalkTo { x: 21, z: 22, .. },
             observed_walk_outcome_seq: 4,
         }]
@@ -395,7 +394,9 @@ fn carried_machine_phase_and_terminal_events_preserve_final_row_authority() {
 /// Walk exits rather than leaving a completed JS machine live in the forest.
 #[test]
 fn carried_machine_failure_abort_and_takeover_settle_without_ghost_entries() {
-    use crate::machine::{MachineEvent, MachineEventKind};
+    use crate::native::seat_rows::{
+        SeatMachineEvent as MachineEvent, SeatMachineEventKind as MachineEventKind,
+    };
 
     for (kind, expected) in [
         (MachineEventKind::Failed, SeatTerminal::Failed),
@@ -428,16 +429,8 @@ fn carried_machine_failure_abort_and_takeover_settle_without_ghost_entries() {
     }
 }
 
-/// §28.7 case 30: the host's wire decoder and slot consumer receive fifty
-/// separately encoded late copies of each control after a real result
-/// receipt, count them, and emit no log or revived terminal.
 #[test]
-fn fifty_late_control_copies_retire_in_slot_metrics_without_logs() {
-    use crate::isolate_fb::{
-        decode_seat_interact_batch, encode_seat_interact_batch, SeatCancelInput, SeatDecisionRef,
-        SeatInteractBatchInput,
-    };
-    use crate::machine::{MachineEvent, MachineEventKind};
+fn late_control_plain_batches_do_not_revive_terminal_or_log() {
     use api::script_contract::DecisionSequence;
 
     for cancel in [false, true] {
@@ -448,9 +441,9 @@ fn fifty_late_control_copies_retire_in_slot_metrics_without_logs() {
         slot.consume_seat_batch(
             batch(),
             0,
-            &[MachineEvent {
+            &[SeatMachineEvent {
                 id: id(1),
-                kind: MachineEventKind::Done,
+                kind: SeatMachineEventKind::Done,
                 admitted: true,
             }],
         );
@@ -460,27 +453,22 @@ fn fifty_late_control_copies_retire_in_slot_metrics_without_logs() {
         slot.consume_seat_batch(acknowledged, 0, &[]);
         assert!(slot.seat.as_ref().unwrap().results().is_empty());
         let logs_before = slot.pending_logs.len();
-        let decisions = [SeatDecisionRef {
-            of: id(1),
-            sequence: DecisionSequence::FIRST,
-            answer: &[],
-        }];
-        let cancels = [SeatCancelInput {
-            of: id(1),
-            reason: CallbackCancelReason::HookThrew,
-        }];
 
         for _ in 0..50 {
-            let input = SeatInteractBatchInput {
-                consumed_terminal_seq: seq,
-                starts: &[],
-                decisions: if cancel { &[] } else { decisions.as_slice() },
-                cancels: if cancel { cancels.as_slice() } else { &[] },
-                mirror_revokes: &[],
-                reqs: &[],
-            };
-            let wire = encode_seat_interact_batch(&input).expect("encode duplicate control");
-            let duplicate = decode_seat_interact_batch(&wire).expect("decode duplicate control");
+            let mut duplicate = batch();
+            duplicate.consumed_terminal_seq = seq;
+            if cancel {
+                duplicate.cancels.push(SeatCancelDecoded {
+                    of: id(1),
+                    reason: CallbackCancelReason::HookThrew,
+                });
+            } else {
+                duplicate.decisions.push(SeatDecisionInput {
+                    of: id(1),
+                    sequence: DecisionSequence::FIRST,
+                    answer: Vec::new(),
+                });
+            }
             slot.consume_seat_batch(duplicate, 0, &[]);
         }
         let seat = slot.seat.as_ref().unwrap();
@@ -494,29 +482,17 @@ fn fifty_late_control_copies_retire_in_slot_metrics_without_logs() {
                 dropped: seat.dropped(),
                 late_controls: 50,
             },
-            "50 encoded late copies must be visible without the test-support probe"
+            "50 plain late copies are visible without reviving a terminal"
         );
-        #[cfg(feature = "test-hooks")]
-        assert_eq!(slot.seat_probe().unwrap().late_controls, 50);
     }
 }
 
-/// §28.7 case 20: seven actual encoded starts exercise four distinct
-/// Capability roots, nested parentage, and the projected fifth-root refusal
-/// through the slot-owned decoder/consumer.
 #[test]
-fn nested_four_root_wire_starts_publish_the_fifth_root_refusal() {
-    use crate::isolate_fb::{
-        decode_seat_interact_batch, encode_seat_interact_batch, SeatInteractBatchInput,
-        SeatStartArgsRef, SeatStartRef,
-    };
+fn plain_batch_starts_preserve_four_roots_nested_parents_and_busy_refusal() {
+    use crate::bank::request::{BankSeatArgs, BankSeatOperation};
     use api::script_contract::Refusal;
 
     let mut slot = slot();
-    let execution = ExecutionId::first(slot.seat.as_ref().unwrap().run());
-    let bank = crate::bank::request::BankSeatArgs::new(
-        crate::bank::request::BankSeatOperation::BankNearest,
-    );
     let starts = [
         (1, None, NativeKind::Prayer),
         (2, None, NativeKind::Autocast),
@@ -526,27 +502,32 @@ fn nested_four_root_wire_starts_publish_the_fifth_root_refusal() {
         (6, Some(5), NativeKind::Walk),
         (7, None, NativeKind::Modals),
     ]
-    .map(|(raw, parent, kind)| SeatStartRef {
-        stamp: RequestStamp::new(id(raw), parent.map(id), None, execution)
-            .expect("current seat execution"),
+    .into_iter()
+    .map(|(raw, parent, kind)| SeatStartInput {
+        id: id(raw),
+        parent: parent.map(id),
+        run: 7,
+        session: 2,
         kind,
         args: if kind == NativeKind::BankNearest {
-            SeatStartArgsRef::Bank(&bank)
+            SeatStartArgs::Bank(BankSeatArgs::new(BankSeatOperation::BankNearest))
         } else {
-            SeatStartArgsRef::Empty
+            SeatStartArgs::Empty
         },
-    });
-    let input = SeatInteractBatchInput {
-        consumed_terminal_seq: 0,
-        starts: &starts,
-        decisions: &[],
-        cancels: &[],
-        mirror_revokes: &[],
-        reqs: &[],
-    };
-    let wire = encode_seat_interact_batch(&input).expect("encode seven ordered starts");
-    let decoded = decode_seat_interact_batch(&wire).expect("decode seven ordered starts");
-    slot.consume_seat_batch(decoded, 0, &[]);
+    })
+    .collect();
+    slot.consume_seat_batch(
+        DecodedSeatBatch {
+            consumed_terminal_seq: 0,
+            starts,
+            decisions: Vec::new(),
+            cancels: Vec::new(),
+            mirror_revokes: Vec::new(),
+            reqs: Vec::new(),
+        },
+        0,
+        &[],
+    );
     let seat = slot.seat.as_ref().unwrap();
     assert_eq!(seat.live().len(), 6);
     assert_eq!(

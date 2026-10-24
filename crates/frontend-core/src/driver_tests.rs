@@ -2857,7 +2857,7 @@ fn run_helper(d: &mut HeadlessDriver, name: &str, generation: u64) {
         .script_start_load(
             name,
             "export function tick(api) { api._n = (api._n || 0) + 1 }".into(),
-            script::LoadShape::NativeTick,
+            script_js::LoadShape::NativeTick,
             None,
             vec![],
         )
@@ -4138,7 +4138,7 @@ fn start_loop_scripts(d: &mut HeadlessDriver, names: &[&str]) {
             .script_start_load(
                 name,
                 "export function tick(api) {}".into(),
-                script::LoadShape::NativeTick,
+                script_js::LoadShape::NativeTick,
                 None,
                 vec![],
             )

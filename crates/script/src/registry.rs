@@ -446,8 +446,6 @@ mod tests {
     #[test]
     fn compiled_card_ids_order_and_native_kinds_are_stable() {
         use crate::native::request::NativeKind;
-        #[cfg(feature = "load")]
-        install_cards(&crate::sherlock::CARDS).unwrap();
         let actual: Vec<_> = compiled_cards()
             .iter()
             .enumerate()
@@ -457,8 +455,6 @@ mod tests {
             (0, "Gatherer", NativeKind::Gather),
             (1, "Grinch", NativeKind::Gather),
             (2, "Quester", NativeKind::Quester),
-            #[cfg(feature = "load")]
-            (3, "Sherlock", NativeKind::Clue),
         ];
         println!("compiled card order and native kinds: {actual:?}");
         assert_eq!(actual, expected);
