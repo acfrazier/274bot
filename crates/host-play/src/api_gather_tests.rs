@@ -322,6 +322,7 @@ fn observe_frame(
         Some(policy),
         None,
         service_arm,
+        None,
     );
     crate::script_runtime::pump_route_work(navs, SLOT);
     let mut packets = Vec::new();
@@ -581,6 +582,7 @@ fn live_gather_seat_delivers_broadcast_posts_and_host_rows_but_drops_game_rows()
         Some(&sender),
         BrokerWorld::Local,
         Some(&mut rig.policy),
+        None,
         None,
         None,
     );
