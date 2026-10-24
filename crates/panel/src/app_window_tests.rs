@@ -285,6 +285,23 @@ fn with_local_profile(state: &mut PanelState) -> Option<map_fixture::MapFixture>
     Some(fixture)
 }
 
+/// The Local server profile with a focused bot and a play session: the maxme
+/// button draws enabled only while a Debug command has both to go to.
+fn with_local_focused_bot(state: &mut PanelState) -> Option<map_fixture::MapFixture> {
+    add_vault(state);
+    let play = frontend_core::test_support::empty_play(&host_play::PlayOptions {
+        host: "127.0.0.1".into(),
+        transport: client::Transport::Tcp,
+        port: 43594,
+        cache_dir: "/tmp".into(),
+        lowmem: true,
+        mainland: false,
+    });
+    state.session.core.set_play(Some(play));
+    state.session.set_focus_for_test("alice");
+    with_local_profile(state)
+}
+
 fn profile_section(ui: &Ui, state: &mut PanelState) {
     super::profile_section(ui, &mut state.session);
 }
@@ -382,7 +399,7 @@ fn opener_cases() -> Vec<OpenerCase> {
         OpenerCase {
             name: "maxme",
             target: PanelWindow::Debug,
-            setup: with_local_profile,
+            setup: with_local_focused_bot,
             opener: debug_section,
             press: button("maxme"),
         },

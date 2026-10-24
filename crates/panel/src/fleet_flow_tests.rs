@@ -32,6 +32,8 @@ fn centre([min_x, min_y, max_x, max_y]: [f32; 4]) -> [f32; 2] {
 struct Rig {
     ctx: dear_imgui_rs::Context,
     session: Session,
+    /// The session's WalkTo arms: a test arms a manual walk through these.
+    walks: host_play::WalkArms,
     layout: FleetLayout,
     dir: TestDir,
     // Last: the context singleton drops before the guard.
@@ -49,6 +51,8 @@ impl Rig {
             vault.put(FixtureProfile::new(name, "pw").uid(1 + i as i32));
         }
         let mut session = Session::new();
+        let walks = host_play::WalkArms::default();
+        session.core.set_walk_arms(std::sync::Arc::clone(&walks));
         install_vault(&mut session.core, vault);
         session.persist_ui = false;
         session
@@ -61,6 +65,7 @@ impl Rig {
         let mut rig = Self {
             ctx,
             session,
+            walks,
             layout: FleetLayout::default(),
             dir,
             _guard: guard,
@@ -596,6 +601,264 @@ fn stop_all_asks_first_and_runs_only_after_confirm() {
         rig.session.error, None,
         "the bulk result is not copied to the banner"
     );
+}
+
+/// The nine bots of PANEL-STATE-GAP-1023, in game on world 3.
+const NINE: [&str; 9] = [
+    "alice", "bob", "carol", "dave", "erin", "frank", "grace", "heidi", "ivan",
+];
+
+impl Rig {
+    /// Nine bots in game, each running a script, every one marked, and the
+    /// last script-walk destination published for the first three: the
+    /// operator's session before Stop. The status fixture is what a nav step
+    /// published, not a live route.
+    fn nine_marked_running_with_three_script_walks(label: &str) -> Self {
+        let worlds: Vec<_> = NINE.iter().map(|name| (*name, 3)).collect();
+        let mut rig = Self::with_worlds(label, &NINE, &worlds);
+        rig.start_scripts(&NINE);
+        rig.mark(&NINE);
+        rig.publish_script_walks(&NINE[..3], Some((2550, 3348, 0)));
+        rig.settle();
+        rig
+    }
+
+    /// Publish (or with `None` retire) the script-walk destination of `names`.
+    fn publish_script_walks(&mut self, names: &[&str], walk: Option<(i32, i32, i32)>) {
+        let (x, z, level) = walk.unwrap_or((-1, -1, -1));
+        let play = self.session.core.play_for_test().unwrap();
+        let mut statuses = play.statuses.lock().unwrap();
+        for status in statuses
+            .iter_mut()
+            .filter(|row| names.contains(&row.username.as_str()))
+        {
+            (status.walk_x, status.walk_z, status.walk_level) = (x, z, level);
+        }
+    }
+
+    /// The label of every fleet row, as `name: label`: what the sidecar and
+    /// the Fleet window's state column draw.
+    fn labels(&self) -> Vec<String> {
+        self.session
+            .fleet_model
+            .rows()
+            .iter()
+            .map(|row| format!("{}: {}", row.name(), row.brief()))
+            .collect()
+    }
+
+    /// Click Stop over the marked bots, confirm, and wait until every one of
+    /// `names` reports an Idle script.
+    fn stop_marked(&mut self, names: &[&str]) {
+        self.click_action(FleetAction::Stop);
+        let plan = self
+            .layout
+            .plan
+            .clone()
+            .expect("marked Stop names its running scripts");
+        self.click(plan.confirm);
+        for name in names {
+            self.wait_state(name, ScriptRunState::Idle);
+        }
+        self.settle();
+        let result = self.session.core.fleet_result().unwrap();
+        assert!(result.settled(), "{}", result.text());
+        assert_eq!(result.counts().done, names.len(), "{}", result.text());
+    }
+}
+
+fn labels_of(names: &[&str], label: &str) -> Vec<String> {
+    names
+        .iter()
+        .map(|name| format!("{name}: {label}"))
+        .collect()
+}
+
+/// PANEL-STATE-GAP-1023 (the diagnosis's reproduction): Stop must retire the
+/// published script-walk label too. Nine scripts stop, all nine report Idle,
+/// and the three bots whose last script walk was still published must read
+/// `idle` like the six others, not `running`. The resource line counts
+/// clients in game, not scripts.
+#[test]
+fn stopped_marked_bots_must_not_keep_running_fleet_labels() {
+    let mut rig = Rig::nine_marked_running_with_three_script_walks("panel-state-gap-1023");
+    assert_eq!(rig.labels(), labels_of(&NINE, "running"));
+    rig.stop_marked(&NINE);
+    for name in NINE {
+        assert_eq!(rig.session.core.script_state(name), ScriptRunState::Idle);
+    }
+    assert_eq!(
+        rig.labels(),
+        labels_of(&NINE, "idle"),
+        "Stop retained a stale walking projection"
+    );
+    assert_eq!(
+        frontend_core::resources::format_bots(9, 9),
+        "9 bots (9 in game)"
+    );
+
+    // Repeating Stop finds nothing to stop; the refusal is the core's.
+    rig.session
+        .submit(OperatorCommand::ClearMarks, Targets::Application);
+    rig.mark(&NINE[..3]);
+    rig.click_action(FleetAction::Stop);
+    assert!(rig.layout.plan.is_none());
+    let refusal = rig
+        .session
+        .error
+        .as_deref()
+        .expect("no scripts left to stop");
+    assert!(refusal.contains("no bot to act on"), "{refusal}");
+    assert!(refusal.contains("alice: no script running"), "{refusal}");
+    assert_eq!(
+        rig.session.core.refusals(),
+        1,
+        "the repeated Stop is the one refusal the command boundary logged"
+    );
+
+    // The banner clears itself after the shared timeout, with no action.
+    let later = Instant::now() + frontend_core::ERROR_MESSAGE_TIMEOUT + Duration::from_secs(1);
+    rig.session.expire_error(later);
+    assert_eq!(rig.session.error, None, "the refusal message expired");
+}
+
+/// PANEL-STATE-GAP-1023, acceptance 1-4 through the panel: Stop retires the
+/// three script walks in the host rows, every client stays in game, there
+/// are zero active scripts and zero script walks, and the old labels do not
+/// return after a window change, a focus change, a mark change, a filter
+/// change or a new script choice.
+#[test]
+fn old_script_walk_labels_do_not_return_after_panel_state_changes() {
+    let mut rig = Rig::nine_marked_running_with_three_script_walks("panel-state-gap-views");
+    rig.stop_marked(&NINE);
+    let idle = labels_of(&NINE, "idle");
+    assert_eq!(rig.labels(), idle);
+    for status in rig
+        .session
+        .core
+        .play_for_test()
+        .unwrap()
+        .statuses
+        .lock()
+        .unwrap()
+        .iter()
+    {
+        assert_eq!(
+            status.script_walk(),
+            None,
+            "{} kept a target",
+            status.username
+        );
+    }
+    for row in rig.session.fleet_model.rows() {
+        assert_eq!(
+            (
+                row.script().is_live(),
+                row.script_walk(),
+                row.connected(),
+                row.phase()
+            ),
+            (false, false, true, frontend_core::Phase::Ready),
+            "{}",
+            row.name()
+        );
+    }
+
+    // Windows: the Fleet window closed and reopened.
+    rig.session.fleet_open = false;
+    rig.settle();
+    rig.session.fleet_open = true;
+    rig.settle();
+    assert_eq!(rig.labels(), idle, "window change");
+
+    // Focus: each of the three that walked.
+    for name in &NINE[..3] {
+        rig.session.set_focus_for_test(name);
+        rig.settle();
+        assert_eq!(rig.labels(), idle, "focus on {name}");
+    }
+
+    // Marks: only the three, then by status Running (marks nothing).
+    rig.session
+        .submit(OperatorCommand::ClearMarks, Targets::Application);
+    rig.mark(&NINE[..3]);
+    assert_eq!(rig.labels(), idle, "marks");
+    rig.session
+        .submit(OperatorCommand::ClearMarks, Targets::Application);
+    rig.settle();
+    rig.click_mark_by_status("running");
+    assert!(rig.marked_names().is_empty(), "nothing is running");
+    assert_eq!(rig.labels(), idle, "mark by status");
+
+    // Filters.
+    for (text, shown) in [("running", 0), ("idle", 9), ("alice", 1), ("", 9)] {
+        rig.session.fleet_model.set_filter_for_test(text);
+        rig.settle();
+        assert_eq!(rig.session.fleet_model.shown().len(), shown, "{text:?}");
+        assert_eq!(rig.labels(), idle, "filter {text:?}");
+    }
+
+    // A new script choice for the fleet.
+    rig.pin("Gatherer");
+    assert_eq!(rig.labels(), idle, "script choice");
+}
+
+/// PANEL-STATE-GAP-1023, acceptance 6 and 7 (panel half): ivan has only a
+/// WalkTo walk. The eight others, three with script walks, stop. Eight read
+/// `idle` and ivan still reads `running`, from his own manual-walk fact. A
+/// Stop aimed at him alone is refused for want of a script.
+#[test]
+fn a_manual_walk_stays_visible_after_a_script_stop_and_stop_does_not_target_it() {
+    let mut rig = Rig::nine_marked_running_with_three_script_walks("panel-state-gap-manual");
+    let arm = std::sync::Arc::new(std::sync::Mutex::new(host_play::WalkArm::default()));
+    rig.walks
+        .lock()
+        .unwrap()
+        .insert("ivan".to_owned(), std::sync::Arc::clone(&arm));
+    arm.lock().unwrap().route = Some(std::sync::Arc::new(nav_planner::router::Route {
+        legs: Vec::new(),
+        dest: api::snapshot::WorldTile {
+            x: 3220,
+            z: 3200,
+            level: 0,
+        },
+        ticks: 1.0,
+    }));
+    // Ivan's own script goes first, so the walk is all he is doing.
+    rig.session
+        .core
+        .play_for_test()
+        .unwrap()
+        .script_stop("ivan");
+    rig.wait_state("ivan", ScriptRunState::Idle);
+    rig.session
+        .submit(OperatorCommand::ClearMarks, Targets::Application);
+    rig.mark(&NINE[..8]);
+    rig.stop_marked(&NINE[..8]);
+
+    let mut want = labels_of(&NINE, "idle");
+    want[8] = "ivan: running".into();
+    assert_eq!(rig.labels(), want);
+    let ivan = rig.session.fleet_model.rows().last().unwrap();
+    assert_eq!(
+        (ivan.script(), ivan.script_walk(), ivan.manual_walk()),
+        (ScriptRunState::Idle, false, true)
+    );
+    assert!(rig.session.core.walk_route_armed("ivan"));
+
+    rig.session
+        .submit(OperatorCommand::ClearMarks, Targets::Application);
+    rig.mark(&["ivan"]);
+    rig.click_action(FleetAction::Stop);
+    assert!(rig.layout.plan.is_none());
+    let refusal = rig.session.error.as_deref().expect("nothing to stop");
+    assert!(refusal.contains("ivan: no script running"), "{refusal}");
+    assert!(arm.lock().unwrap().route.is_some(), "Stop left the walk");
+    assert_eq!(rig.labels(), want);
+
+    arm.lock().unwrap().route = None;
+    rig.settle();
+    assert_eq!(rig.labels(), labels_of(&NINE, "idle"));
 }
 
 /// With marks, one hidden by the filter, a marked Assign with a pinned card

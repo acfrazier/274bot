@@ -87,7 +87,12 @@ impl Session {
                 );
                 self.submit_script_command(OperatorCommand::ImportCatalog, Targets::Application);
             }
-            Err(error) => self.error = Some(format!("server profile: {error}")),
+            Err(error) => self.refuse_command(
+                OperatorCommand::ImportCatalog,
+                &[],
+                None,
+                &format!("server profile: {error}"),
+            ),
         }
     }
 
@@ -108,7 +113,12 @@ impl Session {
         let selected = match self.catalog_root() {
             Ok(selected) => selected,
             Err(error) => {
-                self.error = Some(format!("server profile: {error}"));
+                self.refuse_command(
+                    OperatorCommand::ImportCatalog,
+                    &[],
+                    None,
+                    &format!("server profile: {error}"),
+                );
                 return;
             }
         };
@@ -153,10 +163,12 @@ impl Session {
     /// the picker closes and the root is persisted when the result settles.
     pub fn import_rs2b0t_catalog(&mut self, root: &Path) -> Result<(), String> {
         if !crate::script_picker::rs2b0t_root_has_index(root) {
-            return Err(format!(
+            let reason = format!(
                 "no catalog at {}",
                 paths::registry_index_path(root).display()
-            ));
+            );
+            self.refuse_command(OperatorCommand::ImportCatalog, &[], None, &reason);
+            return Err(reason);
         }
         self.scripts.stage_catalog_action(
             CatalogActionKind::Import,
@@ -225,7 +237,8 @@ impl Session {
     /// remember the parent directory. Errors set [`Session::error`].
     pub fn load_js(&mut self, path: &Path) {
         if !path.is_file() {
-            self.error = Some(format!("script: not a file: {}", path.display()));
+            let reason = format!("script: not a file: {}", path.display());
+            self.refuse_command(OperatorCommand::LoadScriptFile, &[], None, &reason);
             return;
         }
         self.scripts.stage_load_file(path.to_path_buf());

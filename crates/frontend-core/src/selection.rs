@@ -390,14 +390,11 @@ pub(crate) fn profile_rows<Io>(core: &OperatorSession<Io>) -> Vec<(String, Profi
 }
 
 fn script_active<Io>(core: &OperatorSession<Io>, name: &str) -> bool {
-    matches!(
+    crate::scripts::ScriptRunState::from_script(
         core.play()
             .map_or(script::RunState::Idle, |play| play.script_state(name)),
-        script::RunState::Starting
-            | script::RunState::Running
-            | script::RunState::Paused
-            | script::RunState::Stopping
     )
+    .is_live()
 }
 
 fn skip(profile: &str, reason: impl Into<String>) -> BulkSkip {
