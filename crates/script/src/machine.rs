@@ -1524,7 +1524,9 @@ pub(crate) struct CapturedLineage {
     pub(crate) dropped: bool,
 }
 
-pub(crate) use crate::native::seat_rows::{MachineEvent, MachineEventKind};
+pub(crate) use crate::native::seat_rows::{
+    SeatMachineEvent as MachineEvent, SeatMachineEventKind as MachineEventKind,
+};
 
 #[derive(Clone, Copy, Default)]
 struct StartContext {

@@ -443,7 +443,7 @@ pub struct QueuedSeatBatch {
     /// Decoded typed controls and gameplay rows.
     pub batch: DecodedSeatBatch,
     /// Local machine phases and terminals from this same producer turn.
-    pub machine_events: Vec<MachineEvent>,
+    pub machine_events: Vec<SeatMachineEvent>,
     /// Wait facts folded out of `batch.reqs` while the seat was held.
     pub held_waits: HeldWaitFacts,
     /// This is the batch that a guardian hold retained. After the hold, the
@@ -462,7 +462,7 @@ impl QueuedSeatBatch {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum MachineEventKind {
+pub enum SeatMachineEventKind {
     Phase(crate::native::NativePhase),
     Done,
     Failed,
@@ -471,8 +471,8 @@ pub enum MachineEventKind {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct MachineEvent {
+pub struct SeatMachineEvent {
     pub id: RequestId,
-    pub kind: MachineEventKind,
+    pub kind: SeatMachineEventKind,
     pub admitted: bool,
 }
