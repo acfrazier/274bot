@@ -1,5 +1,9 @@
 [live]
 globs = [
+  "Cargo.toml",
+  "Cargo.lock",
+  "**/Cargo.toml",
+  "**/build.rs",
   "crates/api/src/**",
   "crates/api/data/**",
   "crates/host/src/**",
@@ -11,13 +15,17 @@ globs = [
   "crates/nav/src/**",
   "crates/nav-executor/src/**",
   "crates/script/src/**",
+  "crates/script/fonts/**",
   "crates/script/compat-js/*.json",
   "crates/script/compat-js/*.d.ts",
   "crates/script/host-js/**",
   "crates/script/schema/**",
   "crates/script/paths/**",
+  "crates/scenario/src/**",
+  "crates/vault/src/**",
   "vendor/fr-client-rust",
   "vendor/fr-client-rust/crates/client/src/**",
+  "vendor/dear-imgui-wgpu-0.15.1/**",
 ]
 
 [not_live]
@@ -26,6 +34,7 @@ globs = [
   ".github/**",
   "tools/**",
   "crates/e2e/**",
+  "crates/script/src/compat_dts.rs",
   "crates/host-play/src/bank_core_live.rs",
   "crates/host-play/src/bank_fetch_closed_live.rs",
   "crates/host-play/src/bank_memory_live.rs",
@@ -45,306 +54,240 @@ globs = [
   "**/*.spec.ts",
   "**/package.json",
   "**/package-lock.json",
-  "**/build.rs",
-  "**/Cargo.toml",
-  "Cargo.toml",
-  "Cargo.lock",
   "**/clippy.toml",
   "**/*.md",
   "**/*.conf",
   "**/*.yml",
   "**/*.yaml",
   "**/*.cjs",
-  "**/*.lock",
   ".gitignore",
   ".gitmodules",
 ]
 
 [[cover]]
-globs = ["crates/frontend-core/src/driver.rs"]
+globs = ["crates/frontend-core/src/driver.rs", "crates/frontend-core/src/session/scripts.rs"]
 cells = [
-  "frontend-core.driver-script-start|.superpowers/bin/isohome nice -n 10 cargo test --locked -p frontend-core --lib driver::tests::",
+  "frontend-core.driver-script-start|${ISOHOME:?} nice -n 10 cargo test --locked -p frontend-core --lib driver::tests::",
 ]
 
 [[cover]]
 globs = ["crates/frontend-core/src/scripts/**"]
 cells = [
-  "frontend-core.driver-script-start|.superpowers/bin/isohome nice -n 10 cargo test --locked -p frontend-core --lib driver::tests::",
-  "panel.shown-card-start|.superpowers/bin/isohome nice -n 10 cargo test --locked -p panel --lib profile_script::tests::start_runs_the_shown_card_after_a_fleet_assign_over_an_older_browse_pick",
-  "panel.live-script-start|LIVE=1 BOT_LIVE_NAME_PREFIX=lm BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} RS2B0T=${RS2B0T:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} .superpowers/bin/isohome nice -n 10 cargo run --release -p panel --bin panel-play -- --profile local-289 --revision 289 --host 127.0.0.1 --port 44594 --asset-host 127.0.0.1 --http-port 1080 --engine ${ENGINE_A_DIR:?} --nav-pack ${NAV_PACK_289:?} --nav-flags ${NAV_FLAGS_289:?} --catalog ${RS2B0T:?} --live script_bone_burier",
-  "tui.live-script-start|LIVE=1 BOT_LIVE_NAME_PREFIX=lm BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} RS2B0T=${RS2B0T:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} .superpowers/bin/isohome nice -n 10 cargo run --release -p tui --bin tui-play -- --profile local-289 --revision 289 --host 127.0.0.1 --port 44594 --asset-host 127.0.0.1 --http-port 1080 --engine ${ENGINE_A_DIR:?} --nav-pack ${NAV_PACK_289:?} --nav-flags ${NAV_FLAGS_289:?} --catalog ${RS2B0T:?} --live script_nav_routes",
+  "frontend-core.script-selection|${ISOHOME:?} nice -n 10 cargo test --locked -p frontend-core --lib scripts::tests::",
+  "panel.manual-start-live|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip MANUAL_LIVE_EVIDENCE=${LIVE_EVIDENCE_DIR:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} ISOHOME_DIR=${PANEL_LIVE_HOME:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p panel --lib -- --ignored --exact manual_click_live_tests::live_gatherer_skill_sync_restart_through_panel_fleet_action --nocapture --test-threads=1",
+]
+
+[[cover]]
+globs = ["crates/frontend-core/src/live/mod.rs", "crates/tui/src/bin.rs"]
+cells = [
+  "tui.live-jive-kq|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} RS2B0T=${CATALOG_ROOT:?} CATALOG_ROOT=${CATALOG_ROOT:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo run --release -p tui --bin tui-play -- --profile local-289 --revision 289 --host 127.0.0.1 --port 44594 --asset-host 127.0.0.1 --http-port 1080 --engine ${ENGINE_A_DIR:?} --nav-pack ${NAV_PACK_289:?} --nav-flags ${NAV_FLAGS_289:?} --catalog ${CATALOG_ROOT:?} --live script_jive_kq_four|--locked -p tui --lib bin::tests::live_prepare_jive_kq_stashes_four_starts_with_the_same_roster",
 ]
 
 [[cover]]
 globs = ["crates/frontend-core/src/frames.rs"]
 cells = [
-  "frontend-core.frame-shared-headless|.superpowers/bin/isohome nice -n 10 cargo test --locked -p frontend-core --lib frames::tests::",
-  "panel.app-frame-headless|.superpowers/bin/isohome nice -n 10 cargo test --locked -p panel --lib app::frame_tests::",
-  "panel.nav-full|LIVE=1 BOT_LIVE_NAME_PREFIX=lm BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} RS2B0T=${RS2B0T:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} .superpowers/bin/isohome nice -n 10 cargo run --release -p panel --bin panel-play -- --profile local-289 --revision 289 --host 127.0.0.1 --port 44594 --asset-host 127.0.0.1 --http-port 1080 --engine ${ENGINE_A_DIR:?} --nav-pack ${NAV_PACK_289:?} --nav-flags ${NAV_FLAGS_289:?} --catalog ${RS2B0T:?} --live nav_full",
-  "tui.capture-and-loop-headless|.superpowers/bin/isohome nice -n 10 cargo test --locked -p tui --lib bin::loop_tests::",
-  "nav.core-route-live|LIVE=1 BOT_LIVE_NAME_PREFIX=lm BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} NAV_ARRIVAL_PACK=${NAV_PACK_289:?} RS2B0T=${RS2B0T:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} .superpowers/bin/isohome nice -n 10 cargo run --release -p tui --bin tui-play -- --profile local-289 --revision 289 --host 127.0.0.1 --port 44594 --asset-host 127.0.0.1 --http-port 1080 --engine ${ENGINE_A_DIR:?} --nav-pack ${NAV_PACK_289:?} --nav-flags ${NAV_FLAGS_289:?} --catalog ${RS2B0T:?} --live script_nav_routes",
-]
-[[cover]]
-globs = [
-  "crates/script/src/load/**",
-  "crates/script/src/module_imports.rs",
-  "crates/script/src/host_js.rs",
-  "crates/script/src/compat_dts.rs",
-  "crates/script/compat-js/*.json",
-  "crates/script/compat-js/*.d.ts",
-  "crates/script/host-js/**",
-  "crates/script/schema/**",
-  "crates/script/paths/**",
-  "crates/script/src/ctx.rs",
-  "crates/script/src/lib.rs",
-  "crates/script/src/native.rs",
-  "crates/script/src/native/**",
-  "crates/script/src/slot/**",
-]
-cells = [
-  "script.load-headless|.superpowers/bin/isohome nice -n 10 cargo test --locked -p script --lib load::",
-  "host.script-runtime-load|LIVE=1 BOT_LIVE_NAME_PREFIX=lm BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} BOT_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ISOHOME_ROOT=${LIVE_EVIDENCE_DIR:?} .superpowers/bin/isohome nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test script_api_live -- --ignored --exact script_runtime_load --nocapture --test-threads=1",
-  "tui.live-script-run|LIVE=1 BOT_LIVE_NAME_PREFIX=lm BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} RS2B0T=${RS2B0T:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} .superpowers/bin/isohome nice -n 10 cargo run --release -p tui --bin tui-play -- --profile local-289 --revision 289 --host 127.0.0.1 --port 44594 --asset-host 127.0.0.1 --http-port 1080 --engine ${ENGINE_A_DIR:?} --nav-pack ${NAV_PACK_289:?} --nav-flags ${NAV_FLAGS_289:?} --catalog ${RS2B0T:?} --live script_bone_burier",
+  "frontend-core.frames-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p frontend-core --lib frames::tests::",
 ]
 
 [[cover]]
-globs = [
-  "crates/script/src/combat/**",
-  "crates/script/src/combat_session.rs",
-  "crates/script/src/api_combat.rs",
-  "crates/script/src/hunt_fight/**",
-  "crates/script/src/hunt_fight.rs",
-  "crates/script/src/native/combat.rs",
-]
+globs = ["crates/panel/src/profile_script.rs"]
 cells = [
-  "scenario.auto-fighter|LIVE=1 BOT_LIVE_NAME_PREFIX=lm BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} RS2B0T=${RS2B0T:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} .superpowers/bin/isohome nice -n 10 cargo run --release -p tui --bin tui-play -- --profile local-289 --revision 289 --host 127.0.0.1 --port 44594 --asset-host 127.0.0.1 --http-port 1080 --engine ${ENGINE_A_DIR:?} --nav-pack ${NAV_PACK_289:?} --nav-flags ${NAV_FLAGS_289:?} --catalog ${RS2B0T:?} --live script_auto_fighter",
-  "host.api-combat-showcase|LIVE=1 BOT_LIVE_NAME_PREFIX=lm BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 WORLD_GAME_PORT=44594 WORLD_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} BOT_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} WORLD_NAV_PACK=${NAV_PACK_289:?} NAV_ARRIVAL_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} RS2B0T=${RS2B0T:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} CLIENT_UNPACK_DIR=${CLIENT_UNPACK_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} .superpowers/bin/isohome nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored --exact api_combat_live_tests::live_api_combat_showcase_script_runs_every_phase --nocapture --test-threads=1",
-  "host.api-combat-melee|LIVE=1 BOT_LIVE_NAME_PREFIX=lm BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 WORLD_GAME_PORT=44594 WORLD_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} BOT_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} WORLD_NAV_PACK=${NAV_PACK_289:?} NAV_ARRIVAL_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} RS2B0T=${RS2B0T:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} CLIENT_UNPACK_DIR=${CLIENT_UNPACK_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} .superpowers/bin/isohome nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored --exact api_combat_live_tests::live_api_combat_melee_kills_a_lumbridge_cow_for_xp --nocapture --test-threads=1",
+  "panel.shown-card-start|${ISOHOME:?} nice -n 10 cargo test --locked -p panel --lib profile_script::tests::start_runs_the_shown_card_after_a_fleet_assign_over_an_older_browse_pick",
+  "panel.manual-start-live|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip MANUAL_LIVE_EVIDENCE=${LIVE_EVIDENCE_DIR:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} ISOHOME_DIR=${PANEL_LIVE_HOME:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p panel --lib -- --ignored --exact manual_click_live_tests::live_gatherer_skill_sync_restart_through_panel_fleet_action --nocapture --test-threads=1",
 ]
 
 [[cover]]
-globs = [
-  "crates/script/src/gatherer/**",
-  "crates/script/src/gather_tools.rs",
-  "crates/script/src/gather_locations.rs",
-  "crates/script/src/api_gather.rs",
-]
+globs = ["crates/panel/src/session.rs", "crates/panel/src/fleet.rs", "crates/panel/src/fleet_actions.rs"]
 cells = [
-  "scenario.gatherer|LIVE=1 BOT_LIVE_NAME_PREFIX=lm BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} RS2B0T=${RS2B0T:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} .superpowers/bin/isohome nice -n 10 cargo run --release -p tui --bin tui-play -- --profile local-289 --revision 289 --host 127.0.0.1 --port 44594 --asset-host 127.0.0.1 --http-port 1080 --engine ${ENGINE_A_DIR:?} --nav-pack ${NAV_PACK_289:?} --nav-flags ${NAV_FLAGS_289:?} --catalog ${RS2B0T:?} --live script_gatherer",
-  "host.gatherer-bank-trip|LIVE=1 BOT_LIVE_NAME_PREFIX=lm BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 WORLD_GAME_PORT=44594 WORLD_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} BOT_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} WORLD_NAV_PACK=${NAV_PACK_289:?} NAV_ARRIVAL_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} RS2B0T=${RS2B0T:?} GATHERER_NAV_PACK=${NAV_PACK_289:?} GATHERER_ENGINE_DIR=${ENGINE_A_DIR:?} GATHERER_CATALOG_ROOT=${RS2B0T:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} CLIENT_UNPACK_DIR=${CLIENT_UNPACK_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} .superpowers/bin/isohome nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test gatherer_live -- --ignored --exact gatherer_wc_bank_trip_lifecycle --nocapture --test-threads=1",
+  "panel.manual-start-live|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip MANUAL_LIVE_EVIDENCE=${LIVE_EVIDENCE_DIR:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} ISOHOME_DIR=${PANEL_LIVE_HOME:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p panel --lib -- --ignored --exact manual_click_live_tests::live_gatherer_skill_sync_restart_through_panel_fleet_action --nocapture --test-threads=1",
 ]
 
 [[cover]]
-globs = [
-  "crates/script/src/production.rs",
-  "crates/script/src/native_production.rs",
-  "crates/script/src/fire.rs",
-  "crates/script/src/native_shop.rs",
-  "crates/script/src/shop.rs",
-  "crates/script/src/native_bank.rs",
-  "crates/script/src/bank/**",
-]
+globs = ["crates/panel/src/app.rs"]
 cells = [
-  "scenario.production-cook|LIVE=1 BOT_LIVE_NAME_PREFIX=lm BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} RS2B0T=${RS2B0T:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} .superpowers/bin/isohome nice -n 10 cargo run --release -p tui --bin tui-play -- --profile local-289 --revision 289 --host 127.0.0.1 --port 44594 --asset-host 127.0.0.1 --http-port 1080 --engine ${ENGINE_A_DIR:?} --nav-pack ${NAV_PACK_289:?} --nav-flags ${NAV_FLAGS_289:?} --catalog ${RS2B0T:?} --live script_cook_bot",
-  "host.cook-bank-loop|LIVE=1 BOT_LIVE_NAME_PREFIX=lm BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 WORLD_GAME_PORT=44594 WORLD_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} BOT_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} WORLD_NAV_PACK=${NAV_PACK_289:?} NAV_ARRIVAL_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} RS2B0T=${RS2B0T:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} .superpowers/bin/isohome nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test cook_bank_loop_live -- --ignored --exact live_cook_banked_ingredients_use_one_preparation_bank_session --nocapture --test-threads=1",
+  "panel.app-frame-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p panel --lib app::frame_tests::",
+  "panel.headed-nav-script|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} WORLD_NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_NAV_FLAGS=${NAV_FLAGS_289:?} RS2B0T=${CATALOG_ROOT:?} CATALOG_ROOT=${CATALOG_ROOT:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo run --release -p panel --bin panel-play -- --profile local-289 --revision 289 --host 127.0.0.1 --port 44594 --asset-host 127.0.0.1 --http-port 1080 --engine ${ENGINE_A_DIR:?} --nav-pack ${NAV_PACK_289:?} --nav-flags ${NAV_FLAGS_289:?} --catalog ${CATALOG_ROOT:?} --live script_nav_routes|--locked -p panel --lib app::frame_tests::"
 ]
 
 [[cover]]
-globs = [
-  "crates/script/src/quester/**",
-  "crates/script/src/quest_journal/**",
-  "crates/script/src/quest_journal.rs",
-]
+globs = ["crates/panel/src/game_view.rs", "crates/panel/src/paint.rs", "crates/panel/src/window.rs", "crates/panel/assets/**", "vendor/dear-imgui-wgpu-0.15.1/**", "vendor/fr-client-rust", "vendor/fr-client-rust/crates/client/src/render/**", "vendor/fr-client-rust/crates/client/src/client/client.rs"]
 cells = [
-  "scenario.quester-engine-q|LIVE=1 BOT_LIVE_NAME_PREFIX=lm BOT_CPU=1 BOT_NAV_BUILD=skip QUESTER_TICK_MS=300 BOT_GAME_PORT=44694 BOT_HTTP_PORT=1180 ENGINE_DIR=${ENGINE_Q_DIR:?} NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_ENGINE_DIR=${ENGINE_Q_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} NAV_ARRIVAL_PACK=${NAV_PACK_289:?} RS2B0T=${RS2B0T:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} .superpowers/bin/isohome nice -n 10 cargo run --release -p tui --bin tui-play -- --profile local-289 --revision 289 --host 127.0.0.1 --port 44694 --asset-host 127.0.0.1 --http-port 1180 --engine ${ENGINE_Q_DIR:?} --nav-pack ${NAV_PACK_289:?} --nav-flags ${NAV_FLAGS_289:?} --catalog ${RS2B0T:?} --live script_quester_cook",
-  "host.quester-path-engine-q|LIVE=1 BOT_LIVE_NAME_PREFIX=lm BOT_CPU=1 BOT_NAV_BUILD=skip QUESTER_TICK_MS=300 QUESTER_PATH=${QUESTER_PATH:?} QUESTER_SEEDS=${QUESTER_SEEDS:?} BOT_GAME_PORT=44694 BOT_HTTP_PORT=1180 WORLD_GAME_PORT=44694 WORLD_HTTP_PORT=1180 ENGINE_DIR=${ENGINE_Q_DIR:?} BOT_ENGINE_DIR=${ENGINE_Q_DIR:?} WORLD_ENGINE_DIR=${ENGINE_Q_DIR:?} NAV_PACK=${NAV_PACK_289:?} WORLD_NAV_PACK=${NAV_PACK_289:?} NAV_ARRIVAL_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} RS2B0T=${RS2B0T:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} CLIENT_UNPACK_DIR=${CLIENT_UNPACK_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} .superpowers/bin/isohome nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test quester_path_live -- --ignored --exact live_quester_path_smoke --nocapture --test-threads=1",
+  "panel.headed-nav-script|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} WORLD_NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_NAV_FLAGS=${NAV_FLAGS_289:?} RS2B0T=${CATALOG_ROOT:?} CATALOG_ROOT=${CATALOG_ROOT:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo run --release -p panel --bin panel-play -- --profile local-289 --revision 289 --host 127.0.0.1 --port 44594 --asset-host 127.0.0.1 --http-port 1080 --engine ${ENGINE_A_DIR:?} --nav-pack ${NAV_PACK_289:?} --nav-flags ${NAV_FLAGS_289:?} --catalog ${CATALOG_ROOT:?} --live script_nav_routes|--locked -p panel --lib app::frame_tests::"
 ]
 
 [[cover]]
-globs = ["crates/script/src/clue/**", "crates/script/src/clue.rs", "crates/script/src/sherlock.rs"]
+globs = ["crates/tui/src/app.rs"]
 cells = [
-  "scenario.sherlock-real-search|LIVE=1 BOT_LIVE_NAME_PREFIX=lm BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} RS2B0T=${RS2B0T:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} .superpowers/bin/isohome nice -n 10 cargo run --release -p tui --bin tui-play -- --profile local-289 --revision 289 --host 127.0.0.1 --port 44594 --asset-host 127.0.0.1 --http-port 1080 --engine ${ENGINE_A_DIR:?} --nav-pack ${NAV_PACK_289:?} --nav-flags ${NAV_FLAGS_289:?} --catalog ${RS2B0T:?} --live script_sherlock_search",
+  "tui.app-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p tui --lib app::tests::",
 ]
 
 [[cover]]
-globs = [
-  "crates/script/src/shim/*bank*.js",
-  "crates/script/src/shim/inventory.js",
-  "crates/script/src/shim/shop.js",
-  "crates/script/src/shim/periodic_bank.js",
-  "crates/script/src/bank/**",
-]
+globs = ["crates/nav/src/lib.rs", "crates/nav/src/router.rs", "crates/nav/src/router/**", "crates/nav/src/map/catalogue.rs", "crates/nav-executor/src/lib.rs", "crates/nav-executor/src/traveller.rs", "crates/nav-executor/src/traveller/walk.rs", "crates/host-play/src/walk_arm.rs", "crates/host-play/src/walk_map/**", "crates/host-play/src/script_nav.rs", "crates/host-play/src/script_walk.rs", "crates/scenario/src/scenarios/navigation.rs"]
 cells = [
-  "compat.bank-transfer|LIVE=1 BOT_LIVE_NAME_PREFIX=lm BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 WORLD_GAME_PORT=44594 WORLD_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} BOT_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} WORLD_NAV_PACK=${NAV_PACK_289:?} NAV_ARRIVAL_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} RS2B0T=${RS2B0T:?} GATHERER_NAV_PACK=${NAV_PACK_289:?} GATHERER_ENGINE_DIR=${ENGINE_A_DIR:?} GATHERER_CATALOG_ROOT=${RS2B0T:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} CLIENT_UNPACK_DIR=${CLIENT_UNPACK_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} .superpowers/bin/isohome nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored --exact bank_core_live::live_bank_core_compat_close_at_draynor --nocapture --test-threads=1",
-  "compat.bank-fetch-session|LIVE=1 BOT_LIVE_NAME_PREFIX=lm BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 WORLD_GAME_PORT=44594 WORLD_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} BOT_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} WORLD_NAV_PACK=${NAV_PACK_289:?} NAV_ARRIVAL_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} RS2B0T=${RS2B0T:?} GATHERER_NAV_PACK=${NAV_PACK_289:?} GATHERER_ENGINE_DIR=${ENGINE_A_DIR:?} GATHERER_CATALOG_ROOT=${RS2B0T:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} CLIENT_UNPACK_DIR=${CLIENT_UNPACK_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} .superpowers/bin/isohome nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored --exact bank_fetch_closed_live::live_fetch_closed_session_port_sarim_to_karamja --nocapture --test-threads=1",
+  "nav.route-search-live|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} RS2B0T=${CATALOG_ROOT:?} CATALOG_ROOT=${CATALOG_ROOT:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo run --release -p tui --bin tui-play -- --profile local-289 --revision 289 --host 127.0.0.1 --port 44594 --asset-host 127.0.0.1 --http-port 1080 --engine ${ENGINE_A_DIR:?} --nav-pack ${NAV_PACK_289:?} --nav-flags ${NAV_FLAGS_289:?} --catalog ${CATALOG_ROOT:?} --live script_nav_routes|--locked -p scenario --lib tests::nav_routes_is_ten_borrowed_ods_with_item_seed",
+  "panel.headed-nav-script|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} WORLD_NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_NAV_FLAGS=${NAV_FLAGS_289:?} RS2B0T=${CATALOG_ROOT:?} CATALOG_ROOT=${CATALOG_ROOT:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo run --release -p panel --bin panel-play -- --profile local-289 --revision 289 --host 127.0.0.1 --port 44594 --asset-host 127.0.0.1 --http-port 1080 --engine ${ENGINE_A_DIR:?} --nav-pack ${NAV_PACK_289:?} --nav-flags ${NAV_FLAGS_289:?} --catalog ${CATALOG_ROOT:?} --live script_nav_routes|--locked -p panel --lib app::frame_tests::"
 ]
 
 [[cover]]
-globs = [
-  "crates/script/src/shim/traversal.js",
-  "crates/script/src/shim/walk_opening.js",
-  "crates/script/src/shim/navigator.js",
-  "crates/script/src/shim/direct_navigator.js",
-  "crates/script/src/shim/reach.js",
-  "crates/script/src/shim/reachability.js",
-  "crates/script/src/shim/teleport.js",
-]
+globs = ["crates/nav/src/transport.rs", "crates/nav/src/transport/**", "crates/nav-executor/src/traveller/transport_hop.rs"]
 cells = [
-  "compat.movement-routes|LIVE=1 BOT_LIVE_NAME_PREFIX=lm BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} RS2B0T=${RS2B0T:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} .superpowers/bin/isohome nice -n 10 cargo run --release -p tui --bin tui-play -- --profile local-289 --revision 289 --host 127.0.0.1 --port 44594 --asset-host 127.0.0.1 --http-port 1080 --engine ${ENGINE_A_DIR:?} --nav-pack ${NAV_PACK_289:?} --nav-flags ${NAV_FLAGS_289:?} --catalog ${RS2B0T:?} --live script_nav_routes",
-  "nav.shantay-live-follow|LIVE=1 BOT_LIVE_NAME_PREFIX=lm BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} .superpowers/bin/isohome nice -n 10 cargo test --locked -p e2e --test nav_toll -- --ignored --exact nav_shantay_follow --nocapture --test-threads=1",
+  "nav.toll-gate-roundtrip|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip WORLD_GAME_PORT=44594 WORLD_HTTP_PORT=1080 WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_CACHE_DIR=${BOT_CACHE_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} WORLD_NAV_FLAGS=${NAV_FLAGS_289:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test toll_gate_live -- --ignored --exact toll_gate_live_walk_both_ways --nocapture --test-threads=1",
+  "nav.toll-refuses-without-coins|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip WORLD_GAME_PORT=44594 WORLD_HTTP_PORT=1080 WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_CACHE_DIR=${BOT_CACHE_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} WORLD_NAV_FLAGS=${NAV_FLAGS_289:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test toll_gate_live -- --ignored --exact toll_gate_live_refuses_without_coins --nocapture --test-threads=1",
 ]
 
 [[cover]]
-globs = [
-  "crates/script/src/shim/*combat*.js",
-  "crates/script/src/shim/*fight*.js",
-  "crates/script/src/shim/prayer.js",
-  "crates/script/src/shim/ranged.js",
-  "crates/script/src/shim/food.js",
-  "crates/script/src/shim/sustain.js",
-]
+globs = ["crates/nav/src/zones.rs", "crates/nav/src/zones/**", "crates/nav/src/quest_gates.rs", "crates/nav/src/quest_gates/**", "crates/api/src/game_data.rs", "crates/api/src/quest_progress.rs", "crates/api/src/selected.rs"]
 cells = [
-  "compat.combat-prayer|LIVE=1 BOT_LIVE_NAME_PREFIX=lm BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} RS2B0T=${RS2B0T:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} .superpowers/bin/isohome nice -n 10 cargo run --release -p tui --bin tui-play -- --profile local-289 --revision 289 --host 127.0.0.1 --port 44594 --asset-host 127.0.0.1 --http-port 1080 --engine ${ENGINE_A_DIR:?} --nav-pack ${NAV_PACK_289:?} --nav-flags ${NAV_FLAGS_289:?} --catalog ${RS2B0T:?} --live script_prayer_v2_ts",
+  "host.nav-quest-doors|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_CACHE_DIR=${BOT_CACHE_DIR:?} BOT_NAV_SNAPSHOT_ROOT=${NAV_SNAPSHOT_ROOT_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} NAV_QUEST_DOORS_EVIDENCE=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test nav_quest_doors_live -- --ignored --exact live_fortress_disguise_and_secret_wall_use_content_navigation --nocapture --test-threads=1",
+  "host.nav-gated-entrances|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_CACHE_DIR=${BOT_CACHE_DIR:?} BOT_NAV_SNAPSHOT_ROOT=${NAV_SNAPSHOT_ROOT_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} NAV_GATED_ENTRANCES_EVIDENCE=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test nav_gated_entrances_live -- --ignored --exact live_grand_tree_mine_requires_quest_completion_and_reaches_resources --nocapture --test-threads=1",
+]
+[[cover]]
+globs = ["crates/api/data/game-data/289/quests.json"]
+cells = [
+  "host.nav-quest-doors|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_CACHE_DIR=${BOT_CACHE_DIR:?} BOT_NAV_SNAPSHOT_ROOT=${NAV_SNAPSHOT_ROOT_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} NAV_QUEST_DOORS_EVIDENCE=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test nav_quest_doors_live -- --ignored --exact live_fortress_disguise_and_secret_wall_use_content_navigation --nocapture --test-threads=1",
+  "host.nav-gated-entrances|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_CACHE_DIR=${BOT_CACHE_DIR:?} BOT_NAV_SNAPSHOT_ROOT=${NAV_SNAPSHOT_ROOT_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} NAV_GATED_ENTRANCES_EVIDENCE=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test nav_gated_entrances_live -- --ignored --exact live_grand_tree_mine_requires_quest_completion_and_reaches_resources --nocapture --test-threads=1",
 ]
 
 [[cover]]
-globs = [
-  "crates/script/src/shim/gathering_locations.js",
-  "crates/script/src/shim/mining_rocks.js",
-  "crates/script/src/shim/hunting_*.js",
-  "crates/script/src/shim/gather*.js",
-]
+globs = ["crates/nav/src/essence.rs", "crates/nav/src/essence/**"]
 cells = [
-  "compat.gather-locations|LIVE=1 BOT_LIVE_NAME_PREFIX=lm BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} RS2B0T=${RS2B0T:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} .superpowers/bin/isohome nice -n 10 cargo run --release -p tui --bin tui-play -- --profile local-289 --revision 289 --host 127.0.0.1 --port 44594 --asset-host 127.0.0.1 --http-port 1080 --engine ${ENGINE_A_DIR:?} --nav-pack ${NAV_PACK_289:?} --nav-flags ${NAV_FLAGS_289:?} --catalog ${RS2B0T:?} --live script_gatherer",
+  "nav.essence-follow|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip ENGINE_DIR=${ENGINE_274_DIR:?} NAV_PACK=${NAV_PACK_274:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p e2e --test nav_essence -- --ignored --exact nav_essence_follow --nocapture --test-threads=1",
 ]
 
 [[cover]]
-globs = ["crates/nav/src/router.rs", "crates/nav/src/router/**"]
+globs = ["crates/nav/src/arrival.rs", "crates/nav/src/arrival/**"]
 cells = [
-  "nav.route-search-live|LIVE=1 BOT_LIVE_NAME_PREFIX=lm BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} RS2B0T=${RS2B0T:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} .superpowers/bin/isohome nice -n 10 cargo run --release -p tui --bin tui-play -- --profile local-289 --revision 289 --host 127.0.0.1 --port 44594 --asset-host 127.0.0.1 --http-port 1080 --engine ${ENGINE_A_DIR:?} --nav-pack ${NAV_PACK_289:?} --nav-flags ${NAV_FLAGS_289:?} --catalog ${RS2B0T:?} --live script_nav_routes",
-  "panel.nav-full|LIVE=1 BOT_LIVE_NAME_PREFIX=lm BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} RS2B0T=${RS2B0T:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} .superpowers/bin/isohome nice -n 10 cargo run --release -p panel --bin panel-play -- --profile local-289 --revision 289 --host 127.0.0.1 --port 44594 --asset-host 127.0.0.1 --http-port 1080 --engine ${ENGINE_A_DIR:?} --nav-pack ${NAV_PACK_289:?} --nav-flags ${NAV_FLAGS_289:?} --catalog ${RS2B0T:?} --live nav_full",
+  "host.nav-arrival-live|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 BOT_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} NAV_ARRIVAL_PACK=${NAV_PACK_289:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored --exact nav_arrival_live_tests::live_native_walk_arrival_retains_arrived_receipt --nocapture --test-threads=1",
 ]
 
 [[cover]]
-globs = [
-  "crates/nav/src/transport.rs",
-  "crates/nav/src/transport/**",
-  "crates/nav/src/zones.rs",
-  "crates/nav/src/zones/**",
-  "crates/nav/src/quest_gates.rs",
-  "crates/nav/src/quest_gates/**",
-  "crates/nav/src/essence.rs",
-  "crates/nav/src/essence/**",
-]
+globs = ["crates/nav/src/bank_fetch.rs", "crates/nav/src/bank_fetch/**", "crates/script/src/native_bank.rs", "crates/script/src/bank/**", "crates/api/data/game-data/bank-catalog.rs"]
 cells = [
-  "nav.transport-and-gates|LIVE=1 BOT_LIVE_NAME_PREFIX=lm BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} RS2B0T=${RS2B0T:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} .superpowers/bin/isohome nice -n 10 cargo run --release -p tui --bin tui-play -- --profile local-289 --revision 289 --host 127.0.0.1 --port 44594 --asset-host 127.0.0.1 --http-port 1080 --engine ${ENGINE_A_DIR:?} --nav-pack ${NAV_PACK_289:?} --nav-flags ${NAV_FLAGS_289:?} --catalog ${RS2B0T:?} --live script_nav_routes",
-  "nav.toll-fare|LIVE=1 BOT_LIVE_NAME_PREFIX=lm BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} .superpowers/bin/isohome nice -n 10 cargo test --locked -p e2e --test nav_toll -- --ignored --exact nav_toll --nocapture --test-threads=1",
+  "host.bank-fetch-session|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip GATHERER_GAME_PORT=44594 GATHERER_HTTP_PORT=1080 GATHERER_NAV_PACK=${NAV_PACK_289:?} GATHERER_NAV_FLAGS=${NAV_FLAGS_289:?} GATHERER_ENGINE_DIR=${ENGINE_A_DIR:?} GATHERER_CATALOG_ROOT=${CATALOG_ROOT:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} CLIENT_UNPACK_DIR=${CLIENT_UNPACK_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored live_fetch_closed_session_port_sarim_to_karamja --nocapture --test-threads=1",
 ]
 
 [[cover]]
-globs = [
-  "crates/nav/src/arrival.rs",
-  "crates/nav/src/arrival/**",
-  "crates/nav/src/bank_fetch.rs",
-  "crates/nav/src/bank_fetch/**",
-]
+globs = ["crates/api/src/condition.rs", "crates/api/src/lib.rs", "crates/host-play/src/slot_condition.rs"]
 cells = [
-  "nav.arrival-and-bank-fetch|LIVE=1 BOT_LIVE_NAME_PREFIX=lm BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} NAV_ARRIVAL_PACK=${NAV_PACK_289:?} RS2B0T=${RS2B0T:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} .superpowers/bin/isohome nice -n 10 cargo run --release -p tui --bin tui-play -- --profile local-289 --revision 289 --host 127.0.0.1 --port 44594 --asset-host 127.0.0.1 --http-port 1080 --engine ${ENGINE_A_DIR:?} --nav-pack ${NAV_PACK_289:?} --nav-flags ${NAV_FLAGS_289:?} --catalog ${RS2B0T:?} --live script_nav_routes",
+  "host.condition-poison-ordinary|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip GATHERER_GAME_PORT=44594 GATHERER_HTTP_PORT=1080 GATHERER_ENGINE_DIR=${ENGINE_A_DIR:?} GATHERER_NAV_PACK=${NAV_PACK_289:?} GATHERER_NAV_FLAGS=${NAV_FLAGS_289:?} GATHERER_CATALOG_ROOT=${CATALOG_ROOT:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} CLIENT_UNPACK_DIR=${CLIENT_UNPACK_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored --exact slot_condition_live_tests::live_condition_poison_ordinary_no_script --nocapture --test-threads=1",
+  "host.condition-poison-super|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip GATHERER_GAME_PORT=44594 GATHERER_HTTP_PORT=1080 GATHERER_ENGINE_DIR=${ENGINE_A_DIR:?} GATHERER_NAV_PACK=${NAV_PACK_289:?} GATHERER_NAV_FLAGS=${NAV_FLAGS_289:?} GATHERER_CATALOG_ROOT=${CATALOG_ROOT:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} CLIENT_UNPACK_DIR=${CLIENT_UNPACK_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored --exact slot_condition_live_tests::live_condition_poison_super_no_script --nocapture --test-threads=1",
+  "host.condition-deposit|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip GATHERER_GAME_PORT=44594 GATHERER_HTTP_PORT=1080 GATHERER_ENGINE_DIR=${ENGINE_A_DIR:?} GATHERER_NAV_PACK=${NAV_PACK_289:?} GATHERER_NAV_FLAGS=${NAV_FLAGS_289:?} GATHERER_CATALOG_ROOT=${CATALOG_ROOT:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} CLIENT_UNPACK_DIR=${CLIENT_UNPACK_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored --exact slot_condition_live_tests::live_condition_deposit_no_script --nocapture --test-threads=1",
 ]
 
 [[cover]]
-globs = ["crates/nav/src/lib.rs", "crates/nav/src/map/catalogue.rs"]
+globs = ["crates/api/src/interact/**", "crates/api/src/lifecycle.rs", "crates/api/src/snapshot.rs", "crates/api/src/snapshot/**", "crates/host-play/src/script_interact.rs"]
 cells = [
-  "nav.core-route-live|LIVE=1 BOT_LIVE_NAME_PREFIX=lm BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} NAV_ARRIVAL_PACK=${NAV_PACK_289:?} RS2B0T=${RS2B0T:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} .superpowers/bin/isohome nice -n 10 cargo run --release -p tui --bin tui-play -- --profile local-289 --revision 289 --host 127.0.0.1 --port 44594 --asset-host 127.0.0.1 --http-port 1080 --engine ${ENGINE_A_DIR:?} --nav-pack ${NAV_PACK_289:?} --nav-flags ${NAV_FLAGS_289:?} --catalog ${RS2B0T:?} --live script_nav_routes",
+  "host.api-gather-wire-shadow|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 GATHERER_NAV_PACK=${NAV_PACK_289:?} GATHERER_NAV_FLAGS=${NAV_FLAGS_289:?} GATHERER_ENGINE_DIR=${ENGINE_A_DIR:?} GATHERER_WC_TILE=${GATHERER_WC_TILE:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} BOT_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe,memory-profile --lib -- --ignored --exact api_gather_live_tests::live_gather_api_receipt_tracks_memory_reconnect_and_wire_shadow --nocapture --test-threads=1",
 ]
 
 [[cover]]
-globs = ["crates/nav-executor/src/**", "crates/host-play/src/walk_arm.rs", "crates/host-play/src/walk_map/**", "crates/host-play/src/script_nav.rs", "crates/host-play/src/script_walk.rs"]
+globs = ["crates/host-play/src/script_observe.rs"]
 cells = [
-  "nav.executor-route-follow|LIVE=1 BOT_LIVE_NAME_PREFIX=lm BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} NAV_ARRIVAL_PACK=${NAV_PACK_289:?} RS2B0T=${RS2B0T:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} .superpowers/bin/isohome nice -n 10 cargo run --release -p tui --bin tui-play -- --profile local-289 --revision 289 --host 127.0.0.1 --port 44594 --asset-host 127.0.0.1 --http-port 1080 --engine ${ENGINE_A_DIR:?} --nav-pack ${NAV_PACK_289:?} --nav-flags ${NAV_FLAGS_289:?} --catalog ${RS2B0T:?} --live script_nav_routes",
-  "host.npc-hop-live|LIVE=1 BOT_LIVE_NAME_PREFIX=lm BOT_CPU=1 BOT_NAV_BUILD=skip WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} WORLD_NAV_FLAGS=${NAV_FLAGS_289:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} .superpowers/bin/isohome nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test npc_hop_live -- --ignored --exact npc_hop_live_boat_routes --nocapture --test-threads=1",
-  "nav.toll-gate-and-route|LIVE=1 BOT_LIVE_NAME_PREFIX=lm BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} RS2B0T=${RS2B0T:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} .superpowers/bin/isohome nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test toll_gate_live -- --ignored --nocapture --test-threads=1",
+  "host.api-gather-wire-shadow|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 GATHERER_NAV_PACK=${NAV_PACK_289:?} GATHERER_NAV_FLAGS=${NAV_FLAGS_289:?} GATHERER_ENGINE_DIR=${ENGINE_A_DIR:?} GATHERER_WC_TILE=${GATHERER_WC_TILE:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} BOT_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe,memory-profile --lib -- --ignored --exact api_gather_live_tests::live_gather_api_receipt_tracks_memory_reconnect_and_wire_shadow --nocapture --test-threads=1",
+]
+[[cover]]
+globs = ["crates/script/src/load/**"]
+cells = [
+  "script.load-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p script --lib load::",
+  "host.script-runtime-load|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} BOT_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test script_api_live -- --ignored --exact script_runtime_load --nocapture --test-threads=1",
+  "tui.live-jive-kq|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} RS2B0T=${CATALOG_ROOT:?} CATALOG_ROOT=${CATALOG_ROOT:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo run --release -p tui --bin tui-play -- --profile local-289 --revision 289 --host 127.0.0.1 --port 44594 --asset-host 127.0.0.1 --http-port 1080 --engine ${ENGINE_A_DIR:?} --nav-pack ${NAV_PACK_289:?} --nav-flags ${NAV_FLAGS_289:?} --catalog ${CATALOG_ROOT:?} --live script_jive_kq_four|--locked -p tui --lib bin::tests::live_prepare_jive_kq_stashes_four_starts_with_the_same_roster",
 ]
 
 [[cover]]
-globs = ["crates/api/src/interact/**", "crates/api/src/lifecycle.rs", "crates/api/src/snapshot.rs", "crates/api/src/snapshot/**", "crates/host-play/src/script_interact.rs", "crates/host-play/src/script_observe.rs"]
+globs = ["crates/script/src/module_imports.rs"]
 cells = [
-  "host.api-gather-wire-shadow|LIVE=1 BOT_LIVE_NAME_PREFIX=lm BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 WORLD_GAME_PORT=44594 WORLD_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} BOT_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} WORLD_NAV_PACK=${NAV_PACK_289:?} NAV_ARRIVAL_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} RS2B0T=${RS2B0T:?} GATHERER_NAV_PACK=${NAV_PACK_289:?} GATHERER_ENGINE_DIR=${ENGINE_A_DIR:?} GATHERER_CATALOG_ROOT=${RS2B0T:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} CLIENT_UNPACK_DIR=${CLIENT_UNPACK_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} BOT_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} .superpowers/bin/isohome nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored --exact api_gather_live_tests::live_gather_api_receipt_tracks_memory_reconnect_and_wire_shadow --nocapture --test-threads=1",
-  "host.api-combat-showcase|LIVE=1 BOT_LIVE_NAME_PREFIX=lm BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 WORLD_GAME_PORT=44594 WORLD_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} BOT_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} WORLD_NAV_PACK=${NAV_PACK_289:?} NAV_ARRIVAL_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} RS2B0T=${RS2B0T:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} CLIENT_UNPACK_DIR=${CLIENT_UNPACK_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} .superpowers/bin/isohome nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored --exact api_combat_live_tests::live_api_combat_showcase_script_runs_every_phase --nocapture --test-threads=1",
+  "tui.live-jive-kq|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} RS2B0T=${CATALOG_ROOT:?} CATALOG_ROOT=${CATALOG_ROOT:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo run --release -p tui --bin tui-play -- --profile local-289 --revision 289 --host 127.0.0.1 --port 44594 --asset-host 127.0.0.1 --http-port 1080 --engine ${ENGINE_A_DIR:?} --nav-pack ${NAV_PACK_289:?} --nav-flags ${NAV_FLAGS_289:?} --catalog ${CATALOG_ROOT:?} --live script_jive_kq_four|--locked -p tui --lib bin::tests::live_prepare_jive_kq_stashes_four_starts_with_the_same_roster",
 ]
 
 [[cover]]
-globs = ["crates/api/data/**"]
+globs = ["crates/script/src/host_js.rs"]
 cells = [
-  "host.api-combat-showcase|LIVE=1 BOT_LIVE_NAME_PREFIX=lm BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 WORLD_GAME_PORT=44594 WORLD_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} BOT_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} WORLD_NAV_PACK=${NAV_PACK_289:?} NAV_ARRIVAL_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} RS2B0T=${RS2B0T:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} CLIENT_UNPACK_DIR=${CLIENT_UNPACK_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} .superpowers/bin/isohome nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored --exact api_combat_live_tests::live_api_combat_showcase_script_runs_every_phase --nocapture --test-threads=1",
-  "host.survivable-admission|LIVE=1 BOT_LIVE_NAME_PREFIX=lm BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 WORLD_GAME_PORT=44594 WORLD_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} BOT_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} WORLD_NAV_PACK=${NAV_PACK_289:?} NAV_ARRIVAL_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} RS2B0T=${RS2B0T:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} CLIENT_UNPACK_DIR=${CLIENT_UNPACK_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} .superpowers/bin/isohome nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test survivable_admission_live -- --ignored --exact real_unknown_poison_explicit_forbid_then_opt_in_and_default_escape --nocapture --test-threads=1",
-  "host.gatherer-bank-trip|LIVE=1 BOT_LIVE_NAME_PREFIX=lm BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 WORLD_GAME_PORT=44594 WORLD_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} BOT_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} WORLD_NAV_PACK=${NAV_PACK_289:?} NAV_ARRIVAL_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} RS2B0T=${RS2B0T:?} GATHERER_NAV_PACK=${NAV_PACK_289:?} GATHERER_ENGINE_DIR=${ENGINE_A_DIR:?} GATHERER_CATALOG_ROOT=${RS2B0T:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} CLIENT_UNPACK_DIR=${CLIENT_UNPACK_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} .superpowers/bin/isohome nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test gatherer_live -- --ignored --exact gatherer_wc_bank_trip_lifecycle --nocapture --test-threads=1",
+  "host.script-runtime-load|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} BOT_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test script_api_live -- --ignored --exact script_runtime_load --nocapture --test-threads=1",
+  "tui.live-jive-kq|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} RS2B0T=${CATALOG_ROOT:?} CATALOG_ROOT=${CATALOG_ROOT:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo run --release -p tui --bin tui-play -- --profile local-289 --revision 289 --host 127.0.0.1 --port 44594 --asset-host 127.0.0.1 --http-port 1080 --engine ${ENGINE_A_DIR:?} --nav-pack ${NAV_PACK_289:?} --nav-flags ${NAV_FLAGS_289:?} --catalog ${CATALOG_ROOT:?} --live script_jive_kq_four|--locked -p tui --lib bin::tests::live_prepare_jive_kq_stashes_four_starts_with_the_same_roster",
 ]
-
 [[cover]]
-globs = ["crates/host/src/slot_io.rs", "crates/host/src/login_queue.rs", "vendor/fr-client-rust/crates/client/src/io/**"]
+globs = ["crates/script/src/gatherer/**", "crates/script/src/gather_tools.rs", "crates/script/src/gather_locations.rs", "crates/script/src/api_gather.rs", "crates/api/src/gather_methods.rs", "crates/api/src/work.rs", "crates/api/src/identity.rs", "crates/api/data/game-data/289/gathering.json"]
 cells = [
-  "host.transport-relog|LIVE=1 BOT_LIVE_NAME_PREFIX=lm BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 WORLD_GAME_PORT=44594 WORLD_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} BOT_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} WORLD_NAV_PACK=${NAV_PACK_289:?} NAV_ARRIVAL_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} RS2B0T=${RS2B0T:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} CLIENT_UNPACK_DIR=${CLIENT_UNPACK_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} .superpowers/bin/isohome nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored --exact relog_live_tests::live_protocol_error_relogs_fresh_into_a_world --nocapture --test-threads=1",
-  "host.transport-dead-server|LIVE=1 BOT_LIVE_NAME_PREFIX=lm BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 WORLD_GAME_PORT=44594 WORLD_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} BOT_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} WORLD_NAV_PACK=${NAV_PACK_289:?} NAV_ARRIVAL_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} RS2B0T=${RS2B0T:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} CLIENT_UNPACK_DIR=${CLIENT_UNPACK_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} .superpowers/bin/isohome nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored --exact relog_live_tests::live_dead_server_deadline_reconnects_into_a_world --nocapture --test-threads=1",
+  "host.gatherer-bank-cost-fallback|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip GATHERER_GAME_PORT=44594 GATHERER_HTTP_PORT=1080 GATHERER_NAV_PACK=${NAV_PACK_289:?} GATHERER_NAV_FLAGS=${NAV_FLAGS_289:?} GATHERER_ENGINE_DIR=${ENGINE_A_DIR:?} GATHERER_CATALOG_ROOT=${CATALOG_ROOT:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} CLIENT_UNPACK_DIR=${CLIENT_UNPACK_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test gatherer_live -- --ignored --exact gatherer_bank_cost_air_fallback --nocapture --test-threads=1",
+  "scenario.gatherer-live|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} RS2B0T=${CATALOG_ROOT:?} CATALOG_ROOT=${CATALOG_ROOT:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo run --release -p tui --bin tui-play -- --profile local-289 --revision 289 --host 127.0.0.1 --port 44594 --asset-host 127.0.0.1 --http-port 1080 --engine ${ENGINE_A_DIR:?} --nav-pack ${NAV_PACK_289:?} --nav-flags ${NAV_FLAGS_289:?} --catalog ${CATALOG_ROOT:?} --live script_gatherer|--locked -p scenario --lib scenarios::gatherer::tests::start_stands_in_draynor_with_a_proved_tree_in_reach"
+]
+[[cover]]
+globs = ["crates/scenario/src/scenarios/gatherer.rs"]
+cells = [
+  "scenario.gatherer-live|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} RS2B0T=${CATALOG_ROOT:?} CATALOG_ROOT=${CATALOG_ROOT:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo run --release -p tui --bin tui-play -- --profile local-289 --revision 289 --host 127.0.0.1 --port 44594 --asset-host 127.0.0.1 --http-port 1080 --engine ${ENGINE_A_DIR:?} --nav-pack ${NAV_PACK_289:?} --nav-flags ${NAV_FLAGS_289:?} --catalog ${CATALOG_ROOT:?} --live script_gatherer|--locked -p scenario --lib scenarios::gatherer::tests::start_stands_in_draynor_with_a_proved_tree_in_reach"
 ]
 
 
 [[cover]]
-globs = ["crates/script/src/survival/**", "crates/script/src/combat/risk/**", "crates/script/src/death_recovery.rs", "crates/script/src/ctx.rs", "crates/script/src/lib.rs", "crates/script/src/native.rs", "crates/script/src/native/actions.rs", "crates/host-play/src/admission.rs", "crates/host-play/src/play_slots.rs", "crates/host-play/src/play_status.rs"]
+globs = ["crates/script/src/fire.rs", "crates/script/src/shim/firemaking.js", "crates/script/src/load/fire_v8.rs", "crates/script/src/load/bindings.rs", "crates/scenario/src/scenarios/production/firemaking.rs"]
 cells = [
-  "host.survivable-admission|LIVE=1 BOT_LIVE_NAME_PREFIX=lm BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 WORLD_GAME_PORT=44594 WORLD_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} BOT_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} WORLD_NAV_PACK=${NAV_PACK_289:?} NAV_ARRIVAL_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} RS2B0T=${RS2B0T:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} CLIENT_UNPACK_DIR=${CLIENT_UNPACK_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} .superpowers/bin/isohome nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test survivable_admission_live -- --ignored --exact real_unknown_poison_explicit_forbid_then_opt_in_and_default_escape --nocapture --test-threads=1",
+  "scenario.firemaker-live|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} RS2B0T=${CATALOG_ROOT:?} CATALOG_ROOT=${CATALOG_ROOT:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo run --release -p tui --bin tui-play -- --profile local-289 --revision 289 --host 127.0.0.1 --port 44594 --asset-host 127.0.0.1 --http-port 1080 --engine ${ENGINE_A_DIR:?} --nav-pack ${NAV_PACK_289:?} --nav-flags ${NAV_FLAGS_289:?} --catalog ${CATALOG_ROOT:?} --live script_firemaker|--locked -p scenario --lib tests::production_native_seeds_give_verified_certificates_through_real_send"
 ]
 
 [[cover]]
-globs = ["crates/script/src/grinch.rs", "crates/script/src/anchor_return.rs"]
+globs = ["crates/script/src/native_shop.rs", "crates/script/src/shop.rs", "crates/script/src/shim/shop.js", "crates/script/src/shim/shop_types.js", "crates/script/src/shim/shopdb.js", "crates/api/data/shops/**", "crates/scenario/src/scenarios/shop/**"]
 cells = [
-  "host.grinch-cross-region-return|LIVE=1 BOT_LIVE_NAME_PREFIX=lm BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 WORLD_GAME_PORT=44594 WORLD_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} BOT_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} WORLD_NAV_PACK=${NAV_PACK_289:?} NAV_ARRIVAL_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} RS2B0T=${RS2B0T:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} CLIENT_UNPACK_DIR=${CLIENT_UNPACK_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} .superpowers/bin/isohome nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test grinch_live -- --ignored --exact grinch_three_bank_returns_cross_region_live --nocapture --test-threads=1",
+  "scenario.shop-buyout-live|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} RS2B0T=${CATALOG_ROOT:?} CATALOG_ROOT=${CATALOG_ROOT:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo run --release -p tui --bin tui-play -- --profile local-289 --revision 289 --host 127.0.0.1 --port 44594 --asset-host 127.0.0.1 --http-port 1080 --engine ${ENGINE_A_DIR:?} --nav-pack ${NAV_PACK_289:?} --nav-flags ${NAV_FLAGS_289:?} --catalog ${CATALOG_ROOT:?} --live script_shop_buyout|--locked -p scenario --lib tests::shop_buyout_variants_prove_product_bank_and_resumed_purchase"
 ]
 
 [[cover]]
-globs = [
-  "crates/api/src/condition.rs",
-  "crates/host/src/slot.rs",
-  "crates/host-play/src/slot_condition.rs",
-  "crates/api/src/lib.rs",
-  "crates/host-play/src/lib.rs",
-]
+globs = ["crates/script/src/combat/**", "crates/script/src/native/combat.rs", "crates/scenario/src/scenarios/combat/auto_fighter.rs"]
 cells = [
-  "host.condition-poison-ordinary|LIVE=1 BOT_LIVE_NAME_PREFIX=lm BOT_CPU=1 BOT_NAV_BUILD=skip GATHERER_GAME_PORT=44594 GATHERER_HTTP_PORT=1080 GATHERER_ENGINE_DIR=${ENGINE_A_DIR:?} GATHERER_NAV_PACK=${NAV_PACK_289:?} GATHERER_NAV_FLAGS=${NAV_FLAGS_289:?} GATHERER_CATALOG_ROOT=${RS2B0T:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} CLIENT_UNPACK_DIR=${CLIENT_UNPACK_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} .superpowers/bin/isohome nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored --exact slot_condition_live_tests::live_condition_poison_ordinary_no_script --nocapture --test-threads=1",
-  "host.condition-poison-super|LIVE=1 BOT_LIVE_NAME_PREFIX=lm BOT_CPU=1 BOT_NAV_BUILD=skip GATHERER_GAME_PORT=44594 GATHERER_HTTP_PORT=1080 GATHERER_ENGINE_DIR=${ENGINE_A_DIR:?} GATHERER_NAV_PACK=${NAV_PACK_289:?} GATHERER_NAV_FLAGS=${NAV_FLAGS_289:?} GATHERER_CATALOG_ROOT=${RS2B0T:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} CLIENT_UNPACK_DIR=${CLIENT_UNPACK_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} .superpowers/bin/isohome nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored --exact slot_condition_live_tests::live_condition_poison_super_no_script --nocapture --test-threads=1",
-  "host.condition-deposit|LIVE=1 BOT_LIVE_NAME_PREFIX=lm BOT_CPU=1 BOT_NAV_BUILD=skip GATHERER_GAME_PORT=44594 GATHERER_HTTP_PORT=1080 GATHERER_ENGINE_DIR=${ENGINE_A_DIR:?} GATHERER_NAV_PACK=${NAV_PACK_289:?} GATHERER_NAV_FLAGS=${NAV_FLAGS_289:?} GATHERER_CATALOG_ROOT=${RS2B0T:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} CLIENT_UNPACK_DIR=${CLIENT_UNPACK_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} .superpowers/bin/isohome nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored --exact slot_condition_live_tests::live_condition_deposit_no_script --nocapture --test-threads=1",
-]
-[[cover]]
-globs = ["crates/host/src/lib.rs"]
-cells = [
-  "host.api-combat-melee|LIVE=1 BOT_LIVE_NAME_PREFIX=lm BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 WORLD_GAME_PORT=44594 WORLD_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} BOT_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} WORLD_NAV_PACK=${NAV_PACK_289:?} NAV_ARRIVAL_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} RS2B0T=${RS2B0T:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} CLIENT_UNPACK_DIR=${CLIENT_UNPACK_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} .superpowers/bin/isohome nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored --exact api_combat_live_tests::live_api_combat_melee_kills_a_lumbridge_cow_for_xp --nocapture --test-threads=1",
+  "scenario.auto-fighter-live|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} RS2B0T=${CATALOG_ROOT:?} CATALOG_ROOT=${CATALOG_ROOT:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo run --release -p tui --bin tui-play -- --profile local-289 --revision 289 --host 127.0.0.1 --port 44594 --asset-host 127.0.0.1 --http-port 1080 --engine ${ENGINE_A_DIR:?} --nav-pack ${NAV_PACK_289:?} --nav-flags ${NAV_FLAGS_289:?} --catalog ${CATALOG_ROOT:?} --live script_auto_fighter|--locked -p scenario --lib runner::tests::auto_fighter_bank_clean_floor_allows_start_and_records_zero_wait"
 ]
 
 [[cover]]
-globs = ["crates/host/src/slot.rs"]
+globs = ["crates/script/src/combat_session.rs", "crates/script/src/api_combat.rs"]
 cells = [
-  "host.npc-hop-live|LIVE=1 BOT_LIVE_NAME_PREFIX=lm BOT_CPU=1 BOT_NAV_BUILD=skip WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} WORLD_NAV_FLAGS=${NAV_FLAGS_289:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} .superpowers/bin/isohome nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test npc_hop_live -- --ignored --exact npc_hop_live_boat_routes --nocapture --test-threads=1",
+  "host.api-combat-showcase|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 BOT_NAV_PACK=${NAV_PACK_289:?} BOT_ENGINE_DIR=${ENGINE_A_DIR:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} CLIENT_UNPACK_DIR=${CLIENT_UNPACK_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored --exact api_combat_live_tests::live_api_combat_showcase_script_runs_every_phase --nocapture --test-threads=1",
+  "host.api-combat-melee|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 BOT_NAV_PACK=${NAV_PACK_289:?} BOT_ENGINE_DIR=${ENGINE_A_DIR:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} CLIENT_UNPACK_DIR=${CLIENT_UNPACK_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored --exact api_combat_live_tests::live_api_combat_melee_kills_a_lumbridge_cow_for_xp --nocapture --test-threads=1",
 ]
 
 [[cover]]
-globs = ["crates/panel/src/**", "crates/panel/assets/**"]
+globs = ["crates/host-play/src/admission.rs", "crates/host-play/src/play_slots.rs", "crates/host-play/src/play_status.rs"]
 cells = [
-  "panel.app-frame-headless|.superpowers/bin/isohome nice -n 10 cargo test --locked -p panel --lib app::frame_tests::",
-  "panel.shown-card-start|.superpowers/bin/isohome nice -n 10 cargo test --locked -p panel --lib profile_script::tests::start_runs_the_shown_card_after_a_fleet_assign_over_an_older_browse_pick",
-  "panel.live-script-start|LIVE=1 BOT_LIVE_NAME_PREFIX=lm BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} RS2B0T=${RS2B0T:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} .superpowers/bin/isohome nice -n 10 cargo run --release -p panel --bin panel-play -- --profile local-289 --revision 289 --host 127.0.0.1 --port 44594 --asset-host 127.0.0.1 --http-port 1080 --engine ${ENGINE_A_DIR:?} --nav-pack ${NAV_PACK_289:?} --nav-flags ${NAV_FLAGS_289:?} --catalog ${RS2B0T:?} --live script_bone_burier",
+  "host.survivable-admission|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} BOT_UNPACK_DIR=${BOT_UNPACK_DIR:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test survivable_admission_live -- --ignored --exact real_unknown_poison_explicit_forbid_then_opt_in_and_default_escape --nocapture --test-threads=1",
 ]
 
 [[cover]]
-globs = ["crates/tui/src/**"]
+globs = ["crates/script/src/quester/**", "crates/script/src/quest_journal/**", "crates/script/src/quest_journal.rs"]
 cells = [
-  "tui.capture-and-loop-headless|.superpowers/bin/isohome nice -n 10 cargo test --locked -p tui --lib bin::loop_tests::",
-  "tui.capture-application-sizes|.superpowers/bin/isohome nice -n 10 cargo test --locked -p tui --lib app::tests::",
-  "tui.live-script-start|LIVE=1 BOT_LIVE_NAME_PREFIX=lm BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} RS2B0T=${RS2B0T:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} .superpowers/bin/isohome nice -n 10 cargo run --release -p tui --bin tui-play -- --profile local-289 --revision 289 --host 127.0.0.1 --port 44594 --asset-host 127.0.0.1 --http-port 1080 --engine ${ENGINE_A_DIR:?} --nav-pack ${NAV_PACK_289:?} --nav-flags ${NAV_FLAGS_289:?} --catalog ${RS2B0T:?} --live script_nav_routes",
+  "host.quester-path-engine-q|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip QUESTER_TICK_MS=300 QUESTER_PATH=${QUESTER_PATH:?} QUESTER_SEEDS=${QUESTER_SEEDS:?} BOT_GAME_PORT=44694 BOT_HTTP_PORT=1180 WORLD_GAME_PORT=44694 WORLD_HTTP_PORT=1180 ENGINE_DIR=${ENGINE_Q_DIR:?} BOT_ENGINE_DIR=${ENGINE_Q_DIR:?} WORLD_ENGINE_DIR=${ENGINE_Q_DIR:?} NAV_PACK=${NAV_PACK_289:?} WORLD_NAV_PACK=${NAV_PACK_289:?} NAV_ARRIVAL_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} RS2B0T=${CATALOG_ROOT:?} CATALOG_ROOT=${CATALOG_ROOT:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} CLIENT_UNPACK_DIR=${CLIENT_UNPACK_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test quester_path_live -- --ignored --exact live_quester_path_smoke --nocapture --test-threads=1",
+  "scenario.quester-engine-q|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip QUESTER_TICK_MS=300 BOT_GAME_PORT=44694 BOT_HTTP_PORT=1180 ENGINE_DIR=${ENGINE_Q_DIR:?} NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_ENGINE_DIR=${ENGINE_Q_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} WORLD_NAV_FLAGS=${NAV_FLAGS_289:?} NAV_ARRIVAL_PACK=${NAV_PACK_289:?} RS2B0T=${CATALOG_ROOT:?} CATALOG_ROOT=${CATALOG_ROOT:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo run --release -p tui --bin tui-play -- --profile local-289 --revision 289 --host 127.0.0.1 --port 44694 --asset-host 127.0.0.1 --http-port 1180 --engine ${ENGINE_Q_DIR:?} --nav-pack ${NAV_PACK_289:?} --nav-flags ${NAV_FLAGS_289:?} --catalog ${CATALOG_ROOT:?} --live script_quester_cook|--locked -p scenario --lib scenarios::quester::tests::quester_stage_stands_after_the_relog"
+]
+[[cover]]
+globs = ["crates/scenario/src/scenarios/quester.rs"]
+cells = [
+  "scenario.quester-engine-q|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip QUESTER_TICK_MS=300 BOT_GAME_PORT=44694 BOT_HTTP_PORT=1180 ENGINE_DIR=${ENGINE_Q_DIR:?} NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_ENGINE_DIR=${ENGINE_Q_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} WORLD_NAV_FLAGS=${NAV_FLAGS_289:?} NAV_ARRIVAL_PACK=${NAV_PACK_289:?} RS2B0T=${CATALOG_ROOT:?} CATALOG_ROOT=${CATALOG_ROOT:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo run --release -p tui --bin tui-play -- --profile local-289 --revision 289 --host 127.0.0.1 --port 44694 --asset-host 127.0.0.1 --http-port 1180 --engine ${ENGINE_Q_DIR:?} --nav-pack ${NAV_PACK_289:?} --nav-flags ${NAV_FLAGS_289:?} --catalog ${CATALOG_ROOT:?} --live script_quester_cook|--locked -p scenario --lib scenarios::quester::tests::quester_stage_stands_after_the_relog"
 ]
 
 [[cover]]
-globs = ["vendor/fr-client-rust", "vendor/fr-client-rust/crates/client/src/**"]
+globs = ["crates/script/src/clue/**", "crates/script/src/sherlock.rs", "crates/scenario/src/scenarios/clue.rs"]
 cells = [
-  "panel.client-frame-live|LIVE=1 BOT_LIVE_NAME_PREFIX=lm BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} RS2B0T=${RS2B0T:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} .superpowers/bin/isohome nice -n 10 cargo run --release -p panel --bin panel-play -- --profile local-289 --revision 289 --host 127.0.0.1 --port 44594 --asset-host 127.0.0.1 --http-port 1080 --engine ${ENGINE_A_DIR:?} --nav-pack ${NAV_PACK_289:?} --nav-flags ${NAV_FLAGS_289:?} --catalog ${RS2B0T:?} --live nav_full",
-  "tui.capture-and-loop-headless|.superpowers/bin/isohome nice -n 10 cargo test --locked -p tui --lib bin::loop_tests::",
+  "host.sherlock-search-live|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} CLIENT_UNPACK_DIR=${CLIENT_UNPACK_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test clue_walk_arrive_live -- --ignored --exact live_sherlock_ordinary_search_walk_arrive --nocapture --test-threads=1",
+]
+
+[[cover]]
+globs = ["crates/script/src/native_bank.rs", "crates/script/src/bank/**", "crates/script/src/shim/*bank*.js", "crates/script/src/shim/inventory.js", "crates/script/src/shim/periodic_bank.js", "crates/api/data/game-data/bank-catalog.rs"]
+cells = [
+  "compat.bank-core-loop|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip GATHERER_GAME_PORT=44594 GATHERER_HTTP_PORT=1080 GATHERER_NAV_PACK=${NAV_PACK_289:?} GATHERER_NAV_FLAGS=${NAV_FLAGS_289:?} GATHERER_ENGINE_DIR=${ENGINE_A_DIR:?} GATHERER_CATALOG_ROOT=${CATALOG_ROOT:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} CLIENT_UNPACK_DIR=${CLIENT_UNPACK_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored --exact bank_core_live::live_bank_core_compat_gathering_bank_loop_at_draynor --nocapture --test-threads=1",
+]
+
+[[cover]]
+globs = ["crates/script/src/grinch.rs", "crates/script/src/anchor_return.rs", "crates/scenario/src/scenarios/grinch.rs"]
+cells = [
+  "host.grinch-cross-region-return|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} CATALOG_ROOT=${CATALOG_ROOT:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} CLIENT_UNPACK_DIR=${CLIENT_UNPACK_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test grinch_live -- --ignored --exact grinch_three_bank_returns_cross_region_live --nocapture --test-threads=1",
+]
+
+[[cover]]
+globs = ["crates/host/src/slot_io.rs", "crates/host/src/login_queue.rs", "vendor/fr-client-rust/crates/client/src/io/**", "vendor/fr-client-rust/crates/client/src/packet/login.rs"]
+cells = [
+  "host.transport-relog|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip RELOG_GAME_PORT=44594 RELOG_HTTP_PORT=1080 RELOG_ENGINE_DIR=${ENGINE_A_DIR:?} RELOG_CACHE_DIR=${BOT_CACHE_DIR:?} RELOG_UNPACK_DIR=${CLIENT_UNPACK_DIR:?} RELOG_NAV_PACK=${NAV_PACK_289:?} BOT_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored --exact relog_live_tests::live_protocol_error_relogs_fresh_into_a_world --nocapture --test-threads=1",
+  "host.transport-dead-server|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip RELOG_GAME_PORT=44594 RELOG_HTTP_PORT=1080 RELOG_ENGINE_DIR=${ENGINE_A_DIR:?} RELOG_CACHE_DIR=${BOT_CACHE_DIR:?} RELOG_UNPACK_DIR=${CLIENT_UNPACK_DIR:?} RELOG_NAV_PACK=${NAV_PACK_289:?} BOT_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored --exact relog_live_tests::live_dead_server_deadline_reconnects_into_a_world --nocapture --test-threads=1",
+]
+
+[[cover]]
+globs = ["crates/nav-executor/src/traveller/npc_hop.rs", "crates/nav-executor/src/traveller/dialog.rs"]
+cells = [
+  "host.npc-hop-engine-b|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip WORLD_ENGINE_DIR=${ENGINE_B_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} WORLD_NAV_FLAGS=${NAV_FLAGS_289:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test npc_hop_live -- --ignored --exact npc_hop_live_boat_routes --nocapture --test-threads=1",
 ]

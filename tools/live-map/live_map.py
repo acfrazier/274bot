@@ -8,10 +8,14 @@ import fnmatch
 import os
 from pathlib import Path
 import re
+import shlex
 import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stdout
+from io import StringIO
+from unittest.mock import patch
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any
@@ -29,6 +33,7 @@ class MapError(ValueError):
 class Cell:
     name: str
     command: str
+    selector: str
 
 
 @dataclass(frozen=True)
@@ -117,6 +122,109 @@ def load_map(path: Path = MAP_PATH) -> dict[str, Any]:
             raw = tomllib.load(stream)
     return validate_map(raw)
 
+def _cell_fields(cell_spec: str, label: str) -> Cell:
+    parts = [part.strip() for part in cell_spec.split("|", 2)]
+    if len(parts) not in (2, 3):
+        raise MapError(f"{label} has a cell without name|command[|selector]")
+    name, command = parts[:2]
+    if not _CELL_NAME.fullmatch(name) or not command:
+        raise MapError(f"{label} has an invalid cell: {cell_spec!r}")
+    selector = parts[2] if len(parts) == 3 else _test_selector_from_command(command)
+    if not selector:
+        raise MapError(f"cell {name!r} needs a cargo-test selector")
+    try:
+        selector_args = shlex.split(selector)
+    except ValueError as error:
+        raise MapError(f"cell {name!r} has an invalid selector: {error}") from error
+    if not selector_args or selector_args[:2] == ["cargo", "test"]:
+        raise MapError(f"cell {name!r} selector must contain cargo test arguments only")
+    return Cell(name, command, selector)
+
+
+def _test_selector_from_command(command: str) -> str:
+    try:
+        tokens = shlex.split(command)
+    except ValueError as error:
+        raise MapError(f"invalid cell command: {error}") from error
+    for index in range(len(tokens) - 1):
+        if tokens[index : index + 2] != ["cargo", "test"]:
+            continue
+        args = tokens[index + 2 :]
+        if "--" in args:
+            split = args.index("--")
+            cargo_args = args[:split]
+            test_args = [
+                arg
+                for arg in args[split + 1 :]
+                if arg != "--nocapture" and not arg.startswith("--test-threads=")
+            ]
+            return shlex.join([*cargo_args, "--", *test_args])
+        return shlex.join(args)
+    return ""
+
+
+def _cell_registry(config: dict[str, Any]) -> dict[str, Cell]:
+    cells: dict[str, Cell] = {}
+    names: dict[str, Cell] = {}
+    for index, row in enumerate(config["cover"]):
+        for cell_spec in row["cells"]:
+            cell = _cell_fields(cell_spec, f"cover row {index + 1}")
+            if cell.name in names and names[cell.name] != cell:
+                raise MapError(f"cell {cell.name!r} has conflicting commands or selectors")
+            names[cell.name] = cell
+            previous = cells.get(cell.command)
+            if previous is not None and previous.selector != cell.selector:
+                raise MapError(
+                    f"command {cell.command!r} has conflicting test selectors"
+                )
+            if previous is None or cell.name < previous.name:
+                cells[cell.command] = cell
+    return cells
+
+
+def verify_cells(config: dict[str, Any]) -> int:
+    isohome = Path(
+        os.environ.get(
+            "ISOHOME",
+            "/Users/acfrazier/experiments/274bot/.superpowers/bin/isohome",
+        )
+    )
+    if not isohome.is_absolute() or not isohome.is_file():
+        print(f"live-map: ISOHOME must name the absolute isohome executable: {isohome}", file=sys.stderr)
+        return 2
+    failures = 0
+    cells = _cell_registry(config)
+    print(f"Verifying test selectors for {len(cells)} unique commands")
+    for cell in sorted(cells.values(), key=lambda item: item.name):
+        selector_args = shlex.split(cell.selector)
+        if "--" in selector_args:
+            split = selector_args.index("--")
+            command_args = [
+                *selector_args[:split],
+                "--",
+                *selector_args[split + 1 :],
+                "--list",
+            ]
+        else:
+            command_args = [*selector_args, "--", "--list"]
+        command = [str(isohome), "nice", "-n", "10", "cargo", "test", *command_args]
+        print(f"\n[{cell.name}] {shlex.join(command)}")
+        result = subprocess.run(command, cwd=ROOT, check=False, capture_output=True, text=True)
+        output = f"{result.stdout}{result.stderr}"
+        selected = [
+            line.split(": ", 1)[0].strip()
+            for line in output.splitlines()
+            if ": test" in line and line.split(": ", 1)[1].strip().startswith("test")
+        ]
+        for name in selected:
+            print(f"  {name}")
+        print(f"  selected tests: {len(selected)}; exit: {result.returncode}")
+        if result.returncode or not selected:
+            failures += 1
+            print(output, file=sys.stderr, end="" if output.endswith("\n") else "\n")
+    print(f"\nSelector result: {len(cells) - failures}/{len(cells)} cells select at least one test")
+    return 1 if failures else 0
+
 
 def validate_map(raw: dict[str, Any]) -> dict[str, Any]:
     if set(raw) != {"live", "not_live", "cover"}:
@@ -128,7 +236,6 @@ def validate_map(raw: dict[str, Any]) -> dict[str, Any]:
         _validate_globs(section["globs"], section_name)
     if not isinstance(raw["cover"], list):
         raise MapError("cover must be an array of tables")
-    names: dict[str, str] = {}
     for index, row in enumerate(raw["cover"]):
         if not isinstance(row, dict) or set(row) != {"globs", "cells"}:
             raise MapError(f"cover row {index + 1} must define globs and cells")
@@ -136,14 +243,10 @@ def validate_map(raw: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(row["cells"], list) or not row["cells"]:
             raise MapError(f"cover row {index + 1} must define at least one cell")
         for cell_spec in row["cells"]:
-            if not isinstance(cell_spec, str) or "|" not in cell_spec:
-                raise MapError(f"cover row {index + 1} has a cell without name|command")
-            name, command = (part.strip() for part in cell_spec.split("|", 1))
-            if not _CELL_NAME.fullmatch(name) or not command:
-                raise MapError(f"cover row {index + 1} has an invalid cell: {cell_spec!r}")
-            if name in names and names[name] != command:
-                raise MapError(f"cell {name!r} has conflicting commands")
-            names[name] = command
+            if not isinstance(cell_spec, str):
+                raise MapError(f"cover row {index + 1} has a cell that is not a string")
+            _cell_fields(cell_spec, f"cover row {index + 1}")
+    _cell_registry(raw)
     return raw
 
 
@@ -195,7 +298,7 @@ def make_plan(paths: list[str], config: dict[str, Any]) -> Plan:
         else:
             unclassified.append(path)
 
-    cells: dict[str, Cell] = {}
+    selected_cells: dict[str, Cell] = {}
     uncovered: list[str] = []
     for path in live_paths:
         rows = [row for row in config["cover"] if matches_any(path, row["globs"])]
@@ -204,9 +307,11 @@ def make_plan(paths: list[str], config: dict[str, Any]) -> Plan:
             continue
         for row in rows:
             for cell_spec in row["cells"]:
-                name, command = (part.strip() for part in cell_spec.split("|", 1))
-                cells.setdefault(name, Cell(name, command))
-    ordered_cells = tuple(cells[name] for name in sorted(cells))
+                cell = _cell_fields(cell_spec, "cover row")
+                previous = selected_cells.get(cell.command)
+                if previous is None or cell.name < previous.name:
+                    selected_cells[cell.command] = cell
+    ordered_cells = tuple(sorted(selected_cells.values(), key=lambda cell: cell.name))
     return Plan(ordered_cells, tuple(uncovered), tuple(unclassified), tuple(not_live))
 
 
@@ -214,7 +319,7 @@ def diff_paths(diff_range: str, repo: Path = ROOT) -> list[str]:
     if diff_range.count("..") != 1 or diff_range.startswith("..") or diff_range.endswith("..") or "..." in diff_range:
         raise MapError("--diff needs one BASE..HEAD range")
     result = subprocess.run(
-        ["git", "diff", "--name-only", diff_range],
+        ["git", "diff", "--name-only", "--no-renames", diff_range],
         cwd=repo,
         check=False,
         capture_output=True,
@@ -229,8 +334,15 @@ def diff_paths(diff_range: str, repo: Path = ROOT) -> list[str]:
 def format_plan(plan: Plan) -> str:
     lines = [f"Required cells ({len(plan.cells)}; run each 3 times):"]
     if plan.cells:
-        for cell in plan.cells:
-            lines.extend((f"- {cell.name}", f"  Command: `{cell.command}`"))
+        lines.extend(
+            line
+            for cell in plan.cells
+            for line in (
+                f"- {cell.name}",
+                f"  Command: `{cell.command}`",
+                f"  Test selector: `{cell.selector}`",
+            )
+        )
     else:
         lines.append("- None")
     lines.append(f"Changed live paths without a covering cell ({len(plan.uncovered)}):")
@@ -256,7 +368,7 @@ class LiveMapTests(unittest.TestCase):
                 "live": {"globs": ["crates/nav/src/**"]},
                 "not_live": {"globs": ["**/*_tests.rs", "docs/**", "tools/**"]},
                 "cover": [
-                    {"globs": ["crates/nav/src/router.rs"], "cells": ["nav.routes|run-nav"]},
+                    {"globs": ["crates/nav/src/router.rs"], "cells": ["nav.routes|cargo test --locked -p nav --lib router::tests::"]},
                 ],
             }
         )
@@ -281,6 +393,53 @@ class LiveMapTests(unittest.TestCase):
         self.assertEqual(plan.unclassified, ())
         self.assertEqual(plan.not_live, ("crates/nav/src/router_tests.rs", "tools/check.py"))
 
+    def test_commands_deduplicate_by_command(self) -> None:
+        config = validate_map(
+            {
+                "live": {"globs": ["src/**"]},
+                "not_live": {"globs": ["docs/**"]},
+                "cover": [
+                    {"globs": ["src/a.rs"], "cells": ["nav.z-route|cargo test --locked -p nav --lib router::tests::"]},
+                    {"globs": ["src/b.rs"], "cells": ["nav.a-route|cargo test --locked -p nav --lib router::tests::"]},
+                ],
+            }
+        )
+        plan = make_plan(["src/a.rs", "src/b.rs"], config)
+        self.assertEqual([cell.name for cell in plan.cells], ["nav.a-route"])
+
+    def test_duplicate_commands_need_the_same_selector(self) -> None:
+        raw = {
+            "live": {"globs": ["src/**"]},
+            "not_live": {"globs": ["docs/**"]},
+            "cover": [
+                {"globs": ["src/a.rs"], "cells": ["nav.a|panel-play --live nav_a|--locked -p nav --lib router::tests::route"]},
+                {"globs": ["src/b.rs"], "cells": ["nav.b|panel-play --live nav_a|--locked -p nav --lib router::tests::search"]},
+            ],
+        }
+        with self.assertRaises(MapError):
+            validate_map(raw)
+
+    def test_selector_is_derived_from_the_cell_test_command(self) -> None:
+        selector = _test_selector_from_command(
+            "ISOHOME nice -n 10 cargo test --locked -p host-play "
+            "--features live-harness,memory-profile --lib "
+            "-- --ignored --exact api_gather_live_tests::live_receipt --nocapture --test-threads=1"
+        )
+        self.assertEqual(
+            selector,
+            "--locked -p host-play --features live-harness,memory-profile --lib "
+            "-- --ignored --exact api_gather_live_tests::live_receipt",
+        )
+
+    def test_non_test_cell_command_requires_a_selector(self) -> None:
+        raw = {
+            "live": {"globs": ["src/**"]},
+            "not_live": {"globs": ["docs/**"]},
+            "cover": [{"globs": ["src/**"], "cells": ["panel.nav|panel-play --live nav_full"]}],
+        }
+        with self.assertRaises(MapError):
+            validate_map(raw)
+
     def test_uncovered_and_unclassified_paths_are_findings(self) -> None:
         plan = make_plan(["crates/nav/src/new_area.rs", "mystery/file.rs"], self.config)
         self.assertEqual(plan.uncovered, ("crates/nav/src/new_area.rs",))
@@ -291,12 +450,35 @@ class LiveMapTests(unittest.TestCase):
             "live": {"globs": ["src/**"]},
             "not_live": {"globs": ["docs/**"]},
             "cover": [
-                {"globs": ["src/**"], "cells": ["one|first"]},
-                {"globs": ["src/**"], "cells": ["one|second"]},
+                {"globs": ["src/**"], "cells": ["one|cargo test --locked -p nav --lib router::tests::route"]},
+                {"globs": ["src/**"], "cells": ["one|cargo test --locked -p nav --lib router::tests::other"]},
             ],
         }
         with self.assertRaises(MapError):
             validate_map(raw)
+
+    def test_verify_cells_rejects_an_empty_test_list(self) -> None:
+        config = validate_map(
+            {
+                "live": {"globs": ["src/**"]},
+                "not_live": {"globs": ["docs/**"]},
+                "cover": [
+                    {"globs": ["src/**"], "cells": ["nav.routes|cargo test --locked -p nav --lib router::tests::"]}
+                ],
+            }
+        )
+        result = subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout="0 tests, 0 benchmarks\n",
+            stderr="",
+        )
+        output = StringIO()
+        with patch.dict(os.environ, {"ISOHOME": sys.executable}), patch(
+            "subprocess.run", return_value=result
+        ), redirect_stdout(output):
+            self.assertEqual(verify_cells(config), 1)
+        self.assertIn("selected tests: 0", output.getvalue())
 
     def test_diff_reads_a_temporary_git_repository(self) -> None:
         with tempfile.TemporaryDirectory(prefix="live-map-self-test-") as temp:
@@ -325,6 +507,27 @@ class LiveMapTests(unittest.TestCase):
             self.assertEqual(plan.uncovered, ())
             self.assertEqual(plan.unclassified, ("mystery/file.rs",))
 
+    def test_diff_lists_removed_paths_for_renames(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="live-map-rename-") as temp:
+            repo = Path(temp)
+            _git(repo, "init", "--quiet")
+            _git(repo, "config", "user.name", "Live Map Test")
+            _git(repo, "config", "user.email", "live-map-test@example.invalid")
+            old = repo / "crates/nav/src/world_state.rs"
+            old.parent.mkdir(parents=True, exist_ok=True)
+            old.write_text("base\n", encoding="utf-8")
+            _git(repo, "add", "crates/nav/src/world_state.rs")
+            _git(repo, "commit", "--quiet", "-m", "base")
+            _git(repo, "branch", "baseline")
+            new = repo / "crates/nav/src/world_state_tests.rs"
+            old.rename(new)
+            _git(repo, "add", "-A")
+            _git(repo, "commit", "--quiet", "-m", "rename")
+            self.assertEqual(
+                diff_paths("baseline..HEAD", repo),
+                ["crates/nav/src/world_state.rs", "crates/nav/src/world_state_tests.rs"],
+            )
+
     def test_python_310_subset_parser_reads_the_map_shape(self) -> None:
         with tempfile.TemporaryDirectory(prefix="live-map-toml-") as temp:
             path = Path(temp) / "map.toml"
@@ -332,11 +535,14 @@ class LiveMapTests(unittest.TestCase):
                 '[live]\nglobs = ["src/**"]\n'
                 '[not_live]\nglobs = ["docs/**"]\n'
                 '[[cover]]\nglobs = ["src/**"]\n'
-                'cells = [\n "one|run-one",\n]\n',
+                'cells = [\n "one|cargo test --locked -p nav --lib router::tests::",\n]\n',
                 encoding="utf-8",
             )
             parsed = validate_map(_load_toml_310(path))
-            self.assertEqual(parsed["cover"][0]["cells"], ["one|run-one"])
+            self.assertEqual(
+                parsed["cover"][0]["cells"],
+                ["one|cargo test --locked -p nav --lib router::tests::"],
+            )
 
 
 def self_test() -> int:
@@ -350,7 +556,14 @@ def main(argv: list[str] | None = None) -> int:
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--diff", metavar="BASE..HEAD")
     group.add_argument("--self-test", action="store_true")
+    group.add_argument("--verify-cells", action="store_true")
     args = parser.parse_args(argv)
+    if args.verify_cells:
+        try:
+            return verify_cells(load_map())
+        except (MapError, OSError) as error:
+            print(f"live-map: {error}", file=sys.stderr)
+            return 2
     if args.self_test:
         return self_test()
     try:
