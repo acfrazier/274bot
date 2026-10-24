@@ -32,10 +32,12 @@ png = "=0.18.1"
 # and publishes its identities to the compile-time table (`nav_identity`).
 [build-dependencies]
 nav-planner = { path = "../nav-planner" }
+nav-bake = { path = "../nav-bake" }
 serde_json = "=1.0.140"
 
 [dev-dependencies]
 api = { path = "../api", features = ["test-support"] }
+nav-bake = { path = "../nav-bake" }
 allocation-counter = "=0.8.1"
 bzip2 = "0.4"
 # The local HTTPS update servers of `tests/cold_fill_lookups.rs`; the

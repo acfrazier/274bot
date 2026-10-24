@@ -82,7 +82,7 @@ fn nav_cart() {
     if carts.len() < 2 {
         fail(&format!(
             "nav_cart: pack carries {} Npc cart edges, need >= 2 \
-             (rebake with `cargo run -p nav-planner --bin nav-pack`)",
+             (rebake with `cargo run -p nav-bake --bin nav-pack`)",
             carts.len()
         ));
     }

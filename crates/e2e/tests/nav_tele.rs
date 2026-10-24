@@ -89,7 +89,7 @@ fn nav_tele() {
     else {
         fail(&format!(
             "nav_tele: pack carries no dueling-ring rub edge to the Duel Arena {DUEL_ARENA:?} \
-             (rebake with `cargo run -p nav-planner --bin nav-pack`)"
+             (rebake with `cargo run -p nav-bake --bin nav-pack`)"
         ));
     };
     if e.option != 4 {

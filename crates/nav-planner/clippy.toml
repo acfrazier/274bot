@@ -2,6 +2,8 @@
 # Paths include public seed items, reexports, and public aliases of seed types.
 # Value-only const/static uses are inventoried but not denied by Clippy.
 
+allow-unwrap-in-tests = true
+
 disallowed-types = [
     { path = "api::interact::ActionSpec", reason = "The planner must use nav-executor for action capabilities." },
     { path = "api::interact::Driver", reason = "The planner must use nav-executor for action capabilities." },
