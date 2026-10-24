@@ -197,7 +197,7 @@ mod machine;
 /// Frozen market catalog facts over the selected revision's items.
 #[cfg(feature = "load")]
 mod market_catalog;
-mod melee_weapons;
+pub mod melee_weapons;
 #[cfg(feature = "load")]
 mod modals;
 /// One decoded snapshot scene per isolate thread, read by the step machines.
