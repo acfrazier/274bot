@@ -1,11 +1,12 @@
 //! Local selected-bank catalog queries. Reachable selection runs in the native
 //! seat and delegates its route costs to the bounded host bank-pick service.
+pub(crate) use crate::native_bank::bank_value;
 use crate::native_bank::{air_distance_squared, nearest_eligible_bank};
 use crate::observed;
 use api::named_banks::{BankPreferences, NamedBank, NamedBankFacts};
 use api::snapshot::WorldTile;
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::Value;
 use std::cell::{Cell, RefCell};
 use std::sync::Arc;
 
@@ -94,40 +95,6 @@ fn within_locked_bank_radius(bank: WorldTile, tile: WorldTile) -> bool {
     let dx = (i64::from(bank.x) - i64::from(tile.x)).abs();
     let dz = (i64::from(bank.z) - i64::from(tile.z)).abs();
     bank.level == tile.level && dx.max(dz) <= 14
-}
-
-pub(crate) fn bank_value(bank: &NamedBank) -> Value {
-    let mut value = json!({"name": bank.name, "tile": {"x": bank.tile.x, "z": bank.tile.z, "level": bank.tile.level}});
-    if let Some(definition) = bank.definition {
-        if let Some(approach) = definition.approach {
-            value["approach"] = json!({"x": approach.x, "z": approach.z, "level": approach.level});
-        }
-        if let Some(npc) = definition.npc {
-            value["npcAccess"] = json!({"name": npc.name, "op": npc.op});
-            if let Some(choose) = definition.choose {
-                value["npcAccess"]["choose"] = json!(choose);
-            }
-        } else if let Some(object) = definition.object {
-            value["access"] = json!({"name": object.name, "op": object.op});
-            if let Some(open) = definition.open_first {
-                value["access"]["openFirst"] = json!({"name": open.name, "op": open.op});
-            }
-        }
-        if definition.skill.is_some() || definition.quest.is_some() || definition.setting.is_some()
-        {
-            value["requires"] = json!({});
-            if let Some((_, level)) = definition.skill {
-                value["requires"]["skill"] = json!({"name": "fishing", "level": level});
-            }
-            if let Some(quest) = definition.quest {
-                value["requires"]["quest"] = json!(quest);
-            }
-            if let Some(setting) = definition.setting {
-                value["requires"]["setting"] = json!(setting);
-            }
-        }
-    }
-    value
 }
 
 pub(crate) fn selected_bank(index: i32) -> Option<NamedBank> {

@@ -15,7 +15,7 @@ use crate::bank::seat_transfer::{
 use crate::native::request::NativeKind;
 use crate::native::snapshot_source::BankSelectionInput;
 use crate::native::{ActionContext, ActionError, ActionHandle, NativeActions, NativeMachine};
-use crate::native_bank::{PickKind, SelectedBank};
+use crate::native_bank::{bank_value, PickKind, SelectedBank};
 use api::named_banks::{BankPreferences, NamedBankFacts};
 use api::snapshot::WorldTile;
 use serde_json::{json, Value};
@@ -565,12 +565,6 @@ impl BankRow {
     }
 }
 
-// Materialization is shared with local readers and consumes the selected
-// catalog entry, not a second bank catalog or a current snapshot page.
-fn bank_value(bank: &api::named_banks::NamedBank) -> Value {
-    crate::bank_select::bank_value(bank)
-}
-
 impl SlotScript {
     pub(super) fn bank_session_boundary(&mut self, reconnect: bool) {
         if let Some(bank) = &mut self.bank {
@@ -629,6 +623,7 @@ impl SlotScript {
             })
     }
 
+    #[cfg(feature = "load")]
     pub(super) fn start_bank(&mut self, id: RequestId, request: BankSeatArgs) {
         let started = self.bank.get_or_insert_with(Default::default).start(
             id,

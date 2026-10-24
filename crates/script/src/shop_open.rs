@@ -358,11 +358,7 @@ impl OpenCore {
     /// One real tick. `keeper` is read only when a Trade or walk is due.
     /// While walking this waits; the adapter polls its walk and reports with
     /// [`Self::walked`].
-    pub fn tick(
-        &mut self,
-        facts: &Facts,
-        keeper: impl FnOnce() -> Option<Keeper>,
-    ) -> Decision {
+    pub fn tick(&mut self, facts: &Facts, keeper: impl FnOnce() -> Option<Keeper>) -> Decision {
         let Some(tick) = facts.tick else {
             return Decision::Wait;
         };
@@ -436,11 +432,7 @@ impl OpenCore {
 
     /// The adapter's walk to the keeper ended. An arrival continues on the
     /// same tick with a fresh keeper read. A failed walk fails the open.
-    pub fn walked(
-        &mut self,
-        arrived: bool,
-        keeper: impl FnOnce() -> Option<Keeper>,
-    ) -> Decision {
+    pub fn walked(&mut self, arrived: bool, keeper: impl FnOnce() -> Option<Keeper>) -> Decision {
         if !arrived {
             return Decision::Failed("the walk to the unreachable keeper failed");
         }

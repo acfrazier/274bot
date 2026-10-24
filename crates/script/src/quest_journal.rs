@@ -3,7 +3,6 @@
 #[path = "quest_journal/native.rs"]
 mod native;
 pub use native::ROOT_289;
-#[cfg(feature = "load")]
 pub use native::{title_matches, TITLE_289};
 pub use native::{JournalMachine, JournalRequest};
 

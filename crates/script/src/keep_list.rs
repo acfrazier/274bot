@@ -71,10 +71,7 @@ pub fn from_args(args: &[Value]) -> CombatKeepOptions {
 }
 
 #[cfg(feature = "load")]
-pub fn combat_keep_names(
-    data: &SelectedGameData,
-    options: &CombatKeepOptions,
-) -> Vec<String> {
+pub fn combat_keep_names(data: &SelectedGameData, options: &CombatKeepOptions) -> Vec<String> {
     let mut keep = food_forms(data.items(), &options.food);
     keep.extend(options.extra.iter().cloned());
     if options.style == "mage" && !options.spell.is_empty() {

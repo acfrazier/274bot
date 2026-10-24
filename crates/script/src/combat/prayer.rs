@@ -93,11 +93,7 @@ impl PrayerToggle {
     }
 
     /// Apply the shared observed-varp-before-timeout rule.
-    pub fn progress(
-        self,
-        observation: &PrayerObservation,
-        timed_out: bool,
-    ) -> ToggleProgress {
+    pub fn progress(self, observation: &PrayerObservation, timed_out: bool) -> ToggleProgress {
         let matched = match self.want {
             OnArg::Bool(true) => observation.is_on(self.varp),
             OnArg::Bool(false) => observation.is_off(self.varp),

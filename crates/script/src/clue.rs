@@ -15,9 +15,9 @@ pub struct ClueRecovery {
 #[path = "clue/isolate.rs"]
 mod isolate;
 #[cfg(feature = "load")]
+pub(crate) use isolate::on_stop;
+#[cfg(feature = "load")]
 pub use isolate::{
     dispatch, next_native, on_hold, on_pause, on_reset, on_resume, verb_req, Clue, Delegation,
     Outcome, BANK_APPROACH_FAILED,
 };
-#[cfg(feature = "load")]
-pub(crate) use isolate::on_stop;

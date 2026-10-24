@@ -115,6 +115,7 @@ fn prepare_combat(
 }
 
 impl SlotScript {
+    #[cfg(feature = "load")]
     pub(in crate::slot) fn start_api_combat(
         &mut self,
         token: u64,
