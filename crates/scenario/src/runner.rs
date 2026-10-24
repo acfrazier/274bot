@@ -2260,6 +2260,27 @@ impl ScenarioRunner {
         }
     }
 
+    /// The read-only terminal summary of the most recent Await step
+    /// among the first `reached` steps, if that step carried one.
+    /// On a pass every step was reached. On a failure the steps up
+    /// to and including the failing step were reached. The summary
+    /// rides the receipt either way, so a failure names its unmet
+    /// witness terms and a pass still records the summary's
+    /// observation values. An empty summary records nothing.
+    fn reached_terminal_summary(&self, reached: usize) -> Option<String> {
+        self.scenario.steps[..reached.min(self.scenario.steps.len())]
+            .iter()
+            .rev()
+            .find_map(|step| match &step.kind {
+                StepKind::Await {
+                    summary: Some(summary),
+                    ..
+                } => Some(summary()),
+                _ => None,
+            })
+            .filter(|summary| !summary.is_empty())
+    }
+
     fn record_pass(&mut self) {
         self.phase = Phase::Done;
         self.fire_terminal_shot();
@@ -2267,7 +2288,7 @@ impl ScenarioRunner {
             self.scenario.name,
             "PASS",
             self.scenario.proof.name(),
-            None,
+            self.reached_terminal_summary(self.scenario.steps.len()),
             self.total_game_ticks,
             &self.snapshot,
             self.obj_names.as_deref(),
@@ -2290,22 +2311,13 @@ impl ScenarioRunner {
     fn record_terminal(&mut self, outcome: &'static str, msg: &str) {
         self.phase = Phase::Done;
         self.fire_terminal_shot();
-        // A failing Await may carry a read-only terminal summary of
-        // what it still waits for; append it so the receipt names
-        // the unmet terms on both budget and deadline failures.
-        let msg = match self.scenario.steps.get(self.step).map(|step| &step.kind) {
-            Some(StepKind::Await {
-                summary: Some(summary),
-                ..
-            }) => {
-                let summary = summary();
-                if summary.is_empty() {
-                    msg.to_string()
-                } else {
-                    format!("{msg} [{summary}]")
-                }
-            }
-            _ => msg.to_string(),
+        // The most recent reached Await may carry a read-only
+        // terminal summary of what it still waits for. Append it so
+        // the receipt names the unmet terms on budget, deadline and
+        // later-step failures alike.
+        let msg = match self.reached_terminal_summary(self.step + 1) {
+            Some(summary) => format!("{msg} [{summary}]"),
+            None => msg.to_string(),
         };
         let mut evidence = Evidence::terminal(
             self.scenario.name,
