@@ -8,6 +8,7 @@ use std::collections::HashSet;
 use std::fmt;
 use std::path::{Path, PathBuf};
 
+pub use crate::card::ScriptSel;
 #[cfg(feature = "load")]
 use crate::js_cache::{CacheMeta, JsCache};
 use crate::rs2b0t_registry::ScriptSource;
@@ -1176,23 +1177,6 @@ pub(super) fn catalog_defect_reason(
     (JsCache::origin_sha(&bytes)
         == "fedf5f8e05fd43642efb0370352e71e5feebf258a784bc503a2e145c33b46d4d")
         .then_some("dim: known script defect: retries a broken Brimhaven plank instead of an alternate route")
-}
-
-/// A picker selection: a compiled id or a loaded JS card by `(source, name)`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ScriptSel {
-    Compiled(crate::registry::CompiledId),
-    Loaded(ScriptSource, String),
-}
-
-impl ScriptSel {
-    /// The label the picker shows and Start keys on.
-    pub fn label(&self) -> String {
-        match self {
-            ScriptSel::Compiled(id) => id.0.to_string(),
-            ScriptSel::Loaded(_, name) => name.clone(),
-        }
-    }
 }
 
 #[cfg(test)]

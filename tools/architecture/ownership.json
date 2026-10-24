@@ -3139,6 +3139,10 @@
       "owner": "T4"
     },
     {
+      "path": "crates/script/src/card.rs",
+      "owner": "T2"
+    },
+    {
       "path": "crates/script/src/channel.rs",
       "owner": "T1"
     },
@@ -3339,6 +3343,10 @@
       "owner": "T2"
     },
     {
+      "path": "crates/script/src/duel_arena.rs",
+      "owner": "T2"
+    },
+    {
       "path": "crates/script/src/ent.rs",
       "owner": "T2"
     },
@@ -3512,6 +3520,10 @@
     },
     {
       "path": "crates/script/src/inspect_wait.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/src/interact.rs",
       "owner": "T2"
     },
     {
@@ -3847,6 +3859,14 @@
       "owner": "T1"
     },
     {
+      "path": "crates/script/src/native/seat_rows.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/script/src/native/snapshot_source.rs",
+      "owner": "T1"
+    },
+    {
       "path": "crates/script/src/native/thieve.rs",
       "owner": "T2"
     },
@@ -3881,6 +3901,10 @@
     {
       "path": "crates/script/src/observed.rs",
       "owner": "T1"
+    },
+    {
+      "path": "crates/script/src/paint.rs",
+      "owner": "T2"
     },
     {
       "path": "crates/script/src/partner_trade.rs",
@@ -4419,10 +4443,6 @@
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/interact.rs",
-      "owner": "T2"
-    },
-    {
       "path": "crates/script/src/shim/inventory.js",
       "owner": "T2"
     },
@@ -4511,10 +4531,6 @@
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/paint.rs",
-      "owner": "T2"
-    },
-    {
       "path": "crates/script/src/shim/paintLogic.js",
       "owner": "T2"
     },
@@ -4568,6 +4584,10 @@
     },
     {
       "path": "crates/script/src/shim/recovery_hints.js",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/src/shim/rows.rs",
       "owner": "T2"
     },
     {

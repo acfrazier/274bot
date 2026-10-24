@@ -3861,7 +3861,7 @@ fn manual_cancellation_detail_clears_when_the_next_walk_arms() {
     );
     assert_eq!(
         rig.navs.lock().unwrap()["alice"].walk_outcome_cancel_reason,
-        script::isolate_fb::WalkCancelReason::UserInput,
+        script::native::WalkCancelReason::UserInput,
         "the previously published receipt remains intact"
     );
     completed
@@ -3912,7 +3912,7 @@ fn manual_takeover_of_carried_walk_keeps_its_receipt_identity() {
         assert_eq!(bot.walk_outcome_allow_teleports, teleports);
         assert_eq!(
             bot.walk_outcome_cancel_reason,
-            script::isolate_fb::WalkCancelReason::UserInput
+            script::native::WalkCancelReason::UserInput
         );
     }
 }
@@ -3958,7 +3958,7 @@ fn manual_click_terminal_resets_on_stop_before_the_next_load_snapshot() {
     ));
     assert_eq!(
         play.navs.lock().unwrap()["alice"].walk_outcome_cancel_reason,
-        script::isolate_fb::WalkCancelReason::UserInput
+        script::native::WalkCancelReason::UserInput
     );
     assert!(play.script_walk_cancelled_by_user("alice"));
 
@@ -3966,7 +3966,7 @@ fn manual_click_terminal_resets_on_stop_before_the_next_load_snapshot() {
     let navs = play.navs.lock().unwrap();
     assert_eq!(
         navs["alice"].walk_outcome_cancel_reason,
-        script::isolate_fb::WalkCancelReason::None,
+        script::native::WalkCancelReason::None,
         "Stop clears the prior run's UserInput outcome"
     );
     assert_eq!(navs["alice"].walk_outcome_request_id, 0);
@@ -4335,7 +4335,7 @@ fn manual_step_takeover_must_end_active_walk_before_follow() {
     assert_eq!(bot.walk_outcome_request_id, request);
     assert_eq!(
         bot.walk_outcome_cancel_reason,
-        script::isolate_fb::WalkCancelReason::UserInput
+        script::native::WalkCancelReason::UserInput
     );
     assert_eq!(bot.user_move_intent_seq, 1);
     assert_eq!(bot.manual_takeover_watermark, before);
@@ -4499,7 +4499,7 @@ fn manual_round3_click_after_arrival_keeps_the_completed_receipt() {
         assert!(!bot.walk_outcome_failed);
         assert_eq!(
             bot.walk_outcome_cancel_reason,
-            script::isolate_fb::WalkCancelReason::None
+            script::native::WalkCancelReason::None
         );
         assert_eq!(bot.manual_takeover_watermark, 0);
         assert_eq!(bot.user_move_intent_seq, 1, "idle intent is still observed");
@@ -4548,7 +4548,7 @@ fn takeover_after_an_arrived_walk_moves_only_the_sequence_and_reads_user_input_c
     bot.cancel_for_manual_input();
     assert_eq!(
         bot.walk_outcome_cancel_reason,
-        script::isolate_fb::WalkCancelReason::None,
+        script::native::WalkCancelReason::None,
         "no correlated request: the posted Load reason stays None"
     );
     assert_eq!(bot.walk_outcome_request_id, request);
@@ -4899,7 +4899,7 @@ fn queued_walking_decisions_are_fenced_but_observed_fresh_walk_is_allowed() {
         assert_eq!(bots["alice"].walk_outcome_request_id, original);
         assert_eq!(
             bots["alice"].walk_outcome_cancel_reason,
-            script::isolate_fb::WalkCancelReason::UserInput
+            script::native::WalkCancelReason::UserInput
         );
     }
     rig.slot()

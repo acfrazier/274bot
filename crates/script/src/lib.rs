@@ -6,9 +6,7 @@
 /// Inventory-first acquisition shared by native consumers.
 pub mod acquire;
 pub mod api_combat;
-#[cfg(feature = "load")]
 pub mod api_gather;
-#[cfg(feature = "load")]
 pub mod api_progress;
 #[cfg(feature = "load")]
 mod api_session;
@@ -19,6 +17,7 @@ pub mod bank_hints;
 /// Native boost-potion descriptors, planning and sip selection.
 pub mod boost_potions;
 pub mod canvas;
+pub mod card;
 #[cfg(feature = "load")]
 pub mod channel;
 pub mod combat;
@@ -30,6 +29,7 @@ pub mod ctx;
 pub mod declared_abi;
 #[cfg(feature = "load")]
 mod duel;
+pub mod duel_arena;
 /// Script-side Ent tile lookup over caller-supplied rows.
 pub mod ent;
 pub mod escape_runes;
@@ -49,6 +49,7 @@ pub mod grinch;
 pub mod ground_take;
 pub mod host_js;
 pub mod identity;
+pub mod interact;
 #[cfg(feature = "load")]
 pub mod isolate_fb;
 pub mod isolated_env;
@@ -66,6 +67,7 @@ pub mod native_bank;
 pub mod native_equipment;
 pub mod native_production;
 pub mod native_shop;
+pub mod paint;
 pub mod preparation;
 pub mod quester;
 /// Pure ranged supply predicate (`rangeSupplyEmpty`).
@@ -83,9 +85,9 @@ pub mod trade_screen;
 pub mod watchdog;
 pub mod work_admission;
 
+pub use card::ScriptSel;
 pub use ctx::{CompiledTick, DetectedRandom, FindOptions, RandomClaim, ScriptCtx};
-#[cfg(feature = "load")]
-pub use duel::{duel_name, duel_partner_name};
+pub use duel_arena::{duel_name, duel_partner_name};
 pub use identity::{
     card_assignment, card_identity_id, card_identity_key, claim_legacy_overrides,
     combine_fingerprints, compiled_assignment, compiled_identity_key, file_identity,
@@ -101,7 +103,7 @@ pub use load::{
     live_example_path, live_file_fixture_path, live_file_fixture_stem, parse_declared_api_version,
     raw_content_fingerprint, resolve_api_family, scan_import_specifiers,
     scan_same_folder_js_imports, sibling_module_url, ApiFamily, CatalogApplyReport, CatalogDiff,
-    JsCard, LoadFailure, LoadShape, LoadStage, PreparedCard, ScriptSel, VersionDiag,
+    JsCard, LoadFailure, LoadShape, LoadStage, PreparedCard, VersionDiag,
 };
 /// Cache/transpile-backed library and sibling resolution (isolate feature).
 #[cfg(feature = "load")]

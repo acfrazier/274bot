@@ -228,7 +228,6 @@ fn with_tick_output_reach<R>(
         },
         output,
         pairs: None,
-        #[cfg(feature = "load")]
         frame: crate::native::HostFrame {
             here: None,
             snapshot: Some(snapshot),

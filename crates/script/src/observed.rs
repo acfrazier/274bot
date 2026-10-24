@@ -1772,7 +1772,7 @@ mod tests {
         let mut movement = empty(2);
         movement.ingame = true;
         movement.user_move_intent_seq = 3;
-        movement.walk_outcome_cancel_reason = crate::isolate_fb::WalkCancelReason::UserInput;
+        movement.walk_outcome_cancel_reason = crate::native::WalkCancelReason::UserInput;
         let native = NativeFactsInput {
             walk_outcome_seq: 10,
             ..NativeFactsInput::default()
@@ -1793,7 +1793,7 @@ mod tests {
         let mut later_movement = empty(3);
         later_movement.ingame = true;
         later_movement.user_move_intent_seq = 4;
-        later_movement.walk_outcome_cancel_reason = crate::isolate_fb::WalkCancelReason::UserInput;
+        later_movement.walk_outcome_cancel_reason = crate::native::WalkCancelReason::UserInput;
         let native = NativeFactsInput {
             walk_outcome_seq: 10,
             ..NativeFactsInput::default()

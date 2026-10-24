@@ -4,7 +4,7 @@ use crate::native::{ConfigError, ScriptFailure, ScriptStatus};
 use std::sync::Arc;
 
 /// The same public refusal at isolate admission and host preparation.
-pub(crate) fn settings_refusal(error: ConfigError) -> String {
+pub fn settings_refusal(error: ConfigError) -> String {
     if error.field.is_empty() {
         "invalid-settings".into()
     } else {

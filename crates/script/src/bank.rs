@@ -5,7 +5,6 @@
 
 pub(crate) mod npc;
 pub mod ops;
-#[cfg(feature = "load")]
 pub mod request;
 
 #[cfg(feature = "load")]
