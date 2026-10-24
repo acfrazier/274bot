@@ -3127,7 +3127,10 @@ fn fleet_login_focus_cancels_pending_startup_restore() {
     assert_eq!(session.focused_name().as_deref(), Some("bob"));
     session.poll_panel_preferences();
     assert_eq!(session.core.selected(), Some("bob"));
-    assert_eq!(session.focus.lock().unwrap().focused.as_deref(), Some("bob"));
+    assert_eq!(
+        session.focus.lock().unwrap().focused.as_deref(),
+        Some("bob")
+    );
     assert_eq!(session.core.members(), ["bob"]);
     assert!(session.startup_focus_pending.is_none());
 }
@@ -3188,7 +3191,10 @@ fn deleting_other_profile_keeps_pending_saved_profile_restore() {
     assert!(session.startup_focus_pending.is_some());
     session.poll_panel_preferences();
     assert_eq!(session.core.selected(), Some("bob"));
-    assert_eq!(session.focus.lock().unwrap().focused.as_deref(), Some("bob"));
+    assert_eq!(
+        session.focus.lock().unwrap().focused.as_deref(),
+        Some("bob")
+    );
     assert_eq!(session.core.members(), ["bob"]);
 }
 
