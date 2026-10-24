@@ -576,7 +576,9 @@ class TartVM:
         self.active_status_file: Optional[str] = None
         self.supervisor_path: Optional[Path] = None
 
-    def start(self) -> Dict[str, Any]:
+    def start(
+        self, quiet_lock_check: Optional[Callable[[], bool]] = None
+    ) -> Optional[Dict[str, Any]]:
         module = load_vm_module(self.settings.vm_tool)
         self.module = module
         session_id = f"nightly-{uuid.uuid4().hex[:12]}"
@@ -599,6 +601,10 @@ class TartVM:
                 stderr=subprocess.PIPE,
                 text=True,
                 start_new_session=True,
+                # Exec preserves the mask, so clear it for the helper and its children.
+                preexec_fn=lambda: signal.pthread_sigmask(
+                    signal.SIG_SETMASK, set()
+                ),
             )
             self.start_process = process
         except BaseException:
@@ -613,6 +619,13 @@ class TartVM:
                 stdout, stderr = process.communicate(timeout=5)
                 break
             except subprocess.TimeoutExpired:
+                if quiet_lock_check is not None and quiet_lock_check():
+                    log("stopping mac_vm.py start because MAC-QUIET.lock appeared")
+                    if not self.terminate_start():
+                        raise NightlyError(
+                            "mac_vm.py start process did not stop after MAC-QUIET.lock appeared"
+                        )
+                    return None
                 try:
                     self.disk_check()
                 except DiskFloorError as error:
@@ -1270,11 +1283,14 @@ class NightlyOrchestrator:
 
     def sync_quiet_lock(self) -> bool:
         if self.settings.quiet_lock.exists():
-            if not self.quiet_stopped and self.vm.session is not None:
-                quiet_path = f"{GUEST_SHARE}/quiet/MAC-QUIET.lock"
-                self.vm.guest_sh("mkdir -p " + shell_quote(f"{GUEST_SHARE}/quiet") +
-                                 " && touch " + shell_quote(quiet_path))
-                log("MAC-QUIET.lock appeared; guest live cells will stop at the next boundary")
+            if not self.quiet_stopped:
+                if self.vm.session is not None:
+                    quiet_path = f"{GUEST_SHARE}/quiet/MAC-QUIET.lock"
+                    self.vm.guest_sh("mkdir -p " + shell_quote(f"{GUEST_SHARE}/quiet") +
+                                     " && touch " + shell_quote(quiet_path))
+                    log("MAC-QUIET.lock appeared; guest live cells will stop at the next boundary")
+                else:
+                    log("MAC-QUIET.lock appeared during guest start; stopping before staging")
             self.quiet_stopped = True
         return self.quiet_stopped
 
@@ -1410,15 +1426,18 @@ class NightlyOrchestrator:
             if self.sync_quiet_lock():
                 log("skipped before guest start because MAC-QUIET.lock exists")
             else:
-                self.vm.start()
+                self.vm.start(self.sync_quiet_lock)
                 self.session = self.vm.session
                 self.check_disk()
-                self.stage_inputs()
                 tools: Optional[Dict[str, str]] = None
                 if self.sync_quiet_lock():
-                    log("stopped before guest bootstrap because MAC-QUIET.lock appeared")
+                    log("stopped before guest staging because MAC-QUIET.lock appeared")
                 else:
-                    tools = self.run_bootstrap()
+                    self.stage_inputs()
+                    if self.sync_quiet_lock():
+                        log("stopped before guest bootstrap because MAC-QUIET.lock appeared")
+                    else:
+                        tools = self.run_bootstrap()
                 if tools is not None:
                     for branch in self.branches:
                         if self.sync_quiet_lock():
@@ -1462,59 +1481,64 @@ class NightlyOrchestrator:
             error = caught
             result = 1
         finally:
-            if not self.vm.terminate_start():
-                log("could not terminate mac_vm.py start process before clone teardown")
-                if error is None:
-                    error = NightlyError("mac_vm.py start process did not stop")
-                result = 1
-            self.vm.terminate_active()
-            if self.vm.session is not None:
-                self.session = self.vm.session
-                try:
-                    self.export_runs()
-                except Exception as export_error:
-                    log(f"could not export guest run folders before stop: {export_error}")
-                    if error is None:
-                        error = export_error
-                        result = 1
-            if self.vm.session_id:
-                try:
-                    self.vm.stop()
-                    self.stop_ok = True
-                except Exception as stop_error:
-                    log(f"failed to stop/delete Tart clone: {stop_error}")
-                    if error is None:
-                        error = stop_error
-                    result = 1
-            if self.stop_ok:
-                try:
-                    self.publish()
-                except Exception as copy_error:
-                    log(f"could not publish guest run folders: {copy_error}")
-                    if error is None:
-                        error = copy_error
-                    result = 1
+            blocked_signals = {signal.SIGTERM, signal.SIGINT, signal.SIGHUP}
+            old_mask = signal.pthread_sigmask(signal.SIG_BLOCK, blocked_signals)
             try:
-                self.write_status("failed" if result else "completed")
-            except Exception as status_error:
-                log(f"could not update nightly status: {status_error}")
-                if error is None:
-                    error = status_error
-                result = 1
+                if not self.vm.terminate_start():
+                    log("could not terminate mac_vm.py start process before clone teardown")
+                    if error is None:
+                        error = NightlyError("mac_vm.py start process did not stop")
+                    result = 1
+                self.vm.terminate_active()
+                if self.vm.session is not None:
+                    self.session = self.vm.session
+                    try:
+                        self.export_runs()
+                    except Exception as export_error:
+                        log(f"could not export guest run folders before stop: {export_error}")
+                        if error is None:
+                            error = export_error
+                            result = 1
+                if self.vm.session_id:
+                    try:
+                        self.vm.stop()
+                        self.stop_ok = True
+                    except Exception as stop_error:
+                        log(f"failed to stop/delete Tart clone: {stop_error}")
+                        if error is None:
+                            error = stop_error
+                        result = 1
+                if self.stop_ok:
+                    try:
+                        self.publish()
+                    except Exception as copy_error:
+                        log(f"could not publish guest run folders: {copy_error}")
+                        if error is None:
+                            error = copy_error
+                            result = 1
+                try:
+                    self.write_status("failed" if result else "completed")
+                except Exception as status_error:
+                    log(f"could not update nightly status: {status_error}")
+                    if error is None:
+                        error = status_error
+                    result = 1
+                finally:
+                    if self.owned_lock and (self.stop_ok or not self.vm.session_id):
+                        self.settings.status.unlink(missing_ok=True)
+                        try:
+                            self.settings.lock_dir.rmdir()
+                        except OSError:
+                            pass
+                if self.stop_ok and self.published_ok and self.session is not None:
+                    share = Path(str(self.session["share"]))
+                    for name in ("input", "control", "results", "quiet"):
+                        try:
+                            make_writable_and_remove(share / name)
+                        except OSError as cleanup_error:
+                            log(f"could not remove session {name} data: {cleanup_error}")
             finally:
-                if self.owned_lock and (self.stop_ok or not self.vm.session_id):
-                    self.settings.status.unlink(missing_ok=True)
-                    try:
-                        self.settings.lock_dir.rmdir()
-                    except OSError:
-                        pass
-            if self.stop_ok and self.published_ok and self.session is not None:
-                share = Path(str(self.session["share"]))
-                for name in ("input", "control", "results", "quiet"):
-                    try:
-                        make_writable_and_remove(share / name)
-                    except OSError as cleanup_error:
-                        log(f"could not remove session {name} data: {cleanup_error}")
+                signal.pthread_sigmask(signal.SIG_SETMASK, old_mask)
         if error is not None:
             if isinstance(error, KeyboardInterrupt):
                 raise error

@@ -459,7 +459,8 @@ a 120 GiB free-space floor on `/Volumes/dev-scratch`.
 `panel-play` runs in the guest's Aqua session. The user must be logged in.
 The controller checks
 `/Volumes/dev-scratch/274bot-evidence/MAC-QUIET.lock` immediately before guest
-start and immediately before each cell batch. The runner checks the guest copy
+start, during the start wait, before input staging, and immediately before each
+cell batch. The runner checks the guest copy
 at each cell and lane boundary. While the LaunchAgent runs,
 `/Volumes/dev-scratch/274bot-evidence/NIGHTLY/.mac-nightly-running` contains
 the PID, job, state, branch commits and Tart session ID.
@@ -474,9 +475,17 @@ The helper counts every running Tart VM toward Apple's two-guest limit,
 including unprefixed operator guests. It never stops or deletes those guests.
 If two guests already run, the nightly refuses to clone.
 
-1. Copy `tools/nightly` from the primary checkout to a stable runner directory.
+1. Update or check the primary checkout before each refresh. Confirm that it
+   contains the merged nightly changes. Run these commands from that checkout:
+   ```sh
+   cd "$HOME/experiments/274bot"
+   git status --short --branch
+   git log -1 --oneline --decorate
+   ```
+   Copy `tools/nightly` from the primary checkout to a stable runner directory.
    Refresh this copy after each merge that changes the nightly runner. Do not
    use a task worktree because cleanup can remove it.
+   Stop if the nightly run lock exists. Do not refresh during a nightly run.
    The host stages the runner, catalog, fixtures, engines and isohome helper
    as read-only inputs. Main uses the host Engine A forward; quest runs private
    Engine Q in the clone.
@@ -488,6 +497,10 @@ If two guests already run, the nightly refuses to clone.
      ~/.config/274bot-nightly ~/.local/lib/274bot-nightly \
      ~/.local/state/274bot-nightly-mac ~/.local/state/274bot-nightly-malbec-pull \
      ~/Library/LaunchAgents
+   if test -e /Volumes/dev-scratch/274bot-nightly/.mac-nightly.lock; then
+     printf '%s\n' 'Mac nightly is running; do not refresh the runner' >&2
+     exit 1
+   fi
    rsync -a --delete "$HOME/experiments/274bot/tools/nightly/" \
      "$HOME/.local/lib/274bot-nightly/runner/tools/nightly/"
    cat > ~/.config/274bot-nightly/mac-nightly.env <<EOF
@@ -511,6 +524,10 @@ If two guests already run, the nightly refuses to clone.
    The wrapper reads this environment file at launch. Do not reload the
    LaunchAgent while `MAC-QUIET.lock` exists. Main can reload it after the
    measurement window.
+   After each runner refresh, repeat step 3 to reinstall the wrapper scripts
+   and render both LaunchAgent plist files from the updated primary checkout.
+   Run `plutil -lint` again. Perform the refresh only between nightly runs.
+   Do not reload either LaunchAgent while `MAC-QUIET.lock` exists.
 2. Create the dedicated read-only key on merlot (keep the private key here):
    ```sh
    ssh-keygen -t ed25519 -N '' -C '274bot-nightly-malbec-mirror' \
