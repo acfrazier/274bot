@@ -56,7 +56,7 @@ The same form opens later with `N` in the Fleet pane or the palette's
 Startup loading waits for saved preferences.
 An explicit bot selection before preferences are ready cancels only the automatic startup focus.
 The boot profile still loads and logs in.
-A newly saved profile also keeps its load and login.
+A newly saved profile also keeps its load and login. If it is saved from **New profile** while the boot load still waits for preferences, it replaces that boot load: the new profile loads and logs in, and the boot profile does not (load it from the Fleet pane).
 Fleet **Log in** follows the same rule when it selects the first loaded bot.
 Removing or deleting the pending startup profile cancels its load as well.
 
