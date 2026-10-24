@@ -452,10 +452,18 @@ pub struct ScenarioRunner {
     /// Baseline for the current [`Proof::FreshStatXpGain`] step only. Cleared
     /// at every step and session boundary so prior work cannot satisfy it.
     fresh_xp_baseline: Option<(i32, i32)>,
-    /// Chat-sequence baseline for the current FreshTutorial, FreshChat, or
-    /// FreshQuestCompletion wait. Latched when the step begins and cleared at
-    /// every step and session boundary, so a stale line cannot satisfy it.
+    /// Chat-sequence baseline for the current FreshTutorial, FreshChat,
+    /// FreshChatSincePreviousStep, or FreshQuestCompletion wait. Latched
+    /// when the step begins (the previous step for
+    /// FreshChatSincePreviousStep) and cleared at every step and session
+    /// boundary, so a stale line cannot satisfy it.
     fresh_chat_baseline: Option<i32>,
+    /// Chat-sequence baseline for the *next* step when its arm is
+    /// [`Proof::FreshChatSincePreviousStep`]. Latched when the current
+    /// step begins and handed to [`Self::fresh_chat_baseline`] unchanged
+    /// when the run advances into that step, so a line sent while the
+    /// previous watch ran stays in scope but older history does not.
+    next_fresh_chat_baseline: Option<i32>,
     /// Latched per step for [`Proof::VisitedWithin`]: the first snapshot
     /// that shows the player inside the proof rectangle sets it. Cleared
     /// at every step and session boundary, like the chat baseline above.
@@ -585,6 +593,7 @@ impl ScenarioRunner {
             xp_baselines: Vec::new(),
             fresh_xp_baseline: None,
             fresh_chat_baseline: None,
+            next_fresh_chat_baseline: None,
             visited_within: false,
             lamp_episode: None,
             maze_episode: None,
@@ -936,6 +945,7 @@ impl ScenarioRunner {
         if !self.snapshot.ingame() {
             self.fresh_xp_baseline = None;
             self.fresh_chat_baseline = None;
+            self.next_fresh_chat_baseline = None;
             self.visited_within = false;
             self.lamp_episode = None;
             self.maze_episode = None;
@@ -1301,8 +1311,18 @@ impl ScenarioRunner {
         self.route = None;
         self.fresh_xp_baseline = None;
         self.fresh_chat_baseline = None;
+        if matches!(
+            self.current_step().wait.arm,
+            Proof::FreshChatSincePreviousStep { .. }
+        ) {
+            // Hand over the baseline latched when the previous step began;
+            // the capture below fills it from this step's own start when
+            // there is none (first step, or a session boundary between).
+            self.fresh_chat_baseline = self.next_fresh_chat_baseline.take();
+        }
         self.visited_within = false;
         self.capture_chat_baseline(self.current_step().wait.arm);
+        self.capture_next_chat_baseline();
         if matches!(
             self.current_step().wait.arm,
             Proof::GroundItemIdsAbsentNear { .. }
@@ -1413,12 +1433,14 @@ impl ScenarioRunner {
                 Some(baseline) => crate::tutorial::tutorial_confirmed(&self.snapshot, baseline),
                 None => false,
             },
-            Proof::FreshChat { needle } => match self.fresh_chat_baseline {
-                Some(baseline) => {
-                    crate::proof::fresh_chat_contains(&self.snapshot, baseline, needle)
+            Proof::FreshChat { needle } | Proof::FreshChatSincePreviousStep { needle } => {
+                match self.fresh_chat_baseline {
+                    Some(baseline) => {
+                        crate::proof::fresh_chat_contains(&self.snapshot, baseline, needle)
+                    }
+                    None => false,
                 }
-                None => false,
-            },
+            }
             Proof::FreshQuestCompletion {
                 chat_needle,
                 main_root_component_id,
@@ -1770,13 +1792,17 @@ impl ScenarioRunner {
         }
     }
 
-    /// Latch the step-start chat baseline for FreshTutorial, FreshChat and
-    /// FreshQuestCompletion. A stale line at or below this sequence cannot
-    /// satisfy the wait.
+    /// Latch the step-start chat baseline for FreshTutorial, FreshChat,
+    /// FreshQuestCompletion, and (when no previous-step baseline was handed
+    /// over) FreshChatSincePreviousStep. A stale line at or below this
+    /// sequence cannot satisfy the wait.
     fn capture_chat_baseline(&mut self, proof: Proof) {
         if !matches!(
             proof,
-            Proof::FreshTutorial | Proof::FreshChat { .. } | Proof::FreshQuestCompletion { .. }
+            Proof::FreshTutorial
+                | Proof::FreshChat { .. }
+                | Proof::FreshChatSincePreviousStep { .. }
+                | Proof::FreshQuestCompletion { .. }
         ) {
             return;
         }
@@ -1784,6 +1810,23 @@ impl ScenarioRunner {
             return;
         }
         self.fresh_chat_baseline = Some(crate::tutorial::chat_baseline(&self.snapshot));
+    }
+
+    /// Latch the baseline the next step will use when its arm is
+    /// [`Proof::FreshChatSincePreviousStep`]: the newest chat sequence at
+    /// the moment the current (previous) step begins. A burst sent while
+    /// this step runs stays above the baseline; history from before this
+    /// step does not.
+    fn capture_next_chat_baseline(&mut self) {
+        if self.next_fresh_chat_baseline.is_some() {
+            return;
+        }
+        let Some(next) = self.scenario.steps.get(self.step + 1) else {
+            return;
+        };
+        if matches!(next.wait.arm, Proof::FreshChatSincePreviousStep { .. }) {
+            self.next_fresh_chat_baseline = Some(crate::tutorial::chat_baseline(&self.snapshot));
+        }
     }
 
     /// Latch [`Proof::VisitedWithin`] when a dirty snapshot first shows the
@@ -1817,6 +1860,7 @@ impl ScenarioRunner {
             return;
         }
         self.capture_chat_baseline(self.current_step().wait.arm);
+        self.capture_next_chat_baseline();
     }
 
     fn fire_poll_sustains(&self, client: &mut Client) {

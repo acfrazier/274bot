@@ -6246,7 +6246,7 @@ fn wildy_agility_registers_the_full_ordered_course_on_the_observed_player_plane(
 fn brimhaven_agility_registers_fee_tags_ticket_and_subsequent_xp() {
     let brim = get("brimhaven_agility").expect("brimhaven_agility");
     assert_eq!(brim.settings.start_script, Some("BrimhavenAgility"));
-    assert_eq!(brim.settings.deadline, SCRIPT_GOLD_DEADLINE);
+    assert_eq!(brim.settings.deadline, BRIMHAVEN_AGILITY_DEADLINE);
     let inject = settings_inject_map(brim.settings.script_settings_inject).unwrap();
     assert_eq!(inject.get("stealRestock"), Some(&Value::Bool(false)));
     assert_eq!(
@@ -6321,7 +6321,7 @@ fn brimhaven_agility_registers_fee_tags_ticket_and_subsequent_xp() {
                 id: AGILITY_STAT,
                 min: 1,
             },
-            Proof::Chat {
+            Proof::FreshChatSincePreviousStep {
                 needle: "tag the next",
             },
             Proof::Varp { id: 309, min: 15 },
@@ -6333,6 +6333,24 @@ fn brimhaven_agility_registers_fee_tags_ticket_and_subsequent_xp() {
             },
         ]
     );
+    let ticket_step = brim.steps[start + 1..]
+        .iter()
+        .find(|step| step.name == "watch a later Tag grant the first ticket")
+        .expect("ticket watch step");
+    assert_eq!(
+        ticket_step.wait.budget_ticks, BRIMHAVEN_TICKET_WATCH_TICKS,
+        "ticket watch keeps the content-derived two-period budget"
+    );
+    for step in brim.steps[start + 1..]
+        .iter()
+        .filter(|step| step.name != "watch a later Tag grant the first ticket")
+    {
+        assert_eq!(
+            step.wait.budget_ticks, SCRIPT_GOLD_WATCH_TICKS,
+            "{} keeps the ordinary gold watch",
+            step.name
+        );
+    }
     assert_eq!(
         brim.proof,
         Proof::FreshStatXpGain {

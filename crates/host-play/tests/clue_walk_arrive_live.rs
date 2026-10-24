@@ -62,9 +62,11 @@ fn reseed_after_relog(scenario: &mut scenario::Scenario) {
                 }),
             },
             wait: Wait {
-                arm: Proof::Chat {
-                    needle: "get tutorial: 1000",
-                },
+                // Post-relog: only a reply newer than this step's baseline
+                // proves the new session. A pre-relog `get tutorial: 1000`
+                // line retained in the ring must not pass it (the
+                // `FreshTutorial` rule in `scenario/src/tutorial.rs`).
+                arm: Proof::FreshTutorial,
                 budget_ticks: 200,
             },
         },
