@@ -69,6 +69,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.6` 
   A delayed confirmation no longer fails after two ticks.
   A missing seed or refused deposit still fails.
   Their receipts retain deposit attempts, proof ticks and inventory revisions.
+- The Betty shop buyout check allows 502 seconds for its complete
+  shop, bank and return cycle. Five measured cycles took 409 to 418 seconds.
+  Its purchase, deposit, return and resumed-purchase checks stay unchanged.
 
 #### Client
 

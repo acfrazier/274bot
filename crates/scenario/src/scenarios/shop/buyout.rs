@@ -213,27 +213,40 @@ const SHOP_BUYOUT_FERNAHEI_BUDGET_GP: f64 = 1500.0;
 /// shop→bank→shop for deposit and return. The old 150-dirty first-purchase
 /// watch expired while the player was still progressing back with 500 coins.
 ///
-/// These are bounded trial estimates, not measured completion times. The old
-/// dirty-snapshot counts are distinct from server game ticks and wall time.
-/// The failed trace had 102 engine ticks through initial withdrawal and 28
-/// on the return. Its remaining 108-tile Chebyshev distance requires at least
-/// 54 game ticks at two tiles per game tick on a straight leg; later energy
-/// depletion and detours add time. It does not establish a 136-game-tick
-/// return lower bound.
+/// **Units:** per-arm `budget_ticks` are observed game ticks (one per
+/// `PLAYER_INFO`); whole-cycle `deadline` remains wall seconds.
 ///
-/// Prior numeric budgets were 320 dirties for the first purchase and 280 for
-/// later deposit/return. Current waits keep those numeric caps as game ticks:
-/// 192s for 320, 168s for 280 at 600ms per game tick. The old 1.67 dirty/s
-/// trace made the first-purchase 320-dirty value about 190s. Assuming later
-/// legs finish near 120 old dirty increments each, plus setup/actions, gave
-/// a ~365s trial. The 420s deadline is a separate wall cap and may pre-empt
-/// the combined per-step game-tick limits. No live evidence supports raising
-/// it. Empty/close/further-purchase watches, other presets, runtime timeouts,
-/// and global guards retain their existing limits. Falador West is preserved.
+/// **Per-arm game-tick caps (unchanged trial estimates):** first purchase
+/// 320, deposit 280, return 280. Prior numeric budgets were 320 dirties for
+/// the first purchase and 280 for later deposit/return. Current waits keep
+/// those numeric caps as game ticks: 192s for 320, 168s for 280 at 600ms
+/// per game tick. The failed trace behind them had 102 engine ticks through
+/// initial withdrawal and 28 on the return. Its remaining 108-tile
+/// Chebyshev distance requires at least 54 game ticks at two tiles per game
+/// tick on a straight leg. It does not establish a 136-game-tick return
+/// lower bound. Empty/close/further-purchase watches stay ordinary
+/// 150-game-tick watches. Falador West is preserved.
+///
+/// **Measured complete cycles (chardonnay, Engine A, dev `0e7f5489f`,
+/// 2026-10-24, `NIGHTLY-TRIAGE-1024/betty` runs q1–q5):** five PASS
+/// receipts at 409.066s, 409.145s, 410.917s, 411.032s and 418.210s
+/// (612–627 game ticks). Phase game ticks from each debug timeline: leg 1
+/// shop→bank 97, first withdrawal 15, leg 2 bank→shop 136–147, first buy
+/// 5–7, leg 3 shop→bank 174–181, deposit and second withdrawal 20, leg 4
+/// return 179–189, resumed shop open 2–3. Walking is about 92% of the
+/// script ticks. Later legs slow to one tile per tick as run energy
+/// depletes. No run logged a failed walk, bank open, withdrawal or shop
+/// open.
+///
+/// **Whole-cycle wall 502s:** the slowest measured complete cycle is
+/// 418.210s. 418.210 × 1.2 = 501.852, rounded up to 502. The old 420s wall
+/// left 1.8s over that cycle. The 2026-10-24 nightly run reached the shop
+/// with 500 coins and no rune when the 420s wall fired (631 game ticks).
+/// The wall stays separate and can pre-empt per-step game-tick caps.
 pub(crate) const SHOP_BUYOUT_BETTY_FIRST_PURCHASE_WATCH_TICKS: u32 = 320;
 pub(crate) const SHOP_BUYOUT_BETTY_DEPOSIT_WATCH_TICKS: u32 = 280;
 pub(crate) const SHOP_BUYOUT_BETTY_RETURN_WATCH_TICKS: u32 = 280;
-pub(crate) const SHOP_BUYOUT_BETTY_DEADLINE: Duration = Duration::from_secs(420);
+pub(crate) const SHOP_BUYOUT_BETTY_DEADLINE: Duration = Duration::from_secs(502);
 
 /// Gerrant's frozen Draynor preset needs the same four travel legs as other
 /// shop buyouts (initial shop→bank→shop withdrawal, post-buy shop→bank deposit,
@@ -322,9 +335,14 @@ const SHOP_BUYOUT_GERRANT_TIMING: ShopBuyoutTiming = ShopBuyoutTiming {
 
 /// Bob Lumbridge ↔ Draynor: Chebyshev stand 3231,3203 ↔ Draynor approach
 /// 3092,3243 is 139 tiles (estimate, not measured) — wider than Gerrant's 79.
-/// Reuses Betty's four-leg trial game-tick budgets and 420s wall until LIVE
-/// measures Bob-specific variance.
-const SHOP_BUYOUT_BOB_TIMING: ShopBuyoutTiming = SHOP_BUYOUT_BETTY_TIMING;
+/// Reuses Betty's four-leg trial game-tick budgets until LIVE measures
+/// Bob-specific variance. Bob keeps the old 420s trial wall: Betty's 502s
+/// wall is measured on Betty's Port Sarim↔Falador West route only.
+pub(crate) const SHOP_BUYOUT_BOB_DEADLINE: Duration = Duration::from_secs(420);
+const SHOP_BUYOUT_BOB_TIMING: ShopBuyoutTiming = ShopBuyoutTiming {
+    deadline: SHOP_BUYOUT_BOB_DEADLINE,
+    ..SHOP_BUYOUT_BETTY_TIMING
+};
 
 /// Nurmof Dwarven Mine ↔ Falador East travel budgets. Betty's 320/280/280
 /// game-tick caps cannot cover this route: each leg also crosses the mine
