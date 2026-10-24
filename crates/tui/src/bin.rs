@@ -1118,6 +1118,9 @@ impl TuiSession {
 
     /// Select `name` (pure bookkeeping: never a spawn or login).
     fn focus(&mut self, name: &str) {
+        // Fleet, keyboard, and saved-profile selection share this boundary.
+        // A choice made before hydration must supersede the startup request.
+        self.startup_focus = None;
         if let Err(error) = self.submit(OperatorCommand::Select, Targets::Profile(name)) {
             self.error = Some(error);
         }
@@ -3997,8 +4000,10 @@ fn new_app(title: impl Into<String>, preferences: &UiPreferences) -> TuiApp {
 fn interactive_landing(session: &mut TuiSession, args: &Args) -> Result<TuiApp, String> {
     let focus = session.bootstrap_interactive_profiles(&args.users)?;
     if let Some(focus) = &focus {
-        session.startup_focus = Some(focus.clone());
         session.focus(focus);
+        // This is the automatic boot request, not an operator selection.
+        // Queue its readiness-gated load after establishing the initial view.
+        session.startup_focus = Some(focus.clone());
     }
     let mut app = new_app(
         format!(
