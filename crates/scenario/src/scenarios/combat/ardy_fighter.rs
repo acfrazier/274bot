@@ -32,14 +32,34 @@ const ARDY_FIGHTER_STYLE_WATCH_TICKS: u32 = 320;
 /// - close the booth and walk back to the anchor: 1 + 42 (the 42-tile booth
 ///   route of the live nav trace, `FIX-ARDY-STYLE-025/runs/base-d1`);
 /// - anchor to the stall stand (2668,3312): 7;
-/// - restock: one owner-refusal run at each Baker's stand (frozen
-///   `RESET_AFTER_REFUSALS` 3, each steal resolves within 5 game ticks, then
-///   the stand swap) = 2 x 18, plus one emptied-stall respawn
-///   (`stealing.dbrow` `respawn_ticks` 8) = 44. Each stand's owner refuses
-///   while within five tiles with line of sight (content `stealing.rs2`
-///   `stealing_check_for_owner`), so both stands can refuse in one restock.
-///   The 2026-10-24 nightly leg did: its fourth deposit was still pending at
-///   the booth when the former one-run leg expired
+/// - restock: one owner-refusal run at each Baker's stand, the walk
+///   between the stands, and one emptied-stall respawn:
+///   15 + 2 + 15 + 8 = 40. A refused steal itself returns at once
+///   (content `thieving.rs2:56-61`: the owner or guard return precedes
+///   `p_arrivedelay`, so no item and no Thieving XP, and no progress
+///   signal above). The cost is the card's wait, not the server's: the
+///   card sends the steal (1 game tick) and then classifies it as
+///   refused only when `RESOLVE_MS` expires with no food gain, combat,
+///   or lockout (`crates/script/src/cake_stall/runtime.rs:25-26,487,
+///   581-587`). At 600 ms per game tick that wait is 2400 / 600 = 4
+///   game ticks, so one refused steal costs 1 + 4 = 5 game ticks. The
+///   5 in content `stealing.rs2:118` is not this 5: it is the tile
+///   distance within which the owner, with line of sight, refuses
+///   (`stealing_check_for_owner`). The card swaps stands after
+///   `RESET_AFTER_REFUSALS` 3 consecutive refusals
+///   (`crates/script/src/cake_stall.rs:21`; the swap at
+///   `crates/script/src/cake_stall/runtime.rs:519-535`), so one run
+///   costs 3 x 5 = 15. The walk between the stands (2668,3312) and
+///   (2669,3310) (`crates/api/src/cake_stall.rs:35-36`) took 2 game
+///   ticks in the measured run `NIGHTLY-TRIAGE-1024/ardy/runs/q7`:
+///   steal clicks at +10, +13, +18 and the swap at +23 (13 game ticks,
+///   inside the 15 bound), then the next steal at +25
+///   (`runs/q7/timeline.txt:8-13`), so 25 - 23 = 2. The second stand's
+///   run costs the same 3 x 5 = 15, because its owner can meet the
+///   same refusal condition in the same restock. One emptied-stall
+///   respawn adds `stealing.dbrow:9` `respawn_ticks` 8. The
+///   2026-10-24 nightly leg used both stands: its fourth deposit was
+///   still pending at the booth when the former one-run leg expired
 ///   (`NIGHTLY/2026-10-24-dev-58080a889/cells/ardy_fighter_bank`).
 /// - the caught fight: the Guard has 22 hitpoints (`ardougne_east.npc`), 18
 ///   scimitar swings at attack rate 4 = 72, plus retaliation start and death
@@ -50,7 +70,10 @@ const ARDY_FIGHTER_STYLE_WATCH_TICKS: u32 = 320;
 /// Live deposit-to-deposit legs took 65 to 128 game ticks (`base-d7`: 95, 65,
 /// 119; `final-r10`: 93, 72, 128; `FIX-ARDY-STYLE-025/runs/*/timeline.txt`).
 /// The 2026-10-24 nightly leg is the first measured leg beyond that range.
-pub(crate) const ARDY_FIGHTER_BANK_TRIP_SESSION_TICKS: u32 = 43 + 7 + 44 + 77 + 3 + 47;
+/// The leg sum is 43 + 7 + 40 + 77 + 3 + 47 = 217 game ticks. The nightly
+/// receipt test leg lands its fourth deposit 213 game ticks after the
+/// third, so the margin over that leg is 217 - 213 = 4 game ticks.
+pub(crate) const ARDY_FIGHTER_BANK_TRIP_SESSION_TICKS: u32 = 43 + 7 + 40 + 77 + 3 + 47;
 /// First Strength XP of `ardy_fighter_bank` after the card acknowledges the
 /// selected style. Fight picks the nearest unengaged Guard within the leash
 /// (12) of the anchor and the card stands within 7 of it: walk 19 + attack 1;
