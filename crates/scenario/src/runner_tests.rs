@@ -3287,6 +3287,125 @@ fn fresh_tutorial_leaving_the_session_clears_the_baseline() {
     );
 }
 
+/// The brimhaven_agility watch chain in miniature: the first-tag chat
+/// prompt, the first tag's no-ticket state, and the later earned ticket
+/// (`scenarios/production/agility.rs` keeps the same three milestones).
+fn brimhaven_tag_ticket_scenario() -> Scenario {
+    let watch = |name: &'static str, arm: Proof| Step {
+        name,
+        kind: StepKind::Perform {
+            send: Box::new(|_, _| true),
+        },
+        wait: wait(arm, 10),
+    };
+    Scenario {
+        name: "brimhaven-tag-ticket",
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: false,
+        },
+        steps: vec![
+            watch(
+                "watch the first Tag prompt for the next pillar",
+                Proof::Chat {
+                    needle: "tag the next",
+                },
+            ),
+            watch(
+                "confirm the first Tag grants no ticket",
+                Proof::ItemIdAtMost { id: 2996, count: 0 },
+            ),
+            watch(
+                "watch a later Tag grant the first ticket",
+                Proof::ItemId { id: 2996, count: 1 },
+            ),
+        ],
+        proof: Proof::ItemId { id: 2996, count: 1 },
+        companions: vec![],
+        settings: ScenarioSettings::default(),
+    }
+}
+
+/// The content's two consecutive first-tag messages, in send order
+/// (`agilityarena.rs2:72-73`): the second line pushes the matching first
+/// line off the chat head in the same burst.
+fn send_first_tag_prompt(c: &mut Client) {
+    c.add_chat(
+        0,
+        "You get tickets by tagging more than one pillar in a row, tag the next",
+        "",
+    );
+    c.add_chat(0, "pillar!", "");
+    c.bump_gens(ServerProt::MESSAGE_GAME);
+}
+
+#[test]
+fn brimhaven_two_line_tag_prompt_passes_then_waits_for_the_ticket() {
+    let mut c = seeded_client();
+    set_inv(&mut c, &[]);
+    let mut runner = ScenarioRunner::with_world(brimhaven_tag_ticket_scenario(), None);
+    runner.set_scene_settle(Duration::ZERO);
+    runner.tick(&mut c);
+    assert_eq!(
+        runner.status(),
+        RunnerStatus::Running { step: 0, total: 3 },
+        "no prompt yet: the first-tag watch must wait"
+    );
+
+    send_first_tag_prompt(&mut c);
+    assert_running_for_game_ticks(
+        &mut runner,
+        &mut c,
+        3,
+        "the burst passes the prompt and no-ticket watches, then waits for a ticket",
+    );
+    assert_eq!(
+        runner.status(),
+        RunnerStatus::Running { step: 2, total: 3 },
+        "the run must sit on the later-ticket watch, not pass on the prompt alone"
+    );
+
+    set_inv(&mut c, &[(2996, 1)]);
+    advance_game_ticks_until_done(&mut runner, &mut c);
+    assert_eq!(runner.status(), RunnerStatus::Passed);
+}
+
+#[test]
+fn brimhaven_run_without_a_tag_prompt_fails() {
+    let mut c = seeded_client();
+    // Even a ticket in the pack cannot skip the first-tag prompt watch.
+    set_inv(&mut c, &[(2996, 1)]);
+    c.add_chat(0, "pillar!", "");
+    c.bump_gens(ServerProt::MESSAGE_GAME);
+    let mut runner = ScenarioRunner::with_world(brimhaven_tag_ticket_scenario(), None);
+    runner.set_scene_settle(Duration::ZERO);
+    for _ in 0..12 {
+        advance_one_game_tick(&mut runner, &mut c, false);
+    }
+    assert!(
+        matches!(runner.status(), RunnerStatus::Failed(_)),
+        "a run with no tag prompt must fail, got {:?}",
+        runner.status()
+    );
+}
+
+#[test]
+fn brimhaven_run_without_ticket_progress_fails() {
+    let mut c = seeded_client();
+    set_inv(&mut c, &[]);
+    send_first_tag_prompt(&mut c);
+    let mut runner = ScenarioRunner::with_world(brimhaven_tag_ticket_scenario(), None);
+    runner.set_scene_settle(Duration::ZERO);
+    for _ in 0..16 {
+        advance_one_game_tick(&mut runner, &mut c, false);
+    }
+    assert!(
+        matches!(runner.status(), RunnerStatus::Failed(_)),
+        "the prompt alone must not pass without the later ticket, got {:?}",
+        runner.status()
+    );
+}
+
 fn visited_within_scenario() -> Scenario {
     let watch = |name: &'static str, min: i32, max: i32| Step {
         name,

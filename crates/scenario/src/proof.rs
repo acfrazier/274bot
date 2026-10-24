@@ -158,7 +158,15 @@ pub enum Proof {
     Stat { id: i32, min: i32 },
     /// `stat(id) <= max`: sustain polls (energy/HP below a refill line).
     StatAtMost { id: i32, max: i32 },
-    /// A `MESSAGE_GAME`/`MESSAGE_PRIVATE` line containing `needle`.
+    /// A `MESSAGE_GAME`/`MESSAGE_PRIVATE` line containing `needle`
+    /// anywhere in the snapshot's chat history ring, not only the newest
+    /// line: content that sends one sentence as two consecutive messages
+    /// (the agility-arena first-tag prompt is `... tag the next` then
+    /// `pillar!`) must not hide the matching line behind its successor.
+    /// History semantics: a matching line from earlier in the run also
+    /// satisfies this arm. A step that needs a line newer than its own
+    /// start (a post-relog `getvar` reply) uses [`Proof::FreshChat`]
+    /// instead.
     Chat { needle: &'static str },
     /// A fresh post-relog `get tutorial: 1000` reply newer than the
     /// post-relog chat baseline the runner latched when this step began
@@ -735,7 +743,17 @@ impl Proof {
                 .is_some_and(|v| v.value == *value),
             Proof::Stat { id, min } => stat_value(snap, *id).is_some_and(|v| v >= *min),
             Proof::StatAtMost { id, max } => stat_value(snap, *id).is_some_and(|v| v <= *max),
-            Proof::Chat { needle } => snap.chat().is_some_and(|c| c.contains(needle)),
+            // The whole history ring, not only `snap.chat()` (the newest
+            // line): a two-message burst puts the matching line one slot
+            // behind the head before any poll can see it on top. The head
+            // fallback keeps a snapshot whose ring was not rebuilt (only
+            // the head latched) behaving as before.
+            Proof::Chat { needle } => {
+                snap.chat_lines()
+                    .iter()
+                    .any(|line| line.text.contains(needle))
+                    || snap.chat().is_some_and(|c| c.contains(needle))
+            }
             // Freshness needs the runner's post-relog baseline (see
             // `ScenarioRunner::holds`); a bare snapshot check fails closed.
             Proof::FreshTutorial => false,
@@ -2376,6 +2394,48 @@ mod tests {
         let s = snap(&mut seeded());
         assert!(Proof::Chat { needle: "Welcome" }.check(&s, None));
         assert!(!Proof::Chat { needle: "arrived" }.check(&s, None));
+    }
+
+    #[test]
+    fn chat_scans_the_whole_history_ring_not_only_the_newest_line() {
+        // The agility-arena first-tag prompt is two consecutive content
+        // messages (`agilityarena.rs2:72-73`): the matching sentence,
+        // then `pillar!`. In ring order (newest first) the needle sits
+        // one slot behind the head and a head-only check never sees it.
+        let line = |text: &str, sequence| ChatLineView {
+            type_: 0,
+            username: None,
+            text: text.into(),
+            sequence,
+        };
+        let mut s = GameSnapshot::new();
+        s.seed_chat_lines(vec![
+            line("pillar!", 11),
+            line(
+                "You get tickets by tagging more than one pillar in a row, tag the next",
+                10,
+            ),
+        ]);
+        assert!(
+            Proof::Chat {
+                needle: "tag the next"
+            }
+            .check(&s, None),
+            "the two-line burst must satisfy the first-tag watch"
+        );
+        assert!(Proof::Chat { needle: "pillar!" }.check(&s, None));
+
+        // No tag prompt in the history: the watch stays unsatisfied.
+        s.seed_chat_lines(vec![line("pillar!", 11), line("You hop the spikes.", 10)]);
+        assert!(!Proof::Chat {
+            needle: "tag the next"
+        }
+        .check(&s, None));
+        s.seed_chat_lines(vec![]);
+        assert!(!Proof::Chat {
+            needle: "tag the next"
+        }
+        .check(&s, None));
     }
 
     #[test]
