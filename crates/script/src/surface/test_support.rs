@@ -1,6 +1,6 @@
 use super::{
-    PostedSnapshotFacts, ScriptStopReceipt, SurfaceError, SurfaceFactory, SurfaceReady, SurfaceRun,
-    SurfaceStart, SurfaceKind, TickOutcome,
+    PostedSnapshotFacts, ScriptStopReceipt, SurfaceError, SurfaceFactory, SurfaceKind,
+    SurfaceReady, SurfaceRun, SurfaceStart, TickOutcome,
 };
 use crate::interact::{InteractReq, QueuedInteract};
 use crate::native::recovery_hints::RecoveryHintsCell;
@@ -232,9 +232,7 @@ impl StubSurfaceHandle {
 
     /// Set the execution-active response.
     pub fn set_execution_active(&self, active: bool) {
-        self.state
-            .execution_active
-            .store(active, Ordering::Release);
+        self.state.execution_active.store(active, Ordering::Release);
     }
 
     /// Set the execution-sequence response.
@@ -244,7 +242,8 @@ impl StubSurfaceHandle {
 
     /// Set the return values for session reset and reconnect calls.
     pub fn set_session_work_results(&self, reset: u64, reconnect: u64) {
-        self.state.reset_session_work_result
+        self.state
+            .reset_session_work_result
             .store(reset, Ordering::Release);
         self.state
             .reconnect_session_work_result
@@ -371,10 +370,7 @@ impl SurfaceRun for StubSurfaceRun {
     }
 
     fn align_execution(&self, execution: ExecutionId) {
-        record(
-            &self.state,
-            StubSurfaceOperation::AlignExecution(execution),
-        );
+        record(&self.state, StubSurfaceOperation::AlignExecution(execution));
         *lock(&self.state.execution) = execution;
     }
 
@@ -384,9 +380,7 @@ impl SurfaceRun for StubSurfaceRun {
             StubSurfaceOperation::ResetSessionWork(execution),
         );
         *lock(&self.state.posted_facts) = None;
-        self.state
-            .reset_session_work_result
-            .load(Ordering::Acquire)
+        self.state.reset_session_work_result.load(Ordering::Acquire)
     }
 
     fn reconnect_session_work(&mut self, execution: Option<ExecutionId>) -> u64 {
@@ -446,10 +440,7 @@ impl SurfaceRun for StubSurfaceRun {
                 force_banks,
             },
         );
-        let accepted = self
-            .state
-            .snapshot_delta_accepts
-            .load(Ordering::Acquire);
+        let accepted = self.state.snapshot_delta_accepts.load(Ordering::Acquire);
         if !accepted {
             *lock(&self.state.posted_facts) = None;
         }
@@ -594,9 +585,7 @@ impl SurfaceRun for StubSurfaceRun {
 
     fn live_walking_operation(&self) -> bool {
         record(&self.state, StubSurfaceOperation::LiveWalkingOperation);
-        self.state
-            .live_walking_operation
-            .load(Ordering::Acquire)
+        self.state.live_walking_operation.load(Ordering::Acquire)
     }
 
     fn note_manual_walk_takeover(&self, user_move_intent_seq: u64) {
@@ -634,10 +623,11 @@ impl SurfaceRun for StubSurfaceRun {
     }
 
     fn journal_paint_hidden(&self, now: Instant) -> bool {
-        record(&self.state, StubSurfaceOperation::JournalPaintHidden { now });
-        self.state
-            .journal_paint_hidden
-            .load(Ordering::Acquire)
+        record(
+            &self.state,
+            StubSurfaceOperation::JournalPaintHidden { now },
+        );
+        self.state.journal_paint_hidden.load(Ordering::Acquire)
     }
 
     fn probe(&self, expr: &str) -> Result<serde_json::Value, SurfaceError> {
@@ -862,5 +852,7 @@ fn record(state: &StubSurfaceState, operation: StubSurfaceOperation) {
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    mutex
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }

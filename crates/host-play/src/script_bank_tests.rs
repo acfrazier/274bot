@@ -93,16 +93,10 @@ export async function tick(api) {{
         );
         let mut slot = script::SlotScript::new();
         slot.bind_incarnation(1);
-        slot.bind_surface_factory(Arc::new(
-            script::load::surface::JsSurfaceFactory::default(),
-        ));
+        slot.bind_surface_factory(Arc::new(script::load::surface::JsSurfaceFactory::default()));
         let settings = serde_json::json!({"useMageBank": defaults, "useZanarisBank": defaults});
         let start = crate::script_runtime::js_surface_start(
-            crate::script_runtime::js_start_card(
-                source,
-                script::LoadShape::NativeTick,
-                vec![],
-            ),
+            crate::script_runtime::js_start_card(source, script::LoadShape::NativeTick, vec![]),
             settings.as_object().cloned().map(Arc::new),
             Some(api::game_data::for_revision(client::io::ClientRevision::R289).unwrap()),
             Arc::new(NamedBankFacts::from_banks(banks.clone())),

@@ -4228,9 +4228,7 @@ fn in_place_load_rig() -> Rig {
     {
         let slot = rig.slot();
         let mut slot = slot.lock().unwrap();
-        slot.bind_surface_factory(Arc::new(
-            script::load::surface::JsSurfaceFactory::default(),
-        ));
+        slot.bind_surface_factory(Arc::new(script::load::surface::JsSurfaceFactory::default()));
         slot.start_surface(start).unwrap();
     }
     rig.slot().lock().unwrap().probe("true").unwrap();

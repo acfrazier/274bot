@@ -68,9 +68,7 @@ fn start_js_surface(
     let family = script::resolve_api_family(&source)
         .ok()
         .map(|(_, family)| family);
-    slot.bind_surface_factory(Arc::new(
-        script::load::surface::JsSurfaceFactory::default(),
-    ));
+    slot.bind_surface_factory(Arc::new(script::load::surface::JsSurfaceFactory::default()));
     slot.start_surface(script::surface::SurfaceStart {
         card: Arc::new(script::load::surface::JsStartCard {
             source,

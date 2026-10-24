@@ -4,7 +4,11 @@ use crate::native::snapshot_source::{BankSelectionInput, NativeFactsInput, Snaps
 use crate::native::{recovery_hints::RecoveryHintsCell, SettingsBag};
 use crate::paint::ScriptPaint;
 use api::identity::ExecutionId;
-use std::{any::Any, sync::{mpsc::Sender, Arc}, time::Instant};
+use std::{
+    any::Any,
+    sync::{mpsc::Sender, Arc},
+    time::Instant,
+};
 
 /// The runtime a card needs. This value selects its factory.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

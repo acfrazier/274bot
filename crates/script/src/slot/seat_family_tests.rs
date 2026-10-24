@@ -1178,7 +1178,12 @@ fn held_lifecycle_pages_stay_row_bounded_and_counted_frame_by_frame() {
     );
     assert!(lifecycle.contains(&InteractReq::NoteProgress));
     assert!(lifecycle.contains(&InteractReq::LoopSettled));
-    assert!(slot.surface.as_ref().unwrap().drain_seat_batches().is_empty());
+    assert!(slot
+        .surface
+        .as_ref()
+        .unwrap()
+        .drain_seat_batches()
+        .is_empty());
     slot.stop();
 }
 

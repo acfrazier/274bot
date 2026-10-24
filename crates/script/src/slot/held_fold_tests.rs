@@ -1266,7 +1266,10 @@ fn held_resume_frees_the_walk_slot_that_a_blocked_full_queue_waits_for() {
     retained.extend((1..=30).map(lane_open));
     let mut fold = page(&slot, retained.clone());
     fold.held_fold = true;
-    slot.surface.as_ref().unwrap().restore_seat_batches(vec![fold]);
+    slot.surface
+        .as_ref()
+        .unwrap()
+        .restore_seat_batches(vec![fold]);
     let before = dropped(&slot);
     let (delivered, frames) = drain_retained_with_progress(&mut slot, &retained, 4);
     let left = held_rows(&slot);
@@ -1307,7 +1310,10 @@ fn held_second_hold_keeps_the_controls_of_a_waiting_fold() {
         of: id(1),
         reason: api::script_contract::CallbackCancelReason::ParentAborted,
     }];
-    slot.surface.as_ref().unwrap().restore_seat_batches(vec![fold]);
+    slot.surface
+        .as_ref()
+        .unwrap()
+        .restore_seat_batches(vec![fold]);
     slot.seat_guardian_hold(false);
     for yaw in 1..=141 {
         slot.seat
@@ -1919,7 +1925,10 @@ fn guardian_hold_neither_completes_nor_starts_a_native() {
     let mut held = page(&slot, Vec::new());
     held.batch.starts = vec![start_input(&slot, 2, NativeKind::Hunt)];
     held.machine_events = vec![machine_event(1, Done)];
-    slot.surface.as_ref().unwrap().restore_seat_batches(vec![held]);
+    slot.surface
+        .as_ref()
+        .unwrap()
+        .restore_seat_batches(vec![held]);
     let _ = slot.drain_host_interacts();
     let after_frame = state(&slot);
     slot.consume_seat_batch(
