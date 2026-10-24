@@ -1030,7 +1030,13 @@ fn removing_the_focused_bot_cancels_startup_focus() {
 
 #[test]
 fn operator_focus_before_preference_adoption_keeps_walk_target_and_boot_load() {
-    for path in ["direct-same", "direct", "keyboard", "fleet", "first-profile"] {
+    for path in [
+        "direct-same",
+        "direct",
+        "keyboard",
+        "fleet",
+        "first-profile",
+    ] {
         let iso = IsolatedStores::enter(&format!("tui-startup-focus-{path}"));
         let mut session = TuiSession::new(dummy_options());
         session.core.set_spawn_workers(false);
@@ -1062,7 +1068,11 @@ fn operator_focus_before_preference_adoption_keeps_walk_target_and_boot_load() {
         // Selection itself never loads a slot in the TUI. Bob is preloaded
         // for the alternate-focus paths while the boot request waits.
         session.load_and_login("bob");
-        let expected_focus = if path == "direct-same" { "alice" } else { "bob" };
+        let expected_focus = if path == "direct-same" {
+            "alice"
+        } else {
+            "bob"
+        };
         let action = match path {
             "direct-same" => app.select_bot("alice"),
             "direct" => app.select_bot("bob"),
@@ -1121,9 +1131,7 @@ fn operator_focus_before_preference_adoption_keeps_walk_target_and_boot_load() {
             .reports()
             .find(|report| report.command() == OperatorCommand::WalkTo)
             .expect("WalkTo command report");
-        let focus = session
-            .core
-            .profile_identity_or_synthetic(expected_focus);
+        let focus = session.core.profile_identity_or_synthetic(expected_focus);
         assert!(
             report
                 .member(frontend_core::command::Subject::Profile(focus))
@@ -1131,7 +1139,11 @@ fn operator_focus_before_preference_adoption_keeps_walk_target_and_boot_load() {
             "{path}: the command must target the operator's selection: {report:?}"
         );
         assert_eq!(session.core.selected(), Some(expected_focus), "{path}");
-        assert_eq!(app.focused_name().as_deref(), Some(expected_focus), "{path}");
+        assert_eq!(
+            app.focused_name().as_deref(),
+            Some(expected_focus),
+            "{path}"
+        );
         assert!(session.startup_focus.is_none(), "{path}");
     }
 }
@@ -1188,15 +1200,13 @@ fn fleet_login_selection_keeps_startup_load_without_overriding_focus() {
         .is_some_and(|plan| plan.needs_confirm()));
     session.run_fleet_plan(&mut app);
     assert_eq!(session.core.selected(), Some("bob"));
-    assert!(
-        session
-            .core
-            .play_for_test()
-            .unwrap()
-            .arm("bob")
-            .unwrap()
-            .wants_login()
-    );
+    assert!(session
+        .core
+        .play_for_test()
+        .unwrap()
+        .arm("bob")
+        .unwrap()
+        .wants_login());
 
     release.send(()).unwrap();
     session.preferences.reload().unwrap();
@@ -1583,7 +1593,10 @@ fn deleting_pending_startup_profile_cancels_load_and_focus() {
     assert!(session.core.members().is_empty());
     assert!(session.core.selected().is_none());
     assert!(app.focused_name().is_none());
-    assert!(session.error.is_none(), "the deleted profile was not retried");
+    assert!(
+        session.error.is_none(),
+        "the deleted profile was not retried"
+    );
     assert_eq!(
         session
             .core
