@@ -875,6 +875,11 @@ struct PanelPreferenceWrite {
     members: Vec<PanelPreferenceMember>,
 }
 
+enum StartupFocus {
+    Restore,
+    SavedProfile(String),
+}
+
 pub struct Session {
     /// Shared focus policy; slot threads read it every frame (observe) to
     /// apply `client.set_draw(draw_for_slot(&focus, name))`, so only the
@@ -923,9 +928,9 @@ pub struct Session {
     pub(crate) preferences: UiPreferences,
     /// Whether the process writer has published the first readable cache.
     preferences_ready: bool,
-    /// One automatic post-unlock focus/load deferred until the first cache
-    /// is adopted; repeated startup requests coalesce.
-    startup_focus_pending: bool,
+    /// Automatic unlock or saved-profile focus deferred until the first
+    /// preference cache is adopted. Repeated requests coalesce.
+    startup_focus_pending: Option<StartupFocus>,
     /// Service-owned writes remain watched by the panel even when the
     /// settings surface that submitted them is closed.
     panel_preference_writes: Vec<PanelPreferenceWrite>,
@@ -1592,7 +1597,7 @@ impl Session {
             walk_permissions,
             preferences,
             preferences_ready,
-            startup_focus_pending: false,
+            startup_focus_pending: None,
             panel_preference_writes: Vec::new(),
             pending_panel_members: HashMap::new(),
             pending_nav_members,
@@ -1867,8 +1872,8 @@ impl Session {
 
         self.clear_cached_panel_members(document);
         self.clear_cached_nav_members(document);
-        if std::mem::take(&mut self.startup_focus_pending) {
-            self.focus_first_profile();
+        if let Some(focus) = self.startup_focus_pending.take() {
+            self.apply_startup_focus(focus);
         }
     }
 
@@ -2171,7 +2176,7 @@ impl Session {
     /// parked until selected (select keeps a slot once it has run).
     pub fn unlock_at(&mut self, path: &Path, pass: &str) -> bool {
         if self.start_vault(path, pass) {
-            self.focus_first_profile_when_ready();
+            self.focus_when_ready(StartupFocus::Restore);
             true
         } else {
             false
@@ -2714,18 +2719,24 @@ impl Session {
         Ok(())
     }
 
-    /// After unlock/`spawn_all`: restore `last_focus` when it is still a
-    /// vault/slot name; otherwise focus the first so the combo and renderer
-    /// are not stuck on `None`. Mode-aware like a chooser row pick: with
-    /// MultiBox already on, the profile joins the rail ([`Self::load`]).
-    fn focus_first_profile_when_ready(&mut self) {
+    /// Automatic profile loads share the initial preference-readiness gate.
+    fn focus_when_ready(&mut self, focus: StartupFocus) {
         if self.preferences_ready {
-            self.focus_first_profile();
+            self.apply_startup_focus(focus);
         } else {
-            self.startup_focus_pending = true;
+            self.startup_focus_pending = Some(focus);
         }
     }
 
+    fn apply_startup_focus(&mut self, focus: StartupFocus) {
+        match focus {
+            StartupFocus::Restore => self.focus_first_profile(),
+            StartupFocus::SavedProfile(name) => self.select(&name),
+        }
+    }
+
+    /// Restore the saved focus when it still exists, or use the first profile.
+    /// MultiBox restores it onto the rail through the usual chooser path.
     fn focus_first_profile(&mut self) {
         let names = self.profile_names();
         if let Some(name) = frontend_core::pick_focus(&names, self.ui.last_focus.as_deref()) {

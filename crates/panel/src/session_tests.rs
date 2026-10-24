@@ -2937,7 +2937,7 @@ fn unlock_defers_automatic_focus_until_preferences_are_ready() {
     assert!(session.core.vault_open());
     assert!(session.core.slots().is_empty());
     assert!(session.focused_name().is_none());
-    assert!(session.startup_focus_pending);
+    assert!(session.startup_focus_pending.is_some());
     session.preferences.reload().unwrap();
 
     patiently(|| {
@@ -2950,7 +2950,7 @@ fn unlock_defers_automatic_focus_until_preferences_are_ready() {
     })
     .unwrap();
 
-    assert!(!session.startup_focus_pending);
+    assert!(session.startup_focus_pending.is_none());
     assert_eq!(session.focused_name().as_deref(), Some("alice"));
     assert!(session.core.slots().contains_key("alice"));
     assert!(!session.draw.capture());
@@ -6764,6 +6764,86 @@ fn save_credentials_without_focus_upserts_spawns_and_selects() {
     assert!(s.core.profile("test").is_some());
     assert_eq!(s.focused_name().as_deref(), Some("test"));
     assert!(s.core.slots().contains_key("test"));
+}
+
+#[test]
+fn first_profile_save_waits_for_preferences_before_selecting_and_loading_once() {
+    let iso = IsolatedStores::enter("panel-first-profile-cold-preferences");
+    let mut session = Session::new();
+    session.core.set_spawn_workers(false);
+    let (entered, entered_rx) = std::sync::mpsc::sync_channel(1);
+    let (release, release_rx) = std::sync::mpsc::channel();
+    let release_rx = Mutex::new(release_rx);
+    let first = std::sync::atomic::AtomicBool::new(true);
+    let service = host_play::local_state::LocalStateService::open_process_with_read_stall_for_test(
+        host_play::local_state::StateRoot::new(iso.dir().join("cold-state")),
+        Arc::new(move || {
+            if first.swap(false, Ordering::SeqCst) {
+                let _ = entered.send(());
+                let _ = release_rx.lock().unwrap().recv();
+            }
+        }),
+    );
+    entered_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+    session.core.bind_local_state(service);
+    session.preferences = session.core.preferences().unwrap();
+    session.preferences_ready = false;
+    let path = iso.dir().join("vault");
+    assert!(session.unlock_at(&path, "test-passphrase-01"));
+    session.begin_edit_profile(None);
+    *session.profile_editor.draft_mut().username_mut() = "alice".into();
+    *session.profile_editor.draft_mut().password_mut() = "pw".into();
+    *session
+        .profile_editor
+        .draft_mut()
+        .settings_mut()
+        .auto_login_mut() = true;
+    assert!(session.save_credentials());
+    session.core.flush_writes();
+
+    for _ in 0..4 {
+        session.poll_panel_preferences();
+        session.pump_status();
+        assert!(!session.preferences.ready());
+        assert!(session.core.profile("alice").is_some());
+        assert!(
+            session.core.slots().is_empty(),
+            "saving the first profile must not select or load before preferences are ready"
+        );
+        assert!(session.focused_name().is_none());
+    }
+
+    release.send(()).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while session.core.slots().is_empty() && Instant::now() < deadline {
+        session.poll_panel_preferences();
+        session.pump_status();
+        thread::sleep(Duration::from_millis(5));
+    }
+    for _ in 0..4 {
+        session.poll_panel_preferences();
+        session.pump_status();
+    }
+    assert!(session.panel_preferences_ready());
+    assert_eq!(session.focused_name().as_deref(), Some("alice"));
+    assert!(session
+        .core
+        .play_for_test()
+        .unwrap()
+        .arm("alice")
+        .unwrap()
+        .wants_login());
+    assert_eq!(session.core.slots().len(), 1);
+    assert_eq!(
+        session
+            .core
+            .commands()
+            .reports()
+            .filter(|report| report.command() == frontend_core::OperatorCommand::Select)
+            .count(),
+        1,
+        "the saved profile must be selected exactly once"
+    );
 }
 
 #[test]
