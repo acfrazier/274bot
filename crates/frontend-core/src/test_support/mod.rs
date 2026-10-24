@@ -11,6 +11,47 @@ pub mod session;
 pub mod tui;
 
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
+
+/// Wait for an existing completion predicate after WorkAdmission publications.
+///
+/// The caller supplies a timeout as a hang guard. The function returns false
+/// if the shared service becomes unavailable or the hang guard expires.
+pub fn wait_for_work_admission_publication(
+    timeout: Duration,
+    mut completed: impl FnMut() -> bool,
+) -> bool {
+    use script::work_admission::{PublicationWaitOutcome, WorkService};
+
+    let started = Instant::now();
+    if completed() {
+        return true;
+    }
+    let Ok(service) = WorkService::shared() else {
+        return false;
+    };
+
+    loop {
+        if completed() {
+            return true;
+        }
+        let remaining = timeout.saturating_sub(started.elapsed());
+        if remaining.is_zero() {
+            return false;
+        }
+
+        let observed = service.lock().publication_epoch();
+        if completed() {
+            return true;
+        }
+        match WorkService::wait_for_publication_change(&service, observed, remaining) {
+            PublicationWaitOutcome::Changed => {}
+            PublicationWaitOutcome::TimedOut | PublicationWaitOutcome::Unavailable => {
+                return false;
+            }
+        }
+    }
+}
 
 /// A scratch `$HOME` (and cleared `$RS2B0T`) pinned to this thread while it
 /// lives; dropping it restores the previous pin, even on panic. The process

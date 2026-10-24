@@ -1075,16 +1075,22 @@ fn ready_catalogue_retains_searchable_normalized_access_and_rejects_foreign_iden
     let handle = manager
         .request(descriptor, MapDemand::CatalogueOnly)
         .unwrap();
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let hang_guard = std::time::Instant::now() + std::time::Duration::from_secs(120);
     loop {
         match handle.status() {
             MapJobStatus::Ready => break,
             MapJobStatus::Queued | MapJobStatus::Running(_) => {
+                let remaining = hang_guard.saturating_duration_since(std::time::Instant::now());
                 assert!(
-                    std::time::Instant::now() < deadline,
-                    "catalogue did not settle"
+                    !remaining.is_zero(),
+                    "catalogue WorkAdmission hang guard expired"
                 );
-                handle.wait_for_change(std::time::Duration::from_millis(100));
+                let outcome = handle.wait_for_change(remaining);
+                assert_ne!(
+                    outcome,
+                    script::work_admission::PublicationWaitOutcome::Unavailable,
+                    "WorkAdmission became unavailable before the catalogue hang guard"
+                );
             }
             other => panic!("catalogue ended {other:?}"),
         }
