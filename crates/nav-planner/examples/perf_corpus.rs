@@ -378,7 +378,10 @@ fn main() -> Result<(), String> {
                 FindOptions::default(),
                 &rich,
             );
-            assert_eq!(search.route().unwrap_err(), RouteError::NoPath);
+            assert_eq!(
+                search.route().expect_err("Zone policy refuses this route"),
+                RouteError::NoPath
+            );
             let blocked = find_blocking_zones(
                 &world.collision,
                 &world.graph,

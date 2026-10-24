@@ -376,6 +376,8 @@ pub(super) struct CommandDesk {
     pub(super) plan_target: Option<crate::selection::ProfileIdentity>,
     /// Switch world members not settled yet ([`super::world_switch`]).
     pub(super) world_switches: Vec<super::world_switch::WorldSwitch>,
+    /// Commands refused before they became operations ([`OperatorSession::refusals`]).
+    pub(super) refusals: u64,
 }
 
 impl CommandDesk {
@@ -603,8 +605,127 @@ impl<Io> OperatorSession<Io> {
     }
 
     /// [`Self::submit`] at `now`: the start of a Remove's clean-logout
-    /// window ([`super::SLOT_REMOVE_TIMEOUT`]).
+    /// window ([`super::SLOT_REMOVE_TIMEOUT`]). This is the command
+    /// boundary: a command refused before it becomes an operation logs one
+    /// `info` line here, for every front end alike.
     pub fn submit_at<S: SlotSurface<Io = Io>>(
+        &mut self,
+        command: OperatorCommand,
+        targets: Targets<'_>,
+        now: Instant,
+        surface: &mut S,
+    ) -> Result<Submitted, SubmitError> {
+        // Target names are scratch for one resolution; none left over from
+        // an earlier command may name this refusal's bots.
+        let mut names = std::mem::take(&mut self.commands.names);
+        self.commands.pool.clear(&mut names);
+        self.commands.names = names;
+        let submitted = self.submit_unlogged(command, targets, now, surface);
+        if let Err(error) = &submitted {
+            let bots = self.refused_bots(targets);
+            self.record_refusal(command, &bots, &error.to_string());
+        }
+        submitted
+    }
+
+    /// How many commands this session has refused before they became
+    /// operations. A front end's error line uses it to tell a repeated
+    /// refusal (same text, new refusal) from the message already shown.
+    pub fn refusals(&self) -> u64 {
+        self.commands.refusals
+    }
+
+    /// One info line for the members of `request` that were refused, naming
+    /// the command, the bots and the reason. A refusal settles a member as
+    /// [`CommandFailure::Rejected`] before any operation exists for it. One
+    /// line per command, however many bots it refused.
+    fn log_refusals(&mut self, request: RequestId, command: OperatorCommand) {
+        let Some(report) = self.commands.book.report(request) else {
+            return;
+        };
+        let mut refused: Vec<(String, String)> = Vec::new();
+        for member in report.members() {
+            let Some(Settlement::Failed(CommandFailure::Rejected(rejection))) = member.terminal()
+            else {
+                continue;
+            };
+            let name = match member.subject() {
+                Subject::Profile(identity) => self.name_for_identity(identity),
+                Subject::Application => "application".to_owned(),
+            };
+            let reason = match member.detail() {
+                Some(detail) => format!("{rejection:?}: {detail}"),
+                None => format!("{rejection:?}"),
+            };
+            refused.push((name, reason));
+        }
+        let bots = refused
+            .iter()
+            .map(|(name, _)| name.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let reason = match refused.as_slice() {
+            [] => return,
+            [(_, reason)] => reason.clone(),
+            many => many
+                .iter()
+                .map(|(name, reason)| format!("{name}: {reason}"))
+                .collect::<Vec<_>>()
+                .join("; "),
+        };
+        self.record_refusal(command, &bots, &reason);
+    }
+
+    /// The bots a refused submission named, for its log line: the names the
+    /// caller gave, or the ones the targets resolved to before the refusal.
+    fn refused_bots(&self, targets: Targets<'_>) -> String {
+        const NO_BOTS: &str = "no bots";
+        let joined = |names: &[String]| {
+            if names.is_empty() {
+                NO_BOTS.to_owned()
+            } else {
+                names.join(", ")
+            }
+        };
+        match targets {
+            Targets::Application => "application".to_owned(),
+            Targets::Profile(name) => name.to_owned(),
+            Targets::Profiles(names) => joined(names),
+            Targets::Selected => self.selected.clone().unwrap_or_else(|| NO_BOTS.to_owned()),
+            Targets::Everyone | Targets::Marked | Targets::Plan => joined(&self.commands.names),
+        }
+    }
+
+    /// Log and count one refused command: the one place a refusal is
+    /// written, for a refused submission, for refused members and for a front
+    /// end's refusal before it can submit ([`Self::refuse_unsubmitted`]). Never
+    /// for `GameInput`, which is staged every frame.
+    fn record_refusal(&mut self, command: OperatorCommand, bots: &str, reason: &str) {
+        if command == OperatorCommand::GameInput {
+            return;
+        }
+        self.commands.refusals += 1;
+        api::host_log!(
+            api::hostlog::Category::Lifecycle,
+            api::hostlog::Level::Info,
+            "command refused: {command:?} on {bots}: {reason}"
+        );
+    }
+
+    /// A front end refused `command` before it could submit it (a missing
+    /// focus, a bot with no card). The refusal logs and counts as every other
+    /// refusal does, with the bots it named (`&[]` for none) and the reason
+    /// the operator sees.
+    pub fn refuse_unsubmitted(&mut self, command: OperatorCommand, bots: &[&str], reason: &str) {
+        let bots = if bots.is_empty() {
+            "no bots".to_owned()
+        } else {
+            bots.join(", ")
+        };
+        self.record_refusal(command, &bots, reason);
+    }
+
+    fn submit_unlogged<S: SlotSurface<Io = Io>>(
         &mut self,
         command: OperatorCommand,
         targets: Targets<'_>,
@@ -705,6 +826,7 @@ impl<Io> OperatorSession<Io> {
         );
         self.drain_watched();
         self.settle_owned();
+        self.log_refusals(request, command);
         if let Some(plan) = ran_plan {
             // A planned Log in can load the first members: with nothing
             // selected, focus the remembered (else first) one, as Load all

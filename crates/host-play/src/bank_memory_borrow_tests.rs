@@ -169,6 +169,7 @@ fn the_compiled_tick_borrow_is_released_before_queued_cheats_dispatch() {
         None,
         None,
         None,
+        None,
     );
 
     assert!(observation.wrote, "the tick ran and the cheat was sent");
@@ -245,6 +246,7 @@ fn without_a_memory_the_tick_sees_none_and_cheats_still_dispatch() {
         None,
         None,
         crate::script_channels::BrokerWorld::Unavailable,
+        None,
         None,
         None,
         None,

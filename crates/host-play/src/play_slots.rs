@@ -206,17 +206,27 @@ impl Play {
     /// Retire all name-owned registries and return the worker handle without
     /// joining it. Registry guards are always released before stopping a
     /// removed script, so cleanup adds no script-wall -> script-slot edge.
+    /// The unloaded run ends as a Stop's does: the script stops first, then
+    /// [`SlotStatus::retire_script_run`] retires its row once, and only then
+    /// is the row removed. Lock order is the Stop paths' (script, then
+    /// statuses), never nested: each guard ends before the next is taken.
     fn take_slot_for_stop(&mut self, name: &str) -> Option<thread::JoinHandle<()>> {
         #[cfg(test)]
         let arm = self.arms.get(name).cloned();
         self.signal_slot_stop(name);
         self.spawned.remove(name);
-        lock_statuses(&self.statuses).retain(|status| status.username != name);
         self.arms.remove(name);
         let removed = self.scripts.lock().unwrap().remove(name);
         if let Some(slot) = removed {
             stop_retired_script(slot);
         }
+        lock_statuses(&self.statuses).retain_mut(|status| {
+            if status.username != name {
+                return true;
+            }
+            status.retire_script_run();
+            false
+        });
         self.cheats.lock().unwrap().remove(name);
         self.wires.lock().unwrap().remove(name);
         #[cfg(test)]
@@ -634,7 +644,11 @@ pub(super) fn reset_slot_session_work(
     }
     match held {
         Some(carry) => hold_script_nav(navs, name, carry),
-        None => reset_script_nav(navs, name, None),
+        None => {
+            // The relogged session's status rows reset with the login
+            // (`reset_slot_observation`), including the walk destination.
+            reset_script_nav(navs, name, None);
+        }
     }
     // Prayer varps are temporary: relog starts all-off. Do not carry a toggle
     // from the old session into the new one, even if its route is held.
@@ -1837,6 +1851,7 @@ fn spawn_slot_thread(
                                 Some(&mut *run_policy),
                                 Some(&mut debug_replies),
                                 Some(seat_arm),
+                                Some(&slot_statuses),
                                 )
                             };
                             let crate::script_runtime::ScriptObservation {

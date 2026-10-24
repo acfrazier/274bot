@@ -27,7 +27,7 @@ use frontend_core::scripts::{
 use frontend_core::walk_map::{
     display_walk_name_into, WalkCatalogue, WalkMap, WalkObservedService, WalkSearch, WalkSlotStatus,
 };
-use frontend_core::{FleetCounts, ResourceView, SlotDetail, WalkGlobalsView};
+use frontend_core::{FleetCounts, OperatorCommand, ResourceView, SlotDetail, WalkGlobalsView};
 use frontend_core::{MapBakeChoice, NavPreference};
 use nav_planner::map::poi::{PoiKind, PoiRecord};
 use nav_planner::router::{FindOptions, Route};
@@ -35,7 +35,7 @@ use nav_planner::tile::Tile;
 use nav_planner::world::NavWorld;
 
 use crate::chat::{chat_modal_open, Chat, ChatAction, ChatState, ChatView};
-use crate::commands::{script_command, Command};
+use crate::commands::{script_command, Command, Unavailable};
 use crate::fleet::FleetState;
 use crate::layout::{Pane, Regions, Screen};
 use crate::loadouts::{LoadoutsPane, LoadoutsState};
@@ -191,10 +191,53 @@ impl WalkSendState {
     }
 }
 
+/// What a refusal on the message line waits for: the action that supplies
+/// it clears the line at once (`TuiSession::clear_resolved_error`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ErrorNeed {
+    /// The precondition the reason names holds again
+    /// ([`Unavailable::missing`] is false).
+    Precondition(Unavailable),
+    /// The profile called this is loaded (logged in).
+    Loaded(String),
+}
+
+impl ErrorNeed {
+    /// Whether the need holds in `app`.
+    pub fn met(&self, app: &TuiApp) -> bool {
+        match self {
+            ErrorNeed::Precondition(reason) => !reason.missing(app),
+            ErrorNeed::Loaded(name) => app
+                .fleet_model
+                .rows()
+                .iter()
+                .any(|row| row.name() == name && row.loaded()),
+        }
+    }
+}
+
+/// A command the app refuses before any submission: the session shows
+/// `reason`, which clears when `need` holds, and logs the refusal at the
+/// command boundary (the command, `bot` and `reason`). `command` is `None`
+/// for a command that only changes the screen ([`Command::refusal`]): no
+/// operator command is refused, so nothing is logged.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Refusal {
+    pub command: Option<OperatorCommand>,
+    /// The bot the refused command named, if it named one.
+    pub bot: Option<String>,
+    pub reason: std::borrow::Cow<'static, str>,
+    pub need: Option<ErrorNeed>,
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum AppAction {
     /// Quit the app.
     Quit,
+    /// The app refuses a command before any submission (nothing to act on).
+    /// The session shows the reason and logs a refused operator command at
+    /// the command boundary.
+    Refused(Refusal),
     /// Select `name` (mirrored onto the core `select`). Never a spawn or
     /// login; only Enter or a click on a fleet row, a context menu or the
     /// palette produce it.
@@ -285,8 +328,8 @@ pub enum AppAction {
     /// at once when it needs no confirmation, otherwise the confirm
     /// overlay shows the plan's prompt.
     PlanFleet(frontend_core::FleetAction),
-    /// Confirm: run the waiting fleet plan (`Targets::Plan`).
-    RunFleetPlan,
+    /// Confirm: run the waiting fleet plan for this action (`Targets::Plan`).
+    RunFleetPlan(frontend_core::FleetAction),
     /// Cancel: drop the waiting fleet plan (`CancelFleetPlan`).
     CancelFleetPlan,
     /// Reload the focused heading's card, or confirm a shown warning.
@@ -791,6 +834,10 @@ impl TuiApp {
     pub fn focused_name(&self) -> Option<String> {
         self.focused.and_then(|i| self.names.get(i)).cloned()
     }
+    /// Whether a bot has the focus ([`Self::focused_name`] without the copy).
+    pub(crate) fn has_focus(&self) -> bool {
+        self.focused.is_some_and(|i| i < self.names.len())
+    }
     pub(crate) fn profile_id_for_name(&self, name: &str) -> frontend_core::ProfileIdentity {
         frontend_core::profile_id_for_name(&self.names, &self.profile_ids, name)
     }
@@ -1032,9 +1079,14 @@ impl TuiApp {
     pub(crate) fn map_enter(&mut self) -> AppAction {
         if let Some(pending) = self.map_model.pending() {
             if self.walk_send.mode == WalkSendMode::Group {
-                if self.walk_send.checked_count(self.fleet_model.marks()) == 0 {
-                    self.error = Some("no bots selected".into());
-                    return AppAction::None;
+                let reason = Unavailable::NoCheckedBots;
+                if reason.missing(self) {
+                    return AppAction::Refused(Refusal {
+                        command: Some(OperatorCommand::GroupWalk),
+                        bot: None,
+                        reason: reason.text().into(),
+                        need: reason.need(),
+                    });
                 }
                 return AppAction::MapWalkGroup;
             }
@@ -1687,10 +1739,12 @@ impl TuiApp {
             }
             Command::ScriptStart => match self.script_sel.as_ref().map(ScriptChoice::duplicate) {
                 Some(sel) => AppAction::ScriptStart(sel),
-                None => {
-                    self.error = Some("script: browse to pick one first".into());
-                    AppAction::None
-                }
+                None => AppAction::Refused(Refusal {
+                    command: Some(OperatorCommand::StartScript),
+                    bot: self.focused_name(),
+                    reason: "script: browse to pick one first".into(),
+                    need: Unavailable::NoScriptPicked.need(),
+                }),
             },
             Command::ScriptPause => AppAction::ScriptPause,
             Command::ScriptStop => AppAction::ScriptStop,

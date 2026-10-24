@@ -61,7 +61,7 @@ fn nav_spirit() {
     if trees.len() < 8 {
         fail(&format!(
             "nav_spirit: pack carries {} SpiritTree edges, need >= 8 \
-             (rebake with `cargo run -p nav-planner --bin nav-pack`)",
+             (rebake with `cargo run -p nav-bake --bin nav-pack`)",
             trees.len()
         ));
     }

@@ -120,6 +120,17 @@ fn can_copy_equipment(session: &Session) -> bool {
         .is_some_and(|name| session.core.can_observe_equipment(name))
 }
 
+/// What the item slots and Add supply say while there is nothing to edit.
+const NEEDS_A_LOADOUT: &str = "add a loadout first";
+
+/// Whether the window has a loadout draft to edit. The controls that start an
+/// edit draw disabled without one (the equipment slot buttons and Add supply,
+/// the only ways into the item search), so a click never reaches the early
+/// returns of [`assign_slot`] and the supply handlers for want of a draft.
+fn has_draft(session: &Session) -> bool {
+    session.loadouts.draft().is_some()
+}
+
 fn assign_slot(session: &mut Session, slot: WornSlot, item: Option<String>) {
     let two_handed = slot == WornSlot::RightHand
         && item.as_deref().is_some_and(|name| {
@@ -131,6 +142,8 @@ fn assign_slot(session: &mut Session, slot: WornSlot, item: Option<String>) {
                 })
             })
         });
+    // The slot buttons that open the item search are disabled without a draft
+    // (`has_draft`), so a click always has one: this only obtains it.
     let Some(draft) = session.loadouts.draft_mut() else {
         return;
     };
@@ -146,6 +159,9 @@ fn assign_slot(session: &mut Session, slot: WornSlot, item: Option<String>) {
 }
 
 /// Name the item of supply row `index`; `false` when there is no such row.
+/// The search that calls this opens from a supply button, which is drawn only
+/// for a row of the current draft, and a click anywhere outside the search
+/// closes it first, so the row is still there when an item is picked.
 fn set_supply_item(session: &mut Session, index: usize, item: String) -> bool {
     let Some(entry) = session
         .loadouts
@@ -320,6 +336,7 @@ pub fn window(ui: &Ui, session: &mut Session) {
 fn draw_equipment(ui: &Ui, session: &mut Session) {
     let cell_w = scale_px(ui, 150.0);
     let mut open_slot: Option<WornSlot> = None;
+    let editable = has_draft(session);
     for (row_i, row) in WornSlot::layout().iter().enumerate() {
         for (col, cell) in row.iter().enumerate() {
             if col > 0 {
@@ -340,11 +357,15 @@ fn draw_equipment(ui: &Ui, session: &mut Session) {
                         format!("{label}\n{filled}")
                     };
                     let _pad = ui.push_style_var(StyleVar::ButtonTextAlign([0.5, 0.5]));
+                    let _off = (!editable).then(|| ui.begin_disabled());
                     if ui.button_with_size(
                         format!("{caption}##slot-{}", slot.id()),
                         [cell_w, scale_px(ui, 42.0)],
                     ) {
                         open_slot = Some(*slot);
+                    }
+                    if !editable {
+                        ui.set_item_tooltip(NEEDS_A_LOADOUT);
                     }
                 }
                 None => {
@@ -369,6 +390,7 @@ fn draw_supplies(ui: &Ui, session: &mut Session) {
     let mut remove = None;
     let mut open_supply = None;
     let mut edited = false;
+    let editable = has_draft(session);
     let count = session.loadouts.draft().map_or(0, |d| d.carry.len());
     if session.loadouts_qty_bufs.len() != count {
         resync_qty_bufs(session);
@@ -424,11 +446,18 @@ fn draw_supplies(ui: &Ui, session: &mut Session) {
             session.loadouts_qty_bufs.remove(i);
         }
     }
-    if ui.button("Add supply") {
-        if let Some(draft) = session.loadouts.draft_mut() {
-            draft.carry.push(CarryEntry::new("Lobster", 1));
-            session.loadouts_qty_bufs.push("1".into());
-            edited = true;
+    {
+        let _off = (!editable).then(|| ui.begin_disabled());
+        if ui.button("Add supply") {
+            // Disabled without a draft, so a click always has one.
+            if let Some(draft) = session.loadouts.draft_mut() {
+                draft.carry.push(CarryEntry::new("Lobster", 1));
+                session.loadouts_qty_bufs.push("1".into());
+                edited = true;
+            }
+        }
+        if !editable {
+            ui.set_item_tooltip(NEEDS_A_LOADOUT);
         }
     }
     if edited {

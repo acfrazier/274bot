@@ -61,7 +61,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 #[path = "../../host-play/tests/support/map_fixture.rs"]
-mod map_fixture;
+pub(super) mod map_fixture;
 use map_fixture::MapFixture;
 #[path = "../../host-play/tests/support/upgrade_home.rs"]
 mod upgrade_home;
@@ -2035,7 +2035,7 @@ fn saved_collision_prefs_without_drawing_do_not_load_navflags() {
         level: 0,
     };
     let flags = vec![0u32, 0, 0, 0];
-    let bytes = nav_planner::pack::encode_flags_sidecar(origin, 1, 1, &flags);
+    let bytes = nav_bake::pack::encode_flags_sidecar(origin, 1, 1, &flags);
     std::fs::write(&path, &bytes).unwrap();
     let digest = nav_planner::manifest::hash_bytes(&bytes);
 
@@ -2110,7 +2110,7 @@ fn remove_only_focused_drawing_slot_releases_flags() {
         level: 0,
     };
     let flags = vec![0u32, 0, 0, 0];
-    let bytes = nav_planner::pack::encode_flags_sidecar(origin, 1, 1, &flags);
+    let bytes = nav_bake::pack::encode_flags_sidecar(origin, 1, 1, &flags);
     std::fs::write(&path, &bytes).unwrap();
     let digest = nav_planner::manifest::hash_bytes(&bytes);
 
@@ -4698,7 +4698,7 @@ fn a_picker_walk_shows_the_member_running_until_it_ends() {
     s.core.fleet_mut().add("alice");
     s.pump_status();
     let before = s.core.fleet_view().rows_generation();
-    assert!(!s.core.fleet_view().row("alice").unwrap().walking());
+    assert!(!s.core.fleet_view().row("alice").unwrap().manual_walk());
 
     let dest = Tile {
         x: 2,
@@ -4709,7 +4709,7 @@ fn a_picker_walk_shows_the_member_running_until_it_ends() {
     assert!(s.confirm_picker_walk(&world));
     s.pump_status();
     let walking = s.core.fleet_view().row("alice").unwrap();
-    assert!(walking.walking());
+    assert!(walking.manual_walk());
     assert_eq!(walking.brief(), "running");
     assert!(
         s.core.fleet_view().rows_generation() > before,
@@ -4722,14 +4722,14 @@ fn a_picker_walk_shows_the_member_running_until_it_ends() {
         held.route = None;
         s.pump_status();
         assert!(
-            s.core.fleet_view().row("alice").unwrap().walking(),
+            s.core.fleet_view().row("alice").unwrap().manual_walk(),
             "an arm in use keeps its last answer; the pump does not wait"
         );
     }
     s.core.finish_walk_for_test("alice");
     s.pump_status();
     let arrived = s.core.fleet_view().row("alice").unwrap();
-    assert!(!arrived.walking());
+    assert!(!arrived.manual_walk());
     assert_eq!(arrived.brief(), "idle");
     assert_eq!(s.walk_status_text(), "—");
 }
@@ -9218,4 +9218,199 @@ fn panel_frame_hook_receives_client_through_slot_frame() {
     );
 
     assert!(session.mainland_sent.lock().unwrap().contains("alice"));
+}
+
+/// The banner message stays until the shared timeout passes, or a newer
+/// message replaces it and restarts the timer: the same rule as the terminal
+/// app's message line (`frontend_core::ERROR_MESSAGE_TIMEOUT`). An action
+/// that resolves a message clears it earlier; that is proved by
+/// `a_refusal_before_submission_logs_once_and_the_resolving_action_clears_it`.
+#[test]
+fn the_banner_message_expires_unless_replaced() {
+    use frontend_core::ERROR_MESSAGE_TIMEOUT as TIMEOUT;
+    let second = std::time::Duration::from_secs(1);
+    let mut s = Session::new();
+    let t0 = Instant::now();
+
+    // No action: it stays for the whole timeout, then goes.
+    s.error = Some("first".into());
+    s.expire_error(t0);
+    s.expire_error(t0 + TIMEOUT - second);
+    assert_eq!(s.error.as_deref(), Some("first"));
+    s.expire_error(t0 + TIMEOUT);
+    assert_eq!(s.error, None);
+
+    // A newer message replaces it and restarts the timer.
+    s.error = Some("older".into());
+    s.expire_error(t0);
+    s.error = Some("newer".into());
+    s.expire_error(t0 + TIMEOUT - second);
+    s.expire_error(t0 + TIMEOUT + second);
+    assert_eq!(s.error.as_deref(), Some("newer"), "the timer restarted");
+    s.expire_error(t0 + TIMEOUT * 2 - second);
+    assert_eq!(s.error, None);
+}
+
+/// The lines the process log holds for refusals that name `bot`.
+fn refusal_lines_naming(bot: &str) -> Vec<String> {
+    use frontend_core::log::{global, LogScope, LogView};
+    let mut view = LogView::new(LogScope::Process);
+    view.edit_filter(|filter| filter.set_text("command refused"));
+    global().refresh(&mut view);
+    view.rows()
+        .iter()
+        .map(|row| row.message().to_owned())
+        .filter(|line| line.contains(bot))
+        .collect()
+}
+
+/// PANEL-STATE-GAP-1023: a refusal the panel makes before it can submit
+/// (Copy settings with no focus, or on a bot with no card) logs one `info`
+/// line at the shared command boundary, with the command, the bots and the
+/// reason; and the action that resolves it (focusing a bot, here) clears the
+/// banner at once, not only when the timeout passes.
+#[test]
+fn a_refusal_before_submission_logs_once_and_the_resolving_action_clears_it() {
+    let (mut s, _iso) = two_live_session("psg-resolve-refusal");
+    vault_upsert(&mut s.core, profile("psg-f3-zed", "pw", 44));
+    s.persist_ui = false;
+    assert_eq!(s.focused_name(), None);
+    let before = s.core.refusals();
+
+    s.copy_focused_settings_to_same_card();
+    assert_eq!(s.error.as_deref(), Some("Copy settings: focus a bot first"));
+    assert_eq!(s.core.refusals(), before + 1, "one refusal counted");
+    s.select("psg-f3-zed");
+    assert_eq!(s.focused_name().as_deref(), Some("psg-f3-zed"));
+    assert_eq!(s.error, None, "focusing a bot resolved the message");
+
+    // A bot with no card: the line names that bot.
+    s.copy_focused_settings_to_same_card();
+    assert_eq!(
+        s.error.as_deref(),
+        Some("Copy settings: the focused bot has no card")
+    );
+    assert_eq!(s.core.refusals(), before + 2);
+    let lines = refusal_lines_naming("psg-f3-zed");
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    for part in [
+        "PlanFleetAction(CopySettings)",
+        "on psg-f3-zed",
+        "Copy settings: the focused bot has no card",
+    ] {
+        assert!(
+            lines[0].contains(part),
+            "{part:?} missing from {:?}",
+            lines[0]
+        );
+    }
+}
+
+/// Whether the process log holds a refusal line containing `line`.
+fn refusal_logged(line: &str) -> bool {
+    use frontend_core::log::{global, LogScope, LogView};
+    let mut view = LogView::new(LogScope::Process);
+    view.edit_filter(|filter| filter.set_text(line));
+    global().refresh(&mut view);
+    view.rows()
+        .iter()
+        .any(|row| row.message().starts_with("command refused: "))
+}
+
+/// PANEL-STATE-GAP-1023 (F2): a command the panel refuses before it can
+/// submit it is refused at the shared command boundary, as every other
+/// refusal is: one `info` line names the command, the bots and the reason,
+/// and the banner shows the reason. The Refresh catalog button with no
+/// catalog configured, Load on a path that is not a file, and Use this
+/// folder on a folder with no catalog.
+#[test]
+fn the_panels_own_refusals_log_at_the_command_boundary() {
+    let iso = IsolatedStores::enter("psg-panel-own-refusals");
+    let mut s = Session::new();
+    s.persist_ui = false;
+    assert_eq!(s.catalog_root().unwrap(), None);
+    let before = s.core.refusals();
+
+    s.begin_refresh_catalog();
+    assert_eq!(
+        s.error.as_deref(),
+        Some("Refresh catalog: no catalog configured")
+    );
+    assert_eq!(s.core.refusals(), before + 1, "one refusal counted");
+    assert!(refusal_logged(
+        "command refused: ImportCatalog on no bots: Refresh catalog: no catalog configured"
+    ));
+
+    let missing = iso.dir().join("psg-missing.ts");
+    s.load_js(&missing);
+    assert_eq!(s.core.refusals(), before + 2);
+    assert!(refusal_logged(&format!(
+        "command refused: LoadScriptFile on no bots: script: not a file: {}",
+        missing.display()
+    )));
+
+    let empty = iso.dir().join("psg-no-catalog");
+    std::fs::create_dir_all(&empty).unwrap();
+    let refused = s.import_rs2b0t_catalog(&empty).unwrap_err();
+    assert!(refused.starts_with("no catalog at "), "{refused}");
+    assert_eq!(s.core.refusals(), before + 3);
+    assert!(refusal_logged(&format!(
+        "command refused: ImportCatalog on no bots: {refused}"
+    )));
+}
+
+/// PANEL-STATE-GAP-1023 (R3-M1, panel): the refusal of a profile whose
+/// first save is still being written waits for that save. It stays while
+/// the write is held and clears on the first frame after the save is
+/// durable, long before its timeout.
+#[test]
+fn a_still_saving_refusal_clears_when_the_save_finishes() {
+    let path = tmp_vault("saving-clears.vault");
+    let mut s = Session::new();
+    s.core.set_spawn_workers(false);
+    s.core.set_play(Some(empty_play()));
+    let mut vault = VaultFixture::create(&path, "test-passphrase-01");
+    vault.put(profile("alice", "pw", 42));
+    install_vault(&mut s.core, vault);
+    let gate = s.core.write_gate();
+    let held = gate.lock().unwrap();
+    assert!(s
+        .submit(
+            frontend_core::OperatorCommand::OpenNewProfileForm,
+            frontend_core::Targets::Application,
+        )
+        .is_some());
+    *s.profile_editor.username_mut() = "bob".into();
+    assert!(s
+        .submit(
+            frontend_core::OperatorCommand::EditProfileDraft(
+                frontend_core::command::ProfileDraftField::Username,
+            ),
+            frontend_core::Targets::Application,
+        )
+        .is_some());
+    *s.profile_editor.password_mut() = "pw".into();
+    assert!(s
+        .submit(
+            frontend_core::OperatorCommand::EditProfileDraft(
+                frontend_core::command::ProfileDraftField::Password,
+            ),
+            frontend_core::Targets::Application,
+        )
+        .is_some());
+    assert!(s.save_credentials());
+
+    let refused = "bob: profile is still saving";
+    let before = s.core.refusals();
+    assert!(!s.load("bob"), "Load is refused while bob saves");
+    assert_eq!(s.core.refusals(), before + 1);
+    assert_eq!(s.error.as_deref(), Some(refused));
+    s.pump_status();
+    assert_eq!(s.error.as_deref(), Some(refused), "the save is still held");
+
+    drop(held);
+    s.core.flush_writes();
+    s.pump_status();
+    assert!(!s.core.profile_saving("bob"));
+    assert_eq!(s.error, None, "the finished save resolved the message");
 }

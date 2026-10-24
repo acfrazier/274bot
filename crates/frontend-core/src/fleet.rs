@@ -672,24 +672,12 @@ impl MarkPredicate {
 
     /// Whether `row` is in this status.
     pub fn matches(self, row: &FleetRow) -> bool {
-        use crate::scripts::ScriptRunState as RunState;
         let loaded = row.loaded();
         let phase = row.phase();
-        let running = matches!(row.script(), RunState::Starting | RunState::Running);
         match self {
             Self::Ready => loaded && phase == Phase::Ready,
-            Self::Idle => {
-                loaded
-                    && phase == Phase::Ready
-                    && !matches!(
-                        row.script(),
-                        RunState::Starting
-                            | RunState::Running
-                            | RunState::Paused
-                            | RunState::Stopping
-                    )
-            }
-            Self::Running => loaded && running,
+            Self::Idle => loaded && phase == Phase::Ready && !row.script().is_live() && !row.busy(),
+            Self::Running => loaded && row.busy(),
             Self::LoggedOut => loaded && matches!(phase, Phase::Offline | Phase::LoggedOut),
             Self::LoginError => loaded && matches!(phase, Phase::LoginError | Phase::Failed),
             Self::NotLoaded => !loaded,
