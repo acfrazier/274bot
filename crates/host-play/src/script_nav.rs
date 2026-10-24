@@ -6908,30 +6908,35 @@ impl NavBot {
 /// End the session's navigation: every route, find, bank-fetch session,
 /// inspect and bank pick of the slot, a walk a reconnect was carrying, and
 /// the duel offer its accept gate validated. When `terminal_generation` is
-/// present, the same lifecycle receipt resets this state only once.
+/// present, the same lifecycle receipt resets this state only once. Returns
+/// whether it reset the navigation, so the caller that owns the status rows
+/// can retire the published script walk of the same run.
 pub(crate) fn reset_script_nav(
     navs: &Arc<Mutex<HashMap<String, NavBot>>>,
     name: &str,
     terminal_generation: Option<u64>,
-) {
-    if let Some(nav) = navs.lock().unwrap().get_mut(name) {
-        if terminal_generation.is_some_and(|generation| {
-            nav.terminal_nav_reset_generation
-                .is_some_and(|last| last >= generation)
-        }) {
-            return;
-        }
-        end_route_follow(nav);
-        nav.runtime_gate_logged = false;
-        nav.reset_walk_outcome();
-        route_inspect::reset_inspect(nav);
-        nav.bank_pick.reset();
-        nav.carried_walk = None;
-        nav.duel_offer_partner = None;
-        if let Some(generation) = terminal_generation {
-            nav.terminal_nav_reset_generation = Some(generation);
-        }
+) -> bool {
+    let mut navs = navs.lock().unwrap();
+    let Some(nav) = navs.get_mut(name) else {
+        return false;
+    };
+    if terminal_generation.is_some_and(|generation| {
+        nav.terminal_nav_reset_generation
+            .is_some_and(|last| last >= generation)
+    }) {
+        return false;
     }
+    end_route_follow(nav);
+    nav.runtime_gate_logged = false;
+    nav.reset_walk_outcome();
+    route_inspect::reset_inspect(nav);
+    nav.bank_pick.reset();
+    nav.carried_walk = None;
+    nav.duel_offer_partner = None;
+    if let Some(generation) = terminal_generation {
+        nav.terminal_nav_reset_generation = Some(generation);
+    }
+    true
 }
 
 /// Keep the pending script receipt identity when watchdog nav replaces its route.

@@ -7212,6 +7212,97 @@ fn script_stop_clears_offline_published_paint() {
     );
 }
 
+/// PANEL-STATE-GAP-1023: every way to stop a script run retires the run's
+/// published walk destination with it, through the one terminal path, while
+/// another bot's published walk is untouched. The pump's nav step never runs
+/// again once the route is gone, so nothing else would clear the row.
+#[test]
+fn every_script_stop_retires_the_run_walk_and_only_that_runs_walk() {
+    let mut play = run_with_io(
+        &PlayOptions {
+            host: "127.0.0.1".into(),
+            transport: client::Transport::Tcp,
+            port: 43594,
+            cache_dir: "/tmp".into(),
+            lowmem: true,
+            mainland: false,
+        },
+        vec![],
+        |_| (None, None),
+        |_, _, _| {},
+    );
+    for name in ["alice", "bob"] {
+        play.attach_arm(name, SlotArm::new(7, false));
+        play.statuses.lock().unwrap().push(SlotStatus {
+            username: name.into(),
+            ..SlotStatus::default()
+        });
+    }
+    let publish_walks = |play: &Play| {
+        for row in play.statuses.lock().unwrap().iter_mut() {
+            (row.walk_x, row.walk_z, row.walk_level) = (2550, 3348, 0);
+        }
+    };
+    type Walk = Option<(i32, i32, i32)>;
+    let walks = |play: &Play| -> Vec<(String, Walk)> {
+        play.statuses
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|row| {
+                (
+                    row.username.clone(),
+                    (row.walk_x != -1).then_some((row.walk_x, row.walk_z, row.walk_level)),
+                )
+            })
+            .collect()
+    };
+    let start = |play: &Play, identity: &str| {
+        play.script_start_load(
+            "alice",
+            "export function tick(api) {}".into(),
+            script::LoadShape::NativeTick,
+            None,
+            vec![],
+        )
+        .unwrap();
+        wait_script_state(play, "alice", script::RunState::Running);
+        play.script_attach_identity("alice", identity);
+    };
+    let kept = Some((2550, 3348, 0));
+
+    start(&play, "card:a");
+    publish_walks(&play);
+    play.script_stop("alice");
+    wait_script_state(&play, "alice", script::RunState::Idle);
+    assert_eq!(
+        walks(&play),
+        [("alice".into(), None), ("bob".into(), kept)],
+        "Play::script_stop"
+    );
+
+    start(&play, "card:a");
+    publish_walks(&play);
+    let generation = play.script_runtime_generation("alice").unwrap();
+    assert!(play.script_stop_if_identity_generation("alice", "card:a", generation));
+    wait_script_state(&play, "alice", script::RunState::Idle);
+    assert_eq!(
+        walks(&play),
+        [("alice".into(), None), ("bob".into(), kept)],
+        "Play::script_stop_if_identity_generation"
+    );
+
+    start(&play, "card:a");
+    publish_walks(&play);
+    play.script_start_handle().stop("alice").unwrap();
+    wait_script_state(&play, "alice", script::RunState::Idle);
+    assert_eq!(
+        walks(&play),
+        [("alice".into(), None), ("bob".into(), kept)],
+        "ScriptStartHandle::stop"
+    );
+}
+
 #[test]
 fn fenced_script_stop_requires_same_identity_and_generation() {
     let mut play = run_with_io(

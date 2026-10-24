@@ -6376,3 +6376,87 @@ mod s2b_admission_contract {
         assert!(!NavBot::default().ordinary_movement_owned(0));
     }
 }
+
+/// One full observation, keeping the result the test wrappers drop.
+fn observe_full(rig: &mut Rig, tick: u64) -> crate::script_runtime::ScriptObservation {
+    crate::script_runtime::script_observe_cached_with_channels(
+        &mut rig.driver,
+        "alice",
+        true,
+        true,
+        false,
+        tick,
+        Some((0, 0, 0)),
+        None,
+        None,
+        Some(&rig.snapshot),
+        None,
+        None,
+        None,
+        &rig.scripts,
+        &rig.cheats,
+        &rig.navs,
+        &rig.world,
+        false,
+        false,
+        false,
+        None,
+        None,
+        None,
+        None,
+        None,
+        crate::script_channels::BrokerWorld::Unavailable,
+        None,
+        None,
+        None,
+    )
+}
+
+/// PANEL-STATE-GAP-1023: a run that ends on its own (here a Stop the
+/// lifecycle reaps in the pump) resets its navigation, and the pump then
+/// reports the retirement once, so the status owner can end the run's
+/// published walk destination. Nothing else clears it: the nav step runs
+/// only while a route or cleanup is armed.
+#[test]
+fn a_finished_run_reports_its_retirement_once_and_its_walk_leaves_the_status() {
+    let mut rig = open_rig(false);
+    {
+        let mut shared = rig.shared.lock();
+        shared.target = Some(WorldTile {
+            x: 20,
+            z: 0,
+            level: 0,
+        });
+    }
+    rig.observe(1);
+    rig.wait_routed();
+    rig.step();
+    assert!(
+        rig.statuses.lock().unwrap()[0].script_walk().is_some(),
+        "the nav step published the armed destination"
+    );
+
+    rig.slot().lock().unwrap().stop();
+    let mut tick = 2;
+    let mut retirements = 0;
+    assert!(wait_until(5_000, || {
+        tick += 1;
+        retirements += usize::from(observe_full(&mut rig, tick).script_run_retired);
+        retirements > 0
+    }));
+    assert_eq!(queued(&rig.navs), None, "the run's route ended with it");
+    for _ in 0..3 {
+        tick += 1;
+        assert!(
+            !observe_full(&mut rig, tick).script_run_retired,
+            "a retired run is reported once"
+        );
+    }
+    assert!(
+        rig.statuses.lock().unwrap()[0].script_walk().is_some(),
+        "the observer does not own the status rows"
+    );
+
+    crate::play_scripts::retire_script_run_status(&rig.statuses, "alice");
+    assert_eq!(rig.statuses.lock().unwrap()[0].script_walk(), None);
+}

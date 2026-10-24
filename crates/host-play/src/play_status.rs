@@ -259,6 +259,22 @@ impl SlotStatus {
         .then_some((self.tile_x, self.tile_z, self.tile_level))
     }
 
+    /// The destination of the published script walk. `walk_*` hold `-1`
+    /// while no script walk is published; this is the one reader of that
+    /// sentinel for front ends.
+    pub fn script_walk(&self) -> Option<(i32, i32, i32)> {
+        (self.walk_x != -1).then_some((self.walk_x, self.walk_z, self.walk_level))
+    }
+
+    /// Publish the script walk's destination, or retire it with `None`.
+    /// Every writer of `walk_*` goes through here: the pump's per-uid nav
+    /// step, the login reset, and a script run's terminal retirement
+    /// (`retire_script_run_status` in `play_scripts.rs`).
+    pub(crate) fn publish_script_walk(&mut self, destination: Option<api::snapshot::WorldTile>) {
+        let (x, z, level) = destination.map_or((-1, -1, -1), |tile| (tile.x, tile.z, tile.level));
+        (self.walk_x, self.walk_z, self.walk_level) = (x, z, level);
+    }
+
     /// A preparation failure that is terminal for the current slot lifetime.
     /// Login errors also use `StartupPhase::Error`, but are retryable and do
     /// not carry this producer-owned asset-initialization fact.
@@ -590,9 +606,7 @@ pub(super) fn reset_slot_observation(s: &mut SlotStatus) {
     // A fresh login clears the client's pending box, so the row must not
     // keep reporting one (else the drain would click a menu).
     s.tutorial_pending = false;
-    s.walk_x = -1;
-    s.walk_z = -1;
-    s.walk_level = -1;
+    s.publish_script_walk(None);
     s.random = RandomStatus::default();
     s.condition.session = api::condition::SessionMark::Boundary;
 }
