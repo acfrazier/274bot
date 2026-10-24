@@ -4091,6 +4091,9 @@ fn tui_failed_ack_persist_then_success_clears_only_that_error() {
     session.preferences.reload().unwrap();
     session.ack_background_bots(&mut app);
     settle_preferences(&mut session, &mut app);
+    // The notice cache refreshes on its own one-second cadence.
+    session.expire_ack_cache();
+    session.pump(&mut app);
     assert!(app.background_notice.is_none());
     assert!(app.error.is_none(), "got {:?}", app.error);
     assert!(frontend_core::resources::background_bots_acked(
@@ -4107,6 +4110,8 @@ fn tui_successful_ack_preserves_unrelated_error() {
     app.error = Some("script: no focused profile".into());
     session.ack_background_bots(&mut app);
     settle_preferences(&mut session, &mut app);
+    session.expire_ack_cache();
+    session.pump(&mut app);
     assert!(app.background_notice.is_none());
     assert_eq!(app.error.as_deref(), Some("script: no focused profile"));
     assert!(frontend_core::resources::background_bots_acked(
