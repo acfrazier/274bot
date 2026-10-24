@@ -32,9 +32,15 @@ const ARDY_FIGHTER_STYLE_WATCH_TICKS: u32 = 320;
 /// - close the booth and walk back to the anchor: 1 + 42 (the 42-tile booth
 ///   route of the live nav trace, `FIX-ARDY-STYLE-025/runs/base-d1`);
 /// - anchor to the stall stand (2668,3312): 7;
-/// - restock: three owner refusals and the stand swap (frozen
-///   `RESET_AFTER_REFUSALS` 3, each steal resolves within 5 game ticks) = 18,
-///   plus one emptied-stall respawn (`stealing.dbrow` `respawn_ticks` 8) = 26;
+/// - restock: one owner-refusal run at each Baker's stand (frozen
+///   `RESET_AFTER_REFUSALS` 3, each steal resolves within 5 game ticks, then
+///   the stand swap) = 2 x 18, plus one emptied-stall respawn
+///   (`stealing.dbrow` `respawn_ticks` 8) = 44. Each stand's owner refuses
+///   while within five tiles with line of sight (content `stealing.rs2`
+///   `stealing_check_for_owner`), so both stands can refuse in one restock.
+///   The 2026-10-24 nightly leg did: its fourth deposit was still pending at
+///   the booth when the former one-run leg expired
+///   (`NIGHTLY/2026-10-24-dev-58080a889/cells/ardy_fighter_bank`).
 /// - the caught fight: the Guard has 22 hitpoints (`ardougne_east.npc`), 18
 ///   scimitar swings at attack rate 4 = 72, plus retaliation start and death
 ///   = 77 (six live catches took 35 to 47 game ticks from steal to Bones);
@@ -43,7 +49,8 @@ const ARDY_FIGHTER_STYLE_WATCH_TICKS: u32 = 320;
 ///
 /// Live deposit-to-deposit legs took 65 to 128 game ticks (`base-d7`: 95, 65,
 /// 119; `final-r10`: 93, 72, 128; `FIX-ARDY-STYLE-025/runs/*/timeline.txt`).
-pub(crate) const ARDY_FIGHTER_BANK_TRIP_SESSION_TICKS: u32 = 43 + 7 + 26 + 77 + 3 + 47;
+/// The 2026-10-24 nightly leg is the first measured leg beyond that range.
+pub(crate) const ARDY_FIGHTER_BANK_TRIP_SESSION_TICKS: u32 = 43 + 7 + 44 + 77 + 3 + 47;
 /// First Strength XP of `ardy_fighter_bank` after the card acknowledges the
 /// selected style. Fight picks the nearest unengaged Guard within the leash
 /// (12) of the anchor and the card stands within 7 of it: walk 19 + attack 1;
