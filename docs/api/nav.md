@@ -243,7 +243,7 @@ map set. The scans are listed one file per row, not anchored by their
 directories: removing a single consumed child (`shortcuts.rs2`, a jewellery
 `*.rs2`, a `.loc` door config) fails the build even when its directory keeps
 its siblings. That inventory is revision-owned data
-(`crates/nav-bake/src/required-content-{289,274}.tsv`, embedded in `nav_bake::bundle` and
+(`crates/nav-planner/src/required-content-{289,274}.tsv`, embedded in `nav_bake::bundle` and
 verified against the canonical trees — the `bundle::` tests compare the scan
 classes and the map set to the actual trees; refresh the TSV when the canonical
 content legitimately changes) and it is checked on every default build —

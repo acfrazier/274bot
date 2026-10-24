@@ -30,10 +30,13 @@ Append these fields in exactly this order:
 4. Placements: `u32 byte_length`, followed by the placements payload.
 5. Stands: `u32 byte_length`, followed by the stands payload.
 
-The S3 multiway key is `level << 28 | zx << 14 | zz`. Check `level < 4` and
-both coordinate fields below `1 << 14` before packing. Bits 30 and 31 are zero.
-Decode the list into `TransportGraph.multiway: Box<[u32]>`. The approved 289
-source has 4,697 keys. This is a source expectation, not permission to truncate.
+All v18 coordinate keys use `level << 28 | x << 14 | z`, including the S3
+multiway keys (`x = zx`, `z = zz`) and the packed game tiles below.
+BR2 must use this order for every v18 coordinate key.
+Check `level < 4` and both coordinates below `1 << 14` before packing.
+Bits 30 and 31 are zero. Decode the multiway list into
+`TransportGraph.multiway: Box<[u32]>`. The approved 289 source has 4,697 keys.
+This is a source expectation, not permission to truncate.
 S3's older document calls this field v17. It belongs in this combined v18.
 
 Each reach section starts with a `u32` subtable count and a directory.
@@ -66,7 +69,8 @@ Coverage reasons are `1 = unknown content state`, `2 = unmatched join`,
 Reason 5 is complete only when its transition records cover every legal outgoing
 transition. Other reasons prevent a complete negative for the affected query.
 
-Packed game tiles use x in bits 0..13, z in 14..27, and plane in 28..29.
+Packed game tiles use z in bits 0..13, x in 14..27, and plane in 28..29,
+with the same v18 coordinate key order stated above.
 Reject coordinates outside those fields. Bits 30 and 31 must be zero.
 A collision cell is plane-major, then z, then x. Check the full four-plane
 cell count fits `u32` before encoding runs. Never clamp a coordinate.
@@ -273,6 +277,10 @@ into planner's movement module and share it unchanged. Keep `paint::bake_reach`
 and flood helpers in planner through BR1. BR2 migrates their runtime callers to
 the atlas, then removes obsolete flood APIs and caches.
 
+Planner owns the Shilo cart identity and minimum-fare rows, and `WEB_USE_OPTION`.
+The baker reads these shared facts through its existing planner dependency.
+Only the baker owns the cart directions' Zombie Queen completion gates.
+
 The fixed `required-content-274.tsv` and `required-content-289.tsv` tables stay
 in planner. Quester coverage and nightly staging also read these shared input
 facts. The baker includes and hashes the same tables; runtime callers do not
@@ -291,9 +299,9 @@ The paired operator-owned architecture patch admits exactly these additions:
 Planner, executor, script, script-js, frontend-core, TUI, panel, and runtime
 host-play have no normal edge to the baker. Checker tests reject those edges,
 including otherwise identical normal-edge versions of admitted dev/build fixtures.
-Update crate
-membership, member ownership, moved bins, source inventories, deny-list paths,
-and old exceptions together. Scripts cannot import raw atlas storage.
+Update crate membership, member ownership, moved bins, source inventories,
+deny-list paths, and old exceptions together.
+Scripts cannot import raw atlas storage.
 
 Use generator id `nav-bake-3` and workspace-relative source labels. Hash actual
 producers, schemas, encoder, shared reach rules, source inputs, and movement.

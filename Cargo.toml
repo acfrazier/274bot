@@ -45,6 +45,10 @@ opt-level = 3
 [profile.dev.package.nav-planner]
 opt-level = 3
 
+# The extracted producers retain the planner's dev optimization level.
+[profile.dev.package.nav-bake]
+opt-level = 3
+
 # Debug info is most of `target/` and link work. Our crates keep file:line
 # for panics and backtraces; third-party crates carry none and are lightly
 # optimized (they rarely rebuild, and unoptimized wgpu/deno make debug runs
