@@ -286,3 +286,11 @@ fn this_process_reads_its_own_counters() {
         other => panic!("{other:?}"),
     }
 }
+
+/// PANEL-STATE-GAP-1023: the count names clients in game, never "running":
+/// stopping every script leaves all nine in game.
+#[test]
+fn the_bot_count_names_clients_in_game_not_running_scripts() {
+    assert_eq!(format_bots(9, 9), "9 bots (9 in game)");
+    assert_eq!(format_bots(1, 0), "1 bot (0 in game)");
+}

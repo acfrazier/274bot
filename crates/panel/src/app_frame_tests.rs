@@ -1536,3 +1536,80 @@ fn the_rail_tiles_scroll_under_the_sticky_toolbar() {
         }
     }
 }
+
+/// PANEL-STATE-GAP-1023: the rail's caps (`name: label`, the sidecar the
+/// operator saw) read `idle` for all nine bots after Stop, including the
+/// three whose script was walking. Under `UiFrame` the drawn text says the
+/// same.
+fn stopped_scripts_leave_no_walking_label_on_the_rail(drive: Drive) {
+    const NINE: [&str; 9] = [
+        "alice", "bob", "carol", "dave", "erin", "frank", "grace", "heidi", "ivan",
+    ];
+    let (mut session, _dir) = session_with_play("psg-rail", &NINE);
+    session.multibox = true;
+    let Some(mut rig) = Rig::new(drive, session) else {
+        return;
+    };
+    for name in NINE {
+        publish_ingame(rig.session(), name);
+        frontend_core::test_support::scripts::play_start_load(
+            &rig.session().core,
+            name,
+            "export function tick(api) {}".into(),
+            frontend_core::scripts::LoadShape::NativeTick,
+            None,
+            Vec::new(),
+        )
+        .unwrap();
+    }
+    let wait = |rig: &mut Rig, want: ScriptRunState| {
+        for name in NINE {
+            rig.frames_until("the script state", |rig| {
+                let session = rig.session();
+                if let Some(play) = session.core.play_for_test() {
+                    play.pump_script_lifecycle(name);
+                }
+                session.core.script_state(name) == want
+            });
+        }
+    };
+    wait(&mut rig, ScriptRunState::Running);
+    {
+        let play = rig.session().core.play_for_test().unwrap();
+        let mut rows = play.statuses.lock().unwrap();
+        for row in rows
+            .iter_mut()
+            .filter(|row| NINE[..3].contains(&row.username.as_str()))
+        {
+            (row.walk_x, row.walk_z, row.walk_level) = (2550, 3348, 0);
+        }
+    }
+    let caps = |rig: &mut Rig| -> Vec<String> {
+        rig.frame(Pointer::Away);
+        rig.state.sync_fleet();
+        rig.state
+            .fleet_labels
+            .iter()
+            .map(|labels| labels.title.trim_end_matches("###cap").to_owned())
+            .collect()
+    };
+    let expect = |label: &str| -> Vec<String> {
+        NINE.iter().map(|name| format!("{name}: {label}")).collect()
+    };
+    assert_eq!(caps(&mut rig), expect("running"));
+
+    for name in NINE {
+        rig.session()
+            .submit(OperatorCommand::StopScript, Targets::Profile(name));
+    }
+    wait(&mut rig, ScriptRunState::Idle);
+    assert_eq!(caps(&mut rig), expect("idle"), "Stop left a walking label");
+    if matches!(drive, Drive::UiFrame) {
+        assert!(!rig.text.contains(": running"), "{}", rig.text);
+    }
+}
+
+scenario!(
+    stopped_rail_labels,
+    stopped_scripts_leave_no_walking_label_on_the_rail
+);

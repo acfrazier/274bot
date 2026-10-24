@@ -10,7 +10,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::widgets::{Block, Borders, Clear, Widget};
 
 use crate::app::TuiApp;
-use crate::commands::{shortcut, Command};
+use crate::commands::{shortcut, Command, Unavailable};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PaletteState {
@@ -130,7 +130,8 @@ pub fn render_palette(
     // The highlighted command's reason, whole, even when its row is cut.
     let highlighted = commands
         .get(state.cursor)
-        .and_then(|command| command.availability(app).err());
+        .and_then(|command| command.availability(app).err())
+        .map(Unavailable::text);
     let status = match (state.note, highlighted) {
         (Some(reason), _) => format!("cannot run: {reason}"),
         (None, Some(reason)) => format!("unavailable: {reason}"),
@@ -181,7 +182,7 @@ pub fn render_palette(
         text.push_str(&key);
         if let Err(reason) = available {
             text.push_str("  - ");
-            text.push_str(reason);
+            text.push_str(reason.text());
         }
         pad(&mut text, usize::from(inner.width));
         buf.set_stringn(inner.x, y, &text, usize::from(inner.width), style);

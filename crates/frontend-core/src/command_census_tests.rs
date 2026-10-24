@@ -67,6 +67,8 @@ const MAP_DRAFT: &str =
 const GAME_INPUT_STAGING: &str =
     "stages GameInput events into the core queue only (no dispatch); `ui_frame` submits GameInput once per frame";
 const FORMAT: &str = "pure formatting or parsing; no state";
+const UI_TIMER: &str =
+    "presentation timer: clears a front end's own message line after a timeout; no operator decision";
 const LOG_VIEW: &str =
     "control of the log read projection (scope, filter, follow); not transport, work admission or a durable write";
 const SEAM_ROWS: &str = "the command seam: every row, chosen by its literal argument";
@@ -248,6 +250,13 @@ const CORE: &[(&str, Decision)] = &[
     ("resources.rs::cpu_from_delta", Excluded(FORMAT)),
     ("resources.rs::format_bytes", Excluded(FORMAT)),
     ("resources.rs::format_bots", Excluded(FORMAT)),
+    ("error_expiry.rs::ErrorExpiry::observe", Excluded(UI_TIMER)),
+    ("error_expiry.rs::ErrorExpiry::waits_for", Excluded(UI_TIMER)),
+    ("error_expiry.rs::ErrorExpiry::resolve", Excluded(UI_TIMER)),
+    (
+        "session/commands.rs::OperatorSession::refuse_unsubmitted",
+        Excluded("logs and counts a front end's refusal of a command it could not submit; changes no operator state"),
+    ),
     ("resources.rs::format_background", Excluded(FORMAT)),
     ("resources.rs::background_ack_text", Excluded(FORMAT)),
     ("resources.rs::ResourceView::copy_from", Excluded(PROJECTION)),
@@ -792,7 +801,13 @@ const SURFACE: &[(&str, Decision)] = &[
             "the vault prompt's pass: unlock the existing vault or create a new one",
         ),
     ),
-    ("panel/session.rs::Session::reset_vault", Row(C::ResetVault)),
+    (
+        "panel/session.rs::Session::start_vault",
+        Rows(
+            &[C::UnlockVault, C::CreateVault],
+            "refuses the vault prompt's pass before it submits (no bound profile): Unlock when the vault file exists, Create when it does not",
+        ),
+    ),
     // --- panel: fleet view ---
     (
         "panel/fleet.rs::table",
@@ -1123,9 +1138,13 @@ const SURFACE: &[(&str, Decision)] = &[
     (
         "tui/bin.rs::TuiSession::run_fleet_plan",
         Rows(
-            &[C::SwitchWorld(1)],
-            "Confirm submits the waiting plan's own command (`FleetPlan::command`, `Targets::Plan`): the row follows the plan's action, and Switch world's row is issued only through a plan",
+            &[C::SwitchWorld(1), C::PlanFleetAction(crate::fleet_plan::FleetAction::Start)],
+            "Confirm submits the waiting plan's own command (`FleetPlan::command`, `Targets::Plan`): the row follows the plan's action, and Switch world's row is issued only through a plan; with no plan waiting, the confirmed action's PlanFleetAction is refused at the command boundary",
         ),
+    ),
+    (
+        "tui/commands.rs::Command::operator_command",
+        Excluded("names the operator command a palette command runs, for the refusal line of an unavailable one; issues none"),
     ),
     (
         "tui/bin.rs::TuiSession::script_start",

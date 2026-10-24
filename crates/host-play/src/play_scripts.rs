@@ -108,12 +108,15 @@ fn invalidate_bank_pick(navs: &Arc<Mutex<HashMap<String, NavBot>>>, name: &str) 
     }
 }
 
-fn clear_script_paint_status(statuses: &Arc<Mutex<Vec<crate::SlotStatus>>>, name: &str) {
+/// End a script run's published rows on `name`'s status row (paint and walk
+/// destination). Takes only the statuses lock, so a caller that holds a script
+/// slot may call it (order: script, navigation, statuses).
+pub(crate) fn retire_script_run_status(statuses: &Arc<Mutex<Vec<crate::SlotStatus>>>, name: &str) {
     if let Some(status) = lock_statuses(statuses)
         .iter_mut()
         .find(|row| row.username == name)
     {
-        status.script_paint = None;
+        status.retire_script_run();
     }
 }
 
@@ -447,7 +450,7 @@ impl ScriptStartHandle {
         slot.stop();
         reset_script_nav(&self.navs, name, None);
         drop(slot);
-        clear_script_paint_status(&self.statuses, name);
+        retire_script_run_status(&self.statuses, name);
         Ok(())
     }
 
@@ -565,12 +568,15 @@ impl Play {
             .unwrap();
     }
 
-    /// Paint is status-owned once published. Script lifecycle commands clear
-    /// it directly because a disconnected slot has no observe pass. Call only
-    /// after releasing the script-slot guard: script -> status is the sole
-    /// permitted nesting order, and this path does not need to nest them.
-    fn clear_script_paint_status(&self, name: &str) {
-        clear_script_paint_status(&self.statuses, name);
+    /// A stopped script run's published rows end with it: its paint and its
+    /// script-walk destination. Lifecycle commands retire them directly
+    /// because a disconnected or idle slot has no observe pass and no nav
+    /// step, and a front-end refresh must not need another route step to
+    /// learn that the walk ended. Call only after releasing the script-slot
+    /// guard: script -> status is the sole permitted nesting order, and this
+    /// path does not need to nest them.
+    fn retire_script_run_status(&self, name: &str) {
+        retire_script_run_status(&self.statuses, name);
     }
 
     /// Start the same off-pump compiled preparation transaction as live/scenario
@@ -918,7 +924,7 @@ impl Play {
         slot.stop();
         reset_script_nav(&self.navs, name, None);
         drop(slot);
-        self.clear_script_paint_status(name);
+        self.retire_script_run_status(name);
         self.wake(name);
         true
     }
@@ -1012,8 +1018,9 @@ impl Play {
         self.wake(name);
     }
 
-    /// Stop `name`'s script: teardown hook, instance dropped, Idle. Clear its
-    /// published paint even while the client is offline.
+    /// Stop `name`'s script: teardown hook, instance dropped, Idle. Retire its
+    /// published paint and script-walk destination even while the client is
+    /// offline.
     pub fn script_stop(&self, name: &str) {
         let slot = script_slot(&self.scripts, name);
         let mut guard = if let Some(slot) = slot.as_ref() {
@@ -1030,7 +1037,7 @@ impl Play {
         // A stopped script's route and reconnect carry belong to that run.
         reset_script_nav(&self.navs, name, None);
         drop(guard);
-        self.clear_script_paint_status(name);
+        self.retire_script_run_status(name);
         self.wake(name);
     }
 
@@ -1064,7 +1071,7 @@ impl Play {
             slot.stop();
             reset_script_nav(&self.navs, name, None);
         }
-        self.clear_script_paint_status(name);
+        self.retire_script_run_status(name);
         self.wake(name);
         true
     }

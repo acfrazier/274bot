@@ -69,7 +69,7 @@ pub(super) use script_walk::{
 };
 #[cfg(test)]
 pub(super) use script_walk::{
-    apply_nav_follow_outcome, apply_watchdog_nav_action, owe_combat_prayers_off,
+    apply_nav_follow_outcome, apply_watchdog_nav_action, owe_combat_prayers_off, BEFORE_PUBLISH,
 };
 use script_walk::{recovery_walk_idle, resumed_walk};
 #[path = "script_snapshot.rs"]
