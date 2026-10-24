@@ -350,7 +350,7 @@ fn main() {
                 staged
                     .as_ref()
                     .and_then(|stamp| stamp.covers(&expectation).err())
-                    .as_deref(),
+                    .as_ref(),
             ) {
                 Ok(row) => row,
                 Err(e) => fail(&e),
@@ -414,7 +414,7 @@ fn bake_and_stage(
     input_fingerprints: &[nav_bake::bundle::InputFingerprint],
     resource_root: &Path,
     layout: &nav_bake::bundle::ArtifactLayout,
-    stale_reason: Option<&str>,
+    stale_reason: Option<&nav_bake::GenerationError>,
 ) -> Result<NavIdentityRow, String> {
     if let Some(reason) = stale_reason {
         println!("cargo:warning=nav bundle: rebaking ({reason})");
@@ -695,6 +695,6 @@ fn incomplete_content(revision: u16, content_dir: &Path, missing: &[String]) -> 
     )
 }
 
-fn fail(message: &str) -> ! {
+fn fail(message: &(impl std::fmt::Display + ?Sized)) -> ! {
     panic!("navigation build: {message}");
 }

@@ -280,8 +280,8 @@ pub struct RequiredInput {
 /// script accepts have one.
 fn required_inventory(revision: u16) -> Option<&'static str> {
     match revision {
-        289 => Some(include_str!("required-content-289.tsv")),
-        274 => Some(include_str!("required-content-274.tsv")),
+        289 => Some(include_str!("../../nav-planner/src/required-content-289.tsv")),
+        274 => Some(include_str!("../../nav-planner/src/required-content-274.tsv")),
         _ => None,
     }
 }

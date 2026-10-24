@@ -273,6 +273,11 @@ into planner's movement module and share it unchanged. Keep `paint::bake_reach`
 and flood helpers in planner through BR1. BR2 migrates their runtime callers to
 the atlas, then removes obsolete flood APIs and caches.
 
+The fixed `required-content-274.tsv` and `required-content-289.tsv` tables stay
+in planner. Quester coverage and nightly staging also read these shared input
+facts. The baker includes and hashes the same tables; runtime callers do not
+include producer-owned files or add a baker dependency.
+
 The paired operator-owned architecture patch admits exactly these additions:
 
 | From | To | Kind |
