@@ -20,7 +20,7 @@ impl FixDir {
         let dir =
             std::env::temp_dir().join(format!("274bot-nav-router-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::create_dir_all(&dir).expect("The fixture directory must be writable");
         FixDir(dir)
     }
 }
