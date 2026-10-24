@@ -144,7 +144,7 @@ impl ContextItem {
                 let mut label = command.label(app).to_string();
                 if let Err(reason) = command.availability(app) {
                     label.push_str(" - ");
-                    label.push_str(reason);
+                    label.push_str(reason.text());
                 }
                 label
             }
@@ -404,8 +404,14 @@ impl TuiApp {
                 return match command.availability(self) {
                     Ok(()) => (None, self.run_command(command)),
                     Err(reason) => {
-                        state.note = Some(reason);
-                        (Some(Modal::Palette(state)), AppAction::None)
+                        // The palette keeps its note; the refusal is the
+                        // same one a key makes (message line, its need, and
+                        // the command-boundary log line).
+                        state.note = Some(reason.text());
+                        (
+                            Some(Modal::Palette(state)),
+                            self.unavailable(command, reason),
+                        )
                     }
                 };
             }
@@ -443,7 +449,7 @@ impl TuiApp {
                 (None, AppAction::Quit)
             }
             ConfirmKind::RestartSettings { .. } => (None, AppAction::ScriptRestartSettings),
-            ConfirmKind::FleetPlan { .. } => (None, AppAction::RunFleetPlan),
+            ConfirmKind::FleetPlan { action, .. } => (None, AppAction::RunFleetPlan(action)),
         }
     }
 
@@ -480,10 +486,7 @@ impl TuiApp {
             }
             ContextItem::Run(command) => match command.availability(self) {
                 Ok(()) => self.run_command(command),
-                Err(reason) => {
-                    self.error = Some(format!("{}: {reason}", command.label(self)));
-                    AppAction::None
-                }
+                Err(reason) => self.unavailable(command, reason),
             },
         }
     }

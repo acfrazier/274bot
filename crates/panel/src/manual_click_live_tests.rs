@@ -1743,3 +1743,315 @@ fn live_gatherer_skill_sync_restart_through_panel_fleet_action() {
     session.script_stop();
     session.core.set_play(None);
 }
+
+// ---- PANEL-STATE-GAP-1023: Stop retires script walks, a WalkTo walk stays ----
+
+/// `name`'s row facts as the panel reads them, with the host's published
+/// walk destination and the player tile beside them.
+fn state_gap_receipt(session: &Session, name: &str) -> Result<serde_json::Value, String> {
+    let row = session
+        .core
+        .fleet_view()
+        .row(name)
+        .ok_or_else(|| format!("{name} has no fleet row"))?;
+    let status_walk = session
+        .core
+        .play_for_test()
+        .ok_or("Play disappeared")?
+        .statuses
+        .lock()
+        .map_err(|_| "status rows poisoned")?
+        .iter()
+        .find(|status| status.username == name)
+        .and_then(|status| status.script_walk());
+    let tile = player_tile(session, name).ok();
+    Ok(serde_json::json!({
+        "name": name,
+        "label": row.brief(),
+        "script": frontend_core::views::run_state_label(row.script()),
+        "script_walk": row.script_walk(),
+        "manual_walk": row.manual_walk(),
+        "phase": format!("{:?}", row.phase()),
+        "connected": row.connected(),
+        "published_script_walk": status_walk,
+        "walk_route_armed": session.core.walk_route_armed(name),
+        "tile": tile.map(|tile| [tile.x, tile.z, tile.level]),
+    }))
+}
+
+fn state_gap_receipts(session: &Session, names: &[String]) -> Result<serde_json::Value, String> {
+    names
+        .iter()
+        .map(|name| state_gap_receipt(session, name))
+        .collect::<Result<Vec<_>, _>>()
+        .map(serde_json::Value::from)
+}
+
+fn pump_for(session: &mut Session, wait: Duration) {
+    let until = Instant::now() + wait;
+    while Instant::now() < until {
+        session.pump_status();
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+fn pump_until(
+    session: &mut Session,
+    what: &str,
+    wait: Duration,
+    mut done: impl FnMut(&Session) -> Result<bool, String>,
+) -> Result<(), String> {
+    let deadline = Instant::now() + wait;
+    loop {
+        session.pump_status();
+        if done(session)? {
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            return Err(format!("{what}: deadline"));
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+/// Three bots walk for their scripts and one walks for WalkTo. Stop on the
+/// three marked bots completes; their rows then read `idle`, show no script
+/// walk and keep their clients in game, and nothing the operator changes
+/// afterwards (focus, marks, filter) brings the old label back. The WalkTo
+/// bot reads `running` throughout, and a Stop aimed at it alone is refused.
+fn run_stop_retires_script_walks_and_keeps_the_manual_walk() -> Result<(), String> {
+    let inputs = live_inputs()?;
+    let (mut session, _first) = prepare_session_n(&inputs, false, 4)?;
+    let mut names: Vec<String> = session
+        .statuses
+        .iter()
+        .map(|row| row.username().to_string())
+        .collect();
+    names.sort();
+    if names.len() != 4 {
+        return Err(format!("expected four bots in game, got {names:?}"));
+    }
+    let (walkers, manual) = (names[..3].to_vec(), names[3].clone());
+    let world = session
+        .core
+        .play_for_test()
+        .and_then(host_play::Play::world)
+        .ok_or("live navigation world")?;
+    let (stamp, dir) = prepare_evidence(&inputs, "state-gap-stop", &walkers[0])?;
+    let mut receipt = serde_json::Map::new();
+
+    // The seeded fountain tile is blocked in the map picker, so a WalkTo from
+    // it is refused. The WalkTo bot first completes a short real script walk
+    // to its normalized standable tile and stops that script.
+    session.select(&manual);
+    let fountain = player_tile(&session, &manual)?;
+    let standable = session
+        .select_picker_tile(&world, fountain)
+        .ok_or("standable fixture tile")?;
+    frontend_core::test_support::scripts::play_start_load(
+        &session.core,
+        &manual,
+        walk_source(standable),
+        frontend_core::scripts::LoadShape::CompatClass,
+        None,
+        vec![],
+    )?;
+    pump_until(&mut session, "fixture walk arrives", WALK_WAIT, |session| {
+        let proof = current_probe(session, &manual)?;
+        Ok(proof["script"]["walk_result"] == true && player_tile(session, &manual)? == standable)
+    })?;
+    stop_script(&mut session, &manual);
+    pump_until(
+        &mut session,
+        "fixture script Idle",
+        TERMINAL_WAIT,
+        |session| {
+            Ok(session.core.script_state(&manual) == frontend_core::scripts::ScriptRunState::Idle)
+        },
+    )?;
+
+    // Three script walks, each really under way: the route is armed, the
+    // bot has moved, and the host row publishes the destination.
+    let starts: Vec<Tile> = walkers
+        .iter()
+        .map(|name| player_tile(&session, name))
+        .collect::<Result<_, _>>()?;
+    for name in &walkers {
+        start_walk(&session, name)?;
+    }
+    for (name, start) in walkers.iter().zip(&starts) {
+        wait_for_armed(&mut session, name, *start)?;
+    }
+    pump_until(
+        &mut session,
+        "script walks published",
+        WALK_WAIT,
+        |session| {
+            Ok(walkers.iter().all(|name| {
+                state_gap_receipt(session, name).is_ok_and(|row| {
+                    row["script_walk"] == true
+                        && row["label"] == "running"
+                        && !row["published_script_walk"].is_null()
+                })
+            }))
+        },
+    )?;
+
+    // One WalkTo walk on the fourth bot, which has no script.
+    session.select(&manual);
+    let here = player_tile(&session, &manual)?;
+    let destination = reachable_destination(&world, here)?;
+    session
+        .select_picker_tile(&world, destination)
+        .ok_or("manual walk destination has no walkable map selection")?;
+    assert!(
+        session.confirm_picker_walk(&world),
+        "manual arm: {:?}",
+        session.error
+    );
+    pump_until(&mut session, "manual walk armed", WALK_WAIT, |session| {
+        Ok(state_gap_receipt(session, &manual)
+            .is_ok_and(|row| row["manual_walk"] == true && row["label"] == "running"))
+    })?;
+    receipt.insert("before_stop".into(), state_gap_receipts(&session, &names)?);
+    println!("before Stop: {}", receipt["before_stop"]);
+
+    // Stop the three marked bots through the Fleet plan, as the button does.
+    for name in &walkers {
+        session.submit(
+            frontend_core::OperatorCommand::SetMark(true),
+            frontend_core::Targets::Profile(name),
+        );
+    }
+    session.plan_fleet_action(frontend_core::FleetAction::Stop);
+    let planned = session
+        .core
+        .fleet_plan()
+        .ok_or_else(|| format!("Stop planned nothing: {:?}", session.error))?;
+    assert_eq!(planned.target_count(), 3, "{}", planned.prompt());
+    session.confirm_fleet_plan();
+    pump_until(
+        &mut session,
+        "three scripts Idle",
+        TERMINAL_WAIT,
+        |session| {
+            Ok(walkers.iter().all(|name| {
+                session.core.script_state(name) == frontend_core::scripts::ScriptRunState::Idle
+            }))
+        },
+    )?;
+    pump_until(
+        &mut session,
+        "Stop result settled",
+        TERMINAL_WAIT,
+        |session| {
+            Ok(session
+                .core
+                .fleet_result()
+                .is_some_and(|result| result.settled()))
+        },
+    )?;
+    let result = session
+        .core
+        .fleet_result()
+        .map(|result| result.text().to_owned())
+        .unwrap_or_default();
+    assert!(result.starts_with("Stop: done 3"), "{result}");
+    receipt.insert("stop_result".into(), result.clone().into());
+
+    // Check at once and again after the host has had time to publish more.
+    for (label, wait) in [("after_stop", 0), ("after_stop_settled", 3)] {
+        pump_for(&mut session, Duration::from_secs(wait));
+        let rows = state_gap_receipts(&session, &names)?;
+        println!("{label}: {rows}");
+        for row in rows.as_array().into_iter().flatten().take(3) {
+            assert_eq!(row["label"], "idle", "{label}: {row}");
+            assert_eq!(row["script"], "idle", "{label}: {row}");
+            assert_eq!(row["script_walk"], false, "{label}: {row}");
+            assert!(row["published_script_walk"].is_null(), "{label}: {row}");
+            assert_eq!(row["connected"], true, "{label}: {row}");
+            assert_eq!(row["phase"], "Ready", "{label}: {row}");
+        }
+        receipt.insert(label.into(), rows);
+    }
+
+    // The WalkTo walk is still under way, so it still reads running.
+    let walker = state_gap_receipt(&session, &manual)?;
+    assert_eq!(walker["label"], "running", "{walker}");
+    assert_eq!(walker["manual_walk"], true, "{walker}");
+    assert_eq!(walker["script_walk"], false, "{walker}");
+    assert_eq!(walker["script"], "idle", "{walker}");
+
+    // Focus, marks and filters never bring the three old labels back.
+    for name in &walkers {
+        session.select(name);
+        pump_for(&mut session, Duration::from_millis(300));
+        for other in &walkers {
+            assert_eq!(state_gap_receipt(&session, other)?["label"], "idle");
+        }
+    }
+    session.submit(
+        frontend_core::OperatorCommand::ClearMarks,
+        frontend_core::Targets::Application,
+    );
+    session.fleet_model.set_filter_for_test("running");
+    pump_for(&mut session, Duration::from_millis(300));
+    let shown: Vec<String> = session
+        .fleet_model
+        .shown_rows()
+        .map(|(_, row)| row.name().to_owned())
+        .collect();
+    receipt.insert("filter_running_shows".into(), shown.clone().into());
+    assert_eq!(
+        shown,
+        std::slice::from_ref(&manual),
+        "only the WalkTo bot is running"
+    );
+    session.fleet_model.set_filter_for_test("");
+
+    // Stop aimed at the WalkTo bot alone finds no script and leaves its walk.
+    session.submit(
+        frontend_core::OperatorCommand::SetMark(true),
+        frontend_core::Targets::Profile(&manual),
+    );
+    session.error = None;
+    session.plan_fleet_action(frontend_core::FleetAction::Stop);
+    let refusal = session.error.clone().unwrap_or_default();
+    assert!(
+        refusal.contains(&format!("{manual}: no script running")),
+        "{refusal}"
+    );
+    receipt.insert("manual_stop_refusal".into(), refusal.into());
+    assert!(
+        session.core.walk_route_armed(&manual) || {
+            // The walk may have just arrived; its label then reads idle.
+            state_gap_receipt(&session, &manual)?["label"] == "idle"
+        }
+    );
+
+    // The WalkTo walk ends on its own and the label follows.
+    pump_until(&mut session, "manual walk ends", WALK_WAIT, |session| {
+        Ok(state_gap_receipt(session, &manual)?["label"] == "idle")
+    })?;
+    receipt.insert(
+        "after_manual_walk".into(),
+        state_gap_receipts(&session, &names)?,
+    );
+    println!("after the manual walk: {}", receipt["after_manual_walk"]);
+
+    fs::write(
+        dir.join(format!("{stamp}_receipt.json")),
+        serde_json::to_vec_pretty(&serde_json::Value::Object(receipt))
+            .map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| error.to_string())?;
+    println!("PASS state-gap stop walkers={walkers:?} manual={manual}");
+    session.core.set_play(None);
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires LIVE=1, four local R289 accounts/nav pack and a throwaway HOME"]
+fn live_stop_retires_script_walks_and_keeps_the_manual_walk() {
+    run_stop_retires_script_walks_and_keeps_the_manual_walk().unwrap();
+}

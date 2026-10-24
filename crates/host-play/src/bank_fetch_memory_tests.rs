@@ -539,6 +539,7 @@ export default class T extends LoopingBot {
                 None,
                 None,
                 None,
+                None,
             );
             let probe = script_slot(&scripts, "alice")
                 .unwrap()

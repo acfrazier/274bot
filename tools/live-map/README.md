@@ -97,6 +97,42 @@ The four scenario cells advance routes through the live slot loop at
 `crates/host-play/src/play_slots.rs:1909-1929` and
 `crates/host-play/src/script_walk.rs:867-885`.
 
+## State-gap and refusal paths
+
+`panel.state-gap-stop-live` runs
+`manual_click_live_tests::live_stop_retires_script_walks_and_keeps_the_manual_walk`.
+It starts three real script walks and one manual WalkTo. Fleet Stop must retire
+the script walks without cancelling the manual walk. It then changes focus,
+marks and filters and checks that the retired labels do not return.
+
+The call path starts at `crates/panel/src/manual_click_live_tests.rs:1873-1932`.
+The test calls `Session::plan_fleet_action` and `Session::confirm_fleet_plan`,
+then waits for the shared result at `:1933-1959`. The shared fleet plan submits
+Stop to `Play::script_stop` in `crates/host-play/src/play_scripts.rs:1024`.
+That owner retires the published script destination through
+`retire_script_run_status` at `play_scripts.rs:114`. The slot loop and script
+walk code must not publish an old destination afterwards. The test reads the
+shared Fleet projection and checks the manual walk separately at
+`manual_click_live_tests.rs:1962-2038`. `BotProjection::stop_eligibility`
+(`crates/frontend-core/src/bot_projection.rs:117`) uses the same row facts.
+
+The command and refusal rows use controlled-state headless drivers. A game
+connection cannot create an empty focus, advance the UI error clock exactly,
+or prove that an unavailable control submits no command. These tests are the
+UI-rule alternative to game cells, not a claim of interactive desktop proof.
+
+| Changed paths | Driver proof |
+|---|---|
+| `frontend-core/src/error_expiry.rs`, `frontend-core/src/lib.rs`, `frontend-core/src/session/commands.rs` | `frontend-core.driver-command-headless` submits through `HeadlessDriver`. Its Stop and refusal regressions are at `crates/frontend-core/src/driver_tests.rs:4182-4556`. `frontend-core.error-expiry-headless` checks timeout, replacement and resolution through the exported error tracker. |
+| `frontend-core/src/resources.rs` | `frontend-core.resources-headless` checks that the resource count names in-game clients, not running scripts. |
+| `panel/src/debug_panel.rs`, `panel/src/session_catalog.rs` | `panel.session-command-headless` checks debug capability and catalogue command handling through the panel session. `panel.debug-targets-headless` checks target identity changes and the Debug window's saved command state. |
+| `panel/src/loadouts.rs` | `panel.loadout-command-headless` runs the form's command-seam actions and the empty-selection refusals (`crates/panel/src/loadouts.rs:962-1005`). |
+| `tui/src/commands.rs`, `tui/src/input.rs`, `tui/src/overlay.rs`, `tui/src/palette.rs` | `tui.command-refusal-headless` runs the real key, palette and context-menu dispatch. The gate regression is at `crates/tui/src/bin_tests.rs:7300-7414`. It also captures the message line before and after timeout and resolution at 120x40 and 80x24 (`bin_tests.rs:7076-7214`). Set `LIVE_EVIDENCE_DIR` to retain text and JSON captures. |
+
+These drivers do not prove the visual appearance of the disabled Debug and
+Loadouts controls. A visible panel change still needs the operator's headed
+check before push. The state-gap cell tests its real game behavior separately.
+
 ## Essence router call paths
 
 The essence files and the shared `navigation.rs` file select the 289

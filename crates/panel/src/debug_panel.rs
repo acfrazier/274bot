@@ -346,6 +346,25 @@ fn target_description(rows: &[TargetRow]) -> String {
         format!("{} marked bots: {names}", rows.len())
     }
 }
+
+/// Why a Debug send cannot go out now, worded for a tooltip and the status
+/// line; `None` when it can. The one answer for every way into a send: the
+/// Send, maxme and Confirm send buttons draw disabled with it, and asking for
+/// a confirmation stops on it. In the focused scope it is
+/// [`Session::debug_send_target`], the function the send itself takes its bot
+/// from; in the marked scope it is a mark to send to. Cheap enough to ask
+/// every frame, unlike [`target_rows`], which resolves the rows.
+pub(crate) fn send_block(session: &Session) -> Option<&'static str> {
+    match session.debug_panel.target_mode {
+        DebugTargetMode::Focused => session.debug_send_target().err(),
+        DebugTargetMode::Marked => session
+            .fleet_model
+            .marks()
+            .is_empty()
+            .then_some("Mark a bot in the Fleet window first"),
+    }
+}
+
 pub(crate) fn request_destructive_send(
     ui: &Ui,
     session: &mut Session,
@@ -386,6 +405,17 @@ fn request_confirm_send(
     destructive: bool,
     confirm_note: Option<String>,
 ) {
+    // The buttons that get here (Send, maxme) draw disabled while `send_block`
+    // holds, so a click never reaches that guard. The rows guard only obtains
+    // the rows: a focused bot is a listed profile, and the fleet model drops
+    // a mark when its profile is gone, so an accepted scope has rows.
+    if let Some(reason) = send_block(session) {
+        session.debug_panel.status = Some(PanelStatus {
+            success: false,
+            text: format!("Send failed: {reason}."),
+        });
+        return;
+    }
     let targets = target_rows(session);
     if targets.is_empty() {
         session.debug_panel.status = Some(PanelStatus {
@@ -768,7 +798,8 @@ fn draw_command_editor(ui: &Ui, session: &mut Session, command: &DebugCommand) {
                 );
             }
             let targets = target_rows(session);
-            let _disabled = (targets.is_empty()).then(|| ui.begin_disabled());
+            let blocked = send_block(session);
+            let _disabled = (targets.is_empty() || blocked.is_some()).then(|| ui.begin_disabled());
             if ui.button("Send##debug-send") {
                 if command.destructive {
                     request_destructive_send(
@@ -787,6 +818,9 @@ fn draw_command_editor(ui: &Ui, session: &mut Session, command: &DebugCommand) {
                         targets,
                     );
                 }
+            }
+            if let Some(reason) = blocked {
+                ui.set_item_tooltip(reason);
             }
             drop(_disabled);
         }
@@ -981,23 +1015,30 @@ fn draw_confirmation(ui: &Ui, session: &mut Session) {
             }
             ui.text_wrapped(body);
         }
-        if ui.button("Confirm send##debug-confirm") {
-            if same_targets(&target_rows(session), &pending.targets) {
-                send_wires(
-                    session,
-                    &pending.command_name,
-                    pending.wires.iter().map(String::as_str),
-                    &pending.summary,
-                    pending.targets.clone(),
-                );
-            } else {
-                session.debug_panel.pending_send = None;
-                session.debug_panel.status = Some(PanelStatus {
-                    success: false,
-                    text: "Confirmation cancelled: targets changed.".into(),
-                });
+        let blocked = send_block(session);
+        {
+            let _off = blocked.is_some().then(|| ui.begin_disabled());
+            if ui.button("Confirm send##debug-confirm") {
+                if same_targets(&target_rows(session), &pending.targets) {
+                    send_wires(
+                        session,
+                        &pending.command_name,
+                        pending.wires.iter().map(String::as_str),
+                        &pending.summary,
+                        pending.targets.clone(),
+                    );
+                } else {
+                    session.debug_panel.pending_send = None;
+                    session.debug_panel.status = Some(PanelStatus {
+                        success: false,
+                        text: "Confirmation cancelled: targets changed.".into(),
+                    });
+                }
+                ui.close_current_popup();
             }
-            ui.close_current_popup();
+            if let Some(reason) = blocked {
+                ui.set_item_tooltip(reason);
+            }
         }
         ui.same_line();
         if ui.button("Cancel##debug-confirm-cancel") {
