@@ -969,15 +969,14 @@ fn native_bank_seed(
     }
 }
 
-/// The deposit script moves the inventory directly into the bank, without
-/// `p_delay` (`interface_bank/scripts/bank_deposit.rs2:18-27`,
-/// `bank.rs2:87-107`). Engine A observed the main-bank proof two game ticks
-/// after dispatch (NIGHTLY-TRIAGE-1024/gerrant, ticks 23/24/25).
-pub(crate) const NATIVE_SEED_DEPOSIT_PROOF_TICKS: u32 = 2;
-
 /// Progress of one native seed-deposit attempt. Pending data re-arms the
-/// attempt. An accepted send latches the step while its existing bank proof
-/// waits for at most [`NATIVE_SEED_DEPOSIT_PROOF_TICKS`] observed game ticks.
+/// attempt. An accepted send latches the step until its bank proof arrives
+/// or the step's existing observed-game-tick budget expires.
+///
+/// Deposit All moves the item with `inv_moveitem_uncert`, without `p_delay`
+/// (`interface_bank/scripts/bank_deposit.rs2:4,18-27`, `bank.rs2:87-107`,
+/// move at `bank.rs2:102`). The bank inventory change is the proof signal,
+/// not a separate post-send timer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SeedDepositProgress {
     /// The fresh bank already holds the seed and the pack no longer
