@@ -652,6 +652,15 @@ const SCRIPT_GOLD_DEADLINE: Duration = Duration::from_secs(180);
 /// a 69.4 s margin. Only `flax_runner` uses this cap; the other pair
 /// cells keep [`SCRIPT_GOLD_DEADLINE`].
 const FLAX_RUNNER_DEADLINE: Duration = Duration::from_secs(240);
+/// BrimhavenAgility whole-run cap. A valid run can need about 318 counted
+/// game ticks: up to 122 ticks outside the ticket watch (`run-1`, 272 ticks
+/// in 179.6 s with the old 150-tick watch) plus the 196-tick content bound
+/// on a late second tag ([`BRIMHAVEN_TICKET_WATCH_TICKS`]). At 600 ms that
+/// is about 191 s, plus 11.7-16.4 s measured outside counted ticks, so about
+/// 207 s; the shared 180 s [`SCRIPT_GOLD_DEADLINE`] would end such a run
+/// (`NIGHTLY-TRIAGE-1024/brimhaven/review-opus-r2.md`, round 3, R3-1).
+/// 240 s allows about 372 ticks. Only `brimhaven_agility` uses this cap.
+const BRIMHAVEN_AGILITY_DEADLINE: Duration = Duration::from_secs(240);
 /// SmithingBot product→fresh-bank watch after the first pack item appears.
 ///
 /// **Units:** this constant is a `budget_ticks` count of observed game
