@@ -5362,10 +5362,6 @@ fn many_search<'a>(
 /// route after lifting zone restrictions. The strict search must fail with
 /// `NoPath`, and an all-zone-exempt search must find a route before its
 /// transitions can serve as the witness.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "Keeps collision, transports, targets, policy, and search limits separate."
-)]
 pub fn find_blocking_zones(
     collision: &WorldCollision,
     graph: &TransportGraph,
@@ -5432,10 +5428,6 @@ pub fn find_blocking_zones(
 /// Multi-goal refusal attribution uses the union of reachable frontiers for
 /// the selected target set, grouped by active destination zones. A goal's
 /// own zones allow arrival, never transit to targets outside those zones.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "Keeps collision, transports, targets, policy, and search limits separate."
-)]
 pub fn find_first_blocking_zones(
     collision: &WorldCollision,
     graph: &TransportGraph,
