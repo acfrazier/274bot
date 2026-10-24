@@ -514,20 +514,17 @@ pub struct SlotScript {
     compiled_interacts: Vec<crate::interact::InteractReq>,
     
     compiled_interact_outcome_seqs: Vec<u64>,
-    /// A compiled clue-machine session abort is owed to the pump thread.
-    /// `reset_session_work` may run on the control thread and must not touch
-    /// the slot thread's TLS machine, so it marks here and
-    /// [`SlotScript::sync_compiled_clue`] applies it on the next observed
-    /// frame. It drops the machine's live step and its token alone: the strip
-    /// list and the abandon latch are the session's own and survive a
-    /// connection boundary.
-    clue_abort_owed: bool,
-    /// A whole clue-machine instance reset is owed to the pump thread:
-    /// operator Stop is a fresh task instance, so the machine's step, its
-    /// strip list and its abandon latch all start over. Marked by `stop` and
-    /// applied by [`SlotScript::sync_compiled_clue`] the way the abort is; it
-    /// subsumes [`Self::clue_abort_owed`].
-    clue_stop_owed: bool,
+    /// An abort of each registered card session is owed to the pump thread.
+    /// `reset_session_work` can run on the control thread and must not touch
+    /// pump-owned state. [`SlotScript::sync_compiled_clue`] applies the abort
+    /// on the next observed frame. Each hook drops its live step and token
+    /// while retaining the rest of its session state.
+    card_abort_owed: bool,
+    /// A whole registered-card instance reset is owed to the pump thread.
+    /// Operator Stop starts a fresh task instance. The hook clears its step
+    /// and retained session state. [`SlotScript::sync_compiled_clue`] applies
+    /// the reset, which subsumes [`Self::card_abort_owed`].
+    card_stop_owed: bool,
     /// The active surface run, created only on Start.
     surface: Option<Box<dyn SurfaceRun>>,
     /// True after the surface reports that setup completed.
@@ -635,9 +632,9 @@ impl SlotScript {
             
             compiled_interact_outcome_seqs: Vec::new(),
             
-            clue_abort_owed: false,
+            card_abort_owed: false,
             
-            clue_stop_owed: false,
+            card_stop_owed: false,
             
             surface: None,
             
@@ -1225,7 +1222,7 @@ impl SlotScript {
 
     /// Resolve Start/Stop without blocking. The slot thread and UI pump
     /// call this once per frame.
-    fn observe_load_lifecycle(&mut self) {
+    fn observe_surface_lifecycle(&mut self) {
         if let Some(isolate) = self.surface.as_ref() {
             if !self.surface_ready {
                 match isolate.poll_ready() {
@@ -1540,8 +1537,8 @@ impl SlotScript {
         // boundary and drops the step alone.
         
         if !self.surface_active() && self.state != RunState::Stopping {
-            self.clue_stop_owed = true;
-            self.clue_abort_owed = false;
+            self.card_stop_owed = true;
+            self.card_abort_owed = false;
         }
         // A failed setup already ends Idle with its diagnostic; a Stop
         // during its reap must not turn that into a silent cancel.
@@ -1701,12 +1698,10 @@ impl SlotScript {
         self.bank_session_boundary(reconnect);
         
         if !self.surface_active() {
-            // Same rule as Stop: the compiled machine's abort lands on the
-            // pump thread, never here. A connection boundary aborts the live
-            // step and its token and keeps the rest of the session — the
-            // Entrana strip list and the abandon latch survive a relog — so
-            // this is the weaker marker and never `clue_stop_owed`.
-            self.clue_abort_owed = true;
+            // As with Stop, registered hooks run on the pump thread.
+            // A connection boundary aborts live work but retains session
+            // state. It does not request a whole-card instance reset.
+            self.card_abort_owed = true;
         }
         
         {
@@ -1850,8 +1845,8 @@ impl SlotScript {
         if self.surface_active() {
             return;
         }
-        let stop_owed = std::mem::take(&mut self.clue_stop_owed);
-        let abort_owed = std::mem::take(&mut self.clue_abort_owed);
+        let stop_owed = std::mem::take(&mut self.card_stop_owed);
+        let abort_owed = std::mem::take(&mut self.card_abort_owed);
         for card in crate::compiled_cards() {
             let Some(hooks) = card.lifecycle else {
                 continue;
@@ -2582,7 +2577,7 @@ impl SlotScript {
         &mut self,
         batch: DecodedSeatBatch,
         observed_walk_outcome_seq: u64,
-        machine_events: &[crate::machine::MachineEvent],
+        machine_events: &[crate::native::seat_rows::SeatMachineEvent],
     ) {
         if self.admit_seat_batch(&batch) {
             self.apply_seat_batch(batch, observed_walk_outcome_seq, machine_events);
@@ -2650,7 +2645,7 @@ impl SlotScript {
         &mut self,
         mut batch: DecodedSeatBatch,
         observed_walk_outcome_seq: u64,
-        machine_events: &[crate::machine::MachineEvent],
+        machine_events: &[crate::native::seat_rows::SeatMachineEvent],
     ) {
         let execution = self
             .seat_fence
@@ -2761,7 +2756,7 @@ impl SlotScript {
             }
         }
         for event in machine_events {
-            use crate::machine::MachineEventKind;
+            use crate::native::seat_rows::SeatMachineEventKind as MachineEventKind;
             let seat = self.seat.as_mut().expect("armed");
             let result = match event.kind {
                 MachineEventKind::Phase(phase) => seat.set_machine_phase(event.id, phase),
@@ -4280,7 +4275,7 @@ impl SlotScript {
 
     /// Whether the surface retains facts from an accepted snapshot.
     #[doc(hidden)]
-    pub fn has_snapshot_fingerprint(&self) -> bool {
+    pub fn has_posted_snapshot(&self) -> bool {
         self.posted_snapshot_facts().is_some()
     }
 }

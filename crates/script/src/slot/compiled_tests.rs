@@ -2885,7 +2885,7 @@ fn terminal_native_blocked_stops_cleans_up_and_preserves_reason() {
         let control_generation = slot.control_generation;
         #[cfg(feature = "load")]
         {
-            slot.clue_stop_owed = false;
+            slot.card_stop_owed = false;
         }
         let run = slot.native_run().unwrap();
         tick(&mut slot);
@@ -2899,7 +2899,7 @@ fn terminal_native_blocked_stops_cleans_up_and_preserves_reason() {
             "normal Stop clears identity"
         );
         #[cfg(feature = "load")]
-        assert!(slot.clue_stop_owed, "normal Stop owes fresh clue cleanup");
+        assert!(slot.card_stop_owed, "normal Stop owes fresh clue cleanup");
         assert!(slot.retained.is_none(), "Stop releases retained work");
         assert!(!slot.has_native_actions());
         assert!(slot.native_quiet_read(Instant::now()).is_none());
