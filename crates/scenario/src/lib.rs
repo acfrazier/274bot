@@ -504,12 +504,16 @@ pub enum StepKind {
         #[allow(clippy::type_complexity)]
         ready: Box<dyn Fn(&GameSnapshot) -> bool + Send + Sync>,
         /// Read-only terminal summary of what this step is still
-        /// waiting for. The runner appends it to the failure message
-        /// when the run fails on this step (its tick budget or the
-        /// whole-run deadline), so the receipt names the unmet
-        /// witness terms instead of only the step. It sends nothing
-        /// and must not change witness or game state. `None` keeps
-        /// the plain step message.
+        /// waiting for, plus any observation values it reports.
+        /// The runner appends the most recent reached summary to
+        /// the failure message (a step tick budget, the whole-run
+        /// deadline, or a later step), and records it as the pass
+        /// receipt's message. A failure receipt therefore names
+        /// the unmet witness terms instead of only the step, and a
+        /// pass receipt still records observation values, such as
+        /// a chance outcome that must never gate the run. It sends
+        /// nothing and must not change witness or game state.
+        /// `None` keeps the plain messages.
         summary: Option<Box<dyn Fn() -> String + Send + Sync>>,
     },
     /// Scenario-only native lamp witness. Sends no game action. The runner

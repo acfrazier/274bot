@@ -30,19 +30,19 @@ const KQ_LAIR: WorldTile = WorldTile {
 /// diagnosis 2,643/1,641.616, 2,818/1,739.422, 2,343/1,490.066;
 /// first fix series 2,426/1,501.433, 2,531/1,566.269,
 /// 2,471/1,531.477; final series 2,283/1,416.660, 2,545/1,573.469,
-/// 2,857/1,763.554, 2,441/1,512.262. The slowest pass leaves only
-/// 36.446 s (2.0 %) under the old 1,800 s, below the 20 % headroom
-/// rule. Two oracle-classified witness stalls were censored at
-/// that deadline (2,893 ticks / 1,800.016 s and 2,904 ticks /
-/// 1,800.009 s); they stay in the numbers, so the measured
-/// maximum is the 1,800.016 s lower bound. The watchdog is that
-/// maximum plus 20 %, rounded up: 1,800.016 × 1.2 = 2,160.019,
-/// so 2,161 s (`JIVE-KQ-1024/fix/watchdog.json`, computed by
-/// `judge_watchdog.py` there). The content gives no hard upper
-/// bound: fight length and the local-visibility witness terms
-/// can require a third trip, so this value is justified by these
-/// measurements, not derived from content.
-const KQ_WATCHDOG: Duration = Duration::from_secs(2_161);
+/// 2,857/1,763.554, 2,441/1,512.262. Every completed pass fits
+/// under 1,800 s. Two oracle stalls were censored at this deadline
+/// (2,893 ticks / 1,800.016 s and 2,904 ticks / 1,800.009 s). A
+/// censored time is a lower bound, not a completion time, so it
+/// does not size this watchdog. Those stalls waited for
+/// `restock_overlap`, a chance interleaving that is now an
+/// observation, not a gate (see [`KqFleetWitness::complete`]).
+/// A run that meets every gated term no longer waits for it.
+/// Only completed runs of the current witness can justify a
+/// different value. The content gives no hard upper bound: fight
+/// length and the local-visibility witness terms can require a
+/// third trip.
+const KQ_WATCHDOG: Duration = Duration::from_secs(1_800);
 /// Selected-revision Kalphite Queen drops which cannot be confused with the
 /// seeded loadout.  Ammunition is deliberately excluded: recovered arrows
 /// are not boss-loot evidence.
@@ -284,6 +284,12 @@ struct KqSlotWitness {
 struct KqFleetWitness {
     started: bool,
     slots: [KqSlotWitness; 4],
+    /// One member was restocking at the bank while another was
+    /// fighting in the lair. That stagger follows food use,
+    /// hitpoint loss, and the Queen's targeting, so it is a chance
+    /// outcome. It is an observation recorded in the receipt
+    /// through [`KqFleetWitness::terminal_summary`]. It never gates
+    /// the run.
     restock_overlap: bool,
     premature_departure: bool,
     leader_had_two_ropes: bool,
@@ -613,12 +619,16 @@ impl KqFleetWitness {
             .all(|slot| slot.lair_entries >= 2 && slot.second_attack)
     }
 
+    /// Every gated fleet outcome holds. `restock_overlap` is not a
+    /// term here: it depends on chance, so the run records it as an
+    /// observation and never waits for it. The gates stay the kills,
+    /// the escapes, the disappearances, and the second safe bank.
+    /// The coordinated finish follows in the scenario steps.
     fn complete(&self) -> bool {
         self.first_descent()
             && self.first_combat()
             && self.first_loot_bank()
             && self.second_descent()
-            && self.restock_overlap
             && self.slots.iter().all(|slot| {
                 slot.camelot_escape
                     && slot.duel_escape
@@ -657,15 +667,19 @@ impl KqFleetWitness {
             && self.slots[1..].iter().all(|slot| slot.finish_closed)
     }
 
-    /// Read-only terminal summary for a failed run: the fleet terms
-    /// still unmet, then each slot's last observed tile, snapshot
-    /// tick, and bank component with the witness latches it still
-    /// lacks. Two deadline failures (this task's first series run 1
-    /// and SCRIPT-SPLIT-INT's candidate run) stalled on the final
+    /// Read-only terminal summary for the receipt: the fleet terms
+    /// still unmet, the `restock_overlap` observation, then each
+    /// slot's last observed tile, snapshot tick, and bank component
+    /// with the witness latches it still lacks. Two deadline
+    /// failures (this task's first series run 1 and
+    /// SCRIPT-SPLIT-INT's candidate run) stalled on the final
     /// composite witness with no retained record of which term was
-    /// false; this summary rides the failure receipt so the next
-    /// one is diagnosable from the receipt alone. It reads witness
-    /// state only and changes nothing.
+    /// false. This summary rides the receipt on a failure and on a
+    /// pass, so the next failure is diagnosable from the receipt
+    /// alone and a pass still records its observation values.
+    /// `restock_overlap` appears only as its observed value. It
+    /// never appears in the unmet list, because it is not a gate.
+    /// It reads witness state only and changes nothing.
     fn terminal_summary(&self) -> String {
         let mut phases: Vec<&str> = Vec::new();
         if !self.identities_ready() {
@@ -685,9 +699,6 @@ impl KqFleetWitness {
         }
         if !self.second_descent() {
             phases.push("second_descent");
-        }
-        if !self.restock_overlap {
-            phases.push("restock_overlap");
         }
         if !self.slots.iter().any(|slot| slot.kills >= 2) {
             phases.push("any_kills>=2");
@@ -751,8 +762,9 @@ impl KqFleetWitness {
             ));
         }
         format!(
-            "kq_witness unmet=[{}]ropes(leader2={} surface={} upper={}){}",
+            "kq_witness unmet=[{}] restock_overlap={} ropes(leader2={} surface={} upper={}){}",
             phases.join(" "),
+            self.restock_overlap,
             self.leader_had_two_ropes,
             self.surface_rope_valid,
             self.upper_rope_valid,
@@ -1369,7 +1381,7 @@ fn send_ok(slot: &PairCompanionSlot, now: Instant) -> bool {
 /// walk 38, surface rope 17, upper cave 177, lair 206, escape 22, return
 /// walk 84), and the first lair entry was observed at leader tick 567, so
 /// a fifth entry needs at least 567 + 4×908 = 4,199 ticks, past the
-/// watchdog's 3,601 ticks at 600 ms. Four descents at two ropes each is
+/// watchdog's 3,000 ticks at 600 ms. Four descents at two ropes each is
 /// the most the watchdog allows; Beta 1 qualification starts from here.
 const KQ_LEADER_ROPES: u32 = 8;
 /// The other members never withdraw ropes.
@@ -2188,7 +2200,8 @@ pub(crate) fn clue_duel_3554_scenario() -> Scenario {
 }
 
 /// The KQ witness steps' read-only terminal summary closure: one
-/// shared witness, read at failure time only.
+/// shared witness, read at terminal time only, on a pass and on a
+/// failure alike.
 fn kq_terminal_summary(
     witness: &Arc<Mutex<KqFleetWitness>>,
 ) -> Option<Box<dyn Fn() -> String + Send + Sync>> {
@@ -2949,8 +2962,8 @@ mod kq_finish_tests {
         assert_eq!(scenario.proof, Proof::BankClosed);
         assert_eq!(
             scenario.settings.deadline,
-            std::time::Duration::from_secs(2_161),
-            "watchdog is the measured maximum plus 20 percent (KQ_WATCHDOG)"
+            std::time::Duration::from_secs(1_800),
+            "watchdog is the restored 1,800 s (KQ_WATCHDOG)"
         );
     }
 
@@ -2969,11 +2982,23 @@ mod kq_finish_tests {
             "first_combat",
             "first_loot_bank",
             "second_descent",
-            "restock_overlap",
             "any_kills>=2",
         ] {
             assert!(summary.contains(unmet), "unmet {unmet}: {summary}");
         }
+        let unmet_list = summary
+            .split("unmet=[")
+            .nth(1)
+            .and_then(|rest| rest.split(']').next())
+            .expect("unmet list in summary");
+        assert!(
+            !unmet_list.contains("restock_overlap"),
+            "restock overlap is an observation, never an unmet term: {summary}"
+        );
+        assert!(
+            summary.contains("restock_overlap=false"),
+            "the summary records the observed value: {summary}"
+        );
         assert!(summary.contains("s1<?> tile=? tick=0 bank=?"), "{summary}");
         assert!(summary.contains("safely_banked"), "{summary}");
         assert!(summary.contains("disp=0"), "{summary}");
@@ -3009,5 +3034,110 @@ mod kq_finish_tests {
             slot2.contains("safely_banked"),
             "other slots still report their unmet terms: {slot2}"
         );
+    }
+
+    /// A fleet witness set to every gated term of
+    /// [`KqFleetWitness::complete`]: two descents, combat in both
+    /// forms, banked loot, both escapes, two disappearances, a
+    /// second witnessed kill, and the second safe bank.
+    fn complete_witness() -> KqFleetWitness {
+        let mut witness = started_witness();
+        witness.leader_had_two_ropes = true;
+        witness.surface_rope_valid = true;
+        witness.upper_rope_valid = true;
+        for (index, slot) in witness.slots.iter_mut().enumerate() {
+            slot.name = Some(format!("member{index}"));
+            slot.survived = true;
+            slot.pack_ready = true;
+            slot.kit_equipped = true;
+            slot.pass_ready = true;
+            slot.pass_source_complete = true;
+            slot.bank_departed = true;
+            slot.surface_rope = true;
+            slot.upper_rope = true;
+            slot.surface_party = true;
+            slot.upper_party = true;
+            slot.lair_entries = 2;
+            slot.ground_alive = true;
+            slot.flying_alive = true;
+            slot.strength_gain = true;
+            slot.ranged_gain = true;
+            slot.melee_formation = true;
+            slot.ranged_formation = true;
+            slot.boosted = true;
+            slot.food_eaten = true;
+            slot.xp_after_food = true;
+            slot.disappearances = 2;
+            slot.bank_returns = 2;
+            slot.kills = 2;
+            slot.loot_ground = Some(565);
+            slot.loot_collected = true;
+            slot.loot_banked = true;
+            slot.second_attack = true;
+            slot.camelot_escape = true;
+            slot.duel_escape = true;
+            slot.ring_spent = true;
+            slot.safely_banked = true;
+        }
+        witness
+    }
+
+    /// Restock overlap is a chance interleaving, not a gate: a
+    /// witness with every gated term and no overlap completes and
+    /// its summary records `restock_overlap=false`. The real gates
+    /// still gate in both overlap states.
+    #[test]
+    fn completion_passes_without_restock_overlap_and_records_it() {
+        let mut witness = complete_witness();
+        assert!(!witness.restock_overlap);
+        assert!(
+            witness.complete(),
+            "every gated term holds; the chance overlap must not gate"
+        );
+        let summary = witness.terminal_summary();
+        assert!(
+            summary.starts_with("kq_witness unmet=[] restock_overlap=false"),
+            "{summary}"
+        );
+
+        witness.restock_overlap = true;
+        assert!(witness.complete());
+        assert!(
+            witness
+                .terminal_summary()
+                .starts_with("kq_witness unmet=[] restock_overlap=true"),
+            "{}",
+            witness.terminal_summary()
+        );
+
+        witness.slots[2].safely_banked = false;
+        assert!(
+            !witness.complete(),
+            "the second safe bank still gates, overlap or not"
+        );
+        witness.slots[2].safely_banked = true;
+        for slot in &mut witness.slots {
+            slot.kills = 1;
+        }
+        assert!(
+            !witness.complete(),
+            "the second witnessed kill still gates, overlap or not"
+        );
+        for slot in &mut witness.slots {
+            slot.kills = 2;
+        }
+        witness.slots[0].duel_escape = false;
+        assert!(
+            !witness.complete(),
+            "each escape still gates, overlap or not"
+        );
+        witness.slots[0].duel_escape = true;
+        witness.slots[3].disappearances = 1;
+        assert!(
+            !witness.complete(),
+            "two disappearances still gate, overlap or not"
+        );
+        witness.slots[3].disappearances = 2;
+        assert!(witness.complete());
     }
 }

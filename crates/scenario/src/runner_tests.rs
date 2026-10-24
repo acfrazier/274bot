@@ -157,6 +157,46 @@ fn await_terminal_summary_reaches_the_failure_receipt() {
     assert!(!message.contains("unmet=["), "{message}");
 }
 
+/// A passing Await records its read-only terminal summary as the
+/// pass receipt's message, so observation values in the summary
+/// reach the receipt on a pass too. An Await without one keeps a
+/// pass receipt with no message.
+#[test]
+fn await_terminal_summary_reaches_the_pass_receipt() {
+    fn passing_runner(summary: Option<Box<dyn Fn() -> String + Send + Sync>>) -> ScenarioRunner {
+        let mut scenario = stat_scenario(0, 100);
+        scenario.steps[0].kind = StepKind::Await {
+            evidence: "already_ready",
+            ready: Box::new(|_| true),
+            summary,
+        };
+        let mut runner = ScenarioRunner::new(scenario);
+        runner.set_scene_settle(Duration::ZERO);
+        runner
+    }
+
+    let mut runner = passing_runner(Some(Box::new(|| {
+        "kq_witness unmet=[] restock_overlap=false".to_string()
+    })));
+    let mut c = seeded_client();
+    advance_game_ticks_until_done(&mut runner, &mut c);
+    assert_eq!(runner.status(), RunnerStatus::Passed);
+    let evidence = runner.evidence().expect("pass evidence");
+    assert_eq!(evidence.outcome, "PASS");
+    assert_eq!(
+        evidence.message.as_deref(),
+        Some("kq_witness unmet=[] restock_overlap=false"),
+        "the pass receipt records the summary's observation values"
+    );
+
+    let mut runner = passing_runner(None);
+    let mut c = seeded_client();
+    advance_game_ticks_until_done(&mut runner, &mut c);
+    assert_eq!(runner.status(), RunnerStatus::Passed);
+    let evidence = runner.evidence().expect("pass evidence");
+    assert_eq!(evidence.message, None);
+}
+
 #[test]
 fn wait_script_stop_is_none_unless_the_scenario_sets_it() {
     let v1 = ScenarioRunner::new(crate::get("bone_burier").expect("v1"));
