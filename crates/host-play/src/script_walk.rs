@@ -6,15 +6,15 @@ use api::condition::BotCondition;
 use api::interact::{ActionSpec, Driver, Interactions, OpTarget, SendResult};
 use api::quest_progress::EvidenceStamp;
 use api::snapshot::{GameSnapshot, ReadContext, SnapshotView, WorldTile};
-use nav::arrival::ArrivalKind;
-use nav::bank_fetch::{bank_access_tiles, is_bank_access, BankStep, SAME_BANK};
-use nav::router::{
+use nav_executor::TravelOptions;
+use nav_planner::arrival::ArrivalKind;
+use nav_planner::bank_fetch::{bank_access_tiles, is_bank_access, BankStep, SAME_BANK};
+use nav_planner::router::{
     find_first_blocking_zones, find_first_with_avoid, find_with_avoid, FindOptions, Route,
     RouteError,
 };
-use nav::world::NavWorld;
-use nav::WorldState;
-use nav_executor::TravelOptions;
+use nav_planner::world::NavWorld;
+use nav_planner::WorldState;
 use parking_lot::RwLock;
 use script::combat::guard::GUARD_PRAYER_WINDOW_TICKS;
 use script::combat::schedule::elapsed;
@@ -38,7 +38,7 @@ struct LiveRouteRefresh {
     request_id: u64,
     exclusions: Option<Arc<super::script_nav::ScriptRouteExclusions>>,
     authority: Option<script::native::HostAuthority>,
-    quest_evidence: Option<nav::quest_gates::QuestEvidence>,
+    quest_evidence: Option<nav_planner::quest_gates::QuestEvidence>,
     compat_tile_intent: bool,
 }
 
@@ -761,7 +761,7 @@ pub(crate) fn apply_watchdog_nav_action(
 }
 
 fn arrived_in_area(snapshot: &GameSnapshot, here: WorldTile, to: WorldTile, radius: i32) -> bool {
-    nav::arrival::arrived_in_area(here, to, radius, |tile| {
+    nav_planner::arrival::arrived_in_area(here, to, radius, |tile| {
         let scene = api::query::SceneQuery::new(snapshot.scene(), None);
         scene.contains(tile) && scene.walkable(tile)
     })
@@ -1803,8 +1803,8 @@ fn arm_access_fallback(
     dest: WorldTile,
     opts: FindOptions,
     state: &WorldState,
-    avoid: &[nav::router::AvoidRect],
-) -> Result<Route, Option<Vec<nav::zones::ZoneKey>>> {
+    avoid: &[nav_planner::router::AvoidRect],
+) -> Result<Route, Option<Vec<nav_planner::zones::ZoneKey>>> {
     let mut targets: Vec<WorldTile> = world
         .banks()
         .iter()
@@ -1954,10 +1954,10 @@ fn wearing(snapshot: &GameSnapshot, id: i32) -> bool {
 #[cfg(test)]
 mod zone_diagnostic_tests {
     use super::*;
-    use nav::collision::{pack_walk, WorldCollision};
-    use nav::pack::{BankAccess, BankStand};
-    use nav::transport::TransportGraph;
-    use nav::zones::{Zone, ZoneClass, ZoneKey, ZoneKind, ZoneTable};
+    use nav_planner::collision::{pack_walk, WorldCollision};
+    use nav_planner::pack::{BankAccess, BankStand};
+    use nav_planner::transport::TransportGraph;
+    use nav_planner::zones::{Zone, ZoneClass, ZoneKey, ZoneKind, ZoneTable};
 
     fn world_with_bank_access_barrier() -> NavWorld {
         let origin = WorldTile {

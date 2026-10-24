@@ -33,7 +33,7 @@ use crossterm::event::{self, Event, KeyEventKind};
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
-use nav::tile::Tile;
+use nav_planner::tile::Tile;
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 
@@ -4035,6 +4035,20 @@ fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
             frontend_core::launch::ProfileEnv::capture(),
         )
         .map_err(|error| error.to_string())?;
+    // A missing vault cannot contain the requested profile. Refuse it before
+    // binding, which reads the engine key and prepares the game cache, and so
+    // before any passphrase prompt; the interactive branch checks again before
+    // opening the vault.
+    if !memory && matches!(&mode, RunMode::Interactive) {
+        if let Some(name) = args.users.first() {
+            let vault_path = launcher
+                .unbound_vault_path(None)
+                .map_err(|error| error.to_string())?;
+            if !vault_path.is_file() {
+                return Err(unknown_profile_error(name));
+            }
+        }
+    }
     launcher
         .bind_with(None)
         .map_err(|error| error.to_string())?;
@@ -4053,17 +4067,6 @@ fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
     // The saved session-file preference: open this process's file at start.
     frontend_core::log_file::restore_session_log(&session.preferences);
     session.auto_world = args.world;
-    // A missing vault cannot contain the requested profile. Refuse it before
-    // requiring the bundled bot data, and therefore before any passphrase
-    // prompt; the interactive branch checks again before opening the vault.
-    if !memory && matches!(&mode, RunMode::Interactive) {
-        let vault_path = session.bound().expect("bound session").vault_path();
-        if !vault_path.is_file() {
-            if let Some(name) = args.users.first() {
-                return Err(unknown_profile_error(name));
-            }
-        }
-    }
     session
         .bound()
         .expect("bound session")

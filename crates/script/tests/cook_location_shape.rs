@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use api::game_data::SelectedGameData;
 use api::named_banks::{NamedBankFacts, BANK_CATALOG};
-use nav::named_banks::resolve;
+use nav_planner::named_banks::resolve;
 use script::{LoadIsolate, LoadIsolateError, LoadShape};
 
 fn data() -> Arc<SelectedGameData> {

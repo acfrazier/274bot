@@ -432,14 +432,14 @@ pub enum StepKind {
         #[allow(clippy::type_complexity)]
         send: Box<dyn Fn(&mut Client, &GameSnapshot) -> bool + Send + Sync>,
     },
-    /// Nav walk: arm `nav::router::find` over the collision + transport
+    /// Nav walk: arm `nav_planner::router::find` over the collision + transport
     /// graph derived from the baked pack and drive `Traveller::follow`
     /// one route step per client cycle until arrival. Identical to `Follow`;
     /// arm is `arrived(dest)`, the proof mirrors it, so a walk that ends
     /// anywhere but the destination fails the step with the terminal
     /// outcome's message.
     Walk { dest: WorldTile },
-    /// Whole-world nav: arm `nav::router::find` over the collision +
+    /// Whole-world nav: arm `nav_planner::router::find` over the collision +
     /// transport graph derived from the baked pack and drive
     /// `Traveller::follow` one route step per client cycle until the route terminates.
     /// The wait arm is `arrived(dest)`; the proof mirrors it, so a follow

@@ -526,12 +526,12 @@ pub fn bind_cache(path: &Path, revision: u16) -> InputDigest {
             InputDigest::unresolved_at(path, "cache path is a file, not a directory")
         }
         PathClass::Dir(canonical) => {
-            match nav::manifest::CacheManifest::capture(revision, &canonical) {
+            match nav_planner::manifest::CacheManifest::capture(revision, &canonical) {
                 Ok(manifest) => InputDigest {
                     target: path.display().to_string(),
                     sha256: Some(manifest.identity()),
                     bytes: None,
-                    files: nav::manifest::CacheManifest::ARCHIVES.len(),
+                    files: nav_planner::manifest::CacheManifest::ARCHIVES.len(),
                     note: Some("cache profile identity (jag archives)".into()),
                 },
                 Err(error) => InputDigest::unresolved_at(
@@ -555,7 +555,7 @@ pub fn bind_content(path: &Path) -> InputDigest {
             InputDigest::unresolved_at(path, "content path is a file, not a directory")
         }
         PathClass::Dir(canonical) => {
-            let inputs = nav::bake::content_inputs(&canonical);
+            let inputs = nav_planner::bake::content_inputs(&canonical);
             let maps = bind_input(&inputs.maps_dir);
             let doors = bind_input(&inputs.doors_dir);
             let gates = bind_input(&inputs.gates);

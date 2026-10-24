@@ -3,7 +3,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 
 // The Rust codec is the sole definition of decoded identity. This tool never
-// downloads or repacks game assets. Build `cargo build -p nav --bin cache-content-id`
+// downloads or repacks game assets. Build `cargo build -p nav-planner --bin cache-content-id`
 // first and set GAME_DATA_IDENTITY_BIN when using a non-default target directory.
 // Snapshot roots are always explicit: GAME_DATA_274_SNAPSHOTS and
 // GAME_DATA_289_SNAPSHOTS name the client unpack trees each revision verifies.

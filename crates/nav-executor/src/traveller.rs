@@ -15,18 +15,18 @@ use api::settle::{arrived, Evidence, Outcome, Settle, SettleOptions};
 use api::snapshot::{GameSnapshot, LocView, NpcView, ReadContext, WidgetView, WorldTile};
 use client::dash3d::CollisionFlag;
 
-use nav::contract::RoutePlanLease;
-use nav::essence::{
+use nav_planner::contract::RoutePlanLease;
+use nav_planner::essence::{
     essence_session_for_wizard, in_essence_mine, is_essence_entry_edge, EssenceSession,
     ESSENCE_MINE_EXIT_ARRIVE_RADIUS,
 };
-use nav::executor_adapter::{
+use nav_planner::executor_adapter::{
     is_dialogue_door_loc, is_slashable_web, plan_leg_count, plan_owned_leg, plan_retained_leg,
     AL_KHARID_TOLL_LEFT_LOC_ID, AL_KHARID_TOLL_RIGHT_LOC_ID, ARDOUGNE_WILDERNESS_LEVER_LOC_ID,
     CELLAR_SHIFT, SHANTAY_HENGE_LOC_ID,
 };
-use nav::router::{Leg, Route};
-use nav::transport::{DoorDir, TransportEdge, TransportKind};
+use nav_planner::router::{Leg, Route};
+use nav_planner::transport::{DoorDir, TransportEdge, TransportKind};
 use thiserror::Error;
 
 mod dialog;
@@ -293,7 +293,7 @@ pub enum TravelOutcome {
     EntranceRefused {
         at: WorldTile,
         leg: usize,
-        requirement: nav::world_state::EntranceRequirement,
+        requirement: nav_planner::world_state::EntranceRequirement,
     },
     /// The hop budget (`max_hops`) was exhausted before arrival.
     GaveUp { at: WorldTile, hops: u32 },
@@ -380,7 +380,7 @@ pub struct TravelOptions<'a> {
     pub edges: Option<&'a [TransportEdge]>,
     /// Pinned evidence used by route selection, rechecked before gated
     /// transport sends. Missing or undecided evidence fails closed.
-    pub quest_evidence: Option<&'a nav::quest_gates::QuestEvidence>,
+    pub quest_evidence: Option<&'a nav_planner::quest_gates::QuestEvidence>,
     /// Per-leg phase callback; fired during the poll that crosses the
     /// transition. May borrow the caller (like `Evidence<'a>` in settle).
     pub on_leg: Option<TravelLegCallback<'a>>,
@@ -436,7 +436,7 @@ impl Traveller {
     /// entered the mine through, and the overworld tile the mine exit
     /// portal returns to. `None` before the first essence entry (and for
     /// bots that never visit the mine). The caller passes this back into
-    /// [`nav::router::FindOptions::essence`] so a route from inside the
+    /// [`nav_planner::router::FindOptions::essence`] so a route from inside the
     /// mine can use the return hop.
     pub fn essence(&self) -> Option<EssenceSession> {
         self.essence
@@ -631,8 +631,8 @@ impl FollowLeg {
             Self::Legacy(Leg::Walk { tiles }) => Some(tiles),
             Self::Legacy(Leg::Transport { .. }) => None,
             Self::Plan { plan, index } => match plan_retained_leg(plan, *index)? {
-                nav::router::CompactRouteLeg::Transport(_) => None,
-                nav::router::CompactRouteLeg::Walk(tiles) => Some(tiles),
+                nav_planner::router::CompactRouteLeg::Transport(_) => None,
+                nav_planner::router::CompactRouteLeg::Walk(tiles) => Some(tiles),
             },
         }
     }
@@ -1248,10 +1248,10 @@ impl FollowRun {
         edge: &TransportEdge,
         at: WorldTile,
         snapshot: &GameSnapshot,
-        evidence: Option<&nav::quest_gates::QuestEvidence>,
+        evidence: Option<&nav_planner::quest_gates::QuestEvidence>,
     ) -> Option<TravelOutcome> {
         if let Some(requirement) =
-            nav::world_state::WorldState::snapshot_exclusion_failure(edge, snapshot)
+            nav_planner::world_state::WorldState::snapshot_exclusion_failure(edge, snapshot)
         {
             return Some(TravelOutcome::EntranceRefused {
                 at,

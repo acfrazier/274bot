@@ -104,6 +104,8 @@ jobs:
           cargo clippy -p host-play --all-targets --no-deps --features memory-profile-no-alloc -- -D warnings
           cargo clippy -p tui --all-targets --no-deps --features memory-profile -- -D warnings
           cargo clippy -p script --no-default-features --all-targets --no-deps -- -D warnings
+          cargo clippy --manifest-path vendor/fr-client-rust/Cargo.toml --workspace --all-targets --no-deps --features render-test-hooks -- -D warnings
+          cargo clippy -p host --all-targets --no-deps --features render-test-hooks -- -D warnings
 
   architecture:
     name: architecture
@@ -257,6 +259,18 @@ jobs:
             cache_key: workspace
             save_cache: true
             command: "cargo test -p host-play --features memory-profile"
+          - lane: vendor-render-test-hooks
+            free_disk: false
+            cache_key: vendor
+            save_cache: true
+            os: ubuntu-24.04
+            command: "cargo test --manifest-path vendor/fr-client-rust/Cargo.toml --workspace --features render-test-hooks"
+          - lane: host-render-test-hooks
+            free_disk: false
+            cache_key: workspace
+            save_cache: false
+            os: ubuntu-24.04
+            command: "cargo test -p host --features render-test-hooks"
     runs-on: ${{ matrix.os }}
     env:
       SKIP_GPU: "1"

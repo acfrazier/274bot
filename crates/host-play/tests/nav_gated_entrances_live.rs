@@ -19,13 +19,15 @@ use client::client::Client;
 use client::io::ClientRevision;
 use host::Pump;
 use host_play::{mint_live_entries, mint_live_names, ProfileOptions, SharedClientTemplate};
-use nav::quest_gates::{QuestEvidence, QuestFamilyId};
-use nav::router::{find_many_with, find_with, FindOptions, Leg, Route, RouteError, TargetError};
-use nav::transport::TransportEdge;
-use nav::world::NavWorld;
-use nav::zones::ZoneExempt;
-use nav::WorldState;
 use nav_executor::{TravelEvent, TravelOptions, TravelOutcome, Traveller};
+use nav_planner::quest_gates::{QuestEvidence, QuestFamilyId};
+use nav_planner::router::{
+    find_many_with, find_with, FindOptions, Leg, Route, RouteError, TargetError,
+};
+use nav_planner::transport::TransportEdge;
+use nav_planner::world::NavWorld;
+use nav_planner::zones::ZoneExempt;
+use nav_planner::WorldState;
 use serde::Serialize;
 use serde_json::{json, Value};
 
@@ -850,7 +852,7 @@ fn plan_route(
             }
         }
         let blockers = if approaches.is_empty() {
-            nav::router::find_first_blocking_zones(
+            nav_planner::router::find_first_blocking_zones(
                 &world.collision,
                 &world.graph,
                 start,
@@ -1060,7 +1062,7 @@ fn run_case(case: EntranceCase) {
         "account": account,
         "server": {"host":"127.0.0.1", "game_port":44594, "http_port":1080},
         "profile": "local-289",
-        "pack_format": nav::pack::FORMAT_ID,
+        "pack_format": nav_planner::pack::FORMAT_ID,
         "engine_loaded": false,
         "fresh_account_baseline": false,
         "entrance_edges": [],
@@ -1086,13 +1088,13 @@ fn run_case(case: EntranceCase) {
     let template = SharedClientTemplate::load(Arc::clone(&profile)).expect("client template");
     let world = template.world().expect("explicit WORLD_NAV_PACK");
     assert_eq!(
-        nav::pack::FORMAT_ID,
+        nav_planner::pack::FORMAT_ID,
         "274V17",
         "acceptance requires pack v17"
     );
     let identity = profile.nav_identity().expect("navigation identity");
     receipt["nav_identity"] = json!({
-        "pack_format": nav::pack::FORMAT_ID,
+        "pack_format": nav_planner::pack::FORMAT_ID,
         "nav_sha256": identity.nav_sha256,
     });
 
@@ -1608,7 +1610,7 @@ fn run_case(case: EntranceCase) {
             &held_run.outcome,
             Some(TravelOutcome::EntranceRefused {
                 at,
-                requirement: nav::world_state::EntranceRequirement::ForbiddenHeld { id, .. },
+                requirement: nav_planner::world_state::EntranceRequirement::ForbiddenHeld { id, .. },
                 ..
             }) if *at == edge.at && *id == ANA_BARREL_ID
         );
@@ -1682,7 +1684,7 @@ fn run_case(case: EntranceCase) {
             &worn_run.outcome,
             Some(TravelOutcome::EntranceRefused {
                 at,
-                requirement: nav::world_state::EntranceRequirement::ForbiddenWorn { id, .. },
+                requirement: nav_planner::world_state::EntranceRequirement::ForbiddenWorn { id, .. },
                 ..
             }) if *at == edge.at && *id == forbidden_id
         );

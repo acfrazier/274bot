@@ -36,7 +36,7 @@ headings to jump to the part you need.
 | --- | --- |
 | Write a script and look up the script API | [JS API v2](api/js-api-v2.md) |
 | See which rs2b0t scripts and calls run | [Scripts](api/script.md) |
-| Write or load a quest guide for the Quester | [Quest guides](quester-paths.md) |
+| Write or load a quest guide for the Quester | [Quest guides](scripting/quest-guides.md) |
 | Copy a working example | [Example scripts](../crates/script/examples/) |
 | Test a script against a local game server | [Reusable live harness](dev/harness.md) |
 
@@ -50,6 +50,7 @@ headings to jump to the part you need.
 | Reproduce the architecture check, or change a crate dependency | [Architecture check in detail](dev/architecture-check.md) |
 | Regenerate the game data the app ships with | [Generate the selected game data](dev/selected-data-generation.md) |
 | Learn the crates and who owns what | [Architecture](dev/architecture.md) |
+| Change the Quester guide format or step handlers | [Quest paths for contributors](dev/quest-paths.md) |
 | Learn the terms the code uses | [CONTEXT.md](../CONTEXT.md) |
 | Read the Rust API for reading and acting | [Reference pages in `docs/api`](api/README.md) |
 | Run the end-to-end suite | [e2e suite](dev/e2e-suite.md) |

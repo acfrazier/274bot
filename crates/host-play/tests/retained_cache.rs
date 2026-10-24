@@ -8,7 +8,7 @@ use std::path::PathBuf;
 #[test]
 #[ignore = "requires freshly staged nav artifacts and retained caches"]
 fn rebuilt_artifacts_bind_decoded_inputs_and_actual_baker_sources() {
-    use nav::manifest::{hash_file, CacheManifest, NavManifest};
+    use nav_planner::manifest::{hash_file, CacheManifest, NavManifest};
     let home = PathBuf::from(std::env::var_os("HOME").unwrap());
     let root = PathBuf::from(std::env::var_os("NAV_VERIFY_ROOT").expect("NAV_VERIFY_ROOT"));
     for (revision, engine, snapshots) in [
@@ -18,15 +18,16 @@ fn rebuilt_artifacts_bind_decoded_inputs_and_actual_baker_sources() {
         let engine = home.join(engine);
         let cache_dir = engine.join("data/pack/client");
         let cache = CacheManifest::capture(revision, &cache_dir).unwrap();
-        let id = nav::bake::decoded_identity(revision, &cache_dir, &home.join(snapshots)).unwrap();
+        let id = nav_planner::bake::decoded_identity(revision, &cache_dir, &home.join(snapshots))
+            .unwrap();
         let pack = root.join(format!("nav/{revision}/274bot.navpack"));
         let manifest: NavManifest = serde_json::from_slice(
-            &std::fs::read(nav::manifest::nav_manifest_path(&pack)).unwrap(),
+            &std::fs::read(nav_planner::manifest::nav_manifest_path(&pack)).unwrap(),
         )
         .unwrap();
-        let source = nav::bundle::source_digest(
+        let source = nav_planner::bundle::source_digest(
             &engine.parent().unwrap().join("content"),
-            &[&nav::bake::config_jag_for(revision, &cache_dir).unwrap()],
+            &[&nav_planner::bake::config_jag_for(revision, &cache_dir).unwrap()],
         )
         .unwrap();
         assert_eq!(manifest.source_sha256.as_deref(), Some(source.as_str()));
@@ -49,7 +50,7 @@ fn rebuilt_artifacts_bind_decoded_inputs_and_actual_baker_sources() {
             cache_id: cache.identity(),
             content_id: manifest.content_id.clone(),
             source_sha256: manifest.source_sha256.clone(),
-            format: nav::pack::FORMAT_ID.into(),
+            format: nav_planner::pack::FORMAT_ID.into(),
             nav_sha256: hash.clone(),
             flags_sha256: manifest.flags_sha256.clone(),
             reach_sha256: manifest.reach_sha256.clone(),

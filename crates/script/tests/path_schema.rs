@@ -1673,10 +1673,10 @@ fn totem_coin_float_covers_the_round_trip_fare() {
 #[ignore = "requires the real 289 nav pack in NAV_PACK (with its .navflags beside it)"]
 fn totem_mansion_descent_reaches_the_return_boat() {
     use api::WorldTile;
-    use nav::router::{find_with, FindOptions, Leg};
-    use nav::transport::TransportKind;
-    use nav::world::NavWorld;
-    use nav::WorldState;
+    use nav_planner::router::{find_with, FindOptions, Leg};
+    use nav_planner::transport::TransportKind;
+    use nav_planner::world::NavWorld;
+    use nav_planner::WorldState;
 
     let _home = script::IsolatedEnv::enter("path-schema-totem-descent-pack");
     let (selected, quests) = selected_and_quests();
@@ -1829,7 +1829,7 @@ fn totem_mansion_descent_reaches_the_return_boat() {
 
     let pack = real_nav_pack();
     let mut world = NavWorld::load_pack(&pack).expect("real 289 pack");
-    let (_o, _w, _h, flags) = nav::pack::decode_flags_sidecar(
+    let (_o, _w, _h, flags) = nav_planner::pack::decode_flags_sidecar(
         &std::fs::read(pack.with_extension("navflags")).expect("raw flags"),
     )
     .expect("decode flags");
@@ -1926,10 +1926,10 @@ fn totem_mansion_descent_reaches_the_return_boat() {
 #[ignore = "requires the real 289 nav pack in NAV_PACK (with its .navflags beside it)"]
 fn fluffs_yard_entry_walks_end_outside_the_fence() {
     use api::WorldTile;
-    use nav::router::{find_with, FindOptions};
-    use nav::world::NavWorld;
-    use nav::zones::ZoneExempt;
-    use nav::WorldState;
+    use nav_planner::router::{find_with, FindOptions};
+    use nav_planner::world::NavWorld;
+    use nav_planner::zones::ZoneExempt;
+    use nav_planner::WorldState;
 
     let _home = script::IsolatedEnv::enter("path-schema-fluffs-fence-pack");
     let mut value = read_path(&paths_dir().join("fluffs.json"));
@@ -1945,7 +1945,7 @@ fn fluffs_yard_entry_walks_end_outside_the_fence() {
 
     let pack = real_nav_pack();
     let mut world = NavWorld::load_pack(&pack).expect("real 289 pack");
-    let (_o, _w, _h, flags) = nav::pack::decode_flags_sidecar(
+    let (_o, _w, _h, flags) = nav_planner::pack::decode_flags_sidecar(
         &std::fs::read(pack.with_extension("navflags")).expect("raw flags"),
     )
     .expect("decode flags");
@@ -2003,10 +2003,10 @@ fn fluffs_yard_entry_walks_end_outside_the_fence() {
 #[ignore = "requires the real 289 nav pack in NAV_PACK (with its .navflags beside it)"]
 fn danger_cross_grants_route_low_combat_legs() {
     use api::WorldTile;
-    use nav::router::{find_with, FindOptions};
-    use nav::world::NavWorld;
-    use nav::zones::ZoneExempt;
-    use nav::WorldState;
+    use nav_planner::router::{find_with, FindOptions};
+    use nav_planner::world::NavWorld;
+    use nav_planner::zones::ZoneExempt;
+    use nav_planner::WorldState;
 
     let _home = script::IsolatedEnv::enter("path-schema-cross-pack");
     let mut druid = read_path(&paths_dir().join("druid.json"));
@@ -2116,7 +2116,7 @@ fn danger_cross_grants_route_low_combat_legs() {
 
     let pack = real_nav_pack();
     let mut world = NavWorld::load_pack(&pack).expect("real 289 pack");
-    let (_o, _w, _h, flags) = nav::pack::decode_flags_sidecar(
+    let (_o, _w, _h, flags) = nav_planner::pack::decode_flags_sidecar(
         &std::fs::read(pack.with_extension("navflags")).expect("raw flags"),
     )
     .expect("decode flags");

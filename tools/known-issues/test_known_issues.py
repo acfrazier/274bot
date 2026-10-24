@@ -492,6 +492,23 @@ class ListedTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.load_text(LAMP_ITEM.replace('first = "0.2.0"', 'first = "0.2.6"'))
 
+    def test_reworded_item_keeps_published_wording(self):
+        old = "The lamp flickers on a cold start. A fix is planned for 0.2.5."
+        self.items = self.load_text(LAMP_ITEM.replace(
+            'text = "The lamp flickers on a cold start. Wait a minute before you switch it on."',
+            f'text = "{old}"'))
+        self.stage("0.2.4")
+        reworded = LAMP_ITEM + f'\n[[item.earlier]]\nuntil = "0.2.5"\ntext = "{old}"\n'
+        self.items = self.load_text(reworded)
+        self.assertIn("A fix is planned for 0.2.5.", " ".join(self.render("0.2.4").split()))
+        self.assertIn("Wait a minute", " ".join(self.render("0.2.5").split()))
+        proc = self.cli("check", "--release", "0.2.4")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+
+    def test_earlier_wording_until_not_after_listed_rejected(self):
+        with self.assertRaisesRegex(ValueError, "until release '0.2.0' is not later"):
+            self.load_text(LAMP_ITEM + '\n[[item.earlier]]\nuntil = "0.2.0"\ntext = "Old."\n')
+
     def test_listed_item_absent_before_listed_release(self):
         for release in ("0.2.0", "0.2.3", "0.2.4"):
             self.assertNotIn("Dial", self.render(release), release)

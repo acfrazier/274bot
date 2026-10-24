@@ -1,8 +1,8 @@
 use std::sync::Mutex;
 
 use api::snapshot::WorldTile;
-use nav::contract::RouteView;
-use nav::router::Route;
+use nav_planner::contract::RouteView;
+use nav_planner::router::Route;
 
 use crate::{Play, ScriptNavPaint, WalkArm};
 

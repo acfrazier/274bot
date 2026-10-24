@@ -217,7 +217,7 @@ table MainModalTexts {
   texts: [string];
 }
 
-// One navigator-named gate short (`nav::router::MissingReq::Carry`): an
+// One navigator-named gate short (`nav_planner::router::MissingReq::Carry`): an
 // `item_req` stack the strict route needed and the player's posted pack could
 // not prove. `name` is the host obj table's display name for `id`, absent when
 // that table has none — the join is always `id`, never the name, and a missing

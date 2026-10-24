@@ -279,7 +279,7 @@ use std::sync::{Arc, Mutex};
 
 use client::client::MiniMenuAction;
 use client::config::{Cache, ObjType};
-use nav::world::NavWorld;
+use nav_planner::world::NavWorld;
 
 use super::{
     install_dispatch_barrier, script_observe_cached, script_slot, script_slot_or_insert,

@@ -2374,7 +2374,7 @@ mod tests {
                 .unwrap()
                 .comment
                 .as_deref(),
-            Some("A Brimhaven start needs 30 carried coins for the one-way passage to Ardougne (crates/nav/src/transport/static_routes.rs:213; content/scripts/areas/area_karamja/scripts/customs_officer.rs2:59-85).")
+            Some("A Brimhaven start needs 30 carried coins for the one-way passage to Ardougne (crates/nav-planner/src/transport/static_routes.rs:213; content/scripts/areas/area_karamja/scripts/customs_officer.rs2:59-85).")
         );
 
         let seaslug = path("seaslug");

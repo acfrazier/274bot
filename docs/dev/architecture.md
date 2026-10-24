@@ -7,7 +7,7 @@
 and runtime boundaries, not a line-count budget and not a copy of a TypeScript
 lint stack.
 
-0.2.5 is Beta 2. Revision 289 is the production revision: the product is
+0.2.6 Beta 2 is the current release. Revision 289 is the production revision: the product is
 built, tested and claimed for it. Revision 274 is best-effort: it may run,
 but it is neither tested nor claimed.
 
@@ -187,7 +187,7 @@ claim that `e2e` owns those crates' production behavior.
   dependency fails the checker, so the compiled script crate stays
   client-free.
 - **`script`** has no `nav-executor` edge. Script walks run through the host's
-  `Traveller` owner and read plans through `nav::contract`. `panel` has no
+  `Traveller` owner and read plans through `nav_planner::contract`. `panel` has no
   `nav-executor` edge. Its one executor test builds through the `host-play`
   test-support seam `WalkArm::with_latched_essence`.
 - **`tui` → `host`** is `[dev-dependencies]` only. Production TUI composes
@@ -517,7 +517,7 @@ job replay as the library tests. The integration binary does not reference
 
 #### Native map data boundary
 
-The public `nav::map` modules define the data/spatial contract independently of
+The public `nav_planner::map` modules define the data/spatial contract independently of
 the panel, TUI and worker lifecycle. `SourceSpace::ClientVisual` alone uses
 `collision::game_plane`; collision and can-light stamping use that same helper.
 Server NPC spawns and already-game-plane coordinates are never shifted.
@@ -1007,7 +1007,7 @@ snapshot Rust already holds.
 
 | Machine | Card | What it does |
 | --- | --- | --- |
-| Quester (`script/src/quester/`) | `Quester` | Runs built-in quest Paths for revision 289: the Path compiler turns one authored quest document into stage-gated steps, the runner executes them on host verbs (bank, shop, production, gather and combat adapters), and progress resolves from journal evidence. Paths are documented in [quester-paths.md](../quester-paths.md). |
+| Quester (`script/src/quester/`) | `Quester` | Runs built-in quest Paths for revision 289: the Path compiler turns one authored quest document into stage-gated steps, the runner executes them on host verbs (bank, shop, production, gather and combat adapters), and progress resolves from journal evidence. Paths are documented in [quest-paths.md](quest-paths.md). |
 | Grinch (`script/src/grinch.rs`) | `Grinch` | Collects selected visible base ground-item IDs inside a same-plane anchor square, deposits selected IDs only, then returns to the exact anchor. |
 | Combat (`script/src/combat/`) | shared machine, no card | One observed-state planner for melee, ranged and magic: prayers, sips and eating. Quester combat steps drive it through the typed Path adapter; Load scripts drive it through `api.combat` sessions (`slot/combat.rs`, `api_combat.rs`, `combat_session.rs`). |
 | Sherlock (`script/src/sherlock.rs` on `script/src/clue.rs` plus `script/src/clue/`) | `Sherlock` | Runs clue trails on the one clue step machine, one phase slice each, on the slot's pump thread; the clue machine is compiled with the `load` feature. |

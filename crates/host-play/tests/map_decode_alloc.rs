@@ -14,13 +14,13 @@ use host_play::map_bind::{
     WalkMapDecodeFailure, WalkMapDecodeJob, WALK_MAP_DECODE_INPUT_OVERHEAD,
     WALK_MAP_DECODE_PNG_LIMIT, WALK_MAP_DECODE_SCRATCH_LIMIT,
 };
-use nav::map::formats::ImageManifest;
-use nav::map::spatial::{TILE_PIXELS, TILE_RGBA_BYTES};
+use nav_planner::map::formats::ImageManifest;
+use nav_planner::map::spatial::{TILE_PIXELS, TILE_RGBA_BYTES};
 use serde::Deserialize;
 
 #[derive(Deserialize)]
 struct DeclaredIdentity {
-    identity: nav::map::identity::ImageIdentity,
+    identity: nav_planner::map::identity::ImageIdentity,
 }
 
 struct YieldAfterDecode {
@@ -141,7 +141,7 @@ fn largest_png_loads_directly_into_one_shared_allocation() {
         .iter()
         .max_by_key(|tile| tile.payload.bytes)
         .expect("published image has terrain tiles");
-    let ready = nav::map::cache::ReadyImages::open(&root, manifest.identity)
+    let ready = nav_planner::map::cache::ReadyImages::open(&root, manifest.identity)
         .expect("open verified image artifact");
     let overhead = allocation_counter::measure(|| {
         let path = root.join(receipt.key.relative_path().expect("validated tile path"));

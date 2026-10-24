@@ -19,7 +19,7 @@ use host::{
     prepare_client, should_emit_tick, wake_channel, DetectedRandom, FrameBuf, Host, Pump,
     ScriptRunPolicy, SlotInput, SlotPark, SlotRender, SlotWake, TitleWait,
 };
-use nav::world::NavWorld;
+use nav_planner::world::NavWorld;
 use vault::Profile;
 
 #[cfg(feature = "memory-profile")]
