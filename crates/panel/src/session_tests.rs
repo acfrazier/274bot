@@ -343,6 +343,8 @@ fn runtime_profile_fixture(revision: u16) -> (TestDir, PathBuf, PathBuf, PathBuf
 }
 
 fn preparation_only_session() -> Session {
+    script::registry::install_cards(&script::sherlock::CARDS)
+        .expect("install canonical Sherlock card for panel session tests");
     let mut session = Session::new();
     session.core.set_spawn_workers(false);
     session

@@ -3731,6 +3731,10 @@
       "owner": "T2"
     },
     {
+      "path": "crates/script/src/load/memory_profile.rs",
+      "owner": "T1"
+    },
+    {
       "path": "crates/script/src/load/mod.rs",
       "owner": "T1"
     },
@@ -3849,10 +3853,6 @@
     {
       "path": "crates/script/src/melee_weapons.rs",
       "owner": "T2"
-    },
-    {
-      "path": "crates/script/src/memory_profile.rs",
-      "owner": "T1"
     },
     {
       "path": "crates/script/src/modals.rs",
@@ -7297,6 +7297,10 @@
     {
       "path": "crates/frontend-core/src/scripts/paint_style.rs",
       "owner": "T3"
+    },
+    {
+      "path": "crates/frontend-core/src/scripts/paint_tests.rs",
+      "owner": "T4"
     },
     {
       "path": "crates/frontend-core/src/scripts/loadouts.rs",

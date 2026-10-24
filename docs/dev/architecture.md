@@ -577,7 +577,7 @@ the operator's consent and adopts the tiles already verified).
 | --- | --- | --- |
 | `lib.rs` | crate facade: `ScriptCtx`, `SlotScript`, registry descriptors | `load` feature gates the isolate |
 | `ctx.rs` | host-owned per-tick input and shared walk options | compiled cards receive `native::NativeTick`, not this driver |
-| `native.rs`, `registry.rs` | typed card/configuration/output contract and one descriptor registry | metadata/preparer/factory, no duplicate defaults; cards are `Gatherer`, `Grinch`, `Quester` and (with `load`) `Sherlock` |
+| `native.rs`, `registry.rs` | typed card/configuration/output contract and one descriptor registry | metadata, native request kind, preparer and factory. Hosts install Sherlock. Slots refresh their static card view when the publication generation changes |
 | `native/actions.rs`, `native/ledger.rs`, `native/owner.rs`, `native/walk.rs`, `native/walk_wait.rs` | host action ledger and native walk correlation | receipts, revocation identities, route terminal versus arrival |
 | `native/death.rs`, `native/thieve.rs`, `native/thieving_core.rs` | shared death latch; native thieving machine and its core | content-derived respawn square |
 | `native_bank.rs`, `native_equipment.rs`, `native_production.rs`, `native_shop.rs`, `trade_screen.rs`, `bank.rs`, `bank/ops.rs`, `bank/npc.rs` | snapshot-driven cores shared by compiled cards and compat families | one bank transfer kernel, wear/remove, production, shop purchase and player-trade screen |
@@ -633,7 +633,7 @@ the operator's consent and adopts the tiles already verified).
 | `shop.rs`, `market_catalog.rs` | shop and market descriptors | preset and catalog tables |
 | `loadout_plan.rs`, `loadouts_store.rs`, `settings_store.rs` | loadout and settings stores | operator-facing descriptors |
 | `rs2b0t_registry.rs`, `rs2b0t_registry/paths.rs`, `rs2b0t_registry/settings.rs`, `declared_abi.rs`, `module_imports.rs`, `identity.rs` | catalog card registration and identity | import scan, paths, ABI names |
-| `isolated_env.rs`, `js_cache.rs`, `memory_profile.rs`, `events.rs` | isolate env, cache, and diagnostics | support, no game actions |
+| `isolated_env.rs`, `js_cache.rs`, `load/memory_profile.rs`, `events.rs` | isolate env, cache, and diagnostics | support, no game actions. The profiling module keeps its root public path |
 | `load/mod.rs` | Load facade: shapes, cards, isolate | feature-gated library and isolate |
 | `load/library.rs`, `load/library/catalog.rs` | JS card library and catalog apply | file store in root |
 | `load/isolate.rs`, `load/isolate/thread.rs`, `load/isolate/teardown.rs` | V8 isolate thread and teardown | caller handle in root |
@@ -647,7 +647,7 @@ the operator's consent and adopts the tiles already verified).
 | `load/snapshot.rs` | snapshot-to-V8 materializer | typed settings and event rows |
 | `load/paint_chrome.rs`, `load/paint_jive.rs` | paint payload builders | chrome and jive paints |
 | `canvas/mod.rs` | canvas recorder | state and recording API |
-| `canvas/geom.rs`, `canvas/raster.rs`, `canvas/style.rs`, `canvas/compose.rs` | canvas geometry, raster, style, composition | one slice each |
+| `canvas/geom.rs`, `canvas/raster.rs`, `canvas/style.rs`, `canvas/compose.rs` | canvas geometry, raster, style, composition | geometry and parsers are always available. Raster, fonts and composition require `canvas-raster`, which `frontend-core` enables by default |
 | `shim/mod.rs` | import-remap facade | re-exports, JS bytes untouched |
 | `interact.rs`, `paint.rs` | runtime-neutral interaction and paint vocabulary | shared by native and loaded scripts |
 | `shim/content.rs`, `shim/rows.rs`, `shim/modules.rs` | shim Rust producers | content, V8 rows, and module remapping |

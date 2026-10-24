@@ -16,6 +16,9 @@ mod native;
 mod paint;
 mod paint_layout;
 pub mod paint_style;
+#[cfg(test)]
+#[path = "paint_tests.rs"]
+mod paint_tests;
 pub mod paths;
 mod vocab;
 pub(crate) use loadouts::Refused;

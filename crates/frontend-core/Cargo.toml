@@ -34,6 +34,8 @@ png = "=0.18.1"
 scenario = { path = "../scenario" }
 
 [features]
+canvas-raster = ["script/canvas-raster"]
+default = ["canvas-raster"]
 # Test-only lifecycle and capacity fixture seams; enabled from dev-dependencies,
 # never production builds.
 test-support = ["host-play/test-support", "host/test-support"]

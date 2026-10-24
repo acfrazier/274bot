@@ -3,6 +3,8 @@ use crate::ctx::test_support::NullDriver;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 fn selected() -> Arc<api::game_data::SelectedGameData> {
+    #[cfg(feature = "load")]
+    crate::registry::install_cards(&crate::sherlock::CARDS).unwrap();
     api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap()
 }
 

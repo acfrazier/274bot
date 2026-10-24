@@ -3440,6 +3440,8 @@ fn native_protect_alone_does_not_grant_danger_and_invalid_cross_still_refuses() 
 
 #[test]
 fn sherlock_bool_walk_inherits_committed_bits_while_isolate_wiring_stays_frozen() {
+    script::registry::install_cards(&script::sherlock::CARDS)
+        .expect("install canonical Sherlock card for native walk test");
     let mut slot = script::SlotScript::new();
     slot.bind_incarnation(84);
     slot.start_compiled(
