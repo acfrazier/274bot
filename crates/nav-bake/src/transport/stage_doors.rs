@@ -360,7 +360,7 @@ fn retain_quest_upper_bounds(
 struct Sources {
     oplocs: [HashMap<String, Vec<Option<Block>>>; 5],
     oplocu: HashMap<String, Vec<Option<Block>>>,
-    quest_family: Option<crate::quest_gates::QuestFamilyId>,
+    quest_family: Option<nav_planner::quest_gates::QuestFamilyId>,
     quest_complete: HashMap<String, (api::selected::FactKey, i32)>,
     /// Varp names whose every possible source write is bounded by completion.
     quest_exact: HashSet<String>,
@@ -743,7 +743,7 @@ struct Needs {
     items: Vec<(i32, i32)>,
     worn: Vec<(i32, i32)>,
     quests: Vec<api::selected::QuestGate>,
-    quest_family: Option<crate::quest_gates::QuestFamilyId>,
+    quest_family: Option<nav_planner::quest_gates::QuestFamilyId>,
     forbidden_held: Vec<i32>,
     forbidden_worn: Vec<i32>,
     members: bool,
@@ -1805,7 +1805,7 @@ fn gated_edge(
 ) -> TransportEdge {
     let worn = max_per_key(&needs.worn);
     let quest_gates = (!needs.quests.is_empty()).then(|| {
-        crate::quest_gates::QuestGates::new(
+        nav_planner::quest_gates::QuestGates::new(
             needs
                 .quest_family
                 .expect("quest predicate carries its family"),
