@@ -1005,6 +1005,94 @@ fn interactive_landing_restores_preferences_before_loading_existing_profile() {
         .any(|report| report.command() == OperatorCommand::Load));
 }
 
+#[test]
+fn operator_focus_before_preference_adoption_keeps_walk_target() {
+    for path in ["direct", "keyboard", "fleet", "first-profile"] {
+        let iso = IsolatedStores::enter(&format!("tui-startup-focus-{path}"));
+        let mut session = TuiSession::new(dummy_options());
+        session.core.set_spawn_workers(false);
+        let (entered, entered_rx) = std::sync::mpsc::sync_channel(1);
+        let (release, release_rx) = std::sync::mpsc::channel();
+        let release_rx = std::sync::Mutex::new(release_rx);
+        let first = std::sync::atomic::AtomicBool::new(true);
+        let service =
+            host_play::local_state::LocalStateService::open_process_with_read_stall_for_test(
+                host_play::local_state::StateRoot::new(iso.dir().join("cold-state")),
+                Arc::new(move || {
+                    if first.swap(false, std::sync::atomic::Ordering::SeqCst) {
+                        let _ = entered.send(());
+                        let _ = release_rx.lock().unwrap().recv();
+                    }
+                }),
+            );
+        entered_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+        session.core.bind_local_state(service);
+        session.preferences = session.core.preferences().unwrap();
+        session.preferences_adopted = false;
+        let mut vault = VaultFixture::create(&iso.dir().join("vault"), "test-passphrase-01");
+        vault.put(FixtureProfile::new("alice", "pw").uid(7));
+        vault.put(FixtureProfile::new("bob", "pw").uid(8));
+        session.start_play(vault).unwrap();
+        let args = parse_args_from(std::iter::empty::<&str>()).unwrap();
+        let mut app = interactive_landing(&mut session, &args).unwrap();
+        assert_eq!(session.startup_focus.as_deref(), Some("alice"));
+        let action = match path {
+            "direct" => app.select_bot("bob"),
+            "keyboard" => app.run_command(crate::commands::Command::SelectNextBot),
+            "fleet" => {
+                session.load_and_login("bob");
+                session.pump(&mut app);
+                app.table.cursor = app
+                    .fleet_model
+                    .shown()
+                    .iter()
+                    .position(|index| app.fleet_model.rows()[*index].name() == "bob")
+                    .unwrap();
+                app.on_key(settings_key(crossterm::event::KeyCode::Enter))
+            }
+            "first-profile" => {
+                // A durable New profile save uses this same deferred gate.
+                session.startup_focus = Some("alice".into());
+                app.select_bot("bob")
+            }
+            _ => unreachable!(),
+        };
+        assert!(
+            matches!(&action, AppAction::Focus(name) if name == "bob"),
+            "{path}: {action:?}"
+        );
+        dispatch(&mut session, &mut app, action);
+        assert!(!session.preferences.ready());
+        release.send(()).unwrap();
+        session.preferences.reload().unwrap();
+        session.pump(&mut app);
+        session.arm_walk_on(
+            &mut app,
+            Tile {
+                x: 2,
+                z: 2,
+                level: 0,
+            },
+        );
+        let report = session
+            .core
+            .commands()
+            .reports()
+            .find(|report| report.command() == OperatorCommand::WalkTo)
+            .expect("WalkTo command report");
+        let bob = session.core.profile_identity_or_synthetic("bob");
+        assert!(
+            report
+                .member(frontend_core::command::Subject::Profile(bob))
+                .is_some(),
+            "{path}: the command must target the operator's selection: {report:?}"
+        );
+        assert_eq!(session.core.selected(), Some("bob"), "{path}");
+        assert_eq!(app.focused_name().as_deref(), Some("bob"), "{path}");
+        assert!(session.startup_focus.is_none(), "{path}");
+    }
+}
+
 /// Type `text` into the open New profile overlay, dispatching each
 /// key as the event loop does.
 fn type_new_profile(session: &mut TuiSession, app: &mut TuiApp, text: &str) {

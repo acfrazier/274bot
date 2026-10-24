@@ -928,8 +928,8 @@ pub struct Session {
     pub(crate) preferences: UiPreferences,
     /// Whether the process writer has published the first readable cache.
     preferences_ready: bool,
-    /// Automatic unlock or saved-profile focus deferred until the first
-    /// preference cache is adopted. Repeated requests coalesce.
+    /// Automatic unlock or saved-profile focus deferred to a preference poll
+    /// after cache adoption. Explicit selection cancels it.
     startup_focus_pending: Option<StartupFocus>,
     /// Service-owned writes remain watched by the panel even when the
     /// settings surface that submitted them is closed.
@@ -1723,6 +1723,12 @@ impl Session {
             self.clear_cached_panel_members(&document);
             self.clear_cached_nav_members(&document);
             self.adopt_panel_preferences(&document);
+            // Startup selection is a between-command effect. Lazy policy
+            // reads may adopt preferences, but must not replace a command's
+            // captured profile or map context.
+            if let Some(focus) = self.startup_focus_pending.take() {
+                self.apply_startup_focus(focus);
+            }
         }
     }
 
@@ -1872,9 +1878,6 @@ impl Session {
 
         self.clear_cached_panel_members(document);
         self.clear_cached_nav_members(document);
-        if let Some(focus) = self.startup_focus_pending.take() {
-            self.apply_startup_focus(focus);
-        }
     }
 
     fn clear_succeeded_panel_members(&mut self, members: &[PanelPreferenceMember]) {
@@ -3255,6 +3258,9 @@ impl Session {
     }
 
     fn apply_focus(&mut self, name: &str) {
+        // Every profile-selection path converges here, including a repeated
+        // selection of the current bot. Operator intent supersedes startup.
+        self.startup_focus_pending = None;
         if self.persist_ui {
             let focus = name.to_string();
             self.ui.last_focus = Some(focus.clone());
@@ -4390,8 +4396,8 @@ impl Session {
     /// Consume the pending map selection through the typed WalkTo row.
     pub fn confirm_picker_walk(&mut self, world: &NavWorld) -> bool {
         let context = self.picker_context(world);
-        let options = self.walk_find_options();
         let name = self.focused_name();
+        let options = self.walk_find_options();
         let origin = name
             .as_deref()
             .and_then(|name| self.core.walk_slot_status(name).origin());
