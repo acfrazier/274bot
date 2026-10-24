@@ -1008,6 +1008,7 @@ fn interactive_landing_restores_preferences_before_loading_existing_profile() {
 #[test]
 fn removing_the_focused_bot_cancels_startup_focus() {
     let iso = IsolatedStores::enter("tui-remove-startup-focus");
+    let _quester_paths_guard = crate::bin::seam::lock_quester_paths_test_state();
     let mut session = TuiSession::new(dummy_options());
     session.core.set_spawn_workers(false);
     session.preferences.reload().unwrap();
@@ -1038,6 +1039,7 @@ fn operator_focus_before_preference_adoption_keeps_walk_target_and_boot_load() {
         "first-profile",
     ] {
         let iso = IsolatedStores::enter(&format!("tui-startup-focus-{path}"));
+        let _quester_paths_guard = crate::bin::seam::lock_quester_paths_test_state();
         let mut session = TuiSession::new(dummy_options());
         session.core.set_spawn_workers(false);
         let (entered, entered_rx) = std::sync::mpsc::sync_channel(1);
@@ -1151,6 +1153,7 @@ fn operator_focus_before_preference_adoption_keeps_walk_target_and_boot_load() {
 #[test]
 fn fleet_login_selection_keeps_startup_load_without_overriding_focus() {
     let iso = IsolatedStores::enter("tui-fleet-login-startup-focus");
+    let _quester_paths_guard = crate::bin::seam::lock_quester_paths_test_state();
     let mut session = TuiSession::new(dummy_options());
     session.core.set_spawn_workers(false);
     let (entered, entered_rx) = std::sync::mpsc::sync_channel(1);
@@ -1224,6 +1227,7 @@ fn fleet_login_selection_keeps_startup_load_without_overriding_focus() {
 #[test]
 fn removing_a_nonfocused_startup_target_cancels_its_deferred_load() {
     let iso = IsolatedStores::enter("tui-remove-nonfocused-startup-target");
+    let _quester_paths_guard = crate::bin::seam::lock_quester_paths_test_state();
     let mut session = TuiSession::new(dummy_options());
     session.core.set_spawn_workers(false);
     let (entered, entered_rx) = std::sync::mpsc::sync_channel(1);
@@ -1439,6 +1443,7 @@ fn new_profile_form_saves_the_typed_password() {
 #[test]
 fn first_profile_save_waits_for_preferences_before_loading_and_logging_in_once() {
     let iso = IsolatedStores::enter("tui-first-profile-cold-preferences");
+    let _quester_paths_guard = crate::bin::seam::lock_quester_paths_test_state();
     let mut session = TuiSession::new(dummy_options());
     session.core.set_spawn_workers(false);
     let (entered, entered_rx) = std::sync::mpsc::sync_channel(1);
@@ -1533,6 +1538,7 @@ fn first_profile_save_waits_for_preferences_before_loading_and_logging_in_once()
 #[test]
 fn deleting_pending_startup_profile_cancels_load_and_focus() {
     let iso = IsolatedStores::enter("tui-delete-pending-startup-profile");
+    let _quester_paths_guard = crate::bin::seam::lock_quester_paths_test_state();
     let mut session = TuiSession::new(dummy_options());
     session.core.set_spawn_workers(false);
     let (entered, entered_rx) = std::sync::mpsc::sync_channel(1);
