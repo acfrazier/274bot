@@ -3425,28 +3425,47 @@ fn brimhaven_two_line_tag_prompt_passes_then_waits_for_the_ticket() {
 #[test]
 fn brimhaven_prompt_from_before_the_previous_watch_is_stale_history() {
     let mut c = seeded_client();
-    set_inv(&mut c, &[(995, 1), (2996, 1)]);
+    // No ticket is seeded: with one held, the later no-ticket step
+    // could never pass, so the run would fail even if the prompt step
+    // wrongly accepted the stale line.
+    set_inv(&mut c, &[(995, 1)]);
     // The matching line is already in the ring before the preceding
     // watch (and therefore before its baseline) begins. It must never
-    // satisfy the prompt step, even though a ticket is already held.
+    // satisfy the prompt step.
     send_first_tag_prompt(&mut c);
     let mut runner = ScenarioRunner::with_world(brimhaven_tag_ticket_scenario(), None);
     runner.set_scene_settle(Duration::ZERO);
     for _ in 0..20 {
         advance_one_game_tick(&mut runner, &mut c, false);
     }
-    assert!(
-        matches!(runner.status(), RunnerStatus::Failed(_)),
-        "a prompt received before the previous-watch baseline must not pass, got {:?}",
-        runner.status()
-    );
+    match runner.status() {
+        RunnerStatus::Failed(msg) => {
+            assert!(
+                msg.contains("watch the first Tag prompt for the next pillar"),
+                "a prompt from before the previous-watch baseline must fail at the prompt step: {msg}"
+            );
+            assert!(
+                msg.contains("fresh_chat_since_previous_step"),
+                "the failure must name the prompt arm: {msg}"
+            );
+            assert!(
+                msg.contains("not seen within 10 game ticks"),
+                "the prompt step must exhaust its own 10-game-tick budget: {msg}"
+            );
+        }
+        other => panic!(
+            "a prompt received before the previous-watch baseline must not pass, got {other:?}"
+        ),
+    }
 }
 
 #[test]
 fn brimhaven_run_without_a_tag_prompt_fails() {
     let mut c = seeded_client();
-    // Even a ticket in the pack cannot skip the first-tag prompt watch.
-    set_inv(&mut c, &[(995, 1), (2996, 1)]);
+    // No ticket is seeded: with one held, the later no-ticket step
+    // could never pass, so the run would fail even if the prompt step
+    // were skipped or wrongly satisfied.
+    set_inv(&mut c, &[(995, 1)]);
     c.add_chat(0, "pillar!", "");
     c.bump_gens(ServerProt::MESSAGE_GAME);
     let mut runner = ScenarioRunner::with_world(brimhaven_tag_ticket_scenario(), None);
@@ -3454,11 +3473,23 @@ fn brimhaven_run_without_a_tag_prompt_fails() {
     for _ in 0..20 {
         advance_one_game_tick(&mut runner, &mut c, false);
     }
-    assert!(
-        matches!(runner.status(), RunnerStatus::Failed(_)),
-        "a run with no tag prompt must fail, got {:?}",
-        runner.status()
-    );
+    match runner.status() {
+        RunnerStatus::Failed(msg) => {
+            assert!(
+                msg.contains("watch the first Tag prompt for the next pillar"),
+                "a run with no tag prompt must fail at the prompt step: {msg}"
+            );
+            assert!(
+                msg.contains("fresh_chat_since_previous_step"),
+                "the failure must name the prompt arm: {msg}"
+            );
+            assert!(
+                msg.contains("not seen within 10 game ticks"),
+                "the prompt step must exhaust its own 10-game-tick budget: {msg}"
+            );
+        }
+        other => panic!("a run with no tag prompt must fail, got {other:?}"),
+    }
 }
 
 #[test]

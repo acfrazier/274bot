@@ -496,20 +496,25 @@ pub(crate) fn brimhaven_agility_scenario() -> Scenario {
                 count: 0,
             },
         ),
-        (
-            "watch a later Tag grant the first ticket",
-            Proof::ItemId {
-                id: AGILITY_TICKET_ID,
-                count: 1,
-            },
-        ),
-        (
-            "watch subsequent arena obstacle XP after the ticket",
-            subsequent_xp,
-        ),
     ] {
         steps.push(bank_fletcher_watch(name, arm));
     }
+    // A valid second tag can land up to 196 game ticks after the
+    // first under the arena period timers, so this one watch keeps
+    // the wider content-derived budget (see
+    // `BRIMHAVEN_TICKET_WATCH_TICKS`).
+    steps.push(bank_fletcher_watch_with_ticks(
+        "watch a later Tag grant the first ticket",
+        Proof::ItemId {
+            id: AGILITY_TICKET_ID,
+            count: 1,
+        },
+        BRIMHAVEN_TICKET_WATCH_TICKS,
+    ));
+    steps.push(bank_fletcher_watch(
+        "watch subsequent arena obstacle XP after the ticket",
+        subsequent_xp,
+    ));
     Scenario {
         name: "brimhaven_agility",
         seed: Seed {
