@@ -5,6 +5,8 @@ use api::interact::Driver;
 use api::lifecycle::SessionGate;
 pub use api::random::{DetectedRandom, RandomClaim};
 
+use crate::interact::InteractReq;
+
 /// Walk opt-ins a script may pass to [`ScriptCtx::walk_with`]. All default
 /// off, mirroring the three booleans of the host's router options; the nav
 /// type also carries essence and zone-exemption state the host owns, so the
@@ -65,7 +67,7 @@ pub struct CompiledTick<'a> {
     /// when the tick returns; the isolate path forwards a queue of its own
     /// instead, and `None` in a bare ctx — a script that enqueues with
     /// nothing parked sends nothing.
-    pub interacts: Option<Vec<crate::shim::InteractReq>>,
+    pub interacts: Option<Vec<InteractReq>>,
 }
 
 /// What one observed game-tick gives a script: the send-side driver, the
