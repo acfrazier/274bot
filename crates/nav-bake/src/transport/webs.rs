@@ -9,8 +9,6 @@ use super::*;
 /// as success, never using a timer guess. Wilderness placements pack too;
 /// [`nav_planner::router::find`] still refuses wildy tiles unless the search opts in.
 pub(super) const WEB_TICKS: i32 = 2;
-/// `oplocu`: use the first `item_req` obj on the loc (the knife).
-pub(super) const WEB_USE_OPTION: i32 = 0;
 
 pub(super) fn web_edges(
     content_root: &Path,

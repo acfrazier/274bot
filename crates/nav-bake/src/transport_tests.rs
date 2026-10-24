@@ -1889,45 +1889,51 @@ p_telejump($dest);\n";
     );
 }
 
-/// The derived graph carries the `TransportKind::Npc` edges
-/// for the Shilo↔Brimhaven cart (`cart_edges`, the `hajedy.rs2` /
-/// `vigroy.rs2` route pair): coins on the fare are consumed, and the Shilo
-/// Village journal name gates the Brim→Shilo hop.
+/// Derived Shilo cart edges use the planner's canonical identity and fare
+/// facts. The Zombie Queen journal gate remains a bake-time policy.
 #[test]
 fn derive_transports_emits_shilo_brimhaven_cart() {
     let graph = derive_static_routes();
+    let routes = SHILO_CART_ROUTES;
     let carts: Vec<_> = graph
         .edges
         .iter()
-        .filter(|e| e.kind == TransportKind::Npc)
-        .cloned()
+        .filter(|edge| routes.iter().any(|route| route.npc_id() == edge.loc_id))
         .collect();
-    assert!(
-        carts.len() >= 2,
-        "both cart directions derive, got {}",
-        carts.len()
+    assert_eq!(
+        carts.len(),
+        routes.len(),
+        "every planner cart journey derives exactly one edge"
     );
-    assert!(
-        carts.iter().any(|e| !e.consumed_req.is_empty()),
-        "coins on the fare are consumed"
-    );
-    assert!(
-        carts
+
+    for route in routes {
+        let edge = carts
             .iter()
-            .filter(|edge| matches!(edge.loc_id, 510 | 511))
-            .all(|edge| edge.consumed_req == [(995, 10)]),
-        "the live cart's minimum is 10 coins; its 5% debit is balance-dependent"
-    );
-    let shilo = carts
+            .find(|edge| {
+                edge.loc_id == route.npc_id()
+                    && edge.at == route.origin()
+                    && edge.to == route.destination()
+            })
+            .expect("derived cart edge matches planner identity");
+        let (fare_item, minimum) = route.minimum_fare();
+        assert_eq!(edge.consumed_req, [(fare_item, minimum)]);
+        assert_eq!(
+            edge.consumption_count(fare_item, minimum, 1000),
+            50,
+            "cart fare percentage follows the live balance calculation"
+        );
+    }
+
+    let brimhaven_to_shilo = carts
         .iter()
-        .find(|edge| edge.loc_id == 510)
+        .find(|edge| edge.at == routes[0].origin())
         .expect("Brimhaven → Shilo cart");
-    assert_eq!(shilo.quest_req, [SHILO_JOURNAL_NAME]);
-    let return_cart = carts
+    assert_eq!(brimhaven_to_shilo.quest_req, [SHILO_JOURNAL_NAME]);
+    let shilo_to_brimhaven = carts
         .iter()
-        .find(|edge| edge.loc_id == 511)
+        .find(|edge| edge.at == routes[1].origin())
         .expect("Shilo → Brimhaven cart");
-    assert!(return_cart.quest_req.is_empty());
+    assert!(shilo_to_brimhaven.quest_req.is_empty());
 }
 
 /// Both wilderness levers (`wilderness_lever.rs2` `[oploc1,wildinlever]` /

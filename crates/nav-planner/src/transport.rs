@@ -15,6 +15,8 @@ mod webs;
 mod wilderness;
 
 pub(crate) use webs::select_web_action;
+pub use static_routes::{CartFareRoute, SHILO_CART_ROUTES};
+pub use webs::WEB_USE_OPTION;
 pub use wilderness::{WildernessRules, WildernessZone};
 /// The kinds of transport edge this graph derives.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
