@@ -440,11 +440,13 @@ class TartSupervisorTests(unittest.TestCase):
 
 class FakeVM:
     def __init__(
-        self, settings, _disk_check, *, fail_start=False, quiet_during_start=False
+        self, settings, _disk_check, *, fail_start=False, quiet_during_start=False,
+        quiet_after_start=False
     ):
         self.settings = settings
         self.fail_start = fail_start
         self.quiet_during_start = quiet_during_start
+        self.quiet_after_start = quiet_after_start
         self.session = None
         self.session_id = None
         self.supervisor_path = None
@@ -472,6 +474,8 @@ class FakeVM:
             "id": self.session_id, "vm": "fake-vm", "ip": "192.0.2.10",
             "guest_home": str(guest_home), "share": str(share),
         }
+        if self.quiet_after_start:
+            self.settings.quiet_lock.touch()
 
     def guest_sh(self, command, *, timeout=45):
         del timeout
@@ -705,6 +709,33 @@ class NightlyOrchestrationTests(unittest.TestCase):
             self.assertEqual(created[0].run_calls, [])
             self.assertIn("MAC-QUIET.lock appeared during guest start", output.getvalue())
             self.assertNotIn("staged runner source", output.getvalue())
+            self.assertFalse(settings.lock_dir.exists())
+            self.assertFalse(settings.status.exists())
+
+    def test_quiet_lock_after_guest_start_skips_cleanly_without_staging(self):
+        # The lock appears once the start has finished (session set) but before
+        # staging: the run must stop the guest and exit 0, not fail on export.
+        with tempfile.TemporaryDirectory() as temporary:
+            settings = self.make_settings(Path(temporary))
+            created = []
+
+            def vm_factory(*args):
+                vm = FakeVM(*args, quiet_after_start=True)
+                created.append(vm)
+                return vm
+
+            controller = nightly.NightlyOrchestrator(
+                settings, ["dev"], vm_factory=vm_factory
+            )
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                result = controller.run()
+
+            self.assertEqual(result, 0, output.getvalue())
+            self.assertEqual(created[0].stop_calls, 1)
+            self.assertEqual(created[0].run_calls, [])
+            self.assertNotIn("staged runner source", output.getvalue())
+            self.assertNotIn("nightly inputs are not staged", output.getvalue())
             self.assertFalse(settings.lock_dir.exists())
             self.assertFalse(settings.status.exists())
 
