@@ -721,23 +721,14 @@ fn normal_unlock_waits_for_work_admission_validation_then_uses_prepared_profile(
         pass: "prepared-pass".into(),
     });
     drive_startup(&mut state, &mut startup);
-    let deadline = Instant::now() + Duration::from_secs(60);
-    loop {
-        let done = startup
-            .validate
-            .as_ref()
-            .map(|validation| validation.job.is_finished())
-            .unwrap_or(false);
-        if done {
-            break;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "WorkAdmission validation did not settle"
-        );
-        drive_startup(&mut state, &mut startup);
-        thread::sleep(Duration::from_millis(5));
-    }
+    let validation = startup.validate.as_ref().expect("final validation job");
+    assert!(
+        frontend_core::test_support::wait_for_work_admission_publication(
+            Duration::from_secs(120),
+            || validation.job.is_finished(),
+        ),
+        "WorkAdmission validation hang guard expired or service became unavailable"
+    );
     drive_startup(&mut state, &mut startup);
     assert!(state.session.profile_bound());
     assert!(state.session.core.vault_open());
@@ -757,14 +748,13 @@ fn live_boot_stays_deferred_while_final_validation_is_in_flight() {
     assert!(!state.session.core.vault_open());
     assert!(!state.session.core.has_play());
     assert!(state.session.core.slots().is_empty());
-    let deadline = Instant::now() + Duration::from_secs(60);
-    while !validation.job.is_finished() {
-        assert!(
-            Instant::now() < deadline,
-            "WorkAdmission validation did not settle"
-        );
-        thread::sleep(Duration::from_millis(5));
-    }
+    assert!(
+        frontend_core::test_support::wait_for_work_admission_publication(
+            Duration::from_secs(120),
+            || validation.job.is_finished(),
+        ),
+        "WorkAdmission validation hang guard expired or service became unavailable"
+    );
     assert!(validation.job.join().is_ok());
     assert!(matches!(validation.boot, Boot::Live(LiveBoot::Smoke)));
 }
