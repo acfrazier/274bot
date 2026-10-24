@@ -122,7 +122,20 @@ fn probe_gated_default_is_never_for_every_preference_source() {
         let service = host_play::local_state::LocalStateService::open_process(
             host_play::local_state::StateRoot::new(root),
         );
-        WalkGlobals::read(&service.preferences())
+        let preferences = service.preferences();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            match WalkGlobals::read(&preferences) {
+                Err(error) if error.is_not_ready() => {
+                    assert!(
+                        std::time::Instant::now() < deadline,
+                        "{name}: preference hydration did not finish"
+                    );
+                    std::thread::yield_now();
+                }
+                result => break result,
+            }
+        }
     };
     let sources = [
         ("default", WalkGlobals::default()),

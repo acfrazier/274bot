@@ -371,30 +371,6 @@ impl ProfileOrder {
         true
     }
 
-    /// The audit text of a change from `before`: each profile whose place
-    /// changed, `name old→new` with 1-based places.
-    pub(crate) fn moved_from(&self, before: &Self) -> String {
-        use std::fmt::Write as _;
-        let mut text = String::new();
-        for (index, name) in self.names.iter().enumerate() {
-            let old = before.position(name);
-            if old != Some(index) {
-                if !text.is_empty() {
-                    text.push_str(", ");
-                }
-                match old {
-                    Some(old) => {
-                        let _ = write!(text, "{name} {}→{}", old + 1, index + 1);
-                    }
-                    None => {
-                        let _ = write!(text, "{name} new→{}", index + 1);
-                    }
-                }
-            }
-        }
-        text
-    }
-
     #[cfg(any(test, feature = "test-support"))]
     /// Fixture seam: an order of `names` (uids 1, 2, … in that order).
     pub fn of_names_for_test(names: &[&str]) -> Self {
@@ -689,14 +665,6 @@ mod tests {
         assert_eq!(names(&saved), ["a", "e", "b", "d", "c"]);
         let keys = saved.keys();
         assert!(keys.windows(2).all(|w| w[0] < w[1]), "{keys:?}");
-    }
-
-    #[test]
-    fn the_audit_text_names_each_moved_profile() {
-        let before = order(&["a", "b", "c"]);
-        let mut after = before.snapshot();
-        after.move_to("c", "a", false);
-        assert_eq!(after.moved_from(&before), "c 3→1, a 1→2, b 2→3");
     }
 
     #[test]

@@ -363,6 +363,11 @@ impl MapDesk {
         &mut self.bake_gate
     }
 
+    /// Adopt the initial saved bake choice without submitting another write.
+    pub fn adopt_bake_choice(&mut self, choice: crate::MapBakeChoice) {
+        self.bake_gate.set_choice(choice);
+    }
+
     /// Note that an adopt-only image demand settled without terrain.
     pub fn note_ready_without_terrain(&mut self, demand: WalkMapDemand) {
         self.bake_gate.note_ready_without_terrain(demand);

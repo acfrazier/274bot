@@ -7,6 +7,14 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.6` 
 
 ### Panel and terminal app
 
+- Saving shared preferences no longer waits for disk on the panel, TUI or bot
+  thread. Accepted saves continue when you close a settings window. A slow
+  save no longer erases an unsaved checkbox or folder entry during refresh.
+  Each saved change writes one log line that names the changed settings
+  without private text.
+  Quitting during initial preference loading now finishes accepted saves
+  within the shutdown limit or reports their cancellation. Rewriting an
+  unchanged preference file also writes its saved-state log line.
 - Script paint in the panel now follows rs2b0t's layout. The paint has a title bar with the title in the script's accent colour, 16-pixel rows, and rs2b0t's colours. Pause and Stop are compact buttons side by side. Only the small square at the right end of the title bar collapses the paint. The built-in Gatherer and Sherlock scripts now show the same Pause and Stop buttons on their paint. With input capture on, a click on the paint no longer also clicks the game under it.
 - With input capture on, the slot that receives a game press also receives its release. This still holds if the pointer leaves the Game Image. A focus change releases the held button from the slot that received the press.
 - The terminal app can now add a profile. Start `tui-play` on an empty vault to open a **New profile**
@@ -38,6 +46,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.6` 
 ### Fixed during development
 
 - `tui-play --user NAME` stops on a missing vault before it prepares the game cache or reads the engine login key. The message is the same. A local server with no engine directory still stops with the engine-directory error.
+- Saving the first profile now waits for saved preferences before it loads
+  or logs in. The panel and terminal app use their existing startup gates.
 
 #### Survival
 

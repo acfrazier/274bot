@@ -159,6 +159,7 @@ impl SlotSurface for DriverSurface<'_> {
 pub struct HeadlessDriver {
     session: OperatorSession<()>,
     models: DriverModels,
+    preferences_adopted: bool,
 }
 
 impl HeadlessDriver {
@@ -171,10 +172,11 @@ impl HeadlessDriver {
         session.bind_local_state(host_play::local_state::LocalStateService::open_process(
             host_play::local_state::StateRoot::new(state_root.to_path_buf()),
         ));
-        let walk_globals = session.adopt_operator_preferences();
         let preferences = session
             .preferences()
             .expect("the driver bound its local state just now");
+        let preferences_adopted = preferences.ready();
+        let walk_globals = session.adopt_operator_preferences();
         let mut quester = QuesterPathsController::default();
         quester.restore(&preferences);
         let (scripts, _library_error) = Scripts::open_default();
@@ -189,7 +191,11 @@ impl HeadlessDriver {
             draw: DrawPolicy::restore(&preferences, true),
             map: crate::MapDesk::new(crate::map_bake::load_map_bake_choice(&preferences)),
         };
-        Self { session, models }
+        Self {
+            session,
+            models,
+            preferences_adopted,
+        }
     }
 
     /// Open the vault at `vault` with `passphrase` (`UnlockVault`), or
@@ -233,6 +239,18 @@ impl HeadlessDriver {
     /// submission does.
     pub fn poll(&mut self) {
         self.session.poll();
+        if !self.preferences_adopted {
+            if let Some(preferences) = self.session.preferences().filter(|prefs| prefs.ready()) {
+                self.models.quester.restore(&preferences);
+                self.models.draw = DrawPolicy::restore(&preferences, true);
+                self.models
+                    .map
+                    .bake_gate_mut()
+                    .set_choice(crate::map_bake::load_map_bake_choice(&preferences));
+                self.models.walk_globals = self.session.adopt_operator_preferences();
+                self.preferences_adopted = true;
+            }
+        }
         self.models.scripts.poll(&mut self.session);
         self.models.fleet.refresh(&self.session);
         if let Some(view) = self.session.take_settled_walk_globals() {

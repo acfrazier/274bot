@@ -6,12 +6,14 @@
 //! session's handle, never by path.
 
 use std::collections::HashMap;
+#[cfg(test)]
 use std::io;
 use std::path::PathBuf;
 
 use crate::nav_settings::NavSettings;
 
-use frontend_core::log::{Level, Source};
+#[cfg(test)]
+use frontend_core::log::Level;
 use frontend_core::UiPreferences as Preferences;
 use serde_json::{Map, Value};
 
@@ -182,23 +184,30 @@ pub fn default_section_closed(id: &str) -> bool {
 /// has written them, as they do outside tests; [`load_from`] always reads
 /// the store.
 pub fn load(preferences: &Preferences) -> PanelUiState {
+    let Ok(document) = preferences.document() else {
+        #[cfg(test)]
+        return TEST_STATE.with(|state| state.borrow().clone());
+        #[cfg(not(test))]
+        return PanelUiState::default();
+    };
+    load_snapshot(&document)
+}
+
+pub(crate) fn load_snapshot(document: &Map<String, Value>) -> PanelUiState {
     #[cfg(test)]
     {
-        let stand_in = TEST_STATE.with(|s| s.borrow().clone());
-        with_core_owned_keys(stand_in, preferences)
+        let stand_in = TEST_STATE.with(|state| state.borrow().clone());
+        with_core_owned_keys(stand_in, document)
     }
     #[cfg(not(test))]
-    load_from(preferences)
+    from_document(document)
 }
 
 /// `state` with the [`CORE_OWNED_KEYS`] the store holds: their command rows
 /// write the store, never the stand-in, so a key the store holds wins over
 /// the stand-in's (seeded) value, and a key it lacks keeps it.
 #[cfg(test)]
-fn with_core_owned_keys(state: PanelUiState, preferences: &Preferences) -> PanelUiState {
-    let Ok(document) = preferences.document() else {
-        return state;
-    };
+fn with_core_owned_keys(state: PanelUiState, document: &Map<String, Value>) -> PanelUiState {
     let mut merged = serde_json::to_value(&state).expect("PanelUiState serializes");
     let keys = merged
         .as_object_mut()
@@ -211,26 +220,25 @@ fn with_core_owned_keys(state: PanelUiState, preferences: &Preferences) -> Panel
     serde_json::from_value(merged).unwrap_or(state)
 }
 
-/// Save the session's preferences (the per-thread stand-in under
-/// `cfg(test)`, like [`load`]). A refused write is logged, not returned.
-pub fn save(preferences: &Preferences, state: &PanelUiState) {
-    #[cfg(test)]
-    {
-        let _ = preferences;
-        TEST_STATE.with(|s| *s.borrow_mut() = state.clone());
-    }
-    #[cfg(not(test))]
-    save_to(preferences, state);
+/// Seed the per-thread fixture for the panel's own preferences.
+#[cfg(test)]
+pub fn save(_preferences: &Preferences, state: &PanelUiState) {
+    TEST_STATE.with(|s| *s.borrow_mut() = state.clone());
 }
 
 /// The panel preferences `preferences` holds: defaults when the file is
 /// absent, when the service refused it (unreadable), or when it does not
 /// read as panel preferences.
+#[cfg(test)]
 pub fn load_from(preferences: &Preferences) -> PanelUiState {
     let Ok(document) = preferences.document() else {
         return PanelUiState::default();
     };
-    match serde_json::from_value::<PanelUiState>(Value::Object((*document).clone())) {
+    from_document(&document)
+}
+
+pub(crate) fn from_document(document: &Map<String, Value>) -> PanelUiState {
+    match serde_json::from_value::<PanelUiState>(Value::Object(document.clone())) {
         Ok(mut state) => {
             state.debug_panel.normalize();
             state
@@ -239,14 +247,66 @@ pub fn load_from(preferences: &Preferences) -> PanelUiState {
     }
 }
 
-fn prefs_log(level: Level, message: String) {
-    eprintln!("panel: {message}");
-    frontend_core::log::global().process_line(Source::Host, level, &message);
+pub(crate) fn apply_pending_members(
+    mut state: PanelUiState,
+    members: &HashMap<Vec<String>, Option<Value>>,
+) -> PanelUiState {
+    let Ok(mut serialized) = serde_json::to_value(&state) else {
+        return state;
+    };
+    let Some(root) = serialized.as_object_mut() else {
+        return state;
+    };
+    for (path, value) in members {
+        apply_json_member(root, path, value);
+    }
+    if let Ok(mut updated) = serde_json::from_value::<PanelUiState>(serialized) {
+        updated.debug_panel.normalize();
+        state = updated;
+    }
+    state
+}
+
+fn apply_json_member(root: &mut Map<String, Value>, path: &[String], value: &Option<Value>) {
+    let Some((leaf, parents)) = path.split_last() else {
+        return;
+    };
+    let mut object = root;
+    for parent in parents {
+        let entry = object
+            .entry(parent.clone())
+            .or_insert_with(|| Value::Object(Map::new()));
+        if !entry.is_object() {
+            *entry = Value::Object(Map::new());
+        }
+        object = entry
+            .as_object_mut()
+            .expect("a preference path parent was made an object");
+    }
+    match value {
+        Some(value) => {
+            object.insert(leaf.clone(), value.clone());
+        }
+        None => {
+            object.remove(leaf);
+        }
+    }
+}
+
+#[cfg(test)]
+fn prefs_log(_level: Level, message: String) {
+    api::host_log!(
+        stderr;
+        api::hostlog::Category::Lifecycle,
+        api::hostlog::Level::Error,
+        "panel: {message}"
+    );
 }
 
 /// The `nav` keys the core writes (walk permissions, notices, the manual
 /// movement pause, the special-area paint): a panel save keeps the
 /// document's value, or the key's default when the document has none.
+#[cfg(test)]
 const MERGED_NAV_KEYS: &[(&str, bool)] = &[
     ("allow_teleports", false),
     ("allow_wilderness", false),
@@ -263,6 +323,7 @@ const MERGED_NAV_KEYS: &[(&str, bool)] = &[
 /// commands (`SetDraw`, `AcknowledgeNotice`, `SetMapBakeChoice`,
 /// `SetSessionLog`): a panel save never writes them; the document keeps
 /// what it holds.
+#[cfg(test)]
 const CORE_OWNED_KEYS: &[&str] = &[
     "capture",
     "sidecar_50",
@@ -278,6 +339,7 @@ const CORE_OWNED_KEYS: &[&str] = &[
 /// the walk permission keys of `nav` ([`MERGED_NAV_KEYS`]) stay as the
 /// document holds them. A document that does not read as panel preferences
 /// is refused whole, and nothing is written over it.
+#[cfg(test)]
 fn merge_saved_panel_state(
     document: &mut Map<String, Value>,
     replacement: &Value,
@@ -332,30 +394,23 @@ fn merge_saved_panel_state(
 
 /// Write `state` into `preferences`, the outcome logged (see
 /// [`save_to_checked`]) and not returned.
+#[cfg(test)]
 pub fn save_to(preferences: &Preferences, state: &PanelUiState) {
     let _ = save_to_checked(preferences, state);
 }
 
-/// Persist panel preferences and return write failures to the caller that
-/// needs to display an inline notice (the per-thread stand-in under
-/// `cfg(test)`, like [`load`]).
-pub fn save_checked(preferences: &Preferences, state: &PanelUiState) -> io::Result<()> {
-    #[cfg(test)]
-    {
-        let _ = preferences;
-        TEST_STATE.with(|s| *s.borrow_mut() = state.clone());
-        Ok(())
-    }
-    #[cfg(not(test))]
-    {
-        save_to_checked(preferences, state)
-    }
+/// Seed the per-thread panel fixture through the checked fixture API.
+#[cfg(test)]
+pub fn save_checked(_preferences: &Preferences, state: &PanelUiState) -> io::Result<()> {
+    TEST_STATE.with(|s| *s.borrow_mut() = state.clone());
+    Ok(())
 }
 
 /// Persist the panel's own keys into `preferences` through the same
 /// serialized read/merge/write transaction as shared nested preference
 /// updates. A file the service refused, or one that does not read as panel
 /// preferences, is not written: the error is returned and logged once.
+#[cfg(test)]
 pub fn save_to_checked(preferences: &Preferences, state: &PanelUiState) -> io::Result<()> {
     let refused = |error: &dyn std::fmt::Display| {
         prefs_log(
@@ -373,7 +428,7 @@ pub fn save_to_checked(preferences: &Preferences, state: &PanelUiState) -> io::R
             return Err(io::Error::new(io::ErrorKind::InvalidData, error));
         }
     };
-    match preferences.update(|document| merge_saved_panel_state(document, &replacement)) {
+    match preferences.update(move |document| merge_saved_panel_state(document, &replacement)) {
         Ok(()) => Ok(()),
         Err(error) => {
             refused(&error);

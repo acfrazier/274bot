@@ -5,7 +5,7 @@
 //!
 //! Every operator preference is written here, through the process
 //! local-state service's preferences document; a front end writes only its
-//! own presentation state ([`crate::UiPreferences::update`]).
+//! own presentation state ([`crate::UiPreferences::begin_patch`]).
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -222,7 +222,10 @@ impl<Io> OperatorSession<Io> {
         )
         .unwrap_or(true);
         self.set_pause_script_on_manual_walk_abort(pause);
-        self.adopt_profile_order(&preferences);
+        if preferences.ready() && !self.preferences_adopted {
+            self.preferences_adopted = true;
+            self.adopt_profile_order(&preferences);
+        }
         view
     }
 
@@ -252,6 +255,11 @@ impl<Io> OperatorSession<Io> {
     /// panel and the TUI re-read the durable view each frame).
     pub(crate) fn take_settled_walk_globals(&mut self) -> Option<WalkGlobalsView> {
         self.commands.take_settled_walk_globals()
+    }
+
+    /// Whether an accepted preferences save still awaits its terminal result.
+    pub fn preferences_pending(&self) -> bool {
+        self.commands.preferences_pending() || !self.order_writes.is_empty()
     }
 
     /// A handle on the running write of the SaveLog command `request`, for
@@ -414,7 +422,6 @@ impl<Io> OperatorSession<Io> {
                         self.commands.settle_walk_globals(view);
                     }
                     if let Some(order) = watch.order {
-                        log_order_saved(watch.request, &order.audit);
                         if order.seq > self.durable_order_seq {
                             self.durable_order_seq = order.seq;
                             self.durable_order = order.order;
@@ -476,13 +483,6 @@ impl<Io> OperatorSession<Io> {
             | DrawSwitch::FocusedFullRate
             | DrawSwitch::LiveFullRate => self.wake_all_slots(),
         }
-        if let Some(name) = DrawPolicy::key(switch).filter(|_| persist) {
-            crate::log::global().process_line(
-                crate::log::Source::Host,
-                crate::log::Level::Info,
-                &format!("panel preference {name}: {}", on),
-            );
-        }
         match write {
             Some((_, Err(applied))) => applied,
             Some((key, Ok(write))) => self.after_write(request, write, key, PrefEffect::None),
@@ -527,15 +527,7 @@ impl<Io> OperatorSession<Io> {
         let Some(preferences) = self.preferences() else {
             return no_store();
         };
-        let before = WalkGlobalsView::read(&preferences);
-        let mut globals = before.globals();
-        globals.set_danger_level(level);
-        let after = WalkGlobalsView::new(
-            globals,
-            before.script_scope_notice_ack(),
-            before.survivable_routing_notice_ack(),
-        );
-        let write = match WalkGlobalsView::persist_changed(&preferences, before, after) {
+        let write = match WalkGlobalsView::persist_danger(&preferences, level) {
             Ok(write) => write,
             Err(error) => return write_failed("danger routing", &error),
         };
@@ -707,17 +699,11 @@ impl<Io> OperatorSession<Io> {
             .map_err(|error| write_failed(key, &error))
     }
 
-    /// Write the saved Load order a reorder just changed from `before`.
-    /// `Done` (with one audit line) once durable; a write still queued
-    /// keeps the member pending ([`Self::settle_pref_writes`]). A refused
-    /// or failed write puts back the last durable order, so a failure
-    /// never shows as the saved order.
-    pub(super) fn write_profile_order(
-        &mut self,
-        request: RequestId,
-        before: &crate::profile_order::ProfileOrder,
-    ) -> Applied {
-        let audit = self.profile_order.moved_from(before);
+    /// Write the saved Load order.
+    /// `Done` once durable; a queued write keeps the member pending
+    /// ([`Self::settle_pref_writes`]). A refused or failed write restores
+    /// the last durable order, never a failed preview.
+    pub(super) fn write_profile_order(&mut self, request: RequestId) -> Applied {
         let write = match self.write_preference(
             crate::profile_order::PROFILE_ORDER_KEY,
             self.profile_order.to_value(),
@@ -734,7 +720,6 @@ impl<Io> OperatorSession<Io> {
         self.order_write_seq += 1;
         match write {
             Update::Durable => {
-                log_order_saved(request, &audit);
                 self.durable_order_seq = self.order_write_seq;
                 self.durable_order.assign_from(&self.profile_order);
                 Applied::Done
@@ -748,7 +733,6 @@ impl<Io> OperatorSession<Io> {
                     order: Some(OrderWrite {
                         seq: self.order_write_seq,
                         order: self.profile_order.snapshot(),
-                        audit,
                     }),
                 });
                 Applied::Later
@@ -837,19 +821,8 @@ pub(super) struct OrderWrite {
     /// The write's number: a higher one began later.
     seq: u64,
     order: crate::profile_order::ProfileOrder,
-    /// The moved names and their old and new places, for the audit line.
-    audit: String,
 }
 
-/// The one audit line of a durable Load order change.
-fn log_order_saved(request: RequestId, moved: &str) {
-    api::host_log!(
-        api::hostlog::Category::Lifecycle,
-        api::hostlog::Level::Info,
-        "profile order: request {request:?}: saved Load order: {moved}"
-    );
-}
-
-fn write_failed(what: &str, error: &std::io::Error) -> Applied {
+fn write_failed(what: &str, error: &crate::prefs::PreferenceError) -> Applied {
     Applied::Failed(FailureKind::WriteFailed, Some(format!("{what}: {error}")))
 }

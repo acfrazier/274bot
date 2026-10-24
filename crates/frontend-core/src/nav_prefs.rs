@@ -1,8 +1,9 @@
+#[cfg(any(test, feature = "test-support"))]
 use std::io;
 
 use host_play::local_state::Update;
 
-use crate::prefs::UiPreferences;
+use crate::prefs::{PreferenceError, PreferencePatch, UiPreferences};
 
 /// A boolean inside the shared `panel-ui.json` `nav` object.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -46,41 +47,33 @@ impl NavPreference {
 /// Read one shared nested nav boolean through the process service's
 /// preferences, with its legacy default. (Changing it is the
 /// `SetNavPreference` command.)
-pub fn nav_preference(preferences: &UiPreferences, preference: NavPreference) -> io::Result<bool> {
+pub fn nav_preference(
+    preferences: &UiPreferences,
+    preference: NavPreference,
+) -> Result<bool, PreferenceError> {
     let (key, default) = preference.key_and_default();
     if preference == NavPreference::SurvivableRouting {
-        return Ok(host_play::WalkGlobals::read(preferences.inner())
-            .unwrap_or_else(|_| host_play::WalkGlobals::fail_closed())
-            .survivable_routing);
+        return Ok(preferences.inner().walk_globals()?.survivable_routing);
     }
     Ok(preferences
-        .value("nav")
+        .document()?
+        .get("nav")
         .and_then(|value| value.get(key).and_then(serde_json::Value::as_bool))
         .unwrap_or(default))
 }
 
-/// Write one shared nested nav boolean: only that key is merged, against
-/// the file as the service reads it then. A write still queued when the
-/// bounded wait ends comes back [`Update::Queued`] for its command to
-/// settle from.
+/// Submit one shared nested nav boolean without waiting.
+/// The service merges only that member into its latest durable document.
 pub(crate) fn write_nav_preference(
     preferences: &UiPreferences,
     preference: NavPreference,
     enabled: bool,
-) -> io::Result<Update> {
+) -> Result<Update, PreferenceError> {
     let (key, _) = preference.key_and_default();
-    preferences.begin_update(move |document| {
-        let mut nav = document
-            .get("nav")
-            .filter(|value| value.is_object())
-            .cloned()
-            .unwrap_or_else(|| serde_json::json!({}));
-        nav.as_object_mut()
-            .expect("a replacement nav object is always an object")
-            .insert(key.into(), serde_json::Value::Bool(enabled));
-        document.insert("nav".into(), nav);
-        Ok(())
-    })
+    preferences.begin_patch(PreferencePatch::member(
+        &["nav", key],
+        Some(serde_json::Value::Bool(enabled)),
+    )?)
 }
 
 /// Fixture seam: arrange a stored nav boolean as another writer would
@@ -235,7 +228,9 @@ mod tests {
     fn survivable_preference_fails_closed_for_malformed_files() {
         let (dir, prefs) = scratch("malformed-survivable");
         vault::write_private_file(&prefs.path(), b"{malformed").unwrap();
-        assert!(!nav_preference(&prefs, NavPreference::SurvivableRouting).unwrap());
+        assert!(prefs.reload().is_err());
+        assert!(nav_preference(&prefs, NavPreference::SurvivableRouting).is_err());
+        assert_eq!(std::fs::read(prefs.path()).unwrap(), b"{malformed");
         std::fs::remove_dir_all(dir).unwrap();
     }
 }

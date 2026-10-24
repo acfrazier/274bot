@@ -1418,12 +1418,36 @@
       "reason": "T3.3 operator command seam."
     },
     {
+      "id": "seam_type|crates/frontend-core/src/prefs.rs|PreferenceError",
+      "path": "crates/frontend-core/src/prefs.rs",
+      "symbol": "PreferenceError",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "T5.3-S2 typed error for a cold or refused preference cache."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/prefs.rs|PreferencePatch",
+      "path": "crates/frontend-core/src/prefs.rs",
+      "symbol": "PreferencePatch",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "T5.3-S2 changed-member intent accepted by the process writer."
+    },
+    {
       "id": "seam_type|crates/frontend-core/src/prefs.rs|UiPreferences",
       "path": "crates/frontend-core/src/prefs.rs",
       "symbol": "UiPreferences",
       "classification": "owning",
       "owner": "T3",
       "reason": "T3.3 operator command seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/prefs.rs|Update",
+      "path": "crates/frontend-core/src/prefs.rs",
+      "symbol": "Update",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "T5.3-S2 durable or service-owned queued preference result."
     },
     {
       "id": "seam_type|crates/frontend-core/src/surface.rs|SpawnProfile",
