@@ -4,8 +4,6 @@
 //! fail closed; writes merge only values changed by the caller into the
 //! shared preferences, through the process local-state service.
 
-use std::io;
-
 use host_play::WalkGlobals as HostWalkGlobals;
 use nav_planner::router::FindOptions;
 
@@ -151,10 +149,6 @@ impl WalkGlobals {
             survivable_routing,
             ..self
         }
-    }
-
-    pub(crate) fn set_danger_level(&mut self, level: DangerLevel) {
-        *self = self.with_danger_level(level);
     }
 
     pub fn manual_options(self, danger_this_walk: bool) -> FindOptions {
@@ -333,75 +327,20 @@ impl WalkGlobalsView {
         }
     }
 
-    /// Write the fields `after` changes from `before`, merged into the
-    /// file's `nav` object as the service reads it then. A write still
-    /// queued when the bounded wait ends comes back
-    /// [`host_play::local_state::Update::Queued`].
-    pub(crate) fn persist_changed(
+    /// Submit the canonical pair for one danger-level choice as one intent.
+    pub(crate) fn persist_danger(
         preferences: &crate::prefs::UiPreferences,
-        before: Self,
-        after: Self,
-    ) -> io::Result<host_play::local_state::Update> {
-        let before_globals = before.globals;
-        let after_globals = after.globals;
-        let changed = [
-            (
-                "allow_teleports",
-                before_globals.allow_teleports,
-                after_globals.allow_teleports,
-            ),
-            (
-                "allow_wilderness",
-                before_globals.allow_wilderness,
-                after_globals.allow_wilderness,
-            ),
-            (
-                "allow_bank_fetch",
-                before_globals.allow_bank_fetch,
-                after_globals.allow_bank_fetch,
-            ),
-            (
-                "allow_danger_zones",
-                before_globals.allow_danger_zones,
-                after_globals.allow_danger_zones,
-            ),
-            (
-                "survivable_routing",
-                before_globals.survivable_routing,
-                after_globals.survivable_routing,
-            ),
-            (
-                "script_scope_notice_ack",
-                before.script_scope_notice_ack,
-                after.script_scope_notice_ack,
-            ),
-            (
-                "survivable_routing_notice_ack",
-                before.survivable_routing_notice_ack,
-                after.survivable_routing_notice_ack,
-            ),
-        ];
-        if changed.iter().all(|(_, before, after)| before == after) {
-            return Ok(host_play::local_state::Update::Durable);
-        }
-
-        preferences.begin_update(move |document| {
-            let nav = document
-                .entry("nav")
-                .or_insert_with(|| serde_json::json!({}));
-            if !nav.is_object() {
-                *nav = serde_json::json!({});
-            }
-            let nav = nav
-                .as_object_mut()
-                .expect("a replacement nav value is always an object");
-            for (key, before, after) in changed {
-                if before != after {
-                    nav.insert(key.into(), serde_json::Value::Bool(after));
-                }
-            }
-            Ok(())
-        })
+        level: DangerLevel,
+    ) -> Result<host_play::local_state::Update, crate::prefs::PreferenceError> {
+        let (allow, survivable) = match level {
+            DangerLevel::Never => (false, false),
+            DangerLevel::WhenSurvivable => (false, true),
+            DangerLevel::Always => (true, false),
+        };
+        let mut patch = crate::prefs::PreferencePatch::default();
+        patch.set_member(&["nav", "allow_danger_zones"], Some(allow.into()))?;
+        patch.set_member(&["nav", "survivable_routing"], Some(survivable.into()))?;
+        preferences.begin_patch(patch)
     }
 }
 
@@ -547,14 +486,14 @@ mod tests {
     }
 
     #[test]
-    fn changed_projection_fields_merge_in_one_durable_update() {
+    fn danger_pair_merges_in_one_durable_update() {
         let store = TempStore::new("write");
         vault::write_private_file(
             store.path(),
             br#"{"unrelated":{"keep":true},"nav":{"show_nav_path":true,"allow_wilderness":false,"allow_danger_zones":true,"survivable_routing":false,"custom":"keep"}}"#,
         )
         .unwrap();
-        let before = WalkGlobalsView::read(store.prefs());
+        let _before = WalkGlobalsView::read(store.prefs());
         let mut external =
             serde_json::from_slice::<serde_json::Value>(&std::fs::read(store.path()).unwrap())
                 .unwrap();
@@ -562,19 +501,9 @@ mod tests {
         external["nav"]["show_nav_path"] = serde_json::Value::Bool(false);
         vault::write_private_file(store.path(), &serde_json::to_vec(&external).unwrap()).unwrap();
 
-        let mut after = WalkGlobalsView {
-            globals: WalkGlobals {
-                allow_teleports: true,
-                ..before.globals
-            },
-            script_scope_notice_ack: true,
-            survivable_routing_notice_ack: true,
-        };
-        after.globals.set_danger_level(DangerLevel::WhenSurvivable);
-        crate::prefs::settled_for_test(WalkGlobalsView::persist_changed(
+        crate::prefs::settled_for_test(WalkGlobalsView::persist_danger(
             store.prefs(),
-            before,
-            after,
+            DangerLevel::WhenSurvivable,
         ))
         .unwrap();
         let persisted =
@@ -582,13 +511,10 @@ mod tests {
                 .unwrap();
         assert_eq!(persisted["unrelated"]["keep"], true);
         assert_eq!(persisted["nav"]["custom"], "keep");
-        assert_eq!(persisted["nav"]["allow_teleports"], true);
         assert_eq!(persisted["nav"]["allow_wilderness"], true);
         assert!(persisted["nav"].get("allow_bank_fetch").is_none());
         assert_eq!(persisted["nav"]["allow_danger_zones"], false);
         assert_eq!(persisted["nav"]["survivable_routing"], true);
-        assert_eq!(persisted["nav"]["script_scope_notice_ack"], true);
-        assert_eq!(persisted["nav"]["survivable_routing_notice_ack"], true);
         assert_eq!(persisted["nav"]["show_nav_path"], false);
 
         crate::prefs::settled_for_test(crate::nav_prefs::write_nav_preference(
@@ -597,10 +523,9 @@ mod tests {
             false,
         ))
         .unwrap();
-        crate::prefs::settled_for_test(WalkGlobalsView::persist_changed(
+        crate::prefs::settled_for_test(WalkGlobalsView::persist_danger(
             store.prefs(),
-            after,
-            after,
+            DangerLevel::WhenSurvivable,
         ))
         .unwrap();
         let after_noop = WalkGlobalsView::read(store.prefs());

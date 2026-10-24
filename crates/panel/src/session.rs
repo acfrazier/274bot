@@ -34,6 +34,7 @@ use frontend_core::launch::{
     ProfileEnv, ProfileError, ProfileLauncher, ProfilePreparation, ProfileTemplate, UnlockStage,
     ValidatedProfile,
 };
+use frontend_core::prefs::{PreferencePatch, UiPreferences, Update};
 use frontend_core::scripts::{
     CardSource, LoadoutForm, PaintFrame, SchemaRef, ScriptChoice, ScriptRunState,
 };
@@ -43,7 +44,7 @@ use frontend_core::walk_map::{
     WalkRoutePath, WalkRouteSource, WalkSlotStatus, WalkSourceStatus,
 };
 use frontend_core::MapBakeChoice;
-use frontend_core::{CurePoison, GuardianEdit, GuardianPolicy, SurvivalEdit, UiPreferences};
+use frontend_core::{CurePoison, SurvivalEdit};
 #[cfg(test)]
 use host_play::SlotStatus;
 use nav_planner::paint::{
@@ -57,7 +58,10 @@ use nav_planner::world::NavWorld;
 use crate::focus::{draw_for_slot, full_rate_for};
 use crate::nav_settings::{from_scenario, parse_html_color, NavSettings};
 use crate::wall::Wall;
-use frontend_core::{OperatorCommand, OperatorSession, SlotAttach, SlotSurface, Targets};
+use frontend_core::{
+    GuardianEdit, GuardianPolicy, OperatorCommand, OperatorSession, SlotAttach, SlotSurface,
+    Targets,
+};
 
 /// Scatter / mainland hop only on a cold world, not after a `lostCon`
 /// reconnect (that would tele the re-handshaked slot on every DC).
@@ -862,6 +866,20 @@ impl WalkSendState {
         }
     }
 }
+struct PanelPreferenceMember {
+    path: Vec<String>,
+    value: Option<serde_json::Value>,
+}
+
+struct PanelPreferenceWrite {
+    update: Update,
+    members: Vec<PanelPreferenceMember>,
+}
+
+enum StartupFocus {
+    Restore,
+    SavedProfile(String),
+}
 
 /// What a refusal on the banner waits for: the action that supplies it
 /// clears the message at once ([`Session::clear_resolved_error`]).
@@ -923,9 +941,26 @@ pub struct Session {
     /// local-state service this session opened: the one handle every reader
     /// and writer of the panel's preferences goes through.
     pub(crate) preferences: UiPreferences,
+    /// Whether the process writer has published the first readable cache.
+    preferences_ready: bool,
+    /// Automatic unlock or saved-profile focus deferred until the first
+    /// preference cache is adopted. Repeated requests coalesce.
+    startup_focus_pending: Option<StartupFocus>,
+    /// Service-owned writes remain watched by the panel even when the
+    /// settings surface that submitted them is closed.
+    panel_preference_writes: Vec<PanelPreferenceWrite>,
+    /// Latest panel edits kept over a cold-to-ready cache adoption.
+    pending_panel_members: HashMap<Vec<String>, Option<serde_json::Value>>,
+    /// Shared Nav values changed by an accepted command but not yet durable.
+    pending_nav_members: HashMap<&'static str, bool>,
+    /// A failed write remains visible until a later write to that member
+    /// succeeds.
+    preference_write_error: Option<(Vec<String>, String)>,
     /// Shared Quester Paths settings and reload lifecycle.
     pub(crate) quester_paths: frontend_core::QuesterPathsController,
     pub(crate) quester_paths_folder_edit: String,
+    /// Preserve uncommitted text while the durable controller is adopted.
+    pub(crate) quester_paths_folder_dirty: bool,
     /// Separate Fleet window open.
     pub fleet_open: bool,
     /// The one fleet model (rows, marks, filter, order) the Fleet window,
@@ -1362,15 +1397,111 @@ impl frontend_core::frames::FrameHook for PanelFrameHook {
     }
 }
 
-fn apply_walk_permissions_to_nav(nav: &mut NavSettings, view: frontend_core::WalkGlobalsView) {
+fn apply_walk_permissions_to_nav(
+    nav: &mut NavSettings,
+    view: frontend_core::WalkGlobalsView,
+    pending: &mut HashMap<&'static str, bool>,
+) {
     let globals = view.globals();
-    nav.allow_teleports = globals.allow_teleports();
-    nav.allow_wilderness = globals.allow_wilderness();
-    nav.allow_bank_fetch = globals.allow_bank_fetch();
-    nav.allow_danger_zones = globals.allow_danger_zones();
-    nav.survivable_routing = globals.survivable_routing();
-    nav.script_scope_notice_ack = view.script_scope_notice_ack();
-    nav.survivable_routing_notice_ack = view.survivable_routing_notice_ack();
+    apply_walk_permission(nav, "allow_teleports", globals.allow_teleports(), pending);
+    apply_walk_permission(nav, "allow_wilderness", globals.allow_wilderness(), pending);
+    apply_walk_permission(nav, "allow_bank_fetch", globals.allow_bank_fetch(), pending);
+    apply_walk_permission(
+        nav,
+        "allow_danger_zones",
+        globals.allow_danger_zones(),
+        pending,
+    );
+    apply_walk_permission(
+        nav,
+        "survivable_routing",
+        globals.survivable_routing(),
+        pending,
+    );
+    apply_walk_permission(
+        nav,
+        "script_scope_notice_ack",
+        view.script_scope_notice_ack(),
+        pending,
+    );
+    apply_walk_permission(
+        nav,
+        "survivable_routing_notice_ack",
+        view.survivable_routing_notice_ack(),
+        pending,
+    );
+}
+
+fn apply_walk_permission(
+    nav: &mut NavSettings,
+    key: &'static str,
+    durable: bool,
+    pending: &mut HashMap<&'static str, bool>,
+) {
+    let value = match pending.get(key).copied() {
+        Some(value) if value == durable => {
+            pending.remove(key);
+            durable
+        }
+        Some(value) => value,
+        None => durable,
+    };
+    *nav_member_mut(nav, key) = value;
+}
+
+fn nav_member_mut<'a>(nav: &'a mut NavSettings, key: &'static str) -> &'a mut bool {
+    match key {
+        "allow_teleports" => &mut nav.allow_teleports,
+        "allow_wilderness" => &mut nav.allow_wilderness,
+        "allow_bank_fetch" => &mut nav.allow_bank_fetch,
+        "allow_danger_zones" => &mut nav.allow_danger_zones,
+        "survivable_routing" => &mut nav.survivable_routing,
+        "script_scope_notice_ack" => &mut nav.script_scope_notice_ack,
+        "survivable_routing_notice_ack" => &mut nav.survivable_routing_notice_ack,
+        _ => unreachable!("only shared Nav members are refreshed"),
+    }
+}
+
+fn apply_pending_nav_members(nav: &mut NavSettings, pending: &HashMap<&'static str, bool>) {
+    for (key, value) in pending {
+        match *key {
+            "allow_teleports" => nav.allow_teleports = *value,
+            "allow_wilderness" => nav.allow_wilderness = *value,
+            "allow_bank_fetch" => nav.allow_bank_fetch = *value,
+            "allow_danger_zones" => nav.allow_danger_zones = *value,
+            "survivable_routing" => nav.survivable_routing = *value,
+            "script_scope_notice_ack" => nav.script_scope_notice_ack = *value,
+            "survivable_routing_notice_ack" => nav.survivable_routing_notice_ack = *value,
+            "show_special_areas" => nav.show_special_areas = *value,
+            "pause_script_on_manual_walk_abort" => {
+                nav.pause_script_on_manual_walk_abort = *value;
+            }
+            _ => unreachable!("only shared Nav members are retained"),
+        }
+    }
+}
+
+fn json_member_matches(
+    document: &serde_json::Map<String, serde_json::Value>,
+    path: &[String],
+    expected: &Option<serde_json::Value>,
+) -> bool {
+    let mut object = document;
+    let mut value = None;
+    for (index, key) in path.iter().enumerate() {
+        value = object.get(key);
+        if index + 1 < path.len() {
+            let Some(next) = value.and_then(serde_json::Value::as_object) else {
+                return expected.is_none();
+            };
+            object = next;
+        }
+    }
+    match (value, expected) {
+        (None, None) => true,
+        (Some(value), Some(expected)) => value == expected,
+        _ => false,
+    }
 }
 
 #[cfg(test)]
@@ -1406,6 +1537,7 @@ impl Session {
         let preferences = core
             .preferences()
             .expect("the session's local state was bound just now");
+        let preferences_ready = preferences.ready();
         let mut ui = crate::ui_state::load(&preferences);
         let walk_permissions = core.adopt_operator_preferences();
         let mut quester_paths = frontend_core::QuesterPathsController::default();
@@ -1415,7 +1547,8 @@ impl Session {
             .folder()
             .to_string_lossy()
             .into_owned();
-        apply_walk_permissions_to_nav(&mut ui.nav, walk_permissions);
+        let mut pending_nav_members = HashMap::new();
+        apply_walk_permissions_to_nav(&mut ui.nav, walk_permissions, &mut pending_nav_members);
         let capture_pref = ui.capture;
         let (sidecar_50_pref, focused_50_pref) = (ui.sidecar_50, ui.focused_50);
         let map_desk = frontend_core::MapDesk::new(ui.map_bake);
@@ -1479,8 +1612,15 @@ impl Session {
             route_through_zones: false,
             walk_permissions,
             preferences,
+            preferences_ready,
+            startup_focus_pending: None,
+            panel_preference_writes: Vec::new(),
+            pending_panel_members: HashMap::new(),
+            pending_nav_members,
+            preference_write_error: None,
             quester_paths,
             quester_paths_folder_edit,
+            quester_paths_folder_dirty: false,
             map_desk,
             map_model: frontend_core::walk_map::WalkMap::new(),
             map_catalogue: None,
@@ -1562,12 +1702,244 @@ impl Session {
 
     /// Refresh the durable policy before rendering or admitting a manual walk.
     pub(crate) fn refresh_walk_permissions(&mut self) {
-        // Cheap per frame: the preferences re-read their file at most once a
-        // second and answer from what they hold otherwise.
+        self.adopt_panel_preferences_if_ready();
         self.walk_permissions = self.core.refresh_walk_globals();
-        let view = self.walk_permissions;
-        apply_walk_permissions_to_nav(&mut self.ui.nav, view);
-        self.route_through_zones = view.danger_this_walk(self.route_through_zones);
+        apply_walk_permissions_to_nav(
+            &mut self.ui.nav,
+            self.walk_permissions,
+            &mut self.pending_nav_members,
+        );
+        self.route_through_zones = self
+            .walk_permissions
+            .danger_this_walk(self.route_through_zones);
+    }
+
+    /// Poll accepted panel writes and adopt the first cached snapshot.
+    pub(crate) fn poll_panel_preferences(&mut self) {
+        let mut index = 0;
+        while index < self.panel_preference_writes.len() {
+            let outcome = match &mut self.panel_preference_writes[index].update {
+                Update::Durable => Some(Ok(())),
+                Update::Queued(update) => update.poll(),
+            };
+            let Some(outcome) = outcome else {
+                index += 1;
+                continue;
+            };
+            let write = self.panel_preference_writes.swap_remove(index);
+            match outcome {
+                Ok(()) => self.clear_succeeded_panel_members(&write.members),
+                Err(error) => {
+                    self.set_preference_write_error(write.members.first(), error.to_string())
+                }
+            }
+        }
+
+        if let Ok(document) = self.preferences.document() {
+            self.clear_cached_panel_members(&document);
+            self.clear_cached_nav_members(&document);
+            self.adopt_panel_preferences(&document);
+        }
+    }
+
+    pub(crate) fn panel_preferences_ready(&self) -> bool {
+        self.preferences_ready
+    }
+
+    #[cfg(test)]
+    pub(crate) fn panel_preference_writes_pending(&self) -> usize {
+        self.panel_preference_writes.len()
+    }
+
+    /// Whether a core-owned or panel-owned preference write is still pending.
+    pub(crate) fn preferences_pending(&self) -> bool {
+        self.core.preferences_pending() || !self.panel_preference_writes.is_empty()
+    }
+
+    pub(crate) fn panel_preference_write_error(&self) -> Option<&str> {
+        self.preference_write_error
+            .as_ref()
+            .map(|(_, message)| message.as_str())
+    }
+
+    /// Submit one exact panel-owned preference member without waiting.
+    pub(crate) fn persist_panel_member(
+        &mut self,
+        path: &[&str],
+        value: Option<serde_json::Value>,
+    ) -> Result<(), String> {
+        if !self.persist_ui {
+            return Ok(());
+        }
+        let member = PanelPreferenceMember {
+            path: path.iter().map(|part| (*part).to_owned()).collect(),
+            value: value.clone(),
+        };
+        self.pending_panel_members
+            .insert(member.path.clone(), value.clone());
+        let patch = match PreferencePatch::member(path, value) {
+            Ok(patch) => patch,
+            Err(error) => {
+                let message = error.to_string();
+                self.set_preference_write_error(Some(&member), message.clone());
+                return Err(message);
+            }
+        };
+        if patch.is_empty() {
+            self.pending_panel_members.remove(&member.path);
+            return Ok(());
+        }
+        match self.preferences.begin_patch(patch) {
+            Ok(Update::Durable) => {
+                self.clear_succeeded_panel_members(&[member]);
+                Ok(())
+            }
+            Ok(update @ Update::Queued(_)) => {
+                self.panel_preference_writes.push(PanelPreferenceWrite {
+                    update,
+                    members: vec![member],
+                });
+                Ok(())
+            }
+            Err(error) => {
+                let message = error.to_string();
+                self.set_preference_write_error(Some(&member), message.clone());
+                Err(message)
+            }
+        }
+    }
+    pub(crate) fn persist_panel_serializable<T: serde::Serialize + ?Sized>(
+        &mut self,
+        path: &[&str],
+        value: &T,
+    ) -> Result<(), String> {
+        match serde_json::to_value(value) {
+            Ok(value) => self.persist_panel_member(path, Some(value)),
+            Err(error) => {
+                let member = PanelPreferenceMember {
+                    path: path.iter().map(|part| (*part).to_owned()).collect(),
+                    value: None,
+                };
+                let message = error.to_string();
+                self.set_preference_write_error(Some(&member), message.clone());
+                Err(message)
+            }
+        }
+    }
+
+    /// Retain a shared Nav command's value over refreshes until its durable
+    /// view catches up. The panel does not save these core-owned members.
+    pub(crate) fn remember_nav_preference(&mut self, key: &'static str, value: bool) {
+        self.pending_nav_members.insert(key, value);
+    }
+
+    fn adopt_panel_preferences_if_ready(&mut self) {
+        if self.preferences_ready {
+            return;
+        }
+        let Ok(document) = self.preferences.document() else {
+            return;
+        };
+        self.adopt_panel_preferences(&document);
+    }
+
+    fn adopt_panel_preferences(&mut self, document: &serde_json::Map<String, serde_json::Value>) {
+        if self.preferences_ready {
+            return;
+        }
+        self.ui = crate::ui_state::apply_pending_members(
+            crate::ui_state::load_snapshot(document),
+            &self.pending_panel_members,
+        );
+        apply_pending_nav_members(&mut self.ui.nav, &self.pending_nav_members);
+        self.preferences_ready = true;
+
+        let preserve_folder_draft = self.quester_paths_folder_dirty;
+        self.quester_paths.restore(&self.preferences);
+        if !preserve_folder_draft {
+            self.quester_paths_folder_edit = self
+                .quester_paths
+                .settings()
+                .folder()
+                .to_string_lossy()
+                .into_owned();
+        }
+        self.draw = frontend_core::DrawPolicy::restore(&self.preferences, self.persist_ui);
+        {
+            let mut focus = self
+                .focus
+                .lock()
+                .expect("panel focus mutex is not poisoned");
+            focus.capture = self.draw.capture();
+            focus.sidecar_50 = self.draw.sidecar_50();
+            focus.focused_50 = self.draw.focused_50();
+        }
+        self.ui.capture = self.draw.capture();
+        self.ui.sidecar_50 = self.draw.sidecar_50();
+        self.ui.focused_50 = self.draw.focused_50();
+        self.map_desk
+            .adopt_bake_choice(frontend_core::load_map_bake_choice(&self.preferences));
+        self.script_load_dir =
+            crate::script_picker::default_load_browse_dir(self.ui.script_load_last_dir.as_deref());
+        self.rs2b0t_catalog_dir = crate::script_picker::default_load_browse_dir(
+            self.ui.script_catalog_last_dir.as_deref(),
+        );
+        crate::log_pane::apply_session_log_pref(self);
+
+        self.clear_cached_panel_members(document);
+        self.clear_cached_nav_members(document);
+        if let Some(focus) = self.startup_focus_pending.take() {
+            self.apply_startup_focus(focus);
+        }
+    }
+
+    fn clear_succeeded_panel_members(&mut self, members: &[PanelPreferenceMember]) {
+        for member in members {
+            if self.pending_panel_members.get(&member.path) == Some(&member.value) {
+                self.pending_panel_members.remove(&member.path);
+            }
+            if self
+                .preference_write_error
+                .as_ref()
+                .is_some_and(|(path, _)| path == &member.path)
+            {
+                self.preference_write_error = None;
+            }
+        }
+    }
+
+    fn set_preference_write_error(
+        &mut self,
+        member: Option<&PanelPreferenceMember>,
+        error: String,
+    ) {
+        let path = member.map_or_else(Vec::new, |member| member.path.clone());
+        self.preference_write_error = Some((path, format!("Preferences not saved: {error}")));
+    }
+
+    fn clear_cached_panel_members(
+        &mut self,
+        document: &serde_json::Map<String, serde_json::Value>,
+    ) {
+        self.pending_panel_members
+            .retain(|path, value| !json_member_matches(document, path, value));
+    }
+
+    fn clear_cached_nav_members(&mut self, document: &serde_json::Map<String, serde_json::Value>) {
+        for key in ["show_special_areas", "pause_script_on_manual_walk_abort"] {
+            let stored = document
+                .get("nav")
+                .and_then(serde_json::Value::as_object)
+                .and_then(|nav| nav.get(key))
+                .and_then(serde_json::Value::as_bool);
+            if self
+                .pending_nav_members
+                .get(key)
+                .is_some_and(|pending| Some(*pending) == stored)
+            {
+                self.pending_nav_members.remove(key);
+            }
+        }
     }
 
     /// Enable full-core proof only for the dedicated catalog_watch entry.
@@ -1769,7 +2141,7 @@ impl Session {
         }
         self.ui.server_revision = revision;
         self.launcher.bump_generation();
-        crate::ui_state::save(&self.preferences, &self.ui);
+        let _ = self.persist_panel_serializable(&["server_revision"], &revision);
         Ok(())
     }
 
@@ -1827,7 +2199,7 @@ impl Session {
     /// parked until selected (select keeps a slot once it has run).
     pub fn unlock_at(&mut self, path: &Path, pass: &str) -> bool {
         if self.start_vault(path, pass) {
-            self.focus_first_profile();
+            self.focus_when_ready(StartupFocus::Restore);
             true
         } else {
             false
@@ -2385,14 +2757,27 @@ impl Session {
         Ok(())
     }
 
-    /// After unlock/`spawn_all`: restore `last_focus` when it is still a
-    /// vault/slot name; otherwise focus the first so the combo and renderer
-    /// are not stuck on `None`. Mode-aware like a chooser row pick: with
-    /// MultiBox already on, the profile joins the rail ([`Self::load`]).
+    /// Automatic profile loads share the initial preference-readiness gate.
+    fn focus_when_ready(&mut self, focus: StartupFocus) {
+        if self.preferences_ready {
+            self.apply_startup_focus(focus);
+        } else {
+            self.startup_focus_pending = Some(focus);
+        }
+    }
+
+    fn apply_startup_focus(&mut self, focus: StartupFocus) {
+        match focus {
+            StartupFocus::Restore => self.focus_first_profile(),
+            StartupFocus::SavedProfile(name) => self.select(&name),
+        }
+    }
+
+    /// Restore the saved focus when it still exists, or use the first profile.
+    /// MultiBox restores it onto the rail through the usual chooser path.
     fn focus_first_profile(&mut self) {
         let names = self.profile_names();
-        let last = crate::ui_state::load(&self.preferences).last_focus;
-        if let Some(name) = frontend_core::pick_focus(&names, last.as_deref()) {
+        if let Some(name) = frontend_core::pick_focus(&names, self.ui.last_focus.as_deref()) {
             self.pick_profile(&name);
         }
     }
@@ -2979,11 +3364,10 @@ impl Session {
 
     fn apply_focus(&mut self, name: &str) {
         if self.persist_ui {
-            // Reload so an injected/disk collapsed map is not clobbered.
-            let mut ui = crate::ui_state::load(&self.preferences);
-            ui.last_focus = Some(name.to_string());
-            crate::ui_state::save(&self.preferences, &ui);
-            self.ui = ui;
+            let focus = name.to_string();
+            self.ui.last_focus = Some(focus.clone());
+            let _ =
+                self.persist_panel_member(&["last_focus"], Some(serde_json::Value::String(focus)));
         }
         // The core owns the selection (and mirrors it onto the play, waking
         // the outgoing and incoming slots); `focus.focused` is the render
@@ -3424,14 +3808,14 @@ impl Session {
     }
 
     fn persist_game_render_prefs(&mut self) {
+        let raster = self.ui.raster;
         if self.persist_ui {
-            crate::ui_state::save(&self.preferences, &self.ui);
+            let _ = self.persist_panel_serializable(&["raster"], &raster);
         }
         let Some(name) = self.focused_name() else {
             return;
         };
-        if let Err(e) = self.submit_profile_write(OperatorCommand::SetRaster(self.ui.raster), &name)
-        {
+        if let Err(e) = self.submit_profile_write(OperatorCommand::SetRaster(raster), &name) {
             self.error = Some(e);
         }
     }
@@ -3459,9 +3843,7 @@ impl Session {
 
     pub fn set_focused_lowmem(&mut self, lowmem: bool) -> bool {
         self.ui.lowmem = lowmem;
-        if self.persist_ui {
-            crate::ui_state::save(&self.preferences, &self.ui);
-        }
+        let _ = self.persist_panel_member(&["lowmem"], Some(serde_json::Value::Bool(lowmem)));
         self.error = None;
         let Some(name) = self.focused_name() else {
             return true;
@@ -4406,7 +4788,18 @@ impl Session {
         } else {
             self.quester_paths.settings().folder().to_path_buf()
         };
-        self.persist_quester_paths(frontend_core::QuesterPathsView::new(enabled, folder))
+        let result =
+            self.persist_quester_paths(frontend_core::QuesterPathsView::new(enabled, folder));
+        if result.is_ok() && folder_committed {
+            self.quester_paths_folder_dirty = false;
+            self.quester_paths_folder_edit = self
+                .quester_paths
+                .settings()
+                .folder()
+                .to_string_lossy()
+                .into_owned();
+        }
+        result
     }
 
     pub(crate) fn persist_quester_paths(
@@ -4422,7 +4815,7 @@ impl Session {
             },
             None => Err(self.error.clone().unwrap_or_default()),
         };
-        if result.is_ok() {
+        if result.is_ok() && !self.quester_paths_folder_dirty {
             self.quester_paths_folder_edit = self
                 .quester_paths
                 .settings()

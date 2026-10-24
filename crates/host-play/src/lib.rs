@@ -176,8 +176,7 @@ use play_wires::dispatch_wires;
 pub use play_wires::{CheatRefusal, WireCmd};
 pub use resource_view::{
     background_bot_count, background_bots_ack_error, background_bots_acked,
-    begin_persist_background_bots_ack, clear_background_bots_ack_error,
-    persist_background_bots_ack, LiveSlot,
+    begin_persist_background_bots_ack, clear_background_bots_ack_error, LiveSlot,
 };
 pub use rss::{count_tcp_to, current_resident_bytes, parse_lsof_established, sample_process};
 pub use scatter::{scatter_tile_for, tele_args};
@@ -332,8 +331,7 @@ impl Play {
         *self.walk_globals.lock().unwrap() = globals;
     }
 
-    /// Bind the shared preferences every admission reads the globals from,
-    /// so a write by either frontend (or a peer process) applies.
+    /// Bind the cached preferences view shared by every walk admission.
     pub fn set_walk_globals_store(&mut self, preferences: local_state::Preferences) {
         for bot in self.navs.lock().unwrap().values_mut() {
             bot.walk_globals_store = Some(preferences.clone());
@@ -341,11 +339,14 @@ impl Play {
         self.walk_globals_store = Some(preferences);
     }
 
+    /// Return the cached worker-built walk preferences, or fail closed if cold or refused.
     pub fn walk_globals(&self) -> WalkGlobals {
         self.walk_globals_store.as_ref().map_or_else(
             || *self.walk_globals.lock().unwrap(),
             |preferences| {
-                WalkGlobals::read(preferences).unwrap_or_else(|_| WalkGlobals::fail_closed())
+                preferences
+                    .walk_globals()
+                    .unwrap_or_else(|_| WalkGlobals::fail_closed())
             },
         )
     }

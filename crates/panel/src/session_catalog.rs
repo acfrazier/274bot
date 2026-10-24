@@ -262,10 +262,8 @@ impl Session {
             );
         }
         if let Some(parent) = path.parent() {
+            let _ = self.persist_panel_serializable(&["script_load_last_dir"], parent);
             self.ui.script_load_last_dir = Some(parent.to_path_buf());
-            if self.persist_ui {
-                crate::ui_state::save(&self.preferences, &self.ui);
-            }
         }
         self.script_load_open = false;
     }

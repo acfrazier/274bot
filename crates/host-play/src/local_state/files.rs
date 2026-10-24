@@ -38,8 +38,10 @@ use std::collections::{HashMap, HashSet};
 use std::fs::{File, OpenOptions, TryLockError};
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use crate::walk_permissions::WalkGlobals;
 use api::bank_memory::{HintRowsError, MAX_HINT_ROWS};
 use api::identity::DurableTimestamp;
 use api::loadout::{parse_loadout, Loadout};
@@ -51,7 +53,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 use vault::read_private_file;
-
 /// The explicit state root, `<home>/.274bot`, resolved once by the
 /// composition root and handed to the service. Nothing below it is
 /// discovered: the service derives every path from this root and a
@@ -217,11 +218,92 @@ pub(super) enum Rewrite {
     Refused { unreadable: usize, lossy: usize },
 }
 
+/// The worker-owned preference projections used by cache-only readers.
+#[derive(Debug, Clone)]
+pub(super) struct PreferenceProjection {
+    pub(super) document: Arc<Map<String, Value>>,
+    pub(super) walk_globals: Result<WalkGlobals, Arc<str>>,
+}
+
+impl Default for PreferenceProjection {
+    fn default() -> Self {
+        Self {
+            document: Arc::default(),
+            walk_globals: Ok(WalkGlobals::default()),
+        }
+    }
+}
+
+pub(super) fn project_preferences(document: Map<String, Value>) -> PreferenceProjection {
+    let walk_globals = match document.get("nav") {
+        Some(value) => project_walk_globals(value).map_err(Arc::<str>::from),
+        None => Ok(WalkGlobals::default()),
+    };
+    PreferenceProjection {
+        document: Arc::new(document),
+        walk_globals,
+    }
+}
+
+fn project_walk_globals(value: &Value) -> Result<WalkGlobals, &'static str> {
+    let Some(nav) = value.as_object() else {
+        return Err("nav preferences must be an object");
+    };
+    let defaults = WalkGlobals::default();
+    Ok(WalkGlobals {
+        allow_teleports: walk_boolean(
+            nav,
+            "allow_teleports",
+            defaults.allow_teleports,
+            "nav.allow_teleports must be a boolean",
+        )?,
+        allow_wilderness: walk_boolean(
+            nav,
+            "allow_wilderness",
+            defaults.allow_wilderness,
+            "nav.allow_wilderness must be a boolean",
+        )?,
+        allow_bank_fetch: walk_boolean(
+            nav,
+            "allow_bank_fetch",
+            defaults.allow_bank_fetch,
+            "nav.allow_bank_fetch must be a boolean",
+        )?,
+        allow_danger_zones: walk_boolean(
+            nav,
+            "allow_danger_zones",
+            defaults.allow_danger_zones,
+            "nav.allow_danger_zones must be a boolean",
+        )?,
+        survivable_routing: walk_boolean(
+            nav,
+            "survivable_routing",
+            defaults.survivable_routing,
+            "nav.survivable_routing must be a boolean",
+        )?,
+    })
+}
+
+fn walk_boolean(
+    nav: &Map<String, Value>,
+    key: &str,
+    default: bool,
+    error: &'static str,
+) -> Result<bool, &'static str> {
+    match nav.get(key) {
+        None => Ok(default),
+        Some(Value::Bool(value)) => Ok(*value),
+        Some(_) => Err(error),
+    }
+}
+
 /// What a read found.
 #[derive(Debug)]
 pub(super) struct ReadDocument {
     /// The rows, under the domain's row contract.
     pub(super) snapshot: LeaseSnapshot,
+    /// The preference document and typed walk view, if this is Preferences.
+    pub(super) preferences: Option<PreferenceProjection>,
     /// When the rows were observed: the hint's own stamp, or `read_at`
     /// for the operator files (which carry none).
     pub(super) at: DurableTimestamp,
@@ -351,6 +433,7 @@ pub(super) fn read(
             let written_len = loadouts_bytes(&rows)?.len();
             Ok(Some(ReadDocument {
                 snapshot: LeaseSnapshot::loadouts(rows),
+                preferences: None,
                 at: read_at,
                 digest,
                 written_len,
@@ -361,9 +444,11 @@ pub(super) fn read(
             let Value::Object(document) = serde_json::from_str(&raw)? else {
                 return Err(ReadError::NotAnObject);
             };
-            let (rows, unrepresentable) = preference_rows(&document);
+            let projection = project_preferences(document);
+            let (rows, unrepresentable) = preference_rows(&projection.document);
             Ok(Some(ReadDocument {
                 snapshot: LeaseSnapshot::preferences(rows),
+                preferences: Some(projection),
                 at: read_at,
                 digest,
                 written_len: raw.len(),
@@ -423,6 +508,7 @@ pub(super) fn read(
             }
             Ok(Some(ReadDocument {
                 snapshot: LeaseSnapshot::bank_hints(document.rows)?,
+                preferences: None,
                 at: DurableTimestamp::from_unix_seconds(document.observed_at_unix),
                 digest,
                 written_len: raw.len(),

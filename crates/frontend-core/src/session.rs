@@ -685,6 +685,9 @@ pub struct OperatorSession<Io> {
     /// opened; every `Play` this session adopts uses it, so the process has
     /// one writer for its state files.
     local_state: Option<Arc<host_play::local_state::LocalStateService>>,
+    preferences_adopted: bool,
+    preference_error: Option<String>,
+    initial_preference_failure: Option<crate::prefs::PreferenceError>,
     /// Process-lifetime single-instance lock (or an explicit skip).
     _instance: InstancePermit,
     /// Shared host-capacity warning; both front ends read [`Self::capacity_notice`].
@@ -792,6 +795,9 @@ impl<Io> OperatorSession<Io> {
             walk_globals: crate::walk_permissions::WalkGlobals::default(),
             walk_globals_store: None,
             local_state: None,
+            preferences_adopted: false,
+            preference_error: None,
+            initial_preference_failure: None,
             _instance: instance,
             capacity: None,
             capacity_kind: CapacityKind::Clear,
@@ -983,6 +989,9 @@ impl<Io> OperatorSession<Io> {
     /// each `Play`, so slots and forms write through one service.
     pub fn bind_local_state(&mut self, service: Arc<host_play::local_state::LocalStateService>) {
         self.local_state = Some(service);
+        self.preferences_adopted = false;
+        self.preference_error = None;
+        self.initial_preference_failure = None;
     }
 
     /// Open the process local-state service over the operator's state
@@ -1000,6 +1009,35 @@ impl<Io> OperatorSession<Io> {
         self.local_state
             .as_ref()
             .map(|service| crate::prefs::UiPreferences::new(service.preferences()))
+    }
+
+    /// The retained startup or quiet-save preference error, if one occurred.
+    pub fn preference_error(&self) -> Option<&str> {
+        self.preference_error.as_deref()
+    }
+
+    fn poll_initial_preferences(&mut self) {
+        if self.preferences_adopted {
+            return;
+        }
+        let Some(preferences) = self.preferences() else {
+            return;
+        };
+        match preferences.document() {
+            Ok(_) => {
+                if self.initial_preference_failure.take().is_some() {
+                    self.preference_error = None;
+                }
+                self.adopt_operator_preferences();
+            }
+            Err(error) if error.is_not_ready() => {}
+            Err(error) => {
+                if self.initial_preference_failure.as_ref() != Some(&error) {
+                    self.preference_error = Some(error.to_string());
+                    self.initial_preference_failure = Some(error);
+                }
+            }
+        }
     }
 
     /// The process local-state service bound at startup, if any.
@@ -1442,7 +1480,7 @@ impl<Io> OperatorSession<Io> {
                 self.durable_order.assign_from(&self.profile_order);
             }
             Ok(host_play::local_state::Update::Queued(queued)) => self.order_writes.push(queued),
-            Err(error) => order_write_failed(&error),
+            Err(error) => self.retain_order_write_error(&error),
         }
     }
 
@@ -1455,11 +1493,16 @@ impl<Io> OperatorSession<Io> {
                 Some(outcome) => {
                     self.order_writes.swap_remove(index);
                     if let Err(error) = outcome {
-                        order_write_failed(&error);
+                        self.retain_order_write_error(&error);
                     }
                 }
             }
         }
+    }
+
+    fn retain_order_write_error(&mut self, error: &crate::prefs::PreferenceError) {
+        order_write_failed(error);
+        self.preference_error = Some(format!("profile order: {error}"));
     }
 
     /// Live slots other than the selected one.
@@ -2307,6 +2350,7 @@ impl<Io> OperatorSession<Io> {
     }
 
     fn poll_host_at(&mut self, now: Instant) {
+        self.poll_initial_preferences();
         // The saved Load order follows the vault before anything reads it
         // (both halves of a split poll reach here).
         self.reconcile_profile_order();
@@ -3855,7 +3899,7 @@ fn record_transitions(
 }
 
 /// Log a saved Load order write that failed outside a command.
-fn order_write_failed(error: &std::io::Error) {
+fn order_write_failed(error: &crate::prefs::PreferenceError) {
     host_log!(
         Category::Lifecycle,
         Level::Warn,

@@ -1,7 +1,6 @@
 //! Permission composition and durable danger levels at host admissions.
 use std::cell::OnceCell;
 use std::collections::HashMap;
-use std::io;
 use std::sync::{Arc, Mutex};
 
 use nav_planner::router::FindOptions;
@@ -79,7 +78,7 @@ impl Default for WalkGlobals {
 }
 
 impl WalkGlobals {
-    /// Return a deny-all value for an unreadable or malformed preference file.
+    /// Return deny-all grants when the durable view is cold, unreadable, or malformed.
     pub const fn fail_closed() -> Self {
         Self {
             allow_teleports: false,
@@ -90,16 +89,14 @@ impl WalkGlobals {
         }
     }
 
-    /// Read all globals in one pass from the shared preferences, ignoring
-    /// unrelated ones. An absent file or `nav` member is a first-run
-    /// default; a refused file or a malformed `nav` is an error, so callers
-    /// can use [`Self::fail_closed`].
-    pub fn read(preferences: &super::local_state::Preferences) -> io::Result<Self> {
-        match preferences.document()?.get("nav") {
-            None => Ok(Self::default()),
-            Some(nav) => serde_json::from_value(nav.clone())
-                .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error)),
-        }
+    /// Read the worker-built cached globals without waiting for storage.
+    ///
+    /// A cold or refused preference store returns its typed error. Callers
+    /// must use [`Self::fail_closed`] when they cannot obtain a ready view.
+    pub fn read(
+        preferences: &super::local_state::Preferences,
+    ) -> Result<Self, super::local_state::PreferenceError> {
+        preferences.walk_globals()
     }
 
     /// Project the stored pair of booleans to the three-level setting.
@@ -189,9 +186,9 @@ impl WalkGlobals {
 
 pub(crate) fn globals_for(bot: Option<&super::NavBot>) -> WalkGlobals {
     match bot.and_then(|bot| bot.walk_globals_store.as_ref()) {
-        Some(preferences) => {
-            WalkGlobals::read(preferences).unwrap_or_else(|_| WalkGlobals::fail_closed())
-        }
+        Some(preferences) => preferences
+            .walk_globals()
+            .unwrap_or_else(|_| WalkGlobals::fail_closed()),
         None => bot
             .and_then(|bot| bot.walk_globals.as_ref())
             .map_or_else(WalkGlobals::default, |globals| *globals.lock().unwrap()),
@@ -214,9 +211,9 @@ pub(crate) fn log_runtime_net_gate(slot: &str, globals: WalkGlobals, logged: &mu
     }
 }
 
-/// Resolve native search options and risk policy from one durable settings read.
-/// Callback-scoped permissions override the per-bot mirror; when absent, the
-/// mirror remains the fallback. Load API Gather values come from the slot lock.
+/// Resolve native search options and risk policy from the cached durable view.
+/// Callback-scoped permissions override the per-bot mirror. Otherwise, the
+/// mirror is the fallback. Load API Gather values come from the slot lock.
 pub(crate) fn native_admission(
     navs: &Arc<Mutex<HashMap<String, super::NavBot>>>,
     name: &str,
@@ -942,6 +939,350 @@ mod tests {
         )
         .preferences()
     }
+
+    struct HeldGate {
+        release: Option<std::sync::mpsc::Sender<()>>,
+        released: bool,
+    }
+
+    impl HeldGate {
+        fn release(&mut self) {
+            if let Some(release) = self.release.take() {
+                self.released = true;
+                let _ = release.send(());
+            }
+        }
+    }
+
+    impl Drop for HeldGate {
+        fn drop(&mut self) {
+            self.release();
+        }
+    }
+
+    fn preferences_with_held_hydration(
+        scratch: &script::IsolatedEnv,
+    ) -> (
+        Arc<super::super::local_state::LocalStateService>,
+        super::super::local_state::Preferences,
+        HeldGate,
+    ) {
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        let (entered_tx, entered_rx) = mpsc::sync_channel(1);
+        let (release_tx, release_rx) = mpsc::channel();
+        let release_rx = Mutex::new(release_rx);
+        let read_stall: super::super::local_state::ReadStall = Arc::new(move || {
+            let _ = entered_tx.send(());
+            let _ = release_rx.lock().unwrap().recv();
+        });
+        let service =
+            super::super::local_state::LocalStateService::open_process_with_read_stall_for_test(
+                super::super::local_state::StateRoot::new(scratch.home.join(".274bot")),
+                read_stall,
+            );
+        let held = HeldGate {
+            release: Some(release_tx),
+            released: false,
+        };
+        entered_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("loadouts hydration is held; preferences hydration queues behind it");
+        let preferences = service.preferences();
+        (service, preferences, held)
+    }
+
+    fn completes_before_release<T: Send + 'static>(
+        held: &mut HeldGate,
+        operation: impl FnOnce() -> T + Send + 'static,
+    ) -> T {
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        let (finished_tx, finished_rx) = mpsc::sync_channel(1);
+        let worker = std::thread::spawn(move || {
+            let _ = finished_tx.send(operation());
+        });
+        // This is only a deadlock guard.
+        // The passing oracle is completion before release.
+        let result = match finished_rx.recv_timeout(Duration::from_secs(4)) {
+            Ok(result) => result,
+            Err(error) => {
+                held.release();
+                let _ = worker.join();
+                panic!("walk permission path waited for the held gate: {error}");
+            }
+        };
+        assert!(
+            !held.released,
+            "the walk permission path must finish before the held gate releases"
+        );
+        worker.join().expect("walk permission path worker panicked");
+        result
+    }
+
+    fn measured_walk_call<T>(path: &str, operation: impl FnOnce() -> T) -> T {
+        let started = std::time::Instant::now();
+        let result = operation();
+        eprintln!(
+            "walk-cache path={path} elapsed_ns={}",
+            started.elapsed().as_nanos()
+        );
+        result
+    }
+
+    fn another_bot_acquires_navs_before_release(
+        held: &mut HeldGate,
+        navs: &Arc<Mutex<HashMap<String, super::super::NavBot>>>,
+    ) {
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        let navs = Arc::clone(navs);
+        let (acquired_tx, acquired_rx) = mpsc::sync_channel(1);
+        let worker = std::thread::spawn(move || {
+            navs.lock()
+                .unwrap()
+                .insert("bob".into(), super::super::NavBot::default());
+            let _ = acquired_tx.send(());
+        });
+        match acquired_rx.recv_timeout(Duration::from_secs(5)) {
+            Ok(()) => {
+                assert!(
+                    !held.released,
+                    "another bot must acquire navs before the held gate releases"
+                );
+                worker.join().expect("navs acquisition worker panicked");
+            }
+            Err(error) => {
+                held.release();
+                let _ = worker.join();
+                panic!("another bot could not acquire navs while the gate was held: {error}");
+            }
+        }
+    }
+    #[test]
+    fn compiled_options_finishes_before_stale_readback_behind_held_write() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        let scratch = script::IsolatedEnv::enter("compiled-options-stale-write");
+        let root = super::super::local_state::StateRoot::new(scratch.home.join(".274bot"));
+        std::fs::create_dir_all(root.path()).expect("create the test preference directory");
+        let stored_walk = serde_json::json!({
+            "allow_teleports": true,
+            "allow_wilderness": true,
+            "allow_bank_fetch": true,
+            "allow_danger_zones": true,
+            "survivable_routing": false,
+        });
+        let bytes = serde_json::to_vec(&serde_json::json!({
+            "nav": stored_walk.clone(),
+        }))
+        .expect("encode known walk preferences");
+        vault::write_private_file(&root.preferences_file(), &bytes)
+            .expect("write known non-default walk preferences");
+        let service = super::super::local_state::LocalStateService::open_process(root);
+        let preferences = service.preferences();
+        preferences
+            .reload()
+            .expect("hydrate the known walk preferences");
+        let expected_globals = WalkGlobals {
+            allow_teleports: true,
+            allow_wilderness: true,
+            allow_bank_fetch: true,
+            allow_danger_zones: true,
+            survivable_routing: false,
+        };
+        assert_eq!(
+            preferences
+                .walk_globals()
+                .expect("read hydrated walk globals"),
+            expected_globals
+        );
+
+        let (entered_tx, entered_rx) = mpsc::sync_channel(1);
+        let (release_tx, release_rx) = mpsc::channel();
+        let release_rx = Mutex::new(release_rx);
+        let first = AtomicBool::new(true);
+        service.set_write_stall_for_test(Arc::new(move || {
+            if first.swap(false, Ordering::SeqCst) {
+                let _ = entered_tx.send(());
+                let _ = release_rx.lock().unwrap().recv();
+            }
+        }));
+        let super::super::local_state::Update::Queued(mut write) = preferences
+            .begin_set("held_write_marker", true.into())
+            .expect("accept the writer-stall patch")
+        else {
+            panic!("the changed marker must queue a real preference write");
+        };
+        let mut held = HeldGate {
+            release: Some(release_tx),
+            released: false,
+        };
+        entered_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("the preference writer reached the held file-write gate");
+
+        let (readback_queued_before, completed_before) =
+            service.preference_readback_state_for_test();
+        assert!(
+            !readback_queued_before,
+            "the preference lease has no pre-existing readback demand"
+        );
+        service.expire_preference_cache_for_test();
+        let navs = Arc::new(Mutex::new(HashMap::from([(
+            "alice".into(),
+            super::super::NavBot {
+                walk_globals_store: Some(preferences.clone()),
+                native_permissions: Some(WalkPermissions::default()),
+                ..Default::default()
+            },
+        )])));
+        let compiled_navs = Arc::clone(&navs);
+        let compiled = completes_before_release(&mut held, move || {
+            measured_walk_call("compiled_options-stale-write", || {
+                compiled_options(&compiled_navs, "alice", FindOptions::default())
+            })
+        });
+        assert!(compiled.allow_teleports);
+        assert!(compiled.allow_wilderness);
+        assert!(!compiled.allow_bank_fetch);
+        assert!(compiled.zones.is_all());
+        let (readback_queued_after, completed_during_write) =
+            service.preference_readback_state_for_test();
+        assert!(
+            readback_queued_after,
+            "the stale cached lease must queue a readback behind the held write"
+        );
+        assert_eq!(
+            completed_during_write, completed_before,
+            "the writer stall must prevent the queued readback from completing"
+        );
+        another_bot_acquires_navs_before_release(&mut held, &navs);
+
+        held.release();
+        assert_eq!(
+            write.wait(Duration::from_secs(5)),
+            Some(Ok(())),
+            "the held write settles after release"
+        );
+        assert!(
+            service
+                .wait_preference_readbacks_for_test(completed_before + 1, Duration::from_secs(5),),
+            "the stale readback completes after the writer is released"
+        );
+        let document = preferences
+            .document()
+            .expect("the completed readback leaves a coherent cached document");
+        assert_eq!(document["held_write_marker"], true);
+        assert_eq!(document["nav"], stored_walk);
+        assert_eq!(
+            preferences
+                .walk_globals()
+                .expect("read refreshed walk globals"),
+            expected_globals
+        );
+        let (_, completed_after) = service.preference_readback_state_for_test();
+        assert!(
+            completed_after > completed_before,
+            "a real preference readback completed after writer release"
+        );
+    }
+
+    #[test]
+    fn walk_globals_read_finishes_before_cold_hydration_release() {
+        let scratch = script::IsolatedEnv::enter("walk-globals-read-cold");
+        let (_service, preferences, mut held) = preferences_with_held_hydration(&scratch);
+        assert!(completes_before_release(&mut held, move || {
+            measured_walk_call("WalkGlobals::read", || WalkGlobals::read(&preferences))
+        })
+        .is_err());
+        held.release();
+    }
+
+    #[test]
+    fn play_walk_globals_finishes_before_cold_hydration_release() {
+        let scratch = script::IsolatedEnv::enter("play-walk-globals-cold");
+        let (_service, preferences, mut held) = preferences_with_held_hydration(&scratch);
+        let options = super::super::PlayOptions {
+            host: "127.0.0.1".into(),
+            transport: client::Transport::Tcp,
+            port: 43594,
+            cache_dir: concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../target/walk-map-empty-cache"
+            )
+            .into(),
+            lowmem: true,
+            mainland: false,
+        };
+        assert_eq!(
+            completes_before_release(&mut held, move || {
+                let mut play = super::super::Play::new(&options);
+                play.set_walk_globals_store(preferences);
+                measured_walk_call("Play::walk_globals", || play.walk_globals())
+            }),
+            WalkGlobals::fail_closed()
+        );
+        held.release();
+    }
+
+    #[test]
+    fn native_admission_finishes_before_cold_hydration_release() {
+        let scratch = script::IsolatedEnv::enter("native-admission-cold");
+        let (_service, preferences, mut held) = preferences_with_held_hydration(&scratch);
+        let navs = Arc::new(Mutex::new(HashMap::from([(
+            "alice".into(),
+            super::super::NavBot {
+                walk_globals_store: Some(preferences),
+                native_permissions: Some(WalkPermissions::default()),
+                ..Default::default()
+            },
+        )])));
+        let native_navs = Arc::clone(&navs);
+        let (native, policy, _) = completes_before_release(&mut held, move || {
+            measured_walk_call("native_admission", || {
+                native_admission(&native_navs, "alice", WalkOptions::default(), None)
+            })
+        });
+        assert_eq!(policy, RiskPolicy::Avoid);
+        assert!(!native.allow_teleports);
+        assert!(!native.allow_wilderness);
+        assert!(!native.allow_bank_fetch);
+        assert!(!native.zones.is_all());
+        another_bot_acquires_navs_before_release(&mut held, &navs);
+        held.release();
+    }
+
+    #[test]
+    fn compiled_options_finishes_before_cold_hydration_release() {
+        let scratch = script::IsolatedEnv::enter("compiled-options-cold");
+        let (_service, preferences, mut held) = preferences_with_held_hydration(&scratch);
+        let navs = Arc::new(Mutex::new(HashMap::from([(
+            "alice".into(),
+            super::super::NavBot {
+                walk_globals_store: Some(preferences),
+                native_permissions: Some(WalkPermissions::default()),
+                ..Default::default()
+            },
+        )])));
+        let compiled_navs = Arc::clone(&navs);
+        let compiled = completes_before_release(&mut held, move || {
+            measured_walk_call("compiled_options", || {
+                compiled_options(&compiled_navs, "alice", FindOptions::default())
+            })
+        });
+        assert!(!compiled.allow_teleports);
+        assert!(!compiled.allow_wilderness);
+        assert!(!compiled.allow_bank_fetch);
+        assert!(!compiled.zones.is_all());
+        another_bot_acquires_navs_before_release(&mut held, &navs);
+        held.release();
+    }
     /// Retry the globals write while it stays queued past the frontend's
     /// bounded durability wait; under machine load it settles later. The
     /// update re-reads and re-applies its merge on a conflict, so a retry
@@ -966,7 +1307,7 @@ mod tests {
     }
 
     #[test]
-    fn durable_globals_are_reread_at_native_and_manual_admissions() {
+    fn durable_globals_update_cached_native_and_manual_admissions() {
         let scratch = script::IsolatedEnv::enter("walk-globals-reread");
         let preferences = preferences(&scratch);
         let bot = super::super::NavBot {
@@ -1044,6 +1385,7 @@ mod tests {
         let scratch = script::IsolatedEnv::enter("walk-globals-round-trip");
         let preferences = preferences(&scratch);
         let path = preferences.path();
+        preferences.reload().unwrap();
 
         let defaults = WalkGlobals::default();
         assert!(!defaults.allow_teleports);

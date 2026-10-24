@@ -96,7 +96,6 @@ impl<Io> OperatorSession<Io> {
                 )),
             );
         }
-        let before = self.profile_order.snapshot();
         let changed = match op {
             crate::profile_order::ReorderOp::Move { moving, to } => {
                 let (target, after) = match to {
@@ -133,7 +132,7 @@ impl<Io> OperatorSession<Io> {
         self.profiles_generation = self.profiles_generation.wrapping_add(1);
         self.order_reconciled_at = Some(self.profiles_generation);
         self.sort_members_by_order();
-        self.write_profile_order(request, &before)
+        self.write_profile_order(request)
     }
 
     pub(super) fn fleet_row<S: SlotSurface<Io = Io>>(
