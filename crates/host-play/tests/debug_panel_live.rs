@@ -120,8 +120,9 @@ fn debug_catalog_commands_and_host_reply_log() {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_millis();
-    let prefix = std::env::var("DEBUGPANEL_PREFIX").unwrap_or_else(|_| "dbg2".into());
-    let user = format!("{prefix}{:06}", serial % 1_000_000);
+    let user = host_play::mint_live_names(1)
+        .pop()
+        .expect("one live account");
     let slot = Profile {
         username: user.clone(),
         password: "debug-fixture".into(),
