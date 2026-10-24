@@ -2,6 +2,22 @@
   "schema_version": 1,
   "seam_types": [
     {
+      "id": "seam_type|crates/frontend-core/src/bot_projection.rs|BotProjection",
+      "path": "crates/frontend-core/src/bot_projection.rs",
+      "symbol": "BotProjection",
+      "classification": "borrowed",
+      "owner": "T3",
+      "reason": "PANEL-STATE-GAP-1023: per-bot projection seam; register in the introducing commit, no allowance."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/bot_projection.rs|StopEligibility",
+      "path": "crates/frontend-core/src/bot_projection.rs",
+      "symbol": "StopEligibility",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "PANEL-STATE-GAP-1023: per-bot projection seam; register in the introducing commit, no allowance."
+    },
+    {
       "id": "seam_type|crates/frontend-core/src/bulk.rs|BulkOutcome",
       "path": "crates/frontend-core/src/bulk.rs",
       "symbol": "BulkOutcome",
@@ -48,6 +64,14 @@
       "classification": "scalar",
       "owner": "T3",
       "reason": "F0 baseline seam classification."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/error_expiry.rs|ErrorExpiry",
+      "path": "crates/frontend-core/src/error_expiry.rs",
+      "symbol": "ErrorExpiry",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "PANEL-STATE-GAP-1023: error line expiry seam; register in the introducing commit, no allowance."
     },
     {
       "id": "seam_type|crates/frontend-core/src/fleet.rs|Fleet",

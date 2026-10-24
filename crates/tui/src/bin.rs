@@ -55,8 +55,9 @@ use frontend_core::{
 #[cfg(test)]
 use host_play::{PlayOptions, SharedClientTemplate};
 
-use crate::app::{AppAction, ChatData, MapCatalogueStatus, TuiApp};
+use crate::app::{AppAction, ChatData, ErrorNeed, MapCatalogueStatus, TuiApp};
 use crate::chat::ChatAction;
+use crate::commands::Unavailable;
 use crate::loadouts::LoadoutsIntent;
 use crate::overlay::{ConfirmKind, Modal};
 use crate::profile_import::ImportAction;
@@ -364,6 +365,8 @@ pub struct TuiSession {
     core: OperatorSession<()>,
     auto_world: Option<u16>,
     pub error: Option<String>,
+    /// The banner message's expiry clock ([`Self::expire_error`]).
+    error_expiry: frontend_core::ErrorExpiry<ErrorNeed>,
     /// All profile names (for the strip's slot list), in vault order.
     names: Vec<String>,
     /// Hop a fresh slot to the mainland once in a loaded scene (the TUI's own
@@ -644,6 +647,7 @@ impl TuiSession {
             core,
             auto_world: None,
             error: None,
+            error_expiry: frontend_core::ErrorExpiry::default(),
             names: Vec::new(),
             mainland: false,
             launcher,
@@ -1819,46 +1823,57 @@ impl TuiSession {
                             .map(|(index, name, command)| (index, name.to_owned(), command))
                             .collect::<Vec<_>>();
                         for (index, name, planned_command) in planned {
-                            match planned_command {
+                            let staged = match planned_command {
                                 OperatorCommand::CreateProfile => {
-                                    if let Err(error) =
-                                        self.profile_import.stage_create_account(index)
-                                    {
-                                        app.error = Some(format!("profile import: {error}"));
-                                        break;
-                                    }
-                                    if let Err(error) = self.submit(
-                                        OperatorCommand::CreateProfile,
-                                        Targets::Application,
-                                    ) {
-                                        app.error = Some(format!("profile import: {error}"));
-                                    }
+                                    self.profile_import.stage_create_account(index)
                                 }
                                 OperatorCommand::SaveProfile => {
-                                    if let Err(error) =
-                                        self.profile_import.stage_save_account(index)
-                                    {
-                                        app.error = Some(format!("profile import: {error}"));
-                                        break;
-                                    }
-                                    if let Err(error) = self.submit(
-                                        OperatorCommand::SaveProfile,
-                                        Targets::Profile(&name),
-                                    ) {
-                                        app.error = Some(format!("profile import: {error}"));
-                                    }
+                                    self.profile_import.stage_save_account(index)
                                 }
                                 _ => {
-                                    app.error = Some(format!(
-                                        "profile import account {name} has an unsupported writer"
-                                    ));
+                                    self.refuse_command(
+                                        app,
+                                        planned_command,
+                                        &[&name],
+                                        None,
+                                        &format!(
+                                            "profile import account {name} has an unsupported writer"
+                                        ),
+                                    );
                                     break;
                                 }
+                            };
+                            if let Err(error) = staged {
+                                self.refuse_command(
+                                    app,
+                                    planned_command,
+                                    &[&name],
+                                    None,
+                                    &format!("profile import: {error}"),
+                                );
+                                break;
+                            }
+                            let targets = if planned_command == OperatorCommand::CreateProfile {
+                                Targets::Application
+                            } else {
+                                Targets::Profile(&name)
+                            };
+                            if let Err(error) = self.submit(planned_command, targets) {
+                                app.error = Some(format!("profile import: {error}"));
                             }
                             self.profile_import.cancel_staged_account(index);
                         }
                     }
-                    Err(error) => app.error = Some(format!("profile import: {error}")),
+                    // Import replans the preview against the current vault
+                    // before any account row exists; a refused replan is
+                    // refused as the preview it repeats.
+                    Err(error) => self.refuse_command(
+                        app,
+                        OperatorCommand::PreviewProfileImport,
+                        &[],
+                        None,
+                        &format!("profile import: {error}"),
+                    ),
                 }
             }
             ImportAction::Back => {
@@ -2181,7 +2196,13 @@ impl TuiSession {
     /// submit selection and Start as separate command rows.
     fn script_start(&mut self, app: &mut TuiApp, sel: &ScriptChoice) {
         let Some(name) = app.focused_name() else {
-            app.error = Some("script: no focused profile".into());
+            self.refuse_command(
+                app,
+                OperatorCommand::StartScript,
+                &[],
+                Unavailable::NoFocusedBot.need(),
+                "script: no focused profile",
+            );
             return;
         };
         self.scripts.stage_browse_pick(sel.duplicate());
@@ -2339,7 +2360,7 @@ impl TuiSession {
             let prompt = plan.prompt().to_owned();
             app.confirm(ConfirmKind::FleetPlan { action, prompt });
         } else {
-            self.run_fleet_plan(app);
+            self.run_fleet_plan(app, action);
         }
     }
 
@@ -2371,10 +2392,18 @@ impl TuiSession {
     /// targets and card decide everything: marks made or changed since
     /// the plan do not join it. The one result view reports the outcome.
     /// An Assign changes the focused bot's heading when it was a target, so
-    /// the Script pane re-reads it (a pending Browse pick stays).
-    fn run_fleet_plan(&mut self, app: &mut TuiApp) {
+    /// the Script pane re-reads it (a pending Browse pick stays). With no
+    /// plan waiting, the confirmed `action` is refused at the command
+    /// boundary.
+    fn run_fleet_plan(&mut self, app: &mut TuiApp, action: frontend_core::FleetAction) {
         let Some(plan) = self.core.fleet_plan() else {
-            app.error = Some("fleet: no plan is waiting".into());
+            self.refuse_command(
+                app,
+                OperatorCommand::PlanFleetAction(action),
+                &[],
+                None,
+                "fleet: no plan is waiting",
+            );
             return;
         };
         let command = plan.command();
@@ -2471,7 +2500,13 @@ impl TuiSession {
     /// Open the params popup over the focused profile's bag for the card.
     fn open_params(&mut self, app: &mut TuiApp) {
         let Some(profile) = app.focused_name() else {
-            app.error = Some("parameters: no focused profile".into());
+            self.refuse_command(
+                app,
+                OperatorCommand::SaveScriptSettings(frontend_core::command::CardKind::Native),
+                &[],
+                Unavailable::NoFocusedBot.need(),
+                "parameters: no focused profile",
+            );
             return;
         };
         match self.params_bag(app, &profile) {
@@ -2793,6 +2828,16 @@ impl TuiSession {
     /// saved.
     fn persist_settings(&mut self, app: &mut TuiApp) {
         let Some(name) = app.settings_profile.clone() else {
+            // The popup opened with no bot focused, so it has no profile to
+            // save the edit on; the next pump binds the bot focused later.
+            let missing = Unavailable::NoFocusedBot;
+            self.refuse_command(
+                app,
+                OperatorCommand::SetGuardian,
+                &[],
+                missing.need(),
+                &format!("settings: {}", missing.text()),
+            );
             return;
         };
         let changed_policies = self
@@ -3057,8 +3102,53 @@ impl TuiSession {
         }
     }
 
+    /// Clear the banner message once it has stood for
+    /// [`frontend_core::ERROR_MESSAGE_TIMEOUT`] with nothing resolving or
+    /// replacing it (the same rule as the panel's red line).
+    fn expire_error(&mut self, app: &mut TuiApp, now: Instant) {
+        self.error_expiry
+            .observe(&mut app.error, self.core.refusals(), now);
+    }
+
+    /// Refuse `command` before the app can submit it (nothing focused,
+    /// nothing picked). The refusal logs at the shared command boundary like
+    /// every other refused command, then shows like [`Self::show_refusal`].
+    fn refuse_command(
+        &mut self,
+        app: &mut TuiApp,
+        command: OperatorCommand,
+        bots: &[&str],
+        need: Option<ErrorNeed>,
+        reason: &str,
+    ) {
+        self.core.refuse_unsubmitted(command, bots, reason);
+        self.show_refusal(app, need, reason);
+    }
+
+    /// Show `reason` on the message line; the line clears when the action
+    /// that supplies `need` happens ([`Self::clear_resolved_error`]).
+    fn show_refusal(&mut self, app: &mut TuiApp, need: Option<ErrorNeed>, reason: &str) {
+        app.error = Some(reason.to_owned());
+        if let Some(need) = need {
+            self.error_expiry.waits_for(need, reason);
+        }
+    }
+
+    /// Clear the message line when the need it waits for now holds: the
+    /// action that resolves a message clears it at once, whichever action it
+    /// was. Called after a focus change and once per tick.
+    fn clear_resolved_error(&mut self, app: &mut TuiApp) {
+        let Some(need) = self.error_expiry.waiting_need() else {
+            return;
+        };
+        let met = need.met(app);
+        self.error_expiry.resolve(&mut app.error, |_| met);
+    }
+
     /// Copy the focused slot's views into the app and poll the runner.
     fn pump(&mut self, app: &mut TuiApp) {
+        self.expire_error(app, Instant::now());
+        self.clear_resolved_error(app);
         self.project_walk_globals(app);
         self.project_manual_walk_pause(app);
         self.project_quester_paths(app);
@@ -4331,7 +4421,23 @@ fn run_loop(mut session: TuiSession, mut app: TuiApp) -> Result<i32, String> {
 fn dispatch(session: &mut TuiSession, app: &mut TuiApp, action: AppAction) {
     match action {
         AppAction::Quit => session.quit(app),
-        AppAction::Focus(name) => session.focus(&name),
+        AppAction::Refused(refusal) => {
+            let bot = refusal.bot.as_deref();
+            match refusal.command {
+                Some(command) => session.refuse_command(
+                    app,
+                    command,
+                    bot.as_slice(),
+                    refusal.need,
+                    &refusal.reason,
+                ),
+                None => session.show_refusal(app, refusal.need, &refusal.reason),
+            }
+        }
+        AppAction::Focus(name) => {
+            session.focus(&name);
+            session.clear_resolved_error(app);
+        }
         AppAction::MapOpen => {
             session.bind_map_context(app);
             session.open_map_catalogue(app);
@@ -4402,7 +4508,7 @@ fn dispatch(session: &mut TuiSession, app: &mut TuiApp, action: AppAction) {
             frontend_core::FleetAction::SwitchWorld(world),
             profile.as_deref(),
         ),
-        AppAction::RunFleetPlan => session.run_fleet_plan(app),
+        AppAction::RunFleetPlan(action) => session.run_fleet_plan(app, action),
         AppAction::CancelFleetPlan => session.cancel_fleet_plan(app),
         AppAction::ScriptReload => session.script_reload(app),
         AppAction::ScriptReloadCancel => session.script_reload_cancel(app),

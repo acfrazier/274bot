@@ -8,11 +8,12 @@ use std::fmt::Write as _;
 use api::identity::{Cancellation, RequestId, Settlement};
 
 use super::commands::Applied;
+use crate::bot_projection::{BotProjection, StopEligibility};
 use crate::bulk::{BulkOutcome, BulkRow};
 use crate::command::{Completion, Rejection};
 use crate::fleet::CardChoice;
 use crate::fleet_plan::{FleetAction, FleetPlan, FleetResult, PlanScope, ResultCounts};
-use crate::scripts::{ScriptChoice, ScriptRunState as RunState, Scripts};
+use crate::scripts::{ScriptChoice, Scripts};
 use crate::selection::{MarkedSelection, ProfileIdentity};
 use crate::surface::SlotSurface;
 use crate::views::{FleetRow, Phase};
@@ -33,13 +34,6 @@ fn cancellation_words(cause: Cancellation) -> &'static str {
         Cancellation::ScopeInvalidated => "the session or slot it was for ended",
         Cancellation::Shutdown => "shutting down",
     }
-}
-
-fn script_active(state: RunState) -> bool {
-    matches!(
-        state,
-        RunState::Starting | RunState::Running | RunState::Paused | RunState::Stopping
-    )
 }
 
 fn write_names<'a>(text: &mut String, names: impl ExactSizeIterator<Item = &'a str>) {
@@ -544,7 +538,7 @@ impl<Io> OperatorSession<Io> {
     }
 
     /// The profile name `identity` names now, else its raw number.
-    fn name_for_identity(&self, identity: ProfileIdentity) -> String {
+    pub(super) fn name_for_identity(&self, identity: ProfileIdentity) -> String {
         self.profiles()
             .find(|profile| ProfileIdentity::uid(profile.uid()) == identity)
             .map(|profile| profile.username().to_owned())
@@ -567,9 +561,10 @@ fn classify<Io>(
     scripts: Option<&Scripts>,
     core: &OperatorSession<Io>,
 ) -> Result<bool, &'static str> {
+    let bot = BotProjection::new(row, scripts, core);
     let name = row.name();
-    let active = script_active(row.script());
-    let logged_in = row.loaded() && row.phase() == Phase::Ready;
+    let active = row.script().is_live();
+    let logged_in = bot.in_game();
     let logging_in = row.loaded()
         && matches!(
             row.phase(),
@@ -585,17 +580,11 @@ fn classify<Io>(
             }
             Ok(false)
         }
-        FleetAction::Stop => {
-            if active {
-                return Ok(true);
-            }
-            let queued = scripts.is_some_and(|scripts| scripts.start_waiting(name));
-            if queued {
-                Ok(false)
-            } else {
-                Err("no script running")
-            }
-        }
+        FleetAction::Stop => match bot.stop_eligibility() {
+            StopEligibility::Running => Ok(true),
+            StopEligibility::StartQueued => Ok(false),
+            StopEligibility::NoScript => Err(StopEligibility::REFUSAL),
+        },
         FleetAction::Assign | FleetAction::CopySettings => Ok(false),
         FleetAction::AssignRestart => Ok(active),
         FleetAction::Login => {

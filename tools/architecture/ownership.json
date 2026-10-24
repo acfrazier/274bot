@@ -451,11 +451,23 @@
       "owner": "T1"
     },
     {
+      "path": "crates/frontend-core/src/bot_projection.rs",
+      "owner": "T3"
+    },
+    {
       "path": "crates/frontend-core/src/bulk.rs",
       "owner": "T3"
     },
     {
       "path": "crates/frontend-core/src/capacity.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/frontend-core/src/error_expiry.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/frontend-core/src/error_expiry_tests.rs",
       "owner": "T3"
     },
     {
@@ -2460,6 +2472,10 @@
     },
     {
       "path": "crates/panel/src/session_tests.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/panel/src/silent_exit_tests.rs",
       "owner": "T3"
     },
     {
