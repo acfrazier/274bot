@@ -9557,7 +9557,14 @@ fn refusal_lines_naming(bot: &str) -> Vec<String> {
 /// banner at once, not only when the timeout passes.
 #[test]
 fn a_refusal_before_submission_logs_once_and_the_resolving_action_clears_it() {
-    let (mut s, _iso) = two_live_session("psg-resolve-refusal");
+    let _iso = IsolatedStores::enter("psg-resolve-refusal");
+    let mut s = Session::new();
+    s.core.set_spawn_workers(false);
+    s.core.set_play(Some(empty_play()));
+    install_vault(
+        &mut s.core,
+        VaultFixture::create(&tmp_vault("psg-resolve-refusal"), "test-passphrase-01"),
+    );
     vault_upsert(&mut s.core, profile("psg-f3-zed", "pw", 44));
     s.persist_ui = false;
     assert_eq!(s.focused_name(), None);
