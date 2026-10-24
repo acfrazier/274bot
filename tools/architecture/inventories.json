@@ -2692,10 +2692,10 @@
   ],
   "violations": [
     {
-      "id": "test_nav_implementation_import|crates/script/src/combat/guard.rs|cfg(test)::tests|nav::producer::route_view|qualified_path",
+      "id": "test_nav_implementation_import|crates/script/src/combat/guard.rs|cfg(test)::tests|nav_planner::producer::route_view|qualified_path",
       "category": "test_nav_implementation_import",
       "path": "crates/script/src/combat/guard.rs",
-      "symbol": "nav::producer::route_view",
+      "symbol": "nav_planner::producer::route_view",
       "cfg_or_target": "cfg(test)::tests",
       "owner": "T5",
       "reason": "Survival replay-versus-guard oracle borrows a synthetic route through its real owner lease; the facade has no synthetic route constructor.",
@@ -2703,10 +2703,10 @@
       "classification": "qualified_path"
     },
     {
-      "id": "test_nav_implementation_import|crates/script/src/combat/guard.rs|cfg(test)::tests|nav::router::Leg::Walk|macro_token_path",
+      "id": "test_nav_implementation_import|crates/script/src/combat/guard.rs|cfg(test)::tests|nav_planner::router::Leg::Walk|macro_token_path",
       "category": "test_nav_implementation_import",
       "path": "crates/script/src/combat/guard.rs",
-      "symbol": "nav::router::Leg::Walk",
+      "symbol": "nav_planner::router::Leg::Walk",
       "cfg_or_target": "cfg(test)::tests",
       "owner": "T5",
       "reason": "Survival replay-versus-guard oracle builds one quiet walking leg; the facade has no synthetic route constructor.",
@@ -2714,10 +2714,10 @@
       "classification": "macro_token_path"
     },
     {
-      "id": "test_nav_implementation_import|crates/script/src/combat/guard.rs|cfg(test)::tests|nav::router::Route|qualified_path",
+      "id": "test_nav_implementation_import|crates/script/src/combat/guard.rs|cfg(test)::tests|nav_planner::router::Route|qualified_path",
       "category": "test_nav_implementation_import",
       "path": "crates/script/src/combat/guard.rs",
-      "symbol": "nav::router::Route",
+      "symbol": "nav_planner::router::Route",
       "cfg_or_target": "cfg(test)::tests",
       "owner": "T5",
       "reason": "Survival replay-versus-guard oracle retains its exact synthetic route while comparing the two real decisions.",
