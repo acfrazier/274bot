@@ -6070,6 +6070,24 @@ fn brimhaven_agility_registers_fee_tags_ticket_and_subsequent_xp() {
             },
         ]
     );
+    let ticket_step = brim.steps[start + 1..]
+        .iter()
+        .find(|step| step.name == "watch a later Tag grant the first ticket")
+        .expect("ticket watch step");
+    assert_eq!(
+        ticket_step.wait.budget_ticks, BRIMHAVEN_TICKET_WATCH_TICKS,
+        "ticket watch keeps the content-derived two-period budget"
+    );
+    for step in brim.steps[start + 1..]
+        .iter()
+        .filter(|step| step.name != "watch a later Tag grant the first ticket")
+    {
+        assert_eq!(
+            step.wait.budget_ticks, SCRIPT_GOLD_WATCH_TICKS,
+            "{} keeps the ordinary gold watch",
+            step.name
+        );
+    }
     assert_eq!(
         brim.proof,
         Proof::FreshStatXpGain {
