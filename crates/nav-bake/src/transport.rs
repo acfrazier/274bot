@@ -85,10 +85,12 @@ use zanaris::*;
 #[cfg(test)]
 #[path = "transport_tests.rs"]
 mod tests;
+
 pub(crate) struct QuestSource<'a> {
     pub(crate) family: QuestFamilyId,
     pub(crate) facts: &'a api::game_data::QuestIdentityFacts,
 }
+
 pub fn derive_transports(
     content_root: &Path,
     loc_defs: &LocDefs,

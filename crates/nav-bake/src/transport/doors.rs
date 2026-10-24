@@ -1,4 +1,5 @@
 use nav_planner::movement::{cardinal_entry_mask, step_ok};
+
 use super::*;
 
 /// Door edges from `scripts/doors/configs/*.loc` plus
