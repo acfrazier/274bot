@@ -83,7 +83,12 @@ fn decode_tiles(bytes: &[u8]) -> Vec<WorldTile> {
 }
 
 fn encode_tiles(tiles: &[WorldTile]) -> Vec<u8> {
-    let mut bytes = Vec::with_capacity(tiles.len().checked_mul(12).expect("Fixture byte length fits usize"));
+    let mut bytes = Vec::with_capacity(
+        tiles
+            .len()
+            .checked_mul(12)
+            .expect("Fixture byte length fits usize"),
+    );
     for tile in tiles {
         bytes.extend_from_slice(&tile.x.to_le_bytes());
         bytes.extend_from_slice(&tile.z.to_le_bytes());
@@ -103,7 +108,12 @@ fn case_directories(root: &Path) -> Vec<PathBuf> {
     let mut paths: Vec<_> = std::fs::read_dir(root)
         .expect("The fixture directory exists")
         .map(Result::unwrap)
-        .filter(|entry| entry.file_type().expect("Fixture entry metadata is readable").is_dir())
+        .filter(|entry| {
+            entry
+                .file_type()
+                .expect("Fixture entry metadata is readable")
+                .is_dir()
+        })
         .map(|entry| entry.path())
         .collect();
     paths.sort_unstable();

@@ -2,7 +2,9 @@ use super::*;
 use crate::collision::bake_from_maps;
 use api::obj_names::LocDefs;
 use client::config::LocType;
-use nav_planner::canlight::{canlight_at, expected_header_binding, header_binding, identity_digest, policy_digest};
+use nav_planner::canlight::{
+    canlight_at, expected_header_binding, header_binding, identity_digest, policy_digest,
+};
 use std::collections::HashSet;
 use std::fs;
 use std::path::PathBuf;
