@@ -170,7 +170,7 @@ graph, derived from the manifests:
  - `script-js` → `script`, `api`, `vault` (runtime); `client` **dev-only**; `nav-planner` **dev-only** (test fixtures only; production JS code uses the Core `script` nav facade)
  - `host-play` → `api`, `client`, `host`, `script`, `script-js`, `vault`; `nav` runtime and **build**; `nav-bake` **build and dev**; `nav-executor` runtime; `scenario` **optional** (and **dev**); `script` also **dev**; `script-js` also **dev**
  - `scenario` → `api`, `client`, `nav`, `nav-executor`, `script`
- - `frontend-core` → `api`, `host`, `host-play`, `nav`, `script`, `script-js`, `vault`; `client`, `host-play`, `nav-bake`, `scenario` **dev-only**; `script-js` also **dev**
+ - `frontend-core` → `api`, `host`, `host-play`, `nav`, `script`, `script-js`, `vault`; `client`, `host-play`, `nav-bake`, `scenario` **dev-only**
  - `panel` → `api`, `client`, `frontend-core`, `host`, `host-play`, `nav`, `scenario`, `script`, `vault`; `nav-bake` **dev-only**; `frontend-core` and `host-play` also **dev**
  - `tui` → `api`, `client`, `frontend-core`, `host-play`, `nav`, `scenario`, `script`, `vault`; `host`, `nav-bake` **dev-only**; `frontend-core` and `host-play` also **dev**
  - `e2e` → `api`, `client`, `host`, `host-play`, `nav`, `nav-bake`, `scenario`, `vault`; `host-play` also **dev**
@@ -217,7 +217,7 @@ graph, derived from the manifests:
  - **`host-play` → `nav`** is both a runtime dependency and a build-dependency
    (bake/stage nav identity). Both kinds are listed.
  - **`script-js` → `client` and `script-js` → `nav-planner` are `[dev-dependencies]` only.** Production JS code uses the Core `script` nav facade. Promoting either to a normal dependency fails the checker.
- - **`host-play` → `script-js` and `frontend-core` → `script-js` are normal edges** (plus dev). The slot binds the JS surface factory from `script-js`; hosts install its cards with `script_js::install_cards()`.
+ - **`host-play` → `script-js` and `frontend-core` → `script-js` are normal edges.** `host-play` also declares a dev edge for test hooks. The slot binds the JS surface factory from `script-js`; hosts install its cards with `script_js::install_cards()`.
 
 For a new edge, kind, migration, optional-dependency activation, vendored path
 package, or checker change, follow [Changing a boundary](#changing-a-boundary).

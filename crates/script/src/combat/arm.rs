@@ -1,7 +1,5 @@
 //! Shared, allocation-free autocast arm progression for native combat and the isolate family.
 
-#[cfg(feature = "load")]
-use crate::observed::Scene;
 use crate::shim::InteractReq;
 use api::game_data::AutocastControls;
 
@@ -37,20 +35,14 @@ impl ArmObservation {
         self.ingame
     }
 
-    #[cfg(feature = "load")]
-    /// A logout forgets the session: only pages posted since login count.
-    pub(crate) fn from_scene(scene: &Scene, magic_varp: i32) -> Self {
-        let session = scene.since_login();
-        Self::new(
-            session.ingame().unwrap_or(false),
-            session.side_tab().unwrap_or(-1),
-            session.combat_tab_root().unwrap_or(-1),
-            session.varps().map_or(0, |rows| {
-                rows.iter()
-                    .find(|row| row.index == magic_varp)
-                    .map_or(0, |row| row.value)
-            }),
-        )
+    /// The posted combat-tab root for this observation.
+    pub const fn combat_tab_root(&self) -> i32 {
+        self.combat_tab_root
+    }
+
+    /// The posted autocast varp value for this observation.
+    pub const fn magic_varp_value(&self) -> i32 {
+        self.magic_varp_value
     }
 }
 

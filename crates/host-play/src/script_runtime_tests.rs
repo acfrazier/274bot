@@ -2,7 +2,7 @@ use api::snapshot::GameSnapshot;
 use client::client::{Client, ClientConfig};
 use client::config::if_type::{ButtonType, ComponentType, IfType, IfTypeMut};
 use client::io::ServerProt;
-use script::isolate_fb::decode_snapshot;
+use script_js::wire::decode_snapshot;
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -656,7 +656,7 @@ fn puzzle_move_drains_as_opheld_on_the_posted_board() {
         .unwrap()
         .start_load_with_loadouts_settled(
             PUZZLE_MOVE_V2.into(),
-            script::LoadShape::NativeTick,
+            script_js::LoadShape::NativeTick,
             vec![],
             &[],
         )
@@ -1201,7 +1201,7 @@ fn puzzle_move_rides_a_frame_with_an_active_bank_op() {
         .unwrap()
         .start_load_with_loadouts_settled(
             PUZZLE_MOVE_BESIDE_DEPOSIT_V2.into(),
-            script::LoadShape::NativeTick,
+            script_js::LoadShape::NativeTick,
             vec![],
             &[],
         )

@@ -1,13 +1,9 @@
-#[cfg(feature = "load")]
 use crate::observed::{EntityRow, ItemRow, SceneRow};
-#[cfg(feature = "load")]
 use api::snapshot::WorldTile;
-#[cfg(feature = "load")]
 use script::bank::ops::{op_index, BankRow, LocRow, NpcRow, OpLabels};
 
 /// The host posts a native action hole as an empty label in its slot, so
 /// the 1-based positions match the native row.
-#[cfg(feature = "load")]
 impl BankRow for ItemRow {
     fn id(&self) -> i32 {
         self.id
@@ -41,7 +37,6 @@ impl BankRow for ItemRow {
     }
 }
 
-#[cfg(feature = "load")]
 impl OpLabels for SceneRow {
     fn op_len(&self) -> i32 {
         i32::try_from(self.actions.len()).unwrap_or(i32::MAX)
@@ -52,7 +47,6 @@ impl OpLabels for SceneRow {
     }
 }
 
-#[cfg(feature = "load")]
 impl LocRow for SceneRow {
     fn id(&self) -> i32 {
         self.id
@@ -75,7 +69,6 @@ impl LocRow for SceneRow {
     }
 }
 
-#[cfg(feature = "load")]
 impl OpLabels for EntityRow {
     fn op_len(&self) -> i32 {
         i32::try_from(self.actions.len()).unwrap_or(i32::MAX)
@@ -86,7 +79,6 @@ impl OpLabels for EntityRow {
     }
 }
 
-#[cfg(feature = "load")]
 impl NpcRow for EntityRow {
     fn tile(&self) -> WorldTile {
         WorldTile {

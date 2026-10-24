@@ -910,7 +910,7 @@ fn run_cell(variant: Variant) {
                         match play.script_start_load(
                             &account,
                             solid_walk_script(solid),
-                            script::LoadShape::NativeTick,
+                            script_js::LoadShape::NativeTick,
                             None,
                             vec![],
                         ) {

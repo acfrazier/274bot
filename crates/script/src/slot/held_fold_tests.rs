@@ -20,13 +20,13 @@ fn row(request: InteractReq) -> SeatInteractDecoded {
     }
 }
 
-fn page(slot: &SlotScript, reqs: Vec<InteractReq>) -> crate::load::QueuedSeatBatch {
-    crate::load::QueuedSeatBatch {
+fn page(slot: &SlotScript, reqs: Vec<InteractReq>) -> crate::native::seat_rows::QueuedSeatBatch {
+    crate::native::seat_rows::QueuedSeatBatch {
         generation: slot.surface.as_ref().unwrap().generation(),
         observed_walk_outcome_seq: 0,
         batch: decoded(Vec::new(), reqs.into_iter().map(row).collect()),
         machine_events: Vec::new(),
-        held_waits: crate::load::HeldWaitFacts::default(),
+        held_waits: crate::native::seat_rows::HeldWaitFacts::default(),
         held_fold: false,
     }
 }
@@ -247,10 +247,10 @@ impl Rng {
 #[test]
 fn held_wait_summary_matches_the_event_order_replay() {
     let summarize = |events: &[bool], cuts: &[usize]| {
-        let mut summary = crate::load::HeldWaitFacts::default();
+        let mut summary = crate::native::seat_rows::HeldWaitFacts::default();
         let mut from = 0;
         for &to in cuts.iter().chain(std::iter::once(&events.len())) {
-            let mut page = crate::load::HeldWaitFacts::default();
+            let mut page = crate::native::seat_rows::HeldWaitFacts::default();
             for &enqueue in &events[from..to] {
                 if enqueue {
                     page.enqueue();
@@ -372,219 +372,6 @@ fn held_settle_then_enqueue_keeps_the_later_wait() {
     );
 }
 
-fn paint_slot(source: &str, incarnation: u64) -> SlotScript {
-    let mut slot = SlotScript::new();
-    slot.bind_incarnation(incarnation);
-    let source: std::sync::Arc<str> = source.into();
-    let family = crate::resolve_api_family(&source)
-        .ok()
-        .map(|(_, family)| family);
-    slot.bind_surface_factory(std::sync::Arc::new(
-        crate::load::surface::JsSurfaceFactory::default(),
-    ));
-    slot.start_surface(crate::surface::SurfaceStart {
-        card: std::sync::Arc::new(crate::load::surface::JsStartCard {
-            source,
-            shape: crate::load::LoadShape::CompatClass,
-            siblings: std::sync::Arc::from(Vec::<(String, String)>::new()),
-            family,
-        }),
-        settings_bag: None,
-        game_data: Some(selected()),
-        named_banks: std::sync::Arc::default(),
-        loadouts: std::sync::Arc::default(),
-    })
-    .unwrap();
-    let deadline = Instant::now() + Duration::from_secs(10);
-    loop {
-        match slot.poll_start() {
-            StartPoll::Settled(result) => {
-                assert_eq!(result, StartOutcome::Ready);
-                break;
-            }
-            StartPoll::Pending => assert!(Instant::now() < deadline, "Load start stalled"),
-            StartPoll::NotOwed => panic!("start not owed"),
-        }
-        std::thread::yield_now();
-    }
-    slot.on_is_up(true);
-    slot
-}
-
-/// Post an in-game snapshot and run one isolate tick to completion.
-fn paint_tick(slot: &mut SlotScript, tick: u64, held: bool) {
-    let mut input = crate::isolate_fb::tests::empty_input(tick);
-    input.hold = held;
-    let stats: Vec<_> = (0..64)
-        .filter(|&i| api::snapshot::stat_used(i))
-        .map(|index| crate::isolate_fb::StatInput {
-            index: index as i32,
-            name: "skill",
-            xp: 0,
-            base: 1,
-            effective: 1,
-        })
-        .collect();
-    input.stats = &stats;
-    input.scene_state = 2;
-    input.here = Some(crate::isolate_fb::TileInput {
-        x: 3187,
-        z: 3245,
-        level: 0,
-    });
-    assert!(slot.post_snapshot_delta(
-        &input,
-        crate::native::snapshot_source::NativeFactsInput::default(),
-        false,
-    ));
-    let run = slot.surface.as_ref().unwrap();
-    run.on_game_tick_at(tick, 0);
-    run.probe("true").unwrap();
-}
-
-// R4-M1 (Codex), real producer: 18 held `onPaint` floors end at Floor(18).
-#[test]
-fn held_onpaint_policy_ends_at_the_eighteenth_update() {
-    let source = r#"
-import { RunManager } from '../../runtime/RunManager.js';
-globalThis.__p = 0;
-export default class T extends LoopingBot {
-    loop() {}
-    onPaint() { RunManager.override({ energyMin: globalThis.__p++ }); }
-}
-"#;
-    let mut slot = paint_slot(source, 858);
-    paint_tick(&mut slot, 1, false);
-    let _ = slot.drain_host_interacts();
-    slot.seat_guardian_hold(true);
-    for tick in 2..=19 {
-        paint_tick(&mut slot, tick, true);
-        let _ = slot.drain_host_interacts();
-    }
-    let paints = slot.probe("globalThis.__p").unwrap();
-    let policy = resumed_policy(&mut slot);
-    slot.stop();
-    assert_eq!(paints, serde_json::json!(19), "the producer ran all paints");
-    assert_eq!(
-        policy.unwrap().unwrap().energy_min,
-        Some(RunEnergyMin::Floor(18))
-    );
-}
-
-// R4-M3 (Codex), real producer: 142 held `onPaint` yaws keep the last yaw.
-#[test]
-fn held_onpaint_camera_yaws_keep_the_last_yaw() {
-    let source = r#"
-globalThis.__p = 0;
-export default class T extends LoopingBot {
-    loop() {}
-    onPaint() {
-        globalThis.__rs2b0t_host.interact.push({ op: 'set-camera-yaw', yaw: globalThis.__p++ });
-    }
-}
-"#;
-    let mut slot = paint_slot(source, 859);
-    paint_tick(&mut slot, 1, false);
-    let _ = slot.drain_host_interacts();
-    slot.seat_guardian_hold(true);
-    let dropped_before = slot.seat.as_ref().unwrap().dropped();
-    for tick in 2..=143 {
-        paint_tick(&mut slot, tick, true);
-        let _ = slot.drain_host_interacts();
-    }
-    let paints = slot.probe("globalThis.__p").unwrap();
-    let yaws: Vec<_> = held_rows(&slot)
-        .into_iter()
-        .filter(|req| matches!(req, InteractReq::SetCameraYaw { .. }))
-        .collect();
-    let dropped = slot.seat.as_ref().unwrap().dropped() - dropped_before;
-    slot.stop();
-    assert_eq!(paints, serde_json::json!(143));
-    assert_eq!(
-        (yaws, dropped),
-        (vec![InteractReq::SetCameraYaw { yaw: 142 }], 0)
-    );
-}
-
-// R4-M2 (Codex), real producer: old settles and an encoder overflow before
-// the hold, then a new parked wait in a held `onPaint`.
-#[test]
-fn held_fold_keeps_a_wait_parked_after_an_encoder_overflow() {
-    let source = r#"
-import { Execution } from '../../api/execution/Execution.js';
-globalThis.__paint_count = 0;
-globalThis.__hold_wait_parked = false;
-export default class T extends LoopingBot {
-    async loop() {
-        if (globalThis.__ran) return;
-        globalThis.__ran = true;
-        Execution.noteProgress();
-        Execution.noteProgress();
-        await Promise.all(Array.from({length: 142}, () => Execution.delayTicks(1)));
-    }
-    onPaint() {
-        const n = ++globalThis.__paint_count;
-        if (n === 3) {
-            globalThis.__hold_wait_parked = true;
-            Execution.delay(600000).then(() => { globalThis.__hold_wait_parked = false; });
-        }
-    }
-}
-"#;
-    let mut slot = paint_slot(source, 860);
-    let now = Instant::now();
-    paint_tick(&mut slot, 1, false);
-    let _ = slot.drain_host_interacts();
-    let initial = slot.drain_lifecycle();
-    slot.feed_watchdog(now, None, &[], false, true, &initial);
-    assert!(slot.watchdog().wait_active());
-    // This normal tick settles the old waits before the guardian edge. Its
-    // output is still in isolate custody when the host starts the hold.
-    paint_tick(&mut slot, 2, false);
-    let older = held_rows(&slot);
-    slot.seat_guardian_hold(true);
-    let _ = slot.drain_host_interacts();
-    paint_tick(&mut slot, 3, true);
-    let pages = slot.surface.as_ref().unwrap().drain_seat_batches();
-    let newer: Vec<_> = pages
-        .last()
-        .unwrap()
-        .batch
-        .reqs
-        .iter()
-        .map(|row| row.request.clone())
-        .collect();
-    slot.surface.as_ref().unwrap().restore_seat_batches(pages);
-    let _ = slot.drain_host_interacts();
-    assert_eq!(
-        slot.probe("globalThis.__hold_wait_parked").unwrap(),
-        serde_json::json!(true)
-    );
-    let mut reference = crate::watchdog::ProgressWatchdog::new();
-    for req in initial.iter().chain(&older).chain(&newer) {
-        match req {
-            InteractReq::WaitEnqueued => reference.on_wait_enqueued(now),
-            InteractReq::WaitSettled => reference.on_wait_settled(now),
-            _ => {}
-        }
-    }
-    assert!(
-        reference.wait_active(),
-        "the delivered order leaves one wait"
-    );
-    slot.seat_guardian_hold(false);
-    let _ = slot.drain_host_interacts();
-    let folded = slot.drain_lifecycle();
-    slot.feed_watchdog(now, None, &[], false, true, &folded);
-    let count = slot.watchdog.wait_inflight();
-    slot.stop();
-    assert_eq!(
-        count,
-        reference.wait_inflight(),
-        "the fold reproduces the event-order count of the real producer"
-    );
-}
-
 fn channel_post(channel_id: u64, n: u8) -> InteractReq {
     InteractReq::ChannelPost {
         channel_id,
@@ -679,81 +466,6 @@ fn held_channel_lane_refuses_only_posts_and_keeps_order() {
     );
 }
 
-// Main ruling 2b: a refused post is not silent. The sender's channel gets one
-// `messageerror` with the hold reason in that hold, however many posts the
-// hold refuses.
-#[test]
-fn held_onpaint_refused_posts_reach_the_sender_once() {
-    let source = r#"
-globalThis.__p = 0;
-globalThis.__errors = [];
-export default class T extends LoopingBot {
-    loop() {}
-    onPaint() {
-        if (!globalThis.__ch) {
-            globalThis.__ch = new BroadcastChannel('jivekq:a,b');
-            globalThis.__ch.onmessageerror = (event) => globalThis.__errors.push(event.error);
-        }
-        globalThis.__ch.postMessage({ n: globalThis.__p++ });
-    }
-}
-"#;
-    let mut slot = paint_slot(source, 862);
-    // No host drain runs before the hold, so the hold carries the first
-    // paint's open and post too.
-    paint_tick(&mut slot, 1, false);
-    slot.seat_guardian_hold(true);
-    let dropped_before = slot.seat.as_ref().unwrap().dropped();
-    for tick in 2..=170 {
-        paint_tick(&mut slot, tick, true);
-        let _ = slot.drain_host_interacts();
-    }
-    let errors = slot.probe("globalThis.__errors").unwrap();
-    let all_posts = slot.probe("globalThis.__p").unwrap().as_u64().unwrap();
-    let rows = held_rows(&slot);
-    let posts = rows
-        .iter()
-        .filter(|req| matches!(req, InteractReq::ChannelPost { .. }))
-        .count();
-    let other_lane: Vec<_> = rows
-        .iter()
-        .filter(|req| {
-            matches!(
-                req,
-                InteractReq::ChannelOpen { .. }
-                    | InteractReq::ChannelClose { .. }
-                    | InteractReq::InspectRoute { .. }
-            )
-        })
-        .cloned()
-        .collect();
-    let dropped = slot.seat.as_ref().unwrap().dropped() - dropped_before;
-    slot.stop();
-    assert_eq!(
-        errors,
-        serde_json::json!([HELD_CHANNEL_POST_REFUSED]),
-        "one status for the refused posts of this hold"
-    );
-    assert_eq!(
-        other_lane,
-        [InteractReq::ChannelOpen {
-            channel_id: 1,
-            name: "jivekq:a,b".into(),
-        }],
-        "the open is never refused"
-    );
-    assert_eq!(
-        posts + other_lane.len(),
-        HELD_LIFECYCLE_ROWS - HeldReplacement::KEYS,
-        "the lane fills to its limit"
-    );
-    assert_eq!(
-        dropped,
-        all_posts - posts as u64,
-        "each refused post is counted"
-    );
-}
-
 fn lane_open(channel_id: u64) -> InteractReq {
     InteractReq::ChannelOpen {
         channel_id,
@@ -768,7 +480,7 @@ fn lane_close(channel_id: u64) -> InteractReq {
     }
 }
 
-fn requests(reqs: Vec<crate::load::QueuedInteract>) -> Vec<InteractReq> {
+fn requests(reqs: Vec<crate::interact::QueuedInteract>) -> Vec<InteractReq> {
     reqs.into_iter().map(|queued| queued.req).collect()
 }
 
@@ -941,65 +653,6 @@ fn held_resume_keeps_close_and_inspect_after_a_full_post_lane_and_every_replacem
     assert_eq!(after, refused, "resume adds no drop to the refused posts");
 }
 
-// R5-B1 (Codex), real producer: a held `onPaint` opens 141 channels, then
-// closes the first. Resume must deliver the close.
-#[test]
-fn held_onpaint_resume_delivers_the_late_close() {
-    let source = r#"
-globalThis.__paints = 0;
-export default class T extends LoopingBot {
-    loop() {}
-    onPaint() {
-        const n = ++globalThis.__paints;
-        if (n <= 141) {
-            const ch = new BroadcastChannel('jivekq:a,b');
-            if (n === 1) globalThis.__first = ch;
-        } else if (n === 142) {
-            globalThis.__first.close();
-        }
-    }
-}
-"#;
-    let mut slot = paint_slot(source, 883);
-    paint_tick(&mut slot, 1, false);
-    slot.seat_guardian_hold(true);
-    for tick in 2..=142 {
-        paint_tick(&mut slot, tick, true);
-        let _ = slot.drain_host_interacts();
-    }
-    let paints = slot.probe("globalThis.__paints").unwrap();
-    let held = held_rows(&slot);
-    let before = dropped(&slot);
-    slot.seat_guardian_hold(false);
-    let (_, reqs, _) = slot.drain_host_interacts();
-    let after = dropped(&slot);
-    slot.stop();
-    assert_eq!(paints, serde_json::json!(142));
-    let lane = |rows: &[InteractReq]| {
-        rows.iter()
-            .filter(|req| {
-                matches!(
-                    req,
-                    InteractReq::ChannelOpen { .. } | InteractReq::ChannelClose { .. }
-                )
-            })
-            .cloned()
-            .collect::<Vec<_>>()
-    };
-    let held_lane = lane(&held);
-    assert_eq!(held_lane.len(), 142, "141 opens and the close are held");
-    assert!(matches!(
-        held_lane.last(),
-        Some(InteractReq::ChannelClose { channel_id: 1, .. })
-    ));
-    assert_eq!(
-        lane(&requests(reqs)),
-        held_lane,
-        "every open and the close reach the host, in order"
-    );
-    assert_eq!(after, before, "resume drops nothing");
-}
-
 // Round-6 ruling: resume delivers every retained row across several takes,
 // in order, with `dropped` unchanged. Releases and the policy go first, the
 // lane follows in order, and the replacements come last.
@@ -1094,7 +747,7 @@ fn held_resume_pages_around_queued_rows_and_later_batches_queue_behind() {
             .as_mut()
             .unwrap()
             .push(
-                SeatEffect::Interact(crate::load::QueuedInteract {
+                SeatEffect::Interact(crate::interact::QueuedInteract {
                     req: req.clone(),
                     observed_walk_outcome_seq: 0,
                 }),
@@ -1128,7 +781,7 @@ fn held_resume_pages_around_queued_rows_and_later_batches_queue_behind() {
 }
 
 fn queued_interact(req: InteractReq) -> SeatEffect {
-    SeatEffect::Interact(crate::load::QueuedInteract {
+    SeatEffect::Interact(crate::interact::QueuedInteract {
         req,
         observed_walk_outcome_seq: 0,
     })
@@ -1306,7 +959,7 @@ fn held_second_hold_keeps_the_controls_of_a_waiting_fold() {
     slot.seat_guardian_hold(true);
     let mut fold = page(&slot, (1..=20).map(lane_open).collect());
     fold.held_fold = true;
-    fold.batch.cancels = vec![crate::isolate_fb::SeatCancelDecoded {
+    fold.batch.cancels = vec![crate::native::seat_rows::SeatCancelDecoded {
         of: id(1),
         reason: api::script_contract::CallbackCancelReason::ParentAborted,
     }];
@@ -1361,16 +1014,19 @@ fn fill_seat_queue(slot: &mut SlotScript) {
     }
 }
 
-fn machine_event(raw: u64, kind: crate::machine::MachineEventKind) -> crate::machine::MachineEvent {
-    crate::machine::MachineEvent {
+fn machine_event(
+    raw: u64,
+    kind: crate::native::seat_rows::SeatMachineEventKind,
+) -> crate::native::seat_rows::SeatMachineEvent {
+    crate::native::seat_rows::SeatMachineEvent {
         id: id(raw),
         kind,
         admitted: true,
     }
 }
 
-fn mirror_revoke(raw: u64, seq: u64) -> crate::isolate_fb::SeatMirrorRevoke {
-    crate::isolate_fb::SeatMirrorRevoke {
+fn mirror_revoke(raw: u64, seq: u64) -> crate::native::seat_rows::SeatMirrorRevoke {
+    crate::native::seat_rows::SeatMirrorRevoke {
         owner: id(raw),
         seq,
     }
@@ -1381,9 +1037,9 @@ fn mirror_revoke(raw: u64, seq: u64) -> crate::isolate_fb::SeatMirrorRevoke {
 /// it, and hold again before the fold applies. Returns the carried fold.
 fn rehold_while_the_fold_waits(
     slot: &mut SlotScript,
-    initial: crate::load::QueuedSeatBatch,
-    newer: Vec<crate::load::QueuedSeatBatch>,
-) -> crate::load::QueuedSeatBatch {
+    initial: crate::native::seat_rows::QueuedSeatBatch,
+    newer: Vec<crate::native::seat_rows::QueuedSeatBatch>,
+) -> crate::native::seat_rows::QueuedSeatBatch {
     slot.seat_guardian_hold(true);
     slot.surface
         .as_ref()
@@ -1414,7 +1070,7 @@ fn rehold_while_the_fold_waits(
 // `Waiting`.
 #[test]
 fn held_rehold_keeps_a_phase_that_returns_to_an_earlier_value() {
-    use crate::machine::MachineEventKind::Phase;
+    use crate::native::seat_rows::SeatMachineEventKind::Phase;
     use crate::native::NativePhase;
     let mut slot = with_seat(889);
     let mut admit = page(&slot, Vec::new());
@@ -1466,7 +1122,7 @@ fn held_rehold_keeps_a_phase_that_returns_to_an_earlier_value() {
 // newest phase.
 #[test]
 fn held_rehold_phase_a_b_a_ends_at_the_newest_phase() {
-    use crate::machine::MachineEventKind::Phase;
+    use crate::native::seat_rows::SeatMachineEventKind::Phase;
     use crate::native::NativePhase;
     let mut slot = with_seat(890);
     slot.consume_seat_batch(
@@ -1574,8 +1230,8 @@ fn held_rehold_carries_a_repeated_mirror_revoke_once() {
 // the isolate raises its reason (`queue_cancel`).
 #[test]
 fn held_rehold_merges_each_control_by_its_producer_key() {
-    use crate::isolate_fb::{SeatCancelDecoded, SeatDecisionInput};
-    use crate::machine::MachineEventKind::{Done, Failed, Phase};
+    use crate::native::seat_rows::SeatMachineEventKind::{Done, Failed, Phase};
+    use crate::native::seat_rows::{SeatCancelDecoded, SeatDecisionInput};
     use crate::native::NativePhase;
     use api::script_contract::{CallbackCancelReason, DecisionSequence};
     let cancel = |raw, reason| SeatCancelDecoded {
@@ -1906,7 +1562,7 @@ fn host_held_tick_keeps_the_seat_run_policy_for_after_the_hold() {
 // of the hold.
 #[test]
 fn guardian_hold_neither_completes_nor_starts_a_native() {
-    use crate::machine::MachineEventKind::Done;
+    use crate::native::seat_rows::SeatMachineEventKind::Done;
     let mut slot = with_seat(898);
     slot.consume_seat_batch(
         decoded(vec![start_input(&slot, 1, NativeKind::Hunt)], Vec::new()),
@@ -1948,4 +1604,157 @@ fn guardian_hold_neither_completes_nor_starts_a_native() {
         (vec![id(1)], 0),
         "a held seat neither completes request 1 nor starts request 2"
     );
+}
+
+#[test]
+fn held_stubbed_policy_fold_keeps_last_floor() {
+    let mut slot = with_seat(899);
+    slot.seat_guardian_hold(true);
+    for energy in 1..=18 {
+        held_frame(&mut slot, vec![floor(energy)]);
+    }
+    let policy = resumed_policy(&mut slot);
+    slot.stop();
+    assert_eq!(
+        policy.unwrap().unwrap().energy_min,
+        Some(RunEnergyMin::Floor(18))
+    );
+}
+
+#[test]
+fn held_stubbed_yaw_fold_keeps_last_yaw() {
+    let mut slot = with_seat(900);
+    slot.seat_guardian_hold(true);
+    let before = dropped(&slot);
+    for yaw in 0..142 {
+        held_frame(&mut slot, vec![InteractReq::SetCameraYaw { yaw }]);
+    }
+    let rows = held_rows(&slot);
+    let after = dropped(&slot);
+    slot.stop();
+    assert_eq!(
+        (rows, after - before),
+        (vec![InteractReq::SetCameraYaw { yaw: 141 }], 0)
+    );
+}
+
+#[test]
+fn held_stubbed_wait_fold_matches_event_order() {
+    let mut slot = with_seat(901);
+    let now = Instant::now();
+    let initial = [InteractReq::WaitEnqueued];
+    let older = [InteractReq::WaitSettled];
+    let newer = [InteractReq::WaitEnqueued];
+    slot.feed_watchdog(now, None, &[], false, true, &initial);
+    assert!(slot.watchdog().wait_active());
+
+    slot.seat_guardian_hold(true);
+    held_frame(&mut slot, older.to_vec());
+    held_frame(&mut slot, newer.to_vec());
+
+    let mut reference = crate::watchdog::ProgressWatchdog::new();
+    for req in initial.iter().chain(&older).chain(&newer) {
+        match req {
+            InteractReq::WaitEnqueued => reference.on_wait_enqueued(now),
+            InteractReq::WaitSettled => reference.on_wait_settled(now),
+            _ => {}
+        }
+    }
+    assert!(
+        reference.wait_active(),
+        "the delivered order leaves one wait"
+    );
+
+    slot.seat_guardian_hold(false);
+    let _ = slot.drain_host_interacts();
+    let folded = slot.drain_lifecycle();
+    slot.feed_watchdog(now, None, &[], false, true, &folded);
+    let count = slot.watchdog().wait_inflight();
+    slot.stop();
+    assert_eq!(
+        count,
+        reference.wait_inflight(),
+        "the fold reproduces the event-order count"
+    );
+}
+
+#[test]
+fn held_stubbed_channel_fold_counts_refused_posts() {
+    let mut slot = with_seat(902);
+    slot.seat_guardian_hold(true);
+    let dropped_before = dropped(&slot);
+    let open = lane_open(1);
+    for n in 0..170u8 {
+        if n == 0 {
+            held_frame(&mut slot, vec![open.clone(), channel_post(1, n)]);
+        } else {
+            held_frame(&mut slot, vec![channel_post(1, n)]);
+        }
+    }
+    let rows = held_rows(&slot);
+    let posts = rows
+        .iter()
+        .filter(|req| matches!(req, InteractReq::ChannelPost { .. }))
+        .count();
+    let other_lane: Vec<_> = rows
+        .iter()
+        .filter(|req| {
+            matches!(
+                req,
+                InteractReq::ChannelOpen { .. }
+                    | InteractReq::ChannelClose { .. }
+                    | InteractReq::InspectRoute { .. }
+            )
+        })
+        .cloned()
+        .collect();
+    let dropped = dropped(&slot) - dropped_before;
+    slot.stop();
+    assert_eq!(other_lane, [open], "the open is never refused");
+    assert_eq!(
+        posts + other_lane.len(),
+        HELD_LIFECYCLE_ROWS - HeldReplacement::KEYS,
+        "the lane fills to its limit"
+    );
+    assert_eq!(dropped, 170 - posts as u64, "each refused post is counted");
+}
+
+#[test]
+fn held_stubbed_channel_fold_delivers_late_close() {
+    let mut slot = with_seat(903);
+    slot.seat_guardian_hold(true);
+    for channel_id in 1..=141 {
+        held_frame(&mut slot, vec![lane_open(channel_id)]);
+    }
+    held_frame(&mut slot, vec![lane_close(1)]);
+    let held = held_rows(&slot);
+    let before = dropped(&slot);
+    slot.seat_guardian_hold(false);
+    let (_, reqs, _) = slot.drain_host_interacts();
+    let after = dropped(&slot);
+    slot.stop();
+
+    let lane = |rows: &[InteractReq]| {
+        rows.iter()
+            .filter(|req| {
+                matches!(
+                    req,
+                    InteractReq::ChannelOpen { .. } | InteractReq::ChannelClose { .. }
+                )
+            })
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+    let held_lane = lane(&held);
+    assert_eq!(held_lane.len(), 142, "141 opens and the close are held");
+    assert!(matches!(
+        held_lane.last(),
+        Some(InteractReq::ChannelClose { channel_id: 1, .. })
+    ));
+    assert_eq!(
+        lane(&requests(reqs)),
+        held_lane,
+        "every open and the close reach the host, in order"
+    );
+    assert_eq!(after, before, "resume drops nothing");
 }

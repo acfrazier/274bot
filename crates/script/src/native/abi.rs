@@ -1236,7 +1236,7 @@ mod tests {
     fn callback_snapshot_matches_native_census() {
         assert_eq!(
             callback_snapshot(),
-            include_str!("../../compat-js/abi-callbacks.json"),
+            include_str!("../../tests/fixtures/abi-callbacks.json"),
             "Regenerate with: cargo test -p script --lib regenerate_callback_snapshot -- --ignored"
         );
     }
@@ -1363,7 +1363,8 @@ mod tests {
     #[ignore]
     fn regenerate_callback_snapshot() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("compat-js")
+            .join("tests")
+            .join("fixtures")
             .join("abi-callbacks.json");
         std::fs::write(&path, callback_snapshot())
             .unwrap_or_else(|error| panic!("write {}: {error}", path.display()));

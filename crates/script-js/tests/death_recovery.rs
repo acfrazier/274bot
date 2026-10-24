@@ -1,0 +1,786 @@
+use script::shim::InteractReq;
+use script_js::wire::{ChatLineInput, ReachViewInput, SnapshotInput, TileInput};
+use script_js::{LoadIsolate, LoadShape};
+
+mod common;
+use common::post_snapshot_input;
+
+fn base_snapshot<'a>() -> SnapshotInput<'a> {
+    SnapshotInput {
+        tick: 1,
+        here: Some(TileInput {
+            x: 3235,
+            z: 3295,
+            level: 0,
+        }),
+        ingame: true,
+        inv: &[],
+        inv_size: 28,
+        stats: &[],
+        booths: &[],
+        banks: &[],
+        bank: &[],
+        bank_side: &[],
+        bank_open: false,
+        bank_loaded: false,
+        bank_generation: 0,
+        count_dialog_open: false,
+        withdraw_x_result_seq: 0,
+        withdraw_x_result: false,
+        bank_op_result_seq: 0,
+        bank_op_result: false,
+        hold: false,
+        ours: false,
+        npcs: &[],
+        locs: &[],
+        players: &[],
+        ground: &[],
+        equipment: &[],
+        chat_open: false,
+        chat_continue: false,
+        chat_text: None,
+        chat_options: &[],
+        side_tab: -1,
+        varps: &[],
+        combat_styles: &[],
+        run_energy: 0,
+        run_enabled: false,
+        retaliate_enabled: false,
+        my_name: Some("bot"),
+        in_combat: false,
+        animating: false,
+        main_modal_id: -1,
+        chat_modal_id: -1,
+        make_products: &[],
+        side_tab_ifaces: &[],
+        spell_buttons: &[],
+        chat_lines: &[],
+        nearest_booth: None,
+        bank_note_on: -1,
+        bank_note_off: -1,
+        scene_state: 2,
+        weight: 0,
+        combat_level: 0,
+        camera_yaw: 0,
+        camera_pitch: 0,
+        teleports_enabled: false,
+        self_slot: 0,
+        trade_offer_open: false,
+        trade_confirm_open: false,
+        trade_partner: None,
+        trade_mine: &[],
+        trade_theirs: &[],
+        trade_side: &[],
+        trade_accept_id: -1,
+        trade_decline_id: -1,
+        shop_open: false,
+        shop_stock: &[],
+        reach: ReachViewInput::UNAVAILABLE,
+        attacked_by_player: false,
+        self_target_kind: 0,
+        self_target_index: -1,
+        widgets: &[],
+        user_move_intent_seq: 0,
+        walk_outcome_cancel_reason: Default::default(),
+    }
+}
+
+fn tick(iso: &LoadIsolate, n: u64) {
+    iso.on_game_tick(n);
+    let _ = iso.probe("true");
+}
+
+fn number(iso: &LoadIsolate, expr: &str) -> i64 {
+    iso.probe(expr).ok().and_then(|v| v.as_i64()).unwrap_or(0)
+}
+
+fn lumbridge() -> TileInput {
+    TileInput {
+        x: 3222,
+        z: 3218,
+        level: 0,
+    }
+}
+
+fn anchor() -> TileInput {
+    TileInput {
+        x: 3235,
+        z: 3295,
+        level: 0,
+    }
+}
+
+fn welcome(seq: i32) -> ChatLineInput<'static> {
+    ChatLineInput {
+        seq,
+        text: "Welcome to RuneScape",
+        type_: 0,
+        username: None,
+    }
+}
+
+fn death(seq: i32) -> ChatLineInput<'static> {
+    ChatLineInput {
+        seq,
+        text: "Oh dear, you are dead!",
+        type_: 0,
+        username: None,
+    }
+}
+
+fn walk_near_anchor() -> InteractReq {
+    InteractReq::WalkNear {
+        x: 3235,
+        z: 3295,
+        level: 0,
+        radius: 3,
+        compat_tile_intent: true,
+        allow_teleports: false,
+        allow_wilderness: true,
+        allow_bank_fetch: true,
+        request_id: 0,
+        avoid: Vec::new(),
+        cross: Vec::new(),
+    }
+}
+
+const CHICKEN: &str = r#"
+import { DeathRecovery } from '../../api/tasks/DeathRecovery.js';
+export default class ChickenShaped extends TaskBot {
+    onStart() {
+        this.add(new DeathRecovery(this, {
+            anchor: { x: 3235, z: 3295, level: 0 },
+            radius: 3,
+            onDeath: () => { globalThis.__deaths = (globalThis.__deaths || 0) + 1; },
+            onRecovered: () => { globalThis.__recovered = (globalThis.__recovered || 0) + 1; },
+        }));
+    }
+}
+"#;
+
+#[test]
+fn idle_without_death_sends_nothing() {
+    let iso = LoadIsolate::spawn(CHICKEN.into(), LoadShape::CompatClass, vec![]).unwrap();
+    let lines = [welcome(1)];
+    let mut snap = base_snapshot();
+    snap.chat_lines = &lines;
+    post_snapshot_input(&iso, &snap);
+    tick(&iso, 1);
+    tick(&iso, 2);
+    assert!(iso.drain_interacts().is_empty());
+    assert_eq!(number(&iso, "globalThis.__deaths || 0"), 0);
+    iso.join();
+}
+
+#[test]
+fn seeded_duplicate_and_old_chat_do_not_retrigger() {
+    let iso = LoadIsolate::spawn(CHICKEN.into(), LoadShape::CompatClass, vec![]).unwrap();
+    let seeded = [death(4), welcome(3)];
+    let mut snap = base_snapshot();
+    snap.here = Some(lumbridge());
+    snap.chat_lines = &seeded;
+    snap.chat_text = Some("Oh dear, you are dead!");
+    post_snapshot_input(&iso, &snap);
+    tick(&iso, 1);
+    tick(&iso, 2);
+    tick(&iso, 3);
+    assert_eq!(number(&iso, "globalThis.__deaths || 0"), 0);
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "seeded death chat must not start recovery"
+    );
+
+    post_snapshot_input(&iso, &snap);
+    tick(&iso, 4);
+    assert_eq!(number(&iso, "globalThis.__deaths || 0"), 0);
+
+    let old = [welcome(3)];
+    snap.chat_lines = &old;
+    snap.tick = 5;
+    post_snapshot_input(&iso, &snap);
+    tick(&iso, 5);
+    assert_eq!(number(&iso, "globalThis.__deaths || 0"), 0);
+    iso.join();
+}
+
+#[test]
+fn new_death_waits_then_walks_and_recovers_once_from_actual_position() {
+    let iso = LoadIsolate::spawn(CHICKEN.into(), LoadShape::CompatClass, vec![]).unwrap();
+    let welcome_lines = [welcome(1)];
+    let mut snap = base_snapshot();
+    snap.chat_lines = &welcome_lines;
+    post_snapshot_input(&iso, &snap);
+    tick(&iso, 1);
+
+    let death_lines = [death(2), welcome(1)];
+    snap.tick = 2;
+    snap.here = Some(lumbridge());
+    snap.chat_lines = &death_lines;
+    snap.chat_text = Some("Oh dear, you are dead!");
+    post_snapshot_input(&iso, &snap);
+    tick(&iso, 2);
+    assert_eq!(number(&iso, "globalThis.__deaths || 0"), 1);
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "respawn wait must run before walk"
+    );
+
+    for n in 3..=6 {
+        snap.tick = n;
+        post_snapshot_input(&iso, &snap);
+        tick(&iso, n);
+    }
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![walk_near_anchor()],
+        "queued walk is not recovery"
+    );
+    assert_eq!(number(&iso, "globalThis.__recovered || 0"), 0);
+
+    snap.tick = 7;
+    snap.here = Some(anchor());
+    post_snapshot_input(&iso, &snap);
+    tick(&iso, 7);
+    assert!(iso.drain_interacts().is_empty());
+    // Frozen: recovery is the next validate finding the player near.
+
+    snap.tick = 8;
+    post_snapshot_input(&iso, &snap);
+    tick(&iso, 8);
+    tick(&iso, 9);
+    assert_eq!(number(&iso, "globalThis.__deaths || 0"), 1);
+    assert_eq!(number(&iso, "globalThis.__recovered || 0"), 1);
+    iso.join();
+}
+
+/// Frozen DeathRecovery: `walkBack`'s result is not read; recovery is a
+/// later `validate` finding the player within `radius` of the anchor. A
+/// walkBack that ends away from the anchor (WildyAgility's failed bank,
+/// HillGiant's missing key) is not recovery, and the next pass runs it
+/// again.
+#[test]
+fn a_walk_back_that_ends_away_is_retried_until_the_anchor() {
+    let src = r#"
+import { DeathRecovery } from '../../api/tasks/DeathRecovery.js';
+export default class WildyShaped extends TaskBot {
+    onStart() {
+        this.add(new DeathRecovery(this, {
+            anchor: { x: 3004, z: 3931, level: 0 },
+            radius: 6,
+            onDeath: () => { globalThis.__deaths = (globalThis.__deaths || 0) + 1; },
+            onRecovered: () => { globalThis.__recovered = (globalThis.__recovered || 0) + 1; },
+            walkBack: async () => {
+                globalThis.__walkBack = (globalThis.__walkBack || 0) + 1;
+                return false;
+            },
+        }));
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.into(), LoadShape::CompatClass, vec![]).unwrap();
+    let welcome_lines = [welcome(1)];
+    let mut snap = base_snapshot();
+    snap.here = Some(lumbridge());
+    snap.chat_lines = &welcome_lines;
+    post_snapshot_input(&iso, &snap);
+    tick(&iso, 1);
+
+    let death_lines = [death(2), welcome(1)];
+    snap.tick = 2;
+    snap.chat_lines = &death_lines;
+    post_snapshot_input(&iso, &snap);
+    tick(&iso, 2);
+    assert_eq!(number(&iso, "globalThis.__deaths || 0"), 1);
+
+    for n in 3..=6 {
+        snap.tick = n;
+        post_snapshot_input(&iso, &snap);
+        tick(&iso, n);
+    }
+    assert!(
+        iso.drain_interacts()
+            .iter()
+            .all(|req| !matches!(req, InteractReq::WalkNear { .. })),
+        "WildyAgility walkBack must retain the script-owned sequence"
+    );
+    assert_eq!(number(&iso, "globalThis.__walkBack || 0"), 1);
+
+    // Still at Lumbridge: not recovered, and the next pass walks back again.
+    let mut n = 7;
+    while number(&iso, "globalThis.__walkBack || 0") < 2 && n < 20 {
+        snap.tick = n;
+        post_snapshot_input(&iso, &snap);
+        tick(&iso, n);
+        n += 1;
+    }
+    assert_eq!(number(&iso, "globalThis.__walkBack || 0"), 2, "retried");
+    assert_eq!(number(&iso, "globalThis.__recovered || 0"), 0);
+
+    // At the anchor: the next validate recovers, and nothing runs again.
+    snap.here = Some(TileInput {
+        x: 3006,
+        z: 3927,
+        level: 0,
+    });
+    for m in n..n + 8 {
+        snap.tick = m;
+        post_snapshot_input(&iso, &snap);
+        tick(&iso, m);
+    }
+    assert_eq!(number(&iso, "globalThis.__recovered || 0"), 1);
+    assert_eq!(number(&iso, "globalThis.__walkBack || 0"), 2);
+    assert_eq!(number(&iso, "globalThis.__deaths || 0"), 1);
+    iso.join();
+}
+
+#[test]
+fn needs_is_explicit_unsupported() {
+    let src = r#"
+import { DeathRecovery } from '../../api/tasks/DeathRecovery.js';
+export default class T extends TaskBot {
+    onStart() {
+        this.add(new DeathRecovery(this, {
+            anchor: { x: 3235, z: 3295, level: 0 },
+            needs: [{ name: 'Coins', qty: 1 }],
+        }));
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.into(), LoadShape::CompatClass, vec![]).unwrap();
+    let snap = base_snapshot();
+    post_snapshot_input(&iso, &snap);
+    tick(&iso, 1);
+    let logs = iso.drain_logs();
+    assert!(
+        logs.iter()
+            .any(|line| line.contains("not impl: DeathRecovery.needs")),
+        "needs/AcquireTask must stay an explicit unsupported boundary: {logs:?}"
+    );
+    iso.join();
+}
+
+#[test]
+fn pause_hold_and_session_reset_drop_stale_walk() {
+    let iso = LoadIsolate::spawn(CHICKEN.into(), LoadShape::CompatClass, vec![]).unwrap();
+    let welcome_lines = [welcome(1)];
+    let mut snap = base_snapshot();
+    snap.chat_lines = &welcome_lines;
+    post_snapshot_input(&iso, &snap);
+    tick(&iso, 1);
+
+    let death_lines = [death(2), welcome(1)];
+    snap.tick = 2;
+    snap.here = Some(lumbridge());
+    snap.chat_lines = &death_lines;
+    post_snapshot_input(&iso, &snap);
+    tick(&iso, 2);
+    assert_eq!(number(&iso, "globalThis.__deaths || 0"), 1);
+
+    snap.tick = 3;
+    post_snapshot_input(&iso, &snap);
+    tick(&iso, 3);
+    iso.pause();
+    snap.tick = 4;
+    snap.here = Some(anchor());
+    post_snapshot_input(&iso, &snap);
+    tick(&iso, 4);
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "Pause must freeze deadlines and not send walk"
+    );
+    assert_eq!(number(&iso, "globalThis.__recovered || 0"), 0);
+
+    iso.resume();
+    iso.reset_session_work(None);
+    snap.tick = 5;
+    post_snapshot_input(&iso, &snap);
+    tick(&iso, 5);
+    tick(&iso, 6);
+    tick(&iso, 7);
+    assert_eq!(number(&iso, "globalThis.__recovered || 0"), 0);
+    assert!(
+        iso.drain_interacts()
+            .iter()
+            .all(|req| !matches!(req, InteractReq::WalkNear { .. })),
+        "Stop/session replacement must discard stale recovery"
+    );
+    iso.join();
+}
+
+#[test]
+fn guardian_hold_does_not_walk() {
+    let iso = LoadIsolate::spawn(CHICKEN.into(), LoadShape::CompatClass, vec![]).unwrap();
+    let welcome_lines = [welcome(1)];
+    let mut snap = base_snapshot();
+    snap.chat_lines = &welcome_lines;
+    post_snapshot_input(&iso, &snap);
+    tick(&iso, 1);
+
+    let death_lines = [death(2), welcome(1)];
+    snap.tick = 2;
+    snap.here = Some(lumbridge());
+    snap.chat_lines = &death_lines;
+    post_snapshot_input(&iso, &snap);
+    tick(&iso, 2);
+
+    snap.tick = 3;
+    snap.hold = true;
+    post_snapshot_input(&iso, &snap);
+    tick(&iso, 3);
+    tick(&iso, 4);
+    tick(&iso, 5);
+    tick(&iso, 6);
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "Guardian hold must freeze sends"
+    );
+    assert_eq!(number(&iso, "globalThis.__recovered || 0"), 0);
+    iso.join();
+}
+
+/// Frozen calls `onRecovered` synchronously from `validate`: a
+/// never-settling promise it returns holds nothing, so the next death
+/// recovers again.
+#[test]
+fn a_pending_on_recovered_does_not_hold_the_next_recovery() {
+    let src = r#"
+import { DeathRecovery } from '../../api/tasks/DeathRecovery.js';
+export default class T extends TaskBot {
+    onStart() {
+        this.add(new DeathRecovery(this, {
+            anchor: { x: 3235, z: 3295, level: 0 },
+            radius: 3,
+            onRecovered: () => {
+                globalThis.__recovered = (globalThis.__recovered || 0) + 1;
+                return new Promise(() => {});
+            },
+        }));
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.into(), LoadShape::CompatClass, vec![]).unwrap();
+    let welcome_lines = [welcome(1)];
+    let mut snap = base_snapshot();
+    snap.chat_lines = &welcome_lines;
+    post_snapshot_input(&iso, &snap);
+    tick(&iso, 1);
+
+    let first = [death(2), welcome(1)];
+    snap.here = Some(lumbridge());
+    snap.chat_lines = &first;
+    for n in 2..=6 {
+        snap.tick = n;
+        post_snapshot_input(&iso, &snap);
+        tick(&iso, n);
+    }
+    assert_eq!(iso.drain_interacts(), vec![walk_near_anchor()]);
+    snap.here = Some(anchor());
+    for n in 7..=8 {
+        snap.tick = n;
+        post_snapshot_input(&iso, &snap);
+        tick(&iso, n);
+    }
+    assert_eq!(number(&iso, "globalThis.__recovered || 0"), 1);
+
+    let second = [death(3), death(2), welcome(1)];
+    snap.here = Some(lumbridge());
+    snap.chat_lines = &second;
+    for n in 9..=13 {
+        snap.tick = n;
+        post_snapshot_input(&iso, &snap);
+        tick(&iso, n);
+    }
+    assert_eq!(
+        iso.drain_interacts(),
+        vec![walk_near_anchor()],
+        "the second death is recovered"
+    );
+    iso.join();
+}
+
+/// Frozen `validate` checks `near` on every pass while `died` is set,
+/// including the first: a death whose respawn tile is already within
+/// `radius` of the anchor recovers at once, with no run (no respawn wait,
+/// no ticks, no walk).
+#[test]
+fn an_anchor_near_the_respawn_recovers_on_the_first_validate() {
+    let src = r#"
+import { DeathRecovery } from '../../api/tasks/DeathRecovery.js';
+export default class T extends TaskBot {
+    onStart() {
+        this.add(new DeathRecovery(this, {
+            anchor: { x: 3222, z: 3222, level: 0 },
+            onDeath: () => { globalThis.__deaths = (globalThis.__deaths || 0) + 1; },
+            onRecovered: () => { globalThis.__recovered = (globalThis.__recovered || 0) + 1; },
+            walkBack: async () => { globalThis.__walkBack = (globalThis.__walkBack || 0) + 1; },
+        }));
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.into(), LoadShape::CompatClass, vec![]).unwrap();
+    let welcome_lines = [welcome(1)];
+    let mut snap = base_snapshot();
+    snap.here = Some(lumbridge());
+    snap.chat_lines = &welcome_lines;
+    post_snapshot_input(&iso, &snap);
+    tick(&iso, 1);
+
+    let death_lines = [death(2), welcome(1)];
+    snap.tick = 2;
+    snap.chat_lines = &death_lines;
+    post_snapshot_input(&iso, &snap);
+    tick(&iso, 2);
+    assert_eq!(number(&iso, "globalThis.__deaths || 0"), 1);
+    assert_eq!(
+        number(&iso, "globalThis.__recovered || 0"),
+        1,
+        "recovered by the same validate"
+    );
+
+    for n in 3..=8 {
+        snap.tick = n;
+        post_snapshot_input(&iso, &snap);
+        tick(&iso, n);
+    }
+    assert!(iso.drain_interacts().is_empty(), "no walk");
+    assert_eq!(number(&iso, "globalThis.__walkBack || 0"), 0, "no run");
+    assert_eq!(number(&iso, "globalThis.__recovered || 0"), 1);
+    iso.join();
+}
+
+#[test]
+fn replaced_chat_ring_reconciles_a_lower_sequence_death() {
+    let iso = LoadIsolate::spawn(CHICKEN.into(), LoadShape::CompatClass, vec![]).unwrap();
+    let initial = [welcome(100)];
+    let mut snap = base_snapshot();
+    snap.chat_lines = &initial;
+    post_snapshot_input(&iso, &snap);
+    tick(&iso, 1);
+
+    let later = [welcome(200)];
+    snap.tick = 2;
+    snap.chat_lines = &later;
+    post_snapshot_input(&iso, &snap);
+    tick(&iso, 2);
+
+    let replacement = [death(2), welcome(1)];
+    snap.tick = 3;
+    snap.chat_lines = &replacement;
+    post_snapshot_input(&iso, &snap);
+    tick(&iso, 3);
+    assert_eq!(
+        number(&iso, "globalThis.__deaths || 0"),
+        1,
+        "a lower sequence head belongs to the replacement ring"
+    );
+    iso.join();
+}
+
+#[test]
+fn death_recovery_instances_with_shared_options_keep_independent_latches() {
+    let src = r#"
+import { DeathRecovery } from '../../api/tasks/DeathRecovery.js';
+export default class T extends TaskBot {
+    onStart() {
+        const options = {
+            anchor: { x: 3222, z: 3218, level: 0 },
+            onDeath: () => { globalThis.__deaths = (globalThis.__deaths || 0) + 1; },
+            onRecovered: () => { globalThis.__recovered = (globalThis.__recovered || 0) + 1; },
+        };
+        this.add(new DeathRecovery(this, options), new DeathRecovery(this, options));
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.into(), LoadShape::CompatClass, vec![]).unwrap();
+    let initial = [welcome(1)];
+    let mut snap = base_snapshot();
+    snap.here = Some(lumbridge());
+    snap.chat_lines = &initial;
+    post_snapshot_input(&iso, &snap);
+    tick(&iso, 1);
+
+    let death_lines = [death(2), welcome(1)];
+    snap.tick = 2;
+    snap.chat_lines = &death_lines;
+    post_snapshot_input(&iso, &snap);
+    tick(&iso, 2);
+    assert_eq!(
+        number(&iso, "globalThis.__deaths || 0"),
+        2,
+        "both task instances receive their own death latch"
+    );
+    assert_eq!(number(&iso, "globalThis.__recovered || 0"), 2);
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "both recover at the anchor"
+    );
+    iso.join();
+}
+
+#[test]
+fn each_new_death_line_calls_on_death_even_while_recovery_is_latched() {
+    let src = r#"
+import { DeathRecovery } from '../../api/tasks/DeathRecovery.js';
+export default class T extends TaskBot {
+    onStart() {
+        const recovery = new DeathRecovery(this, {
+            anchor: { x: 3235, z: 3295, level: 0 },
+            radius: 3,
+            onDeath: () => { globalThis.__deaths = (globalThis.__deaths || 0) + 1; },
+            onRecovered: () => { globalThis.__recovered = (globalThis.__recovered || 0) + 1; },
+        });
+        globalThis.__recovery = recovery;
+        this.add(recovery);
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.into(), LoadShape::CompatClass, vec![]).unwrap();
+    let initial = [welcome(1)];
+    let mut snap = base_snapshot();
+    snap.chat_lines = &initial;
+    post_snapshot_input(&iso, &snap);
+    tick(&iso, 1);
+
+    let first_death = [death(2), welcome(1)];
+    snap.tick = 2;
+    snap.here = Some(lumbridge());
+    snap.chat_lines = &first_death;
+    post_snapshot_input(&iso, &snap);
+    tick(&iso, 2);
+    assert_eq!(number(&iso, "globalThis.__deaths || 0"), 1);
+
+    for n in 3..=6 {
+        snap.tick = n;
+        post_snapshot_input(&iso, &snap);
+        tick(&iso, n);
+    }
+    assert_eq!(iso.drain_interacts(), vec![walk_near_anchor()]);
+
+    let second_death = [death(3), death(2), welcome(1)];
+    snap.tick = 7;
+    snap.chat_lines = &second_death;
+    post_snapshot_input(&iso, &snap);
+    tick(&iso, 7);
+    // The scheduler's TaskBot loop is single-flight while execute awaits.
+    // Invoke validate directly to observe this event with the latch still set.
+    assert_eq!(
+        iso.probe("globalThis.__recovery.validate()").unwrap(),
+        serde_json::Value::Bool(false),
+        "a live recovery prevents a second execute"
+    );
+    assert_eq!(
+        number(&iso, "globalThis.__deaths || 0"),
+        2,
+        "every new death line invokes onDeath when validation observes it"
+    );
+    assert_eq!(number(&iso, "globalThis.__recovered || 0"), 0);
+    iso.join();
+}
+
+#[test]
+fn fractional_radius_uses_the_same_default_for_validate_and_execute() {
+    let src = r#"
+import { DeathRecovery } from '../../api/tasks/DeathRecovery.js';
+export default class T extends TaskBot {
+    onStart() {
+        this.add(new DeathRecovery(this, {
+            anchor: { x: 3235, z: 3295, level: 0 },
+            radius: 2.5,
+            onDeath: () => { globalThis.__deaths = (globalThis.__deaths || 0) + 1; },
+            onRecovered: () => { globalThis.__recovered = (globalThis.__recovered || 0) + 1; },
+        }));
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.into(), LoadShape::CompatClass, vec![]).unwrap();
+    let initial = [welcome(1)];
+    let mut snap = base_snapshot();
+    snap.here = Some(lumbridge());
+    snap.chat_lines = &initial;
+    post_snapshot_input(&iso, &snap);
+    tick(&iso, 1);
+
+    let death_lines = [death(2), welcome(1)];
+    snap.tick = 2;
+    snap.chat_lines = &death_lines;
+    post_snapshot_input(&iso, &snap);
+    tick(&iso, 2);
+    for n in 3..=6 {
+        snap.tick = n;
+        post_snapshot_input(&iso, &snap);
+        tick(&iso, n);
+    }
+    assert!(matches!(
+        iso.drain_interacts().as_slice(),
+        [InteractReq::WalkNear { radius: 6, .. }]
+    ));
+
+    // Four tiles is outside the invalid fractional radius but within the
+    // shared integer default used by the recovery walk.
+    snap.here = Some(TileInput {
+        x: 3231,
+        z: 3295,
+        level: 0,
+    });
+    for n in 7..=8 {
+        snap.tick = n;
+        post_snapshot_input(&iso, &snap);
+        tick(&iso, n);
+    }
+    assert_eq!(
+        number(&iso, "globalThis.__recovered || 0"),
+        1,
+        "validate must use the same integer/default radius as execute"
+    );
+    iso.join();
+}
+
+#[test]
+fn a_missing_anchor_level_never_walks_to_plane_zero() {
+    let src = r#"
+import { DeathRecovery } from '../../api/tasks/DeathRecovery.js';
+export default class T extends TaskBot {
+    onStart() {
+        this.add(new DeathRecovery(this, {
+            anchor: { x: 3222, z: 3218 },
+            radius: 3,
+            onDeath: () => { globalThis.__deaths = (globalThis.__deaths || 0) + 1; },
+            onRecovered: () => { globalThis.__recovered = (globalThis.__recovered || 0) + 1; },
+        }));
+    }
+}
+"#;
+    let iso = LoadIsolate::spawn(src.into(), LoadShape::CompatClass, vec![]).unwrap();
+    let initial = [welcome(1)];
+    let mut snap = base_snapshot();
+    snap.here = Some(TileInput {
+        x: 3222,
+        z: 3218,
+        level: 1,
+    });
+    snap.chat_lines = &initial;
+    post_snapshot_input(&iso, &snap);
+    tick(&iso, 1);
+
+    let death_lines = [death(2), welcome(1)];
+    snap.tick = 2;
+    snap.chat_lines = &death_lines;
+    post_snapshot_input(&iso, &snap);
+    tick(&iso, 2);
+    for n in 3..=6 {
+        snap.tick = n;
+        post_snapshot_input(&iso, &snap);
+        tick(&iso, n);
+    }
+    assert_eq!(
+        number(&iso, "globalThis.__deaths || 0"),
+        1,
+        "the missing level does not match the observed plane"
+    );
+    assert!(
+        iso.drain_interacts().is_empty(),
+        "an incomplete anchor must not be coerced to level 0"
+    );
+    assert_eq!(number(&iso, "globalThis.__recovered || 0"), 0);
+    iso.join();
+}

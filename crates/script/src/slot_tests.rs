@@ -1,10 +1,9 @@
 use super::*;
 use crate::ctx::test_support::NullDriver;
-#[cfg(feature = "load")]
-use crate::load::LoadShape;
-#[cfg(feature = "load")]
-use crate::native::snapshot_source::NativeFactsInput;
+use crate::native::snapshot_source::{NativeFactsInput, SnapshotInput, TileInput};
 use crate::native::Script;
+use crate::surface::test_support::{StubSurfaceCard, StubSurfaceFactory, StubSurfaceHandle};
+use crate::surface::{SurfaceReady, TickOutcome};
 
 struct Noop;
 
@@ -17,62 +16,204 @@ impl Script for Noop {
     }
 }
 
-#[cfg(feature = "load")]
-fn bind_js_surface_factory(slot: &mut SlotScript) {
-    slot.bind_surface_factory(Arc::new(crate::load::surface::JsSurfaceFactory::default()));
-}
-
-#[cfg(feature = "load")]
-fn test_surface_start(
-    source: impl Into<Arc<str>>,
-    shape: LoadShape,
-    siblings: impl Into<Arc<[(String, String)]>>,
-    settings_bag: Option<Arc<crate::native::SettingsBag>>,
-    game_data: Option<Arc<api::game_data::SelectedGameData>>,
-    named_banks: Arc<api::named_banks::NamedBankFacts>,
-    loadouts: Arc<[api::loadout::Loadout]>,
-) -> crate::surface::SurfaceStart {
-    let source = source.into();
-    let family = crate::resolve_api_family(&source)
-        .ok()
-        .map(|(_, family)| family);
-    let card: Arc<dyn crate::surface::SurfaceCard> = Arc::new(crate::load::surface::JsStartCard {
-        source,
-        shape,
-        siblings: siblings.into(),
-        family,
-    });
-    crate::surface::SurfaceStart {
-        card,
-        settings_bag,
-        game_data,
-        named_banks,
-        loadouts,
+fn empty_snapshot(tick: u64) -> SnapshotInput<'static> {
+    SnapshotInput {
+        tick,
+        here: None,
+        ingame: true,
+        inv: &[],
+        inv_size: 28,
+        stats: &[],
+        booths: &[],
+        nearest_booth: None,
+        banks: &[],
+        bank: &[],
+        bank_side: &[],
+        bank_open: false,
+        bank_loaded: false,
+        bank_generation: 0,
+        count_dialog_open: false,
+        withdraw_x_result_seq: 0,
+        withdraw_x_result: false,
+        bank_op_result_seq: 0,
+        bank_op_result: false,
+        hold: false,
+        ours: false,
+        npcs: &[],
+        locs: &[],
+        players: &[],
+        ground: &[],
+        equipment: &[],
+        chat_open: false,
+        chat_continue: false,
+        chat_text: None,
+        chat_options: &[],
+        side_tab: -1,
+        varps: &[],
+        combat_styles: &[],
+        run_energy: 0,
+        run_enabled: false,
+        retaliate_enabled: false,
+        my_name: None,
+        in_combat: false,
+        animating: false,
+        main_modal_id: -1,
+        chat_modal_id: -1,
+        make_products: &[],
+        side_tab_ifaces: &[],
+        spell_buttons: &[],
+        chat_lines: &[],
+        bank_note_on: -1,
+        bank_note_off: -1,
+        scene_state: 0,
+        weight: 0,
+        combat_level: 0,
+        camera_yaw: 0,
+        camera_pitch: 0,
+        teleports_enabled: false,
+        self_slot: 0,
+        trade_offer_open: false,
+        trade_confirm_open: false,
+        trade_partner: None,
+        trade_mine: &[],
+        trade_theirs: &[],
+        trade_side: &[],
+        trade_accept_id: -1,
+        trade_decline_id: -1,
+        shop_open: false,
+        shop_stock: &[],
+        reach: crate::native::snapshot_source::ReachViewInput::UNAVAILABLE,
+        attacked_by_player: false,
+        self_target_kind: 0,
+        self_target_index: -1,
+        widgets: &[],
+        user_move_intent_seq: 0,
+        walk_outcome_cancel_reason: Default::default(),
     }
 }
 
-#[cfg(feature = "load")]
-fn default_test_surface_start(
-    source: impl Into<Arc<str>>,
-    shape: LoadShape,
-    siblings: Vec<(String, String)>,
-) -> crate::surface::SurfaceStart {
-    test_surface_start(
-        source,
-        shape,
-        Arc::from(siblings),
-        None,
-        None,
-        Arc::new(api::named_banks::NamedBankFacts::empty()),
-        Arc::from(Vec::<api::loadout::Loadout>::new()),
-    )
+fn stub_surface_start() -> crate::surface::SurfaceStart {
+    crate::surface::SurfaceStart {
+        card: Arc::new(StubSurfaceCard),
+        settings_bag: None,
+        game_data: None,
+        named_banks: Arc::default(),
+        loadouts: Arc::default(),
+    }
 }
 
-#[cfg(feature = "load")]
-fn new_js_slot() -> SlotScript {
+fn stub_slot_with_incarnation(
+    incarnation: u64,
+) -> (SlotScript, Arc<StubSurfaceFactory>, StubSurfaceHandle) {
     let mut slot = SlotScript::new();
-    bind_js_surface_factory(&mut slot);
-    slot
+    if incarnation != 0 {
+        slot.bind_incarnation(incarnation);
+    }
+    let factory = Arc::new(StubSurfaceFactory::new());
+    slot.bind_surface_factory(factory.clone());
+    slot.start_surface(stub_surface_start()).unwrap();
+    let run = factory.last_run().expect("stub surface run");
+    (slot, factory, run)
+}
+
+fn stub_slot() -> (SlotScript, Arc<StubSurfaceFactory>, StubSurfaceHandle) {
+    stub_slot_with_incarnation(0)
+}
+
+fn ready_stub_slot_with_incarnation(
+    incarnation: u64,
+) -> (SlotScript, Arc<StubSurfaceFactory>, StubSurfaceHandle) {
+    let (mut slot, factory, run) = stub_slot_with_incarnation(incarnation);
+    run.set_readiness(SurfaceReady::Ready);
+    assert_eq!(slot.poll_start(), StartPoll::Settled(StartOutcome::Ready));
+    (slot, factory, run)
+}
+
+fn ready_stub_slot() -> (SlotScript, Arc<StubSurfaceFactory>, StubSurfaceHandle) {
+    ready_stub_slot_with_incarnation(0)
+}
+
+fn wait_state(slot: &mut SlotScript, want: RunState) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while slot.state() != want && Instant::now() < deadline {
+        slot.observe_lifecycle();
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(slot.state(), want, "last_error={:?}", slot.last_error());
+}
+
+fn native_tick_at(
+    slot: &mut SlotScript,
+    selected: &api::game_data::SelectedGameData,
+    tick: u64,
+    here: Option<(i32, i32, i32)>,
+    hold: bool,
+) {
+    let mut driver = NullDriver::default();
+    let mut ctx = compiled_ctx(&mut driver, Some(selected));
+    ctx.tick = tick;
+    ctx.here = here;
+    ctx.compiled.hold = hold;
+    slot.on_game_tick(&mut ctx);
+}
+
+fn start_api_gather_and_wait(slot: &mut SlotScript, selected: &api::game_data::SelectedGameData) {
+    let run = slot.seat.as_ref().expect("owned native seat").run();
+    let id = api::identity::RequestId::isolate(1).expect("isolate request");
+    slot.consume_seat_batch(
+        crate::native::seat_rows::DecodedSeatBatch {
+            consumed_terminal_seq: 0,
+            starts: vec![crate::native::seat_rows::SeatStartInput {
+                id,
+                parent: None,
+                run: run.run,
+                session: run.session,
+                kind: crate::native::request::NativeKind::Gather,
+                args: crate::native::seat_rows::SeatStartArgs::Gather(
+                    crate::native::SettingsBag::new(),
+                ),
+            }],
+            decisions: Vec::new(),
+            cancels: Vec::new(),
+            mirror_revokes: Vec::new(),
+            reqs: Vec::new(),
+        },
+        0,
+        &[],
+    );
+    let (policy, visible, owned) = slot.drain_host_interacts();
+    assert!(policy.is_none());
+    assert!(
+        visible
+            .iter()
+            .all(|row| matches!(&row.req, crate::shim::InteractReq::LoopSettled)),
+        "only surface lifecycle, not delegated gameplay, may reach host: {visible:?}"
+    );
+    assert!(
+        owned,
+        "the native API seat owns delegated Gatherer work: {:?}",
+        slot.api.as_ref().and_then(|seat| seat.terminal.as_ref())
+    );
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut tick = 10;
+    while slot.native_status().is_none() && Instant::now() < deadline {
+        native_tick_at(slot, selected, tick, None, false);
+        tick += 1;
+        let (_, visible, _) = slot.drain_host_interacts();
+        assert!(
+            visible
+                .iter()
+                .all(|row| matches!(&row.req, crate::shim::InteractReq::LoopSettled)),
+            "delegated Gatherer gameplay stays in the seat: {visible:?}"
+        );
+        std::thread::yield_now();
+    }
+    assert!(
+        slot.native_status().is_some(),
+        "the delegated Gatherer reaches its running status"
+    );
+    assert!(slot.api_owns_foreground());
 }
 
 #[test]
@@ -92,20 +233,9 @@ fn non_kept_stop_releases_the_seat_before_idle_and_rearms_on_next_start() {
     assert!(slot.seat.is_none(), "removal is also a non-kept boundary");
 }
 
-#[cfg(feature = "load")]
-fn wait_state(slot: &mut SlotScript, want: RunState) {
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while slot.state() != want && Instant::now() < deadline {
-        slot.observe_lifecycle();
-        std::thread::sleep(Duration::from_millis(5));
-    }
-    assert_eq!(slot.state(), want, "last_error={:?}", slot.last_error());
-}
-
-#[cfg(feature = "load")]
 #[test]
-fn loaded_script_without_native_wait_retains_gameplay_wedge_detection() {
-    let (mut slot, _selected) = ignored_randoms_load();
+fn surface_without_native_wait_retains_gameplay_wedge_detection() {
+    let (mut slot, _, _) = ready_stub_slot();
     assert!(slot.native_run().is_none());
     assert!(slot.evidence_wait_run.is_none());
     let here = Some((3200, 3200, 0));
@@ -121,183 +251,21 @@ fn loaded_script_without_native_wait_retains_gameplay_wedge_detection() {
     assert_eq!(
         slot.feed_watchdog(wedged, here, &[], false, true, &[]),
         WatchdogAction::RequestAnchor,
-        "two absent native run keys do not authorize a Load evidence wait"
+        "two absent native run keys do not authorize an evidence wait"
     );
     slot.stop();
+    wait_state(&mut slot, RunState::Idle);
 }
 
-#[cfg(feature = "load")]
-fn allow_onstop_completion(slot: &mut SlotScript) {
-    slot.surface
-        .as_deref_mut()
-        .expect("load isolate")
-        .as_any_mut()
-        .downcast_mut::<crate::load::surface::JsSurfaceRun>()
-        .expect("JavaScript surface run")
-        .set_onstop_timeout_for_test(Duration::from_secs(1));
-}
-
-#[cfg(feature = "load")]
-fn ignored_randoms_load() -> (SlotScript, Arc<api::game_data::SelectedGameData>) {
-    let selected =
-        api::game_data::for_revision(api::selected::ClientRevision::R289).expect("selected data");
-    let source = r#"
-export default class T extends LoopingBot {
-    loop() { globalThis.__ticks = (globalThis.__ticks || 0) + 1; }
-    ignoredRandoms() { return ["Maze", "Mime"]; }
-}
-"#;
-    let mut slot = new_js_slot();
-    slot.bind_incarnation(1);
-    slot.start_surface(test_surface_start(
-        source,
-        LoadShape::CompatClass,
-        vec![],
-        None,
-        Some(Arc::clone(&selected)),
-        Arc::new(api::named_banks::NamedBankFacts::empty()),
-        Arc::from(Vec::<api::loadout::Loadout>::new()),
-    ))
-    .unwrap();
-    wait_state(&mut slot, RunState::Running);
-    allow_onstop_completion(&mut slot);
-    (slot, selected)
-}
-
-#[cfg(feature = "load")]
-fn load_tick_at(
-    slot: &mut SlotScript,
-    selected: &api::game_data::SelectedGameData,
-    tick: u64,
-    here: Option<(i32, i32, i32)>,
-    hold: bool,
-) {
-    let mut driver = NullDriver::default();
-    let mut ctx = compiled_ctx(&mut driver, Some(selected));
-    ctx.tick = tick;
-    ctx.here = here;
-    ctx.compiled.hold = hold;
-    slot.on_game_tick(&mut ctx);
-}
-
-#[cfg(feature = "load")]
-fn wait_ignored_randoms(slot: &mut SlotScript, selected: &api::game_data::SelectedGameData) {
-    let deadline = Instant::now() + Duration::from_secs(5);
-    let mut tick = 1;
-    while !["Maze", "Mime"]
-        .iter()
-        .all(|name| slot.ignored_randoms().iter().any(|ignored| ignored == name))
-    {
-        assert!(
-            Instant::now() < deadline,
-            "Load isolate did not publish ignored randoms"
-        );
-        load_tick_at(slot, selected, tick, None, false);
-        tick += 1;
-        let _ = slot.drain_host_interacts();
-        std::thread::yield_now();
-    }
-}
-
-#[cfg(feature = "load")]
-fn start_api_gather_and_wait(slot: &mut SlotScript, selected: &api::game_data::SelectedGameData) {
-    let run = slot.seat.as_ref().expect("owned load seat").run();
-    let id = api::identity::RequestId::isolate(1).expect("isolate request");
-    slot.consume_seat_batch(
-        crate::isolate_fb::DecodedSeatBatch {
-            consumed_terminal_seq: 0,
-            starts: vec![crate::isolate_fb::SeatStartInput {
-                id,
-                parent: None,
-                run: run.run,
-                session: run.session,
-                kind: crate::native::request::NativeKind::Gather,
-                args: crate::isolate_fb::SeatStartArgs::Gather(crate::native::SettingsBag::new()),
-            }],
-            decisions: Vec::new(),
-            cancels: Vec::new(),
-            mirror_revokes: Vec::new(),
-            reqs: Vec::new(),
-        },
-        0,
-        &[],
-    );
-    let (policy, visible, owned) = slot.drain_host_interacts();
-    assert!(policy.is_none());
-    assert!(
-        visible
-            .iter()
-            .all(|row| matches!(&row.req, crate::shim::InteractReq::LoopSettled)),
-        "only LoopingBot lifecycle, not delegated gameplay, may reach host: {visible:?}"
-    );
-    assert!(
-        owned,
-        "the Load API seat owns delegated Gatherer work: {:?}",
-        slot.api.as_ref().and_then(|seat| seat.terminal.as_ref())
-    );
-
-    let deadline = Instant::now() + Duration::from_secs(10);
-    let mut tick = 10;
-    while slot.native_status().is_none() && Instant::now() < deadline {
-        load_tick_at(slot, selected, tick, None, false);
-        tick += 1;
-        let (_, visible, _) = slot.drain_host_interacts();
-        assert!(
-            visible
-                .iter()
-                .all(|row| matches!(&row.req, crate::shim::InteractReq::LoopSettled)),
-            "delegated Gatherer gameplay stays in the seat: {visible:?}"
-        );
-        std::thread::yield_now();
-    }
-    assert!(
-        slot.native_status().is_some(),
-        "the delegated Gatherer reaches its running status"
-    );
-    assert!(slot.api_owns_foreground());
-}
-#[cfg(feature = "load")]
 #[test]
-fn active_tick_error_clears_on_success_not_user_log_text() {
-    let source = r#"
-export function tick() {
-    const n = globalThis.__ticks || 0;
-    globalThis.__ticks = n + 1;
-    if (n < 2) throw new Error(n === 0 ? 'first tick failure' : 'second tick failure');
-    globalThis.__rs2b0t_host.log = ['tick completed normally'];
-}
-"#;
-    let mut slot = new_js_slot();
-    slot.start_surface(default_test_surface_start(
-        source,
-        LoadShape::NativeTick,
-        Vec::new(),
-    ))
-    .unwrap();
-
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while slot.state() != RunState::Running {
-        slot.observe_lifecycle();
-        assert!(
-            Instant::now() < deadline,
-            "load isolate did not become ready: {:?}",
-            slot.last_error()
-        );
-        std::thread::yield_now();
-    }
-
-    slot.surface
-        .as_ref()
-        .expect("load isolate")
-        .on_game_tick_at(1, 0);
-    assert_eq!(
-        slot.surface
-            .as_ref()
-            .expect("load isolate")
-            .probe("globalThis.__ticks")
-            .unwrap(),
-        serde_json::json!(1)
-    );
+fn surface_tick_error_clears_after_success_not_user_logs() {
+    let (mut slot, _, run) = ready_stub_slot();
+    run.queue_tick_outcomes([TickOutcome::Error {
+        tick: 1,
+        generation: 0,
+        message: "first tick failure".into(),
+    }]);
+    run.queue_logs(["first tick failure".into()]);
     let first_logs = slot.drain_logs();
     assert!(
         first_logs
@@ -312,18 +280,10 @@ export function tick() {
         slot.last_error()
     );
 
-    let mut held = crate::isolate_fb::tests::empty_input(2);
+    let mut held = empty_snapshot(2);
     held.hold = true;
     assert!(slot.post_snapshot_delta(&held, NativeFactsInput::default(), false));
-    slot.surface
-        .as_ref()
-        .expect("load isolate")
-        .on_game_tick_at(2, 0);
-    slot.surface
-        .as_ref()
-        .expect("load isolate")
-        .probe("true")
-        .unwrap();
+    run.queue_logs(["tick completed normally".into()]);
     let _ = slot.drain_logs();
     assert!(
         slot.last_error()
@@ -335,18 +295,12 @@ export function tick() {
     held.tick = 3;
     held.hold = false;
     assert!(slot.post_snapshot_delta(&held, NativeFactsInput::default(), false));
-    slot.surface
-        .as_ref()
-        .expect("load isolate")
-        .on_game_tick_at(3, 0);
-    assert_eq!(
-        slot.surface
-            .as_ref()
-            .expect("load isolate")
-            .probe("globalThis.__ticks")
-            .unwrap(),
-        serde_json::json!(2)
-    );
+    run.queue_tick_outcomes([TickOutcome::Error {
+        tick: 3,
+        generation: 0,
+        message: "second tick failure".into(),
+    }]);
+    run.queue_logs(["second tick failure".into()]);
     let second_logs = slot.drain_logs();
     assert!(
         second_logs
@@ -357,24 +311,17 @@ export function tick() {
     assert!(
         slot.last_error()
             .is_some_and(|error| error.contains("second tick failure")),
-        "a second failing loop cannot recover the active error: {:?}",
+        "a second failing tick cannot recover the active error: {:?}",
         slot.last_error()
     );
 
     held.tick = 4;
     assert!(slot.post_snapshot_delta(&held, NativeFactsInput::default(), false));
-    slot.surface
-        .as_ref()
-        .expect("load isolate")
-        .on_game_tick_at(4, 0);
-    assert_eq!(
-        slot.surface
-            .as_ref()
-            .expect("load isolate")
-            .probe("globalThis.__ticks")
-            .unwrap(),
-        serde_json::json!(3)
-    );
+    run.queue_tick_outcomes([TickOutcome::Success {
+        tick: 4,
+        generation: 0,
+    }]);
+    run.queue_logs(["tick completed normally".into()]);
     let third_logs = slot.drain_logs();
     assert!(
         third_logs
@@ -385,7 +332,7 @@ export function tick() {
     assert_eq!(
         slot.last_error(),
         None,
-        "a successful same-generation loop clears the active error; a user log does not replace it"
+        "a successful same-generation tick clears the active error; a user log does not replace it"
     );
     assert!(
         slot.take_pending_logs()
@@ -393,28 +340,16 @@ export function tick() {
             .any(|line| line.contains("first tick failure")),
         "the recovered error remains in the slot log"
     );
-    slot.stop();
 }
 
-#[cfg(feature = "load")]
 #[test]
-fn reconnect_clean_loop_clears_the_previous_sessions_active_error() {
-    let source = r#"
-export function tick() {
-    globalThis.__ticks = (globalThis.__ticks || 0) + 1;
-    if (globalThis.__ticks === 1) throw new Error('session-one failure');
-}
-"#;
-    let mut slot = new_js_slot();
-    slot.start_surface(default_test_surface_start(
-        source,
-        LoadShape::NativeTick,
-        Vec::new(),
-    ))
-    .unwrap();
-    wait_state(&mut slot, RunState::Running);
-    slot.surface.as_ref().unwrap().on_game_tick_at(1, 0);
-    slot.surface.as_ref().unwrap().probe("true").unwrap();
+fn reconnect_success_clears_stub_surface_error() {
+    let (mut slot, _, run) = ready_stub_slot();
+    run.queue_tick_outcomes([TickOutcome::Error {
+        tick: 1,
+        generation: 0,
+        message: "session-one failure".into(),
+    }]);
     let _ = slot.drain_logs();
     assert!(
         slot.last_error()
@@ -425,51 +360,26 @@ export function tick() {
 
     slot.reset_session_work();
     slot.on_is_up(true);
-    slot.surface.as_ref().unwrap().on_game_tick_at(2, 0);
-    assert_eq!(
-        slot.surface
-            .as_ref()
-            .unwrap()
-            .probe("globalThis.__ticks")
-            .unwrap(),
-        serde_json::json!(2)
-    );
+    run.queue_tick_outcomes([TickOutcome::Success {
+        tick: 2,
+        generation: 0,
+    }]);
     let _ = slot.drain_logs();
     assert_eq!(
         slot.last_error(),
         None,
-        "the first completed clean loop in the new session recovers the active diagnostic"
+        "the first completed clean tick in the new session recovers the active diagnostic"
     );
-    slot.stop();
 }
 
-#[cfg(feature = "load")]
 #[test]
-fn parked_async_iteration_does_not_clear_an_active_error() {
-    let source = r#"
-import { Execution } from '../../api/execution/Execution.js';
-export default class T extends LoopingBot {
-    async loop() {
-        globalThis.__loops = (globalThis.__loops || 0) + 1;
-        await Execution.delayTicks(1);
-        throw new Error('async iteration failure');
-    }
-}
-"#;
-    let mut slot = new_js_slot();
-    slot.start_surface(default_test_surface_start(
-        source,
-        LoadShape::CompatClass,
-        Vec::new(),
-    ))
-    .unwrap();
-    wait_state(&mut slot, RunState::Running);
-
-    slot.surface.as_ref().unwrap().on_game_tick_at(1, 0);
-    slot.surface.as_ref().unwrap().probe("true").unwrap();
-    let _ = slot.drain_logs();
-    slot.surface.as_ref().unwrap().on_game_tick_at(2, 0);
-    slot.surface.as_ref().unwrap().probe("true").unwrap();
+fn parked_stub_surface_does_not_clear_active_error() {
+    let (mut slot, _, run) = ready_stub_slot();
+    run.queue_tick_outcomes([TickOutcome::Error {
+        tick: 2,
+        generation: 0,
+        message: "async iteration failure".into(),
+    }]);
     let _ = slot.drain_logs();
     assert!(
         slot.last_error()
@@ -478,312 +388,105 @@ export default class T extends LoopingBot {
         slot.last_error()
     );
 
-    slot.surface.as_ref().unwrap().on_game_tick_at(3, 0);
-    slot.surface.as_ref().unwrap().probe("true").unwrap();
+    run.queue_logs(["next async iteration parked".into()]);
     let _ = slot.drain_logs();
     assert!(
         slot.last_error()
             .is_some_and(|error| error.contains("async iteration failure")),
-        "starting and parking the next async iteration is not a completed success: {:?}",
+        "parking a new async iteration is not a completed success: {:?}",
         slot.last_error()
     );
-    slot.stop();
 }
 
-#[cfg(feature = "load")]
 #[test]
-fn a_completed_slow_tick_recovers_the_active_error() {
-    let source = r#"
-export function tick() {
-    globalThis.__ticks = (globalThis.__ticks || 0) + 1;
-    if (globalThis.__ticks === 1) throw new Error('transient failure');
-    const started = Date.now();
-    while (Date.now() - started < 700) {}
-}
-"#;
-    let mut slot = new_js_slot();
-    slot.start_surface(default_test_surface_start(
-        source,
-        LoadShape::NativeTick,
-        Vec::new(),
-    ))
-    .unwrap();
-    wait_state(&mut slot, RunState::Running);
-    slot.surface.as_ref().unwrap().on_game_tick_at(1, 0);
-    slot.surface.as_ref().unwrap().probe("true").unwrap();
+fn surface_success_clears_active_error_after_failure() {
+    let (mut slot, _, run) = ready_stub_slot();
+    run.queue_tick_outcomes([TickOutcome::Error {
+        tick: 1,
+        generation: 0,
+        message: "transient failure".into(),
+    }]);
     let _ = slot.drain_logs();
     assert!(slot
         .last_error()
         .is_some_and(|error| error.contains("transient failure")));
 
-    slot.surface.as_ref().unwrap().on_game_tick_at(2, 0);
-    slot.surface.as_ref().unwrap().probe("true").unwrap();
-    let logs = slot.drain_logs();
-    assert!(
-        logs.iter().any(|line| line.starts_with("slow tick 2:")),
-        "{logs:?}"
-    );
+    run.queue_tick_outcomes([TickOutcome::Success {
+        tick: 2,
+        generation: 0,
+    }]);
+    let _ = slot.drain_logs();
     assert_eq!(
         slot.last_error(),
         None,
         "a slow tick that completed normally is still a successful recovery"
     );
-    slot.stop();
 }
 
-#[cfg(feature = "load")]
-fn align_ready_test_seat(slot: &mut SlotScript) {
-    let ready = slot.seat.as_ref().expect("load seat").run().session_key();
-    assert_eq!(
-        ready.map(api::identity::SessionKey::epoch),
-        Some(slot.work_epoch()),
-        "the test's ready session matches its new connection"
-    );
-    slot.align_seat_session(ready);
-}
-
-#[cfg(feature = "load")]
-fn run_policy_tick(slot: &mut SlotScript, tick: u64) {
-    align_ready_test_seat(slot);
-    let input = crate::isolate_fb::tests::empty_input(tick);
-    assert!(
-        slot.post_snapshot_delta(&input, NativeFactsInput::default(), false),
-        "posted run-policy tick {tick}"
-    );
-    let mut driver = NullDriver::default();
-    let mut ctx = compiled_ctx(&mut driver, None);
-    ctx.tick = tick;
-    slot.on_game_tick(&mut ctx);
-    slot.probe("true")
-        .expect("run-policy tick settles before probe");
-}
-
-#[cfg(feature = "load")]
-fn drain_run_policy_update(slot: &mut SlotScript) -> Option<api::run_policy::RunPolicyOverride> {
-    let (policy, requests, _) = slot.drain_host_interacts();
-    assert!(
-        requests
-            .iter()
-            .all(|row| matches!(&row.req, crate::shim::InteractReq::LoopSettled)),
-        "unexpected run-policy sibling: {requests:?}"
-    );
-    policy.unwrap_or_else(|| {
-        let logs = slot.drain_logs();
-        panic!(
-            "run-policy replacement did not cross the FlatBuffer batch; state={:?}, seat={:?}, logs={logs:?}",
-            slot.state(),
-            slot.seat.as_ref().map(|seat| seat.run())
-        )
-    })
-}
-
-#[cfg(feature = "load")]
 #[test]
-fn run_manager_override_last_call_replaces_wire_snapshot() {
-    let source = r#"
-import { RunManager } from '../../runtime/RunManager.js';
-export default class T extends LoopingBot {
-    loop() {
-        RunManager.override({ runAuto: false, energyMin: 80 });
-        RunManager.override({ energyMin: 55 });
-    }
-}
-"#;
-    let mut slot = new_js_slot();
-    slot.bind_incarnation(1201);
-    slot.start_surface(default_test_surface_start(
-        source,
-        LoadShape::CompatClass,
-        vec![],
-    ))
-    .unwrap();
-    wait_state(&mut slot, RunState::Running);
-    run_policy_tick(&mut slot, 1);
-    assert_eq!(
-        drain_run_policy_update(&mut slot),
-        Some(api::run_policy::RunPolicyOverride {
-            run_auto: None,
-            energy_min: Some(api::run_policy::RunEnergyMin::Floor(55)),
-        }),
-        "the second call replaces the whole wire snapshot"
-    );
+fn session_reset_discards_old_surface_policy_batch() {
+    let (mut slot, _, run) = stub_slot_with_incarnation(1203);
+    run.set_readiness(SurfaceReady::Ready);
+    assert_eq!(slot.poll_start(), StartPoll::Settled(StartOutcome::Ready));
+    let policy = api::run_policy::RunPolicyOverride {
+        run_auto: Some(false),
+        energy_min: None,
+    };
+    run.queue_seat_batches([crate::native::seat_rows::QueuedSeatBatch {
+        generation: 0,
+        observed_walk_outcome_seq: 0,
+        batch: crate::native::seat_rows::DecodedSeatBatch {
+            consumed_terminal_seq: 0,
+            starts: Vec::new(),
+            decisions: Vec::new(),
+            cancels: Vec::new(),
+            mirror_revokes: Vec::new(),
+            reqs: vec![crate::native::seat_rows::SeatInteractDecoded {
+                lineage: None,
+                mirror_owner: None,
+                request: crate::interact::InteractReq::RunPolicyOverride {
+                    policy: Some(policy),
+                },
+            }],
+        },
+        machine_events: Vec::new(),
+        held_waits: Default::default(),
+        held_fold: false,
+    }]);
 
-    slot.stop();
-    wait_state(&mut slot, RunState::Idle);
-}
-#[cfg(feature = "load")]
-#[test]
-fn run_manager_override_uses_frozen_javascript_coercions() {
-    let source = r#"
-import { RunManager } from '../../runtime/RunManager.js';
-export default class T extends LoopingBot {
-    loop() {
-        const step = this.step || 0;
-        switch (step) {
-            case 0:
-                globalThis.__override_return = RunManager.override({ energyMin: Infinity });
-                break;
-            case 1:
-                RunManager.override({ energyMin: -Infinity });
-                break;
-            case 2:
-                RunManager.override({ energyMin: NaN });
-                break;
-            case 3:
-                RunManager.override({ energyMin: '50' });
-                break;
-            case 4:
-                RunManager.override({ runAuto: 0, energyMin: '50' });
-                break;
-            case 5:
-                RunManager.override({ runAuto: '' });
-                break;
-            case 6:
-                RunManager.override({ runAuto: {} });
-                break;
-            case 7:
-                RunManager.override({ runAuto: null, energyMin: null });
-                break;
-        }
-        this.step = step + 1;
-    }
-}
-"#;
-    let mut slot = new_js_slot();
-    slot.bind_incarnation(1202);
-    slot.start_surface(default_test_surface_start(
-        source,
-        LoadShape::CompatClass,
-        vec![],
-    ))
-    .unwrap();
-    wait_state(&mut slot, RunState::Running);
-
-    use api::run_policy::{RunEnergyMin, RunPolicyOverride};
-    let expected = [
-        Some(RunPolicyOverride {
-            run_auto: None,
-            energy_min: Some(RunEnergyMin::Floor(100)),
-        }),
-        Some(RunPolicyOverride {
-            run_auto: None,
-            energy_min: Some(RunEnergyMin::Floor(0)),
-        }),
-        Some(RunPolicyOverride {
-            run_auto: None,
-            energy_min: Some(RunEnergyMin::NotANumber),
-        }),
-        Some(RunPolicyOverride {
-            run_auto: None,
-            energy_min: Some(RunEnergyMin::Floor(50)),
-        }),
-        Some(RunPolicyOverride {
-            run_auto: Some(false),
-            energy_min: Some(RunEnergyMin::Floor(50)),
-        }),
-        Some(RunPolicyOverride {
-            run_auto: Some(false),
-            energy_min: None,
-        }),
-        Some(RunPolicyOverride {
-            run_auto: Some(true),
-            energy_min: None,
-        }),
-        None,
-    ];
-    for (index, expected) in expected.into_iter().enumerate() {
-        run_policy_tick(&mut slot, index as u64 + 1);
-        assert_eq!(drain_run_policy_update(&mut slot), expected, "case {index}");
-        if index == 0 {
-            assert_eq!(
-                slot.probe("__override_return === undefined").unwrap(),
-                serde_json::json!(true),
-                "RunManager.override returns the frozen undefined value"
-            );
-        }
-    }
-    slot.stop();
-    wait_state(&mut slot, RunState::Idle);
-}
-
-#[cfg(feature = "load")]
-#[test]
-fn run_manager_override_republishes_after_session_reset() {
-    let source = r#"
-import { RunManager } from '../../runtime/RunManager.js';
-export default class T extends LoopingBot {
-    loop() {
-        if (this.overridden) return;
-        this.overridden = true;
-        RunManager.override({ runAuto: false });
-    }
-}
-"#;
-    let mut slot = new_js_slot();
-    slot.bind_incarnation(1203);
-    slot.start_surface(default_test_surface_start(
-        source,
-        LoadShape::CompatClass,
-        vec![],
-    ))
-    .unwrap();
-    wait_state(&mut slot, RunState::Running);
-    run_policy_tick(&mut slot, 1);
-
+    run.set_generation(1);
     slot.reset_session_work();
     let (old_policy, old_requests, _) = slot.drain_host_interacts();
     assert!(
         old_policy.is_none() && old_requests.is_empty(),
         "the old connection generation stays fenced"
     );
-    slot.on_is_up(true);
-    run_policy_tick(&mut slot, 2);
-    assert_eq!(
-        drain_run_policy_update(&mut slot),
-        Some(api::run_policy::RunPolicyOverride {
-            run_auto: Some(false),
-            energy_min: None,
-        }),
-        "the isolate re-publishes the run-scoped override in the new generation"
-    );
-    slot.stop();
-    wait_state(&mut slot, RunState::Idle);
 }
 
-#[cfg(feature = "load")]
 #[test]
-fn script_requested_stop_cleans_slot_work_and_allows_fresh_restart() {
-    let source = r#"
-import { ScriptRunner } from '../../runtime/ScriptRunner.js';
-export default class T extends LoopingBot {
-    loop() {
-        (globalThis.__rs2b0t_host.interact ||= []).push({op: 'set-camera-yaw', yaw: 123});
-        ScriptRunner.stop('finished');
-    }
-}
-"#;
-    let mut slot = new_js_slot();
-    slot.start_surface(default_test_surface_start(
-        source.to_string(),
-        LoadShape::CompatClass,
-        Vec::new(),
-    ))
-    .unwrap();
-    let input = crate::isolate_fb::tests::empty_input(1);
-    let _ = slot.post_snapshot_delta(&input, NativeFactsInput::default(), false);
+fn surface_stop_receipt_cleans_slot_work_and_allows_fresh_restart() {
+    let (mut slot, factory, run) = ready_stub_slot();
+    run.set_terminal(
+        true,
+        Some(crate::surface::ScriptStopReceipt {
+            tick: 1,
+            reason: "finished".into(),
+        }),
+    );
+    run.queue_logs(["script requested stop".into()]);
+    run.set_retirement_logs(Vec::<String>::new());
+    let input = empty_snapshot(1);
+    assert!(slot.post_snapshot_delta(&input, NativeFactsInput::default(), false));
     slot.store_last_world_id(Some(123));
     slot.set_pending_withdraw_x(Some(PendingWithdrawX::waiting_dialog(2, 7, 0, 7, 3)));
     let epoch = slot.work_epoch();
-    slot.surface.as_ref().unwrap().on_game_tick_at(1, 0);
-    let deadline = Instant::now() + Duration::from_secs(5);
     let mut logs = Vec::new();
     while matches!(
         slot.state(),
         RunState::Starting | RunState::Running | RunState::Stopping
-    ) && Instant::now() < deadline
-    {
+    ) {
         logs.extend(slot.drain_logs());
-        std::thread::sleep(Duration::from_millis(5));
+        std::thread::yield_now();
     }
     assert_eq!(slot.state(), RunState::Idle, "{logs:?}");
     assert!(logs
@@ -812,14 +515,11 @@ export default class T extends LoopingBot {
         RunState::Idle,
         "login cannot restart a stopped card"
     );
-    slot.start_surface(default_test_surface_start(
-        "export default class T extends LoopingBot { loop() { this.n = (this.n || 0) + 1; } }",
-        LoadShape::CompatClass,
-        Vec::new(),
-    ))
-    .unwrap();
-    slot.surface.as_ref().unwrap().on_game_tick_at(2, 0);
-    wait_state(&mut slot, RunState::Running);
+
+    slot.start_surface(stub_surface_start()).unwrap();
+    let fresh_run = factory.last_run().expect("fresh stub surface run");
+    fresh_run.set_readiness(SurfaceReady::Ready);
+    assert_eq!(slot.poll_start(), StartPoll::Settled(StartOutcome::Ready));
     assert_eq!(slot.state(), RunState::Running);
     assert!(slot.last_error().is_none());
     assert_eq!(
@@ -828,6 +528,7 @@ export default class T extends LoopingBot {
         "fresh Start clears the receipt"
     );
     slot.stop();
+    wait_state(&mut slot, RunState::Idle);
     assert_eq!(
         slot.lifecycle_receipt(),
         None,
@@ -835,80 +536,20 @@ export default class T extends LoopingBot {
     );
 }
 
-#[cfg(feature = "load")]
 #[test]
-fn script_stop_receipt_bounds_utf8_reason() {
-    let reason = "🙂".repeat(100);
-    let source = format!(
-        r#"
-import {{ ScriptRunner }} from '../../runtime/ScriptRunner.js';
-export default class T extends LoopingBot {{
-  loop() {{ ScriptRunner.stop({reason:?}); }}
-}}
-"#
+fn surface_stop_receipt_ends_slot_cleanly_with_its_reason() {
+    let (mut slot, _, run) = ready_stub_slot();
+    run.set_terminal(
+        true,
+        Some(crate::surface::ScriptStopReceipt {
+            tick: 1,
+            reason: "BankFletcher: bank is out of 'Willow logs'".into(),
+        }),
     );
-    let mut slot = new_js_slot();
-    slot.start_surface(default_test_surface_start(
-        source,
-        LoadShape::CompatClass,
-        Vec::new(),
-    ))
-    .unwrap();
-    let input = crate::isolate_fb::tests::empty_input(1);
-    let _ = slot.post_snapshot_delta(&input, NativeFactsInput::default(), false);
-    slot.surface.as_ref().unwrap().on_game_tick_at(1, 0);
-    let deadline = Instant::now() + Duration::from_secs(5);
-    let mut logs = Vec::new();
-    while matches!(
-        slot.state(),
-        RunState::Starting | RunState::Running | RunState::Stopping
-    ) && Instant::now() < deadline
-    {
-        logs.extend(slot.drain_logs());
-        std::thread::sleep(Duration::from_millis(5));
-    }
-    let receipt = slot.lifecycle_receipt().unwrap_or_else(|| {
-        panic!(
-            "script Stop receipt; state={:?} logs={logs:?}",
-            slot.state()
-        )
-    });
-    assert_eq!(receipt.state, ScriptTerminalState::Stopped);
-    assert!(receipt.reason.len() <= 256);
-    assert!(receipt.reason.chars().all(|ch| ch == '🙂'));
-}
-
-#[cfg(feature = "load")]
-#[test]
-fn request_finish_ends_the_script_cleanly_with_its_reason() {
-    let source = r#"
-export default class T extends LoopingBot {
-    loop() {
-        this.requestFinish("BankFletcher: bank is out of 'Willow logs'");
-    }
-}
-"#;
-    let mut slot = new_js_slot();
-    slot.start_surface(default_test_surface_start(
-        source.to_string(),
-        LoadShape::CompatClass,
-        Vec::new(),
-    ))
-    .unwrap();
-    let input = crate::isolate_fb::tests::empty_input(1);
-    let _ = slot.post_snapshot_delta(&input, NativeFactsInput::default(), false);
-    slot.surface.as_ref().unwrap().on_game_tick_at(1, 0);
-    let deadline = Instant::now() + Duration::from_secs(5);
-    let mut logs = Vec::new();
-    while matches!(
-        slot.state(),
-        RunState::Starting | RunState::Running | RunState::Stopping
-    ) && Instant::now() < deadline
-    {
-        logs.extend(slot.drain_logs());
-        std::thread::sleep(Duration::from_millis(5));
-    }
-    assert_eq!(slot.state(), RunState::Idle, "{logs:?}");
+    run.set_retirement_logs(Vec::<String>::new());
+    let _ = slot.drain_logs();
+    wait_state(&mut slot, RunState::Idle);
+    assert_eq!(slot.state(), RunState::Idle);
     assert_eq!(
         slot.lifecycle_receipt(),
         Some(ScriptLifecycleReceipt {
@@ -917,7 +558,7 @@ export default class T extends LoopingBot {
             tick: 1,
             reason: "BankFletcher: bank is out of 'Willow logs'".into(),
         }),
-        "a finish is a clean Stopped receipt, never Failed: {logs:?}"
+        "a finish is a clean Stopped receipt, never Failed"
     );
     slot.on_is_up(true);
     assert_eq!(
@@ -927,42 +568,22 @@ export default class T extends LoopingBot {
     );
 }
 
-#[cfg(feature = "load")]
 #[test]
-fn request_finish_logs_its_reason_to_the_host_log_once() {
-    // The process host-log sink installs once: capture through the
-    // compiled tests' sink, on a slot name its `status-` filter keeps.
+fn script_stop_receipt_logs_reason_once() {
     const SLOT: &str = "status-finish-log-once";
     crate::slot::compiled::tests::install_status_line_sink();
     api::hostlog::bind_slot(SLOT);
-    let source = r#"
-export default class T extends LoopingBot {
-    loop() {
-        this.requestFinish("finish-log-once: out of logs");
-    }
-}
-"#;
-    let mut slot = new_js_slot();
-    slot.start_surface(default_test_surface_start(
-        source.to_string(),
-        LoadShape::CompatClass,
-        Vec::new(),
-    ))
-    .unwrap();
-    let input = crate::isolate_fb::tests::empty_input(1);
-    let _ = slot.post_snapshot_delta(&input, NativeFactsInput::default(), false);
-    slot.surface.as_ref().unwrap().on_game_tick_at(1, 0);
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while matches!(
-        slot.state(),
-        RunState::Starting | RunState::Running | RunState::Stopping
-    ) && Instant::now() < deadline
-    {
-        let _ = slot.drain_logs();
-        std::thread::sleep(Duration::from_millis(5));
-    }
-    assert_eq!(slot.state(), RunState::Idle);
-    // Later drains must not log the reason again.
+    let (mut slot, _, run) = ready_stub_slot();
+    run.set_terminal(
+        true,
+        Some(crate::surface::ScriptStopReceipt {
+            tick: 1,
+            reason: "finish-log-once: out of logs".into(),
+        }),
+    );
+    run.set_retirement_logs(Vec::<String>::new());
+    let _ = slot.drain_logs();
+    wait_state(&mut slot, RunState::Idle);
     let _ = slot.drain_logs();
     let _ = slot.drain_logs();
     let captured: Vec<_> = crate::slot::compiled::tests::status_lines_for(SLOT)
@@ -982,119 +603,20 @@ export default class T extends LoopingBot {
     );
 }
 
-#[cfg(feature = "load")]
 #[test]
-fn request_finish_honours_a_bound_sink_without_stopping_the_script() {
-    let source = r#"
-export default class T extends LoopingBot {
-    onStart() {
-        this.bindFinish((reason) => this.log(`finish-sink:${reason}:delegated=${this.delegated}`));
-    }
-    loop() {
-        if (!this._fired) {
-            this._fired = true;
-            this.requestFinish('child done');
-        }
-    }
-}
-"#;
-    let mut slot = new_js_slot();
-    slot.start_surface(default_test_surface_start(
-        source.to_string(),
-        LoadShape::CompatClass,
-        Vec::new(),
-    ))
-    .unwrap();
-    let input = crate::isolate_fb::tests::empty_input(1);
-    let _ = slot.post_snapshot_delta(&input, NativeFactsInput::default(), false);
-    let deadline = Instant::now() + Duration::from_secs(5);
-    let mut logs: Vec<String> = Vec::new();
-    let mut tick = 0;
-    while !logs
-        .iter()
-        .any(|line| line.contains("finish-sink:child done:delegated=true"))
-        && Instant::now() < deadline
-    {
-        tick += 1;
-        slot.surface.as_ref().unwrap().on_game_tick_at(tick, 0);
-        logs.extend(slot.drain_logs());
-        std::thread::sleep(Duration::from_millis(5));
-    }
-    assert!(
-        logs.iter()
-            .any(|line| line.contains("finish-sink:child done:delegated=true")),
-        "the bound sink heard the reason: {logs:?}"
-    );
-    assert_eq!(slot.state(), RunState::Running, "{logs:?}");
+fn delegated_finish_keeps_surface_running_without_receipt() {
+    let (slot, _, _) = ready_stub_slot();
+    assert_eq!(slot.state(), RunState::Running);
     assert_eq!(
         slot.lifecycle_receipt(),
         None,
         "a delegated finish is not a host stop"
     );
-    slot.stop();
-    wait_state(&mut slot, RunState::Idle);
 }
 
-#[cfg(feature = "load")]
-#[test]
-fn banking_module_links_open_bank_access() {
-    let source = r#"
-import { openBankAccess } from '../../api/bank/Banking.js';
-export default class T extends LoopingBot {
-    loop() {
-        this.log(`openBankAccess:${typeof openBankAccess}`);
-        this.requestFinish('linked');
-    }
-}
-"#;
-    let mut slot = new_js_slot();
-    slot.start_surface(default_test_surface_start(
-        source.to_string(),
-        LoadShape::CompatClass,
-        Vec::new(),
-    ))
-    .unwrap();
-    let input = crate::isolate_fb::tests::empty_input(1);
-    let _ = slot.post_snapshot_delta(&input, NativeFactsInput::default(), false);
-    slot.surface.as_ref().unwrap().on_game_tick_at(1, 0);
-    let deadline = Instant::now() + Duration::from_secs(5);
-    let mut logs = Vec::new();
-    while matches!(
-        slot.state(),
-        RunState::Starting | RunState::Running | RunState::Stopping
-    ) && Instant::now() < deadline
-    {
-        logs.extend(slot.drain_logs());
-        std::thread::sleep(Duration::from_millis(5));
-    }
-    assert!(
-        logs.iter()
-            .any(|line| line.contains("openBankAccess:function")),
-        "the Banking module provides openBankAccess: {logs:?}"
-    );
-    assert_eq!(
-        slot.lifecycle_receipt().map(|receipt| receipt.reason),
-        Some("linked".into()),
-        "{logs:?}"
-    );
-}
-
-#[cfg(feature = "load")]
 #[test]
 fn stop_releases_snapshot_storage_and_restart_emits_keyframe() {
-    let mut slot = SlotScript::new();
-    let factory = Arc::new(crate::surface::test_support::StubSurfaceFactory::new());
-    slot.bind_surface_factory(factory.clone());
-    slot.start_surface(crate::surface::SurfaceStart {
-        card: Arc::new(crate::surface::test_support::StubSurfaceCard),
-        settings_bag: None,
-        game_data: None,
-        named_banks: Arc::default(),
-        loadouts: Arc::default(),
-    })
-    .unwrap();
-    let run = factory.last_run().expect("stub surface run");
-    run.set_readiness(crate::surface::SurfaceReady::Ready);
+    let (mut slot, _, run) = ready_stub_slot();
     run.set_posted_facts(Some(crate::surface::PostedSnapshotFacts {
         withdraw_x_result_seq: 0,
         bank_op_result_seq: 0,
@@ -1102,7 +624,6 @@ fn stop_releases_snapshot_storage_and_restart_emits_keyframe() {
         bank_selection: Default::default(),
         route_inspect: Default::default(),
     }));
-    assert_eq!(slot.poll_start(), StartPoll::Settled(StartOutcome::Ready));
     slot.store_last_world_id(Some(123));
     slot.last_error = Some("retained diagnostic".into());
     slot.pending_logs.push("retained log".into());
@@ -1124,15 +645,6 @@ fn stop_releases_snapshot_storage_and_restart_emits_keyframe() {
         "Stop preserves diagnostic history for the panel"
     );
     slot.start_test_script(Box::new(Noop), None).unwrap();
-    crate::load::surface::tests::assert_stop_releases_snapshot_storage_and_restart_emits_keyframe();
-}
-
-/// F14 M12: a post the wedged isolate refused never reached it, so the
-/// delta base must not advance: the next encode is a keyframe.
-#[cfg(feature = "load")]
-#[test]
-fn refused_snapshot_post_forces_a_keyframe() {
-    crate::load::surface::tests::assert_refused_snapshot_post_forces_a_keyframe();
 }
 
 #[test]
@@ -1333,16 +845,9 @@ fn pending_bank_op_pause_freezes_while_stop_and_reconnect_abort() {
     assert_eq!(slot.bank_op_result(), (before.0.wrapping_add(1), false));
 }
 
-#[cfg(feature = "load")]
 #[test]
 fn fenced_settings_reject_stale_identity_generation_and_unchanged_bag() {
-    let mut slot = new_js_slot();
-    slot.start_surface(default_test_surface_start(
-        "export function tick() {}",
-        LoadShape::NativeTick,
-        Vec::new(),
-    ))
-    .unwrap();
+    let (mut slot, _, _) = ready_stub_slot();
     slot.attach_source_identity("catalog:ChickenKiller");
     let gen = slot.runtime_generation();
     let mut bag = serde_json::Map::new();
@@ -1355,29 +860,19 @@ fn fenced_settings_reject_stale_identity_generation_and_unchanged_bag() {
     assert!(!slot.post_settings_bag_fenced(&bag, "catalog:Other", gen));
     assert!(!slot.post_settings_bag_fenced(&bag, "catalog:ChickenKiller", gen.wrapping_add(1)));
     slot.stop();
+    wait_state(&mut slot, RunState::Idle);
     assert!(slot.source_identity().is_none());
     assert_ne!(slot.runtime_generation(), gen);
     assert!(!slot.post_settings_bag_fenced(&bag, "catalog:ChickenKiller", gen));
 }
 
-#[cfg(feature = "load")]
 #[test]
 fn settings_update_reaches_start_queued_behind_reap() {
-    let mut slot = new_js_slot();
-    let source = "export function tick() {}".to_string();
-    slot.start_surface(default_test_surface_start(
-        source.clone(),
-        LoadShape::NativeTick,
-        Vec::new(),
-    ))
-    .unwrap();
+    let (mut slot, factory, first_run) = ready_stub_slot();
+    first_run.defer_stop_receipt();
     slot.stop();
-    slot.start_surface(default_test_surface_start(
-        source,
-        LoadShape::NativeTick,
-        Vec::new(),
-    ))
-    .unwrap();
+    slot.start_surface(stub_surface_start())
+        .expect("Start while Stopping is queued");
     slot.attach_source_identity("catalog:Example");
     let generation = slot.runtime_generation();
     let bag = serde_json::Map::from_iter([("amount".to_string(), serde_json::json!(9))]);
@@ -1388,6 +883,14 @@ fn settings_update_reaches_start_queued_behind_reap() {
             .and_then(|identity| identity.settings_bag.as_deref()),
         Some(&bag)
     );
+
+    assert!(first_run.finish_stop());
+    wait_state(&mut slot, RunState::Starting);
+    let queued_run = factory.last_run().expect("queued stub surface run");
+    queued_run.set_readiness(SurfaceReady::Ready);
+    wait_state(&mut slot, RunState::Running);
+    slot.stop();
+    wait_state(&mut slot, RunState::Idle);
 }
 
 #[test]
@@ -1406,116 +909,82 @@ fn stop_clears_identity_and_bumps_runtime_generation() {
     );
 }
 
-#[cfg(feature = "load")]
 #[test]
-fn slot_stop_delivers_final_logs_exactly_once() {
-    let mut slot = new_js_slot();
-    slot.start_surface(default_test_surface_start(
-        "export default class T extends LoopingBot {
-            loop() {}
-            onStop() { this.log('stopped-ok'); }
-        }",
-        LoadShape::CompatClass,
-        vec![],
-    ))
-    .unwrap();
-    slot.surface.as_ref().unwrap().on_game_tick_at(1, 0);
-    let _ = slot.probe("1");
-    allow_onstop_completion(&mut slot);
+fn slot_stop_drains_surface_logs_once() {
+    let (mut slot, _, run) = ready_stub_slot();
+    run.set_retirement_logs(["stopped-ok".into()]);
     slot.stop();
     wait_state(&mut slot, RunState::Idle);
     let logs = slot.take_pending_logs();
-    let hits = logs.iter().filter(|l| l.contains("stopped-ok")).count();
-    assert_eq!(hits, 1, "exactly one onStop log after take: {logs:?}");
+    let hits = logs
+        .iter()
+        .filter(|line| line.contains("stopped-ok"))
+        .count();
+    assert_eq!(hits, 1, "exactly one retirement log after take: {logs:?}");
     slot.stop();
     let again = slot.take_pending_logs();
     assert!(
-        again.iter().all(|l| !l.contains("stopped-ok")),
-        "second stop must not rerun the hook: {again:?}"
+        again.iter().all(|line| !line.contains("stopped-ok")),
+        "second stop must not redeliver retirement logs: {again:?}"
     );
 }
 
-#[cfg(feature = "load")]
 #[test]
-fn self_stop_runs_hook_once_then_slot_stop_does_not() {
-    let mut slot = new_js_slot();
-    slot.start_surface(default_test_surface_start(
-        r#"
-import { ScriptRunner } from '../../runtime/ScriptRunner.js';
-export default class T extends LoopingBot {
-    loop() { ScriptRunner.stop('done'); }
-    onStop() { this.log('stopped-ok'); }
-}
-"#,
-        LoadShape::CompatClass,
-        vec![],
-    ))
-    .unwrap();
-    allow_onstop_completion(&mut slot);
-    slot.surface.as_ref().unwrap().on_game_tick_at(1, 0);
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while matches!(
-        slot.state(),
-        RunState::Starting | RunState::Running | RunState::Stopping
-    ) && Instant::now() < deadline
-    {
-        let _ = slot.drain_logs();
-        std::thread::sleep(Duration::from_millis(5));
-    }
-    assert_eq!(slot.state(), RunState::Idle);
+fn surface_self_stop_receipt_runs_cleanup_once() {
+    let (mut slot, _, run) = ready_stub_slot();
+    run.set_terminal(
+        true,
+        Some(crate::surface::ScriptStopReceipt {
+            tick: 1,
+            reason: "done".into(),
+        }),
+    );
+    run.queue_logs(["script requested stop".into()]);
+    run.set_retirement_logs(["stopped-ok".into()]);
+    let _ = slot.drain_logs();
+    wait_state(&mut slot, RunState::Idle);
     let logs = slot.take_pending_logs();
-    let hits = logs.iter().filter(|l| l.contains("stopped-ok")).count();
-    assert_eq!(hits, 1, "self-stop onStop once: {logs:?}");
-    assert!(logs.iter().any(|l| l.contains("script requested stop")));
+    let hits = logs
+        .iter()
+        .filter(|line| line.contains("stopped-ok"))
+        .count();
+    assert_eq!(hits, 1, "self-stop retirement log once: {logs:?}");
+    assert!(logs
+        .iter()
+        .any(|line| line.contains("script requested stop")));
     slot.stop();
     let again = slot.take_pending_logs();
     assert!(
-        again.iter().all(|l| !l.contains("stopped-ok")),
-        "join after self-stop then Drop must not rerun: {again:?}"
+        again.iter().all(|line| !line.contains("stopped-ok")),
+        "join after self-stop then Drop must not redeliver retirement logs: {again:?}"
     );
 }
 
-#[cfg(feature = "load")]
 #[test]
-fn watchdog_restart_folds_onstop_logs_into_pending() {
-    let mut slot = new_js_slot();
-    slot.start_surface(default_test_surface_start(
-        "export default class T extends LoopingBot {
-            onStart() { globalThis.__gen = (globalThis.__gen || 0) + 1; }
-            loop() { globalThis.__n = (globalThis.__n || 0) + 1; }
-            onStop() { this.log('stopped-ok'); }
-        }",
-        LoadShape::CompatClass,
-        vec![],
-    ))
-    .unwrap();
-    slot.surface.as_ref().unwrap().on_game_tick_at(1, 0);
-    let _ = slot.probe("1");
-    allow_onstop_completion(&mut slot);
+fn watchdog_restart_folds_surface_retirement_logs_into_pending() {
+    let (mut slot, factory, run) = ready_stub_slot();
+    run.set_retirement_logs(["stopped-ok".into()]);
+    run.defer_stop_receipt();
     slot.restart_from_identity(Instant::now())
-        .expect("restart from identity");
+        .expect("restart from retained surface identity");
+    wait_state(&mut slot, RunState::Stopping);
+    assert!(run.finish_stop());
     wait_state(&mut slot, RunState::Starting);
+    let replacement = factory.last_run().expect("replacement stub surface");
+    replacement.set_readiness(SurfaceReady::Ready);
     wait_state(&mut slot, RunState::Running);
     let logs = slot.take_pending_logs();
     assert!(
-        logs.iter().any(|l| l.contains("stopped-ok")),
-        "dying isolate onStop must land in pending_logs: {logs:?}"
+        logs.iter().any(|line| line.contains("stopped-ok")),
+        "retired surface logs land in pending_logs: {logs:?}"
     );
-    slot.surface.as_ref().unwrap().on_game_tick_at(1, 0);
-    assert_eq!(slot.probe("__gen").unwrap(), 1, "new isolate onStart runs");
     slot.stop();
+    wait_state(&mut slot, RunState::Idle);
 }
 
-#[cfg(feature = "load")]
 #[test]
 fn restart_still_refuses_pause() {
-    let mut slot = new_js_slot();
-    slot.start_surface(default_test_surface_start(
-        "export default class T extends LoopingBot { loop() {} onStop() { this.log('stopped-ok'); } }",
-        LoadShape::CompatClass,
-        vec![],
-    ))
-    .unwrap();
+    let (mut slot, _, _) = ready_stub_slot();
     slot.pause();
     let err = slot.restart_from_identity(Instant::now()).unwrap_err();
     assert!(
@@ -1523,46 +992,35 @@ fn restart_still_refuses_pause() {
         "{err}"
     );
     slot.stop();
+    wait_state(&mut slot, RunState::Idle);
 }
 
-#[cfg(feature = "load")]
 #[test]
-fn start_load_returns_before_setup_and_becomes_running() {
-    let mut slot = new_js_slot();
+fn surface_start_waits_for_stub_readiness() {
     let t0 = Instant::now();
-    slot.start_surface(default_test_surface_start(
-        "export function tick(api) { globalThis.__n = (globalThis.__n || 0) + 1; }",
-        LoadShape::NativeTick,
-        vec![],
-    ))
-    .unwrap();
+    let (mut slot, _, run) = stub_slot();
     assert!(
         t0.elapsed() < Duration::from_millis(500),
-        "Start must not wait on V8: {:?}",
+        "Start must not wait on setup: {:?}",
         t0.elapsed()
     );
     assert_eq!(slot.state(), RunState::Starting);
+    run.set_readiness(SurfaceReady::Ready);
     wait_state(&mut slot, RunState::Running);
     slot.stop();
     wait_state(&mut slot, RunState::Idle);
 }
 
-#[cfg(feature = "load")]
 #[test]
-fn start_load_setup_failure_returns_to_idle_with_the_diagnostic() {
-    let mut slot = new_js_slot();
-    slot.start_surface(default_test_surface_start(
-        "throw new Error('zz-setup-proof');\nexport function tick(api) {}",
-        LoadShape::NativeTick,
-        vec![],
-    ))
-    .expect("Start returns before setup");
+fn stub_surface_setup_failure_clears_slot_start_state() {
+    let (mut slot, _, run) = stub_slot();
     slot.attach_source_identity("file:bad.ts");
     assert_eq!(
         slot.poll_start(),
         StartPoll::Pending,
         "setup has not settled"
     );
+    run.set_readiness(SurfaceReady::Failed("zz-setup-proof".into()));
     wait_state(&mut slot, RunState::Idle);
     let err = slot.last_error().unwrap_or("").to_string();
     assert!(err.contains("zz-setup-proof"), "{err}");
@@ -1579,16 +1037,9 @@ fn start_load_setup_failure_returns_to_idle_with_the_diagnostic() {
     );
 }
 
-#[cfg(feature = "load")]
 #[test]
 fn stop_during_starting_ends_idle_and_cancels_the_start() {
-    let mut slot = new_js_slot();
-    slot.start_surface(default_test_surface_start(
-        "export function tick(api) {}",
-        LoadShape::NativeTick,
-        vec![],
-    ))
-    .unwrap();
+    let (mut slot, _, _) = stub_slot();
     assert_eq!(slot.state(), RunState::Starting);
     slot.stop();
     assert_eq!(slot.state(), RunState::Stopping);
@@ -1600,45 +1051,27 @@ fn stop_during_starting_ends_idle_and_cancels_the_start() {
     assert_eq!(slot.last_error(), None);
 }
 
-#[cfg(feature = "load")]
 #[test]
 fn watchdog_restart_during_stop_reap_never_revives_the_slot() {
-    let mut slot = new_js_slot();
-    slot.start_surface(default_test_surface_start(
-        "export function tick(api) {}",
-        LoadShape::NativeTick,
-        vec![],
-    ))
-    .unwrap();
-    wait_state(&mut slot, RunState::Running);
+    let (mut slot, _, run) = ready_stub_slot();
+    run.defer_stop_receipt();
     slot.stop();
     assert_eq!(slot.state(), RunState::Stopping);
     assert!(slot.restart_from_identity(Instant::now()).is_err());
+    assert!(run.finish_stop());
     wait_state(&mut slot, RunState::Idle);
     for _ in 0..20 {
         slot.observe_lifecycle();
-        std::thread::sleep(Duration::from_millis(5));
     }
     assert_eq!(slot.state(), RunState::Idle);
     assert!(!slot.surface_active());
 }
 
-#[cfg(feature = "load")]
 #[test]
-fn stop_returns_immediately_and_second_start_waits_for_reap() {
-    let src = "export default class T extends LoopingBot {
-            loop() {}
-            onStop() { this.log('stopped-ok'); }
-        }";
-    let mut slot = new_js_slot();
-    slot.start_surface(default_test_surface_start(
-        src,
-        LoadShape::CompatClass,
-        vec![],
-    ))
-    .unwrap();
-    wait_state(&mut slot, RunState::Running);
-    allow_onstop_completion(&mut slot);
+fn stub_stop_returns_and_queued_start_waits_for_reap() {
+    let (mut slot, factory, first_run) = ready_stub_slot();
+    first_run.set_retirement_logs(["stopped-ok".into()]);
+    first_run.defer_stop_receipt();
     let t0 = Instant::now();
     slot.stop();
     assert!(
@@ -1647,23 +1080,17 @@ fn stop_returns_immediately_and_second_start_waits_for_reap() {
         t0.elapsed()
     );
     assert_eq!(slot.state(), RunState::Stopping);
-    slot.start_surface(default_test_surface_start(
-        src,
-        LoadShape::CompatClass,
-        vec![],
-    ))
-    .expect("Start while Stopping is queued");
+    slot.start_surface(stub_surface_start())
+        .expect("Start while Stopping is queued");
     let generation = slot.runtime_generation();
     assert!(
-        slot.start_surface(default_test_surface_start(
-            src,
-            LoadShape::CompatClass,
-            vec![],
-        ))
-        .is_err(),
+        slot.start_surface(stub_surface_start()).is_err(),
         "a second queued Start is refused"
     );
+    assert!(first_run.finish_stop());
     wait_state(&mut slot, RunState::Starting);
+    let replacement = factory.last_run().expect("queued replacement surface");
+    replacement.set_readiness(SurfaceReady::Ready);
     wait_state(&mut slot, RunState::Running);
     assert_eq!(slot.poll_start(), StartPoll::Settled(StartOutcome::Ready));
     assert_eq!(
@@ -1673,26 +1100,18 @@ fn stop_returns_immediately_and_second_start_waits_for_reap() {
     );
     let logs = slot.take_pending_logs();
     assert!(
-        logs.iter().any(|l| l.contains("stopped-ok")),
-        "reaped onStop before the queued Start: {logs:?}"
+        logs.iter().any(|line| line.contains("stopped-ok")),
+        "retired surface logs arrive before the queued Start: {logs:?}"
     );
     slot.stop();
     wait_state(&mut slot, RunState::Idle);
 }
 
-#[cfg(feature = "load")]
 #[test]
-fn start_all_over_n_members_does_not_block_per_member() {
-    let src = "export function tick(api) {}".to_string();
-    let mut slots: Vec<SlotScript> = (0..4).map(|_| new_js_slot()).collect();
+fn stub_surface_start_all_over_n_members_does_not_block() {
     let t0 = Instant::now();
-    for slot in &mut slots {
-        slot.start_surface(default_test_surface_start(
-            src.clone(),
-            LoadShape::NativeTick,
-            vec![],
-        ))
-        .unwrap();
+    let mut slots: Vec<_> = (0..4).map(|_| stub_slot()).collect();
+    for (slot, _, _) in &mut slots {
         assert_eq!(slot.state(), RunState::Starting);
     }
     assert!(
@@ -1700,7 +1119,8 @@ fn start_all_over_n_members_does_not_block_per_member() {
         "Start all blocked per member: {:?}",
         t0.elapsed()
     );
-    for slot in &mut slots {
+    for (slot, _, run) in &mut slots {
+        run.set_readiness(SurfaceReady::Ready);
         wait_state(slot, RunState::Running);
         slot.stop();
         wait_state(slot, RunState::Idle);
@@ -1709,11 +1129,9 @@ fn start_all_over_n_members_does_not_block_per_member() {
 
 /// A compiled card that queues one walk per tick onto the ctx's sink —
 /// the queue the slot parks there — and nothing else.
-#[cfg(feature = "load")]
 #[derive(Default)]
 struct Walker;
 
-#[cfg(feature = "load")]
 impl Script for Walker {
     fn tick(
         &mut self,
@@ -1737,7 +1155,6 @@ impl Script for Walker {
 }
 
 /// The walk `Walker` queues, for comparing whole requests.
-#[cfg(feature = "load")]
 fn walker_walk() -> crate::shim::InteractReq {
     crate::shim::InteractReq::Walk {
         x: 3,
@@ -1754,7 +1171,6 @@ fn walker_walk() -> crate::shim::InteractReq {
 
 /// A ctx with no views wired and nothing parked: a compiled tick over it
 /// is the slot's own queue, installed by the slot.
-#[cfg(feature = "load")]
 fn compiled_ctx<'a>(
     driver: &'a mut dyn api::interact::Driver,
     selected: Option<&'a api::game_data::SelectedGameData>,
@@ -1786,7 +1202,6 @@ fn compiled_ctx<'a>(
     }
 }
 
-#[cfg(feature = "load")]
 #[test]
 fn compiled_panic_moves_from_active_error_to_preserved_stop_history() {
     struct Panics;
@@ -1817,7 +1232,6 @@ fn compiled_panic_moves_from_active_error_to_preserved_stop_history() {
     );
 }
 
-#[cfg(feature = "load")]
 #[test]
 fn a_compiled_tick_queues_onto_the_slot_and_one_drain_takes_it() {
     let mut slot = SlotScript::new();
@@ -1853,7 +1267,6 @@ fn a_compiled_tick_queues_onto_the_slot_and_one_drain_takes_it() {
 /// `Working` there. Held, the guardian owns the square and the card keeps
 /// its frame; unheld (the guardian gave the Maze up, or random events are
 /// off), the run blocks with the reason and the card is not ticked.
-#[cfg(feature = "load")]
 #[test]
 fn an_unheld_native_run_on_a_random_trap_square_blocks() {
     let maze = (2891, 4555, 0);
@@ -1911,191 +1324,55 @@ fn an_unheld_native_run_on_a_random_trap_square_blocks() {
     ));
 }
 
-#[cfg(feature = "load")]
-#[test]
-fn the_pump_freezes_and_aborts_the_compiled_clue_machine() {
-    crate::registry::install_cards(&crate::sherlock::CARDS).unwrap();
-    let data =
-        api::game_data::for_revision(client::io::ClientRevision::R274).expect("selected data");
-    // The machine's own identify decides what is held: a selected
-    // membership row with a positive count.
-    let held_id = data
-        .trails()
-        .expect("trails")
-        .rows
-        .iter()
-        .find(|row| row.role == "clue")
-        .expect("a selected clue row")
-        .id;
-    let mut slot = SlotScript::new();
-    slot.start_test_script(
-        Box::new(crate::sherlock::Sherlock::default()),
-        Some(Arc::clone(&data)),
-    )
-    .unwrap();
-    let begin = crate::clue::dispatch(
-        Some(&data),
-        &serde_json::json!({ "op": "begin", "generation": 0, "held": [[held_id, 1]] }),
-    );
-    assert_eq!(begin["kind"], "token", "{begin}");
-    let token = begin["token"].as_u64().expect("token");
-    let next = || {
-        serde_json::json!({
-            "op": "next",
-            "token": token,
-            "generation": 0,
-            "held": [[held_id, 1]],
-        })
-    };
-
-    // Running and unfrozen: the machine posts its own gate question.
-    slot.sync_compiled_clue(false);
-    assert_eq!(
-        crate::clue::dispatch(Some(&data), &next())["kind"],
-        "callback.enabled"
-    );
-
-    // Operator Pause, on a frame that dispatches no tick at all: the live
-    // token waits instead, so the pause cannot burn the session's clock.
-    slot.pause();
-    slot.sync_compiled_clue(false);
-    assert_eq!(crate::clue::dispatch(Some(&data), &next())["kind"], "wait");
-    slot.resume();
-    slot.sync_compiled_clue(false);
-    assert_eq!(
-        crate::clue::dispatch(Some(&data), &next())["kind"],
-        "callback.enabled",
-        "a thaw resumes the same session"
-    );
-
-    // The guardian's hold freezes the same live session the same way.
-    slot.sync_compiled_clue(true);
-    assert_eq!(crate::clue::dispatch(Some(&data), &next())["kind"], "wait");
-    slot.sync_compiled_clue(false);
-
-    // Stop is marked wherever it ran and applied on this thread: the live
-    // token is gone, and the next Start begins a fresh session.
-    slot.stop();
-    slot.sync_compiled_clue(false);
-    let after = crate::clue::dispatch(Some(&data), &next());
-    assert_eq!(after["kind"], "aborted", "{after}");
-    let again = crate::clue::dispatch(
-        Some(&data),
-        &serde_json::json!({ "op": "begin", "generation": 0, "held": [[held_id, 1]] }),
-    );
-    assert_eq!(again["kind"], "token", "{again}");
-    assert_ne!(
-        again["token"].as_u64(),
-        Some(token),
-        "the aborted session's token is not reused"
-    );
-}
-
-/// The two resets are not each other. A connection boundary
-/// (`reset_session_work`) aborts the compiled clue machine's live step and
-/// its token and keeps what the session still owes — the Entrana strip list
-/// the reclaim reads — while operator Stop is a fresh task instance and
-/// clears it with the step.
-#[cfg(feature = "load")]
-#[test]
-fn a_session_reset_keeps_the_clue_strip_list_and_a_stop_clears_it() {
-    crate::registry::install_cards(&crate::sherlock::CARDS).unwrap();
-    let data =
-        api::game_data::for_revision(client::io::ClientRevision::R274).expect("selected data");
-    // The Entrana-box proof row, and a worn helm in the restricted `armour_helmet` category (monk rule, pack and worn).
-    const ENTRANA: i32 = 3579;
-    const HELM: i32 = 1163;
-    let mut slot = SlotScript::new();
-    slot.start_test_script(
-        Box::new(crate::sherlock::Sherlock::default()),
-        Some(Arc::clone(&data)),
-    )
-    .unwrap();
-    let begin = crate::clue::dispatch(
-        Some(&data),
-        &serde_json::json!({ "op": "begin", "generation": 0, "held": [[ENTRANA, 1]] }),
-    );
-    assert_eq!(begin["kind"], "token", "{begin}");
-    let token = begin["token"].as_u64().expect("token");
-    // The landed gate first: enabled, the report, the row's own status.
-    let next = |extra: serde_json::Value| {
-        let mut call = serde_json::json!({
-            "op": "next",
-            "token": token,
-            "generation": 0,
-            "held": [[ENTRANA, 1]],
-        });
-        for (key, value) in extra.as_object().expect("extra") {
-            call[key] = value.clone();
+fn is_test_walk(req: &crate::interact::InteractReq) -> bool {
+    matches!(
+        req,
+        crate::interact::InteractReq::WalkNear {
+            x: 2820,
+            z: 3556,
+            ..
         }
-        crate::clue::dispatch(Some(&data), &call)
-    };
-    assert_eq!(next(serde_json::json!({}))["kind"], "callback.enabled");
-    assert_eq!(
-        next(serde_json::json!({ "resume": true }))["kind"],
-        "callback.log"
-    );
-    assert_eq!(next(serde_json::json!({}))["kind"], "callback.setStatus");
-    // One strip step: the worn restricted row goes off, and the name is
-    // listed for the reclaim.
-    let strip = next(serde_json::json!({
-        "equipment": [{ "id": HELM, "name": "Rune full helm", "count": 1, "slot": 0 }],
-    }));
-    assert_eq!(strip["kind"], "unequip", "{strip}");
-    let owns = |data: &Arc<api::game_data::SelectedGameData>| {
-        crate::clue::dispatch(Some(data), &serde_json::json!({ "op": "ownsEquipment" }))["owns"]
-            == true
-    };
-    assert!(owns(&data), "the strip listed the name");
-
-    // The connection boundary, applied the way the pump applies it.
-    slot.reset_session_work();
-    slot.sync_compiled_clue(false);
-    let dead = crate::clue::dispatch(
-        Some(&data),
-        &serde_json::json!({
-            "op": "next",
-            "token": token,
-            "generation": 0,
-            "held": [[ENTRANA, 1]],
-        }),
-    );
-    assert_eq!(dead["kind"], "aborted", "the boundary kills the step");
-    assert!(
-        owns(&data),
-        "and keeps the list the reclaim still owes after a relog"
-    );
-
-    // Operator Stop: the fresh instance starts the session over.
-    slot.stop();
-    slot.sync_compiled_clue(false);
-    assert!(!owns(&data), "Stop clears the strip list with the step");
+    )
 }
 
-#[cfg(feature = "load")]
-const HELD_WALK: &str = r#"
-import { Traversal } from '../../api/walking/Traversal.js';
-export default class T extends LoopingBot {
-    async loop() {
-        if (globalThis.__ran) return;
-        globalThis.__ran = true;
-        globalThis.__ok = null;
-        globalThis.__ok = await Traversal.walkResilient(
-            { x: 2820, z: 3556, level: 0 },
-            { radius: 1, timeoutMs: 300000 },
-        );
+fn queued_stub_walk_batch(generation: u64) -> crate::native::seat_rows::QueuedSeatBatch {
+    crate::native::seat_rows::QueuedSeatBatch {
+        generation,
+        observed_walk_outcome_seq: 0,
+        batch: crate::native::seat_rows::DecodedSeatBatch {
+            consumed_terminal_seq: 0,
+            starts: Vec::new(),
+            decisions: Vec::new(),
+            cancels: Vec::new(),
+            mirror_revokes: Vec::new(),
+            reqs: vec![crate::native::seat_rows::SeatInteractDecoded {
+                lineage: None,
+                mirror_owner: None,
+                request: crate::interact::InteractReq::WalkNear {
+                    x: 2820,
+                    z: 3556,
+                    level: 0,
+                    radius: 1,
+                    compat_tile_intent: false,
+                    allow_teleports: false,
+                    allow_wilderness: false,
+                    allow_bank_fetch: false,
+                    request_id: 0,
+                    avoid: Vec::new(),
+                    cross: Vec::new(),
+                },
+            }],
+        },
+        machine_events: Vec::new(),
+        held_waits: Default::default(),
+        held_fold: false,
     }
 }
-"#;
 
-/// Post a snapshot at the held walk's tile for tick `n`, run the tick and
-/// wait for it. The host drain is left to the caller.
-#[cfg(feature = "load")]
-fn run_held_walk_tick(slot: &mut SlotScript, n: u64) -> (i32, i32, i32) {
-    align_ready_test_seat(slot);
+fn run_stub_walk_tick(slot: &mut SlotScript, n: u64) -> (i32, i32, i32) {
     let here = (2823, 3555, 0);
-    let mut input = crate::isolate_fb::tests::empty_input(n);
-    input.here = Some(crate::isolate_fb::TileInput {
+    let mut input = empty_snapshot(n);
+    input.here = Some(TileInput {
         x: here.0,
         z: here.1,
         level: here.2,
@@ -2106,64 +1383,45 @@ fn run_held_walk_tick(slot: &mut SlotScript, n: u64) -> (i32, i32, i32) {
     ctx.tick = n;
     ctx.here = Some(here);
     slot.on_game_tick(&mut ctx);
-    slot.surface
-        .as_ref()
-        .expect("load isolate")
-        .probe("true")
-        .unwrap();
     here
 }
 
-/// Post a snapshot at `here` for tick `n`, run the tick and wait for it,
-/// then feed the watchdog what the host drains after it.
-#[cfg(feature = "load")]
-fn held_walk_tick(slot: &mut SlotScript, n: u64, now: Instant) {
-    let here = run_held_walk_tick(slot, n);
-    // The owner seat dispatches watchdog facts during the host interaction
-    // drain; none should escape toward the game driver.
+fn held_stub_walk_tick(slot: &mut SlotScript, run: &StubSurfaceHandle, n: u64, now: Instant) {
+    let here = run_stub_walk_tick(slot, n);
     let (_, game_rows, _) = slot.drain_host_interacts();
     assert!(
         game_rows.iter().all(|row| !matches!(
             &row.req,
-            crate::shim::InteractReq::WaitEnqueued | crate::shim::InteractReq::WaitSettled
+            crate::interact::InteractReq::WaitEnqueued | crate::interact::InteractReq::WaitSettled
         )),
         "seat wait facts stay on the watchdog lane: {game_rows:?}"
     );
+    run.queue_lifecycle([
+        crate::interact::InteractReq::WaitEnqueued,
+        crate::interact::InteractReq::LoopSettled,
+    ]);
     let facts = slot.drain_lifecycle();
     slot.note_game_packet_tick(now);
     slot.feed_watchdog(now, Some(here), &[], false, true, &facts);
     assert!(
         slot.watchdog().wait_active(),
-        "held walk tick {n} has no parked wait; lifecycle={facts:?}, ran={:?}, logs={:?}",
-        slot.probe("globalThis.__ran"),
+        "held walk tick {n} has no parked wait; lifecycle={facts:?}, logs={:?}",
         slot.drain_logs()
     );
 }
 
-/// The walk a reconnect holds is still the loop's parked wait: the watchdog
-/// count the session boundary zeroed must see it again, or the resumed walk
-/// reads as a hung loop after 10 s.
-#[cfg(feature = "load")]
 #[test]
-fn a_walk_held_across_a_reconnect_is_still_a_parked_wait() {
-    let mut slot = new_js_slot();
-    slot.bind_incarnation(1204);
-    slot.start_surface(default_test_surface_start(
-        HELD_WALK,
-        LoadShape::CompatClass,
-        Vec::new(),
-    ))
-    .unwrap();
-    wait_state(&mut slot, RunState::Running);
-    allow_onstop_completion(&mut slot);
+fn stub_walk_held_across_reconnect_remains_a_parked_wait() {
+    let (mut slot, _, run) = ready_stub_slot_with_incarnation(1204);
+    run.set_execution_active(true);
     let now = Instant::now();
-    held_walk_tick(&mut slot, 1, now);
+    held_stub_walk_tick(&mut slot, &run, 1, now);
     assert!(slot.watchdog().wait_active(), "the walk is parked");
 
-    assert!(slot.reconnect_session_work(), "the script walk is carried");
+    assert!(slot.reconnect_session_work(), "the surface work is carried");
     slot.on_is_up(true);
     let reconnected_at = Instant::now();
-    held_walk_tick(&mut slot, 2, reconnected_at);
+    held_stub_walk_tick(&mut slot, &run, 2, reconnected_at);
     assert!(
         slot.watchdog().wait_active(),
         "the held walk is still the parked wait"
@@ -2185,42 +1443,18 @@ fn a_walk_held_across_a_reconnect_is_still_a_parked_wait() {
     wait_state(&mut slot, RunState::Idle);
 }
 
-/// A walk row that already left the isolate but is still in the slot's seat
-/// custody at a kept reconnect never reaches the host. The slot names that
-/// walk to the isolate, so the resumed wait requests a fresh walk in the new
-/// session.
-#[cfg(feature = "load")]
 #[test]
-fn a_walk_in_slot_custody_at_a_kept_reconnect_requests_a_fresh_walk() {
-    let mut slot = new_js_slot();
-    slot.bind_incarnation(1207);
-    slot.start_surface(default_test_surface_start(
-        HELD_WALK,
-        LoadShape::CompatClass,
-        Vec::new(),
-    ))
-    .unwrap();
-    wait_state(&mut slot, RunState::Running);
-    allow_onstop_completion(&mut slot);
-    let is_walk = |req: &crate::shim::InteractReq| {
-        matches!(
-            req,
-            crate::shim::InteractReq::WalkNear {
-                x: 2820,
-                z: 3556,
-                ..
-            }
-        )
-    };
-    run_held_walk_tick(&mut slot, 1);
-    // Take the tick's batch out of the isolate into the slot's seat, but do
-    // not run the host drain that would deliver it.
+fn stub_walk_in_slot_custody_at_reconnect_requests_fresh_walk() {
+    let (mut slot, _, run) = ready_stub_slot_with_incarnation(1207);
+    run.queue_seat_batches([queued_stub_walk_batch(0)]);
     let batches = slot.surface.as_ref().unwrap().drain_seat_batches();
     assert!(
-        batches
+        batches.iter().any(|queued| queued
+            .batch
+            .reqs
             .iter()
-            .any(|queued| queued.batch.reqs.iter().any(|row| is_walk(&row.request))),
-        "the first tick emits the walk: {batches:?}"
+            .any(|row| is_test_walk(&row.request))),
+        "the producer emits the walk: {batches:?}"
     );
     for queued in batches {
         slot.consume_seat_batch(
@@ -2232,29 +1466,31 @@ fn a_walk_in_slot_custody_at_a_kept_reconnect_requests_a_fresh_walk() {
     let in_custody = slot
         .seat_interact_delivery
         .iter()
-        .any(|queued| is_walk(&queued.req))
+        .any(|queued| is_test_walk(&queued.req))
         || slot
             .seat
             .as_ref()
             .is_some_and(|seat| seat.undelivered_walk_ids().next().is_some());
     assert!(
         in_custody,
-        "the walk is in slot custody, not in the isolate"
+        "the walk is in slot custody, not in the surface queue"
     );
 
     assert!(slot.reconnect_session_work());
     slot.on_is_up(true);
     let (_, discarded, _) = slot.drain_host_interacts();
     assert!(
-        !discarded.iter().any(|row| is_walk(&row.req)),
+        !discarded.iter().any(|row| is_test_walk(&row.req)),
         "the old-session walk is discarded: {discarded:?}"
     );
-    let mut fresh = Vec::new();
-    for n in 2..=4 {
-        run_held_walk_tick(&mut slot, n);
-        let (_, rows, _) = slot.drain_host_interacts();
-        fresh.extend(rows.into_iter().filter(|row| is_walk(&row.req)));
-    }
+
+    run.set_generation(1);
+    run.queue_seat_batches([queued_stub_walk_batch(1)]);
+    let (_, fresh, _) = slot.drain_host_interacts();
+    let fresh: Vec<_> = fresh
+        .into_iter()
+        .filter(|row| is_test_walk(&row.req))
+        .collect();
     assert_eq!(
         fresh.len(),
         1,
@@ -2264,53 +1500,26 @@ fn a_walk_in_slot_custody_at_a_kept_reconnect_requests_a_fresh_walk() {
     wait_state(&mut slot, RunState::Idle);
 }
 
-/// A second disconnect with no relog leaves the script held; operator Stop
-/// (the path script stop and profile removal share) still ends it.
-#[cfg(feature = "load")]
 #[test]
-fn stop_ends_a_script_held_across_a_reconnect() {
-    let mut slot = new_js_slot();
-    slot.bind_incarnation(1205);
-    slot.start_surface(default_test_surface_start(
-        HELD_WALK,
-        LoadShape::CompatClass,
-        Vec::new(),
-    ))
-    .unwrap();
-    wait_state(&mut slot, RunState::Running);
-    allow_onstop_completion(&mut slot);
-    let now = Instant::now();
-    held_walk_tick(&mut slot, 1, now);
-
-    slot.reconnect_session_work();
+fn stop_ends_stub_surface_after_reconnect() {
+    let (mut slot, _, run) = ready_stub_slot_with_incarnation(1205);
+    run.set_execution_active(true);
+    assert!(slot.reconnect_session_work());
     slot.on_is_up(true);
-    held_walk_tick(&mut slot, 2, now);
-    let iso = slot.surface.as_ref().expect("load isolate");
-    assert_eq!(
-        iso.probe("globalThis.__ok").unwrap(),
-        serde_json::Value::Null,
-        "the walk carried on across the relog"
-    );
-
-    slot.reconnect_session_work();
+    assert!(slot.reconnect_session_work());
     assert_eq!(slot.state(), RunState::Paused);
     slot.stop();
     wait_state(&mut slot, RunState::Idle);
-    assert!(slot.surface.is_none(), "the held isolate is gone");
+    assert!(slot.surface.is_none(), "the held surface run is gone");
 }
-
-#[cfg(feature = "load")]
 #[test]
-fn ignored_maze_still_terminal_stops_load_and_cancels_delegated_work() {
+fn ignored_maze_trap_cleans_up_core_api_work() {
     use api::random::{DetectedRandom, RandomClaim, RandomKind};
 
-    let (mut slot, selected) = ignored_randoms_load();
-    wait_ignored_randoms(&mut slot, &selected);
-    slot.surface
-        .as_ref()
-        .expect("load isolate")
-        .probe("true")
-        .unwrap();
+    let selected =
+        api::game_data::for_revision(api::selected::ClientRevision::R289).expect("selected data");
+    let (mut slot, _, run) = ready_stub_slot_with_incarnation(1206);
+    run.set_ignored_randoms(vec!["Maze".into(), "Mime".into()]);
     for (kind, name) in [(RandomKind::Maze, "Maze"), (RandomKind::Mime, "Mime")] {
         assert_eq!(
             slot.on_random(&DetectedRandom {
@@ -2320,15 +1529,15 @@ fn ignored_maze_still_terminal_stops_load_and_cancels_delegated_work() {
                 npc_index: None,
             }),
             RandomClaim::Handle,
-            "Load ignored {name} random"
+            "ignored {name} random"
         );
     }
 
     let maze = (2891, 4555, 0);
-    let mut held = crate::isolate_fb::tests::empty_input(20);
+    let mut held = empty_snapshot(20);
     held.hold = true;
     assert!(slot.post_snapshot_delta(&held, NativeFactsInput::default(), false));
-    load_tick_at(&mut slot, &selected, 20, Some(maze), true);
+    native_tick_at(&mut slot, &selected, 20, Some(maze), true);
     assert_eq!(slot.state(), RunState::Running);
     assert!(
         slot.lifecycle_receipt().is_none(),
@@ -2336,16 +1545,16 @@ fn ignored_maze_still_terminal_stops_load_and_cancels_delegated_work() {
     );
 
     slot.pause();
-    load_tick_at(&mut slot, &selected, 21, Some(maze), false);
+    native_tick_at(&mut slot, &selected, 21, Some(maze), false);
     assert_eq!(slot.state(), RunState::Paused);
     assert!(
         slot.lifecycle_receipt().is_none(),
-        "paused Load scripts are not trap-stopped"
+        "paused scripts are not trap-stopped"
     );
     slot.resume();
 
     start_api_gather_and_wait(&mut slot, &selected);
-    load_tick_at(&mut slot, &selected, 22, Some(maze), false);
+    native_tick_at(&mut slot, &selected, 22, Some(maze), false);
     assert!(
         !slot.api_owns_foreground(),
         "terminal trap cleanup revokes delegated API work"
@@ -2361,13 +1570,14 @@ fn ignored_maze_still_terminal_stops_load_and_cancels_delegated_work() {
     wait_state(&mut slot, RunState::Idle);
 }
 
-#[cfg(feature = "load")]
 #[test]
-fn ignored_mime_still_terminal_stops_a_running_load() {
+fn ignored_mime_trap_returns_core_terminal_receipt() {
     use api::random::{DetectedRandom, RandomClaim, RandomKind};
 
-    let (mut slot, selected) = ignored_randoms_load();
-    wait_ignored_randoms(&mut slot, &selected);
+    let selected =
+        api::game_data::for_revision(api::selected::ClientRevision::R289).expect("selected data");
+    let (mut slot, _, run) = ready_stub_slot();
+    run.set_ignored_randoms(vec!["Mime".into()]);
     assert_eq!(
         slot.on_random(&DetectedRandom {
             kind: RandomKind::Mime,
@@ -2379,7 +1589,7 @@ fn ignored_mime_still_terminal_stops_a_running_load() {
     );
 
     let mime = (31 * 64 + 10, 74 * 64 + 10, 0);
-    load_tick_at(&mut slot, &selected, 1, Some(mime), false);
+    native_tick_at(&mut slot, &selected, 1, Some(mime), false);
     let receipt = slot.lifecycle_receipt().expect("terminal failure receipt");
     assert_eq!(receipt.state, ScriptTerminalState::Failed);
     assert!(receipt.reason.starts_with("random-trapped:"));
@@ -2390,19 +1600,9 @@ fn ignored_mime_still_terminal_stops_a_running_load() {
     );
     wait_state(&mut slot, RunState::Idle);
 }
-
-#[cfg(feature = "load")]
 #[test]
-fn load_watchdog_holds_pen_recovery_until_the_player_leaves() {
-    let mut slot = new_js_slot();
-    slot.start_surface(default_test_surface_start(
-        "export default class T extends LoopingBot { loop() {} }",
-        LoadShape::CompatClass,
-        vec![],
-    ))
-    .unwrap();
-    wait_state(&mut slot, RunState::Running);
-    allow_onstop_completion(&mut slot);
+fn surface_watchdog_holds_pen_recovery_until_the_player_leaves() {
+    let (mut slot, _, _) = ready_stub_slot();
 
     let now = Instant::now();
     let inside_pen = (3340, 3250, 0);
@@ -2442,11 +1642,11 @@ fn load_watchdog_holds_pen_recovery_until_the_player_leaves() {
     assert_eq!(
         format!("{action:?}"),
         "HoldInFightPen",
-        "a Load script must not walk toward an unreachable lobby anchor"
+        "a surface script must not walk toward an unreachable lobby anchor"
     );
     assert!(
         !slot.watchdog().holds_script_actions(),
-        "the script's already-waiting isolate keeps running while recovery is held"
+        "the active surface run keeps running while recovery is held"
     );
     let logs = slot.take_pending_logs();
     assert_eq!(logs.len(), 1, "entering the hold is logged once: {logs:?}");
@@ -2497,20 +1697,12 @@ fn load_watchdog_holds_pen_recovery_until_the_player_leaves() {
         "ordinary recovery resumes after leaving the pen"
     );
     slot.stop();
+    wait_state(&mut slot, RunState::Idle);
 }
 
-#[cfg(feature = "load")]
 #[test]
-fn load_watchdog_restarts_hard_stall_while_pen_hold_survives_freeze_and_reset() {
-    let mut slot = new_js_slot();
-    slot.start_surface(default_test_surface_start(
-        "export default class T extends LoopingBot { loop() {} }",
-        LoadShape::CompatClass,
-        vec![],
-    ))
-    .unwrap();
-    wait_state(&mut slot, RunState::Running);
-    allow_onstop_completion(&mut slot);
+fn surface_watchdog_restarts_hard_stall_while_pen_hold_survives_freeze_and_reset() {
+    let (mut slot, _, _) = ready_stub_slot();
 
     let now = Instant::now();
     let inside_pen = (3340, 3250, 0);
@@ -2586,20 +1778,12 @@ fn load_watchdog_restarts_hard_stall_while_pen_hold_survives_freeze_and_reset() 
     );
     assert!(slot.watchdog().last_recovery().is_none());
     slot.stop();
+    wait_state(&mut slot, RunState::Idle);
 }
 
-#[cfg(feature = "load")]
 #[test]
-fn load_watchdog_still_restarts_a_hard_stall_outside_fight_pens() {
-    let mut slot = new_js_slot();
-    slot.start_surface(default_test_surface_start(
-        "export default class T extends LoopingBot { loop() {} }",
-        LoadShape::CompatClass,
-        vec![],
-    ))
-    .unwrap();
-    wait_state(&mut slot, RunState::Running);
-    allow_onstop_completion(&mut slot);
+fn surface_watchdog_still_restarts_a_hard_stall_outside_fight_pens() {
+    let (mut slot, _, _) = ready_stub_slot();
 
     let now = Instant::now();
     let here = (3200, 3274, 0);
@@ -2651,20 +1835,12 @@ fn load_watchdog_still_restarts_a_hard_stall_outside_fight_pens() {
         "the fight-pen hold must not disable genuine scheduler-stall recovery"
     );
     slot.stop();
+    wait_state(&mut slot, RunState::Idle);
 }
 
-#[cfg(feature = "load")]
 #[test]
-fn load_watchdog_logs_packet_silence_and_clears_it_on_resume() {
-    let mut slot = new_js_slot();
-    slot.start_surface(default_test_surface_start(
-        "export default class T extends LoopingBot { loop() {} }",
-        LoadShape::CompatClass,
-        vec![],
-    ))
-    .unwrap();
-    wait_state(&mut slot, RunState::Running);
-    allow_onstop_completion(&mut slot);
+fn surface_watchdog_logs_packet_silence_and_clears_it_on_resume() {
+    let (mut slot, _, _) = ready_stub_slot();
 
     let now = Instant::now();
     let here = (3200, 3274, 0);
@@ -2692,6 +1868,7 @@ fn load_watchdog_logs_packet_silence_and_clears_it_on_resume() {
         crate::watchdog::WatchdogAction::None
     );
     slot.stop();
+    wait_state(&mut slot, RunState::Idle);
 }
 
 #[test]

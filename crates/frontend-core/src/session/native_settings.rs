@@ -783,7 +783,7 @@ mod tests {
     }
 
     fn native_fixture(test: &str) -> Fixture {
-        script::registry::install_cards(&script::sherlock::CARDS)
+        script_js::install_cards()
             .expect("install canonical Sherlock card for native settings tests");
         let iso = script::IsolatedEnv::enter(&format!("frontend-core-native-settings-{test}"));
         let dir = iso.dir.clone();
@@ -809,7 +809,7 @@ mod tests {
         let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
         core.play_mut().unwrap().bind_script_test_data(data);
         let scripts = Scripts::new(
-            script::JsLibrary::with_cache(dir.join("js-scripts.json"), dir.join("js-cache")),
+            script_js::JsLibrary::with_cache(dir.join("js-scripts.json"), dir.join("js-cache")),
             script::ScriptSettingsStore::at(dir.join("script-settings.json")),
         );
         Fixture {

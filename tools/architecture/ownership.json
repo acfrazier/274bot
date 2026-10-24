@@ -2975,167 +2975,167 @@
       "owner": "T2"
     },
     {
-      "path": "crates/script/compat-js/abi-contract.cjs",
+      "path": "crates/script-js/compat-js/abi-contract.cjs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/compat-js/abi-contract.test.cjs",
+      "path": "crates/script-js/compat-js/abi-contract.test.cjs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/compat-js/generate.cjs",
+      "path": "crates/script-js/compat-js/generate.cjs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/compat-js/index.d.ts",
+      "path": "crates/script-js/compat-js/index.d.ts",
       "owner": "T2"
     },
     {
-      "path": "crates/script/examples/acquire_key_v2.ts",
+      "path": "crates/script-js/examples/acquire_key_v2.ts",
       "owner": "T2"
     },
     {
-      "path": "crates/script/examples/actor_observation_v2.ts",
+      "path": "crates/script-js/examples/actor_observation_v2.ts",
       "owner": "T2"
     },
     {
-      "path": "crates/script/examples/bank_v2.ts",
+      "path": "crates/script-js/examples/bank_v2.ts",
       "owner": "T2"
     },
     {
-      "path": "crates/script/examples/boat_fare_v1.ts",
+      "path": "crates/script-js/examples/boat_fare_v1.ts",
       "owner": "T2"
     },
     {
-      "path": "crates/script/examples/bone_burier_v2.js",
+      "path": "crates/script-js/examples/bone_burier_v2.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/examples/bone_burier_v2.ts",
+      "path": "crates/script-js/examples/bone_burier_v2.ts",
       "owner": "T2"
     },
     {
-      "path": "crates/script/examples/catalog_inventory.rs",
+      "path": "crates/script-js/examples/catalog_inventory.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/examples/cell_v2.ts",
+      "path": "crates/script-js/examples/cell_v2.ts",
       "owner": "T2"
     },
     {
-      "path": "crates/script/examples/clue_facts_v2.ts",
+      "path": "crates/script-js/examples/clue_facts_v2.ts",
       "owner": "T2"
     },
     {
-      "path": "crates/script/examples/clue_hard_kit_v2.ts",
+      "path": "crates/script-js/examples/clue_hard_kit_v2.ts",
       "owner": "T2"
     },
     {
-      "path": "crates/script/examples/clue_held_step_v2.ts",
+      "path": "crates/script-js/examples/clue_held_step_v2.ts",
       "owner": "T2"
     },
     {
-      "path": "crates/script/examples/clue_keep_v2.ts",
+      "path": "crates/script-js/examples/clue_keep_v2.ts",
       "owner": "T2"
     },
     {
-      "path": "crates/script/examples/clue_pack_v2.ts",
+      "path": "crates/script-js/examples/clue_pack_v2.ts",
       "owner": "T2"
     },
     {
-      "path": "crates/script/examples/combat_showcase_v2.ts",
+      "path": "crates/script-js/examples/combat_showcase_v2.ts",
       "owner": "T2"
     },
     {
-      "path": "crates/script/examples/enter_lair_v2.ts",
+      "path": "crates/script-js/examples/enter_lair_v2.ts",
       "owner": "T2"
     },
     {
-      "path": "crates/script/examples/fight_field_v2.ts",
+      "path": "crates/script-js/examples/fight_field_v2.ts",
       "owner": "T2"
     },
     {
-      "path": "crates/script/examples/fight_v2.ts",
+      "path": "crates/script-js/examples/fight_v2.ts",
       "owner": "T2"
     },
     {
-      "path": "crates/script/examples/gather_methods_v2.ts",
+      "path": "crates/script-js/examples/gather_methods_v2.ts",
       "owner": "T2"
     },
     {
-      "path": "crates/script/examples/gather_placements_v2.ts",
+      "path": "crates/script-js/examples/gather_placements_v2.ts",
       "owner": "T2"
     },
     {
-      "path": "crates/script/examples/gather_quest_v2.js",
+      "path": "crates/script-js/examples/gather_quest_v2.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/examples/gather_quest_v2.ts",
+      "path": "crates/script-js/examples/gather_quest_v2.ts",
       "owner": "T2"
     },
     {
-      "path": "crates/script/examples/hold_spot_v2.ts",
+      "path": "crates/script-js/examples/hold_spot_v2.ts",
       "owner": "T2"
     },
     {
-      "path": "crates/script/examples/leave_lair_v2.ts",
+      "path": "crates/script-js/examples/leave_lair_v2.ts",
       "owner": "T2"
     },
     {
-      "path": "crates/script/examples/line_of_sight_v2.ts",
+      "path": "crates/script-js/examples/line_of_sight_v2.ts",
       "owner": "T2"
     },
     {
-      "path": "crates/script/examples/loadout_potion_v2.ts",
+      "path": "crates/script-js/examples/loadout_potion_v2.ts",
       "owner": "T2"
     },
     {
-      "path": "crates/script/examples/prayer_v1.ts",
+      "path": "crates/script-js/examples/prayer_v1.ts",
       "owner": "T2"
     },
     {
-      "path": "crates/script/examples/prayer_v2.ts",
+      "path": "crates/script-js/examples/prayer_v2.ts",
       "owner": "T2"
     },
     {
-      "path": "crates/script/examples/quest_facts_v2.ts",
+      "path": "crates/script-js/examples/quest_facts_v2.ts",
       "owner": "T2"
     },
     {
-      "path": "crates/script/examples/quest_status_v2.ts",
+      "path": "crates/script-js/examples/quest_status_v2.ts",
       "owner": "T2"
     },
     {
-      "path": "crates/script/examples/retreat_spot_v2.ts",
+      "path": "crates/script-js/examples/retreat_spot_v2.ts",
       "owner": "T2"
     },
     {
-      "path": "crates/script/examples/route_inspect_brimhaven_v2.ts",
+      "path": "crates/script-js/examples/route_inspect_brimhaven_v2.ts",
       "owner": "T2"
     },
     {
-      "path": "crates/script/examples/scene_observe_v2.ts",
+      "path": "crates/script-js/examples/scene_observe_v2.ts",
       "owner": "T2"
     },
     {
-      "path": "crates/script/examples/supply_helpers_v2.ts",
+      "path": "crates/script-js/examples/supply_helpers_v2.ts",
       "owner": "T2"
     },
     {
-      "path": "crates/script/examples/walk_spot_v2.ts",
+      "path": "crates/script-js/examples/walk_spot_v2.ts",
       "owner": "T2"
     },
     {
-      "path": "crates/script/host-js/index.d.ts",
+      "path": "crates/script-js/host-js/index.d.ts",
       "owner": "T2"
     },
     {
-      "path": "crates/script/schema/generated/isolate_generated.rs",
+      "path": "crates/script-js/schema/generated/isolate_generated.rs",
       "owner": "T1"
     },
     {
-      "path": "crates/script/schema/isolate.fbs",
+      "path": "crates/script-js/schema/isolate.fbs",
       "owner": "T1"
     },
     {
@@ -3159,7 +3159,7 @@
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/anchor_return.rs",
+      "path": "crates/script-js/src/compat/anchor_return.rs",
       "owner": "T2"
     },
     {
@@ -3175,15 +3175,15 @@
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/api_session.rs",
+      "path": "crates/script-js/src/api_v2/api_session.rs",
       "owner": "T1"
     },
     {
-      "path": "crates/script/src/attack_clock.rs",
+      "path": "crates/script-js/src/scene/attack_clock.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/autocast.rs",
+      "path": "crates/script-js/src/compat/autocast.rs",
       "owner": "T2"
     },
     {
@@ -3227,19 +3227,19 @@
       "owner": "T1"
     },
     {
-      "path": "crates/script/src/bank_select.rs",
+      "path": "crates/script-js/src/scene/bank_select.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/bank_withdraw.rs",
+      "path": "crates/script-js/src/compat/bank_withdraw.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/boat_fare.rs",
+      "path": "crates/script-js/src/compat/boat_fare.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/boat_fare_tests.rs",
+      "path": "crates/script-js/src/compat/boat_fare_tests.rs",
       "owner": "T2"
     },
     {
@@ -3251,7 +3251,7 @@
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/cake_stall/runtime.rs",
+      "path": "crates/script-js/src/compat/cake_stall/runtime.rs",
       "owner": "T2"
     },
     {
@@ -3291,47 +3291,47 @@
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/clue/acquire.rs",
+      "path": "crates/script-js/src/compat/clue/acquire.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/clue/combat.rs",
+      "path": "crates/script-js/src/compat/clue/combat.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/clue/entrana.rs",
+      "path": "crates/script-js/src/compat/clue/entrana.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/clue/family.rs",
+      "path": "crates/script-js/src/compat/clue/family.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/clue/isolate.rs",
+      "path": "crates/script-js/src/compat/clue/isolate.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/clue/puzzle.rs",
+      "path": "crates/script-js/src/compat/clue/puzzle.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/clue/scene.rs",
+      "path": "crates/script-js/src/compat/clue/scene.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/clue/shop.rs",
+      "path": "crates/script-js/src/compat/clue/shop.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/clue/talk.rs",
+      "path": "crates/script-js/src/compat/clue/talk.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/clue/verbs.rs",
+      "path": "crates/script-js/src/compat/clue/verbs.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/clue_tests.rs",
+      "path": "crates/script-js/src/compat/clue_tests.rs",
       "owner": "T2"
     },
     {
@@ -3443,7 +3443,7 @@
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/compat_dts.rs",
+      "path": "crates/script-js/src/tooling/compat_dts.rs",
       "owner": "T2"
     },
     {
@@ -3451,7 +3451,7 @@
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/cook_locations.rs",
+      "path": "crates/script-js/src/compat/cook_locations.rs",
       "owner": "T2"
     },
     {
@@ -3459,15 +3459,15 @@
       "owner": "T1"
     },
     {
-      "path": "crates/script/src/death_recovery.rs",
+      "path": "crates/script-js/src/compat/death_recovery.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/declared_abi.rs",
+      "path": "crates/script-js/src/tooling/declared_abi.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/dialog.rs",
+      "path": "crates/script-js/src/compat/dialog.rs",
       "owner": "T2"
     },
     {
@@ -3475,11 +3475,11 @@
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/drive_partner_trade.rs",
+      "path": "crates/script-js/src/compat/drive_partner_trade.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/duel.rs",
+      "path": "crates/script-js/src/compat/duel.rs",
       "owner": "T2"
     },
     {
@@ -3495,19 +3495,19 @@
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/event_signal.rs",
+      "path": "crates/script-js/src/scene/event_signal.rs",
       "owner": "T1"
     },
     {
-      "path": "crates/script/src/events.rs",
+      "path": "crates/script-js/src/scene/events.rs",
       "owner": "T1"
     },
     {
-      "path": "crates/script/src/fight_upkeep.rs",
+      "path": "crates/script-js/src/compat/fight_upkeep.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/fire.rs",
+      "path": "crates/script-js/src/compat/fire.rs",
       "owner": "T2"
     },
     {
@@ -3591,67 +3591,67 @@
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/host_js.rs",
+      "path": "crates/script-js/src/tooling/host_js.rs",
       "owner": "T1"
     },
     {
-      "path": "crates/script/src/hunt.rs",
+      "path": "crates/script-js/src/compat/hunt.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/hunt/acquire.rs",
+      "path": "crates/script-js/src/compat/hunt/acquire.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/hunt/teleport_out.rs",
+      "path": "crates/script-js/src/compat/hunt/teleport_out.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/hunt/wait.rs",
+      "path": "crates/script-js/src/compat/hunt/wait.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/hunt_bank.rs",
+      "path": "crates/script-js/src/compat/hunt_bank.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/hunt_bank/plan.rs",
+      "path": "crates/script-js/src/compat/hunt_bank/plan.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/hunt_catalog.rs",
+      "path": "crates/script-js/src/compat/hunt_catalog.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/hunt_cell.rs",
+      "path": "crates/script-js/src/compat/hunt_cell.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/hunt_fight.rs",
+      "path": "crates/script-js/src/compat/hunt_fight.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/hunt_fight/hold.rs",
+      "path": "crates/script-js/src/compat/hunt_fight/hold.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/hunt_fight/retreat.rs",
+      "path": "crates/script-js/src/compat/hunt_fight/retreat.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/hunt_fight/walk_spot.rs",
+      "path": "crates/script-js/src/compat/hunt_fight/walk_spot.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/hunt_key.rs",
+      "path": "crates/script-js/src/compat/hunt_key.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/hunt_lair.rs",
+      "path": "crates/script-js/src/compat/hunt_lair.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/hunt_leave.rs",
+      "path": "crates/script-js/src/compat/hunt_leave.rs",
       "owner": "T2"
     },
     {
@@ -3659,7 +3659,7 @@
       "owner": "T1"
     },
     {
-      "path": "crates/script/src/inspect_wait.rs",
+      "path": "crates/script-js/src/scene/inspect_wait.rs",
       "owner": "T2"
     },
     {
@@ -3667,11 +3667,11 @@
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/isolate_fb.rs",
+      "path": "crates/script-js/src/wire/isolate_fb.rs",
       "owner": "T1"
     },
     {
-      "path": "crates/script/src/isolate_fb_schema_roundtrip.rs",
+      "path": "crates/script-js/src/wire/isolate_fb_schema_roundtrip.rs",
       "owner": "T1"
     },
     {
@@ -3679,7 +3679,7 @@
       "owner": "T1"
     },
     {
-      "path": "crates/script/src/js_cache.rs",
+      "path": "crates/script-js/src/library/js_cache.rs",
       "owner": "T1"
     },
     {
@@ -3691,263 +3691,263 @@
       "owner": "T1"
     },
     {
-      "path": "crates/script/src/line_of_sight.rs",
+      "path": "crates/script-js/src/scene/line_of_sight.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/load/area.rs",
+      "path": "crates/script-js/src/materialize/area.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/load/bank_locations_v8.rs",
+      "path": "crates/script-js/src/materialize/bank_locations_v8.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/load/bank_tasks_v8.rs",
+      "path": "crates/script-js/src/materialize/bank_tasks_v8.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/load/bindings.rs",
+      "path": "crates/script-js/src/runtime/bindings.rs",
       "owner": "T1"
     },
     {
-      "path": "crates/script/src/load/boost_potions_v8.rs",
+      "path": "crates/script-js/src/materialize/boost_potions_v8.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/load/buyout_plan.rs",
+      "path": "crates/script-js/src/materialize/buyout_plan.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/load/cake_stall_v8.rs",
+      "path": "crates/script-js/src/materialize/cake_stall_v8.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/load/callback_v8.rs",
+      "path": "crates/script-js/src/materialize/callback_v8.rs",
       "owner": "T1"
     },
     {
-      "path": "crates/script/src/load/canvas_tape.rs",
+      "path": "crates/script-js/src/materialize/canvas_tape.rs",
       "owner": "T4"
     },
     {
-      "path": "crates/script/src/load/chatbox_v8.rs",
+      "path": "crates/script-js/src/materialize/chatbox_v8.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/load/clue_facts_v8.rs",
+      "path": "crates/script-js/src/materialize/clue_facts_v8.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/load/clue_logic_v8.rs",
+      "path": "crates/script-js/src/materialize/clue_logic_v8.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/load/clue_pack_v8.rs",
+      "path": "crates/script-js/src/materialize/clue_pack_v8.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/load/combat_style_v8.rs",
+      "path": "crates/script-js/src/materialize/combat_style_v8.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/load/crypto_stub.js",
+      "path": "crates/script-js/src/runtime/crypto_stub.js",
       "owner": "T1"
     },
     {
-      "path": "crates/script/src/load/crypto_stub.rs",
+      "path": "crates/script-js/src/runtime/crypto_stub.rs",
       "owner": "T1"
     },
     {
-      "path": "crates/script/src/load/dialog_v8.rs",
+      "path": "crates/script-js/src/materialize/dialog_v8.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/load/distance.rs",
+      "path": "crates/script-js/src/materialize/distance.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/load/entities_v8.rs",
+      "path": "crates/script-js/src/materialize/entities_v8.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/load/entity_pages.rs",
+      "path": "crates/script-js/src/materialize/entity_pages.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/load/fire_v8.rs",
+      "path": "crates/script-js/src/materialize/fire_v8.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/load/gather_methods_v8.rs",
+      "path": "crates/script-js/src/materialize/gather_methods_v8.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/load/gathering_v8.rs",
+      "path": "crates/script-js/src/materialize/gathering_v8.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/load/hunt_v8.rs",
+      "path": "crates/script-js/src/materialize/hunt_v8.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/load/inventory_v8.rs",
+      "path": "crates/script-js/src/materialize/inventory_v8.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/load/isolate.rs",
+      "path": "crates/script-js/src/runtime/isolate.rs",
       "owner": "T1"
     },
     {
-      "path": "crates/script/src/load/isolate/supervisor.rs",
+      "path": "crates/script-js/src/runtime/isolate/supervisor.rs",
       "owner": "T1"
     },
     {
-      "path": "crates/script/src/load/isolate/teardown.rs",
+      "path": "crates/script-js/src/runtime/isolate/teardown.rs",
       "owner": "T1"
     },
     {
-      "path": "crates/script/src/load/isolate/thread.rs",
+      "path": "crates/script-js/src/runtime/isolate/thread.rs",
       "owner": "T1"
     },
     {
-      "path": "crates/script/src/load/isolate/validation.rs",
+      "path": "crates/script-js/src/runtime/isolate/validation.rs",
       "owner": "T1"
     },
     {
-      "path": "crates/script/src/load/isolate_tests.rs",
+      "path": "crates/script-js/src/runtime/isolate_tests.rs",
       "owner": "T1"
     },
     {
-      "path": "crates/script/src/load/library.rs",
+      "path": "crates/script-js/src/library/library.rs",
       "owner": "T1"
     },
     {
-      "path": "crates/script/src/load/library/catalog.rs",
+      "path": "crates/script-js/src/library/library/catalog.rs",
       "owner": "T1"
     },
     {
-      "path": "crates/script/src/load/library_tests.rs",
+      "path": "crates/script-js/src/library/library_tests.rs",
       "owner": "T1"
     },
     {
-      "path": "crates/script/src/load/line_of_sight.rs",
+      "path": "crates/script-js/src/materialize/line_of_sight.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/load/lineage_v8.rs",
+      "path": "crates/script-js/src/materialize/lineage_v8.rs",
       "owner": "T1"
     },
     {
-      "path": "crates/script/src/load/loadout_v8.rs",
+      "path": "crates/script-js/src/materialize/loadout_v8.rs",
       "owner": "T1"
     },
     {
-      "path": "crates/script/src/load/machine_v8.rs",
+      "path": "crates/script-js/src/materialize/machine_v8.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/load/melee_weapons_v8.rs",
+      "path": "crates/script-js/src/materialize/melee_weapons_v8.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/load/memory_profile.rs",
+      "path": "crates/script-js/src/runtime/memory_profile.rs",
       "owner": "T1"
     },
     {
-      "path": "crates/script/src/load/mod.rs",
+      "path": "crates/script-js/src/lib.rs",
       "owner": "T1"
     },
     {
-      "path": "crates/script/src/load/paint_chrome.rs",
+      "path": "crates/script-js/src/materialize/paint_chrome.rs",
       "owner": "T4"
     },
     {
-      "path": "crates/script/src/load/paint_jive.rs",
+      "path": "crates/script-js/src/materialize/paint_jive.rs",
       "owner": "T4"
     },
     {
-      "path": "crates/script/src/load/partner_trade_v8.rs",
+      "path": "crates/script-js/src/materialize/partner_trade_v8.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/load/platform.rs",
+      "path": "crates/script-js/src/runtime/platform.rs",
       "owner": "T1"
     },
     {
-      "path": "crates/script/src/load/progress_methods_v8.rs",
+      "path": "crates/script-js/src/materialize/progress_methods_v8.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/load/quest_facts_v8.rs",
+      "path": "crates/script-js/src/materialize/quest_facts_v8.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/load/reach_query.rs",
+      "path": "crates/script-js/src/materialize/reach_query.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/load/recovery_hints_v8.rs",
+      "path": "crates/script-js/src/runtime/recovery_hints_v8.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/load/run_policy_v8.rs",
+      "path": "crates/script-js/src/materialize/run_policy_v8.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/load/rune_routes_v8.rs",
+      "path": "crates/script-js/src/materialize/rune_routes_v8.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/load/runtime_bridge.rs",
+      "path": "crates/script-js/src/runtime/runtime_bridge.rs",
       "owner": "T1"
     },
     {
-      "path": "crates/script/src/load/scene_v8.rs",
+      "path": "crates/script-js/src/materialize/scene_v8.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/load/selected_facts_v8.rs",
+      "path": "crates/script-js/src/materialize/selected_facts_v8.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/load/shape.rs",
+      "path": "crates/script-js/src/library/shape.rs",
       "owner": "T1"
     },
     {
-      "path": "crates/script/src/load/shop_ops_v8.rs",
+      "path": "crates/script-js/src/materialize/shop_ops_v8.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/load/skills_v8.rs",
+      "path": "crates/script-js/src/materialize/skills_v8.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/load/snapshot.rs",
+      "path": "crates/script-js/src/runtime/snapshot.rs",
       "owner": "T1"
     },
     {
-      "path": "crates/script/src/load/supply_v8.rs",
+      "path": "crates/script-js/src/materialize/supply_v8.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/load/surface.rs",
+      "path": "crates/script-js/src/surface.rs",
       "owner": "T1"
     },
     {
-      "path": "crates/script/src/load/targets_v8.rs",
+      "path": "crates/script-js/src/materialize/targets_v8.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/load/tools_v8.rs",
+      "path": "crates/script-js/src/materialize/tools_v8.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/load/wait_clock.rs",
+      "path": "crates/script-js/src/runtime/wait_clock.rs",
       "owner": "T1"
     },
     {
-      "path": "crates/script/src/load/walk_opening_v8.rs",
+      "path": "crates/script-js/src/materialize/walk_opening_v8.rs",
       "owner": "T2"
     },
     {
@@ -3963,11 +3963,11 @@
       "owner": "T1"
     },
     {
-      "path": "crates/script/src/machine.rs",
+      "path": "crates/script-js/src/machine/mod.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/market_catalog.rs",
+      "path": "crates/script-js/src/compat/market_catalog.rs",
       "owner": "T2"
     },
     {
@@ -3975,11 +3975,11 @@
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/modals.rs",
+      "path": "crates/script-js/src/compat/modals.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/module_imports.rs",
+      "path": "crates/script-js/src/library/module_imports.rs",
       "owner": "T1"
     },
     {
@@ -4051,7 +4051,7 @@
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/observed.rs",
+      "path": "crates/script-js/src/scene/observed.rs",
       "owner": "T1"
     },
     {
@@ -4059,15 +4059,15 @@
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/partner_trade.rs",
+      "path": "crates/script-js/src/compat/partner_trade.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/periodic_bank.rs",
+      "path": "crates/script-js/src/compat/periodic_bank.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/prayer.rs",
+      "path": "crates/script-js/src/compat/prayer.rs",
       "owner": "T2"
     },
     {
@@ -4083,7 +4083,7 @@
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/quest_journal/isolate.rs",
+      "path": "crates/script-js/src/compat/quest_journal/isolate.rs",
       "owner": "T2"
     },
     {
@@ -4291,11 +4291,11 @@
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/reach.rs",
+      "path": "crates/script-js/src/compat/reach.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/reach_entity.rs",
+      "path": "crates/script-js/src/compat/reach_entity.rs",
       "owner": "T2"
     },
     {
@@ -4307,23 +4307,23 @@
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/rs2b0t_registry.rs",
+      "path": "crates/script-js/src/library/rs2b0t_registry.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/rs2b0t_registry/paths.rs",
+      "path": "crates/script-js/src/library/rs2b0t_registry/paths.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/rs2b0t_registry/settings.rs",
+      "path": "crates/script-js/src/library/rs2b0t_registry/settings.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/rs2b0t_registry_tests.rs",
+      "path": "crates/script-js/src/compat/rs2b0t_registry_tests.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/scene_query.rs",
+      "path": "crates/script-js/src/scene/scene_query.rs",
       "owner": "T2"
     },
     {
@@ -4331,311 +4331,311 @@
       "owner": "T1"
     },
     {
-      "path": "crates/script/src/sherlock.rs",
+      "path": "crates/script-js/src/compat/sherlock.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/sherlock_native_tests.rs",
+      "path": "crates/script-js/src/compat/sherlock_native_tests.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/_kernel.js",
+      "path": "crates/script-js/src/shim/_kernel.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/anchor.js",
+      "path": "crates/script-js/src/shim/anchor.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/area.js",
+      "path": "crates/script-js/src/shim/area.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/autocast.js",
+      "path": "crates/script-js/src/shim/autocast.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/bank.js",
+      "path": "crates/script-js/src/shim/bank.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/bank_locations.js",
+      "path": "crates/script-js/src/shim/bank_locations.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/bank_ops.js",
+      "path": "crates/script-js/src/shim/bank_ops.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/bank_quest_junk.js",
+      "path": "crates/script-js/src/shim/bank_quest_junk.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/bank_rules.js",
+      "path": "crates/script-js/src/shim/bank_rules.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/bank_sort.js",
+      "path": "crates/script-js/src/shim/bank_sort.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/bank_sort_rules.js",
+      "path": "crates/script-js/src/shim/bank_sort_rules.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/banking.js",
+      "path": "crates/script-js/src/shim/banking.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/boost_potions.js",
+      "path": "crates/script-js/src/shim/boost_potions.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/bot.js",
+      "path": "crates/script-js/src/shim/bot.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/bot_host.js",
+      "path": "crates/script-js/src/shim/bot_host.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/buyout_logic.js",
+      "path": "crates/script-js/src/shim/buyout_logic.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/cake_stall.js",
+      "path": "crates/script-js/src/shim/cake_stall.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/cake_stall_data.js",
+      "path": "crates/script-js/src/shim/cake_stall_data.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/catalog.js",
+      "path": "crates/script-js/src/shim/catalog.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/chat_dialog.js",
+      "path": "crates/script-js/src/shim/chat_dialog.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/client_adapter.js",
+      "path": "crates/script-js/src/shim/client_adapter.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/clue_bank_access.js",
+      "path": "crates/script-js/src/shim/clue_bank_access.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/clue_duel.js",
+      "path": "crates/script-js/src/shim/clue_duel.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/clue_duel_travel.js",
+      "path": "crates/script-js/src/shim/clue_duel_travel.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/clue_executor.js",
+      "path": "crates/script-js/src/shim/clue_executor.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/clue_paint.js",
+      "path": "crates/script-js/src/shim/clue_paint.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/clue_tool_acquire.js",
+      "path": "crates/script-js/src/shim/clue_tool_acquire.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/cluedb.js",
+      "path": "crates/script-js/src/shim/cluedb.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/combat_equipment.js",
+      "path": "crates/script-js/src/shim/combat_equipment.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/combat_style.js",
+      "path": "crates/script-js/src/shim/combat_style.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/combat_style_logic.js",
+      "path": "crates/script-js/src/shim/combat_style_logic.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/content.rs",
+      "path": "crates/script-js/src/shim/content.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/continue_dialog.js",
+      "path": "crates/script-js/src/shim/continue_dialog.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/cook_locations.js",
+      "path": "crates/script-js/src/shim/cook_locations.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/cook_locations_data.js",
+      "path": "crates/script-js/src/shim/cook_locations_data.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/cow_killer_locations.js",
+      "path": "crates/script-js/src/shim/cow_killer_locations.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/data/herbs.js",
+      "path": "crates/script-js/src/shim/data/herbs.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/data/itemdb.js",
+      "path": "crates/script-js/src/shim/data/itemdb.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/data/pickpocket_targets.js",
+      "path": "crates/script-js/src/shim/data/pickpocket_targets.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/data/spelldb.js",
+      "path": "crates/script-js/src/shim/data/spelldb.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/data/woodcutting_locations.js",
+      "path": "crates/script-js/src/shim/data/woodcutting_locations.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/death_recovery.js",
+      "path": "crates/script-js/src/shim/death_recovery.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/declared_surface.js",
+      "path": "crates/script-js/src/shim/declared_surface.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/direct_navigator.js",
+      "path": "crates/script-js/src/shim/direct_navigator.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/drive_partner_trade.js",
+      "path": "crates/script-js/src/shim/drive_partner_trade.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/dropdb.js",
+      "path": "crates/script-js/src/shim/dropdb.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/duel.js",
+      "path": "crates/script-js/src/shim/duel.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/eat_timing.js",
+      "path": "crates/script-js/src/shim/eat_timing.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/equipment.js",
+      "path": "crates/script-js/src/shim/equipment.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/event_signal.js",
+      "path": "crates/script-js/src/shim/event_signal.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/execution.js",
+      "path": "crates/script-js/src/shim/execution.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/fight_upkeep.js",
+      "path": "crates/script-js/src/shim/fight_upkeep.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/firemaking.js",
+      "path": "crates/script-js/src/shim/firemaking.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/food.js",
+      "path": "crates/script-js/src/shim/food.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/game.js",
+      "path": "crates/script-js/src/shim/game.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/game_messages.js",
+      "path": "crates/script-js/src/shim/game_messages.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/gathering_locations.js",
+      "path": "crates/script-js/src/shim/gathering_locations.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/grounditems.js",
+      "path": "crates/script-js/src/shim/grounditems.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/hunting_combat.js",
+      "path": "crates/script-js/src/shim/hunting_combat.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/hunting_guarded.js",
+      "path": "crates/script-js/src/shim/hunting_guarded.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/hunting_logic.js",
+      "path": "crates/script-js/src/shim/hunting_logic.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/hunting_sites.js",
+      "path": "crates/script-js/src/shim/hunting_sites.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/hunting_supply.js",
+      "path": "crates/script-js/src/shim/hunting_supply.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/input.js",
+      "path": "crates/script-js/src/shim/input.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/inventory.js",
+      "path": "crates/script-js/src/shim/inventory.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/jive.js",
+      "path": "crates/script-js/src/shim/jive.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/keep_list.js",
+      "path": "crates/script-js/src/shim/keep_list.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/level_progress.js",
+      "path": "crates/script-js/src/shim/level_progress.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/light_fire.js",
+      "path": "crates/script-js/src/shim/light_fire.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/loadout_plan.js",
+      "path": "crates/script-js/src/shim/loadout_plan.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/loadout_setting.js",
+      "path": "crates/script-js/src/shim/loadout_setting.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/locs.js",
+      "path": "crates/script-js/src/shim/locs.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/market_maker.js",
+      "path": "crates/script-js/src/shim/market_maker.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/melee_weapons.js",
+      "path": "crates/script-js/src/shim/melee_weapons.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/mining_rocks.js",
+      "path": "crates/script-js/src/shim/mining_rocks.js",
       "owner": "T2"
     },
     {
@@ -4643,187 +4643,187 @@
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/modals.js",
+      "path": "crates/script-js/src/shim/modals.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/model_loc.js",
+      "path": "crates/script-js/src/shim/model_loc.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/model_npc.js",
+      "path": "crates/script-js/src/shim/model_npc.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/model_player.js",
+      "path": "crates/script-js/src/shim/model_player.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/modules.rs",
+      "path": "crates/script-js/src/shim/modules.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/murder_areas.js",
+      "path": "crates/script-js/src/shim/murder_areas.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/navigator.js",
+      "path": "crates/script-js/src/shim/navigator.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/npcs.js",
+      "path": "crates/script-js/src/shim/npcs.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/pack_rules.js",
+      "path": "crates/script-js/src/shim/pack_rules.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/paint.js",
+      "path": "crates/script-js/src/shim/paint.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/paintLogic.js",
+      "path": "crates/script-js/src/shim/paintLogic.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/partner_trade.js",
+      "path": "crates/script-js/src/shim/partner_trade.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/periodic_bank.js",
+      "path": "crates/script-js/src/shim/periodic_bank.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/players.js",
+      "path": "crates/script-js/src/shim/players.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/prayer.js",
+      "path": "crates/script-js/src/shim/prayer.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/primitives.js",
+      "path": "crates/script-js/src/shim/primitives.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/query.js",
+      "path": "crates/script-js/src/shim/query.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/quest_engine.js",
+      "path": "crates/script-js/src/shim/quest_engine.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/quests.js",
+      "path": "crates/script-js/src/shim/quests.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/ranged.js",
+      "path": "crates/script-js/src/shim/ranged.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/ranged_settings.js",
+      "path": "crates/script-js/src/shim/ranged_settings.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/reach.js",
+      "path": "crates/script-js/src/shim/reach.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/reachability.js",
+      "path": "crates/script-js/src/shim/reachability.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/recovery_hints.js",
+      "path": "crates/script-js/src/shim/recovery_hints.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/rows.rs",
+      "path": "crates/script-js/src/shim/rows.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/rs2b0t_api.js",
+      "path": "crates/script-js/src/shim/rs2b0t_api.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/run_manager.js",
+      "path": "crates/script-js/src/shim/run_manager.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/rune_craft_locations.js",
+      "path": "crates/script-js/src/shim/rune_craft_locations.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/script_runner.js",
+      "path": "crates/script-js/src/shim/script_runner.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/settings.js",
+      "path": "crates/script-js/src/shim/settings.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/shop.js",
+      "path": "crates/script-js/src/shim/shop.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/shop_types.js",
+      "path": "crates/script-js/src/shim/shop_types.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/shopdb.js",
+      "path": "crates/script-js/src/shim/shopdb.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/skills.js",
+      "path": "crates/script-js/src/shim/skills.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/solve_clue.js",
+      "path": "crates/script-js/src/shim/solve_clue.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/special.js",
+      "path": "crates/script-js/src/shim/special.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/steal_rules.js",
+      "path": "crates/script-js/src/shim/steal_rules.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/supervisor.js",
+      "path": "crates/script-js/src/shim/supervisor.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/sustain.js",
+      "path": "crates/script-js/src/shim/sustain.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/thieving_targets.js",
+      "path": "crates/script-js/src/shim/thieving_targets.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/tile.js",
+      "path": "crates/script-js/src/shim/tile.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/tools.js",
+      "path": "crates/script-js/src/shim/tools.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/trade.js",
+      "path": "crates/script-js/src/shim/trade.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/traversal.js",
+      "path": "crates/script-js/src/shim/traversal.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/walk_opening.js",
+      "path": "crates/script-js/src/shim/walk_opening.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shop.rs",
+      "path": "crates/script-js/src/compat/shop.rs",
       "owner": "T2"
     },
     {
@@ -4887,11 +4887,11 @@
       "owner": "T1"
     },
     {
-      "path": "crates/script/src/special.rs",
+      "path": "crates/script-js/src/compat/special.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/supply_v2.rs",
+      "path": "crates/script-js/src/scene/supply_v2.rs",
       "owner": "T2"
     },
     {
@@ -4903,7 +4903,7 @@
       "owner": "T1"
     },
     {
-      "path": "crates/script/src/task_clock.rs",
+      "path": "crates/script-js/src/scene/task_clock.rs",
       "owner": "T1"
     },
     {
@@ -4923,11 +4923,11 @@
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/teleport.rs",
+      "path": "crates/script-js/src/compat/teleport.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/trade.rs",
+      "path": "crates/script-js/src/compat/trade.rs",
       "owner": "T2"
     },
     {
@@ -4935,11 +4935,11 @@
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/walk.rs",
+      "path": "crates/script-js/src/compat/walk.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/walk_wait.rs",
+      "path": "crates/script-js/src/scene/walk_wait.rs",
       "owner": "T2"
     },
     {
@@ -4967,51 +4967,51 @@
       "owner": "T1"
     },
     {
-      "path": "crates/script/tests/actor_observation.rs",
+      "path": "crates/script-js/tests/actor_observation.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/api_combat_runtime.rs",
+      "path": "crates/script-js/tests/api_combat_runtime.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/api_gather_runtime.rs",
+      "path": "crates/script-js/tests/api_gather_runtime.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/api_gather_wire.rs",
+      "path": "crates/script-js/tests/api_gather_wire.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/api_progress_runtime.rs",
+      "path": "crates/script-js/tests/api_progress_runtime.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/api_progress_wire.rs",
+      "path": "crates/script-js/tests/api_progress_wire.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/autocast.rs",
+      "path": "crates/script-js/tests/autocast.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/bank_withdraw_op.rs",
+      "path": "crates/script-js/tests/bank_withdraw_op.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/blocked_cards.rs",
+      "path": "crates/script-js/tests/blocked_cards.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/bone_burier_v2.rs",
+      "path": "crates/script-js/tests/bone_burier_v2.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/boost_potions_native_mapping.rs",
+      "path": "crates/script-js/tests/boost_potions_native_mapping.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/broadcast_channel.rs",
+      "path": "crates/script-js/tests/broadcast_channel.rs",
       "owner": "T1"
     },
     {
@@ -5019,183 +5019,183 @@
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/cake_stall_native_mapping.rs",
+      "path": "crates/script-js/tests/cake_stall_native_mapping.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/canvas.rs",
+      "path": "crates/script-js/tests/canvas.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/catalog_bright_fixture.rs",
+      "path": "crates/script-js/tests/catalog_bright_fixture.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/catalog_run.rs",
+      "path": "crates/script-js/tests/catalog_run.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/chat_dialog_continue.rs",
+      "path": "crates/script-js/tests/chat_dialog_continue.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/client_adapter_combat_level.rs",
+      "path": "crates/script-js/tests/client_adapter_combat_level.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/client_adapter_count_dialog.rs",
+      "path": "crates/script-js/tests/client_adapter_count_dialog.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/client_adapter_inventory.rs",
+      "path": "crates/script-js/tests/client_adapter_inventory.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/client_adapter_local_walk.rs",
+      "path": "crates/script-js/tests/client_adapter_local_walk.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/client_adapter_self_anim.rs",
+      "path": "crates/script-js/tests/client_adapter_self_anim.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/clue_facts.rs",
+      "path": "crates/script-js/tests/clue_facts.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/clue_pack.rs",
+      "path": "crates/script-js/tests/clue_pack.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/combat_keep_names.rs",
+      "path": "crates/script-js/tests/combat_keep_names.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/combat_start_helpers.rs",
+      "path": "crates/script-js/tests/combat_start_helpers.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/combat_style_contract.rs",
+      "path": "crates/script-js/tests/combat_style_contract.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/common/bank_slot.rs",
+      "path": "crates/script-js/tests/common/bank_slot.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/common/mod.rs",
+      "path": "crates/script-js/tests/common/mod.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/compat_dts.rs",
+      "path": "crates/script-js/tests/compat_dts.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/compat_dts_probe/consumer.ts",
+      "path": "crates/script-js/tests/compat_dts_probe/consumer.ts",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/compat_dts_probe/emit-round2.ts",
+      "path": "crates/script-js/tests/compat_dts_probe/emit-round2.ts",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/compat_dts_probe/invalid-extra.ts",
+      "path": "crates/script-js/tests/compat_dts_probe/invalid-extra.ts",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/compat_dts_probe/probe.ts",
+      "path": "crates/script-js/tests/compat_dts_probe/probe.ts",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/compat_dts_probe/reach.ts",
+      "path": "crates/script-js/tests/compat_dts_probe/reach.ts",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/compat_dts_probe/settings.ts",
+      "path": "crates/script-js/tests/compat_dts_probe/settings.ts",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/compat_dts_probe/valid-extra.ts",
+      "path": "crates/script-js/tests/compat_dts_probe/valid-extra.ts",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/compat_paint_settings.rs",
+      "path": "crates/script-js/tests/compat_paint_settings.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/cook_location_shape.rs",
+      "path": "crates/script-js/tests/cook_location_shape.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/crypto_stub.rs",
+      "path": "crates/script-js/tests/crypto_stub.rs",
       "owner": "T1"
     },
     {
-      "path": "crates/script/tests/death_recovery.rs",
+      "path": "crates/script-js/tests/death_recovery.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/declared_abi.rs",
+      "path": "crates/script-js/tests/declared_abi.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/dialog.rs",
+      "path": "crates/script-js/tests/dialog.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/direct_walkto.rs",
+      "path": "crates/script-js/tests/direct_walkto.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/drive_partner_trade.rs",
+      "path": "crates/script-js/tests/drive_partner_trade.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/ent.rs",
+      "path": "crates/script-js/tests/ent.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/entity_row_shape.rs",
+      "path": "crates/script-js/tests/entity_row_shape.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/equipment_items_id.rs",
+      "path": "crates/script-js/tests/equipment_items_id.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/events.rs",
+      "path": "crates/script-js/tests/events.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/fight_upkeep.rs",
+      "path": "crates/script-js/tests/fight_upkeep.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/fire.rs",
+      "path": "crates/script-js/tests/fire.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/fixtures/ExampleBot.ts",
+      "path": "crates/script-js/tests/fixtures/ExampleBot.ts",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/fixtures/trade_bot.ts",
+      "path": "crates/script-js/tests/fixtures/trade_bot.ts",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/gather_gas_alloc.rs",
+      "path": "crates/script-js/tests/gather_gas_alloc.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/gather_gas_set.rs",
+      "path": "crates/script-js/tests/gather_gas_set.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/gather_lazy_ownership.rs",
+      "path": "crates/script-js/tests/gather_lazy_ownership.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/gather_methods.rs",
+      "path": "crates/script-js/tests/gather_methods.rs",
       "owner": "T2"
     },
     {
@@ -5207,139 +5207,139 @@
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/gold_stubs.rs",
+      "path": "crates/script-js/tests/gold_stubs.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/ground_selected_identity.rs",
+      "path": "crates/script-js/tests/ground_selected_identity.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/herb_data.rs",
+      "path": "crates/script-js/tests/herb_data.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/host_js.rs",
+      "path": "crates/script-js/tests/host_js.rs",
       "owner": "T1"
     },
     {
-      "path": "crates/script/tests/hostile_duel.rs",
+      "path": "crates/script-js/tests/hostile_duel.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/hunt_bank.rs",
+      "path": "crates/script-js/tests/hunt_bank.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/hunt_cell.rs",
+      "path": "crates/script-js/tests/hunt_cell.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/hunt_enter.rs",
+      "path": "crates/script-js/tests/hunt_enter.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/hunt_fight.rs",
+      "path": "crates/script-js/tests/hunt_fight.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/hunt_hold.rs",
+      "path": "crates/script-js/tests/hunt_hold.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/hunt_key.rs",
+      "path": "crates/script-js/tests/hunt_key.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/hunt_leave.rs",
+      "path": "crates/script-js/tests/hunt_leave.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/hunt_retreat.rs",
+      "path": "crates/script-js/tests/hunt_retreat.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/hunt_walk.rs",
+      "path": "crates/script-js/tests/hunt_walk.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/input_action_at.rs",
+      "path": "crates/script-js/tests/input_action_at.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/input_ground_identity.rs",
+      "path": "crates/script-js/tests/input_ground_identity.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/input_inv_button.rs",
+      "path": "crates/script-js/tests/input_inv_button.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/jive_paint.rs",
+      "path": "crates/script-js/tests/jive_paint.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/js_cache.rs",
+      "path": "crates/script-js/tests/js_cache.rs",
       "owner": "T1"
     },
     {
-      "path": "crates/script/tests/line_of_sight.rs",
+      "path": "crates/script-js/tests/line_of_sight.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/load_diagnostics.rs",
+      "path": "crates/script-js/tests/load_diagnostics.rs",
       "owner": "T1"
     },
     {
-      "path": "crates/script/tests/load_isolate.rs",
+      "path": "crates/script-js/tests/load_isolate.rs",
       "owner": "T1"
     },
     {
-      "path": "crates/script/tests/load_isolate/seat_product_cases.rs",
+      "path": "crates/script-js/tests/load_isolate/seat_product_cases.rs",
       "owner": "T1"
     },
     {
-      "path": "crates/script/tests/load_picker.rs",
+      "path": "crates/script-js/tests/load_picker.rs",
       "owner": "T1"
     },
     {
-      "path": "crates/script/tests/load_shape.rs",
+      "path": "crates/script-js/tests/load_shape.rs",
       "owner": "T1"
     },
     {
-      "path": "crates/script/tests/load_siblings.rs",
+      "path": "crates/script-js/tests/load_siblings.rs",
       "owner": "T1"
     },
     {
-      "path": "crates/script/tests/loadout_potion_helpers.rs",
+      "path": "crates/script-js/tests/loadout_potion_helpers.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/loadouts_bag.rs",
+      "path": "crates/script-js/tests/loadouts_bag.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/loc_selected_identity.rs",
+      "path": "crates/script-js/tests/loc_selected_identity.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/modals.rs",
+      "path": "crates/script-js/tests/modals.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/named_bank_approach.rs",
+      "path": "crates/script-js/tests/named_bank_approach.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/named_bank_locations.rs",
+      "path": "crates/script-js/tests/named_bank_locations.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/native_api_v2.rs",
+      "path": "crates/script-js/tests/native_api_v2.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/native_hint_overhead.rs",
+      "path": "crates/script-js/tests/native_hint_overhead.rs",
       "owner": "T2"
     },
     {
@@ -5347,51 +5347,51 @@
       "owner": "T1"
     },
     {
-      "path": "crates/script/tests/native_npc_box.rs",
+      "path": "crates/script-js/tests/native_npc_box.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/native_quest_status.rs",
+      "path": "crates/script-js/tests/native_quest_status.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/native_retaliate_controls.rs",
+      "path": "crates/script-js/tests/native_retaliate_controls.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/on_stop.rs",
+      "path": "crates/script-js/tests/on_stop.rs",
       "owner": "T1"
     },
     {
-      "path": "crates/script/tests/paint_buttons.rs",
+      "path": "crates/script-js/tests/paint_buttons.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/paint_chrome.rs",
+      "path": "crates/script-js/tests/paint_chrome.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/paint_controls_shape.rs",
+      "path": "crates/script-js/tests/paint_controls_shape.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/paint_crossings.rs",
+      "path": "crates/script-js/tests/paint_crossings.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/paint_formats.rs",
+      "path": "crates/script-js/tests/paint_formats.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/paint_frame_share.rs",
+      "path": "crates/script-js/tests/paint_frame_share.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/paint_pipeline.rs",
+      "path": "crates/script-js/tests/paint_pipeline.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/paired_catalog.rs",
+      "path": "crates/script-js/tests/paired_catalog.rs",
       "owner": "T2"
     },
     {
@@ -5399,23 +5399,23 @@
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/periodic_bank.rs",
+      "path": "crates/script-js/tests/periodic_bank.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/prayer.rs",
+      "path": "crates/script-js/tests/prayer.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/production.rs",
+      "path": "crates/script-js/tests/production.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/quest_facts.rs",
+      "path": "crates/script-js/tests/quest_facts.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/quest_journal.rs",
+      "path": "crates/script-js/tests/quest_journal.rs",
       "owner": "T2"
     },
     {
@@ -5431,43 +5431,43 @@
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/reach.rs",
+      "path": "crates/script-js/tests/reach.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/reach_distance.rs",
+      "path": "crates/script-js/tests/reach_distance.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/reconnect_hold.rs",
+      "path": "crates/script-js/tests/reconnect_hold.rs",
       "owner": "T1"
     },
     {
-      "path": "crates/script/tests/resource_tool_facts.rs",
+      "path": "crates/script-js/tests/resource_tool_facts.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/return_to_anchor.rs",
+      "path": "crates/script-js/tests/return_to_anchor.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/route_inspect_brimhaven_v2.rs",
+      "path": "crates/script-js/tests/route_inspect_brimhaven_v2.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/rs2b0t_registry.rs",
+      "path": "crates/script-js/tests/rs2b0t_registry.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/settings_bag.rs",
+      "path": "crates/script-js/tests/settings_bag.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/shop.rs",
+      "path": "crates/script-js/tests/shop.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/shop_buyout.rs",
+      "path": "crates/script-js/tests/shop_buyout.rs",
       "owner": "T2"
     },
     {
@@ -5475,43 +5475,43 @@
       "owner": "T1"
     },
     {
-      "path": "crates/script/tests/solve_clue_adapter.rs",
+      "path": "crates/script-js/tests/solve_clue_adapter.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/special.rs",
+      "path": "crates/script-js/tests/special.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/spell_facts.rs",
+      "path": "crates/script-js/tests/spell_facts.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/supervisor_mapping.rs",
+      "path": "crates/script-js/tests/supervisor_mapping.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/supply_helpers.rs",
+      "path": "crates/script-js/tests/supply_helpers.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/t2_chatbox_family.rs",
+      "path": "crates/script-js/tests/t2_chatbox_family.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/t2_cooking_family.rs",
+      "path": "crates/script-js/tests/t2_cooking_family.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/t2_cow_family.rs",
+      "path": "crates/script-js/tests/t2_cow_family.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/t2_entities_family.rs",
+      "path": "crates/script-js/tests/t2_entities_family.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/t2_entities_generation.rs",
+      "path": "crates/script-js/tests/t2_entities_generation.rs",
       "owner": "T2"
     },
     {
@@ -5519,283 +5519,283 @@
       "owner": "T1"
     },
     {
-      "path": "crates/script/tests/t2_gathering_family.rs",
+      "path": "crates/script-js/tests/t2_gathering_family.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/t2_inventory_family.rs",
+      "path": "crates/script-js/tests/t2_inventory_family.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/t2_runecrafting_family.rs",
+      "path": "crates/script-js/tests/t2_runecrafting_family.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/t2_skills_family.rs",
+      "path": "crates/script-js/tests/t2_skills_family.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/t2_world_primitives.rs",
+      "path": "crates/script-js/tests/t2_world_primitives.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/task_validation.rs",
+      "path": "crates/script-js/tests/task_validation.rs",
       "owner": "T1"
     },
     {
-      "path": "crates/script/tests/teleport.rs",
+      "path": "crates/script-js/tests/teleport.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/thieving_targets_native_mapping.rs",
+      "path": "crates/script-js/tests/thieving_targets_native_mapping.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/tick_subscriber.rs",
+      "path": "crates/script-js/tests/tick_subscriber.rs",
       "owner": "T1"
     },
     {
-      "path": "crates/script/tests/tool_native_mapping.rs",
+      "path": "crates/script-js/tests/tool_native_mapping.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/tool_tiers.rs",
+      "path": "crates/script-js/tests/tool_tiers.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/trade.rs",
+      "path": "crates/script-js/tests/trade.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/unloadable.rs",
+      "path": "crates/script-js/tests/unloadable.rs",
       "owner": "T1"
     },
     {
-      "path": "crates/script/tests/upstream/2de6bb23/api/acquisition/Tools.test.ts",
+      "path": "crates/script-js/tests/upstream/2de6bb23/api/acquisition/Tools.test.ts",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/upstream/2de6bb23/api/acquisition/woodcutting-axes.test.ts",
+      "path": "crates/script-js/tests/upstream/2de6bb23/api/acquisition/woodcutting-axes.test.ts",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/upstream/2de6bb23/api/ai/clues/data/toolAcquire.test.ts",
+      "path": "crates/script-js/tests/upstream/2de6bb23/api/ai/clues/data/toolAcquire.test.ts",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/upstream/2de6bb23/api/ai/clues/toolAcquire.test.ts",
+      "path": "crates/script-js/tests/upstream/2de6bb23/api/ai/clues/toolAcquire.test.ts",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/upstream/2de6bb23/api/ai/quests/driveDialogGap.test.ts",
+      "path": "crates/script-js/tests/upstream/2de6bb23/api/ai/quests/driveDialogGap.test.ts",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/upstream/2de6bb23/api/ai/quests/exec/primitives.test.ts",
+      "path": "crates/script-js/tests/upstream/2de6bb23/api/ai/quests/exec/primitives.test.ts",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/upstream/2de6bb23/api/bank/bank-withdraw-op.test.ts",
+      "path": "crates/script-js/tests/upstream/2de6bb23/api/bank/bank-withdraw-op.test.ts",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/upstream/2de6bb23/api/bank/bankQuestJunk.test.ts",
+      "path": "crates/script-js/tests/upstream/2de6bb23/api/bank/bankQuestJunk.test.ts",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/upstream/2de6bb23/api/bank/bankSortRules.test.ts",
+      "path": "crates/script-js/tests/upstream/2de6bb23/api/bank/bankSortRules.test.ts",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/upstream/2de6bb23/api/bank/banking-common.test.ts",
+      "path": "crates/script-js/tests/upstream/2de6bb23/api/bank/banking-common.test.ts",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/upstream/2de6bb23/api/bank/banking-route.test.ts",
+      "path": "crates/script-js/tests/upstream/2de6bb23/api/bank/banking-route.test.ts",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/upstream/2de6bb23/api/bank/banking.test.ts",
+      "path": "crates/script-js/tests/upstream/2de6bb23/api/bank/banking.test.ts",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/upstream/2de6bb23/api/chatbox/gameMessages.test.ts",
+      "path": "crates/script-js/tests/upstream/2de6bb23/api/chatbox/gameMessages.test.ts",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/upstream/2de6bb23/api/combat/boostPotions.test.ts",
+      "path": "crates/script-js/tests/upstream/2de6bb23/api/combat/boostPotions.test.ts",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/upstream/2de6bb23/api/combat/combat-style.test.ts",
+      "path": "crates/script-js/tests/upstream/2de6bb23/api/combat/combat-style.test.ts",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/upstream/2de6bb23/api/combat/combatStyleLogic.test.ts",
+      "path": "crates/script-js/tests/upstream/2de6bb23/api/combat/combatStyleLogic.test.ts",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/upstream/2de6bb23/api/combat/eatTiming.test.ts",
+      "path": "crates/script-js/tests/upstream/2de6bb23/api/combat/eatTiming.test.ts",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/upstream/2de6bb23/api/combat/food-heal.test.ts",
+      "path": "crates/script-js/tests/upstream/2de6bb23/api/combat/food-heal.test.ts",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/upstream/2de6bb23/api/combat/food-notes.test.ts",
+      "path": "crates/script-js/tests/upstream/2de6bb23/api/combat/food-notes.test.ts",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/upstream/2de6bb23/api/combat/meleeWeapons.test.ts",
+      "path": "crates/script-js/tests/upstream/2de6bb23/api/combat/meleeWeapons.test.ts",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/upstream/2de6bb23/api/combat/special.test.ts",
+      "path": "crates/script-js/tests/upstream/2de6bb23/api/combat/special.test.ts",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/upstream/2de6bb23/api/cooking/cookLocations.test.ts",
+      "path": "crates/script-js/tests/upstream/2de6bb23/api/cooking/cookLocations.test.ts",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/upstream/2de6bb23/api/game/combat-signals.test.ts",
+      "path": "crates/script-js/tests/upstream/2de6bb23/api/game/combat-signals.test.ts",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/upstream/2de6bb23/api/market/catalog.test.ts",
+      "path": "crates/script-js/tests/upstream/2de6bb23/api/market/catalog.test.ts",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/upstream/2de6bb23/api/shop/buyout-logic.test.ts",
+      "path": "crates/script-js/tests/upstream/2de6bb23/api/shop/buyout-logic.test.ts",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/upstream/2de6bb23/api/shop/shopOpBatch.test.ts",
+      "path": "crates/script-js/tests/upstream/2de6bb23/api/shop/shopOpBatch.test.ts",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/upstream/2de6bb23/api/sustain/sustain.test.ts",
+      "path": "crates/script-js/tests/upstream/2de6bb23/api/sustain/sustain.test.ts",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/upstream/2de6bb23/api/tasks/Anchor.test.ts",
+      "path": "crates/script-js/tests/upstream/2de6bb23/api/tasks/Anchor.test.ts",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/upstream/2de6bb23/api/trade/PartnerTrade.test.ts",
+      "path": "crates/script-js/tests/upstream/2de6bb23/api/trade/PartnerTrade.test.ts",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/upstream/2de6bb23/api/trade/TradePartner.test.ts",
+      "path": "crates/script-js/tests/upstream/2de6bb23/api/trade/TradePartner.test.ts",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/upstream/2de6bb23/data/CowKillerLocations.test.ts",
+      "path": "crates/script-js/tests/upstream/2de6bb23/data/CowKillerLocations.test.ts",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/upstream/2de6bb23/data/WoodcuttingLocations.test.ts",
+      "path": "crates/script-js/tests/upstream/2de6bb23/data/WoodcuttingLocations.test.ts",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/upstream/2de6bb23/data/itemParse.test.ts",
+      "path": "crates/script-js/tests/upstream/2de6bb23/data/itemParse.test.ts",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/upstream/2de6bb23/data/mining-rocks.test.ts",
+      "path": "crates/script-js/tests/upstream/2de6bb23/data/mining-rocks.test.ts",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/upstream/2de6bb23/data/spelldb-drift.test.ts",
+      "path": "crates/script-js/tests/upstream/2de6bb23/data/spelldb-drift.test.ts",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/upstream/2de6bb23/event/webwalk/script-travel-corpus.test.ts",
+      "path": "crates/script-js/tests/upstream/2de6bb23/event/webwalk/script-travel-corpus.test.ts",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/upstream/2de6bb23/event/webwalk/scriptRouteCorpus.test.ts",
+      "path": "crates/script-js/tests/upstream/2de6bb23/event/webwalk/scriptRouteCorpus.test.ts",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/upstream/2de6bb23/event/webwalk/stairsParse.test.ts",
+      "path": "crates/script-js/tests/upstream/2de6bb23/event/webwalk/stairsParse.test.ts",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/upstream/2de6bb23/event/webwalk/walkOpening.test.ts",
+      "path": "crates/script-js/tests/upstream/2de6bb23/event/webwalk/walkOpening.test.ts",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/upstream/2de6bb23/input/input.test.ts",
+      "path": "crates/script-js/tests/upstream/2de6bb23/input/input.test.ts",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/upstream/2de6bb23/paint/Paint.test.ts",
+      "path": "crates/script-js/tests/upstream/2de6bb23/paint/Paint.test.ts",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/upstream/2de6bb23/paint/jive.test.ts",
+      "path": "crates/script-js/tests/upstream/2de6bb23/paint/jive.test.ts",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/upstream/2de6bb23/paint/levelProgress.test.ts",
+      "path": "crates/script-js/tests/upstream/2de6bb23/paint/levelProgress.test.ts",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/upstream/2de6bb23/paint/paintLogic.test.ts",
+      "path": "crates/script-js/tests/upstream/2de6bb23/paint/paintLogic.test.ts",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/upstream/2de6bb23/scripts/ArdyFighter/ArdyFighterLogic.test.ts",
+      "path": "crates/script-js/tests/upstream/2de6bb23/scripts/ArdyFighter/ArdyFighterLogic.test.ts",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/upstream/2de6bb23/scripts/ArdyFighter/CakeStallLogic.test.ts",
+      "path": "crates/script-js/tests/upstream/2de6bb23/scripts/ArdyFighter/CakeStallLogic.test.ts",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/upstream/2de6bb23/scripts/ArdyFighter/ThievingBotLogic.test.ts",
+      "path": "crates/script-js/tests/upstream/2de6bb23/scripts/ArdyFighter/ThievingBotLogic.test.ts",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/upstream/2de6bb23/scripts/ArdyFighter/ardythiever-logic.test.ts",
+      "path": "crates/script-js/tests/upstream/2de6bb23/scripts/ArdyFighter/ardythiever-logic.test.ts",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/upstream/2de6bb23/scripts/GatheringBot/FiremakingLogic.test.ts",
+      "path": "crates/script-js/tests/upstream/2de6bb23/scripts/GatheringBot/FiremakingLogic.test.ts",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/upstream/2de6bb23/scripts/JiveDragons/scheduler.test.ts",
+      "path": "crates/script-js/tests/upstream/2de6bb23/scripts/JiveDragons/scheduler.test.ts",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/upstream/harness/bun_test.js",
+      "path": "crates/script-js/tests/upstream/harness/bun_test.js",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/upstream_tier1.rs",
+      "path": "crates/script-js/tests/upstream_tier1.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/v8_platform.rs",
+      "path": "crates/script-js/tests/v8_platform.rs",
       "owner": "T1"
     },
     {
-      "path": "crates/script/tests/walk_options.rs",
+      "path": "crates/script-js/tests/walk_options.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/walk_outcome.rs",
+      "path": "crates/script-js/tests/walk_outcome.rs",
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/watchdog.rs",
+      "path": "crates/script-js/tests/watchdog.rs",
       "owner": "T1"
     },
     {
-      "path": "crates/script/tests/wildy_pit_recovery.rs",
+      "path": "crates/script-js/tests/wildy_pit_recovery.rs",
       "owner": "T2"
     },
     {
@@ -7367,7 +7367,7 @@
       "owner": "T2"
     },
     {
-      "path": "crates/script/tests/script_seam_engine.rs",
+      "path": "crates/script-js/tests/script_seam_engine.rs",
       "owner": "T2"
     },
     {
@@ -7525,6 +7525,54 @@
     {
       "path": "crates/frontend-core/src/session/world_switch.rs",
       "owner": "T3"
+    },
+    {
+      "path": "crates/script-js/Cargo.toml",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script-js/src/compat/cake_stall.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script-js/src/compat/clue.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script-js/src/compat/keep_list.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script-js/src/compat/production.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script-js/src/shim/mod.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script-js/src/compat/bank_rows.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script-js/tests/risk_startup.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script-js/tests/slot_compiled_tests.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/script-js/tests/slot_held_fold_tests.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/script-js/tests/slot_seat_wire_tests.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/script-js/tests/slot_slot_tests.rs",
+      "owner": "T1"
     }
   ]
 }

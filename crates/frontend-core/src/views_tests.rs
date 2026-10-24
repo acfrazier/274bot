@@ -1112,7 +1112,7 @@ fn a_script_walk_ends_with_its_run_and_a_manual_walk_survives_the_stop() {
             .script_start_load(
                 name,
                 "export function tick(api) {}".into(),
-                script::LoadShape::NativeTick,
+                script_js::LoadShape::NativeTick,
                 None,
                 vec![],
             )

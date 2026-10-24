@@ -1,12 +1,8 @@
 //! Rust-owned composition for the compatibility combat keep list.
 
 use api::game_data::GameItem;
-#[cfg(feature = "load")]
 use api::game_data::SelectedGameData;
-#[cfg(feature = "load")]
-use serde_json::Value;
 
-#[cfg(feature = "load")]
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct CombatKeepOptions {
     pub(crate) food: String,
@@ -17,7 +13,6 @@ pub struct CombatKeepOptions {
     pub(crate) extra: Vec<String>,
 }
 
-#[cfg(feature = "load")]
 impl CombatKeepOptions {
     pub fn new(
         food: String,
@@ -38,39 +33,6 @@ impl CombatKeepOptions {
     }
 }
 
-#[cfg(feature = "load")]
-pub fn from_args(args: &[Value]) -> CombatKeepOptions {
-    let Some(object) = args.first().and_then(Value::as_object) else {
-        return CombatKeepOptions::default();
-    };
-    let string = |field| {
-        object
-            .get(field)
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_string()
-    };
-    let extra = object
-        .get("extra")
-        .and_then(Value::as_array)
-        .map(|rows| {
-            rows.iter()
-                .filter_map(Value::as_str)
-                .map(str::to_string)
-                .collect()
-        })
-        .unwrap_or_default();
-    CombatKeepOptions {
-        food: string("food"),
-        style: string("style"),
-        spell: string("spell"),
-        ammo: string("ammo"),
-        weapon: string("weapon"),
-        extra,
-    }
-}
-
-#[cfg(feature = "load")]
 pub fn combat_keep_names(data: &SelectedGameData, options: &CombatKeepOptions) -> Vec<String> {
     let mut keep = food_forms(data.items(), &options.food);
     keep.extend(options.extra.iter().cloned());
@@ -191,7 +153,7 @@ impl<'a> FoodForms<'a> {
     }
 }
 
-#[cfg(all(test, feature = "load"))]
+#[cfg(test)]
 mod tests {
     use super::*;
     use client::io::ClientRevision;
@@ -307,28 +269,5 @@ mod tests {
             assert!(!keep.iter().any(|name| name == "Big bones"));
             assert!(!keep.iter().any(|name| name == "Rune scimitar"));
         }
-    }
-
-    #[test]
-    fn bound_arguments_accept_supported_strings_and_arrays() {
-        let args = [serde_json::json!({
-            "food": "Cake",
-            "style": "range",
-            "spell": "Wind Strike",
-            "ammo": "Iron arrow",
-            "weapon": "Maple shortbow",
-            "extra": ["Coins", 1, "Rope"]
-        })];
-        assert_eq!(
-            from_args(&args),
-            CombatKeepOptions {
-                food: "Cake".into(),
-                style: "range".into(),
-                spell: "Wind Strike".into(),
-                ammo: "Iron arrow".into(),
-                weapon: "Maple shortbow".into(),
-                extra: vec!["Coins".into(), "Rope".into()],
-            }
-        );
     }
 }
