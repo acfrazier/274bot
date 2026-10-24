@@ -946,18 +946,7 @@ pub(crate) fn step_nav_bot<D: Driver>(
                     drop(all);
                     let mut rows = lock_statuses(statuses);
                     if let Some(s) = rows.iter_mut().find(|s| s.username == name) {
-                        match queued {
-                            Some(d) => {
-                                s.walk_x = d.x;
-                                s.walk_z = d.z;
-                                s.walk_level = d.level;
-                            }
-                            None => {
-                                s.walk_x = -1;
-                                s.walk_z = -1;
-                                s.walk_level = -1;
-                            }
-                        }
+                        s.publish_script_walk(queued);
                     }
                     return;
                 }
@@ -1205,18 +1194,7 @@ pub(crate) fn step_nav_bot<D: Driver>(
     };
     let mut rows = lock_statuses(statuses);
     if let Some(s) = rows.iter_mut().find(|s| s.username == name) {
-        match queued {
-            Some(d) => {
-                s.walk_x = d.x;
-                s.walk_z = d.z;
-                s.walk_level = d.level;
-            }
-            None => {
-                s.walk_x = -1;
-                s.walk_z = -1;
-                s.walk_level = -1;
-            }
-        }
+        s.publish_script_walk(queued);
     }
 }
 
