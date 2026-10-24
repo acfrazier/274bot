@@ -53,8 +53,10 @@ the account's own password. Enter on the password field saves through
 `CreateProfile`. The new profile then loads, logs in and takes focus.
 The same form opens later with `N` in the Fleet pane or the palette's
 **New profile**.
-Startup loading waits for saved preferences. If you select another bot before
-preferences are ready, that selection cancels the pending startup focus.
+Startup loading waits for saved preferences. An explicit bot selection before
+preferences are ready supersedes only the automatic startup focus: the boot
+profile still loads and logs in, and a newly saved profile still loads and logs
+in. Removing or deleting the pending startup profile cancels its load as well.
 
 `--map-bundle OUT --revision 289 --cache JAG_DIR --unpack SNAPSHOT_ROOT` is a
 release-packaging run, not a panel: it bakes the WalkTo map catalogue and

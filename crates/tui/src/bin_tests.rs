@@ -1029,8 +1029,8 @@ fn removing_the_focused_bot_cancels_startup_focus() {
 }
 
 #[test]
-fn operator_focus_before_preference_adoption_keeps_walk_target() {
-    for path in ["direct", "keyboard", "fleet", "first-profile"] {
+fn operator_focus_before_preference_adoption_keeps_walk_target_and_boot_load() {
+    for path in ["direct-same", "direct", "keyboard", "fleet", "first-profile"] {
         let iso = IsolatedStores::enter(&format!("tui-startup-focus-{path}"));
         let mut session = TuiSession::new(dummy_options());
         session.core.set_spawn_workers(false);
@@ -1059,10 +1059,12 @@ fn operator_focus_before_preference_adoption_keeps_walk_target() {
         let args = parse_args_from(std::iter::empty::<&str>()).unwrap();
         let mut app = interactive_landing(&mut session, &args).unwrap();
         assert_eq!(session.startup_focus.as_deref(), Some("alice"));
-        // Selection never loads a slot in the TUI. The operator can select
-        // this already-loaded member while the startup load still waits.
+        // Selection itself never loads a slot in the TUI. Bob is preloaded
+        // for the alternate-focus paths while the boot request waits.
         session.load_and_login("bob");
+        let expected_focus = if path == "direct-same" { "alice" } else { "bob" };
         let action = match path {
+            "direct-same" => app.select_bot("alice"),
             "direct" => app.select_bot("bob"),
             "keyboard" => app.run_command(crate::commands::Command::SelectNextBot),
             "fleet" => {
@@ -1083,7 +1085,7 @@ fn operator_focus_before_preference_adoption_keeps_walk_target() {
             _ => unreachable!(),
         };
         assert!(
-            matches!(&action, AppAction::Focus(name) if name == "bob"),
+            matches!(&action, AppAction::Focus(name) if name == expected_focus),
             "{path}: {action:?}"
         );
         dispatch(&mut session, &mut app, action);
@@ -1091,6 +1093,20 @@ fn operator_focus_before_preference_adoption_keeps_walk_target() {
         release.send(()).unwrap();
         session.preferences.reload().unwrap();
         session.pump(&mut app);
+        assert!(
+            session.core.members().iter().any(|name| name == "alice"),
+            "{path}: the boot profile must still load after an early selection"
+        );
+        assert!(
+            session
+                .core
+                .play_for_test()
+                .unwrap()
+                .arm("alice")
+                .unwrap()
+                .wants_login(),
+            "{path}: the boot profile must retain its login intent"
+        );
         session.arm_walk_on(
             &mut app,
             Tile {
@@ -1105,17 +1121,178 @@ fn operator_focus_before_preference_adoption_keeps_walk_target() {
             .reports()
             .find(|report| report.command() == OperatorCommand::WalkTo)
             .expect("WalkTo command report");
-        let bob = session.core.profile_identity_or_synthetic("bob");
+        let focus = session
+            .core
+            .profile_identity_or_synthetic(expected_focus);
         assert!(
             report
-                .member(frontend_core::command::Subject::Profile(bob))
+                .member(frontend_core::command::Subject::Profile(focus))
                 .is_some(),
             "{path}: the command must target the operator's selection: {report:?}"
         );
-        assert_eq!(session.core.selected(), Some("bob"), "{path}");
-        assert_eq!(app.focused_name().as_deref(), Some("bob"), "{path}");
+        assert_eq!(session.core.selected(), Some(expected_focus), "{path}");
+        assert_eq!(app.focused_name().as_deref(), Some(expected_focus), "{path}");
         assert!(session.startup_focus.is_none(), "{path}");
     }
+}
+
+#[test]
+fn fleet_login_selection_keeps_startup_load_without_overriding_focus() {
+    let iso = IsolatedStores::enter("tui-fleet-login-startup-focus");
+    let mut session = TuiSession::new(dummy_options());
+    session.core.set_spawn_workers(false);
+    let (entered, entered_rx) = std::sync::mpsc::sync_channel(1);
+    let (release, release_rx) = std::sync::mpsc::channel();
+    let release_rx = std::sync::Mutex::new(release_rx);
+    let first = std::sync::atomic::AtomicBool::new(true);
+    let service = host_play::local_state::LocalStateService::open_process_with_read_stall_for_test(
+        host_play::local_state::StateRoot::new(iso.dir().join("cold-state")),
+        Arc::new(move || {
+            if first.swap(false, std::sync::atomic::Ordering::SeqCst) {
+                let _ = entered.send(());
+                let _ = release_rx.lock().unwrap().recv();
+            }
+        }),
+    );
+    entered_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+    session.core.bind_local_state(service);
+    session.preferences = session.core.preferences().unwrap();
+    session.preferences_adopted = false;
+    let mut vault = VaultFixture::create(&iso.dir().join("vault"), "test-passphrase-01");
+    vault.put(FixtureProfile::new("alice", "pw").uid(7));
+    vault.put(FixtureProfile::new("bob", "pw").uid(8));
+    session.start_play(vault).unwrap();
+    assert_eq!(
+        session
+            .bootstrap_interactive_profiles(&[])
+            .unwrap()
+            .as_deref(),
+        Some("alice")
+    );
+    // This models the deferred request left by a profile save, with no
+    // existing core selection for the planned Log in to replace.
+    let mut app = new_app("fleet login", &session.preferences);
+    app.names = session.names.clone();
+    session
+        .submit(OperatorCommand::Load, Targets::Profile("bob"))
+        .unwrap();
+    session.pump(&mut app);
+    assert!(!session.preferences.ready());
+    assert!(session.core.selected().is_none());
+
+    session.plan_fleet_action(&mut app, frontend_core::FleetAction::Login, None);
+    assert!(session
+        .core
+        .fleet_plan()
+        .is_some_and(|plan| plan.needs_confirm()));
+    session.run_fleet_plan(&mut app);
+    assert_eq!(session.core.selected(), Some("bob"));
+    assert!(
+        session
+            .core
+            .play_for_test()
+            .unwrap()
+            .arm("bob")
+            .unwrap()
+            .wants_login()
+    );
+
+    release.send(()).unwrap();
+    session.preferences.reload().unwrap();
+    session.pump(&mut app);
+    assert!(session.core.members().iter().any(|name| name == "alice"));
+    assert!(session.core.members().iter().any(|name| name == "bob"));
+    let play = session.core.play_for_test().unwrap();
+    for name in ["alice", "bob"] {
+        assert!(play.arm(name).unwrap().wants_login(), "{name}");
+    }
+    assert_eq!(session.core.selected(), Some("bob"));
+    assert_eq!(app.focused_name().as_deref(), Some("bob"));
+}
+
+#[test]
+fn removing_a_nonfocused_startup_target_cancels_its_deferred_load() {
+    let iso = IsolatedStores::enter("tui-remove-nonfocused-startup-target");
+    let mut session = TuiSession::new(dummy_options());
+    session.core.set_spawn_workers(false);
+    let (entered, entered_rx) = std::sync::mpsc::sync_channel(1);
+    let (release, release_rx) = std::sync::mpsc::channel();
+    let release_rx = std::sync::Mutex::new(release_rx);
+    let first = std::sync::atomic::AtomicBool::new(true);
+    let service = host_play::local_state::LocalStateService::open_process_with_read_stall_for_test(
+        host_play::local_state::StateRoot::new(iso.dir().join("cold-state")),
+        Arc::new(move || {
+            if first.swap(false, std::sync::atomic::Ordering::SeqCst) {
+                let _ = entered.send(());
+                let _ = release_rx.lock().unwrap().recv();
+            }
+        }),
+    );
+    entered_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+    session.core.bind_local_state(service);
+    session.preferences = session.core.preferences().unwrap();
+    session.preferences_adopted = false;
+    let mut vault = VaultFixture::create(&iso.dir().join("vault"), "test-passphrase-01");
+    vault.put(FixtureProfile::new("alice", "pw").uid(7));
+    vault.put(FixtureProfile::new("bob", "pw").uid(8));
+    session.start_play(vault).unwrap();
+    let args = parse_args_from(std::iter::empty::<&str>()).unwrap();
+    let mut app = interactive_landing(&mut session, &args).unwrap();
+    assert_eq!(session.startup_focus.as_deref(), Some("alice"));
+    session.load_and_login("bob");
+    // A core-side focus path leaves the startup request pending.
+    select(&mut session, "bob");
+    session.pump(&mut app);
+    session.load_and_login("alice");
+    session.pump(&mut app);
+    assert_eq!(session.core.selected(), Some("bob"));
+    assert_eq!(app.focused_name().as_deref(), Some("bob"));
+    assert!(session.core.members().iter().any(|name| name == "alice"));
+
+    let load_count = session
+        .core
+        .commands()
+        .reports()
+        .filter(|report| report.command() == OperatorCommand::Load)
+        .count();
+    let login_count = session
+        .core
+        .commands()
+        .reports()
+        .filter(|report| report.command() == OperatorCommand::Login)
+        .count();
+    session.remove(&mut app, "alice");
+    session.pump(&mut app);
+    assert_eq!(session.core.selected(), Some("bob"));
+    assert!(!session.core.members().iter().any(|name| name == "alice"));
+    assert_eq!(app.focused_name().as_deref(), Some("bob"));
+
+    release.send(()).unwrap();
+    session.preferences.reload().unwrap();
+    session.pump(&mut app);
+    assert!(!session.core.members().iter().any(|name| name == "alice"));
+    assert_eq!(session.core.selected(), Some("bob"));
+    assert_eq!(app.focused_name().as_deref(), Some("bob"));
+    assert_eq!(
+        session
+            .core
+            .commands()
+            .reports()
+            .filter(|report| report.command() == OperatorCommand::Load)
+            .count(),
+        load_count,
+        "the removed pending target must not be loaded again"
+    );
+    assert_eq!(
+        session
+            .core
+            .commands()
+            .reports()
+            .filter(|report| report.command() == OperatorCommand::Login)
+            .count(),
+        login_count,
+        "the removed pending target must not be logged in again"
+    );
 }
 
 /// Type `text` into the open New profile overlay, dispatching each
@@ -1301,12 +1478,20 @@ fn first_profile_save_waits_for_preferences_before_loading_and_logging_in_once()
         )));
     }
 
+    assert_eq!(session.startup_focus.as_deref(), Some("alice"));
+    dispatch(
+        &mut session,
+        &mut app,
+        AppAction::Focus("alice".to_string()),
+    );
+    assert!(!session.preferences.ready());
     release.send(()).unwrap();
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while session.core.slots().is_empty() && Instant::now() < deadline {
-        session.pump(&mut app);
-        std::thread::sleep(Duration::from_millis(5));
-    }
+    session.preferences.reload().unwrap();
+    session.pump(&mut app);
+    assert!(
+        session.core.members().iter().any(|name| name == "alice"),
+        "the new profile still loads after an early explicit focus"
+    );
     assert!(session.preferences.ready());
     for _ in 0..4 {
         session.pump(&mut app);
@@ -1319,6 +1504,7 @@ fn first_profile_save_waits_for_preferences_before_loading_and_logging_in_once()
         .arm("alice")
         .unwrap()
         .wants_login());
+    assert_eq!(app.focused_name().as_deref(), Some("alice"));
     for command in [OperatorCommand::Load, OperatorCommand::Login] {
         assert_eq!(
             session
@@ -1331,6 +1517,91 @@ fn first_profile_save_waits_for_preferences_before_loading_and_logging_in_once()
             "{command:?} must be submitted exactly once"
         );
     }
+}
+
+#[test]
+fn deleting_pending_startup_profile_cancels_load_and_focus() {
+    let iso = IsolatedStores::enter("tui-delete-pending-startup-profile");
+    let mut session = TuiSession::new(dummy_options());
+    session.core.set_spawn_workers(false);
+    let (entered, entered_rx) = std::sync::mpsc::sync_channel(1);
+    let (release, release_rx) = std::sync::mpsc::channel();
+    let release_rx = std::sync::Mutex::new(release_rx);
+    let first = std::sync::atomic::AtomicBool::new(true);
+    let service = host_play::local_state::LocalStateService::open_process_with_read_stall_for_test(
+        host_play::local_state::StateRoot::new(iso.dir().join("cold-state")),
+        Arc::new(move || {
+            if first.swap(false, std::sync::atomic::Ordering::SeqCst) {
+                let _ = entered.send(());
+                let _ = release_rx.lock().unwrap().recv();
+            }
+        }),
+    );
+    entered_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+    session.core.bind_local_state(service);
+    session.preferences = session.core.preferences().unwrap();
+    session.preferences_adopted = false;
+    let mut vault = VaultFixture::create(&iso.dir().join("vault"), "test-passphrase-01");
+    vault.put(FixtureProfile::new("alice", "pw").uid(7));
+    session.start_play(vault).unwrap();
+    let request = session.bootstrap_interactive_profiles(&[]).unwrap();
+    assert_eq!(request.as_deref(), Some("alice"));
+    // Recreate the deferred state while leaving core selection empty.
+    let mut app = new_app("deleted startup profile", &session.preferences);
+    app.names = session.names.clone();
+
+    let delete = session
+        .submit(OperatorCommand::DeleteProfile, Targets::Profile("alice"))
+        .unwrap();
+    assert!(delete.operation().is_some());
+    session.core.flush_writes();
+    for _ in 0..4 {
+        session.pump(&mut app);
+        assert!(!session.preferences.ready());
+    }
+    assert!(session.core.profile("alice").is_none());
+    assert!(session.core.members().is_empty());
+    assert!(session.core.selected().is_none());
+    let load_count = session
+        .core
+        .commands()
+        .reports()
+        .filter(|report| report.command() == OperatorCommand::Load)
+        .count();
+    let login_count = session
+        .core
+        .commands()
+        .reports()
+        .filter(|report| report.command() == OperatorCommand::Login)
+        .count();
+
+    release.send(()).unwrap();
+    session.preferences.reload().unwrap();
+    session.pump(&mut app);
+    assert!(session.core.members().is_empty());
+    assert!(session.core.selected().is_none());
+    assert!(app.focused_name().is_none());
+    assert!(session.error.is_none(), "the deleted profile was not retried");
+    assert_eq!(
+        session
+            .core
+            .commands()
+            .reports()
+            .filter(|report| report.command() == OperatorCommand::Load)
+            .count(),
+        load_count,
+        "the deleted startup profile must not be loaded"
+    );
+    assert_eq!(
+        session
+            .core
+            .commands()
+            .reports()
+            .filter(|report| report.command() == OperatorCommand::Login)
+            .count(),
+        login_count,
+        "the deleted startup profile must not be logged in"
+    );
 }
 
 /// A 0.1.9.x home keeps its v10 pack at the default path. The TUI's play and
