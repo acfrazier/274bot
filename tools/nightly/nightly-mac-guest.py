@@ -1375,7 +1375,9 @@ class NightlyOrchestrator:
         return command
 
     def export_runs(self) -> None:
-        if self.vm.session is None:
+        if self.vm.session is None or self.input_root is None:
+            # Nothing was staged (for example a quiet-lock skip right after the
+            # start), so the guest ran nothing and has no run folders to export.
             return
         paths = self.input_paths()
         python = "/usr/bin/python3"
