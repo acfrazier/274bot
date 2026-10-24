@@ -325,10 +325,7 @@ fn session_boundaries_clear_posted_facts_without_replacing_the_run() {
 
 #[test]
 fn slot_size_stays_within_the_full_build_parent_layout() {
-    // S0b 1a52fd40d: default/Load SlotScript is 4496 bytes on x86_64.
-    assert!(
-        std::mem::size_of::<SlotScript>() <= 4496,
-        "the surface slot exceeds its measured parent: {} bytes",
-        std::mem::size_of::<SlotScript>()
-    );
+    let actual = std::mem::size_of::<SlotScript>();
+    println!("S0c SlotScript layout: {actual} bytes");
+    assert_eq!(actual, 1608, "the surface slot changed from its measured size");
 }
