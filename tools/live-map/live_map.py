@@ -383,6 +383,7 @@ def _submodule_commit_paths(repo: Path, base: str, head: str) -> list[str]:
             str(submodule),
             "diff",
             "--name-only",
+            "--no-renames",
             old,
             new,
         )
@@ -700,6 +701,37 @@ class LiveMapTests(unittest.TestCase):
             self.assertEqual(test_plan.not_live, (f"{CLIENT_SUBMODULE_PATH}/crates/client/src/client/client_tests.rs",))
             self.assertEqual(test_plan.uncovered, ())
             self.assertEqual(test_plan.unclassified, ())
+            moved_old = client / "crates/client/src/client/client.rs"
+            moved_new = client / "crates/client/tests/client.rs"
+            moved_new.parent.mkdir(parents=True, exist_ok=True)
+            moved_old.rename(moved_new)
+            _git(client, "add", "-A")
+            _git(client, "commit", "--quiet", "-m", "move client source")
+            moved_commit = _git_output(client, "rev-parse", "HEAD").strip()
+            _git(submodule, "fetch", "origin", moved_commit)
+            _git(submodule, "checkout", "--detach", moved_commit)
+            _git(parent, "add", CLIENT_SUBMODULE_PATH)
+            _git(parent, "commit", "--quiet", "-m", "update client rename")
+            moved_update = _git_output(parent, "rev-parse", "HEAD").strip()
+
+            moved_paths = diff_paths(f"{test_update}..{moved_update}", parent)
+            old_path = f"{CLIENT_SUBMODULE_PATH}/crates/client/src/client/client.rs"
+            new_path = f"{CLIENT_SUBMODULE_PATH}/crates/client/tests/client.rs"
+            self.assertIn(old_path, moved_paths)
+            self.assertIn(new_path, moved_paths)
+            moved_plan = make_plan(moved_paths, config)
+            self.assertEqual(
+                {cell.name for cell in moved_plan.cells},
+                {
+                    "host.transport-dead-server",
+                    "host.transport-relog",
+                    "panel.headed-nav-script",
+                    "panel.headed-render",
+                },
+            )
+            self.assertEqual(moved_plan.uncovered, ())
+            self.assertEqual(moved_plan.unclassified, ())
+            self.assertEqual(moved_plan.not_live, (new_path,))
 
             missing = "deadbeef" * 5
             _git(
