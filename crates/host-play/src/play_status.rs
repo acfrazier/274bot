@@ -7,6 +7,14 @@ use client::client::{Client, LoginError};
 
 use super::RandomStatus;
 
+#[cfg(test)]
+thread_local! {
+    /// Every [`SlotStatus::retire_script_run`] on this thread, as (bot, had
+    /// paint, had walk), so a test can count the retirements a path makes.
+    pub(crate) static RETIRED_RUNS: std::cell::RefCell<Vec<(String, bool, bool)>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
 /// Pollable per-slot view; the slot threads update it after each frame.
 /// `clone_from` reuses the destination's string buffers, so a poll that
 /// copies rows into a retained vector allocates nothing in steady state.
@@ -283,13 +291,22 @@ impl SlotStatus {
     }
 
     /// End everything a script run published on this row: its paint frame and
-    /// its walk destination. Every way a run ends reaches it: an explicit
-    /// Stop and a run that ends on its own (`retire_script_run_status` in
-    /// `play_scripts.rs`), and a worker's terminal outcome
-    /// (`publish_worker_terminal`). A logout or relog resets the walk only
-    /// ([`Self::retire_script_walk`]): a paused script keeps its paint frame.
-    /// Unload removes the row itself.
+    /// its walk destination. Every way a run ends reaches it once: an
+    /// explicit Stop and a run that ends on its own (`retire_script_run_status`
+    /// in `play_scripts.rs`), a worker's terminal outcome
+    /// (`publish_worker_terminal`), and an unload, which stops the script,
+    /// retires the run and only then removes the row (`take_slot_for_stop`).
+    /// A logout or relog resets the walk only ([`Self::retire_script_walk`]):
+    /// a paused script keeps its paint frame.
     pub(crate) fn retire_script_run(&mut self) {
+        #[cfg(test)]
+        RETIRED_RUNS.with(|runs| {
+            runs.borrow_mut().push((
+                self.username.clone(),
+                self.script_paint.is_some(),
+                self.script_walk().is_some(),
+            ));
+        });
         self.script_paint = None;
         self.retire_script_walk();
     }

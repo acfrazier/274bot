@@ -7375,8 +7375,9 @@ fn script_native_stop_retires_only_the_named_runs_rows() {
 
 /// PANEL-STATE-GAP-1023: a run's published walk ends with the run however the
 /// run ends: a disconnect, a relog, a worker that fails or panics, and an
-/// unload (which removes the row). A logout or relog keeps a held script's
-/// paint frame. The explicit Stops are covered above.
+/// unload (which then removes the row). A logout or relog keeps a held
+/// script's paint frame. The explicit Stops are covered above; the unload's
+/// retirement itself is counted in the next test.
 #[test]
 fn every_other_way_a_run_ends_retires_its_published_rows() {
     let mut play = run_with_io(
@@ -7446,6 +7447,84 @@ fn every_other_way_a_run_ends_retires_its_published_rows() {
         ],
         "a logout or relog ends the walk and keeps the paint of a held script; a worker that fails or panics ends both; only the bot whose run did not end keeps its rows; the unloaded bot's row is gone"
     );
+}
+
+/// PANEL-STATE-GAP-1023 (F4): an unload ends its bot's run as a Stop does.
+/// Both unload entry points stop the script, retire the run's row through
+/// `SlotStatus::retire_script_run` exactly once while the row still holds the
+/// run's paint and walk, and only then remove the row. The bot that stays
+/// keeps its run and its rows.
+#[test]
+fn an_unload_retires_the_run_once_before_it_removes_the_row() {
+    let mut play = run_with_io(
+        &PlayOptions {
+            host: "127.0.0.1".into(),
+            transport: client::Transport::Tcp,
+            port: 43594,
+            cache_dir: "/tmp".into(),
+            lowmem: true,
+            mainland: false,
+        },
+        vec![],
+        |_| (None, None),
+        |_, _, _| {},
+    );
+    for name in ["kept", "stopped", "retiring"] {
+        play.attach_arm(name, SlotArm::new(7, false));
+        let mut row = SlotStatus {
+            username: name.into(),
+            script_paint: Some(Arc::new(script::shim::ScriptPaint::default())),
+            ..SlotStatus::default()
+        };
+        row.publish_script_walk(Some(WorldTile {
+            x: 2550,
+            z: 3348,
+            level: 0,
+        }));
+        play.statuses.lock().unwrap().push(row);
+        script_slot_or_insert(&play.scripts, name)
+            .lock()
+            .unwrap()
+            .start_test_script(Box::new(TickCounter(Arc::new(Mutex::new(0)))), None)
+            .unwrap();
+    }
+    crate::play_status::RETIRED_RUNS.with(|runs| runs.borrow_mut().clear());
+    let kept_state = play.script_state("kept");
+    assert_ne!(kept_state, script::RunState::Idle);
+
+    play.stop_slot("stopped");
+    play.begin_stop_slot("retiring");
+
+    let retired = crate::play_status::RETIRED_RUNS.with(std::cell::RefCell::take);
+    assert_eq!(
+        retired,
+        [
+            ("stopped".to_owned(), true, true),
+            ("retiring".to_owned(), true, true),
+        ],
+        "each unload retires its run once, before the row is removed (Play::stop_slot, Play::begin_stop_slot)"
+    );
+    let rows: Vec<(String, bool, bool)> = play
+        .statuses
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|row| {
+            (
+                row.username.clone(),
+                row.script_paint.is_some(),
+                row.script_walk().is_some(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        rows,
+        [("kept".to_owned(), true, true)],
+        "the unloaded rows are gone; the bot that stays keeps its rows"
+    );
+    assert!(script_slot(&play.scripts, "stopped").is_none());
+    assert!(script_slot(&play.scripts, "retiring").is_none());
+    assert_eq!(play.script_state("kept"), kept_state);
 }
 
 #[test]
