@@ -12,9 +12,11 @@ export const SERVER_ORDERED_SCHEMA = 1;
 export const SERVER_ORDERED_REVISION = 289;
 
 export const serverOrderedContentFiles = [
+    'pack/category.pack',
     'pack/interface.pack',
     'pack/loc.pack',
     'pack/mesanim.pack',
+    'pack/obj.pack',
     'pack/varp.pack',
     'scripts/interface_bank/configs/bank_booth.loc',
     'scripts/interface_bank/interfaces/bank_main.if',
@@ -30,6 +32,9 @@ export const serverOrderedContentFiles = [
     'scripts/interface_chat/interfaces/multi2.if',
     'scripts/interface_chat/interfaces/skill_multi3.if',
     'scripts/interface_chat/scripts/chat.rs2',
+    'scripts/skill_cooking/scripts/gnome_cooking/cutting_fruit.rs2',
+    'scripts/skill_firemaking/configs/firemaking.obj',
+    'scripts/skill_fletching/configs/cut_logs/cut_logs.dbrow',
     'scripts/skill_fletching/scripts/cut_logs.rs2',
     'scripts/tutorial/interfaces/player_kit.if',
     'scripts/tutorial/scripts/tutorial.rs2',
@@ -178,6 +183,21 @@ export type ServerOrderedNumericLoc = {
     sources: ServerOrderedSourceSpan[];
 };
 
+// One selected content identity joined from its pack alias to its packed id.
+export type ServerOrderedContractIdentity = {
+    alias: string;
+    id: number;
+};
+
+// The selected knife/use-item recipe. The logs allowlist holds exactly the
+// dbrow rows that reach the skill_multi3 Make path (a declared shafts count
+// of at least one); no other item can enter the Make request through this fact.
+export type ServerOrderedKnife = {
+    knife: ServerOrderedContractIdentity;
+    logs: ServerOrderedContractIdentity[];
+    sources: ServerOrderedSourceSpan[];
+};
+
 export type ServerOrderedBankerPage = {
     font_alias: string;
     font_id: number;
@@ -206,6 +226,7 @@ export type ServerOrderedCatalog = {
     banker_page: ServerOrderedBankerPage | null;
     bank: ServerOrderedBank;
     numeric_locs: ServerOrderedNumericLoc[];
+    knife: ServerOrderedKnife;
 };
 
 /** A small decoded view of one real engine Component. */
@@ -1566,6 +1587,97 @@ function extractKnifeSource(contentRoot: string) {
     ]);
 }
 
+const CUT_LOGS_DBROW_SOURCE = 'scripts/skill_fletching/configs/cut_logs/cut_logs.dbrow';
+const CUTTING_FRUIT_SOURCE = 'scripts/skill_cooking/scripts/gnome_cooking/cutting_fruit.rs2';
+const LOG_OBJ_SOURCE = 'scripts/skill_firemaking/configs/firemaking.obj';
+const OBJ_PACK = 'pack/obj.pack';
+const CATEGORY_PACK = 'pack/category.pack';
+
+// The selected knife/use-item recipe: the exact knife alias from the OPHELDU
+// case that reaches the fletching label, and exactly the dbrow log rows whose
+// declared shafts count selects the skill_multi3 Make path. Both the
+// category-block recipe and the knife-specific delegation must agree, because
+// the engine tries the specific [opheldu,knife] trigger before the category.
+function extractKnifeFacts(contentRoot: string): ServerOrderedKnife {
+    const blocks = parseRs2Blocks(CUT_LOGS_SOURCE, requireGatherText(contentRoot, CUT_LOGS_SOURCE));
+    const opheldus = blocks.filter(block => block.kind === 'opheldu');
+    if (opheldus.length !== 1) throw new Error('server_ordered: expected one cut_logs OPHELDU recipe block');
+    const categoryName = /^_([A-Za-z][A-Za-z0-9_]*)$/.exec(opheldus[0].name)?.[1];
+    if (!categoryName) throw new Error('server_ordered: cut_logs OPHELDU recipe is not a category dispatch');
+    const category = resolvePackAlias(contentRoot, CATEGORY_PACK, categoryName, 'server_ordered');
+    const useCases = switchCases(sourceBody(opheldus[0]), 'switch_obj', 'last_useitem');
+    const fletchCases = useCases.filter(row => /@fletch_log\s*\(/.test(row.body));
+    if (fletchCases.length !== 1) throw new Error('server_ordered: expected one knife case reaching fletch_log');
+    const knifeAlias = fletchCases[0].label;
+    if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(knifeAlias)) throw new Error('server_ordered: knife case does not name one use item');
+    const knife = resolvePackAlias(contentRoot, OBJ_PACK, knifeAlias, 'server_ordered');
+    const fletch = oneBlock(blocks, 'label', 'fletch_log', 'fletching skill menu handler');
+    const fletchBody = sourceBody(fletch);
+    const dbTable = /db_find\(\s*([A-Za-z][A-Za-z0-9_]*)\s*:\s*log\s*,\s*\$log\s*\)/.exec(fletchBody)?.[1];
+    if (!dbTable) throw new Error('server_ordered: fletch_log does not look up its log row by table');
+    if (!new RegExp(`db_getfield\\(\\$data,\\s*${dbTable}:shafts,\\s*0\\s*\\)`).test(fletchBody)
+        || !/if\s*\(\s*\$shaft_count\s*<\s*1\s*\)/.test(fletchBody)) {
+        throw new Error('server_ordered: fletch_log shafts Make gate changed');
+    }
+    const dbRows = parseInterfaceDefinitions(CUT_LOGS_DBROW_SOURCE, requireGatherText(contentRoot, CUT_LOGS_DBROW_SOURCE))
+        .filter(row => (row.fields.get('table') ?? []).some(field => field.value === dbTable));
+    if (dbRows.length === 0) throw new Error(`server_ordered: no ${dbTable} log recipe rows`);
+    const objSections = parseInterfaceDefinitions(LOG_OBJ_SOURCE, requireGatherText(contentRoot, LOG_OBJ_SOURCE));
+    const logs: ServerOrderedContractIdentity[] = [];
+    const logSpans: ServerOrderedSourceSpan[] = [];
+    for (const row of dbRows) {
+        const logFields = (row.fields.get('data') ?? []).filter(field => field.value.startsWith('log,'));
+        if (logFields.length !== 1) throw new Error(`server_ordered: ${row.alias} does not name one log`);
+        const logAlias = logFields[0].value.slice('log,'.length);
+        if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(logAlias)) throw new Error(`server_ordered: ${row.alias} names an invalid log`);
+        const shaftsFields = (row.fields.get('data') ?? []).filter(field => field.value.startsWith('shafts,'));
+        if (shaftsFields.length > 1) throw new Error(`server_ordered: ambiguous shafts count in ${row.alias}`);
+        const shafts = shaftsFields.length === 0 ? 0 : Number(shaftsFields[0].value.slice('shafts,'.length));
+        if (!Number.isInteger(shafts) || shafts < 0) throw new Error(`server_ordered: invalid shafts count in ${row.alias}`);
+        if (shafts < 1) continue;
+        const log = resolvePackAlias(contentRoot, OBJ_PACK, logAlias, 'server_ordered');
+        const configs = objSections.filter(section => section.alias === logAlias);
+        if (configs.length !== 1) throw new Error(`server_ordered: expected one [${logAlias}] obj config`);
+        const categories = configs[0].fields.get('category') ?? [];
+        if (categories.length !== 1 || categories[0].value !== categoryName) {
+            throw new Error(`server_ordered: [${logAlias}] is not in the OPHELDU recipe category`);
+        }
+        logs.push({ alias: logAlias, id: log.id });
+        logSpans.push(span(CUT_LOGS_DBROW_SOURCE, row.first, row.last));
+        logSpans.push(span(LOG_OBJ_SOURCE, configs[0].first, configs[0].last));
+        logSpans.push(span(OBJ_PACK, log.line));
+    }
+    logs.sort((left, right) => left.id - right.id);
+    if (logs.length === 0) throw new Error('server_ordered: no log recipe reaches the Make menu');
+    const fruitBlocks = parseRs2Blocks(CUTTING_FRUIT_SOURCE, requireGatherText(contentRoot, CUTTING_FRUIT_SOURCE));
+    const knifeHeaders = fruitBlocks.filter(block => block.kind === 'opheldu' && block.name === knifeAlias);
+    if (knifeHeaders.length !== 1) throw new Error('server_ordered: expected one knife-specific OPHELDU delegation');
+    const fruitCases = switchCases(sourceBody(knifeHeaders[0]), 'switch_obj', 'last_useitem');
+    const fallback = fruitCases.find(row => row.label === 'default');
+    if (!fallback
+        || !new RegExp(`oc_category\\(last_useitem\\)\\s*=\\s*${categoryName}`).test(fallback.body)
+        || !/@fletch_log\s*\(\s*last_useitem\s*\)/.test(fallback.body)) {
+        throw new Error('server_ordered: knife-specific OPHELDU no longer delegates its category to fletch_log');
+    }
+    for (const log of logs) {
+        if (fruitCases.some(row => row.label.split(',').map(part => part.trim()).includes(log.alias))) {
+            throw new Error(`server_ordered: [${log.alias}] bypasses the knife category delegation`);
+        }
+    }
+    return {
+        knife: { alias: knifeAlias, id: knife.id },
+        logs,
+        sources: mergeSpans([
+            opheldus[0].span,
+            fletch.span,
+            knifeHeaders[0].span,
+            ...logSpans,
+            span(OBJ_PACK, knife.line),
+            span(CATEGORY_PACK, category.line),
+        ]),
+    };
+}
+
 function buildEntries(
     bankerPage: ServerOrderedBankerPage | null,
     bankFacts: ServerOrderedBankFacts,
@@ -1672,6 +1784,7 @@ export function extractServerOrderedFacts(input: ServerOrderedExtractInput): Ser
     const bankCloseSources = extractCloseModal(contentRoot, engineSources);
     const character = extractCharacterAcceptance(contentRoot);
     const knifeSources = extractKnifeSource(contentRoot);
+    const knife = extractKnifeFacts(contentRoot);
     const entries = buildEntries(bankerPage, bankFacts, bankCloseSources, booth, character, knifeSources, countResumeVerified);
 
     return {
@@ -1690,6 +1803,7 @@ export function extractServerOrderedFacts(input: ServerOrderedExtractInput): Ser
         banker_page: bankerPage,
         bank: bankFacts.bank,
         numeric_locs: [booth.numericLoc],
+        knife,
     };
 }
 

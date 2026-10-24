@@ -31,8 +31,10 @@ pub use services::{
 pub mod death;
 pub(crate) mod ledger;
 mod owner;
+mod server_ordered;
 pub mod thieve;
 pub(crate) mod thieving_core;
+pub use server_ordered::ServerOrderedCompletion;
 pub mod walk;
 pub mod walk_wait;
 pub use ledger::{BankDepositTrace, HostAction, HostAuthority, HostEffect, QuietReadOwner};
@@ -1120,32 +1122,46 @@ impl<M: NativeMachine> ActionHandle<M> {
         ActionRevoker(Arc::clone(&self.owner))
     }
 }
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ActionError {
+    #[error("the native action owner is busy")]
     Busy,
+    #[error("the native action is held")]
     Held,
+    #[error("this native runtime exhausted its observed-tick emission allowance or owner storage")]
     BudgetExhausted,
+    #[error("the native action identity is stale")]
     Stale,
+    #[error("the native action was cancelled")]
     Cancelled,
     /// A step adapter was interrupted by manual movement, not owner revocation.
+    #[error("manual input interrupted the native action")]
     UserInput,
+    #[error("the native action is unavailable: {0}")]
     Unavailable(Arc<str>),
+    #[error("the native action failed: {0}")]
     Failed(Arc<str>),
     /// A typed permanent refusal from the shared bank-deposit machine.
+    #[error("bank deposit was refused: {0:?}")]
     BankDeposit(crate::bank::ops::DepositFailure),
-    /// A hit on the local player closed the dialogue before it finished
-    /// (the NPC combat scripts `if_close` on every swing, including a
-    /// 0-damage miss). Typed so callers never match on a reason string;
-    /// runners treat it like `Blocked` (park for an explicit retry).
+    /// A hit on the local player closed the dialogue before it finished.
+    #[error("combat interrupted the dialogue")]
     CombatInterrupted,
     /// The step cannot continue safely without an explicit operator retry.
+    #[error("the native action is blocked: {0}")]
     Blocked(Arc<str>),
     /// The action requires typed quest evidence before it can continue.
+    #[error("the native action needs quest evidence: {0:?}")]
     NeedsEvidence(Arc<[QuestGate]>),
     /// Typed capacity or duplicate refusal from exact ground-item Take.
+    #[error("ground-item Take was refused: {0:?}")]
     GroundTake(api::ground_take::GroundRefusal),
     /// Invalid bounded candidate-goal request, rejected before host admission.
+    #[error("walk goals were refused: {0}")]
     WalkGoals(WalkGoalsError),
+    /// A typed server-ordered admission refusal, before host dispatch.
+    #[error(transparent)]
+    ServerOrdered(#[from] api::interact::server_ordered::ServerOrderedError),
 }
 
 /// A poll-time admission that has used this tick's event must retry later.

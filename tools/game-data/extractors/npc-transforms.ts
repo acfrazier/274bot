@@ -39,6 +39,7 @@ export type NpcTransformUnresolvedReason =
     | 'ambiguous_npc_config'
     | 'missing_npc_config'
     | 'unknown_trigger_target'
+    | 'missing_trigger_handler'
     | 'ambiguous_trigger'
     | 'unknown_category'
     | 'unsupported_transform_expression'
@@ -951,6 +952,8 @@ function scriptCalls(
             if (opCode === null || apCode === null || unknownRefs.length > 0) {
                 state = 'unknown';
                 triggerKind = 'unresolved';
+                // A slot header with an unresolvable subject keeps unknown_trigger_target:
+                // the extractor cannot tell which NPC type the handler selects.
                 addUniqueUnresolved(unresolved, {
                     scope_npc_type_id: type.npc_type_id,
                     scope_slot: slot,
@@ -965,10 +968,13 @@ function scriptCalls(
                 if (selectionReason !== null || (!op.trigger && !ap.trigger)) {
                     state = 'unknown';
                     triggerKind = selectionReason === null ? 'none' : 'unresolved';
+                    // Every candidate subject resolves but no OP/AP handler selects this type,
+                    // so the option has no handler to compare: missing_trigger_handler, not an
+                    // unknown subject. Ambiguous or unknown-category selections keep their reason.
                     addUniqueUnresolved(unresolved, {
                         scope_npc_type_id: type.npc_type_id,
                         scope_slot: slot,
-                        reason: selectionReason ?? 'unknown_trigger_target',
+                        reason: selectionReason ?? 'missing_trigger_handler',
                         expression: null,
                         source_refs: [
                             ...baseRefs,

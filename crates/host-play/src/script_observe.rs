@@ -118,6 +118,36 @@ fn wait_dispatch_barrier() {
     }
 }
 
+#[cfg(test)]
+type OrderedDispatchHook = Box<dyn FnOnce(&script::native::HostAuthority)>;
+
+#[cfg(test)]
+std::thread_local! {
+    static ORDERED_DISPATCH_HOOK: std::cell::RefCell<Option<OrderedDispatchHook>> =
+        const { std::cell::RefCell::new(None) };
+    static DELAY_ORDERED_DRAIN: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+#[cfg(test)]
+pub(crate) fn install_ordered_dispatch_hook(hook: OrderedDispatchHook) {
+    ORDERED_DISPATCH_HOOK.with(|cell| {
+        assert!(cell.borrow_mut().replace(hook).is_none());
+    });
+}
+
+#[cfg(test)]
+fn run_ordered_dispatch_hook(authority: &script::native::HostAuthority) {
+    let hook = ORDERED_DISPATCH_HOOK.with(|cell| cell.borrow_mut().take());
+    if let Some(hook) = hook {
+        hook(authority);
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn delay_ordered_drain_for_test() {
+    DELAY_ORDERED_DRAIN.with(|delay| assert!(!delay.replace(true)));
+}
+
 /// Post the slot's snapshot. Only a post the isolate accepted counts as the
 /// isolate having seen the walk outcome it carries (`walk_seq`), so only
 /// then is the live refusal guard released. A refused post leaves the guard
@@ -406,6 +436,12 @@ pub(crate) fn script_observe_cached_with_channels(
 ) -> ScriptObservation {
     if let Some(inp) = slot_input {
         inp.set_host_consume_allowed(up && !hold);
+        if let Some(snapshot) = snapshot {
+            inp.observe_input_session(driver.revision(), snapshot.gens().session);
+        }
+        if !up || hold || guardian_hold {
+            inp.with_server_ordered_input(|state| state.invalidate_content_expectation());
+        }
     }
     let mut wrote = false;
     let mut journal_wall_now = None;
@@ -1247,6 +1283,10 @@ pub(crate) fn script_observe_cached_with_channels(
     // with default FindOptions, so wilderness/quest gates fail closed).
     // The guardian's hold drops them: the script's parked wait stays
     // frozen, and a later retry re-queues what still matters.
+    #[cfg(test)]
+    if DELAY_ORDERED_DRAIN.with(|delay| delay.replace(false)) {
+        has_native_actions = false;
+    }
     if up && !hold && (!interact.is_empty() || has_native_actions) {
         if let Some(snapshot) = snapshot {
             #[cfg(test)]
@@ -1356,6 +1396,34 @@ pub(crate) fn script_observe_cached_with_channels(
                             continue;
                         }
                         match action.effect {
+                            script::native::HostEffect::ServerOrdered(envelope) => {
+                                #[cfg(test)]
+                                run_ordered_dispatch_hook(&authority);
+                                let selected = slot.compiled_game_data();
+                                let dispatch = super::dispatch_native_server_ordered(
+                                    driver,
+                                    super::OrderedDispatchContext {
+                                        snapshot,
+                                        selected: selected.as_deref(),
+                                        tick,
+                                        input: slot_input,
+                                    },
+                                    &authority,
+                                    &envelope,
+                                );
+                                wrote |= dispatch.wire_events != 0;
+                                slot.complete_native_server_ordered(
+                                    &authority,
+                                    script::native::ServerOrderedCompletion {
+                                        evidence: api::quest_progress::EvidenceStamp {
+                                            run: authority.run(),
+                                            tick,
+                                            sequence: tick,
+                                        },
+                                        dispatch,
+                                    },
+                                );
+                            }
                             script::native::HostEffect::Interaction(request) => {
                                 #[cfg(test)]
                                 let proof_capture = crate::combat_proof::capture_enabled(name);
