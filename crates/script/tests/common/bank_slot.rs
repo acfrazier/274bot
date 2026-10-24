@@ -337,7 +337,7 @@ impl BankSlot {
         );
     }
 
-    pub fn probe(&self, expression: &str) -> Result<serde_json::Value, String> {
+    pub fn probe(&self, expression: &str) -> Result<serde_json::Value, script::surface::SurfaceError> {
         self.slot.probe(expression)
     }
 

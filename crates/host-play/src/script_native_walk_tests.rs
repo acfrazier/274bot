@@ -4213,16 +4213,26 @@ fn takeover_is_refused_for_an_absent_revoked_or_completed_owner() {
 fn in_place_load_rig() -> Rig {
     let mut rig = open_rig(false);
     rig.slot().lock().unwrap().stop();
-    rig.slot()
-        .lock()
-        .unwrap()
-        .start_load(
+    let start = crate::script_runtime::js_surface_start(
+        crate::script_runtime::js_start_card(
             "export function tick(api) { globalThis.s2Ticks = (globalThis.s2Ticks || 0) + 1; }"
                 .into(),
             script::LoadShape::NativeTick,
             Vec::new(),
-        )
-        .unwrap();
+        ),
+        None,
+        None,
+        Arc::new(api::named_banks::NamedBankFacts::empty()),
+        Arc::from(Vec::<api::loadout::Loadout>::new()),
+    );
+    {
+        let slot = rig.slot();
+        let mut slot = slot.lock().unwrap();
+        slot.bind_surface_factory(Arc::new(
+            script::load::surface::JsSurfaceFactory::default(),
+        ));
+        slot.start_surface(start).unwrap();
+    }
     rig.slot().lock().unwrap().probe("true").unwrap();
     rig.observe(1);
     rig.slot().lock().unwrap().probe("true").unwrap();
@@ -5949,7 +5959,7 @@ mod s2b_admission_contract {
             ]);
             assert_eq!(
                 rig.slot().lock().unwrap().surface_family(),
-                Some(script::ApiFamily::V1)
+                Some(script::surface::SurfaceFamily::JsV1)
             );
             rig.frames(1);
             assert!(rig.wait_for_route_work(5_000, || rig
@@ -6007,7 +6017,7 @@ mod s2b_admission_contract {
         observed_loadout(&mut rig.snap);
         assert_eq!(
             rig.slot().lock().unwrap().surface_family(),
-            Some(script::ApiFamily::V1)
+            Some(script::surface::SurfaceFamily::JsV1)
         );
         rig.t23_bank_frame(1, true);
         assert!(rig.wait_for_route_work(5_000, || rig
