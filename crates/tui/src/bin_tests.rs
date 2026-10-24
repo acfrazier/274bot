@@ -1198,7 +1198,7 @@ fn fleet_login_selection_keeps_startup_load_without_overriding_focus() {
         .core
         .fleet_plan()
         .is_some_and(|plan| plan.needs_confirm()));
-    session.run_fleet_plan(&mut app);
+    session.run_fleet_plan(&mut app, frontend_core::FleetAction::Login);
     assert_eq!(session.core.selected(), Some("bob"));
     assert!(session
         .core
