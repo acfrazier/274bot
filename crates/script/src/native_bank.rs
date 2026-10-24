@@ -54,14 +54,13 @@ const SELECT_BOUND: Duration = Duration::from_secs(5);
 /// reconnect, `Player.ts:562`; an operator cheat, `ClientCheatHandler.ts`).
 pub const MAX_BANK_REOPENS: u8 = 2;
 
-pub(crate) fn air_distance_squared(a: WorldTile, b: WorldTile) -> i64 {
+pub fn air_distance_squared(a: WorldTile, b: WorldTile) -> i64 {
     let dx = i64::from(a.x) - i64::from(b.x);
     let dz = i64::from(a.z) - i64::from(b.z);
     dx * dx + dz * dz
 }
 
-#[cfg(feature = "load")]
-pub(crate) fn nearest_eligible_bank(
+pub fn nearest_eligible_bank(
     facts: &NamedBankFacts,
     from: WorldTile,
     mut eligible: impl FnMut(&NamedBank) -> bool,

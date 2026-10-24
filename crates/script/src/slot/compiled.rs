@@ -424,9 +424,9 @@ pub(super) fn frame_context<'a>(
 }
 
 /// Borrowed, owner-controlled seat capabilities passed to one compiled tick.
-pub(super) struct SeatTickPorts<'a> {
-    pub authority: Option<crate::native::ServiceAuthority<'a>>,
-    pub prompt: Option<&'a mut dyn crate::native::SeatPromptPort>,
+pub struct SeatTickPorts<'a> {
+    pub(crate) authority: Option<crate::native::ServiceAuthority<'a>>,
+    pub(crate) prompt: Option<&'a mut dyn crate::native::SeatPromptPort>,
 }
 
 impl CompiledRun {
@@ -977,7 +977,6 @@ pub(super) fn prepare_run(
 /// Off-pump preparation for an API seat's unlisted native card (no Browse
 /// registry entry): `build` creates the card from the selected data on the
 /// preparation worker and returns its prepared configuration.
-#[cfg(feature = "load")]
 pub(super) fn prepare_native_run(
     run: RunKey,
     selected: Arc<api::game_data::SelectedGameData>,
@@ -1361,7 +1360,6 @@ impl SlotScript {
             .compiled
             .as_ref()
             .and_then(|run| run.output.status.clone());
-        #[cfg(feature = "load")]
         let status = status.or_else(|| self.api_status());
         status.or_else(|| self.terminal_native_status.clone())
     }
@@ -1581,11 +1579,19 @@ impl SlotScript {
 
 #[cfg(all(test, feature = "load"))]
 #[derive(Default)]
-pub(crate) struct TestOutput {
-    pub statuses: Vec<ScriptStatus>,
-    pub paints: Vec<Arc<crate::shim::ScriptPaint>>,
-    pub logs: Vec<String>,
+pub struct TestOutput {
+    pub(crate) statuses: Vec<ScriptStatus>,
+    pub(crate) paints: Vec<Arc<crate::shim::ScriptPaint>>,
+    pub(crate) logs: Vec<String>,
 }
+
+#[cfg(all(test, feature = "load"))]
+impl TestOutput {
+    pub fn paints(&self) -> &[Arc<crate::paint::ScriptPaint>] {
+        &self.paints
+    }
+}
+
 #[cfg(all(test, feature = "load"))]
 impl NativeOutput for TestOutput {
     fn status(&mut self, status: ScriptStatus) {

@@ -17,7 +17,7 @@ pub(super) const WITHDRAW_ONE: &str = "Withdraw-1";
 
 /// The native clue's one bank approach/open attempt failed its existing
 /// walk or readiness deadline. Sherlock maps this terminal reason to Blocked.
-pub(crate) const BANK_APPROACH_FAILED: &str = "bank-approach-failed";
+pub const BANK_APPROACH_FAILED: &str = "bank-approach-failed";
 
 /// The caps' own name for a name that would not go back on — the frozen
 /// `could not re-equip … — will retry` line, logged with this token and never a

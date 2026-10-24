@@ -8,7 +8,7 @@ use serde_json::Value;
 
 #[cfg(feature = "load")]
 #[derive(Debug, Default, PartialEq, Eq)]
-pub(crate) struct CombatKeepOptions {
+pub struct CombatKeepOptions {
     pub(crate) food: String,
     pub(crate) style: String,
     pub(crate) spell: String,
@@ -18,7 +18,28 @@ pub(crate) struct CombatKeepOptions {
 }
 
 #[cfg(feature = "load")]
-pub(crate) fn from_args(args: &[Value]) -> CombatKeepOptions {
+impl CombatKeepOptions {
+    pub fn new(
+        food: String,
+        style: String,
+        spell: String,
+        ammo: String,
+        weapon: String,
+        extra: Vec<String>,
+    ) -> Self {
+        Self {
+            food,
+            style,
+            spell,
+            ammo,
+            weapon,
+            extra,
+        }
+    }
+}
+
+#[cfg(feature = "load")]
+pub fn from_args(args: &[Value]) -> CombatKeepOptions {
     let Some(object) = args.first().and_then(Value::as_object) else {
         return CombatKeepOptions::default();
     };
@@ -50,7 +71,7 @@ pub(crate) fn from_args(args: &[Value]) -> CombatKeepOptions {
 }
 
 #[cfg(feature = "load")]
-pub(crate) fn combat_keep_names(
+pub fn combat_keep_names(
     data: &SelectedGameData,
     options: &CombatKeepOptions,
 ) -> Vec<String> {

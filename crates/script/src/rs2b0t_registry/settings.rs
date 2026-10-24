@@ -1644,7 +1644,7 @@ const SHOP_DB_SOURCE_KEYS: [&str; 2] = ["./src/bot/data/shopdb.ts", "./src/bot/d
 
 #[cfg(feature = "load")]
 /// Load `SHOP_DB` from the registered catalog root at the known data path.
-pub(crate) fn insert_shop_db_from_root(sources: &mut HashMap<String, String>, root: &Path) {
+pub fn insert_shop_db_from_root(sources: &mut HashMap<String, String>, root: &Path) {
     let ts = root.join("src/bot/data/shopdb.ts");
     let js = root.join("src/bot/data/shopdb.js");
     let text = std::fs::read_to_string(&ts)

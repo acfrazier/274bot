@@ -9,7 +9,7 @@ pub(super) fn text_field<'a>(step: &'a Value, key: &str) -> Option<&'a str> {
 }
 
 /// Map one machine verb onto an interact op. An unknown kind is not a loc.
-pub(crate) fn verb_req(step: &Value) -> Option<InteractReq> {
+pub fn verb_req(step: &Value) -> Option<InteractReq> {
     match step.get("kind").and_then(Value::as_str)? {
         "walk" => Some(InteractReq::Walk {
             x: i32_field(step, "x")?,

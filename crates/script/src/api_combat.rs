@@ -106,14 +106,26 @@ const KEYS: &[&str] = &[
     "budgetTicks",
 ];
 
-const MALFORMED: &str = "invalid-settings";
+/// A malformed or invalid native combat-session request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum CombatRequestError {
+    #[error("invalid-args")]
+    InvalidArgs,
+    #[error("invalid-settings")]
+    InvalidSettings,
+    #[error("invalid-setting:{field}:{code}")]
+    InvalidSetting {
+        field: &'static str,
+        code: &'static str,
+    },
+}
 
-fn setting(field: &str, code: &str) -> String {
-    format!("invalid-setting:{field}:{code}")
+fn setting(field: &'static str, code: &'static str) -> CombatRequestError {
+    CombatRequestError::InvalidSetting { field, code }
 }
 
 /// A JS number that is an exact integer, else `invalid-settings`.
-fn integer(value: &Value) -> Result<i64, String> {
+fn integer(value: &Value) -> Result<i64, CombatRequestError> {
     if let Some(value) = value.as_i64() {
         return Ok(value);
     }
@@ -121,19 +133,19 @@ fn integer(value: &Value) -> Result<i64, String> {
         Some(value) if value.is_finite() && value.fract() == 0.0 && value.abs() < 9.0e15 => {
             Ok(value as i64)
         }
-        _ => Err(MALFORMED.into()),
+        _ => Err(CombatRequestError::InvalidSettings),
     }
 }
 
-fn boolean(value: &Value) -> Result<bool, String> {
-    value.as_bool().ok_or_else(|| MALFORMED.into())
+fn boolean(value: &Value) -> Result<bool, CombatRequestError> {
+    value.as_bool().ok_or(CombatRequestError::InvalidSettings)
 }
 
-fn text(value: &Value) -> Result<&str, String> {
-    value.as_str().ok_or_else(|| MALFORMED.into())
+fn text(value: &Value) -> Result<&str, CombatRequestError> {
+    value.as_str().ok_or(CombatRequestError::InvalidSettings)
 }
 
-fn ranged_u8(value: &Value, field: &str) -> Result<u8, String> {
+fn ranged_u8(value: &Value, field: &'static str) -> Result<u8, CombatRequestError> {
     let value = integer(value)?;
     u8::try_from(value)
         .ok()
@@ -141,15 +153,15 @@ fn ranged_u8(value: &Value, field: &str) -> Result<u8, String> {
         .ok_or_else(|| setting(field, "out-of-range"))
 }
 
-fn one_or_many(value: &Value) -> Result<Vec<&Value>, String> {
+fn one_or_many(value: &Value) -> Result<Vec<&Value>, CombatRequestError> {
     match value {
         Value::Array(items) => Ok(items.iter().collect()),
-        Value::Null => Err(MALFORMED.into()),
+        Value::Null => Err(CombatRequestError::InvalidSettings),
         other => Ok(vec![other]),
     }
 }
 
-fn name_list(value: &Value, field: &str) -> Result<Box<[Arc<str>]>, String> {
+fn name_list(value: &Value, field: &'static str) -> Result<Box<[Arc<str>]>, CombatRequestError> {
     let items = one_or_many(value)?;
     if items.is_empty() {
         return Err(setting(field, "empty"));
@@ -174,15 +186,15 @@ fn name_list(value: &Value, field: &str) -> Result<Box<[Arc<str>]>, String> {
     Ok(names.into_boxed_slice())
 }
 
-fn target(value: &Value) -> Result<TargetSpec, String> {
+fn target(value: &Value) -> Result<TargetSpec, CombatRequestError> {
     let Value::Object(object) = value else {
-        return Err(MALFORMED.into());
+        return Err(CombatRequestError::InvalidSettings);
     };
     if object
         .keys()
         .any(|key| !matches!(key.as_str(), "npc" | "npcId" | "attackers"))
     {
-        return Err(MALFORMED.into());
+        return Err(CombatRequestError::InvalidSettings);
     }
     match object.len() {
         0 => return Err(setting("target", "required")),
@@ -224,17 +236,17 @@ fn target(value: &Value) -> Result<TargetSpec, String> {
     Ok(TargetSpec::Attackers { npcs, players })
 }
 
-fn area_box(value: &Value) -> Result<[i32; 5], String> {
+fn area_box(value: &Value) -> Result<[i32; 5], CombatRequestError> {
     let Value::Object(object) = value else {
-        return Err(MALFORMED.into());
+        return Err(CombatRequestError::InvalidSettings);
     };
     if object.len() != 5 {
-        return Err(MALFORMED.into());
+        return Err(CombatRequestError::InvalidSettings);
     }
-    let field = |name: &str| -> Result<i64, String> {
+    let field = |name: &str| -> Result<i64, CombatRequestError> {
         object
             .get(name)
-            .ok_or(MALFORMED.to_string())
+            .ok_or(CombatRequestError::InvalidSettings)
             .and_then(integer)
     };
     let (min_x, min_z, max_x, max_z, level) = (
@@ -266,16 +278,16 @@ impl CombatSessionRequest {
     /// unknown key, a wrong type or a non-integer number is
     /// `invalid-settings`; a semantic failure is
     /// `invalid-setting:<field>:<code>`.
-    pub fn from_value(value: &Value) -> Result<Self, String> {
+    pub fn from_value(value: &Value) -> Result<Self, CombatRequestError> {
         let Value::Object(object) = value else {
-            return Err("invalid-args".into());
+            return Err(CombatRequestError::InvalidArgs);
         };
         Self::from_object(object)
     }
 
-    fn from_object(object: &Map<String, Value>) -> Result<Self, String> {
+    fn from_object(object: &Map<String, Value>) -> Result<Self, CombatRequestError> {
         if object.keys().any(|key| !KEYS.contains(&key.as_str())) {
-            return Err(MALFORMED.into());
+            return Err(CombatRequestError::InvalidSettings);
         }
         let mut request = Self::default();
         let get = |key: &str| object.get(key).filter(|value| !value.is_null());
@@ -354,7 +366,7 @@ impl CombatSessionRequest {
         }
         if let Some(value) = get("spells") {
             let Value::Array(items) = value else {
-                return Err(MALFORMED.into());
+                return Err(CombatRequestError::InvalidSettings);
             };
             if items.is_empty() {
                 return Err(setting("spells", "empty"));
@@ -395,7 +407,7 @@ impl CombatSessionRequest {
 
     /// The invariants every admitted request holds; the host re-checks a
     /// decoded wire request with this before it resolves it.
-    pub fn check(&self) -> Result<(), String> {
+    pub fn check(&self) -> Result<(), CombatRequestError> {
         let names_ok = |names: &[Arc<str>], max: usize| {
             !names.is_empty()
                 && names.len() <= max
@@ -814,7 +826,7 @@ mod tests {
     use serde_json::json;
 
     fn decode(value: Value) -> Result<CombatSessionRequest, String> {
-        CombatSessionRequest::from_value(&value)
+        CombatSessionRequest::from_value(&value).map_err(|error| error.to_string())
     }
 
     fn tables() -> Arc<CombatTables> {

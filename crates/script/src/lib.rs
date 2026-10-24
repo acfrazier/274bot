@@ -18,10 +18,8 @@ pub mod bank_hints;
 pub mod boost_potions;
 pub mod canvas;
 pub mod card;
-#[cfg(feature = "load")]
 pub mod channel;
 pub mod combat;
-#[cfg(feature = "load")]
 mod combat_session;
 /// Curated script site configuration and the hostile-attacker predicate.
 pub mod content;
@@ -55,13 +53,13 @@ pub mod isolate_fb;
 pub mod isolated_env;
 #[cfg(feature = "load")]
 pub mod js_cache;
-mod keep_list;
+pub mod keep_list;
 #[cfg(feature = "load")]
 pub mod load;
 pub mod loadout_plan;
 pub mod loadouts_store;
 pub mod local_state;
-mod module_imports;
+pub mod module_imports;
 pub mod native;
 pub mod native_bank;
 pub mod native_equipment;
@@ -77,7 +75,7 @@ pub mod registry;
 pub mod rs2b0t_registry;
 pub mod settings_store;
 pub mod shim;
-mod shop_open;
+pub mod shop_open;
 pub mod slot;
 /// Pure condition derivation and survival arithmetic.
 pub mod survival;

@@ -422,7 +422,7 @@ impl TickRows {
                 let _ = out.send(ThreadMsg::TickError {
                     tick: n,
                     generation,
-                    message: format!("dropped malformed interact row: {}", rejected.0),
+                    message: format!("dropped malformed interact row: {}", rejected.message()),
                 });
             }
         }
@@ -449,7 +449,11 @@ fn take_tick_output(
         )
     }) {
         Ok(output) => TickRows {
-            rows: output.interact.into_iter().map(|row| row.0).collect(),
+            rows: output
+                .interact
+                .into_iter()
+                .map(crate::shim::QueuedRow::into_inner)
+                .collect(),
             queue: output.queue,
             enqueued: output.wait_enqueues,
             settled: output.wait_settles,

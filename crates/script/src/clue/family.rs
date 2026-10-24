@@ -10,7 +10,7 @@ pub(crate) struct ClueArgs {
 }
 
 /// Execute-loop family over the isolate clue session.
-pub(crate) struct Clue {
+pub struct Clue {
     pub(super) token: u64,
     pub(super) last_hook: Option<usize>,
     pub(super) resume: Option<bool>,

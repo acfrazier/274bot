@@ -2898,6 +2898,7 @@ fn u9_cold_shared_tables_and_kind_build_measurement() {
     eprintln!("S2a first build selected={selected_elapsed:?} combat={combat_elapsed:?} risk={elapsed:?}; RiskTables allocations={} payload={}B retained={}B; npcs={} zoned kinds={}",
         allocations.count_total,allocations.bytes_total,allocations.bytes_current,combat.selected().npc_names().unwrap().rows.len(),fx.table.kinds().len());
     let payload = payload.unwrap();
+    assert!(facts::build_count_for_test() > 0);
     for kind in fx.table.kinds() {
         assert!(payload.npc(kind.npc_id).is_some(), "{}", kind.id);
     }

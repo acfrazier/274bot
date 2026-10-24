@@ -240,7 +240,7 @@ mod compat {
     }
 
     /// One `ChatDialog` make or option call.
-    pub(crate) struct ChatDialog {
+    pub struct ChatDialog {
         phase: Phase,
         make_x: MakeXCore,
     }
@@ -864,4 +864,4 @@ mod compat {
 }
 
 #[cfg(feature = "load")]
-pub(crate) use compat::ChatDialog;
+pub use compat::ChatDialog;

@@ -7,13 +7,10 @@ pub(crate) mod npc;
 pub mod ops;
 pub mod request;
 
-#[cfg(feature = "load")]
 pub(crate) mod compat;
 #[cfg(test)]
 mod prompt_args_tests;
-#[cfg(feature = "load")]
 pub(crate) mod seat_open;
-#[cfg(feature = "load")]
 pub(crate) mod seat_transfer;
 
 pub use crate::native_bank::{
@@ -25,7 +22,7 @@ pub use crate::native_bank::{
 /// catalog extraction. Field order preserves the public settings order.
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct PeriodicSettings {
+pub struct PeriodicSettings {
     bank_strategy: StrategySetting,
     bank_every_items: NumberSetting,
     bank_every_minutes: NumberSetting,
@@ -60,7 +57,7 @@ struct BooleanSetting {
     label: &'static str,
 }
 
-pub(crate) const PERIODIC_SETTINGS: PeriodicSettings = PeriodicSettings {
+pub const PERIODIC_SETTINGS: PeriodicSettings = PeriodicSettings {
     bank_strategy: StrategySetting {
         kind: "string",
         default: "Off",

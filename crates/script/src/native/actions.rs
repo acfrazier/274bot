@@ -68,8 +68,7 @@ impl ActionContext<'_> {
 
     /// A seat continuation keeps its owned arguments until admission can spend
     /// a transition. This check does not consume or renew the slot's budget.
-    #[cfg(feature = "load")]
-    pub(crate) fn may_begin_this_tick(&self) -> bool {
+    pub fn may_begin_this_tick(&self) -> bool {
         self.may_continue_this_tick() && self.budget.transition_available()
     }
 
@@ -692,8 +691,7 @@ impl NativeActions {
     /// Resume a retained request cursor after a kept session boundary.
     /// The caller selects the request from the closed reconnect-policy table;
     /// interrupted sub-operations and non-kept resets must not call this.
-    #[cfg(feature = "load")]
-    pub(crate) fn resume_kept<M: NativeMachine>(
+    pub fn resume_kept<M: NativeMachine>(
         &mut self,
         kind: super::request::NativeKind,
         handle: &mut ActionHandle<M>,
@@ -1302,7 +1300,6 @@ mod tests {
         f(&mut cx)
     }
 
-    #[cfg(feature = "load")]
     #[test]
     fn kept_resume_preserves_cursor_revokes_old_authority_and_spends_transition() {
         use crate::native::request::NativeKind;
