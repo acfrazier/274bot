@@ -2,7 +2,7 @@ use super::*;
 use crate::collision::bake_from_maps;
 use api::obj_names::LocDefs;
 use client::config::LocType;
-use nav_planner::canlight::{canlight_at, expected_header_binding, header_binding, policy_digest};
+use nav_planner::canlight::{canlight_at, expected_header_binding, header_binding, identity_digest, policy_digest};
 use std::collections::HashSet;
 use std::fs;
 use std::path::PathBuf;
@@ -126,13 +126,13 @@ fn equal_pack_inputs_with_different_active_loc_masks_have_different_identities()
     let moved_flags = moved_collision.flags.as_ref().unwrap();
     let moved_bits =
         bake_canlight(&moved_collision, moved_flags, &fix.0, &defs(&locs), &[zone]).unwrap();
-    let open_pack = nav_planner::pack::encode(
+    let open_pack = crate::pack::encode(
         &open_collision,
         &nav_planner::transport::TransportGraph::default(),
         &[],
     )
     .unwrap();
-    let moved_pack = nav_planner::pack::encode(
+    let moved_pack = crate::pack::encode(
         &moved_collision,
         &nav_planner::transport::TransportGraph::default(),
         &[],

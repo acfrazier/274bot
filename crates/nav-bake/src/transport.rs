@@ -6,11 +6,9 @@ use api::obj_names::LocDefs;
 use api::snapshot::WorldTile;
 use client::dash3d::{CollisionFlag, LocShape};
 use nav_planner::collision::WorldCollision;
-use nav_planner::quest_gates::{QuestFamilyId, QuestGates};
+use nav_planner::quest_gates::QuestFamilyId;
 use nav_planner::transport::{
-    DoorDir, TransportEdge, TransportGraph, TransportKind, WildernessRules, WildernessZone,
-    AL_KHARID_TOLL_LEFT_LOC_ID, AL_KHARID_TOLL_RIGHT_LOC_ID, ARDOUGNE_WILDERNESS_LEVER_LOC_ID,
-    CELLAR_SHIFT, SHANTAY_HENGE_LOC_ID,
+    DoorDir, TransportEdge, TransportGraph, TransportKind, WildernessRules, WildernessZone, CELLAR_SHIFT,
 };
 
 use crate::pack::{parse_door_config, parse_door_config_ids, parse_door_open_ids};
@@ -57,7 +55,7 @@ use gliders::*;
 use index::*;
 pub(crate) use index::{
     loc_ids_by_name, loc_positions, npc_ids_by_name, npc_positions, visit_loc_configs,
-    visit_npc_configs, NpcPlacement, Placement,
+    visit_npc_configs, Placement,
 };
 use levers::*;
 use magic_guild::*;
@@ -78,6 +76,7 @@ use static_routes::*;
 use teleports::*;
 use toll::*;
 use vertical::*;
+use webs::*;
 pub(crate) use wilderness::require_wilderness_teleport_legality;
 use wilderness::*;
 use zanaris::*;

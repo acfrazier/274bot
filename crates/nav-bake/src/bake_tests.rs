@@ -211,7 +211,7 @@ fn collision_with_flags(
     for &(x, z, face) in entries {
         flags[z * width + x] |= face;
     }
-    let (walk, blocked) = crate::collision::pack_walk(&flags);
+    let (walk, blocked) = nav_planner::collision::pack_walk(&flags);
     WorldCollision {
         origin: WorldTile {
             x: 0,
@@ -497,7 +497,7 @@ fn fixed_ranged_hunter_carves_occluded_tiles_but_retains_visible_range() {
         collision.origin,
         24,
         24,
-        &crate::transport::WildernessRules::default(),
+        &nav_planner::transport::WildernessRules::default(),
     )
     .unwrap();
     assert_eq!(
