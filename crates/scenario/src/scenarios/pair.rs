@@ -252,6 +252,13 @@ struct KqSlotWitness {
     /// `safely_banked` flag: a bank seen open after the finish
     /// revokes it until a later snapshot shows the bank closed.
     finish_closed: bool,
+    /// Last observed state for the terminal failure summary:
+    /// world tile, snapshot game tick, and bank component from this
+    /// slot's most recent snapshot. Read-only reporting state; no
+    /// witness latch reads it.
+    last_tile: Option<(i32, i32, i32)>,
+    last_tick: u32,
+    last_bank_component: i32,
 }
 
 #[derive(Default)]
@@ -288,6 +295,9 @@ impl KqFleetWitness {
             slot.ranged_baseline = Some(pair_xp(snap, 4));
         }
         slot.survived &= pair_effective_stat(snap, 3) > 0;
+        slot.last_tile = snap.tile();
+        slot.last_tick = snap.tick();
+        slot.last_bank_component = snap.bank_component_id();
         let strength_xp = pair_xp(snap, 2);
         let ranged_xp = pair_xp(snap, 4);
         slot.strength_gain |= slot
@@ -626,6 +636,109 @@ impl KqFleetWitness {
         self.finish_started
             && self.slots.iter().all(|slot| slot.finish_observed)
             && self.slots[1..].iter().all(|slot| slot.finish_closed)
+    }
+
+    /// Read-only terminal summary for a failed run: the fleet terms
+    /// still unmet, then each slot's last observed tile, snapshot
+    /// tick, and bank component with the witness latches it still
+    /// lacks. Two deadline failures (this task's first series run 1
+    /// and SCRIPT-SPLIT-INT's candidate run) stalled on the final
+    /// composite witness with no retained record of which term was
+    /// false; this summary rides the failure receipt so the next
+    /// one is diagnosable from the receipt alone. It reads witness
+    /// state only and changes nothing.
+    fn terminal_summary(&self) -> String {
+        let mut phases: Vec<&str> = Vec::new();
+        if !self.identities_ready() {
+            phases.push("identities");
+        }
+        if self.premature_departure {
+            phases.push("premature_departure");
+        }
+        if !self.first_descent() {
+            phases.push("first_descent");
+        }
+        if !self.first_combat() {
+            phases.push("first_combat");
+        }
+        if !self.first_loot_bank() {
+            phases.push("first_loot_bank");
+        }
+        if !self.second_descent() {
+            phases.push("second_descent");
+        }
+        if !self.restock_overlap {
+            phases.push("restock_overlap");
+        }
+        if !self.slots.iter().any(|slot| slot.kills >= 2) {
+            phases.push("any_kills>=2");
+        }
+        if self.finish_started && !self.finish_ready() {
+            phases.push("safe_finish");
+        }
+        let mut slots = String::new();
+        for (index, slot) in self.slots.iter().enumerate() {
+            let mut missing: Vec<String> = Vec::new();
+            let mut want = |met: bool, name: &str| {
+                if !met {
+                    missing.push(name.to_string());
+                }
+            };
+            want(slot.pack_ready, "pack");
+            want(slot.kit_equipped, "kit");
+            want(slot.pass_ready, "pass");
+            want(slot.pass_source_complete, "pass_source");
+            want(slot.bank_departed, "departed");
+            want(slot.surface_rope, "surface_rope");
+            want(slot.upper_rope, "upper_rope");
+            want(slot.surface_party, "surface_party");
+            want(slot.upper_party, "upper_party");
+            want(slot.ground_alive, "ground_seen");
+            want(slot.flying_alive, "flying_seen");
+            want(slot.strength_gain, "strength_xp");
+            want(slot.ranged_gain, "ranged_xp");
+            want(slot.melee_formation, "melee_formation");
+            want(slot.ranged_formation, "ranged_formation");
+            want(slot.boosted, "boosted");
+            want(slot.second_attack, "second_attack");
+            want(slot.camelot_escape, "camelot_escape");
+            want(slot.duel_escape, "duel_escape");
+            want(slot.ring_spent, "ring_spent");
+            want(slot.safely_banked, "safely_banked");
+            want(slot.survived, "survived");
+            want(
+                slot.loot_ground.is_some() && slot.loot_collected && slot.loot_banked,
+                "loot_banked",
+            );
+            if self.finish_started && !slot.finish_closed {
+                missing.push("finish_bank_closed".to_string());
+            }
+            let (tile, bank) = match slot.last_tile {
+                Some((x, z, level)) => (
+                    format!("{x},{z},{level}"),
+                    slot.last_bank_component.to_string(),
+                ),
+                None => ("?".to_string(), "?".to_string()),
+            };
+            slots.push_str(&format!(
+                " s{index}<{}> tile={tile} tick={} bank={bank} entries={} returns={} disp={} kills={} missing=[{}]",
+                slot.name.as_deref().unwrap_or("?"),
+                slot.last_tick,
+                slot.lair_entries,
+                slot.bank_returns,
+                slot.disappearances,
+                slot.kills,
+                missing.join(" "),
+            ));
+        }
+        format!(
+            "kq_witness unmet=[{}]ropes(leader2={} surface={} upper={}){}",
+            phases.join(" "),
+            self.leader_had_two_ropes,
+            self.surface_rope_valid,
+            self.upper_rope_valid,
+            slots,
+        )
     }
 }
 
@@ -1724,6 +1837,7 @@ pub(crate) fn flax_runner_scenario() -> Scenario {
         kind: StepKind::Await {
             evidence: "flax_spinner_relogged_and_prepared_before_start",
             ready: Box::new(move |_| prep_wait.all_ready()),
+            summary: None,
         },
         wait: Wait {
             arm: Proof::Stat { id: 16, min: 0 },
@@ -1866,6 +1980,7 @@ pub fn duel_arena_completed_duel_step(budget_ticks: u32) -> Step {
         kind: StepKind::Await {
             evidence: "duel_arena_pen_entered_and_lobby_returned",
             ready: Box::new(move |snap| witness.lock().expect("duel witness mutex").observe(snap)),
+            summary: None,
         },
         wait: Wait {
             arm: Proof::Stat { id: 16, min: 0 },
@@ -1931,6 +2046,7 @@ pub(crate) fn clue_duel_3554_scenario() -> Scenario {
         kind: StepKind::Await {
             evidence: "clue_helper_prepared_before_start",
             ready: Box::new(move |_| prep_wait.all_ready()),
+            summary: None,
         },
         wait: Wait {
             arm: Proof::Stat { id: 16, min: 0 },
@@ -1949,6 +2065,7 @@ pub(crate) fn clue_duel_3554_scenario() -> Scenario {
                 witness.observe(0, snap);
                 witness.identities_ready()
             }),
+            summary: None,
         },
         wait: Wait {
             arm: Proof::Stat { id: 16, min: 0 },
@@ -1965,6 +2082,7 @@ pub(crate) fn clue_duel_3554_scenario() -> Scenario {
                 witness.observe(0, snap);
                 witness.handshake_complete()
             }),
+            summary: None,
         },
         wait: Wait {
             arm: Proof::Stat { id: 16, min: 0 },
@@ -1981,6 +2099,7 @@ pub(crate) fn clue_duel_3554_scenario() -> Scenario {
                 witness.observe(0, snap);
                 witness.trail_complete()
             }),
+            summary: None,
         },
         wait: Wait {
             arm: Proof::Stat { id: 16, min: 0 },
@@ -1997,6 +2116,7 @@ pub(crate) fn clue_duel_3554_scenario() -> Scenario {
                 witness.observe(0, snap);
                 witness.complete()
             }),
+            summary: None,
         },
         wait: Wait {
             arm: Proof::Stat { id: 16, min: 0 },
@@ -2043,6 +2163,17 @@ pub(crate) fn clue_duel_3554_scenario() -> Scenario {
     }
 }
 
+/// The KQ witness steps' read-only terminal summary closure: one
+/// shared witness, read at failure time only.
+fn kq_terminal_summary(
+    witness: &Arc<Mutex<KqFleetWitness>>,
+) -> Option<Box<dyn Fn() -> String + Send + Sync>> {
+    let witness = Arc::clone(witness);
+    Some(Box::new(move || {
+        witness.lock().expect("KQ witness mutex").terminal_summary()
+    }))
+}
+
 /// Four-account max-stat JiveKQ gold: all members share one minted roster,
 /// provision from Shantay, descend together, kill both Queen phases, collect
 /// one non-loadout drop, and carry it through the next fresh bank. JiveKQ is
@@ -2076,6 +2207,7 @@ pub(crate) fn jive_kq_four_scenario() -> Scenario {
         kind: StepKind::Await {
             evidence: "kq_companions_prepared_before_start",
             ready: Box::new(move |_| prep_wait.all_ready()),
+            summary: None,
         },
         wait: Wait {
             arm: Proof::Stat { id: 16, min: 0 },
@@ -2108,6 +2240,7 @@ pub(crate) fn jive_kq_four_scenario() -> Scenario {
                 witness.observe(0, snap);
                 witness.identities_ready()
             }),
+            summary: kq_terminal_summary(&witness),
         },
         wait: Wait {
             arm: Proof::Stat { id: 16, min: 0 },
@@ -2124,6 +2257,7 @@ pub(crate) fn jive_kq_four_scenario() -> Scenario {
                 witness.observe(0, snap);
                 witness.first_descent()
             }),
+            summary: kq_terminal_summary(&witness),
         },
         wait: Wait {
             arm: Proof::Stat { id: 16, min: 0 },
@@ -2140,6 +2274,7 @@ pub(crate) fn jive_kq_four_scenario() -> Scenario {
                 witness.observe(0, snap);
                 witness.first_combat()
             }),
+            summary: kq_terminal_summary(&witness),
         },
         wait: Wait {
             arm: Proof::Stat { id: 16, min: 0 },
@@ -2156,6 +2291,7 @@ pub(crate) fn jive_kq_four_scenario() -> Scenario {
                 witness.observe(0, snap);
                 witness.first_loot_bank()
             }),
+            summary: kq_terminal_summary(&witness),
         },
         wait: Wait {
             arm: Proof::Stat { id: 16, min: 0 },
@@ -2172,6 +2308,7 @@ pub(crate) fn jive_kq_four_scenario() -> Scenario {
                 witness.observe(0, snap);
                 witness.second_descent()
             }),
+            summary: kq_terminal_summary(&witness),
         },
         wait: Wait {
             arm: Proof::Stat { id: 16, min: 0 },
@@ -2188,6 +2325,7 @@ pub(crate) fn jive_kq_four_scenario() -> Scenario {
                 witness.observe(0, snap);
                 witness.complete()
             }),
+            summary: kq_terminal_summary(&witness),
         },
         wait: Wait {
             arm: Proof::Stat { id: 16, min: 0 },
@@ -2256,6 +2394,7 @@ pub(crate) fn jive_kq_four_scenario() -> Scenario {
                 witness.observe(0, snap);
                 witness.finish_ready()
             }),
+            summary: kq_terminal_summary(&witness),
         },
         wait: Wait {
             arm: Proof::Stat { id: 16, min: 0 },
@@ -2757,6 +2896,15 @@ mod kq_finish_tests {
             matches!(scenario.steps[stop + 1].kind, StepKind::Perform { .. }),
             "the finish begins right after the stop"
         );
+        for step in [&scenario.steps[complete], &scenario.steps[stop + 2]] {
+            assert!(matches!(
+                &step.kind,
+                StepKind::Await {
+                    summary: Some(_),
+                    ..
+                }
+            ));
+        }
         let finish = &scenario.steps[stop + 2];
         assert!(matches!(
             &finish.kind,
@@ -2775,5 +2923,62 @@ mod kq_finish_tests {
             "the driven close is the last step before the proof"
         );
         assert_eq!(scenario.proof, Proof::BankClosed);
+    }
+
+    /// The terminal summary names the unmet fleet phases, each
+    /// account's last tile, tick, and bank state, and the latches
+    /// that account still lacks. Terms drop out as they are met:
+    /// a met term must not stay in the summary, and an unmet one
+    /// must not vanish from it.
+    #[test]
+    fn terminal_summary_names_unmet_witnesses_and_last_slot_states() {
+        let mut witness = started_witness();
+        let summary = witness.terminal_summary();
+        for unmet in [
+            "identities",
+            "first_descent",
+            "first_combat",
+            "first_loot_bank",
+            "second_descent",
+            "restock_overlap",
+            "any_kills>=2",
+        ] {
+            assert!(summary.contains(unmet), "unmet {unmet}: {summary}");
+        }
+        assert!(summary.contains("s1<?> tile=? tick=0 bank=?"), "{summary}");
+        assert!(summary.contains("safely_banked"), "{summary}");
+        assert!(summary.contains("disp=0"), "{summary}");
+
+        let mut snap = at_bank(false);
+        snap.seed_tick(2_893);
+        witness.observe(1, &snap);
+        let summary = witness.terminal_summary();
+        let slot1 = summary.split("s1<").nth(1).expect("slot 1 in summary");
+        assert!(
+            slot1.starts_with("?> tile=3308,3120,0 tick=2893 bank=-1"),
+            "{summary}"
+        );
+
+        witness.slots[1].safely_banked = true;
+        witness.slots[1].disappearances = 2;
+        witness.slots[1].kills = 2;
+        let summary = witness.terminal_summary();
+        let slot1 = summary
+            .split("s1<")
+            .nth(1)
+            .and_then(|rest| rest.split(" s2<").next())
+            .expect("slot 1 segment");
+        assert!(!slot1.contains("safely_banked"), "met latch: {slot1}");
+        assert!(slot1.contains("disp=2"), "{slot1}");
+        assert!(slot1.contains("kills=2"), "{slot1}");
+        assert!(
+            !summary.contains("any_kills>=2"),
+            "fleet kills term met: {summary}"
+        );
+        let slot2 = summary.split("s2<").nth(1).expect("slot 2 in summary");
+        assert!(
+            slot2.contains("safely_banked"),
+            "other slots still report their unmet terms: {slot2}"
+        );
     }
 }

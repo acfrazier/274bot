@@ -2290,11 +2290,28 @@ impl ScenarioRunner {
     fn record_terminal(&mut self, outcome: &'static str, msg: &str) {
         self.phase = Phase::Done;
         self.fire_terminal_shot();
+        // A failing Await may carry a read-only terminal summary of
+        // what it still waits for; append it so the receipt names
+        // the unmet terms on both budget and deadline failures.
+        let msg = match self.scenario.steps.get(self.step).map(|step| &step.kind) {
+            Some(StepKind::Await {
+                summary: Some(summary),
+                ..
+            }) => {
+                let summary = summary();
+                if summary.is_empty() {
+                    msg.to_string()
+                } else {
+                    format!("{msg} [{summary}]")
+                }
+            }
+            _ => msg.to_string(),
+        };
         let mut evidence = Evidence::terminal(
             self.scenario.name,
             outcome,
             self.current_predicate_name(),
-            Some(msg.to_string()),
+            Some(msg),
             self.total_game_ticks,
             &self.snapshot,
             self.obj_names.as_deref(),
