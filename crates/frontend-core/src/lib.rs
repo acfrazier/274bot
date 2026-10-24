@@ -33,6 +33,7 @@ pub mod launch;
 pub mod live;
 pub mod log;
 pub mod log_file;
+mod login_notice;
 pub mod map_bake;
 pub mod map_decode;
 pub mod marked;
