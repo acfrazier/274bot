@@ -1501,21 +1501,12 @@ impl SlotScript {
         self.seat_compiled_owner = None;
         self.seat_delivery.clear();
         self.seat_native_delivery.clear();
-
         self.seat_interact_delivery.clear();
-
         self.held_aborts.clear();
-
-        {
-            self.held_policy = None;
-        }
-
+        self.held_policy = None;
         self.seat_lifecycle.clear();
-
         self.held_channel_refusals.clear();
-
         self.teardown_api(reason);
-
         self.bank_runtime_boundary();
         self.native_runtime.revoke();
         self.evidence_wait_run = None;
@@ -1543,9 +1534,7 @@ impl SlotScript {
         self.last_error = None;
         self.teardown_compiled(reason);
 
-        {
-            self.active_tick_error_generation = None;
-        }
+        self.active_tick_error_generation = None;
         // A Start that has not reached Ready never ran: nothing to commit.
         self.settle_start(StartOutcome::Cancelled);
 
@@ -1672,25 +1661,15 @@ impl SlotScript {
         } else {
             self.seat_delivery.clear();
             self.seat_native_delivery.clear();
-
             self.seat_interact_delivery.clear();
-
             self.held_aborts.clear();
-
-            {
-                self.held_policy = None;
-            }
+            self.held_policy = None;
         }
-
         self.seat_lifecycle.clear();
-
         self.held_channel_refusals.clear();
         self.seat_fence.revoke();
-
         self.api_session_boundary(reconnect);
-
         self.bank_session_boundary(reconnect);
-
         if !self.surface_active() {
             // As with Stop, registered hooks run on the pump thread.
             // A connection boundary aborts live work but retains session
@@ -1739,7 +1718,7 @@ impl SlotScript {
             .is_some_and(|surface| surface.post_channel_events(events))
     }
 
-    /// Post the merged operator settings bag into a Load isolate.
+    /// Post the merged operator settings bag to the active script surface.
     pub fn post_settings_bag(&mut self, bag: &serde_json::Map<String, serde_json::Value>) {
         if self.surface.is_none() {
             return;

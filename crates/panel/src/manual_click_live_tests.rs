@@ -1536,7 +1536,7 @@ fn live_gatherer_skill_sync_restart_through_panel_fleet_action() {
         .set_mark_for_test(frontend_core::ProfileIdentity::uid(target_uid), true);
 
     session.select(&source);
-    session.script_sel = Some(ScriptChoice::compiled(id));
+    session.select_script_selection(ScriptChoice::compiled(id));
     assert!(session.set_profile_setting(
         &source,
         frontend_core::scripts::CardSource::Catalog,
@@ -1563,7 +1563,7 @@ fn live_gatherer_skill_sync_restart_through_panel_fleet_action() {
     );
 
     session.select(&target);
-    session.script_sel = Some(ScriptChoice::compiled(id));
+    session.select_script_selection(ScriptChoice::compiled(id));
     session.script_start_selected();
     assert!(
         session.error.is_none(),
@@ -1590,7 +1590,7 @@ fn live_gatherer_skill_sync_restart_through_panel_fleet_action() {
     assert_eq!(fishing.text_field("skill"), Some("Fishing"));
 
     session.select(&source);
-    session.script_sel = Some(ScriptChoice::compiled(id));
+    session.select_script_selection(ScriptChoice::compiled(id));
     session.script_start_selected();
     assert!(
         session.error.is_none(),
@@ -1617,7 +1617,7 @@ fn live_gatherer_skill_sync_restart_through_panel_fleet_action() {
     assert_eq!(source_fishing.text_field("skill"), Some("Fishing"));
 
     session.select(&source);
-    session.script_sel = Some(ScriptChoice::compiled(id));
+    session.select_script_selection(ScriptChoice::compiled(id));
     assert!(session.set_profile_setting(
         &source,
         frontend_core::scripts::CardSource::Catalog,
