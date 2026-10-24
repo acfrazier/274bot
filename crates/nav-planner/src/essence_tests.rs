@@ -137,4 +137,3 @@ fn mine_enclosure_covers_the_landings_and_portals() {
         level: 1
     }));
 }
-
