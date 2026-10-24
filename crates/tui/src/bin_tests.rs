@@ -1006,6 +1006,29 @@ fn interactive_landing_restores_preferences_before_loading_existing_profile() {
 }
 
 #[test]
+fn removing_the_focused_bot_cancels_startup_focus() {
+    let iso = IsolatedStores::enter("tui-remove-startup-focus");
+    let mut session = TuiSession::new(dummy_options());
+    session.core.set_spawn_workers(false);
+    session.preferences.reload().unwrap();
+    let mut vault = VaultFixture::create(&iso.dir().join("vault"), "test-passphrase-01");
+    vault.put(FixtureProfile::new("alice", "pw").uid(7));
+    session.start_play(vault).unwrap();
+    let args = parse_args_from(std::iter::empty::<&str>()).unwrap();
+    let mut app = interactive_landing(&mut session, &args).unwrap();
+    session.load_and_login("alice");
+    session.remove(&mut app, "alice");
+    assert!(session.core.selected().is_none());
+    session.pump(&mut app);
+    assert!(
+        session.core.selected().is_none(),
+        "startup must not reload the removed focus"
+    );
+    assert!(app.focused_name().is_none());
+    assert!(session.startup_focus.is_none());
+}
+
+#[test]
 fn operator_focus_before_preference_adoption_keeps_walk_target() {
     for path in ["direct", "keyboard", "fleet", "first-profile"] {
         let iso = IsolatedStores::enter(&format!("tui-startup-focus-{path}"));
@@ -1036,11 +1059,13 @@ fn operator_focus_before_preference_adoption_keeps_walk_target() {
         let args = parse_args_from(std::iter::empty::<&str>()).unwrap();
         let mut app = interactive_landing(&mut session, &args).unwrap();
         assert_eq!(session.startup_focus.as_deref(), Some("alice"));
+        // Selection never loads a slot in the TUI. The operator can select
+        // this already-loaded member while the startup load still waits.
+        session.load_and_login("bob");
         let action = match path {
             "direct" => app.select_bot("bob"),
             "keyboard" => app.run_command(crate::commands::Command::SelectNextBot),
             "fleet" => {
-                session.load_and_login("bob");
                 session.pump(&mut app);
                 app.table.cursor = app
                     .fleet_model

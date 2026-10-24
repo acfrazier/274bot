@@ -3257,10 +3257,14 @@ impl Session {
         self.background_ack_open = false;
     }
 
+    fn cancel_startup_focus(&mut self) {
+        self.startup_focus_pending = None;
+    }
+
     fn apply_focus(&mut self, name: &str) {
         // Every profile-selection path converges here, including a repeated
         // selection of the current bot. Operator intent supersedes startup.
-        self.startup_focus_pending = None;
+        self.cancel_startup_focus();
         if self.persist_ui {
             let focus = name.to_string();
             self.ui.last_focus = Some(focus.clone());
@@ -4109,6 +4113,9 @@ impl Session {
             removal.reselected().map(str::to_string),
             removal.selection_cleared(),
         );
+        if reselected.is_some() || cleared {
+            self.cancel_startup_focus();
+        }
         self.sync_wall_focus();
         if let Some(next) = reselected.as_deref() {
             self.select(next);
