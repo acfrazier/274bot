@@ -419,9 +419,9 @@ accounting: Stop/Pause recovery adopts the retained page without a new click.
 
 The live map has two headed panel cells on merlot against Engine A at
 `127.0.0.1:44594` and `127.0.0.1:1080`. `panel.headed-nav-script` sets
-`BOT_CPU=1` and covers the app route. `panel.headed-render` uses
-`env -u BOT_CPU` to select the GPU renderer and covers the panel client render
-and imgui renderer paths. Both run `panel-play --live script_nav_routes`.
+`BOT_CPU=1` and covers CPU client paths. `panel.headed-render` removes
+`BOT_CPU` to select the GPU renderer and covers GPU client and imgui paths.
+Changes to the client login path also select both relog cells.
 
 Run each cell in merlot's interactive display session with a throwaway HOME.
 The CPU cell is not a substitute for the GPU cell. `--verify-cells` checks the
