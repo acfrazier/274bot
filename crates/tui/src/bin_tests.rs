@@ -3442,6 +3442,23 @@ fn pending_preferences_survive_settings_reopen_and_keep_the_folder_draft() {
     for (width, height) in [(120, 40), (80, 24)] {
         let shown = crate::test_support::text(&crate::test_support::draw(&mut app, width, height));
         assert!(shown.contains("Saving preferences"), "{shown}");
+        if let Some(dir) = std::env::var_os("TUI_CAPTURE_DIR") {
+            std::fs::create_dir_all(&dir).unwrap();
+            super::manual_click_live_tests::capture(
+                &mut app,
+                width,
+                height,
+                std::path::Path::new(&dir),
+                &format!("{width}x{height}"),
+                "preferences-pending-reopened",
+                &serde_json::json!({
+                    "preferences_pending": true,
+                    "allow_teleports_draft": true,
+                    "folder_draft": folder,
+                }),
+            )
+            .unwrap();
+        }
     }
     release.send(()).unwrap();
     let deadline = Instant::now() + Duration::from_secs(10);
@@ -3453,6 +3470,25 @@ fn pending_preferences_survive_settings_reopen_and_keep_the_folder_draft() {
     assert!(app.walk_permissions.globals().allow_teleports());
     assert_eq!(app.quester_paths.folder(), folder);
     assert!(!app.settings_state.preferences_pending);
+    if let Some(dir) = std::env::var_os("TUI_CAPTURE_DIR") {
+        std::fs::create_dir_all(&dir).unwrap();
+        for (width, height) in [(120, 40), (80, 24)] {
+            super::manual_click_live_tests::capture(
+                &mut app,
+                width,
+                height,
+                std::path::Path::new(&dir),
+                &format!("{width}x{height}"),
+                "preferences-settled-draft-kept",
+                &serde_json::json!({
+                    "preferences_pending": false,
+                    "allow_teleports_durable": true,
+                    "folder_draft": folder,
+                }),
+            )
+            .unwrap();
+        }
+    }
 }
 
 /// Quit goes through the `Quit` command: every loaded member's Quit
@@ -7275,6 +7311,22 @@ fn retained_preference_failure_expires_without_reappearing_and_clears_on_recover
         }
         let failure = session.core.preference_error().unwrap().to_owned();
         assert_eq!(app.error.as_deref(), Some(failure.as_str()));
+        let captures = std::env::var_os("TUI_CAPTURE_DIR").map(PathBuf::from);
+        if let Some(dir) = captures.as_deref() {
+            std::fs::create_dir_all(dir).unwrap();
+        }
+        capture_message_line(
+            captures.as_deref(),
+            &session,
+            &mut app,
+            if expire {
+                "preferences-before-timeout"
+            } else {
+                "preferences-before-recovery"
+            },
+            Some(&failure),
+            &failure,
+        );
 
         if expire {
             let now = Instant::now();
@@ -7285,6 +7337,14 @@ fn retained_preference_failure_expires_without_reappearing_and_clears_on_recover
                 session.pump(&mut app);
                 assert_eq!(app.error, None, "the retained failure must not reappear");
             }
+            capture_message_line(
+                captures.as_deref(),
+                &session,
+                &mut app,
+                "preferences-expired-without-reappearing",
+                None,
+                &failure,
+            );
             app.error = Some("newer message".into());
         }
 
@@ -7297,6 +7357,18 @@ fn retained_preference_failure_expires_without_reappearing_and_clears_on_recover
             app.error.as_deref(),
             expire.then_some("newer message"),
             "recovery clears only the message for that failure"
+        );
+        capture_message_line(
+            captures.as_deref(),
+            &session,
+            &mut app,
+            if expire {
+                "preferences-recovered-newer-message-kept"
+            } else {
+                "preferences-recovered-error-cleared"
+            },
+            expire.then_some("newer message"),
+            &failure,
         );
     }
 }
