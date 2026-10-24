@@ -59,7 +59,7 @@ pub fn parse_mapsquare_jm2(
 /// Door edge `from`/`to` snap to the nearest walkable tile on `collision`
 /// (see [`WorldCollision::nearest_walkable`]), not a blind ±1 around the
 /// loc.
-pub(super) fn parse_mapsquare_text(
+pub(crate) fn parse_mapsquare_text(
     text: &str,
     mapsquare_x: i32,
     mapsquare_z: i32,

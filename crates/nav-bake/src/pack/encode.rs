@@ -15,15 +15,16 @@ use super::{banks::write_bank_stands, zones};
 /// Serialize `g` to the 274N grid byte format.
 pub fn encode_grid(g: &StepGrid) -> Vec<u8> {
     let mut out =
-        Vec::with_capacity(4 + 1 + 12 + 8 + g.walk.len() + 4 + g.doors.len() * DOOR_BYTES);
+        Vec::with_capacity(4 + 1 + 12 + 8 + g.walk_bytes().len() + 4 + g.doors.len() * DOOR_BYTES);
     out.extend_from_slice(MAGIC_GRID);
     out.push(VERSION_GRID);
-    for v in [g.origin.x, g.origin.z, g.origin.level] {
+    let origin = g.origin();
+    for v in [origin.x, origin.z, origin.level] {
         out.extend_from_slice(&v.to_le_bytes());
     }
-    out.extend_from_slice(&(g.width as u32).to_le_bytes());
-    out.extend_from_slice(&(g.height as u32).to_le_bytes());
-    out.extend_from_slice(&g.walk);
+    out.extend_from_slice(&(g.width() as u32).to_le_bytes());
+    out.extend_from_slice(&(g.height() as u32).to_le_bytes());
+    out.extend_from_slice(g.walk_bytes());
     out.extend_from_slice(&(g.doors.len() as u32).to_le_bytes());
     for d in &g.doors {
         for v in [

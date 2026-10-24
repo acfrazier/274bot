@@ -75,15 +75,15 @@ fn decode_tiles(bytes: &[u8]) -> Vec<WorldTile> {
     chunks
         .iter()
         .map(|chunk| WorldTile {
-            x: i32::from_le_bytes(chunk[..4].try_into().unwrap()),
-            z: i32::from_le_bytes(chunk[4..8].try_into().unwrap()),
-            level: i32::from_le_bytes(chunk[8..].try_into().unwrap()),
+            x: i32::from_le_bytes(chunk[..4].try_into().expect("Four x-coordinate bytes")),
+            z: i32::from_le_bytes(chunk[4..8].try_into().expect("Four z-coordinate bytes")),
+            level: i32::from_le_bytes(chunk[8..].try_into().expect("Four level-coordinate bytes")),
         })
         .collect()
 }
 
 fn encode_tiles(tiles: &[WorldTile]) -> Vec<u8> {
-    let mut bytes = Vec::with_capacity(tiles.len().checked_mul(12).unwrap());
+    let mut bytes = Vec::with_capacity(tiles.len().checked_mul(12).expect("Fixture byte length fits usize"));
     for tile in tiles {
         bytes.extend_from_slice(&tile.x.to_le_bytes());
         bytes.extend_from_slice(&tile.z.to_le_bytes());
@@ -101,9 +101,9 @@ fn collision_at(collision: &WorldCollision, tile: WorldTile) -> Option<i32> {
 
 fn case_directories(root: &Path) -> Vec<PathBuf> {
     let mut paths: Vec<_> = std::fs::read_dir(root)
-        .unwrap()
+        .expect("The fixture directory exists")
         .map(Result::unwrap)
-        .filter(|entry| entry.file_type().unwrap().is_dir())
+        .filter(|entry| entry.file_type().expect("Fixture entry metadata is readable").is_dir())
         .map(|entry| entry.path())
         .collect();
     paths.sort_unstable();
