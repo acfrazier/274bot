@@ -946,7 +946,7 @@ mod tests {
         on_reset();
         let token = begin(2820, 3556, 0, 1, false);
         let mut input = empty_input(2);
-        input.walk_outcome_cancel_reason = crate::isolate_fb::WalkCancelReason::UserInput;
+        input.walk_outcome_cancel_reason = crate::native::WalkCancelReason::UserInput;
         let outcome = NativeFactsInput {
             walk_outcome_seq: 1,
             walk_outcome_generation: 1,

@@ -15,7 +15,6 @@ use serde_json::{Map, Value};
 use std::sync::Arc;
 
 /// The live combat session page has the gather page's shape and wire table.
-#[cfg(feature = "load")]
 pub type CombatPage = crate::api_gather::GatherPage;
 
 /// At most this many npc names or ids in one target.

@@ -69,7 +69,6 @@ pub struct CompiledTick<'a> {
     /// when the tick returns; the isolate path forwards a queue of its own
     /// instead, and `None` in a bare ctx — a script that enqueues with
     /// nothing parked sends nothing.
-    #[cfg(feature = "load")]
     pub interacts: Option<Vec<crate::shim::InteractReq>>,
 }
 

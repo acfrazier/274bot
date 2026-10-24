@@ -7,7 +7,6 @@ use crate::native::{
 };
 use crate::native_bank::{AccessKind, BankPickReceipt, BankStandAccess, PickKind, SelectedBank};
 use crate::shim::InteractReq;
-#[cfg(feature = "load")]
 use api::game_data::SelectedGameData;
 use api::named_banks::{NamedBank, NamedBankFacts};
 use api::quest_progress::EvidenceStamp;
@@ -118,7 +117,6 @@ impl NativeOutput for CaptureOutput {
 
 struct Driver {
     run: RunKey,
-    #[cfg(feature = "load")]
     selected: Arc<SelectedGameData>,
     pin: Arc<api::selected::SelectedPin>,
     retained: RetainedMemory,
@@ -138,7 +136,6 @@ impl Driver {
         let pin = selected.selected_pin().unwrap();
         Self {
             run,
-            #[cfg(feature = "load")]
             selected,
             pin,
             retained: RetainedMemory::default(),
@@ -166,7 +163,6 @@ impl Driver {
             tick,
             sequence: tick,
         };
-        #[cfg(feature = "load")]
         let selected = Arc::clone(&self.selected);
         let pin = Arc::clone(&self.pin);
         let mut budget = ledger::TickBudget::default();
@@ -203,7 +199,6 @@ impl Driver {
                 state: None,
                 service_authority: None,
                 prompt_port: None,
-                #[cfg(feature = "load")]
                 frame: crate::native::HostFrame {
                     here: None,
                     snapshot: Some(snapshot),

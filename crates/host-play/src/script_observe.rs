@@ -843,7 +843,7 @@ pub(crate) fn script_observe_cached_with_channels(
                             0,
                             false,
                             false,
-                            script::isolate_fb::WalkCancelReason::None,
+                            script::native::WalkCancelReason::None,
                             0,
                             Vec::new(),
                             route_inspect::PostedInspect::default(),
