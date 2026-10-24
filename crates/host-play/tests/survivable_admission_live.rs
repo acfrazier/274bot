@@ -295,7 +295,9 @@ fn real_unknown_poison_explicit_forbid_then_opt_in_and_default_escape() {
         .duration_since(UNIX_EPOCH)
         .expect("clock")
         .as_millis();
-    let name = format!("{prefix}{}", serial % 1_000_000_000);
+    let name = host_play::mint_live_names(1)
+        .pop()
+        .expect("one live account");
     let mut client = template
         .prepare_client((serial % 1_000_000_000) as i32, true)
         .expect("prepare actual client");
@@ -881,7 +883,9 @@ fn real_compat_v1_crossing_and_own_sustain_at_45_and_14_hp() {
             .duration_since(UNIX_EPOCH)
             .expect("clock")
             .as_millis();
-        let name = format!("{prefix}{}", serial % 1_000_000_000);
+        let name = host_play::mint_live_names(1)
+            .pop()
+            .expect("one live account");
         let state = Arc::new(Mutex::new(CompatLive {
             snapshot: GameSnapshot::new(),
             world: template.world().expect("actual nav world"),

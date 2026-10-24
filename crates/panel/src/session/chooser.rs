@@ -63,13 +63,12 @@ impl Session {
         }
     }
 
-    /// Settle the credentials Saves being written: once one is durable, the
-    /// form it came from follows the saved name and the profile is selected
-    /// (`select` builds the arm from the durable auto-login). A failed write
-    /// shows in the form it came from and on the banner; it selects nothing.
+    /// Settle durable credential saves and follow their saved names. Automatic
+    /// selection waits for preference adoption through the startup gate.
+    /// A failed write keeps its form and banner error and selects nothing.
     pub(crate) fn settle_profile_save(&mut self) {
         for name in self.profile_editor.settle(&mut self.core) {
-            self.select(&name);
+            self.focus_when_ready(super::StartupFocus::SavedProfile(name));
         }
     }
 

@@ -80,8 +80,9 @@ fn live_mage_arena_webs_cellar_and_gundai_arrive() {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_millis();
-    let prefix = std::env::var("BOT_LIVE_NAME_PREFIX").unwrap_or_else(|_| "ml".into());
-    let name = format!("{prefix}{}", serial % 1_000_000_000);
+    let name = host_play::mint_live_names(1)
+        .pop()
+        .expect("one live account");
     let receipt_path =
         PathBuf::from(std::env::var_os("NAV_SCRIPTED_LADDERS_RECEIPT").expect("receipt path"));
     let profile = ProfileOptions {
@@ -289,13 +290,13 @@ fn live_mage_arena_webs_cellar_and_gundai_arrive() {
 #[ignore = "requires LIVE=1, WORLD_ENGINE_DIR, WORLD_NAV_PACK, NAV_RELATIVE_LADDER_RECEIPT and disposable HOME"]
 fn live_viking_seer_ladder_uses_player_relative_landing() {
     assert_eq!(std::env::var("LIVE").as_deref(), Ok("1"));
-    let prefix = std::env::var("BOT_LIVE_NAME_PREFIX").unwrap_or_else(|_| "nr".into());
-    assert!(!prefix.is_empty());
     let serial = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_millis();
-    let name = format!("{prefix}{}", serial % 1_000_000_000);
+    let name = host_play::mint_live_names(1)
+        .pop()
+        .expect("one live account");
     let receipt_path =
         PathBuf::from(std::env::var_os("NAV_RELATIVE_LADDER_RECEIPT").expect("receipt path"));
     let origin = WorldTile {
@@ -495,13 +496,13 @@ fn live_viking_seer_ladder_uses_player_relative_landing() {
 #[ignore = "requires LIVE=1, WORLD_ENGINE_DIR, WORLD_NAV_PACK, BOT_CACHE_DIR, NAV_GANGPLANK_RECEIPT, NAV_GANGPLANK_EVIDENCE_DIR and disposable HOME"]
 fn live_karamja_gangplank_2084_uses_player_relative_landing() {
     assert_eq!(std::env::var("LIVE").as_deref(), Ok("1"));
-    let prefix = std::env::var("BOT_LIVE_NAME_PREFIX").unwrap_or_else(|_| "gp3".into());
-    assert!(!prefix.is_empty());
     let serial = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_millis();
-    let name = format!("{prefix}{}", serial % 1_000_000_000);
+    let name = host_play::mint_live_names(1)
+        .pop()
+        .expect("one live account");
     let receipt_path =
         PathBuf::from(std::env::var_os("NAV_GANGPLANK_RECEIPT").expect("receipt path"));
     let origin = WorldTile {

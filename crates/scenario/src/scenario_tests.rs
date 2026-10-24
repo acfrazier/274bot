@@ -1004,6 +1004,269 @@ fn native_seed_deposit_runner_failure_names_the_missing_row_branch() {
     }
 }
 
+fn seed_deposit_runner(ids: &[(i32, Option<i32>)], budget_ticks: u32) -> ScenarioRunner {
+    let mut steps = native_bank_deposit(
+        "deposit the native seed",
+        ids.iter()
+            .map(|&(unnoted_id, note_id)| NativeSeed {
+                unnoted_id,
+                debug_alias: "test_seed",
+                note_alias: None,
+                quantity: 200,
+                note_id,
+            })
+            .collect(),
+    );
+    for step in &mut steps {
+        step.wait.budget_ticks = budget_ticks;
+    }
+    let scenario = Scenario {
+        name: "native_seed_deposit_settlement",
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: false,
+        },
+        steps,
+        proof: Proof::BankItemId {
+            id: ids.last().unwrap().0,
+            count: 200,
+        },
+        companions: vec![],
+        settings: ScenarioSettings::default(),
+    };
+    let mut runner = ScenarioRunner::with_world(scenario, None);
+    runner.set_scene_settle(Duration::ZERO);
+    runner
+}
+
+/// The bank-side update can precede the main bank update. A sent deposit
+/// must not send again or reinterpret its consumed row as a missing seed.
+#[test]
+fn native_seed_deposit_waits_for_main_bank_after_side_row_disappears() {
+    use client::io::ServerProt;
+
+    for (id, note_id) in [(COINS_ID, None), (LOBSTER_ID, Some(NOTED_LOBSTER_ID))] {
+        let mut runner = seed_deposit_runner(&[(id, note_id)], 200);
+        let mut client = native_seed_client();
+        let _peer = attach_loopback(&mut client);
+        plant_loaded_empty_bank(&mut client);
+        plant_bank_side_full(&mut client, note_id.unwrap_or(id), 200);
+        for _ in 0..23 {
+            client.bump_gens(ServerProt::PLAYER_INFO);
+        }
+        runner.tick(&mut client);
+        assert_eq!(runner.status(), RunnerStatus::Running { step: 0, total: 1 });
+        let sent = client.out.pos;
+
+        // Even if the server has not posted the removal yet, a second
+        // observed tick must not repeat an already accepted interaction.
+        client.bump_gens(ServerProt::PLAYER_INFO);
+        runner.tick(&mut client);
+        assert_eq!(client.out.pos, sent, "a sent deposit must not repeat");
+
+        let mut empty_side = inv_full_packet(701, &[]);
+        client.handle_packet(ServerProt::UPDATE_INV_FULL, &mut empty_side);
+        runner.tick(&mut client);
+        assert_eq!(runner.status(), RunnerStatus::Running { step: 0, total: 1 });
+        for _ in 0..20 {
+            client.bump_gens(ServerProt::MESSAGE_GAME);
+            runner.tick(&mut client);
+        }
+        assert_eq!(runner.status(), RunnerStatus::Running { step: 0, total: 1 });
+        assert_eq!(client.out.pos, sent, "settlement sends nothing");
+
+        // The fresh bank proof arrives at the next observed game tick.
+        let mut bank_full = inv_full_packet(601, &[(id + 1, 200)]);
+        client.handle_packet(ServerProt::UPDATE_INV_FULL, &mut bank_full);
+        client.bump_gens(ServerProt::PLAYER_INFO);
+        runner.tick(&mut client);
+        runner.tick(&mut client);
+        assert_eq!(runner.status(), RunnerStatus::Passed);
+        assert_eq!(client.out.pos, sent);
+        let attempts = &runner.evidence().unwrap().seed_deposits;
+        assert_eq!(attempts.len(), 2);
+        assert_eq!((attempts[0].tick, attempts[0].result), (23, "DepositSent"));
+        assert_eq!(
+            (attempts[1].tick, attempts[1].result),
+            (25, "ProofObserved")
+        );
+        assert!(!attempts[0].proof);
+        assert!(attempts[1].proof);
+        assert_eq!(attempts[1].side, 0);
+        assert_eq!(attempts[1].bank, 200);
+        assert!(attempts[1].side_generation > attempts[0].side_generation);
+        assert!(attempts[1].main_generation > attempts[0].main_generation);
+    }
+}
+
+/// A consumed row is not a failure while the bank proof is still pending.
+/// The step's own budget, not a shorter post-send cap, bounds this wait.
+#[test]
+fn native_seed_deposit_accepts_bank_proof_several_ticks_after_send() {
+    use client::io::ServerProt;
+
+    for (id, note_id) in [(COINS_ID, None), (LOBSTER_ID, Some(NOTED_LOBSTER_ID))] {
+        let mut runner = seed_deposit_runner(&[(id, note_id)], 200);
+        let mut client = native_seed_client();
+        let _peer = attach_loopback(&mut client);
+        plant_loaded_empty_bank(&mut client);
+        plant_bank_side_full(&mut client, note_id.unwrap_or(id), 200);
+        runner.tick(&mut client);
+        let sent = client.out.pos;
+
+        let mut empty_side = inv_full_packet(701, &[]);
+        client.handle_packet(ServerProt::UPDATE_INV_FULL, &mut empty_side);
+        let mut short_bank = inv_full_packet(601, &[(id + 1, 199)]);
+        client.handle_packet(ServerProt::UPDATE_INV_FULL, &mut short_bank);
+        for _ in 0..7 {
+            client.bump_gens(ServerProt::PLAYER_INFO);
+            runner.tick(&mut client);
+            assert_eq!(runner.status(), RunnerStatus::Running { step: 0, total: 1 });
+            assert_eq!(client.out.pos, sent, "a pending proof must not resend");
+        }
+
+        let mut bank_full = inv_full_packet(601, &[(id + 1, 200)]);
+        client.handle_packet(ServerProt::UPDATE_INV_FULL, &mut bank_full);
+        client.bump_gens(ServerProt::PLAYER_INFO);
+        runner.tick(&mut client);
+        runner.tick(&mut client);
+        assert_eq!(runner.status(), RunnerStatus::Passed);
+        assert_eq!(client.out.pos, sent);
+        let attempts = &runner.evidence().unwrap().seed_deposits;
+        assert_eq!(attempts.len(), 2);
+        assert_eq!((attempts[0].tick, attempts[0].result), (0, "DepositSent"));
+        assert_eq!((attempts[1].tick, attempts[1].result), (8, "ProofObserved"));
+        assert!(attempts[1].proof);
+    }
+}
+
+#[test]
+fn native_seed_deposit_consumed_row_without_bank_proof_fails_on_observed_tick() {
+    use client::io::ServerProt;
+
+    for bank_count in [0, 199] {
+        let mut runner = seed_deposit_runner(&[(COINS_ID, None)], 5);
+        let mut client = native_seed_client();
+        let _peer = attach_loopback(&mut client);
+        plant_loaded_empty_bank(&mut client);
+        plant_bank_side_full(&mut client, COINS_ID, 200);
+        // Start the step at tick zero so its full five-tick budget remains.
+        runner.tick(&mut client);
+        let sent = client.out.pos;
+        let mut empty_side = inv_full_packet(701, &[]);
+        client.handle_packet(ServerProt::UPDATE_INV_FULL, &mut empty_side);
+        let mut bank_full = inv_full_packet(601, &[(COINS_ID + 1, bank_count)]);
+        client.handle_packet(ServerProt::UPDATE_INV_FULL, &mut bank_full);
+        runner.tick(&mut client);
+        assert_eq!(runner.status(), RunnerStatus::Running { step: 0, total: 1 });
+        for _ in 0..20 {
+            client.bump_gens(ServerProt::MESSAGE_GAME);
+            runner.tick(&mut client);
+        }
+        assert_eq!(runner.status(), RunnerStatus::Running { step: 0, total: 1 });
+        for _ in 0..4 {
+            client.bump_gens(ServerProt::PLAYER_INFO);
+            runner.tick(&mut client);
+            assert_eq!(runner.status(), RunnerStatus::Running { step: 0, total: 1 });
+            assert_eq!(client.out.pos, sent);
+        }
+        client.bump_gens(ServerProt::PLAYER_INFO);
+        runner.tick(&mut client);
+        match runner.status() {
+            RunnerStatus::Failed(message) => {
+                assert!(message.contains("5 game ticks"), "{message}");
+            }
+            other => panic!("missing bank proof must fail, got {other:?}"),
+        }
+        assert_eq!(client.out.pos, sent);
+    }
+}
+
+#[test]
+fn native_seed_deposit_without_consumption_still_exhausts_proof_budget() {
+    use client::io::ServerProt;
+
+    let mut runner = seed_deposit_runner(&[(COINS_ID, None)], 3);
+    let mut client = native_seed_client();
+    let _peer = attach_loopback(&mut client);
+    plant_loaded_empty_bank(&mut client);
+    plant_bank_side_full(&mut client, COINS_ID, 200);
+    runner.tick(&mut client);
+    let sent = client.out.pos;
+    for _ in 0..2 {
+        client.bump_gens(ServerProt::PLAYER_INFO);
+        runner.tick(&mut client);
+        assert_eq!(runner.status(), RunnerStatus::Running { step: 0, total: 1 });
+    }
+    client.bump_gens(ServerProt::PLAYER_INFO);
+    runner.tick(&mut client);
+    match runner.status() {
+        RunnerStatus::Failed(message) => assert!(message.contains("3 game ticks"), "{message}"),
+        other => panic!("unprocessed deposit must fail within its budget, got {other:?}"),
+    }
+    assert_eq!(client.out.pos, sent);
+}
+
+#[test]
+fn native_seed_deposit_runner_keeps_refused_send_as_failure() {
+    use client::io::ServerProt;
+
+    let mut runner = seed_deposit_runner(&[(COINS_ID, None)], 200);
+    let mut client = native_seed_client();
+    plant_loaded_empty_bank(&mut client);
+    plant_bank_side_full(&mut client, COINS_ID, 200);
+    client.bump_gens(ServerProt::UPDATE_INV_FULL);
+    runner.tick(&mut client);
+    match runner.status() {
+        RunnerStatus::Failed(message) => {
+            assert!(message.contains("refused: NotAttached"), "{message}");
+        }
+        other => panic!("refused deposit must fail, got {other:?}"),
+    }
+}
+
+#[test]
+fn native_seed_deposit_send_latch_resets_for_next_seed() {
+    use client::io::ServerProt;
+
+    let mut runner = seed_deposit_runner(
+        &[(COINS_ID, None), (LOBSTER_ID, Some(NOTED_LOBSTER_ID))],
+        200,
+    );
+    let mut client = native_seed_client();
+    let _peer = attach_loopback(&mut client);
+    plant_loaded_empty_bank(&mut client);
+    // This episode retains both seeds in the bank. The shared empty-bank
+    // fixture has one slot, and the client discards updates beyond capacity.
+    client.set_iface_mut(
+        601,
+        client::config::if_type::IfTypeMut {
+            link_obj_type: Some(vec![0, 0]),
+            link_obj_number: Some(vec![0, 0]),
+            ..Default::default()
+        },
+    );
+    plant_bank_side_full(&mut client, COINS_ID, 200);
+    runner.tick(&mut client);
+    let first_sent = client.out.pos;
+    plant_bank_side_full(&mut client, NOTED_LOBSTER_ID, 200);
+    let mut bank_full = inv_full_packet(601, &[(COINS_ID + 1, 200)]);
+    client.handle_packet(ServerProt::UPDATE_INV_FULL, &mut bank_full);
+    runner.tick(&mut client);
+    assert_eq!(runner.status(), RunnerStatus::Running { step: 1, total: 2 });
+    runner.tick(&mut client);
+    assert!(client.out.pos > first_sent, "the next seed must send");
+    assert_eq!(client.menu_param_a[0], NOTED_LOBSTER_ID);
+    assert_eq!(runner.status(), RunnerStatus::Running { step: 1, total: 2 });
+    let mut empty_side = inv_full_packet(701, &[]);
+    client.handle_packet(ServerProt::UPDATE_INV_FULL, &mut empty_side);
+    let mut bank_full = inv_full_packet(601, &[(COINS_ID + 1, 200), (LOBSTER_ID + 1, 200)]);
+    client.handle_packet(ServerProt::UPDATE_INV_FULL, &mut bank_full);
+    runner.tick(&mut client);
+    runner.tick(&mut client);
+    assert_eq!(runner.status(), RunnerStatus::Passed);
+}
+
 /// An already loaded bank must remain usable by the following deposit.
 #[test]
 fn herblore_open_seed_bank_skips_booth_when_current_bank_loaded() {
@@ -5983,7 +6246,7 @@ fn wildy_agility_registers_the_full_ordered_course_on_the_observed_player_plane(
 fn brimhaven_agility_registers_fee_tags_ticket_and_subsequent_xp() {
     let brim = get("brimhaven_agility").expect("brimhaven_agility");
     assert_eq!(brim.settings.start_script, Some("BrimhavenAgility"));
-    assert_eq!(brim.settings.deadline, SCRIPT_GOLD_DEADLINE);
+    assert_eq!(brim.settings.deadline, BRIMHAVEN_AGILITY_DEADLINE);
     let inject = settings_inject_map(brim.settings.script_settings_inject).unwrap();
     assert_eq!(inject.get("stealRestock"), Some(&Value::Bool(false)));
     assert_eq!(
@@ -6058,7 +6321,7 @@ fn brimhaven_agility_registers_fee_tags_ticket_and_subsequent_xp() {
                 id: AGILITY_STAT,
                 min: 1,
             },
-            Proof::Chat {
+            Proof::FreshChatSincePreviousStep {
                 needle: "tag the next",
             },
             Proof::Varp { id: 309, min: 15 },
@@ -6070,6 +6333,24 @@ fn brimhaven_agility_registers_fee_tags_ticket_and_subsequent_xp() {
             },
         ]
     );
+    let ticket_step = brim.steps[start + 1..]
+        .iter()
+        .find(|step| step.name == "watch a later Tag grant the first ticket")
+        .expect("ticket watch step");
+    assert_eq!(
+        ticket_step.wait.budget_ticks, BRIMHAVEN_TICKET_WATCH_TICKS,
+        "ticket watch keeps the content-derived two-period budget"
+    );
+    for step in brim.steps[start + 1..]
+        .iter()
+        .filter(|step| step.name != "watch a later Tag grant the first ticket")
+    {
+        assert_eq!(
+            step.wait.budget_ticks, SCRIPT_GOLD_WATCH_TICKS,
+            "{} keeps the ordinary gold watch",
+            step.name
+        );
+    }
     assert_eq!(
         brim.proof,
         Proof::FreshStatXpGain {

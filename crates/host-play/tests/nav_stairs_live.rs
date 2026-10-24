@@ -83,14 +83,9 @@ fn env_port(name: &str, default: u16) -> u16 {
 }
 
 #[test]
-#[ignore = "requires LIVE=1, NAV_STAIRS_PACK, WORLD_ENGINE_DIR and NAV_STAIRS_RECEIPT; BOT_LIVE_NAME_PREFIX defaults to ns"]
+#[ignore = "requires LIVE=1, NAV_STAIRS_PACK, WORLD_ENGINE_DIR and NAV_STAIRS_RECEIPT; account names come from BOT_LIVE_NAME_PREFIX via the common minter"]
 fn live_lumbridge_stairs_walk_arm_reaches_operable_stand() {
     assert_eq!(std::env::var("LIVE").as_deref(), Ok("1"));
-    let prefix = std::env::var("BOT_LIVE_NAME_PREFIX").unwrap_or_else(|_| "ns".into());
-    assert!(
-        !prefix.is_empty(),
-        "BOT_LIVE_NAME_PREFIX must be non-empty so generated accounts stay agent-owned"
-    );
     let receipt_path =
         PathBuf::from(std::env::var_os("NAV_STAIRS_RECEIPT").expect("NAV_STAIRS_RECEIPT"));
     let serial = SystemTime::now()
@@ -120,7 +115,9 @@ fn live_lumbridge_stairs_walk_arm_reaches_operable_stand() {
         .expect("resolve local-289 profile")
         .bind()
         .expect("bind profile");
-    let name = format!("{prefix}{}", serial % 1_000_000_000);
+    let name = host_play::mint_live_names(1)
+        .pop()
+        .expect("one live account");
     let template =
         SharedClientTemplate::load(Arc::clone(&profile)).expect("load shared client template");
     let world = template.world().expect("bundled world");
