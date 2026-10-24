@@ -9,7 +9,7 @@ and failure exits in Rust so preservation projects can reuse the same
 behavior through `host-play`, the TUI or the panel. No engine assets or
 external catalog scripts are included in this repository.
 
-0.2.5 is Beta 2. Revision 289 is the production revision: the harness cells
+0.2.6 Beta 2 is the current release. Revision 289 is the production revision: the harness cells
 are written, run and claimed for it. Revision 274 cells run best-effort and
 are neither tested nor claimed.
 
@@ -325,7 +325,7 @@ export RS2B0T=/absolute/path/to/catalog
 # optional custom bake (not required for default bundled nav):
 # export NAV_PACK=/absolute/output/274bot.navpack
 # export NAV_FLAGS=/absolute/output/274bot.navflags
-# cargo run --locked --release -p nav --bin nav-pack
+# cargo run --locked --release -p nav-planner --bin nav-pack
 
 cargo run --locked --release -p tui --bin tui-play -- --profile local-289 --live script_thiever
 cargo run --locked --release -p panel --bin panel-play -- --profile local-289 --live script_thiever

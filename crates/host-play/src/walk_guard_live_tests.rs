@@ -125,20 +125,20 @@ fn throwers_crossing_path_compiles_with_current_schema() {
 }
 
 fn throwers_route_context(
-    world: &nav::world::NavWorld,
-) -> (nav::router::FindOptions, nav::WorldState) {
+    world: &nav_planner::world::NavWorld,
+) -> (nav_planner::router::FindOptions, nav_planner::WorldState) {
     let table = world.graph.zones.as_ref().expect("baked zone table");
     let key = table.resolve(ZONE).expect("death-plateau-throwers");
-    let zones = nav::zones::ZoneExempt::named(&[key]).expect("zone exempt");
-    let opts = nav::router::FindOptions {
+    let zones = nav_planner::zones::ZoneExempt::named(&[key]).expect("zone exempt");
+    let opts = nav_planner::router::FindOptions {
         zones,
-        ..nav::router::FindOptions::default()
+        ..nav_planner::router::FindOptions::default()
     };
-    let state = nav::WorldState::empty().with_map_members(true);
+    let state = nav_planner::WorldState::empty().with_map_members(true);
     (opts, state)
 }
 
-fn pick_crossing(world: &nav::world::NavWorld) -> (WorldTile, WorldTile) {
+fn pick_crossing(world: &nav_planner::world::NavWorld) -> (WorldTile, WorldTile) {
     let (opts, state) = throwers_route_context(world);
     let mut starts = Vec::new();
     let mut dests = Vec::new();
@@ -160,8 +160,15 @@ fn pick_crossing(world: &nav::world::NavWorld) -> (WorldTile, WorldTile) {
     }
     for start in &starts {
         for dest in &dests {
-            if nav::router::find_with(&world.collision, &world.graph, *start, *dest, opts, &state)
-                .is_ok()
+            if nav_planner::router::find_with(
+                &world.collision,
+                &world.graph,
+                *start,
+                *dest,
+                opts,
+                &state,
+            )
+            .is_ok()
             {
                 return (*start, *dest);
             }
@@ -200,7 +207,7 @@ fn death_plateau_throwers_has_a_standable_protected_crossing() {
         }
         panic!("W1 pack missing at {}", pack.display());
     }
-    let world = nav::world::NavWorld::load_pack(&pack).expect("load baked 289 pack");
+    let world = nav_planner::world::NavWorld::load_pack(&pack).expect("load baked 289 pack");
     let (start, dest) = pick_crossing(&world);
     let attacker_stage = thrower_stage_tile(&world, start, dest);
     assert!(world.collision.standable(attacker_stage));
@@ -328,7 +335,7 @@ fn arrived_at(snapshot: &GameSnapshot, dest: WorldTile) -> bool {
 }
 
 fn thrower_stage_tile(
-    world: &nav::world::NavWorld,
+    world: &nav_planner::world::NavWorld,
     start: WorldTile,
     dest: WorldTile,
 ) -> WorldTile {

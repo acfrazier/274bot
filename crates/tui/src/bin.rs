@@ -33,7 +33,7 @@ use crossterm::event::{self, Event, KeyEventKind};
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
-use nav::tile::Tile;
+use nav_planner::tile::Tile;
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 
@@ -407,6 +407,15 @@ pub struct TuiSession {
     profile_import: frontend_core::rs2b0t_import::ProfileImport,
     /// Preview waiting for the first asynchronous catalog scan.
     profile_import_preview_pending: bool,
+    /// The shared profile form behind [`Modal::NewProfile`]: the same
+    /// editor the panel's Profiles window binds, opened only on its
+    /// blank new-profile row. The settings popup keeps its own
+    /// form-save model, so this editor is lent only to the New profile
+    /// rows (open, draft edits, create, close).
+    profile_editor: frontend_core::ProfileEditor,
+    /// The username a New profile Save is still writing, while its
+    /// overlay waits for the write to settle.
+    new_profile_pending: Option<String>,
     /// Browse category order keys (in-memory; panel persists to panel-ui.json).
     script_category_order: Vec<String>,
     /// The process local-state service's shared operator preferences
@@ -661,6 +670,8 @@ impl TuiSession {
             rs2b0t_catalog_dir: Self::default_catalog_browse_dir(),
             profile_import: frontend_core::rs2b0t_import::ProfileImport::new(),
             profile_import_preview_pending: false,
+            profile_editor: frontend_core::ProfileEditor::new(),
+            new_profile_pending: None,
             script_category_order: Vec::new(),
             preferences: preferences.share(),
             loadouts,
@@ -943,6 +954,46 @@ impl TuiSession {
         targets: Targets<'_>,
     ) -> Result<frontend_core::Submitted, String> {
         let (core, mut surface) = self.core_and_surface_with(app);
+        core.submit(command, targets, &mut surface)
+            .map_err(|error| error.to_string())
+    }
+
+    /// [`Self::core_and_surface_with`] lending the shared profile
+    /// editor instead of the settings popup's form-save model. Only
+    /// the New profile rows submit over it, so the editor is open
+    /// exactly while its overlay is.
+    fn core_and_surface_with_editor<'a>(
+        &'a mut self,
+        app: &'a mut TuiApp,
+    ) -> (&'a mut OperatorSession<()>, TuiSurface<'a>) {
+        (
+            &mut self.core,
+            TuiSurface {
+                walk_cleared: &mut self.walk_reset,
+                map_desk: &mut self.map_desk,
+                models: frontend_core::Models::none()
+                    .with_scripts(&mut self.scripts)
+                    .with_import(&mut self.profile_import)
+                    .with_loadouts(&mut self.loadouts)
+                    .with_fleet(&mut app.fleet_model)
+                    .with_quester(&mut app.quester_paths_controller)
+                    .with_walk_globals(&mut app.walk_permissions)
+                    .with_editor(&mut self.profile_editor),
+                frame_hook: None,
+            },
+        )
+    }
+
+    /// Submit one New profile row over the editor surface, without
+    /// collapsing its result: the form's own notice (a refusal, or
+    /// `Saved <name>.` once durable) is what the overlay shows.
+    fn submit_raw_editor(
+        &mut self,
+        app: &mut TuiApp,
+        command: OperatorCommand,
+        targets: Targets<'_>,
+    ) -> Result<frontend_core::Submitted, String> {
+        let (core, mut surface) = self.core_and_surface_with_editor(app);
         core.submit(command, targets, &mut surface)
             .map_err(|error| error.to_string())
     }
@@ -1906,6 +1957,200 @@ impl TuiSession {
         view.settled = flow.settled(&self.core);
         view.can_delete = flow.can_delete(&self.core);
         view.delete_asked = flow.delete_asked();
+    }
+
+    /// Open the shared profile form on its blank new-profile row
+    /// (`OpenNewProfileForm`, the panel's New profile button). The
+    /// overlay is already open; this opens the editor behind it and
+    /// shows its fresh draft.
+    fn open_new_profile(&mut self, app: &mut TuiApp) {
+        if let Err(error) = self.submit_raw_editor(
+            app,
+            OperatorCommand::OpenNewProfileForm,
+            Targets::Application,
+        ) {
+            app.error = Some(error);
+        }
+        self.show_new_profile(app);
+    }
+
+    /// One key in the New profile overlay. Typing edits the editor's
+    /// draft (staged through `EditProfileDraft`), Enter on the
+    /// password field saves it (`CreateProfile`), and Esc closes the
+    /// form (`CloseProfileForm`) unless its save is still being
+    /// written, when the overlay stays until the write settles.
+    fn new_profile_key(&mut self, app: &mut TuiApp, key: crossterm::event::KeyEvent) {
+        use crate::new_profile::NewProfileField;
+        use crossterm::event::{KeyCode, KeyModifiers};
+        use frontend_core::command::ProfileDraftField;
+
+        let Some(Modal::NewProfile(view)) = app.modal.as_ref() else {
+            return;
+        };
+        let field = view.field;
+        let text = !key
+            .modifiers
+            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER);
+        // While the form's save is being written, keys change nothing:
+        // the write already carries its draft, and an edit now would
+        // be lost when the saved profile closes the overlay.
+        if key.code != KeyCode::Esc && self.profile_editor.saving(&self.core) {
+            self.show_new_profile(app);
+            return;
+        }
+        match key.code {
+            KeyCode::Esc => {
+                if self.profile_editor.saving(&self.core) {
+                    self.show_new_profile(app);
+                    return;
+                }
+                if let Err(error) = self.submit_raw_editor(
+                    app,
+                    OperatorCommand::CloseProfileForm(frontend_core::command::FormClose::Form),
+                    Targets::Application,
+                ) {
+                    app.error = Some(error);
+                }
+                self.new_profile_pending = None;
+                app.modal = None;
+                return;
+            }
+            KeyCode::Tab | KeyCode::BackTab | KeyCode::Up | KeyCode::Down => {
+                if let Some(Modal::NewProfile(view)) = app.modal.as_mut() {
+                    view.field = field.other();
+                }
+            }
+            KeyCode::Enter if field == NewProfileField::Username => {
+                if let Some(Modal::NewProfile(view)) = app.modal.as_mut() {
+                    view.field = NewProfileField::Password;
+                }
+            }
+            KeyCode::Enter => {
+                self.new_profile_save(app);
+                return;
+            }
+            KeyCode::Backspace => {
+                let (buffer, draft_field) = match field {
+                    NewProfileField::Username => (
+                        self.profile_editor.username_mut(),
+                        ProfileDraftField::Username,
+                    ),
+                    NewProfileField::Password => (
+                        self.profile_editor.password_mut(),
+                        ProfileDraftField::Password,
+                    ),
+                };
+                if buffer.pop().is_some() {
+                    if let Err(error) = self.submit_raw_editor(
+                        app,
+                        OperatorCommand::EditProfileDraft(draft_field),
+                        Targets::Application,
+                    ) {
+                        app.error = Some(error);
+                    }
+                }
+            }
+            KeyCode::Char(c) if text => {
+                let (buffer, draft_field) = match field {
+                    NewProfileField::Username => (
+                        self.profile_editor.username_mut(),
+                        ProfileDraftField::Username,
+                    ),
+                    NewProfileField::Password => (
+                        self.profile_editor.password_mut(),
+                        ProfileDraftField::Password,
+                    ),
+                };
+                buffer.push(c);
+                if let Err(error) = self.submit_raw_editor(
+                    app,
+                    OperatorCommand::EditProfileDraft(draft_field),
+                    Targets::Application,
+                ) {
+                    app.error = Some(error);
+                }
+            }
+            _ => {}
+        }
+        self.show_new_profile(app);
+    }
+
+    /// Save the New profile form (`CreateProfile` over the editor's
+    /// draft, with the password the operator typed). A refusal shows
+    /// in the form; an accepted write settles in the pump, which
+    /// closes the overlay on the saved profile.
+    fn new_profile_save(&mut self, app: &mut TuiApp) {
+        let username = self.profile_editor.draft().username().trim().to_string();
+        match self.submit_raw_editor(app, OperatorCommand::CreateProfile, Targets::Application) {
+            Ok(submitted) => {
+                if submitted.operation().is_some() {
+                    self.new_profile_pending = Some(username);
+                }
+            }
+            Err(error) => app.error = Some(error),
+        }
+        self.show_new_profile(app);
+    }
+
+    /// Copy the editor's draft and save notice into its open overlay.
+    /// The password itself is never copied: only its length, for the
+    /// mask. The field that takes typing is the overlay's own and is
+    /// kept as it is.
+    fn show_new_profile(&self, app: &mut TuiApp) {
+        let Some(Modal::NewProfile(view)) = app.modal.as_mut() else {
+            return;
+        };
+        let draft = self.profile_editor.draft();
+        view.username.clear();
+        view.username.push_str(draft.username());
+        view.password_len = draft.password_len();
+        view.error = self
+            .profile_editor
+            .save_state()
+            .notice()
+            .and_then(|notice| notice.error())
+            .map(str::to_owned);
+        view.saving = self.profile_editor.saving(&self.core);
+    }
+
+    /// Settle a New profile save the writer has finished: a durable
+    /// one closes the overlay and loads, logs in and focuses the new
+    /// profile (the boot's own landing for its first profile); a
+    /// failed one keeps the form and its draft, with the failure in
+    /// the form's notice. Runs from the pump in place of the settings
+    /// popup's settle while the overlay is open: the two forms are
+    /// never open at once, and a settings write that settles late
+    /// still reaches the message line through `take_write_failures`.
+    fn settle_new_profile(&mut self, app: &mut TuiApp) {
+        let saved = self.profile_editor.settle(&mut self.core);
+        self.show_new_profile(app);
+        let Some(pending) = self.new_profile_pending.take() else {
+            return;
+        };
+        if !saved.iter().any(|name| name == &pending) {
+            if self.profile_editor.saving(&self.core) {
+                // Still being written: keep waiting for it.
+                self.new_profile_pending = Some(pending);
+            }
+            return;
+        }
+        if let Err(error) = self.submit_raw_editor(
+            app,
+            OperatorCommand::CloseProfileForm(frontend_core::command::FormClose::Form),
+            Targets::Application,
+        ) {
+            app.error = Some(error);
+        }
+        if matches!(app.modal, Some(Modal::NewProfile(_))) {
+            app.modal = None;
+        }
+        self.names = self
+            .core
+            .profiles()
+            .map(|p| p.username().to_string())
+            .collect();
+        self.load_and_login(&pending);
+        self.focus(&pending);
     }
 
     fn import_rs2b0t_catalog(&mut self, app: &mut TuiApp, root: &Path) -> Result<(), String> {
@@ -3175,20 +3420,27 @@ impl TuiSession {
         }
         // `Saved <name>.` or the failure shows only on the popup the persist
         // came from. A failed write put the profile back, so that popup
-        // shows what is saved rather than the edit that did not land.
-        for settled in app.settings_save.settle(&mut self.core) {
-            let Some(failed) = settled.as_failed() else {
-                continue;
-            };
-            if !failed.same_form() {
-                continue;
-            }
-            if let Some(saved) = app
-                .settings_profile
-                .as_deref()
-                .and_then(|name| self.core.profile(name))
-            {
-                app.settings = saved.settings_draft();
+        // shows what is saved rather than the edit that did not land. The
+        // New profile overlay settles its own form instead while it is
+        // open, or while its save is still in flight behind another
+        // overlay (the two forms are never open at once).
+        if matches!(app.modal, Some(Modal::NewProfile(_))) || self.new_profile_pending.is_some() {
+            self.settle_new_profile(app);
+        } else {
+            for settled in app.settings_save.settle(&mut self.core) {
+                let Some(failed) = settled.as_failed() else {
+                    continue;
+                };
+                if !failed.same_form() {
+                    continue;
+                }
+                if let Some(saved) = app
+                    .settings_profile
+                    .as_deref()
+                    .and_then(|name| self.core.profile(name))
+                {
+                    app.settings = saved.settings_draft();
+                }
             }
         }
         if app.map_bake_dirty {
@@ -3742,6 +3994,43 @@ fn new_app(title: impl Into<String>, preferences: &UiPreferences) -> TuiApp {
     app
 }
 
+/// Build the interactive landing that `run` opens after it unlocks the vault.
+fn interactive_landing(session: &mut TuiSession, args: &Args) -> Result<TuiApp, String> {
+    let focus = session.bootstrap_interactive_profiles(&args.users)?;
+    if let Some(focus) = &focus {
+        session.startup_focus = Some(focus.clone());
+        session.focus(focus);
+    }
+    let mut app = new_app(
+        format!(
+            "{} headless · {}",
+            session.app_title(),
+            session.profile_label()
+        ),
+        &session.preferences,
+    );
+    app.names = session.names.clone();
+    app.focused = focus
+        .as_ref()
+        .and_then(|focus| session.names.iter().position(|name| name == focus));
+    if focus.is_none() {
+        app.open_modal(Modal::NewProfile(
+            crate::new_profile::NewProfileView::default(),
+        ));
+        session.open_new_profile(&mut app);
+    }
+    Ok(app)
+}
+
+fn unknown_profile_error(name: &str) -> String {
+    format!(
+        "no profile named {name} in the vault: --user only selects existing \
+         profiles and creates none (start tui-play without --user and add \
+         it with New profile: press N in the Fleet pane, then type its \
+         username and password)"
+    )
+}
+
 fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
     let memory = {
         #[cfg(feature = "memory-profile")]
@@ -3777,6 +4066,20 @@ fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
             frontend_core::launch::ProfileEnv::capture(),
         )
         .map_err(|error| error.to_string())?;
+    // A missing vault cannot contain the requested profile. Refuse it before
+    // binding, which reads the engine key and prepares the game cache, and so
+    // before any passphrase prompt; the interactive branch checks again before
+    // opening the vault.
+    if !memory && matches!(&mode, RunMode::Interactive) {
+        if let Some(name) = args.users.first() {
+            let vault_path = launcher
+                .unbound_vault_path(None)
+                .map_err(|error| error.to_string())?;
+            if !vault_path.is_file() {
+                return Err(unknown_profile_error(name));
+            }
+        }
+    }
     launcher
         .bind_with(None)
         .map_err(|error| error.to_string())?;
@@ -3854,6 +4157,11 @@ fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
                 .vault_path()
                 .to_path_buf();
             let vault_exists = vault_path.is_file();
+            if !vault_exists {
+                if let Some(name) = args.users.first() {
+                    return Err(unknown_profile_error(name));
+                }
+            }
             let pass =
                 frontend_core::launch::obtain_passphrase("tui-play", args.pass_stdin, vault_exists)
                     .map_err(|error| error.to_string())?;
@@ -3862,68 +4170,43 @@ fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
             }
             // The passphrase has done its job; do not keep it through the run.
             drop(pass);
-            // A fresh vault starts empty: no seeded `test` profile (M-311).
-            // Pass `--user` (or use host-play) to create the first profile.
-            let focus = session.bootstrap_interactive_profiles(&args.users)?;
-            session.startup_focus = Some(focus.clone());
-            session.focus(&focus);
-            let mut app = new_app(
-                format!(
-                    "{} headless · {}",
-                    session.app_title(),
-                    session.profile_label()
-                ),
-                &session.preferences,
-            );
-            app.names = session.names.clone();
-            app.focused = session.names.iter().position(|n| n == &focus);
+            // A fresh vault starts empty: no seeded `test` profile (M-311),
+            // and `--user` creates none. An empty vault opens on the New
+            // profile form, where the operator types the first account's
+            // own username and password.
+            let app = interactive_landing(&mut session, args)?;
             run_loop(session, app)
         }
     }
 }
 
 impl TuiSession {
-    /// Profiles for an interactive boot: create missing `--user` names,
-    /// then focus the first `--user` (or the vault's first profile). A
-    /// fresh vault stays empty — no seeded `test` profile (M-311) — so
-    /// booting one without `--user` is an honest error, not a dead end.
-    fn bootstrap_interactive_profiles(&mut self, users: &[String]) -> Result<String, String> {
-        // `--user` names may not exist: create them like host-play does.
-        for u in users {
-            if self.core.profile(u).is_none() {
-                self.create_profile(u)?;
-            }
-        }
+    /// Profiles for an interactive boot: `--user` only selects
+    /// profiles the vault already holds. It never creates one: a
+    /// created profile would need a password the operator did not
+    /// type. An unknown `--user` name stops the boot and names how
+    /// to add it. The focus is the first `--user` (or the vault's
+    /// first profile); an empty vault has none, and the caller opens
+    /// the New profile form on it instead of stopping. A fresh vault
+    /// stays empty — no seeded `test` profile (M-311).
+    fn bootstrap_interactive_profiles(
+        &mut self,
+        users: &[String],
+    ) -> Result<Option<String>, String> {
         self.names = self
             .core
             .profiles()
             .map(|p| p.username().to_string())
             .collect();
-        users
+        for user in users {
+            if !self.names.contains(user) {
+                return Err(unknown_profile_error(user));
+            }
+        }
+        Ok(users
             .first()
             .cloned()
-            .or_else(|| self.names.first().cloned())
-            .ok_or_else(|| {
-                "vault has no profiles (start tui-play with --user <name> to create one)".into()
-            })
-    }
-
-    /// Create a missing profile (fresh game secret, uid one past the
-    /// vault's max, from the 274M base).
-    fn create_profile(&mut self, username: &str) -> Result<(), String> {
-        self.core
-            .stage_new_profile(username, &frontend_core::live::profile_password(username));
-        let submitted = self
-            .submit_raw(OperatorCommand::CreateProfile, Targets::Application)
-            .map_err(|error| format!("profile: {error}"))?;
-        if let Some(reason) = self.core.command_failure(submitted.request()) {
-            return Err(reason.to_string());
-        }
-        self.core.flush_writes();
-        match submitted.operation().and_then(|op| self.core.failure(op)) {
-            Some(error) => Err(format!("profile: {error}")),
-            None => Ok(()),
-        }
+            .or_else(|| self.names.first().cloned()))
     }
 }
 
@@ -4216,6 +4499,8 @@ fn dispatch(session: &mut TuiSession, app: &mut TuiApp, action: AppAction) {
             }
         }
         AppAction::ProfileImport(action) => session.profile_import(app, action),
+        AppAction::OpenNewProfile => session.open_new_profile(app),
+        AppAction::NewProfileKey(key) => session.new_profile_key(app, key),
         AppAction::ParamsKey(key) => {
             let action = session.params_key(app, key);
             dispatch(session, app, action);

@@ -46,13 +46,13 @@ use frontend_core::walk_map::{
 use frontend_core::MapBakeChoice;
 #[cfg(test)]
 use host_play::SlotStatus;
-use nav::paint::{
+use nav_planner::paint::{
     collision_at_with, hop_captions, hull_targets, reached, remaining_path_tiles, remaining_trail,
     select_draw_indices, trail_tones, HopCaption, HullTarget, PathTile, TrailTone,
 };
-use nav::router::{FindOptions, Route};
-use nav::tile::Tile;
-use nav::world::NavWorld;
+use nav_planner::router::{FindOptions, Route};
+use nav_planner::tile::Tile;
+use nav_planner::world::NavWorld;
 
 use crate::focus::{draw_for_slot, full_rate_for};
 use crate::nav_settings::{from_scenario, parse_html_color, NavSettings};
@@ -456,7 +456,9 @@ impl SceneRoutePaint {
         hops: bool,
     ) -> Self {
         let route = match route {
-            Some(WalkRoutePath::Legacy(route)) => nav::producer::route_view(world, route).ok(),
+            Some(WalkRoutePath::Legacy(route)) => {
+                nav_planner::producer::route_view(world, route).ok()
+            }
             Some(WalkRoutePath::Compact(route)) => Some(route),
             None => None,
         };
@@ -751,15 +753,15 @@ fn apply_path_camera(client: &mut Client, tiles: &[PathTile], here: Option<World
     }
     let world: Vec<_> = tiles.iter().map(|p| p.tile).collect();
     let hops: Vec<_> = tiles.iter().map(|p| p.transport).collect();
-    let Some(sampled) = nav::camera::path_facing_yaw(here, &world, &hops, 12) else {
+    let Some(sampled) = nav_planner::camera::path_facing_yaw(here, &world, &hops, 12) else {
         return;
     };
     let mut hold = PATH_CAM.lock().unwrap();
-    hold.desired = Some(nav::camera::hold_desired(hold.desired, sampled));
+    hold.desired = Some(nav_planner::camera::hold_desired(hold.desired, sampled));
     let Some(target) = hold.desired else {
         return;
     };
-    let (yaw, v) = nav::camera::ease_yaw(client.orbit_camera_yaw, target, hold.vel);
+    let (yaw, v) = nav_planner::camera::ease_yaw(client.orbit_camera_yaw, target, hold.vel);
     hold.vel = v;
     client.orbit_camera_yaw = yaw;
     // Keycam must not also integrate our ease velocity.
@@ -3582,7 +3584,7 @@ impl Session {
         self.select(name);
     }
 
-    /// Log out one member (the credentials Logout button): latch it so
+    /// Log out one member (the credentials Log out button): latch it so
     /// auto-login is blocked until [`Session::login_all`], then arm a clean
     /// IF logout. The slot stays up and focused; only the login intent
     /// changes.
@@ -4291,11 +4293,11 @@ impl Session {
         self.observed_map_services = self.core.observed_walk_services(&name, context);
     }
 
-    pub fn map_nav_digest(&self) -> nav::map::identity::Digest {
+    pub fn map_nav_digest(&self) -> nav_planner::map::identity::Digest {
         self.map_nav_digest_for(None)
     }
 
-    fn map_nav_digest_for(&self, world: Option<&NavWorld>) -> nav::map::identity::Digest {
+    fn map_nav_digest_for(&self, world: Option<&NavWorld>) -> nav_planner::map::identity::Digest {
         self.server_profile()
             .and_then(BoundProfile::nav_identity)
             .or_else(|| {
@@ -4308,7 +4310,7 @@ impl Session {
                 })
             })
             .unwrap_or_else(|| {
-                nav::map::identity::Digest::of(&self.launcher.generation().to_be_bytes())
+                nav_planner::map::identity::Digest::of(&self.launcher.generation().to_be_bytes())
             })
     }
 

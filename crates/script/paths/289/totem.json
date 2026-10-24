@@ -211,7 +211,7 @@
                 "leash": 6,
                 "prefer": ["Ok, I will get it back.", "I'm in search of adventure!"]
               },
-              "comment": "A Brimhaven start needs 30 carried coins for the one-way passage to Ardougne (crates/nav/src/transport/static_routes.rs:213; content/scripts/areas/area_karamja/scripts/customs_officer.rs2:59-85).",
+              "comment": "A Brimhaven start needs 30 carried coins for the one-way passage to Ardougne (crates/nav-planner/src/transport/static_routes.rs:213; content/scripts/areas/area_karamja/scripts/customs_officer.rs2:59-85).",
               "skip_if": { "Any": [] },
               "settle": {
                 "Fact": {

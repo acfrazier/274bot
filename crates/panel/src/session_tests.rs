@@ -31,7 +31,7 @@ use frontend_core::scripts::{
     CardSource, CompiledCardId, LoadShape, LoadStage, Loadouts, ScriptChoice, ScriptRunState,
 };
 use frontend_core::surface::InputSender;
-use frontend_core::surface::{FrameBuf, SlotInput};
+use frontend_core::surface::{FrameBuf, InputEv, SlotInput};
 use frontend_core::test_support::session::{
     assignment_key, clear_vault, core_vault_debug_rows, install_vault, vault_debug_rows,
     vault_upsert, with_assignment, with_lamp_auto, with_lamp_skill, with_random_events,
@@ -41,16 +41,16 @@ use frontend_core::test_support::{FixtureProfile, IsolatedStores, VaultFixture};
 use host_play as map_host;
 use host_play::profile::ProfileEnvironment;
 use host_play::{ProfileOptions, SlotArm, SlotStatus, StartupPhase};
-use nav::collision::WorldCollision;
-use nav::paint::{MAX_DRAW_TILES, NEAR_FULL_DENSITY};
-use nav::router::{
+use nav_planner::collision::WorldCollision;
+use nav_planner::paint::{MAX_DRAW_TILES, NEAR_FULL_DENSITY};
+use nav_planner::router::{
     CursorStep, FindOptions, Leg, Route, SearchCompletion, SearchCursor, SearchRequest,
 };
-use nav::tile::Tile;
-use nav::transport::{TransportEdge, TransportGraph, TransportKind};
-use nav::world::NavWorld;
-use nav::zones::ZoneExempt;
-use nav::WorldState;
+use nav_planner::tile::Tile;
+use nav_planner::transport::{TransportEdge, TransportGraph, TransportKind};
+use nav_planner::world::NavWorld;
+use nav_planner::zones::ZoneExempt;
+use nav_planner::WorldState;
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::num::NonZeroU32;
@@ -318,8 +318,8 @@ fn plant_snapshot(unpack: &Path, revision: u16, packs: &[(String, Vec<u8>)]) {
         .find(|(name, _)| name == "versionlist")
         .unwrap()
         .1;
-    let transfer = nav::manifest::hash_bytes(versionlist);
-    let negotiated = nav::manifest::hash_bytes(&crc_body(packs)[..36]);
+    let transfer = nav_planner::manifest::hash_bytes(versionlist);
+    let negotiated = nav_planner::manifest::hash_bytes(&crc_body(packs)[..36]);
     let input = unpack.join("fixture-input");
     std::fs::create_dir_all(&input).unwrap();
     for (name, bytes) in packs {
@@ -836,7 +836,7 @@ fn panel_profile_install_does_not_decode_reach_until_layer_demand() {
     let world = profile.world().unwrap();
     assert_eq!(profile.nav_load_counters().reach_reads, 1);
     assert_eq!(profile.nav_load_counters().reach_hashes, 1);
-    nav::paint::reset_bake_reach_calls();
+    nav_planner::paint::reset_bake_reach_calls();
     // An eager install would keep the old verified payload and paint it even
     // after the file changes. First layer demand must instead fail closed.
     let path = profile.nav_pack().with_extension("navreach");
@@ -850,7 +850,7 @@ fn panel_profile_install_does_not_decode_reach_until_layer_demand() {
     assert!(profile.reach().is_none());
     assert_eq!(profile.nav_load_counters().reach_reads, 2);
     assert_eq!(profile.nav_load_counters().reach_hashes, 2);
-    assert_eq!(nav::paint::bake_reach_calls(), 0);
+    assert_eq!(nav_planner::paint::bake_reach_calls(), 0);
 }
 
 #[test]
@@ -864,17 +864,17 @@ fn panel_map_uses_the_shared_lazy_sidecar_and_releases_its_binding() {
     let world = profile.world().unwrap();
     assert_eq!(profile.nav_load_counters().reach_reads, 1);
     assert_eq!(profile.nav_load_counters().reach_hashes, 1);
-    nav::paint::reset_bake_reach_calls();
+    nav_planner::paint::reset_bake_reach_calls();
     let map_bits = crate::picker::map_reach_bitset(&world).unwrap();
     assert_eq!(&*map_bits, &[0u64]);
     assert!(Arc::ptr_eq(&map_bits, &profile.reach().unwrap()));
     assert_eq!(Arc::strong_count(&map_bits), 2, "profile plus paint lease");
-    assert_eq!(nav::paint::bake_reach_calls(), 0);
-    let mut other = nav::world::NavWorld::load_pack(profile.nav_pack()).unwrap();
+    assert_eq!(nav_planner::paint::bake_reach_calls(), 0);
+    let mut other = nav_planner::world::NavWorld::load_pack(profile.nav_pack()).unwrap();
     other.collision.origin.x += 1;
     assert!(crate::picker::map_reach_bitset(&other).is_none());
     assert!(crate::picker::reach_bitset(&other).is_none());
-    assert_eq!(nav::paint::bake_reach_calls(), 0);
+    assert_eq!(nav_planner::paint::bake_reach_calls(), 0);
     session.release_walk_map();
     assert!(Arc::ptr_eq(
         &map_bits,
@@ -1707,7 +1707,7 @@ fn walled_world() -> NavWorld {
     let mut flags = vec![0u32; width * height];
     flags[width + 1] = CollisionFlag::W_N as u32 | CollisionFlag::W_S as u32;
     flags[2 * width + 2] = CollisionFlag::WR_GRND as u32;
-    let (walk, blocked) = nav::collision::pack_walk(&flags);
+    let (walk, blocked) = nav_planner::collision::pack_walk(&flags);
     NavWorld::from_parts(
         WorldCollision {
             origin: WorldTile {
@@ -1730,8 +1730,8 @@ fn compact_route_completion(
     world: &Arc<NavWorld>,
     from: WorldTile,
     to: WorldTile,
-) -> (nav::contract::NavLease, SearchCompletion) {
-    let lease = nav::producer::lease(world).expect("fixture pack lease");
+) -> (nav_planner::contract::NavLease, SearchCompletion) {
+    let lease = nav_planner::producer::lease(world).expect("fixture pack lease");
     let mut cursor = SearchCursor::new(
         SearchRequest::Single {
             from,
@@ -1950,7 +1950,7 @@ fn publish_nav_debug_carries_reach_from_the_bitset() {
     let mut flags = vec![0u32; width * height];
     flags[width + 1] = CollisionFlag::WALK_BLOCK_FLAGS as u32;
     flags[2 * width + 2] = CollisionFlag::WR_GRND as u32;
-    let (walk, blocked) = nav::collision::pack_walk(&flags);
+    let (walk, blocked) = nav_planner::collision::pack_walk(&flags);
     let world = NavWorld::from_parts(
         WorldCollision {
             origin: WorldTile {
@@ -2080,9 +2080,9 @@ fn saved_collision_prefs_without_drawing_do_not_load_navflags() {
         level: 0,
     };
     let flags = vec![0u32, 0, 0, 0];
-    let bytes = nav::pack::encode_flags_sidecar(origin, 1, 1, &flags);
+    let bytes = nav_planner::pack::encode_flags_sidecar(origin, 1, 1, &flags);
     std::fs::write(&path, &bytes).unwrap();
-    let digest = nav::manifest::hash_bytes(&bytes);
+    let digest = nav_planner::manifest::hash_bytes(&bytes);
 
     crate::picker::drop_flags_sidecar();
     crate::picker::reset_flags_load_count();
@@ -2155,9 +2155,9 @@ fn remove_only_focused_drawing_slot_releases_flags() {
         level: 0,
     };
     let flags = vec![0u32, 0, 0, 0];
-    let bytes = nav::pack::encode_flags_sidecar(origin, 1, 1, &flags);
+    let bytes = nav_planner::pack::encode_flags_sidecar(origin, 1, 1, &flags);
     std::fs::write(&path, &bytes).unwrap();
-    let digest = nav::manifest::hash_bytes(&bytes);
+    let digest = nav_planner::manifest::hash_bytes(&bytes);
 
     crate::picker::drop_flags_sidecar();
     crate::picker::set_navflags_binding(path, Some(digest), true);
@@ -2411,7 +2411,7 @@ fn face_only_cells_publish_with_fill_without_labels() {
     let mut flags = vec![0u32; width * height];
     flags[width + 1] = CollisionFlag::W_S as u32;
     flags[width + 2] = CollisionFlag::W_NE as u32;
-    let (walk, blocked) = nav::collision::pack_walk(&flags);
+    let (walk, blocked) = nav_planner::collision::pack_walk(&flags);
     let world = NavWorld::from_parts(
         WorldCollision {
             origin: WorldTile {
@@ -4280,7 +4280,7 @@ fn picker_mine_world() -> NavWorld {
             }
         }
     }
-    let (walk, blocked) = nav::collision::pack_walk(&flags);
+    let (walk, blocked) = nav_planner::collision::pack_walk(&flags);
     NavWorld::from_parts(
         WorldCollision {
             origin: WorldTile {
@@ -4310,7 +4310,7 @@ fn picker_confirm_feeds_the_focused_slots_latched_essence_session() {
     arms.lock().unwrap().insert(
         "alice".into(),
         Arc::new(Mutex::new(host_play::WalkArm::with_latched_essence(
-            nav::essence::essence_session_for_wizard(553),
+            nav_planner::essence::essence_session_for_wizard(553),
         ))),
     );
     s.core.set_walk_arms(arms);
@@ -4378,7 +4378,7 @@ fn picker_confirm_no_path_keeps_destination_without_arming() {
     for z in 0..3 {
         flags[z * 3 + 1] = CollisionFlag::WALK_BLOCK_FLAGS as u32;
     }
-    let (walk, blocked) = nav::collision::pack_walk(&flags);
+    let (walk, blocked) = nav_planner::collision::pack_walk(&flags);
     let world = NavWorld::from_parts(
         WorldCollision {
             origin: WorldTile {
@@ -4461,7 +4461,7 @@ fn toll_world() -> NavWorld {
     let mut graph = TransportGraph::default();
     graph.at.entry(edge.at).or_default().push(0);
     graph.edges.push(edge);
-    let (walk, blocked) = nav::collision::pack_walk(&flags);
+    let (walk, blocked) = nav_planner::collision::pack_walk(&flags);
     NavWorld::from_parts(
         WorldCollision {
             origin: WorldTile {
@@ -4648,7 +4648,7 @@ fn picker_confirm_ignores_teles_until_allow_teleports() {
         wildy_cap: None,
         quest_gates: None,
     });
-    let (walk, blocked) = nav::collision::pack_walk(&flags);
+    let (walk, blocked) = nav_planner::collision::pack_walk(&flags);
     let world = NavWorld::from_parts(
         WorldCollision {
             origin: WorldTile {
@@ -4739,8 +4739,8 @@ fn picker_confirm_uses_find_with_options() {
     // Routing gates wilderness entry on the packed `graph.wilderness`
     // rules; pack the surface zone so the fixture has a wilderness.
     let mut graph = TransportGraph {
-        wilderness: nav::transport::WildernessRules {
-            zones: vec![nav::transport::WildernessZone {
+        wilderness: nav_planner::transport::WildernessRules {
+            zones: vec![nav_planner::transport::WildernessZone {
                 x1: 2944,
                 z1: 3520,
                 x2: 3391,
@@ -4783,7 +4783,7 @@ fn picker_confirm_uses_find_with_options() {
         wildy_cap: None,
         quest_gates: None,
     });
-    let (walk, blocked) = nav::collision::pack_walk(&flags);
+    let (walk, blocked) = nav_planner::collision::pack_walk(&flags);
     let world = NavWorld::from_parts(
         WorldCollision {
             origin: WorldTile {
@@ -5999,6 +5999,41 @@ fn closing_game_pane_leaves_capture_pref_on() {
         !s.map_desk.input_connected(),
         "drain drops while the pane is closed"
     );
+}
+
+#[test]
+fn closing_game_pane_releases_a_captured_mouse_hold() {
+    let input = SlotInput::new();
+    let mut s = Session::new();
+    s.core.set_spawn_workers(false);
+    s.core.set_play(Some(empty_play()));
+    s.core.insert_slot_io(
+        "alice",
+        SlotIo {
+            input: Arc::clone(&input),
+            pixels: FrameBuf::new(),
+        },
+    );
+    s.set_focus_for_test("alice");
+    s.set_game_pane_open(true);
+    s.set_capture(true);
+    let sender = s
+        .map_desk
+        .duplicate_input_sender()
+        .expect("capture is attached to the focused slot");
+    assert!(sender.send(InputEv::Down {
+        button: 2,
+        x: 10,
+        y: 20,
+    }));
+    let mut shell = client::client::GameShell::new();
+    input.drain(&mut shell);
+    assert_eq!(shell.mouse_button, 2);
+
+    s.set_game_pane_open(false);
+    input.drain(&mut shell);
+    assert_eq!(shell.mouse_button, 0);
+    assert!(!s.map_desk.input_connected());
 }
 
 #[test]

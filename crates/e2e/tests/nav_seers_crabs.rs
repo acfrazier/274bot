@@ -1,6 +1,6 @@
 //! Live: Seers street → rock crabs on foot — the live twin of the nav
 //! `seers_street_walks_to_rock_crabs_on_foot` unit test. Waits for the
-//! slot `ingame && scene_state == 2`, then runs `nav::router::find` for
+//! slot `ingame && scene_state == 2`, then runs `nav_planner::router::find` for
 //! the same OD (Seers street (2725,3485) → rock crabs (2710,3720), both
 //! level 0) on the pack the process loaded. `NoPath` fails the harness
 //! with exit 1 (rs2b0t style). The character is not walked the whole way
@@ -19,8 +19,8 @@ use std::time::Duration;
 use api::snapshot::WorldTile;
 use common::{fail, live, options, profiles, wait_ingame};
 use host_play::run_with_io;
-use nav::router::{find, Leg};
-use nav::world::NavWorld;
+use nav_planner::router::{find, Leg};
+use nav_planner::world::NavWorld;
 
 /// The task OD, verbatim: Seers street → rock crabs, both level 0.
 const FROM: WorldTile = WorldTile {
@@ -57,7 +57,7 @@ fn nav_seers_crabs() {
         Ok(w) => w,
         Err(e) => fail(&format!(
             "nav_seers_crabs: cannot load nav pack {} ({e}); \
-             rebake with `cargo run -p nav --bin nav-pack` (v5)",
+             rebake with `cargo run -p nav-planner --bin nav-pack` (v5)",
             path.display()
         )),
     };
@@ -109,7 +109,7 @@ fn nav_seers_crabs() {
     }
     for l in &r.legs {
         if let Leg::Transport { edge } = l {
-            if edge.kind != nav::transport::TransportKind::Door {
+            if edge.kind != nav_planner::transport::TransportKind::Door {
                 fail(&format!(
                     "nav_seers_crabs: transport at {:?} is not a road door \
                      (invented cliff/teleport hop)",

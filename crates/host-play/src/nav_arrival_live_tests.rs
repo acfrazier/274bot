@@ -93,7 +93,7 @@ impl WalkSpec {
             target: self.target,
             candidate_goals: None,
             radius: self.radius,
-            arrival: nav::arrival::ArrivalKind::Reach,
+            arrival: nav_planner::arrival::ArrivalKind::Reach,
             loc_id: self.loc_id,
             options: script::native::WalkOptions::default(),
             required_after,
@@ -170,7 +170,7 @@ impl Script for NativeWalkScript {
 struct RouteSample {
     request_id: u64,
     generation: u64,
-    route: nav::router::Route,
+    route: nav_planner::router::Route,
 }
 
 fn stamp_utc() -> String {
@@ -411,8 +411,8 @@ fn route_json(sample: Option<&RouteSample>) -> Value {
         .legs
         .iter()
         .map(|leg| match leg {
-            nav::router::Leg::Walk { tiles } => json!({"kind": "walk", "tiles": tiles}),
-            nav::router::Leg::Transport { edge } => json!({
+            nav_planner::router::Leg::Walk { tiles } => json!({"kind": "walk", "tiles": tiles}),
+            nav_planner::router::Leg::Transport { edge } => json!({
                 "kind": format!("{:?}", edge.kind),
                 "at": edge.at,
                 "to": edge.to,

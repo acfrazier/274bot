@@ -25,7 +25,7 @@
 //! coins row whose required count equals the selected full-crate payout and
 //! exceeds the amount held. Frozen names the shortfall (`bankPlan.ts:98–113`);
 //! the host gets the required total from `walk_missing_carry`
-//! (`nav::router::missing_item_reqs`). These rows are only posted for a
+//! (`nav_planner::router::missing_item_reqs`). These rows are only posted for a
 //! `NoPath` failure, as frozen only explains an `unreachable` one
 //! (`WalkExecutor.ts:466–490`).
 //!

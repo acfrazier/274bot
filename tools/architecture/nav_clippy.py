@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Any, Iterator
 
 ROOT = Path(__file__).resolve().parents[2]
-NAV_CRATE = ROOT / "crates" / "nav"
+NAV_CRATE = ROOT / "crates" / "nav-planner"
 ROOT_MANIFEST = ROOT / "Cargo.toml"
 CONFIG_PATH = NAV_CRATE / "clippy.toml"
 INVENTORY_PATH = ROOT / "tools" / "architecture" / "nav-clippy-inventory.json"
@@ -1132,7 +1132,7 @@ def check_generated_files() -> bool:
     expected_config = config_text(inventory)
     actual_config = CONFIG_PATH.read_text(encoding="utf-8")
     if actual_config != expected_config:
-        print("crates/nav/clippy.toml differs from the generated deny list.", file=sys.stderr)
+        print("crates/nav-planner/clippy.toml differs from the generated deny list.", file=sys.stderr)
         okay = False
     if okay:
         print(

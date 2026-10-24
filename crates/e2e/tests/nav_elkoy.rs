@@ -31,9 +31,9 @@ use std::time::{Duration, Instant};
 use api::snapshot::WorldTile;
 use common::{fail, live, mint_seed, options, profiles, wait_ingame};
 use host_play::run_with_io;
-use nav::router::{find_with, FindOptions, Leg};
-use nav::transport::TransportKind;
-use nav::world::NavWorld;
+use nav_planner::router::{find_with, FindOptions, Leg};
+use nav_planner::transport::TransportKind;
+use nav_planner::world::NavWorld;
 use scenario::{default_pack_path, RunnerStatus, ScenarioRunner};
 
 /// The maze entrance coord (`^elkoy_entrance_coord = 0_39_49_8_56`).
@@ -82,20 +82,20 @@ fn nav_elkoy() {
     if elk.len() != 2 {
         fail(&format!(
             "nav_elkoy: pack carries {} Elkoy escort edges, need 2 \
-             (rebake with `cargo run -p nav --bin nav-pack`)",
+             (rebake with `cargo run -p nav-planner --bin nav-pack`)",
             elk.len()
         ));
     }
     if !elk.iter().any(|e| e.at == ELKOY_MAZE_SIDE && e.to == MAZE) {
         fail(&format!(
             "nav_elkoy: the maze-side Elkoy {ELKOY_MAZE_SIDE:?} -> village {MAZE:?} \
-             escort is missing (rebake with `cargo run -p nav --bin nav-pack`)"
+             escort is missing (rebake with `cargo run -p nav-planner --bin nav-pack`)"
         ));
     }
     if !elk.iter().any(|e| e.to == ENTRANCE) {
         fail(&format!(
             "nav_elkoy: the village Elkoy -> entrance {ENTRANCE:?} escort is missing \
-             (rebake with `cargo run -p nav --bin nav-pack`)"
+             (rebake with `cargo run -p nav-planner --bin nav-pack`)"
         ));
     }
     for e in &elk {
@@ -114,7 +114,7 @@ fn nav_elkoy() {
     // hop (the traveller walks no maze tiles) — the escort edge carries
     // the Tree Gnome Village quest req, so the proof must state the quest
     // done: the fail-closed empty state refuses the gated hop.
-    let mut state = nav::WorldState::empty();
+    let mut state = nav_planner::WorldState::empty();
     state.quests.insert("Tree Gnome Village".to_string());
     find_with(
         &world.collision,
@@ -142,7 +142,7 @@ fn nav_elkoy() {
                 route.legs
             ));
         }
-        if nav::debug_enabled() {
+        if nav_planner::debug_enabled() {
             println!(
                 "nav_elkoy: maze-side elkoy -> village routed ({:.0} ticks, {} legs)",
                 route.ticks,

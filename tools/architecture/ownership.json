@@ -1723,527 +1723,527 @@
       "owner": "T5"
     },
     {
-      "path": "crates/nav/build.rs",
+      "path": "crates/nav-planner/build.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/examples/perf_corpus.rs",
+      "path": "crates/nav-planner/examples/perf_corpus.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/arrival.rs",
+      "path": "crates/nav-planner/src/arrival.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/arrival_tests.rs",
+      "path": "crates/nav-planner/src/arrival_tests.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/bake.rs",
+      "path": "crates/nav-planner/src/bake.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/bake_tests.rs",
+      "path": "crates/nav-planner/src/bake_tests.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/bank_fetch.rs",
+      "path": "crates/nav-planner/src/bank_fetch.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/bank_fetch/cursor.rs",
+      "path": "crates/nav-planner/src/bank_fetch/cursor.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/bank_fetch/cursor_tests.rs",
+      "path": "crates/nav-planner/src/bank_fetch/cursor_tests.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/bank_fetch/overlay.rs",
+      "path": "crates/nav-planner/src/bank_fetch/overlay.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/bank_fetch/planning.rs",
+      "path": "crates/nav-planner/src/bank_fetch/planning.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/bank_fetch_tests.rs",
+      "path": "crates/nav-planner/src/bank_fetch_tests.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/bin/cache-content-id.rs",
+      "path": "crates/nav-planner/src/bin/cache-content-id.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/bin/nav-input-audit.rs",
+      "path": "crates/nav-planner/src/bin/nav-input-audit.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/bin/nav-pack.rs",
+      "path": "crates/nav-planner/src/bin/nav-pack.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/bin/nav-pack/nav_pack_tests.rs",
+      "path": "crates/nav-planner/src/bin/nav-pack/nav_pack_tests.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/bundle.rs",
+      "path": "crates/nav-planner/src/bundle.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/bundle_tests.rs",
+      "path": "crates/nav-planner/src/bundle_tests.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/camera.rs",
+      "path": "crates/nav-planner/src/camera.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/camera_tests.rs",
+      "path": "crates/nav-planner/src/camera_tests.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/canlight.rs",
+      "path": "crates/nav-planner/src/canlight.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/canlight_tests.rs",
+      "path": "crates/nav-planner/src/canlight_tests.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/collision.rs",
+      "path": "crates/nav-planner/src/collision.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/collision_tests.rs",
+      "path": "crates/nav-planner/src/collision_tests.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/essence.rs",
+      "path": "crates/nav-planner/src/essence.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/essence_tests.rs",
+      "path": "crates/nav-planner/src/essence_tests.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/executor_adapter.rs",
+      "path": "crates/nav-planner/src/executor_adapter.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/executor_adapter_tests.rs",
+      "path": "crates/nav-planner/src/executor_adapter_tests.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/grid.rs",
+      "path": "crates/nav-planner/src/grid.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/lib.rs",
+      "path": "crates/nav-planner/src/lib.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/lib_tests.rs",
+      "path": "crates/nav-planner/src/lib_tests.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/manifest.rs",
+      "path": "crates/nav-planner/src/manifest.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/manifest_tests.rs",
+      "path": "crates/nav-planner/src/manifest_tests.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/map.rs",
+      "path": "crates/nav-planner/src/map.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/map/cache.rs",
+      "path": "crates/nav-planner/src/map/cache.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/map/catalogue.rs",
+      "path": "crates/nav-planner/src/map/catalogue.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/map/catalogue_tests.rs",
+      "path": "crates/nav-planner/src/map/catalogue_tests.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/map/client_cache.rs",
+      "path": "crates/nav-planner/src/map/client_cache.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/map/formats.rs",
+      "path": "crates/nav-planner/src/map/formats.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/map/identity.rs",
+      "path": "crates/nav-planner/src/map/identity.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/map/poi.rs",
+      "path": "crates/nav-planner/src/map/poi.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/map/producer.rs",
+      "path": "crates/nav-planner/src/map/producer.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/map/raster.rs",
+      "path": "crates/nav-planner/src/map/raster.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/map/raster_tests.rs",
+      "path": "crates/nav-planner/src/map/raster_tests.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/map/records.rs",
+      "path": "crates/nav-planner/src/map/records.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/map/services.rs",
+      "path": "crates/nav-planner/src/map/services.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/map/services_tests.rs",
+      "path": "crates/nav-planner/src/map/services_tests.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/map/spatial.rs",
+      "path": "crates/nav-planner/src/map/spatial.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/map/tests.rs",
+      "path": "crates/nav-planner/src/map/tests.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/named_banks.rs",
+      "path": "crates/nav-planner/src/named_banks.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/named_banks_tests.rs",
+      "path": "crates/nav-planner/src/named_banks_tests.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/pack.rs",
+      "path": "crates/nav-planner/src/pack.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/pack/banks.rs",
+      "path": "crates/nav-planner/src/pack/banks.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/pack/config_parse.rs",
+      "path": "crates/nav-planner/src/pack/config_parse.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/pack/mapsquare.rs",
+      "path": "crates/nav-planner/src/pack/mapsquare.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/pack/sidecars.rs",
+      "path": "crates/nav-planner/src/pack/sidecars.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/pack/zones.rs",
+      "path": "crates/nav-planner/src/pack/zones.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/pack_tests.rs",
+      "path": "crates/nav-planner/src/pack_tests.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/paint.rs",
+      "path": "crates/nav-planner/src/paint.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/paint_tests.rs",
+      "path": "crates/nav-planner/src/paint_tests.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/producer.rs",
+      "path": "crates/nav-planner/src/producer.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/producer_tests.rs",
+      "path": "crates/nav-planner/src/producer_tests.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/quest_gates.rs",
+      "path": "crates/nav-planner/src/quest_gates.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/quest_gates_tests.rs",
+      "path": "crates/nav-planner/src/quest_gates_tests.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/router.rs",
+      "path": "crates/nav-planner/src/router.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/router/consumption_tests.rs",
+      "path": "crates/nav-planner/src/router/consumption_tests.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/router/grid.rs",
+      "path": "crates/nav-planner/src/router/grid.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/router/resources.rs",
+      "path": "crates/nav-planner/src/router/resources.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/router/zeroed_buffer.rs",
+      "path": "crates/nav-planner/src/router/zeroed_buffer.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/router_tests.rs",
+      "path": "crates/nav-planner/src/router_tests.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/test_support.rs",
+      "path": "crates/nav-planner/src/test_support.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/test_support/source_scan.rs",
+      "path": "crates/nav-planner/src/test_support/source_scan.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/tile.rs",
+      "path": "crates/nav-planner/src/tile.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/transport.rs",
+      "path": "crates/nav-planner/src/transport.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/transport/brass_key.rs",
+      "path": "crates/nav-planner/src/transport/brass_key.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/transport/condparse.rs",
+      "path": "crates/nav-planner/src/transport/condparse.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/transport/door_members.rs",
+      "path": "crates/nav-planner/src/transport/door_members.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/transport/doors.rs",
+      "path": "crates/nav-planner/src/transport/doors.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/transport/engine_door_procs.rs2",
+      "path": "crates/nav-planner/src/transport/engine_door_procs.rs2",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/transport/engine_forced_procs.rs2",
+      "path": "crates/nav-planner/src/transport/engine_forced_procs.rs2",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/transport/gates.rs",
+      "path": "crates/nav-planner/src/transport/gates.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/transport/gliders.rs",
+      "path": "crates/nav-planner/src/transport/gliders.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/transport/index.rs",
+      "path": "crates/nav-planner/src/transport/index.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/transport/levers.rs",
+      "path": "crates/nav-planner/src/transport/levers.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/transport/magic_guild.rs",
+      "path": "crates/nav-planner/src/transport/magic_guild.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/transport/membergate.rs",
+      "path": "crates/nav-planner/src/transport/membergate.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/transport/members_guard.rs",
+      "path": "crates/nav-planner/src/transport/members_guard.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/transport/npc_hops.rs",
+      "path": "crates/nav-planner/src/transport/npc_hops.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/transport/observable.rs",
+      "path": "crates/nav-planner/src/transport/observable.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/transport/quest_doors.rs",
+      "path": "crates/nav-planner/src/transport/quest_doors.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/transport/ranging_guild.rs",
+      "path": "crates/nav-planner/src/transport/ranging_guild.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/transport/rs2_syntax.rs",
+      "path": "crates/nav-planner/src/transport/rs2_syntax.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/transport/script_text.rs",
+      "path": "crates/nav-planner/src/transport/script_text.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/transport/scripted_doors.rs",
+      "path": "crates/nav-planner/src/transport/scripted_doors.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/transport/shortcuts.rs",
+      "path": "crates/nav-planner/src/transport/shortcuts.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/transport/spirit_trees.rs",
+      "path": "crates/nav-planner/src/transport/spirit_trees.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/transport/stage_doors.rs",
+      "path": "crates/nav-planner/src/transport/stage_doors.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/transport/stage_doors_entrances.rs",
+      "path": "crates/nav-planner/src/transport/stage_doors_entrances.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/transport/stage_doors_forced.rs",
+      "path": "crates/nav-planner/src/transport/stage_doors_forced.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/transport/stage_doors_keys.rs",
+      "path": "crates/nav-planner/src/transport/stage_doors_keys.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/transport/stage_doors_tests.rs",
+      "path": "crates/nav-planner/src/transport/stage_doors_tests.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/transport/static_routes.rs",
+      "path": "crates/nav-planner/src/transport/static_routes.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/transport/teleports.rs",
+      "path": "crates/nav-planner/src/transport/teleports.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/transport/toll.rs",
+      "path": "crates/nav-planner/src/transport/toll.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/transport/vertical.rs",
+      "path": "crates/nav-planner/src/transport/vertical.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/transport/webs.rs",
+      "path": "crates/nav-planner/src/transport/webs.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/transport/wilderness.rs",
+      "path": "crates/nav-planner/src/transport/wilderness.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/transport/zanaris.rs",
+      "path": "crates/nav-planner/src/transport/zanaris.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/transport_tests.rs",
+      "path": "crates/nav-planner/src/transport_tests.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/walk_destinations.rs",
+      "path": "crates/nav-planner/src/walk_destinations.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/walk_destinations_tests.rs",
+      "path": "crates/nav-planner/src/walk_destinations_tests.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/world.rs",
+      "path": "crates/nav-planner/src/world.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/world_state.rs",
+      "path": "crates/nav-planner/src/world_state.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/world_state_tests.rs",
+      "path": "crates/nav-planner/src/world_state_tests.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/world_tests.rs",
+      "path": "crates/nav-planner/src/world_tests.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/zones.rs",
+      "path": "crates/nav-planner/src/zones.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/zones/curated.rs",
+      "path": "crates/nav-planner/src/zones/curated.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/zones_tests.rs",
+      "path": "crates/nav-planner/src/zones_tests.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/tests/arrival_candidate_parity.rs",
+      "path": "crates/nav-planner/tests/arrival_candidate_parity.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/tests/arrival_candidate_qualification.rs",
+      "path": "crates/nav-planner/tests/arrival_candidate_qualification.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/tests/death_plateau_real_pack.rs",
+      "path": "crates/nav-planner/tests/death_plateau_real_pack.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/tests/entrance_diagnosis.rs",
+      "path": "crates/nav-planner/tests/entrance_diagnosis.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/tests/forced_moves_real_pack.rs",
+      "path": "crates/nav-planner/tests/forced_moves_real_pack.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/tests/gated_entrances_real_pack.rs",
+      "path": "crates/nav-planner/tests/gated_entrances_real_pack.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/tests/ice_dungeon_real_pack.rs",
+      "path": "crates/nav-planner/tests/ice_dungeon_real_pack.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/tests/pack_decode_bound.rs",
+      "path": "crates/nav-planner/tests/pack_decode_bound.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/tests/quest_doors_real_pack.rs",
+      "path": "crates/nav-planner/tests/quest_doors_real_pack.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/tests/resource_manifest.rs",
+      "path": "crates/nav-planner/tests/resource_manifest.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/tests/scripted_ladders.rs",
+      "path": "crates/nav-planner/tests/scripted_ladders.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/tests/small_cooperative_memory.rs",
+      "path": "crates/nav-planner/tests/small_cooperative_memory.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/tests/wwm_back_route_real_pack.rs",
+      "path": "crates/nav-planner/tests/wwm_back_route_real_pack.rs",
       "owner": "T5"
     },
     {
@@ -5691,6 +5691,10 @@
       "owner": "T3"
     },
     {
+      "path": "crates/tui/src/new_profile.rs",
+      "owner": "T3"
+    },
+    {
       "path": "crates/tui/src/overlay.rs",
       "owner": "T3"
     },
@@ -5808,6 +5812,14 @@
     },
     {
       "path": "tools/architecture/run.sh",
+      "owner": "T1"
+    },
+    {
+      "path": "tools/docs-check/docs_check.py",
+      "owner": "T1"
+    },
+    {
+      "path": "tools/docs-check/test_docs_check.py",
       "owner": "T1"
     },
     {
@@ -6627,6 +6639,14 @@
       "owner": "T1"
     },
     {
+      "path": "vendor/fr-client-rust/crates/client/tests/common/gpu_serial.rs",
+      "owner": "T4"
+    },
+    {
+      "path": "vendor/fr-client-rust/crates/client/tests/common/scene_fixture.rs",
+      "owner": "T4"
+    },
+    {
       "path": "vendor/fr-client-rust/crates/client/tests/config_types.rs",
       "owner": "T1"
     },
@@ -6879,6 +6899,18 @@
       "owner": "T1"
     },
     {
+      "path": "vendor/fr-client-rust/crates/client/tests/scene_hook_omit.rs",
+      "owner": "T4"
+    },
+    {
+      "path": "vendor/fr-client-rust/crates/client/tests/scene_hook_result.rs",
+      "owner": "T4"
+    },
+    {
+      "path": "vendor/fr-client-rust/crates/client/tests/scene_hook_standalone_omit.rs",
+      "owner": "T4"
+    },
+    {
       "path": "vendor/fr-client-rust/crates/client/tests/seq_delay.rs",
       "owner": "T1"
     },
@@ -7039,35 +7071,35 @@
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/contract/mod.rs",
+      "path": "crates/nav-planner/src/contract/mod.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/contract/arrival.rs",
+      "path": "crates/nav-planner/src/contract/arrival.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/contract/collision.rs",
+      "path": "crates/nav-planner/src/contract/collision.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/contract/contract_tests.rs",
+      "path": "crates/nav-planner/src/contract/contract_tests.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/contract/envelope.rs",
+      "path": "crates/nav-planner/src/contract/envelope.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/contract/route.rs",
+      "path": "crates/nav-planner/src/contract/route.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/contract/transport.rs",
+      "path": "crates/nav-planner/src/contract/transport.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav/src/contract/zones.rs",
+      "path": "crates/nav-planner/src/contract/zones.rs",
       "owner": "T5"
     },
     {
@@ -7168,6 +7200,14 @@
     },
     {
       "path": "crates/frontend-core/src/scripts/paint.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/frontend-core/src/scripts/paint_layout.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/frontend-core/src/scripts/paint_style.rs",
       "owner": "T3"
     },
     {

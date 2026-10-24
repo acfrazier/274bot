@@ -322,7 +322,7 @@ fn parse_guarded_local_world(revision: u16, engine_dir: &Path) -> Option<Guarded
     Some(GuardedLocalWorld {
         members,
         path,
-        sha256: nav::pack::sha256_hex(&digest),
+        sha256: nav_planner::pack::sha256_hex(&digest),
         bytes: bytes.len() as u64,
     })
 }

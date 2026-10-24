@@ -10,7 +10,7 @@ use frontend_core::test_support::paint::TestPaint;
 use frontend_core::test_support::scripts::{NativeStatus, TestSchema};
 use frontend_core::SettingsDraft;
 use host_play::local_state::{LocalStateService, StateRoot};
-use nav::tile::Tile;
+use nav_planner::tile::Tile;
 
 use crate::bin::seam::Seam;
 use crate::layout::Screen;
@@ -22,15 +22,15 @@ use frontend_core::walk_map::{
     WalkActionErrorKind, WalkActionKind, WalkCatalogue, WalkExclude, WalkMapContext, WalkServices,
     WalkSlotStatus,
 };
-use nav::map::formats::{
+use nav_planner::map::formats::{
     ClientPois, Coverage, CoverageLevel, ServiceIdentity, ServicePois, NAVPOIS_VERSION,
 };
-use nav::map::identity::{CatalogueIdentity, Digest};
-use nav::map::poi::{
+use nav_planner::map::identity::{CatalogueIdentity, Digest};
+use nav_planner::map::poi::{
     CapabilityEvidence, DisplayAnchor, EntityKind, Footprint, PoiKey, PoiKind, PoiRecord,
     SourceSpace,
 };
-use nav::map::{Rows, Text};
+use nav_planner::map::{Rows, Text};
 
 use super::{wasd_target, AppAction, MapCatalogueStatus, TuiApp, WalkSendMode};
 use frontend_core::{FleetRow, Phase, SlotDetail};
@@ -144,8 +144,8 @@ fn poi_record(
 }
 
 fn map_poi_catalogue() -> (std::sync::Arc<WalkCatalogue>, Tile, Tile) {
-    let world = std::sync::Arc::new(nav::world::NavWorld::from_grid(
-        &nav::grid::StepGrid::fixture_open_3x3(),
+    let world = std::sync::Arc::new(nav_planner::world::NavWorld::from_grid(
+        &nav_planner::grid::StepGrid::fixture_open_3x3(),
     ));
     let identity = CatalogueIdentity {
         revision: 289,
@@ -249,8 +249,8 @@ fn open_map_world() -> TuiApp {
         &[],
     );
     app.detail = Some(ready_detail("alice", (1, 1, 0)));
-    app.world = Some(Arc::new(nav::world::NavWorld::from_grid(
-        &nav::grid::StepGrid::fixture_open_3x3(),
+    app.world = Some(Arc::new(nav_planner::world::NavWorld::from_grid(
+        &nav_planner::grid::StepGrid::fixture_open_3x3(),
     )));
     app.here = Some(WorldTile {
         x: 1,
@@ -315,8 +315,8 @@ fn boot_draws_the_fleet_without_map_demand() {
     let all = text(&rows);
     assert!(rows[0].contains("274bot"), "title: {all}");
     assert!(
-        all.contains("no profiles: nothing to mark or log in"),
-        "an empty fleet says there is nothing to act on: {all}"
+        all.contains("no profiles: press N to add one"),
+        "an empty fleet explains how to add a profile: {all}"
     );
     assert_eq!(
         app.map_catalogue_status,
@@ -356,8 +356,8 @@ fn status_card_shows_a_parked_quester_phase_and_reason_at_common_sizes() {
 #[test]
 fn draw_map_paints_walkable_dots_after_explicit_activation() {
     let mut app = TuiApp::new("274bot headless");
-    app.world = Some(Arc::new(nav::world::NavWorld::from_grid(
-        &nav::grid::StepGrid::fixture_open_3x3(),
+    app.world = Some(Arc::new(nav_planner::world::NavWorld::from_grid(
+        &nav_planner::grid::StepGrid::fixture_open_3x3(),
     )));
     app.here = Some(api::snapshot::WorldTile {
         x: 1,
@@ -809,8 +809,8 @@ fn map_enter_confirms_a_walk_selection() {
     let mut app = TuiApp::new("274bot headless");
     app.names = vec!["test".into()];
     app.focused = Some(0);
-    app.world = Some(Arc::new(nav::world::NavWorld::from_grid(
-        &nav::grid::StepGrid::fixture_open_3x3(),
+    app.world = Some(Arc::new(nav_planner::world::NavWorld::from_grid(
+        &nav_planner::grid::StepGrid::fixture_open_3x3(),
     )));
     app.here = Some(api::snapshot::WorldTile {
         x: 1,
@@ -842,7 +842,10 @@ fn map_zone_toggle_selects_request_policy_and_resets_per_open() {
     app.nav = frontend_core::WalkGlobals::new(true, false, false, false, true);
 
     assert_eq!(app.on_key(key(KeyCode::F(4))), AppAction::MapOpen);
-    assert_eq!(app.map_find_options().zones, nav::zones::ZoneExempt::NONE);
+    assert_eq!(
+        app.map_find_options().zones,
+        nav_planner::zones::ZoneExempt::NONE
+    );
     assert!(app.map_find_options().allow_teleports);
 
     assert_eq!(app.on_key(ch('z')), AppAction::None);
@@ -856,7 +859,10 @@ fn map_zone_toggle_selects_request_policy_and_resets_per_open() {
 
     assert_eq!(app.on_key(key(KeyCode::Esc)), AppAction::MapClose);
     assert!(!app.map_route_through_zones);
-    assert_eq!(app.map_find_options().zones, nav::zones::ZoneExempt::NONE);
+    assert_eq!(
+        app.map_find_options().zones,
+        nav_planner::zones::ZoneExempt::NONE
+    );
 
     assert_eq!(app.on_key(key(KeyCode::F(4))), AppAction::MapOpen);
     assert!(!app.map_route_through_zones);
@@ -932,7 +938,10 @@ fn durable_walk_permissions_refresh_map_and_inherited_script_parameter() {
 
     let initial = text(&draw(&mut app, 120, 40));
     assert!(initial.contains("avoided"), "{initial}");
-    assert_eq!(app.map_find_options().zones, nav::zones::ZoneExempt::NONE);
+    assert_eq!(
+        app.map_find_options().zones,
+        nav_planner::zones::ZoneExempt::NONE
+    );
     assert_eq!(app.on_key(ch('z')), AppAction::None);
     assert!(app.map_route_through_zones);
     assert!(app.map_find_options().zones.is_all());
@@ -977,7 +986,10 @@ fn durable_walk_permissions_refresh_map_and_inherited_script_parameter() {
         globally_off.contains("avoided") && !globally_off.contains("crossing (z)"),
         "{globally_off}"
     );
-    assert_eq!(app.map_find_options().zones, nav::zones::ZoneExempt::NONE);
+    assert_eq!(
+        app.map_find_options().zones,
+        nav_planner::zones::ZoneExempt::NONE
+    );
     app.params_state.open = true;
     let local = params_overlay_text(&mut app, &loadouts);
     assert!(
@@ -991,7 +1003,10 @@ fn durable_walk_permissions_refresh_map_and_inherited_script_parameter() {
     assert!(app.map_find_options().zones.is_all());
     assert_eq!(app.on_key(ch('z')), AppAction::None);
     assert!(!app.map_route_through_zones);
-    assert_eq!(app.map_find_options().zones, nav::zones::ZoneExempt::NONE);
+    assert_eq!(
+        app.map_find_options().zones,
+        nav_planner::zones::ZoneExempt::NONE
+    );
 
     std::fs::write(preferences.path(), "{corrupt").unwrap();
     // A directly written file is seen after an explicit re-read; a corrupt
@@ -1003,7 +1018,10 @@ fn durable_walk_permissions_refresh_map_and_inherited_script_parameter() {
         "{corrupt}"
     );
     assert!(!app.map_route_through_zones);
-    assert_eq!(app.map_find_options().zones, nav::zones::ZoneExempt::NONE);
+    assert_eq!(
+        app.map_find_options().zones,
+        nav_planner::zones::ZoneExempt::NONE
+    );
     app.params_state.open = true;
     let fail_closed = params_overlay_text(&mut app, &loadouts);
     assert!(
@@ -1023,8 +1041,8 @@ fn map_focus_reserves_l_for_pan_and_esc_orders_search_before_close() {
         "l opens loadouts from the Overview"
     );
     app.loadouts_state.open = false;
-    app.world = Some(Arc::new(nav::world::NavWorld::from_grid(
-        &nav::grid::StepGrid::fixture_open_3x3(),
+    app.world = Some(Arc::new(nav_planner::world::NavWorld::from_grid(
+        &nav_planner::grid::StepGrid::fixture_open_3x3(),
     )));
     assert_eq!(app.on_key(key(KeyCode::F(4))), AppAction::MapOpen);
     let before = app.map.pan;

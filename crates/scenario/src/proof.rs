@@ -7,8 +7,8 @@ use api::snapshot::{
     ActorKind, ChatLineView, GameSnapshot, GroundItemView, LocView, WidgetRoot, WidgetView,
     WorldTile,
 };
-use nav::arrival::arrived;
-use nav::tile::{chebyshev, Tile};
+use nav_planner::arrival::arrived;
+use nav_planner::tile::{chebyshev, Tile};
 
 /// A named predicate over observable game state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -125,7 +125,7 @@ pub enum Proof {
     ChatChoice,
     /// `quest_done("Rune Mysteries Quest")`: the quest tab paints the
     /// quest's row green — the same journal read the nav
-    /// [`nav::WorldState`] gates quest edges on.
+    /// [`nav_planner::WorldState`] gates quest edges on.
     QuestDone { name: &'static str },
     /// Tutorial overlay is closed (`tut_com_id == -1`).
     TutorialClosed,
@@ -704,16 +704,16 @@ impl Proof {
             | Proof::ScriptIdle
             | Proof::ClueProtectWindow { .. } => false,
             Proof::EssenceMine => snap.tile().is_some_and(|(tx, tz, tl)| {
-                nav::essence::in_essence_mine(WorldTile {
+                nav_planner::essence::in_essence_mine(WorldTile {
                     x: tx,
                     z: tz,
                     level: tl,
                 })
             }),
             Proof::ChatChoice => !snap.chat_options().is_empty(),
-            Proof::QuestDone { name } => {
-                nav::WorldState::from_snapshot(snap).quests.contains(*name)
-            }
+            Proof::QuestDone { name } => nav_planner::WorldState::from_snapshot(snap)
+                .quests
+                .contains(*name),
             Proof::TutorialClosed => snap.modals().tutorial == -1,
             Proof::ChatClosed => snap.modals().chat == -1,
             Proof::ActiveContinue => active_continue(snap),

@@ -9,7 +9,7 @@ use std::future::Future;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use api::game_data::{NpcAttackKind, NpcNameRow};
-use nav::contract::ZoneKindView;
+use nav_planner::contract::ZoneKindView;
 
 use super::super::select::facts::npc_max_hit;
 use super::super::tables::CombatTables;

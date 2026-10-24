@@ -342,7 +342,7 @@ impl Case {
         }
     }
 
-    fn stand(self, world: &nav::world::NavWorld) -> Result<WorldTile, String> {
+    fn stand(self, world: &nav_planner::world::NavWorld) -> Result<WorldTile, String> {
         match self {
             Self::M1 | Self::M5 | Self::M5Stop => Ok(IMP_START),
             Self::M0Manual | Self::M0ManualPaused => standable_neighbor(world, M0_START_ANCHOR),
@@ -2060,7 +2060,7 @@ fn wear_step(id: i32) -> Step {
 }
 
 fn standable_neighbor(
-    world: &nav::world::NavWorld,
+    world: &nav_planner::world::NavWorld,
     anchor: WorldTile,
 ) -> Result<WorldTile, String> {
     const OFFSETS: [(i32, i32); 8] = [
@@ -2089,7 +2089,10 @@ struct RangedPlacement {
     stands: Vec<WorldTile>,
 }
 
-fn ranged_placement(case: Case, world: &nav::world::NavWorld) -> Result<RangedPlacement, String> {
+fn ranged_placement(
+    case: Case,
+    world: &nav_planner::world::NavWorld,
+) -> Result<RangedPlacement, String> {
     if !case.is_ranged() {
         return Err("ranged placement requested for a non-ranged case".to_owned());
     }
@@ -2142,7 +2145,10 @@ fn tile_distance(a: WorldTile, b: WorldTile) -> i32 {
     }
 }
 
-fn magic_spawn_stand(world: &nav::world::NavWorld, anchor: WorldTile) -> Result<WorldTile, String> {
+fn magic_spawn_stand(
+    world: &nav_planner::world::NavWorld,
+    anchor: WorldTile,
+) -> Result<WorldTile, String> {
     // A clear two-tile-wide walking corridor conservatively excludes scenery
     // and wall faces along the five-tile casting line, including the actor.
     for dz in -8..=8 {

@@ -5,12 +5,12 @@ use api::snapshot::WorldTile;
 use client::dash3d::CollisionFlag;
 use host_play::admission::{self, Admission, RiskInput};
 use host_play::{DangerLevel, WalkGlobals, NET_AVAILABLE};
-use nav::collision::{pack_walk, WorldCollision};
-use nav::router::{find_with_avoid, FindOptions, Route};
-use nav::transport::TransportGraph;
-use nav::world::NavWorld;
-use nav::zones::{Zone, ZoneClass, ZoneExempt, ZoneKind, ZoneTable, NO_GROUP};
-use nav::WorldState;
+use nav_planner::collision::{pack_walk, WorldCollision};
+use nav_planner::router::{find_with_avoid, FindOptions, Route};
+use nav_planner::transport::TransportGraph;
+use nav_planner::world::NavWorld;
+use nav_planner::zones::{Zone, ZoneClass, ZoneExempt, ZoneKind, ZoneTable, NO_GROUP};
+use nav_planner::WorldState;
 use script::combat::risk::{RiskTables, UnknownWhy, Verdict};
 use script::combat::CombatTables;
 use script::native::{RiskPolicy, WalkBit, WalkOptions, WalkPermissions, WalkRefusal};
@@ -412,7 +412,7 @@ fn reentering_after_an_origin_escape_is_a_crossing() {
     let mut tiles: Vec<_> = (2..=20).map(|x| tile(x, 1)).collect();
     tiles.extend((2..20).rev().map(|x| tile(x, 1)));
     let route = Route {
-        legs: vec![nav::router::Leg::Walk { tiles }],
+        legs: vec![nav_planner::router::Leg::Walk { tiles }],
         dest: tile(2, 1),
         ticks: 20.0,
     };

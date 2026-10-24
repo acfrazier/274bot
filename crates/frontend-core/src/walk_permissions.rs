@@ -5,7 +5,7 @@
 //! shared preferences, through the process local-state service.
 
 use host_play::WalkGlobals as HostWalkGlobals;
-use nav::router::FindOptions;
+use nav_planner::router::FindOptions;
 
 /// Three durable danger-route policies.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -349,7 +349,7 @@ mod tests {
     use super::{DangerLevel, WalkGlobals, WalkGlobalsView};
     use crate::prefs::UiPreferences as Preferences;
     use host_play::local_state::{LocalStateService, StateRoot};
-    use nav::zones::ZoneExempt;
+    use nav_planner::zones::ZoneExempt;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicUsize, Ordering};
 

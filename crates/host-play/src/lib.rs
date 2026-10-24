@@ -121,14 +121,14 @@ pub use instance_lock::{
     InstancePermit, InstancePermitOutcome,
 };
 #[cfg(test)]
-use nav::bank_fetch::BankStep;
-#[cfg(test)]
-use nav::router::{find_with, FindOptions, Route};
-use nav::world::NavWorld;
-#[cfg(test)]
-use nav::WorldState;
-#[cfg(test)]
 use nav_executor::Traveller;
+#[cfg(test)]
+use nav_planner::bank_fetch::BankStep;
+#[cfg(test)]
+use nav_planner::router::{find_with, FindOptions, Route};
+use nav_planner::world::NavWorld;
+#[cfg(test)]
+use nav_planner::WorldState;
 #[cfg(test)]
 use play_bootstrap::bot_client_config;
 use play_bootstrap::PlayConnection;
@@ -393,7 +393,7 @@ impl Play {
     /// `name` is the typed username, looked up by the login identity it
     /// decodes to ([`slot_bank_memory::memory_key`]). `Unknown` with no
     /// rows for a never-observed or unknown account.
-    pub fn bank_rows(&self, name: &str) -> nav::bank_fetch::BankRows {
+    pub fn bank_rows(&self, name: &str) -> nav_planner::bank_fetch::BankRows {
         slot_bank_memory::planner_rows(
             self.bank_memories
                 .get(slot_bank_memory::memory_key(name).as_ref())

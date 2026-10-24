@@ -8,9 +8,10 @@
 
 ## Developer overview: the Agent API
 
-Beta kernel surface a bot agent codes against in 0.2.5 Beta 2: reading world state,
+Beta kernel surface a bot agent codes against in 0.2.6 Beta 2: reading world state,
 acting, settling, navigating, and logging in — through the `api` crate
-(`crates/api`) plus `nav` (`crates/nav`) and the host tick. The script
+(`crates/api`), `nav-planner` (`crates/nav-planner`), `nav-executor`
+(`crates/nav-executor`) and the host tick. The script
 crate is the runner kernel (compiled cards + Load isolate + catalog
 registration). Catalog helper compatibility is **partial** and fail-closed;
 honest skilling bots are not “all green by default.” Revision server profiles,
@@ -46,7 +47,7 @@ tested nor claimed.
 | `scenario` | Shared headed/headless live scenario runner (`panel-play --live` and `crates/e2e`) |
 | `e2e` | Headless live twins (`LIVE=1`) + `e2e-suite` ordered runner |
 | `frontend-core` | Shared panel/TUI scripts, nav prefs, resource meter |
-| `panel` | Native UI (`panel-play`): profiles, Log in/Logout, WalkTo, scripts, MultiBox |
+| `panel` | Native UI (`panel-play`): profiles, Log in/Log out, WalkTo, scripts, MultiBox |
 | `tui` | Headless operator panel (`tui-play`): ratatui + crossterm, same `host_play::Play`, raster Off |
 
 The client is the `vendor/fr-client-rust` submodule (path dep as `client`).

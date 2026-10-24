@@ -439,7 +439,7 @@ fn run_bank_return(template: Arc<SharedClientTemplate>, profile: Arc<host_play::
     let world = template.world().expect("selected navigation world");
     assert!(
         world.banks().iter().any(|bank| {
-            bank.tile == booth && matches!(bank.access, nav::pack::BankAccess::Booth { .. })
+            bank.tile == booth && matches!(bank.access, nav_planner::pack::BankAccess::Booth { .. })
         }),
         "selected pack does not contain the Catherby booth"
     );

@@ -1,13 +1,15 @@
+use std::sync::Arc;
+
 use client::client::GameShell;
 use dear_imgui_rs::Key;
-use frontend_core::surface::{InputEv, InputSender};
+use frontend_core::surface::{InputEv, InputSender, SlotInput};
 use frontend_core::{GameInputEvent, MapDesk};
 use winit::keyboard::{Key as WinitKey, KeyLocation, NamedKey};
 
 use super::{
     add_shifted_key_event, capture_key_ch, discard_unconsumed_native_capture,
     game_keyboard_available, maybe_send_click, shifted_imgui_key, shifted_imgui_key_at_location,
-    stream_capture, KeyboardOwner,
+    stream_capture, KeyboardOwner, MouseButtons, MouseFrame, MouseTarget, PaintMouseGate,
 };
 
 struct KeyCapture {
@@ -26,11 +28,76 @@ fn captured_input(map_desk: &MapDesk) -> Vec<InputEv> {
     map_desk
         .staged_game_input_for_test()
         .into_iter()
-        .filter_map(|event| match event {
+        .filter_map(|(event, _)| match event {
             GameInputEvent::Captured(event) => Some(event),
             GameInputEvent::Wire(_) => None,
         })
         .collect()
+}
+
+#[derive(Clone, Copy)]
+struct MouseRouteInput<'a> {
+    target: Option<MouseTarget<'a>>,
+    image_hovered: bool,
+    pointer_in_paint: bool,
+    applet_point: Option<(i32, i32)>,
+    buttons: MouseButtons,
+}
+
+fn mouse_route_input<'a>(
+    target: Option<MouseTarget<'a>>,
+    image_hovered: bool,
+    pointer_in_paint: bool,
+    applet_point: Option<(i32, i32)>,
+    buttons: MouseButtons,
+) -> MouseRouteInput<'a> {
+    MouseRouteInput {
+        target,
+        image_hovered,
+        pointer_in_paint,
+        applet_point,
+        buttons,
+    }
+}
+
+fn route_mouse(
+    gate: &mut PaintMouseGate,
+    map_desk: &mut MapDesk,
+    input: MouseRouteInput<'_>,
+    live_slots: &[(&str, &Arc<SlotInput>)],
+) {
+    let MouseRouteInput {
+        target,
+        image_hovered,
+        pointer_in_paint,
+        applet_point,
+        buttons,
+    } = input;
+    let sender = if image_hovered
+        && !pointer_in_paint
+        && applet_point.is_some()
+        && (buttons.left_down || buttons.right_down)
+    {
+        map_desk.duplicate_input_sender()
+    } else {
+        None
+    };
+    gate.route(
+        map_desk,
+        MouseFrame {
+            target,
+            sender,
+            image_hovered,
+            pointer_in_paint,
+            applet_point,
+            buttons,
+        },
+        |slot, input| {
+            live_slots
+                .iter()
+                .any(|(live_slot, live_input)| *live_slot == slot && Arc::ptr_eq(live_input, input))
+        },
+    );
 }
 
 impl KeyCapture {
@@ -518,6 +585,389 @@ fn stream_capture_stages_right_up_and_key() {
     ));
     assert!(matches!(events[2], InputEv::Up));
     assert!(matches!(events[3], InputEv::Key { down: true, ch: 10 }));
+}
+
+fn buttons(left_down: bool, right_down: bool, left_up: bool, right_up: bool) -> MouseButtons {
+    MouseButtons {
+        left_down,
+        right_down,
+        left_up,
+        right_up,
+    }
+}
+
+/// A game press keeps its release when the pointer leaves the image.
+#[test]
+fn a_game_press_released_outside_the_image_reaches_its_slot() {
+    let input = SlotInput::new();
+    let (sender, _) = InputSender::probe();
+    let mut map_desk = MapDesk::default();
+    map_desk.set_input_sender(Some(sender));
+    let target = MouseTarget {
+        slot: "alice",
+        input: &input,
+    };
+    let live_slots = [("alice", &input)];
+    let mut gate = PaintMouseGate::default();
+
+    route_mouse(
+        &mut gate,
+        &mut map_desk,
+        mouse_route_input(
+            Some(target),
+            true,
+            false,
+            Some((10, 20)),
+            buttons(true, false, false, false),
+        ),
+        &live_slots,
+    );
+    assert_eq!(
+        captured_input(&map_desk),
+        [InputEv::Down {
+            button: 1,
+            x: 10,
+            y: 20,
+        }]
+    );
+
+    map_desk.begin_game_input_frame();
+    route_mouse(
+        &mut gate,
+        &mut map_desk,
+        mouse_route_input(
+            Some(target),
+            false,
+            false,
+            None,
+            buttons(false, false, true, false),
+        ),
+        &live_slots,
+    );
+    assert_eq!(captured_input(&map_desk), [InputEv::Up]);
+}
+
+/// A paint press and its release never reach the game.
+#[test]
+fn a_paint_press_sends_neither_its_press_nor_its_release() {
+    let input = SlotInput::new();
+    let (sender, _) = InputSender::probe();
+    let mut map_desk = MapDesk::default();
+    map_desk.set_input_sender(Some(sender));
+    let target = MouseTarget {
+        slot: "alice",
+        input: &input,
+    };
+    let live_slots = [("alice", &input)];
+    let mut gate = PaintMouseGate::default();
+
+    route_mouse(
+        &mut gate,
+        &mut map_desk,
+        mouse_route_input(
+            Some(target),
+            true,
+            true,
+            Some((10, 20)),
+            buttons(true, true, false, false),
+        ),
+        &live_slots,
+    );
+    assert!(captured_input(&map_desk).is_empty());
+
+    map_desk.begin_game_input_frame();
+    route_mouse(
+        &mut gate,
+        &mut map_desk,
+        mouse_route_input(
+            Some(target),
+            true,
+            false,
+            Some((10, 20)),
+            buttons(false, false, true, true),
+        ),
+        &live_slots,
+    );
+    assert!(captured_input(&map_desk).is_empty());
+}
+
+/// A paint-owned button does not end a game-owned button's hold.
+#[test]
+fn two_held_buttons_keep_their_own_origins() {
+    let input = SlotInput::new();
+    let (sender, _) = InputSender::probe();
+    let mut map_desk = MapDesk::default();
+    map_desk.set_input_sender(Some(sender));
+    let target = MouseTarget {
+        slot: "alice",
+        input: &input,
+    };
+    let live_slots = [("alice", &input)];
+    let mut gate = PaintMouseGate::default();
+
+    route_mouse(
+        &mut gate,
+        &mut map_desk,
+        mouse_route_input(
+            Some(target),
+            true,
+            false,
+            Some((10, 20)),
+            buttons(true, false, false, false),
+        ),
+        &live_slots,
+    );
+    assert!(matches!(
+        captured_input(&map_desk).as_slice(),
+        [InputEv::Down { button: 1, .. }]
+    ));
+
+    map_desk.begin_game_input_frame();
+    route_mouse(
+        &mut gate,
+        &mut map_desk,
+        mouse_route_input(
+            Some(target),
+            true,
+            true,
+            Some((30, 40)),
+            buttons(false, true, false, false),
+        ),
+        &live_slots,
+    );
+    assert!(captured_input(&map_desk).is_empty());
+
+    map_desk.begin_game_input_frame();
+    route_mouse(
+        &mut gate,
+        &mut map_desk,
+        mouse_route_input(
+            Some(target),
+            true,
+            false,
+            Some((50, 60)),
+            buttons(false, false, false, true),
+        ),
+        &live_slots,
+    );
+    assert!(captured_input(&map_desk).is_empty());
+
+    map_desk.begin_game_input_frame();
+    route_mouse(
+        &mut gate,
+        &mut map_desk,
+        mouse_route_input(
+            Some(target),
+            true,
+            true,
+            Some((70, 80)),
+            buttons(false, false, true, false),
+        ),
+        &live_slots,
+    );
+    assert_eq!(captured_input(&map_desk), [InputEv::Up]);
+}
+
+/// An off-image press replaces an origin whose release was not observed.
+#[test]
+fn a_new_off_image_press_cannot_reuse_a_stale_game_origin() {
+    let input = SlotInput::new();
+    let (sender, _) = InputSender::probe();
+    let mut map_desk = MapDesk::default();
+    map_desk.set_input_sender(Some(sender));
+    let target = MouseTarget {
+        slot: "alice",
+        input: &input,
+    };
+    let live_slots = [("alice", &input)];
+    let mut gate = PaintMouseGate::default();
+
+    route_mouse(
+        &mut gate,
+        &mut map_desk,
+        mouse_route_input(
+            Some(target),
+            true,
+            false,
+            Some((10, 20)),
+            buttons(false, true, false, false),
+        ),
+        &live_slots,
+    );
+    map_desk.begin_game_input_frame();
+    route_mouse(
+        &mut gate,
+        &mut map_desk,
+        mouse_route_input(
+            Some(target),
+            false,
+            false,
+            None,
+            buttons(false, true, false, false),
+        ),
+        &live_slots,
+    );
+    assert_eq!(captured_input(&map_desk), [InputEv::Up]);
+
+    map_desk.begin_game_input_frame();
+    route_mouse(
+        &mut gate,
+        &mut map_desk,
+        mouse_route_input(
+            Some(target),
+            true,
+            false,
+            Some((30, 40)),
+            buttons(false, false, false, true),
+        ),
+        &live_slots,
+    );
+    assert!(captured_input(&map_desk).is_empty());
+}
+
+/// A focus change sends the release to the old slot, not the new slot.
+#[test]
+fn changing_focus_releases_the_press_slot_and_not_the_new_slot() {
+    let old_input = SlotInput::new();
+    let new_input = SlotInput::new();
+    let (old_sender, old_probe) = InputSender::probe();
+    let (new_sender, new_probe) = InputSender::probe();
+    let mut map_desk = MapDesk::default();
+    map_desk.set_input_sender(Some(old_sender.duplicate()));
+    let old_target = MouseTarget {
+        slot: "alice",
+        input: &old_input,
+    };
+    let new_target = MouseTarget {
+        slot: "bob",
+        input: &new_input,
+    };
+    let live_slots = [("alice", &old_input), ("bob", &new_input)];
+    let mut gate = PaintMouseGate::default();
+
+    route_mouse(
+        &mut gate,
+        &mut map_desk,
+        mouse_route_input(
+            Some(old_target),
+            true,
+            false,
+            Some((10, 20)),
+            buttons(false, true, false, false),
+        ),
+        &live_slots,
+    );
+    for (event, target) in map_desk.staged_game_input_for_test() {
+        if let GameInputEvent::Captured(event) = event {
+            assert!(target.unwrap_or(&old_sender).send(event));
+        }
+    }
+    map_desk.begin_game_input_frame();
+    map_desk.set_input_sender(Some(new_sender.duplicate()));
+    route_mouse(
+        &mut gate,
+        &mut map_desk,
+        mouse_route_input(
+            Some(new_target),
+            true,
+            false,
+            Some((30, 40)),
+            MouseButtons::default(),
+        ),
+        &live_slots,
+    );
+    assert_eq!(captured_input(&map_desk), [InputEv::Up]);
+    for (event, target) in map_desk.staged_game_input_for_test() {
+        if let GameInputEvent::Captured(event) = event {
+            assert!(target.unwrap_or(&new_sender).send(event));
+        }
+    }
+    map_desk.begin_game_input_frame();
+    route_mouse(
+        &mut gate,
+        &mut map_desk,
+        mouse_route_input(
+            Some(new_target),
+            true,
+            true,
+            Some((50, 60)),
+            buttons(false, false, false, true),
+        ),
+        &live_slots,
+    );
+    for (event, target) in map_desk.staged_game_input_for_test() {
+        if let GameInputEvent::Captured(event) = event {
+            assert!(target.unwrap_or(&new_sender).send(event));
+        }
+    }
+    assert_eq!(
+        old_probe.try_iter().collect::<Vec<_>>(),
+        [
+            InputEv::Down {
+                button: 2,
+                x: 10,
+                y: 20,
+            },
+            InputEv::Up,
+        ]
+    );
+    assert!(new_probe.try_iter().next().is_none());
+}
+
+/// Removing a held slot drops its release instead of sending it elsewhere.
+#[test]
+fn a_removed_slot_does_not_receive_a_late_release() {
+    let input = SlotInput::new();
+    let (sender, probe) = InputSender::probe();
+    let mut map_desk = MapDesk::default();
+    map_desk.set_input_sender(Some(sender));
+    let target = MouseTarget {
+        slot: "alice",
+        input: &input,
+    };
+    let live_slots = [("alice", &input)];
+    let mut gate = PaintMouseGate::default();
+
+    route_mouse(
+        &mut gate,
+        &mut map_desk,
+        mouse_route_input(
+            Some(target),
+            true,
+            false,
+            Some((10, 20)),
+            buttons(false, true, false, false),
+        ),
+        &live_slots,
+    );
+    for (event, target) in map_desk.staged_game_input_for_test() {
+        if let GameInputEvent::Captured(event) = event {
+            assert!(target.expect("the press has its slot sender").send(event));
+        }
+    }
+    map_desk.begin_game_input_frame();
+    route_mouse(
+        &mut gate,
+        &mut map_desk,
+        mouse_route_input(None, false, false, None, MouseButtons::default()),
+        &[],
+    );
+    map_desk.begin_game_input_frame();
+    route_mouse(
+        &mut gate,
+        &mut map_desk,
+        mouse_route_input(None, false, false, None, buttons(false, false, false, true)),
+        &[],
+    );
+    assert!(captured_input(&map_desk).is_empty());
+    assert_eq!(
+        probe.try_iter().collect::<Vec<_>>(),
+        [InputEv::Down {
+            button: 2,
+            x: 10,
+            y: 20,
+        }]
+    );
 }
 
 #[test]

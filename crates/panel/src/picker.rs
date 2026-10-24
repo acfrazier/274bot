@@ -25,16 +25,16 @@ use frontend_core::walk_map::{
 use frontend_core::{
     MapBakePrompt, DANGER_THIS_WALK_LABEL, GLOBAL_DANGER_WARNING, MAP_BAKE_TITLE, MAP_BAKE_WARNING,
 };
-use nav::contract::LegView;
+use nav_planner::contract::LegView;
 #[cfg(test)]
-use nav::contract::RouteView;
-use nav::map::spatial::GameTile;
-use nav::paint::{bake_reach, flood_components};
-use nav::router::Leg;
+use nav_planner::contract::RouteView;
+use nav_planner::map::spatial::GameTile;
+use nav_planner::paint::{bake_reach, flood_components};
+use nav_planner::router::Leg;
 #[cfg(test)]
-use nav::router::Route;
-use nav::tile::Tile;
-use nav::world::NavWorld;
+use nav_planner::router::Route;
+use nav_planner::tile::Tile;
+use nav_planner::world::NavWorld;
 
 use crate::game_view::FrameGpu;
 use crate::session::Session;
@@ -339,7 +339,7 @@ pub(crate) fn navflags_path() -> PathBuf {
 #[cfg(test)]
 fn decode_sidecar_file(path: &std::path::Path) -> Option<FlagSidecar> {
     // Tests decode fixtures without identity hashing.
-    let loaded = nav::pack::read_flags_sidecar(path, false).ok()?;
+    let loaded = nav_planner::pack::read_flags_sidecar(path, false).ok()?;
     Some(FlagSidecar {
         origin: loaded.origin,
         width: loaded.width,
@@ -369,8 +369,10 @@ pub(crate) fn ensure_flags_sidecar() {
     let hash = !trusted_bundled;
     let slot = match expected {
         None => FlagsSlot::Refused("flags identity is unknown"),
-        Some(expected) => match nav::pack::read_flags_sidecar(&path, hash) {
-            Err(nav::pack::PackError::Io(err)) if err.kind() == std::io::ErrorKind::NotFound => {
+        Some(expected) => match nav_planner::pack::read_flags_sidecar(&path, hash) {
+            Err(nav_planner::pack::PackError::Io(err))
+                if err.kind() == std::io::ErrorKind::NotFound =>
+            {
                 FlagsSlot::Missing
             }
             Err(_) => FlagsSlot::Refused("flags sidecar is unreadable"),
@@ -707,7 +709,7 @@ pub(crate) fn zoom_toward(
     split_centre(ncx, ncz)
 }
 
-fn map_layers(map: &WalkMapRenderer, view: nav::map::spatial::View) -> OverlayLayers {
+fn map_layers(map: &WalkMapRenderer, view: nav_planner::map::spatial::View) -> OverlayLayers {
     OverlayLayers {
         grid: map.show_grid,
         collision_fill: map.show_collision,
@@ -760,7 +762,7 @@ pub(crate) fn pending_highlight(session: &Session) -> Option<Tile> {
         .map(WalkSelection::reported_destination)
 }
 
-fn poi_anchor(poi: &nav::map::poi::PoiRecord) -> Tile {
+fn poi_anchor(poi: &nav_planner::map::poi::PoiRecord) -> Tile {
     Tile {
         x: poi.display.x.floor() as i32,
         z: poi.display.z.floor() as i32,

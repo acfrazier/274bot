@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/host", "crates/vault", "crates/api", "crates/host-play", "crates/frontend-core", "crates/e2e", "crates/panel", "crates/nav", "crates/nav-executor", "crates/script", "crates/scenario", "crates/tui", "tools/seat-model"]
+members = ["crates/host", "crates/vault", "crates/api", "crates/host-play", "crates/frontend-core", "crates/e2e", "crates/panel", "crates/nav-planner", "crates/nav-executor", "crates/script", "crates/scenario", "crates/tui", "tools/seat-model"]
 
 [workspace.lints.clippy]
 undocumented_unsafe_blocks = "warn"
@@ -24,7 +24,7 @@ large_types_passed_by_value = "deny"
 assigning_clones = "deny"
 
 [workspace.package]
-version = "0.2.5"
+version = "0.2.6"
 
 [workspace.dependencies]
 client = { path = "vendor/fr-client-rust/crates/client" }
@@ -39,10 +39,10 @@ dear-imgui-wgpu = { path = "vendor/dear-imgui-wgpu-0.15.1" }
 opt-level = 3
 
 # Route searches over the real pack dominate nav and real-pack tests. At
-# opt-level 0 the full `cargo test -p nav` took a median 334 s; at 3 it took
+# opt-level 0 the full `cargo test -p nav-planner` took a median 334 s; at 3 it took
 # 30 s (release: 28 s). A nav edit then rebuilding `script` tests cost +4 s
 # (27 -> 31 s). Measured 2026-10-08, MEASURE-NAV-OPT.
-[profile.dev.package.nav]
+[profile.dev.package.nav-planner]
 opt-level = 3
 
 # Debug info is most of `target/` and link work. Our crates keep file:line
