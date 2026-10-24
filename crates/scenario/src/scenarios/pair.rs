@@ -24,6 +24,25 @@ const KQ_LAIR: WorldTile = WorldTile {
     z: 9493,
     level: 0,
 };
+/// Whole-run watchdog for `jive_kq_four` (JIVE-KQ-1024).
+///
+/// Measured passing receipts (counted ticks / elapsed seconds):
+/// diagnosis 2,643/1,641.616, 2,818/1,739.422, 2,343/1,490.066;
+/// first fix series 2,426/1,501.433, 2,531/1,566.269,
+/// 2,471/1,531.477; final series 2,283/1,416.660, 2,545/1,573.469,
+/// 2,857/1,763.554, 2,441/1,512.262. The slowest pass leaves only
+/// 36.446 s (2.0 %) under the old 1,800 s, below the 20 % headroom
+/// rule. Two oracle-classified witness stalls were censored at
+/// that deadline (2,893 ticks / 1,800.016 s and 2,904 ticks /
+/// 1,800.009 s); they stay in the numbers, so the measured
+/// maximum is the 1,800.016 s lower bound. The watchdog is that
+/// maximum plus 20 %, rounded up: 1,800.016 × 1.2 = 2,160.019,
+/// so 2,161 s (`JIVE-KQ-1024/fix/watchdog.json`, computed by
+/// `judge_watchdog.py` there). The content gives no hard upper
+/// bound: fight length and the local-visibility witness terms
+/// can require a third trip, so this value is justified by these
+/// measurements, not derived from content.
+const KQ_WATCHDOG: Duration = Duration::from_secs(2_161);
 /// Selected-revision Kalphite Queen drops which cannot be confused with the
 /// seeded loadout.  Ammunition is deliberately excluded: recovered arrows
 /// are not boss-loot evidence.
@@ -1345,8 +1364,13 @@ fn send_ok(slot: &PairCompanionSlot, now: Instant) -> bool {
 /// four banked, KQ witness 14 (0.1.9) failed: its second group retreated on
 /// the food reserve before the second kill, a third descent still fit the
 /// 1800 s deadline, and the leader stopped on "KQ bank needs 2 more of item
-/// 954". Eight covers every descent the deadline allows; Beta 1
-/// qualification starts from here.
+/// 954". Eight still covers [`KQ_WATCHDOG`]: the fastest observed full
+/// descent cycle is 908 leader ticks (diagnosis run 3, trip 2: bank 364,
+/// walk 38, surface rope 17, upper cave 177, lair 206, escape 22, return
+/// walk 84), and the first lair entry was observed at leader tick 567, so
+/// a fifth entry needs at least 567 + 4×908 = 4,199 ticks, past the
+/// watchdog's 3,601 ticks at 600 ms. Four descents at two ropes each is
+/// the most the watchdog allows; Beta 1 qualification starts from here.
 const KQ_LEADER_ROPES: u32 = 8;
 /// The other members never withdraw ropes.
 const KQ_MEMBER_ROPES: u32 = 4;
@@ -2440,7 +2464,7 @@ pub(crate) fn jive_kq_four_scenario() -> Scenario {
             require_mainland_base: true,
             start_script: Some("JiveKQ"),
             fleet_start: Some(FleetStart::JiveKq),
-            deadline: Duration::from_secs(1_800),
+            deadline: KQ_WATCHDOG,
             nav: gold_script_nav(),
             ..Default::default()
         },
@@ -2923,6 +2947,11 @@ mod kq_finish_tests {
             "the driven close is the last step before the proof"
         );
         assert_eq!(scenario.proof, Proof::BankClosed);
+        assert_eq!(
+            scenario.settings.deadline,
+            std::time::Duration::from_secs(2_161),
+            "watchdog is the measured maximum plus 20 percent (KQ_WATCHDOG)"
+        );
     }
 
     /// The terminal summary names the unmet fleet phases, each
