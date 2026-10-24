@@ -1099,17 +1099,58 @@ fn native_seed_deposit_waits_for_main_bank_after_side_row_disappears() {
     }
 }
 
+/// A consumed row is not a failure while the bank proof is still pending.
+/// The step's own budget, not a shorter post-send cap, bounds this wait.
+#[test]
+fn native_seed_deposit_accepts_bank_proof_several_ticks_after_send() {
+    use client::io::ServerProt;
+
+    for (id, note_id) in [(COINS_ID, None), (LOBSTER_ID, Some(NOTED_LOBSTER_ID))] {
+        let mut runner = seed_deposit_runner(&[(id, note_id)], 200);
+        let mut client = native_seed_client();
+        let _peer = attach_loopback(&mut client);
+        plant_loaded_empty_bank(&mut client);
+        plant_bank_side_full(&mut client, note_id.unwrap_or(id), 200);
+        runner.tick(&mut client);
+        let sent = client.out.pos;
+
+        let mut empty_side = inv_full_packet(701, &[]);
+        client.handle_packet(ServerProt::UPDATE_INV_FULL, &mut empty_side);
+        let mut short_bank = inv_full_packet(601, &[(id + 1, 199)]);
+        client.handle_packet(ServerProt::UPDATE_INV_FULL, &mut short_bank);
+        for _ in 0..7 {
+            client.bump_gens(ServerProt::PLAYER_INFO);
+            runner.tick(&mut client);
+            assert_eq!(runner.status(), RunnerStatus::Running { step: 0, total: 1 });
+            assert_eq!(client.out.pos, sent, "a pending proof must not resend");
+        }
+
+        let mut bank_full = inv_full_packet(601, &[(id + 1, 200)]);
+        client.handle_packet(ServerProt::UPDATE_INV_FULL, &mut bank_full);
+        client.bump_gens(ServerProt::PLAYER_INFO);
+        runner.tick(&mut client);
+        runner.tick(&mut client);
+        assert_eq!(runner.status(), RunnerStatus::Passed);
+        assert_eq!(client.out.pos, sent);
+        let attempts = &runner.evidence().unwrap().seed_deposits;
+        assert_eq!(attempts.len(), 2);
+        assert_eq!((attempts[0].tick, attempts[0].result), (0, "DepositSent"));
+        assert_eq!((attempts[1].tick, attempts[1].result), (8, "ProofObserved"));
+        assert!(attempts[1].proof);
+    }
+}
+
 #[test]
 fn native_seed_deposit_consumed_row_without_bank_proof_fails_on_observed_tick() {
     use client::io::ServerProt;
 
     for bank_count in [0, 199] {
-        let mut runner = seed_deposit_runner(&[(COINS_ID, None)], 200);
+        let mut runner = seed_deposit_runner(&[(COINS_ID, None)], 5);
         let mut client = native_seed_client();
         let _peer = attach_loopback(&mut client);
         plant_loaded_empty_bank(&mut client);
         plant_bank_side_full(&mut client, COINS_ID, 200);
-        client.bump_gens(ServerProt::PLAYER_INFO);
+        // Start the step at tick zero so its full five-tick budget remains.
         runner.tick(&mut client);
         let sent = client.out.pos;
         let mut empty_side = inv_full_packet(701, &[]);
@@ -1123,14 +1164,17 @@ fn native_seed_deposit_consumed_row_without_bank_proof_fails_on_observed_tick() 
             runner.tick(&mut client);
         }
         assert_eq!(runner.status(), RunnerStatus::Running { step: 0, total: 1 });
-        client.bump_gens(ServerProt::PLAYER_INFO);
-        runner.tick(&mut client);
-        assert_eq!(runner.status(), RunnerStatus::Running { step: 0, total: 1 });
+        for _ in 0..4 {
+            client.bump_gens(ServerProt::PLAYER_INFO);
+            runner.tick(&mut client);
+            assert_eq!(runner.status(), RunnerStatus::Running { step: 0, total: 1 });
+            assert_eq!(client.out.pos, sent);
+        }
         client.bump_gens(ServerProt::PLAYER_INFO);
         runner.tick(&mut client);
         match runner.status() {
             RunnerStatus::Failed(message) => {
-                assert!(message.contains("2 game ticks"), "{message}");
+                assert!(message.contains("5 game ticks"), "{message}");
             }
             other => panic!("missing bank proof must fail, got {other:?}"),
         }
@@ -1149,7 +1193,7 @@ fn native_seed_deposit_without_consumption_still_exhausts_proof_budget() {
     plant_bank_side_full(&mut client, COINS_ID, 200);
     runner.tick(&mut client);
     let sent = client.out.pos;
-    for _ in 0..1 {
+    for _ in 0..2 {
         client.bump_gens(ServerProt::PLAYER_INFO);
         runner.tick(&mut client);
         assert_eq!(runner.status(), RunnerStatus::Running { step: 0, total: 1 });
@@ -1157,7 +1201,7 @@ fn native_seed_deposit_without_consumption_still_exhausts_proof_budget() {
     client.bump_gens(ServerProt::PLAYER_INFO);
     runner.tick(&mut client);
     match runner.status() {
-        RunnerStatus::Failed(message) => assert!(message.contains("2 game ticks"), "{message}"),
+        RunnerStatus::Failed(message) => assert!(message.contains("3 game ticks"), "{message}"),
         other => panic!("unprocessed deposit must fail within its budget, got {other:?}"),
     }
     assert_eq!(client.out.pos, sent);

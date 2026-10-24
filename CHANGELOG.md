@@ -42,7 +42,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.6` 
 #### Developer tools
 
 - Live checks that prepare bank stock now send each seed deposit once and wait
-  for the bank to confirm it. A missing seed or refused deposit still fails.
+  for the bank to confirm it within the step's existing game-tick budget.
+  A delayed confirmation no longer fails after two ticks.
+  A missing seed or refused deposit still fails.
   Their receipts retain deposit attempts, proof ticks and inventory revisions.
 
 #### Survival

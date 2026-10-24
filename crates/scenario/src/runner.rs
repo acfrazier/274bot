@@ -1093,16 +1093,6 @@ impl ScenarioRunner {
                 let wait = &self.current_step().wait;
                 (wait.arm, wait.budget_ticks)
             };
-            let seed_sent_tick =
-                matches!(self.current_step().kind, StepKind::NativeSeedDeposit { .. })
-                    .then_some(self.repeat_sent_game_tick)
-                    .flatten()
-                    .filter(|_| self.step_sent);
-            let budget = if seed_sent_tick.is_some() {
-                budget.min(crate::NATIVE_SEED_DEPOSIT_PROOF_TICKS)
-            } else {
-                budget
-            };
             self.observe_ground_guard(arm);
             if let Err(message) = self.observe_loot_trips(arm) {
                 self.finish_fail(&format!(
@@ -1116,8 +1106,6 @@ impl ScenarioRunner {
                 self.ground_guard
                     .as_ref()
                     .map_or(0, |guard| guard.ticks_waited)
-            } else if let Some(sent_tick) = seed_sent_tick {
-                self.snapshot.tick().wrapping_sub(sent_tick)
             } else {
                 self.game_ticks_waited
             };
