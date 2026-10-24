@@ -20,7 +20,7 @@ export GAME_DATA_289_SNAPSHOTS=/absolute/path/to/289-snapshots
 ```
 
 ```bash
-cargo build -p nav-planner --bin cache-content-id
+cargo build -p nav-bake --bin cache-content-id
 bun tools/game-data/generate.test.ts
 bun tools/game-data/verify.ts --revision 289
 bun tools/game-data/generate.ts --revision 289

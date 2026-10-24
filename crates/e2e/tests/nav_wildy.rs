@@ -134,7 +134,7 @@ fn nav_wildy() {
     if levers.len() < 2 {
         fail(&format!(
             "nav_wildy: pack carries {} lever edges (locs 1814/1815), need >= 2 \
-             (rebake with `cargo run -p nav-planner --bin nav-pack`)",
+             (rebake with `cargo run -p nav-bake --bin nav-pack`)",
             levers.len()
         ));
     }

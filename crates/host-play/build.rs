@@ -1,7 +1,7 @@
 //! Ordinary application builds own the navigation artifact.
 //!
 //! A default build bakes (or reuses) the selected release revision's nav pack
-//! and flags with the shared baker ([`nav_planner::bake`]), stages them under the
+//! and flags with the shared baker ([`nav_bake::bake`]), stages them under the
 //! install resource root the running binary resolves — the cargo profile
 //! directory for a plain executable, `Contents/Resources` for a macOS bundle,
 //! `BOT_NAV_RESOURCE_DIR` when a packager stages elsewhere — and publishes
@@ -19,7 +19,7 @@
 //! bake consumes implicitly — the pack id tables, the files of each recursive
 //! script scan (one row per file, so a missing child fails even when its
 //! directory keeps siblings), the bank booth config and the revision's
-//! canonical mapsquares ([`nav_planner::bundle::required_content_inputs`]) — on every
+//! canonical mapsquares ([`nav_bake::bundle::required_content_inputs`]) — on every
 //! build, before a warm staged artifact set is accepted. A deliberate content
 //! edit or addition is not judged here; it flows through the ordinary input
 //! fingerprints and rebakes. The developer CLI keeps its tolerant behavior.
@@ -48,7 +48,7 @@ use nav_bake::bundle::{
     artifact_layout, fingerprints, merge_identity_rows, resource_root_for_build, BakeStamp,
     StampExpectation,
 };
-use nav_planner::manifest::{self as modname, CacheManifest};
+use nav_planner::manifest::{CacheManifest, NavIdentityRow};
 use nav_planner::pack::FORMAT_ID;
 /// Environment inputs, all re-checked by cargo before this script is skipped.
 const ENV_KEYS: [&str; 7] = [
@@ -70,7 +70,8 @@ fn main() {
 
     // The bake generator identity is part of the artifact stamp: any change to
     // the baker or the pack format invalidates staged artifacts.
-    let nav_dir = manifest_dir.join("../nav-planner");
+    // Generator labels are relative to the workspace, not one crate.
+    let nav_dir = manifest_dir.join("../..");
     let mut sources = Vec::new();
     for relative in GENERATOR_SOURCES {
         let path = nav_dir.join(relative);
@@ -316,7 +317,7 @@ fn main() {
         .and_then(|stamp| stamp.covers(&expectation).ok())
     {
         Some(()) => (
-            modname::NavIdentityRow {
+            NavIdentityRow {
                 revision,
                 cache_id: cache_id.clone(),
                 content_id: staged.as_ref().expect("stamp").content_id.clone(),
@@ -414,7 +415,7 @@ fn bake_and_stage(
     resource_root: &Path,
     layout: &nav_bake::bundle::ArtifactLayout,
     stale_reason: Option<&str>,
-) -> Result<modname::NavIdentityRow, String> {
+) -> Result<NavIdentityRow, String> {
     if let Some(reason) = stale_reason {
         println!("cargo:warning=nav bundle: rebaking ({reason})");
     }
@@ -527,7 +528,7 @@ fn bake_and_stage(
         pois.len(),
         pack_path.display()
     );
-    Ok(modname::NavIdentityRow {
+    Ok(NavIdentityRow {
         revision,
         cache_id: cache_id.to_string(),
         content_id: manifest.content_id.clone(),
@@ -548,8 +549,8 @@ fn bake_and_stage(
 /// not generate.
 fn publish(
     out_dir: &Path,
-    checked_in: Vec<modname::NavIdentityRow>,
-    generated: Vec<modname::NavIdentityRow>,
+    checked_in: Vec<NavIdentityRow>,
+    generated: Vec<NavIdentityRow>,
 ) -> usize {
     let (rows, notes) = merge_identity_rows(generated, checked_in);
     for note in notes {
@@ -604,12 +605,12 @@ fn env_path(key: &str) -> Option<PathBuf> {
     Some(PathBuf::from(home).join(rest))
 }
 
-fn read_rows(path: &Path) -> Vec<modname::NavIdentityRow> {
+fn read_rows(path: &Path) -> Vec<NavIdentityRow> {
     let bytes = match std::fs::read(path) {
         Ok(bytes) => bytes,
         Err(e) => fail(&format!("navigation identities {}: {e}", path.display())),
     };
-    match serde_json::from_slice::<Vec<modname::NavIdentityRow>>(&bytes) {
+    match serde_json::from_slice::<Vec<NavIdentityRow>>(&bytes) {
         Ok(rows) => rows,
         Err(e) => fail(&format!("navigation identities {}: {e}", path.display())),
     }
