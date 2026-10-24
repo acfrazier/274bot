@@ -483,13 +483,11 @@ pub enum StepKind {
         #[allow(clippy::type_complexity)]
         send: Box<dyn Fn(&mut Client, &GameSnapshot) -> bool + Send + Sync>,
     },
-    /// Native seed deposit through the open bank window: like
-    /// [`StepKind::Repeat`], it re-attempts once per observed game tick
-    /// until `wait.arm` holds, but the runner owns the send
-    /// ([`native_seed_deposit_attempt`]) so a failed branch — missing
-    /// bank-side row, missing Deposit All operation, refused send —
-    /// names itself in the step failure instead of collapsing to a
-    /// bare driver rejection. Pending bank-side data soft-waits.
+    /// Native seed deposit through the open bank window. Pending bank-side
+    /// data re-arms once per observed game tick. An accepted send waits for
+    /// `wait.arm` without sending again, for at most two observed game ticks.
+    /// The runner owns the attempt so missing rows, missing Deposit All
+    /// operations and refused sends name their branch in the failure.
     NativeSeedDeposit {
         unnoted_id: i32,
         quantity: i32,
@@ -971,10 +969,14 @@ fn native_bank_seed(
     }
 }
 
-/// Progress of one native seed-deposit attempt. Every variant keeps
-/// the step armed: the runner re-attempts on the next observed game
-/// tick until the wait arm (a fresh bank holding the seed) holds or
-/// the step's game-tick budget runs out.
+/// Progress of one native seed-deposit attempt. Pending data re-arms the
+/// attempt. An accepted send latches the step until its bank proof arrives
+/// or the step's existing observed-game-tick budget expires.
+///
+/// Deposit All moves the item with `inv_moveitem_uncert`, without `p_delay`
+/// (`interface_bank/scripts/bank_deposit.rs2:4,18-27`, `bank.rs2:87-107`,
+/// move at `bank.rs2:102`). The bank inventory change is the proof signal,
+/// not a separate post-send timer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SeedDepositProgress {
     /// The fresh bank already holds the seed and the pack no longer
