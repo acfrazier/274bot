@@ -1192,3 +1192,147 @@ fn a_script_walk_ends_with_its_run_and_a_manual_walk_survives_the_stop() {
     s.poll();
     assert_eq!(row(&s, "vs-bob").brief(), "idle");
 }
+
+const REFUSED: &str = "Error connecting to server. (connect: Connection refused)";
+
+/// Two loaded bots with bob selected and a Log in wanted for bob, and bob's
+/// refused login published at `t0` and seen by the poll at `t0`.
+fn refused_bob(test: &str, t0: Instant) -> OperatorSession<()> {
+    let mut s = fleet(test, &["vn-alice", "vn-bob"], false);
+    s.select("vn-bob");
+    s.login("vn-bob", &mut HeadlessSurface::new());
+    publish(&s, "vn-bob", |r| {
+        phase_to(r, StartupPhase::Error);
+        r.error = Some(REFUSED.into());
+    });
+    s.poll_at(t0);
+    s
+}
+
+/// LOGIN-NOTICE-1024: the regression the headed check found. After a
+/// refused login, the retry's Connecting, a queue wait and a parked logged
+/// out each replace the state line, but none of them is a newer message or
+/// resolves the failure, so the login notice stays until the shared
+/// timeout. The state line keeps telling the truth beside it.
+#[test]
+fn login_notice_survives_retry_and_parked_states_until_the_timeout() {
+    use crate::ERROR_MESSAGE_TIMEOUT as TIMEOUT;
+    let t0 = Instant::now();
+    let mut s = refused_bob("notice-survives", t0);
+    let line = format!("login {REFUSED}");
+    assert_eq!(row(&s, "vn-bob").phase, Phase::LoginError);
+    assert_eq!(detail(&s).state, line);
+    assert_eq!(detail(&s).row.login_notice(), Some(line.as_str()));
+    assert_eq!(
+        detail(&s).login_notice_line(),
+        None,
+        "the error state line already says it"
+    );
+    assert_eq!(row(&s, "vn-alice").login_notice(), None, "per bot");
+
+    // The next attempt: the host clears its error (mark_login_started).
+    publish(&s, "vn-bob", |r| {
+        phase_to(r, StartupPhase::Connecting);
+        r.error = None;
+    });
+    s.poll_at(t0 + Duration::from_secs(1));
+    assert_eq!(row(&s, "vn-bob").phase, Phase::Connecting);
+    assert_eq!(detail(&s).state, "logging in…");
+    assert_eq!(detail(&s).login_notice_line(), Some(line.as_str()));
+    assert_eq!(
+        row(&s, "vn-bob").last_error(),
+        None,
+        "the notice, not the history row, shows the error"
+    );
+
+    publish(&s, "vn-bob", |r| {
+        phase_to(r, StartupPhase::Queueing);
+        (r.queue_position, r.queue_total) = (1, 2);
+    });
+    s.poll_at(t0 + Duration::from_secs(2));
+    assert_eq!(row(&s, "vn-bob").phase, Phase::Queued);
+    assert_eq!(detail(&s).login_notice_line(), Some(line.as_str()));
+
+    s.logout("vn-bob");
+    s.poll_at(t0 + Duration::from_secs(3));
+    assert_eq!(row(&s, "vn-bob").phase, Phase::LoggedOut);
+    assert_eq!(detail(&s).state, "logged out (Log in to connect)");
+    assert_eq!(detail(&s).login_notice_line(), Some(line.as_str()));
+
+    s.poll_at(t0 + TIMEOUT - Duration::from_millis(1));
+    assert_eq!(detail(&s).login_notice_line(), Some(line.as_str()));
+    let generation = s.fleet_view().generation();
+    s.poll_at(t0 + TIMEOUT);
+    assert_eq!(detail(&s).row.login_notice(), None, "gone at 15 s");
+    assert!(
+        s.fleet_view().generation() > generation,
+        "the expiry is a visible change"
+    );
+    assert_eq!(
+        row(&s, "vn-bob").last_error(),
+        Some(REFUSED),
+        "the error stays as history"
+    );
+    assert_eq!(detail(&s).state, "logged out (Log in to connect)");
+}
+
+/// A second refused attempt with the same words is a newer message: it
+/// restarts the 15 s.
+#[test]
+fn login_notice_renews_on_a_repeated_failure_with_the_same_text() {
+    use crate::ERROR_MESSAGE_TIMEOUT as TIMEOUT;
+    let t0 = Instant::now();
+    let mut s = refused_bob("notice-renews", t0);
+    publish(&s, "vn-bob", |r| {
+        phase_to(r, StartupPhase::Connecting);
+        r.error = None;
+    });
+    s.poll_at(t0 + Duration::from_secs(5));
+    let again = t0 + Duration::from_secs(10);
+    publish(&s, "vn-bob", |r| {
+        r.startup_phase = StartupPhase::Error;
+        r.startup_phase_started = again;
+        r.error = Some(REFUSED.into());
+    });
+    s.poll_at(again);
+    s.poll_at(t0 + TIMEOUT);
+    assert!(
+        detail(&s).row.login_notice().is_some(),
+        "the second failure restarted the clock"
+    );
+    s.poll_at(again + TIMEOUT - Duration::from_millis(1));
+    assert!(detail(&s).row.login_notice().is_some());
+    s.poll_at(again + TIMEOUT);
+    assert_eq!(detail(&s).row.login_notice(), None);
+}
+
+/// A successful login resolves the notice at once.
+#[test]
+fn login_notice_clears_on_a_successful_login() {
+    let t0 = Instant::now();
+    let mut s = refused_bob("notice-resolved", t0);
+    publish(&s, "vn-bob", |r| {
+        phase_to(r, StartupPhase::Connecting);
+        r.error = None;
+    });
+    s.poll_at(t0 + Duration::from_secs(1));
+    assert!(detail(&s).row.login_notice().is_some());
+    publish(&s, "vn-bob", |r| {
+        phase_to(r, StartupPhase::LoadingScene);
+        r.connected = true;
+    });
+    s.poll_at(t0 + Duration::from_secs(2));
+    assert_eq!(row(&s, "vn-bob").phase, Phase::Loading);
+    assert_eq!(detail(&s).row.login_notice(), None, "resolved by the login");
+    assert_eq!(detail(&s).login_notice_line(), None);
+}
+
+/// Size tripwire: a bot with no login notice pays one pointer on its row and
+/// one in its derivation state (168 + 16 bytes before the notice; an inline
+/// `Option<String>` and clock made it 192 + 120), so keep the notice boxed.
+#[cfg(target_pointer_width = "64")]
+#[test]
+fn a_bot_without_a_login_notice_costs_two_pointers() {
+    assert_eq!(std::mem::size_of::<FleetRow>(), 176);
+    assert_eq!(std::mem::size_of::<RowState>(), 24);
+}

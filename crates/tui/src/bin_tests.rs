@@ -8273,3 +8273,171 @@ fn a_settings_edit_with_no_bound_profile_is_refused() {
     assert_eq!(app.error, None, "focusing a bot resolved the message");
     let _iso = iso;
 }
+
+/// Edit `name`'s published host row, as its slot worker would.
+fn publish_status(session: &TuiSession, name: &str, edit: impl FnOnce(&mut host_play::SlotStatus)) {
+    let play = session.core.play_for_test().unwrap();
+    let mut rows = play.statuses.lock().unwrap();
+    match rows.iter_mut().find(|row| row.username == name) {
+        Some(row) => edit(row),
+        None => {
+            let mut row = host_play::SlotStatus {
+                username: name.into(),
+                ..host_play::SlotStatus::default()
+            };
+            edit(&mut row);
+            rows.push(row);
+        }
+    }
+}
+
+/// LOGIN-NOTICE-1024: bob's refused login at 120x40 and 80x24. The
+/// notice stays in red in the status pane through the retry's Connecting,
+/// a queue wait and a parked logged out, with the live state line above
+/// it; it is gone at the shared 15 s timeout and the error is then history
+/// (`last error`). With `TUI_CAPTURE_DIR` set, every frame is written to
+/// `<dir>/login-notice` by the capture harness (text and JSON cells).
+#[test]
+fn a_login_notice_stands_through_retry_states_and_expires_at_both_sizes() {
+    use frontend_core::ERROR_MESSAGE_TIMEOUT as TIMEOUT;
+    let refused = "Error connecting to server. (connect: Connection refused)";
+    let notice = format!("login {refused}");
+    let iso = IsolatedStores::enter("tui-login-notice");
+    let (mut session, mut app) = tui_with_profiles(&iso, &["alice", "bob"]);
+    let dir = std::env::var_os("TUI_CAPTURE_DIR")
+        .map(|dir| std::path::PathBuf::from(dir).join("login-notice"));
+    if let Some(dir) = dir.as_deref() {
+        std::fs::create_dir_all(dir).unwrap();
+    }
+    app.focused = Some(1);
+    dispatch(&mut session, &mut app, AppAction::Focus("bob".into()));
+    app.key_focus = crate::layout::Pane::Detail;
+    session
+        .submit(OperatorCommand::Login, Targets::Profile("bob"))
+        .expect("login");
+    let mut frames = 0;
+    let mut shot = |session: &mut TuiSession, app: &mut TuiApp, label: &str, state: &str| {
+        session.pump(app);
+        let detail = app.focused_detail();
+        let shown = detail.and_then(|detail| detail.row().login_notice().map(str::to_owned));
+        let apart = detail.is_some_and(|detail| detail.login_notice_line().is_some());
+        // Heads short enough for the narrowest status pane: longer text
+        // wraps there.
+        let head = |line: &str| line.chars().take(26).collect::<String>();
+        for (cols, rows) in [(120, 40), (80, 24)] {
+            let mut terminal =
+                ratatui::Terminal::new(ratatui::backend::TestBackend::new(cols, rows)).unwrap();
+            terminal.draw(|frame| app.draw(frame)).unwrap();
+            let buffer = terminal.backend().buffer();
+            let lines: Vec<String> = (0..rows)
+                .map(|y| (0..cols).map(|x| buffer[(x, y)].symbol()).collect())
+                .collect();
+            let text = lines.join("\n");
+            assert!(
+                text.contains(&head(&format!("state: {state}"))),
+                "{label} {cols}x{rows}:\n{text}"
+            );
+            match &shown {
+                Some(_) => assert!(
+                    text.contains(&head(&notice)) && !text.contains("last error"),
+                    "{label} {cols}x{rows}:\n{text}"
+                ),
+                None => assert!(
+                    text.contains(&head(&format!("last error: {refused}"))),
+                    "{label} {cols}x{rows}:\n{text}"
+                ),
+            }
+            // A notice on its own line is drawn in red in the status pane:
+            // a row that starts at the state line's column (the log pane
+            // may show the same words, also in red).
+            let column = lines
+                .iter()
+                .find_map(|line| line.find("state: ").map(|at| line[..at].chars().count()))
+                .expect("the status pane");
+            let red = lines.iter().enumerate().any(|(y, line)| {
+                let rest: String = line.chars().skip(column).collect();
+                rest.starts_with(&head(&notice))
+                    && buffer[(column as u16, y as u16)].fg == ratatui::style::Color::Red
+            });
+            assert_eq!(red, apart, "{label} {cols}x{rows}:\n{text}");
+            if let Some(dir) = dir.as_deref() {
+                let proof = serde_json::json!({
+                    "label": label,
+                    "state": state,
+                    "login_notice": shown,
+                });
+                super::manual_click_live_tests::capture(
+                    app,
+                    cols,
+                    rows,
+                    dir,
+                    &format!("{cols}x{rows}"),
+                    label,
+                    &proof,
+                )
+                .unwrap();
+            }
+            frames += 1;
+        }
+        shown
+    };
+
+    let t0 = Instant::now();
+    publish_status(&session, "bob", |r| {
+        r.startup_phase = host_play::StartupPhase::Error;
+        r.startup_phase_started = t0;
+        r.error = Some(refused.into());
+    });
+    session.core.poll_at(t0);
+    assert_eq!(
+        shot(&mut session, &mut app, "01-refused-0s", &notice).as_deref(),
+        Some(notice.as_str())
+    );
+
+    publish_status(&session, "bob", |r| {
+        r.startup_phase = host_play::StartupPhase::Connecting;
+        r.startup_phase_started = Instant::now();
+        r.error = None;
+    });
+    session.core.poll_at(t0 + Duration::from_secs(1));
+    assert!(shot(
+        &mut session,
+        &mut app,
+        "02-retry-connecting-1s",
+        "logging in…"
+    )
+    .is_some());
+
+    publish_status(&session, "bob", |r| {
+        r.startup_phase = host_play::StartupPhase::Queueing;
+        r.startup_phase_started = Instant::now();
+        (r.queue_position, r.queue_total) = (2, 3);
+    });
+    session.core.poll_at(t0 + Duration::from_secs(2));
+    assert!(shot(
+        &mut session,
+        &mut app,
+        "03-queued-2s",
+        "waiting in login queue (2/3)"
+    )
+    .is_some());
+
+    session
+        .submit(OperatorCommand::Logout, Targets::Profile("bob"))
+        .expect("logout");
+    let parked = "logged out (Log in to connect)";
+    session.core.poll_at(t0 + Duration::from_secs(3));
+    assert!(shot(&mut session, &mut app, "04-logged-out-3s", parked).is_some());
+
+    session.core.poll_at(t0 + TIMEOUT - Duration::from_secs(1));
+    assert!(shot(&mut session, &mut app, "05-logged-out-14s", parked).is_some());
+
+    session.core.poll_at(t0 + TIMEOUT);
+    assert_eq!(
+        shot(&mut session, &mut app, "06-expired-15s", parked),
+        None,
+        "the notice is gone at the shared timeout"
+    );
+    assert_eq!(frames, 12);
+    let _iso = iso;
+}
