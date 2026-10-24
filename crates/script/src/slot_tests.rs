@@ -1771,6 +1771,7 @@ fn compiled_ctx<'a>(
         compiled: crate::CompiledTick {
             condition: None,
             poison_unknown_pulse: None,
+            cure_poison: crate::survival::CurePoison::WhenNeeded,
             walk_danger: None,
             selected,
             reach: None,

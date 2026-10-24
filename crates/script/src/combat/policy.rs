@@ -323,17 +323,25 @@ pub(crate) struct EatChoice {
 
 /// Shared food selection for Combat and WalkGuard. The caller owns admission
 /// and pending-operation policy; this function only evaluates the current
-/// observation.
+/// observation. `poison_fire` is the next poison fire's damage. It raises the
+/// eat line, so a bite is due when one more fire would put HP at or below
+/// the base line. A bot at full HP never bites. A bite there heals nothing.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the frame, tables and schedule borrows plus the danger, poison fire, HP pair and tick scalars stay explicit so both consumers and the replay keep the current call shape"
+)]
 pub(crate) fn eat_choice(
     frame: &Frame<'_>,
     tables: &CombatTables,
     schedule: &Schedule,
     danger: Option<i32>,
+    poison_fire: i32,
     hp: i32,
     hp_max: i32,
     tick: u16,
 ) -> Option<EatChoice> {
-    if hp <= 0 || danger == Some(0) || hp > select::lines(danger, hp_max).eat {
+    let lines = select::lines(danger, hp_max).with_poison(poison_fire);
+    if hp <= 0 || hp >= hp_max || (danger == Some(0) && poison_fire == 0) || hp > lines.eat {
         return None;
     }
 
@@ -348,9 +356,7 @@ pub(crate) fn eat_choice(
     let heal = ordinary
         .and_then(|id| tables.food(id))
         .map_or(0, |food| food.heal);
-    if ordinary.is_some()
-        && hp.saturating_add(heal).min(hp_max) > select::lines(danger, hp_max).drink_gate
-    {
+    if ordinary.is_some() && hp.saturating_add(heal).min(hp_max) > lines.drink_gate {
         return Some(EatChoice {
             ordinary,
             combo: None,

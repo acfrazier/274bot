@@ -8,6 +8,7 @@ docs/superpowers/
 .DS_Store
 imgui.ini
 274bot-panel.ini
+__pycache__/
 
 # Local operator guidance, campaign evidence, and build exports
 /AGENTS.md

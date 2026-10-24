@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use api::bank_memory::BankMemory;
+use api::condition::BotCondition;
 use api::interact::{ActionSpec, Driver, Interactions, OpTarget, SendResult};
 use api::quest_progress::EvidenceStamp;
 use api::snapshot::{GameSnapshot, ReadContext, SnapshotView, WorldTile};
@@ -126,7 +127,7 @@ pub(crate) fn apply_guard_op(
             });
             (sent, "if-button", Some(*component))
         }
-        GuardOp::Drink { name } => {
+        GuardOp::Drink { name, .. } => {
             let sent = snapshot
                 .inventory()
                 .iter()
@@ -169,7 +170,17 @@ pub(crate) fn apply_guard_op(
     #[cfg(test)]
     if sent {
         if let Some(account) = account {
-            crate::combat_proof::record_guard(account, snapshot, kind, component);
+            let item = match op {
+                GuardOp::Eat { name } | GuardOp::Drink { name, .. } => Some(name.as_ref()),
+                _ => None,
+            };
+            crate::combat_proof::record_guard(account, snapshot, kind, component, item);
+        }
+    }
+    #[cfg(feature = "test-support")]
+    if sent {
+        if let Some(account) = account {
+            crate::play_scripts::notify_guard_action_for_test(account, snapshot, op);
         }
     }
     let _ = (kind, component);
@@ -497,11 +508,13 @@ pub(crate) fn tick_walk_guard<D: Driver>(
     driver: &mut D,
     snapshot: &GameSnapshot,
     guard: &mut Option<script::combat::WalkGuard>,
+    condition: Option<&BotCondition>,
     account: Option<&str>,
+    cure_policy: script::survival::CurePoison,
 ) -> Option<GuardOp> {
     let guard = guard.as_mut()?;
     let view = guard_view(snapshot);
-    let op = guard.tick(&view)?;
+    let op = guard.tick(&view, condition, cure_policy)?;
     if apply_guard_op(driver, snapshot, &op, account) {
         guard.admitted(&op, &view);
     }
@@ -1119,10 +1132,21 @@ pub(crate) fn step_nav_bot<D: Driver>(
                                     && route.destination().level == *level
                         )
                     });
-                    // A later route may follow while the old off-click is
-                    // watched, but cannot raise a protect that debt could clear.
+                    // A later route may follow while the old off-click is watched,
+                    // but cannot raise a protect that debt could clear.
                     let guard_op = if bot.walk_guard_off.is_none() {
-                        tick_walk_guard(driver, snapshot, &mut bot.walk_guard, Some(name))
+                        let condition = bot
+                            .condition
+                            .current()
+                            .filter(|fact| fact.tick == snapshot.tick());
+                        tick_walk_guard(
+                            driver,
+                            snapshot,
+                            &mut bot.walk_guard,
+                            condition,
+                            Some(name),
+                            bot.cure_poison,
+                        )
                     } else {
                         None
                     };

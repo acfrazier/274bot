@@ -1703,6 +1703,8 @@ def cell_env(home: Path, tmp: Path, evidence: Path, cell: str, prefix: str,
         env["QUESTER_TICK_MS"] = str(JOB_DEFAULTS["tick_ms"])
     if ISOHOME:
         env["ISOHOME_DIR"] = str(home)
+        if os.environ.get("ISOHOME_ROOT"):
+            env["ISOHOME_ROOT"] = os.environ["ISOHOME_ROOT"]
     if not GPU_CELLS.search(cell):
         env["BOT_CPU"] = "1"
     return env

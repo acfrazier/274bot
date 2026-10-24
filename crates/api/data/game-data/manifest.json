@@ -8614,8 +8614,8 @@
         "npc_configs": 3,
         "digest": "61fad0df0a3449eb85e52902d83668c8ef56fe4e61337ff0fdc98b528c9ab9d1"
       },
-      "bytes": 6327900,
-      "sha256": "ed8b610a071733d2ef124ba624a5034c3173f560445dd25b975a60348d4e3999",
+      "bytes": 6329688,
+      "sha256": "82158054fb824cf6347ab0e2afea39d7b3f5c877a92cd9417f7b994fa37fd215",
       "engine_commit": "cc359656b4acd216ca452495874b6beba9a0ac75",
       "content_commit": "92649430fcbc83538d8c4367ecb96cee1a67a944",
       "inputs": [

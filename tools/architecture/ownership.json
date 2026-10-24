@@ -115,7 +115,15 @@
       "owner": "T2"
     },
     {
+      "path": "crates/api/src/interact/server_ordered/input.rs",
+      "owner": "T2"
+    },
+    {
       "path": "crates/api/src/interact/server_ordered/npc_transforms.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/api/src/interact/server_ordered/request.rs",
       "owner": "T2"
     },
     {
@@ -1211,6 +1219,10 @@
       "owner": "T1"
     },
     {
+      "path": "crates/host-play/src/script_server_ordered_tests.rs",
+      "owner": "T5"
+    },
+    {
       "path": "crates/host-play/src/script_paint.rs",
       "owner": "T1"
     },
@@ -1248,6 +1260,10 @@
     },
     {
       "path": "crates/host-play/src/slot_condition_tests.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/host-play/src/survival_eat_live_tests.rs",
       "owner": "T1"
     },
     {
@@ -1600,6 +1616,10 @@
     },
     {
       "path": "crates/host/src/capacity_tests.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/host/src/input_observation.rs",
       "owner": "T1"
     },
     {
@@ -3871,6 +3891,10 @@
       "owner": "T1"
     },
     {
+      "path": "crates/script/src/native/server_ordered.rs",
+      "owner": "T2"
+    },
+    {
       "path": "crates/script/src/native/snapshot_source.rs",
       "owner": "T1"
     },
@@ -4771,6 +4795,10 @@
       "owner": "T2"
     },
     {
+      "path": "crates/script/src/survival/cure.rs",
+      "owner": "T2"
+    },
+    {
       "path": "crates/script/src/survival/math.rs",
       "owner": "T2"
     },
@@ -5193,6 +5221,10 @@
     {
       "path": "crates/script/tests/native_hint_overhead.rs",
       "owner": "T2"
+    },
+    {
+      "path": "crates/script/tests/native_packet_fence.rs",
+      "owner": "T1"
     },
     {
       "path": "crates/script/tests/native_npc_box.rs",
@@ -6019,6 +6051,10 @@
       "owner": "T1"
     },
     {
+      "path": "tools/live-map/live_map.py",
+      "owner": "T1"
+    },
+    {
       "path": "tools/nightly/cellar-pull-windows.sh",
       "owner": "T1"
     },
@@ -6063,6 +6099,10 @@
       "owner": "T1"
     },
     {
+      "path": "tools/nightly/nightly-mac-guest.py",
+      "owner": "T1"
+    },
+    {
       "path": "tools/nightly/nightly-mac.sh",
       "owner": "T1"
     },
@@ -6084,6 +6124,10 @@
     },
     {
       "path": "tools/nightly/test_latency_proxy.py",
+      "owner": "T1"
+    },
+    {
+      "path": "tools/nightly/test_nightly_mac_guest.py",
       "owner": "T1"
     },
     {
@@ -7220,6 +7264,10 @@
     },
     {
       "path": "crates/frontend-core/tests/command_book_alloc.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/frontend-core/src/survival_live_tests.rs",
       "owner": "T3"
     },
     {

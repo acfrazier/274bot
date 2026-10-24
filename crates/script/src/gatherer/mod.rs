@@ -19,6 +19,9 @@ mod widen;
 
 pub use area::{AreaMode, WorkArea};
 pub use card::CARD;
+/// The real disposal consumer, exposed only for production-drain integration tests.
+#[cfg(feature = "test-hooks")]
+pub use drop::{DropBatch, DropBatchArgs, DropEnd, DropResult};
 pub use runner::Gatherer;
 pub use settings::{GathererSettings, Skill};
 /// Test-only view of the inventory rows Gatherer will deposit at a bank.

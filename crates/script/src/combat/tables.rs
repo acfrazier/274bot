@@ -114,6 +114,7 @@ pub struct SpotanimStyle {
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[repr(u8)]
 pub enum PotionKind {
     Prayer,
     SuperAttack,
@@ -122,10 +123,12 @@ pub enum PotionKind {
     Ranging,
     Magic,
     Antifire,
+    Antipoison,
+    SuperAntipoison,
 }
 
 impl PotionKind {
-    const ALL: [Self; 7] = [
+    const ALL: [Self; 9] = [
         Self::Prayer,
         Self::SuperAttack,
         Self::SuperStrength,
@@ -133,6 +136,8 @@ impl PotionKind {
         Self::Ranging,
         Self::Magic,
         Self::Antifire,
+        Self::Antipoison,
+        Self::SuperAntipoison,
     ];
 
     const fn index(self) -> usize {
@@ -144,6 +149,8 @@ impl PotionKind {
             Self::Ranging => 4,
             Self::Magic => 5,
             Self::Antifire => 6,
+            Self::Antipoison => 7,
+            Self::SuperAntipoison => 8,
         }
     }
 
@@ -156,6 +163,8 @@ impl PotionKind {
             "potion_rangerspotion" => Some(Self::Ranging),
             "potion_1magic" => Some(Self::Magic),
             "potion_1antidragon" => Some(Self::Antifire),
+            "potion_antipoison" => Some(Self::Antipoison),
+            "potion_2antipoison" => Some(Self::SuperAntipoison),
             _ => None,
         }
     }
@@ -269,7 +278,7 @@ pub struct CombatTables {
     selected: Arc<SelectedGameData>,
     prayer_rows: [Option<usize>; 9],
     foods: Box<[FoodFact]>,
-    potions: [Option<PotionFamily>; 7],
+    potions: [Option<PotionFamily>; 9],
     melee_mode_rows: MeleeModeIndex,
     melee_mode_varp: Option<i32>,
     poison_unknown_pulse: u8,
@@ -529,10 +538,10 @@ fn build_foods(consumption: &[ConsumptionFact]) -> Result<Vec<FoodFact>, ActionE
 fn build_potions(
     selected: &SelectedGameData,
     consumption: &[ConsumptionFact],
-) -> Result<[Option<PotionFamily>; 7], ActionError> {
-    let mut doses: [[Option<PotionDose>; 4]; 7] = [[None; 4]; 7];
-    let mut present = [false; 7];
-    let mut effects: [Option<(CombatStat, i32, i32)>; 7] = [None; 7];
+) -> Result<[Option<PotionFamily>; 9], ActionError> {
+    let mut doses: [[Option<PotionDose>; 4]; 9] = [[None; 4]; 9];
+    let mut present = [false; 9];
+    let mut effects: [Option<(CombatStat, i32, i32)>; 9] = [None; 9];
     for fact in consumption {
         let Some(kind) = fact
             .dose_family
@@ -588,7 +597,7 @@ fn build_potions(
         present[family_index] = true;
     }
 
-    let mut families = [None; 7];
+    let mut families = [None; 9];
     for kind in PotionKind::ALL {
         let index = kind.index();
         if !present[index] {
@@ -915,6 +924,29 @@ mod tests {
             }
             consumption.push(fact);
         }
+        for (family, prefix, base) in [
+            ("potion_antipoison", "antipoison", 500),
+            ("potion_2antipoison", "super_antipoison", 600),
+        ] {
+            for count in 1..=4u8 {
+                let alias = format!("{prefix}_{count}");
+                let next = if count == 1 {
+                    "empty_vial".to_string()
+                } else {
+                    format!("{prefix}_{}", count - 1)
+                };
+                let id = base + i32::from(count);
+                items.push(item(&alias, id));
+                consumption.push(consume(
+                    &alias,
+                    id,
+                    &alias,
+                    None,
+                    [None, None, Some(1)],
+                    Some((family, count, &next)),
+                ));
+            }
+        }
         let item_rows = items;
         let data = json!({
             "schema_version":5,
@@ -976,6 +1008,35 @@ mod tests {
             serde_json::from_value(selected_fixture_value())
                 .expect("selected combat facts deserialize"),
         )
+    }
+
+    #[test]
+    fn potion_table_has_antipoison_families() {
+        assert_eq!(
+            PotionKind::from_family("potion_antipoison"),
+            Some(PotionKind::Antipoison)
+        );
+        assert_eq!(
+            PotionKind::from_family("potion_2antipoison"),
+            Some(PotionKind::SuperAntipoison)
+        );
+        let tables = CombatTables::build(selected_fixture()).expect("potion facts");
+        assert_eq!(
+            tables
+                .potion(PotionKind::Antipoison)
+                .expect("ordinary family")
+                .doses
+                .map(|dose| dose.map(|dose| dose.id)),
+            [Some(501), Some(502), Some(503), Some(504)]
+        );
+        assert_eq!(
+            tables
+                .potion(PotionKind::SuperAntipoison)
+                .expect("super family")
+                .doses
+                .map(|dose| dose.map(|dose| dose.id)),
+            [Some(601), Some(602), Some(603), Some(604)]
+        );
     }
 
     #[test]

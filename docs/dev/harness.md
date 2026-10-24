@@ -415,6 +415,19 @@ run, so simultaneous processes do not share an account and
 `BOT_LIVE_NAME_PREFIX` tags an owner's fixtures. Keep the strict journal click
 accounting: Stop/Pause recovery adopts the retained page without a new click.
 
+### Headed checks
+
+The live map has two headed panel cells on merlot against Engine A at
+`127.0.0.1:44594` and `127.0.0.1:1080`. `panel.headed-nav-script` sets
+`BOT_CPU=1` and covers CPU client paths. `panel.headed-render` removes
+`BOT_CPU` to select the GPU renderer and covers GPU client and imgui paths.
+Changes to the client login path also select both relog cells.
+
+Run each cell in merlot's interactive display session with a throwaway HOME.
+The CPU cell is not a substitute for the GPU cell. `--verify-cells` checks the
+proxy test selector; it does not run either headed command or validate its
+`--live` argument or host.
+
 ### Headed recording
 
 Overnight `--live script_<name>` runs can record video of the panel window
@@ -836,6 +849,27 @@ LIVE_EVIDENCE_DIR=<evidence-root> \
 cargo test -p host-play --lib walk_guard_live_tests::replay_walk_guard_w1_retained_receipts \
   -- --exact --ignored --nocapture
 ```
+
+## Survival fruit cells
+
+Run these ignored `host-play` library tests with `live-harness,test-support`
+against Engine A at 600 ms:
+
+- `survival_eat_live_tests::live_survival_strange_fruit_after_bite`
+- `survival_eat_live_tests::live_survival_strange_fruit_through_api_combat_fight`
+
+Use an isolated HOME, a unique `BOT_LIVE_NAME_PREFIX` of one to four characters,
+and the accepted revision-289 cache and nav pack. Set `LIVE=1`, `BOT_CPU=1`,
+`BOT_NAV_BUILD=skip`, and an absolute `LIVE_EVIDENCE_DIR`.
+Both cells seed only their account. The combat cell attacks real Cows.
+Each cell enables poison cure after the first health bite. It requires exactly
+one Strange fruit click at the first content-allowed tick, T+3, and an observed
+cure. The combat cell also requires decoded wire actions from the same fight.
+
+The harness reads captured actions on every sample, including repeated ticks.
+A late policy change produces a classified fixture failure. The receipt is
+written before the final assertion. Receipts include `commit` and
+`worktree_dirty`, so an uncommitted mutation is not reported as clean source.
 
 ## JS API v2 checks
 

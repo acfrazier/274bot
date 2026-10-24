@@ -102,7 +102,7 @@ pub(crate) fn script_state_builds_nav_facts(script_state: Option<script::RunStat
 pub(super) type SlotFrame = Arc<dyn Fn(&mut Client, &str, SlotFrameInput) + Send + Sync>;
 
 #[cfg(any(test, feature = "test-support"))]
-pub(super) type PostNativePlayerInfo = Arc<dyn Fn(&Client, &str) + Send + Sync>;
+pub(super) type PostFrameObserver = Arc<dyn Fn(&Client, &str) + Send + Sync>;
 
 pub(super) fn take_slot_frame_input(
     input: &SlotInput,
@@ -585,6 +585,8 @@ impl Play {
             Arc::clone(&self.per_frame),
             #[cfg(any(test, feature = "test-support"))]
             self.post_native_player_info.clone(),
+            #[cfg(feature = "test-support")]
+            self.post_host_frame.clone(),
             Arc::clone(&self.capacity),
             &mut self.handles,
         );
@@ -906,7 +908,9 @@ fn spawn_slot_thread(
     slot_paired_core: paired_core::PairWatch,
     slot_frame: SlotFrame,
     #[cfg(any(test, feature = "test-support"))]
-    post_native_player_info: Option<PostNativePlayerInfo>,
+    post_native_player_info: Option<PostFrameObserver>,
+    #[cfg(feature = "test-support")]
+    post_host_frame: Option<PostFrameObserver>,
     slot_capacity: Arc<host::CapacityMonitor>,
     handles: &mut HashMap<String, thread::JoinHandle<()>>,
 ) {
@@ -1407,6 +1411,8 @@ fn spawn_slot_thread(
                         let slot_frame = Arc::clone(&slot_frame);
                         #[cfg(any(test, feature = "test-support"))]
                         let post_native_player_info = post_native_player_info.clone();
+                        #[cfg(feature = "test-support")]
+                        let post_host_frame = post_host_frame.clone();
                         let slot_statuses = Arc::clone(&slot_statuses);
                         let slot_scripts = Arc::clone(&slot_scripts);
                         let slot_input = Arc::clone(&slot_input);
@@ -1843,6 +1849,10 @@ fn spawn_slot_thread(
                                 script_evidence_dirty(drain.dirty),
                                 nav_state,
                             );
+                            #[cfg(feature = "test-support")]
+                            if let Some(observer) = &post_host_frame {
+                                observer(c, name);
+                            }
                             #[cfg(test)]
                             if crate::combat_proof::capture_enabled(name) {
                                 crate::combat_proof::record_frame(name, *script_tick, &nav_snapshot);

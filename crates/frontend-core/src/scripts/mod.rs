@@ -69,10 +69,37 @@ use vault::ScriptAssignment;
 
 use crate::command::{CommandFailure, Completion, FailureKind, Subject};
 use crate::operations::OperationId;
+use crate::profiles::ProfileAuditBefore;
 use crate::session::{
     ArmMirror, OperatorSession, ScriptAssignmentWrite, ScriptStart, StartSettled,
 };
 use crate::QueuePlace;
+
+/// Log metadata for a setting write. The values come from the committed
+/// rows when the write settles.
+pub(crate) struct ScriptSettingsLog {
+    identity: String,
+    card: String,
+    action: &'static str,
+    schema: Vec<script::SettingDef>,
+}
+
+impl ScriptSettingsLog {
+    pub(crate) fn details(
+        &self,
+        before: Option<&ProfileAuditBefore>,
+        after: &vault::ProfileSettings,
+    ) -> String {
+        let old = match before {
+            Some(ProfileAuditBefore::ScriptSettings(values)) => {
+                script_settings_values_from_entry(&self.identity, values.as_ref())
+            }
+            _ => Map::new(),
+        };
+        let new = script_settings_values(after, &self.identity);
+        format_script_settings_log(&self.card, self.action, &self.schema, &old, &new)
+    }
+}
 
 pub use reload::{
     CatalogError, PendingReload, PendingReloadKind, ReloadOutcome, ReloadWarning, TranspileError,
@@ -1826,19 +1853,13 @@ impl Scripts {
             None => Err("script: vault locked".to_string()),
             Some(None) => Err(format!("script: no profile {profile}")),
             Some(Some(mut row)) => {
-                let previous = setting_identity
+                let audit = setting_identity
                     .as_deref()
-                    .map(|identity| script_settings_values(&row.settings, identity));
+                    .map(|identity| self.script_settings_log(identity, log_action));
                 edit(&mut row.settings);
-                let details = setting_identity.as_deref().zip(previous.as_ref()).map(
-                    |(identity, previous)| {
-                        let current = script_settings_values(&row.settings, identity);
-                        self.script_settings_log_details(identity, log_action, previous, &current)
-                    },
-                );
                 let result = core.save_profile_with_log_action(row, mirror, "script", log_action);
-                if let (Ok(op), Some(details)) = (result.as_ref(), details) {
-                    core.track_script_settings_log(*op, details);
+                if let (Ok(op), Some(audit)) = (result.as_ref(), audit) {
+                    core.track_script_settings_log(*op, audit);
                 }
                 result
             }
@@ -1849,32 +1870,34 @@ impl Scripts {
         result
     }
 
-    fn script_settings_log_details(
-        &self,
-        identity: &str,
-        action: &str,
-        old: &Map<String, Value>,
-        new: &Map<String, Value>,
-    ) -> String {
+    fn script_settings_log(&self, identity: &str, action: &'static str) -> ScriptSettingsLog {
         if let Some(name) = identity.strip_prefix("compiled:") {
             if let Some(card) = script::compiled_id(name).and_then(script::compiled_card) {
-                let schema = (card.schema)();
-                return format_script_settings_log(card.name, action, schema, old, new);
+                return ScriptSettingsLog {
+                    identity: identity.to_string(),
+                    card: card.name.to_string(),
+                    action,
+                    schema: (card.schema)().to_vec(),
+                };
             }
         } else if let Some((source, lookup)) = identity.split_once(':') {
             if let Some(card) =
                 script::parse_source_kind(source).and_then(|source| self.js.get(source, lookup))
             {
-                return format_script_settings_log(
-                    &card.name,
+                return ScriptSettingsLog {
+                    identity: identity.to_string(),
+                    card: card.name.clone(),
                     action,
-                    &card.settings_schema,
-                    old,
-                    new,
-                );
+                    schema: card.settings_schema.clone(),
+                };
             }
         }
-        format_script_settings_log(identity, action, &[], old, new)
+        ScriptSettingsLog {
+            identity: identity.to_string(),
+            card: identity.to_string(),
+            action,
+            schema: Vec::new(),
+        }
     }
 
     /// Save `profile`'s last successful assignment. Re-starting the same
@@ -3602,19 +3625,20 @@ impl Scripts {
     }
 }
 fn script_settings_values(settings: &vault::ProfileSettings, identity: &str) -> Map<String, Value> {
+    script_settings_values_from_entry(identity, settings.script_settings.get(identity))
+}
+
+fn script_settings_values_from_entry(
+    identity: &str,
+    entry: Option<&Map<String, Value>>,
+) -> Map<String, Value> {
     if identity.starts_with("compiled:") {
-        return settings
-            .script_settings
-            .get(identity)
+        return entry
             .and_then(|entry| vault::CompiledSettingsRecord::view(entry).ok())
             .map(|(_, values)| values.clone())
             .unwrap_or_default();
     }
-    settings
-        .script_settings
-        .get(identity)
-        .cloned()
-        .unwrap_or_default()
+    entry.cloned().unwrap_or_default()
 }
 
 fn format_script_settings_log(
