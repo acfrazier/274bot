@@ -18,6 +18,7 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.6` 
   vault.
 - The panel button and the terminal app's Fleet button now read **Log out**, as the panel's Fleet toolbar already did.
 - The panel's profile form also refuses to create a profile with an empty password, with the message `credentials: password required`, and saves nothing.
+- Hovering the Fleet's result line (for example "9 bots stopped") now shows its text in a normal tooltip. It was a thin column one letter wide and as tall as the window.
 
 ### Survival
 
