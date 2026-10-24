@@ -1,4 +1,4 @@
-use super::*;
+use std::collections::{HashMap, HashSet};
 
 /// Door loc ids from `content/scripts/doors/configs/*.loc` text: every
 /// `[loc_N]` block that can open, i.e. has `op1=Open` or
