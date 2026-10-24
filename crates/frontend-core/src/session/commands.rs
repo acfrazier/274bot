@@ -591,16 +591,15 @@ impl<Io> OperatorSession<Io> {
         now: Instant,
         surface: &mut S,
     ) -> Result<Submitted, SubmitError> {
+        // Target names are scratch for one resolution; none left over from
+        // an earlier command may name this refusal's bots.
+        let mut names = std::mem::take(&mut self.commands.names);
+        self.commands.pool.clear(&mut names);
+        self.commands.names = names;
         let submitted = self.submit_unlogged(command, targets, now, surface);
         if let Err(error) = &submitted {
-            if command != OperatorCommand::GameInput {
-                self.commands.refusals += 1;
-                api::host_log!(
-                    api::hostlog::Category::Lifecycle,
-                    api::hostlog::Level::Info,
-                    "command refused: {command:?}: {error}"
-                );
-            }
+            let bots = self.refused_bots(targets);
+            self.record_refusal(command, &bots, &error.to_string());
         }
         submitted
     }
@@ -620,36 +619,86 @@ impl<Io> OperatorSession<Io> {
         let Some(report) = self.commands.book.report(request) else {
             return;
         };
-        let mut line = String::new();
-        let mut refused = 0;
+        let mut refused: Vec<(String, String)> = Vec::new();
         for member in report.members() {
-            if !matches!(
-                member.terminal(),
-                Some(Settlement::Failed(CommandFailure::Rejected(_)))
-            ) {
+            let Some(Settlement::Failed(CommandFailure::Rejected(rejection))) = member.terminal()
+            else {
                 continue;
-            }
-            if refused > 0 {
-                line.push_str("; ");
-            }
-            refused += 1;
-            match member.subject() {
-                Subject::Profile(identity) => line.push_str(&self.name_for_identity(identity)),
-                Subject::Application => line.push_str("application"),
-            }
-            if let Some(detail) = member.detail() {
-                line.push_str(": ");
-                line.push_str(detail);
-            }
+            };
+            let name = match member.subject() {
+                Subject::Profile(identity) => self.name_for_identity(identity),
+                Subject::Application => "application".to_owned(),
+            };
+            let reason = match member.detail() {
+                Some(detail) => format!("{rejection:?}: {detail}"),
+                None => format!("{rejection:?}"),
+            };
+            refused.push((name, reason));
         }
-        if refused > 0 {
-            self.commands.refusals += 1;
-            api::host_log!(
-                api::hostlog::Category::Lifecycle,
-                api::hostlog::Level::Info,
-                "command refused: {command:?} on {refused} member(s): {line}"
-            );
+        let bots = refused
+            .iter()
+            .map(|(name, _)| name.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let reason = match refused.as_slice() {
+            [] => return,
+            [(_, reason)] => reason.clone(),
+            many => many
+                .iter()
+                .map(|(name, reason)| format!("{name}: {reason}"))
+                .collect::<Vec<_>>()
+                .join("; "),
+        };
+        self.record_refusal(command, &bots, &reason);
+    }
+
+    /// The bots a refused submission named, for its log line: the names the
+    /// caller gave, or the ones the targets resolved to before the refusal.
+    fn refused_bots(&self, targets: Targets<'_>) -> String {
+        const NO_BOTS: &str = "no bots";
+        let joined = |names: &[String]| {
+            if names.is_empty() {
+                NO_BOTS.to_owned()
+            } else {
+                names.join(", ")
+            }
+        };
+        match targets {
+            Targets::Application => "application".to_owned(),
+            Targets::Profile(name) => name.to_owned(),
+            Targets::Profiles(names) => joined(names),
+            Targets::Selected => self.selected.clone().unwrap_or_else(|| NO_BOTS.to_owned()),
+            Targets::Everyone | Targets::Marked | Targets::Plan => joined(&self.commands.names),
         }
+    }
+
+    /// Log and count one refused command: the one place a refusal is
+    /// written, for a refused submission, for refused members and for a front
+    /// end's refusal before it can submit ([`Self::refuse_unsubmitted`]). Never
+    /// for `GameInput`, which is staged every frame.
+    fn record_refusal(&mut self, command: OperatorCommand, bots: &str, reason: &str) {
+        if command == OperatorCommand::GameInput {
+            return;
+        }
+        self.commands.refusals += 1;
+        api::host_log!(
+            api::hostlog::Category::Lifecycle,
+            api::hostlog::Level::Info,
+            "command refused: {command:?} on {bots}: {reason}"
+        );
+    }
+
+    /// A front end refused `command` before it could submit it (a missing
+    /// focus, a bot with no card). The refusal logs and counts as every other
+    /// refusal does, with the bots it named (`&[]` for none) and the reason
+    /// the operator sees.
+    pub fn refuse_unsubmitted(&mut self, command: OperatorCommand, bots: &[&str], reason: &str) {
+        let bots = if bots.is_empty() {
+            "no bots".to_owned()
+        } else {
+            bots.join(", ")
+        };
+        self.record_refusal(command, &bots, reason);
     }
 
     fn submit_unlogged<S: SlotSurface<Io = Io>>(

@@ -9,7 +9,7 @@
 //! [`frontend_core::OperatorSession::fleet_result`]; nothing here copies it.
 //! A pick in the world picker takes the same path ([`Session::plan_world_switch`]).
 
-use frontend_core::{FleetAction, OperatorCommand, Targets};
+use frontend_core::{ErrorNeed, FleetAction, OperatorCommand, Targets};
 
 use crate::session::{PanelWindow, Session};
 
@@ -112,15 +112,26 @@ impl Session {
     /// loaded shown rows), through the same plan flow with the plan row's
     /// confirmation.
     pub(crate) fn copy_focused_settings_to_same_card(&mut self) {
+        let command = OperatorCommand::PlanFleetAction(FleetAction::CopySettings);
         let Some(focused) = self.focused_name() else {
-            self.error = Some("Copy settings: focus a bot first".into());
+            self.refuse_command(
+                command,
+                &[],
+                Some(ErrorNeed::FocusedBot),
+                "Copy settings: focus a bot first",
+            );
             return;
         };
         let Some(card) = self.scripts.heading(&self.core, &focused) else {
-            self.error = Some("Copy settings: the focused bot has no card".into());
+            self.refuse_command(
+                command,
+                &[&focused],
+                Some(ErrorNeed::FocusedBotCard),
+                "Copy settings: the focused bot has no card",
+            );
             return;
         };
         self.core.stage_plan_card(card);
-        self.submit_fleet_plan(OperatorCommand::PlanFleetAction(FleetAction::CopySettings));
+        self.submit_fleet_plan(command);
     }
 }

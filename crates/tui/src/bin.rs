@@ -2184,7 +2184,13 @@ impl TuiSession {
     /// submit selection and Start as separate command rows.
     fn script_start(&mut self, app: &mut TuiApp, sel: &ScriptChoice) {
         let Some(name) = app.focused_name() else {
-            app.error = Some("script: no focused profile".into());
+            self.refuse_command(
+                app,
+                OperatorCommand::StartScript,
+                &[],
+                Some(frontend_core::ErrorNeed::FocusedBot),
+                "script: no focused profile",
+            );
             return;
         };
         self.scripts.stage_browse_pick(sel.duplicate());
@@ -2474,7 +2480,13 @@ impl TuiSession {
     /// Open the params popup over the focused profile's bag for the card.
     fn open_params(&mut self, app: &mut TuiApp) {
         let Some(profile) = app.focused_name() else {
-            app.error = Some("parameters: no focused profile".into());
+            self.refuse_command(
+                app,
+                OperatorCommand::SaveScriptSettings(frontend_core::command::CardKind::Native),
+                &[],
+                Some(frontend_core::ErrorNeed::FocusedBot),
+                "parameters: no focused profile",
+            );
             return;
         };
         match self.params_bag(app, &profile) {
@@ -3054,9 +3066,51 @@ impl TuiSession {
             .observe(&mut app.error, self.core.refusals(), now);
     }
 
+    /// Refuse `command` before the app can submit it (nothing focused,
+    /// nothing picked). The refusal logs at the shared command boundary like
+    /// every other refused command, shows on the message line, and the line
+    /// clears when the action that supplies `need` happens
+    /// ([`Self::clear_resolved_error`]).
+    fn refuse_command(
+        &mut self,
+        app: &mut TuiApp,
+        command: OperatorCommand,
+        bots: &[&str],
+        need: Option<frontend_core::ErrorNeed>,
+        reason: &str,
+    ) {
+        self.core.refuse_unsubmitted(command, bots, reason);
+        app.error = Some(reason.to_owned());
+        if let Some(need) = need {
+            self.error_expiry.waits_for(need, reason);
+        }
+    }
+
+    /// Clear the message line when the need it waits for now holds: the
+    /// action that resolves a message clears it at once, whichever action it
+    /// was. Called after a focus change and once per tick.
+    fn clear_resolved_error(&mut self, app: &mut TuiApp) {
+        let Some(need) = self.error_expiry.waiting_need() else {
+            return;
+        };
+        let focused = app.focused_name();
+        let met = match need {
+            frontend_core::ErrorNeed::FocusedBot => focused.is_some(),
+            frontend_core::ErrorNeed::FocusedBotCard => focused
+                .as_deref()
+                .is_some_and(|name| self.scripts.heading(&self.core, name).is_some()),
+            frontend_core::ErrorNeed::PickedCard => app.script_sel.is_some(),
+            frontend_core::ErrorNeed::CheckedBots => {
+                app.walk_send.checked_count(app.fleet_model.marks()) > 0
+            }
+        };
+        self.error_expiry.resolve(&mut app.error, |_| met);
+    }
+
     /// Copy the focused slot's views into the app and poll the runner.
     fn pump(&mut self, app: &mut TuiApp) {
         self.expire_error(app, Instant::now());
+        self.clear_resolved_error(app);
         self.project_walk_globals(app);
         self.project_manual_walk_pause(app);
         self.project_quester_paths(app);
@@ -4329,7 +4383,13 @@ fn run_loop(mut session: TuiSession, mut app: TuiApp) -> Result<i32, String> {
 fn dispatch(session: &mut TuiSession, app: &mut TuiApp, action: AppAction) {
     match action {
         AppAction::Quit => session.quit(app),
-        AppAction::Focus(name) => session.focus(&name),
+        AppAction::Refused(refusal) => {
+            session.refuse_command(app, refusal.command, &[], refusal.need, refusal.reason);
+        }
+        AppAction::Focus(name) => {
+            session.focus(&name);
+            session.clear_resolved_error(app);
+        }
         AppAction::MapOpen => {
             session.bind_map_context(app);
             session.open_map_catalogue(app);

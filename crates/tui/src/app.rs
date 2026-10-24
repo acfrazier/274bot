@@ -27,7 +27,9 @@ use frontend_core::scripts::{
 use frontend_core::walk_map::{
     display_walk_name_into, WalkCatalogue, WalkMap, WalkObservedService, WalkSearch, WalkSlotStatus,
 };
-use frontend_core::{FleetCounts, ResourceView, SlotDetail, WalkGlobalsView};
+use frontend_core::{
+    ErrorNeed, FleetCounts, OperatorCommand, ResourceView, SlotDetail, WalkGlobalsView,
+};
 use frontend_core::{MapBakeChoice, NavPreference};
 use nav_planner::map::poi::{PoiKind, PoiRecord};
 use nav_planner::router::{FindOptions, Route};
@@ -191,10 +193,22 @@ impl WalkSendState {
     }
 }
 
+/// A command the app refuses before any submission: the session logs it at the
+/// command boundary and shows `reason`, which clears when `need` holds.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Refusal {
+    pub command: OperatorCommand,
+    pub reason: &'static str,
+    pub need: Option<ErrorNeed>,
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum AppAction {
     /// Quit the app.
     Quit,
+    /// The app refuses a command before any submission (nothing to act on).
+    /// The session logs it at the command boundary and shows the reason.
+    Refused(Refusal),
     /// Select `name` (mirrored onto the core `select`). Never a spawn or
     /// login; only Enter or a click on a fleet row, a context menu or the
     /// palette produce it.
@@ -1033,8 +1047,11 @@ impl TuiApp {
         if let Some(pending) = self.map_model.pending() {
             if self.walk_send.mode == WalkSendMode::Group {
                 if self.walk_send.checked_count(self.fleet_model.marks()) == 0 {
-                    self.error = Some("no bots selected".into());
-                    return AppAction::None;
+                    return AppAction::Refused(Refusal {
+                        command: OperatorCommand::GroupWalk,
+                        reason: "no bots selected",
+                        need: Some(ErrorNeed::CheckedBots),
+                    });
                 }
                 return AppAction::MapWalkGroup;
             }
@@ -1687,10 +1704,11 @@ impl TuiApp {
             }
             Command::ScriptStart => match self.script_sel.as_ref().map(ScriptChoice::duplicate) {
                 Some(sel) => AppAction::ScriptStart(sel),
-                None => {
-                    self.error = Some("script: browse to pick one first".into());
-                    AppAction::None
-                }
+                None => AppAction::Refused(Refusal {
+                    command: OperatorCommand::StartScript,
+                    reason: "script: browse to pick one first",
+                    need: Some(ErrorNeed::PickedCard),
+                }),
             },
             Command::ScriptPause => AppAction::ScriptPause,
             Command::ScriptStop => AppAction::ScriptStop,

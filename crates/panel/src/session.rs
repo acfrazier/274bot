@@ -1824,7 +1824,12 @@ impl Session {
     /// session cannot clobber the file. Forgotten-password recovery.
     pub fn reset_vault_at(&mut self, path: &Path) -> bool {
         if self.core.vault_open() {
-            self.error = Some("reset vault: unlock / close the session first".into());
+            self.refuse_command(
+                OperatorCommand::ResetVault,
+                &[],
+                None,
+                "reset vault: unlock / close the session first",
+            );
             return false;
         }
         self.core.stage_vault_reset(path.to_path_buf());
@@ -2371,10 +2376,51 @@ impl Session {
             .observe(&mut self.error, self.core.refusals(), now);
     }
 
+    /// Refuse `command` before the panel can submit it (no focused bot, a bot
+    /// with no card). The refusal logs at the shared command boundary like
+    /// every other refused command, shows on the banner, and the banner clears
+    /// when the action that supplies `need` happens
+    /// ([`Self::clear_resolved_error`]).
+    pub(crate) fn refuse_command(
+        &mut self,
+        command: OperatorCommand,
+        bots: &[&str],
+        need: Option<frontend_core::ErrorNeed>,
+        reason: &str,
+    ) {
+        self.core.refuse_unsubmitted(command, bots, reason);
+        self.error = Some(reason.to_owned());
+        if let Some(need) = need {
+            self.error_expiry.waits_for(need, reason);
+        }
+    }
+
+    /// Clear the banner message when the need it waits for now holds: the
+    /// action that resolves a message clears it at once, whichever action it
+    /// was (a focus change, a card pick). Called after a focus change and
+    /// once per frame.
+    pub(crate) fn clear_resolved_error(&mut self) {
+        let Some(need) = self.error_expiry.waiting_need() else {
+            return;
+        };
+        let focused = self.focused_name();
+        let met = match need {
+            frontend_core::ErrorNeed::FocusedBot => focused.is_some(),
+            frontend_core::ErrorNeed::FocusedBotCard => focused
+                .as_deref()
+                .is_some_and(|name| self.scripts.heading(&self.core, name).is_some()),
+            frontend_core::ErrorNeed::PickedCard => self.script_sel.is_some(),
+            // The terminal app's walk group list; the panel never waits on it.
+            frontend_core::ErrorNeed::CheckedBots => false,
+        };
+        self.error_expiry.resolve(&mut self.error, |_| met);
+    }
+
     /// Poll slot statuses and append log lines for transitions (slot up,
     /// login errors, ingame, scene changes). Call once per UI frame.
     pub fn pump_status(&mut self) {
         self.expire_error(Instant::now());
+        self.clear_resolved_error();
         self.core.advance_removals(Instant::now());
         // The fleet model follows the core's rows and the vault at this
         // sync, whether or not a fleet surface is drawn (two integer
@@ -2804,6 +2850,7 @@ impl Session {
             return Err(format!("pair capture actor {name} is not a live slot"));
         }
         self.apply_focus(name);
+        self.clear_resolved_error();
         Ok(())
     }
 
@@ -2818,7 +2865,7 @@ impl Session {
     /// that slot's `FrameBuf`. No socket is swapped (the channel-head baton
     /// is gone); every slot keeps running.
     pub fn select(&mut self, name: &str) {
-        if self.refuse_saving(name) {
+        if self.refuse_saving(OperatorCommand::Select, name) {
             return;
         }
         self.core.stage_select_opens_slot();
@@ -2829,6 +2876,7 @@ impl Session {
         }
         self.apply_focus(name);
         self.restore_script_heading(name);
+        self.clear_resolved_error();
         if !self.multibox {
             self.maybe_offer_background_ack();
         }
@@ -3128,10 +3176,15 @@ impl Session {
 
     /// A profile whose first save is still being written cannot be focused
     /// or started yet; say so instead of acting on staged credentials.
-    fn refuse_saving(&mut self, name: &str) -> bool {
+    fn refuse_saving(&mut self, command: OperatorCommand, name: &str) -> bool {
         let saving = self.core.profile_saving(name);
         if saving {
-            self.error = Some(format!("{name}: profile is still saving"));
+            self.refuse_command(
+                command,
+                &[name],
+                None,
+                &format!("{name}: profile is still saving"),
+            );
         }
         saving
     }
@@ -3448,7 +3501,7 @@ impl Session {
     /// spawned holding the title screen until [`Session::login_all`].
     /// Returns whether the name was newly added to the wall.
     pub fn load(&mut self, name: &str) -> bool {
-        if self.refuse_saving(name) {
+        if self.refuse_saving(OperatorCommand::Load, name) {
             return false;
         }
         let added = self
@@ -4417,7 +4470,12 @@ impl Session {
     /// so this is the no-call backstop). Errors set [`Session::error`].
     pub fn script_start_selected(&mut self) {
         let Some(name) = self.focused_name() else {
-            self.error = Some("script: no focused profile".into());
+            self.refuse_command(
+                OperatorCommand::StartScript,
+                &[],
+                Some(frontend_core::ErrorNeed::FocusedBot),
+                "script: no focused profile",
+            );
             return;
         };
         match self.script_start_focused(&name) {

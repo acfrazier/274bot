@@ -247,6 +247,12 @@ const CORE: &[(&str, Decision)] = &[
     ("resources.rs::format_bytes", Excluded(FORMAT)),
     ("resources.rs::format_bots", Excluded(FORMAT)),
     ("error_expiry.rs::ErrorExpiry::observe", Excluded(UI_TIMER)),
+    ("error_expiry.rs::ErrorExpiry::waits_for", Excluded(UI_TIMER)),
+    ("error_expiry.rs::ErrorExpiry::resolve", Excluded(UI_TIMER)),
+    (
+        "session/commands.rs::OperatorSession::refuse_unsubmitted",
+        Excluded("logs and counts a front end's refusal of a command it could not submit; changes no operator state"),
+    ),
     ("resources.rs::format_background", Excluded(FORMAT)),
     ("resources.rs::background_ack_text", Excluded(FORMAT)),
     ("resources.rs::ResourceView::copy_from", Excluded(PROJECTION)),

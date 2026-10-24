@@ -2339,7 +2339,16 @@ fn empty_group_walk_preserves_selection_and_reports_refusal() {
         level: 0,
     });
     app.walk_send.mode = crate::app::WalkSendMode::Group;
-    assert_eq!(app.map_enter(), AppAction::None);
+    let refused = app.map_enter();
+    assert_eq!(
+        refused,
+        AppAction::Refused(crate::app::Refusal {
+            command: OperatorCommand::GroupWalk,
+            reason: "no bots selected",
+            need: Some(frontend_core::ErrorNeed::CheckedBots),
+        })
+    );
+    dispatch(&mut session, &mut app, refused);
     assert_eq!(app.error.as_deref(), Some("no bots selected"));
     assert!(app.map_model.pending().is_some());
     app.error = None;
@@ -6893,7 +6902,7 @@ fn tui_fleet_pane_and_stop_agree_with_the_core_after_nine_bots_stop() {
 /// replaces it, or the shared timeout passes: the same rule as the panel's
 /// banner (`frontend_core::ERROR_MESSAGE_TIMEOUT`).
 #[test]
-fn the_message_line_expires_unless_resolved_or_replaced() {
+fn the_message_line_expires_unless_replaced() {
     use frontend_core::ERROR_MESSAGE_TIMEOUT as TIMEOUT;
     let second = Duration::from_secs(1);
     let mut session = TuiSession::new(dummy_options());
@@ -6915,13 +6924,69 @@ fn the_message_line_expires_unless_resolved_or_replaced() {
     assert_eq!(app.error.as_deref(), Some("newer"), "the timer restarted");
     session.expire_error(&mut app, t0 + TIMEOUT * 2 - second);
     assert_eq!(app.error, None);
+}
 
-    app.error = Some("resolved".into());
-    session.expire_error(&mut app, t0);
-    app.error = None;
-    session.expire_error(&mut app, t0 + second);
-    app.error = Some("next".into());
-    session.expire_error(&mut app, t0 + TIMEOUT);
-    session.expire_error(&mut app, t0 + TIMEOUT * 2 - second);
-    assert_eq!(app.error.as_deref(), Some("next"));
+/// PANEL-STATE-GAP-1023: the terminal app's own refusals (Start with nothing
+/// focused, nothing browsed, no bots checked) log one `info` line at the
+/// shared command boundary, naming the command, the bots and the reason, and
+/// the action that resolves each one clears the message line at once.
+#[test]
+fn a_refusal_before_submission_logs_once_and_the_resolving_action_clears_it() {
+    use crate::app::Refusal;
+    use frontend_core::log::{global, LogScope, LogView};
+    let iso = IsolatedStores::enter("tui-resolve-refusal");
+    let mut session = TuiSession::new(dummy_options());
+    session.persist_ui = false;
+    session.inject_play(two_arm_play());
+    session.names = vec!["alice".into(), "bob".into()];
+    let mut app = TuiApp::new("tui");
+    app.names = session.names.clone();
+    let sel = ScriptChoice::loaded(CardSource::Catalog, "BoneBurier");
+    let before = session.core.refusals();
+
+    // Start with nothing focused: refused at the boundary, once.
+    dispatch(
+        &mut session,
+        &mut app,
+        AppAction::ScriptStart(sel.duplicate()),
+    );
+    assert_eq!(app.error.as_deref(), Some("script: no focused profile"));
+    assert_eq!(session.core.refusals(), before + 1);
+    let mut view = LogView::new(LogScope::Process);
+    view.edit_filter(|filter| filter.set_text("command refused: StartScript on no bots"));
+    global().refresh(&mut view);
+    assert!(
+        view.rows()
+            .iter()
+            .any(|row| row.message().ends_with("script: no focused profile")),
+        "{}",
+        view.to_text()
+    );
+    // Focusing a bot resolves it.
+    app.focused = Some(0);
+    dispatch(&mut session, &mut app, AppAction::Focus("alice".into()));
+    assert_eq!(app.error, None, "focusing a bot resolved the message");
+
+    // The key for Start with no card browsed refuses the same way; picking
+    // a card resolves it.
+    dispatch(
+        &mut session,
+        &mut app,
+        AppAction::Refused(Refusal {
+            command: OperatorCommand::StartScript,
+            reason: "script: browse to pick one first",
+            need: Some(frontend_core::ErrorNeed::PickedCard),
+        }),
+    );
+    assert_eq!(
+        app.error.as_deref(),
+        Some("script: browse to pick one first")
+    );
+    assert_eq!(session.core.refusals(), before + 2);
+    session.pump(&mut app);
+    assert!(app.error.is_some(), "nothing was picked yet");
+    app.script_sel = Some(sel);
+    session.pump(&mut app);
+    assert_eq!(app.error, None, "picking a card resolved the message");
+    let _iso = iso;
 }

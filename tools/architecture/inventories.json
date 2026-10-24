@@ -74,6 +74,14 @@
       "reason": "PANEL-STATE-GAP-1023: error line expiry seam; register in the introducing commit, no allowance."
     },
     {
+      "id": "seam_type|crates/frontend-core/src/error_expiry.rs|ErrorNeed",
+      "path": "crates/frontend-core/src/error_expiry.rs",
+      "symbol": "ErrorNeed",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "PANEL-STATE-GAP-1023: Copy enum naming the precondition an error line waits for."
+    },
+    {
       "id": "seam_type|crates/frontend-core/src/fleet.rs|Fleet",
       "path": "crates/frontend-core/src/fleet.rs",
       "symbol": "Fleet",

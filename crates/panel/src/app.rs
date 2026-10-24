@@ -3742,7 +3742,12 @@ fn persist_profile_setting(
 ) {
     if selection.compiled_id().is_some() {
         let Some(profile) = session.focused_name() else {
-            session.error = Some("parameters: select a profile first".into());
+            session.refuse_command(
+                OperatorCommand::SaveScriptSettings(frontend_core::command::CardKind::Native),
+                &[],
+                Some(frontend_core::ErrorNeed::FocusedBot),
+                "parameters: select a profile first",
+            );
             return;
         };
         session
@@ -3859,7 +3864,12 @@ fn script_parameter_text_input(
         session.submit_script_command(OperatorCommand::DiscardParameterText, Targets::Application);
     } else if changed || commit {
         if commit && profile.is_none() && selection.compiled_id().is_some() {
-            session.error = Some("parameters: select a profile first".into());
+            session.refuse_command(
+                OperatorCommand::SaveScriptSettings(frontend_core::command::CardKind::Native),
+                &[],
+                Some(frontend_core::ErrorNeed::FocusedBot),
+                "parameters: select a profile first",
+            );
             return;
         }
         let key = frontend_core::scripts::ParameterEditKey::new(profile, selection, def.id());
