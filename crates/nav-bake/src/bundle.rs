@@ -30,15 +30,25 @@ pub struct InputFingerprint {
 
 impl InputFingerprint {
     pub fn of(path: &Path) -> Result<Self, crate::GenerationError> {
-        let metadata =
-            std::fs::metadata(path).map_err(|e| format!("bake input {}: {e}", path.display()))?;
+        let metadata = std::fs::metadata(path).map_err(|source| {
+            crate::SourceInputError::Io {
+                context: crate::SourceInputContext::BakeInput,
+                path: path.to_path_buf(),
+                source,
+            }
+        })?;
         let modified_nanos = metadata
             .modified()
             .ok()
             .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
             .map(|age| age.as_nanos() as u64)
             .unwrap_or(0);
-        let sha256 = nav_planner::manifest::hash_file(path)?;
+        let sha256 = nav_planner::manifest::hash_file(path).map_err(|detail| {
+            crate::SourceInputError::HashFailed {
+                path: path.to_path_buf(),
+                detail,
+            }
+        })?;
         Ok(Self {
             path: path.to_string_lossy().into_owned(),
             bytes: metadata.len(),
@@ -58,13 +68,16 @@ pub fn fingerprints(
     let mut paths = Vec::new();
     collect_files(root, &mut paths)?;
     for file in files {
-        let metadata =
-            std::fs::metadata(file).map_err(|e| format!("bake input {}: {e}", file.display()))?;
+        let metadata = std::fs::metadata(file).map_err(|source| crate::SourceInputError::Io {
+            context: crate::SourceInputContext::BakeInput,
+            path: file.to_path_buf(),
+            source,
+        })?;
         if !metadata.is_file() {
-            return Err(crate::GenerationError::InvalidInput(format!(
-                "bake input {} is not a file",
-                file.display()
-            )));
+            return Err(crate::SourceInputError::NotRegularFile {
+                path: file.to_path_buf(),
+            }
+            .into());
         }
         paths.push((*file).to_path_buf());
     }
@@ -138,10 +151,9 @@ pub fn fingerprint_for_path<'a>(
         .ok()
         .map(|index| &inputs[index])
         .ok_or_else(|| {
-            crate::GenerationError::InvalidInput(format!(
-                "source input {} was not fingerprinted",
-                path.display()
-            ))
+            crate::SourceInputError::NotFingerprinted {
+                path: path.to_path_buf(),
+            }
         })
 }
 
@@ -170,16 +182,26 @@ pub fn source_digest(root: &Path, files: &[&Path]) -> Result<String, crate::Gene
 }
 
 fn collect_files(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), crate::GenerationError> {
-    let entries = std::fs::read_dir(dir)
-        .map_err(|e| format!("bake input directory {}: {e}", dir.display()))?;
+    let entries = std::fs::read_dir(dir).map_err(|source| crate::SourceInputError::Io {
+        context: crate::SourceInputContext::BakeInputDirectory,
+        path: dir.to_path_buf(),
+        source,
+    })?;
     for entry in entries {
-        let entry = entry.map_err(|e| format!("bake input directory {}: {e}", dir.display()))?;
+        let entry = entry.map_err(|source| crate::SourceInputError::Io {
+            context: crate::SourceInputContext::BakeInputDirectory,
+            path: dir.to_path_buf(),
+            source,
+        })?;
         if entry.file_name() == ".git" {
             continue;
         }
         let path = entry.path();
-        let metadata =
-            std::fs::metadata(&path).map_err(|e| format!("bake input {}: {e}", path.display()))?;
+        let metadata = std::fs::metadata(&path).map_err(|source| crate::SourceInputError::Io {
+            context: crate::SourceInputContext::BakeInput,
+            path: path.clone(),
+            source,
+        })?;
         if metadata.is_dir() {
             collect_files(&path, out)?;
         } else if metadata.is_file() {
@@ -314,22 +336,27 @@ pub fn required_content_inputs(
         let mut columns = line.split('\t');
         let kind_name = columns.next().unwrap_or_default();
         let Some(kind) = RequiredKind::from_name(kind_name) else {
-            return Err(crate::GenerationError::InvalidInput(format!(
-                "required-content-{revision} line {}: unknown kind {kind_name:?}",
-                index + 1
-            )));
+            return Err(crate::SourceInputError::UnknownInventoryKind {
+                revision,
+                line: index + 1,
+                kind: kind_name.to_owned(),
+            }
+            .into());
         };
         let Some(path) = columns.next().filter(|path| !path.is_empty()) else {
-            return Err(crate::GenerationError::InvalidInput(format!(
-                "required-content-{revision} line {}: no path",
-                index + 1
-            )));
+            return Err(crate::SourceInputError::MissingInventoryPath {
+                revision,
+                line: index + 1,
+            }
+            .into());
         };
         if path.starts_with('/') || path.split('/').any(|part| part == "..") {
-            return Err(crate::GenerationError::InvalidInput(format!(
-                "required-content-{revision} line {}: {path} is not content-relative",
-                index + 1
-            )));
+            return Err(crate::SourceInputError::InvalidInventoryPath {
+                revision,
+                line: index + 1,
+                path: path.to_owned(),
+            }
+            .into());
         }
         rows.push(RequiredInput {
             path,
@@ -481,172 +508,196 @@ impl BakeStamp {
     /// staged files are still the stamped ones; `Err(reason)` otherwise.
     pub fn covers(&self, expected: &StampExpectation<'_>) -> Result<(), crate::GenerationError> {
         if self.revision != expected.revision {
-            return Err(crate::GenerationError::InvalidInput(format!(
-                "staged navigation is revision {}, build selects {}",
-                self.revision, expected.revision
-            )));
+            return Err(crate::StaleStampError::RevisionMismatch {
+                stamped: self.revision,
+                selected: expected.revision,
+            }
+            .into());
         }
         if self.format != expected.format {
-            return Err(crate::GenerationError::InvalidInput(format!(
-                "staged navigation format {} is not {}",
-                self.format, expected.format
-            )));
+            return Err(crate::StaleStampError::FormatMismatch {
+                stamped: self.format.clone(),
+                selected: expected.format.to_owned(),
+            }
+            .into());
         }
         if self.generator != expected.generator {
-            return Err("bake generator changed (nav bake/format sources or generator id)".into());
+            return Err(crate::StaleStampError::GeneratorChanged.into());
         }
         if self.cache_id != expected.cache_id {
-            return Err("selected cache identity changed".into());
+            return Err(crate::StaleStampError::CacheIdentityChanged.into());
         }
-        match expected.staged_pack_bytes {
-            None => {
-                return Err(crate::GenerationError::InvalidInput(format!(
-                    "staged pack {} is missing",
-                    self.relative_pack
-                )))
-            }
-            Some(bytes) if bytes != self.pack_bytes => {
-                return Err(crate::GenerationError::InvalidInput(format!(
-                    "staged pack {} is {bytes} bytes, stamped {}",
-                    self.relative_pack, self.pack_bytes
-                )))
-            }
-            Some(_) => {}
-        }
-        match expected.staged_flags_bytes {
-            None => {
-                return Err(crate::GenerationError::InvalidInput(format!(
-                    "staged flags {} are missing",
-                    self.relative_flags
-                )))
-            }
-            Some(bytes) if bytes != self.flags_bytes => {
-                return Err(crate::GenerationError::InvalidInput(format!(
-                    "staged flags {} are {bytes} bytes, stamped {}",
-                    self.relative_flags, self.flags_bytes
-                )))
-            }
-            Some(_) => {}
-        }
-        match expected.staged_reach_bytes {
-            None => {
-                return Err(crate::GenerationError::InvalidInput(format!(
-                    "staged reach {} is missing",
-                    self.relative_reach
-                )))
-            }
-            Some(bytes) if bytes != self.reach_bytes => {
-                return Err(crate::GenerationError::InvalidInput(format!(
-                    "staged reach {} is {bytes} bytes, stamped {}",
-                    self.relative_reach, self.reach_bytes
-                )))
-            }
-            Some(_) => {}
-        }
-        match expected.staged_canlight_bytes {
-            None => {
-                return Err(crate::GenerationError::InvalidInput(format!(
-                    "staged canlight {} is missing",
-                    self.relative_canlight
-                )))
-            }
-            Some(bytes) if bytes != self.canlight_bytes => {
-                return Err(crate::GenerationError::InvalidInput(format!(
-                    "staged canlight {} is {bytes} bytes, stamped {}",
-                    self.relative_canlight, self.canlight_bytes
-                )))
-            }
-            Some(_) => {}
-        }
-        check_staged_digest("pack", &self.nav_sha256, expected.staged_pack_sha256)?;
-        check_staged_digest("flags", &self.flags_sha256, expected.staged_flags_sha256)?;
-        check_staged_digest("reach", &self.reach_sha256, expected.staged_reach_sha256)?;
+        check_staged_size(
+            crate::StagedArtifact::Pack,
+            &self.relative_pack,
+            self.pack_bytes,
+            expected.staged_pack_bytes,
+        )?;
+        check_staged_size(
+            crate::StagedArtifact::Flags,
+            &self.relative_flags,
+            self.flags_bytes,
+            expected.staged_flags_bytes,
+        )?;
+        check_staged_size(
+            crate::StagedArtifact::Reach,
+            &self.relative_reach,
+            self.reach_bytes,
+            expected.staged_reach_bytes,
+        )?;
+        check_staged_size(
+            crate::StagedArtifact::Canlight,
+            &self.relative_canlight,
+            self.canlight_bytes,
+            expected.staged_canlight_bytes,
+        )?;
         check_staged_digest(
-            "canlight",
+            crate::StagedArtifact::Pack,
+            &self.nav_sha256,
+            expected.staged_pack_sha256,
+        )?;
+        check_staged_digest(
+            crate::StagedArtifact::Flags,
+            &self.flags_sha256,
+            expected.staged_flags_sha256,
+        )?;
+        check_staged_digest(
+            crate::StagedArtifact::Reach,
+            &self.reach_sha256,
+            expected.staged_reach_sha256,
+        )?;
+        check_staged_digest(
+            crate::StagedArtifact::Canlight,
             &self.canlight_sha256,
             expected.staged_canlight_sha256,
         )?;
-        let manifest_sha256 = self.manifest_sha256.as_deref().unwrap_or_default();
-        check_staged_digest("manifest", manifest_sha256, expected.staged_manifest_sha256)?;
+        let Some(stamped_manifest_sha256) = self.manifest_sha256.as_deref() else {
+            return Err(crate::StaleStampError::ManifestDigestMissingFromStamp.into());
+        };
+        check_staged_digest(
+            crate::StagedArtifact::Manifest,
+            stamped_manifest_sha256,
+            expected.staged_manifest_sha256,
+        )?;
         match (self.manifest_bytes, expected.staged_manifest_bytes) {
-            (None, _) => return Err("staged navigation manifest is missing".into()),
-            (_, None) => return Err("staged navigation manifest is missing".into()),
+            (None, _) => {
+                return Err(crate::StaleStampError::ManifestBytesMissingFromStamp.into())
+            }
+            (_, None) => {
+                return Err(crate::StaleStampError::ManifestBytesMissingFromDisk.into())
+            }
             (Some(stamped), Some(actual)) if stamped != actual => {
-                return Err(crate::GenerationError::InvalidInput(format!(
-                    "staged navigation manifest is {actual} bytes, stamped {stamped}"
-                )))
+                return Err(crate::StaleStampError::ManifestSizeMismatch {
+                    actual_bytes: actual,
+                    stamped_bytes: stamped,
+                }
+                .into())
             }
             (Some(_), Some(_)) => {}
         }
         if self.relative_manifest.is_none() {
-            return Err("staged navigation manifest path is missing from the stamp".into());
+            return Err(crate::StaleStampError::ManifestPathMissingFromStamp.into());
         }
-        if self.pois_sha256.is_none() {
-            return Err("staged navpois is missing".into());
-        }
+        let Some(stamped_pois_sha256) = self.pois_sha256.as_deref() else {
+            return Err(crate::StaleStampError::NavPoisDigestMissingFromStamp.into());
+        };
         if self.pois_generator.as_deref() != Some(expected.pois_generator) {
-            return Err("navpois generator changed".into());
+            return Err(crate::StaleStampError::NavPoisGeneratorChanged {
+                stamped: self.pois_generator.clone(),
+                expected: expected.pois_generator.to_owned(),
+            }
+            .into());
         }
         match expected.staged_pois_bytes {
             None => {
-                return Err(crate::GenerationError::InvalidInput(format!(
-                    "staged navpois {} is missing",
-                    self.relative_pois.as_deref().unwrap_or("274bot.navpois")
-                )))
+                return Err(crate::StaleStampError::StagedArtifactMissing {
+                    artifact: crate::StagedArtifact::NavPois,
+                    path: self
+                        .relative_pois
+                        .as_deref()
+                        .unwrap_or("274bot.navpois")
+                        .to_owned(),
+                }
+                .into())
             }
-            Some(bytes) if self.pois_bytes != Some(bytes) => {
-                return Err(crate::GenerationError::InvalidInput(format!(
-                    "staged navpois is {bytes} bytes, stamped {}",
-                    self.pois_bytes.unwrap_or(0)
-                )))
-            }
-            Some(_) => {}
+            Some(actual) => match self.pois_bytes {
+                None => return Err(crate::StaleStampError::NavPoisBytesMissingFromStamp.into()),
+                Some(stamped_bytes) if stamped_bytes != actual => {
+                    return Err(crate::StaleStampError::NavPoisSizeMismatch {
+                        actual_bytes: actual,
+                        stamped_bytes,
+                    }
+                    .into())
+                }
+                Some(_) => {}
+            },
         }
-        match (self.pois_sha256.as_deref(), expected.staged_pois_sha256) {
-            (None, _) => return Err("staged navpois is missing".into()),
-            (_, None) => {
-                return Err(crate::GenerationError::InvalidInput(format!(
-                    "staged navpois {} is missing",
-                    self.relative_pois.as_deref().unwrap_or("274bot.navpois")
-                )))
+        let Some(actual_pois_sha256) = expected.staged_pois_sha256 else {
+            return Err(crate::StaleStampError::StagedDigestMissing {
+                artifact: crate::StagedArtifact::NavPois,
             }
-            (Some(stamped), Some(actual)) if stamped != actual => {
-                return Err("staged navpois digest does not match the stamp".into())
+            .into());
+        };
+        if stamped_pois_sha256 != actual_pois_sha256 {
+            return Err(crate::StaleStampError::StagedDigestMismatch {
+                artifact: crate::StagedArtifact::NavPois,
             }
-            (Some(_), Some(_)) => {}
+            .into());
         }
         if self.inputs.len() != expected.inputs.len() {
-            return Err(crate::GenerationError::InvalidInput(format!(
-                "canonical inputs changed ({} stamped, {} present)",
-                self.inputs.len(),
-                expected.inputs.len()
-            )));
+            return Err(crate::StaleStampError::CanonicalInputCountMismatch {
+                stamped: self.inputs.len(),
+                present: expected.inputs.len(),
+            }
+            .into());
         }
         for (stamped, present) in self.inputs.iter().zip(expected.inputs) {
             if stamped != present {
-                return Err(crate::GenerationError::InvalidInput(format!(
-                    "canonical input {} changed",
-                    present.path
-                )));
+                return Err(crate::StaleStampError::CanonicalInputChanged {
+                    path: present.path.clone(),
+                }
+                .into());
             }
         }
         Ok(())
     }
 }
+
+fn check_staged_size(
+    artifact: crate::StagedArtifact,
+    path: &str,
+    stamped_bytes: u64,
+    actual_bytes: Option<u64>,
+) -> Result<(), crate::GenerationError> {
+    let Some(actual_bytes) = actual_bytes else {
+        return Err(crate::StaleStampError::StagedArtifactMissing {
+            artifact,
+            path: path.to_owned(),
+        }
+        .into());
+    };
+    if actual_bytes != stamped_bytes {
+        return Err(crate::StaleStampError::StagedArtifactSizeMismatch {
+            artifact,
+            path: path.to_owned(),
+            actual_bytes,
+            stamped_bytes,
+        }
+        .into());
+    }
+    Ok(())
+}
+
 fn check_staged_digest(
-    name: &str,
+    artifact: crate::StagedArtifact,
     stamped: &str,
     actual: Option<&str>,
 ) -> Result<(), crate::GenerationError> {
     let Some(actual) = actual else {
-        return Err(crate::GenerationError::InvalidInput(format!(
-            "staged {name} is missing"
-        )));
+        return Err(crate::StaleStampError::StagedDigestMissing { artifact }.into());
     };
     if stamped != actual {
-        return Err(crate::GenerationError::InvalidInput(format!(
-            "staged {name} digest does not match the stamp"
-        )));
+        return Err(crate::StaleStampError::StagedDigestMismatch { artifact }.into());
     }
     Ok(())
 }
@@ -696,7 +747,7 @@ pub fn resource_root_for_build(
 ) -> Result<PathBuf, crate::GenerationError> {
     if let Some(dir) = override_dir {
         if dir.as_os_str().is_empty() {
-            return Err("BOT_NAV_RESOURCE_DIR is empty".into());
+            return Err(crate::GenerationError::EmptyResourceDirectory);
         }
         return normalize(dir);
     }
@@ -704,18 +755,15 @@ pub fn resource_root_for_build(
         .parent()
         .and_then(Path::parent)
         .filter(|build| build.file_name().is_some_and(|name| name == "build"))
-        .ok_or_else(|| {
-            format!(
-                "unexpected build script output layout {}; set BOT_NAV_RESOURCE_DIR",
-                out_dir.display()
-            )
+        .ok_or_else(|| crate::GenerationError::UnexpectedBuildOutputLayout {
+            out_dir: out_dir.to_path_buf(),
         })?;
-    let profile_dir = build_dir.parent().ok_or_else(|| {
-        format!(
-            "unexpected build script output layout {}; set BOT_NAV_RESOURCE_DIR",
-            out_dir.display()
-        )
-    })?;
+    let profile_dir =
+        build_dir
+            .parent()
+            .ok_or_else(|| crate::GenerationError::UnexpectedBuildOutputLayout {
+                out_dir: out_dir.to_path_buf(),
+            })?;
     Ok(profile_dir.to_path_buf())
 }
 
@@ -723,16 +771,16 @@ fn normalize(path: &Path) -> Result<PathBuf, crate::GenerationError> {
     if path.is_absolute() {
         return Ok(path.to_path_buf());
     }
-    let cwd = std::env::current_dir().map_err(|e| format!("working directory: {e}"))?;
+    let cwd = std::env::current_dir()
+        .map_err(|source| crate::GenerationError::WorkingDirectoryRead { source })?;
     let joined = cwd.join(path);
     if joined
         .components()
         .any(|component| matches!(component, Component::ParentDir))
     {
-        return Err(crate::GenerationError::InvalidInput(format!(
-            "resource directory {} must not escape its root",
-            path.display()
-        )));
+        return Err(crate::GenerationError::ResourceDirectoryEscapesRoot {
+            path: path.to_path_buf(),
+        });
     }
     Ok(joined)
 }

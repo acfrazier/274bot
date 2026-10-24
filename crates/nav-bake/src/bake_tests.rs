@@ -158,7 +158,12 @@ fn movement_sources_invalidate_a_warm_reach_stamp() {
         .covers(&expected)
         .expect_err("shared movement change must fail covers and force reach rebake");
     assert!(
-        matches!(&error, crate::GenerationError::InvalidInput(detail) if detail.contains("generator")),
+        matches!(
+            &error,
+            crate::GenerationError::StaleStamp(
+                crate::StaleStampError::GeneratorChanged
+            )
+        ),
         "{error}"
     );
 }
@@ -196,10 +201,45 @@ fn a_missing_door_config_fails_the_bake() {
         .err()
         .expect("a bake without all door inputs");
     assert!(
-        matches!(&error, crate::GenerationError::InvalidInput(detail) if detail.contains("doubledoors.loc")),
+        matches!(
+            &error,
+            crate::GenerationError::SourceInput(crate::SourceInputError::Io {
+                context: crate::SourceInputContext::DoorConfig,
+                path,
+                ..
+            }) if path.ends_with("doubledoors.loc")
+        ),
         "{error}"
     );
     std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn bake_requires_the_config_archive_source_fingerprint() {
+    let content_root = PathBuf::from("/content");
+    let maps = content_root.join("maps");
+    let doors = content_root.join("scripts/doors/configs");
+    let gates = content_root.join("scripts/general_use/configs/gates.loc");
+    let config_jag = content_root.join("engine/data/pack/config");
+    let input_fingerprints: [crate::bundle::InputFingerprint; 0] = [];
+    let request = BakeRequest {
+        revision: None,
+        maps_dir: &maps,
+        doors_dir: &doors,
+        gates: &gates,
+        config_jag: &config_jag,
+        cache: None,
+        require_all_door_configs: false,
+        input_fingerprints: Some(&input_fingerprints),
+        content_id: None,
+    };
+
+    assert!(matches!(
+        bake_world(&request),
+        Err(crate::GenerationError::SourceInput(
+            crate::SourceInputError::NotFingerprinted { path }
+        )) if path == config_jag
+    ));
 }
 
 fn collision_with_flags(
