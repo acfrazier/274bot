@@ -63,15 +63,6 @@ impl From<crate::native::WalkCancelReason> for WalkCancelReason {
     }
 }
 
-impl From<WalkCancelReason> for crate::native::WalkCancelReason {
-    fn from(reason: WalkCancelReason) -> Self {
-        match reason {
-            WalkCancelReason::None => Self::None,
-            WalkCancelReason::UserInput => Self::UserInput,
-            _ => Self::None,
-        }
-    }
-}
 pub(crate) const LOCAL_PLAYER_MOTION_UNKNOWN: u8 = 0;
 pub(crate) const LOCAL_PLAYER_MOTION_STATIONARY: u8 = 1;
 pub(crate) const LOCAL_PLAYER_MOTION_MOVING: u8 = 2;

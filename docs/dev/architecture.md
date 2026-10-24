@@ -646,7 +646,8 @@ the operator's consent and adopts the tiles already verified).
 | `canvas/mod.rs` | canvas recorder | state and recording API |
 | `canvas/geom.rs`, `canvas/raster.rs`, `canvas/style.rs`, `canvas/compose.rs` | canvas geometry, raster, style, composition | one slice each |
 | `shim/mod.rs` | import-remap facade | re-exports, JS bytes untouched |
-| `shim/content.rs`, `shim/paint.rs`, `shim/interact.rs`, `shim/modules.rs` | shim Rust producers | wire, paint, and content |
+| `interact.rs`, `paint.rs` | runtime-neutral interaction and paint vocabulary | shared by native and loaded scripts |
+| `shim/content.rs`, `shim/rows.rs`, `shim/modules.rs` | shim Rust producers | content, V8 rows, and module remapping |
 | `shim/*.js` | embedded JS sources | name maps, coercion, await plumbing only |
 
 Native bank booth approach borrows the current scene and the host's cached
