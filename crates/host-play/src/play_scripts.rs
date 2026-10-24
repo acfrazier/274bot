@@ -18,13 +18,15 @@ fn invalidate_bank_pick(navs: &Arc<Mutex<HashMap<String, NavBot>>>, name: &str) 
     }
 }
 
+/// End a script run's published rows on `name`'s status row (paint and walk
+/// destination). Takes only the statuses lock, so a caller that holds a script
+/// slot may call it (order: script, navigation, statuses).
 pub(crate) fn retire_script_run_status(statuses: &Arc<Mutex<Vec<crate::SlotStatus>>>, name: &str) {
     if let Some(status) = lock_statuses(statuses)
         .iter_mut()
         .find(|row| row.username == name)
     {
-        status.script_paint = None;
-        status.publish_script_walk(None);
+        status.retire_script_run();
     }
 }
 

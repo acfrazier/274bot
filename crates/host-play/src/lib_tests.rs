@@ -7303,6 +7303,151 @@ fn every_script_stop_retires_the_run_walk_and_only_that_runs_walk() {
     );
 }
 
+/// PANEL-STATE-GAP-1023: a Stop that names the run (`script_native_stop`)
+/// retires that run's published rows with it, and a Stop that names a
+/// different run changes nothing.
+#[test]
+fn script_native_stop_retires_only_the_named_runs_rows() {
+    let mut play = run_with_io(
+        &PlayOptions {
+            host: "127.0.0.1".into(),
+            transport: client::Transport::Tcp,
+            port: 43594,
+            cache_dir: "/tmp".into(),
+            lowmem: true,
+            mainland: false,
+        },
+        vec![],
+        |_| (None, None),
+        |_, _, _| {},
+    );
+    for name in ["alice", "bob"] {
+        play.attach_arm(name, SlotArm::new(7, false));
+        let mut row = SlotStatus {
+            username: name.into(),
+            script_paint: Some(Arc::new(script::shim::ScriptPaint::default())),
+            ..SlotStatus::default()
+        };
+        row.publish_script_walk(Some(WorldTile {
+            x: 2550,
+            z: 3348,
+            level: 0,
+        }));
+        play.statuses.lock().unwrap().push(row);
+    }
+    let slot = script_slot_or_insert(&play.scripts, "alice");
+    slot.lock()
+        .unwrap()
+        .start_test_script(Box::new(TickCounter(Arc::new(Mutex::new(0)))), None)
+        .unwrap();
+    let run = slot
+        .lock()
+        .unwrap()
+        .native_run()
+        .expect("the started script is a native run");
+    let published = |play: &Play| -> Vec<(bool, bool)> {
+        play.statuses
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|row| (row.script_paint.is_some(), row.script_walk().is_some()))
+            .collect()
+    };
+
+    let stale = api::selected::RunKey {
+        run: run.run + 1,
+        ..run
+    };
+    assert!(!play.script_native_stop("alice", stale));
+    assert_eq!(
+        published(&play),
+        [(true, true), (true, true)],
+        "a Stop for another run retires nothing"
+    );
+
+    assert!(play.script_native_stop("alice", run));
+    assert_eq!(
+        published(&play),
+        [(false, false), (true, true)],
+        "Play::script_native_stop retires that run's paint and walk, and only that bot's"
+    );
+}
+
+/// PANEL-STATE-GAP-1023: a run's published walk ends with the run however the
+/// run ends: a disconnect, a relog, a worker that fails or panics, and an
+/// unload (which removes the row). A logout or relog keeps a held script's
+/// paint frame. The explicit Stops are covered above.
+#[test]
+fn every_other_way_a_run_ends_retires_its_published_rows() {
+    let mut play = run_with_io(
+        &PlayOptions {
+            host: "127.0.0.1".into(),
+            transport: client::Transport::Tcp,
+            port: 43594,
+            cache_dir: "/tmp".into(),
+            lowmem: true,
+            mainland: false,
+        },
+        vec![],
+        |_| (None, None),
+        |_, _, _| {},
+    );
+    let names = ["kept", "logout", "relog", "failed", "panicked", "unloaded"];
+    for name in names {
+        let mut row = SlotStatus {
+            username: name.into(),
+            script_paint: Some(Arc::new(script::shim::ScriptPaint::default())),
+            ..SlotStatus::default()
+        };
+        row.publish_script_walk(Some(WorldTile {
+            x: 2550,
+            z: 3348,
+            level: 0,
+        }));
+        play.statuses.lock().unwrap().push(row);
+    }
+    crate::play_status::publish_slot_disconnected(&play.statuses, "logout");
+    crate::play_status::publish_slot_observation_reset(&play.statuses, "relog");
+    crate::play_status::publish_worker_terminal(
+        &play.statuses,
+        "failed",
+        crate::play_status::WorkerTerminal::Failed,
+        None,
+    );
+    crate::play_status::publish_worker_terminal(
+        &play.statuses,
+        "panicked",
+        crate::play_status::WorkerTerminal::Panicked,
+        None,
+    );
+    play.stop_slot("unloaded");
+
+    let published: Vec<(String, bool, bool)> = play
+        .statuses
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|row| {
+            (
+                row.username.clone(),
+                row.script_paint.is_some(),
+                row.script_walk().is_some(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        published,
+        [
+            ("kept".to_owned(), true, true),
+            ("logout".to_owned(), true, false),
+            ("relog".to_owned(), true, false),
+            ("failed".to_owned(), false, false),
+            ("panicked".to_owned(), false, false),
+        ],
+        "a logout or relog ends the walk and keeps the paint of a held script; a worker that fails or panics ends both; only the bot whose run did not end keeps its rows; the unloaded bot's row is gone"
+    );
+}
+
 #[test]
 fn fenced_script_stop_requires_same_identity_and_generation() {
     let mut play = run_with_io(
@@ -8421,6 +8566,7 @@ fn host_internal_tutorial_probe_is_not_tracked_as_debug_reply() {
         None,
         Some(&mut replies),
         None,
+        None,
     );
 
     assert_eq!(
@@ -9068,6 +9214,7 @@ fn t23_bank_observe(
             None,
             None,
             super::script_channels::BrokerWorld::Local,
+            None,
             None,
             None,
             None,
@@ -21962,6 +22109,7 @@ fn dirty_snapshot_pumps_compiled_without_replenishing_events() {
             None,
             None,
             None,
+            None,
         );
     };
     observe(&mut rig, true, false, 1);
@@ -22206,6 +22354,7 @@ impl ReconnectRig {
             None,
             Some(&self.channels),
             script_channels::BrokerWorld::Local,
+            None,
             None,
             None,
             None,
@@ -30342,6 +30491,7 @@ mod host_batch_tests {
                 None,
                 None,
                 super::super::script_channels::BrokerWorld::Unavailable,
+                None,
                 None,
                 None,
                 None,

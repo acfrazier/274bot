@@ -6409,16 +6409,17 @@ fn observe_full(rig: &mut Rig, tick: u64) -> crate::script_runtime::ScriptObserv
         None,
         None,
         None,
+        Some(&rig.statuses),
     )
 }
 
-/// PANEL-STATE-GAP-1023: a run that ends on its own (here a Stop the
-/// lifecycle reaps in the pump) resets its navigation, and the pump then
-/// reports the retirement once, so the status owner can end the run's
-/// published walk destination. Nothing else clears it: the nav step runs
-/// only while a route or cleanup is armed.
+/// PANEL-STATE-GAP-1023: a run that ends on its own resets its navigation in
+/// the observer, and the same observation ends the run's published walk
+/// destination, once. The nav step runs only while a route or cleanup is
+/// armed, so nothing else would clear the row. Here the lifecycle reaps a
+/// Stop with its walk still armed.
 #[test]
-fn a_finished_run_reports_its_retirement_once_and_its_walk_leaves_the_status() {
+fn a_run_that_ends_in_the_pump_retires_its_published_walk_once() {
     let mut rig = open_rig(false);
     {
         let mut shared = rig.shared.lock();
@@ -6438,25 +6439,125 @@ fn a_finished_run_reports_its_retirement_once_and_its_walk_leaves_the_status() {
 
     rig.slot().lock().unwrap().stop();
     let mut tick = 2;
-    let mut retirements = 0;
     assert!(wait_until(5_000, || {
         tick += 1;
-        retirements += usize::from(observe_full(&mut rig, tick).script_run_retired);
-        retirements > 0
+        observe_full(&mut rig, tick);
+        rig.statuses.lock().unwrap()[0].script_walk().is_none()
     }));
     assert_eq!(queued(&rig.navs), None, "the run's route ended with it");
+
+    // A later publication stands for the next run's walk: the ended run does
+    // not retire it again.
+    rig.statuses.lock().unwrap()[0].publish_script_walk(Some(WorldTile {
+        x: 7,
+        z: 7,
+        level: 0,
+    }));
     for _ in 0..3 {
         tick += 1;
-        assert!(
-            !observe_full(&mut rig, tick).script_run_retired,
-            "a retired run is reported once"
-        );
+        observe_full(&mut rig, tick);
     }
     assert!(
         rig.statuses.lock().unwrap()[0].script_walk().is_some(),
-        "the observer does not own the status rows"
+        "an ended run is retired once"
+    );
+}
+
+/// PANEL-STATE-GAP-1023: a run that fails ends its published rows the same
+/// way (the lifecycle receipt names its generation), once per run.
+#[test]
+fn a_failed_run_retires_its_published_rows_once() {
+    let mut rig = open_rig(true);
+    rig.statuses.lock().unwrap()[0].publish_script_walk(Some(WorldTile {
+        x: 20,
+        z: 0,
+        level: 0,
+    }));
+    let mut tick = 1;
+    assert!(wait_until(5_000, || {
+        tick += 1;
+        observe_full(&mut rig, tick);
+        rig.slot()
+            .lock()
+            .unwrap()
+            .terminal_lifecycle_generation()
+            .is_some()
+            && rig.statuses.lock().unwrap()[0].script_walk().is_none()
+    }));
+
+    rig.statuses.lock().unwrap()[0].publish_script_walk(Some(WorldTile {
+        x: 7,
+        z: 7,
+        level: 0,
+    }));
+    for _ in 0..3 {
+        tick += 1;
+        observe_full(&mut rig, tick);
+    }
+    assert!(
+        rig.statuses.lock().unwrap()[0].script_walk().is_some(),
+        "a failed run is retired once"
+    );
+}
+
+/// PANEL-STATE-GAP-1023: a Stop that lands between the nav step's read of the
+/// armed destination and its status write must not be overwritten. The nav
+/// step parks at that point; a Stop thread runs `Play::script_stop`'s own
+/// sequence (stop the run, reset navigation, release the slot, retire the
+/// published rows); the step then writes. The destination read belongs to the
+/// retired run, so it must not be published after the retirement.
+#[test]
+fn a_stop_between_the_walk_read_and_its_publication_is_not_overwritten() {
+    use std::sync::mpsc::channel;
+    use std::time::Duration;
+
+    let mut rig = open_rig(false);
+    {
+        let mut shared = rig.shared.lock();
+        shared.target = Some(WorldTile {
+            x: 20,
+            z: 0,
+            level: 0,
+        });
+    }
+    rig.observe(1);
+    rig.wait_routed();
+    rig.step();
+    assert!(
+        rig.statuses.lock().unwrap()[0].script_walk().is_some(),
+        "the nav step published the armed destination"
     );
 
-    crate::play_scripts::retire_script_run_status(&rig.statuses, "alice");
-    assert_eq!(rig.statuses.lock().unwrap()[0].script_walk(), None);
+    let (read_tx, read_rx) = channel::<()>();
+    let (stopped_tx, stopped_rx) = channel::<()>();
+    let slot = rig.slot();
+    let navs = Arc::clone(&rig.navs);
+    let statuses = Arc::clone(&rig.statuses);
+    let stopper = std::thread::spawn(move || {
+        read_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+        let mut guard = slot.lock().unwrap();
+        guard.stop();
+        crate::script_runtime::reset_script_nav(&navs, "alice", None);
+        drop(guard);
+        crate::play_scripts::retire_script_run_status(&statuses, "alice");
+        // The publisher may have stopped waiting by now.
+        let _ = stopped_tx.send(());
+    });
+    crate::script_runtime::BEFORE_PUBLISH.with(|hook| {
+        *hook.borrow_mut() = Some(Box::new(move || {
+            read_tx.send(()).unwrap();
+            // Where the destination is read under the navigation lock, the
+            // Stop waits for that lock; where it is not, the Stop finishes here.
+            let _ = stopped_rx.recv_timeout(Duration::from_secs(1));
+        }));
+    });
+    rig.step();
+    stopper.join().unwrap();
+
+    assert_eq!(queued(&rig.navs), None, "Stop ended the run's route");
+    assert_eq!(
+        rig.statuses.lock().unwrap()[0].script_walk(),
+        None,
+        "an in-flight publication restored the retired run's destination"
+    );
 }

@@ -266,13 +266,32 @@ impl SlotStatus {
         (self.walk_x != -1).then_some((self.walk_x, self.walk_z, self.walk_level))
     }
 
-    /// Publish the script walk's destination, or retire it with `None`.
-    /// Every writer of `walk_*` goes through here: the pump's per-uid nav
-    /// step, the login reset, and a script run's terminal retirement
-    /// (`retire_script_run_status` in `play_scripts.rs`).
+    /// Publish the armed script walk's destination. The pump's per-uid nav
+    /// step is the only caller; the destination ends through
+    /// [`Self::retire_script_walk`].
     pub(crate) fn publish_script_walk(&mut self, destination: Option<api::snapshot::WorldTile>) {
         let (x, z, level) = destination.map_or((-1, -1, -1), |tile| (tile.x, tile.z, tile.level));
         (self.walk_x, self.walk_z, self.walk_level) = (x, z, level);
+    }
+
+    /// End the published script walk destination. This is the only place
+    /// that clears it. A login boundary ends it with the old session (a
+    /// script that holds its work re-arms the walk after the next login);
+    /// a run's end ends it through [`Self::retire_script_run`].
+    pub(crate) fn retire_script_walk(&mut self) {
+        self.publish_script_walk(None);
+    }
+
+    /// End everything a script run published on this row: its paint frame and
+    /// its walk destination. Every way a run ends reaches it: an explicit
+    /// Stop and a run that ends on its own (`retire_script_run_status` in
+    /// `play_scripts.rs`), and a worker's terminal outcome
+    /// (`publish_worker_terminal`). A logout or relog resets the walk only
+    /// ([`Self::retire_script_walk`]): a paused script keeps its paint frame.
+    /// Unload removes the row itself.
+    pub(crate) fn retire_script_run(&mut self) {
+        self.script_paint = None;
+        self.retire_script_walk();
     }
 
     /// A preparation failure that is terminal for the current slot lifetime.
@@ -606,7 +625,7 @@ pub(super) fn reset_slot_observation(s: &mut SlotStatus) {
     // A fresh login clears the client's pending box, so the row must not
     // keep reporting one (else the drain would click a menu).
     s.tutorial_pending = false;
-    s.publish_script_walk(None);
+    s.retire_script_walk();
     s.random = RandomStatus::default();
     s.condition.session = api::condition::SessionMark::Boundary;
 }
@@ -657,7 +676,7 @@ pub(super) fn publish_worker_terminal(
     let mut rows = lock_statuses(statuses);
     if let Some(status) = rows.iter_mut().find(|status| status.username == name) {
         reset_slot_observation(status);
-        status.script_paint = None;
+        status.retire_script_run();
         status.login_started = None;
         status.queue_position = -1;
         status.queue_total = -1;

@@ -33,7 +33,6 @@ use crate::play_login::{
     wait_for_transfer_response, PermitWait, QueuePlaceRetirement, SharedLoginQueue, SlotArm,
     SlotLogin,
 };
-use crate::play_scripts::retire_script_run_status;
 use crate::play_status::{
     apply_startup_phase, clear_startup_progress, copy_stream_bytes, lock_statuses,
     mark_login_started, publish_login_lowmem, publish_session_boundary_status,
@@ -1836,24 +1835,19 @@ fn spawn_slot_thread(
                                 Some(&mut *run_policy),
                                 Some(&mut debug_replies),
                                 Some(seat_arm),
+                                Some(&slot_statuses),
                                 )
                             };
                             let crate::script_runtime::ScriptObservation {
                                 wrote: _wrote,
                                 journal_paint_hidden,
                                 exclusive,
-                                script_run_retired,
                             } = observe(
                                 c,
                                 tick_edge,
                                 script_evidence_dirty(drain.dirty),
                                 nav_state,
                             );
-                            // The run ended and its navigation is reset: its
-                            // published rows end with it, here and in Stop.
-                            if script_run_retired {
-                                retire_script_run_status(&slot_statuses, name);
-                            }
                             #[cfg(test)]
                             if crate::combat_proof::capture_enabled(name) {
                                 crate::combat_proof::record_frame(name, *script_tick, &nav_snapshot);
@@ -1961,9 +1955,6 @@ fn spawn_slot_thread(
                                         ),
                                     );
                                     c.set_journal_paint_hidden(c.ingame && completion.journal_paint_hidden);
-                                    if completion.script_run_retired {
-                                        retire_script_run_status(&slot_statuses, name);
-                                    }
                                 }
                             }
                             #[cfg(any(test, feature = "test-support"))]

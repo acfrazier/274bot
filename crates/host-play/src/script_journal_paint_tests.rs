@@ -127,6 +127,7 @@ impl PaintRig {
             None,
             None,
             None,
+            None,
         )
         .journal_paint_hidden
     }

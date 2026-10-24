@@ -327,6 +327,7 @@ pub(crate) fn script_observe_cached(
         run_policy,
         None,
         None,
+        None,
     )
     .wrote
 }
@@ -370,10 +371,16 @@ pub(crate) struct ScriptObservation {
     pub journal_paint_hidden: bool,
     /// A live nonzero native batch was drained; freeze follow for this key.
     pub exclusive: bool,
-    /// The observed script run ended (Idle or Error) and this frame reset its
-    /// navigation, once per run. The caller owns the status rows and retires
-    /// the run's published rows, so a walk destination cannot outlive it.
-    pub script_run_retired: bool,
+}
+
+/// The observed run ended in this frame and its navigation is reset, once per
+/// run: its published rows end with it, as in an explicit Stop
+/// (`retire_script_run_status`). Runs under the slot lock, which keeps the
+/// order script, then statuses. `None` is a caller without status rows.
+fn retire_run_status(statuses: Option<&Arc<Mutex<Vec<crate::SlotStatus>>>>, name: &str) {
+    if let Some(statuses) = statuses {
+        crate::play_scripts::retire_script_run_status(statuses, name);
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -407,12 +414,12 @@ pub(crate) fn script_observe_cached_with_channels(
     run_policy: Option<&mut ScriptRunPolicy>,
     mut debug_replies: Option<&mut super::debug_replies::DebugReplies>,
     service_arm: Option<&SlotArm>,
+    statuses: Option<&Arc<Mutex<Vec<crate::SlotStatus>>>>,
 ) -> ScriptObservation {
     if let Some(inp) = slot_input {
         inp.set_host_consume_allowed(up && !hold);
     }
     let mut wrote = false;
-    let mut script_run_retired = false;
     let mut journal_wall_now = None;
     let mut journal_paint_hidden = false;
     let mut exclusive = false;
@@ -501,7 +508,9 @@ pub(crate) fn script_observe_cached_with_channels(
         );
         if terminal_slot {
             if let Some(generation) = slot.terminal_lifecycle_generation() {
-                script_run_retired |= reset_script_nav(navs, name, Some(generation));
+                if reset_script_nav(navs, name, Some(generation)) {
+                    retire_run_status(statuses, name);
+                }
             } else if navs
                 .lock()
                 .unwrap()
@@ -510,7 +519,7 @@ pub(crate) fn script_observe_cached_with_channels(
             {
                 // Legacy self-stops without a terminal receipt can only own a walk.
                 abort_script_walk(navs, name);
-                script_run_retired = true;
+                retire_run_status(statuses, name);
             }
         }
         slot.on_is_up(up);
@@ -1266,7 +1275,6 @@ pub(crate) fn script_observe_cached_with_channels(
                         wrote,
                         journal_paint_hidden,
                         exclusive,
-                        script_run_retired,
                     };
                 };
                 if same_lifetime
@@ -1775,7 +1783,6 @@ pub(crate) fn script_observe_cached_with_channels(
                             wrote,
                             journal_paint_hidden,
                             exclusive,
-                            script_run_retired,
                         };
                     };
                     if same_lifetime && Some(slot.work_epoch()) == slot_work_epoch {
@@ -1814,7 +1821,6 @@ pub(crate) fn script_observe_cached_with_channels(
                         wrote,
                         journal_paint_hidden,
                         exclusive,
-                        script_run_retired,
                     };
                 };
                 if same_lifetime && Some(slot.work_epoch()) == slot_work_epoch {
@@ -1869,7 +1875,6 @@ pub(crate) fn script_observe_cached_with_channels(
         wrote,
         journal_paint_hidden,
         exclusive,
-        script_run_retired,
     }
 }
 
