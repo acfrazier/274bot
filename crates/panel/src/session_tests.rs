@@ -55,7 +55,7 @@ use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -266,15 +266,37 @@ fn plant_snapshot(unpack: &Path, revision: u16, packs: &[(String, Vec<u8>)]) {
 }
 
 /// Mock update server: `/crc` matching the fixture packs, plus pack GETs if
-/// a runtime refresh asks. Detached so unit tests never need a live engine.
-fn serve_fixture_crc(packs: Vec<(String, Vec<u8>)>) -> u16 {
+/// a runtime refresh asks. The owning fixture stops and joins the server.
+struct FixtureCrcServer {
+    port: u16,
+    stop: Arc<AtomicBool>,
+    worker: Option<thread::JoinHandle<()>>,
+}
+
+impl FixtureCrcServer {
+    fn port(&self) -> u16 {
+        self.port
+    }
+}
+
+impl Drop for FixtureCrcServer {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Release);
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
+    }
+}
+
+fn serve_fixture_crc(packs: Vec<(String, Vec<u8>)>) -> FixtureCrcServer {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
-    thread::spawn(move || {
-        listener.set_nonblocking(true).unwrap();
-        let deadline = Instant::now() + Duration::from_secs(30);
+    listener.set_nonblocking(true).unwrap();
+    let stop = Arc::new(AtomicBool::new(false));
+    let worker_stop = Arc::clone(&stop);
+    let worker = thread::spawn(move || {
         let body = crc_body(&packs);
-        while Instant::now() < deadline {
+        while !worker_stop.load(Ordering::Acquire) {
             let (mut sock, _) = match listener.accept() {
                 Ok(conn) => {
                     // Accepted sockets inherit O_NONBLOCK from the listener on macOS/BSD.
@@ -320,10 +342,16 @@ fn serve_fixture_crc(packs: Vec<(String, Vec<u8>)>) -> u16 {
             let _ = sock.write_all(&response);
         }
     });
-    port
+    FixtureCrcServer {
+        port,
+        stop,
+        worker: Some(worker),
+    }
 }
 
-fn runtime_profile_fixture(revision: u16) -> (TestDir, PathBuf, PathBuf, PathBuf, u16) {
+fn runtime_profile_fixture(
+    revision: u16,
+) -> (TestDir, PathBuf, PathBuf, PathBuf, FixtureCrcServer) {
     let (root, cache, _) = checked_profile_fixture(revision);
     let packs = identity_packs();
     for (name, bytes) in &packs {
@@ -338,8 +366,8 @@ fn runtime_profile_fixture(revision: u16) -> (TestDir, PathBuf, PathBuf, PathBuf
     .unwrap();
     let unpack = root.join("unpack");
     plant_snapshot(&unpack, revision, &packs);
-    let port = serve_fixture_crc(packs);
-    (root, cache, manifest_path, unpack, port)
+    let server = serve_fixture_crc(packs);
+    (root, cache, manifest_path, unpack, server)
 }
 
 fn preparation_only_session() -> Session {
@@ -389,7 +417,7 @@ fn join_validation(session: &mut Session, generation: u64) -> ValidatedProfile {
 
 #[test]
 fn explicit_profile_wins_saved_revision_and_bound_session_refuses_changes() {
-    let (root, cache, manifest, unpack, port) = runtime_profile_fixture(274);
+    let (root, cache, manifest, unpack, server) = runtime_profile_fixture(274);
     let mut session = Session::new();
     session.ui.server_revision = 289;
     configure_isolated_profile(
@@ -399,7 +427,7 @@ fn explicit_profile_wins_saved_revision_and_bound_session_refuses_changes() {
             cache_dir: Some(cache),
             cache_manifest: Some(manifest),
             unpack_dir: Some(unpack),
-            http_port: Some(port),
+            http_port: Some(server.port()),
             ..ProfileOptions::default()
         },
         &root,
@@ -414,7 +442,8 @@ fn explicit_profile_wins_saved_revision_and_bound_session_refuses_changes() {
 
 #[test]
 fn stale_profile_preparation_is_dropped_without_partial_session_state() {
-    let (root, cache, manifest, unpack, port) = runtime_profile_fixture(274);
+    let _work_service_guard = crate::work_service_test_lock();
+    let (root, cache, manifest, unpack, server) = runtime_profile_fixture(274);
     let mut session = Session::new();
     configure_isolated_profile(
         &mut session,
@@ -423,7 +452,7 @@ fn stale_profile_preparation_is_dropped_without_partial_session_state() {
             cache_dir: Some(cache),
             cache_manifest: Some(manifest),
             unpack_dir: Some(unpack),
-            http_port: Some(port),
+            http_port: Some(server.port()),
             ..ProfileOptions::default()
         },
         &root,
@@ -481,8 +510,8 @@ fn profile_preparation_failure_keeps_vault_play_and_slots_absent() {
 
 #[test]
 fn validated_profile_unlock_uses_the_ticket_without_rebinding() {
-    let (root, cache, manifest, unpack, port) = runtime_profile_fixture(274);
     let _work_service_guard = crate::work_service_test_lock();
+    let (root, cache, manifest, unpack, server) = runtime_profile_fixture(274);
     let mut session = Session::new();
     configure_isolated_profile(
         &mut session,
@@ -491,7 +520,7 @@ fn validated_profile_unlock_uses_the_ticket_without_rebinding() {
             cache_dir: Some(cache.clone()),
             cache_manifest: Some(manifest),
             unpack_dir: Some(unpack),
-            http_port: Some(port),
+            http_port: Some(server.port()),
             vault_path: Some(root.join("prepared.vault")),
             ..ProfileOptions::default()
         },
@@ -524,8 +553,8 @@ fn validated_profile_unlock_uses_the_ticket_without_rebinding() {
 #[test]
 fn start_handle_reads_operator_loadouts_through_the_sessions_service() {
     let _iso = IsolatedStores::enter("start-handle-loadouts");
-    let (root, cache, manifest, unpack, port) = runtime_profile_fixture(274);
     let _work_service_guard = crate::work_service_test_lock();
+    let (root, cache, manifest, unpack, server) = runtime_profile_fixture(274);
     let mut session = Session::new();
     configure_isolated_profile(
         &mut session,
@@ -534,7 +563,7 @@ fn start_handle_reads_operator_loadouts_through_the_sessions_service() {
             cache_dir: Some(cache),
             cache_manifest: Some(manifest),
             unpack_dir: Some(unpack),
-            http_port: Some(port),
+            http_port: Some(server.port()),
             vault_path: Some(root.join("prepared.vault")),
             ..ProfileOptions::default()
         },
@@ -1047,7 +1076,7 @@ fn explicit_catalog_default_allows_manual_import_and_preserves_custom_cards() {
 #[test]
 fn revision_and_binding_allow_already_loaded_scripts_and_source_edits() {
     let _work_service_guard = crate::work_service_test_lock();
-    let (root, cache, manifest, unpack, port) = runtime_profile_fixture(274);
+    let (root, cache, manifest, unpack, server) = runtime_profile_fixture(274);
     let catalog = write_looping_catalog(&root.join("catalog"), &[("Chosen", "Chosen")]);
     let source = catalog.join("src/bot/scripts/Chosen/Chosen.ts");
     let env = ProfileEnvironment {
@@ -1067,7 +1096,7 @@ fn revision_and_binding_allow_already_loaded_scripts_and_source_edits() {
                 cache_dir: Some(cache),
                 cache_manifest: Some(manifest),
                 unpack_dir: Some(unpack),
-                http_port: Some(port),
+                http_port: Some(server.port()),
                 catalog_root: Some(catalog),
                 ..ProfileOptions::default()
             }),
