@@ -5,10 +5,14 @@ import contextlib
 import importlib.util
 import io
 import json
+import os
+import signal
 import subprocess
 import sys
 import tarfile
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -331,6 +335,87 @@ class TartStartTests(unittest.TestCase):
         start_command = popen.call_args.args[0]
         self.assertEqual(start_command[start_command.index("--session-id") + 1], str(session_id))
 
+    def test_start_child_receives_sigterm_with_default_signal_mask(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            helper = Path(temporary) / "fake-mac-vm.py"
+            helper.write_text(
+                "VM_PREFIX = '274bot-mac-'\n"
+                "import time\n"
+                "if __name__ == '__main__':\n"
+                "    while True:\n"
+                "        time.sleep(1)\n",
+                encoding="utf-8",
+            )
+            settings = SimpleNamespace(
+                python=sys.executable, vm_tool=helper, base="test-base"
+            )
+            vm = nightly.TartVM(settings, lambda: 200 * nightly.GIB)
+            child_ready = threading.Event()
+            children = []
+            original_popen = subprocess.Popen
+
+            def spawn(*args, **kwargs):
+                child = original_popen(*args, **kwargs)
+                children.append(child)
+                child_ready.set()
+                return child
+
+            errors = []
+
+            def start():
+                try:
+                    vm.start()
+                except BaseException as error:
+                    errors.append(error)
+
+            worker = threading.Thread(target=start)
+            try:
+                with mock.patch.object(nightly.subprocess, "Popen", side_effect=spawn):
+                    worker.start()
+                    self.assertTrue(child_ready.wait(timeout=5))
+                    deadline = time.monotonic() + 5
+                    while vm.start_process is None and time.monotonic() < deadline:
+                        time.sleep(0.01)
+                    process = vm.start_process
+                    self.assertIsNotNone(process)
+                    started = time.monotonic()
+                    self.assertTrue(vm.terminate_start())
+                    elapsed = time.monotonic() - started
+                worker.join(timeout=5)
+                self.assertFalse(worker.is_alive())
+                self.assertLess(elapsed, 5)
+                self.assertEqual(process.returncode, -signal.SIGTERM)
+                self.assertIsInstance(errors[0], nightly.NightlyError)
+            finally:
+                if vm.start_process is not None:
+                    vm.terminate_start()
+                elif children and children[0].poll() is None:
+                    os.killpg(children[0].pid, signal.SIGKILL)
+                    children[0].wait(timeout=5)
+                worker.join(timeout=20)
+
+    def test_quiet_lock_check_stops_start_wait(self):
+        settings = SimpleNamespace(
+            python="python3", vm_tool=Path("/tmp/mac_vm.py"), base="test-base"
+        )
+        module = SimpleNamespace(VM_PREFIX="274bot-mac-", load_session=mock.Mock())
+        process = mock.Mock(returncode=None, pid=32146)
+        process.communicate.side_effect = subprocess.TimeoutExpired(["python3"], 5)
+        vm = nightly.TartVM(settings, lambda: 200 * nightly.GIB)
+        quiet_lock_check = mock.Mock(return_value=True)
+
+        with mock.patch.object(nightly, "load_vm_module", return_value=module), \
+                mock.patch.object(nightly.subprocess, "Popen", return_value=process), \
+                mock.patch.object(nightly.os, "killpg") as kill_group:
+            self.assertIsNone(vm.start(quiet_lock_check))
+
+        quiet_lock_check.assert_called_once_with()
+        kill_group.assert_called_once_with(process.pid, signal.SIGTERM)
+        process.wait.assert_called_once_with(timeout=15)
+        module.load_session.assert_not_called()
+        self.assertIsNone(vm.start_process)
+        self.assertIsNotNone(vm.session_id)
+
 
 class TartSupervisorTests(unittest.TestCase):
     def test_retains_fast_failure_log_outside_the_disposable_guest(self):
@@ -354,9 +439,12 @@ class TartSupervisorTests(unittest.TestCase):
 
 
 class FakeVM:
-    def __init__(self, settings, _disk_check, *, fail_start=False):
+    def __init__(
+        self, settings, _disk_check, *, fail_start=False, quiet_during_start=False
+    ):
         self.settings = settings
         self.fail_start = fail_start
+        self.quiet_during_start = quiet_during_start
         self.session = None
         self.session_id = None
         self.supervisor_path = None
@@ -366,11 +454,15 @@ class FakeVM:
         self.stop_calls = 0
         self.start_calls = 0
 
-    def start(self):
+    def start(self, quiet_lock_check=None):
         self.start_calls += 1
         self.session_id = "nightly-test"
         if self.fail_start:
             raise nightly.NightlyError("simulated start failure after clone creation")
+        if self.quiet_during_start:
+            self.settings.quiet_lock.touch()
+            if quiet_lock_check is not None and quiet_lock_check():
+                return
         session_dir = self.settings.root.parent / "sessions" / self.session_id
         share = session_dir / "share"
         share.mkdir(parents=True, exist_ok=True)
@@ -589,6 +681,81 @@ class NightlyOrchestrationTests(unittest.TestCase):
             self.assertEqual(created[0].stop_calls, 1)
             self.assertFalse(settings.lock_dir.exists())
             self.assertFalse(settings.status.exists())
+
+    def test_quiet_lock_during_guest_start_stops_before_staging(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            settings = self.make_settings(Path(temporary))
+            created = []
+
+            def vm_factory(*args):
+                vm = FakeVM(*args, quiet_during_start=True)
+                created.append(vm)
+                return vm
+
+            controller = nightly.NightlyOrchestrator(
+                settings, ["dev"], vm_factory=vm_factory
+            )
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                result = controller.run()
+
+            self.assertEqual(result, 0)
+            self.assertEqual(created[0].start_calls, 1)
+            self.assertEqual(created[0].stop_calls, 1)
+            self.assertEqual(created[0].run_calls, [])
+            self.assertIn("MAC-QUIET.lock appeared during guest start", output.getvalue())
+            self.assertNotIn("staged runner source", output.getvalue())
+            self.assertFalse(settings.lock_dir.exists())
+            self.assertFalse(settings.status.exists())
+
+    def test_second_signal_during_teardown_does_not_skip_cleanup(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            settings = self.make_settings(Path(temporary))
+            controller = nightly.NightlyOrchestrator(
+                settings, ["dev"], vm_factory=FakeVM
+            )
+
+            def send_second_signal():
+                os.kill(os.getpid(), signal.SIGTERM)
+                return True
+
+            controller.vm.terminate_start = send_second_signal
+            old_handler = signal.signal(signal.SIGTERM, nightly.handle_signal)
+            try:
+                with self.assertRaises(SystemExit) as raised:
+                    with contextlib.redirect_stdout(io.StringIO()):
+                        controller.run()
+            finally:
+                signal.signal(signal.SIGTERM, old_handler)
+
+            self.assertEqual(raised.exception.code, 128 + signal.SIGTERM)
+            self.assertEqual(controller.vm.stop_calls, 1)
+            self.assertFalse(settings.status.exists())
+            self.assertFalse(settings.lock_dir.exists())
+
+
+class NightlyRefreshDocumentationTests(unittest.TestCase):
+    def test_refresh_checks_checkout_and_run_lock_and_reinstalls_launch_files(self):
+        readme = (HERE / "README.md").read_text(encoding="utf-8")
+        section = readme.split(
+            "### Merlot macOS nightly and malbec mirror\n", 1
+        )[1].split("\n### ", 1)[0]
+
+        self.assertIn('cd "$HOME/experiments/274bot"', section)
+        self.assertIn("git status --short --branch", section)
+        self.assertIn("git log -1 --oneline --decorate", section)
+        lock_check = "if test -e /Volumes/dev-scratch/274bot-nightly/.mac-nightly.lock; then"
+        self.assertLess(section.index(lock_check), section.index("rsync -a --delete"))
+        self.assertIn("After each runner refresh, repeat step 3", section)
+        for name in (
+            "pull-274.sh",
+            "nightly-mac.sh",
+            "malbec-mirror-pull.sh",
+            "local.274bot-nightly-mac.plist",
+            "local.274bot-nightly-malbec-pull.plist",
+        ):
+            self.assertIn(name, section)
+
 
 
 if __name__ == "__main__":
