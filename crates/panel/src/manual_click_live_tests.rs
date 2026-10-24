@@ -1822,14 +1822,6 @@ fn pump_until(
 fn run_stop_retires_script_walks_and_keeps_the_manual_walk() -> Result<(), String> {
     let inputs = live_inputs()?;
     let (mut session, _first) = prepare_session_n(&inputs, false, 4)?;
-    let diagnostic_started = Instant::now();
-    let mut preference_order = vec![serde_json::json!({
-        "phase": "scene ready",
-        "elapsed_ms": diagnostic_started.elapsed().as_millis(),
-        "preference_cache_ready": session.core.preferences().map(|prefs| prefs.ready()),
-        "panel_preferences_adopted": session.panel_preferences_ready(),
-        "preference_error": session.core.preference_error(),
-    })];
     let mut names: Vec<String> = session
         .statuses
         .iter()
@@ -1877,13 +1869,6 @@ fn run_stop_retires_script_walks_and_keeps_the_manual_walk() -> Result<(), Strin
             Ok(session.core.script_state(&manual) == frontend_core::scripts::ScriptRunState::Idle)
         },
     )?;
-    preference_order.push(serde_json::json!({
-        "phase": "fixture script Idle",
-        "elapsed_ms": diagnostic_started.elapsed().as_millis(),
-        "preference_cache_ready": session.core.preferences().map(|prefs| prefs.ready()),
-        "panel_preferences_adopted": session.panel_preferences_ready(),
-        "preference_error": session.core.preference_error(),
-    }));
 
     // Three script walks, each really under way: the route is armed, the
     // bot has moved, and the host row publishes the destination.
@@ -1919,32 +1904,11 @@ fn run_stop_retires_script_walks_and_keeps_the_manual_walk() -> Result<(), Strin
     session
         .select_picker_tile(&world, destination)
         .ok_or("manual walk destination has no walkable map selection")?;
-    preference_order.push(serde_json::json!({
-        "phase": "before manual WalkTo",
-        "elapsed_ms": diagnostic_started.elapsed().as_millis(),
-        "preference_cache_ready": session.core.preferences().map(|prefs| prefs.ready()),
-        "panel_preferences_adopted": session.panel_preferences_ready(),
-        "preference_error": session.core.preference_error(),
-    }));
-    let before_manual_arm = current_probe(&session, &manual)?;
-    let applied = session.confirm_picker_walk(&world);
-    let diagnostic = serde_json::json!({
-        "preference_order": preference_order,
-        "manual": manual,
-        "focused": session.focused_name(),
-        "applied": applied,
-        "error": session.error,
-        "before_manual_arm": before_manual_arm,
-        "after_manual_arm": current_probe(&session, &manual)?,
-        "fleet_row": state_gap_receipt(&session, &manual)?,
-        "command_reports": format!("{:?}", session.core.commands().reports().collect::<Vec<_>>()),
-    });
-    fs::write(
-        dir.join(format!("{stamp}_manual-arm-diagnostic.json")),
-        serde_json::to_vec_pretty(&diagnostic).map_err(|error| error.to_string())?,
-    )
-    .map_err(|error| error.to_string())?;
-    assert!(applied, "manual arm: {diagnostic}");
+    assert!(
+        session.confirm_picker_walk(&world),
+        "manual arm: {:?}",
+        session.error
+    );
     pump_until(&mut session, "manual walk armed", WALK_WAIT, |session| {
         Ok(state_gap_receipt(session, &manual)
             .is_ok_and(|row| row["manual_walk"] == true && row["label"] == "running"))
