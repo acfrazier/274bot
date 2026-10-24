@@ -887,7 +887,7 @@ fn real_camp_gate_read_set_stays_within_the_entrance_bound() {
         .quest_identity_for_bake()
         .expect("verified quest family");
     let quests = QuestSource {
-        family: crate::quest_gates::QuestFamilyId::new(identity.sha256, identity.schema),
+        family: nav_planner::quest_gates::QuestFamilyId::new(identity.sha256, identity.schema),
         facts: &facts,
     };
     let src = Sources::read(&root, &loc_ids_by_name(&root), Some(&quests));
