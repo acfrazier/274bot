@@ -16,6 +16,17 @@ Run the self-tests with temporary Git repositories:
 python3 -B tools/live-map/live_map.py --self-test
 ```
 
+## Validate test selectors
+
+Before using a map, list the tests selected by every unique cell command:
+
+```sh
+ISOHOME=/Users/acfrazier/experiments/274bot/.superpowers/bin/isohome \
+  python3 -B tools/live-map/live_map.py --verify-cells
+```
+
+The verifier runs each cell's Cargo test selector with its declared package and feature arguments and `-- --list`. It fails if a selector exits unsuccessfully or matches no tests. This checks test selection only; it does not run the live cell.
+
 ## Add a cell
 
 1. Write and run the live cell against real game content. Do not seed the target resource or entity.
@@ -26,7 +37,7 @@ python3 -B tools/live-map/live_map.py --self-test
 
 A path that matches `[not_live]` is not live, even if it also matches `[live]`. A path that matches neither is unclassified. Do not use a broad live glob to hide an uncovered path.
 
-The command strings use `.superpowers/bin/isohome` from the primary checkout and `nice -n 10` for Cargo. They use environment variables for local assets and writable per-run data. Set `ENGINE_A_DIR` or `ENGINE_Q_DIR`, `NAV_PACK_289`, `NAV_FLAGS_289`, `RS2B0T`, `BOT_CACHE_DIR`, `CLIENT_UNPACK_DIR`, and `LIVE_EVIDENCE_DIR` before a live run. Quest path smoke also needs `QUESTER_PATH` and `QUESTER_SEEDS`. Each variable must name a local input or a fresh writable run path, as required by the selected cell.
+Commands use `${ISOHOME:?}` for the absolute isohome executable and `nice -n 10` for Cargo. Before a live run, set `ISOHOME=/Users/acfrazier/experiments/274bot/.superpowers/bin/isohome`, choose a unique `BOT_LIVE_NAME_PREFIX`, and provide every `${NAME:?}` shown in the selected command. Those inputs may include an engine directory and port-specific nav pack, a cache or unpack directory, `CATALOG_ROOT`, `BOT_NAV_PACK`, `BOT_UNPACK_DIR`, `RELOG_*`, `BOT_EVIDENCE_DIR` or `LIVE_EVIDENCE_DIR`, and a fresh writable evidence path. Quest path smoke also needs `QUESTER_PATH` and `QUESTER_SEEDS`. Each value must name the local input or writable run path required by that cell.
 
 The scenario registry and nightly cell lists are separate from changed-path matching. Inspect them with:
 
