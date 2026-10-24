@@ -17,6 +17,7 @@ pub const CARD: CompiledCard = CompiledCard {
     category: "Gathering",
     schema_version: 4,
     schema,
+    per_account_settings: &[],
     prepare,
     create,
     lifecycle: None,

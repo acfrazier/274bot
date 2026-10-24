@@ -4270,7 +4270,7 @@ impl SlotScript {
         &mut self,
         inspect: impl FnOnce(&mut dyn SurfaceRun) -> R,
     ) -> Option<R> {
-        self.surface.as_deref_mut().map(inspect)
+        self.surface.as_mut().map(|run| inspect(run.as_mut()))
     }
 
     /// Whether the surface retains facts from an accepted snapshot.

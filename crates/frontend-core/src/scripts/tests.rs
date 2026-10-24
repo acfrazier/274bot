@@ -30,6 +30,36 @@ use serde_json::{json, Map, Value};
 use vault::{Profile, ProfileSettings, Vault};
 const LOOPING: &str = "export default class T extends LoopingBot { override loop() {} }\n";
 
+#[test]
+fn surface_start_errors_keep_runtime_and_refusal_classification() {
+    use script::surface::{SurfaceError, SurfaceKind};
+    use script::StartLoadError;
+
+    for (error, expected) in [
+        (
+            StartLoadError::RuntimeLoad("run generation exhausted".into()),
+            ScriptStartErrorKind::RuntimeLoad,
+        ),
+        (
+            StartLoadError::Surface(SurfaceError::Spawn("failed to spawn isolate thread".into())),
+            ScriptStartErrorKind::RuntimeLoad,
+        ),
+        (
+            StartLoadError::Surface(SurfaceError::NoFactory(SurfaceKind::Js)),
+            ScriptStartErrorKind::Refused,
+        ),
+        (
+            StartLoadError::Surface(SurfaceError::ForeignCard(SurfaceKind::Js)),
+            ScriptStartErrorKind::Refused,
+        ),
+    ] {
+        let diagnostic = error.to_string();
+        let converted = super::ScriptStartError::from(error);
+        assert_eq!(converted.kind(), expected);
+        assert_eq!(converted.message, diagnostic);
+    }
+}
+
 /// Hang guard for every wait in this file, never a pass condition and never a
 /// latency target. Each wait ends on the product's own settlement signal
 /// (`starts_pending()`, `catalog_work_pending()`, the slot's run state): every
