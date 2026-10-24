@@ -73,8 +73,8 @@ pub enum GenerationError {
         path: std::path::PathBuf,
     },
     /// The decoded cache identity could not be computed.
-    #[error("{detail}")]
-    DecodedIdentityFailed { detail: String },
+    #[error(transparent)]
+    DecodedIdentityFailed(#[from] client::content_identity::ContentIdentityError),
     /// The versionlist could not be read during offline identity preparation.
     #[error("{source}")]
     VersionlistRead {
@@ -164,7 +164,7 @@ pub enum GenerationError {
     /// A curated zone group overlaps another curated group.
     #[error("zone {kind_id}@{x},{z},{level} belongs to more than one curated group")]
     DuplicateCuratedZoneMembership {
-        kind_id: String,
+        kind_id: std::sync::Arc<str>,
         x: i32,
         z: i32,
         level: u8,
