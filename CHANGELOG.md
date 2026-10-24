@@ -31,6 +31,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.6` 
 - A message on the panel's red line or the terminal app's message line now goes away by itself 15 seconds after it appears. An action that fixes the problem clears it at once. In the terminal app, a message that a key, palette entry or menu item shows because its command cannot run now clears as soon as the reason it names is gone: for example, focusing a bot clears "Log in: no bot selected", and picking a script clears "Script parameters: pick a script first". The one exception is "no message", which only a newer message replaces. The terminal app's "is not loaded" message clears when that bot is logged in, and focusing a bot clears "no focused profile" and the Guardian settings message. In the panel, focusing a bot clears "focus a bot first", and a finished save clears "profile is still saving". A newer message replaces it and starts its own 15 seconds. The same text shown again without a new refusal keeps its first 15 seconds. Before, a message stayed until you did something else that happened to clear it.
 - Hovering the Fleet's result line (for example "9 bots stopped") now shows its text in a normal tooltip. It was a thin column one letter wide and as tall as the window.
 
+### Host
+
+- The session log warning for a long background work step (`background work slice overrun`) now names the kind of work that ran long, for example profile preparation. The warning only names the work. The step still takes the same time.
+
 ### Survival
 
 - Combat and protected walks use a held antipoison dose or Strange fruit
