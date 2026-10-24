@@ -8,6 +8,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::script_snapshot_fb;
 use super::SettledStart;
+use crate::PostedWalkOutcome;
 
 const HINT: usize = 0;
 const BOARD: usize = 1;

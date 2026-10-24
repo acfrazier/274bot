@@ -1191,20 +1191,6 @@ impl LoadIsolate {
         *queued = drained;
     }
 
-    /// Diagnostics/tests only: reconstructs zero stamps. Production restore
-    /// MUST use `restore_interacts_stamped`.
-    pub(crate) fn restore_interacts(&self, drained: Vec<crate::shim::InteractReq>) {
-        self.restore_interacts_stamped(
-            drained
-                .into_iter()
-                .map(|req| QueuedInteract {
-                    req,
-                    observed_walk_outcome_seq: 0,
-                })
-                .collect(),
-        );
-    }
-
     /// Drop queued canvas mouse rows so Pause/logout cannot replay them.
     pub fn discard_mouse_interacts(&self) {
         self.pump_logs();
