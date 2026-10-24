@@ -28,7 +28,8 @@ impl Drop for Fixture {
 
 fn fixture_cache(path: &Path) {
     for name in CacheManifest::ARCHIVES {
-        std::fs::write(path.join(name), format!("fixture-{name}")).expect("The fixture cache must be writable");
+        std::fs::write(path.join(name), format!("fixture-{name}"))
+            .expect("The fixture cache must be writable");
     }
 }
 
