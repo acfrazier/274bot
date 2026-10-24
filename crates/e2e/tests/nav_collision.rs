@@ -92,7 +92,7 @@ fn nav_collision() {
         Ok(w) => w,
         Err(e) => fail(&format!(
             "nav_collision: cannot load nav pack {} ({e}); \
-             rebake with `cargo run -p nav-planner --bin nav-pack` (v5)",
+             rebake with `cargo run -p nav-bake --bin nav-pack` (v5)",
             path.display()
         )),
     };

@@ -1555,7 +1555,7 @@ mod tests {
         let c = &world.collision;
         let bits = vec![0x1234u64; c.walk.len().div_ceil(64)];
         let bytes =
-            nav_planner::pack::encode_reach_sidecar(c.origin, c.width, c.height, &bits, &binding);
+            nav_bake::pack::encode_reach_sidecar(c.origin, c.width, c.height, &bits, &binding);
         let path = pack.with_extension("navreach");
         std::fs::write(&path, &bytes).unwrap();
         let prepared = super::DeferredReach::prepare(

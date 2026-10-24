@@ -357,6 +357,7 @@ pub(crate) fn script_observe_cached(
         run_policy,
         None,
         None,
+        None,
     )
     .wrote
 }
@@ -402,6 +403,16 @@ pub(crate) struct ScriptObservation {
     pub exclusive: bool,
 }
 
+/// The observed run ended in this frame and its navigation is reset, once per
+/// run: its published rows end with it, as in an explicit Stop
+/// (`retire_script_run_status`). Runs under the slot lock, which keeps the
+/// order script, then statuses. `None` is a caller without status rows.
+fn retire_run_status(statuses: Option<&Arc<Mutex<Vec<crate::SlotStatus>>>>, name: &str) {
+    if let Some(statuses) = statuses {
+        crate::play_scripts::retire_script_run_status(statuses, name);
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn script_observe_cached_with_channels(
     driver: &mut dyn Driver,
@@ -433,6 +444,7 @@ pub(crate) fn script_observe_cached_with_channels(
     run_policy: Option<&mut ScriptRunPolicy>,
     mut debug_replies: Option<&mut super::debug_replies::DebugReplies>,
     service_arm: Option<&SlotArm>,
+    statuses: Option<&Arc<Mutex<Vec<crate::SlotStatus>>>>,
 ) -> ScriptObservation {
     if let Some(inp) = slot_input {
         inp.set_host_consume_allowed(up && !hold);
@@ -544,7 +556,9 @@ pub(crate) fn script_observe_cached_with_channels(
         );
         if terminal_slot {
             if let Some(generation) = slot.terminal_lifecycle_generation() {
-                reset_script_nav(navs, name, Some(generation));
+                if reset_script_nav(navs, name, Some(generation)) {
+                    retire_run_status(statuses, name);
+                }
             } else if navs
                 .lock()
                 .unwrap()
@@ -553,6 +567,7 @@ pub(crate) fn script_observe_cached_with_channels(
             {
                 // Legacy self-stops without a terminal receipt can only own a walk.
                 abort_script_walk(navs, name);
+                retire_run_status(statuses, name);
             }
         }
         slot.on_is_up(up);

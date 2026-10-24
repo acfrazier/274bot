@@ -863,6 +863,36 @@ pub(crate) fn apply_nav_follow_outcome(
     }
 }
 
+/// Publish a script walk's destination into `name`'s status row. The caller
+/// must still hold the navigation lock it read `destination` under, so that
+/// a Stop's `reset_script_nav` and the retirement that follows it cannot
+/// fall between the read and this write. Lock order stays script, then
+/// navigation, then statuses; nothing takes navigation while holding statuses.
+fn publish_script_walk(
+    statuses: &Arc<Mutex<Vec<SlotStatus>>>,
+    name: &str,
+    destination: Option<WorldTile>,
+) {
+    #[cfg(test)]
+    BEFORE_PUBLISH.with(|hook| {
+        if let Some(hook) = hook.borrow_mut().take() {
+            hook();
+        }
+    });
+    let mut rows = lock_statuses(statuses);
+    if let Some(s) = rows.iter_mut().find(|s| s.username == name) {
+        s.publish_script_walk(destination);
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    /// A test parks the publishing thread between its navigation read and the
+    /// status write, to interleave a Stop at that exact point.
+    pub(crate) static BEFORE_PUBLISH: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
 /// One pump step of a uid's nav bot: advance a pending BankBudget session
 /// first, then poll the armed route through [`Traveller::follow`] one step
 /// against `snapshot`. `here` is the player's world tile when the body
@@ -955,23 +985,7 @@ pub(crate) fn step_nav_bot<D: Driver>(
                 // Close. Walk with a stand sub-route armed falls through
                 // to Traveller::follow — never final_route mid-session.
                 if bank_fetch_freezes_follow(bot) {
-                    let queued = bot.route_destination();
-                    drop(all);
-                    let mut rows = lock_statuses(statuses);
-                    if let Some(s) = rows.iter_mut().find(|s| s.username == name) {
-                        match queued {
-                            Some(d) => {
-                                s.walk_x = d.x;
-                                s.walk_z = d.z;
-                                s.walk_level = d.level;
-                            }
-                            None => {
-                                s.walk_x = -1;
-                                s.walk_z = -1;
-                                s.walk_level = -1;
-                            }
-                        }
-                    }
+                    publish_script_walk(statuses, name, bot.route_destination());
                     return;
                 }
             }
@@ -1106,7 +1120,7 @@ pub(crate) fn step_nav_bot<D: Driver>(
         );
     }
     let defer_estimated_end = estimated_endpoint;
-    let queued = {
+    {
         let mut all = navs.lock().unwrap();
         let Some(bot) = all.get_mut(name) else {
             return;
@@ -1225,22 +1239,10 @@ pub(crate) fn step_nav_bot<D: Driver>(
                 }
             }
         }
-        bot.route_destination()
-    };
-    let mut rows = lock_statuses(statuses);
-    if let Some(s) = rows.iter_mut().find(|s| s.username == name) {
-        match queued {
-            Some(d) => {
-                s.walk_x = d.x;
-                s.walk_z = d.z;
-                s.walk_level = d.level;
-            }
-            None => {
-                s.walk_x = -1;
-                s.walk_z = -1;
-                s.walk_level = -1;
-            }
-        }
+        // Publish while the navigation lock is still held: a Stop's reset
+        // and retirement then run wholly before or wholly after this
+        // read-and-publish, so a retired run's destination cannot return.
+        publish_script_walk(statuses, name, bot.route_destination());
     }
 }
 

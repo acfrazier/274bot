@@ -111,7 +111,7 @@ table and the build-time identity rules: [docs/api/nav.md](../api/nav.md).
 `nav-pack` stays for deliberate developer/custom-input bakes over a Server tree:
 
 ```bash
-cargo run -p nav-planner --bin nav-pack
+NAV_PACK=/absolute/output/274bot.navpack NAV_FLAGS=/absolute/output/274bot.navflags cargo run -p nav-bake --bin nav-pack
 ```
 
 Output: `$NAV_PACK` or `~/.274bot/274bot.navpack` (magic `274V`, version byte **17**).
@@ -132,7 +132,7 @@ See [the navigation API guide](../api/nav.md) for the full wire format and bake 
 
 **External v17 packs keep their baked routing data.** The app rebuilds the bundled pack automatically.
 It does not derive a pack that you baked yourself from the current content tree.
-Rebake it with `cargo run -p nav-planner --bin nav-pack` after content or format changes to refresh its routing data.
+Rebake it with `cargo run -p nav-bake --bin nav-pack`, with explicit output paths, after content or format changes.
 
 ## Live tests and suite runner
 

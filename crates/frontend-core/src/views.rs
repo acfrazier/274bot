@@ -250,8 +250,11 @@ pub struct FleetRow {
     /// Authenticated client session, independent of game readiness.
     connected: bool,
     script: RunState,
-    /// A walk is queued on the slot.
-    walking: bool,
+    /// The script run's published walk destination is live (tied to the run:
+    /// only while the script lifecycle is live).
+    script_walk: bool,
+    /// A WalkTo walk is armed on the front end for this bot.
+    manual_walk: bool,
     /// The lifetime's error. While [`Self::phase`] is an error phase this is
     /// the current error; otherwise it is the last login error, kept (as
     /// history) until the slot is ready, goes offline or a new worker
@@ -277,7 +280,8 @@ impl Default for FleetRow {
             retrying: false,
             connected: false,
             script: RunState::Idle,
-            walking: false,
+            script_walk: false,
+            manual_walk: false,
             error: None,
             last_op: None,
             brief: String::from(Phase::Offline.label()),
@@ -298,7 +302,8 @@ impl FleetRow {
         self.retrying = source.retrying;
         self.connected = source.connected;
         self.script = source.script;
-        self.walking = source.walking;
+        self.script_walk = source.script_walk;
+        self.manual_walk = source.manual_walk;
         self.error.clone_from(&source.error);
         match (&mut self.last_op, source.last_op.as_ref()) {
             (Some(held), Some(brief)) => *held = brief.duplicate(),
@@ -319,7 +324,8 @@ impl FleetRow {
             retrying: false,
             connected: false,
             script: RunState::Idle,
-            walking: false,
+            script_walk: false,
+            manual_walk: false,
             error: None,
             last_op: None,
             brief: String::new(),
@@ -360,7 +366,8 @@ impl FleetRow {
         self.retrying = false;
         self.connected = false;
         self.script = RunState::Idle;
-        self.walking = false;
+        self.script_walk = false;
+        self.manual_walk = false;
         self.error = None;
         self.last_op = None;
         self.brief.clear();
@@ -408,9 +415,16 @@ impl FleetRow {
         self.script
     }
 
-    /// A walk is queued on the slot.
-    pub fn walking(&self) -> bool {
-        self.walking
+    /// The script run's published walk is live. It belongs to the run, so it
+    /// is never true while the script is idle or failed.
+    pub fn script_walk(&self) -> bool {
+        self.script_walk
+    }
+
+    /// A WalkTo walk is armed on the front end for this bot. It belongs to
+    /// no script run, so a script Stop leaves it visible.
+    pub fn manual_walk(&self) -> bool {
+        self.manual_walk
     }
 
     /// The lifetime's error, when one is retained.
@@ -428,9 +442,13 @@ impl FleetRow {
         &self.brief
     }
 
-    /// A script is running or a walk is queued.
+    /// The bot is doing something the label calls `running`: a script is
+    /// starting or running, its published walk is live, or a WalkTo walk is
+    /// armed. Each is a separate fact; none is inferred from another.
     pub fn busy(&self) -> bool {
-        self.script == RunState::Running || self.walking
+        matches!(self.script, RunState::Starting | RunState::Running)
+            || self.script_walk
+            || self.manual_walk
     }
 
     pub fn light(&self) -> Light {
@@ -488,12 +506,7 @@ impl FleetRow {
                 let _ = write!(self.brief, "queued {}/{}", place.position, place.total);
                 return;
             }
-            Phase::Ready
-                if self.walking
-                    || matches!(self.script, RunState::Running | RunState::Starting) =>
-            {
-                "running"
-            }
+            Phase::Ready if self.busy() => "running",
             Phase::Ready => "idle",
             Phase::Preparing => "starting",
             Phase::LoginError => "error",
@@ -1141,19 +1154,20 @@ fn update_row(row: &mut FleetRow, state: &mut RowState, input: &Inputs<'_>) -> b
     let mut changed = false;
     let world = status.and_then(|s| s.world);
     let connected = status.is_some_and(|s| s.connected);
-    // A script walk is published on the host row; a WalkTo walk lives on
-    // the front end's arm.
-    let walking = status.is_some_and(|s| s.walk_x != -1)
-        || match input.walks.and_then(|walks| walks.get(&row.name)) {
-            None => false,
-            Some(walk) => match walk.try_lock() {
-                Ok(walk) => walk.route.is_some(),
-                // Its slot thread is stepping the walk right now: keep the
-                // last answer rather than wait on the slot.
-                Err(TryLockError::WouldBlock) => row.walking,
-                Err(TryLockError::Poisoned(_)) => false,
-            },
-        };
+    // The script walk is published on the host row and belongs to the script
+    // run: a destination left on the row after the run ended is not a walk.
+    // A WalkTo walk lives on the front end's arm and belongs to no run.
+    let script_walk = script.is_live() && status.is_some_and(|s| s.script_walk().is_some());
+    let manual_walk = match input.walks.and_then(|walks| walks.get(&row.name)) {
+        None => false,
+        Some(walk) => match walk.try_lock() {
+            Ok(walk) => walk.route.is_some(),
+            // Its slot thread is stepping the walk right now: keep the
+            // last answer rather than wait on the slot.
+            Err(TryLockError::WouldBlock) => row.manual_walk,
+            Err(TryLockError::Poisoned(_)) => false,
+        },
+    };
     if (
         row.world,
         row.phase,
@@ -1161,16 +1175,26 @@ fn update_row(row: &mut FleetRow, state: &mut RowState, input: &Inputs<'_>) -> b
         row.retrying,
         row.connected,
         row.script,
-        row.walking,
-    ) != (world, phase, queue, retrying, connected, script, walking)
-    {
+        row.script_walk,
+        row.manual_walk,
+    ) != (
+        world,
+        phase,
+        queue,
+        retrying,
+        connected,
+        script,
+        script_walk,
+        manual_walk,
+    ) {
         row.world = world;
         row.phase = phase;
         row.queue = queue;
         row.retrying = retrying;
         row.connected = connected;
         row.script = script;
-        row.walking = walking;
+        row.script_walk = script_walk;
+        row.manual_walk = manual_walk;
         changed = true;
     }
     match status.and_then(|s| s.error.as_deref()) {

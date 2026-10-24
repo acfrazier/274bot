@@ -11,10 +11,30 @@ use crate::help::help_rows;
 use crate::layout::{Pane, Screen};
 use crate::overlay::{ConfirmKind, Modal};
 use crate::test_support::{ch, ctrl, draw, find, fleet_app, key, mouse, right_click, text};
-use frontend_core::{FleetAction, FleetCard};
+use frontend_core::{FleetAction, FleetCard, OperatorCommand};
 
 fn names(app: &TuiApp) -> Vec<&str> {
     app.names.iter().map(String::as_str).collect()
+}
+
+/// The reason of the refusal `action` hands to the session, which logs it at
+/// the command boundary and shows it on the message line.
+fn refused(action: AppAction, command: OperatorCommand) -> String {
+    match action {
+        AppAction::Refused(refusal) if refusal.command == Some(command) => {
+            refusal.reason.into_owned()
+        }
+        other => panic!("expected a refusal of {command:?}, got {other:?}"),
+    }
+}
+
+/// The reason of the refusal `action` hands to the session for a command
+/// that only changes the screen: it shows on the message line, logs nothing.
+fn shown_only(action: AppAction) -> String {
+    match action {
+        AppAction::Refused(refusal) if refusal.command.is_none() => refusal.reason.into_owned(),
+        other => panic!("expected a screen-only refusal, got {other:?}"),
+    }
 }
 
 #[test]
@@ -296,7 +316,11 @@ fn palette_explains_unavailable_commands_and_runs_available_ones() {
     let all = text(&draw(&mut app, 120, 40));
     assert!(all.contains("Log in"), "{all}");
     assert!(all.contains("no bot selected"), "reason shown: {all}");
-    assert_eq!(app.on_key(key(KeyCode::Enter)), AppAction::None);
+    let shown = refused(app.on_key(key(KeyCode::Enter)), OperatorCommand::Login);
+    assert!(
+        shown.ends_with("no bot selected (Fleet: Enter or click a row)"),
+        "{shown}"
+    );
     assert!(
         matches!(&app.modal, Some(Modal::Palette(p)) if p.note.is_some()),
         "Enter on an unavailable command keeps the palette with its reason"
@@ -406,8 +430,11 @@ fn fleet_action_keys_ask_core_for_a_plan() {
 fn the_confirm_overlay_shows_the_plan_prompt_verbatim() {
     let prompt = "Stop 2 running bots: alice, bob. 1 marked bot is idle and is skipped.";
     for (press, expected) in [
-        (key(KeyCode::Enter), AppAction::RunFleetPlan),
-        (ch('y'), AppAction::RunFleetPlan),
+        (
+            key(KeyCode::Enter),
+            AppAction::RunFleetPlan(FleetAction::Stop),
+        ),
+        (ch('y'), AppAction::RunFleetPlan(FleetAction::Stop)),
         (key(KeyCode::Esc), AppAction::CancelFleetPlan),
         (ch('n'), AppAction::CancelFleetPlan),
     ] {
@@ -442,7 +469,10 @@ fn the_confirm_overlay_shows_the_plan_prompt_verbatim() {
     });
     let rows = draw(&mut app, 120, 40);
     let (run_x, run_y) = find(&rows, "[Run y]").unwrap();
-    assert_eq!(app.on_click(run_x, run_y), AppAction::RunFleetPlan);
+    assert_eq!(
+        app.on_click(run_x, run_y),
+        AppAction::RunFleetPlan(FleetAction::Logout)
+    );
 }
 
 /// Assign, Assign & restart and Copy settings are unavailable while the
@@ -455,9 +485,14 @@ fn card_actions_are_unavailable_on_own_until_a_card_is_picked() {
     for action in FleetAction::ALL {
         let command = Command::Fleet(action);
         if action.needs_card() {
-            assert_eq!(command.availability(&app), Err("pick a card first"));
-            assert_eq!(app.run_command(command), AppAction::None);
-            let shown = app.error.take().expect("the reason shows");
+            assert_eq!(
+                command.availability(&app),
+                Err(crate::commands::Unavailable::NoFleetCard)
+            );
+            let shown = refused(
+                app.run_command(command),
+                OperatorCommand::PlanFleetAction(action),
+            );
             assert!(shown.ends_with("pick a card first"), "{shown}");
         } else {
             assert_eq!(command.availability(&app), Ok(()), "{action:?}");
@@ -562,13 +597,12 @@ fn mark_keys_and_palette_entries_submit_core_mark_ops() {
         app.on_key(ch('a')),
         AppAction::MarkFleet(frontend_core::MarkOp::Shown)
     );
-    // Nothing is marked yet in the model: `A` says so and sends nothing.
-    assert_eq!(app.on_key(ch('A')), AppAction::None);
-    assert!(app
-        .error
-        .take()
-        .unwrap()
-        .ends_with("no shown row is marked"));
+    // Nothing is marked yet in the model: `A` is refused and sends nothing.
+    let shown = refused(
+        app.on_key(ch('A')),
+        OperatorCommand::MarkFleet(frontend_core::MarkOp::UnmarkShown),
+    );
+    assert!(shown.ends_with("no shown row is marked"), "{shown}");
     seam.apply(&mut app, AppAction::MarkFleet(frontend_core::MarkOp::Shown));
     assert_eq!(
         app.on_key(ch('A')),
@@ -1288,12 +1322,11 @@ fn clicking_an_unloaded_row_marks_through_its_box_and_never_focuses() {
         app.on_click(box_x + 1, y),
         AppAction::SetMark("zed".into(), true)
     );
-    assert_eq!(app.on_click(x, y), AppAction::None);
-    assert_eq!(app.focused_name().as_deref(), Some("alice"));
     assert_eq!(
-        app.error.as_deref(),
-        Some("zed is not loaded: mark it and press m to log in")
+        refused(app.on_click(x, y), OperatorCommand::Select),
+        "zed is not loaded: mark it and press m to log in"
     );
+    assert_eq!(app.focused_name().as_deref(), Some("alice"));
 }
 
 /// Enter on an unloaded row keeps the focus where it was and says what to
@@ -1304,12 +1337,11 @@ fn enter_on_an_unloaded_row_does_not_focus_and_says_why() {
     draw(&mut app, 120, 40);
     assert_eq!(app.focused_name().as_deref(), Some("alice"));
     app.on_key(key(KeyCode::End));
-    assert_eq!(app.on_key(key(KeyCode::Enter)), AppAction::None);
-    assert_eq!(app.focused_name().as_deref(), Some("alice"));
     assert_eq!(
-        app.error.as_deref(),
-        Some("zed is not loaded: mark it and press m to log in")
+        refused(app.on_key(key(KeyCode::Enter)), OperatorCommand::Select),
+        "zed is not loaded: mark it and press m to log in"
     );
+    assert_eq!(app.focused_name().as_deref(), Some("alice"));
     // A loaded row still focuses.
     app.on_key(key(KeyCode::Up));
     assert_eq!(
@@ -1384,16 +1416,20 @@ fn move_op(moving: frontend_core::ProfileIdentity, to: frontend_core::Placement)
 
 /// Alt+Up / Alt+Down move the cursor row; the action names the identities
 /// of the cursor row and its shown neighbour. At the first or last shown
-/// row nothing happens.
+/// row the move is refused (logged at the command boundary) and nothing
+/// moves.
 #[test]
 fn alt_up_and_alt_down_return_the_reorder_action_for_the_cursor_row() {
     use frontend_core::Placement::{After, Before};
     let [alice, bob, carol] = reorder_ids();
     let mut app = reorder_app();
-    assert_eq!(
+    let first = refused(
         app.on_key(alt(KeyCode::Up)),
-        AppAction::None,
-        "alice is on the first row"
+        OperatorCommand::ReorderProfiles,
+    );
+    assert!(
+        first.ends_with("no shown row above the cursor"),
+        "alice is on the first row: {first}"
     );
     assert_eq!(
         app.on_key(alt(KeyCode::Down)),
@@ -1408,10 +1444,13 @@ fn alt_up_and_alt_down_return_the_reorder_action_for_the_cursor_row() {
     );
     assert_eq!(app.on_key(alt(KeyCode::Down)), move_op(bob, After(carol)));
     app.on_key(key(KeyCode::Down));
-    assert_eq!(
+    let last = refused(
         app.on_key(alt(KeyCode::Down)),
-        AppAction::None,
-        "carol is on the last row"
+        OperatorCommand::ReorderProfiles,
+    );
+    assert!(
+        last.ends_with("no shown row below the cursor"),
+        "carol is on the last row: {last}"
     );
     assert_eq!(app.on_key(alt(KeyCode::Up)), move_op(carol, Before(bob)));
 }
@@ -1440,11 +1479,11 @@ fn the_move_commands_match_the_keys_and_follow_their_availability() {
     let mut app = reorder_app();
     assert_eq!(
         Command::MoveProfileUp.availability(&app),
-        Err("no shown row above the cursor")
+        Err(crate::commands::Unavailable::NoRowAbove)
     );
     assert_eq!(
         Command::MoveMarkedToTop.availability(&app),
-        Err("mark fleet rows first (Space)")
+        Err(crate::commands::Unavailable::NoRowsMarkedToMove)
     );
     assert_eq!(Command::MoveProfileDown.availability(&app), Ok(()));
     assert_eq!(
@@ -1472,18 +1511,17 @@ fn the_move_commands_match_the_keys_and_follow_their_availability() {
     ] {
         assert_eq!(
             command.availability(&app),
-            Err("choose Load order to reorder"),
+            Err(crate::commands::Unavailable::NotLoadOrder),
             "{command:?}"
         );
-        assert_eq!(app.run_command(command), AppAction::None, "{command:?}");
-        let message = app.error.take().expect("the reason is shown");
+        let message = refused(app.run_command(command), OperatorCommand::ReorderProfiles);
         assert!(
             message.contains("choose Load order to reorder"),
             "{message}"
         );
     }
     for code in [KeyCode::Up, KeyCode::Down] {
-        assert_eq!(app.on_key(alt(code)), AppAction::None);
+        refused(app.on_key(alt(code)), OperatorCommand::ReorderProfiles);
     }
 }
 
@@ -1583,15 +1621,10 @@ fn w_names_the_cursor_row_and_the_palette_entry_names_none() {
 
     // With no row there is nothing for W to name; the reason shows.
     let mut empty = fleet_app(&[]);
-    assert_eq!(empty.on_key(ch('W')), AppAction::None);
-    let shown = empty.error.take().expect("the reason shows");
+    let shown = shown_only(empty.on_key(ch('W')));
     assert!(shown.ends_with("no fleet row under the cursor"), "{shown}");
-    assert_eq!(empty.run_command(Command::PickWorldMarked), AppAction::None);
-    assert!(empty
-        .error
-        .take()
-        .expect("the reason shows")
-        .ends_with("no rows shown or marked"));
+    let shown = shown_only(empty.run_command(Command::PickWorldMarked));
+    assert!(shown.ends_with("no rows shown or marked"), "{shown}");
 }
 
 /// The palette lists both commands (the cursor one with its `W` key), help

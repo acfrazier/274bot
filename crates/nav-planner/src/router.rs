@@ -38,11 +38,11 @@ use api::identity::Cancellation;
 use api::selected::{QuestGate, Truth};
 use api::snapshot::WorldTile;
 use api::work::{Checkpoint, StepContext, WorkPhase};
-use client::dash3d::CollisionFlag;
 
 use crate::collision::WorldCollision;
 use crate::contract::{ContractError, NavLease, PackId, RouteView};
 use crate::essence::{EssenceSession, ESSENCE_MINE_EXIT_TICKS, ESSENCE_MINE_PORTALS};
+use crate::movement::step_ok;
 use crate::quest_gates::QuestFamilyMismatch;
 use crate::transport::{select_web_action, TransportEdge, TransportGraph};
 use crate::world_state::WorldState;
@@ -886,18 +886,6 @@ pub struct AvoidRect {
     pub max_z: i32,
     /// `None` = every level.
     pub level: Option<i32>,
-}
-
-impl AvoidRect {
-    /// Whether `tile` sits inside this rect (inclusive bounds, optional level).
-    pub fn contains(self, tile: WorldTile) -> bool {
-        if let Some(lvl) = self.level {
-            if tile.level != lvl {
-                return false;
-            }
-        }
-        tile.x >= self.min_x && tile.x <= self.max_x && tile.z >= self.min_z && tile.z <= self.max_z
-    }
 }
 
 /// Which blocker-attribution rule a cooperative diagnosis uses.
@@ -4072,16 +4060,6 @@ const STEPS: [(i32, i32); 8] = [
     (1, 1),
 ];
 
-/// The client's `PL_WALK_*` movement masks, as `u32` to match the flag word.
-const MASK_N: u32 = CollisionFlag::PL_WALK_N as u32;
-const MASK_E: u32 = CollisionFlag::PL_WALK_E as u32;
-const MASK_S: u32 = CollisionFlag::PL_WALK_S as u32;
-const MASK_W: u32 = CollisionFlag::PL_WALK_W as u32;
-const MASK_NE: u32 = CollisionFlag::PL_WALK_NE as u32;
-const MASK_SE: u32 = CollisionFlag::PL_WALK_SE as u32;
-const MASK_NW: u32 = CollisionFlag::PL_WALK_NW as u32;
-const MASK_SW: u32 = CollisionFlag::PL_WALK_SW as u32;
-
 /// Dijkstra over `collision` walk steps (each costing the search's run
 /// rate) and `graph` transport edges (each costing `edge.ticks`), all in
 /// one heap minimizing total ticks. Walk steps are 8-directional and stay
@@ -4152,7 +4130,10 @@ pub fn find_with_avoid(
 /// [`find_with_avoid`] with an injectable node-expansion cap. Production
 /// inspect uses [`find_with_avoid`] (the default [`NODE_BUDGET`]); tests
 /// may pass a smaller bound to distinguish `BudgetExhausted` from `NoPath`.
-#[allow(clippy::too_many_arguments)] // collision/graph/tiles/opts/state/avoid/budget surface
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Keeps collision, transports, targets, policy, and search limits separate."
+)]
 pub fn find_with_avoid_bounded(
     collision: &WorldCollision,
     graph: &TransportGraph,
@@ -4427,7 +4408,10 @@ pub fn find_first_with_fallback(
 /// ([`find_with_avoid`]). The backward proofs ignore the rectangles: they
 /// over-approximate reachability, so a goal they prove unreachable stays
 /// unreachable with the rectangles too.
-#[allow(clippy::too_many_arguments)] // search surface plus avoid rects
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Keeps collision, transports, targets, policy, and search limits separate."
+)]
 pub fn find_first_with_fallback_avoid(
     collision: &WorldCollision,
     graph: &TransportGraph,
@@ -4516,7 +4500,10 @@ async fn goal_zone_key_cooperative(
 /// An open proof always leaves the full forward-search budget intact.
 const ZONE_GOAL_PROOF_STEPS: usize = 64;
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Keeps collision, transports, targets, policy, and search limits separate."
+)]
 fn zone_goal_proof(
     collision: &WorldCollision,
     graph: &TransportGraph,
@@ -4603,7 +4590,10 @@ async fn zone_goal_proof_cooperative(
     Ok(closure.report(ReverseProof::Open))
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Keeps collision, transports, targets, policy, and search limits separate."
+)]
 fn first_search(
     collision: &WorldCollision,
     graph: &TransportGraph,
@@ -4857,7 +4847,10 @@ fn merge_fallback(current: &mut Option<FallbackRoute>, candidate: FallbackRoute)
 /// forward search, so a strict proof never hides a relaxed route. Each goal
 /// set's `budget` holds until its own proof shows it reachable, then
 /// `reachable_budget` applies ([`FirstGoals`]).
-#[allow(clippy::too_many_arguments)] // search surface plus relaxation/avoid/budgets
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Keeps collision, transports, targets, policy, and search limits separate."
+)]
 fn first_search_core(
     collision: &WorldCollision,
     graph: &TransportGraph,
@@ -5102,7 +5095,10 @@ pub fn find_many_with<'a>(
 }
 
 /// Shared bounded search. Duplicate targets retain separate input rows.
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Keeps collision, transports, targets, policy, and search limits separate."
+)]
 pub fn find_many_with_avoid_bounded<'a>(
     collision: &WorldCollision,
     graph: &'a TransportGraph,
@@ -5121,7 +5117,10 @@ pub fn find_many_with_avoid_bounded<'a>(
 /// As above, with a caller-supplied completion deadline. The wall-clock
 /// bound is caller policy; the search checks it every 256 heap pops and at
 /// exit, reports unsettled targets, and leaves fallback choice to the caller.
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Keeps collision, transports, targets, policy, and search limits separate."
+)]
 pub fn find_many_with_avoid_bounded_until<'a>(
     collision: &WorldCollision,
     graph: &'a TransportGraph,
@@ -5248,7 +5247,10 @@ pub fn find_many_with_avoid_bounded_until<'a>(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Keeps collision, transports, targets, policy, and search limits separate."
+)]
 fn many_search<'a>(
     collision: &WorldCollision,
     graph: &'a TransportGraph,
@@ -5360,7 +5362,6 @@ fn many_search<'a>(
 /// route after lifting zone restrictions. The strict search must fail with
 /// `NoPath`, and an all-zone-exempt search must find a route before its
 /// transitions can serve as the witness.
-#[allow(clippy::too_many_arguments)]
 pub fn find_blocking_zones(
     collision: &WorldCollision,
     graph: &TransportGraph,
@@ -5427,7 +5428,6 @@ pub fn find_blocking_zones(
 /// Multi-goal refusal attribution uses the union of reachable frontiers for
 /// the selected target set, grouped by active destination zones. A goal's
 /// own zones allow arrival, never transit to targets outside those zones.
-#[allow(clippy::too_many_arguments)]
 pub fn find_first_blocking_zones(
     collision: &WorldCollision,
     graph: &TransportGraph,
@@ -5479,7 +5479,10 @@ pub fn find_first_blocking_zones(
     blocking_zone_keys(graph.zones.as_ref()?, blockers)
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Keeps collision, transports, targets, policy, and search limits separate."
+)]
 fn blocking_frontier(
     collision: &WorldCollision,
     graph: &TransportGraph,
@@ -5904,7 +5907,10 @@ pub fn find_missing_item_reqs_with_avoid(
 
 /// [`find_missing_item_reqs_with_avoid`] with an injectable node-expansion
 /// cap. Production inspect uses the default-budget form.
-#[allow(clippy::too_many_arguments)] // collision/graph/tiles/opts/state/avoid/budget surface
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Keeps collision, transports, targets, policy, and search limits separate."
+)]
 pub fn find_missing_item_reqs_with_avoid_bounded(
     collision: &WorldCollision,
     graph: &TransportGraph,
@@ -5959,7 +5965,10 @@ pub fn find_missing_item_reqs_with_avoid_bounded(
 /// reachable), so a goal set costs what its strict search may, never one
 /// diagnosis per goal. The `Unknown` stage-gate retry and the `None` cases
 /// are [`find_missing_item_reqs`]'s.
-#[allow(clippy::too_many_arguments)] // first-goal search surface plus avoid rects
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Keeps collision, transports, targets, policy, and search limits separate."
+)]
 pub fn find_first_missing_item_reqs_with_avoid(
     collision: &WorldCollision,
     graph: &TransportGraph,
@@ -7703,7 +7712,10 @@ impl KernelOutcome {
         }
     }
 
-    #[allow(clippy::too_many_arguments)] // the kernel's scratch tables plus its stop facts
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Finishing borrows the kernel scratch tables and records its stop facts."
+    )]
     fn finish<B: Budget>(
         came_from: PackedSearchTable,
         heap: &PackedMinMaxHeap,
@@ -8182,7 +8194,10 @@ impl<'a> ReverseClosure<'a> {
 
 /// Run one single-target kernel with the supplied zone filter and rebuild
 /// its route when the selected goal settles.
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Keeps collision, transports, targets, policy, and search limits separate."
+)]
 fn run_single_search(
     collision: &WorldCollision,
     graph: &TransportGraph,
@@ -8244,7 +8259,10 @@ fn run_single_search(
 /// the wilderness zone; `state` gates every transport edge (walked or
 /// teleported) on its requirements — an edge the state cannot prove is not
 /// relaxed.
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Keeps collision, transports, targets, policy, and search limits separate."
+)]
 fn find_bounded_impl(
     collision: &WorldCollision,
     graph: &TransportGraph,
@@ -8366,7 +8384,10 @@ thread_local! {
 /// keeping every positive requirement and quest-stage gate strict. `budget`
 /// caps each search; `goals` decide whether it continues after each settled
 /// node (first-goal searches also bound their goal sets and backward proofs).
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Keeps collision, transports, targets, policy, and search limits separate."
+)]
 async fn search_kernel(
     collision: &WorldCollision,
     graph: &TransportGraph,
@@ -9050,73 +9071,6 @@ fn wildy_step_ok(
     allow_wilderness: bool,
 ) -> bool {
     allow_wilderness || graph.wilderness.contains(cur) || !graph.wilderness.contains(next)
-}
-
-/// Whether a one-tile step from `cur` by `d` is allowed — the client's
-/// `tryMove` movement test against the collision bake's derived walkable
-/// word, not the blanket `walkable()`. A step into a neighbour clears that
-/// neighbour's `PL_WALK_*` mask for the face/corner the step enters
-/// through; a diagonal step additionally clears both orthogonal neighbours'
-/// cardinal masks, exactly like `tryMove`'s BFS. The derived word carries
-/// the `SQ_BLOCKED` base on any wall/scenery/ground tile, so those tiles
-/// reject entry from every direction. Every step stays inside the bake's
-/// x/z grid (the whole-world mapsquare bbox); each level tests its own
-/// plane (an unstamped plane is unrestricted within it).
-pub fn step_ok(collision: &WorldCollision, cur: WorldTile, d: (i32, i32)) -> bool {
-    let nb = WorldTile {
-        x: cur.x + d.0,
-        z: cur.z + d.1,
-        level: cur.level,
-    };
-    let lx = nb.x - collision.origin.x;
-    let lz = nb.z - collision.origin.z;
-    if lx < 0 || lz < 0 {
-        return false;
-    }
-    if lx as usize >= collision.width || lz as usize >= collision.height {
-        return false;
-    }
-    let f = |x: i32, z: i32| collision.walkable_word(x, z, nb.level);
-    if let Some(mask) = cardinal_entry_mask(d) {
-        // Cardinal: the destination's face toward `cur`.
-        return f(nb.x, nb.z) & mask == 0;
-    }
-    match (d.0, d.1) {
-        // Diagonal: the destination's corner mask plus both orthogonals.
-        (-1, -1) => {
-            f(nb.x, nb.z) & MASK_NE == 0
-                && f(cur.x - 1, cur.z) & MASK_E == 0
-                && f(cur.x, cur.z - 1) & MASK_N == 0
-        }
-        (1, -1) => {
-            f(nb.x, nb.z) & MASK_NW == 0
-                && f(cur.x + 1, cur.z) & MASK_W == 0
-                && f(cur.x, cur.z - 1) & MASK_N == 0
-        }
-        (-1, 1) => {
-            f(nb.x, nb.z) & MASK_SE == 0
-                && f(cur.x - 1, cur.z) & MASK_E == 0
-                && f(cur.x, cur.z + 1) & MASK_S == 0
-        }
-        (1, 1) => {
-            f(nb.x, nb.z) & MASK_SW == 0
-                && f(cur.x + 1, cur.z) & MASK_W == 0
-                && f(cur.x, cur.z + 1) & MASK_S == 0
-        }
-        _ => false,
-    }
-}
-
-/// The `PL_WALK_*` mask a cardinal step by `d` tests on the tile it enters
-/// (the face toward the tile it leaves); `None` for any other delta.
-pub(crate) fn cardinal_entry_mask(d: (i32, i32)) -> Option<u32> {
-    match d {
-        (0, 1) => Some(MASK_S),
-        (0, -1) => Some(MASK_N),
-        (1, 0) => Some(MASK_W),
-        (-1, 0) => Some(MASK_E),
-        _ => None,
-    }
 }
 
 /// Return the component reachable from `origin` using baked client-style
