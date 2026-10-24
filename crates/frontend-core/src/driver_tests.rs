@@ -4506,3 +4506,51 @@ fn a_repeated_stop_logs_one_refusal_line() {
         assert!(line.contains(part), "{part:?} missing from {line:?}");
     }
 }
+
+/// PANEL-STATE-GAP-1023: every refusal line holds the command, the bots and
+/// the reason. A refused submission names the bots the caller gave. A refused
+/// member that carries no text still names its typed reason.
+#[test]
+fn a_refusal_line_names_the_command_the_bots_and_the_reason() {
+    use crate::log::{global, LogScope, LogView};
+    const BOT: &str = "psg5r-bot";
+    let mut d = driver("psg-refusal-reason", &[BOT]);
+    load(&mut d, &[BOT]);
+    let lines_with = |needle: &str| -> Vec<String> {
+        let mut view = LogView::new(LogScope::Process);
+        view.edit_filter(|filter| filter.set_text("command refused: PrepareScriptCard"));
+        global().refresh(&mut view);
+        view.rows()
+            .iter()
+            .map(|row| row.message().to_owned())
+            .filter(|line| line.contains(needle))
+            .collect()
+    };
+
+    // A command for the application, given a bot: refused before it opens.
+    let before = d.session().refusals();
+    assert!(d
+        .submit(OperatorCommand::PrepareScriptCard, Targets::Profile(BOT))
+        .is_err());
+    assert_eq!(d.session().refusals(), before + 1);
+    let named = lines_with(BOT);
+    assert_eq!(named.len(), 1, "{named:?}");
+    for part in [
+        "PrepareScriptCard",
+        "on psg5r-bot",
+        "cannot take these targets",
+    ] {
+        assert!(
+            named[0].contains(part),
+            "{part:?} missing from {:?}",
+            named[0]
+        );
+    }
+
+    // A member refused with a typed reason and no text.
+    d.submit(OperatorCommand::PrepareScriptCard, Targets::Application)
+        .expect("opened");
+    assert_eq!(d.session().refusals(), before + 2);
+    let bare = lines_with("on application: NotStaged");
+    assert!(!bare.is_empty(), "the typed reason is in the line");
+}

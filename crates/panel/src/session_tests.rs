@@ -9147,11 +9147,13 @@ fn panel_frame_hook_receives_client_through_slot_frame() {
     assert!(session.mainland_sent.lock().unwrap().contains("alice"));
 }
 
-/// The banner message stays until an action resolves it, a newer message
-/// replaces it, or the shared timeout passes: the same rule as the terminal
-/// app's message line (`frontend_core::ERROR_MESSAGE_TIMEOUT`).
+/// The banner message stays until the shared timeout passes, or a newer
+/// message replaces it and restarts the timer: the same rule as the terminal
+/// app's message line (`frontend_core::ERROR_MESSAGE_TIMEOUT`). An action
+/// that resolves a message clears it earlier; that is proved by
+/// `a_refusal_before_submission_logs_once_and_the_resolving_action_clears_it`.
 #[test]
-fn the_banner_message_expires_unless_resolved_or_replaced() {
+fn the_banner_message_expires_unless_replaced() {
     use frontend_core::ERROR_MESSAGE_TIMEOUT as TIMEOUT;
     let second = std::time::Duration::from_secs(1);
     let mut s = Session::new();
@@ -9174,15 +9176,59 @@ fn the_banner_message_expires_unless_resolved_or_replaced() {
     assert_eq!(s.error.as_deref(), Some("newer"), "the timer restarted");
     s.expire_error(t0 + TIMEOUT * 2 - second);
     assert_eq!(s.error, None);
+}
 
-    // An action that resolves it clears it early; the next message gets the
-    // whole timeout.
-    s.error = Some("resolved".into());
-    s.expire_error(t0);
-    s.error = None;
-    s.expire_error(t0 + second);
-    s.error = Some("next".into());
-    s.expire_error(t0 + TIMEOUT);
-    s.expire_error(t0 + TIMEOUT * 2 - second);
-    assert_eq!(s.error.as_deref(), Some("next"));
+/// The lines the process log holds for refusals that name `bot`.
+fn refusal_lines_naming(bot: &str) -> Vec<String> {
+    use frontend_core::log::{global, LogScope, LogView};
+    let mut view = LogView::new(LogScope::Process);
+    view.edit_filter(|filter| filter.set_text("command refused"));
+    global().refresh(&mut view);
+    view.rows()
+        .iter()
+        .map(|row| row.message().to_owned())
+        .filter(|line| line.contains(bot))
+        .collect()
+}
+
+/// PANEL-STATE-GAP-1023: a refusal the panel makes before it can submit
+/// (Copy settings with no focus, or on a bot with no card) logs one `info`
+/// line at the shared command boundary, with the command, the bots and the
+/// reason; and the action that resolves it (focusing a bot, here) clears the
+/// banner at once, not only when the timeout passes.
+#[test]
+fn a_refusal_before_submission_logs_once_and_the_resolving_action_clears_it() {
+    let (mut s, _iso) = two_live_session("psg-resolve-refusal");
+    vault_upsert(&mut s.core, profile("psg-f3-zed", "pw", 44));
+    s.persist_ui = false;
+    assert_eq!(s.focused_name(), None);
+    let before = s.core.refusals();
+
+    s.copy_focused_settings_to_same_card();
+    assert_eq!(s.error.as_deref(), Some("Copy settings: focus a bot first"));
+    assert_eq!(s.core.refusals(), before + 1, "one refusal counted");
+    s.select("psg-f3-zed");
+    assert_eq!(s.focused_name().as_deref(), Some("psg-f3-zed"));
+    assert_eq!(s.error, None, "focusing a bot resolved the message");
+
+    // A bot with no card: the line names that bot.
+    s.copy_focused_settings_to_same_card();
+    assert_eq!(
+        s.error.as_deref(),
+        Some("Copy settings: the focused bot has no card")
+    );
+    assert_eq!(s.core.refusals(), before + 2);
+    let lines = refusal_lines_naming("psg-f3-zed");
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    for part in [
+        "PlanFleetAction(CopySettings)",
+        "on psg-f3-zed",
+        "Copy settings: the focused bot has no card",
+    ] {
+        assert!(
+            lines[0].contains(part),
+            "{part:?} missing from {:?}",
+            lines[0]
+        );
+    }
 }
