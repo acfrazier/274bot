@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use nav_planner::manifest::{CacheManifest, NavManifest};
+use nav_planner::manifest::CacheManifest;
 
 static NEXT: AtomicUsize = AtomicUsize::new(0);
 
@@ -15,7 +15,7 @@ impl Fixture {
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
-        std::fs::create_dir_all(&path).unwrap();
+        std::fs::create_dir_all(&path).expect("The fixture directory must be writable");
         Self(path)
     }
 }
@@ -28,7 +28,7 @@ impl Drop for Fixture {
 
 fn fixture_cache(path: &Path) {
     for name in CacheManifest::ARCHIVES {
-        std::fs::write(path.join(name), format!("fixture-{name}")).unwrap();
+        std::fs::write(path.join(name), format!("fixture-{name}")).expect("The fixture cache must be writable");
     }
 }
 
