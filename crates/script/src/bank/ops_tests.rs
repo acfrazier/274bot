@@ -49,32 +49,6 @@ fn held_at(id: i32, count: i32, slot: i32) -> ItemView {
     }
 }
 
-/// The isolate row the host posts for the same facts: an action hole is an
-/// empty label in its slot.
-#[cfg(feature = "load")]
-fn compat(
-    id: i32,
-    name: &str,
-    count: i32,
-    slot: Option<i32>,
-    component_id: Option<i32>,
-    actions: &[Option<&str>],
-) -> ItemRow {
-    use std::rc::Rc;
-    ItemRow {
-        id,
-        count,
-        name: Some(Rc::from(name)),
-        ops: actions
-            .iter()
-            .map(|action| Rc::from(action.unwrap_or_default()))
-            .collect::<crate::observed::Ops>(),
-        component_id,
-        slot,
-        ..ItemRow::default()
-    }
-}
-
 const LADDER: [Option<&str>; 5] = [
     Some("Withdraw-1"),
     Some("Withdraw-5"),
@@ -112,148 +86,6 @@ fn clicked(req: Option<InteractReq>) -> (String, i32) {
     match req {
         Some(InteractReq::WithdrawX { action, count, .. }) => (action, count),
         other => panic!("expected one Withdraw-X click, got {other:?}"),
-    }
-}
-
-/// P-row: one kernel decides on a native row and on the isolate row the
-/// host posts for it, holes and positions included. Nothing converts one
-/// representation into the other.
-#[cfg(feature = "load")]
-#[test]
-fn p_row_both_row_types_make_the_same_decisions() {
-    let withdraw_ops = [
-        Some("Withdraw-1"),
-        Some("Withdraw-5"),
-        None,
-        Some("Withdraw-X"),
-    ];
-    let bank_native = native(COINS, "Coins", 50, 4, 5382, &withdraw_ops);
-    let bank_compat = compat(COINS, "Coins", 50, Some(4), Some(5382), &withdraw_ops);
-    assert_eq!(action_op(&bank_native, "Withdraw-X"), Some(4));
-    assert_eq!(action_op(&bank_compat, "Withdraw-X"), Some(4));
-    assert_eq!(action_op(&bank_native, "withdraw x"), Some(4));
-    let goal = exact(7, 50, 0);
-    for remaining in [1, 5, 7, 10, 60] {
-        assert_eq!(
-            withdraw_click(&bank_native, remaining, &goal),
-            withdraw_click(&bank_compat, remaining, &goal),
-            "remaining {remaining}"
-        );
-    }
-    assert_eq!(
-        withdraw_click(&bank_compat, 7, &goal),
-        Some(InteractReq::WithdrawX {
-            name: "Coins".into(),
-            count: 7,
-            bank_item_id: COINS,
-            lands_as_id: COINS,
-            action: "Withdraw-X".into(),
-            bank_generation: 9,
-        })
-    );
-
-    // A hole before the bulk op: the sweep and the labelled op name the
-    // same 1-based slot in both representations.
-    let side_ops = [Some("Deposit-1"), None, Some("Deposit-All")];
-    let side_native = [native(TROUT, "Trout", 3, 6, 2006, &side_ops)];
-    let side_compat = [compat(TROUT, "Trout", 3, Some(6), Some(2006), &side_ops)];
-    let want = DepositClick {
-        id: TROUT,
-        slot: 6,
-        component: 2006,
-        operation: 3,
-    };
-    assert_eq!(
-        deposit_click(&side_native[0], DepositRequest::Sweep),
-        Some(want)
-    );
-    assert_eq!(
-        deposit_click(&side_compat[0], DepositRequest::Sweep),
-        Some(want)
-    );
-    let one = DepositClick {
-        operation: 1,
-        ..want
-    };
-    assert_eq!(
-        deposit_click(&side_native[0], DepositRequest::Label("Deposit-1")),
-        Some(one)
-    );
-    assert_eq!(
-        deposit_click(&side_compat[0], DepositRequest::Label("Deposit-1")),
-        Some(one)
-    );
-    assert_eq!(
-        deposit_click(&side_compat[0], DepositRequest::Label("Deposit-5")),
-        None,
-        "a missing label is not an All substitute"
-    );
-    let spec = DepositSpec {
-        kind: DepositKind::UntilEmpty,
-        keep: &[],
-        only: None,
-    };
-    let pack_native = [held_at(TROUT, 3, 6)];
-    let pack_compat = [compat(TROUT, "Trout", 3, None, None, &[])];
-    assert_eq!(
-        deposit_next(
-            &spec,
-            Some(&side_native[..]),
-            Some(&pack_native[..]),
-            false,
-            true
-        ),
-        DepositScan::Click(want)
-    );
-    assert_eq!(
-        deposit_next(
-            &spec,
-            Some(&side_compat[..]),
-            Some(&pack_compat[..]),
-            false,
-            true
-        ),
-        DepositScan::Click(want)
-    );
-    assert_eq!(
-        deposit_req(want, 9),
-        InteractReq::InvButton {
-            id: TROUT,
-            slot: 6,
-            component: 2006,
-            operation: 3,
-            bank_generation: 9,
-        }
-    );
-
-    // Op 0 and out-of-range slots are never ops; holes are not labels.
-    for row in [&side_compat[0] as &dyn RowProbe, &side_native[0]] {
-        assert_eq!(row.label(0), None);
-        assert_eq!(row.label(-1), None);
-        assert_eq!(row.label(2), None);
-        assert_eq!(row.label(4), None);
-        assert_eq!(row.label(3), Some("Deposit-All"));
-    }
-
-    // A row the isolate posted without slot or component cannot be clicked.
-    let unplaced = compat(TROUT, "Trout", 3, None, Some(2006), &side_ops);
-    assert_eq!(deposit_click(&unplaced, DepositRequest::Sweep), None);
-    let unplaced = compat(TROUT, "Trout", 3, Some(6), None, &side_ops);
-    assert_eq!(deposit_click(&unplaced, DepositRequest::Sweep), None);
-    let negative = native(TROUT, "Trout", 3, -1, 2006, &side_ops);
-    assert_eq!(deposit_click(&negative, DepositRequest::Sweep), None);
-}
-
-/// Object-safe probe so one assertion loop covers both row types.
-#[cfg(feature = "load")]
-trait RowProbe {
-    fn label(&self, op: i32) -> Option<&str>;
-}
-
-#[cfg(feature = "load")]
-impl<R: BankRow> RowProbe for R {
-    fn label(&self, op: i32) -> Option<&str> {
-        self.op_label(op)
     }
 }
 
@@ -755,24 +587,6 @@ fn capacity_deposit_requires_exact_stackability_and_op() {
     assert_eq!(
         deposit_capacity_next(&[], Some(&side[..]), Some(&pack[..]), false),
         DepositScan::SessionGone
-    );
-}
-
-#[cfg(feature = "load")]
-#[test]
-fn capacity_deposit_fails_closed_when_stackability_is_unknown() {
-    let side = [compat(
-        500,
-        "Stack",
-        1,
-        Some(0),
-        Some(2000),
-        &[Some("Deposit-All")],
-    )];
-    let pack = [compat(500, "Stack", 4, Some(0), Some(2001), &[])];
-    assert_eq!(
-        deposit_capacity_next(&[], Some(&side[..]), Some(&pack[..]), true),
-        DepositScan::MissingRequired
     );
 }
 

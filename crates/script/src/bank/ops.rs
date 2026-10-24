@@ -13,8 +13,6 @@
 //! each keeps its own named policy below. They decide alike wherever the
 //! content labels (bank `option1..5`) reach.
 
-#[cfg(feature = "load")]
-use crate::observed::{EntityRow, ItemRow, SceneRow};
 use crate::shim::InteractReq;
 use api::snapshot::{ItemView, LocView, NpcView, WorldTile};
 use std::sync::Arc;
@@ -137,7 +135,7 @@ pub trait BankRow {
 }
 
 /// The 0-based index of 1-based op slot `one_based`, if it is one.
-fn op_index(one_based: i32) -> Option<usize> {
+pub fn op_index(one_based: i32) -> Option<usize> {
     usize::try_from(one_based).ok()?.checked_sub(1)
 }
 
@@ -174,42 +172,6 @@ impl BankRow for ItemView {
     }
     fn stackable(&self) -> Option<bool> {
         Some(self.def.stackable)
-    }
-}
-
-/// The host posts a native action hole as an empty label in its slot, so
-/// the 1-based positions match the native row.
-#[cfg(feature = "load")]
-impl BankRow for ItemRow {
-    fn id(&self) -> i32 {
-        self.id
-    }
-
-    fn count(&self) -> i32 {
-        self.count
-    }
-
-    fn name(&self) -> Option<&str> {
-        self.name.as_deref()
-    }
-
-    fn slot(&self) -> Option<i32> {
-        self.slot
-    }
-
-    fn component_id(&self) -> Option<i32> {
-        self.component_id
-    }
-
-    fn op_len(&self) -> i32 {
-        i32::try_from(self.ops.len()).unwrap_or(i32::MAX)
-    }
-
-    fn op_label(&self, one_based: i32) -> Option<&str> {
-        self.ops
-            .get(op_index(one_based)?)
-            .map(|label| &**label)
-            .filter(|label| !label.is_empty())
     }
 }
 
@@ -1100,70 +1062,6 @@ impl OpLabels for NpcView {
 impl NpcRow for NpcView {
     fn tile(&self) -> WorldTile {
         self.tile
-    }
-
-    fn distance(&self) -> i32 {
-        self.distance
-    }
-
-    fn name(&self) -> Option<&str> {
-        self.name.as_deref()
-    }
-}
-
-#[cfg(feature = "load")]
-impl OpLabels for SceneRow {
-    fn op_len(&self) -> i32 {
-        i32::try_from(self.actions.len()).unwrap_or(i32::MAX)
-    }
-
-    fn op_label(&self, one_based: i32) -> Option<&str> {
-        self.actions.get(op_index(one_based)?).map(|label| &**label)
-    }
-}
-
-#[cfg(feature = "load")]
-impl LocRow for SceneRow {
-    fn id(&self) -> i32 {
-        self.id
-    }
-
-    fn tile(&self) -> WorldTile {
-        WorldTile {
-            x: self.x,
-            z: self.z,
-            level: self.level,
-        }
-    }
-
-    fn distance(&self) -> i32 {
-        self.distance
-    }
-
-    fn name(&self) -> Option<&str> {
-        self.name.as_deref()
-    }
-}
-
-#[cfg(feature = "load")]
-impl OpLabels for EntityRow {
-    fn op_len(&self) -> i32 {
-        i32::try_from(self.actions.len()).unwrap_or(i32::MAX)
-    }
-
-    fn op_label(&self, one_based: i32) -> Option<&str> {
-        self.actions.get(op_index(one_based)?).map(|label| &**label)
-    }
-}
-
-#[cfg(feature = "load")]
-impl NpcRow for EntityRow {
-    fn tile(&self) -> WorldTile {
-        WorldTile {
-            x: self.x,
-            z: self.z,
-            level: self.level,
-        }
     }
 
     fn distance(&self) -> i32 {
