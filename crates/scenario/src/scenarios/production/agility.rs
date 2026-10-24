@@ -527,7 +527,7 @@ pub(crate) fn brimhaven_agility_scenario() -> Scenario {
         settings: ScenarioSettings {
             full_rate: true,
             require_mainland_base: true,
-            deadline: SCRIPT_GOLD_DEADLINE,
+            deadline: BRIMHAVEN_AGILITY_DEADLINE,
             start_script: Some("BrimhavenAgility"),
             script_settings_inject: Some(BRIMHAVEN_AGILITY_INJECT),
             fixture_loadouts: Some(BRIMHAVEN_AGILITY_FIXTURE_LOADOUTS),

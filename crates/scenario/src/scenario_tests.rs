@@ -5983,7 +5983,7 @@ fn wildy_agility_registers_the_full_ordered_course_on_the_observed_player_plane(
 fn brimhaven_agility_registers_fee_tags_ticket_and_subsequent_xp() {
     let brim = get("brimhaven_agility").expect("brimhaven_agility");
     assert_eq!(brim.settings.start_script, Some("BrimhavenAgility"));
-    assert_eq!(brim.settings.deadline, SCRIPT_GOLD_DEADLINE);
+    assert_eq!(brim.settings.deadline, BRIMHAVEN_AGILITY_DEADLINE);
     let inject = settings_inject_map(brim.settings.script_settings_inject).unwrap();
     assert_eq!(inject.get("stealRestock"), Some(&Value::Bool(false)));
     assert_eq!(
