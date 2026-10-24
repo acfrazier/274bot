@@ -3261,7 +3261,18 @@ impl Session {
         self.startup_focus_pending = None;
     }
 
-    fn apply_focus(&mut self, name: &str) {
+    fn cancel_startup_focus_for_removed_profile(&mut self, name: &str) {
+        // Before hydration, Restore can still resolve to any vault profile.
+        // A named save only depends on that one profile.
+        if self.startup_focus_pending.as_ref().is_some_and(|focus| {
+            matches!(focus, StartupFocus::Restore)
+                || matches!(focus, StartupFocus::SavedProfile(target) if target == name)
+        }) {
+            self.cancel_startup_focus();
+        }
+    }
+
+    pub(crate) fn apply_focus(&mut self, name: &str) {
         // Every profile-selection path converges here, including a repeated
         // selection of the current bot. Operator intent supersedes startup.
         self.cancel_startup_focus();
@@ -3921,12 +3932,14 @@ impl Session {
             | None
                 if submitted.operation().is_some() =>
             {
+                self.cancel_startup_focus_for_removed_profile(name);
                 self.error = None;
                 true
             }
             Some(api::identity::Settlement::Completed(
                 frontend_core::command::Completion::Done,
             )) => {
+                self.cancel_startup_focus_for_removed_profile(name);
                 self.error = None;
                 true
             }
@@ -4113,6 +4126,7 @@ impl Session {
             removal.reselected().map(str::to_string),
             removal.selection_cleared(),
         );
+        self.cancel_startup_focus_for_removed_profile(name);
         if reselected.is_some() || cleared {
             self.cancel_startup_focus();
         }

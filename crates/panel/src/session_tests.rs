@@ -3102,6 +3102,96 @@ fn removing_the_focused_bot_cancels_startup_focus() {
     assert!(session.startup_focus_pending.is_none());
 }
 
+fn fleet_login_profile(session: &mut Session, name: &str) {
+    session.pump_status();
+    session.fleet_model.clear_marks_for_test();
+    let identity = session.core.profile_identity(name).unwrap();
+    session.fleet_model.set_mark_for_test(identity, true);
+    session.plan_fleet_action(frontend_core::FleetAction::Login);
+    if session.core.fleet_plan().is_some() {
+        session.confirm_fleet_plan();
+    }
+    session.pump_status();
+}
+
+#[test]
+fn fleet_login_focus_cancels_pending_startup_restore() {
+    let _iso = IsolatedStores::enter("panel-fleet-startup-focus");
+    let (mut session, vault) = multibox_unlock_fixture();
+    session.preferences.reload().unwrap();
+    session.preferences_ready = false;
+    assert!(session.unlock_at(&vault, "test-passphrase-01"));
+    assert!(session.startup_focus_pending.is_some());
+    fleet_login_profile(&mut session, "bob");
+    assert_eq!(session.core.selected(), Some("bob"));
+    assert_eq!(session.focused_name().as_deref(), Some("bob"));
+    session.poll_panel_preferences();
+    assert_eq!(session.core.selected(), Some("bob"));
+    assert_eq!(session.focus.lock().unwrap().focused.as_deref(), Some("bob"));
+    assert_eq!(session.core.members(), ["bob"]);
+    assert!(session.startup_focus_pending.is_none());
+}
+
+#[test]
+fn removing_unfocused_restore_target_cancels_startup_restore() {
+    for saved_profile in [false, true] {
+        let _iso = IsolatedStores::enter("panel-remove-unfocused-startup");
+        let (mut session, vault) = multibox_unlock_fixture();
+        session.preferences.reload().unwrap();
+        session.preferences_ready = false;
+        assert!(session.unlock_at(&vault, "test-passphrase-01"));
+        fleet_login_profile(&mut session, "bob");
+        fleet_login_profile(&mut session, "alice");
+        assert_eq!(session.core.selected(), Some("bob"));
+        assert!(session.core.members().iter().any(|name| name == "alice"));
+        // Keep removal independent of the Fleet selection cancellation.
+        session.focus_when_ready(if saved_profile {
+            super::StartupFocus::SavedProfile("alice".into())
+        } else {
+            super::StartupFocus::Restore
+        });
+        session.rail_remove("alice");
+        assert!(!session.core.members().iter().any(|name| name == "alice"));
+        session.poll_panel_preferences();
+        assert_eq!(session.core.members(), ["bob"]);
+        assert_eq!(session.core.selected(), Some("bob"));
+        assert!(session.startup_focus_pending.is_none());
+    }
+}
+
+#[test]
+fn deleting_pending_saved_profile_cancels_startup_restore() {
+    let _iso = IsolatedStores::enter("panel-delete-startup-focus");
+    let (mut session, vault) = multibox_unlock_fixture();
+    session.preferences.reload().unwrap();
+    session.preferences_ready = false;
+    assert!(session.unlock_at(&vault, "test-passphrase-01"));
+    session.focus_when_ready(super::StartupFocus::SavedProfile("alice".into()));
+    assert!(session.vault_remove("alice"));
+    assert!(!session.profile_names().iter().any(|name| name == "alice"));
+    session.poll_panel_preferences();
+    assert!(session.core.members().is_empty());
+    assert!(session.core.selected().is_none());
+    assert!(session.focus.lock().unwrap().focused.is_none());
+    assert!(session.startup_focus_pending.is_none());
+}
+
+#[test]
+fn deleting_other_profile_keeps_pending_saved_profile_restore() {
+    let _iso = IsolatedStores::enter("panel-delete-other-startup-focus");
+    let (mut session, vault) = multibox_unlock_fixture();
+    session.preferences.reload().unwrap();
+    session.preferences_ready = false;
+    assert!(session.unlock_at(&vault, "test-passphrase-01"));
+    session.focus_when_ready(super::StartupFocus::SavedProfile("bob".into()));
+    assert!(session.vault_remove("alice"));
+    assert!(session.startup_focus_pending.is_some());
+    session.poll_panel_preferences();
+    assert_eq!(session.core.selected(), Some("bob"));
+    assert_eq!(session.focus.lock().unwrap().focused.as_deref(), Some("bob"));
+    assert_eq!(session.core.members(), ["bob"]);
+}
+
 #[test]
 fn multibox_profile_pick_restores_that_profiles_script_heading() {
     let (mut session, path) = multibox_unlock_fixture();
