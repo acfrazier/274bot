@@ -1,0 +1,10 @@
+{
+  "stage": "cook:0",
+  "stand": [3209, 3215, 0],
+  "loadout": null,
+  "extra_items": [],
+  "seed_vars": [["cookquest", 0]],
+  "before_relog": [],
+  "expect": ["cook:1"],
+  "mode": "stage"
+}
