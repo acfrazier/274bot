@@ -864,24 +864,18 @@ pub(crate) fn script_observe_cached_with_channels(
                     packed.flood.as_deref(),
                     packed.stamp,
                     |input, native| {
-                        post_script_snapshot(
-                            &mut slot,
-                            navs,
-                            name,
-                            walk_seq,
-                            |slot| {
-                                if wake_waits {
-                                    slot.post_snapshot_wake(
-                                        input,
-                                        native,
-                                        force_banks,
-                                        inv.is_none() && input.inv_size == 0,
-                                    )
-                                } else {
-                                    slot.post_snapshot_delta(input, native, force_banks)
-                                }
-                            },
-                        )
+                        post_script_snapshot(&mut slot, navs, name, walk_seq, |slot| {
+                            if wake_waits {
+                                slot.post_snapshot_wake(
+                                    input,
+                                    native,
+                                    force_banks,
+                                    inv.is_none() && input.inv_size == 0,
+                                )
+                            } else {
+                                slot.post_snapshot_delta(input, native, force_banks)
+                            }
+                        })
                     },
                 );
                 slot.store_last_world_id(world_id);
