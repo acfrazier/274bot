@@ -26,9 +26,13 @@ impl crate::test_support::FixtureProfile {
 
 /// Resolve a registered live scenario through the front-end core seam.
 pub fn scenario(name: &str) -> Option<Scenario> {
+    registered_scenario(name).map(Scenario::from)
+}
+
+fn registered_scenario(name: &str) -> Option<scenario::Scenario> {
     script::registry::install_cards(&script::sherlock::CARDS)
         .expect("install canonical Sherlock card for live fixture scenarios");
-    Scenario::get(name)
+    scenario::get(name)
 }
 
 /// Resolve a registered scenario and apply the selected live fixture mode.
@@ -45,7 +49,7 @@ pub fn scenario_with_profiles_for_test(
     mainland: bool,
     additional_profile: (&'static str, &'static str),
 ) -> Result<Scenario, String> {
-    let mut scenario = scenario(name).ok_or_else(|| format!("unknown scenario {name}"))?;
+    let mut scenario = registered_scenario(name).ok_or_else(|| format!("unknown scenario {name}"))?;
     scenario.seed.mainland = mainland;
     scenario
         .seed
@@ -59,7 +63,7 @@ pub fn scenario_with_start_script_for_test(
     name: &str,
     start_script: &'static str,
 ) -> Result<Scenario, String> {
-    let mut scenario = scenario(name).ok_or_else(|| format!("unknown scenario {name}"))?;
+    let mut scenario = registered_scenario(name).ok_or_else(|| format!("unknown scenario {name}"))?;
     scenario.settings.start_script = Some(start_script);
     Ok(scenario.into())
 }
@@ -70,7 +74,7 @@ pub fn scenario_with_nav_for_test(
     allow_teleports: bool,
     allow_wilderness: bool,
 ) -> Result<Scenario, String> {
-    let mut scenario = scenario(name).ok_or_else(|| format!("unknown scenario {name}"))?;
+    let mut scenario = registered_scenario(name).ok_or_else(|| format!("unknown scenario {name}"))?;
     scenario.settings.nav.allow_teleports = allow_teleports;
     scenario.settings.nav.allow_wilderness = allow_wilderness;
     Ok(scenario.into())

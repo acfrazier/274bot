@@ -300,6 +300,146 @@ mod tests {
     }
 
     #[test]
+    fn installed_card_lifecycle_hooks_are_dispatched_once() {
+        const TEST_NAME: &str =
+            "registry::tests::installed_card_lifecycle_hooks_are_dispatched_once";
+        const CHILD_ENV: &str = "SCRIPT_CARD_LIFECYCLE_TEST_CHILD";
+        if std::env::var_os(CHILD_ENV).is_none() {
+            let output = std::process::Command::new(
+                std::env::current_exe().expect("unit-test executable path"),
+            )
+            .args(["--exact", TEST_NAME, "--nocapture"])
+            .env(CHILD_ENV, "1")
+            .output()
+            .expect("run isolated registered-card lifecycle test");
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(
+                output.status.success(),
+                "isolated lifecycle test failed\nstdout: {stdout}\nstderr: {stderr}"
+            );
+            assert!(
+                stdout.contains(&format!("test {TEST_NAME} ... ok"))
+                    && stdout.contains("1 passed"),
+                "isolated lifecycle test did not run exactly once\nstdout: {stdout}\nstderr: {stderr}"
+            );
+            return;
+        }
+
+        use crate::native::{CardLifecycle, NativeTick, Script, ScriptFailure, ScriptFlow};
+        use crate::surface::test_support::{StubSurfaceCard, StubSurfaceFactory};
+        use crate::surface::{SurfaceReady, SurfaceStart};
+        use crate::{RunState, SlotScript};
+        use std::sync::Arc;
+
+        #[derive(Debug, PartialEq, Eq)]
+        enum Call {
+            Stop,
+            Reset,
+            Resume,
+            Pause,
+            Hold(bool),
+        }
+        static CALLS: Mutex<Vec<Call>> = Mutex::new(Vec::new());
+
+        fn on_stop() {
+            CALLS.lock().unwrap().push(Call::Stop);
+        }
+        fn on_reset() {
+            CALLS.lock().unwrap().push(Call::Reset);
+        }
+        fn on_resume() {
+            CALLS.lock().unwrap().push(Call::Resume);
+        }
+        fn on_pause() {
+            CALLS.lock().unwrap().push(Call::Pause);
+        }
+        fn on_hold(held: bool) {
+            CALLS.lock().unwrap().push(Call::Hold(held));
+        }
+        fn assert_calls(expected: &[Call]) {
+            let mut calls = CALLS.lock().unwrap();
+            assert_eq!(calls.as_slice(), expected);
+            calls.clear();
+        }
+
+        static HOOKS: CardLifecycle = CardLifecycle {
+            on_stop,
+            on_reset,
+            on_resume,
+            on_pause,
+            on_hold,
+        };
+        static COUNTING_CARD: [CompiledCard; 1] = [CompiledCard {
+            id: CompiledId("registry-counting-lifecycle-test"),
+            lifecycle: Some(&HOOKS),
+            ..ADDED_CARD
+        }];
+
+        struct IdleScript;
+        impl Script for IdleScript {
+            fn tick(&mut self, _: &mut NativeTick<'_>) -> Result<ScriptFlow, ScriptFailure> {
+                Ok(ScriptFlow::Continue)
+            }
+        }
+
+        let mut slot = SlotScript::new();
+        slot.sync_compiled_clue(false);
+        install_cards(&COUNTING_CARD).unwrap();
+        slot.start_test_script(Box::new(IdleScript), None).unwrap();
+        slot.sync_compiled_clue(false);
+        assert_calls(&[Call::Resume, Call::Hold(false)]);
+
+        slot.pause();
+        slot.sync_compiled_clue(true);
+        assert_calls(&[Call::Pause, Call::Hold(true)]);
+        slot.resume();
+        slot.sync_compiled_clue(false);
+        assert_calls(&[Call::Resume, Call::Hold(false)]);
+
+        slot.reset_session_work();
+        slot.sync_compiled_clue(true);
+        assert_calls(&[Call::Reset, Call::Resume, Call::Hold(true)]);
+        slot.sync_compiled_clue(false);
+        assert_calls(&[Call::Resume, Call::Hold(false)]);
+
+        slot.stop();
+        slot.sync_compiled_clue(false);
+        assert_calls(&[Call::Stop]);
+        slot.sync_compiled_clue(true);
+        assert_calls(&[]);
+
+        let mut surface_slot = SlotScript::new();
+        surface_slot.stop();
+        surface_slot.reset_session_work();
+        let factory = Arc::new(StubSurfaceFactory::new());
+        surface_slot.bind_surface_factory(factory.clone());
+        surface_slot
+            .start_surface(SurfaceStart {
+                card: Arc::new(StubSurfaceCard),
+                settings_bag: None,
+                game_data: None,
+                named_banks: Arc::default(),
+                loadouts: Arc::default(),
+            })
+            .unwrap();
+        factory.last_run().unwrap().set_readiness(SurfaceReady::Ready);
+        let _ = surface_slot.poll_start();
+        assert_eq!(surface_slot.state(), RunState::Running);
+        surface_slot.sync_compiled_clue(false);
+        surface_slot.sync_compiled_clue(true);
+        assert_calls(&[]);
+
+        surface_slot.stop();
+        surface_slot.observe_lifecycle();
+        assert_eq!(surface_slot.state(), RunState::Idle);
+        surface_slot.sync_compiled_clue(false);
+        assert_calls(&[Call::Stop]);
+        surface_slot.sync_compiled_clue(false);
+        assert_calls(&[]);
+    }
+
+    #[test]
     fn compiled_card_ids_order_and_native_kinds_are_stable() {
         use crate::native::request::NativeKind;
         #[cfg(feature = "load")]
