@@ -238,6 +238,7 @@ impl Rig {
             None,
             None,
             None,
+            None,
         )
     }
 

@@ -67,6 +67,47 @@ globs = [
 
 exceptions = ["crates/host-play/tests/survivable_admission_live.rs"]
 
+# Fleet Stop enters the shared command plan, retires the host's script walk,
+# and projects the resulting rows. See README.md "State-gap and refusal paths".
+[[cover]]
+globs = ["crates/frontend-core/src/bot_projection.rs", "crates/frontend-core/src/fleet.rs", "crates/frontend-core/src/selection.rs", "crates/frontend-core/src/session/fleet_plan.rs", "crates/frontend-core/src/views.rs", "crates/host-play/src/play_scripts.rs", "crates/host-play/src/script_runtime.rs", "crates/host-play/src/play_slots.rs", "crates/host-play/src/script_nav.rs", "crates/host-play/src/script_walk.rs", "crates/panel/src/session.rs", "crates/panel/src/fleet.rs", "crates/panel/src/fleet_actions.rs"]
+cells = [
+  "panel.state-gap-stop-live|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip MANUAL_LIVE_EVIDENCE=${LIVE_EVIDENCE_DIR:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} ISOHOME_DIR=${PANEL_LIVE_HOME:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p panel --lib -- --ignored --exact manual_click_live_tests::live_stop_retires_script_walks_and_keeps_the_manual_walk --nocapture --test-threads=1",
+]
+
+# These UI paths have controlled-state driver proof, not game-world fixtures.
+[[cover]]
+globs = ["crates/frontend-core/src/error_expiry.rs", "crates/frontend-core/src/lib.rs", "crates/frontend-core/src/session/commands.rs"]
+cells = [
+  "frontend-core.driver-command-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p frontend-core --lib driver::tests::",
+  "frontend-core.error-expiry-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p frontend-core --lib error_expiry::tests::",
+]
+
+[[cover]]
+globs = ["crates/frontend-core/src/resources.rs"]
+cells = [
+  "frontend-core.resources-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p frontend-core --lib resources::tests::",
+]
+
+[[cover]]
+globs = ["crates/panel/src/debug_panel.rs", "crates/panel/src/session_catalog.rs"]
+cells = [
+  "panel.session-command-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p panel --lib session::tests::",
+  "panel.debug-targets-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p panel --lib debug_panel::tests::",
+]
+
+[[cover]]
+globs = ["crates/panel/src/loadouts.rs"]
+cells = [
+  "panel.loadout-command-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p panel --lib loadouts::tests::",
+]
+
+[[cover]]
+globs = ["crates/tui/src/commands.rs", "crates/tui/src/input.rs", "crates/tui/src/overlay.rs", "crates/tui/src/palette.rs"]
+cells = [
+  "tui.command-refusal-headless|TUI_CAPTURE_DIR=${LIVE_EVIDENCE_DIR:?}/tui ${ISOHOME:?} nice -n 10 cargo test --locked -p tui --lib bin::tests::",
+]
+
 [[cover]]
 globs = ["crates/frontend-core/src/driver.rs", "crates/frontend-core/src/session/scripts.rs"]
 cells = [
