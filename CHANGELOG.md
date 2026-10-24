@@ -33,7 +33,7 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.6` 
 
 #### Survival
 
-- Strange fruit waits for the game's food delay after a bite.
+- Strange fruit waits for the game's food delay after a bite. Eating the fruit also delays the next combat attack.
 
 #### Profile settings
 

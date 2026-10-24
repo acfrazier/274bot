@@ -158,10 +158,8 @@ impl Trace {
 
     fn receipt(&self, scenario: &str, failure: Option<&str>) -> Value {
         let projected = self.projected_first_mark_bite();
-        let head = git_head();
-        json!({
+        let mut receipt = json!({
             "scenario": scenario,
-            "git_head": head,
             "account": self.account,
             "outcome": if failure.is_none() { "PASS" } else { "FAIL" },
             "map_members": true,
@@ -266,7 +264,9 @@ impl Trace {
                 "setup_passed": self.setup_passed,
             },
             "events": self.events,
-        })
+        });
+        host_play::evidence_writer::record_source_identity(&mut receipt);
+        receipt
     }
 
     fn projected_first_mark_bite(&self) -> Option<bool> {
@@ -509,7 +509,7 @@ fn walk_request(required_after: api::quest_progress::EvidenceStamp) -> WalkReque
         candidate_goals: None,
         loc_id: None,
         radius: 12,
-        arrival: nav::arrival::ArrivalKind::Reach,
+        arrival: nav_planner::arrival::ArrivalKind::Reach,
         options: script::native::WalkOptions::default(),
         required_after,
         evidence: None,
@@ -1526,23 +1526,6 @@ fn item_count(snapshot: &GameSnapshot, id: i32) -> i32 {
         .filter(|item| item.def.id == id)
         .map(|item| item.count)
         .fold(0_i32, i32::saturating_add)
-}
-
-fn git_head() -> String {
-    let output = std::process::Command::new("git")
-        .args(["rev-parse", "HEAD"])
-        .current_dir(env!("CARGO_MANIFEST_DIR"))
-        .output()
-        .expect("run git rev-parse HEAD for the live receipt");
-    assert!(
-        output.status.success(),
-        "git rev-parse HEAD failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    String::from_utf8(output.stdout)
-        .expect("git rev-parse HEAD output is UTF-8")
-        .trim()
-        .to_owned()
 }
 
 fn required_path(name: &str) -> Result<PathBuf, String> {
