@@ -179,12 +179,8 @@ fn seat_terminal_publishable(terminal: SeatTerminal) -> Result<(), SeatPageError
         SeatTerminal::Refused(Refusal::ArgsTooLarge) => {
             Err(SeatPageError::LocalArgsTooLargeRefusal)
         }
-        SeatTerminal::Aborted(AbortReason::Reset) => {
-            Err(SeatPageError::ResetTerminal)
-        }
-        SeatTerminal::Aborted(AbortReason::Terminated) => {
-            Err(SeatPageError::TerminatedTerminal)
-        }
+        SeatTerminal::Aborted(AbortReason::Reset) => Err(SeatPageError::ResetTerminal),
+        SeatTerminal::Aborted(AbortReason::Terminated) => Err(SeatPageError::TerminatedTerminal),
         _ => Ok(()),
     }
 }
@@ -232,11 +228,7 @@ fn validate_seat_page(page: &SeatPageInput<'_>) -> Result<(), SeatPageError> {
                 }
             }
             None if entry.prompt.is_none() => {}
-            _ => {
-                return Err(SeatPageError::PromptSequenceMismatch {
-                    id: entry.id.get(),
-                })
-            }
+            _ => return Err(SeatPageError::PromptSequenceMismatch { id: entry.id.get() }),
         }
     }
     let mut previous_seq = 0;
@@ -267,9 +259,11 @@ fn validate_seat_page(page: &SeatPageInput<'_>) -> Result<(), SeatPageError> {
             .results
             .iter()
             .filter(|result| result.id == result_value.id);
-        let result = matching.next().ok_or(SeatPageError::MissingTerminalResult {
-            id: result_value.id.get(),
-        })?;
+        let result = matching
+            .next()
+            .ok_or(SeatPageError::MissingTerminalResult {
+                id: result_value.id.get(),
+            })?;
         if matching.next().is_some() {
             return Err(SeatPageError::AmbiguousTerminalResult {
                 id: result_value.id.get(),

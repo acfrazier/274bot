@@ -224,7 +224,7 @@ impl SlotScript {
     }
 
     /// Read-only receipt seam for the ignored public Script API live cells.
-    #[cfg(feature = "test-hooks")]
+    #[cfg(all(feature = "load", feature = "test-hooks"))]
     #[doc(hidden)]
     pub fn api_live_test_probe(&mut self) -> serde_json::Value {
         let stamp = |value: api::quest_progress::EvidenceStamp| {
@@ -433,6 +433,7 @@ impl SlotScript {
         }
     }
 
+    #[cfg(feature = "load")]
     pub(super) fn start_api_gather(&mut self, token: u64, settings: &Arc<SettingsBag>) {
         if !self.load_active() {
             return;

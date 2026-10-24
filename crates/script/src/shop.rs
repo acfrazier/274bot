@@ -1084,7 +1084,10 @@ mod tests {
         assert!(choose_keeper(&[], "Shop keeper", None).is_none());
         // No live flood: the nearest Trade row by straight-line distance.
         let nearest = choose_keeper(&rows, " shop keeper ", None).unwrap();
-        assert_eq!((nearest.index(), nearest.route()), (4, KeeperRoute::Unknown(2)));
+        assert_eq!(
+            (nearest.index(), nearest.route()),
+            (4, KeeperRoute::Unknown(2))
+        );
         assert_eq!(nearest.action(), "Trade");
     }
 

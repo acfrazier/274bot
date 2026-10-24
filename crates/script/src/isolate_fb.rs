@@ -3738,7 +3738,7 @@ fn seat_page_vectors_off<'b>(
     b: &mut FlatBufferBuilder<'b>,
     page: SeatPageInput<'_>,
 ) -> Result<(SeatLiveVector<'b>, SeatResultVector<'b>), String> {
-    page.validate()?;
+    page.validate().map_err(|error| error.to_string())?;
     let mut live_offsets = [WIPOffset::new(0); MAX_SEAT_LIVE];
     for (index, (entry, details)) in page.live().iter().zip(page.live_details()).enumerate() {
         live_offsets[index] = seat_live_off(b, entry, *details);
@@ -9171,6 +9171,89 @@ pub(crate) mod tests {
 
     #[test]
     fn seat_page_rejects_unsorted_and_overbound_pages() {
+        use crate::native::seat_rows::SeatPageError;
+        for (error, expected) in [
+            (
+                SeatPageError::LiveTooLarge { len: 17 },
+                format!("seat live vector length 17 exceeds cap {MAX_SEAT_LIVE}"),
+            ),
+            (
+                SeatPageError::ResultsTooLarge { len: 17 },
+                format!("seat result vector length 17 exceeds cap {MAX_SEAT_RESULTS}"),
+            ),
+            (
+                SeatPageError::CreditLimit,
+                format!(
+                    "seat live and result credits exceed cap {}",
+                    api::script_contract::MAX_RESULTS
+                ),
+            ),
+            (
+                SeatPageError::LiveDetailCountMismatch {
+                    live: 2,
+                    details: 1,
+                },
+                "seat live/detail count mismatch: 2 live, 1 details".to_owned(),
+            ),
+            (
+                SeatPageError::LiveDetailIdMismatch { index: 3 },
+                "seat live/detail id mismatch at index 3".to_owned(),
+            ),
+            (
+                SeatPageError::OwnParent { id: 17 },
+                "seat live entry 17 is its own parent".to_owned(),
+            ),
+            (
+                SeatPageError::PromptArgsTooLarge { len: 9999 },
+                format!("seat prompt args length 9999 exceeds cap {MAX_SEAT_BINARY_BYTES}"),
+            ),
+            (
+                SeatPageError::PromptSequenceMismatch { id: 17 },
+                "seat live entry 17 has misaligned prompt sequence".to_owned(),
+            ),
+            (
+                SeatPageError::UnorderedResults,
+                "seat results are not strictly ordered by terminal sequence".to_owned(),
+            ),
+            (
+                SeatPageError::ResultValueTooLarge { len: 9999 },
+                format!("seat result value length 9999 exceeds cap {MAX_SEAT_BINARY_BYTES}"),
+            ),
+            (
+                SeatPageError::DuplicateResultValue { id: 17 },
+                "duplicate seat result value for 17".to_owned(),
+            ),
+            (
+                SeatPageError::MissingTerminalResult { id: 17 },
+                "seat result value 17 has no matching terminal result".to_owned(),
+            ),
+            (
+                SeatPageError::AmbiguousTerminalResult { id: 17 },
+                "seat result value 17 matches multiple terminal results".to_owned(),
+            ),
+            (
+                SeatPageError::ResultValueOutcome { id: 17 },
+                "seat result value 17 requires a Done or Failed outcome".to_owned(),
+            ),
+            (
+                SeatPageError::DuplicateSeatId,
+                "duplicate live/terminal seat id".to_owned(),
+            ),
+            (
+                SeatPageError::LocalArgsTooLargeRefusal,
+                "local ArgsTooLarge refusal cannot be published on the seat wire".to_owned(),
+            ),
+            (
+                SeatPageError::ResetTerminal,
+                "Reset is not a seat-published terminal".to_owned(),
+            ),
+            (
+                SeatPageError::TerminatedTerminal,
+                "Terminated is not a seat-published terminal".to_owned(),
+            ),
+        ] {
+            assert_eq!(error.to_string(), expected);
+        }
         let result = |id, seq| NativeSeatResult {
             id: RequestId::from_raw(id).expect("result id"),
             seq,
@@ -9183,6 +9266,7 @@ pub(crate) mod tests {
         assert!(SeatPageInput::new(&[], &unsorted, &[], 0)
             .err()
             .expect("terminal sequence must be ordered")
+            .to_string()
             .contains("strictly ordered"));
 
         let too_many_results = (0..=MAX_SEAT_RESULTS)
@@ -9191,6 +9275,7 @@ pub(crate) mod tests {
         assert!(SeatPageInput::new(&[], &too_many_results, &[], 0)
             .err()
             .expect("result vector must stay bounded")
+            .to_string()
             .contains("exceeds cap"));
 
         let live = (0..=MAX_SEAT_LIVE)
@@ -9215,10 +9300,12 @@ pub(crate) mod tests {
         assert!(SeatPageInput::new(&live, &[], &details, 0)
             .err()
             .expect("live vector must stay bounded")
+            .to_string()
             .contains("exceeds cap"));
         assert!(SeatPageInput::new(&live[..1], &[], &[], 0)
             .err()
             .expect("live/detail vectors must align")
+            .to_string()
             .contains("count mismatch"));
     }
 
@@ -9267,6 +9354,7 @@ pub(crate) mod tests {
             .with_result_values(&duplicate)
             .err()
             .expect("duplicate value ID rejected")
+            .to_string()
             .contains("duplicate seat result value"));
 
         let refused_value = [SeatResultValue {
@@ -9278,6 +9366,7 @@ pub(crate) mod tests {
             .with_result_values(&refused_value)
             .err()
             .expect("refused outcome value rejected")
+            .to_string()
             .contains("Done or Failed"));
 
         let oversized = vec![0; MAX_SEAT_BINARY_BYTES + 1];
@@ -9290,6 +9379,7 @@ pub(crate) mod tests {
             .with_result_values(&oversized_value)
             .err()
             .expect("oversized value rejected")
+            .to_string()
             .contains("exceeds cap"));
     }
 
@@ -10327,6 +10417,7 @@ pub(crate) mod tests {
         assert!(SeatPageInput::new(&live, &[], &details, 0)
             .err()
             .expect("producer prompt-args cap")
+            .to_string()
             .contains("prompt args length"));
     }
 

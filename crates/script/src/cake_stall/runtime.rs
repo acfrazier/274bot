@@ -974,11 +974,11 @@ pub fn on_hold(held: bool) {
     });
 }
 
-pub(crate) fn carried_cakes() -> i32 {
+pub fn carried_cakes() -> i32 {
     observed::with(|scene| NativeObservation::from_scene(scene, false).carried)
 }
 
-pub(crate) fn needs_cake_restock_from_snapshot(target: Option<i32>) -> bool {
+pub fn needs_cake_restock_from_snapshot(target: Option<i32>) -> bool {
     observed::with(|scene| {
         let obs = NativeObservation::from_scene(scene, false);
         let pack_full = obs.inv_size > 0 && obs.inv_len >= obs.inv_size as usize;
