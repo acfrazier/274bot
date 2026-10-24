@@ -16,11 +16,11 @@ use ratatui::widgets::Widget;
 
 use api::snapshot::WorldTile;
 use frontend_core::walk_map::WalkCatalogue;
-use nav::map::poi::{PoiKind, PoiRecord};
-use nav::paint::remaining_path_tiles;
-use nav::router::Route;
-use nav::tile::Tile;
-use nav::world::NavWorld;
+use nav_planner::map::poi::{PoiKind, PoiRecord};
+use nav_planner::paint::remaining_path_tiles;
+use nav_planner::router::Route;
+use nav_planner::tile::Tile;
+use nav_planner::world::NavWorld;
 
 /// Zoom steps in tiles per cell (coarse to fine): the TUI twin of the
 /// picker's pixel `ZOOMS`. A cell covers this many world tiles per side.
@@ -333,7 +333,9 @@ impl<'a, F: FnMut(Tile)> Widget for Map<'a, F> {
                             z,
                             level: c.level,
                         };
-                        if walkable && !nav::paint::reached(bits, &self.world.collision, tile) {
+                        if walkable
+                            && !nav_planner::paint::reached(bits, &self.world.collision, tile)
+                        {
                             let point = (area.x + col as u16, area.y + row as u16);
                             buf[point].set_bg(Color::Rgb(64, 24, 24));
                         }
@@ -372,7 +374,7 @@ impl<'a, F: FnMut(Tile)> Widget for Map<'a, F> {
 
         if let Some(route) = self
             .route
-            .and_then(|route| nav::producer::route_view(self.world, route).ok())
+            .and_then(|route| nav_planner::producer::route_view(self.world, route).ok())
         {
             for pt in remaining_path_tiles(route, self.here) {
                 if pt.tile.level != c.level {
@@ -524,9 +526,9 @@ fn poi_glyph(kind: PoiKind) -> &'static str {
 #[cfg(test)]
 mod tests {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-    use nav::grid::StepGrid;
-    use nav::router::find;
-    use nav::tile::Tile;
+    use nav_planner::grid::StepGrid;
+    use nav_planner::router::find;
+    use nav_planner::tile::Tile;
     use ratatui::backend::TestBackend;
     use ratatui::buffer::Buffer;
     use ratatui::style::Modifier;
@@ -565,7 +567,7 @@ mod tests {
 
     #[test]
     fn here_at_centre_draws_the_at_marker() {
-        let world = nav::world::NavWorld::from_grid(&StepGrid::fixture_open_3x3());
+        let world = nav_planner::world::NavWorld::from_grid(&StepGrid::fixture_open_3x3());
         let mut view = MapView::new();
         let text = render(
             Map::new(&world, &mut view, |_| {}).here(wtile(1, 1, 0)),
@@ -584,7 +586,7 @@ mod tests {
 
     #[test]
     fn reach_layer_snapshots_at_standard_and_compact_sizes() {
-        let world = nav::world::NavWorld::from_grid(&StepGrid::fixture_open_3x3());
+        let world = nav_planner::world::NavWorld::from_grid(&StepGrid::fixture_open_3x3());
         let bits = [1u64 << 4];
         for (width, height) in [(120, 40), (80, 24)] {
             let mut view = MapView::new();
@@ -642,7 +644,7 @@ mod tests {
 
     #[test]
     fn wilderness_overlay_uses_selected_zone_tiles() {
-        let mut world = nav::world::NavWorld::from_grid(&StepGrid::fixture_rect_at(
+        let mut world = nav_planner::world::NavWorld::from_grid(&StepGrid::fixture_rect_at(
             Tile {
                 x: 0,
                 z: 0,
@@ -652,8 +654,8 @@ mod tests {
             5,
         ));
         world.collision.origin = wtile(2944, 3519, 0);
-        world.graph.wilderness = nav::transport::WildernessRules {
-            zones: vec![nav::transport::WildernessZone {
+        world.graph.wilderness = nav_planner::transport::WildernessRules {
+            zones: vec![nav_planner::transport::WildernessZone {
                 x1: 2944,
                 z1: 3520,
                 x2: 2948,
@@ -719,7 +721,7 @@ mod tests {
 
     #[test]
     fn route_paints_stars_and_advancing_here_drops_the_first() {
-        let world = nav::world::NavWorld::from_grid(&StepGrid::fixture_rect_at(
+        let world = nav_planner::world::NavWorld::from_grid(&StepGrid::fixture_rect_at(
             Tile {
                 x: 0,
                 z: 0,
@@ -771,7 +773,7 @@ mod tests {
 
     #[test]
     fn arrows_and_hjkl_pan_the_view() {
-        let world = nav::world::NavWorld::from_grid(&StepGrid::fixture_open_3x3());
+        let world = nav_planner::world::NavWorld::from_grid(&StepGrid::fixture_open_3x3());
         let mut view = MapView::new();
         let mut map = Map::new(&world, &mut view, |_| {}).here(wtile(1, 1, 0));
 
@@ -826,7 +828,7 @@ mod tests {
 
     #[test]
     fn enter_selects_the_centre_tile_and_plus_paints_it() {
-        let world = nav::world::NavWorld::from_grid(&StepGrid::fixture_open_3x3());
+        let world = nav_planner::world::NavWorld::from_grid(&StepGrid::fixture_open_3x3());
         let mut view = MapView::new();
         let mut map = Map::new(&world, &mut view, |_| {}).here(wtile(1, 1, 0));
 
@@ -856,7 +858,7 @@ mod tests {
 
     #[test]
     fn enter_selects_the_requested_centre_even_when_blocked() {
-        let world = nav::world::NavWorld::from_grid(&StepGrid::fixture_open_3x3());
+        let world = nav_planner::world::NavWorld::from_grid(&StepGrid::fixture_open_3x3());
         let mut view = MapView::new();
         view.pan = (2, 2); // centre (3,3): off the 3x3 grid at (0,0).
         let mut map = Map::new(&world, &mut view, |_| {}).here(wtile(1, 1, 0));
@@ -870,7 +872,7 @@ mod tests {
 
     #[test]
     fn enter_confirms_walk_to_the_selection_through_the_hook() {
-        let world = nav::world::NavWorld::from_grid(&StepGrid::fixture_open_3x3());
+        let world = nav_planner::world::NavWorld::from_grid(&StepGrid::fixture_open_3x3());
         let mut view = MapView::new();
         view.selection = Some(tile(2, 2, 0));
         let mut walked: Vec<Tile> = Vec::new();
@@ -893,7 +895,7 @@ mod tests {
 
     #[test]
     fn esc_clears_the_selection() {
-        let world = nav::world::NavWorld::from_grid(&StepGrid::fixture_open_3x3());
+        let world = nav_planner::world::NavWorld::from_grid(&StepGrid::fixture_open_3x3());
         let mut view = MapView::new();
         view.selection = Some(tile(2, 2, 0));
         let mut map = Map::new(&world, &mut view, |_| {});
@@ -903,7 +905,7 @@ mod tests {
 
     #[test]
     fn zoom_keys_cycle_the_tiles_per_cell_steps() {
-        let world = nav::world::NavWorld::from_grid(&StepGrid::fixture_open_3x3());
+        let world = nav_planner::world::NavWorld::from_grid(&StepGrid::fixture_open_3x3());
         let mut view = MapView::new();
         let mut map = Map::new(&world, &mut view, |_| {});
         let finest = ZOOMS.len() - 1;
@@ -935,7 +937,7 @@ mod tests {
 
     #[test]
     fn unknown_keys_are_ignored() {
-        let world = nav::world::NavWorld::from_grid(&StepGrid::fixture_open_3x3());
+        let world = nav_planner::world::NavWorld::from_grid(&StepGrid::fixture_open_3x3());
         let mut view = MapView::new();
         let before = view.clone();
         {

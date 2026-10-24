@@ -129,27 +129,29 @@ fn staged_bundle_selects_the_install_layout_without_runtime_hashing() {
                     "bundled canlight policy identity is required"
                 );
                 let pack_bytes = std::fs::read(path).expect("staged pack");
-                let world = nav::world::NavWorld::from_bytes(&pack_bytes).expect("decode pack");
-                let expected = nav::paint::bake_reach(&world.collision, &world.graph);
-                let side = nav::pack::decode_reach_sidecar(
+                let world =
+                    nav_planner::world::NavWorld::from_bytes(&pack_bytes).expect("decode pack");
+                let expected = nav_planner::paint::bake_reach(&world.collision, &world.graph);
+                let side = nav_planner::pack::decode_reach_sidecar(
                     &std::fs::read(&reach_path).expect("staged reach"),
                 )
                 .expect("decode reach");
                 assert_eq!(side.bits, expected, "staged reach must equal bake_reach");
                 assert_eq!(
-                    nav::pack::sha256_hex(&side.binding),
+                    nav_planner::pack::sha256_hex(&side.binding),
                     row.nav_sha256,
                     "reach binding is the pack identity"
                 );
                 let canlight_bytes = std::fs::read(&canlight_path).expect("staged canlight");
-                let canlight =
-                    nav::pack::decode_canlight_sidecar(&canlight_bytes).expect("decode canlight");
+                let canlight = nav_planner::pack::decode_canlight_sidecar(&canlight_bytes)
+                    .expect("decode canlight");
                 let policy = row
                     .canlight_identity
                     .as_deref()
                     .expect("canlight policy identity");
-                let expected = nav::canlight::expected_header_binding(&row.nav_sha256, policy)
-                    .expect("canlight binding");
+                let expected =
+                    nav_planner::canlight::expected_header_binding(&row.nav_sha256, policy)
+                        .expect("canlight binding");
                 assert_eq!(
                     canlight.binding, expected,
                     "canlight binding is pack+policy identity"

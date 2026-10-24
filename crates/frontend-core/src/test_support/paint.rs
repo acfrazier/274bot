@@ -94,6 +94,18 @@ impl TestPaint {
         self
     }
 
+    /// Advertise one tabs band, after any bands already added (tests).
+    pub fn with_tab_band(mut self, id: &str, names: &[&str], selected: &str) -> Self {
+        self.paint.tabs.push(script::shim::PaintChromeBand {
+            id: id.to_string(),
+            names: names.iter().map(|name| (*name).to_string()).collect(),
+            selected: selected.to_string(),
+            status: None,
+            brand: None,
+        });
+        self
+    }
+
     /// The right-aligned byline (tests).
     pub fn with_footer(mut self, footer: &str) -> Self {
         self.paint.footer = Some(footer.to_string());

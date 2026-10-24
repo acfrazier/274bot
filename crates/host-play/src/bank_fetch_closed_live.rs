@@ -49,11 +49,11 @@ use api::bank_memory::Origin;
 use api::named_banks::{BankPreferences, NamedBankFacts};
 use api::snapshot::{GameSnapshot, WorldTile};
 use client::client::Client;
-use nav::bank_fetch::{BankRows, BankStep};
-use nav::router::FindOptions;
-use nav::tile::Tile;
-use nav::world::NavWorld;
-use nav::WorldState;
+use nav_planner::bank_fetch::{BankRows, BankStep};
+use nav_planner::router::FindOptions;
+use nav_planner::tile::Tile;
+use nav_planner::world::NavWorld;
+use nav_planner::WorldState;
 use parking_lot::Mutex;
 use script::bank::{Close, Open, OpenArgs, Select, SelectArgs};
 use script::native::{ActionHandle, NativeTick, Script, ScriptFailure, ScriptFlow};
@@ -436,18 +436,18 @@ fn status_tile(play: &super::Play, account: &str) -> Option<(bool, [i32; 3])> {
 }
 
 /// A route's legs for the trace: walk spans and transport hops.
-fn leg_lines(route: &nav::router::Route) -> Vec<String> {
+fn leg_lines(route: &nav_planner::router::Route) -> Vec<String> {
     route
         .legs
         .iter()
         .map(|leg| match leg {
-            nav::router::Leg::Walk { tiles } => format!(
+            nav_planner::router::Leg::Walk { tiles } => format!(
                 "walk {} tiles {:?} -> {:?}",
                 tiles.len(),
                 tiles.first(),
                 tiles.last()
             ),
-            nav::router::Leg::Transport { edge } => format!(
+            nav_planner::router::Leg::Transport { edge } => format!(
                 "{:?} loc={} at={:?} to={:?} item_req={:?} consumed_req={:?} quest_req={:?}",
                 edge.kind,
                 edge.loc_id,

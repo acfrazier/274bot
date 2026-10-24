@@ -5,14 +5,14 @@ use api::selected::ClientRevision;
 use api::selected::{QuestGate, RunKey, Truth};
 use api::snapshot::WorldTile;
 use client::dash3d::CollisionFlag;
-use nav::collision::{pack_walk, WorldCollision};
-use nav::quest_gates::{QuestEvidence, QuestFamilyId};
-use nav::router::{Leg, RouteError};
-use nav::transport::TransportGraph;
+use nav_planner::collision::{pack_walk, WorldCollision};
+use nav_planner::quest_gates::{QuestEvidence, QuestFamilyId};
+use nav_planner::router::{Leg, RouteError};
+use nav_planner::transport::TransportGraph;
 #[cfg(feature = "test-support")]
-use nav::transport::{TransportEdge, TransportKind, WildernessRules, WildernessZone};
-use nav::zones::{Zone, ZoneClass, ZoneGroup, ZoneKind, ZoneTable, NO_GROUP};
-use nav::WorldState;
+use nav_planner::transport::{TransportEdge, TransportKind, WildernessRules, WildernessZone};
+use nav_planner::zones::{Zone, ZoneClass, ZoneGroup, ZoneKind, ZoneTable, NO_GROUP};
+use nav_planner::WorldState;
 use script::combat::guard::{Escape, EscapeAction, EscapeOwner, EscapeState};
 use script::combat::request::{ActorKind, ActorRef};
 use script::combat::risk::{KindRisk, LiveRow, UnknownKind};
@@ -190,7 +190,7 @@ fn real_search(
     state: &WorldState,
     avoid: &[AvoidRect],
 ) -> crate::RouteOutcome {
-    match nav::router::find_with_avoid(
+    match nav_planner::router::find_with_avoid(
         &world.collision,
         &world.graph,
         from,
@@ -212,7 +212,7 @@ fn real_witness(
     state: &WorldState,
     avoid: &[AvoidRect],
 ) -> Option<Vec<ZoneKey>> {
-    nav::router::find_blocking_zones(
+    nav_planner::router::find_blocking_zones(
         &world.collision,
         &world.graph,
         from,
@@ -245,7 +245,7 @@ fn unavailable_snapshots_preserve_missing_facts_without_inventing_events() {
 
 #[cfg(feature = "test-support")]
 fn count_kernels<T>(work: impl FnOnce() -> T) -> (T, usize) {
-    nav::router::count_kernel_searches(work)
+    nav_planner::router::count_kernel_searches(work)
 }
 
 #[cfg(feature = "test-support")]
@@ -651,7 +651,8 @@ fn witness_verdicts_through_the_kind_view_match_the_round_two_rule() {
         };
         let kind = &table.kinds()[usize::from(zone.kind)];
         if kind.npc_id == -1 {
-            nav::zones::curated::hazard_damage(kind.id.as_ref()).is_some_and(|max| max < input.hp)
+            nav_planner::zones::curated::hazard_damage(kind.id.as_ref())
+                .is_some_and(|max| max < input.hp)
         } else {
             risks.npc(kind.npc_id).is_some_and(|facts| {
                 facts.unknown_for(input.map_members).is_none() && facts.max_hit < input.hp
@@ -736,7 +737,7 @@ fn u6_real_budget_one_corridor_exhausts_the_named_retry_after_a_real_witness() {
             &budget_exhaustion_corridor,
             &admission,
             options,
-            |opts| match nav::router::find_with_avoid_bounded(
+            |opts| match nav_planner::router::find_with_avoid_bounded(
                 &budget_exhaustion_corridor.collision,
                 &budget_exhaustion_corridor.graph,
                 from,
@@ -1195,7 +1196,7 @@ fn u11_fresh_ignores_only_clock_age() {
         due_tick: 15,
     };
     let admission = make_admission(RiskPolicy::Inherit, input);
-    let route = nav::router::find_with_avoid(
+    let route = nav_planner::router::find_with_avoid(
         &world.collision,
         &world.graph,
         tile(0, 1),
@@ -1259,7 +1260,7 @@ fn u11_native_publication_reassesses_stale_input_then_refuses_before_follow() {
     let world = known_corridor(&[20]);
     let from = tile(0, 1);
     let to = tile(20, 1);
-    let route = nav::router::find_with_avoid(
+    let route = nav_planner::router::find_with_avoid(
         &world.collision,
         &world.graph,
         from,
@@ -1309,7 +1310,7 @@ fn u11_manual_stale_publication_refuses_and_retains_reason_before_held_follow() 
     let world = known_corridor(&[20]);
     let from = tile(0, 1);
     let to = tile(20, 1);
-    let route = nav::router::find_with_avoid(
+    let route = nav_planner::router::find_with_avoid(
         &world.collision,
         &world.graph,
         from,
@@ -1363,7 +1364,7 @@ fn u11_publication_during_live_escape_refuses_without_reassessment() {
     let world = empty_corridor();
     let from = tile(0, 1);
     let to = tile(8, 1);
-    let route = nav::router::find_with_avoid(
+    let route = nav_planner::router::find_with_avoid(
         &world.collision,
         &world.graph,
         from,
@@ -1416,7 +1417,7 @@ fn u11_live_escape_states_refuse_before_any_kernel_but_advisory_assess_is_allowe
     let world = empty_corridor();
     let from = tile(0, 1);
     let to = tile(8, 1);
-    let route = nav::router::find_with_avoid(
+    let route = nav_planner::router::find_with_avoid(
         &world.collision,
         &world.graph,
         from,
@@ -1612,7 +1613,7 @@ fn s2b_admission_route_and_publication_microbenchmarks() {
     let safe_from = tile(0, 1);
     let safe_to = tile(12, 1);
     let _ = assess(
-        &nav::router::find_with_avoid(
+        &nav_planner::router::find_with_avoid(
             &safe_world.collision,
             &safe_world.graph,
             safe_from,
@@ -1696,7 +1697,7 @@ fn s2b_admission_route_and_publication_microbenchmarks() {
     let publish_world = empty_corridor();
     let publish_from = tile(0, 1);
     let publish_to = tile(8, 1);
-    let publish_route = nav::router::find_with_avoid(
+    let publish_route = nav_planner::router::find_with_avoid(
         &publish_world.collision,
         &publish_world.graph,
         publish_from,
@@ -1878,7 +1879,7 @@ fn unknown_poison_witness_is_not_researched() {
 fn missing_facts_at_publication_never_refuse_a_no_crossing_walk() {
     let world = empty_corridor();
     let route = Arc::new(
-        nav::router::find_with_avoid(
+        nav_planner::router::find_with_avoid(
             &world.collision,
             &world.graph,
             tile(0, 1),
@@ -2038,17 +2039,17 @@ fn held_manual_no_path_leaves_walk_arms_untouched() {
     const { assert!(!crate::NET_AVAILABLE) };
     let world = known_corridor(&[12]);
     let state = WorldState::default();
-    let from = nav::tile::Tile {
+    let from = nav_planner::tile::Tile {
         x: 0,
         z: 1,
         level: 0,
     };
-    let to = nav::tile::Tile {
+    let to = nav_planner::tile::Tile {
         x: 23,
         z: 1,
         level: 0,
     };
-    let walking = Arc::new(nav::router::Route {
+    let walking = Arc::new(nav_planner::router::Route {
         legs: vec![Leg::Walk {
             tiles: vec![tile(0, 1), tile(1, 1)],
         }],
@@ -2080,7 +2081,7 @@ fn held_manual_no_path_leaves_walk_arms_untouched() {
             to,
             FindOptions::default(),
             &state,
-            &nav::bank_fetch::BankRows::default(),
+            &nav_planner::bank_fetch::BankRows::default(),
             held,
             &arms,
             Some(name),
@@ -2105,7 +2106,7 @@ fn held_manual_no_path_leaves_walk_arms_untouched() {
         to,
         FindOptions::default(),
         &state,
-        &nav::bank_fetch::BankRows::default(),
+        &nav_planner::bank_fetch::BankRows::default(),
         enforcing,
         &arms,
         Some("alice"),
@@ -2294,7 +2295,7 @@ fn real_squire_walk(
         to,
         radius: i32::try_from(args["radius"].as_i64().unwrap()).unwrap(),
         loc_id: None,
-        arrival: nav::arrival::ArrivalKind::Reach,
+        arrival: nav_planner::arrival::ArrivalKind::Reach,
         opts,
         state: Some(state),
         bank_origin: api::bank_memory::Origin::Unknown,
@@ -2437,8 +2438,8 @@ mod compact_final_route_tests {
         to: WorldTile,
     ) -> crate::walk_plan::RoutePath {
         let lease = producer::lease(world).expect("fixture navigation lease");
-        let mut cursor = nav::router::SearchCursor::new(
-            nav::router::SearchRequest::Single {
+        let mut cursor = nav_planner::router::SearchCursor::new(
+            nav_planner::router::SearchRequest::Single {
                 from,
                 to,
                 options: FindOptions {
@@ -2462,23 +2463,23 @@ mod compact_final_route_tests {
             );
             let mut context = StepContext::<InspectionPhase>::new(&clock, budget, &cancellation);
             match cursor.advance(&mut context) {
-                nav::router::CursorStep::Complete(completion) => break completion,
-                nav::router::CursorStep::Yielded => {}
-                nav::router::CursorStep::Cancelled(reason) => {
+                nav_planner::router::CursorStep::Complete(completion) => break completion,
+                nav_planner::router::CursorStep::Yielded => {}
+                nav_planner::router::CursorStep::Cancelled(reason) => {
                     panic!("fixture route cancelled: {reason:?}")
                 }
-                nav::router::CursorStep::Failed(error) => {
+                nav_planner::router::CursorStep::Failed(error) => {
                     panic!("fixture route failed: {error:?}")
                 }
             }
         };
         let (outcome, _) = completion.into_parts();
-        let nav::router::SearchOutcome::Single { route: Ok(route) } = outcome else {
+        let nav_planner::router::SearchOutcome::Single { route: Ok(route) } = outcome else {
             panic!("fixture search did not return one compact route")
         };
-        let bytes =
-            nav::producer::compact_route_result_bytes(&route).expect("route size is bounded");
-        let ledger = nav::producer::OwnerResultLedger::with_limits(bytes, bytes);
+        let bytes = nav_planner::producer::compact_route_result_bytes(&route)
+            .expect("route size is bounded");
+        let ledger = nav_planner::producer::OwnerResultLedger::with_limits(bytes, bytes);
         let reservation = ledger
             .try_reserve_bytes(bytes)
             .expect("fixture route result reservation");
@@ -2491,7 +2492,7 @@ mod compact_final_route_tests {
             None,
         )
         .expect("valid fixture work identity");
-        let plan = nav::producer::publish_compact_route(
+        let plan = nav_planner::producer::publish_compact_route(
             &lease,
             identity,
             InputRevision::FIRST,
@@ -2630,7 +2631,9 @@ mod compact_final_route_tests {
         id: i32,
     ) -> crate::PendingBankFetch {
         crate::PendingBankFetch {
-            steps: std::collections::VecDeque::from([nav::bank_fetch::BankStep::Wear { id }]),
+            steps: std::collections::VecDeque::from([nav_planner::bank_fetch::BankStep::Wear {
+                id,
+            }]),
             dest,
             opts: FindOptions::default(),
             final_route,

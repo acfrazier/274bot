@@ -41,6 +41,19 @@ with the passphrase it was created with. In a pty, send the passphrase at the
 prompt and end it with Enter (`\r` or `\n`). `BOT_VAULT_PASS` and
 `--vault-pass` were removed; see [vault.md](vault.md#passphrase-sourcing).
 
+At an interactive start the boot loads and logs in the first `--user`
+profile, or the vault's first profile without one. `tui-play --user`
+only selects a profile already in the vault. It creates none (unlike
+`host-play --user`, which mints missing users with random game
+passwords). An unknown `--user` name exits 1 with a message that names
+how to add it, and creates nothing. An empty vault does not exit: the
+app opens on the **New profile** form (the shared profile form's blank
+row, `OpenNewProfileForm`), where the operator types the username and
+the account's own password. Enter on the password field saves through
+`CreateProfile`. The new profile then loads, logs in and takes focus.
+The same form opens later with `N` in the Fleet pane or the palette's
+**New profile**.
+
 `--map-bundle OUT --revision 289 --cache JAG_DIR --unpack SNAPSHOT_ROOT` is a
 release-packaging run, not a panel: it bakes the WalkTo map catalogue and
 terrain for that offline client cache through the production map-cache path
@@ -70,7 +83,7 @@ label in its border. Everything is plain text as well as colour.
 
 | Pane | What it shows |
 | --- | --- |
-| Fleet | every profile in the saved Load order, loaded or not (a profile that is not loaded is dim, state `not loaded`): a header line `card: <card> · sort: <order> · N marked`, then `[x]` row mark, `>` cursor, `*` selected bot, world, lifecycle state; `/` filter; `N/M shown · marked K (H not shown)`; Load+login / Logout buttons. A click on the header's `card: …` part opens the card picker and a click on its `sort: …` part shows the next sort (the same as `c` and `s`). The panel's Fleet window, rail and Grid read the same rows, filter, order, marks and fleet card |
+| Fleet | every profile in the saved Load order, loaded or not (a profile that is not loaded is dim, state `not loaded`): a header line `card: <card> · sort: <order> · N marked`, then `[x]` row mark, `>` cursor, `*` selected bot, world, lifecycle state; `/` filter; `N/M shown · marked K (H not shown)`; Load+login / Log out buttons. A click on the header's `card: …` part opens the card picker and a click on its `sort: …` part shows the next sort (the same as `c` and `s`). The panel's Fleet window, rail and Grid read the same rows, filter, order, marks and fleet card |
 | Overview | the selected bot's buttons (Log in, Log out, Remove, Settings, Loadouts, Manual walk), status rows (same `SlotStatus` + `RandomStatus` as the panel, including active world), the status pane's script, phase and reason rows (the same rows as the panel's Status card) and inventory / stats / nearest locs |
 | Map | packed collision dots, POIs, `@` here, remaining-walk `*`; Walk-confirm is `host_play::arm_walk_on`; Walk / Teleport / Group / Search buttons. Its info line shows `zones: avoided` or `zones: crossing (z)`. The catalogue is requested only while this tab is open. |
 | Script | Browse/Start/Pause/Stop/Load, Parameters, Reload, Start fleet / Stop fleet over the compiled native cards (Gatherer, Grinch, Quester, Sherlock) plus the same JS library as the panel; `$RS2B0T` / `--catalog` cards included ([script.md](script.md)) |
@@ -98,8 +111,9 @@ is global, and moving the fleet cursor never changes the selected bot.
 
 | Pane | Keys |
 | --- | --- |
-| Fleet | arrows / `j` `k` / PgUp PgDn Home End move the cursor; `Enter` selects that bot (a profile that is not loaded is not selected: mark it and press `m`); `Space` marks the row for group actions, loaded or not; `a` marks the shown rows, `A` unmarks them (hidden marks stay); `c` picks the fleet card; `s` shows the next fleet order (Load order, Name, Status, then Load order again; palette: **Cycle fleet sort**), and the cursor stays on its profile; `m` Load + log in and `U` Log out (a fleet plan over the marked rows, else over the loaded shown rows, and it asks first when nothing is marked); `W` opens the world picker for the cursor row's profile (palette: **Switch world of marked…** for the marked rows); `/` filters by name, `wN` / `world:N` or state (`not loaded` included); `Alt+Up` / `Alt+Down` move the cursor's profile one shown row up or down in the saved Load order (palette: **Move profile up**, **Move profile down**, and **Move marked to top**, which keeps the marked profiles' order); a profile hidden by the filter keeps its place |
+| Fleet | arrows / `j` `k` / PgUp PgDn Home End move the cursor; `Enter` selects that bot (a profile that is not loaded is not selected: mark it and press `m`); `Space` marks the row for group actions, loaded or not; `a` marks the shown rows, `A` unmarks them (hidden marks stay); `c` picks the fleet card; `s` shows the next fleet order (Load order, Name, Status, then Load order again; palette: **Cycle fleet sort**), and the cursor stays on its profile; `m` Load + log in and `U` Log out (a fleet plan over the marked rows, else over the loaded shown rows, and it asks first when nothing is marked); `W` opens the world picker for the cursor row's profile (palette: **Switch world of marked…** for the marked rows); `N` opens the New profile form (palette: **New profile**); `/` filters by name, `wN` / `world:N` or state (`not loaded` included); `Alt+Up` / `Alt+Down` move the cursor's profile one shown row up or down in the saved Load order (palette: **Move profile up**, **Move profile down**, and **Move marked to top**, which keeps the marked profiles' order); a profile hidden by the filter keeps its place |
 | rs2b0t import (palette **Import rs2b0t profiles…**) | type the path of rs2b0t's `rs2b0t-profiles.json`, `Enter` previews; in the preview `o` switches Skip/Overwrite for existing profiles, `u` (when the file has accounts the 289 client cannot log in with) imports those too or leaves them out, `Enter`/`y` imports, `Esc` goes back; in the report `d` asks to delete the export file (`y` deletes, `n` keeps; offered only once every chosen account is confirmed saved), `Esc` closes. See [vault.md](vault.md#importing-profiles-from-rs2b0t) |
+| New profile (`N` in the Fleet pane, palette **New profile**, or an empty vault at start) | type the username, `Tab` (or `Enter`) moves to the password, type the account's own password (shown only as a mask), `Enter` saves the profile and loads, logs in and focuses it; a refusal or a failed write shows in the form and keeps the typed draft; `Esc` closes without saving (it waits while a save is being written) |
 | Overview | `i` Log in, `u` Log out, `x` Remove…, `o` settings, `l` loadouts, `w` Manual walk, `n` Got it (background-bots notice) |
 | Map | arrows / `hjkl` pan, `+` `-` zoom, `Enter` select centre then Walk, `/` search (name or `x,z,plane`), PgUp PgDn `0`-`3` plane, `d` `c` `r` dots / collision / reach layers, `w` wilderness overlay (persisted as `nav.show_special_areas` in the shared panel UI settings), `z` route through danger zones for this Map open (superseded while Danger routing is Always), `g` group send, `Space` select the selected bot for the group, `t` teleport (local), `R` recenter, `Esc` clear selection, then back |
 | Script | `b` Browse, `t` Start, `P` Pause/Resume, `e` Stop, `f` Load, `v` Parameters, `R` Reload/Confirm, `C` Cancel, `T` Start fleet (the fleet plan), `E` Stop fleet; in Browse, Up/Down pick and `Enter` or `Esc` close it (the pick stays for `t`); in Parameters, `Space` steps through an option's choices and `Enter` opens its choice list (searchable past 16 options) |

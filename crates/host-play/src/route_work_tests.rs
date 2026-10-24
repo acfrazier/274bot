@@ -72,7 +72,7 @@ struct HeldRoute {
 impl CooperativeJob for HeldRoute {
     type Output = RouteStageResult;
     type Error = RouteJobError;
-    type Phase = nav::contract::RoutePhase;
+    type Phase = nav_planner::contract::RoutePhase;
 
     fn request_thread(&self) -> Option<api::work::RequestThread<'_>> {
         Some(api::work::RequestThread::new("route-owner-test"))

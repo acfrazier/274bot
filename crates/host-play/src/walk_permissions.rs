@@ -4,8 +4,8 @@ use std::collections::HashMap;
 use std::io;
 use std::sync::{Arc, Mutex};
 
-use nav::router::FindOptions;
-use nav::zones::ZoneExempt;
+use nav_planner::router::FindOptions;
+use nav_planner::zones::ZoneExempt;
 use script::native::{RiskPolicy, WalkBit, WalkOptions, WalkPermissions};
 
 /// Runtime net activation is held until the integrated S2c gate passes.
@@ -255,7 +255,7 @@ fn resolve_native_admission(
 pub(crate) struct SelectionDangerQuery<'a> {
     navs: &'a Arc<Mutex<HashMap<String, super::NavBot>>>,
     name: &'a str,
-    world: &'a nav::world::NavWorld,
+    world: &'a nav_planner::world::NavWorld,
     snapshot: Option<&'a api::snapshot::GameSnapshot>,
     session_permissions: Option<WalkPermissions>,
     resolved: OnceCell<SelectionDanger>,
@@ -263,7 +263,7 @@ pub(crate) struct SelectionDangerQuery<'a> {
 
 enum SelectionDanger {
     Allowed,
-    Filtered(nav::zones::ZoneFilterOwned),
+    Filtered(nav_planner::zones::ZoneFilterOwned),
     Unavailable,
 }
 
@@ -271,7 +271,7 @@ impl<'a> SelectionDangerQuery<'a> {
     pub(crate) fn new(
         navs: &'a Arc<Mutex<HashMap<String, super::NavBot>>>,
         name: &'a str,
-        world: &'a nav::world::NavWorld,
+        world: &'a nav_planner::world::NavWorld,
         snapshot: Option<&'a api::snapshot::GameSnapshot>,
         session_permissions: Option<WalkPermissions>,
     ) -> Self {
@@ -303,8 +303,12 @@ impl<'a> SelectionDangerQuery<'a> {
                 .snapshot
                 .and_then(|snapshot| snapshot.local_player())
                 .map(|player| player.player.combat_level);
-            match nav::zones::ZoneFilterOwned::new(table.zones().len(), combat, &[], options.zones)
-            {
+            match nav_planner::zones::ZoneFilterOwned::new(
+                table.zones().len(),
+                combat,
+                &[],
+                options.zones,
+            ) {
                 Ok(filter) => SelectionDanger::Filtered(filter),
                 Err(_) => SelectionDanger::Unavailable,
             }
@@ -318,7 +322,7 @@ impl script::native::WalkDangerQuery for SelectionDangerQuery<'_> {
         target: api::WorldTile,
         loc_id: Option<i32>,
         radius: u16,
-        arrival: nav::contract::ArrivalKind,
+        arrival: nav_planner::contract::ArrivalKind,
     ) -> script::native::WalkDanger<'_> {
         use script::native::WalkDanger;
 
@@ -349,8 +353,12 @@ impl script::native::WalkDangerQuery for SelectionDangerQuery<'_> {
             Some(index) => {
                 let zone = &table.zones()[usize::from(index)];
                 let label = match table.key(index) {
-                    nav::zones::ZoneKey::Group(group) => &table.groups()[usize::from(group)].label,
-                    nav::zones::ZoneKey::Zone(_) => &table.kinds()[usize::from(zone.kind)].label,
+                    nav_planner::zones::ZoneKey::Group(group) => {
+                        &table.groups()[usize::from(group)].label
+                    }
+                    nav_planner::zones::ZoneKey::Zone(_) => {
+                        &table.kinds()[usize::from(zone.kind)].label
+                    }
                 };
                 WalkDanger::Denied { zone: label }
             }
@@ -364,7 +372,7 @@ impl script::native::WalkDangerQuery for SelectionDangerQuery<'_> {
         target: api::WorldTile,
         loc_id: Option<i32>,
         radius: u16,
-        arrival: nav::contract::ArrivalKind,
+        arrival: nav_planner::contract::ArrivalKind,
         existing: Option<&script::native::WalkGoals>,
     ) -> Result<Option<script::native::WalkGoals>, script::native::WalkGoalsError> {
         use script::native::{WalkGoals, WalkGoalsError};
@@ -665,7 +673,7 @@ pub(crate) fn route_loc_access_geometry(
 /// Return the packed collision flags used by both route arrival admission and
 /// the selector's scalar Reach predicate.
 pub(crate) fn packed_arrival_flags(
-    collision: &nav::collision::WorldCollision,
+    collision: &nav_planner::collision::WorldCollision,
     tile: api::WorldTile,
 ) -> Option<i32> {
     if !(0..=3).contains(&tile.level) {
@@ -686,12 +694,12 @@ pub(crate) fn packed_arrival_flags(
 /// The same scalar destination geometry and packed arrival rule used by the
 /// route cursor, without capturing flags or constructing candidate vectors.
 pub(crate) fn selection_access_tiles<'a>(
-    world: &'a nav::world::NavWorld,
+    world: &'a nav_planner::world::NavWorld,
     snapshot: Option<&'a api::snapshot::GameSnapshot>,
     target: api::WorldTile,
     loc_id: Option<i32>,
     radius: u16,
-    arrival: nav::contract::ArrivalKind,
+    arrival: nav_planner::contract::ArrivalKind,
 ) -> impl Iterator<Item = api::WorldTile> + 'a {
     use api::query::{is_arrived, CollisionArrivalProbe};
 
@@ -735,7 +743,7 @@ pub(crate) fn selection_access_tiles<'a>(
         // Explicit loc routes without a modeled in-scene footprint use the
         // router's standable-radius estimate, not plain-tile Reach filtering.
         (loc_id.is_some()
-            || arrival == nav::contract::ArrivalKind::Area
+            || arrival == nav_planner::contract::ArrivalKind::Area
             || is_arrived(tile, target, i32::from(radius), || &probe))
         .then_some(tile)
     })
@@ -805,15 +813,15 @@ pub(crate) fn compiled_options(
 mod tests {
     use super::*;
 
-    fn empty_world() -> nav::world::NavWorld {
+    fn empty_world() -> nav_planner::world::NavWorld {
         let origin = api::WorldTile {
             x: 0,
             z: 0,
             level: 0,
         };
-        let (walk, blocked) = nav::collision::pack_walk(&[0; 4]);
-        nav::world::NavWorld::from_parts(
-            nav::collision::WorldCollision {
+        let (walk, blocked) = nav_planner::collision::pack_walk(&[0; 4]);
+        nav_planner::world::NavWorld::from_parts(
+            nav_planner::collision::WorldCollision {
                 origin,
                 width: 1,
                 height: 1,
@@ -821,7 +829,7 @@ mod tests {
                 blocked,
                 flags: None,
             },
-            nav::transport::TransportGraph::default(),
+            nav_planner::transport::TransportGraph::default(),
             Vec::new(),
         )
     }
@@ -1163,7 +1171,7 @@ mod tests {
 
     #[test]
     fn inherited_avoid_does_not_remove_named_zone_grants() {
-        use nav::zones::ZoneKey;
+        use nav_planner::zones::ZoneKey;
 
         let named = ZoneExempt::named(&[ZoneKey::Zone(7)]).unwrap();
         let globals = WalkGlobals {

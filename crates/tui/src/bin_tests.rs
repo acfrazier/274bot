@@ -21,7 +21,7 @@ use frontend_core::test_support::tui::{
 use frontend_core::test_support::{FixtureProfile, IsolatedStores};
 use host_play::profile::ProfileEnvironment;
 use host_play::{Play, SlotArm, WalkArm};
-use nav::router::FindOptions;
+use nav_planner::router::FindOptions;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -123,7 +123,8 @@ fn publish_map_walk_snapshot(
         actions: Vec::new(),
         component_id: -1,
     }]);
-    let state = nav::WorldState::from_snapshot(&snapshot).with_map_members(core.map_members());
+    let state =
+        nav_planner::WorldState::from_snapshot(&snapshot).with_map_members(core.map_members());
     core.publish_test_snapshot(name, snapshot, state);
 }
 
@@ -836,32 +837,11 @@ fn plaintext_offhost_requires_explicit_opt_in() {
     assert!(host_play::validate_play_host("attacker.example", true).is_ok());
 }
 
-#[test]
-#[cfg(unix)]
-fn create_profile_upsert_error_returns_err() {
-    use std::os::unix::fs::PermissionsExt;
-
-    let dir = std::env::temp_dir().join(format!(
-        "274bot-tui-create-profile-err-{}",
-        std::process::id()
-    ));
-    std::fs::create_dir_all(&dir).unwrap();
-    let path = dir.join("vault.vault");
-    let mut session = TuiSession::new(dummy_options());
-    session
-        .start_play(VaultFixture::create(&path, "test-passphrase-01"))
-        .unwrap();
-    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o500)).unwrap();
-    let err = session.create_profile("alice").unwrap_err();
-    assert!(
-        err.starts_with("profile:"),
-        "upsert failure must return Err, got {err:?}"
-    );
-}
-
 /// M-311: a fresh vault starts empty — interactive boot must not seed a
-/// `test`/`test` profile. `--user` still creates the first profile, and an
-/// existing vault keeps its profiles.
+/// `test`/`test` profile. An empty vault is not an error: the boot
+/// opens the New profile form on it. `--user` creates nothing: an
+/// unknown name stops with a message that names how to add it, and
+/// leaves the vault empty.
 #[test]
 fn fresh_vault_starts_empty_without_a_seeded_test_profile() {
     let iso = IsolatedStores::enter("tui-fresh-vault-empty");
@@ -873,35 +853,246 @@ fn fresh_vault_starts_empty_without_a_seeded_test_profile() {
             "test-passphrase-01",
         ))
         .unwrap();
-    // No `--user`: an honest error, and no `test` profile left behind.
-    let err = session.bootstrap_interactive_profiles(&[]).unwrap_err();
-    assert_eq!(
-        err,
-        "vault has no profiles (start tui-play with --user <name> to create one)"
-    );
+    // No `--user`: no focus and no error (the boot opens the New
+    // profile form), and no `test` profile left behind.
+    assert_eq!(session.bootstrap_interactive_profiles(&[]).unwrap(), None);
     assert!(session.names.is_empty(), "names: {:?}", session.names);
     assert!(
         session.core.profile("test").is_none(),
         "fresh vault must not seed `test`"
     );
-    // `--user` creates the first profile (and focuses it).
+    // `--user` with an unknown name: a clear message, nothing created.
+    let err = session
+        .bootstrap_interactive_profiles(&["alice".to_string()])
+        .unwrap_err();
+    assert_eq!(
+        err,
+        "no profile named alice in the vault: --user only selects existing \
+         profiles and creates none (start tui-play without --user and add \
+         it with New profile: press N in the Fleet pane, then type its \
+         username and password)"
+    );
+    assert!(session.names.is_empty(), "names: {:?}", session.names);
+    assert!(
+        session.core.profile("alice").is_none() && session.core.profile("test").is_none(),
+        "--user must not create a profile"
+    );
+}
+
+/// A missing vault rejects `--user` before it can request a passphrase or
+/// create the vault file.
+#[test]
+fn user_on_missing_vault_fails_without_prompt_or_vault_write() {
+    let iso = IsolatedStores::enter("tui-user-missing-vault");
+    // `run` resolves the vault from its own arguments and the process home,
+    // not from the thread-pinned stores, so name the vault path explicitly.
+    let vault_path = iso.dir().join("vault-test");
+    assert!(!vault_path.exists(), "the test starts without a vault");
+    let nav_dir = std::env::current_exe()
+        .expect("test binary path")
+        .parent()
+        .and_then(std::path::Path::parent)
+        .expect("target debug directory")
+        .join("nav/289");
+    // The local profile resolves with any engine directory; `--user` on a
+    // missing vault is refused before binding reads the engine key or
+    // prepares the cache, so the test needs neither the host's `ENGINE_DIR`
+    // nor `LOGIN_RSAN/E`, nor a running engine.
+    let args = parse_args_from([
+        "--profile".to_string(),
+        "local-289".to_string(),
+        "--engine".to_string(),
+        iso.dir().join("engine").to_string_lossy().into_owned(),
+        "--nav-pack".to_string(),
+        nav_dir
+            .join("274bot.navpack")
+            .to_string_lossy()
+            .into_owned(),
+        "--nav-flags".to_string(),
+        nav_dir
+            .join("274bot.navflags")
+            .to_string_lossy()
+            .into_owned(),
+        "--vault".to_string(),
+        vault_path.to_string_lossy().into_owned(),
+        "--user".to_string(),
+        "ghost".to_string(),
+    ])
+    .unwrap();
+
+    let error = run(&args, RunMode::Interactive).unwrap_err();
+    assert_eq!(
+        error,
+        "no profile named ghost in the vault: --user only selects existing \
+         profiles and creates none (start tui-play without --user and add \
+         it with New profile: press N in the Fleet pane, then type its \
+         username and password)"
+    );
+    assert!(
+        !vault_path.exists(),
+        "a rejected user must not create a vault"
+    );
+}
+
+/// `--user` selects an existing profile as the boot focus, and an
+/// existing vault keeps its profiles: no seeding, no wipe, nothing
+/// created for a later unknown name either.
+#[test]
+fn user_selects_an_existing_profile_and_creates_none() {
+    let iso = IsolatedStores::enter("tui-user-selects-existing");
+    let mut session = TuiSession::new(dummy_options());
+    session.core.set_spawn_workers(false);
+    let mut vault = VaultFixture::create(&iso.dir().join("vault"), "test-passphrase-01");
+    vault.put(FixtureProfile::new("alice", "pw").uid(7));
+    vault.put(FixtureProfile::new("bob", "pw").uid(8));
+    session.start_play(vault).unwrap();
     assert_eq!(
         session
-            .bootstrap_interactive_profiles(&["alice".to_string()])
+            .bootstrap_interactive_profiles(&["bob".to_string()])
             .unwrap(),
-        "alice"
+        Some("bob".to_string())
     );
-    assert_eq!(session.names, vec!["alice".to_string()]);
-    assert!(
-        session.core.profile("test").is_none() && session.core.profile("alice").is_some(),
-        "only `--user` profiles exist"
-    );
-    // An existing vault keeps its profiles: no seeding, no wipe.
+    assert_eq!(session.names, vec!["alice".to_string(), "bob".to_string()]);
+    // No `--user`: the vault's first profile is the focus.
     assert_eq!(
         session.bootstrap_interactive_profiles(&[]).unwrap(),
-        "alice"
+        Some("alice".to_string())
     );
-    assert_eq!(session.names, vec!["alice".to_string()]);
+    // An unknown name after valid ones still creates nothing.
+    assert!(session
+        .bootstrap_interactive_profiles(&["alice".to_string(), "nosuch".to_string()])
+        .is_err());
+    assert!(session.core.profile("nosuch").is_none());
+}
+
+/// Type `text` into the open New profile overlay, dispatching each
+/// key as the event loop does.
+fn type_new_profile(session: &mut TuiSession, app: &mut TuiApp, text: &str) {
+    for c in text.chars() {
+        let action = app.on_key(settings_key(crossterm::event::KeyCode::Char(c)));
+        dispatch(session, app, action);
+    }
+}
+
+#[test]
+fn new_profile_form_refuses_empty_password_without_login() {
+    let iso = IsolatedStores::enter("tui-empty-profile-password");
+    let path = iso.dir().join("vault");
+    let mut session = TuiSession::new(dummy_options());
+    session.core.set_spawn_workers(false);
+    session
+        .start_play(VaultFixture::create(&path, "test-passphrase-01"))
+        .unwrap();
+    let args = parse_args_from(std::iter::empty::<&str>()).unwrap();
+    let mut app = interactive_landing(&mut session, &args).unwrap();
+
+    type_new_profile(&mut session, &mut app, "alice");
+    let tab = app.on_key(settings_key(crossterm::event::KeyCode::Tab));
+    dispatch(&mut session, &mut app, tab);
+    let enter = app.on_key(settings_key(crossterm::event::KeyCode::Enter));
+    dispatch(&mut session, &mut app, enter);
+
+    assert_eq!(session.profile_editor.target(), Some(""));
+    let Some(Modal::NewProfile(view)) = app.modal.as_ref() else {
+        panic!("the refused save keeps the New profile form open");
+    };
+    assert_eq!(
+        view.error.as_deref(),
+        Some("credentials: password required")
+    );
+    assert!(session.core.profile("alice").is_none());
+    assert!(
+        !session
+            .core
+            .commands()
+            .reports()
+            .any(|report| report.command() == frontend_core::command::OperatorCommand::Login),
+        "a refused save must not attempt a login"
+    );
+    session.core.flush_writes();
+    assert!(
+        VaultFixture::unlock(&path, "test-passphrase-01")
+            .usernames()
+            .is_empty(),
+        "the rejected profile must not be written"
+    );
+}
+
+/// An empty vault does not exit: `interactive_landing`, which `run` also
+/// calls, opens the New profile form. This test types and saves a profile
+/// through the shared form. It also checks Esc and `N` at both UI sizes.
+#[test]
+fn new_profile_form_saves_the_typed_password() {
+    let iso = IsolatedStores::enter("tui-new-profile-form");
+    let path = iso.dir().join("vault");
+    let mut session = TuiSession::new(dummy_options());
+    session.core.set_spawn_workers(false);
+    session
+        .start_play(VaultFixture::create(&path, "test-passphrase-01"))
+        .unwrap();
+    let args = parse_args_from(std::iter::empty::<&str>()).unwrap();
+    let mut app = interactive_landing(&mut session, &args).unwrap();
+    assert_eq!(session.profile_editor.target(), Some(""));
+    // Esc closes the form and creates nothing.
+    type_new_profile(&mut session, &mut app, "ghost");
+    let esc = app.on_key(settings_key(crossterm::event::KeyCode::Esc));
+    dispatch(&mut session, &mut app, esc);
+    assert!(app.modal.is_none(), "Esc closes the form");
+    assert!(session.core.profile("ghost").is_none());
+    assert_eq!(session.profile_editor.target(), None);
+    for (w, h) in SIZES {
+        let screen = screen(&mut app, w, h);
+        assert!(
+            cell_of(&screen, "no profiles: press N to add one").is_some(),
+            "{w}x{h}: the empty Fleet row must name `N`"
+        );
+    }
+    // Reopen through the Fleet pane's command, as `N` and the palette do.
+    let open = app.run_command(crate::commands::Command::NewProfile);
+    assert_eq!(open, AppAction::OpenNewProfile);
+    dispatch(&mut session, &mut app, open);
+    assert_eq!(session.profile_editor.target(), Some(""));
+    type_new_profile(&mut session, &mut app, "alice");
+    let tab = app.on_key(settings_key(crossterm::event::KeyCode::Tab));
+    dispatch(&mut session, &mut app, tab);
+    type_new_profile(&mut session, &mut app, "s3cret-typed");
+    assert_eq!(session.profile_editor.draft().username(), "alice");
+    assert_eq!(
+        session.profile_editor.draft().password_for_test(),
+        "s3cret-typed"
+    );
+    // Both sizes: the full labels fit, the password is only a mask.
+    for (w, h) in SIZES {
+        let screen = screen(&mut app, w, h);
+        for label in [
+            "New profile",
+            "Username: alice_",
+            "Password: ************_",
+            "[Save Enter]",
+            "[Close Esc]",
+        ] {
+            assert!(cell_of(&screen, label).is_some(), "{w}x{h}: {label}");
+        }
+        assert!(
+            cell_of(&screen, "s3cret-typed").is_none(),
+            "{w}x{h}: the password is never shown"
+        );
+    }
+    // Enter on the password field saves the form.
+    let enter = app.on_key(settings_key(crossterm::event::KeyCode::Enter));
+    dispatch(&mut session, &mut app, enter);
+    session.core.flush_writes();
+    session.pump(&mut app);
+    assert!(app.modal.is_none(), "a saved profile closes the form");
+    assert_eq!(app.error, None, "the save was accepted");
+    assert!(session.core.profile("alice").is_some(), "alice appears");
+    // The vault file holds the typed password, not a generated one.
+    let stored = VaultFixture::unlock(&path, "test-passphrase-01");
+    assert_eq!(stored.usernames(), vec!["alice".to_string()]);
+    assert_eq!(
+        stored.profile("alice").unwrap().draft().password_for_test(),
+        "s3cret-typed"
+    );
 }
 
 /// A 0.1.9.x home keeps its v10 pack at the default path. The TUI's play and
@@ -1361,7 +1552,10 @@ fn the_boot_focus_is_a_fleet_member_and_starts_a_loaded_script() {
     vault.put(FixtureProfile::new("alice", "pw").uid(7).auto_login(true));
     vault.put(FixtureProfile::new("bob", "pw").uid(8));
     session.start_play(vault).unwrap();
-    let focus = session.bootstrap_interactive_profiles(&[]).unwrap();
+    let focus = session
+        .bootstrap_interactive_profiles(&[])
+        .unwrap()
+        .expect("the vault's first profile is the boot focus");
     assert_eq!(focus, "alice");
     assert!(session.load_and_login(&focus));
     session.focus(&focus);
@@ -1736,9 +1930,9 @@ mod bank_fetch_fixtures {
     use client::config::if_type::ComponentType;
     use client::config::{Cache, IfType, IfTypeMut, LocType, ObjType};
     use client::io::ServerProt;
-    use nav::pack::BankAccess;
-    use nav::transport::{TransportEdge, TransportGraph, TransportKind};
-    use nav::world::NavWorld;
+    use nav_planner::pack::BankAccess;
+    use nav_planner::transport::{TransportEdge, TransportGraph, TransportKind};
+    use nav_planner::world::NavWorld;
 
     pub fn bank_client() -> Client {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -1901,9 +2095,9 @@ mod bank_fetch_fixtures {
         let mut graph = TransportGraph::default();
         graph.at.entry(edge.at).or_default().push(0);
         graph.edges.push(edge);
-        let (walk, blocked) = nav::collision::pack_walk(&flags);
+        let (walk, blocked) = nav_planner::collision::pack_walk(&flags);
         NavWorld::from_parts(
-            nav::collision::WorldCollision {
+            nav_planner::collision::WorldCollision {
                 origin: WorldTile {
                     x: 0,
                     z: 0,
@@ -1916,7 +2110,7 @@ mod bank_fetch_fixtures {
                 flags: None,
             },
             graph,
-            vec![nav::pack::BankStand {
+            vec![nav_planner::pack::BankStand {
                 name: "Bank booth".into(),
                 tile: WorldTile {
                     x: 0,
@@ -2221,8 +2415,8 @@ fn player_at_plane_one_follow_uses_level() {
     use api::snapshot::WorldTile;
     use bank_fetch_fixtures::bank_client;
     use host_play::{player_here_tile, step_walk_arm_bank_fetch, PendingBankFetch};
-    use nav::bank_fetch::BankStep;
-    use nav::router::Route;
+    use nav_planner::bank_fetch::BankStep;
+    use nav_planner::router::Route;
     use std::collections::VecDeque;
 
     let mut c = bank_client();
@@ -2290,8 +2484,8 @@ fn follow_tick_pumps_bank_budget_step() {
     use api::snapshot::WorldTile;
     use bank_fetch_fixtures::{bank_client, knife_nav_world};
     use host_play::PendingBankFetch;
-    use nav::bank_fetch::BankStep;
-    use nav::router::Route;
+    use nav_planner::bank_fetch::BankStep;
+    use nav_planner::router::Route;
     use std::collections::VecDeque;
 
     let mut c = bank_client();
@@ -2360,8 +2554,8 @@ fn bank_stand_subroute_does_not_emit_operator_terminal_receipt() {
     use bank_fetch_fixtures::bank_client;
     use frontend_core::log::{global, LogScope, LogView};
     use host_play::PendingBankFetch;
-    use nav::bank_fetch::BankStep;
-    use nav::router::{Leg, Route};
+    use nav_planner::bank_fetch::BankStep;
+    use nav_planner::router::{Leg, Route};
     use std::collections::VecDeque;
 
     let log = global();
@@ -2466,8 +2660,8 @@ fn operator_walk_logs_one_terminal_receipt_for_arrival_and_abort() {
     use api::snapshot::WorldTile;
     use bank_fetch_fixtures::bank_client;
     use frontend_core::log::{global, LogScope, LogView};
-    use nav::router::{Leg, Route};
-    use nav::transport::{TransportEdge, TransportKind};
+    use nav_planner::router::{Leg, Route};
+    use nav_planner::transport::{TransportEdge, TransportKind};
 
     let log = global();
 

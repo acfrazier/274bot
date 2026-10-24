@@ -77,7 +77,7 @@ pub(super) fn posted_i32(row: &Value, key: &str) -> Option<i32> {
 }
 
 /// One packed-coord square: `SQUARE` tiles per map square on both axes.
-/// Same packed contract as the landed `nav::canlight::unpack_packed_coord`,
+/// Same packed contract as the landed `nav_planner::canlight::unpack_packed_coord`,
 /// kept local so this hot path stays a const and needs no nav lookup.
 pub(super) const SQUARE: i32 = 64;
 
@@ -104,7 +104,7 @@ pub(super) fn chebyshev(a: Tile, b: Tile) -> i64 {
 
 /// A selected `trail_coord` token → the tile it packs.
 ///
-/// The landed `nav::canlight::unpack_packed_coord` contract, copied: five
+/// The landed `nav_planner::canlight::unpack_packed_coord` contract, copied: five
 /// `_`-separated integers `level_mapX_mapZ_localX_localZ`, level in `0..=3`,
 /// both locals in `0..64`, and `x = mapX * 64 + localX` (`z` likewise). A
 /// missing or extra part, a non-integer, an out-of-range level or local, and

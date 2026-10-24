@@ -16,15 +16,15 @@ use std::sync::Arc;
 
 use api::snapshot::WorldTile;
 use dear_imgui_rs::{TextureId, Ui};
-use nav::map::identity::{Digest, ImageIdentity};
-use nav::map::poi::PoiKind;
-use nav::map::spatial::{
+use nav_planner::map::identity::{Digest, ImageIdentity};
+use nav_planner::map::poi::PoiKind;
+use nav_planner::map::spatial::{
     select_lod, snap_walkable, GameTile, TileKey, View, VisibleTiles, INTERIOR_UV, TEXTURE_CAP,
     TILE_PIXELS, TILE_RGBA_BYTES,
 };
-use nav::tile::Tile;
-use nav::transport::WildernessZone;
-use nav::world::NavWorld;
+use nav_planner::tile::Tile;
+use nav_planner::transport::WildernessZone;
+use nav_planner::world::NavWorld;
 
 use frontend_core::walk_map::{
     display_walk_name_into, WalkCatalogue, WalkObservedService, WalkReadyImages, WalkSearch,
@@ -32,7 +32,7 @@ use frontend_core::walk_map::{
 use frontend_core::WalkMapDecodeController;
 
 #[cfg(test)]
-use nav::map::MapError;
+use nav_planner::map::MapError;
 
 use crate::game_view::FrameGpu;
 use crate::nav_settings::{parse_html_color, NavSettings};
@@ -405,7 +405,7 @@ impl WalkMapRenderer {
         self.phase
     }
 
-    pub fn search_hits(&self) -> Vec<&nav::map::poi::PoiRecord> {
+    pub fn search_hits(&self) -> Vec<&nav_planner::map::poi::PoiRecord> {
         let q = self.search.trim().to_ascii_lowercase();
         if q.is_empty() {
             return Vec::new();

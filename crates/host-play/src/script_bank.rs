@@ -9,15 +9,15 @@ use api::work::{
     StepOutcome, SubmissionRefusal, WorkAdmission, WorkCharge, WorkFamily, WorkFamilySpec,
     WorkTicket,
 };
-use nav::bank_fetch::SAME_BANK;
+use nav_planner::bank_fetch::SAME_BANK;
 #[cfg(any(test, all(target_os = "linux", feature = "test-support")))]
-use nav::router::{find_first_with, find_many_with_avoid_bounded, find_with};
-use nav::router::{
+use nav_planner::router::{find_first_with, find_many_with_avoid_bounded, find_with};
+use nav_planner::router::{
     CursorStep, FindOptions, SearchCursor, SearchOutcome, SearchPreflight, SearchRequest,
     SearchRequestShape, BANK_TARGET_BUDGET, NODE_BUDGET,
 };
-use nav::world::NavWorld;
-use nav::WorldState;
+use nav_planner::world::NavWorld;
+use nav_planner::WorldState;
 use script::bank::ops;
 use script::isolate_fb::BankSelectionInput;
 use script::native::HostAuthority;
@@ -65,8 +65,8 @@ pub(crate) struct BankPickState {
     pending_cancel: Option<(WorkCancellation<BankPickSpec>, Cancellation)>,
     // Owner-result pressure retains one payload only while publication waits.
     pending_inline: Option<Box<PendingInlinePick>>,
-    owner_result: Option<Arc<nav::producer::OwnerResult<PickResult>>>,
-    retired_owner: Option<Arc<nav::producer::OwnerResult<PickResult>>>,
+    owner_result: Option<Arc<nav_planner::producer::OwnerResult<PickResult>>>,
+    retired_owner: Option<Arc<nav_planner::producer::OwnerResult<PickResult>>>,
     pub(crate) posted: BankSelectionInput,
     native_receipt: Option<(HostAuthority, NativeBankPickReceipt)>,
     #[cfg(test)]
@@ -249,7 +249,7 @@ struct BankCandidates {
 
 struct BankPickRequest {
     request_id: u64,
-    lease: nav::contract::NavLease,
+    lease: nav_planner::contract::NavLease,
     facts: Arc<NamedBankFacts>,
     from: WorldTile,
     opts: FindOptions,
@@ -262,7 +262,7 @@ struct BankPickRequest {
 }
 
 pub(super) struct CompactPlan {
-    pub(super) lease: nav::contract::RoutePlanLease,
+    pub(super) lease: nav_planner::contract::RoutePlanLease,
 }
 
 #[cfg(any(test, all(target_os = "linux", feature = "test-support")))]
@@ -270,15 +270,15 @@ struct LegacyPickResult {
     index: Option<usize>,
     access_tile: Option<WorldTile>,
     kind: PickKind,
-    route: Option<nav::router::Route>,
+    route: Option<nav_planner::router::Route>,
 }
 
 pub(super) struct PickResult {
     index: Option<usize>,
     access_tile: Option<WorldTile>,
     kind: PickKind,
-    route: Option<nav::router::CompactRoute>,
-    nav_lease: Option<nav::contract::NavLease>,
+    route: Option<nav_planner::router::CompactRoute>,
+    nav_lease: Option<nav_planner::contract::NavLease>,
     plan: Option<CompactPlan>,
 }
 
@@ -298,23 +298,23 @@ impl PickResult {
         let retained = self
             .route
             .as_ref()
-            .map_or(Some(0), nav::producer::compact_route_storage_bytes)?;
-        nav::producer::OwnerResultLedger::owner_result_bytes::<Self>(retained)
+            .map_or(Some(0), nav_planner::producer::compact_route_storage_bytes)?;
+        nav_planner::producer::OwnerResultLedger::owner_result_bytes::<Self>(retained)
     }
 
     fn into_owner_result(
         mut self,
         identity: WorkIdentity,
         revision: InputRevision,
-        reservation: nav::producer::OwnerResultReservation,
-    ) -> Arc<nav::producer::OwnerResult<Self>> {
+        reservation: nav_planner::producer::OwnerResultReservation,
+    ) -> Arc<nav_planner::producer::OwnerResult<Self>> {
         if let Some(route) = self.route.take() {
             let lease = self
                 .nav_lease
                 .take()
                 .expect("a routed bank pick retains its navigation lease");
             self.plan = Some(CompactPlan {
-                lease: nav::producer::publish_compact_route(
+                lease: nav_planner::producer::publish_compact_route(
                     &lease,
                     identity,
                     revision,
@@ -400,7 +400,8 @@ enum BankPickSearchKind {
     Many,
     First,
 }
-type BankPickTargetResult = Result<nav::router::TargetCost, nav::router::TargetError>;
+type BankPickTargetResult =
+    Result<nav_planner::router::TargetCost, nav_planner::router::TargetError>;
 
 struct BankPickSearchPreflight {
     kind: BankPickSearchKind,
@@ -415,7 +416,7 @@ struct BankPickPreflights {
 struct CooperativeBankPickJob {
     job: BankPickJob,
     input: BankPickInput,
-    lease: Option<nav::contract::NavLease>,
+    lease: Option<nav_planner::contract::NavLease>,
     stage: BankPickStage,
     search_kind: Option<BankPickSearchKind>,
     search_preflights: BankPickPreflights,
@@ -432,7 +433,7 @@ struct CooperativeBankPickJob {
     first_access_tile: Option<WorldTile>,
     first_order: usize,
     first_access: usize,
-    pending_route: Option<nav::router::CompactRoute>,
+    pending_route: Option<nav_planner::router::CompactRoute>,
     pending_many_results: Option<Box<[BankPickTargetResult]>>,
     result: Option<PickResult>,
     fallback_started: bool,
@@ -472,7 +473,7 @@ impl CooperativeBankPickJob {
         index: Option<usize>,
         access_tile: Option<WorldTile>,
         kind: PickKind,
-        route: Option<nav::router::CompactRoute>,
+        route: Option<nav_planner::router::CompactRoute>,
     ) -> PickResult {
         PickResult {
             index,
@@ -751,11 +752,11 @@ impl CooperativeJob for CooperativeBankPickJob {
                 .saturating_add(cursor.retained_bytes())
         });
         let route_bytes = self.pending_route.as_ref().map_or(0, |route| {
-            nav::producer::compact_route_storage_bytes(route).unwrap_or(usize::MAX)
+            nav_planner::producer::compact_route_storage_bytes(route).unwrap_or(usize::MAX)
         });
         let result_bytes = self.result.as_ref().map_or(0, |result| {
             result.route.as_ref().map_or(0, |route| {
-                nav::producer::compact_route_storage_bytes(route).unwrap_or(usize::MAX)
+                nav_planner::producer::compact_route_storage_bytes(route).unwrap_or(usize::MAX)
             })
         });
         let many_result_bytes = self.pending_many_results.as_ref().map_or(0, |results| {
@@ -1444,7 +1445,14 @@ impl BankPickRequest {
     fn route_key(
         &self,
         index: usize,
-    ) -> (WorldTile, i32, bool, bool, bool, nav::zones::ZoneExempt) {
+    ) -> (
+        WorldTile,
+        i32,
+        bool,
+        bool,
+        bool,
+        nav_planner::zones::ZoneExempt,
+    ) {
         (
             self.facts.banks()[index].tile,
             0,
@@ -1703,15 +1711,15 @@ fn native_bank_access(
                 && definition_npc.is_none_or(|wanted| {
                     matches!(
                         &stand.access,
-                        nav::pack::BankAccess::Npc { name, .. }
+                        nav_planner::pack::BankAccess::Npc { name, .. }
                             if name.eq_ignore_ascii_case(wanted.name)
                     )
                 })
         })
         .min_by_key(|stand| {
             let kind_order = match &stand.access {
-                nav::pack::BankAccess::Booth { .. } => 0,
-                nav::pack::BankAccess::Npc { .. } => 1,
+                nav_planner::pack::BankAccess::Booth { .. } => 0,
+                nav_planner::pack::BankAccess::Npc { .. } => 1,
             };
             (
                 kind_order,
@@ -1738,18 +1746,18 @@ fn native_bank_access(
         ));
     };
     let access_tiles: Vec<_> =
-        nav::bank_fetch::bank_access_tiles(&world.collision, stand).collect();
+        nav_planner::bank_fetch::bank_access_tiles(&world.collision, stand).collect();
     if access_tiles.is_empty() {
         return None;
     }
     let (kind, stand_op, name, choose) = match &stand.access {
-        nav::pack::BankAccess::Booth { op } => (
+        nav_planner::pack::BankAccess::Booth { op } => (
             NativeAccessKind::Booth,
             *op,
             Some(Arc::from(stand.name.as_str())),
             None,
         ),
-        nav::pack::BankAccess::Npc { name, op, choose } => (
+        nav_planner::pack::BankAccess::Npc { name, op, choose } => (
             NativeAccessKind::Teller,
             *op,
             Some(Arc::from(name.as_str())),
@@ -1839,7 +1847,7 @@ fn bank_candidates(
 )]
 fn make_bank_pick_request(
     request_id: u64,
-    lease: nav::contract::NavLease,
+    lease: nav_planner::contract::NavLease,
     facts: Arc<NamedBankFacts>,
     from: WorldTile,
     opts: FindOptions,
@@ -1952,7 +1960,7 @@ fn queue_bank(
     drain_bank_pick_cancellation(navs, name);
     drain_bank_pick_retired_owner(navs, name);
     let lease = match world.as_ref() {
-        Some(world) => match nav::producer::lease(world) {
+        Some(world) => match nav_planner::producer::lease(world) {
             Ok(lease) => Some(lease),
             Err(error) => {
                 api::host_log!(
@@ -2411,8 +2419,11 @@ fn restore_pending_inline(
 
 fn pending_owner_result(
     pending: PendingInlinePick,
-    reservation: nav::producer::OwnerResultReservation,
-) -> (PickCommit, Arc<nav::producer::OwnerResult<PickResult>>) {
+    reservation: nav_planner::producer::OwnerResultReservation,
+) -> (
+    PickCommit,
+    Arc<nav_planner::producer::OwnerResult<PickResult>>,
+) {
     let PendingInlinePick {
         generation,
         request_id,
@@ -2467,7 +2478,7 @@ fn set_active_owner_result_full(
 }
 
 fn bank_pick_result_within_bound(bytes: usize) -> bool {
-    bytes <= nav::producer::OWNER_RESULT_MAX_BYTES
+    bytes <= nav_planner::producer::OWNER_RESULT_MAX_BYTES
 }
 
 fn bank_pick_result_bytes(result: &PickResult) -> Option<usize> {
@@ -2506,14 +2517,14 @@ fn publish_pending_inline(navs: &Arc<Mutex<HashMap<String, super::NavBot>>>, nam
         restore_pending_inline(navs, name, pending);
         return;
     };
-    match nav::producer::OwnerResultLedger::shared().try_reserve_bytes(bytes) {
+    match nav_planner::producer::OwnerResultLedger::shared().try_reserve_bytes(bytes) {
         Ok(reservation) => {
             let (commit, owner) = pending_owner_result(*pending, reservation);
             apply_bank_pick_result(navs, name, commit, owner);
         }
-        Err(nav::producer::OwnerResultRefusal::Full { .. })
-        | Err(nav::producer::OwnerResultRefusal::TooLarge { .. })
-        | Err(nav::producer::OwnerResultRefusal::SizeOverflow) => {
+        Err(nav_planner::producer::OwnerResultRefusal::Full { .. })
+        | Err(nav_planner::producer::OwnerResultRefusal::TooLarge { .. })
+        | Err(nav_planner::producer::OwnerResultRefusal::SizeOverflow) => {
             restore_pending_inline(navs, name, pending);
         }
     }
@@ -2564,7 +2575,7 @@ fn apply_bank_pick_result(
     navs: &Arc<Mutex<HashMap<String, super::NavBot>>>,
     name: &str,
     commit: PickCommit,
-    owner: Arc<nav::producer::OwnerResult<PickResult>>,
+    owner: Arc<nav_planner::producer::OwnerResult<PickResult>>,
 ) {
     drain_bank_pick_retired_owner(navs, name);
     let mut completed_active = None;
@@ -2708,8 +2719,8 @@ fn reserve_bank_pick_result(
     job: &BankPickJob,
     ticket: WorkTicket<BankPickSpec>,
     bytes: usize,
-    ledger: &nav::producer::OwnerResultLedger,
-) -> Option<nav::producer::OwnerResultReservation> {
+    ledger: &nav_planner::producer::OwnerResultLedger,
+) -> Option<nav_planner::producer::OwnerResultReservation> {
     let generation = job.generation;
     let request_id = job.request.request_id;
     if !active_bank_pick_is_current(navs, name, scope, generation, request_id, ticket) {
@@ -2720,12 +2731,12 @@ fn reserve_bank_pick_result(
             set_active_owner_result_full(navs, name, scope, generation, request_id, ticket, false);
             Some(reservation)
         }
-        Err(nav::producer::OwnerResultRefusal::Full { .. }) => {
+        Err(nav_planner::producer::OwnerResultRefusal::Full { .. }) => {
             set_active_owner_result_full(navs, name, scope, generation, request_id, ticket, true);
             None
         }
-        Err(nav::producer::OwnerResultRefusal::TooLarge { .. })
-        | Err(nav::producer::OwnerResultRefusal::SizeOverflow) => {
+        Err(nav_planner::producer::OwnerResultRefusal::TooLarge { .. })
+        | Err(nav_planner::producer::OwnerResultRefusal::SizeOverflow) => {
             if retire_active_bank_pick(navs, name, scope, generation, request_id, ticket) {
                 api::host_log!(
                     api::hostlog::Category::NavEvent,
@@ -2772,7 +2783,7 @@ fn publish_work_pick_result(
     job: BankPickJob,
     ticket: WorkTicket<BankPickSpec>,
     result: PickResult,
-    reservation: nav::producer::OwnerResultReservation,
+    reservation: nav_planner::producer::OwnerResultReservation,
 ) {
     let mut pending = job.pending_inline(scope, result);
     pending.ticket = Some(BankPickTicketRef::from_ticket(ticket));
@@ -2786,7 +2797,7 @@ fn publish_failed_bank_pick(
     scope: Scope,
     job: BankPickJob,
     ticket: WorkTicket<BankPickSpec>,
-    ledger: &nav::producer::OwnerResultLedger,
+    ledger: &nav_planner::producer::OwnerResultLedger,
 ) {
     let result = PickResult::plain(None, None, PickKind::NoCandidate);
     let Some(bytes) = result.owner_result_bytes() else {
@@ -2807,7 +2818,7 @@ fn consume_failed_bank_pick(
     job: BankPickJob,
     ticket: WorkTicket<BankPickSpec>,
     shared: &Arc<parking_lot::Mutex<WorkService>>,
-    ledger: &nav::producer::OwnerResultLedger,
+    ledger: &nav_planner::producer::OwnerResultLedger,
 ) {
     let result = PickResult::plain(None, None, PickKind::NoCandidate);
     let Some(bytes) = result.owner_result_bytes() else {
@@ -2875,7 +2886,7 @@ fn consume_completed_bank_pick(
     ticket: WorkTicket<BankPickSpec>,
     bytes: usize,
     shared: &Arc<parking_lot::Mutex<WorkService>>,
-    ledger: &nav::producer::OwnerResultLedger,
+    ledger: &nav_planner::producer::OwnerResultLedger,
 ) {
     let Some(reservation) =
         reserve_bank_pick_result(navs, name, scope, &job, ticket, bytes, ledger)
@@ -2995,7 +3006,7 @@ fn poll_bank_pick_inner(
                     ticket,
                     bytes,
                     shared,
-                    nav::producer::OwnerResultLedger::shared(),
+                    nav_planner::producer::OwnerResultLedger::shared(),
                 );
             }
             Some(BankPickTerminal::Failed | BankPickTerminal::Cancelled) => {
@@ -3006,7 +3017,7 @@ fn poll_bank_pick_inner(
                     job,
                     ticket,
                     shared,
-                    nav::producer::OwnerResultLedger::shared(),
+                    nav_planner::producer::OwnerResultLedger::shared(),
                 );
             }
             Some(BankPickTerminal::InvalidResultSize) => {
@@ -3249,10 +3260,10 @@ pub(crate) fn open_bank_at_here<D: Driver>(
     world: Option<&NavWorld>,
 ) -> bool {
     use api::interact::{ActionSpec, OpTarget, SendResult};
-    use nav::pack::BankAccess;
+    use nav_planner::pack::BankAccess;
     if let Some(world) = world {
         if !world.banks().is_empty() {
-            let mut stands: Vec<&nav::pack::BankStand> = world.banks().iter().collect();
+            let mut stands: Vec<&nav_planner::pack::BankStand> = world.banks().iter().collect();
             if let Some((hx, hz, hl)) = here {
                 stands.sort_by_key(|s| {
                     (
@@ -3262,7 +3273,7 @@ pub(crate) fn open_bank_at_here<D: Driver>(
                 });
             }
             let nearest = stands[0];
-            let cluster: Vec<&nav::pack::BankStand> = stands
+            let cluster: Vec<&nav_planner::pack::BankStand> = stands
                 .iter()
                 .copied()
                 .filter(|s| {
@@ -3318,7 +3329,7 @@ pub(crate) fn open_bank_at_here<D: Driver>(
 fn open_booth_stand<D: Driver>(
     driver: &mut D,
     snapshot: &GameSnapshot,
-    stand: &nav::pack::BankStand,
+    stand: &nav_planner::pack::BankStand,
 ) -> bool {
     use api::interact::{ActionSpec, OpTarget, SendResult};
     let mut ix = api::interact::Interactions::new(snapshot, driver);

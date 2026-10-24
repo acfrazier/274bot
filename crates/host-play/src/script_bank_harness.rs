@@ -136,7 +136,7 @@ pub(super) fn request(
         None,
         native.as_ref().map(|native| &native.request),
     );
-    let lease = nav::producer::lease(world).unwrap();
+    let lease = nav_planner::producer::lease(world).unwrap();
     let native = native.map(|native| NativePickContext {
         authority: native.authority,
         evidence: native.evidence,

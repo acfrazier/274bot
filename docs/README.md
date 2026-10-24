@@ -9,7 +9,7 @@ it, or work on its code.
 | --- | --- |
 | Install it and run it for the first time | [Install and first run](manual/install-and-first-run.md) |
 | Fix a first-start problem | [Troubleshooting in FIRST-START.md](../FIRST-START.md#troubleshooting) |
-| Learn the window and what its buttons do | [Panel guide](api/panel.md) |
+| Learn the window and what its buttons do | [Use the panel window](manual/panel.md) |
 | Run bots in a terminal, for example on a server | [Terminal app guide](api/tui.md) |
 | Add, change or remove accounts | [Manage your accounts and log in](manual/profiles-and-accounts.md) |
 | Move accounts over from rs2b0t | [Import your accounts from rs2b0t](manual/importing-from-rs2b0t.md) |
@@ -19,6 +19,9 @@ it, or work on its code.
 | Look up the exact login limits or the vault file format | [Login limits](api/login.md) and [Vault](api/vault.md) |
 | Start, pause and stop scripts, and set their options | [Run scripts on your bots](manual/running-scripts.md) |
 | Learn what the Quester, Gatherer, Grinch and Sherlock do, and their settings | [The built-in scripts](manual/built-in-scripts.md) |
+| Control many bots together, walk them as a group, move them to another world | [Work with many bots](manual/fleet-and-groups.md) |
+| Look up what each Fleet button does | [Fleet actions](reference/fleet-actions.md) |
+| Change the app, walking and script options | [Change the settings](manual/settings.md) |
 | Send bots across the map | [Navigation](api/nav.md) |
 | Upgrade from 0.1.9.1 | [Upgrade guide](upgrade-0.2.0.md) |
 | See what changed in each release | [CHANGELOG](../CHANGELOG.md) |
@@ -33,7 +36,7 @@ headings to jump to the part you need.
 | --- | --- |
 | Write a script and look up the script API | [JS API v2](api/js-api-v2.md) |
 | See which rs2b0t scripts and calls run | [Scripts](api/script.md) |
-| Write or load a quest guide for the Quester | [Quest guides](quester-paths.md) |
+| Write or load a quest guide for the Quester | [Quest guides](scripting/quest-guides.md) |
 | Copy a working example | [Example scripts](../crates/script/examples/) |
 | Test a script against a local game server | [Reusable live harness](dev/harness.md) |
 
@@ -47,6 +50,7 @@ headings to jump to the part you need.
 | Reproduce the architecture check, or change a crate dependency | [Architecture check in detail](dev/architecture-check.md) |
 | Regenerate the game data the app ships with | [Generate the selected game data](dev/selected-data-generation.md) |
 | Learn the crates and who owns what | [Architecture](dev/architecture.md) |
+| Change the Quester guide format or step handlers | [Quest paths for contributors](dev/quest-paths.md) |
 | Learn the terms the code uses | [CONTEXT.md](../CONTEXT.md) |
 | Read the Rust API for reading and acting | [Reference pages in `docs/api`](api/README.md) |
 | Run the end-to-end suite | [e2e suite](dev/e2e-suite.md) |

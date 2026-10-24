@@ -76,8 +76,8 @@ struct GathererGeometry {
     trees: Vec<EligibleTree>,
     candidate_placements: usize,
     excluded_placements: usize,
-    world: Option<Arc<nav::world::NavWorld>>,
-    filter: Option<nav::zones::ZoneFilterOwned>,
+    world: Option<Arc<nav_planner::world::NavWorld>>,
+    filter: Option<nav_planner::zones::ZoneFilterOwned>,
 }
 
 #[derive(Default)]
@@ -166,7 +166,7 @@ struct GathererFleet {
     names: Vec<String>,
     budget_ticks: u32,
     radius: i32,
-    world: Option<Arc<nav::world::NavWorld>>,
+    world: Option<Arc<nav_planner::world::NavWorld>>,
     catalog: Option<Arc<api::gather_methods::GatherCatalog>>,
     anchor: Option<WorldTile>,
     anchor_owner: Option<String>,
@@ -204,7 +204,7 @@ pub(crate) fn configure_gatherer_fleet(
     names: &[String],
     budget_ticks: u32,
     radius: i32,
-    world: Option<Arc<nav::world::NavWorld>>,
+    world: Option<Arc<nav_planner::world::NavWorld>>,
 ) {
     let bots = names
         .iter()
@@ -409,7 +409,7 @@ enum SampledPosition {
 
 fn build_gatherer_geometry(
     c: &client::client::Client,
-    world: &Arc<nav::world::NavWorld>,
+    world: &Arc<nav_planner::world::NavWorld>,
     catalog: &api::gather_methods::GatherCatalog,
     anchor: WorldTile,
     combat: i32,
@@ -448,11 +448,11 @@ fn build_gatherer_geometry(
         .zones
         .as_ref()
         .ok_or_else(|| "gatherer_zone_table_unavailable".to_owned())?;
-    let zone_filter = nav::zones::ZoneFilterOwned::new(
+    let zone_filter = nav_planner::zones::ZoneFilterOwned::new(
         zone_table.zones().len(),
         Some(combat),
         &[],
-        nav::zones::ZoneExempt::NONE,
+        nav_planner::zones::ZoneExempt::NONE,
     )
     .map_err(|_| "gatherer_zone_filter_allocation_failed".to_owned())?;
     let Some(filter) = zone_filter.view(zone_table) else {

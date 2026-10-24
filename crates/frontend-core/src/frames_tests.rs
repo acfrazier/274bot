@@ -317,7 +317,7 @@ fn a_slot_frame_publishes_then_hooks_then_ticks_live_then_follows_the_walk_once_
         step: move |_: &mut Client,
                     _: &api::snapshot::GameSnapshot,
                     _: &mut host_play::WalkArm,
-                    _: Option<&nav::world::NavWorld>,
+                    _: Option<&nav_planner::world::NavWorld>,
                     _: (i32, i32, i32),
                     _: bool,
                     _: Option<&str>| {

@@ -36,13 +36,13 @@ use super::{
     MapBakeCursorStep, MapCacheError, MapCacheRoot, MapProgressSnapshot, MapStage,
 };
 use api::work::{Checkpoint, MapBakePhase, StepContext};
-use nav::map::cache::{BakeStage, CompletedUnit, UnitKey};
-use nav::map::formats::{
+use nav_planner::map::cache::{BakeStage, CompletedUnit, UnitKey};
+use nav_planner::map::formats::{
     CatalogueManifest, ClientPois, ImageManifest, ShippedCatalogue, ShippedImages, TileReceipt,
     MAX_JSON_BYTES, MAX_PNG_BYTES, MAX_SHIPPED_CATALOGUE_BYTES, MAX_SHIPPED_IMAGES_BYTES,
 };
-use nav::map::identity::{CatalogueIdentity, Digest, ImageIdentity};
-use nav::map::MapError;
+use nav_planner::map::identity::{CatalogueIdentity, Digest, ImageIdentity};
+use nav_planner::map::MapError;
 use parking_lot::Mutex;
 use serde::Serialize;
 use std::collections::BTreeSet;
@@ -358,7 +358,7 @@ impl MapBakeCursor for ShippedInstallCursor {
             };
             let plan = BakePlan {
                 planned_units: self.bundle.tiles,
-                stage: nav::map::cache::BakeStage::BaseTerrain,
+                stage: nav_planner::map::cache::BakeStage::BaseTerrain,
             }
             .checked()?;
             self.plan = Some(plan);

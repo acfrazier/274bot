@@ -252,7 +252,7 @@ reconnect storm; the slot status names the guard and the session log records
 its count and window. The window uses Rust's monotonic `Instant`; on macOS it
 counts awake time, so system sleep does not advance the ten minutes. The
 script's work remains held, and **Log in** clears the guard and resumes it.
-Operator **Logout**, Stop, and removal remain terminal and are never
+Operator **Log out**, Stop, and removal remain terminal and are never
 automatically resurrected.
 
 ## Relog now (memory mode)

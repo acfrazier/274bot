@@ -486,7 +486,7 @@ impl BankRow {
                         candidate_goals: None,
                         loc_id: None,
                         radius: 6,
-                        arrival: nav::contract::ArrivalKind::Reach,
+                        arrival: nav_planner::contract::ArrivalKind::Reach,
                         options: crate::native::WalkOptions {
                             allow_teleports: crate::native::WalkBit::Forbid,
                             allow_wilderness: crate::native::WalkBit::Allow,
