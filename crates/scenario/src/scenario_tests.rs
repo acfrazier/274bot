@@ -1004,6 +1004,193 @@ fn native_seed_deposit_runner_failure_names_the_missing_row_branch() {
     }
 }
 
+fn seed_deposit_runner(ids: &[(i32, Option<i32>)], budget_ticks: u32) -> ScenarioRunner {
+    let mut steps = native_bank_deposit(
+        "deposit the native seed",
+        ids.iter()
+            .map(|&(unnoted_id, note_id)| NativeSeed {
+                unnoted_id,
+                debug_alias: "test_seed",
+                note_alias: None,
+                quantity: 200,
+                note_id,
+            })
+            .collect(),
+    );
+    for step in &mut steps {
+        step.wait.budget_ticks = budget_ticks;
+    }
+    let scenario = Scenario {
+        name: "native_seed_deposit_settlement",
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: false,
+        },
+        steps,
+        proof: Proof::BankItemId {
+            id: ids.last().unwrap().0,
+            count: 200,
+        },
+        companions: vec![],
+        settings: ScenarioSettings::default(),
+    };
+    let mut runner = ScenarioRunner::with_world(scenario, None);
+    runner.set_scene_settle(Duration::ZERO);
+    runner
+}
+
+/// The bank-side update can precede the main bank update. A sent deposit
+/// must not send again or reinterpret its consumed row as a missing seed.
+#[test]
+fn native_seed_deposit_waits_for_main_bank_after_side_row_disappears() {
+    use client::io::ServerProt;
+
+    for (id, note_id) in [(COINS_ID, None), (LOBSTER_ID, Some(NOTED_LOBSTER_ID))] {
+        let mut runner = seed_deposit_runner(&[(id, note_id)], 200);
+        let mut client = native_seed_client();
+        let _peer = attach_loopback(&mut client);
+        plant_loaded_empty_bank(&mut client);
+        plant_bank_side_full(&mut client, note_id.unwrap_or(id), 200);
+        client.bump_gens(ServerProt::PLAYER_INFO);
+        runner.tick(&mut client);
+        assert_eq!(runner.status(), RunnerStatus::Running { step: 0, total: 1 });
+        let sent = client.out.pos;
+
+        // Even if the server has not posted the removal yet, a second
+        // observed tick must not repeat an already accepted interaction.
+        client.bump_gens(ServerProt::PLAYER_INFO);
+        runner.tick(&mut client);
+        assert_eq!(client.out.pos, sent, "a sent deposit must not repeat");
+
+        let mut empty_side = inv_full_packet(701, &[]);
+        client.handle_packet(ServerProt::UPDATE_INV_FULL, &mut empty_side);
+        runner.tick(&mut client);
+        assert_eq!(runner.status(), RunnerStatus::Running { step: 0, total: 1 });
+        for _ in 0..20 {
+            client.bump_gens(ServerProt::MESSAGE_GAME);
+            runner.tick(&mut client);
+        }
+        assert_eq!(runner.status(), RunnerStatus::Running { step: 0, total: 1 });
+        assert_eq!(client.out.pos, sent, "settlement sends nothing");
+
+        // The fresh bank proof arrives at the next observed game tick.
+        let mut bank_full = inv_full_packet(601, &[(id + 1, 200)]);
+        client.handle_packet(ServerProt::UPDATE_INV_FULL, &mut bank_full);
+        client.bump_gens(ServerProt::PLAYER_INFO);
+        runner.tick(&mut client);
+        assert_eq!(runner.status(), RunnerStatus::Passed);
+        assert_eq!(client.out.pos, sent);
+    }
+}
+
+#[test]
+fn native_seed_deposit_consumed_row_without_bank_proof_fails_on_observed_tick() {
+    use client::io::ServerProt;
+
+    for bank_count in [0, 199] {
+        let mut runner = seed_deposit_runner(&[(COINS_ID, None)], 200);
+        let mut client = native_seed_client();
+        let _peer = attach_loopback(&mut client);
+        plant_loaded_empty_bank(&mut client);
+        plant_bank_side_full(&mut client, COINS_ID, 200);
+        client.bump_gens(ServerProt::PLAYER_INFO);
+        runner.tick(&mut client);
+        let sent = client.out.pos;
+        let mut empty_side = inv_full_packet(701, &[]);
+        client.handle_packet(ServerProt::UPDATE_INV_FULL, &mut empty_side);
+        let mut bank_full = inv_full_packet(601, &[(COINS_ID + 1, bank_count)]);
+        client.handle_packet(ServerProt::UPDATE_INV_FULL, &mut bank_full);
+        runner.tick(&mut client);
+        assert_eq!(runner.status(), RunnerStatus::Running { step: 0, total: 1 });
+        for _ in 0..20 {
+            client.bump_gens(ServerProt::MESSAGE_GAME);
+            runner.tick(&mut client);
+        }
+        assert_eq!(runner.status(), RunnerStatus::Running { step: 0, total: 1 });
+        client.bump_gens(ServerProt::PLAYER_INFO);
+        runner.tick(&mut client);
+        match runner.status() {
+            RunnerStatus::Failed(message) => {
+                assert!(message.contains("seed left the bank-side pack"), "{message}");
+                assert!(message.contains("1 observed game tick"), "{message}");
+            }
+            other => panic!("missing bank proof must fail, got {other:?}"),
+        }
+        assert_eq!(client.out.pos, sent);
+    }
+}
+
+#[test]
+fn native_seed_deposit_without_consumption_still_exhausts_step_budget() {
+    use client::io::ServerProt;
+
+    let mut runner = seed_deposit_runner(&[(COINS_ID, None)], 3);
+    let mut client = native_seed_client();
+    let _peer = attach_loopback(&mut client);
+    plant_loaded_empty_bank(&mut client);
+    plant_bank_side_full(&mut client, COINS_ID, 200);
+    runner.tick(&mut client);
+    let sent = client.out.pos;
+    for _ in 0..2 {
+        client.bump_gens(ServerProt::PLAYER_INFO);
+        runner.tick(&mut client);
+        assert_eq!(runner.status(), RunnerStatus::Running { step: 0, total: 1 });
+    }
+    client.bump_gens(ServerProt::PLAYER_INFO);
+    runner.tick(&mut client);
+    match runner.status() {
+        RunnerStatus::Failed(message) => assert!(message.contains("3 game ticks"), "{message}"),
+        other => panic!("unprocessed deposit must fail within its budget, got {other:?}"),
+    }
+    assert_eq!(client.out.pos, sent);
+}
+
+#[test]
+fn native_seed_deposit_runner_keeps_refused_send_as_failure() {
+    use client::io::ServerProt;
+
+    let mut runner = seed_deposit_runner(&[(COINS_ID, None)], 200);
+    let mut client = native_seed_client();
+    plant_loaded_empty_bank(&mut client);
+    plant_bank_side_full(&mut client, COINS_ID, 200);
+    client.bump_gens(ServerProt::UPDATE_INV_FULL);
+    runner.tick(&mut client);
+    match runner.status() {
+        RunnerStatus::Failed(message) => {
+            assert!(message.contains("refused: NotAttached"), "{message}");
+        }
+        other => panic!("refused deposit must fail, got {other:?}"),
+    }
+}
+
+#[test]
+fn native_seed_deposit_send_latch_resets_for_next_seed() {
+    use client::io::ServerProt;
+
+    let mut runner = seed_deposit_runner(&[(COINS_ID, None), (LOBSTER_ID, Some(NOTED_LOBSTER_ID))], 200);
+    let mut client = native_seed_client();
+    let _peer = attach_loopback(&mut client);
+    plant_loaded_empty_bank(&mut client);
+    plant_bank_side_full(&mut client, COINS_ID, 200);
+    runner.tick(&mut client);
+    let first_sent = client.out.pos;
+    plant_bank_side_full(&mut client, NOTED_LOBSTER_ID, 200);
+    let mut bank_full = inv_full_packet(601, &[(COINS_ID + 1, 200)]);
+    client.handle_packet(ServerProt::UPDATE_INV_FULL, &mut bank_full);
+    runner.tick(&mut client);
+    assert_eq!(runner.status(), RunnerStatus::Running { step: 1, total: 2 });
+    runner.tick(&mut client);
+    assert!(client.out.pos > first_sent, "the next seed must send");
+    assert_eq!(client.menu_param_a[0], NOTED_LOBSTER_ID);
+    assert_eq!(runner.status(), RunnerStatus::Running { step: 1, total: 2 });
+    let mut empty_side = inv_full_packet(701, &[]);
+    client.handle_packet(ServerProt::UPDATE_INV_FULL, &mut empty_side);
+    let mut bank_full = inv_full_packet(601, &[(COINS_ID + 1, 200), (LOBSTER_ID + 1, 200)]);
+    client.handle_packet(ServerProt::UPDATE_INV_FULL, &mut bank_full);
+    runner.tick(&mut client);
+    assert_eq!(runner.status(), RunnerStatus::Passed);
+}
+
 /// An already loaded bank must remain usable by the following deposit.
 #[test]
 fn herblore_open_seed_bank_skips_booth_when_current_bank_loaded() {
