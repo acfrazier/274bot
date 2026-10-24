@@ -1051,7 +1051,9 @@ fn native_seed_deposit_waits_for_main_bank_after_side_row_disappears() {
         let _peer = attach_loopback(&mut client);
         plant_loaded_empty_bank(&mut client);
         plant_bank_side_full(&mut client, note_id.unwrap_or(id), 200);
-        client.bump_gens(ServerProt::PLAYER_INFO);
+        for _ in 0..23 {
+            client.bump_gens(ServerProt::PLAYER_INFO);
+        }
         runner.tick(&mut client);
         assert_eq!(runner.status(), RunnerStatus::Running { step: 0, total: 1 });
         let sent = client.out.pos;
@@ -1081,6 +1083,19 @@ fn native_seed_deposit_waits_for_main_bank_after_side_row_disappears() {
         runner.tick(&mut client);
         assert_eq!(runner.status(), RunnerStatus::Passed);
         assert_eq!(client.out.pos, sent);
+        let attempts = &runner.evidence().unwrap().seed_deposits;
+        assert_eq!(attempts.len(), 2);
+        assert_eq!((attempts[0].tick, attempts[0].result), (23, "DepositSent"));
+        assert_eq!(
+            (attempts[1].tick, attempts[1].result),
+            (25, "ProofObserved")
+        );
+        assert!(!attempts[0].proof);
+        assert!(attempts[1].proof);
+        assert_eq!(attempts[1].side, 0);
+        assert_eq!(attempts[1].bank, 200);
+        assert!(attempts[1].side_generation > attempts[0].side_generation);
+        assert!(attempts[1].main_generation > attempts[0].main_generation);
     }
 }
 
@@ -1110,10 +1125,12 @@ fn native_seed_deposit_consumed_row_without_bank_proof_fails_on_observed_tick() 
         assert_eq!(runner.status(), RunnerStatus::Running { step: 0, total: 1 });
         client.bump_gens(ServerProt::PLAYER_INFO);
         runner.tick(&mut client);
+        assert_eq!(runner.status(), RunnerStatus::Running { step: 0, total: 1 });
+        client.bump_gens(ServerProt::PLAYER_INFO);
+        runner.tick(&mut client);
         match runner.status() {
             RunnerStatus::Failed(message) => {
-                assert!(message.contains("seed left the bank-side pack"), "{message}");
-                assert!(message.contains("1 observed game tick"), "{message}");
+                assert!(message.contains("2 game ticks"), "{message}");
             }
             other => panic!("missing bank proof must fail, got {other:?}"),
         }
@@ -1122,7 +1139,7 @@ fn native_seed_deposit_consumed_row_without_bank_proof_fails_on_observed_tick() 
 }
 
 #[test]
-fn native_seed_deposit_without_consumption_still_exhausts_step_budget() {
+fn native_seed_deposit_without_consumption_still_exhausts_proof_budget() {
     use client::io::ServerProt;
 
     let mut runner = seed_deposit_runner(&[(COINS_ID, None)], 3);
@@ -1132,7 +1149,7 @@ fn native_seed_deposit_without_consumption_still_exhausts_step_budget() {
     plant_bank_side_full(&mut client, COINS_ID, 200);
     runner.tick(&mut client);
     let sent = client.out.pos;
-    for _ in 0..2 {
+    for _ in 0..1 {
         client.bump_gens(ServerProt::PLAYER_INFO);
         runner.tick(&mut client);
         assert_eq!(runner.status(), RunnerStatus::Running { step: 0, total: 1 });
@@ -1140,7 +1157,7 @@ fn native_seed_deposit_without_consumption_still_exhausts_step_budget() {
     client.bump_gens(ServerProt::PLAYER_INFO);
     runner.tick(&mut client);
     match runner.status() {
-        RunnerStatus::Failed(message) => assert!(message.contains("3 game ticks"), "{message}"),
+        RunnerStatus::Failed(message) => assert!(message.contains("2 game ticks"), "{message}"),
         other => panic!("unprocessed deposit must fail within its budget, got {other:?}"),
     }
     assert_eq!(client.out.pos, sent);
@@ -1168,7 +1185,10 @@ fn native_seed_deposit_runner_keeps_refused_send_as_failure() {
 fn native_seed_deposit_send_latch_resets_for_next_seed() {
     use client::io::ServerProt;
 
-    let mut runner = seed_deposit_runner(&[(COINS_ID, None), (LOBSTER_ID, Some(NOTED_LOBSTER_ID))], 200);
+    let mut runner = seed_deposit_runner(
+        &[(COINS_ID, None), (LOBSTER_ID, Some(NOTED_LOBSTER_ID))],
+        200,
+    );
     let mut client = native_seed_client();
     let _peer = attach_loopback(&mut client);
     plant_loaded_empty_bank(&mut client);
