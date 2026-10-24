@@ -5,7 +5,8 @@ use super::wilderness::{
     TEST_LEVELS_CONSTANT, TEST_LEVELS_RS2, TEST_SPELL_TELEPORT_RS2, TEST_ZONES_DBROW,
 };
 use super::*;
-use nav_planner::collision::{bake_from_maps, WorldCollision};
+use crate::collision::bake_from_maps;
+use nav_planner::collision::WorldCollision;
 use client::config::{Cache, LocType};
 use client::io::JagFile;
 

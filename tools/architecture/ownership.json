@@ -1723,6 +1723,74 @@
       "owner": "T5"
     },
     {
+      "path": "crates/nav-bake/tests/paint_sidecars.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/nav-bake/src/canlight.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/nav-bake/src/canlight_tests.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/nav-bake/src/lib.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/nav-bake/src/manifest.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/nav-bake/src/manifest_tests.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/nav-bake/src/services.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/nav-bake/src/services_tests.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/nav-bake/src/transport.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/nav-bake/src/transport/static_routes.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/nav-bake/src/transport/webs.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/nav-bake/src/transport/wilderness.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/nav-bake/src/transport_tests.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/nav-bake/src/zones.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/nav-bake/tests/router_collision.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/nav-planner/examples/route_parity.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/nav-planner/src/movement.rs",
+      "owner": "T5"
+    },
+    {
       "path": "crates/nav-planner/build.rs",
       "owner": "T5"
     },
@@ -1739,11 +1807,11 @@
       "owner": "T5"
     },
     {
-      "path": "crates/nav-planner/src/bake.rs",
+      "path": "crates/nav-bake/src/bake.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav-planner/src/bake_tests.rs",
+      "path": "crates/nav-bake/src/bake_tests.rs",
       "owner": "T5"
     },
     {
@@ -1771,27 +1839,27 @@
       "owner": "T5"
     },
     {
-      "path": "crates/nav-planner/src/bin/cache-content-id.rs",
+      "path": "crates/nav-bake/src/bin/cache-content-id.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav-planner/src/bin/nav-input-audit.rs",
+      "path": "crates/nav-bake/src/bin/nav-input-audit.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav-planner/src/bin/nav-pack.rs",
+      "path": "crates/nav-bake/src/bin/nav-pack.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav-planner/src/bin/nav-pack/nav_pack_tests.rs",
+      "path": "crates/nav-bake/src/bin/nav-pack/nav_pack_tests.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav-planner/src/bundle.rs",
+      "path": "crates/nav-bake/src/bundle.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav-planner/src/bundle_tests.rs",
+      "path": "crates/nav-bake/src/bundle_tests.rs",
       "owner": "T5"
     },
     {
@@ -2019,111 +2087,111 @@
       "owner": "T5"
     },
     {
-      "path": "crates/nav-planner/src/transport/brass_key.rs",
+      "path": "crates/nav-bake/src/transport/brass_key.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav-planner/src/transport/condparse.rs",
+      "path": "crates/nav-bake/src/transport/condparse.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav-planner/src/transport/door_members.rs",
+      "path": "crates/nav-bake/src/transport/door_members.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav-planner/src/transport/doors.rs",
+      "path": "crates/nav-bake/src/transport/doors.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav-planner/src/transport/engine_door_procs.rs2",
+      "path": "crates/nav-bake/src/transport/engine_door_procs.rs2",
       "owner": "T5"
     },
     {
-      "path": "crates/nav-planner/src/transport/engine_forced_procs.rs2",
+      "path": "crates/nav-bake/src/transport/engine_forced_procs.rs2",
       "owner": "T5"
     },
     {
-      "path": "crates/nav-planner/src/transport/gates.rs",
+      "path": "crates/nav-bake/src/transport/gates.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav-planner/src/transport/gliders.rs",
+      "path": "crates/nav-bake/src/transport/gliders.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav-planner/src/transport/index.rs",
+      "path": "crates/nav-bake/src/transport/index.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav-planner/src/transport/levers.rs",
+      "path": "crates/nav-bake/src/transport/levers.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav-planner/src/transport/magic_guild.rs",
+      "path": "crates/nav-bake/src/transport/magic_guild.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav-planner/src/transport/membergate.rs",
+      "path": "crates/nav-bake/src/transport/membergate.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav-planner/src/transport/members_guard.rs",
+      "path": "crates/nav-bake/src/transport/members_guard.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav-planner/src/transport/npc_hops.rs",
+      "path": "crates/nav-bake/src/transport/npc_hops.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav-planner/src/transport/observable.rs",
+      "path": "crates/nav-bake/src/transport/observable.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav-planner/src/transport/quest_doors.rs",
+      "path": "crates/nav-bake/src/transport/quest_doors.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav-planner/src/transport/ranging_guild.rs",
+      "path": "crates/nav-bake/src/transport/ranging_guild.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav-planner/src/transport/rs2_syntax.rs",
+      "path": "crates/nav-bake/src/transport/rs2_syntax.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav-planner/src/transport/script_text.rs",
+      "path": "crates/nav-bake/src/transport/script_text.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav-planner/src/transport/scripted_doors.rs",
+      "path": "crates/nav-bake/src/transport/scripted_doors.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav-planner/src/transport/shortcuts.rs",
+      "path": "crates/nav-bake/src/transport/shortcuts.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav-planner/src/transport/spirit_trees.rs",
+      "path": "crates/nav-bake/src/transport/spirit_trees.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav-planner/src/transport/stage_doors.rs",
+      "path": "crates/nav-bake/src/transport/stage_doors.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav-planner/src/transport/stage_doors_entrances.rs",
+      "path": "crates/nav-bake/src/transport/stage_doors_entrances.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav-planner/src/transport/stage_doors_forced.rs",
+      "path": "crates/nav-bake/src/transport/stage_doors_forced.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav-planner/src/transport/stage_doors_keys.rs",
+      "path": "crates/nav-bake/src/transport/stage_doors_keys.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav-planner/src/transport/stage_doors_tests.rs",
+      "path": "crates/nav-bake/src/transport/stage_doors_tests.rs",
       "owner": "T5"
     },
     {
@@ -2131,15 +2199,15 @@
       "owner": "T5"
     },
     {
-      "path": "crates/nav-planner/src/transport/teleports.rs",
+      "path": "crates/nav-bake/src/transport/teleports.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav-planner/src/transport/toll.rs",
+      "path": "crates/nav-bake/src/transport/toll.rs",
       "owner": "T5"
     },
     {
-      "path": "crates/nav-planner/src/transport/vertical.rs",
+      "path": "crates/nav-bake/src/transport/vertical.rs",
       "owner": "T5"
     },
     {
@@ -2151,7 +2219,7 @@
       "owner": "T5"
     },
     {
-      "path": "crates/nav-planner/src/transport/zanaris.rs",
+      "path": "crates/nav-bake/src/transport/zanaris.rs",
       "owner": "T5"
     },
     {
@@ -2231,7 +2299,7 @@
       "owner": "T5"
     },
     {
-      "path": "crates/nav-planner/tests/resource_manifest.rs",
+      "path": "crates/nav-bake/tests/resource_manifest.rs",
       "owner": "T5"
     },
     {

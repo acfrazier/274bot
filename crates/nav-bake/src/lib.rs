@@ -1,3 +1,7 @@
+#![deny(clippy::disallowed_types)]
+#![deny(clippy::disallowed_methods)]
+#![deny(clippy::disallowed_macros)]
+
 //! Release navigation generation. Runtime planning stays in `nav-planner`.
 
 pub mod bake;
