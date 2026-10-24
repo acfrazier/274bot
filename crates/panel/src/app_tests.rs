@@ -435,8 +435,8 @@ fn plant_snapshot(unpack: &std::path::Path, revision: u16, packs: &[(String, Vec
         .find(|(name, _)| name == "versionlist")
         .unwrap()
         .1;
-    let transfer = nav::manifest::hash_bytes(versionlist);
-    let negotiated = nav::manifest::hash_bytes(&crc_body(packs)[..36]);
+    let transfer = nav_planner::manifest::hash_bytes(versionlist);
+    let negotiated = nav_planner::manifest::hash_bytes(&crc_body(packs)[..36]);
     let input = unpack.join("fixture-input");
     std::fs::create_dir_all(&input).unwrap();
     for (name, bytes) in packs {
@@ -2231,7 +2231,7 @@ fn manual_shot_rejects_an_empty_published_snapshot() {
     state.session.core.publish_test_snapshot(
         "alice",
         api::snapshot::GameSnapshot::new(),
-        nav::WorldState::default(),
+        nav_planner::WorldState::default(),
     );
     super::enqueue_manual_shot(&mut state);
     assert!(state.shot_state.lock().unwrap().requests.is_empty());
@@ -2326,7 +2326,7 @@ fn clean_stop_rearms_written_shot_once_and_can_complete() {
     assert!(snapshot.ingame() && snapshot.scene_state() == 2);
     session
         .core
-        .publish_test_snapshot("alice", snapshot, nav::WorldState::default());
+        .publish_test_snapshot("alice", snapshot, nav_planner::WorldState::default());
 
     let shots = std::sync::Mutex::new(crate::window::ShotState::default());
     let label = "bone-stop";
@@ -2405,7 +2405,7 @@ fn clean_stop_missing_scene_cannot_reuse_prior_written_capture() {
     snapshot.rebuild(&client);
     session
         .core
-        .publish_test_snapshot("alice", snapshot, nav::WorldState::default());
+        .publish_test_snapshot("alice", snapshot, nav_planner::WorldState::default());
     let shots = std::sync::Mutex::new(crate::window::ShotState::default());
     shots.lock().unwrap().mark_written("bone-stop");
     let mut live = LiveScript {
@@ -2494,8 +2494,11 @@ fn live_script_tick_latches_pass_reports_soak_readbacks_and_fail() {
     s.set_focus_for_test("catalogtest");
     let mut terminal_snapshot = api::snapshot::GameSnapshot::new();
     terminal_snapshot.rebuild(&script_client());
-    s.core
-        .publish_test_snapshot("catalogtest", terminal_snapshot, nav::WorldState::default());
+    s.core.publish_test_snapshot(
+        "catalogtest",
+        terminal_snapshot,
+        nav_planner::WorldState::default(),
+    );
     let shots = std::sync::Mutex::new(crate::window::ShotState::default());
     shots.lock().unwrap().mark_written("core-pass");
     let mut baseline = host_play::catalog_core::Observation {
@@ -2781,7 +2784,7 @@ fn native_failure_rearms_written_shot_and_waits_for_current_capture() {
     assert!(snapshot.ingame() && snapshot.scene_state() == 2);
     session
         .core
-        .publish_test_snapshot("alice", snapshot, nav::WorldState::default());
+        .publish_test_snapshot("alice", snapshot, nav_planner::WorldState::default());
 
     let shots = std::sync::Mutex::new(crate::window::ShotState::default());
     let label = "thiever";
@@ -2853,7 +2856,7 @@ fn native_failure_missing_scene_cannot_reuse_prior_written_capture() {
     snapshot.rebuild(&client);
     session
         .core
-        .publish_test_snapshot("alice", snapshot, nav::WorldState::default());
+        .publish_test_snapshot("alice", snapshot, nav_planner::WorldState::default());
     let shots = std::sync::Mutex::new(crate::window::ShotState::default());
     shots.lock().unwrap().mark_written("thiever");
     super::enqueue_current_terminal_shot(&session, &shots, "thiever");
@@ -2906,9 +2909,9 @@ fn pair_terminal_decision_requests_scene2_snapshots_for_both_actors() {
     assert!(snap_a.ingame() && snap_a.scene_state() == 2);
     assert!(snap_b.ingame() && snap_b.scene_state() == 2);
     s.core
-        .publish_test_snapshot("alice", snap_a, nav::WorldState::default());
+        .publish_test_snapshot("alice", snap_a, nav_planner::WorldState::default());
     s.core
-        .publish_test_snapshot("bob", snap_b, nav::WorldState::default());
+        .publish_test_snapshot("bob", snap_b, nav_planner::WorldState::default());
 
     let shots = std::sync::Mutex::new(crate::window::ShotState::default());
     let mut live = LiveScript {
@@ -3014,7 +3017,7 @@ fn insert_named_scene2(session: &mut crate::session::Session, name: &str, player
     assert!(snap.ingame() && snap.scene_state() == 2);
     session
         .core
-        .publish_test_snapshot(name, snap, nav::WorldState::default());
+        .publish_test_snapshot(name, snap, nav_planner::WorldState::default());
 }
 
 fn sidecar_actor_and_scene(json: &str) -> (String, i64) {
@@ -3137,7 +3140,7 @@ fn pump_shots_does_not_promote_a_presented_actor_that_left_scene2() {
     state.session.core.publish_test_snapshot(
         "alice",
         api::snapshot::GameSnapshot::new(),
-        nav::WorldState::default(),
+        nav_planner::WorldState::default(),
     );
     state.shot_state.lock().unwrap().enqueue_for_actor(
         "air-alice".into(),
@@ -3345,7 +3348,7 @@ fn alice_scene2_session() -> crate::session::Session {
     snap.rebuild(&client);
     assert!(snap.ingame() && snap.scene_state() == 2);
     s.core
-        .publish_test_snapshot("alice", snap, nav::WorldState::default());
+        .publish_test_snapshot("alice", snap, nav_planner::WorldState::default());
     s
 }
 

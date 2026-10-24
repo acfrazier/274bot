@@ -221,7 +221,7 @@ impl AcquireRun {
                             candidate_goals: None,
                             loc_id: None,
                             radius: 0,
-                            arrival: nav::contract::ArrivalKind::Reach,
+                            arrival: nav_planner::contract::ArrivalKind::Reach,
                             options: self.request.walk,
                             required_after: self.request.required_after,
                             evidence: None,

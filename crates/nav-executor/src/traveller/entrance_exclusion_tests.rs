@@ -1,5 +1,5 @@
 use super::*;
-use nav::world_state::{EntranceRequirement, WorldState};
+use nav_planner::world_state::{EntranceRequirement, WorldState};
 
 const FORBIDDEN_HELD: i32 = 4242;
 const FORBIDDEN_WORN: i32 = 4343;

@@ -12,8 +12,8 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::OnceLock;
 
 /// One shipped navpack identity, analogue of `known-cache-identities.json`.
-/// The schema and its writer live in [`nav::bundle`].
-pub use nav::bundle::NavIdentityRow as BundledNavIdentity;
+/// The schema and its writer live in [`nav_planner::bundle`].
+pub use nav_planner::bundle::NavIdentityRow as BundledNavIdentity;
 
 /// Origin of the loaded navigation pack.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -134,7 +134,7 @@ pub fn select_nav_origin(
                     && identity
                         .source_sha256
                         .as_deref()
-                        .is_some_and(nav::manifest::is_sha256)))
+                        .is_some_and(nav_planner::manifest::is_sha256)))
         {
             if matched.is_some() {
                 return Err(format!(
@@ -161,11 +161,11 @@ pub fn select_nav_origin(
 }
 
 fn validate_identity_shape(identity: &BundledNavIdentity) -> Result<(), String> {
-    if identity.format != nav::pack::FORMAT_ID {
+    if identity.format != nav_planner::pack::FORMAT_ID {
         return Err(format!(
             "bundled navigation format {} is unsupported; expected {}",
             identity.format,
-            nav::pack::FORMAT_ID
+            nav_planner::pack::FORMAT_ID
         ));
     }
     if identity.nav_sha256.len() != 64
@@ -251,7 +251,7 @@ mod tests {
             cache_id: "cache".into(),
             content_id: None,
             source_sha256: None,
-            format: nav::pack::FORMAT_ID.into(),
+            format: nav_planner::pack::FORMAT_ID.into(),
             nav_sha256: "ab".repeat(32),
             flags_sha256: None,
             reach_sha256: None,
@@ -286,7 +286,7 @@ mod tests {
             "one generated identity row per built revision: {table:?}"
         );
         let row = generated[0];
-        assert_eq!(row.format, nav::pack::FORMAT_ID);
+        assert_eq!(row.format, nav_planner::pack::FORMAT_ID);
         assert_eq!(row.nav_sha256.len(), 64);
         assert!(row.relative_path.ends_with("274bot.navpack"));
 
@@ -294,7 +294,7 @@ mod tests {
         let mut seen = std::collections::HashSet::new();
         for row in table {
             assert!(matches!(row.revision, 274 | 289));
-            assert_eq!(row.format, nav::pack::FORMAT_ID);
+            assert_eq!(row.format, nav_planner::pack::FORMAT_ID);
             assert_eq!(row.nav_sha256.len(), 64);
             assert!(row
                 .flags_sha256
@@ -407,7 +407,7 @@ mod tests {
             Path::new("/tmp/x")
         )
         .unwrap_err()
-        .contains(nav::pack::FORMAT_ID));
+        .contains(nav_planner::pack::FORMAT_ID));
         let table = [identity("a.navpack"), identity("b.navpack")];
         assert!(select_nav_origin(
             &table,

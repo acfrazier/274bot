@@ -676,25 +676,29 @@ fn cancelled_parameter_save_restores_durable_text_and_releases_start() {
 
 #[test]
 fn typed_parameter_commands_hold_start_until_durable_and_log_each_saved_change() {
-    let mut f = fixture("parameter-typed-command", &["prefs-typed"]);
+    let mut f = fixture("parameter-typed-command", &["prefs-script-save"]);
     let card = f.card(
         "cook-settings.ts",
         "export const SETTINGS = { surface: { type: 'string', default: 'Range', options: ['Range', 'Fire'] } };\nexport default class T extends LoopingBot { override loop() {} }\n",
     );
-    f.assign("prefs-typed", &card);
+    f.assign("prefs-script-save", &card);
     let selection =
         ScriptChoice::from_script(script::ScriptSel::Loaded(card.source, card.identity_id()));
     for value in [json!("Fire"), json!("Range")] {
-        f.scripts
-            .stage_setting(Some("prefs-typed"), &selection, "surface", value.clone());
+        f.scripts.stage_setting(
+            Some("prefs-script-save"),
+            &selection,
+            "surface",
+            value.clone(),
+        );
         f.submit(
             OperatorCommand::SaveScriptSettings(CardKind::Script),
-            crate::session::Targets::Profile("prefs-typed"),
+            crate::session::Targets::Profile("prefs-script-save"),
         );
-        assert!(f.scripts.parameter_edit_blocks_start("prefs-typed"));
+        assert!(f.scripts.parameter_edit_blocks_start("prefs-script-save"));
         assert_eq!(
             f.scripts
-                .start_profile(&mut f.core, "prefs-typed", None)
+                .start_profile(&mut f.core, "prefs-script-save", None)
                 .unwrap_err()
                 .kind(),
             ScriptStartErrorKind::Waiting
@@ -702,12 +706,13 @@ fn typed_parameter_commands_hold_start_until_durable_and_log_each_saved_change()
         let op = f.core.last_operation().unwrap().id();
         f.core.flush_writes();
         f.scripts.poll(&mut f.core);
-        assert!(!f.scripts.parameter_edit_blocks_start("prefs-typed"));
+        assert!(!f.scripts.parameter_edit_blocks_start("prefs-script-save"));
         assert_eq!(
-            f.saved_bag("prefs-typed", &card.identity_key()).unwrap()["surface"],
+            f.saved_bag("prefs-script-save", &card.identity_key())
+                .unwrap()["surface"],
             value
         );
-        let mut log = crate::log::LogView::new(crate::log::LogScope::slot("prefs-typed"));
+        let mut log = crate::log::LogView::new(crate::log::LogScope::slot("prefs-script-save"));
         crate::log::global().refresh(&mut log);
         let old = if value == json!("Fire") {
             "\"Range\""
@@ -715,7 +720,7 @@ fn typed_parameter_commands_hold_start_until_durable_and_log_each_saved_change()
             "\"Fire\""
         };
         let expected = format!(
-            "saved script settings; profile prefs-typed; card {}; action parameter edit; field surface; old {old}; new {value}; op#{}",
+            "saved script settings; profile prefs-script-save; card {}; action parameter edit; field surface; old {old}; new {value}; op#{}",
             card.name, op.0
         );
         assert!(log
@@ -723,11 +728,11 @@ fn typed_parameter_commands_hold_start_until_durable_and_log_each_saved_change()
             .iter()
             .any(|row| { row.level() == api::hostlog::Level::Info && row.message() == expected }));
     }
-    f.start_running("prefs-typed");
-    let mut credential = f.core.durable_profile("prefs-typed").unwrap().clone();
+    f.start_running("prefs-script-save");
+    let mut credential = f.core.durable_profile("prefs-script-save").unwrap().clone();
     let live = f
         .scripts
-        .profile_save_live(&f.core, "prefs-typed", &credential.settings)
+        .profile_save_live(&f.core, "prefs-script-save", &credential.settings)
         .expect("the running script has live settings");
     credential.password = "updated-password".into();
     let op = f
@@ -740,7 +745,7 @@ fn typed_parameter_commands_hold_start_until_durable_and_log_each_saved_change()
         .unwrap();
     f.core.flush_writes();
     f.scripts.poll(&mut f.core);
-    let mut log = crate::log::LogView::new(crate::log::LogScope::slot("prefs-typed"));
+    let mut log = crate::log::LogView::new(crate::log::LogScope::slot("prefs-script-save"));
     crate::log::global().refresh(&mut log);
     assert!(!log.rows().iter().any(|row| {
         row.message().contains("saved script settings")

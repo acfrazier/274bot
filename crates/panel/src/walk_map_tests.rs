@@ -14,16 +14,18 @@ use host_play::map_cache::{
     fixture::{self, CountingMapProducer},
     MapDemandManager, MapJobStatus, MapProfileDescriptor,
 };
-use nav::collision::WorldCollision;
-use nav::map::formats::{ColorFormat, ImageManifest, PayloadReceipt, PlaneBounds, TileReceipt};
-use nav::map::identity::{Digest, ImageIdentity, IMAGE_SCHEMA};
-use nav::map::spatial::{
+use nav_planner::collision::WorldCollision;
+use nav_planner::map::formats::{
+    ColorFormat, ImageManifest, PayloadReceipt, PlaneBounds, TileReceipt,
+};
+use nav_planner::map::identity::{Digest, ImageIdentity, IMAGE_SCHEMA};
+use nav_planner::map::spatial::{
     select_lod, GameTile, TileKey, View, WorldBounds, TEXTURE_CAP, TILE_GUTTER, TILE_INTERIOR,
     TILE_PIXELS, TILE_RGBA_BYTES,
 };
-use nav::map::Rows;
-use nav::transport::{TransportGraph, WildernessZone};
-use nav::world::NavWorld;
+use nav_planner::map::Rows;
+use nav_planner::transport::{TransportGraph, WildernessZone};
+use nav_planner::world::NavWorld;
 
 use super::overlay::{self, OverlayColors, OverlayFit, OverlayLayers, OverlayPaint};
 use super::{
@@ -35,7 +37,7 @@ use super::{
 };
 use crate::game_view::FrameGpu;
 use crate::test_support::headless_gpu;
-use nav::map::poi::PoiKind;
+use nav_planner::map::poi::PoiKind;
 
 fn decode_service_test_lock() -> std::sync::MutexGuard<'static, ()> {
     crate::work_service_test_lock()
@@ -190,7 +192,7 @@ fn bake_world(w: usize, h: usize, extras: &[(i32, i32, u32)]) -> NavWorld {
     for &(x, z, f) in extras {
         flags[z as usize * w + x as usize] |= f;
     }
-    let (walk, blocked) = nav::collision::pack_walk(&flags);
+    let (walk, blocked) = nav_planner::collision::pack_walk(&flags);
     NavWorld::from_parts(
         WorldCollision {
             origin: WorldTile {
@@ -283,7 +285,7 @@ fn fixture_png_is_real_258_rgba8() {
 fn frozen_walk_map_decode_family_keeps_command_contract() {
     use super::{decode_checked, DECODE_LIMIT_BYTES};
     use api::work::{WalkMapDecodeCommand, WorkFamily};
-    use nav::map::MapError;
+    use nav_planner::map::MapError;
 
     assert_eq!(
         [
@@ -469,7 +471,7 @@ fn hidpi_zoom_out_falls_back_and_recovers() {
     let far = view_from_canvas((3220, 3220), (0.0, 0.0), 0.25, size, 0, 1, fb);
     let vis = select_lod(
         View {
-            max_lod: nav::map::spatial::MAX_LOD,
+            max_lod: nav_planner::map::spatial::MAX_LOD,
             ..far
         },
         TEXTURE_CAP,

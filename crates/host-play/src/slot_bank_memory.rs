@@ -88,9 +88,11 @@ pub(crate) fn memory_key(username: &str) -> Cow<'_, str> {
 /// (design-bank-snapshot §4 F6): its rows with their origin, taken under a
 /// read guard that ends here. `None` (no memory attached) is the
 /// never-observed `Unknown` bank. Called once per arm, never per tick.
-pub(crate) fn planner_rows(memory: Option<&RwLock<BankMemory>>) -> nav::bank_fetch::BankRows {
-    memory.map_or_else(nav::bank_fetch::BankRows::default, |memory| {
-        nav::bank_fetch::BankRows::of(&memory.read())
+pub(crate) fn planner_rows(
+    memory: Option<&RwLock<BankMemory>>,
+) -> nav_planner::bank_fetch::BankRows {
+    memory.map_or_else(nav_planner::bank_fetch::BankRows::default, |memory| {
+        nav_planner::bank_fetch::BankRows::of(&memory.read())
     })
 }
 
@@ -1187,7 +1189,7 @@ mod tests {
         let mut play = offline_play();
         assert_eq!(
             play.bank_rows("ghost"),
-            nav::bank_fetch::BankRows::default(),
+            nav_planner::bank_fetch::BankRows::default(),
             "an unknown account is Unknown with no rows"
         );
         let memory: SharedBankMemory = Arc::default();
@@ -1339,7 +1341,7 @@ mod tests {
         assert_eq!(play.bank_rows("_alice_smith_").rows, vec![(COINS, 50)]);
         assert_eq!(
             play.bank_rows("alice_smith"),
-            nav::bank_fetch::BankRows::default(),
+            nav_planner::bank_fetch::BankRows::default(),
             "the login name shares nothing with the refused spelling"
         );
     }

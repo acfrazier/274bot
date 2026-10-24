@@ -277,7 +277,7 @@ impl ActionContext<'_> {
             return Err(ActionError::Stale);
         }
         if request.candidate_goals.is_some()
-            && (request.arrival != nav::contract::ArrivalKind::Area
+            && (request.arrival != nav_planner::contract::ArrivalKind::Area
                 || request.loc_id.is_some()
                 || request.radius != 0)
         {
@@ -344,7 +344,7 @@ impl ActionContext<'_> {
             return Err(ActionError::Stale);
         }
         if request.candidate_goals.is_some()
-            && (request.arrival != nav::contract::ArrivalKind::Area
+            && (request.arrival != nav_planner::contract::ArrivalKind::Area
                 || request.loc_id.is_some()
                 || request.radius != 0)
         {
@@ -1807,7 +1807,7 @@ mod tests {
                 },
                 candidate_goals: None,
                 radius: 0,
-                arrival: nav::contract::ArrivalKind::Reach,
+                arrival: nav_planner::contract::ArrivalKind::Reach,
                 options: WalkOptions::default(),
                 required_after: cx.evidence(),
                 evidence: None,
@@ -2320,7 +2320,7 @@ mod tests {
                 candidate_goals: None,
                 loc_id: None,
                 radius: 0,
-                arrival: nav::contract::ArrivalKind::Reach,
+                arrival: nav_planner::contract::ArrivalKind::Reach,
                 options: WalkOptions::default(),
                 required_after: cx.evidence(),
                 evidence: None,
@@ -2420,7 +2420,7 @@ mod tests {
                             candidate_goals: None,
                             loc_id: None,
                             radius,
-                            arrival: nav::contract::ArrivalKind::Reach,
+                            arrival: nav_planner::contract::ArrivalKind::Reach,
                             options: WalkOptions::default(),
                             required_after: cx.evidence(),
                             evidence: None,
@@ -2482,7 +2482,7 @@ mod tests {
             candidate_goals: None,
             loc_id: None,
             radius: 0,
-            arrival: nav::contract::ArrivalKind::Reach,
+            arrival: nav_planner::contract::ArrivalKind::Reach,
             options: WalkOptions::default(),
             required_after: evidence,
             evidence: None,

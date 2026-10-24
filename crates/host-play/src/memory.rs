@@ -1176,7 +1176,7 @@ fn qualify_duel_arena_fleet(
 fn seed_runner(
     scenario: scenario::Scenario,
     name: &str,
-    world: Option<Arc<nav::world::NavWorld>>,
+    world: Option<Arc<nav_planner::world::NavWorld>>,
     map_members: bool,
 ) -> Seed {
     let step_names = scenario.steps.iter().map(|step| step.name).collect();
@@ -1252,7 +1252,7 @@ pub struct Run {
     game_data: Option<serde_json::Value>,
 }
 
-/// Where non-idle seed runners get their [`nav::world::NavWorld`].
+/// Where non-idle seed runners get their [`nav_planner::world::NavWorld`].
 ///
 /// Frontends pass [`SeedNav::FromPlay`] with `Play::world()` so the pack is
 /// decoded once. Unit tests without a Play use [`SeedNav::LoadDefault`].
@@ -1265,7 +1265,7 @@ pub enum SeedNav {
     /// every by-name inventory proof (`Proof::Item`, `ItemAtMost`) needs: a
     /// runner without them fails such a proof closed.
     FromPlay {
-        world: Option<Arc<nav::world::NavWorld>>,
+        world: Option<Arc<nav_planner::world::NavWorld>>,
         obj_names: Option<Arc<api::obj_names::ObjNames>>,
         map_members: bool,
     },
@@ -1532,7 +1532,7 @@ impl Run {
         }
         let (seed_world, obj_names, map_members) = match seed_nav {
             SeedNav::LoadDefault => (
-                nav::world::NavWorld::load_pack(&scenario::default_pack_path())
+                nav_planner::world::NavWorld::load_pack(&scenario::default_pack_path())
                     .ok()
                     .map(Arc::new),
                 None,
@@ -2818,8 +2818,8 @@ mod tests {
 
     #[test]
     fn seed_runners_share_world_but_keep_independent_state() {
-        let world = Arc::new(nav::world::NavWorld::from_parts(
-            nav::collision::WorldCollision {
+        let world = Arc::new(nav_planner::world::NavWorld::from_parts(
+            nav_planner::collision::WorldCollision {
                 origin: api::snapshot::WorldTile {
                     x: 0,
                     z: 0,
@@ -2860,8 +2860,8 @@ mod tests {
             "BOT_MEMORY_N",
             "BOT_MEMORY_WORKLOAD",
         ]);
-        let world = Arc::new(nav::world::NavWorld::from_parts(
-            nav::collision::WorldCollision {
+        let world = Arc::new(nav_planner::world::NavWorld::from_parts(
+            nav_planner::collision::WorldCollision {
                 origin: api::snapshot::WorldTile {
                     x: 0,
                     z: 0,
@@ -2933,8 +2933,8 @@ mod tests {
     fn prepare_with_seed_nav_from_play_matches_bind() {
         let _lock = ENV_LOCK.lock().unwrap();
         let _g = EnvGuard::clear(&["RS2B0T", "BOT_MEMORY_OUTPUT"]);
-        let world = Arc::new(nav::world::NavWorld::from_parts(
-            nav::collision::WorldCollision {
+        let world = Arc::new(nav_planner::world::NavWorld::from_parts(
+            nav_planner::collision::WorldCollision {
                 origin: api::snapshot::WorldTile {
                     x: 1,
                     z: 2,

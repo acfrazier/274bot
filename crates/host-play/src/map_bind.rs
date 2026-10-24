@@ -14,8 +14,8 @@ use crate::ServerProfile;
 use api::work::{
     Checkpoint, CooperativeJob, RetainedState, StepContext, StepOutcome, WalkMapDecodePhase,
 };
-use nav::map::formats::{ServicePois, NAVPOIS_HEADER_BYTES};
-use nav::map::identity::Digest;
+use nav_planner::map::formats::{ServicePois, NAVPOIS_HEADER_BYTES};
+use nav_planner::map::identity::Digest;
 use std::fs;
 use std::io::Cursor;
 use std::path::Path;
@@ -255,7 +255,7 @@ pub const WALK_MAP_DECODE_INPUT_OVERHEAD: usize = std::mem::size_of::<WalkMapDec
 /// tables; png::Limits allows the input cap plus one raw RGBA row (including its filter byte).
 pub const WALK_MAP_DECODE_SCRATCH_LIMIT: usize = 2 * 1024 * 1024;
 const PNG_DECODER_LIMIT_BYTES: usize =
-    WALK_MAP_DECODE_PNG_LIMIT + nav::map::spatial::TILE_PIXELS as usize * 4 + 1;
+    WALK_MAP_DECODE_PNG_LIMIT + nav_planner::map::spatial::TILE_PIXELS as usize * 4 + 1;
 
 /// Stable, allocation-free failures from the bounded walk-map PNG decoder.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
@@ -365,7 +365,7 @@ impl CooperativeJob for WalkMapDecodeJob {
 }
 
 fn decode_walk_map_png(bytes: &[u8]) -> Result<Vec<u8>, WalkMapDecodeFailure> {
-    use nav::map::spatial::{TILE_PIXELS, TILE_RGBA_BYTES};
+    use nav_planner::map::spatial::{TILE_PIXELS, TILE_RGBA_BYTES};
 
     if bytes.len() < 33 {
         return Err(WalkMapDecodeFailure::Truncated);
@@ -449,7 +449,7 @@ pub fn load_navpois(
 mod tests {
     use super::*;
     use crate::map_cache::{MapCacheRoot, MapProfileDescriptor};
-    use nav::map::identity::Digest;
+    use nav_planner::map::identity::Digest;
 
     #[test]
     fn artifact_policies_are_stable() {

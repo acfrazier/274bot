@@ -1561,7 +1561,7 @@ Combat begins — retires them on death, and hands them to the host on any Stop
 ## Nav vs scripts
 
 WalkTo stays the panel **WalkTo** button + traveller. Script walk requests use
-the host's shared `nav::router::find` and the slot pump's
+the host's shared `nav_planner::router::find` and the slot pump's
 `nav_executor::Traveller::follow`; `SlotStatus.walk_{x,z,level}` mirrors the
 armed destination and clears on arrival. Find runs off-pump; follow steps on
 the slot pump under the existing admission fence. Typed native walks correlate

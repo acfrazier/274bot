@@ -1,9 +1,9 @@
 use api::snapshot::WorldTile;
 use client::dash3d::CollisionFlag;
-use nav::collision::WorldCollision;
-use nav::tile::Tile;
-use nav::transport::TransportGraph;
-use nav::world::NavWorld;
+use nav_planner::collision::WorldCollision;
+use nav_planner::tile::Tile;
+use nav_planner::transport::TransportGraph;
+use nav_planner::world::NavWorld;
 
 use std::sync::Arc;
 
@@ -221,7 +221,7 @@ fn snap_wall_click_lands_on_nearest_walkable() {
     // tie over (3,0) by iteration order.
     let mut flags = vec![0u32; 5];
     flags[2] = CollisionFlag::WALK_BLOCK_FLAGS as u32;
-    let (walk, blocked) = nav::collision::pack_walk(&flags);
+    let (walk, blocked) = nav_planner::collision::pack_walk(&flags);
     let w = NavWorld::from_parts(
         WorldCollision {
             origin: WorldTile {
@@ -262,7 +262,7 @@ fn snap_returns_none_when_walkable_is_outside_radius_16() {
     // instead of scanning the whole plane.
     let mut flags = vec![CollisionFlag::WALK_BLOCK_FLAGS as u32; 40];
     flags[0] = 0;
-    let (walk, blocked) = nav::collision::pack_walk(&flags);
+    let (walk, blocked) = nav_planner::collision::pack_walk(&flags);
     let w = NavWorld::from_parts(
         WorldCollision {
             origin: WorldTile {
@@ -313,7 +313,7 @@ fn available_levels_lists_planes_with_content() {
     // A 4-plane world with a stamped level-1 plane lists it too.
     let mut flags = vec![0u32; 4 * 9];
     flags[9 + 4] = CollisionFlag::WALK_SCENERY as u32;
-    let (walk, blocked) = nav::collision::pack_walk(&flags);
+    let (walk, blocked) = nav_planner::collision::pack_walk(&flags);
     let w2 = NavWorld::from_parts(
         WorldCollision {
             origin: WorldTile {
@@ -686,7 +686,7 @@ fn bake_world(w: usize, h: usize, extras: &[(i32, i32, u32)]) -> NavWorld {
     for &(x, z, f) in extras {
         flags[z as usize * w + x as usize] |= f;
     }
-    let (walk, blocked) = nav::collision::pack_walk(&flags);
+    let (walk, blocked) = nav_planner::collision::pack_walk(&flags);
     NavWorld::from_parts(
         WorldCollision {
             origin: WorldTile {
@@ -788,7 +788,7 @@ fn sidecar_file_roundtrips_and_rejects_garbage() {
         0,
         CollisionFlag::WALK_SCENERY as u32,
     ];
-    let bytes = nav::pack::encode_flags_sidecar(
+    let bytes = nav_planner::pack::encode_flags_sidecar(
         WorldTile {
             x: 3200,
             z: 3200,
@@ -896,9 +896,9 @@ fn flags_sidecar_requires_exact_identity_and_drops_on_toggle_off() {
         level: 0,
     };
     let flags = vec![CollisionFlag::W_N as u32, 0, 0, 0];
-    let bytes = nav::pack::encode_flags_sidecar(origin, 1, 1, &flags);
+    let bytes = nav_planner::pack::encode_flags_sidecar(origin, 1, 1, &flags);
     std::fs::write(&path, &bytes).unwrap();
-    let digest = nav::manifest::hash_bytes(&bytes);
+    let digest = nav_planner::manifest::hash_bytes(&bytes);
 
     reset_flags_content_hash_count();
     set_navflags_binding(path.clone(), None, false);
@@ -947,10 +947,10 @@ fn bundled_flags_decode_without_content_hash_and_reuse_sidecar() {
         level: 0,
     };
     let flags = vec![CollisionFlag::W_N as u32, 0, 0, 0];
-    let bytes = nav::pack::encode_flags_sidecar(origin, 1, 1, &flags);
+    let bytes = nav_planner::pack::encode_flags_sidecar(origin, 1, 1, &flags);
     std::fs::write(&path, &bytes).unwrap();
     // Digest is still bound (identity names flags) but must not be rehashed.
-    let digest = nav::manifest::hash_bytes(&bytes);
+    let digest = nav_planner::manifest::hash_bytes(&bytes);
 
     reset_flags_content_hash_count();
     set_navflags_binding(path.clone(), Some(digest.clone()), true);
@@ -1025,11 +1025,11 @@ fn unbound_reach_is_unavailable_and_does_not_bake() {
         false,
     );
     let world = bake_world(3, 3, &[]);
-    nav::paint::reset_bake_reach_calls();
+    nav_planner::paint::reset_bake_reach_calls();
     assert!(map_reach_bitset(&world).is_none());
     set_pack(None);
     assert!(map_reach_bitset(&world).is_none());
-    assert_eq!(nav::paint::bake_reach_calls(), 0);
+    assert_eq!(nav_planner::paint::bake_reach_calls(), 0);
 }
 
 #[test]
@@ -1075,15 +1075,15 @@ fn external_reach_floods_once_and_reuses_the_arc() {
         false,
     );
     let world = bake_world(3, 3, &[]);
-    nav::paint::reset_bake_reach_calls();
+    nav_planner::paint::reset_bake_reach_calls();
     let first = reach_bitset(&world).expect("external bake");
     let second = reach_bitset(&world).expect("cached");
     assert!(Arc::ptr_eq(&first, &second));
-    assert_eq!(nav::paint::bake_reach_calls(), 1);
+    assert_eq!(nav_planner::paint::bake_reach_calls(), 1);
     set_pack(None);
     let _ = reach_bitset(&world);
     assert_eq!(
-        nav::paint::bake_reach_calls(),
+        nav_planner::paint::bake_reach_calls(),
         2,
         "set_pack drops the computed cache"
     );
@@ -1158,9 +1158,9 @@ fn flags_load_once_on_ensure_and_drop_releases() {
         level: 0,
     };
     let flags = vec![CollisionFlag::W_N as u32, 0, 0, 0];
-    let bytes = nav::pack::encode_flags_sidecar(origin, 1, 1, &flags);
+    let bytes = nav_planner::pack::encode_flags_sidecar(origin, 1, 1, &flags);
     std::fs::write(&path, &bytes).unwrap();
-    let digest = nav::manifest::hash_bytes(&bytes);
+    let digest = nav_planner::manifest::hash_bytes(&bytes);
 
     drop_flags_sidecar();
     reset_flags_load_count();
@@ -1265,9 +1265,9 @@ fn wt(x: i32, z: i32) -> WorldTile {
     WorldTile { x, z, level: 0 }
 }
 
-fn test_route() -> nav::router::Route {
-    use nav::router::{Leg, Route};
-    use nav::transport::{TransportEdge, TransportKind};
+fn test_route() -> nav_planner::router::Route {
+    use nav_planner::router::{Leg, Route};
+    use nav_planner::transport::{TransportEdge, TransportKind};
     Route {
         legs: vec![
             Leg::Walk {
@@ -1315,7 +1315,7 @@ fn compact_route_view_uses_the_same_clipped_leg_cache() {
     reset_route_cache();
     let route = test_route();
     let world = open_world_at((0, 0), 6, 1);
-    let view = nav::producer::route_view(&world, &route).expect("route view");
+    let view = nav_planner::producer::route_view(&world, &route).expect("route view");
     let tiles = cached_remaining_path_view(view, WalkRouteSource::Script, 2, Some(wt(2, 0)));
     assert_eq!(
         tiles.iter().map(|(tile, _)| *tile).collect::<Vec<_>>(),

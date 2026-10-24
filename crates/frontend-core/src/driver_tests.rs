@@ -15,20 +15,41 @@ use vault::{Profile, ProfileSettings, Vault};
 use super::*;
 use crate::command::{CommandFailure, Completion, DrawSwitch, Pending, SkipReason, Subject};
 use crate::launch::InstancePermit;
+use crate::test_support::IsolatedStores;
 
-fn scratch(test: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("274bot-t33-driver-{}-{test}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("scratch dir");
-    dir
+/// A test's own scratch directory, holding an isolated bot home beside it
+/// for as long as the test keeps it. Every path a driver resolves under
+/// `~/.274bot` (session logs, the card library and its transpile cache, the
+/// saved card settings, the catalogue pointer) lands under this directory,
+/// never under the operator's home; the whole tree goes on drop.
+struct Scratch {
+    dir: PathBuf,
+    _iso: IsolatedStores,
 }
 
-/// A driver over the state root `state`. Opening restores the Quest Paths
+impl std::ops::Deref for Scratch {
+    type Target = Path;
+
+    fn deref(&self) -> &Path {
+        &self.dir
+    }
+}
+
+fn scratch(test: &str) -> Scratch {
+    let iso = IsolatedStores::enter(&format!("driver-{test}"));
+    let dir = iso.dir().join("scratch");
+    std::fs::create_dir_all(&dir).expect("scratch dir");
+    Scratch { dir, _iso: iso }
+}
+
+/// A driver over the state root `dir/state`. Opening restores the Quest Paths
 /// source into the process-wide registry, so it waits for a test that
-/// owns that source.
-fn open_driver(state: &Path) -> HeadlessDriver {
+/// owns that source. The guarded [`Scratch`] it takes keeps every
+/// home-relative write inside the test: no caller can pass a bare path and
+/// let the guard drop first.
+fn open_driver(dir: &Scratch) -> HeadlessDriver {
     let _source = crate::quester_paths::registry_source_test_lock();
-    HeadlessDriver::open(state, InstancePermit::skip())
+    HeadlessDriver::open(&dir.join("state"), InstancePermit::skip())
 }
 
 /// A real vault file at `dir/vault` holding `names`.
@@ -61,10 +82,11 @@ fn play() -> PlayConfig {
 }
 
 /// A driver composed like a front end (local state under `dir/state`),
-/// unlocked through `UnlockVault` over a vault holding `names`.
-fn driver_in(dir: &Path, names: &[&str]) -> HeadlessDriver {
+/// unlocked through `UnlockVault` over a vault holding `names`. The guarded
+/// [`Scratch`] it takes keeps every home-relative write inside the test.
+fn driver_in(dir: &Scratch, names: &[&str]) -> HeadlessDriver {
     let vault = vault_with(dir, names);
-    let mut d = open_driver(&dir.join("state"));
+    let mut d = open_driver(dir);
     d.session_mut().set_spawn_workers(false);
     let unlock = d
         .unlock(vault, PASSPHRASE, &play())
@@ -80,8 +102,35 @@ fn driver_in(dir: &Path, names: &[&str]) -> HeadlessDriver {
     d
 }
 
-fn driver(test: &str, names: &[&str]) -> HeadlessDriver {
-    driver_in(&scratch(test), names)
+/// A driver that owns its test's scratch and isolated home for the whole
+/// test: the guard drops (and removes the home) when the test does. It
+/// derefs to [`HeadlessDriver`], so a test drives it as before.
+struct TestDriver {
+    driver: HeadlessDriver,
+    _scratch: Scratch,
+}
+
+impl std::ops::Deref for TestDriver {
+    type Target = HeadlessDriver;
+
+    fn deref(&self) -> &HeadlessDriver {
+        &self.driver
+    }
+}
+
+impl std::ops::DerefMut for TestDriver {
+    fn deref_mut(&mut self) -> &mut HeadlessDriver {
+        &mut self.driver
+    }
+}
+
+fn driver(test: &str, names: &[&str]) -> TestDriver {
+    let scratch = scratch(test);
+    let driver = driver_in(&scratch, names);
+    TestDriver {
+        driver,
+        _scratch: scratch,
+    }
 }
 
 type Terminal = Settlement<Completion, CommandFailure>;
@@ -361,7 +410,7 @@ fn preferences_file_now(d: &HeadlessDriver) -> Option<serde_json::Value> {
 fn unlock_with_a_wrong_passphrase_is_refused_and_keeps_the_vault() {
     let dir = scratch("unlock-wrong");
     let vault = vault_with(&dir, &["alice"]);
-    let mut d = open_driver(&dir.join("state"));
+    let mut d = open_driver(&dir);
     let wrong = d
         .unlock(vault.clone(), "not-the-passphrase", &play())
         .expect("admitted");
@@ -393,7 +442,7 @@ fn unlock_with_a_wrong_passphrase_is_refused_and_keeps_the_vault() {
 fn create_vault_makes_a_new_vault_file_that_a_new_session_unlocks() {
     let dir = scratch("create-vault");
     let vault = dir.join("new-vault");
-    let mut d = open_driver(&dir.join("state"));
+    let mut d = open_driver(&dir);
     let create = d
         .unlock(vault.clone(), PASSPHRASE, &play())
         .expect("admitted");
@@ -405,7 +454,7 @@ fn create_vault_makes_a_new_vault_file_that_a_new_session_unlocks() {
     assert!(vault.is_file(), "CreateVault wrote the vault file");
     drop(d);
 
-    let mut again = open_driver(&dir.join("state"));
+    let mut again = open_driver(&dir);
     let unlock = again.unlock(vault, PASSPHRASE, &play()).expect("admitted");
     assert_eq!(
         again.report(unlock.request()).map(CommandReport::command),
@@ -418,7 +467,7 @@ fn create_vault_makes_a_new_vault_file_that_a_new_session_unlocks() {
 fn reset_vault_deletes_the_locked_file_and_refuses_while_unlocked() {
     let dir = scratch("reset-vault");
     let vault = vault_with(&dir, &["alice"]);
-    let mut d = open_driver(&dir.join("state"));
+    let mut d = open_driver(&dir);
     d.session_mut().stage_vault_reset(vault.clone());
     let reset = d
         .submit(OperatorCommand::ResetVault, Targets::Application)
@@ -444,7 +493,7 @@ fn reset_vault_deletes_the_locked_file_and_refuses_while_unlocked() {
 #[test]
 fn a_vault_row_with_nothing_staged_is_refused_not_done() {
     let dir = scratch("vault-unstaged");
-    let mut d = open_driver(&dir.join("state"));
+    let mut d = open_driver(&dir);
     let unlock = d
         .submit(OperatorCommand::UnlockVault, Targets::Application)
         .expect("admitted");
@@ -499,7 +548,7 @@ fn preference_rows_write_the_file_and_a_new_session_reads_them_back() {
     assert_eq!(file["session_log_file"], serde_json::Value::Bool(true));
     assert_eq!(file["map_bake"], serde_json::Value::String("always".into()));
     // A new session over the same state root.
-    let again = open_driver(&dir.join("state"));
+    let again = open_driver(&dir);
     assert_eq!(
         again
             .session()
@@ -750,14 +799,17 @@ fn walk_to_without_a_confirmed_destination_is_refused_and_arms_nothing() {
     );
     // A staged walk over a map with no picked destination: the map
     // refuses it the same way, and no route is armed.
-    let context =
-        crate::walk_map::WalkMapContext::browsing(nav::map::identity::Digest([0; 32]), None, 1);
+    let context = crate::walk_map::WalkMapContext::browsing(
+        nav_planner::map::identity::Digest([0; 32]),
+        None,
+        1,
+    );
     let mut map = crate::walk_map::WalkMap::new();
     d.models_mut().map_mut().stage_walk_to(
         &mut map,
         context,
         None,
-        nav::router::FindOptions::default(),
+        nav_planner::router::FindOptions::default(),
     );
     let walk = d
         .submit(OperatorCommand::WalkTo, Targets::Profile("alice"))
@@ -1248,7 +1300,7 @@ fn the_order_follows_create_rename_delete_and_survives_a_restart() {
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
     drop(d);
-    let mut again = open_driver(&dir.join("state"));
+    let mut again = open_driver(&dir);
     again.session_mut().set_spawn_workers(false);
     again
         .unlock(dir.join("vault"), PASSPHRASE, &play())
@@ -1691,7 +1743,7 @@ fn a_600_profile_order_is_durable_and_restores_after_a_restart() {
     assert!(per_profile < 32.0, "{per_profile} bytes per profile");
     d.session_mut().flush_writes();
     drop(d);
-    let mut again = open_driver(&dir.join("state"));
+    let mut again = open_driver(&dir);
     again.session_mut().set_spawn_workers(false);
     again
         .unlock(dir.join("vault"), PASSPHRASE, &play())
@@ -1750,7 +1802,7 @@ fn a_held_or_failed_rename_keeps_the_saved_place() {
     assert_eq!(stored_order(&d), saved);
     d.session_mut().flush_writes();
     drop(d);
-    let mut again = open_driver(&dir.join("state"));
+    let mut again = open_driver(&dir);
     again.session_mut().set_spawn_workers(false);
     again
         .unlock(dir.join("vault"), PASSPHRASE, &play())
@@ -2139,7 +2191,7 @@ const SETTINGS_CARD: &str = "export const SETTINGS = { target: { type: 'string',
 /// Load alice, bob and carol, give all a loaded JS card (its copy is a
 /// profile write, so it lands without a game data set), focus alice and
 /// plan a copy of her settings to bob and carol (marked).
-fn copy_plan(test: &str) -> HeadlessDriver {
+fn copy_plan(test: &str) -> TestDriver {
     let dir = scratch(test);
     let mut d = driver_in(&dir, &["alice", "bob", "carol"]);
     let path = dir.join("thiever.ts");
@@ -2163,7 +2215,10 @@ fn copy_plan(test: &str) -> HeadlessDriver {
         .expect("unmark");
     assert_eq!(plan(&mut d, crate::FleetAction::CopySettings), Some(done()));
     assert_eq!(plan_names(&d), ["bob", "carol"]);
-    d
+    TestDriver {
+        driver: d,
+        _scratch: dir,
+    }
 }
 
 /// Review F3-1: a profile deleted and recreated under the same name
@@ -2269,7 +2324,7 @@ fn a_copy_skips_a_target_whose_save_started_after_the_plan() {
 /// Load alice, give her a loaded JS card through a plan, then submit her
 /// own single Start with no frame after it: the card's preparation is
 /// pending (an untallied preparation). Returns the Start command.
-fn preparing_start(test: &str) -> (HeadlessDriver, RequestId) {
+fn preparing_start(test: &str) -> (TestDriver, RequestId) {
     let dir = scratch(test);
     let mut d = driver_in(&dir, &["alice", "bob"]);
     let path = dir.join("looping.ts");
@@ -2294,12 +2349,18 @@ fn preparing_start(test: &str) -> (HeadlessDriver, RequestId) {
         "the single Start waits on its card's preparation"
     );
     assert_eq!(terminal(&d, start, "alice"), None, "Pending");
-    (d, start)
+    (
+        TestDriver {
+            driver: d,
+            _scratch: dir,
+        },
+        start,
+    )
 }
 
 /// `count` bots on Gatherer, bot000 focused (the copy's source), every
 /// other bot marked and a planned native Copy settings waiting.
-fn copy_to_many(test: &str, count: usize) -> HeadlessDriver {
+fn copy_to_many(test: &str, count: usize) -> TestDriver {
     let names: Vec<String> = (0..count).map(|index| format!("bot{index:03}")).collect();
     let refs: Vec<&str> = names.iter().map(String::as_str).collect();
     let mut d = driver(test, &refs);
@@ -2595,7 +2656,7 @@ fn a_deleted_profiles_member_is_pruned_and_its_uid_never_reused() {
     assert_eq!(stored_uids_settled(&mut d).len(), 3);
     assert_eq!(stored_order(&d), ["alice", "bob", "dave"]);
     drop(d);
-    let mut again = open_driver(&dir.join("state"));
+    let mut again = open_driver(&dir);
     again.session_mut().set_spawn_workers(false);
     again
         .unlock(dir.join("vault"), PASSPHRASE, &play())
@@ -2674,7 +2735,7 @@ fn a_pending_or_failed_deletion_keeps_the_saved_place() {
         "the stored order never changed"
     );
     drop(d);
-    let mut again = open_driver(&dir.join("state"));
+    let mut again = open_driver(&dir);
     again.session_mut().set_spawn_workers(false);
     again
         .unlock(dir.join("vault"), PASSPHRASE, &play())
@@ -2748,7 +2809,7 @@ fn a_failed_large_marked_move_leaves_the_stored_order_exactly_as_before() {
     );
     d.session_mut().flush_writes();
     drop(d);
-    let mut again = open_driver(&dir.join("state"));
+    let mut again = open_driver(&dir);
     again.session_mut().set_spawn_workers(false);
     again
         .unlock(dir.join("vault"), PASSPHRASE, &play())
@@ -2806,7 +2867,7 @@ fn run_helper(d: &mut HeadlessDriver, name: &str, generation: u64) {
     d.poll();
 }
 
-fn paint_driver(test: &str, names: &[&str]) -> HeadlessDriver {
+fn paint_driver(test: &str, names: &[&str]) -> TestDriver {
     let mut d = driver(test, names);
     d.submit(OperatorCommand::Load, Targets::Everyone)
         .expect("load");
@@ -3428,15 +3489,26 @@ fn log_in_on(d: &mut HeadlessDriver, name: &str, world: u16) {
 }
 
 /// A driver whose server lists public worlds 1-3, with `names` loaded and
-/// in game on world 1.
-fn world_driver(test: &str, names: &[&str]) -> HeadlessDriver {
-    let mut d = driver(test, names);
+/// in game on world 1, over a scratch the caller already holds.
+fn world_driver_in(dir: &Scratch, names: &[&str]) -> HeadlessDriver {
+    let mut d = driver_in(dir, names);
     d.session_mut().set_public_worlds_for_test(&[1, 2, 3]);
     load(&mut d, names);
     for name in names {
         log_in_on(&mut d, name, 1);
     }
     d
+}
+
+/// A driver whose server lists public worlds 1-3, with `names` loaded and
+/// in game on world 1, owning its scratch home for the whole test.
+fn world_driver(test: &str, names: &[&str]) -> TestDriver {
+    let scratch = scratch(test);
+    let driver = world_driver_in(&scratch, names);
+    TestDriver {
+        driver,
+        _scratch: scratch,
+    }
 }
 
 /// Plan Switch world (for `target` alone when given): the plan command's
@@ -3775,11 +3847,8 @@ fn a_mixed_switch_admits_ready_bots_and_names_each_refusal_once() {
 /// logs the bot out.
 #[test]
 fn a_failed_world_save_never_logs_the_bot_out() {
-    let dir = std::env::temp_dir().join(format!(
-        "274bot-t33-driver-{}-f4-failed-save",
-        std::process::id()
-    ));
-    let mut d = world_driver("f4-failed-save", &["alice"]);
+    let dir = scratch("f4-failed-save");
+    let mut d = world_driver_in(&dir, &["alice"]);
     let session = arm_of(&d, "alice").session_key();
     assert_eq!(plan_switch(&mut d, 3, Some("alice")).0, Some(done()));
     // A directory where the vault file was: the next write cannot publish.

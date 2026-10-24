@@ -928,7 +928,7 @@ mod tests {
                 candidate_goals: None,
                 loc_id: None,
                 radius: 1,
-                arrival: nav::contract::ArrivalKind::Reach,
+                arrival: nav_planner::contract::ArrivalKind::Reach,
                 options: crate::native::WalkOptions::default(),
                 required_after: dummy_stamp(0),
                 evidence: None,

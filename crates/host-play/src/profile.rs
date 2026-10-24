@@ -10,11 +10,11 @@ use client::client::ClientConfig;
 use client::io::{ClientRevision, Packet};
 use client::session::{ClientSessionConfig, ClientSessionProfile};
 use client::Transport;
-use nav::canlight;
-use nav::manifest::hash_bytes_with_progress;
-pub use nav::manifest::{nav_manifest_path, CacheManifest, NavManifest};
-use nav::pack::sha256_hex;
-use nav::world::NavWorld;
+use nav_planner::canlight;
+use nav_planner::manifest::hash_bytes_with_progress;
+pub use nav_planner::manifest::{nav_manifest_path, CacheManifest, NavManifest};
+use nav_planner::pack::sha256_hex;
+use nav_planner::world::NavWorld;
 
 use crate::cache::CacheAvailability;
 use crate::nav_identity::{

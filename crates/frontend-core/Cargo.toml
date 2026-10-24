@@ -10,7 +10,7 @@ publish = false
 api = { path = "../api" }
 host = { path = "../host" }
 host-play = { path = "../host-play" }
-nav = { path = "../nav" }
+nav-planner = { path = "../nav-planner" }
 script = { path = "../script" }
 # The live harness's scenario runner (ruling D2(a)); only with `live-harness`.
 scenario = { path = "../scenario", optional = true }

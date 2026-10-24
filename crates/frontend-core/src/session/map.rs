@@ -1,11 +1,11 @@
 use std::sync::Arc;
 
 use api::identity::{RequestId, Settlement};
-use nav::map::identity::Digest;
-use nav::router::FindOptions;
-use nav::tile::Tile;
-use nav::world::NavWorld;
-use nav::WorldState;
+use nav_planner::map::identity::Digest;
+use nav_planner::router::FindOptions;
+use nav_planner::tile::Tile;
+use nav_planner::world::NavWorld;
+use nav_planner::WorldState;
 
 use crate::command::{
     CommandFailure, Completion, FailureKind, OperatorCommand, Rejection, SkipReason, Subject,
@@ -90,7 +90,7 @@ impl<Io> OperatorSession<Io> {
 
     /// Share the focused manual walk route with a renderer without cloning
     /// its tile or leg buffers.
-    pub fn manual_walk_route(&self, name: &str) -> Option<Arc<nav::router::Route>> {
+    pub fn manual_walk_route(&self, name: &str) -> Option<Arc<nav_planner::router::Route>> {
         let arm = self.walk_arms().lock().unwrap().get(name).cloned()?;
         let route = arm.lock().unwrap().route.clone();
         route
@@ -1014,7 +1014,7 @@ impl<Io> OperatorSession<Io> {
         let origin = name.and_then(|name| self.walk_origin(name));
         let state = self.walk_state(name);
         let map_members = state.map_members;
-        let bank = name.map_or_else(nav::bank_fetch::BankRows::default, |name| {
+        let bank = name.map_or_else(nav_planner::bank_fetch::BankRows::default, |name| {
             self.bank_rows(name)
         });
         let input = self.walk_risk_input(name);

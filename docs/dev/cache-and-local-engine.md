@@ -62,7 +62,7 @@ Nav pack: an ordinary application build bakes and stages the selected
 canonical inputs fail the build (`BOT_NAV_BUILD=skip` opts out;
 `BOT_NAV_REVISION=274` builds 274). Runtime profile revision and
 build-time nav revision should match the world you play. `nav-pack` stays
-for custom bakes: `cargo run -p nav --bin nav-pack` over the content maps
+for custom bakes: `cargo run -p nav-planner --bin nav-pack` over the content maps
 tree (output `$NAV_PACK` or `~/.274bot/274bot.navpack`, magic `274V`,
 version byte **17**; v16 and older are `BadVersion` and must be rebaked).
 Details: [docs/api/nav.md](../api/nav.md).

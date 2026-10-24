@@ -3035,7 +3035,7 @@ impl Combat {
             candidate_goals: None,
             loc_id: None,
             radius: 1,
-            arrival: nav::contract::ArrivalKind::Reach,
+            arrival: nav_planner::contract::ArrivalKind::Reach,
             options: Default::default(),
             required_after: cx.evidence(),
             evidence: None,

@@ -11,7 +11,7 @@ use client::client::{Client, ClientConfig};
 use client::config::{Cache, IfType, IfTypeMut};
 use client::io::JagFile;
 use host::login_queue::LoginQueue;
-use nav::world::NavWorld;
+use nav_planner::world::NavWorld;
 use parking_lot::Mutex as QueueMutex;
 use rand_core::{OsRng, RngCore};
 use vault::{Profile, Vault, VaultError};

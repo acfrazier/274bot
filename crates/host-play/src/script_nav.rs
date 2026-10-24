@@ -16,26 +16,26 @@ use api::work::{
     Checkpoint, CooperativeJob, InputRevision, RetainedState, StepContext, StepOutcome,
     SubmissionRefusal, WorkAdmission, WorkTicket,
 };
-use nav::arrival::ArrivalKind;
+use nav_executor::Traveller;
+use nav_planner::arrival::ArrivalKind;
 #[cfg(test)]
-use nav::bank_fetch::{plan_bank_fetch, planning_rows, BankFetchError};
-use nav::bank_fetch::{
+use nav_planner::bank_fetch::{plan_bank_fetch, planning_rows, BankFetchError};
+use nav_planner::bank_fetch::{
     BankFetchCursor, BankFetchPlan, BankRows, BankStep, FetchableEdgeCursor, FetchableStateCursor,
     PlanningRowsCursor,
 };
-use nav::contract::{NavLease, RoutePlanLease};
-use nav::producer::{lease as nav_lease, OwnerResultLedger, OwnerResultReservation};
+use nav_planner::contract::{NavLease, RoutePlanLease};
+use nav_planner::producer::{lease as nav_lease, OwnerResultLedger, OwnerResultReservation};
 #[cfg(test)]
-use nav::router::find_missing_item_reqs_with_avoid;
-use nav::router::{
+use nav_planner::router::find_missing_item_reqs_with_avoid;
+use nav_planner::router::{
     AvoidRect, BlockerDiagnosis, CompactFallbackRoute, CompactRoute, CursorStep, FindOptions,
     MissingReqView, MissingRequirements, Route, SearchCursor, SearchOutcome, SearchPreflight,
     SearchRequest, SearchRequestShape, NODE_BUDGET,
 };
-use nav::world::NavWorld;
-use nav::zones::{ZoneExempt, ZoneFilterOwned, ZoneKey};
-use nav::WorldState;
-use nav_executor::Traveller;
+use nav_planner::world::NavWorld;
+use nav_planner::zones::{ZoneExempt, ZoneFilterOwned, ZoneKey};
+use nav_planner::WorldState;
 use script::work_admission::{cancellation::WorkCancellation, WorkService};
 
 use crate::walk_plan::{PendingBankFetch, RouteOutcome, RoutePath};
@@ -203,7 +203,7 @@ impl RouteWorkJob {
 impl CooperativeJob for RouteWorkJob {
     type Output = RouteStageResult;
     type Error = RouteJobError;
-    type Phase = nav::contract::RoutePhase;
+    type Phase = nav_planner::contract::RoutePhase;
 
     fn request_thread(&self) -> Option<api::work::RequestThread<'_>> {
         self.job
@@ -504,12 +504,10 @@ impl RouteSubmission {
         result_bytes = result_bytes.max(preflights.unresolved.reservation().result_bytes);
         result_bytes = result_bytes.max(preflights.entrance.reservation().result_bytes);
         result_bytes = result_bytes
-            .checked_add(
-                state
-                    .quest_evidence
-                    .as_ref()
-                    .map_or(0, nav::quest_gates::QuestEvidence::owned_provider_bytes),
-            )
+            .checked_add(state.quest_evidence.as_ref().map_or(
+                0,
+                nav_planner::quest_gates::QuestEvidence::owned_provider_bytes,
+            ))
             .ok_or(RouteJobError::Budget)?;
 
         let mut peak = input_bytes
@@ -840,7 +838,7 @@ fn arrival_filter_needed(request: &ScriptRouteRequest) -> bool {
 }
 
 fn arrival_collision_flags(
-    collision: &nav::collision::WorldCollision,
+    collision: &nav_planner::collision::WorldCollision,
     tile: WorldTile,
 ) -> Option<i32> {
     crate::walk_permissions::packed_arrival_flags(collision, tile)
@@ -901,7 +899,7 @@ impl api::work::WorkFamilySpec for RouteWorkSpec {
     type Input = RouteSubmission;
     type Output = RouteStageResult;
     type Error = RouteJobError;
-    type Phase = nav::contract::RoutePhase;
+    type Phase = nav_planner::contract::RoutePhase;
 
     fn revision(input: &Self::Input) -> InputRevision {
         input.revision
@@ -2288,7 +2286,7 @@ impl RouteJob {
 impl CooperativeJob for RouteJob {
     type Output = RouteJobOutput;
     type Error = RouteJobError;
-    type Phase = nav::contract::RoutePhase;
+    type Phase = nav_planner::contract::RoutePhase;
 
     fn step(
         &mut self,
@@ -2802,7 +2800,7 @@ pub(crate) struct RouteJobOutput {
     basis_avoid: Arc<[AvoidRect]>,
     opts: FindOptions,
     compat_v1: bool,
-    quest_evidence: Option<nav::quest_gates::QuestEvidence>,
+    quest_evidence: Option<nav_planner::quest_gates::QuestEvidence>,
     outcome: RouteJobOutcome,
     assessment: Option<Arc<script::combat::risk::RouteAssessment>>,
     refusal: Option<script::native::WalkRefusal>,
@@ -2872,13 +2870,13 @@ async fn assess_route_outcome_cooperative(
     if admission.escape.is_some_and(crate::admission::escape_live) {
         return Ok((RouteJobOutcome::NoPath, None, false));
     }
-    let view =
-        nav::producer::compact_route_view(&lease, route).map_err(|_| RouteJobError::ResultShape)?;
+    let view = nav_planner::producer::compact_route_view(&lease, route)
+        .map_err(|_| RouteJobError::ResultShape)?;
     let mut yield_unit = crate::admission::route_yield_unit;
     let assessment =
         crate::admission::assess_view_cooperative(view, &world, &admission, &mut yield_unit).await;
-    let view =
-        nav::producer::compact_route_view(&lease, route).map_err(|_| RouteJobError::ResultShape)?;
+    let view = nav_planner::producer::compact_route_view(&lease, route)
+        .map_err(|_| RouteJobError::ResultShape)?;
     let permitted = crate::admission::permits_view_cooperative(
         view,
         &world,
@@ -2894,64 +2892,64 @@ enum RouteReservation {
     NotNeeded,
     Full,
     Failed(String),
-    Refused(nav::producer::OwnerResultRefusal),
+    Refused(nav_planner::producer::OwnerResultRefusal),
     Reserved(Option<OwnerResultReservation>),
 }
 
 fn route_output_retained_bytes(
     output: &RouteJobOutput,
-) -> Result<Option<usize>, nav::producer::OwnerResultRefusal> {
+) -> Result<Option<usize>, nav_planner::producer::OwnerResultRefusal> {
     if !matches!(&output.kind, RouteDemandKind::Walk { .. }) {
         return Ok(None);
     }
     let custody_bytes = OwnerResultLedger::owner_result_bytes::<RoutePlanLease>(0)
-        .ok_or(nav::producer::OwnerResultRefusal::SizeOverflow)?;
+        .ok_or(nav_planner::producer::OwnerResultRefusal::SizeOverflow)?;
     let basis_bytes = arc_slice_heap_bytes::<AvoidRect>(output.basis_avoid.len())
-        .ok_or(nav::producer::OwnerResultRefusal::SizeOverflow)?;
+        .ok_or(nav_planner::producer::OwnerResultRefusal::SizeOverflow)?;
     let route_basis_layout = std::alloc::Layout::new::<[std::sync::atomic::AtomicUsize; 2]>()
         .extend(std::alloc::Layout::new::<crate::admission::RouteBasis>())
-        .map_err(|_| nav::producer::OwnerResultRefusal::SizeOverflow)?
+        .map_err(|_| nav_planner::producer::OwnerResultRefusal::SizeOverflow)?
         .0
         .pad_to_align()
         .size();
     let retained = match &output.outcome {
         RouteJobOutcome::NoPath => return Ok(None),
-        RouteJobOutcome::Route(route) => nav::producer::compact_route_storage_bytes(route)
-            .ok_or(nav::producer::OwnerResultRefusal::SizeOverflow)?
+        RouteJobOutcome::Route(route) => nav_planner::producer::compact_route_storage_bytes(route)
+            .ok_or(nav_planner::producer::OwnerResultRefusal::SizeOverflow)?
             .checked_add(std::mem::size_of::<RoutePath>())
             .and_then(|bytes| bytes.checked_add(custody_bytes))
             .and_then(|bytes| bytes.checked_add(basis_bytes))
             .and_then(|bytes| bytes.checked_add(route_basis_layout))
-            .ok_or(nav::producer::OwnerResultRefusal::SizeOverflow)?,
+            .ok_or(nav_planner::producer::OwnerResultRefusal::SizeOverflow)?,
         RouteJobOutcome::Bank {
             steps,
             route,
             final_route,
         } => {
             let current = match route {
-                Some(route) => nav::producer::compact_route_storage_bytes(route)
-                    .ok_or(nav::producer::OwnerResultRefusal::SizeOverflow)?,
+                Some(route) => nav_planner::producer::compact_route_storage_bytes(route)
+                    .ok_or(nav_planner::producer::OwnerResultRefusal::SizeOverflow)?,
                 None => 0,
             };
-            let final_route = nav::producer::compact_route_storage_bytes(final_route)
-                .ok_or(nav::producer::OwnerResultRefusal::SizeOverflow)?;
+            let final_route = nav_planner::producer::compact_route_storage_bytes(final_route)
+                .ok_or(nav_planner::producer::OwnerResultRefusal::SizeOverflow)?;
             let shared_custody = if route.is_some() {
                 custody_bytes
                     .checked_mul(2)
                     .and_then(|bytes| bytes.checked_sub(OwnerResultReservation::storage_bytes()))
-                    .ok_or(nav::producer::OwnerResultRefusal::SizeOverflow)?
+                    .ok_or(nav_planner::producer::OwnerResultRefusal::SizeOverflow)?
             } else {
                 custody_bytes
             };
             let step_bytes = steps
                 .capacity()
                 .checked_mul(std::mem::size_of::<BankStep>())
-                .ok_or(nav::producer::OwnerResultRefusal::SizeOverflow)?;
+                .ok_or(nav_planner::producer::OwnerResultRefusal::SizeOverflow)?;
             let avoid_bytes = output
                 .bank_avoid_copy
                 .capacity()
                 .checked_mul(std::mem::size_of::<AvoidRect>())
-                .ok_or(nav::producer::OwnerResultRefusal::SizeOverflow)?;
+                .ok_or(nav_planner::producer::OwnerResultRefusal::SizeOverflow)?;
             current
                 .checked_add(final_route)
                 .and_then(|bytes| bytes.checked_add(std::mem::size_of::<RoutePath>()))
@@ -2961,7 +2959,7 @@ fn route_output_retained_bytes(
                 .and_then(|bytes| bytes.checked_add(shared_custody))
                 .and_then(|bytes| bytes.checked_add(basis_bytes))
                 .and_then(|bytes| bytes.checked_add(route_basis_layout))
-                .ok_or(nav::producer::OwnerResultRefusal::SizeOverflow)?
+                .ok_or(nav_planner::producer::OwnerResultRefusal::SizeOverflow)?
         }
     };
     Ok(Some(retained))
@@ -3114,7 +3112,7 @@ fn publish_unsubmitted_route_failure(
 }
 
 fn compact_route_ticks(lease: &NavLease, route: &CompactRoute) -> u32 {
-    nav::producer::compact_route_view(lease, route)
+    nav_planner::producer::compact_route_view(lease, route)
         .ok()
         .and_then(|view| script::combat::risk::RoutePath::new(view).ok())
         .and_then(|path| u32::try_from(path.ticks()).ok())
@@ -3394,17 +3392,17 @@ pub(crate) fn publish_route_owner_refusal(
     generation: u64,
     request_id: u64,
     kind: RouteDemandKind,
-    error: nav::producer::OwnerResultRefusal,
+    error: nav_planner::producer::OwnerResultRefusal,
 ) {
     let refusal = match &error {
-        nav::producer::OwnerResultRefusal::TooLarge { requested, maximum } => {
+        nav_planner::producer::OwnerResultRefusal::TooLarge { requested, maximum } => {
             Some(script::native::WalkRefusal::RouteTooLarge {
                 required_bytes: *requested,
                 maximum_bytes: *maximum,
             })
         }
-        nav::producer::OwnerResultRefusal::Full { .. }
-        | nav::producer::OwnerResultRefusal::SizeOverflow => None,
+        nav_planner::producer::OwnerResultRefusal::Full { .. }
+        | nav_planner::producer::OwnerResultRefusal::SizeOverflow => None,
     };
     let detail = refusal.map_or_else(|| error.to_string(), |refusal| refusal.to_string());
     publish_accepted_route_refusal(navs, name, generation, request_id, kind, &detail, refusal);
@@ -3417,8 +3415,13 @@ fn make_compact_route_path(
     revision: InputRevision,
     reservation: &OwnerResultReservation,
 ) -> (RoutePath, Arc<dyn std::any::Any + Send + Sync>) {
-    let plan =
-        nav::producer::publish_compact_route(lease, identity, revision, route, reservation.clone());
+    let plan = nav_planner::producer::publish_compact_route(
+        lease,
+        identity,
+        revision,
+        route,
+        reservation.clone(),
+    );
     let custody = Arc::new(reservation.clone().hold(plan.clone()));
     let custody_any: Arc<dyn std::any::Any + Send + Sync> = custody;
     (
@@ -3670,7 +3673,7 @@ fn apply_route_output(
 
 fn route_stage_retained_bytes(
     result: &RouteStageResult,
-) -> Result<Option<usize>, nav::producer::OwnerResultRefusal> {
+) -> Result<Option<usize>, nav_planner::producer::OwnerResultRefusal> {
     match result {
         RouteStageResult::Complete(output) => route_output_retained_bytes(output),
         RouteStageResult::Continue(job) => job
@@ -3678,7 +3681,7 @@ fn route_stage_retained_bytes(
             .and_then(|bytes| bytes.checked_add(std::mem::size_of::<RouteDemand>()))
             .and_then(|bytes| bytes.checked_add(OwnerResultReservation::storage_bytes()))
             .map(Some)
-            .ok_or(nav::producer::OwnerResultRefusal::SizeOverflow),
+            .ok_or(nav_planner::producer::OwnerResultRefusal::SizeOverflow),
     }
 }
 
@@ -3766,7 +3769,9 @@ fn harvest_route_terminal(
                 Ok(None) => RouteReservation::NotNeeded,
                 Ok(Some(bytes)) => match ledger.try_reserve_bytes(bytes) {
                     Ok(reservation) => RouteReservation::Reserved(Some(reservation)),
-                    Err(nav::producer::OwnerResultRefusal::Full { .. }) => RouteReservation::Full,
+                    Err(nav_planner::producer::OwnerResultRefusal::Full { .. }) => {
+                        RouteReservation::Full
+                    }
                     Err(error) => RouteReservation::Refused(error),
                 },
             },
@@ -3979,15 +3984,16 @@ impl api::quest_progress::EvidenceProvider for RouteQuestProvider {
 }
 
 fn captured_route_quests(
-    family: nav::quest_gates::QuestFamilyId,
+    family: nav_planner::quest_gates::QuestFamilyId,
     context: Option<&RouteQuestContext>,
     snapshot: &GameSnapshot,
     explicit: Option<Arc<dyn api::quest_progress::EvidenceProvider>>,
     required_after: EvidenceStamp,
-) -> Option<nav::quest_gates::QuestEvidence> {
+) -> Option<nav_planner::quest_gates::QuestEvidence> {
     let prepared = context.and_then(|context| {
         let identity = context.selected.quest_family_identity()?;
-        if nav::quest_gates::QuestFamilyId::new(identity.sha256, identity.schema) != family {
+        if nav_planner::quest_gates::QuestFamilyId::new(identity.sha256, identity.schema) != family
+        {
             return None;
         }
         let quests = context.selected.try_quests()?;
@@ -4011,12 +4017,13 @@ fn captured_route_quests(
             .checked_add(ordinary.retained_status_bytes())?;
         let provider = Arc::new(RouteQuestProvider { explicit, ordinary });
         Some(
-            nav::quest_gates::QuestEvidence::new(provider, family, required_after)
+            nav_planner::quest_gates::QuestEvidence::new(provider, family, required_after)
                 .with_owned_provider_bytes(bytes),
         )
     } else {
-        explicit
-            .map(|provider| nav::quest_gates::QuestEvidence::new(provider, family, required_after))
+        explicit.map(|provider| {
+            nav_planner::quest_gates::QuestEvidence::new(provider, family, required_after)
+        })
     }
 }
 
@@ -4076,7 +4083,7 @@ pub(crate) struct NavBot {
     pub(crate) native_end: Option<(script::native::HostAuthority, script::native::WalkEnd)>,
     pub(crate) native_end_risk: Option<Box<NativeEndRisk>>,
     /// Evidence retained with the published route, not a newer pending retarget.
-    pub(crate) route_quest_evidence: Option<nav::quest_gates::QuestEvidence>,
+    pub(crate) route_quest_evidence: Option<nav_planner::quest_gates::QuestEvidence>,
     /// Dest, radius, FindOptions bits, and the per-walk zone exemptions.
     pub(crate) requested_route: Option<(WorldTile, i32, bool, bool, bool, ZoneExempt)>,
     /// The current route came from a compat tile-destination walk.
@@ -4188,7 +4195,7 @@ pub(crate) struct ScriptWalkArm {
     pub(crate) state: Option<WorldState>,
     /// The account's bank memory rows at arm time
     /// ([`super::slot_bank_memory::planner_rows`]): what a BankBudget
-    /// session is planned over ([`nav::bank_fetch::planning_rows`]).
+    /// session is planned over ([`nav_planner::bank_fetch::planning_rows`]).
     pub(crate) bank: BankRows,
 }
 
@@ -4234,14 +4241,17 @@ pub(super) fn log_walk_arm_bot(build: impl FnOnce() -> String) {
         build()
     );
 }
-fn format_zone_witness(table: &nav::zones::ZoneTable, keys: &[ZoneKey]) -> String {
+fn format_zone_witness(table: &nav_planner::zones::ZoneTable, keys: &[ZoneKey]) -> String {
     keys.iter()
         .map(|&key| format!("{} [{}]", table.label(key), table.name(key)))
         .collect::<Vec<_>>()
         .join(", ")
 }
 
-pub(crate) fn blocked_zone_detail(table: &nav::zones::ZoneTable, keys: &[ZoneKey]) -> String {
+pub(crate) fn blocked_zone_detail(
+    table: &nav_planner::zones::ZoneTable,
+    keys: &[ZoneKey],
+) -> String {
     format!(
         "blocked by danger zones: {}",
         format_zone_witness(table, keys)
@@ -4286,7 +4296,7 @@ pub(crate) fn resolve_route_exclusions(
                         "avoidZones: zone catalog unavailable for {id:?} (legacy grid pack)"
                     ));
                 };
-                if !nav::zones::AVOID_CATALOG_IDS.contains(&id.as_str()) {
+                if !nav_planner::zones::AVOID_CATALOG_IDS.contains(&id.as_str()) {
                     return Err(format!("avoidZones: unknown zone {id:?}"));
                 }
                 let Some(group) = table.resolve(id).and_then(|key| match key {
@@ -5971,7 +5981,7 @@ impl ScriptRouteRequest {
             self.live_geometry.as_ref().map_or(&[][..], |_| targets)
         };
         let direct = match route_blocker_diagnosis(self) {
-            BlockerDiagnosis::SingleTarget => nav::router::find_blocking_zones(
+            BlockerDiagnosis::SingleTarget => nav_planner::router::find_blocking_zones(
                 &self.world.collision,
                 &self.world.graph,
                 self.from,
@@ -5980,7 +5990,7 @@ impl ScriptRouteRequest {
                 state,
                 self.avoid(),
             ),
-            BlockerDiagnosis::FirstGoal => nav::router::find_first_blocking_zones(
+            BlockerDiagnosis::FirstGoal => nav_planner::router::find_first_blocking_zones(
                 &self.world.collision,
                 &self.world.graph,
                 self.from,
@@ -6032,7 +6042,7 @@ impl ScriptRouteRequest {
                 }
                 Err(_) => continue,
             };
-            if let Some(keys) = nav::router::find_blocking_zones(
+            if let Some(keys) = nav_planner::router::find_blocking_zones(
                 &self.world.collision,
                 &self.world.graph,
                 self.from,
@@ -6311,7 +6321,7 @@ impl NavBot {
         route: RoutePath,
         pending: Option<PendingBankFetch>,
         custody: Arc<dyn std::any::Any + Send + Sync>,
-        quest_evidence: Option<nav::quest_gates::QuestEvidence>,
+        quest_evidence: Option<nav_planner::quest_gates::QuestEvidence>,
     ) -> bool {
         let Some(plan) = route.plan() else {
             return false;
@@ -7129,7 +7139,7 @@ mod diagnostic_tests {
             level: 0,
         };
         let world = NavWorld::from_parts(
-            nav::collision::WorldCollision {
+            nav_planner::collision::WorldCollision {
                 origin,
                 width: 209,
                 height: 209,
@@ -7137,7 +7147,7 @@ mod diagnostic_tests {
                 blocked: vec![0; (209usize * 209).div_ceil(64)],
                 flags: None,
             },
-            nav::transport::TransportGraph::default(),
+            nav_planner::transport::TransportGraph::default(),
             Vec::new(),
         );
         let mut request = ScriptRouteRequest {
@@ -7248,7 +7258,7 @@ mod diagnostic_tests {
             level: 0,
         };
         stage_request(Arc::new(NavWorld::from_parts(
-            nav::collision::WorldCollision {
+            nav_planner::collision::WorldCollision {
                 origin,
                 width: 4,
                 height: 4,
@@ -7256,7 +7266,7 @@ mod diagnostic_tests {
                 blocked: vec![0; (4usize * 4 * 4).div_ceil(64)],
                 flags: None,
             },
-            nav::transport::TransportGraph::default(),
+            nav_planner::transport::TransportGraph::default(),
             Vec::new(),
         )))
     }
@@ -7265,7 +7275,7 @@ mod diagnostic_tests {
     fn candidate_search_keeps_reachable_components_without_per_goal_searches() {
         let tile = |x| WorldTile { x, z: 0, level: 0 };
         let world = Arc::new(NavWorld::from_parts(
-            nav::collision::WorldCollision {
+            nav_planner::collision::WorldCollision {
                 origin: tile(0),
                 width: 3,
                 height: 1,
@@ -7273,7 +7283,7 @@ mod diagnostic_tests {
                 blocked: vec![1 << 1],
                 flags: None,
             },
-            nav::transport::TransportGraph::default(),
+            nav_planner::transport::TransportGraph::default(),
             Vec::new(),
         ));
         let mut old = stage_request(Arc::clone(&world));
@@ -7312,7 +7322,7 @@ mod diagnostic_tests {
         let mut blocked = vec![0u64; (1024usize * 4).div_ceil(64)];
         blocked[1022 >> 6] |= 1 << (1022 & 63);
         let world = Arc::new(NavWorld::from_parts(
-            nav::collision::WorldCollision {
+            nav_planner::collision::WorldCollision {
                 origin: tile(0),
                 width: 1024,
                 height: 1,
@@ -7320,7 +7330,7 @@ mod diagnostic_tests {
                 blocked,
                 flags: None,
             },
-            nav::transport::TransportGraph::default(),
+            nav_planner::transport::TransportGraph::default(),
             Vec::new(),
         ));
         let mut request = stage_request(world);
@@ -7351,7 +7361,7 @@ mod diagnostic_tests {
         let preferred = [tile(3086, 3230), tile(3086, 3231)];
         let mut state = WorldState::empty().with_map_members(true);
         state.stats = (0..=20).map(|skill| (skill, 99)).collect();
-        let shared = nav::router::find_first_with_fallback(
+        let shared = nav_planner::router::find_first_with_fallback(
             &world.collision,
             &world.graph,
             bank,
@@ -7365,9 +7375,9 @@ mod diagnostic_tests {
             "safe fallback closes before own-zone completion"
         );
         assert!(
-            matches!(shared.fallback(), Some(nav::router::FallbackRoute::Routed(route)) if route.dest == bank)
+            matches!(shared.fallback(), Some(nav_planner::router::FallbackRoute::Routed(route)) if route.dest == bank)
         );
-        let old = nav::router::find_first_with(
+        let old = nav_planner::router::find_first_with(
             &world.collision,
             &world.graph,
             bank,
@@ -7416,7 +7426,7 @@ mod diagnostic_tests {
             level: 0,
         };
         let preferred = WorldTile { x: 1152, ..from };
-        let collision = nav::collision::WorldCollision {
+        let collision = nav_planner::collision::WorldCollision {
             origin: WorldTile {
                 x: 0,
                 z: 0,
@@ -7428,9 +7438,9 @@ mod diagnostic_tests {
             blocked,
             flags: None,
         };
-        let graph = nav::transport::TransportGraph::default();
+        let graph = nav_planner::transport::TransportGraph::default();
         let started = std::time::Instant::now();
-        let search = nav::router::find_first_with(
+        let search = nav_planner::router::find_first_with(
             &collision,
             &graph,
             from,
@@ -7441,11 +7451,11 @@ mod diagnostic_tests {
         let elapsed = started.elapsed();
         assert_eq!(
             search.route(),
-            Err(nav::router::RouteError::BudgetExhausted)
+            Err(nav_planner::router::RouteError::BudgetExhausted)
         );
-        assert_eq!(search.proof(), nav::router::ReverseProof::Abandoned);
-        assert!(search.settled() <= nav::router::FIRST_TARGET_BUDGET + 1);
-        let fallback = nav::router::find_first_with(
+        assert_eq!(search.proof(), nav_planner::router::ReverseProof::Abandoned);
+        assert!(search.settled() <= nav_planner::router::FIRST_TARGET_BUDGET + 1);
+        let fallback = nav_planner::router::find_first_with(
             &collision,
             &graph,
             from,
@@ -7460,7 +7470,7 @@ mod diagnostic_tests {
             "preferred_failure": "BudgetExhausted",
             "proof": "Abandoned",
             "forward_settles": search.settled(),
-            "unproven_settle_budget": nav::router::FIRST_TARGET_BUDGET,
+            "unproven_settle_budget": nav_planner::router::FIRST_TARGET_BUDGET,
             "elapsed_ms": elapsed.as_millis(),
             "fallback": fallback.dest,
             "fallback_ticks": fallback.ticks,
@@ -7734,7 +7744,7 @@ mod diagnostic_tests {
             ..WorldState::empty()
         };
         let legacy = FindOptions {
-            zones: nav::zones::ZoneExempt::all(),
+            zones: nav_planner::zones::ZoneExempt::all(),
             ..FindOptions::default()
         };
         let teleports = FindOptions {
@@ -7892,7 +7902,7 @@ mod diagnostic_tests {
             let all_goals = goals.len();
             let mut selected = if name.starts_with("radius_walk") && stride > 1 {
                 let mut selected: Vec<_> = goals.iter().step_by(stride).copied().collect();
-                let first = nav::router::find_first_with(
+                let first = nav_planner::router::find_first_with(
                     &world.collision,
                     &world.graph,
                     from,
@@ -8037,7 +8047,7 @@ mod diagnostic_tests {
                 let opts = request.opts;
                 let (outcome, _) = request.drive_route_job_for_test();
                 assert!(matches!(outcome, RouteOutcome::NoPath));
-                let missing = nav::router::find_missing_item_reqs_with_avoid(
+                let missing = nav_planner::router::find_missing_item_reqs_with_avoid(
                     &world.collision,
                     &world.graph,
                     from,
@@ -8049,10 +8059,10 @@ mod diagnostic_tests {
                 .unwrap();
                 assert_eq!(
                     missing,
-                    vec![nav::router::MissingReq::Carry { id: 946, count: 1 }],
+                    vec![nav_planner::router::MissingReq::Carry { id: 946, count: 1 }],
                 );
                 assert!(matches!(
-                    nav::bank_fetch::plan_bank_fetch(
+                    nav_planner::bank_fetch::plan_bank_fetch(
                         &missing,
                         &state,
                         &bank,
@@ -8063,7 +8073,7 @@ mod diagnostic_tests {
                         opts,
                         &[],
                     ),
-                    Err(nav::bank_fetch::BankFetchError::Unavailable),
+                    Err(nav_planner::bank_fetch::BankFetchError::Unavailable),
                 ));
                 records.push(serde_json::json!({
                     "case": case,
@@ -8261,11 +8271,13 @@ mod route_quest_provider_tests {
         (facts.id.clone(), facts.display.to_string())
     }
 
-    fn family(selected: &api::game_data::SelectedGameData) -> nav::quest_gates::QuestFamilyId {
+    fn family(
+        selected: &api::game_data::SelectedGameData,
+    ) -> nav_planner::quest_gates::QuestFamilyId {
         let identity = selected
             .quest_family_identity()
             .expect("selected quest family identity");
-        nav::quest_gates::QuestFamilyId::new(identity.sha256, identity.schema)
+        nav_planner::quest_gates::QuestFamilyId::new(identity.sha256, identity.schema)
     }
 
     fn run() -> RunKey {
@@ -8331,7 +8343,7 @@ mod route_quest_provider_tests {
         let family = family(&selected);
         let run = run();
         let floor = stamp(run, 9, 9);
-        let complete = nav::world_state::QUEST_COMPLETE_COLOUR;
+        let complete = nav_planner::world_state::QUEST_COMPLETE_COLOUR;
         let not_started = 0xF80000;
         let gate = QuestGate::Complete(quest);
         let context = context(Arc::clone(&selected), floor);
@@ -8390,7 +8402,7 @@ mod route_quest_provider_tests {
         let (quest, name) = selected_quest(&selected);
         let family = family(&selected);
         let observed = stamp(run(), 5, 5);
-        let complete = snapshot(&name, nav::world_state::QUEST_COMPLETE_COLOUR, true);
+        let complete = snapshot(&name, nav_planner::world_state::QUEST_COMPLETE_COLOUR, true);
         let gate = QuestGate::Complete(quest);
 
         let later_floor = stamp(run(), 6, 6);
@@ -8414,7 +8426,7 @@ mod route_quest_provider_tests {
             level: 0,
         };
         Arc::new(NavWorld::from_parts(
-            nav::collision::WorldCollision {
+            nav_planner::collision::WorldCollision {
                 origin,
                 width: 4,
                 height: 4,
@@ -8422,7 +8434,7 @@ mod route_quest_provider_tests {
                 blocked: vec![0; 1],
                 flags: None,
             },
-            nav::transport::TransportGraph::default(),
+            nav_planner::transport::TransportGraph::default(),
             Vec::new(),
         ))
     }
@@ -8468,7 +8480,7 @@ mod route_quest_provider_tests {
         let family = family(&selected);
         let stamp = stamp(run(), 12, 12);
         let context = context(Arc::clone(&selected), stamp);
-        let snapshot = snapshot(&name, nav::world_state::QUEST_COMPLETE_COLOUR, true);
+        let snapshot = snapshot(&name, nav_planner::world_state::QUEST_COMPLETE_COLOUR, true);
         let evidence = captured_route_quests(family, Some(&context), &snapshot, None, stamp)
             .expect("real ordinary quest-list evidence");
         assert_eq!(evidence.test(&QuestGate::Complete(quest)), Truth::True);

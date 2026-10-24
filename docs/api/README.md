@@ -8,9 +8,10 @@
 
 ## Developer overview: the Agent API
 
-Beta kernel surface a bot agent codes against in 0.2.5 Beta 2: reading world state,
+Beta kernel surface a bot agent codes against in 0.2.6 Beta 2: reading world state,
 acting, settling, navigating, and logging in — through the `api` crate
-(`crates/api`) plus `nav` (`crates/nav`) and the host tick. The script
+(`crates/api`), `nav-planner` (`crates/nav-planner`), `nav-executor`
+(`crates/nav-executor`) and the host tick. The script
 crate is the runner kernel (compiled cards + Load isolate + catalog
 registration). Catalog helper compatibility is **partial** and fail-closed;
 honest skilling bots are not “all green by default.” Revision server profiles,
