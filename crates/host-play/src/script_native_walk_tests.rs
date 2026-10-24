@@ -5706,8 +5706,8 @@ fn s2b_admission_per_bot_layouts() {
     // no SlotScript growth.
     // Rust 1.98.1 is pinned for the workspace and CI. These are lib-test
     // layouts: test-only inspection budgets and bank fixtures are included.
-    // Linux's std::sync::Mutex is 8 B smaller than macOS's for each of the
-    // fifteen inline LoadIsolate mutexes, so SlotScript is 120 B smaller.
+    // S0c moves the platform-specific isolate mutexes into the surface run.
+    // The shared 64-bit slot layout no longer contains those mutexes.
     #[cfg(all(
         target_os = "macos",
         target_arch = "aarch64",
@@ -5720,7 +5720,7 @@ fn s2b_admission_per_bot_layouts() {
             std::mem::size_of::<script::combat::Combat>(),
             std::mem::size_of::<script::combat::WalkGuard>()
         ),
-        (3776, 4616, 512, 264)
+        (3776, 1608, 512, 264)
     );
     #[cfg(all(
         target_os = "linux",
@@ -5735,7 +5735,7 @@ fn s2b_admission_per_bot_layouts() {
             std::mem::size_of::<script::combat::Combat>(),
             std::mem::size_of::<script::combat::WalkGuard>()
         ),
-        (3776, 4496, 512, 264)
+        (3776, 1608, 512, 264)
     );
     assert!(std::mem::size_of::<script::combat::Combat>() <= 512);
     assert!(std::mem::size_of::<script::combat::WalkGuard>() <= 264);

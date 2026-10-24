@@ -132,30 +132,25 @@ pub fn post_snapshot_delta_pages_for_test(
     native: NativeFactsInput<'_>,
     force_banks: bool,
 ) -> (bool, bool) {
+    assert!(
+        slot.post_snapshot_delta(input, native, force_banks),
+        "reconnect keyframe is accepted by the real isolate"
+    );
     slot.with_surface_run_for_test(|run| {
         let run = run
             .as_any_mut()
             .downcast_mut::<JsSurfaceRun>()
             .expect("JavaScript surface run");
-        let (bytes, fingerprint, evidence_changed) =
-            run.ipc.encode_snapshot_delta_with_native_and_evidence(
-                run.last_snapshot.as_ref(),
-                input,
-                native,
-                force_banks,
-            );
-        let encoded = crate::isolate_fb::Snapshot::from_bytes(&bytes).unwrap();
-        let pages = (
+        let encoded = crate::isolate_fb::Snapshot::from_bytes(
+            run.ipc.finished_snapshot_bytes_for_test(),
+        )
+        .expect("the accepted snapshot remains in its builder");
+        (
             encoded
                 .api_gather()
                 .is_some_and(|page| page.request_id() != 0),
             encoded.api_gather_outcome().is_some(),
-        );
-        assert!(
-            run.post_encoded_snapshot(bytes, fingerprint, evidence_changed),
-            "reconnect keyframe is accepted by the real isolate"
-        );
-        pages
+        )
     })
     .expect("active surface run")
 }

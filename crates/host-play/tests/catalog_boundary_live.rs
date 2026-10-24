@@ -2871,8 +2871,25 @@ export default class NativeStop extends LoopingBot {{
 "#
         );
         let mut slot = script::SlotScript::new();
-        slot.start_load_with_loadouts(source, script::LoadShape::CompatClass, vec![], &[])
-            .unwrap();
+        slot.bind_surface_factory(Arc::new(
+            script::load::surface::JsSurfaceFactory::default(),
+        ));
+        let family = script::resolve_api_family(&source)
+            .ok()
+            .map(|(_, family)| family);
+        slot.start_surface(script::surface::SurfaceStart {
+            card: Arc::new(script::load::surface::JsStartCard {
+                source: source.into(),
+                shape: script::LoadShape::CompatClass,
+                siblings: Arc::from([]),
+                family,
+            }),
+            settings_bag: None,
+            game_data: None,
+            named_banks: Arc::new(api::named_banks::NamedBankFacts::empty()),
+            loadouts: Arc::from([]),
+        })
+        .unwrap();
         let mut client = client::client::Client::new(client::client::ClientConfig {
             host: "127.0.0.1".into(),
             port: 43594,

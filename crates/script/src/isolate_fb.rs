@@ -1896,6 +1896,11 @@ impl IsolateBuf {
         self.builder.collapse().0.capacity()
     }
 
+    #[cfg(feature = "test-hooks")]
+    pub(crate) fn finished_snapshot_bytes_for_test(&self) -> &[u8] {
+        self.builder.finished_data()
+    }
+
     fn copy_finished(&self) -> Vec<u8> {
         self.builder.finished_data().to_vec()
     }
