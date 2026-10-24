@@ -37,15 +37,15 @@ const KQ_LAIR: WorldTile = WorldTile {
 /// does not size this watchdog. Those stalls waited for
 /// `restock_overlap`, a chance interleaving that is now an
 /// observation, not a gate (see [`KqFleetWitness::complete`]).
-/// A run that meets every gated term no longer waits for it, so a pass
-/// under the old gate is an upper bound for the same run now.
-/// Round 2 (`319e12b74`, `JIVE-KQ-1024/fix-r2/watchdog-r2.json`) added
-/// completed passes of 1,483.755, 1,601.719, 1,744.640 and 1,576.639 s.
-/// The slowest completed pass on the finished code is 1,763.554 s; 1,800 s
-/// left 2 % headroom. 2,120 s is that slowest pass plus 20 %, rounded up.
+/// A run that meets every gated term no longer waits for it.
+/// Only completed runs of the observation-only witness size this value:
+/// round 2 (`319e12b74`, `JIVE-KQ-1024/fix-r2/watchdog-r2.json`) passed in
+/// 1,483.755, 1,601.719, 1,744.640 and 1,576.639 s. 2,094 s is the slowest
+/// of those plus 20 %, rounded up (1,744.640 × 1.2 = 2,093.568); 1,800 s
+/// left 3 % headroom (Grok review round 2).
 /// The content gives no hard upper bound: fight length and the
 /// local-visibility witness terms can require a third trip.
-const KQ_WATCHDOG: Duration = Duration::from_secs(2_120);
+const KQ_WATCHDOG: Duration = Duration::from_secs(2_094);
 /// Selected-revision Kalphite Queen drops which cannot be confused with the
 /// seeded loadout.  Ammunition is deliberately excluded: recovered arrows
 /// are not boss-loot evidence.
@@ -1384,7 +1384,7 @@ fn send_ok(slot: &PairCompanionSlot, now: Instant) -> bool {
 /// walk 38, surface rope 17, upper cave 177, lair 206, escape 22, return
 /// walk 84), and the first lair entry was observed at leader tick 567, so
 /// a fifth entry needs at least 567 + 4×908 = 4,199 ticks, past the
-/// watchdog's 3,000 ticks at 600 ms. Four descents at two ropes each is
+/// watchdog's 3,490 ticks (2,094 s at 600 ms). Four descents at two ropes each is
 /// the most the watchdog allows; Beta 1 qualification starts from here.
 const KQ_LEADER_ROPES: u32 = 8;
 /// The other members never withdraw ropes.
@@ -2965,8 +2965,8 @@ mod kq_finish_tests {
         assert_eq!(scenario.proof, Proof::BankClosed);
         assert_eq!(
             scenario.settings.deadline,
-            std::time::Duration::from_secs(2_120),
-            "watchdog is the slowest completed pass plus 20 % (KQ_WATCHDOG)"
+            std::time::Duration::from_secs(2_094),
+            "watchdog is the slowest round-2 completed pass plus 20 % (KQ_WATCHDOG)"
         );
     }
 
