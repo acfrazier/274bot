@@ -22,7 +22,9 @@ pub mod custody;
 pub mod divergence;
 pub mod request;
 pub mod seat;
+pub mod seat_rows;
 pub mod services;
+pub mod snapshot_source;
 pub use request::NativeRequest;
 pub use services::{
     LocalStateCapability, PromptPoint, ScriptServices, SeatPromptPort, ServiceAuthority,
@@ -491,7 +493,6 @@ pub struct NativeTick<'a> {
     pub prompt_port: Option<&'a mut dyn SeatPromptPort>,
     /// Read-only danger admission for target selection, borrowed from the host.
     pub walk_danger: Option<&'a dyn WalkDangerQuery>,
-    #[cfg(feature = "load")]
     pub(crate) frame: HostFrame<'a>,
 }
 
@@ -556,7 +557,10 @@ impl NativeTick<'_> {
 /// The existing Sherlock adapter's single borrowed host bridge. No driver or
 /// action facility escapes here. The host/Load clue extraction replaces this
 /// bridge; effects still use the slot's existing compiled queue in the meantime.
-#[cfg(feature = "load")]
+#[cfg_attr(
+    not(feature = "load"),
+    expect(dead_code, reason = "fields read by sherlock.rs, un-gated at S0b")
+)]
 pub(crate) struct HostFrame<'a> {
     pub here: Option<(i32, i32, i32)>,
     pub snapshot: Option<&'a api::snapshot::GameSnapshot>,

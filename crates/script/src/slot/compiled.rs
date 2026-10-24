@@ -1,6 +1,5 @@
 //! Compiled registration transaction and shared presentation, owned by SlotScript.
 use super::*;
-#[cfg(feature = "load")]
 use crate::native::HostFrame;
 use crate::native::{
     ActionContext, ConfigError, Interrupt, NativeActions, NativeOutput, NativePhase, NativeTick,
@@ -504,7 +503,6 @@ impl CompiledRun {
                 crate::quester::pair::PairFrame { binding, inventory },
             );
         }
-        #[cfg(feature = "load")]
         let interacts = ctx.compiled.interacts.take();
         let result = {
             let mut tick = NativeTick {
@@ -516,7 +514,6 @@ impl CompiledRun {
                 service_authority: seat_ports.authority,
                 prompt_port: seat_ports.prompt,
                 walk_danger: ctx.compiled.walk_danger,
-                #[cfg(feature = "load")]
                 frame: HostFrame {
                     here: ctx.here,
                     snapshot: ctx.snapshot,
@@ -534,7 +531,6 @@ impl CompiledRun {
                         walk_danger: ctx.compiled.walk_danger,
                         hold: ctx.compiled.hold,
                         service_gate: ctx.compiled.service_gate,
-                        #[cfg(feature = "load")]
                         interacts,
                     },
                 },
@@ -542,10 +538,7 @@ impl CompiledRun {
             // Take the queue back even after a card panic, then let SlotScript
             // revoke/discard it before the host can drain any partial effects.
             let result = catch_unwind(AssertUnwindSafe(|| self.script.tick(&mut tick)));
-            #[cfg(feature = "load")]
             let interacts = tick.frame.compiled.interacts.take();
-            #[cfg(not(feature = "load"))]
-            let interacts = None;
             (result, interacts)
         };
         let (result, interacts) = result;
