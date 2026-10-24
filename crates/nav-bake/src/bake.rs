@@ -295,7 +295,7 @@ pub fn decoded_identity(
         cache_dir,
         snapshot_root.join(version),
     )
-    .map_err(|detail| crate::GenerationError::DecodedIdentityFailed { detail })?
+    .map_err(crate::GenerationError::DecodedIdentityFailed)?
     .content_id_hex();
     let after = CacheManifest::capture(revision, cache_dir)
         .map_err(|detail| crate::GenerationError::CacheManifestCapture { detail })?;
@@ -335,7 +335,7 @@ pub fn decoded_identity_from_snapshot(
         cache_dir,
         snapshot_root.join(version),
     )
-    .map_err(|detail| crate::GenerationError::DecodedIdentityFailed { detail })?
+    .map_err(crate::GenerationError::DecodedIdentityFailed)?
     .content_id_hex())
 }
 

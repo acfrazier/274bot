@@ -151,9 +151,9 @@ pub fn fingerprint_for_path<'a>(
         .ok()
         .map(|index| &inputs[index])
         .ok_or_else(|| {
-            crate::SourceInputError::NotFingerprinted {
+            crate::GenerationError::SourceInput(crate::SourceInputError::NotFingerprinted {
                 path: path.to_path_buf(),
-            }
+            })
         })
 }
 
