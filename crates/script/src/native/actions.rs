@@ -921,6 +921,7 @@ mod tests {
         let mut cx = ActionContext {
             condition: None,
             poison_unknown_pulse: u8::MAX,
+            cure_poison: crate::survival::CurePoison::WhenNeeded,
             evidence,
             pin: &pin,
             snapshot: SnapshotView::new(None, evidence),
@@ -1286,6 +1287,7 @@ mod tests {
             condition: None,
             poison_unknown_pulse: u8::MAX,
             evidence,
+            cure_poison: crate::survival::CurePoison::WhenNeeded,
             pin: &pin,
             snapshot: SnapshotView::new(snapshot, evidence),
             retained: &mut retained,

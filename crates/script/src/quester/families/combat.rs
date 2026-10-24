@@ -923,7 +923,7 @@ impl NativeMachine for AbortHold {
         let live_attacker = has_live_attacker(&snapshot, &self.tables);
         self.observe_threat_free(cx.evidence().tick, live_attacker);
         if let Some(guard) = self.guard.as_mut() {
-            if let Some(op) = guard.tick(&snapshot) {
+            if let Some(op) = guard.tick(&snapshot, cx.condition(), cx.cure_poison()) {
                 if matches!(&op, GuardOp::Unprotectable { .. }) {
                     self.protect_unavailable = true;
                 }
@@ -1079,7 +1079,7 @@ fn guard_interaction(op: &GuardOp) -> Option<InteractReq> {
         GuardOp::IfButton { component } => Some(InteractReq::IfButton {
             component_id: *component,
         }),
-        GuardOp::Drink { name } => Some(InteractReq::Held {
+        GuardOp::Drink { name, .. } => Some(InteractReq::Held {
             name: name.to_string(),
             action: "Drink".to_owned(),
             slot: None,

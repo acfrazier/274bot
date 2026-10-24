@@ -19,9 +19,28 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.6` 
 - The panel button and the terminal app's Fleet button now read **Log out**, as the panel's Fleet toolbar already did.
 - The panel's profile form also refuses to create a profile with an empty password, with the message `credentials: password required`, and saves nothing.
 
+### Survival
+
+- Combat and protected walks use a held antipoison dose or Strange fruit
+  before a health bite when poison makes a cure necessary. Walks that only
+  eat also drink a held cure before their next bite.
+- When a bot is poisoned, fighting and walk protection count the next poison hit before they decide to eat. A bot at full hitpoints no longer eats food that would heal nothing.
+- A new profile setting group, Survival and supplies, holds Cure poison: when needed (default), always, or never.
+
 ### Fixed during development
 
 - `tui-play --user NAME` stops on a missing vault before it prepares the game cache or reads the engine login key. The message is the same. A local server with no engine directory still stops with the engine-directory error.
+
+#### Survival
+
+- Strange fruit waits for the game's food delay after a bite. Eating the fruit also delays the next combat attack.
+
+#### Profile settings
+
+- Survival and script-setting audit lines use the values before and after
+  the durable commit, including when one commit batches edits. Failed writes
+  and superseded same-setting edits do not add audit lines.
+- The Cure poison labels now limit **When needed** to combat and protected walks and do not claim a poison status row.
 
 ## [0.2.6] — 2026-10-23 — Beta 2
 

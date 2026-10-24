@@ -3839,6 +3839,48 @@ fn switching_the_edit_target_resets_a_focused_text_field() {
     );
 }
 
+/// The profile form draws the Survival and supplies section with the
+/// Cure poison row and the saved value's label. This frame test is the
+/// headless stand-in for a headed capture: it builds the real chooser
+/// window through ImGui and reads back every text item it drew.
+#[test]
+fn profile_form_draws_the_survival_section() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let dir = TestDir::new("chooser-survival-section");
+    let mut session = crate::session::Session::new();
+    let mut vault =
+        frontend_core::test_support::VaultFixture::create(&dir.join("vault"), "test-passphrase-01");
+    vault.put(frontend_core::test_support::FixtureProfile::new("Hans", "hpass").uid(43));
+    frontend_core::test_support::session::install_vault(&mut session.core, vault);
+    session.begin_edit_profile(Some("Hans"));
+    let mut ctx = crate::test_support::imgui_context();
+    let drawn = DrawnText::default();
+    ctx.set_clipboard_backend(drawn.clone());
+    for _ in 0..2 {
+        ctx.prepare_frame(
+            dear_imgui_rs::FramePrepareOptions::new([900.0, 700.0], 1.0 / 60.0)
+                .renderer_has_textures(),
+        );
+        {
+            let ui = ctx.frame();
+            ui.log_to_clipboard(0u32);
+            super::chooser_window(ui, &mut session, None);
+            ui.log_finish();
+        }
+        ctx.render();
+    }
+    let text = drawn.0.take();
+    assert!(
+        text.contains("Survival and supplies"),
+        "the section heading draws:\n{text}"
+    );
+    assert!(text.contains("Cure poison"), "the row draws:\n{text}");
+    assert!(
+        text.contains("When needed: drink for health in combat or protected walks"),
+        "the saved default's label draws:\n{text}"
+    );
+}
+
 /// Every text item one ImGui frame drew, read back from ImGui's own text
 /// log (`LogToClipboard` finishes into this clipboard backend): one line
 /// per row, same-row items joined by a space, buttons as `[ label ]`.

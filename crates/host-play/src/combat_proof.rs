@@ -303,6 +303,7 @@ pub(crate) fn record_guard(
     snapshot: &GameSnapshot,
     op: &str,
     component_id: Option<i32>,
+    item: Option<&str>,
 ) {
     let Some(capture) = capture_for(account) else {
         return;
@@ -313,6 +314,7 @@ pub(crate) fn record_guard(
         "sequence": sequence,
         "kind": "guard",
         "op": op,
+        "item": item,
         "component_id": component_id,
         "accepted": true,
         "dispatch": "sent",

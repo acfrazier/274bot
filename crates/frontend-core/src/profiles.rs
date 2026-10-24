@@ -8,9 +8,12 @@
 //! later jobs of its commit that wrote one of its profiles, so the session
 //! can tell which of the job's settings they replace.
 
+use std::collections::HashMap;
+use std::sync::Arc;
+
 use std::sync::mpsc::{self, Receiver, Sender};
 #[cfg(any(test, feature = "test-support"))]
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Mutex, PoisonError};
 use std::thread::{self, JoinHandle};
 
 use vault::{Profile, ScriptAssignment, Vault, VaultChange, VaultStore};
@@ -21,6 +24,18 @@ struct Job {
     op: OperationId,
     changes: Vec<VaultChange>,
     assignment_action: &'static str,
+    audit: Option<ProfileAuditKind>,
+}
+
+#[derive(Clone, Hash, PartialEq, Eq)]
+pub(crate) enum ProfileAuditKind {
+    SurvivalCurePoison,
+    ScriptSettings(String),
+}
+
+pub(crate) enum ProfileAuditBefore {
+    SurvivalCurePoison(vault::CurePoison),
+    ScriptSettings(Option<serde_json::Map<String, serde_json::Value>>),
 }
 
 /// An assignment transition owned by the last job that changed the assignment
@@ -261,6 +276,9 @@ pub(crate) struct Written {
     /// Each touched profile's durable value after the commit, so a failed
     /// write can put the in-memory view back.
     pub(crate) durable: Vec<(String, Option<Profile>)>,
+    /// The audited setting's value before the commit, shared across jobs
+    /// that audit the same profile setting in this batch.
+    pub(crate) audit_before: Option<Arc<ProfileAuditBefore>>,
 }
 
 pub(crate) struct ProfileWriter {
@@ -287,6 +305,40 @@ impl ProfileWriter {
                     let _batch = gate.lock().unwrap_or_else(PoisonError::into_inner);
                     let mut batch = vec![first];
                     batch.extend(inbox.try_iter());
+                    let mut audit_snapshots =
+                        HashMap::<(String, ProfileAuditKind), Arc<ProfileAuditBefore>>::new();
+                    for job in &batch {
+                        let Some(kind) = job.audit.as_ref() else {
+                            continue;
+                        };
+                        for change in &job.changes {
+                            let name = change.username();
+                            let key = (name.to_string(), kind.clone());
+                            if let std::collections::hash_map::Entry::Vacant(entry) =
+                                audit_snapshots.entry(key)
+                            {
+                                if let Some(profile) = store.get(name) {
+                                    let before = match kind {
+                                        ProfileAuditKind::SurvivalCurePoison => {
+                                            ProfileAuditBefore::SurvivalCurePoison(
+                                                profile.settings.survival.cure_poison,
+                                            )
+                                        }
+                                        ProfileAuditKind::ScriptSettings(identity) => {
+                                            ProfileAuditBefore::ScriptSettings(
+                                                profile
+                                                    .settings
+                                                    .script_settings
+                                                    .get(identity)
+                                                    .cloned(),
+                                            )
+                                        }
+                                    };
+                                    entry.insert(Arc::new(before));
+                                }
+                            }
+                        }
+                    }
                     let assignment_changes = durable_assignment_changes(&store, &batch);
 
                     // Applied in submission order in one commit, so the file
@@ -328,12 +380,19 @@ impl ProfileWriter {
                                 (name.to_string(), store.get(name).cloned())
                             })
                             .collect();
+                        let audit_before = job.audit.as_ref().and_then(|kind| {
+                            job.changes.iter().find_map(|change| {
+                                let key = (change.username().to_string(), kind.clone());
+                                audit_snapshots.get(&key).map(Arc::clone)
+                            })
+                        });
                         let written = Written {
                             op: job.op,
                             result: result.clone(),
                             superseded,
                             later,
                             durable,
+                            audit_before,
                         };
                         if report.send(written).is_err() {
                             return;
@@ -355,6 +414,7 @@ impl ProfileWriter {
         op: OperationId,
         changes: Vec<VaultChange>,
         assignment_action: &'static str,
+        audit: Option<ProfileAuditKind>,
     ) {
         if let Some(jobs) = &self.jobs {
             if jobs
@@ -362,6 +422,7 @@ impl ProfileWriter {
                     op,
                     changes,
                     assignment_action,
+                    audit,
                 })
                 .is_ok()
             {

@@ -18,9 +18,10 @@ pub(crate) enum RowKind {
     Style,
     Retaliate,
     Attack,
-    Pickup,
     Cast,
+    Pickup,
     Arm,
+    CureFruit,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) struct PlanRow {
@@ -45,7 +46,7 @@ impl PlanRow {
     pub fn terminal(self, tables: &CombatTables) -> bool {
         matches!(
             self.kind,
-            RowKind::Attack | RowKind::Pickup | RowKind::Cast | RowKind::Arm
+            RowKind::Attack | RowKind::Pickup | RowKind::Cast | RowKind::Arm | RowKind::CureFruit
         ) || self.kind == RowKind::Drink
             || (self.kind == RowKind::Eat
                 && tables
