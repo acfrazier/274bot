@@ -138,7 +138,7 @@ fn nav_toll() {
     if tolls.len() < 4 {
         fail(&format!(
             "nav_toll: pack carries {} toll-gate edges (locs 2882/2883), need 4 \
-             (rebake with `cargo run -p nav-planner --bin nav-pack`)",
+             (rebake with `cargo run -p nav-bake --bin nav-pack`)",
             tolls.len()
         ));
     }
@@ -179,7 +179,7 @@ fn nav_toll() {
         fail(&format!(
             "nav_toll: pack carries {} Shantay henge edges (loc 4031), need exactly 2 \
              (the gated desert hop and the free desert exit; rebake with \
-             `cargo run -p nav-planner --bin nav-pack`)",
+             `cargo run -p nav-bake --bin nav-pack`)",
             henge.len()
         ));
     }

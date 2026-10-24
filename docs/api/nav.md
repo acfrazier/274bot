@@ -1,15 +1,15 @@
 # Nav: whole-world routing, transports, and WalkTo
 
-`crates/nav-planner` and `crates/nav-executor` form the nav stack.
-`nav-planner` owns the whole-world collision bake, the content-derived transport
-graph and Dijkstra router. `nav-executor` owns the pollable route follower. The
+`nav-planner`, `nav-executor`, and `nav-bake` form the navigation stack.
+`nav-planner` owns runtime collision, transport data, map views, and routing.
+`nav-bake` owns release generation. `nav-executor` owns the pollable route follower. The
 follower acts only through the kernel API (`api::interact`,
 `api::settle`) and never deep-copies the world.
 
 ## Pack bake
 
 Application builds bake the pack themselves. `crates/host-play/build.rs` runs
-the shared baker (`nav_planner::bake::bake_world`) for the selected release revision,
+the shared baker (`nav_bake::bake::bake_world`) for the selected release revision,
 stages pack + flags + reach + sidecar manifest + stamp under the install resource root
 (`nav/<revision>/` — next to the built binary, `Contents/Resources` in a macOS
 bundle, `BOT_NAV_RESOURCE_DIR` when a packager stages elsewhere) and publishes
@@ -18,13 +18,20 @@ serves. Normal WalkTo in that build needs no manual step. The default revision
 is **289**; `BOT_NAV_REVISION=274` builds the 274 artifact instead. Revision
 289 is the production revision; 274 is best-effort, neither tested nor claimed.
 
+The build retains `nav-planner` for manifest schemas, hashes, and format identity.
+`nav-bake` is a separate build dependency, not a normal runtime dependency.
+`BOT_NAV_BUILD=skip` skips baking but does not remove nonoptional Cargo build dependencies.
+Release binaries load shipped artifacts without compiling or baking.
+The combined future v18 schema is frozen in the
+[baked reachability contract](../dev/baked-reachability.md). BR1 still produces v17.
+
 `nav-pack` remains for deliberate developer/custom-input bakes. It calls the
 same baker and reads every Server mapsquare jm2 plus the door/loc/rs2 scripts
 and writes the current whole-world pack (`encode` in
-`crates/nav-planner/src/pack.rs`):
+`crates/nav-bake/src/pack.rs`):
 
 ```bash
-cargo run -p nav-planner --bin nav-pack [MAPS_DIR] [DOORS_CONFIG_DIR] [CONFIG_JAG]
+NAV_PACK=/absolute/output/274bot.navpack NAV_FLAGS=/absolute/output/274bot.navflags cargo run -p nav-bake --bin nav-pack [MAPS_DIR] [DOORS_CONFIG_DIR] [CONFIG_JAG]
 # or: nav-pack --revision 274|289 --content CONTENT_DIR --cache CACHE_DIR --cache-manifest CACHE_MANIFEST --out NAV_PACK [--flags-out F] [--snapshot-root ROOT]
 ```
 
@@ -208,7 +215,7 @@ inherit built-in facts. Local supported facts additionally verify their selected
 source inputs. Unknown client content remains unavailable/rejected, never guessed.
 
 The `tools/game-data` generator and verifier are offline `tsx` tools. Build
-`cargo build -p nav-planner --bin cache-content-id` first. `GAME_DATA_274_ENGINE`,
+`cargo build -p nav-bake --bin cache-content-id` first. `GAME_DATA_274_ENGINE`,
 `GAME_DATA_274_CONTENT`, `GAME_DATA_289_ENGINE`, `GAME_DATA_289_CONTENT`,
 `RS2B0T`, `GAME_DATA_274_SNAPSHOTS` and `GAME_DATA_289_SNAPSHOTS` are all
 required and name explicit roots — an unset variable fails closed and names
@@ -236,7 +243,7 @@ map set. The scans are listed one file per row, not anchored by their
 directories: removing a single consumed child (`shortcuts.rs2`, a jewellery
 `*.rs2`, a `.loc` door config) fails the build even when its directory keeps
 its siblings. That inventory is revision-owned data
-(`crates/nav-planner/src/required-content-{289,274}.tsv`, embedded in `nav_planner::bundle` and
+(`crates/nav-planner/src/required-content-{289,274}.tsv`, embedded in `nav_bake::bundle` and
 verified against the canonical trees — the `bundle::` tests compare the scan
 classes and the map set to the actual trees; refresh the TSV when the canonical
 content legitimately changes) and it is checked on every default build —

@@ -88,7 +88,7 @@ fn nav_essence() {
     if ess.len() < 4 {
         fail(&format!(
             "nav_essence: pack carries {} essence entry edges, need >= 4 \
-             (Aubury+Sedridor+…; rebake with `cargo run -p nav-planner --bin nav-pack`)",
+             (Aubury+Sedridor+…; rebake with `cargo run -p nav-bake --bin nav-pack`)",
             ess.len()
         ));
     }
@@ -102,13 +102,13 @@ fn nav_essence() {
         {
             fail(&format!(
                 "nav_essence: entry edge {e:?} is not on a known wizard tile \
-                 (rebake with `cargo run -p nav-planner --bin nav-pack`)"
+                 (rebake with `cargo run -p nav-bake --bin nav-pack`)"
             ));
         }
         if e.to != MINE_PAD {
             fail(&format!(
                 "nav_essence: entry edge {e:?} must land on the mine pad {MINE_PAD:?} \
-                 (rebake with `cargo run -p nav-planner --bin nav-pack`)"
+                 (rebake with `cargo run -p nav-bake --bin nav-pack`)"
             ));
         }
         if !e
