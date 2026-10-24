@@ -1,11 +1,13 @@
 #![cfg(feature = "test-hooks")]
 
 use script::{
-    native::snapshot_source::{BankSelectionInput, NativeFactsInput, ReachViewInput, SnapshotInput},
     native::recovery_hints::{HintTile, RecoveryHintsCell},
+    native::snapshot_source::{
+        BankSelectionInput, NativeFactsInput, ReachViewInput, SnapshotInput,
+    },
     surface::{
-        test_support::StubSurfaceFactory, PostedSnapshotFacts, RouteInspectIdentities,
-        SurfaceCard, SurfaceFamily, SurfaceKind, SurfaceReady, SurfaceStart,
+        test_support::StubSurfaceFactory, PostedSnapshotFacts, RouteInspectIdentities, SurfaceCard,
+        SurfaceFamily, SurfaceKind, SurfaceReady, SurfaceStart,
     },
     RunState, SlotScript, StartOutcome, StartPoll,
 };
@@ -175,10 +177,7 @@ fn watchdog_restart_hints_are_isolated_between_slots_sharing_a_factory() {
     let restarted_a = factory.run(2).expect("slot A restarted run");
     assert_eq!(factory.spawn_attempts(), 3);
     restarted_a.set_readiness(SurfaceReady::Ready);
-    assert_eq!(
-        slot_a.poll_start(),
-        StartPoll::NotOwed
-    );
+    assert_eq!(slot_a.poll_start(), StartPoll::NotOwed);
     assert_eq!(slot_a.state(), RunState::Running);
     assert!(!hints_b.pending());
 }
@@ -226,11 +225,7 @@ fn refused_typed_snapshot_keeps_the_active_run_and_clears_facts() {
     run.set_snapshot_acceptance(false, true);
     assert!(slot.posted_snapshot_facts().is_some());
 
-    let accepted = slot.post_snapshot_delta(
-        &empty_snapshot(1),
-        NativeFactsInput::default(),
-        false,
-    );
+    let accepted = slot.post_snapshot_delta(&empty_snapshot(1), NativeFactsInput::default(), false);
     assert!(!accepted);
     assert!(slot.surface_active());
     assert_eq!(slot.state(), RunState::Running);
@@ -281,7 +276,10 @@ fn populated_posted_fact_reads_and_host_comparisons_allocate_nothing() {
         );
     });
     assert_eq!(info.count_total, 0, "fact reads and comparisons allocate");
-    assert_eq!(info.bytes_total, 0, "fact reads and comparisons allocate bytes");
+    assert_eq!(
+        info.bytes_total, 0,
+        "fact reads and comparisons allocate bytes"
+    );
     assert_eq!(comparisons, (true, true, true));
     assert_eq!(run.posted_facts_reads(), 3);
 }

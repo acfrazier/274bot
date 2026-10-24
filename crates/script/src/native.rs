@@ -329,7 +329,6 @@ pub struct CompiledCard {
     pub lifecycle: Option<&'static CardLifecycle>,
 }
 
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StartError {
     Busy,

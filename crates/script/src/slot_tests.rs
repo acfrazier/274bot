@@ -36,13 +36,12 @@ fn test_surface_start(
     let family = crate::resolve_api_family(&source)
         .ok()
         .map(|(_, family)| family);
-    let card: Arc<dyn crate::surface::SurfaceCard> =
-        Arc::new(crate::load::surface::JsStartCard {
-            source,
-            shape,
-            siblings: siblings.into(),
-            family,
-        });
+    let card: Arc<dyn crate::surface::SurfaceCard> = Arc::new(crate::load::surface::JsStartCard {
+        source,
+        shape,
+        siblings: siblings.into(),
+        family,
+    });
     crate::surface::SurfaceStart {
         card,
         settings_bag,
@@ -159,7 +158,7 @@ export default class T extends LoopingBot {
         Arc::new(api::named_banks::NamedBankFacts::empty()),
         Arc::from(Vec::<api::loadout::Loadout>::new()),
     ))
-        .unwrap();
+    .unwrap();
     wait_state(&mut slot, RunState::Running);
     allow_onstop_completion(&mut slot);
     (slot, selected)
@@ -287,7 +286,10 @@ export function tick() {
         std::thread::yield_now();
     }
 
-    slot.surface.as_ref().expect("load isolate").on_game_tick_at(1, 0);
+    slot.surface
+        .as_ref()
+        .expect("load isolate")
+        .on_game_tick_at(1, 0);
     assert_eq!(
         slot.surface
             .as_ref()
@@ -313,7 +315,10 @@ export function tick() {
     let mut held = crate::isolate_fb::tests::empty_input(2);
     held.hold = true;
     assert!(slot.post_snapshot_delta(&held, NativeFactsInput::default(), false));
-    slot.surface.as_ref().expect("load isolate").on_game_tick_at(2, 0);
+    slot.surface
+        .as_ref()
+        .expect("load isolate")
+        .on_game_tick_at(2, 0);
     slot.surface
         .as_ref()
         .expect("load isolate")
@@ -330,7 +335,10 @@ export function tick() {
     held.tick = 3;
     held.hold = false;
     assert!(slot.post_snapshot_delta(&held, NativeFactsInput::default(), false));
-    slot.surface.as_ref().expect("load isolate").on_game_tick_at(3, 0);
+    slot.surface
+        .as_ref()
+        .expect("load isolate")
+        .on_game_tick_at(3, 0);
     assert_eq!(
         slot.surface
             .as_ref()
@@ -355,7 +363,10 @@ export function tick() {
 
     held.tick = 4;
     assert!(slot.post_snapshot_delta(&held, NativeFactsInput::default(), false));
-    slot.surface.as_ref().expect("load isolate").on_game_tick_at(4, 0);
+    slot.surface
+        .as_ref()
+        .expect("load isolate")
+        .on_game_tick_at(4, 0);
     assert_eq!(
         slot.surface
             .as_ref()
@@ -580,8 +591,12 @@ export default class T extends LoopingBot {
 "#;
     let mut slot = new_js_slot();
     slot.bind_incarnation(1201);
-    slot.start_surface(default_test_surface_start(source, LoadShape::CompatClass, vec![]))
-        .unwrap();
+    slot.start_surface(default_test_surface_start(
+        source,
+        LoadShape::CompatClass,
+        vec![],
+    ))
+    .unwrap();
     wait_state(&mut slot, RunState::Running);
     run_policy_tick(&mut slot, 1);
     assert_eq!(
@@ -636,8 +651,12 @@ export default class T extends LoopingBot {
 "#;
     let mut slot = new_js_slot();
     slot.bind_incarnation(1202);
-    slot.start_surface(default_test_surface_start(source, LoadShape::CompatClass, vec![]))
-        .unwrap();
+    slot.start_surface(default_test_surface_start(
+        source,
+        LoadShape::CompatClass,
+        vec![],
+    ))
+    .unwrap();
     wait_state(&mut slot, RunState::Running);
 
     use api::run_policy::{RunEnergyMin, RunPolicyOverride};
@@ -702,8 +721,12 @@ export default class T extends LoopingBot {
 "#;
     let mut slot = new_js_slot();
     slot.bind_incarnation(1203);
-    slot.start_surface(default_test_surface_start(source, LoadShape::CompatClass, vec![]))
-        .unwrap();
+    slot.start_surface(default_test_surface_start(
+        source,
+        LoadShape::CompatClass,
+        vec![],
+    ))
+    .unwrap();
     wait_state(&mut slot, RunState::Running);
     run_policy_tick(&mut slot, 1);
 
@@ -825,8 +848,12 @@ export default class T extends LoopingBot {{
 "#
     );
     let mut slot = new_js_slot();
-    slot.start_surface(default_test_surface_start(source, LoadShape::CompatClass, Vec::new()))
-        .unwrap();
+    slot.start_surface(default_test_surface_start(
+        source,
+        LoadShape::CompatClass,
+        Vec::new(),
+    ))
+    .unwrap();
     let input = crate::isolate_fb::tests::empty_input(1);
     let _ = slot.post_snapshot_delta(&input, NativeFactsInput::default(), false);
     slot.surface.as_ref().unwrap().on_game_tick_at(1, 0);
@@ -1068,11 +1095,14 @@ fn stop_releases_snapshot_storage_and_restart_emits_keyframe() {
     .unwrap();
     let run = factory.last_run().expect("stub surface run");
     run.set_readiness(crate::surface::SurfaceReady::Ready);
-    run.set_posted_facts(Some(crate::surface::PostedSnapshotFacts::default()));
-    assert_eq!(
-        slot.poll_start(),
-        StartPoll::Settled(StartOutcome::Ready)
-    );
+    run.set_posted_facts(Some(crate::surface::PostedSnapshotFacts {
+        withdraw_x_result_seq: 0,
+        bank_op_result_seq: 0,
+        walk_outcome_seq: 0,
+        bank_selection: Default::default(),
+        route_inspect: Default::default(),
+    }));
+    assert_eq!(slot.poll_start(), StartPoll::Settled(StartOutcome::Ready));
     slot.store_last_world_id(Some(123));
     slot.last_error = Some("retained diagnostic".into());
     slot.pending_logs.push("retained log".into());
@@ -1601,8 +1631,12 @@ fn stop_returns_immediately_and_second_start_waits_for_reap() {
             onStop() { this.log('stopped-ok'); }
         }";
     let mut slot = new_js_slot();
-    slot.start_surface(default_test_surface_start(src, LoadShape::CompatClass, vec![]))
-        .unwrap();
+    slot.start_surface(default_test_surface_start(
+        src,
+        LoadShape::CompatClass,
+        vec![],
+    ))
+    .unwrap();
     wait_state(&mut slot, RunState::Running);
     allow_onstop_completion(&mut slot);
     let t0 = Instant::now();
@@ -1613,8 +1647,12 @@ fn stop_returns_immediately_and_second_start_waits_for_reap() {
         t0.elapsed()
     );
     assert_eq!(slot.state(), RunState::Stopping);
-    slot.start_surface(default_test_surface_start(src, LoadShape::CompatClass, vec![]))
-        .expect("Start while Stopping is queued");
+    slot.start_surface(default_test_surface_start(
+        src,
+        LoadShape::CompatClass,
+        vec![],
+    ))
+    .expect("Start while Stopping is queued");
     let generation = slot.runtime_generation();
     assert!(
         slot.start_surface(default_test_surface_start(
@@ -1622,7 +1660,7 @@ fn stop_returns_immediately_and_second_start_waits_for_reap() {
             LoadShape::CompatClass,
             vec![],
         ))
-            .is_err(),
+        .is_err(),
         "a second queued Start is refused"
     );
     wait_state(&mut slot, RunState::Starting);
@@ -1649,8 +1687,12 @@ fn start_all_over_n_members_does_not_block_per_member() {
     let mut slots: Vec<SlotScript> = (0..4).map(|_| new_js_slot()).collect();
     let t0 = Instant::now();
     for slot in &mut slots {
-        slot.start_surface(default_test_surface_start(src.clone(), LoadShape::NativeTick, vec![]))
-            .unwrap();
+        slot.start_surface(default_test_surface_start(
+            src.clone(),
+            LoadShape::NativeTick,
+            vec![],
+        ))
+        .unwrap();
         assert_eq!(slot.state(), RunState::Starting);
     }
     assert!(

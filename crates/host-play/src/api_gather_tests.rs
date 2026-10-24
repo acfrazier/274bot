@@ -263,8 +263,7 @@ fn start_source(
             Arc::new(api::named_banks::NamedBankFacts::empty()),
             Arc::from(Vec::<api::loadout::Loadout>::new()),
         );
-        slot.start_surface(start)
-        .expect("v2 isolate starts");
+        slot.start_surface(start).expect("v2 isolate starts");
     }
     let deadline = Instant::now() + Duration::from_secs(60);
     loop {

@@ -2909,13 +2909,26 @@ fn u9_cold_shared_tables_and_kind_build_measurement() {
 #[ignore = "isolated cold construction-count probe; run explicitly"]
 fn u9_normal_slot_start_does_not_construct_risk_tables() {
     assert_eq!(facts::build_count_for_test(), 0);
+    use std::sync::Arc;
+
     let mut slot = crate::SlotScript::new();
-    slot.start_load_with_loadouts(
-        "export function tick() {}".into(),
-        crate::load::LoadShape::NativeTick,
-        vec![],
-        &[],
-    )
+    let source: Arc<str> = "export function tick() {}".into();
+    let family = crate::resolve_api_family(&source)
+        .ok()
+        .map(|(_, family)| family);
+    slot.bind_surface_factory(Arc::new(crate::load::surface::JsSurfaceFactory::default()));
+    slot.start_surface(crate::surface::SurfaceStart {
+        card: Arc::new(crate::load::surface::JsStartCard {
+            source,
+            shape: crate::load::LoadShape::NativeTick,
+            siblings: Arc::default(),
+            family,
+        }),
+        settings_bag: None,
+        game_data: None,
+        named_banks: Arc::default(),
+        loadouts: Arc::default(),
+    })
     .unwrap();
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     while slot.state() != crate::slot::RunState::Running && std::time::Instant::now() < deadline {

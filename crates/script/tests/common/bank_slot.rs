@@ -96,9 +96,7 @@ impl BankSlot {
             .map(|(_, family)| family);
         let mut slot = SlotScript::new();
         slot.bind_incarnation(1);
-        slot.bind_surface_factory(Arc::new(
-            script::load::surface::JsSurfaceFactory::default(),
-        ));
+        slot.bind_surface_factory(Arc::new(script::load::surface::JsSurfaceFactory::default()));
         slot.start_surface_with_settings(script::surface::SurfaceStart {
             card: Arc::new(script::load::surface::JsStartCard {
                 source,
@@ -337,7 +335,10 @@ impl BankSlot {
         );
     }
 
-    pub fn probe(&self, expression: &str) -> Result<serde_json::Value, script::surface::SurfaceError> {
+    pub fn probe(
+        &self,
+        expression: &str,
+    ) -> Result<serde_json::Value, script::surface::SurfaceError> {
         self.slot.probe(expression)
     }
 

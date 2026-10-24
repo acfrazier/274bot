@@ -1756,8 +1756,10 @@ fn gatherer_exclusive_heap_stays_inside_the_eight_kib_target() {
 mod api_gather_seat {
     use super::*;
     use crate::api_gather::{GatherEnd, GatherPhase};
-    use crate::native::seat_rows::{DecodedSeatBatch, SeatInteractDecoded, SeatStartArgs, SeatStartInput};
     use crate::native::request::NativeKind;
+    use crate::native::seat_rows::{
+        DecodedSeatBatch, SeatInteractDecoded, SeatStartArgs, SeatStartInput,
+    };
     use crate::shim::InteractReq;
     use api::identity::RequestId;
 

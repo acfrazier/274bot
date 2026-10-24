@@ -65,9 +65,7 @@ fn default_test_surface_start(
     test_surface_start(source, shape, siblings, None)
 }
 
-fn js_start_card(
-    start: &script::surface::SurfaceStart,
-) -> &script::load::surface::JsStartCard {
+fn js_start_card(start: &script::surface::SurfaceStart) -> &script::load::surface::JsStartCard {
     start
         .card
         .as_any()

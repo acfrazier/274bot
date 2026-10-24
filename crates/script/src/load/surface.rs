@@ -11,7 +11,8 @@ use crate::native::SettingsBag;
 use crate::paint::ScriptPaint;
 use crate::surface::{
     PostedSnapshotFacts, RouteInspectIdentities, ScriptStopReceipt, SurfaceCard, SurfaceError,
-    SurfaceFactory, SurfaceFamily, SurfaceKind, SurfaceReady, SurfaceRun, SurfaceStart, TickOutcome,
+    SurfaceFactory, SurfaceFamily, SurfaceKind, SurfaceReady, SurfaceRun, SurfaceStart,
+    TickOutcome,
 };
 use api::identity::ExecutionId;
 use std::any::Any;
@@ -112,7 +113,8 @@ impl JsSurfaceRun {
         evidence_changed: bool,
     ) -> bool {
         self.last_snapshot = Some(fingerprint);
-        self.isolate.record_snapshot_evidence_change(evidence_changed);
+        self.isolate
+            .record_snapshot_evidence_change(evidence_changed);
         let accepted = self.isolate.post_snapshot(bytes);
         if !accepted {
             self.last_snapshot = None;
@@ -267,7 +269,11 @@ impl SurfaceRun for JsSurfaceRun {
                 walk_outcome_seq: fingerprint.walk_outcome_seq,
                 bank_selection: fingerprint.bank_selection,
                 route_inspect: RouteInspectIdentities {
-                    latest: (route.latest.seq, route.latest.generation, route.latest.request_id),
+                    latest: (
+                        route.latest.seq,
+                        route.latest.generation,
+                        route.latest.request_id,
+                    ),
                     prev: (route.prev.seq, route.prev.generation, route.prev.request_id),
                     replaced_id: route.replaced_id,
                     replaced_prev_id: route.replaced_prev_id,
@@ -654,9 +660,8 @@ pub(crate) mod tests {
     }
 
     pub(crate) fn assert_refused_snapshot_post_forces_a_keyframe() {
-        let mut run = run(
-            "export function tick() { const t = Date.now(); while (Date.now() - t < 400) {} }",
-        );
+        let mut run =
+            run("export function tick() { const t = Date.now(); while (Date.now() - t < 400) {} }");
         let text = "x".repeat(64 * 1024);
         let mut input = crate::isolate_fb::tests::empty_input(1);
         input.chat_text = Some(&text);

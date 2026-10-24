@@ -126,7 +126,6 @@ enum HeldReplacement {
     LoopSettled,
 }
 
-
 impl HeldReplacement {
     const KEYS: usize = 7;
 
@@ -303,7 +302,6 @@ fn carry_waiting_controls(
     );
 }
 
-
 fn seat_live_details<'a>(
     seat: &'a GameplaySeat<SeatEffect>,
     api: Option<&api_seat::ApiSeat>,
@@ -347,7 +345,6 @@ fn seat_live_details<'a>(
     details
 }
 
-
 const CUT_RESTART_LIMIT: usize = 3;
 
 const CUT_RESTART_WINDOW: Duration = Duration::from_secs(5 * 60);
@@ -368,7 +365,6 @@ pub enum StartLoadError {
     #[error("{0}")]
     Surface(#[from] SurfaceError),
 }
-
 
 /// Lifecycle of the script slot. `starting` is the surface setup window.
 /// `paused` covers both operator Pause and the not-`is_up` gate.
@@ -401,8 +397,6 @@ pub struct ScriptLifecycleReceipt {
     pub tick: u64,
     pub reason: String,
 }
-
-
 
 #[derive(Clone)]
 enum AfterStop {
@@ -462,7 +456,7 @@ pub struct SlotScript {
     seat_fence: Fence<ExecutionId>,
     seat_delivery: Vec<SeatEffect>,
     seat_native_delivery: VecDeque<crate::native::HostAction>,
-    
+
     seat_interact_delivery: Vec<crate::interact::QueuedInteract>,
     /// Guardian hold is separate from the shared seat-held state.
     guardian_held: bool,
@@ -512,7 +506,7 @@ pub struct SlotScript {
     /// by the host on the same frames the isolate's queue is. Never both — a
     /// slot runs a compiled script XOR a Load isolate.
     compiled_interacts: Vec<crate::interact::InteractReq>,
-    
+
     compiled_interact_outcome_seqs: Vec<u64>,
     /// An abort of each registered card session is owed to the pump thread.
     /// `reset_session_work` can run on the control thread and must not touch
@@ -531,7 +525,7 @@ pub struct SlotScript {
     surface_ready: bool,
     /// Reaper completion for a non-blocking Stop.
     stop_rx: Option<std::sync::mpsc::Receiver<Vec<String>>>,
-    
+
     after_stop: AfterStop,
     /// An operator Load Start has not settled yet (see [`StartOutcome`]).
     start_pending: bool,
@@ -539,9 +533,9 @@ pub struct SlotScript {
     /// `runtime_generation` before the unsettled setup's bump. A setup
     /// that fails restores it: a failed Start never counted as a Start.
     setup_generation_base: Option<u64>,
-    
+
     last_world_id: Option<usize>,
-    
+
     reach_cache: api::query::ReachPackCache,
     last_error: Option<String>,
     /// Work generation that owns the active tick error, if any. A successful
@@ -568,7 +562,7 @@ pub struct SlotScript {
     /// Fixed-size rolling window for terminate-driven runtime recreates.
     /// The third cut inside [`CUT_RESTART_WINDOW`] stops the script.
     cut_restart_times: [Option<Instant>; CUT_RESTART_LIMIT],
-    
+
     cut_restart_next: usize,
     /// Stable source identity key for this execution (`catalog:Name` / file path).
     source_identity: Option<String>,
@@ -601,19 +595,19 @@ impl SlotScript {
             seat_fence: Fence::new(),
             seat_delivery: Vec::new(),
             seat_native_delivery: VecDeque::new(),
-            
+
             seat_interact_delivery: Vec::new(),
             guardian_held: false,
             seat_host_held: false,
-            
+
             held_aborts: Vec::new(),
-            
+
             held_policy: None,
             seat_session_held: false,
             held_walk_terminals: Vec::new(),
-            
+
             seat_lifecycle: Vec::new(),
-            
+
             held_channel_refusals: Vec::new(),
             api: None,
             bank: None,
@@ -627,32 +621,32 @@ impl SlotScript {
             incarnation: 0,
             world_members: api::selected::Truth::Unknown,
             control_generation: 0,
-            
+
             compiled_interacts: Vec::new(),
-            
+
             compiled_interact_outcome_seqs: Vec::new(),
-            
+
             card_abort_owed: false,
-            
+
             card_stop_owed: false,
-            
+
             surface: None,
-            
+
             surface_ready: false,
-            
+
             stop_rx: None,
-            
+
             after_stop: AfterStop::Idle,
             start_pending: false,
             start_outcome: None,
-            
+
             setup_generation_base: None,
-            
+
             last_world_id: None,
-            
+
             reach_cache: api::query::ReachPackCache::default(),
             last_error: None,
-            
+
             active_tick_error_generation: None,
             lifecycle_receipt: None,
             pending_logs: Vec::new(),
@@ -664,13 +658,13 @@ impl SlotScript {
             bank_op_result_seq: 0,
             bank_op_result: false,
             work_epoch: 0,
-            
+
             surface_start: None,
             factories: [None; SurfaceKind::COUNT],
             watchdog: ProgressWatchdog::new(),
-            
+
             cut_restart_times: [None; CUT_RESTART_LIMIT],
-            
+
             cut_restart_next: 0,
             source_identity: None,
             runtime_generation: 0,
@@ -737,9 +731,9 @@ impl SlotScript {
         });
         if let Some(run) = rekeyed {
             self.discard_seat_gameplay_delivery();
-            
+
             self.align_api_session(run.session);
-            
+
             if let Some(isolate) = &self.surface {
                 // The local work epoch can have advanced on transient down
                 // observations before F0 mints this session. The carrier's
@@ -884,7 +878,7 @@ impl SlotScript {
         let mut dropped = self.seat_native_delivery.len();
         self.seat_native_delivery.retain(abort_action);
         dropped -= self.seat_native_delivery.len();
-        
+
         {
             dropped += self.seat_interact_delivery.len() + self.compiled_interacts.len();
             self.seat_interact_delivery
@@ -936,7 +930,7 @@ impl SlotScript {
             keep
         });
         let native_dropped = native_before - self.seat_native_delivery.len();
-        
+
         let dropped = {
             let interact_before = self.seat_interact_delivery.len();
             self.seat_interact_delivery.retain(|queued| {
@@ -963,17 +957,17 @@ impl SlotScript {
         self.seat_compiled_owner = None;
         self.seat_delivery.clear();
         self.seat_native_delivery.clear();
-        
+
         self.seat_interact_delivery.clear();
-        
+
         self.held_aborts.clear();
-        
+
         {
             self.held_policy = None;
         }
-        
+
         self.seat_lifecycle.clear();
-        
+
         self.held_channel_refusals.clear();
     }
 
@@ -1004,7 +998,7 @@ impl SlotScript {
         let kind = match card.0 {
             "Gatherer" | "Grinch" => crate::native::request::NativeKind::Gather,
             "Quester" => crate::native::request::NativeKind::Quester,
-            
+
             "Sherlock" => crate::native::request::NativeKind::Clue,
             #[cfg(any(test, feature = "test-hooks"))]
             "test" => crate::native::request::NativeKind::BankNearest,
@@ -1110,7 +1104,6 @@ impl SlotScript {
         self.cut_restart_next = 0;
     }
 
-    
     fn begin_start_outcome(&mut self) {
         self.start_pending = true;
         self.start_outcome = None;
@@ -1170,7 +1163,6 @@ impl SlotScript {
         Ok(())
     }
 
-    
     fn begin_async_stop(&mut self, after: AfterStop) -> bool {
         let Some(isolate) = self.surface.take() else {
             return false;
@@ -1195,11 +1187,11 @@ impl SlotScript {
 
     fn finish_idle_stop(&mut self) {
         self.teardown_compiled(StopReason::Operator);
-        
+
         self.teardown_api(StopReason::Operator);
-        
+
         self.compiled_interacts.clear();
-        
+
         {
             self.compiled_interact_outcome_seqs.clear();
             self.last_world_id = None;
@@ -1249,7 +1241,10 @@ impl SlotScript {
                         self.settle_start(StartOutcome::Ready);
                     }
                     SurfaceReady::Failed(e) => {
-                        let isolate = self.surface.take().expect("failed setup still owns isolate");
+                        let isolate = self
+                            .surface
+                            .take()
+                            .expect("failed setup still owns isolate");
                         self.teardown_api(StopReason::Replaced);
                         let (tx, rx) = std::sync::mpsc::channel();
                         isolate.stop(tx);
@@ -1262,7 +1257,10 @@ impl SlotScript {
                 }
             }
         }
-        let script_cut = self.surface.as_ref().is_some_and(|surface| surface.take_script_cut());
+        let script_cut = self
+            .surface
+            .as_ref()
+            .is_some_and(|surface| surface.take_script_cut());
         if script_cut {
             self.handle_script_cut(Instant::now());
         }
@@ -1278,7 +1276,7 @@ impl SlotScript {
             Err(std::sync::mpsc::TryRecvError::Disconnected) => self.complete_stop(),
         }
     }
-    
+
     fn handle_script_cut(&mut self, now: Instant) {
         self.cut_restart_times[self.cut_restart_next] = Some(now);
         self.cut_restart_next = (self.cut_restart_next + 1) % CUT_RESTART_LIMIT;
@@ -1312,7 +1310,6 @@ impl SlotScript {
         }
     }
 
-    
     fn finish_cut_limit(&mut self, error: String) {
         self.surface_start = None;
         self.source_identity = None;
@@ -1325,7 +1322,6 @@ impl SlotScript {
         self.last_settings_fp = None;
     }
 
-    
     fn complete_stop(&mut self) {
         self.stop_rx = None;
         self.last_world_id = None;
@@ -1393,7 +1389,7 @@ impl SlotScript {
         self.native_runtime.clock.observe(Instant::now(), false);
         self.revoke_native_input();
         self.interrupt_compiled(Interrupt::Pause);
-        
+
         self.interrupt_api(Interrupt::Pause);
         if let Some(pending) = &mut self.pending_withdraw_x {
             pending.freeze();
@@ -1402,7 +1398,6 @@ impl SlotScript {
             pending.freeze();
         }
         if self.has_instance() && matches!(self.state, RunState::Running | RunState::Starting) {
-            
             if let Some(isolate) = &self.surface {
                 isolate.pause();
             }
@@ -1425,7 +1420,7 @@ impl SlotScript {
         self.native_runtime.consume_manual_takeover();
 
         self.interrupt_compiled(Interrupt::Resume);
-        
+
         self.interrupt_api(Interrupt::Resume);
         if self.state == RunState::Error {
             return;
@@ -1438,7 +1433,6 @@ impl SlotScript {
             pending.resume();
         }
         if self.has_instance() && self.state == RunState::Paused {
-            
             if let Some(isolate) = &self.surface {
                 isolate.resume();
             }
@@ -1507,21 +1501,21 @@ impl SlotScript {
         self.seat_compiled_owner = None;
         self.seat_delivery.clear();
         self.seat_native_delivery.clear();
-        
+
         self.seat_interact_delivery.clear();
-        
+
         self.held_aborts.clear();
-        
+
         {
             self.held_policy = None;
         }
-        
+
         self.seat_lifecycle.clear();
-        
+
         self.held_channel_refusals.clear();
-        
+
         self.teardown_api(reason);
-        
+
         self.bank_runtime_boundary();
         self.native_runtime.revoke();
         self.evidence_wait_run = None;
@@ -1535,26 +1529,26 @@ impl SlotScript {
         // and its abandon latch all start over — which is the marker
         // `reset_session_work` must not make: that one is a connection
         // boundary and drops the step alone.
-        
+
         if !self.surface_active() && self.state != RunState::Stopping {
             self.card_stop_owed = true;
             self.card_abort_owed = false;
         }
         // A failed setup already ends Idle with its diagnostic; a Stop
         // during its reap must not turn that into a silent cancel.
-        
+
         if self.state == RunState::Stopping && matches!(self.after_stop, AfterStop::Fail(_)) {
             return;
         }
         self.last_error = None;
         self.teardown_compiled(reason);
-        
+
         {
             self.active_tick_error_generation = None;
         }
         // A Start that has not reached Ready never ran: nothing to commit.
         self.settle_start(StartOutcome::Cancelled);
-        
+
         if self.state == RunState::Stopping {
             // Already reaping: a queued Start or a watchdog restart after
             // it is dropped, and the reap ends Idle.
@@ -1568,7 +1562,7 @@ impl SlotScript {
             self.last_settings_fp = None;
             return;
         }
-        
+
         if self.begin_async_stop(AfterStop::Idle) {
             self.want_run = false;
             return;
@@ -1585,7 +1579,7 @@ impl SlotScript {
             self.evidence_wait_run = None;
             self.native_runtime.clear_note_progress();
             self.native_input.sync_live(false);
-            
+
             self.discard_mouse_interacts();
             if self.pending_withdraw_x.is_some() {
                 self.complete_withdraw_x(false);
@@ -1634,7 +1628,7 @@ impl SlotScript {
         self.evidence_wait_run = None;
         self.native_runtime.clock.observe(Instant::now(), false);
         self.on_is_up(false);
-        
+
         let discarded_walks = if reconnect {
             let seat_walks = self
                 .seat
@@ -1678,32 +1672,32 @@ impl SlotScript {
         } else {
             self.seat_delivery.clear();
             self.seat_native_delivery.clear();
-            
+
             self.seat_interact_delivery.clear();
-            
+
             self.held_aborts.clear();
-            
+
             {
                 self.held_policy = None;
             }
         }
-        
+
         self.seat_lifecycle.clear();
-        
+
         self.held_channel_refusals.clear();
         self.seat_fence.revoke();
-        
+
         self.api_session_boundary(reconnect);
-        
+
         self.bank_session_boundary(reconnect);
-        
+
         if !self.surface_active() {
             // As with Stop, registered hooks run on the pump thread.
             // A connection boundary aborts live work but retains session
             // state. It does not request a whole-card instance reset.
             self.card_abort_owed = true;
         }
-        
+
         {
             let execution = ExecutionId::first(api::selected::RunKey {
                 slot: self.incarnation,
@@ -1822,7 +1816,7 @@ impl SlotScript {
     /// Selected-revision facts pinned by a compiled run or a live Load seat.
     pub fn compiled_game_data(&self) -> Option<Arc<api::game_data::SelectedGameData>> {
         let selected = self.compiled.as_ref().map(|run| Arc::clone(&run.selected));
-        
+
         let selected = selected.or_else(|| self.api_game_data()).or_else(|| {
             self.surface_start
                 .as_ref()
@@ -1886,11 +1880,10 @@ impl SlotScript {
 
     fn revoke_native_input(&mut self) {
         self.native_input.revoke();
-        
+
         self.discard_mouse_interacts();
     }
 
-    
     fn discard_mouse_interacts(&self) {
         if let Some(isolate) = &self.surface {
             isolate.discard_mouse_interacts();
@@ -1918,7 +1911,6 @@ impl SlotScript {
                 .is_some_and(|(pairs, run)| pairs.held(run))
     }
     fn foreground_action_active(&self) -> bool {
-        
         if !self.compiled_interacts.is_empty() || !self.seat_interact_delivery.is_empty() {
             return true;
         }
@@ -1933,12 +1925,10 @@ impl SlotScript {
         let live = self.dispatch_open();
         self.native_input.sync_live(live);
         if !live {
-            
             self.discard_mouse_interacts();
         }
     }
 
-    
     pub fn post_loadouts(&mut self, loadouts: &[api::loadout::Loadout]) {
         if let Some(isolate) = &self.surface {
             isolate.post_loadouts(loadouts);
@@ -2103,7 +2093,6 @@ impl SlotScript {
         self.last_world_id = id;
     }
 
-    
     pub fn reach_pack_cache(&mut self) -> &mut api::query::ReachPackCache {
         &mut self.reach_cache
     }
@@ -2121,7 +2110,7 @@ impl SlotScript {
         if self.native_quiet_read(now).is_some() {
             return true;
         }
-        
+
         {
             self.surface
                 .as_ref()
@@ -2143,7 +2132,7 @@ impl SlotScript {
         }) {
             return true;
         }
-        
+
         if let Some(isolate) = &self.surface {
             return isolate.live_walking_operation();
         }
@@ -2160,7 +2149,6 @@ impl SlotScript {
     /// Live work a manual movement takes over: a walking operation, a live
     /// native ledger owner, or a Gather or Combat API session.
     pub fn manual_input_owner(&self) -> bool {
-        
         if self.api_session_takes_manual_input() {
             return true;
         }
@@ -2171,11 +2159,11 @@ impl SlotScript {
         // A deliberate takeover is gameplay progress, even if the human
         // clicked an unwalkable tile and no player-info movement follows.
         self.watchdog.stamp_gameplay(Instant::now());
-        
+
         if let Some(isolate) = &self.surface {
             isolate.note_manual_walk_takeover(intent_seq);
         }
-        
+
         self.api_user_input();
         let Some(ledger) = self.native_runtime.ledger.as_mut() else {
             return;
@@ -2252,7 +2240,7 @@ impl SlotScript {
             .and_then(|owner| owner.active_walk())
             .and_then(|request| native_walk_id(request.get()));
         seat.retire_inactive_native_walks(active_native_walk);
-        
+
         let bank_owner = self.bank.as_ref().and_then(|bank| bank.action_owner);
         let owner = bank_owner
             .or(self.seat_compiled_owner)
@@ -2276,9 +2264,9 @@ impl SlotScript {
                 continue;
             }
             let (class, release) = match &action.effect {
-                crate::native::HostEffect::Interaction(crate::interact::InteractReq::AbortWalk {
-                    request_id,
-                }) => (
+                crate::native::HostEffect::Interaction(
+                    crate::interact::InteractReq::AbortWalk { request_id },
+                ) => (
                     api::script_contract::EmissionClass::Release,
                     native_walk_id(*request_id)
                         .or(owner)
@@ -2303,7 +2291,6 @@ impl SlotScript {
         }
     }
 
-    
     fn capture_compiled_seat_interacts(&mut self) {
         let Some(seat) = self.seat.as_mut() else {
             return;
@@ -2321,7 +2308,8 @@ impl SlotScript {
             }
             let (class, release) = seat_interact_class(&req, owner);
             let walk = seat_walk_id(&req, owner);
-            let reserved_policy = matches!(req, crate::interact::InteractReq::RunPolicyOverride { .. });
+            let reserved_policy =
+                matches!(req, crate::interact::InteractReq::RunPolicyOverride { .. });
             let effect = SeatEffect::Interact(crate::interact::QueuedInteract {
                 req,
                 observed_walk_outcome_seq,
@@ -2350,7 +2338,7 @@ impl SlotScript {
         for row in delivery.drain(..) {
             match row {
                 SeatEffect::Native(action) => self.seat_native_delivery.push_back(action),
-                
+
                 SeatEffect::Interact(interact)
                     if matches!(
                         &interact.req,
@@ -2364,7 +2352,7 @@ impl SlotScript {
                 {
                     self.seat_lifecycle.push(interact.req);
                 }
-                
+
                 SeatEffect::Interact(interact) => self.seat_interact_delivery.push(interact),
             }
         }
@@ -2546,7 +2534,6 @@ impl SlotScript {
             .collect()
     }
 
-    
     fn drain_interacts_stamped(&mut self) -> Vec<crate::interact::QueuedInteract> {
         debug_assert!(
             !(self.compiled.is_some() && self.surface.is_some()),
@@ -2877,7 +2864,6 @@ impl SlotScript {
         }
     }
 
-    
     fn compact_held_seat_batches(
         &mut self,
         mut batches: Vec<crate::native::seat_rows::QueuedSeatBatch>,
@@ -3422,7 +3408,6 @@ impl SlotScript {
         }
     }
 
-    
     pub fn restore_host_interacts(&mut self, drained: Vec<crate::interact::QueuedInteract>) {
         match &self.surface {
             Some(isolate) => isolate.restore_interacts_stamped(drained),
@@ -3439,7 +3424,6 @@ impl SlotScript {
         }
     }
 
-    
     pub fn drain_lifecycle(&mut self) -> Vec<crate::interact::InteractReq> {
         let mut facts = self
             .surface
@@ -3449,14 +3433,12 @@ impl SlotScript {
         facts
     }
 
-    
     pub fn request_recovery_anchor(&self) {
         if let Some(isolate) = &self.surface {
             isolate.request_recovery_anchor();
         }
     }
 
-    
     pub fn surface_start(&self) -> Option<&SurfaceStart> {
         self.surface_start.as_ref()
     }
@@ -3486,7 +3468,6 @@ impl SlotScript {
         self.watchdog.stamp_game_packet_tick(now);
     }
 
-    
     fn duel_fight_pen_anchor_unreachable(player: WatchdogTile, anchor: WatchdogTile) -> bool {
         let pen_index = |tile: WatchdogTile| crate::duel_arena::pen_at(tile.x, tile.z, tile.level);
         let Some(player_pen) = pen_index(player) else {
@@ -3495,7 +3476,6 @@ impl SlotScript {
         Some(player_pen) != pen_index(anchor)
     }
 
-    
     fn hold_fight_pen_recovery_if_needed(
         &mut self,
         player: Option<WatchdogTile>,
@@ -3557,7 +3537,7 @@ impl SlotScript {
         if matches!(freeze_action, WatchdogAction::AbortWalk) {
             return freeze_action;
         }
-        
+
         if self.surface_active() {
             if let (Some(anchor), Some((x, z, level))) =
                 (self.watchdog.held_fight_pen_anchor(), here)
@@ -3598,7 +3578,7 @@ impl SlotScript {
         }
         if let Some(reply) = anchor_reply {
             let player = here.map(|(x, z, level)| WatchdogTile { x, z, level });
-            
+
             if let Some(action) = self.hold_fight_pen_recovery_if_needed(player, reply) {
                 return action;
             }
@@ -3663,7 +3643,7 @@ impl SlotScript {
                     anchor,
                 );
             }
-            
+
             // `api.gather` has a separate recovery-anchor path; keep its
             // Duel Arena fight-pen check consistent with lifecycle anchors.
             if let Some(anchor) = self.api_recovery_anchor() {
@@ -3705,7 +3685,7 @@ impl SlotScript {
         if self.compiled.is_some() {
             return self.restart_compiled(now);
         }
-        
+
         {
             if self.state == RunState::Stopping {
                 // A respawn is already queued behind this reap.
@@ -3827,7 +3807,7 @@ impl SlotScript {
             self.native_runtime.clear_note_progress();
             return;
         }
-        
+
         if let Some(isolate) = &self.surface {
             if let Some(failure) = trapped_failure(ctx) {
                 self.stop_blocked(failure, ctx.tick);
@@ -3861,14 +3841,14 @@ impl SlotScript {
             self.native_runtime.clear_note_progress();
             return;
         }
-        
+
         if self.surface.is_some() {
             if let Some(failure) = trapped_failure(ctx) {
                 self.stop_blocked(failure, ctx.tick);
                 return;
             }
         }
-        
+
         if let Some(isolate) = &self.surface {
             isolate.on_game_tick_at(ctx.tick, self.native_input.lock().identity());
             if ctx.compiled.hold {
@@ -3910,7 +3890,7 @@ impl SlotScript {
         // Park this slot's interact queue in the ctx for the tick: the verbs
         // the card dispatches then land on the same drain the isolate's
         // forwarded requests ride.
-        
+
         {
             ctx.compiled.interacts = Some(std::mem::take(&mut self.compiled_interacts));
         }
@@ -3947,7 +3927,7 @@ impl SlotScript {
                             .map(|seat| seat.as_mut() as &mut dyn crate::native::SeatPromptPort),
                     },
                 );
-                
+
                 {
                     ctx.compiled.interacts = interacts;
                 }
@@ -3958,7 +3938,7 @@ impl SlotScript {
         if result.is_ok() {
             self.watchdog.stamp_scheduler(Instant::now());
         }
-        
+
         {
             self.compiled_interacts = ctx.compiled.interacts.take().unwrap_or_default();
             self.compiled_interact_outcome_seqs.resize(
@@ -3967,7 +3947,7 @@ impl SlotScript {
             );
         }
         self.capture_native_seat_rows();
-        
+
         self.capture_compiled_seat_interacts();
         let ready_observation = ctx.here.is_some()
             && ctx.snapshot.is_some_and(|snapshot| {
@@ -4034,7 +4014,7 @@ impl SlotScript {
                     }
                 }
                 self.revoke_native_input();
-                
+
                 {
                     self.compiled_interacts.clear();
                     self.compiled_interact_outcome_seqs.clear();
@@ -4082,7 +4062,6 @@ impl SlotScript {
     /// A Blocked flow is terminal even when the card omitted its status;
     /// a published Blocked phase is terminal only when it carries a failure.
     fn stop_blocked(&mut self, failure: ScriptFailure, tick: u64) {
-        
         if self.compiled.is_none() {
             let generation = self.runtime_generation;
             let reason = format!("{}: {}", failure.code, failure.message);
@@ -4132,7 +4111,7 @@ impl SlotScript {
         if self.state != RunState::Running || !self.want_run {
             return RandomClaim::Host;
         }
-        
+
         if self
             .surface
             .as_ref()
@@ -4156,7 +4135,9 @@ impl SlotScript {
     }
 
     pub fn memory_metrics(&self) -> Option<serde_json::Value> {
-        self.surface.as_ref().and_then(|surface| surface.memory_metrics())
+        self.surface
+            .as_ref()
+            .and_then(|surface| surface.memory_metrics())
     }
 
     pub fn memory_progress(&self) -> serde_json::Value {
@@ -4253,7 +4234,6 @@ impl SlotScript {
 
     /// Take log lines staged by [`Self::drain_logs`] (panel log pane).
     pub fn take_pending_logs(&mut self) -> Vec<String> {
-        
         self.observe_lifecycle();
         std::mem::take(&mut self.pending_logs)
     }
@@ -4285,9 +4265,9 @@ impl Drop for SlotScript {
         self.preparing = None;
         self.pending_compiled_start = None;
         self.teardown_compiled(StopReason::Removed);
-        
+
         self.teardown_api(StopReason::Removed);
-        
+
         if let Some(isolate) = self.surface.take() {
             let (tx, _rx) = std::sync::mpsc::channel();
             isolate.stop(tx);
@@ -4339,7 +4319,6 @@ fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
     }
     "(no message)".to_string()
 }
-
 
 fn settings_fp(bag: &serde_json::Map<String, serde_json::Value>) -> String {
     serde_json::to_string(bag).unwrap_or_default()
