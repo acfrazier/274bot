@@ -364,6 +364,8 @@ pub struct TuiSession {
     core: OperatorSession<()>,
     auto_world: Option<u16>,
     pub error: Option<String>,
+    /// The banner message's expiry clock ([`Self::expire_error`]).
+    error_expiry: frontend_core::ErrorExpiry,
     /// All profile names (for the strip's slot list), in vault order.
     names: Vec<String>,
     /// Hop a fresh slot to the mainland once in a loaded scene (the TUI's own
@@ -644,6 +646,7 @@ impl TuiSession {
             core,
             auto_world: None,
             error: None,
+            error_expiry: frontend_core::ErrorExpiry::default(),
             names: Vec::new(),
             mainland: false,
             launcher,
@@ -3043,8 +3046,17 @@ impl TuiSession {
         }
     }
 
+    /// Clear the banner message once it has stood for
+    /// [`frontend_core::ERROR_MESSAGE_TIMEOUT`] with nothing resolving or
+    /// replacing it (the same rule as the panel's red line).
+    fn expire_error(&mut self, app: &mut TuiApp, now: Instant) {
+        self.error_expiry
+            .observe(&mut app.error, self.core.refusals(), now);
+    }
+
     /// Copy the focused slot's views into the app and poll the runner.
     fn pump(&mut self, app: &mut TuiApp) {
+        self.expire_error(app, Instant::now());
         self.project_walk_globals(app);
         self.project_manual_walk_pause(app);
         self.project_quester_paths(app);

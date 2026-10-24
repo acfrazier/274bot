@@ -2151,7 +2151,7 @@ fn a_map_walk_shows_the_member_running_on_its_fleet_row() {
     let mut app = TuiApp::new("274bot headless");
     app.map_active = true;
     session.pump(&mut app);
-    assert!(!app.fleet_model.rows()[0].walking());
+    assert!(!app.fleet_model.rows()[0].manual_walk());
 
     let destination = Tile {
         x: 1,
@@ -2163,7 +2163,7 @@ fn a_map_walk_shows_the_member_running_on_its_fleet_row() {
     assert_eq!(app.error, None);
     session.pump(&mut app);
     assert!(
-        app.fleet_model.rows()[0].walking(),
+        app.fleet_model.rows()[0].manual_walk(),
         "the armed walk shows on the row"
     );
     assert!(app.fleet_model.rows()[0].busy());
@@ -6699,4 +6699,229 @@ fn a_second_identical_emptied_plan_shows_its_result_again() {
         Some(skipped),
         "the second emptied plan's result shows"
     );
+}
+
+/// PANEL-STATE-GAP-1023, acceptance 7 (TUI half): the same nine bots as the
+/// panel's test. The Fleet pane draws the label the core projects, Stop
+/// retires the three script walks, and the Stop decision comes from the same
+/// facts the label does.
+#[test]
+fn tui_fleet_pane_and_stop_agree_with_the_core_after_nine_bots_stop() {
+    use crate::fleet::{FleetState, FleetTable};
+    use crate::layout::SizeClass;
+    const NINE: [&str; 9] = [
+        "alice", "bob", "carol", "dave", "erin", "frank", "grace", "heidi", "ivan",
+    ];
+    let iso = IsolatedStores::enter("tui-state-gap");
+    let (mut session, mut app) = tui_with_profiles(&iso, &NINE);
+    {
+        let mut rows = session
+            .core
+            .play_for_test()
+            .unwrap()
+            .statuses
+            .lock()
+            .unwrap();
+        for name in NINE {
+            rows.retain(|row| row.username != name);
+            rows.push(host_play::SlotStatus {
+                username: name.into(),
+                connected: true,
+                ingame: true,
+                scene_state: 2,
+                ..host_play::SlotStatus::default()
+            });
+        }
+    }
+    let path = iso.dir().join("loop.ts");
+    std::fs::write(&path, LOOPING_TS).unwrap();
+    let card = session.scripts.load_card(&path).unwrap();
+    for name in NINE {
+        assign(&mut session, name, &card);
+    }
+    for name in NINE {
+        start_assigned_script(&mut session, &mut app, name);
+    }
+    settle_starts(&mut session, &mut app);
+    for name in NINE {
+        wait_script_state(
+            session.core.play_for_test().unwrap(),
+            name,
+            ScriptRunState::Running,
+        );
+    }
+    {
+        let mut rows = session
+            .core
+            .play_for_test()
+            .unwrap()
+            .statuses
+            .lock()
+            .unwrap();
+        for row in rows
+            .iter_mut()
+            .filter(|row| NINE[..3].contains(&row.username.as_str()))
+        {
+            (row.walk_x, row.walk_z, row.walk_level) = (2550, 3348, 0);
+        }
+    }
+    for name in NINE {
+        session
+            .submit_with(
+                &mut app,
+                OperatorCommand::SetMark(true),
+                Targets::Profile(name),
+            )
+            .expect("mark");
+    }
+    session.pump(&mut app);
+    assert_eq!(app.fleet_model.counts().marked(), 9);
+
+    // What the Fleet pane draws for each bot, one text line per row.
+    let drawn = |app: &TuiApp| -> Vec<String> {
+        let area = ratatui::layout::Rect::new(0, 0, 80, 20);
+        let mut buf = ratatui::buffer::Buffer::empty(area);
+        FleetTable {
+            model: &app.fleet_model,
+            restart_badges: &std::collections::HashSet::new(),
+            state: &mut FleetState::default(),
+            selected: None,
+            keys: false,
+            class: SizeClass::Standard,
+            header_parts: &mut Vec::new(),
+        }
+        .render(area, &mut buf, 0);
+        (0..area.height)
+            .map(|y| {
+                (0..area.width)
+                    .map(|x| buf[(x, y)].symbol())
+                    .collect::<String>()
+            })
+            .filter(|line| NINE.iter().any(|name| line.contains(name)))
+            .collect()
+    };
+    let state_of = |line: &str| {
+        line.split_whitespace()
+            .find(|word| ["running", "idle"].contains(word))
+            .map(str::to_owned)
+    };
+    let lines = drawn(&app);
+    assert_eq!(lines.len(), 9, "{lines:?}");
+    assert!(
+        lines
+            .iter()
+            .all(|line| state_of(line).as_deref() == Some("running")),
+        "{lines:?}"
+    );
+
+    run_fleet_action(&mut session, &mut app, frontend_core::FleetAction::Stop);
+    for name in NINE {
+        wait_script_state(
+            session.core.play_for_test().unwrap(),
+            name,
+            ScriptRunState::Idle,
+        );
+    }
+    settle_fleet_result(&mut session, &mut app);
+    session.pump(&mut app);
+    let settled = app.error.clone().unwrap_or_default();
+    assert!(settled.starts_with("Stop: done 9"), "{settled}");
+
+    let lines = drawn(&app);
+    assert_eq!(lines.len(), 9, "{lines:?}");
+    assert!(
+        lines
+            .iter()
+            .all(|line| state_of(line).as_deref() == Some("idle")),
+        "the TUI drew a stale walking label: {lines:?}"
+    );
+    for row in app.fleet_model.rows() {
+        assert_eq!(
+            (
+                row.brief(),
+                row.script().is_live(),
+                row.script_walk(),
+                row.connected()
+            ),
+            ("idle", false, false, true),
+            "{}",
+            row.name()
+        );
+        let bot = session
+            .core
+            .bot_projection(Some(&session.scripts), row.name())
+            .expect("a loaded bot");
+        assert_eq!(bot.label(), row.brief());
+        assert_eq!(
+            bot.stop_eligibility(),
+            frontend_core::StopEligibility::NoScript
+        );
+    }
+    for status in session
+        .core
+        .play_for_test()
+        .unwrap()
+        .statuses
+        .lock()
+        .unwrap()
+        .iter()
+    {
+        assert_eq!(status.script_walk(), None, "{}", status.username);
+    }
+
+    // Stop again: nothing to stop, and the refusal names the same fact.
+    run_fleet_action(&mut session, &mut app, frontend_core::FleetAction::Stop);
+    let refusal = app.error.clone().unwrap_or_default();
+    assert!(
+        refusal.contains("no bot to act on") && refusal.contains("alice: no script running"),
+        "{refusal}"
+    );
+    assert_eq!(
+        session.core.refusals(),
+        1,
+        "the repeated Stop is the one refusal the command boundary logged"
+    );
+    session.pump(&mut app);
+    session.expire_error(
+        &mut app,
+        Instant::now() + frontend_core::ERROR_MESSAGE_TIMEOUT + Duration::from_secs(1),
+    );
+    assert_eq!(app.error, None, "the refusal message expired");
+}
+
+/// The message line stays until an action resolves it, a newer message
+/// replaces it, or the shared timeout passes: the same rule as the panel's
+/// banner (`frontend_core::ERROR_MESSAGE_TIMEOUT`).
+#[test]
+fn the_message_line_expires_unless_resolved_or_replaced() {
+    use frontend_core::ERROR_MESSAGE_TIMEOUT as TIMEOUT;
+    let second = Duration::from_secs(1);
+    let mut session = TuiSession::new(dummy_options());
+    let mut app = TuiApp::new("274bot headless");
+    let t0 = Instant::now();
+
+    app.error = Some("first".into());
+    session.expire_error(&mut app, t0);
+    session.expire_error(&mut app, t0 + TIMEOUT - second);
+    assert_eq!(app.error.as_deref(), Some("first"));
+    session.expire_error(&mut app, t0 + TIMEOUT);
+    assert_eq!(app.error, None);
+
+    app.error = Some("older".into());
+    session.expire_error(&mut app, t0);
+    app.error = Some("newer".into());
+    session.expire_error(&mut app, t0 + TIMEOUT - second);
+    session.expire_error(&mut app, t0 + TIMEOUT + second);
+    assert_eq!(app.error.as_deref(), Some("newer"), "the timer restarted");
+    session.expire_error(&mut app, t0 + TIMEOUT * 2 - second);
+    assert_eq!(app.error, None);
+
+    app.error = Some("resolved".into());
+    session.expire_error(&mut app, t0);
+    app.error = None;
+    session.expire_error(&mut app, t0 + second);
+    app.error = Some("next".into());
+    session.expire_error(&mut app, t0 + TIMEOUT);
+    session.expire_error(&mut app, t0 + TIMEOUT * 2 - second);
+    assert_eq!(app.error.as_deref(), Some("next"));
 }

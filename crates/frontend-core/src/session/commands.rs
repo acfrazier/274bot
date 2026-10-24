@@ -358,6 +358,8 @@ pub(super) struct CommandDesk {
     pub(super) plan_target: Option<crate::selection::ProfileIdentity>,
     /// Switch world members not settled yet ([`super::world_switch`]).
     pub(super) world_switches: Vec<super::world_switch::WorldSwitch>,
+    /// Commands refused before they became operations ([`OperatorSession::refusals`]).
+    pub(super) refusals: u64,
 }
 
 impl CommandDesk {
@@ -579,8 +581,78 @@ impl<Io> OperatorSession<Io> {
     }
 
     /// [`Self::submit`] at `now`: the start of a Remove's clean-logout
-    /// window ([`super::SLOT_REMOVE_TIMEOUT`]).
+    /// window ([`super::SLOT_REMOVE_TIMEOUT`]). This is the command
+    /// boundary: a command refused before it becomes an operation logs one
+    /// `info` line here, for every front end alike.
     pub fn submit_at<S: SlotSurface<Io = Io>>(
+        &mut self,
+        command: OperatorCommand,
+        targets: Targets<'_>,
+        now: Instant,
+        surface: &mut S,
+    ) -> Result<Submitted, SubmitError> {
+        let submitted = self.submit_unlogged(command, targets, now, surface);
+        if let Err(error) = &submitted {
+            if command != OperatorCommand::GameInput {
+                self.commands.refusals += 1;
+                api::host_log!(
+                    api::hostlog::Category::Lifecycle,
+                    api::hostlog::Level::Info,
+                    "command refused: {command:?}: {error}"
+                );
+            }
+        }
+        submitted
+    }
+
+    /// How many commands this session has refused before they became
+    /// operations. A front end's error line uses it to tell a repeated
+    /// refusal (same text, new refusal) from the message already shown.
+    pub fn refusals(&self) -> u64 {
+        self.commands.refusals
+    }
+
+    /// One info line for the members of `request` that were refused, naming
+    /// the command, the bots and the reason. A refusal settles a member as
+    /// [`CommandFailure::Rejected`] before any operation exists for it. One
+    /// line per command, however many bots it refused.
+    fn log_refusals(&mut self, request: RequestId, command: OperatorCommand) {
+        let Some(report) = self.commands.book.report(request) else {
+            return;
+        };
+        let mut line = String::new();
+        let mut refused = 0;
+        for member in report.members() {
+            if !matches!(
+                member.terminal(),
+                Some(Settlement::Failed(CommandFailure::Rejected(_)))
+            ) {
+                continue;
+            }
+            if refused > 0 {
+                line.push_str("; ");
+            }
+            refused += 1;
+            match member.subject() {
+                Subject::Profile(identity) => line.push_str(&self.name_for_identity(identity)),
+                Subject::Application => line.push_str("application"),
+            }
+            if let Some(detail) = member.detail() {
+                line.push_str(": ");
+                line.push_str(detail);
+            }
+        }
+        if refused > 0 {
+            self.commands.refusals += 1;
+            api::host_log!(
+                api::hostlog::Category::Lifecycle,
+                api::hostlog::Level::Info,
+                "command refused: {command:?} on {refused} member(s): {line}"
+            );
+        }
+    }
+
+    fn submit_unlogged<S: SlotSurface<Io = Io>>(
         &mut self,
         command: OperatorCommand,
         targets: Targets<'_>,
@@ -681,6 +753,7 @@ impl<Io> OperatorSession<Io> {
         );
         self.drain_watched();
         self.settle_owned();
+        self.log_refusals(request, command);
         if let Some(plan) = ran_plan {
             // A planned Log in can load the first members: with nothing
             // selected, focus the remembered (else first) one, as Load all

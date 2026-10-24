@@ -67,6 +67,8 @@ const MAP_DRAFT: &str =
 const GAME_INPUT_STAGING: &str =
     "stages GameInput events into the core queue only (no dispatch); `ui_frame` submits GameInput once per frame";
 const FORMAT: &str = "pure formatting or parsing; no state";
+const UI_TIMER: &str =
+    "presentation timer: clears a front end's own message line after a timeout; no operator decision";
 const LOG_VIEW: &str =
     "control of the log read projection (scope, filter, follow); not transport, work admission or a durable write";
 const SEAM_ROWS: &str = "the command seam: every row, chosen by its literal argument";
@@ -244,6 +246,7 @@ const CORE: &[(&str, Decision)] = &[
     ("resources.rs::cpu_from_delta", Excluded(FORMAT)),
     ("resources.rs::format_bytes", Excluded(FORMAT)),
     ("resources.rs::format_bots", Excluded(FORMAT)),
+    ("error_expiry.rs::ErrorExpiry::observe", Excluded(UI_TIMER)),
     ("resources.rs::format_background", Excluded(FORMAT)),
     ("resources.rs::background_ack_text", Excluded(FORMAT)),
     ("resources.rs::ResourceView::copy_from", Excluded(PROJECTION)),

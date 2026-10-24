@@ -4669,7 +4669,7 @@ fn a_picker_walk_shows_the_member_running_until_it_ends() {
     s.core.fleet_mut().add("alice");
     s.pump_status();
     let before = s.core.fleet_view().rows_generation();
-    assert!(!s.core.fleet_view().row("alice").unwrap().walking());
+    assert!(!s.core.fleet_view().row("alice").unwrap().manual_walk());
 
     let dest = Tile {
         x: 2,
@@ -4680,7 +4680,7 @@ fn a_picker_walk_shows_the_member_running_until_it_ends() {
     assert!(s.confirm_picker_walk(&world));
     s.pump_status();
     let walking = s.core.fleet_view().row("alice").unwrap();
-    assert!(walking.walking());
+    assert!(walking.manual_walk());
     assert_eq!(walking.brief(), "running");
     assert!(
         s.core.fleet_view().rows_generation() > before,
@@ -4693,14 +4693,14 @@ fn a_picker_walk_shows_the_member_running_until_it_ends() {
         held.route = None;
         s.pump_status();
         assert!(
-            s.core.fleet_view().row("alice").unwrap().walking(),
+            s.core.fleet_view().row("alice").unwrap().manual_walk(),
             "an arm in use keeps its last answer; the pump does not wait"
         );
     }
     s.core.finish_walk_for_test("alice");
     s.pump_status();
     let arrived = s.core.fleet_view().row("alice").unwrap();
-    assert!(!arrived.walking());
+    assert!(!arrived.manual_walk());
     assert_eq!(arrived.brief(), "idle");
     assert_eq!(s.walk_status_text(), "—");
 }
@@ -9145,4 +9145,44 @@ fn panel_frame_hook_receives_client_through_slot_frame() {
     );
 
     assert!(session.mainland_sent.lock().unwrap().contains("alice"));
+}
+
+/// The banner message stays until an action resolves it, a newer message
+/// replaces it, or the shared timeout passes: the same rule as the terminal
+/// app's message line (`frontend_core::ERROR_MESSAGE_TIMEOUT`).
+#[test]
+fn the_banner_message_expires_unless_resolved_or_replaced() {
+    use frontend_core::ERROR_MESSAGE_TIMEOUT as TIMEOUT;
+    let second = std::time::Duration::from_secs(1);
+    let mut s = Session::new();
+    let t0 = Instant::now();
+
+    // No action: it stays for the whole timeout, then goes.
+    s.error = Some("first".into());
+    s.expire_error(t0);
+    s.expire_error(t0 + TIMEOUT - second);
+    assert_eq!(s.error.as_deref(), Some("first"));
+    s.expire_error(t0 + TIMEOUT);
+    assert_eq!(s.error, None);
+
+    // A newer message replaces it and restarts the timer.
+    s.error = Some("older".into());
+    s.expire_error(t0);
+    s.error = Some("newer".into());
+    s.expire_error(t0 + TIMEOUT - second);
+    s.expire_error(t0 + TIMEOUT + second);
+    assert_eq!(s.error.as_deref(), Some("newer"), "the timer restarted");
+    s.expire_error(t0 + TIMEOUT * 2 - second);
+    assert_eq!(s.error, None);
+
+    // An action that resolves it clears it early; the next message gets the
+    // whole timeout.
+    s.error = Some("resolved".into());
+    s.expire_error(t0);
+    s.error = None;
+    s.expire_error(t0 + second);
+    s.error = Some("next".into());
+    s.expire_error(t0 + TIMEOUT);
+    s.expire_error(t0 + TIMEOUT * 2 - second);
+    assert_eq!(s.error.as_deref(), Some("next"));
 }

@@ -3726,14 +3726,11 @@ fn slot_names<Io>(core: &OperatorSession<Io>) -> Vec<String> {
 }
 
 fn script_active<Io>(core: &OperatorSession<Io>, name: &str) -> bool {
-    matches!(
+    ScriptRunState::from_script(
         core.play()
             .map_or(script::RunState::Idle, |p| p.script_state(name)),
-        script::RunState::Starting
-            | script::RunState::Running
-            | script::RunState::Paused
-            | script::RunState::Stopping
     )
+    .is_live()
 }
 
 fn wall_member<Io>(core: &OperatorSession<Io>, name: &str) -> bool {

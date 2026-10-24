@@ -18,10 +18,12 @@
 
 #[cfg(feature = "memory-profile")]
 pub mod bench;
+pub mod bot_projection;
 pub mod bulk;
 pub mod capacity;
 pub mod command;
 pub mod driver;
+pub mod error_expiry;
 pub mod fleet;
 pub mod fleet_plan;
 pub mod frames;
@@ -61,10 +63,12 @@ pub mod views;
 pub mod walk_map;
 pub mod walk_permissions;
 
+pub use bot_projection::{BotProjection, StopEligibility};
 pub use bulk::{BulkOutcome, BulkReport, BulkRow};
 pub use capacity::{CapacityNotice, CapacityWarning, RenderPolicyLabel};
 pub use command::{CommandBook, CommandReport, FleetOrder, OperatorCommand};
 pub use driver::HeadlessDriver;
+pub use error_expiry::{ErrorExpiry, ERROR_MESSAGE_TIMEOUT};
 pub use fleet::{
     contains_ci, fill_visible_row_indices, fleet_row_matches, state_label, Fleet, FleetCard,
     FleetFilter, FleetMarkCounts, FleetModel, MarkOp, MarkPredicate, ShownMarks,
