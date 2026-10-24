@@ -20,6 +20,7 @@ pub mod abi;
 mod actions;
 pub mod custody;
 pub mod divergence;
+pub mod recovery_hints;
 pub mod request;
 pub mod seat;
 pub mod seat_rows;
@@ -300,7 +301,21 @@ pub type PrepareCard =
 pub type CreateScript =
     fn(RunKey, Arc<PreparedConfig>, &mut RetainedMemory) -> Result<Box<dyn Script>, StartError>;
 
-#[derive(Debug)]
+/// Static lifecycle hooks registered by a compiled card.
+///
+/// The card descriptor owns these function pointers. They carry no per-bot
+/// state. The owning slot invokes them on its pump thread, never a control
+/// thread.
+#[derive(Debug, Clone, Copy)]
+pub struct CardLifecycle {
+    pub on_stop: fn(),
+    pub on_reset: fn(),
+    pub on_resume: fn(),
+    pub on_pause: fn(),
+    pub on_hold: fn(bool),
+}
+
+#[derive(Debug, Clone, Copy)]
 pub struct CompiledCard {
     pub id: CompiledId,
     pub name: &'static str,
@@ -311,7 +326,9 @@ pub struct CompiledCard {
     pub per_account_settings: &'static [&'static str],
     pub prepare: PrepareCard,
     pub create: CreateScript,
+    pub lifecycle: Option<&'static CardLifecycle>,
 }
+
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StartError {

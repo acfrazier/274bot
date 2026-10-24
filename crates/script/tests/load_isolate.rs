@@ -8,7 +8,7 @@
 // `include_str!`s a script tree.
 
 use std::path::PathBuf;
-use std::sync::mpsc;
+use std::sync::{mpsc, Arc};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -58,6 +58,32 @@ fn wait_slot_state(slot: &mut SlotScript, want: script::RunState) {
 // every other read/set throws `not impl`).
 const NATIVE_TICK: &str =
     "export function tick(api) { globalThis.__rs_n = (globalThis.__rs_n || 0) + 1 }";
+
+fn start_js_surface(
+    slot: &mut SlotScript,
+    source: impl Into<String>,
+    shape: LoadShape,
+) -> Result<(), script::slot::StartLoadError> {
+    let source = Arc::<str>::from(source.into());
+    let family = script::resolve_api_family(&source)
+        .ok()
+        .map(|(_, family)| family);
+    slot.bind_surface_factory(Arc::new(
+        script::load::surface::JsSurfaceFactory::default(),
+    ));
+    slot.start_surface(script::surface::SurfaceStart {
+        card: Arc::new(script::load::surface::JsStartCard {
+            source,
+            shape,
+            siblings: Arc::<[(String, String)]>::from([]),
+            family,
+        }),
+        settings_bag: None,
+        game_data: None,
+        named_banks: Arc::new(api::named_banks::NamedBankFacts::empty()),
+        loadouts: Arc::<[api::loadout::Loadout]>::from([]),
+    })
+}
 
 // The brief's compat fixture: defineBot config with a `create()` bot.
 const COMPAT_FIXTURE: &str =
@@ -1138,20 +1164,20 @@ fn drive_until_runaway(slot: &mut SlotScript, driver: &mut NullDriver, next_tick
     for _ in 0..12 {
         let tick = *next_tick;
         *next_tick += 1;
-        let (before, _) = slot.load_execution_sequence();
+        let (before, _) = slot.surface_execution_sequence();
         dispatch_slot_tick(slot, driver, tick);
         let entry_deadline = Instant::now() + Duration::from_secs(2);
         loop {
-            let (execution, active) = slot.load_execution_sequence();
+            let (execution, active) = slot.surface_execution_sequence();
             if execution != before {
                 if !active {
                     break;
                 }
                 let runaway_deadline = Instant::now() + Duration::from_millis(400);
-                while slot.load_execution_active() && Instant::now() < runaway_deadline {
+                while slot.surface_execution_active() && Instant::now() < runaway_deadline {
                     thread::yield_now();
                 }
-                if slot.load_execution_active() {
+                if slot.surface_execution_active() {
                     return tick;
                 }
                 break;
@@ -1191,7 +1217,7 @@ fn wait_for_cut_restart(
 
 fn assert_cut_restarts(source: String, shape: LoadShape, pause: bool, label: &str) {
     let mut slot = SlotScript::new();
-    slot.start_load(source, shape, vec![]).unwrap();
+    start_js_surface(&mut slot, source, shape).unwrap();
     wait_slot_state(&mut slot, script::RunState::Running);
     let generation = slot.runtime_generation();
     let mut driver = NullDriver::default();
@@ -1299,8 +1325,7 @@ fn dispatch_watchdog_uses_active_execution_start_and_tick() {
     ]
     .concat();
     let mut slot = SlotScript::new();
-    slot.start_load(source, LoadShape::NativeTick, vec![])
-        .unwrap();
+    start_js_surface(&mut slot, source, LoadShape::NativeTick).unwrap();
     wait_slot_state(&mut slot, script::RunState::Running);
     let generation = slot.runtime_generation();
     let mut driver = NullDriver::default();
@@ -1311,7 +1336,7 @@ fn dispatch_watchdog_uses_active_execution_start_and_tick() {
         }
     }
     let deadline = Instant::now() + Duration::from_secs(2);
-    while !slot.load_execution_active() {
+    while !slot.surface_execution_active() {
         assert!(Instant::now() < deadline, "runaway tick 3 never entered");
         thread::yield_now();
     }
@@ -1363,8 +1388,7 @@ fn repeated_cut_restarts_are_bounded() {
     ]
     .concat();
     let mut slot = SlotScript::new();
-    slot.start_load(source, LoadShape::NativeTick, vec![])
-        .unwrap();
+    start_js_surface(&mut slot, source, LoadShape::NativeTick).unwrap();
     wait_slot_state(&mut slot, script::RunState::Running);
     let mut driver = NullDriver::default();
     let mut next_tick = 1;
@@ -2393,14 +2417,13 @@ fn join_bounds_a_runaway_tick() {
     joiner.join().unwrap();
 }
 
-// (6) SlotScript: the isolate is spawned only by the Start helper
-// (`start_load`); `stop` joins the thread. Dispatch goes through the normal
-// `on_game_tick` pump path.
+// SlotScript spawns the isolate from a typed surface start. `stop` joins
+// the thread. Dispatch goes through the normal `on_game_tick` pump path.
 #[test]
 fn slot_start_load_ticks_and_stop_joins() {
     let mut slot = SlotScript::new();
-    slot.start_load(NATIVE_TICK.to_string(), LoadShape::NativeTick, vec![])
-        .expect("start_load spawns the isolate");
+    start_js_surface(&mut slot, NATIVE_TICK, LoadShape::NativeTick)
+        .expect("typed surface start spawns the isolate");
     wait_slot_state(&mut slot, script::RunState::Running);
 
     let mut driver = NullDriver::default();
@@ -2440,17 +2463,14 @@ fn slot_start_load_ticks_and_stop_joins() {
 #[test]
 fn slot_start_load_refuses_while_active() {
     let mut slot = SlotScript::new();
-    slot.start_load(NATIVE_TICK.to_string(), LoadShape::NativeTick, vec![])
-        .unwrap();
-    let err = slot
-        .start_load(NATIVE_TICK.to_string(), LoadShape::NativeTick, vec![])
-        .expect_err("already active");
+    start_js_surface(&mut slot, NATIVE_TICK, LoadShape::NativeTick).unwrap();
+    let err = start_js_surface(&mut slot, NATIVE_TICK, LoadShape::NativeTick)
+        .expect_err("already active")
+        .to_string();
     assert!(err.contains("active"), "{err}");
     slot.stop();
     wait_slot_state(&mut slot, script::RunState::Idle);
-    assert!(slot
-        .start_load(NATIVE_TICK.to_string(), LoadShape::NativeTick, vec![])
-        .is_ok());
+    assert!(start_js_surface(&mut slot, NATIVE_TICK, LoadShape::NativeTick).is_ok());
     slot.stop();
     wait_slot_state(&mut slot, script::RunState::Idle);
 }
@@ -2469,16 +2489,13 @@ fn slot_load_and_compiled_are_xor() {
         }
     }
     let mut slot = SlotScript::new();
-    slot.start_load(NATIVE_TICK.to_string(), LoadShape::NativeTick, vec![])
-        .unwrap();
+    start_js_surface(&mut slot, NATIVE_TICK, LoadShape::NativeTick).unwrap();
     assert!(slot.start_test_script(Box::new(Noop), None).is_err());
     slot.stop();
     wait_slot_state(&mut slot, script::RunState::Idle);
 
     slot.start_test_script(Box::new(Noop), None).unwrap();
-    assert!(slot
-        .start_load(NATIVE_TICK.to_string(), LoadShape::NativeTick, vec![])
-        .is_err());
+    assert!(start_js_surface(&mut slot, NATIVE_TICK, LoadShape::NativeTick).is_err());
     slot.stop();
 }
 

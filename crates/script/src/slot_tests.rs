@@ -1,5 +1,9 @@
 use super::*;
 use crate::ctx::test_support::NullDriver;
+#[cfg(feature = "load")]
+use crate::load::LoadShape;
+#[cfg(feature = "load")]
+use crate::native::snapshot_source::NativeFactsInput;
 use crate::native::Script;
 
 struct Noop;
@@ -11,6 +15,65 @@ impl Script for Noop {
     ) -> Result<crate::native::ScriptFlow, crate::native::ScriptFailure> {
         Ok(crate::native::ScriptFlow::Continue)
     }
+}
+
+#[cfg(feature = "load")]
+fn bind_js_surface_factory(slot: &mut SlotScript) {
+    slot.bind_surface_factory(Arc::new(crate::load::surface::JsSurfaceFactory::default()));
+}
+
+#[cfg(feature = "load")]
+fn test_surface_start(
+    source: impl Into<Arc<str>>,
+    shape: LoadShape,
+    siblings: impl Into<Arc<[(String, String)]>>,
+    settings_bag: Option<Arc<crate::native::SettingsBag>>,
+    game_data: Option<Arc<api::game_data::SelectedGameData>>,
+    named_banks: Arc<api::named_banks::NamedBankFacts>,
+    loadouts: Arc<[api::loadout::Loadout]>,
+) -> crate::surface::SurfaceStart {
+    let source = source.into();
+    let family = crate::resolve_api_family(&source)
+        .ok()
+        .map(|(_, family)| family);
+    let card: Arc<dyn crate::surface::SurfaceCard> =
+        Arc::new(crate::load::surface::JsStartCard {
+            source,
+            shape,
+            siblings: siblings.into(),
+            family,
+        });
+    crate::surface::SurfaceStart {
+        card,
+        settings_bag,
+        game_data,
+        named_banks,
+        loadouts,
+    }
+}
+
+#[cfg(feature = "load")]
+fn default_test_surface_start(
+    source: impl Into<Arc<str>>,
+    shape: LoadShape,
+    siblings: Vec<(String, String)>,
+) -> crate::surface::SurfaceStart {
+    test_surface_start(
+        source,
+        shape,
+        Arc::from(siblings),
+        None,
+        None,
+        Arc::new(api::named_banks::NamedBankFacts::empty()),
+        Arc::from(Vec::<api::loadout::Loadout>::new()),
+    )
+}
+
+#[cfg(feature = "load")]
+fn new_js_slot() -> SlotScript {
+    let mut slot = SlotScript::new();
+    bind_js_surface_factory(&mut slot);
+    slot
 }
 
 #[test]
@@ -65,10 +128,13 @@ fn loaded_script_without_native_wait_retains_gameplay_wedge_detection() {
 }
 
 #[cfg(feature = "load")]
-fn allow_onstop_completion(slot: &SlotScript) {
-    slot.load
-        .as_ref()
+fn allow_onstop_completion(slot: &mut SlotScript) {
+    slot.surface
+        .as_deref_mut()
         .expect("load isolate")
+        .as_any_mut()
+        .downcast_mut::<crate::load::surface::JsSurfaceRun>()
+        .expect("JavaScript surface run")
         .set_onstop_timeout_for_test(Duration::from_secs(1));
 }
 
@@ -82,19 +148,20 @@ export default class T extends LoopingBot {
     ignoredRandoms() { return ["Maze", "Mime"]; }
 }
 "#;
-    let mut slot = SlotScript::new();
+    let mut slot = new_js_slot();
     slot.bind_incarnation(1);
-    slot.start_load_with_loadouts_and_game_data(
-        source.into(),
+    slot.start_surface(test_surface_start(
+        source,
         LoadShape::CompatClass,
         vec![],
-        &[],
+        None,
         Some(Arc::clone(&selected)),
         Arc::new(api::named_banks::NamedBankFacts::empty()),
-    )
-    .unwrap();
+        Arc::from(Vec::<api::loadout::Loadout>::new()),
+    ))
+        .unwrap();
     wait_state(&mut slot, RunState::Running);
-    allow_onstop_completion(&slot);
+    allow_onstop_completion(&mut slot);
     (slot, selected)
 }
 
@@ -201,9 +268,13 @@ export function tick() {
     globalThis.__rs2b0t_host.log = ['tick completed normally'];
 }
 "#;
-    let mut slot = SlotScript::new();
-    slot.start_load_with_loadouts(source.into(), LoadShape::NativeTick, vec![], &[])
-        .unwrap();
+    let mut slot = new_js_slot();
+    slot.start_surface(default_test_surface_start(
+        source,
+        LoadShape::NativeTick,
+        Vec::new(),
+    ))
+    .unwrap();
 
     let deadline = Instant::now() + Duration::from_secs(5);
     while slot.state() != RunState::Running {
@@ -216,9 +287,9 @@ export function tick() {
         std::thread::yield_now();
     }
 
-    slot.load.as_ref().expect("load isolate").on_game_tick(1);
+    slot.surface.as_ref().expect("load isolate").on_game_tick_at(1, 0);
     assert_eq!(
-        slot.load
+        slot.surface
             .as_ref()
             .expect("load isolate")
             .probe("globalThis.__ticks")
@@ -241,10 +312,9 @@ export function tick() {
 
     let mut held = crate::isolate_fb::tests::empty_input(2);
     held.hold = true;
-    let bytes = slot.encode_snapshot_delta(&held, false);
-    assert!(slot.post_snapshot(bytes));
-    slot.load.as_ref().expect("load isolate").on_game_tick(2);
-    slot.load
+    assert!(slot.post_snapshot_delta(&held, NativeFactsInput::default(), false));
+    slot.surface.as_ref().expect("load isolate").on_game_tick_at(2, 0);
+    slot.surface
         .as_ref()
         .expect("load isolate")
         .probe("true")
@@ -259,11 +329,10 @@ export function tick() {
 
     held.tick = 3;
     held.hold = false;
-    let bytes = slot.encode_snapshot_delta(&held, false);
-    assert!(slot.post_snapshot(bytes));
-    slot.load.as_ref().expect("load isolate").on_game_tick(3);
+    assert!(slot.post_snapshot_delta(&held, NativeFactsInput::default(), false));
+    slot.surface.as_ref().expect("load isolate").on_game_tick_at(3, 0);
     assert_eq!(
-        slot.load
+        slot.surface
             .as_ref()
             .expect("load isolate")
             .probe("globalThis.__ticks")
@@ -285,11 +354,10 @@ export function tick() {
     );
 
     held.tick = 4;
-    let bytes = slot.encode_snapshot_delta(&held, false);
-    assert!(slot.post_snapshot(bytes));
-    slot.load.as_ref().expect("load isolate").on_game_tick(4);
+    assert!(slot.post_snapshot_delta(&held, NativeFactsInput::default(), false));
+    slot.surface.as_ref().expect("load isolate").on_game_tick_at(4, 0);
     assert_eq!(
-        slot.load
+        slot.surface
             .as_ref()
             .expect("load isolate")
             .probe("globalThis.__ticks")
@@ -326,12 +394,16 @@ export function tick() {
     if (globalThis.__ticks === 1) throw new Error('session-one failure');
 }
 "#;
-    let mut slot = SlotScript::new();
-    slot.start_load_with_loadouts(source.into(), LoadShape::NativeTick, vec![], &[])
-        .unwrap();
+    let mut slot = new_js_slot();
+    slot.start_surface(default_test_surface_start(
+        source,
+        LoadShape::NativeTick,
+        Vec::new(),
+    ))
+    .unwrap();
     wait_state(&mut slot, RunState::Running);
-    slot.load.as_ref().unwrap().on_game_tick(1);
-    slot.load.as_ref().unwrap().probe("true").unwrap();
+    slot.surface.as_ref().unwrap().on_game_tick_at(1, 0);
+    slot.surface.as_ref().unwrap().probe("true").unwrap();
     let _ = slot.drain_logs();
     assert!(
         slot.last_error()
@@ -342,9 +414,9 @@ export function tick() {
 
     slot.reset_session_work();
     slot.on_is_up(true);
-    slot.load.as_ref().unwrap().on_game_tick(2);
+    slot.surface.as_ref().unwrap().on_game_tick_at(2, 0);
     assert_eq!(
-        slot.load
+        slot.surface
             .as_ref()
             .unwrap()
             .probe("globalThis.__ticks")
@@ -373,16 +445,20 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    let mut slot = SlotScript::new();
-    slot.start_load_with_loadouts(source.into(), LoadShape::CompatClass, vec![], &[])
-        .unwrap();
+    let mut slot = new_js_slot();
+    slot.start_surface(default_test_surface_start(
+        source,
+        LoadShape::CompatClass,
+        Vec::new(),
+    ))
+    .unwrap();
     wait_state(&mut slot, RunState::Running);
 
-    slot.load.as_ref().unwrap().on_game_tick(1);
-    slot.load.as_ref().unwrap().probe("true").unwrap();
+    slot.surface.as_ref().unwrap().on_game_tick_at(1, 0);
+    slot.surface.as_ref().unwrap().probe("true").unwrap();
     let _ = slot.drain_logs();
-    slot.load.as_ref().unwrap().on_game_tick(2);
-    slot.load.as_ref().unwrap().probe("true").unwrap();
+    slot.surface.as_ref().unwrap().on_game_tick_at(2, 0);
+    slot.surface.as_ref().unwrap().probe("true").unwrap();
     let _ = slot.drain_logs();
     assert!(
         slot.last_error()
@@ -391,8 +467,8 @@ export default class T extends LoopingBot {
         slot.last_error()
     );
 
-    slot.load.as_ref().unwrap().on_game_tick(3);
-    slot.load.as_ref().unwrap().probe("true").unwrap();
+    slot.surface.as_ref().unwrap().on_game_tick_at(3, 0);
+    slot.surface.as_ref().unwrap().probe("true").unwrap();
     let _ = slot.drain_logs();
     assert!(
         slot.last_error()
@@ -414,19 +490,23 @@ export function tick() {
     while (Date.now() - started < 700) {}
 }
 "#;
-    let mut slot = SlotScript::new();
-    slot.start_load_with_loadouts(source.into(), LoadShape::NativeTick, vec![], &[])
-        .unwrap();
+    let mut slot = new_js_slot();
+    slot.start_surface(default_test_surface_start(
+        source,
+        LoadShape::NativeTick,
+        Vec::new(),
+    ))
+    .unwrap();
     wait_state(&mut slot, RunState::Running);
-    slot.load.as_ref().unwrap().on_game_tick(1);
-    slot.load.as_ref().unwrap().probe("true").unwrap();
+    slot.surface.as_ref().unwrap().on_game_tick_at(1, 0);
+    slot.surface.as_ref().unwrap().probe("true").unwrap();
     let _ = slot.drain_logs();
     assert!(slot
         .last_error()
         .is_some_and(|error| error.contains("transient failure")));
 
-    slot.load.as_ref().unwrap().on_game_tick(2);
-    slot.load.as_ref().unwrap().probe("true").unwrap();
+    slot.surface.as_ref().unwrap().on_game_tick_at(2, 0);
+    slot.surface.as_ref().unwrap().probe("true").unwrap();
     let logs = slot.drain_logs();
     assert!(
         logs.iter().any(|line| line.starts_with("slow tick 2:")),
@@ -455,8 +535,10 @@ fn align_ready_test_seat(slot: &mut SlotScript) {
 fn run_policy_tick(slot: &mut SlotScript, tick: u64) {
     align_ready_test_seat(slot);
     let input = crate::isolate_fb::tests::empty_input(tick);
-    let bytes = slot.encode_snapshot_delta(&input, false);
-    assert!(slot.post_snapshot(bytes), "posted run-policy tick {tick}");
+    assert!(
+        slot.post_snapshot_delta(&input, NativeFactsInput::default(), false),
+        "posted run-policy tick {tick}"
+    );
     let mut driver = NullDriver::default();
     let mut ctx = compiled_ctx(&mut driver, None);
     ctx.tick = tick;
@@ -496,9 +578,9 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    let mut slot = SlotScript::new();
+    let mut slot = new_js_slot();
     slot.bind_incarnation(1201);
-    slot.start_load(source.into(), LoadShape::CompatClass, vec![])
+    slot.start_surface(default_test_surface_start(source, LoadShape::CompatClass, vec![]))
         .unwrap();
     wait_state(&mut slot, RunState::Running);
     run_policy_tick(&mut slot, 1);
@@ -552,9 +634,9 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    let mut slot = SlotScript::new();
+    let mut slot = new_js_slot();
     slot.bind_incarnation(1202);
-    slot.start_load(source.into(), LoadShape::CompatClass, vec![])
+    slot.start_surface(default_test_surface_start(source, LoadShape::CompatClass, vec![]))
         .unwrap();
     wait_state(&mut slot, RunState::Running);
 
@@ -618,9 +700,9 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    let mut slot = SlotScript::new();
+    let mut slot = new_js_slot();
     slot.bind_incarnation(1203);
-    slot.start_load(source.into(), LoadShape::CompatClass, vec![])
+    slot.start_surface(default_test_surface_start(source, LoadShape::CompatClass, vec![]))
         .unwrap();
     wait_state(&mut slot, RunState::Running);
     run_policy_tick(&mut slot, 1);
@@ -657,15 +739,19 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    let mut slot = SlotScript::new();
-    slot.start_load_with_loadouts(source.to_string(), LoadShape::CompatClass, vec![], &[])
-        .unwrap();
+    let mut slot = new_js_slot();
+    slot.start_surface(default_test_surface_start(
+        source.to_string(),
+        LoadShape::CompatClass,
+        Vec::new(),
+    ))
+    .unwrap();
     let input = crate::isolate_fb::tests::empty_input(1);
-    slot.encode_snapshot_delta(&input, false);
+    let _ = slot.post_snapshot_delta(&input, NativeFactsInput::default(), false);
     slot.store_last_world_id(Some(123));
     slot.set_pending_withdraw_x(Some(PendingWithdrawX::waiting_dialog(2, 7, 0, 7, 3)));
     let epoch = slot.work_epoch();
-    slot.load.as_ref().unwrap().on_game_tick(1);
+    slot.surface.as_ref().unwrap().on_game_tick_at(1, 0);
     let deadline = Instant::now() + Duration::from_secs(5);
     let mut logs = Vec::new();
     while matches!(
@@ -703,15 +789,13 @@ export default class T extends LoopingBot {
         RunState::Idle,
         "login cannot restart a stopped card"
     );
-    slot.start_load_with_loadouts(
-        "export default class T extends LoopingBot { loop() { this.n = (this.n || 0) + 1; } }"
-            .into(),
+    slot.start_surface(default_test_surface_start(
+        "export default class T extends LoopingBot { loop() { this.n = (this.n || 0) + 1; } }",
         LoadShape::CompatClass,
-        vec![],
-        &[],
-    )
+        Vec::new(),
+    ))
     .unwrap();
-    slot.load.as_ref().unwrap().on_game_tick(2);
+    slot.surface.as_ref().unwrap().on_game_tick_at(2, 0);
     wait_state(&mut slot, RunState::Running);
     assert_eq!(slot.state(), RunState::Running);
     assert!(slot.last_error().is_none());
@@ -740,12 +824,12 @@ export default class T extends LoopingBot {{
 }}
 "#
     );
-    let mut slot = SlotScript::new();
-    slot.start_load_with_loadouts(source, LoadShape::CompatClass, vec![], &[])
+    let mut slot = new_js_slot();
+    slot.start_surface(default_test_surface_start(source, LoadShape::CompatClass, Vec::new()))
         .unwrap();
     let input = crate::isolate_fb::tests::empty_input(1);
-    slot.encode_snapshot_delta(&input, false);
-    slot.load.as_ref().unwrap().on_game_tick(1);
+    let _ = slot.post_snapshot_delta(&input, NativeFactsInput::default(), false);
+    slot.surface.as_ref().unwrap().on_game_tick_at(1, 0);
     let deadline = Instant::now() + Duration::from_secs(5);
     let mut logs = Vec::new();
     while matches!(
@@ -777,12 +861,16 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    let mut slot = SlotScript::new();
-    slot.start_load_with_loadouts(source.to_string(), LoadShape::CompatClass, vec![], &[])
-        .unwrap();
+    let mut slot = new_js_slot();
+    slot.start_surface(default_test_surface_start(
+        source.to_string(),
+        LoadShape::CompatClass,
+        Vec::new(),
+    ))
+    .unwrap();
     let input = crate::isolate_fb::tests::empty_input(1);
-    slot.encode_snapshot_delta(&input, false);
-    slot.load.as_ref().unwrap().on_game_tick(1);
+    let _ = slot.post_snapshot_delta(&input, NativeFactsInput::default(), false);
+    slot.surface.as_ref().unwrap().on_game_tick_at(1, 0);
     let deadline = Instant::now() + Duration::from_secs(5);
     let mut logs = Vec::new();
     while matches!(
@@ -827,12 +915,16 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    let mut slot = SlotScript::new();
-    slot.start_load_with_loadouts(source.to_string(), LoadShape::CompatClass, vec![], &[])
-        .unwrap();
+    let mut slot = new_js_slot();
+    slot.start_surface(default_test_surface_start(
+        source.to_string(),
+        LoadShape::CompatClass,
+        Vec::new(),
+    ))
+    .unwrap();
     let input = crate::isolate_fb::tests::empty_input(1);
-    slot.encode_snapshot_delta(&input, false);
-    slot.load.as_ref().unwrap().on_game_tick(1);
+    let _ = slot.post_snapshot_delta(&input, NativeFactsInput::default(), false);
+    slot.surface.as_ref().unwrap().on_game_tick_at(1, 0);
     let deadline = Instant::now() + Duration::from_secs(5);
     while matches!(
         slot.state(),
@@ -879,11 +971,15 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    let mut slot = SlotScript::new();
-    slot.start_load_with_loadouts(source.to_string(), LoadShape::CompatClass, vec![], &[])
-        .unwrap();
+    let mut slot = new_js_slot();
+    slot.start_surface(default_test_surface_start(
+        source.to_string(),
+        LoadShape::CompatClass,
+        Vec::new(),
+    ))
+    .unwrap();
     let input = crate::isolate_fb::tests::empty_input(1);
-    slot.encode_snapshot_delta(&input, false);
+    let _ = slot.post_snapshot_delta(&input, NativeFactsInput::default(), false);
     let deadline = Instant::now() + Duration::from_secs(5);
     let mut logs: Vec<String> = Vec::new();
     let mut tick = 0;
@@ -893,7 +989,7 @@ export default class T extends LoopingBot {
         && Instant::now() < deadline
     {
         tick += 1;
-        slot.load.as_ref().unwrap().on_game_tick(tick);
+        slot.surface.as_ref().unwrap().on_game_tick_at(tick, 0);
         logs.extend(slot.drain_logs());
         std::thread::sleep(Duration::from_millis(5));
     }
@@ -924,12 +1020,16 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-    let mut slot = SlotScript::new();
-    slot.start_load_with_loadouts(source.to_string(), LoadShape::CompatClass, vec![], &[])
-        .unwrap();
+    let mut slot = new_js_slot();
+    slot.start_surface(default_test_surface_start(
+        source.to_string(),
+        LoadShape::CompatClass,
+        Vec::new(),
+    ))
+    .unwrap();
     let input = crate::isolate_fb::tests::empty_input(1);
-    slot.encode_snapshot_delta(&input, false);
-    slot.load.as_ref().unwrap().on_game_tick(1);
+    let _ = slot.post_snapshot_delta(&input, NativeFactsInput::default(), false);
+    slot.surface.as_ref().unwrap().on_game_tick_at(1, 0);
     let deadline = Instant::now() + Duration::from_secs(5);
     let mut logs = Vec::new();
     while matches!(
@@ -956,12 +1056,23 @@ export default class T extends LoopingBot {
 #[test]
 fn stop_releases_snapshot_storage_and_restart_emits_keyframe() {
     let mut slot = SlotScript::new();
-    slot.start_test_script(Box::new(Noop), None).unwrap();
-    let text = "x".repeat(1024 * 1024);
-    let mut input = crate::isolate_fb::tests::empty_input(1);
-    input.chat_text = Some(&text);
-    let first = slot.encode_snapshot_delta(&input, false);
-    assert!(first.len() > text.len());
+    let factory = Arc::new(crate::surface::test_support::StubSurfaceFactory::new());
+    slot.bind_surface_factory(factory.clone());
+    slot.start_surface(crate::surface::SurfaceStart {
+        card: Arc::new(crate::surface::test_support::StubSurfaceCard),
+        settings_bag: None,
+        game_data: None,
+        named_banks: Arc::default(),
+        loadouts: Arc::default(),
+    })
+    .unwrap();
+    let run = factory.last_run().expect("stub surface run");
+    run.set_readiness(crate::surface::SurfaceReady::Ready);
+    run.set_posted_facts(Some(crate::surface::PostedSnapshotFacts::default()));
+    assert_eq!(
+        slot.poll_start(),
+        StartPoll::Settled(StartOutcome::Ready)
+    );
     slot.store_last_world_id(Some(123));
     slot.last_error = Some("retained diagnostic".into());
     slot.pending_logs.push("retained log".into());
@@ -969,12 +1080,10 @@ fn stop_releases_snapshot_storage_and_restart_emits_keyframe() {
     assert!(slot.has_snapshot_fingerprint());
     assert_eq!(slot.last_world_id(), Some(123));
     slot.resume();
-    let delta = slot.encode_snapshot_delta(&input, false);
-    assert!(delta.len() < 1024);
     slot.stop();
+    wait_state(&mut slot, RunState::Idle);
     assert!(!slot.has_snapshot_fingerprint());
     assert_eq!(slot.last_world_id(), None);
-    assert_eq!(std::mem::take(&mut slot.ipc).into_backing_capacity(), 0);
     assert_eq!(
         slot.last_error, None,
         "operator Stop clears the active diagnostic"
@@ -985,9 +1094,7 @@ fn stop_releases_snapshot_storage_and_restart_emits_keyframe() {
         "Stop preserves diagnostic history for the panel"
     );
     slot.start_test_script(Box::new(Noop), None).unwrap();
-    assert_eq!(slot.encode_snapshot_delta(&input, false), first);
-    // The earlier owned packet remains intact after reuse and Stop.
-    assert!(crate::isolate_fb::Snapshot::from_bytes(&first).is_ok());
+    crate::load::surface::tests::assert_stop_releases_snapshot_storage_and_restart_emits_keyframe();
 }
 
 /// F14 M12: a post the wedged isolate refused never reached it, so the
@@ -995,37 +1102,7 @@ fn stop_releases_snapshot_storage_and_restart_emits_keyframe() {
 #[cfg(feature = "load")]
 #[test]
 fn refused_snapshot_post_forces_a_keyframe() {
-    let mut slot = SlotScript::new();
-    slot.start_load_with_loadouts(
-        "export function tick(api) { const t = Date.now(); while (Date.now() - t < 400) {} }"
-            .into(),
-        LoadShape::NativeTick,
-        vec![],
-        &[],
-    )
-    .unwrap();
-    let text = "x".repeat(64 * 1024);
-    let mut input = crate::isolate_fb::tests::empty_input(1);
-    input.chat_text = Some(&text);
-    let keyframe = slot.encode_snapshot_delta(&input, false);
-    assert!(keyframe.len() > text.len());
-    assert!(slot.post_snapshot(keyframe));
-    slot.load.as_ref().unwrap().on_game_tick(1);
-    let mut refused = false;
-    for _ in 0..200 {
-        let delta = slot.encode_snapshot_delta(&input, false);
-        assert!(delta.len() < 1024, "unchanged fields stay out of a delta");
-        if !slot.post_snapshot(delta) {
-            refused = true;
-            break;
-        }
-    }
-    assert!(refused, "the busy isolate's backlog is bounded");
-    assert!(
-        slot.encode_snapshot_delta(&input, false).len() > text.len(),
-        "the post after a refusal carries every field again"
-    );
-    slot.stop();
+    crate::load::surface::tests::assert_refused_snapshot_post_forces_a_keyframe();
 }
 
 #[test]
@@ -1229,13 +1306,12 @@ fn pending_bank_op_pause_freezes_while_stop_and_reconnect_abort() {
 #[cfg(feature = "load")]
 #[test]
 fn fenced_settings_reject_stale_identity_generation_and_unchanged_bag() {
-    let mut slot = SlotScript::new();
-    slot.start_load_with_loadouts(
-        "export function tick() {}".into(),
+    let mut slot = new_js_slot();
+    slot.start_surface(default_test_surface_start(
+        "export function tick() {}",
         LoadShape::NativeTick,
-        vec![],
-        &[],
-    )
+        Vec::new(),
+    ))
     .unwrap();
     slot.attach_source_identity("catalog:ChickenKiller");
     let gen = slot.runtime_generation();
@@ -1257,19 +1333,27 @@ fn fenced_settings_reject_stale_identity_generation_and_unchanged_bag() {
 #[cfg(feature = "load")]
 #[test]
 fn settings_update_reaches_start_queued_behind_reap() {
-    let mut slot = SlotScript::new();
+    let mut slot = new_js_slot();
     let source = "export function tick() {}".to_string();
-    slot.start_load_with_loadouts(source.clone(), LoadShape::NativeTick, vec![], &[])
-        .unwrap();
+    slot.start_surface(default_test_surface_start(
+        source.clone(),
+        LoadShape::NativeTick,
+        Vec::new(),
+    ))
+    .unwrap();
     slot.stop();
-    slot.start_load_with_loadouts(source, LoadShape::NativeTick, vec![], &[])
-        .unwrap();
+    slot.start_surface(default_test_surface_start(
+        source,
+        LoadShape::NativeTick,
+        Vec::new(),
+    ))
+    .unwrap();
     slot.attach_source_identity("catalog:Example");
     let generation = slot.runtime_generation();
     let bag = serde_json::Map::from_iter([("amount".to_string(), serde_json::json!(9))]);
     assert!(slot.post_settings_bag_fenced(&bag, "catalog:Example", generation));
     assert_eq!(
-        slot.load_identity
+        slot.surface_start
             .as_ref()
             .and_then(|identity| identity.settings_bag.as_deref()),
         Some(&bag)
@@ -1295,20 +1379,19 @@ fn stop_clears_identity_and_bumps_runtime_generation() {
 #[cfg(feature = "load")]
 #[test]
 fn slot_stop_delivers_final_logs_exactly_once() {
-    let mut slot = SlotScript::new();
-    slot.start_load(
+    let mut slot = new_js_slot();
+    slot.start_surface(default_test_surface_start(
         "export default class T extends LoopingBot {
             loop() {}
             onStop() { this.log('stopped-ok'); }
-        }"
-        .into(),
+        }",
         LoadShape::CompatClass,
         vec![],
-    )
+    ))
     .unwrap();
-    slot.load.as_ref().unwrap().on_game_tick(1);
+    slot.surface.as_ref().unwrap().on_game_tick_at(1, 0);
     let _ = slot.probe("1");
-    allow_onstop_completion(&slot);
+    allow_onstop_completion(&mut slot);
     slot.stop();
     wait_state(&mut slot, RunState::Idle);
     let logs = slot.take_pending_logs();
@@ -1325,22 +1408,21 @@ fn slot_stop_delivers_final_logs_exactly_once() {
 #[cfg(feature = "load")]
 #[test]
 fn self_stop_runs_hook_once_then_slot_stop_does_not() {
-    let mut slot = SlotScript::new();
-    slot.start_load(
+    let mut slot = new_js_slot();
+    slot.start_surface(default_test_surface_start(
         r#"
 import { ScriptRunner } from '../../runtime/ScriptRunner.js';
 export default class T extends LoopingBot {
     loop() { ScriptRunner.stop('done'); }
     onStop() { this.log('stopped-ok'); }
 }
-"#
-        .into(),
+"#,
         LoadShape::CompatClass,
         vec![],
-    )
+    ))
     .unwrap();
-    allow_onstop_completion(&slot);
-    slot.load.as_ref().unwrap().on_game_tick(1);
+    allow_onstop_completion(&mut slot);
+    slot.surface.as_ref().unwrap().on_game_tick_at(1, 0);
     let deadline = Instant::now() + Duration::from_secs(5);
     while matches!(
         slot.state(),
@@ -1366,21 +1448,20 @@ export default class T extends LoopingBot {
 #[cfg(feature = "load")]
 #[test]
 fn watchdog_restart_folds_onstop_logs_into_pending() {
-    let mut slot = SlotScript::new();
-    slot.start_load(
+    let mut slot = new_js_slot();
+    slot.start_surface(default_test_surface_start(
         "export default class T extends LoopingBot {
             onStart() { globalThis.__gen = (globalThis.__gen || 0) + 1; }
             loop() { globalThis.__n = (globalThis.__n || 0) + 1; }
             onStop() { this.log('stopped-ok'); }
-        }"
-        .into(),
+        }",
         LoadShape::CompatClass,
         vec![],
-    )
+    ))
     .unwrap();
-    slot.load.as_ref().unwrap().on_game_tick(1);
+    slot.surface.as_ref().unwrap().on_game_tick_at(1, 0);
     let _ = slot.probe("1");
-    allow_onstop_completion(&slot);
+    allow_onstop_completion(&mut slot);
     slot.restart_from_identity(Instant::now())
         .expect("restart from identity");
     wait_state(&mut slot, RunState::Starting);
@@ -1390,7 +1471,7 @@ fn watchdog_restart_folds_onstop_logs_into_pending() {
         logs.iter().any(|l| l.contains("stopped-ok")),
         "dying isolate onStop must land in pending_logs: {logs:?}"
     );
-    slot.load.as_ref().unwrap().on_game_tick(1);
+    slot.surface.as_ref().unwrap().on_game_tick_at(1, 0);
     assert_eq!(slot.probe("__gen").unwrap(), 1, "new isolate onStart runs");
     slot.stop();
 }
@@ -1398,14 +1479,13 @@ fn watchdog_restart_folds_onstop_logs_into_pending() {
 #[cfg(feature = "load")]
 #[test]
 fn restart_still_refuses_pause() {
-    let mut slot = SlotScript::new();
-    slot.start_load(
-            "export default class T extends LoopingBot { loop() {} onStop() { this.log('stopped-ok'); } }"
-                .into(),
-            LoadShape::CompatClass,
-            vec![],
-        )
-        .unwrap();
+    let mut slot = new_js_slot();
+    slot.start_surface(default_test_surface_start(
+        "export default class T extends LoopingBot { loop() {} onStop() { this.log('stopped-ok'); } }",
+        LoadShape::CompatClass,
+        vec![],
+    ))
+    .unwrap();
     slot.pause();
     let err = slot.restart_from_identity(Instant::now()).unwrap_err();
     assert!(
@@ -1418,13 +1498,13 @@ fn restart_still_refuses_pause() {
 #[cfg(feature = "load")]
 #[test]
 fn start_load_returns_before_setup_and_becomes_running() {
-    let mut slot = SlotScript::new();
+    let mut slot = new_js_slot();
     let t0 = Instant::now();
-    slot.start_load(
-        "export function tick(api) { globalThis.__n = (globalThis.__n || 0) + 1; }".into(),
+    slot.start_surface(default_test_surface_start(
+        "export function tick(api) { globalThis.__n = (globalThis.__n || 0) + 1; }",
         LoadShape::NativeTick,
         vec![],
-    )
+    ))
     .unwrap();
     assert!(
         t0.elapsed() < Duration::from_millis(500),
@@ -1440,12 +1520,12 @@ fn start_load_returns_before_setup_and_becomes_running() {
 #[cfg(feature = "load")]
 #[test]
 fn start_load_setup_failure_returns_to_idle_with_the_diagnostic() {
-    let mut slot = SlotScript::new();
-    slot.start_load(
-        "throw new Error('zz-setup-proof');\nexport function tick(api) {}".into(),
+    let mut slot = new_js_slot();
+    slot.start_surface(default_test_surface_start(
+        "throw new Error('zz-setup-proof');\nexport function tick(api) {}",
         LoadShape::NativeTick,
         vec![],
-    )
+    ))
     .expect("Start returns before setup");
     slot.attach_source_identity("file:bad.ts");
     assert_eq!(
@@ -1461,7 +1541,7 @@ fn start_load_setup_failure_returns_to_idle_with_the_diagnostic() {
         StartPoll::Settled(StartOutcome::Failed(err))
     );
     assert_eq!(slot.source_identity(), None);
-    assert!(slot.load_identity.is_none());
+    assert!(slot.surface_start.is_none());
     assert_eq!(
         slot.runtime_generation(),
         0,
@@ -1472,12 +1552,12 @@ fn start_load_setup_failure_returns_to_idle_with_the_diagnostic() {
 #[cfg(feature = "load")]
 #[test]
 fn stop_during_starting_ends_idle_and_cancels_the_start() {
-    let mut slot = SlotScript::new();
-    slot.start_load(
-        "export function tick(api) {}".into(),
+    let mut slot = new_js_slot();
+    slot.start_surface(default_test_surface_start(
+        "export function tick(api) {}",
         LoadShape::NativeTick,
         vec![],
-    )
+    ))
     .unwrap();
     assert_eq!(slot.state(), RunState::Starting);
     slot.stop();
@@ -1493,12 +1573,12 @@ fn stop_during_starting_ends_idle_and_cancels_the_start() {
 #[cfg(feature = "load")]
 #[test]
 fn watchdog_restart_during_stop_reap_never_revives_the_slot() {
-    let mut slot = SlotScript::new();
-    slot.start_load(
-        "export function tick(api) {}".into(),
+    let mut slot = new_js_slot();
+    slot.start_surface(default_test_surface_start(
+        "export function tick(api) {}",
         LoadShape::NativeTick,
         vec![],
-    )
+    ))
     .unwrap();
     wait_state(&mut slot, RunState::Running);
     slot.stop();
@@ -1510,7 +1590,7 @@ fn watchdog_restart_during_stop_reap_never_revives_the_slot() {
         std::thread::sleep(Duration::from_millis(5));
     }
     assert_eq!(slot.state(), RunState::Idle);
-    assert!(!slot.load_active());
+    assert!(!slot.surface_active());
 }
 
 #[cfg(feature = "load")]
@@ -1520,11 +1600,11 @@ fn stop_returns_immediately_and_second_start_waits_for_reap() {
             loop() {}
             onStop() { this.log('stopped-ok'); }
         }";
-    let mut slot = SlotScript::new();
-    slot.start_load(src.into(), LoadShape::CompatClass, vec![])
+    let mut slot = new_js_slot();
+    slot.start_surface(default_test_surface_start(src, LoadShape::CompatClass, vec![]))
         .unwrap();
     wait_state(&mut slot, RunState::Running);
-    allow_onstop_completion(&slot);
+    allow_onstop_completion(&mut slot);
     let t0 = Instant::now();
     slot.stop();
     assert!(
@@ -1533,11 +1613,15 @@ fn stop_returns_immediately_and_second_start_waits_for_reap() {
         t0.elapsed()
     );
     assert_eq!(slot.state(), RunState::Stopping);
-    slot.start_load(src.into(), LoadShape::CompatClass, vec![])
+    slot.start_surface(default_test_surface_start(src, LoadShape::CompatClass, vec![]))
         .expect("Start while Stopping is queued");
     let generation = slot.runtime_generation();
     assert!(
-        slot.start_load(src.into(), LoadShape::CompatClass, vec![])
+        slot.start_surface(default_test_surface_start(
+            src,
+            LoadShape::CompatClass,
+            vec![],
+        ))
             .is_err(),
         "a second queued Start is refused"
     );
@@ -1562,10 +1646,10 @@ fn stop_returns_immediately_and_second_start_waits_for_reap() {
 #[test]
 fn start_all_over_n_members_does_not_block_per_member() {
     let src = "export function tick(api) {}".to_string();
-    let mut slots: Vec<SlotScript> = (0..4).map(|_| SlotScript::new()).collect();
+    let mut slots: Vec<SlotScript> = (0..4).map(|_| new_js_slot()).collect();
     let t0 = Instant::now();
     for slot in &mut slots {
-        slot.start_load(src.clone(), LoadShape::NativeTick, vec![])
+        slot.start_surface(default_test_surface_start(src.clone(), LoadShape::NativeTick, vec![]))
             .unwrap();
         assert_eq!(slot.state(), RunState::Starting);
     }
@@ -1971,14 +2055,13 @@ fn run_held_walk_tick(slot: &mut SlotScript, n: u64) -> (i32, i32, i32) {
         z: here.1,
         level: here.2,
     });
-    let bytes = slot.encode_snapshot_delta(&input, false);
-    assert!(slot.post_snapshot(bytes));
+    assert!(slot.post_snapshot_delta(&input, NativeFactsInput::default(), false));
     let mut driver = NullDriver::default();
     let mut ctx = compiled_ctx(&mut driver, None);
     ctx.tick = n;
     ctx.here = Some(here);
     slot.on_game_tick(&mut ctx);
-    slot.load
+    slot.surface
         .as_ref()
         .expect("load isolate")
         .probe("true")
@@ -2018,12 +2101,16 @@ fn held_walk_tick(slot: &mut SlotScript, n: u64, now: Instant) {
 #[cfg(feature = "load")]
 #[test]
 fn a_walk_held_across_a_reconnect_is_still_a_parked_wait() {
-    let mut slot = SlotScript::new();
+    let mut slot = new_js_slot();
     slot.bind_incarnation(1204);
-    slot.start_load_with_loadouts(HELD_WALK.into(), LoadShape::CompatClass, vec![], &[])
-        .unwrap();
+    slot.start_surface(default_test_surface_start(
+        HELD_WALK,
+        LoadShape::CompatClass,
+        Vec::new(),
+    ))
+    .unwrap();
     wait_state(&mut slot, RunState::Running);
-    allow_onstop_completion(&slot);
+    allow_onstop_completion(&mut slot);
     let now = Instant::now();
     held_walk_tick(&mut slot, 1, now);
     assert!(slot.watchdog().wait_active(), "the walk is parked");
@@ -2060,12 +2147,16 @@ fn a_walk_held_across_a_reconnect_is_still_a_parked_wait() {
 #[cfg(feature = "load")]
 #[test]
 fn a_walk_in_slot_custody_at_a_kept_reconnect_requests_a_fresh_walk() {
-    let mut slot = SlotScript::new();
+    let mut slot = new_js_slot();
     slot.bind_incarnation(1207);
-    slot.start_load_with_loadouts(HELD_WALK.into(), LoadShape::CompatClass, vec![], &[])
-        .unwrap();
+    slot.start_surface(default_test_surface_start(
+        HELD_WALK,
+        LoadShape::CompatClass,
+        Vec::new(),
+    ))
+    .unwrap();
     wait_state(&mut slot, RunState::Running);
-    allow_onstop_completion(&slot);
+    allow_onstop_completion(&mut slot);
     let is_walk = |req: &crate::shim::InteractReq| {
         matches!(
             req,
@@ -2079,7 +2170,7 @@ fn a_walk_in_slot_custody_at_a_kept_reconnect_requests_a_fresh_walk() {
     run_held_walk_tick(&mut slot, 1);
     // Take the tick's batch out of the isolate into the slot's seat, but do
     // not run the host drain that would deliver it.
-    let batches = slot.load.as_ref().unwrap().drain_seat_batches();
+    let batches = slot.surface.as_ref().unwrap().drain_seat_batches();
     assert!(
         batches
             .iter()
@@ -2133,19 +2224,23 @@ fn a_walk_in_slot_custody_at_a_kept_reconnect_requests_a_fresh_walk() {
 #[cfg(feature = "load")]
 #[test]
 fn stop_ends_a_script_held_across_a_reconnect() {
-    let mut slot = SlotScript::new();
+    let mut slot = new_js_slot();
     slot.bind_incarnation(1205);
-    slot.start_load_with_loadouts(HELD_WALK.into(), LoadShape::CompatClass, vec![], &[])
-        .unwrap();
+    slot.start_surface(default_test_surface_start(
+        HELD_WALK,
+        LoadShape::CompatClass,
+        Vec::new(),
+    ))
+    .unwrap();
     wait_state(&mut slot, RunState::Running);
-    allow_onstop_completion(&slot);
+    allow_onstop_completion(&mut slot);
     let now = Instant::now();
     held_walk_tick(&mut slot, 1, now);
 
     slot.reconnect_session_work();
     slot.on_is_up(true);
     held_walk_tick(&mut slot, 2, now);
-    let iso = slot.load.as_ref().expect("load isolate");
+    let iso = slot.surface.as_ref().expect("load isolate");
     assert_eq!(
         iso.probe("globalThis.__ok").unwrap(),
         serde_json::Value::Null,
@@ -2156,7 +2251,7 @@ fn stop_ends_a_script_held_across_a_reconnect() {
     assert_eq!(slot.state(), RunState::Paused);
     slot.stop();
     wait_state(&mut slot, RunState::Idle);
-    assert!(slot.load.is_none(), "the held isolate is gone");
+    assert!(slot.surface.is_none(), "the held isolate is gone");
 }
 
 #[cfg(feature = "load")]
@@ -2166,7 +2261,7 @@ fn ignored_maze_still_terminal_stops_load_and_cancels_delegated_work() {
 
     let (mut slot, selected) = ignored_randoms_load();
     wait_ignored_randoms(&mut slot, &selected);
-    slot.load
+    slot.surface
         .as_ref()
         .expect("load isolate")
         .probe("true")
@@ -2187,8 +2282,7 @@ fn ignored_maze_still_terminal_stops_load_and_cancels_delegated_work() {
     let maze = (2891, 4555, 0);
     let mut held = crate::isolate_fb::tests::empty_input(20);
     held.hold = true;
-    let held_packet = slot.encode_snapshot_delta(&held, false);
-    assert!(slot.post_snapshot(held_packet));
+    assert!(slot.post_snapshot_delta(&held, NativeFactsInput::default(), false));
     load_tick_at(&mut slot, &selected, 20, Some(maze), true);
     assert_eq!(slot.state(), RunState::Running);
     assert!(
@@ -2255,15 +2349,15 @@ fn ignored_mime_still_terminal_stops_a_running_load() {
 #[cfg(feature = "load")]
 #[test]
 fn load_watchdog_holds_pen_recovery_until_the_player_leaves() {
-    let mut slot = SlotScript::new();
-    slot.start_load(
-        "export default class T extends LoopingBot { loop() {} }".into(),
+    let mut slot = new_js_slot();
+    slot.start_surface(default_test_surface_start(
+        "export default class T extends LoopingBot { loop() {} }",
         LoadShape::CompatClass,
         vec![],
-    )
+    ))
     .unwrap();
     wait_state(&mut slot, RunState::Running);
-    allow_onstop_completion(&slot);
+    allow_onstop_completion(&mut slot);
 
     let now = Instant::now();
     let inside_pen = (3340, 3250, 0);
@@ -2363,15 +2457,15 @@ fn load_watchdog_holds_pen_recovery_until_the_player_leaves() {
 #[cfg(feature = "load")]
 #[test]
 fn load_watchdog_restarts_hard_stall_while_pen_hold_survives_freeze_and_reset() {
-    let mut slot = SlotScript::new();
-    slot.start_load(
-        "export default class T extends LoopingBot { loop() {} }".into(),
+    let mut slot = new_js_slot();
+    slot.start_surface(default_test_surface_start(
+        "export default class T extends LoopingBot { loop() {} }",
         LoadShape::CompatClass,
         vec![],
-    )
+    ))
     .unwrap();
     wait_state(&mut slot, RunState::Running);
-    allow_onstop_completion(&slot);
+    allow_onstop_completion(&mut slot);
 
     let now = Instant::now();
     let inside_pen = (3340, 3250, 0);
@@ -2452,15 +2546,15 @@ fn load_watchdog_restarts_hard_stall_while_pen_hold_survives_freeze_and_reset() 
 #[cfg(feature = "load")]
 #[test]
 fn load_watchdog_still_restarts_a_hard_stall_outside_fight_pens() {
-    let mut slot = SlotScript::new();
-    slot.start_load(
-        "export default class T extends LoopingBot { loop() {} }".into(),
+    let mut slot = new_js_slot();
+    slot.start_surface(default_test_surface_start(
+        "export default class T extends LoopingBot { loop() {} }",
         LoadShape::CompatClass,
         vec![],
-    )
+    ))
     .unwrap();
     wait_state(&mut slot, RunState::Running);
-    allow_onstop_completion(&slot);
+    allow_onstop_completion(&mut slot);
 
     let now = Instant::now();
     let here = (3200, 3274, 0);
@@ -2517,15 +2611,15 @@ fn load_watchdog_still_restarts_a_hard_stall_outside_fight_pens() {
 #[cfg(feature = "load")]
 #[test]
 fn load_watchdog_logs_packet_silence_and_clears_it_on_resume() {
-    let mut slot = SlotScript::new();
-    slot.start_load(
-        "export default class T extends LoopingBot { loop() {} }".into(),
+    let mut slot = new_js_slot();
+    slot.start_surface(default_test_surface_start(
+        "export default class T extends LoopingBot { loop() {} }",
         LoadShape::CompatClass,
         vec![],
-    )
+    ))
     .unwrap();
     wait_state(&mut slot, RunState::Running);
-    allow_onstop_completion(&slot);
+    allow_onstop_completion(&mut slot);
 
     let now = Instant::now();
     let here = (3200, 3274, 0);

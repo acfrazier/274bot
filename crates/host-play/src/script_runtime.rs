@@ -142,9 +142,54 @@ pub(super) fn script_slot_or_insert(wall: &ScriptWall, name: &str) -> ScriptSlot
                 .expect("slot incarnation exhausted");
             let mut slot = SlotScript::new();
             slot.bind_incarnation(incarnation);
+            bind_js_surface_factory(&mut slot);
             Arc::new(Mutex::new(slot))
         })
         .clone()
+}
+
+fn shared_js_surface_factory() -> Arc<script::load::surface::JsSurfaceFactory> {
+    static FACTORY: std::sync::LazyLock<Arc<script::load::surface::JsSurfaceFactory>> =
+        std::sync::LazyLock::new(|| Arc::new(script::load::surface::JsSurfaceFactory::default()));
+    Arc::clone(&FACTORY)
+}
+
+fn bind_js_surface_factory(slot: &mut SlotScript) {
+    slot.bind_surface_factory(shared_js_surface_factory());
+}
+
+pub(super) fn js_start_card(
+    source: String,
+    shape: script::LoadShape,
+    siblings: Vec<(String, String)>,
+) -> Arc<script::load::surface::JsStartCard> {
+    let source = Arc::<str>::from(source);
+    let family = script::resolve_api_family(&source)
+        .ok()
+        .map(|(_, family)| family);
+    Arc::new(script::load::surface::JsStartCard {
+        source,
+        shape,
+        siblings: Arc::from(siblings),
+        family,
+    })
+}
+
+pub(super) fn js_surface_start(
+    card: Arc<script::load::surface::JsStartCard>,
+    settings_bag: Option<Arc<script::native::SettingsBag>>,
+    game_data: Option<Arc<api::game_data::SelectedGameData>>,
+    named_banks: Arc<api::named_banks::NamedBankFacts>,
+    loadouts: Arc<[api::loadout::Loadout]>,
+) -> script::surface::SurfaceStart {
+    let card: Arc<dyn script::surface::SurfaceCard> = card;
+    script::surface::SurfaceStart {
+        card,
+        settings_bag,
+        game_data,
+        named_banks,
+        loadouts,
+    }
 }
 
 /// Resolve `name`'s lifecycle and read its latest Start under one lock; a
@@ -243,7 +288,16 @@ impl SettledStart for SlotScript {
         shape: script::LoadShape,
         siblings: Vec<(String, String)>,
     ) -> Result<(), String> {
-        self.start_load(source, shape, siblings)?;
+        bind_js_surface_factory(self);
+        let start = js_surface_start(
+            js_start_card(source, shape, siblings),
+            None,
+            None,
+            Arc::new(api::named_banks::NamedBankFacts::default()),
+            Arc::from(Vec::<api::loadout::Loadout>::new()),
+        );
+        self.start_surface(start)
+            .map_err(|error| error.to_string())?;
         settle_start(self)
     }
 
@@ -254,7 +308,16 @@ impl SettledStart for SlotScript {
         siblings: Vec<(String, String)>,
         loadouts: &[api::loadout::Loadout],
     ) -> Result<(), String> {
-        self.start_load_with_loadouts(source, shape, siblings, loadouts)?;
+        bind_js_surface_factory(self);
+        let start = js_surface_start(
+            js_start_card(source, shape, siblings),
+            None,
+            None,
+            Arc::new(api::named_banks::NamedBankFacts::default()),
+            Arc::from(loadouts.to_vec()),
+        );
+        self.start_surface(start)
+            .map_err(|error| error.to_string())?;
         settle_start(self)
     }
 }

@@ -49,8 +49,8 @@ pub(super) struct TeardownState {
     pub(super) hook_entry_delay: Option<Duration>,
     /// Test seam: pretend the supervisor cannot accept a hook deadline.
     pub(super) fail_hook_registration: bool,
-    /// Unit-test-only wider budget for success-path hook assertions.
-    #[cfg(test)]
+    /// Test-only wider budget for success-path hook assertions.
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(super) test_hook_timeout: Option<Duration>,
     /// Isolate-local fault seam; no process-global supervisor state is changed.
     #[cfg(any(test, feature = "test-hooks"))]
@@ -90,7 +90,7 @@ impl TeardownState {
             fail_hook_registration: false,
             #[cfg(any(test, feature = "test-hooks"))]
             fail_execution_registration: None,
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-hooks"))]
             test_hook_timeout: None,
             execution_active: false,
             execution_id: 0,
@@ -209,9 +209,9 @@ pub(super) fn enter_teardown_hook(teardown: &std::sync::Arc<Mutex<TeardownState>
         TeardownPhase::Hook | TeardownPhase::Done => false,
         TeardownPhase::Running | TeardownPhase::UnwindingTick => {
             st.phase = TeardownPhase::Hook;
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-hooks"))]
             let hook_timeout = st.test_hook_timeout.unwrap_or(ON_STOP_DEADLINE);
-            #[cfg(not(test))]
+            #[cfg(not(any(test, feature = "test-hooks")))]
             let hook_timeout = ON_STOP_DEADLINE;
             st.deadline = Some(Instant::now() + hook_timeout);
             st.interrupt_issued = false;

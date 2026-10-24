@@ -90,17 +90,27 @@ impl BankSlot {
     ) -> Self {
         let game_data = api::game_data::for_revision(api::selected::ClientRevision::R289)
             .expect("R289 selected game data");
+        let source = Arc::<str>::from(source.into());
+        let family = script::resolve_api_family(&source)
+            .ok()
+            .map(|(_, family)| family);
         let mut slot = SlotScript::new();
         slot.bind_incarnation(1);
-        slot.start_load_with_settings_and_game_data(
-            source.into(),
-            shape,
-            settings,
-            vec![],
-            &[],
-            Some(game_data),
+        slot.bind_surface_factory(Arc::new(
+            script::load::surface::JsSurfaceFactory::default(),
+        ));
+        slot.start_surface_with_settings(script::surface::SurfaceStart {
+            card: Arc::new(script::load::surface::JsStartCard {
+                source,
+                shape,
+                siblings: Arc::<[(String, String)]>::from([]),
+                family,
+            }),
+            settings_bag: settings.map(|settings| Arc::new(settings.clone())),
+            game_data: Some(game_data),
             named_banks,
-        )
+            loadouts: Arc::<[api::loadout::Loadout]>::from([]),
+        })
         .expect("start test SlotScript");
 
         let deadline = Instant::now() + Duration::from_secs(10);
@@ -126,13 +136,10 @@ impl BankSlot {
         }
     }
 
-    /// Publish a full/delta script page while updating the persistent native view.
+    /// Publish a typed surface page while updating the matching native view.
     pub fn post_snapshot(&mut self, input: &SnapshotInput<'_>, native: NativeFactsInput<'_>) {
         let native = self.with_slot_bank_selection(native);
-        let bytes = self
-            .slot
-            .encode_snapshot_delta_with_native(input, native, false);
-        self.post_snapshot_bytes(bytes, input, native);
+        self.post_snapshot_with_observations_inner(input, native, input, native);
     }
 
     fn with_slot_bank_selection<'a>(
@@ -143,23 +150,43 @@ impl BankSlot {
         native
     }
 
-    /// Post a caller-encoded delta while keeping the native view independent.
-    pub fn post_snapshot_bytes(
+    /// Post one surface observation while retaining an independent native view.
+    ///
+    /// The native view receives this slot's bank selection. The surface keeps
+    /// the facts supplied by its caller.
+    pub fn post_snapshot_with_observations(
         &mut self,
-        bytes: Vec<u8>,
-        input: &SnapshotInput<'_>,
+        surface_input: &SnapshotInput<'_>,
+        surface_native: NativeFactsInput<'_>,
+        native_input: &SnapshotInput<'_>,
         native: NativeFactsInput<'_>,
     ) {
         let native = self.with_slot_bank_selection(native);
+        self.post_snapshot_with_observations_inner(
+            surface_input,
+            surface_native,
+            native_input,
+            native,
+        );
+    }
+
+    fn post_snapshot_with_observations_inner(
+        &mut self,
+        surface_input: &SnapshotInput<'_>,
+        surface_native: NativeFactsInput<'_>,
+        native_input: &SnapshotInput<'_>,
+        native: NativeFactsInput<'_>,
+    ) {
         assert!(
-            self.slot.post_snapshot(bytes),
+            self.slot
+                .post_snapshot_delta(surface_input, surface_native, false),
             "SlotScript rejected snapshot"
         );
-        self.held = input.hold;
+        self.held = native_input.hold;
         let mut snapshot = std::mem::replace(&mut self.native_snapshot, GameSnapshot::new());
-        update_native_snapshot(&mut snapshot, input, native, None);
+        update_native_snapshot(&mut snapshot, native_input, native, None);
         self.native_snapshot = snapshot;
-        self.native_reach = reach_query_view(input.reach);
+        self.native_reach = reach_query_view(native_input.reach);
     }
 
     /// Tick against the persistent native view last posted by `post_snapshot`.
@@ -242,10 +269,10 @@ impl BankSlot {
     ) {
         for _ in 0..8 {
             let native = self.with_slot_bank_selection(native);
-            let bytes = self
-                .slot
-                .encode_snapshot_delta_with_native(input, native, false);
-            assert!(self.slot.post_snapshot(bytes));
+            assert!(
+                self.slot.post_snapshot_delta(input, native, false),
+                "SlotScript rejected snapshot"
+            );
             self.run_snapshot_change(tick, snapshot);
         }
     }

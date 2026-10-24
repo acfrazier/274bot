@@ -1,3 +1,5 @@
+#![cfg(feature = "load")]
+
 use super::*;
 use crate::api_combat::{CombatEnd, CombatSessionRequest, TargetSpec};
 use crate::api_gather::{GatherEnd, GatherPhase};
@@ -22,16 +24,20 @@ fn selected() -> Arc<api::game_data::SelectedGameData> {
 fn load_slot(incarnation: u64) -> SlotScript {
     let mut slot = SlotScript::new();
     slot.bind_incarnation(incarnation);
-    slot.start_load_with_settings_and_game_data(
-        "export function tick() {}".into(),
-        crate::load::LoadShape::NativeTick,
-        None,
-        vec![],
-        &[],
-        Some(selected()),
-        Arc::default(),
-    )
+    let factory = Arc::new(crate::surface::test_support::StubSurfaceFactory::new());
+    slot.bind_surface_factory(factory.clone());
+    slot.start_surface(crate::surface::SurfaceStart {
+        card: Arc::new(crate::surface::test_support::StubSurfaceCard),
+        settings_bag: None,
+        game_data: Some(selected()),
+        named_banks: Arc::default(),
+        loadouts: Arc::default(),
+    })
     .unwrap();
+    factory
+        .last_run()
+        .expect("stub surface run")
+        .set_readiness(crate::surface::SurfaceReady::Ready);
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         match slot.poll_start() {
@@ -1006,7 +1012,7 @@ fn review_lifecycle_batch(slot: &SlotScript) -> crate::load::QueuedSeatBatch {
         request,
     };
     crate::load::QueuedSeatBatch {
-        generation: slot.load.as_ref().unwrap().generation(),
+        generation: slot.surface.as_ref().unwrap().generation(),
         observed_walk_outcome_seq: 0,
         batch: decoded(
             Vec::new(),
@@ -1078,7 +1084,7 @@ fn held_lifecycle_pages_stay_row_bounded_and_counted_frame_by_frame() {
         request,
     };
     let page = |slot: &SlotScript, reqs: Vec<InteractReq>| crate::load::QueuedSeatBatch {
-        generation: slot.load.as_ref().unwrap().generation(),
+        generation: slot.surface.as_ref().unwrap().generation(),
         observed_walk_outcome_seq: 0,
         batch: decoded(Vec::new(), reqs.into_iter().map(row).collect()),
         machine_events: Vec::new(),
@@ -1095,7 +1101,7 @@ fn held_lifecycle_pages_stay_row_bounded_and_counted_frame_by_frame() {
             InteractReq::NoteProgress,
         ],
     );
-    slot.load
+    slot.surface
         .as_ref()
         .unwrap()
         .restore_seat_batches(vec![first]);
@@ -1103,18 +1109,18 @@ fn held_lifecycle_pages_stay_row_bounded_and_counted_frame_by_frame() {
     let mut held_rows = Vec::with_capacity(201);
     for frame in 0..=200 {
         // The new page arrives behind the held batch, as the isolate queues it.
-        let mut queue = slot.load.as_ref().unwrap().drain_seat_batches();
+        let mut queue = slot.surface.as_ref().unwrap().drain_seat_batches();
         assert_eq!(queue.len(), 1, "frame {frame}: one held batch");
         held_rows.push(queue[0].batch.reqs.len());
         if frame == 200 {
-            slot.load.as_ref().unwrap().restore_seat_batches(queue);
+            slot.surface.as_ref().unwrap().restore_seat_batches(queue);
             break;
         }
         queue.push(page(
             &slot,
             vec![InteractReq::WaitEnqueued, InteractReq::LoopSettled],
         ));
-        slot.load.as_ref().unwrap().restore_seat_batches(queue);
+        slot.surface.as_ref().unwrap().restore_seat_batches(queue);
         let _ = slot.drain_host_interacts();
     }
     assert!(
@@ -1123,7 +1129,7 @@ fn held_lifecycle_pages_stay_row_bounded_and_counted_frame_by_frame() {
         &held_rows[..3],
         held_rows.last()
     );
-    let mut held = slot.load.as_ref().unwrap().drain_seat_batches();
+    let mut held = slot.surface.as_ref().unwrap().drain_seat_batches();
     assert_eq!(held.len(), 1);
     let batch = held.pop().unwrap();
     assert_eq!(
@@ -1150,7 +1156,7 @@ fn held_lifecycle_pages_stay_row_bounded_and_counted_frame_by_frame() {
         0,
         "a repeated stamp is a replacement, not a dropped row"
     );
-    slot.load
+    slot.surface
         .as_ref()
         .unwrap()
         .restore_seat_batches(vec![batch]);
@@ -1172,7 +1178,7 @@ fn held_lifecycle_pages_stay_row_bounded_and_counted_frame_by_frame() {
     );
     assert!(lifecycle.contains(&InteractReq::NoteProgress));
     assert!(lifecycle.contains(&InteractReq::LoopSettled));
-    assert!(slot.load.as_ref().unwrap().drain_seat_batches().is_empty());
+    assert!(slot.surface.as_ref().unwrap().drain_seat_batches().is_empty());
     slot.stop();
 }
 
@@ -1180,7 +1186,7 @@ fn held_lifecycle_pages_stay_row_bounded_and_counted_frame_by_frame() {
 fn guardian_hold_keeps_lifecycle_rows_until_resume() {
     let mut slot = with_seat(831);
     let control = review_lifecycle_batch(&slot);
-    slot.load
+    slot.surface
         .as_ref()
         .unwrap()
         .restore_seat_batches(vec![control]);
@@ -1192,7 +1198,7 @@ fn guardian_hold_keeps_lifecycle_rows_until_resume() {
     );
     slot.seat_guardian_hold(true);
     let batch = review_lifecycle_batch(&slot);
-    slot.load
+    slot.surface
         .as_ref()
         .unwrap()
         .restore_seat_batches(vec![batch]);

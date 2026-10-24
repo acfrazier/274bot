@@ -77,6 +77,7 @@ pub mod settings_store;
 pub mod shim;
 pub mod shop_open;
 pub mod slot;
+pub mod surface;
 /// Pure condition derivation and survival arithmetic.
 pub mod survival;
 pub mod trade_screen;
@@ -124,7 +125,6 @@ pub use settings_store::{
     card_key, coerce_setting_value, default_script_settings_path, format_setting_value, merge_bag,
     parameter_rows, setting_visible, ScriptSettingsStore, CLUE_DUEL_PARTNER,
 };
-#[cfg(feature = "load")]
 pub use slot::StartLoadError;
 pub use slot::{
     CompiledDelivery, RunState, ScriptLifecycleReceipt, ScriptTerminalState, SlotScript,

@@ -311,7 +311,7 @@ impl LiveState {
                 Some((
                     format!("{:?}", slot.state()),
                     slot.want_run,
-                    slot.load_active(),
+                    slot.surface_active(),
                     slot.live_native_owner(),
                     slot.live_walking_operation(),
                     slot.api_session_takes_manual_input(),

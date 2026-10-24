@@ -536,7 +536,7 @@ pub(crate) fn take_manual_walk_ownership(
     let api_session = slot
         .as_ref()
         .is_some_and(|slot| slot.api_session_takes_manual_input());
-    let load_active = slot.as_ref().is_some_and(|slot| slot.load_active());
+    let load_active = slot.as_ref().is_some_and(|slot| slot.surface_active());
     let live_work = eligible
         && (api_session
             || live_walking_operation
