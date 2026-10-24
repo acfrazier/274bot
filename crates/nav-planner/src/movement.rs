@@ -1,9 +1,10 @@
-//! Shared client movement rules for routing and release generation.
+//! Shared movement and spatial-membership rules for routing and release generation.
 
 use api::snapshot::WorldTile;
 use client::dash3d::CollisionFlag;
 
 use crate::collision::WorldCollision;
+use crate::router::AvoidRect;
 
 const MASK_N: u32 = CollisionFlag::PL_WALK_N as u32;
 const MASK_E: u32 = CollisionFlag::PL_WALK_E as u32;
@@ -75,5 +76,16 @@ pub fn cardinal_entry_mask(d: (i32, i32)) -> Option<u32> {
         (1, 0) => Some(MASK_W),
         (-1, 0) => Some(MASK_E),
         _ => None,
+    }
+}
+impl AvoidRect {
+    /// Whether `tile` sits inside this rect (inclusive bounds, optional level).
+    pub fn contains(self, tile: WorldTile) -> bool {
+        if let Some(lvl) = self.level {
+            if tile.level != lvl {
+                return false;
+            }
+        }
+        tile.x >= self.min_x && tile.x <= self.max_x && tile.z >= self.min_z && tile.z <= self.max_z
     }
 }

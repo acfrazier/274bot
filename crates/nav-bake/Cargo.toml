@@ -4,6 +4,9 @@ version.workspace = true
 edition = "2021"
 publish = false
 
+[lints]
+workspace = true
+
 [dependencies]
 api = { path = "../api" }
 nav-planner = { path = "../nav-planner" }
