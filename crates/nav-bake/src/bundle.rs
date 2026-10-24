@@ -30,12 +30,10 @@ pub struct InputFingerprint {
 
 impl InputFingerprint {
     pub fn of(path: &Path) -> Result<Self, crate::GenerationError> {
-        let metadata = std::fs::metadata(path).map_err(|source| {
-            crate::SourceInputError::Io {
-                context: crate::SourceInputContext::BakeInput,
-                path: path.to_path_buf(),
-                source,
-            }
+        let metadata = std::fs::metadata(path).map_err(|source| crate::SourceInputError::Io {
+            context: crate::SourceInputContext::BakeInput,
+            path: path.to_path_buf(),
+            source,
         })?;
         let modified_nanos = metadata
             .modified()
@@ -580,12 +578,8 @@ impl BakeStamp {
             expected.staged_manifest_sha256,
         )?;
         match (self.manifest_bytes, expected.staged_manifest_bytes) {
-            (None, _) => {
-                return Err(crate::StaleStampError::ManifestBytesMissingFromStamp.into())
-            }
-            (_, None) => {
-                return Err(crate::StaleStampError::ManifestBytesMissingFromDisk.into())
-            }
+            (None, _) => return Err(crate::StaleStampError::ManifestBytesMissingFromStamp.into()),
+            (_, None) => return Err(crate::StaleStampError::ManifestBytesMissingFromDisk.into()),
             (Some(stamped), Some(actual)) if stamped != actual => {
                 return Err(crate::StaleStampError::ManifestSizeMismatch {
                     actual_bytes: actual,
