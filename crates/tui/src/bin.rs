@@ -2114,8 +2114,8 @@ impl TuiSession {
     }
 
     /// Settle a New profile save the writer has finished: a durable
-    /// one closes the overlay and loads, logs in and focuses the new
-    /// profile (the boot's own landing for its first profile); a
+    /// one closes the overlay and queues its startup focus. The pump
+    /// loads and logs in through the preference-readiness gate. A
     /// failed one keeps the form and its draft, with the failure in
     /// the form's notice. Runs from the pump in place of the settings
     /// popup's settle while the overlay is open: the two forms are
@@ -2149,8 +2149,7 @@ impl TuiSession {
             .profiles()
             .map(|p| p.username().to_string())
             .collect();
-        self.load_and_login(&pending);
-        self.focus(&pending);
+        self.startup_focus = Some(pending);
     }
 
     fn import_rs2b0t_catalog(&mut self, app: &mut TuiApp, root: &Path) -> Result<(), String> {

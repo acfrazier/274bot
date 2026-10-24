@@ -1135,6 +1135,91 @@ fn new_profile_form_saves_the_typed_password() {
     );
 }
 
+#[test]
+fn first_profile_save_waits_for_preferences_before_loading_and_logging_in_once() {
+    let iso = IsolatedStores::enter("tui-first-profile-cold-preferences");
+    let mut session = TuiSession::new(dummy_options());
+    session.core.set_spawn_workers(false);
+    let (entered, entered_rx) = std::sync::mpsc::sync_channel(1);
+    let (release, release_rx) = std::sync::mpsc::channel();
+    let release_rx = std::sync::Mutex::new(release_rx);
+    let first = std::sync::atomic::AtomicBool::new(true);
+    let service = host_play::local_state::LocalStateService::open_process_with_read_stall_for_test(
+        host_play::local_state::StateRoot::new(iso.dir().join("cold-state")),
+        Arc::new(move || {
+            if first.swap(false, std::sync::atomic::Ordering::SeqCst) {
+                let _ = entered.send(());
+                let _ = release_rx.lock().unwrap().recv();
+            }
+        }),
+    );
+    entered_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+    session.core.bind_local_state(service);
+    session.preferences = session.core.preferences().unwrap();
+    session.preferences_adopted = false;
+    session
+        .start_play(VaultFixture::create(
+            &iso.dir().join("vault"),
+            "test-passphrase-01",
+        ))
+        .unwrap();
+    let args = parse_args_from(std::iter::empty::<&str>()).unwrap();
+    let mut app = interactive_landing(&mut session, &args).unwrap();
+    type_new_profile(&mut session, &mut app, "alice");
+    let tab = app.on_key(settings_key(crossterm::event::KeyCode::Tab));
+    dispatch(&mut session, &mut app, tab);
+    type_new_profile(&mut session, &mut app, "pw");
+    let enter = app.on_key(settings_key(crossterm::event::KeyCode::Enter));
+    dispatch(&mut session, &mut app, enter);
+    session.core.flush_writes();
+
+    for _ in 0..4 {
+        session.pump(&mut app);
+        assert!(!session.preferences.ready());
+        assert!(session.core.profile("alice").is_some());
+        assert!(app.modal.is_none(), "the durable save closes the form");
+        assert!(
+            session.core.slots().is_empty(),
+            "saving the first profile must not load or log in before preferences are ready"
+        );
+        assert!(!session.core.commands().reports().any(|report| matches!(
+            report.command(),
+            OperatorCommand::Load | OperatorCommand::Login
+        )));
+    }
+
+    release.send(()).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while session.core.slots().is_empty() && Instant::now() < deadline {
+        session.pump(&mut app);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(session.preferences.ready());
+    for _ in 0..4 {
+        session.pump(&mut app);
+    }
+    assert_eq!(session.core.selected(), Some("alice"));
+    assert!(session
+        .core
+        .play_for_test()
+        .unwrap()
+        .arm("alice")
+        .unwrap()
+        .wants_login());
+    for command in [OperatorCommand::Load, OperatorCommand::Login] {
+        assert_eq!(
+            session
+                .core
+                .commands()
+                .reports()
+                .filter(|report| report.command() == command)
+                .count(),
+            1,
+            "{command:?} must be submitted exactly once"
+        );
+    }
+}
+
 /// A 0.1.9.x home keeps its v10 pack at the default path. The TUI's play and
 /// its WalkTo/scenario world are the packaged v11 bundle's one shared world,
 /// and the old file is left alone; an explicit override to the old file still
