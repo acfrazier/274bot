@@ -3904,7 +3904,7 @@ pub(crate) struct PostedWalkOutcome {
     pub(crate) allow_teleports: bool,
     /// The settled route end is frozen `'blocked'`.
     pub(crate) blocked: bool,
-    pub(crate) cancel_reason: script::isolate_fb::WalkCancelReason,
+    pub(crate) cancel_reason: script::native::WalkCancelReason,
     pub(crate) user_move_intent_seq: u64,
 }
 
@@ -4125,7 +4125,7 @@ pub(crate) struct NavBot {
     /// The published route end is frozen `'blocked'`
     /// ([`nav_executor::HopFailure::EndBlocked`]).
     pub(crate) walk_outcome_blocked: bool,
-    pub(crate) walk_outcome_cancel_reason: script::isolate_fb::WalkCancelReason,
+    pub(crate) walk_outcome_cancel_reason: script::native::WalkCancelReason,
     /// UI-only cancellation detail, cleared by a subsequent arm or outcome.
     pub(crate) manual_walk_cancelled_detail: bool,
     /// Every qualifying human gesture, including when no route exists.
@@ -6598,7 +6598,7 @@ impl NavBot {
         self.walk_outcome_request_id = request_id;
         self.walk_outcome_failed = true;
         self.walk_outcome_blocked = false;
-        self.walk_outcome_cancel_reason = script::isolate_fb::WalkCancelReason::None;
+        self.walk_outcome_cancel_reason = script::native::WalkCancelReason::None;
         self.walk_outcome_x = to.x;
         self.walk_outcome_z = to.z;
         self.walk_outcome_level = to.level;
@@ -6643,7 +6643,7 @@ impl NavBot {
         self.walk_outcome_request_id = request_id;
         self.walk_outcome_failed = false;
         self.walk_outcome_blocked = blocked;
-        self.walk_outcome_cancel_reason = script::isolate_fb::WalkCancelReason::None;
+        self.walk_outcome_cancel_reason = script::native::WalkCancelReason::None;
         self.walk_outcome_x = to.x;
         self.walk_outcome_z = to.z;
         self.walk_outcome_level = to.level;
@@ -6660,7 +6660,7 @@ impl NavBot {
         // AbortWalk is a release of the current operation, not a script-run
         // boundary. Preserve its published UserInput terminal until an
         // isolate observes it.
-        if self.walk_outcome_cancel_reason == script::isolate_fb::WalkCancelReason::UserInput {
+        if self.walk_outcome_cancel_reason == script::native::WalkCancelReason::UserInput {
             return;
         }
         self.reset_walk_outcome();
@@ -6681,7 +6681,7 @@ impl NavBot {
         self.native_walk_blocked = None;
         self.walk_outcome_detail = None;
         self.walk_live_refusal_id = 0;
-        self.walk_outcome_cancel_reason = script::isolate_fb::WalkCancelReason::None;
+        self.walk_outcome_cancel_reason = script::native::WalkCancelReason::None;
         // The family posts a present empty vector: a routed outcome names no
         // short, and the clear is never omitted.
         self.walk_missing_carry.clear();
@@ -6701,7 +6701,7 @@ impl NavBot {
         let takeover_outcome = self.manual_takeover_watermark != 0
             && self.walk_outcome_seq == self.manual_takeover_watermark;
         if takeover_outcome
-            || self.walk_outcome_cancel_reason == script::isolate_fb::WalkCancelReason::UserInput
+            || self.walk_outcome_cancel_reason == script::native::WalkCancelReason::UserInput
         {
             script::native::WalkCancelReason::UserInput
         } else {
@@ -6788,7 +6788,7 @@ impl NavBot {
             self.walk_outcome_request_id = request_id;
             self.walk_outcome_failed = true;
             self.walk_outcome_blocked = false;
-            self.walk_outcome_cancel_reason = script::isolate_fb::WalkCancelReason::UserInput;
+            self.walk_outcome_cancel_reason = script::native::WalkCancelReason::UserInput;
             self.walk_outcome_x = to.x;
             self.walk_outcome_z = to.z;
             self.walk_outcome_level = to.level;

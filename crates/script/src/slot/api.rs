@@ -681,12 +681,7 @@ impl SlotScript {
                             .map(|seat| seat.as_mut() as &mut dyn crate::native::SeatPromptPort),
                     },
                 );
-                #[cfg(feature = "load")]
-                {
-                    ctx.compiled.interacts = interacts;
-                }
-                #[cfg(not(feature = "load"))]
-                let _ = interacts;
+                ctx.compiled.interacts = interacts;
                 run.finish_tick();
                 result
             };

@@ -998,7 +998,7 @@ export default class T extends LoopingBot {
     };
     let mut manual = base_snapshot(2, far());
     manual.user_move_intent_seq = 1;
-    manual.walk_outcome_cancel_reason = script::isolate_fb::WalkCancelReason::UserInput;
+    manual.walk_outcome_cancel_reason = script::native::WalkCancelReason::UserInput;
     let (cancelled, fingerprint) = encode_snapshot_delta_with_native(
         Some(&fingerprint),
         &manual,
@@ -1091,7 +1091,7 @@ export function tick(api) {
     iso.probe("true").unwrap();
     let mut input = base_snapshot(2, far());
     input.user_move_intent_seq = 7;
-    input.walk_outcome_cancel_reason = script::isolate_fb::WalkCancelReason::UserInput;
+    input.walk_outcome_cancel_reason = script::native::WalkCancelReason::UserInput;
     let (unrelated, fingerprint) = encode_snapshot_delta_with_native(
         Some(&fingerprint),
         &input,
@@ -1118,7 +1118,7 @@ export function tick(api) {
     iso.on_game_tick(4);
     assert_eq!(iso.probe("globalThis.__cancelled").unwrap(), true);
     input.tick = 5;
-    input.walk_outcome_cancel_reason = script::isolate_fb::WalkCancelReason::None;
+    input.walk_outcome_cancel_reason = script::native::WalkCancelReason::None;
     let (arrived, _) = encode_snapshot_delta_with_native(
         Some(&fingerprint),
         &input,

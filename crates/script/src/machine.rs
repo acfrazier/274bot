@@ -1523,21 +1523,8 @@ pub(crate) struct CapturedLineage {
     pub(crate) mirror_owner: Option<RequestId>,
     pub(crate) dropped: bool,
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum MachineEventKind {
-    Phase(crate::native::NativePhase),
-    Done,
-    Failed,
-    Aborted(api::script_contract::AbortReason),
-    ManualWalk,
-}
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct MachineEvent {
-    pub(crate) id: RequestId,
-    pub(crate) kind: MachineEventKind,
-    pub(crate) admitted: bool,
-}
+pub(crate) use crate::native::seat_rows::{MachineEvent, MachineEventKind};
 
 #[derive(Clone, Copy, Default)]
 struct StartContext {

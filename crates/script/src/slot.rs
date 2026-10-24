@@ -3817,13 +3817,7 @@ impl SlotScript {
 
     #[cfg(feature = "load")]
     fn duel_fight_pen_anchor_unreachable(player: WatchdogTile, anchor: WatchdogTile) -> bool {
-        let pen_index = |tile: WatchdogTile| {
-            crate::duel::pen_at(crate::observed::Tile {
-                x: tile.x,
-                z: tile.z,
-                level: tile.level,
-            })
-        };
+        let pen_index = |tile: WatchdogTile| crate::duel_arena::pen_at(tile.x, tile.z, tile.level);
         let Some(player_pen) = pen_index(player) else {
             return false;
         };

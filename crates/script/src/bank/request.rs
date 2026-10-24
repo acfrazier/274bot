@@ -4,6 +4,14 @@
 //! `quantity`. Callback handles stay in the isolate; the wire carries only
 //! their fixed operation-specific presence bits.
 
+#![cfg_attr(
+    not(feature = "load"),
+    expect(
+        dead_code,
+        reason = "read by the wire decoder isolate_fb.rs and machine.rs, un-gated at S0b"
+    )
+)]
+
 use crate::native::request::NativeKind;
 use api::snapshot::WorldTile;
 

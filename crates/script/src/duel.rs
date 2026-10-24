@@ -15,6 +15,7 @@ use api::snapshot::WorldTile;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
+use crate::duel_arena::{duel_name, duel_partner_name};
 use crate::machine::{Begin, Cx, Family, Step};
 use crate::observed::{self, SceneRow, Tile};
 use crate::shim::InteractReq;
@@ -56,16 +57,6 @@ const UNSAFE_RULES: &str = "rejecting unsafe clue duel rules";
 const NO_PARTNER: &str =
     "set Global clue duel partner and run that account in Duel Arena Clue helper mode";
 
-/// Frozen `DUEL_FIGHT_ARENAS` as `(minX, maxX, minZ, maxZ)`.
-const PENS: [(i32, i32, i32, i32); 6] = [
-    (3333, 3357, 3244, 3258),
-    (3364, 3388, 3225, 3239),
-    (3333, 3357, 3206, 3220),
-    (3364, 3388, 3244, 3258),
-    (3333, 3357, 3225, 3239),
-    (3364, 3388, 3206, 3220),
-];
-
 /// The `log` hook of the duel families' `runMachine` calls.
 const LOG: usize = 0;
 
@@ -106,37 +97,11 @@ fn global_partner() -> String {
     PARTNER.with(|slot| slot.borrow().clone())
 }
 
-/// Frozen `clueDuelName`: underscores read as spaces, trimmed, lowercased.
-/// The host's accept gate compares names the same way.
-pub fn duel_name(name: &str) -> String {
-    name.replace('_', " ").trim().to_lowercase()
-}
-
-/// Frozen `parseDuelPartnerHeader`: the display name after an optional
-/// `Dueling with :` prefix (any case, optional spaces around the colon).
-pub fn duel_partner_name(text: &str) -> Option<String> {
-    let text = text.trim();
-    let name = strip_dueling_with(text).unwrap_or(text).trim();
-    (!name.is_empty()).then(|| name.to_string())
-}
-
-fn strip_dueling_with(text: &str) -> Option<&str> {
-    const PREFIX: &str = "dueling with";
-    let head = text.get(..PREFIX.len())?;
-    if !head.eq_ignore_ascii_case(PREFIX) {
-        return None;
-    }
-    text[PREFIX.len()..].trim_start().strip_prefix(':')
-}
-
-pub(crate) fn pen_at(tile: Tile) -> Option<usize> {
-    (tile.level == 0).then_some(())?;
-    PENS.iter().position(|&(min_x, max_x, min_z, max_z)| {
-        tile.x >= min_x && tile.x <= max_x && tile.z >= min_z && tile.z <= max_z
-    })
-}
-
 /// Frozen upstream `inDuelChallengeArea`, excluding every fight pen.
+fn pen_at(tile: Tile) -> Option<usize> {
+    crate::duel_arena::pen_at(tile.x, tile.z, tile.level)
+}
+
 fn in_challenge_area(tile: Tile) -> bool {
     tile.level == 0
         && tile.x >= 3328
@@ -239,7 +204,7 @@ pub(crate) fn dispatch(value: &Value) -> Value {
             json!(dest == CLUE_TILE || here_in_pen)
         }
         "tables" => json!({
-            "pens": PENS.map(|(min_x, max_x, min_z, max_z)| {
+            "pens": crate::duel_arena::PENS.map(|(min_x, max_x, min_z, max_z)| {
                 json!({ "minX": min_x, "maxX": max_x, "minZ": min_z, "maxZ": max_z })
             }),
             "lobby": tile_json(LOBBY),

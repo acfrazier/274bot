@@ -22441,7 +22441,7 @@ fn manual_config_on_recovery_click_resume_never_replays_cancelled_work() {
         assert_eq!(bot.walk_outcome_generation, original_generation);
         assert_eq!(
             bot.walk_outcome_cancel_reason,
-            script::isolate_fb::WalkCancelReason::UserInput
+            script::native::WalkCancelReason::UserInput
         );
         assert!(bot.carried_walk.is_none());
         (bot.walk_outcome_seq, bot.walk_outcome_generation)
@@ -22736,7 +22736,7 @@ fn manual_resume_click_after_resume_receipts_carried_request_once() {
         receipt_id, armed.0,
         "carry must not disappear without a receipt"
     );
-    assert_eq!(reason, script::isolate_fb::WalkCancelReason::UserInput);
+    assert_eq!(reason, script::native::WalkCancelReason::UserInput);
     assert_eq!(
         receipt_generation, original_generation,
         "carry retains route correlation"
