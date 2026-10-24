@@ -38,7 +38,6 @@ use api::identity::Cancellation;
 use api::selected::{QuestGate, Truth};
 use api::snapshot::WorldTile;
 use api::work::{Checkpoint, StepContext, WorkPhase};
-use client::dash3d::CollisionFlag;
 
 use crate::collision::WorldCollision;
 use crate::contract::{ContractError, NavLease, PackId, RouteView};

@@ -69,7 +69,7 @@ fn malformed_takeoff_tag_is_rejected_by_runtime_decoder_helper() {
     bytes.extend_from_slice(&[0; 12]);
     assert!(matches!(
         read_takeoff(
-            &mut Cursor::new(bytes),
+            &mut Cursor::new(bytes.as_slice()),
             WorldTile {
                 x: 1,
                 z: 2,

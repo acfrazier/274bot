@@ -1,3 +1,7 @@
+#![deny(clippy::disallowed_types)]
+#![deny(clippy::disallowed_methods)]
+#![deny(clippy::disallowed_macros)]
+
 //! Offline audit of the cache/nav/content inputs used by one selected world.
 
 use std::collections::BTreeMap;
