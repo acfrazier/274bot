@@ -55,7 +55,10 @@ use doors::*;
 use gates::*;
 use gliders::*;
 use index::*;
-pub(crate) use index::{loc_ids_by_name, loc_positions, npc_ids_by_name, npc_positions, Placement};
+pub(crate) use index::{
+    loc_ids_by_name, loc_positions, npc_ids_by_name, npc_positions, NpcPlacement, Placement,
+    visit_loc_configs, visit_npc_configs,
+};
 use levers::*;
 use magic_guild::*;
 use membergate::*;
