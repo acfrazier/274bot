@@ -779,6 +779,46 @@ fn tooltip_shown(_rig: &Rig) -> bool {
     }
 }
 
+/// The size of the tooltip window the last frame of `_rig` drew.
+fn tooltip_size(_rig: &Rig) -> [f32; 2] {
+    // SAFETY: as in `tooltip_shown`: the rig's context is current, no frame
+    // is open, and the window pointer is read at once, not kept.
+    unsafe {
+        let window = dear_imgui_rs::sys::igFindWindowByName(c"##Tooltip_00".as_ptr());
+        assert!(!window.is_null(), "a tooltip window exists");
+        [(*window).Size.x, (*window).Size.y]
+    }
+}
+
+/// A short result's tooltip takes one line: it is not a column one letter
+/// wide and as tall as the text is long (the wrap position the tooltip
+/// sets must hold).
+#[test]
+fn the_result_tooltip_holds_a_short_result_on_one_line() {
+    let all = names(3);
+    for scale in [1.0, 2.0] {
+        let mut rig = Rig::new("toolbar-result-tooltip", &all, &all, scale);
+        rig.session.plan_fleet_action(FleetAction::Login);
+        rig.session.confirm_fleet_plan();
+        let place = Place::Window([760.0, 460.0]);
+        let (text, rect) = rig.settle(place).result.expect("a result line");
+        let line = rect[3] - rect[1];
+        let at = centre(rect);
+        for _ in 0..40 {
+            rig.frame(place, at, false);
+        }
+        assert!(
+            tooltip_shown(&rig),
+            "{scale}x: the result line has a tooltip"
+        );
+        let [width, height] = tooltip_size(&rig);
+        assert!(
+            height < 3.0 * line && width > height,
+            "{scale}x: tooltip for {text:?} is {width}x{height}, one line is {line}"
+        );
+    }
+}
+
 /// A press and release of the left button at `at` over toolbar frames of
 /// `sites`, the pointer left there.
 fn press_at(rig: &mut Rig, sites: &[Site], open: bool, at: [f32; 2]) {
