@@ -141,10 +141,9 @@ pub fn post_snapshot_delta_pages_for_test(
             .as_any_mut()
             .downcast_mut::<JsSurfaceRun>()
             .expect("JavaScript surface run");
-        let encoded = crate::isolate_fb::Snapshot::from_bytes(
-            run.ipc.finished_snapshot_bytes_for_test(),
-        )
-        .expect("the accepted snapshot remains in its builder");
+        let encoded =
+            crate::isolate_fb::Snapshot::from_bytes(run.ipc.finished_snapshot_bytes_for_test())
+                .expect("the accepted snapshot remains in its builder");
         (
             encoded
                 .api_gather()
