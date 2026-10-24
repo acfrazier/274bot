@@ -86,7 +86,7 @@ pub(crate) fn loc_positions(content_root: &Path) -> HashMap<i32, Vec<Placement>>
 }
 
 /// All jm2 NPC placements grouped by id. NPC rows are already on the
-/// engine game plane (see [`crate::map::services`] scan).
+/// engine game plane (see [`nav_planner::map::services`] scan).
 pub(crate) fn npc_positions(content_root: &Path) -> HashMap<i32, Vec<NpcPlacement>> {
     let mut out: HashMap<i32, Vec<NpcPlacement>> = HashMap::new();
     let Ok(entries) = fs::read_dir(content_root.join("maps")) else {
@@ -121,7 +121,7 @@ pub(super) fn mapsquare_coords(name: &str) -> Option<(i32, i32)> {
 /// the engine's game plane: like the server's `GameMap.loadLocations`, a
 /// loc whose tile carries LINK_BELOW on the level-1 MAP flags sits one
 /// plane down, and one that would land below plane 0 is not loaded at all
-/// ([`crate::collision::game_plane`], the rule the collision bake stamps
+/// ([`nav_planner::collision::game_plane`], the rule the collision bake stamps
 /// by). `loc_coord` in the loc's scripts and the collision plane its
 /// footprint blocks are both that game plane.
 pub(super) fn parse_jm2_locs(text: &str, mx: i32, mz: i32) -> Vec<Placement> {
@@ -189,7 +189,7 @@ pub(super) fn parse_jm2_locs(text: &str, mx: i32, mz: i32) -> Vec<Placement> {
             (Some(x), Some(z)) => link_below.contains(&(x, z)),
             _ => false,
         };
-        match crate::collision::game_plane(p.level, bridged) {
+        match nav_planner::collision::game_plane(p.level, bridged) {
             Some(plane) => {
                 p.level = plane;
                 true
@@ -253,8 +253,13 @@ pub(super) fn parse_jm2_npcs(text: &str, mx: i32, mz: i32) -> Vec<NpcPlacement> 
 }
 
 /// Every `.loc` config text under `scripts`, recursively.
-pub(super) fn visit_loc_configs(dir: &Path, cb: &mut impl FnMut(&str)) {
+pub(crate) fn visit_loc_configs(dir: &Path, cb: &mut impl FnMut(&str)) {
     visit_configs(dir, "loc", cb);
+}
+
+/// Every `.npc` config text under `scripts`, recursively.
+pub(crate) fn visit_npc_configs(dir: &Path, cb: &mut impl FnMut(&str)) {
+    visit_configs(dir, "npc", cb);
 }
 
 /// Every `.<ext>` config text under `dir`, recursively.

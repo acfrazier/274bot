@@ -2,8 +2,8 @@
 //! synthetic content shaped like the 289 openers each test cites.
 
 use super::*;
-use crate::router::{find_first_with, find_with, FindOptions, Leg, RouteError};
-use crate::world_state::WorldState;
+use nav_planner::router::{find_first_with, find_with, FindOptions, Leg, RouteError};
+use nav_planner::world_state::WorldState;
 use client::dash3d::CollisionFlag;
 
 /// The shared engine facts every stage-door fixture needs: the pinned
@@ -1660,7 +1660,7 @@ fn derive_entrance_fixture(fx: &Fixture) -> (TransportGraph, WorldCollision) {
         api::game_data::for_revision(client::io::ClientRevision::R289).expect("selected revision");
     let (facts, identity) = selected.quest_identity_for_bake().expect("verified family");
     let quests = QuestSource {
-        family: crate::quest_gates::QuestFamilyId::new(identity.sha256, identity.schema),
+        family: nav_planner::quest_gates::QuestFamilyId::new(identity.sha256, identity.schema),
         facts: &facts,
     };
     let graph = derive_transports_with_audit(fx.path(), &defs, &collision, None, Some(&quests)).0;

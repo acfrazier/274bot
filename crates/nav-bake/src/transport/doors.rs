@@ -1,3 +1,5 @@
+use nav_planner::movement::{cardinal_entry_mask, step_ok};
+
 use super::*;
 
 /// Door edges from `scripts/doors/configs/*.loc` plus
@@ -259,12 +261,12 @@ pub(super) fn diagonal_door_crossings(
             z: at.z + dz,
             level: at.level,
         };
-        let Some(mask) = crate::router::cardinal_entry_mask((-dx, -dz)) else {
+        let Some(mask) = cardinal_entry_mask((-dx, -dz)) else {
             return false;
         };
         // The door's own footprint is the `SQ_BLOCKED` base the open
         // removes; face walls and blocked ground stay.
-        let faces = collision.walkable_word(at.x, at.z, at.level) & !crate::collision::SQ_BLOCKED;
+        let faces = collision.walkable_word(at.x, at.z, at.level) & !nav_planner::collision::SQ_BLOCKED;
         let ground = collision.flag(at.x, at.z, at.level) & CollisionFlag::WR_GRND as u32;
         collision.standable(stand) && faces & mask == 0 && ground == 0
     };
@@ -274,7 +276,7 @@ pub(super) fn diagonal_door_crossings(
         }
         landings.iter().find_map(|&dir| {
             let to = door_far_side(at, dir, collision)?;
-            crate::router::step_ok(collision, at, dir_delta(dir)).then_some((dir, to))
+            step_ok(collision, at, dir_delta(dir)).then_some((dir, to))
         })
     };
     [land(other_side, &[front]), land(angle_side, &other_side)]
