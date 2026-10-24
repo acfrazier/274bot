@@ -295,28 +295,30 @@ if (npcType.op[message.op - 1] === null) return;
 if (npcType.op[message.op - 1] === 'hidden') return;
 const trigger: ServerTriggerType = ServerTriggerType.APNPC1 + (message.op - 1);
 `],
-        ['content/pack/npc.pack', '101=test_npc\n202=transformed_npc\n303=global_npc\n404=op_only_npc\n505=barbarian\n606=category_npc\n707=category_only_npc\n'],
+        ['content/pack/npc.pack', '101=test_npc\n202=transformed_npc\n303=global_npc\n404=op_only_npc\n505=barbarian\n606=category_npc\n707=category_only_npc\n808=no_handler_npc\n'],
         ['content/pack/category.pack', '1=test_category\n2=barbarian\n3=only\n'],
         ['content/pack/param.pack', '1=test_param\n'],
         ['content/pack/script.pack', '1=test_script\n'],
         ['content/scripts/test.npc', `
-[test_npc]
-op1=Talk-to
-[transformed_npc]
-op1=Talk-to
-[global_npc]
-op2=Use
-[op_only_npc]
-op3=Talk-to
-[barbarian]
-op1=Talk-to
-category=barbarian
-[category_npc]
-op3=Talk-to
-category=only
-[category_only_npc]
-op4=Talk-to
-`],
+ [test_npc]
+ op1=Talk-to
+ [transformed_npc]
+ op1=Talk-to
+ [global_npc]
+ op2=Use
+ [op_only_npc]
+ op3=Talk-to
+ [barbarian]
+ op1=Talk-to
+ category=barbarian
+ [category_npc]
+ op3=Talk-to
+ category=only
+ [category_only_npc]
+ op4=Talk-to
+ [no_handler_npc]
+ op3=Talk-to
+ `],
         ['content/scripts/handlers.rs2', `
 [opnpc1,test_npc]
 npc_changetype(202, 1000)
@@ -371,6 +373,15 @@ return;
         reason === 'unknown_trigger_target'
         && [16, 18].every(line => source_refs.some(ref => evidence.source_spans[ref]?.first === line)),
     ), 'category-only bare names and category_ aliases remain unresolved');
+    const noHandler = actionByPair.get('808:3')!;
+    assert.equal(noHandler.state, 'unknown', 'a configured option with no OP/AP handler has no comparable action');
+    assert.equal(noHandler.trigger_kind, 'none', 'a configured option with no handler names no trigger target');
+    assert.ok(evidence.unresolved.some(({ scope_npc_type_id, scope_slot, reason }) =>
+        scope_npc_type_id === 808 && scope_slot === 3 && reason === 'missing_trigger_handler',
+    ), 'a configured option with no handler reports missing_trigger_handler, not an unknown subject');
+    assert.equal(evidence.proofs.find(({ npc_type_id, slot }) => npc_type_id === 808 && slot === 3)?.status, 'unavailable');
+    assert.ok(!runtimeNpcOperations(evidence).operations.some(({ npc_type_id, slot }) => npc_type_id === 808 && slot === 3),
+        'an option with no handler must not enter runtime operations');
     const opOnly = actionByPair.get('404:3')!;
     assert.equal(opOnly.state, 'present');
     assert.equal(opOnly.trigger_kind, 'type');

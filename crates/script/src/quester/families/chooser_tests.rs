@@ -98,6 +98,7 @@ fn describe(ledger: &Option<Box<ledger::Ledger>>) -> String {
         HostEffect::Interaction(request) => format!("{request:?}"),
         HostEffect::BankPick(_) => "bank pick".into(),
         HostEffect::AssessWalk(request) => format!("assess walk to {:?}", request.target),
+        HostEffect::ServerOrdered(_) => "server-ordered request".into(),
     }
 }
 
