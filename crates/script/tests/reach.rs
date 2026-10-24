@@ -1622,8 +1622,7 @@ fn loc_op_pumps_sustain_while_it_walks_to_the_stand() {
 }
 
 /// One locOp with `expectMs` set to the JS literal `expect_ms`: asserts the
-/// first click and an unsettled reach, and returns the clicks in the four
-/// ticks after a 60 ms wait.
+/// first click before the wait and returns clicks from one tick after 60 ms.
 fn loc_op_clicks_after_a_wait(expect_ms: &str) -> usize {
     let iso = spawn(LOC_OP);
     iso.probe(&format!("globalThis.__expectMs = {expect_ms}"))
@@ -1637,11 +1636,8 @@ fn loc_op_clicks_after_a_wait(expect_ms: &str) -> usize {
     tick(&iso, 2);
     let first = iso.drain_interacts();
     std::thread::sleep(std::time::Duration::from_millis(60));
-    let mut later = Vec::new();
-    for n in 3..=6 {
-        tick(&iso, n);
-        later.extend(iso.drain_interacts());
-    }
+    tick(&iso, 3);
+    let later = iso.drain_interacts();
     let ok = iso.probe("__ok").unwrap();
     iso.join();
     assert_eq!(first, vec![loc_op(6, 5, "Take From", 7000)], "{expect_ms}");

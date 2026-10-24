@@ -32,6 +32,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.6` 
 
 - `tui-play --user NAME` stops on a missing vault before it prepares the game cache or reads the engine login key. The message is the same. A local server with no engine directory still stops with the engine-directory error.
 
+#### Test reliability
+
+- Profile and map tests wait for WorkAdmission publication. They keep a 120-second hang guard.
+- The panel profile fixture stops its `/crc` server when the fixture drops.
+- Fractional reach tests send one tick after timeout. A frozen-clock unit test checks the timeout boundary.
+
 #### Survival
 
 - Strange fruit waits for the game's food delay after a bite. Eating the fruit also delays the next combat attack.
