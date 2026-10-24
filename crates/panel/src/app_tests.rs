@@ -721,10 +721,7 @@ fn normal_unlock_waits_for_work_admission_validation_then_uses_prepared_profile(
         pass: "prepared-pass".into(),
     });
     drive_startup(&mut state, &mut startup);
-    let validation = startup
-        .validate
-        .as_ref()
-        .expect("final validation job");
+    let validation = startup.validate.as_ref().expect("final validation job");
     assert!(
         frontend_core::test_support::wait_for_work_admission_publication(
             Duration::from_secs(120),

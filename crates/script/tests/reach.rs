@@ -1622,8 +1622,22 @@ fn loc_op_pumps_sustain_while_it_walks_to_the_stand() {
 }
 
 /// One locOp with `expectMs` set to the JS literal `expect_ms`: asserts the
-/// first click before the wait and returns clicks from one tick after 60 ms.
-fn loc_op_clicks_after_a_wait(expect_ms: &str) -> usize {
+/// first click and an unsettled reach, and returns the retry clicks seen
+/// after it. With `wait_for_retry` the ticks run until the retry click —
+/// the real signal — under a 120 s hang guard; without it the ticks stop
+/// at tick 6, the window the fractional case is compared against.
+///
+/// No sleep drives the timeout. The 0.5 ms window rounds up to a 1 ms
+/// bound (`loc_expect_window`), the watch re-reads that bound on every
+/// tick (`LocPhase::WatchExpect`), and each `tick` here is a full isolate
+/// round trip, so the bound passes while the ticks run however long each
+/// tick takes under load. This test cannot freeze the bound itself:
+/// `InstantTaskClock` is crate-private, so "no retry before the deadline"
+/// is the frozen-clock unit test
+/// `loc_op_fractional_expect_ms_stays_pending_before_its_rounded_deadline`
+/// plus the no-bound control below, which drives the same ticks and
+/// never retries.
+fn loc_op_clicks_after_a_wait(expect_ms: &str, wait_for_retry: bool) -> usize {
     let iso = spawn(LOC_OP);
     iso.probe(&format!("globalThis.__expectMs = {expect_ms}"))
         .unwrap();
@@ -1635,9 +1649,19 @@ fn loc_op_clicks_after_a_wait(expect_ms: &str) -> usize {
     tick(&iso, 1);
     tick(&iso, 2);
     let first = iso.drain_interacts();
-    std::thread::sleep(std::time::Duration::from_millis(60));
-    tick(&iso, 3);
-    let later = iso.drain_interacts();
+    let started = std::time::Instant::now();
+    let mut later = Vec::new();
+    for n in 3.. {
+        tick(&iso, n);
+        later.extend(iso.drain_interacts());
+        if loc_clicks(&later) > 0 || (!wait_for_retry && n == 6) {
+            break;
+        }
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(120),
+            "{expect_ms}: hang guard expired, no retry click after tick {n}"
+        );
+    }
     let ok = iso.probe("__ok").unwrap();
     iso.join();
     assert_eq!(first, vec![loc_op(6, 5, "Take From", 7000)], "{expect_ms}");
@@ -1650,7 +1674,7 @@ fn loc_op_clicks_after_a_wait(expect_ms: &str) -> usize {
 /// (review MIN-1). It times out and the next round clicks again.
 #[test]
 fn loc_op_fractional_expect_ms_times_out_then_clicks_again() {
-    assert_eq!(loc_op_clicks_after_a_wait("0.5"), 1);
+    assert_eq!(loc_op_clicks_after_a_wait("0.5", true), 1);
 }
 
 /// Frozen `delayUntil(cond, expectMs)` arms no bound for `expectMs <= 0`
@@ -1659,6 +1683,6 @@ fn loc_op_fractional_expect_ms_times_out_then_clicks_again() {
 #[test]
 fn loc_op_zero_negative_or_non_finite_expect_ms_waits_without_a_bound() {
     for no_bound in ["0", "-1", "-0.5", "NaN", "Infinity"] {
-        assert_eq!(loc_op_clicks_after_a_wait(no_bound), 0, "{no_bound}");
+        assert_eq!(loc_op_clicks_after_a_wait(no_bound, false), 0, "{no_bound}");
     }
 }

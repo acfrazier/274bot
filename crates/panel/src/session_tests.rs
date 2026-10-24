@@ -349,7 +349,9 @@ fn serve_fixture_crc(packs: Vec<(String, Vec<u8>)>) -> FixtureCrcServer {
     }
 }
 
-fn runtime_profile_fixture(revision: u16) -> (TestDir, PathBuf, PathBuf, PathBuf, FixtureCrcServer) {
+fn runtime_profile_fixture(
+    revision: u16,
+) -> (TestDir, PathBuf, PathBuf, PathBuf, FixtureCrcServer) {
     let (root, cache, _) = checked_profile_fixture(revision);
     let packs = identity_packs();
     for (name, bytes) in &packs {
