@@ -769,7 +769,7 @@ export default class T extends LoopingBot {
     assert!(!slot.has_instance());
     assert!(slot.pending_withdraw_x().is_none());
     assert_ne!(slot.work_epoch(), epoch);
-    assert!(!slot.has_snapshot_fingerprint());
+    assert!(!slot.has_posted_snapshot());
     assert_eq!(slot.last_world_id(), None);
     assert!(slot.drain_interacts().is_empty());
     assert!(slot.last_error().unwrap().contains("script requested stop"));
@@ -1077,12 +1077,12 @@ fn stop_releases_snapshot_storage_and_restart_emits_keyframe() {
     slot.last_error = Some("retained diagnostic".into());
     slot.pending_logs.push("retained log".into());
     slot.pause();
-    assert!(slot.has_snapshot_fingerprint());
+    assert!(slot.has_posted_snapshot());
     assert_eq!(slot.last_world_id(), Some(123));
     slot.resume();
     slot.stop();
     wait_state(&mut slot, RunState::Idle);
-    assert!(!slot.has_snapshot_fingerprint());
+    assert!(!slot.has_posted_snapshot());
     assert_eq!(slot.last_world_id(), None);
     assert_eq!(
         slot.last_error, None,

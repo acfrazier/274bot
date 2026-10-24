@@ -1339,7 +1339,7 @@ impl SlotScript {
 
     pub fn observe_lifecycle(&mut self) {
         self.poll_compiled();
-        self.observe_load_lifecycle();
+        self.observe_surface_lifecycle();
     }
 
     pub fn native_run(&self) -> Option<RunKey> {
@@ -1479,7 +1479,7 @@ impl SlotScript {
         {
             self.compiled_interacts.clear();
             self.compiled_interact_outcome_seqs.clear();
-            self.clue_abort_owed = true;
+            self.card_abort_owed = true;
         }
         self.pending_logs.push(failure.message.to_string());
         self.last_error = Some(failure.message.to_string());

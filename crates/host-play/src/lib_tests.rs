@@ -17772,7 +17772,7 @@ fn script_observe_compiled_running_skips_isolate_snapshot_encode() {
             .unwrap()
             .lock()
             .unwrap()
-            .has_snapshot_fingerprint(),
+            .has_posted_snapshot(),
         "compiled-only Running must not encode isolate snapshot delta"
     );
 }
@@ -17893,7 +17893,7 @@ fn script_observe_load_isolate_still_encodes_snapshot_on_tick_edge() {
             .unwrap()
             .lock()
             .unwrap()
-            .has_snapshot_fingerprint(),
+            .has_posted_snapshot(),
         "Load isolate must still encode snapshot delta on tick edge"
     );
     script_slot(&scripts, "alice")
