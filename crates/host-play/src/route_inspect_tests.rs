@@ -3,11 +3,11 @@ use api::bank_memory::Origin;
 use api::snapshot::WorldTile;
 use api::work::WorkFamilySpec;
 use client::config::{Cache, LocType, NpcType, ObjType};
-use nav::bank_fetch::BankRows;
-use nav::collision::{pack_walk, WorldCollision};
-use nav::pack::{BankAccess, BankStand};
-use nav::transport::{TransportEdge, TransportGraph};
-use nav::world::NavWorld;
+use nav_planner::bank_fetch::BankRows;
+use nav_planner::collision::{pack_walk, WorldCollision};
+use nav_planner::pack::{BankAccess, BankStand};
+use nav_planner::transport::{TransportEdge, TransportGraph};
+use nav_planner::world::NavWorld;
 use sha2::Digest;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -69,14 +69,14 @@ fn world_with(graph: TransportGraph, banks: Vec<BankStand>) -> Arc<NavWorld> {
 
 fn zoned_line_world(mut graph: TransportGraph, banks: Vec<BankStand>) -> Arc<NavWorld> {
     let collision = open_world(40, 1);
-    let zones = vec![nav::zones::Zone::npc(
+    let zones = vec![nav_planner::zones::Zone::npc(
         tile(2, 0, 0),
         0,
-        nav::zones::ZoneClass::Always,
+        nav_planner::zones::ZoneClass::Always,
         u16::MAX,
         0,
     )];
-    let kinds = vec![nav::zones::ZoneKind::new(
+    let kinds = vec![nav_planner::zones::ZoneKind::new(
         "test-barrier",
         "Test barrier",
         123,
@@ -85,7 +85,7 @@ fn zoned_line_world(mut graph: TransportGraph, banks: Vec<BankStand>) -> Arc<Nav
         false,
     )];
     graph.zones = Some(
-        nav::zones::ZoneTable::from_parts(
+        nav_planner::zones::ZoneTable::from_parts(
             zones,
             kinds,
             vec![],
@@ -156,7 +156,7 @@ fn req(from: WorldTile, to: WorldTile, request_id: u64) -> InspectRequest {
         allow_teleports: false,
         allow_wilderness: true,
         allow_bank_fetch: false,
-        zones: nav::zones::ZoneExempt::NONE,
+        zones: nav_planner::zones::ZoneExempt::NONE,
         avoid: Vec::new(),
         request_id,
         invalid_args: false,
@@ -383,7 +383,7 @@ fn bank_false_fare_is_nopath() {
         request_id: 1,
         generation: 0,
         revision: api::work::InputRevision::FIRST,
-        lease: nav::producer::lease(&world).expect("test world has a nav lease"),
+        lease: nav_planner::producer::lease(&world).expect("test world has a nav lease"),
         world,
         state: Arc::new(WorldState::empty()),
         bank_origin: Origin::Unknown,
@@ -437,7 +437,7 @@ fn pre_state_stand_proof_rejects_post_only_stand() {
         request_id: 2,
         generation: 0,
         revision: api::work::InputRevision::FIRST,
-        lease: nav::producer::lease(&world).expect("test world has a nav lease"),
+        lease: nav_planner::producer::lease(&world).expect("test world has a nav lease"),
         world,
         state: Arc::new(WorldState::empty()),
         bank_origin: Origin::Session,
@@ -470,7 +470,7 @@ fn no_path_reason_names_the_active_zone_witness() {
         request_id: 3,
         generation: 0,
         revision: api::work::InputRevision::FIRST,
-        lease: nav::producer::lease(&world).expect("test world has a nav lease"),
+        lease: nav_planner::producer::lease(&world).expect("test world has a nav lease"),
         world,
         state: Arc::new(WorldState::empty()),
         bank_origin: Origin::Unknown,
@@ -520,7 +520,7 @@ fn bank_access_no_path_reason_names_the_active_zone_witness() {
         request_id: 4,
         generation: 0,
         revision: api::work::InputRevision::FIRST,
-        lease: nav::producer::lease(&world).expect("test world has a nav lease"),
+        lease: nav_planner::producer::lease(&world).expect("test world has a nav lease"),
         world,
         state: Arc::new(WorldState::empty()),
         bank_origin: Origin::Session,
@@ -581,7 +581,7 @@ fn ok_hops_are_post_from_to_not_bank_steps() {
         request_id: 3,
         generation: 0,
         revision: api::work::InputRevision::FIRST,
-        lease: nav::producer::lease(&world).expect("test world has a nav lease"),
+        lease: nav_planner::producer::lease(&world).expect("test world has a nav lease"),
         world,
         state: Arc::new(WorldState::empty()),
         bank_origin: Origin::Session,
@@ -648,7 +648,7 @@ fn cooperative_bank_fetch_postroute_uses_unique_world_state() {
         request_id: 57,
         generation: 0,
         revision: api::work::InputRevision::FIRST,
-        lease: nav::producer::lease(&world).expect("test world has a nav lease"),
+        lease: nav_planner::producer::lease(&world).expect("test world has a nav lease"),
         world: Arc::clone(&world),
         state: Arc::clone(&state),
         bank_origin: bank.origin,
@@ -736,7 +736,7 @@ fn cooperative_hint_overlay_adds_missing_carry_before_planning() {
         request_id: 58,
         generation: 0,
         revision: api::work::InputRevision::FIRST,
-        lease: nav::producer::lease(&world).expect("test world has a nav lease"),
+        lease: nav_planner::producer::lease(&world).expect("test world has a nav lease"),
         world: Arc::clone(&world),
         state: Arc::clone(&state),
         bank_origin: bank.origin,
@@ -843,7 +843,7 @@ fn inspection_publication_retries_when_owner_ledger_is_full() {
     let service = WorkService::shared().expect("work service");
     WorkService::wait_terminal(&service, &ticket).expect("inspection terminal");
 
-    let ledger = nav::producer::OwnerResultLedger::with_limits(1024, 1024);
+    let ledger = nav_planner::producer::OwnerResultLedger::with_limits(1024, 1024);
     let occupied = ledger
         .try_reserve_bytes(1024)
         .expect("test reservation fills its private ledger");
@@ -938,10 +938,10 @@ fn oversized_route_result_publishes_typed_refusal_not_nopath() {
     let service = WorkService::shared().expect("work service");
     WorkService::wait_terminal(&service, &ticket).expect("inspection terminal");
     let base_result_bytes =
-        nav::producer::OwnerResultLedger::owner_result_bytes::<InspectStored>(0)
+        nav_planner::producer::OwnerResultLedger::owner_result_bytes::<InspectStored>(0)
             .expect("fixed owner-result size");
     let ledger =
-        nav::producer::OwnerResultLedger::with_limits(base_result_bytes, base_result_bytes);
+        nav_planner::producer::OwnerResultLedger::with_limits(base_result_bytes, base_result_bytes);
     {
         let work_service = service.lock();
         let Some(Settlement::Completed(output)) = work_service
@@ -956,7 +956,7 @@ fn oversized_route_result_publishes_typed_refusal_not_nopath() {
         );
         assert!(matches!(
             reserve_inspect_owner_result(output, &ledger),
-            Err(nav::producer::OwnerResultRefusal::TooLarge { .. })
+            Err(nav_planner::producer::OwnerResultRefusal::TooLarge { .. })
         ));
     }
     poll_inspection_with_ledger(&navs, "p", &ledger);
@@ -1206,9 +1206,10 @@ fn pending_replace_publishes_stale_for_replaced_request() {
 
 #[test]
 fn replay_ring_keeps_three_independent_owner_results_until_ack_or_eviction() {
-    let one_result = nav::producer::OwnerResultLedger::owner_result_bytes::<InspectStored>(0)
-        .expect("fixed owner result size");
-    let ledger = nav::producer::OwnerResultLedger::with_limits(one_result * 3, one_result);
+    let one_result =
+        nav_planner::producer::OwnerResultLedger::owner_result_bytes::<InspectStored>(0)
+            .expect("fixed owner result size");
+    let ledger = nav_planner::producer::OwnerResultLedger::with_limits(one_result * 3, one_result);
     let terminal = |request_id| {
         let reservation = ledger
             .try_reserve_bytes(one_result)
@@ -1349,7 +1350,7 @@ fn capture(
         request_id,
         generation: 0,
         revision: api::work::InputRevision::FIRST,
-        lease: nav::producer::lease(&world).expect("test world has a nav lease"),
+        lease: nav_planner::producer::lease(&world).expect("test world has a nav lease"),
         world,
         state: Arc::new(WorldState::empty()),
         bank_origin: bank.origin,
@@ -1369,7 +1370,7 @@ fn capture_with_named_zone(allow_bank_fetch: bool) -> InspectCapture {
     let world = zoned_line_world(TransportGraph::default(), vec![]);
     let options = FindOptions {
         allow_bank_fetch,
-        zones: nav::zones::ZoneExempt::named(&[nav::zones::ZoneKey::Zone(0)])
+        zones: nav_planner::zones::ZoneExempt::named(&[nav_planner::zones::ZoneKey::Zone(0)])
             .expect("one named zone"),
         ..FindOptions::default()
     };
@@ -1618,17 +1619,17 @@ fn inspection_preflight_mismatch_fails_before_cursor_allocation() {
         None,
         None,
     );
-    let preflight = nav::router::SearchCursor::preflight(
-        nav::router::SearchRequestShape::Single {
+    let preflight = nav_planner::router::SearchCursor::preflight(
+        nav_planner::router::SearchRequestShape::Single {
             options: capture.opts,
             avoid_capacity: 0,
-            max_settles: nav::router::NODE_BUDGET,
+            max_settles: nav_planner::router::NODE_BUDGET,
         },
         &capture.lease,
         &capture.state,
     )
     .expect("single request preflight");
-    let request = nav::router::SearchRequest::Single {
+    let request = nav_planner::router::SearchRequest::Single {
         from: capture.from,
         to: capture.to,
         options: capture.opts,
@@ -1639,20 +1640,20 @@ fn inspection_preflight_mismatch_fails_before_cursor_allocation() {
             max_z: 1,
             level: Some(0),
         }]),
-        max_settles: nav::router::NODE_BUDGET,
+        max_settles: nav_planner::router::NODE_BUDGET,
     };
     let lease = capture.lease.clone();
     let state = Arc::clone(&capture.state);
     let mut result = None;
     let measured = allocation_counter::measure(|| {
-        result = Some(nav::router::SearchCursor::new_preflighted(
+        result = Some(nav_planner::router::SearchCursor::new_preflighted(
             request, lease, state, preflight,
         ));
     });
     assert_eq!(measured.count_total, 0);
     assert!(matches!(
         result.expect("cursor result"),
-        Err(nav::router::SearchCursorError::PreflightMismatch)
+        Err(nav_planner::router::SearchCursorError::PreflightMismatch)
     ));
 }
 
@@ -1662,7 +1663,7 @@ fn inspection_bounds_charge_future_layout_and_zone_peak_once() {
     let (_, preflights) =
         InspectSubmission::for_capture("test", &capture).expect("preflight search phases");
     let strict = preflights.strict.as_ref().expect("strict route preflight");
-    let strict_request = nav::router::SearchRequest::Single {
+    let strict_request = nav_planner::router::SearchRequest::Single {
         from: capture.from,
         to: capture.to,
         options: capture.opts,
@@ -1671,7 +1672,7 @@ fn inspection_bounds_charge_future_layout_and_zone_peak_once() {
     };
     assert_eq!(
         strict.reservation().future_layout_bytes,
-        nav::router::SearchCursor::future_layout_bytes_for(
+        nav_planner::router::SearchCursor::future_layout_bytes_for(
             &strict_request,
             &capture.lease,
             &capture.state,
@@ -1692,19 +1693,19 @@ fn inspection_bounds_charge_future_layout_and_zone_peak_once() {
     )
     .expect("owned blocker filter");
     filter.select_destination(Some(capture.to));
-    let blocker_request = nav::router::SearchRequest::BlockingZones {
+    let blocker_request = nav_planner::router::SearchRequest::BlockingZones {
         from: capture.from,
         targets: Box::new([capture.to]),
-        diagnosis: nav::router::BlockerDiagnosis::SingleTarget,
+        diagnosis: nav_planner::router::BlockerDiagnosis::SingleTarget,
         options: capture.opts,
         avoid: capture.avoid.clone().into_boxed_slice(),
-        max_settles: nav::router::NODE_BUDGET,
+        max_settles: nav_planner::router::NODE_BUDGET,
         zone_filter: filter,
     };
     let reservation = blockers.reservation();
     assert_eq!(
         reservation.future_layout_bytes,
-        nav::router::SearchCursor::future_layout_bytes_for(
+        nav_planner::router::SearchCursor::future_layout_bytes_for(
             &blocker_request,
             &capture.lease,
             &capture.state,
@@ -3038,12 +3039,12 @@ fn real_content_inspection_world() -> Option<(Arc<NavWorld>, Arc<Cache>, Arc<Obj
     let config_bytes =
         std::fs::read(cache_dir.join("config")).expect("matching decoded config archive");
     let config_digest: [u8; 32] = sha2::Sha256::digest(&config_bytes).into();
-    assert_eq!(nav::pack::sha256_hex(&config_digest), CONFIG_SHA256);
+    assert_eq!(nav_planner::pack::sha256_hex(&config_digest), CONFIG_SHA256);
     let cache = Arc::new(Cache::unpack(&client::io::JagFile::new(config_bytes)));
     let obj_names = names(&cache);
 
     let mut loaded_world = NavWorld::load_pack(&pack).expect("real revision-289 navpack");
-    let flags = nav::pack::read_flags_sidecar(&pack.with_extension("navflags"), true)
+    let flags = nav_planner::pack::read_flags_sidecar(&pack.with_extension("navflags"), true)
         .expect("matching raw flags sidecar");
     assert_eq!(flags.content_sha256.as_deref(), Some(FLAGS_SHA256));
     assert_eq!(flags.origin, loaded_world.collision.origin);
@@ -3109,7 +3110,7 @@ fn real_content_inspection_capture_bytes() {
                 request_id: REQUEST_ID,
                 generation: 0,
                 revision: api::work::InputRevision::FIRST,
-                lease: nav::producer::lease(&world).expect("test world has a nav lease"),
+                lease: nav_planner::producer::lease(&world).expect("test world has a nav lease"),
                 world: Arc::clone(&world),
                 state: Arc::new(gate_state.clone()),
                 bank_origin: Origin::Unknown,
@@ -3279,7 +3280,7 @@ fn real_content_inspection_capture_bytes() {
     assert_eq!(old_bytes.len(), 1_376, "immutable capture size");
     let digest: [u8; 32] = sha2::Sha256::digest(&old_bytes).into();
     assert_eq!(
-        nav::pack::sha256_hex(&digest),
+        nav_planner::pack::sha256_hex(&digest),
         "886f2db744cd8f7f7b90004af412b6a24b0211b2fdd23a460ccc54eb531188ab",
         "immutable real-content inspection capture authority"
     );
@@ -3289,7 +3290,7 @@ fn real_content_inspection_capture_bytes() {
     assert_eq!(bytes.len(), 1_360, "new capture size");
     let new_digest: [u8; 32] = sha2::Sha256::digest(&bytes).into();
     assert_eq!(
-        nav::pack::sha256_hex(&new_digest),
+        nav_planner::pack::sha256_hex(&new_digest),
         "342c6caaccae1009d420d0e32a632042a60dbe3d056f62b22aaee48764b7ea5d",
         "new real-content inspection capture authority"
     );
@@ -3429,14 +3430,14 @@ fn inspect_corpus_capture(
         !case.all_zones || case.zones.is_empty(),
         "all_zones cannot combine with named zone exemptions"
     );
-    assert!(case.zones.len() <= nav::zones::MAX_ZONE_KEYS);
+    assert!(case.zones.len() <= nav_planner::zones::MAX_ZONE_KEYS);
     assert!(case.avoid.len() <= MAX_AVOID);
     assert!(case.bank_rows.len() <= api::bank_memory::MAX_HINT_ROWS);
 
     let zones = if case.all_zones {
-        nav::zones::ZoneExempt::all()
+        nav_planner::zones::ZoneExempt::all()
     } else if case.zones.is_empty() {
-        nav::zones::ZoneExempt::NONE
+        nav_planner::zones::ZoneExempt::NONE
     } else {
         let table = world
             .graph
@@ -3452,7 +3453,7 @@ fn inspect_corpus_capture(
                     .unwrap_or_else(|| panic!("unknown zone id {id:?}"))
             })
             .collect::<Vec<_>>();
-        nav::zones::ZoneExempt::named(&keys).expect("bounded zone exemptions")
+        nav_planner::zones::ZoneExempt::named(&keys).expect("bounded zone exemptions")
     };
     let options = FindOptions {
         allow_teleports: case.allow_teleports,
@@ -3605,14 +3606,14 @@ fn real_content_inspection_whole_job_memory() {
         output.route.is_some(),
         "the real Edgeville route must be reachable"
     );
-    let ledger = nav::producer::OwnerResultLedger::with_limits(
-        nav::producer::OWNER_RESULT_CAPACITY_BYTES,
-        nav::producer::OWNER_RESULT_MAX_BYTES,
+    let ledger = nav_planner::producer::OwnerResultLedger::with_limits(
+        nav_planner::producer::OWNER_RESULT_CAPACITY_BYTES,
+        nav_planner::producer::OWNER_RESULT_MAX_BYTES,
     );
     let result_bytes = match reserve_inspect_owner_result(&output, &ledger) {
         Ok(reservation) => Some(reservation.bytes()),
-        Err(nav::producer::OwnerResultRefusal::TooLarge { requested, maximum }) => {
-            assert_eq!(maximum, nav::producer::OWNER_RESULT_MAX_BYTES);
+        Err(nav_planner::producer::OwnerResultRefusal::TooLarge { requested, maximum }) => {
+            assert_eq!(maximum, nav_planner::producer::OWNER_RESULT_MAX_BYTES);
             assert!(requested > maximum);
             None
         }
@@ -3630,7 +3631,7 @@ fn real_content_inspection_whole_job_memory() {
         "whole-job allocations exceed the declared charge: {measured:?}"
     );
     if let Some(result_bytes) = result_bytes {
-        assert!(result_bytes <= nav::producer::OWNER_RESULT_MAX_BYTES);
+        assert!(result_bytes <= nav_planner::producer::OWNER_RESULT_MAX_BYTES);
     }
 }
 
@@ -3731,9 +3732,9 @@ fn real_content_inspection_bank_fetch_whole_job_memory() {
                 "the production effective bound includes every loaded worn row",
             );
             assert_eq!(reservation.max_plan_item_rows, 3_824);
-            assert_eq!(strict_budget(&capture), nav::router::NODE_BUDGET);
-            assert_eq!(stand_budget(&capture), nav::router::NODE_BUDGET);
-            assert_eq!(post_budget(&capture), nav::router::NODE_BUDGET);
+            assert_eq!(strict_budget(&capture), nav_planner::router::NODE_BUDGET);
+            assert_eq!(stand_budget(&capture), nav_planner::router::NODE_BUDGET);
+            assert_eq!(post_budget(&capture), nav_planner::router::NODE_BUDGET);
             charge_bytes = InspectWorkFamily::charge(&submission)
                 .total_bytes()
                 .expect("checked real bank-fetch charge");
@@ -3751,14 +3752,14 @@ fn real_content_inspection_bank_fetch_whole_job_memory() {
             "real sewer-web plan uses the banked knife"
         );
         assert!(output.route.is_some(), "real sewer-web route is retained");
-        let ledger = nav::producer::OwnerResultLedger::with_limits(
-            nav::producer::OWNER_RESULT_CAPACITY_BYTES,
-            nav::producer::OWNER_RESULT_MAX_BYTES,
+        let ledger = nav_planner::producer::OwnerResultLedger::with_limits(
+            nav_planner::producer::OWNER_RESULT_CAPACITY_BYTES,
+            nav_planner::producer::OWNER_RESULT_MAX_BYTES,
         );
         let result_bytes = match reserve_inspect_owner_result(&output, &ledger) {
             Ok(reservation) => Some(reservation.bytes()),
-            Err(nav::producer::OwnerResultRefusal::TooLarge { requested, maximum }) => {
-                assert_eq!(maximum, nav::producer::OWNER_RESULT_MAX_BYTES);
+            Err(nav_planner::producer::OwnerResultRefusal::TooLarge { requested, maximum }) => {
+                assert_eq!(maximum, nav_planner::producer::OWNER_RESULT_MAX_BYTES);
                 assert!(requested > maximum);
                 None
             }
@@ -3777,7 +3778,7 @@ fn real_content_inspection_bank_fetch_whole_job_memory() {
             "real bank-fetch allocations exceed the declared charge: {measured:?}"
         );
         if let Some(result_bytes) = result_bytes {
-            assert!(result_bytes <= nav::producer::OWNER_RESULT_MAX_BYTES);
+            assert!(result_bytes <= nav_planner::producer::OWNER_RESULT_MAX_BYTES);
         }
     }
 }
@@ -3903,9 +3904,9 @@ fn real_content_inspection_result_distribution() {
     let Some((world, cache, obj_names)) = real_content_inspection_world() else {
         return;
     };
-    let ledger = nav::producer::OwnerResultLedger::with_limits(
-        nav::producer::OWNER_RESULT_CAPACITY_BYTES,
-        nav::producer::OWNER_RESULT_MAX_BYTES,
+    let ledger = nav_planner::producer::OwnerResultLedger::with_limits(
+        nav_planner::producer::OWNER_RESULT_CAPACITY_BYTES,
+        nav_planner::producer::OWNER_RESULT_MAX_BYTES,
     );
     let mut sizes = Vec::with_capacity(cases.len());
     let mut too_large_results = 0usize;
@@ -3940,7 +3941,7 @@ fn real_content_inspection_result_distribution() {
         match reserve_inspect_owner_result(&output, &ledger) {
             Ok(reservation) => {
                 let result_bytes = reservation.bytes();
-                assert!(result_bytes <= nav::producer::OWNER_RESULT_MAX_BYTES);
+                assert!(result_bytes <= nav_planner::producer::OWNER_RESULT_MAX_BYTES);
                 assert_eq!(ledger.used_bytes(), result_bytes);
                 drop(reservation);
                 assert_eq!(ledger.used_bytes(), 0);
@@ -3952,8 +3953,8 @@ fn real_content_inspection_result_distribution() {
                     largest_slice.as_nanos(),
                 );
             }
-            Err(nav::producer::OwnerResultRefusal::TooLarge { requested, maximum }) => {
-                assert_eq!(maximum, nav::producer::OWNER_RESULT_MAX_BYTES);
+            Err(nav_planner::producer::OwnerResultRefusal::TooLarge { requested, maximum }) => {
+                assert_eq!(maximum, nav_planner::producer::OWNER_RESULT_MAX_BYTES);
                 assert!(requested > maximum);
                 assert_eq!(ledger.used_bytes(), 0);
                 too_large_results += 1;
@@ -4009,7 +4010,7 @@ fn inspection_charge_accounts_for_each_bank_fetch_phase_overlap() {
     );
     let options = FindOptions {
         allow_bank_fetch: true,
-        zones: nav::zones::ZoneExempt::named(&[nav::zones::ZoneKey::Zone(0)])
+        zones: nav_planner::zones::ZoneExempt::named(&[nav_planner::zones::ZoneKey::Zone(0)])
             .expect("one zone exemption"),
         ..FindOptions::default()
     };
@@ -4040,8 +4041,8 @@ fn inspection_charge_accounts_for_each_bank_fetch_phase_overlap() {
     stand_options.allow_bank_fetch = false;
     stand_options.prefer_target_order = true;
     let stand_rows = capture.world.banks().len();
-    let expected_stand = nav::router::SearchCursor::preflight(
-        nav::router::SearchRequestShape::First {
+    let expected_stand = nav_planner::router::SearchCursor::preflight(
+        nav_planner::router::SearchRequestShape::First {
             target_capacity: stand_rows.checked_mul(4).expect("stand goal bound"),
             fallback_capacity: 0,
             options: stand_options,
@@ -4053,8 +4054,8 @@ fn inspection_charge_accounts_for_each_bank_fetch_phase_overlap() {
     )
     .expect("target-ordered bank access preflight");
     assert_eq!(*stand, expected_stand);
-    let expected_stand_fallback = nav::router::SearchCursor::preflight(
-        nav::router::SearchRequestShape::Single {
+    let expected_stand_fallback = nav_planner::router::SearchCursor::preflight(
+        nav_planner::router::SearchRequestShape::Single {
             options: stand_options,
             avoid_capacity: capture.avoid.len(),
             max_settles: stand_budget(&capture),
@@ -4073,7 +4074,7 @@ fn inspection_charge_accounts_for_each_bank_fetch_phase_overlap() {
         .blockers_without_bank
         .as_ref()
         .expect("post-bank blocker phase");
-    let search_peak = |preflight: &nav::router::SearchPreflight| {
+    let search_peak = |preflight: &nav_planner::router::SearchPreflight| {
         preflight
             .input_bytes()
             .checked_add(preflight.reservation().future_layout_bytes)
@@ -4101,14 +4102,14 @@ fn inspection_charge_accounts_for_each_bank_fetch_phase_overlap() {
         "planner rows use U_eff, not the full missing-diagnosis count"
     );
     assert_eq!(plan_item_rows, preflights.max_plan_item_rows);
-    assert!(missing_count >= nav::router::NODE_BUDGET);
+    assert!(missing_count >= nav_planner::router::NODE_BUDGET);
     assert!(
         missing_count > plan_item_rows,
         "M remains the diagnosis bound rather than the planner row count"
     );
-    assert_eq!(strict_budget(&capture), nav::router::NODE_BUDGET);
-    assert_eq!(stand_budget(&capture), nav::router::NODE_BUDGET);
-    assert_eq!(post_budget(&capture), nav::router::NODE_BUDGET);
+    assert_eq!(strict_budget(&capture), nav_planner::router::NODE_BUDGET);
+    assert_eq!(stand_budget(&capture), nav_planner::router::NODE_BUDGET);
+    assert_eq!(post_budget(&capture), nav_planner::router::NODE_BUDGET);
 
     let missing_result = search_result_payload_bytes(missing_reservation.result_bytes)
         .expect("retained missing search output");

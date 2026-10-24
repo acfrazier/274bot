@@ -32,7 +32,7 @@ use std::time::{Duration, Instant};
 use client::dash3d::CollisionFlag;
 use common::{fail, live, options, profiles, wait_ingame};
 use host_play::run_with_io;
-use nav::world::NavWorld;
+use nav_planner::world::NavWorld;
 
 /// Walk-relevant raw flags compared across pack and live: the client's
 /// directional wall bits (`W_*`), the scenery footprint, the ground block,
@@ -92,7 +92,7 @@ fn nav_collision() {
         Ok(w) => w,
         Err(e) => fail(&format!(
             "nav_collision: cannot load nav pack {} ({e}); \
-             rebake with `cargo run -p nav --bin nav-pack` (v5)",
+             rebake with `cargo run -p nav-planner --bin nav-pack` (v5)",
             path.display()
         )),
     };

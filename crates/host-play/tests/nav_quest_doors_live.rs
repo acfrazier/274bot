@@ -12,11 +12,11 @@ use api::snapshot::{GameSnapshot, ReadContext, WorldTile};
 use client::client::Client;
 use host::Pump;
 use host_play::{mint_live_entries, mint_live_names, ProfileOptions, SharedClientTemplate};
-use nav::router::{find_with, FindOptions, Leg, Route, RouteError};
-use nav::transport::{TransportEdge, TransportKind};
-use nav::world::NavWorld;
-use nav::WorldState;
 use nav_executor::{TravelEvent, TravelOptions, TravelOutcome, Traveller};
+use nav_planner::router::{find_with, FindOptions, Leg, Route, RouteError};
+use nav_planner::transport::{TransportEdge, TransportKind};
+use nav_planner::world::NavWorld;
+use nav_planner::WorldState;
 use serde::Serialize;
 use serde_json::{json, Value};
 
@@ -361,7 +361,7 @@ fn live_fortress_disguise_and_secret_wall_use_content_navigation() {
     assert_eq!(secret_wall.id, 2341);
     receipt["engine_loaded"] = json!(true);
     receipt["nav_identity"] = json!({
-        "pack_format": nav::pack::FORMAT_ID,
+        "pack_format": nav_planner::pack::FORMAT_ID,
         "nav_sha256": identity.nav_sha256,
     });
     receipt["selected_facts"] = json!({

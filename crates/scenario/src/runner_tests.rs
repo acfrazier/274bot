@@ -4,8 +4,8 @@ use client::config::if_type::{ComponentType, IfTypeMut};
 use client::config::IfType;
 use client::dash3d::ClientPlayer;
 use client::io::{ClientProt, ServerProt};
-use nav::grid::StepGrid;
-use nav::tile::Tile;
+use nav_planner::grid::StepGrid;
+use nav_planner::tile::Tile;
 use std::path::PathBuf;
 use std::sync::Mutex;
 use std::time::Duration;
@@ -640,7 +640,7 @@ fn follow_failure_keeps_snapshot_for_existing_same_client_cycle_budget_failure()
             z: 3220,
             level: 0,
         },
-        legs: vec![nav::router::Leg::Walk {
+        legs: vec![nav_planner::router::Leg::Walk {
             tiles: vec![
                 WorldTile {
                     x: 3220,
@@ -694,7 +694,7 @@ fn record_position_names_the_run_before_the_first_tick() {
 
 #[test]
 fn hold_skips_follow_and_keeps_the_armed_route() {
-    use nav::router::Route;
+    use nav_planner::router::Route;
 
     let mut c = seeded_client();
     let dest = WorldTile {
@@ -1104,7 +1104,7 @@ fn walk_scenario(dest: WorldTile, budget: u32) -> Scenario {
     }
 }
 
-/// A `Walk` step routes exactly like `Follow`: `nav::router::find`
+/// A `Walk` step routes exactly like `Follow`: `nav_planner::router::find`
 /// over the whole-world `NavWorld` (collision + transport graph),
 /// driven by `Traveller::follow` one leg per delivered frame.
 #[test]

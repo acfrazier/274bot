@@ -14,6 +14,7 @@ parking_lot = { version = "0.12", optional = true }
 
 [features]
 render-diagnostics = ["client/render-diagnostics"]
+render-test-hooks = ["client/render-test-hooks"]
 performance-profile = []
 # Lossless, immutable paint witnesses for the Windows journal fixture only.
 journal-paint-proof = ["dep:parking_lot"]

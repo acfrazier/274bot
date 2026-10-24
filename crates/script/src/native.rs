@@ -145,7 +145,7 @@ pub trait WalkDangerQuery {
         target: WorldTile,
         loc_id: Option<i32>,
         radius: u16,
-        arrival: nav::contract::ArrivalKind,
+        arrival: nav_planner::contract::ArrivalKind,
     ) -> WalkDanger<'_>;
 
     /// Restrict only the chosen target's access goals after eligibility checks.
@@ -156,7 +156,7 @@ pub trait WalkDangerQuery {
         target: WorldTile,
         loc_id: Option<i32>,
         radius: u16,
-        arrival: nav::contract::ArrivalKind,
+        arrival: nav_planner::contract::ArrivalKind,
         existing: Option<&WalkGoals>,
     ) -> Result<Option<WalkGoals>, WalkGoalsError>;
 }
@@ -172,7 +172,7 @@ impl WalkDangerQuery for AllowWalkDanger {
         _target: WorldTile,
         _loc_id: Option<i32>,
         _radius: u16,
-        _arrival: nav::contract::ArrivalKind,
+        _arrival: nav_planner::contract::ArrivalKind,
     ) -> WalkDanger<'_> {
         WalkDanger::Allowed
     }
@@ -182,7 +182,7 @@ impl WalkDangerQuery for AllowWalkDanger {
         _target: WorldTile,
         _loc_id: Option<i32>,
         _radius: u16,
-        _arrival: nav::contract::ArrivalKind,
+        _arrival: nav_planner::contract::ArrivalKind,
         _existing: Option<&WalkGoals>,
     ) -> Result<Option<WalkGoals>, WalkGoalsError> {
         Ok(None)
@@ -803,7 +803,7 @@ pub struct WalkRequest {
     /// within this margin; off-scene geometry is an estimate, not arrival proof.
     pub radius: u16,
     /// Destination settlement mode; `Reach` remains the default behavior.
-    pub arrival: nav::contract::ArrivalKind,
+    pub arrival: nav_planner::contract::ArrivalKind,
     pub options: WalkOptions,
     pub required_after: EvidenceStamp,
     pub evidence: Option<Arc<dyn EvidenceProvider>>,
@@ -963,7 +963,7 @@ pub struct WalkReceipt {
     /// without a loc), with or without candidates. Other arrivals report None.
     pub goal: Option<WorldTile>,
     pub end: WalkEnd,
-    pub blocked: Option<Arc<[nav::contract::ZoneKey]>>,
+    pub blocked: Option<Arc<[nav_planner::contract::ZoneKey]>>,
     pub detail: Option<Arc<str>>,
     pub refusal: Option<WalkRefusal>,
     pub assessment: Option<Arc<crate::combat::risk::RouteAssessment>>,

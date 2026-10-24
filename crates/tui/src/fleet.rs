@@ -498,7 +498,7 @@ impl FleetTable<'_> {
                 &mut x,
                 y,
                 right,
-                "no profiles: nothing to mark or log in",
+                "no profiles: press N to add one",
                 dim,
             );
         } else if rows_h > 0 && model.shown().is_empty() {

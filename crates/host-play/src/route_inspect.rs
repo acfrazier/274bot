@@ -14,18 +14,18 @@ use api::work::{
 };
 use client::config::Cache;
 #[cfg(test)]
-use nav::bank_fetch::{plan_bank_fetch, planning_rows, BankFetchError, BankStep};
-use nav::bank_fetch::{BankFetchCursor, BankFetchPlan, BankRows, PlanningRowsCursor};
+use nav_planner::bank_fetch::{plan_bank_fetch, planning_rows, BankFetchError, BankStep};
+use nav_planner::bank_fetch::{BankFetchCursor, BankFetchPlan, BankRows, PlanningRowsCursor};
 #[cfg(test)]
-use nav::router::{
+use nav_planner::router::{
     find_missing_item_reqs_with_avoid, find_missing_item_reqs_with_avoid_bounded, find_with_avoid,
     find_with_avoid_bounded, Leg, Route, RouteError,
 };
-use nav::router::{AvoidRect, FindOptions};
-use nav::transport::TransportKind;
-use nav::world::NavWorld;
-use nav::world_state::WorldState;
-use nav::zones::{ZoneExempt, ZoneFilterOwned};
+use nav_planner::router::{AvoidRect, FindOptions};
+use nav_planner::transport::TransportKind;
+use nav_planner::world::NavWorld;
+use nav_planner::world_state::WorldState;
+use nav_planner::zones::{ZoneExempt, ZoneFilterOwned};
 use script::work_admission::{cancellation::WorkCancellation, WorkService};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, Weak};
@@ -118,7 +118,7 @@ pub(crate) struct InspectStored {
     reason: InspectMessage,
     bank_planned: bool,
     ticks: f64,
-    route: Option<nav::contract::RoutePlanLease>,
+    route: Option<nav_planner::contract::RoutePlanLease>,
     cache: Option<Arc<Cache>>,
     obj_names: Option<Arc<ObjNames>>,
 }
@@ -148,8 +148,8 @@ struct InspectJobOutput {
     reason: InspectMessage,
     bank_planned: bool,
     ticks: f64,
-    route: Option<nav::router::CompactRoute>,
-    lease: Option<nav::contract::NavLease>,
+    route: Option<nav_planner::router::CompactRoute>,
+    lease: Option<nav_planner::contract::NavLease>,
     cache: Option<Arc<Cache>>,
     obj_names: Option<Arc<ObjNames>>,
 }
@@ -216,13 +216,13 @@ struct InspectSubmission {
 
 #[derive(Default)]
 struct InspectSearchPreflights {
-    strict: Option<nav::router::SearchPreflight>,
-    missing: Option<nav::router::SearchPreflight>,
-    stand: Option<nav::router::SearchPreflight>,
-    stand_fallback: Option<nav::router::SearchPreflight>,
-    post: Option<nav::router::SearchPreflight>,
-    blockers_with_bank: Option<nav::router::SearchPreflight>,
-    blockers_without_bank: Option<nav::router::SearchPreflight>,
+    strict: Option<nav_planner::router::SearchPreflight>,
+    missing: Option<nav_planner::router::SearchPreflight>,
+    stand: Option<nav_planner::router::SearchPreflight>,
+    stand_fallback: Option<nav_planner::router::SearchPreflight>,
+    post: Option<nav_planner::router::SearchPreflight>,
+    blockers_with_bank: Option<nav_planner::router::SearchPreflight>,
+    blockers_without_bank: Option<nav_planner::router::SearchPreflight>,
     max_plan_item_rows: usize,
     missing_result_bytes: usize,
 }
@@ -248,7 +248,7 @@ impl InspectSubmission {
 
         let strict = preflight_inspection_search(
             capture,
-            nav::router::SearchRequestShape::Single {
+            nav_planner::router::SearchRequestShape::Single {
                 options: capture.opts,
                 avoid_capacity,
                 max_settles: strict_budget(capture),
@@ -260,7 +260,7 @@ impl InspectSubmission {
         if capture.opts.allow_bank_fetch {
             let missing = preflight_inspection_search(
                 capture,
-                nav::router::SearchRequestShape::MissingItemReqs {
+                nav_planner::router::SearchRequestShape::MissingItemReqs {
                     target_capacity: 1,
                     fallback_capacity: 0,
                     options: capture.opts,
@@ -279,7 +279,7 @@ impl InspectSubmission {
             // below preserves the first candidate's failure for diagnosis.
             let stand = preflight_inspection_search(
                 capture,
-                nav::router::SearchRequestShape::First {
+                nav_planner::router::SearchRequestShape::First {
                     target_capacity: stand_target_capacity,
                     fallback_capacity: 0,
                     options,
@@ -292,7 +292,7 @@ impl InspectSubmission {
 
             let stand_fallback = preflight_inspection_search(
                 capture,
-                nav::router::SearchRequestShape::Single {
+                nav_planner::router::SearchRequestShape::Single {
                     options,
                     avoid_capacity,
                     max_settles: stand_budget(capture),
@@ -302,7 +302,7 @@ impl InspectSubmission {
             preflights.stand_fallback = Some(stand_fallback);
             let post = preflight_inspection_search(
                 capture,
-                nav::router::SearchRequestShape::Single {
+                nav_planner::router::SearchRequestShape::Single {
                     options: FindOptions {
                         allow_bank_fetch: false,
                         ..capture.opts
@@ -329,13 +329,13 @@ impl InspectSubmission {
                 };
                 let blockers_with_bank = preflight_inspection_search(
                     capture,
-                    nav::router::SearchRequestShape::BlockingZones {
+                    nav_planner::router::SearchRequestShape::BlockingZones {
                         target_capacity: 1,
-                        diagnosis: nav::router::BlockerDiagnosis::SingleTarget,
+                        diagnosis: nav_planner::router::BlockerDiagnosis::SingleTarget,
                         options: blocker_options,
                         avoid_capacity,
                         zone_filter_bytes,
-                        max_settles: nav::router::NODE_BUDGET,
+                        max_settles: nav_planner::router::NODE_BUDGET,
                     },
                 )?;
                 bounds.include(&blockers_with_bank, InspectSearchKind::Blockers)?;
@@ -343,16 +343,16 @@ impl InspectSubmission {
                     preflights.blockers_with_bank = Some(blockers_with_bank);
                     let blockers_without_bank = preflight_inspection_search(
                         capture,
-                        nav::router::SearchRequestShape::BlockingZones {
+                        nav_planner::router::SearchRequestShape::BlockingZones {
                             target_capacity: 1,
-                            diagnosis: nav::router::BlockerDiagnosis::SingleTarget,
+                            diagnosis: nav_planner::router::BlockerDiagnosis::SingleTarget,
                             options: FindOptions {
                                 allow_bank_fetch: false,
                                 ..capture.opts
                             },
                             avoid_capacity,
                             zone_filter_bytes,
-                            max_settles: nav::router::NODE_BUDGET,
+                            max_settles: nav_planner::router::NODE_BUDGET,
                         },
                     )?;
                     bounds.include(&blockers_without_bank, InspectSearchKind::Blockers)?;
@@ -530,9 +530,9 @@ impl InspectSubmission {
 
 fn preflight_inspection_search(
     capture: &InspectCapture,
-    shape: nav::router::SearchRequestShape,
-) -> Result<nav::router::SearchPreflight, InspectJobError> {
-    nav::router::SearchCursor::preflight(shape, &capture.lease, &capture.state)
+    shape: nav_planner::router::SearchRequestShape,
+) -> Result<nav_planner::router::SearchPreflight, InspectJobError> {
+    nav_planner::router::SearchCursor::preflight(shape, &capture.lease, &capture.state)
         .ok_or(InspectJobError::ChargeOverflow)
 }
 
@@ -567,7 +567,7 @@ struct InspectSearchBounds {
 impl InspectSearchBounds {
     fn include(
         &mut self,
-        preflight: &nav::router::SearchPreflight,
+        preflight: &nav_planner::router::SearchPreflight,
         kind: InspectSearchKind,
     ) -> Result<(), InspectJobError> {
         let reservation = preflight.reservation();
@@ -608,8 +608,8 @@ impl InspectSearchBounds {
 // Search wrappers are inline during the cursor phase and disappear before
 // publication. Their sizes stay in peak_bytes, not in later retained payloads.
 fn search_result_payload_bytes(result_bytes: usize) -> Result<usize, InspectJobError> {
-    let inline_bytes = std::mem::size_of::<nav::router::SearchOutcome>()
-        .checked_add(std::mem::size_of::<nav::router::SearchCompletion>())
+    let inline_bytes = std::mem::size_of::<nav_planner::router::SearchOutcome>()
+        .checked_add(std::mem::size_of::<nav_planner::router::SearchCompletion>())
         .ok_or(InspectJobError::ChargeOverflow)?;
     result_bytes
         .checked_sub(inline_bytes)
@@ -660,7 +660,7 @@ impl api::work::WorkFamilySpec for InspectWorkFamily {
     }
 }
 struct InspectBankPlanning {
-    missing: nav::router::MissingRequirements,
+    missing: nav_planner::router::MissingRequirements,
     rows: BankRowsInput,
     cursor: BankFetchCursor,
 }
@@ -722,7 +722,7 @@ struct InspectSearchBuilder {
     avoid_at: usize,
     reserved: bool,
     purpose: InspectSearchPurpose,
-    preflight: nav::router::SearchPreflight,
+    preflight: nav_planner::router::SearchPreflight,
 }
 
 impl InspectSearchBuilder {
@@ -735,7 +735,7 @@ impl InspectSearchBuilder {
         max_settles: usize,
         input: InspectSearchInput,
         purpose: InspectSearchPurpose,
-        preflight: nav::router::SearchPreflight,
+        preflight: nav_planner::router::SearchPreflight,
     ) -> Self {
         let target = match input {
             InspectSearchInput::Missing | InspectSearchInput::Blocking(_) => Some(to),
@@ -810,9 +810,9 @@ impl InspectSearchBuilder {
     fn into_request(
         self,
     ) -> (
-        nav::router::SearchRequest,
+        nav_planner::router::SearchRequest,
         InspectSearchPurpose,
-        nav::router::SearchPreflight,
+        nav_planner::router::SearchPreflight,
     ) {
         let Self {
             from,
@@ -828,14 +828,14 @@ impl InspectSearchBuilder {
         } = self;
         let avoid = avoid.into_boxed_slice();
         let request = match input {
-            InspectSearchInput::Single => nav::router::SearchRequest::Single {
+            InspectSearchInput::Single => nav_planner::router::SearchRequest::Single {
                 from,
                 to,
                 options,
                 avoid,
                 max_settles,
             },
-            InspectSearchInput::First(targets) => nav::router::SearchRequest::First {
+            InspectSearchInput::First(targets) => nav_planner::router::SearchRequest::First {
                 from,
                 targets,
                 fallback: Box::default(),
@@ -843,7 +843,7 @@ impl InspectSearchBuilder {
                 avoid,
                 max_settles,
             },
-            InspectSearchInput::Missing => nav::router::SearchRequest::MissingItemReqs {
+            InspectSearchInput::Missing => nav_planner::router::SearchRequest::MissingItemReqs {
                 from,
                 targets: targets.into_boxed_slice(),
                 fallback: Box::new([]),
@@ -852,10 +852,10 @@ impl InspectSearchBuilder {
                 max_settles,
             },
             InspectSearchInput::Blocking(zone_filter) => {
-                nav::router::SearchRequest::BlockingZones {
+                nav_planner::router::SearchRequest::BlockingZones {
                     from,
                     targets: targets.into_boxed_slice(),
-                    diagnosis: nav::router::BlockerDiagnosis::SingleTarget,
+                    diagnosis: nav_planner::router::BlockerDiagnosis::SingleTarget,
                     options,
                     avoid,
                     max_settles,
@@ -882,11 +882,11 @@ enum InspectJobPhase {
         builder: InspectSearchBuilder,
     },
     Search {
-        cursor: nav::router::SearchCursor,
+        cursor: nav_planner::router::SearchCursor,
         purpose: InspectSearchPurpose,
     },
     PlanningRows {
-        missing: nav::router::MissingRequirements,
+        missing: nav_planner::router::MissingRequirements,
         cursor: PlanningRowsCursor,
     },
     BankPlan(InspectBankPlanning),
@@ -899,7 +899,7 @@ enum InspectJobPhase {
         to: WorldTile,
         options: FindOptions,
         bank_planned: bool,
-        preflight: nav::router::SearchPreflight,
+        preflight: nav_planner::router::SearchPreflight,
     },
     BlockerDetail {
         cursor: BlockingDetailCursor,
@@ -992,7 +992,7 @@ impl InspectJob {
         ok: bool,
         reason: InspectMessage,
         bank_planned: bool,
-        route: Option<nav::router::CompactRoute>,
+        route: Option<nav_planner::router::CompactRoute>,
     ) {
         let capture = self
             .capture
@@ -1038,7 +1038,7 @@ impl InspectJob {
         self.set_ready(false, InspectMessage::Static(reason), bank_planned, None);
     }
 
-    fn set_route(&mut self, route: nav::router::CompactRoute, bank_planned: bool) {
+    fn set_route(&mut self, route: nav_planner::router::CompactRoute, bank_planned: bool) {
         self.set_ready(true, InspectMessage::Static(""), bank_planned, Some(route));
     }
 
@@ -1064,16 +1064,17 @@ impl InspectJob {
 
     fn start_search(
         &mut self,
-        request: nav::router::SearchRequest,
+        request: nav_planner::router::SearchRequest,
         purpose: InspectSearchPurpose,
-        preflight: nav::router::SearchPreflight,
+        preflight: nav_planner::router::SearchPreflight,
     ) -> Result<(), InspectJobError> {
         let (lease, state) = {
             let capture = self.capture_ref();
             (capture.lease.clone(), Arc::clone(&capture.state))
         };
-        let cursor = nav::router::SearchCursor::new_preflighted(request, lease, state, preflight)
-            .map_err(|_| InspectJobError::SearchCursor)?;
+        let cursor =
+            nav_planner::router::SearchCursor::new_preflighted(request, lease, state, preflight)
+                .map_err(|_| InspectJobError::SearchCursor)?;
         self.phase = InspectJobPhase::Search { cursor, purpose };
         Ok(())
     }
@@ -1085,7 +1086,7 @@ impl InspectJob {
         options: FindOptions,
         max_settles: usize,
         purpose: InspectSearchPurpose,
-        preflight: nav::router::SearchPreflight,
+        preflight: nav_planner::router::SearchPreflight,
     ) {
         self.phase = InspectJobPhase::BuildSearch {
             builder: InspectSearchBuilder::new(
@@ -1107,7 +1108,7 @@ impl InspectJob {
         options: FindOptions,
         max_settles: usize,
         purpose: InspectSearchPurpose,
-        preflight: nav::router::SearchPreflight,
+        preflight: nav_planner::router::SearchPreflight,
     ) -> Result<(), InspectJobError> {
         let to = targets
             .first()
@@ -1187,7 +1188,7 @@ impl InspectJob {
     fn finish_bank_access(
         &mut self,
         mut planning: InspectBankAccess,
-        route: nav::router::CompactRoute,
+        route: nav_planner::router::CompactRoute,
     ) -> Result<(), InspectJobError> {
         if !planning.cursor.select_access(route.destination()) {
             return Err(InspectJobError::SearchCursor);
@@ -1267,9 +1268,9 @@ impl InspectJob {
     fn handle_search(
         &mut self,
         purpose: InspectSearchPurpose,
-        outcome: nav::router::SearchOutcome,
+        outcome: nav_planner::router::SearchOutcome,
     ) -> Result<(), InspectJobError> {
-        use nav::router::{RouteError, SearchOutcome};
+        use nav_planner::router::{RouteError, SearchOutcome};
 
         match (purpose, outcome) {
             (InspectSearchPurpose::Strict, SearchOutcome::Single { route: Ok(route) }) => {
@@ -1413,36 +1414,36 @@ impl InspectJob {
 fn strict_budget(capture: &InspectCapture) -> usize {
     capture
         .search_budget_strict
-        .unwrap_or(nav::router::NODE_BUDGET)
+        .unwrap_or(nav_planner::router::NODE_BUDGET)
 }
 
 #[cfg(not(test))]
 fn strict_budget(_capture: &InspectCapture) -> usize {
-    nav::router::NODE_BUDGET
+    nav_planner::router::NODE_BUDGET
 }
 
 #[cfg(test)]
 fn stand_budget(capture: &InspectCapture) -> usize {
     capture
         .search_budget_stand
-        .unwrap_or(nav::router::NODE_BUDGET)
+        .unwrap_or(nav_planner::router::NODE_BUDGET)
 }
 
 #[cfg(not(test))]
 fn stand_budget(_capture: &InspectCapture) -> usize {
-    nav::router::NODE_BUDGET
+    nav_planner::router::NODE_BUDGET
 }
 
 #[cfg(test)]
 fn post_budget(capture: &InspectCapture) -> usize {
     capture
         .search_budget_post
-        .unwrap_or(nav::router::NODE_BUDGET)
+        .unwrap_or(nav_planner::router::NODE_BUDGET)
 }
 
 #[cfg(not(test))]
 fn post_budget(_capture: &InspectCapture) -> usize {
-    nav::router::NODE_BUDGET
+    nav_planner::router::NODE_BUDGET
 }
 impl InspectJob {
     fn after_unit(
@@ -1533,17 +1534,17 @@ impl CooperativeJob for InspectJob {
                     mut cursor,
                     purpose,
                 } => match cursor.advance(context) {
-                    nav::router::CursorStep::Yielded => {
+                    nav_planner::router::CursorStep::Yielded => {
                         self.phase = InspectJobPhase::Search { cursor, purpose };
                         return StepOutcome::Yielded;
                     }
-                    nav::router::CursorStep::Cancelled(_) => {
+                    nav_planner::router::CursorStep::Cancelled(_) => {
                         return StepOutcome::Completed(self.cancelled_output());
                     }
-                    nav::router::CursorStep::Failed(_) => {
+                    nav_planner::router::CursorStep::Failed(_) => {
                         return StepOutcome::Failed(InspectJobError::SearchCursor);
                     }
-                    nav::router::CursorStep::Complete(completion) => {
+                    nav_planner::router::CursorStep::Complete(completion) => {
                         let (outcome, state) = completion.into_parts();
                         let capture = self
                             .capture
@@ -1701,7 +1702,7 @@ impl CooperativeJob for InspectJob {
                                 from,
                                 to,
                                 options,
-                                nav::router::NODE_BUDGET,
+                                nav_planner::router::NODE_BUDGET,
                                 InspectSearchInput::Blocking(filter),
                                 InspectSearchPurpose::Blockers { bank_planned },
                                 preflight,
@@ -1774,7 +1775,7 @@ impl InspectMessage {
 }
 
 struct BlockingDetailCursor {
-    keys: Box<[nav::zones::ZoneKey]>,
+    keys: Box<[nav_planner::zones::ZoneKey]>,
     measure_at: usize,
     write_at: usize,
     required_bytes: usize,
@@ -1782,7 +1783,7 @@ struct BlockingDetailCursor {
 }
 
 impl BlockingDetailCursor {
-    fn new(keys: Box<[nav::zones::ZoneKey]>) -> Self {
+    fn new(keys: Box<[nav_planner::zones::ZoneKey]>) -> Self {
         Self {
             keys,
             measure_at: 0,
@@ -1793,7 +1794,7 @@ impl BlockingDetailCursor {
     }
 
     /// One unit measures or writes one key, or allocates the exact output.
-    fn advance(&mut self, table: &nav::zones::ZoneTable) -> Result<bool, InspectJobError> {
+    fn advance(&mut self, table: &nav_planner::zones::ZoneTable) -> Result<bool, InspectJobError> {
         if self.output.is_none() {
             if let Some(&key) = self.keys.get(self.measure_at) {
                 let separator = if self.measure_at == 0 { 0 } else { 2 };
@@ -1831,7 +1832,7 @@ impl BlockingDetailCursor {
     fn retained_heap_bytes(&self) -> Option<usize> {
         self.keys
             .len()
-            .checked_mul(std::mem::size_of::<nav::zones::ZoneKey>())?
+            .checked_mul(std::mem::size_of::<nav_planner::zones::ZoneKey>())?
             .checked_add(self.output.as_ref().map_or(0, String::capacity))
     }
 
@@ -1853,7 +1854,7 @@ pub(crate) struct InspectLegacy {
 #[derive(Clone, Debug)]
 pub(crate) enum InspectReason {
     Static(&'static str),
-    Owned(Arc<nav::producer::OwnerResult<InspectStored>>),
+    Owned(Arc<nav_planner::producer::OwnerResult<InspectStored>>),
     #[cfg(test)]
     Legacy(Arc<InspectLegacy>),
 }
@@ -1897,13 +1898,13 @@ impl PartialEq<&str> for InspectReason {
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct InspectHops {
-    owner: Option<Arc<nav::producer::OwnerResult<InspectStored>>>,
+    owner: Option<Arc<nav_planner::producer::OwnerResult<InspectStored>>>,
     #[cfg(test)]
     legacy: Option<Arc<InspectLegacy>>,
 }
 
 impl InspectHops {
-    fn owner(result: Arc<nav::producer::OwnerResult<InspectStored>>) -> Self {
+    fn owner(result: Arc<nav_planner::producer::OwnerResult<InspectStored>>) -> Self {
         Self {
             owner: Some(result),
             #[cfg(test)]
@@ -1922,7 +1923,7 @@ impl InspectHops {
     pub(crate) fn iter(&self) -> InspectHopIter<'_> {
         let owner = self.owner.as_deref().map(|result| result.value());
         let route = owner.and_then(|owner| owner.route.as_ref()).map(|route| {
-            nav::producer::route_plan_cursor(route)
+            nav_planner::producer::route_plan_cursor(route)
                 .expect("published inspection plan retains its navigation lease")
         });
         InspectHopIter {
@@ -1941,7 +1942,7 @@ impl PartialEq for InspectHops {
 }
 
 pub(crate) struct InspectHopIter<'a> {
-    route: Option<nav::producer::RoutePlanCursor<'a>>,
+    route: Option<nav_planner::producer::RoutePlanCursor<'a>>,
     owner: Option<&'a InspectStored>,
     #[cfg(test)]
     legacy: Option<std::slice::Iter<'a, InspectHop>>,
@@ -1953,7 +1954,7 @@ impl<'a> Iterator for InspectHopIter<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         if let (Some(route), Some(owner)) = (self.route.as_mut(), self.owner) {
             while let Some(leg) = route.next_leg() {
-                let nav::producer::RoutePlanLeg::Transport(step) = leg else {
+                let nav_planner::producer::RoutePlanLeg::Transport(step) = leg else {
                     continue;
                 };
                 let kind = step.kind();
@@ -2034,7 +2035,7 @@ impl InspectTerminal {
     fn owned(
         request_id: u64,
         generation: u64,
-        result: Arc<nav::producer::OwnerResult<InspectStored>>,
+        result: Arc<nav_planner::producer::OwnerResult<InspectStored>>,
     ) -> Self {
         let value = result.value();
         Self {
@@ -2096,7 +2097,7 @@ pub(crate) struct InspectCapture {
     pub generation: u64,
     pub revision: api::work::InputRevision,
     pub world: Arc<NavWorld>,
-    pub lease: nav::contract::NavLease,
+    pub lease: nav_planner::contract::NavLease,
     pub state: Arc<WorldState>,
     /// The bank memory's origin beside its rows ([`BankRows`] flattened, so
     /// the byte packs into this capture's own padding).
@@ -2466,7 +2467,7 @@ pub(super) fn queue_inspect(
         return;
     };
 
-    let lease = nav::producer::lease(&world);
+    let lease = nav_planner::producer::lease(&world);
     let (generation, revision, opts, lease) = {
         let mut all = navs
             .lock()
@@ -2773,26 +2774,29 @@ enum InspectPollAttempt {
 
 fn reserve_inspect_owner_result(
     output: &InspectJobOutput,
-    ledger: &nav::producer::OwnerResultLedger,
-) -> Result<nav::producer::OwnerResultReservation, nav::producer::OwnerResultRefusal> {
+    ledger: &nav_planner::producer::OwnerResultLedger,
+) -> Result<nav_planner::producer::OwnerResultReservation, nav_planner::producer::OwnerResultRefusal>
+{
     let mut retained = match &output.reason {
         InspectMessage::Static(_) => 0,
         InspectMessage::Owned(reason) => reason.capacity(),
     };
     if let Some(route) = &output.route {
-        let bytes = nav::producer::compact_route_storage_bytes(route)
-            .ok_or(nav::producer::OwnerResultRefusal::SizeOverflow)?;
-        add_bytes(&mut retained, bytes).ok_or(nav::producer::OwnerResultRefusal::SizeOverflow)?;
+        let bytes = nav_planner::producer::compact_route_storage_bytes(route)
+            .ok_or(nav_planner::producer::OwnerResultRefusal::SizeOverflow)?;
+        add_bytes(&mut retained, bytes)
+            .ok_or(nav_planner::producer::OwnerResultRefusal::SizeOverflow)?;
     }
-    let bytes = nav::producer::OwnerResultLedger::owner_result_bytes::<InspectStored>(retained)
-        .ok_or(nav::producer::OwnerResultRefusal::SizeOverflow)?;
+    let bytes =
+        nav_planner::producer::OwnerResultLedger::owner_result_bytes::<InspectStored>(retained)
+            .ok_or(nav_planner::producer::OwnerResultRefusal::SizeOverflow)?;
     ledger.try_reserve_bytes(bytes)
 }
 
 fn own_inspect_output(
     output: InspectJobOutput,
     ticket: InspectTicketRef,
-    reservation: nav::producer::OwnerResultReservation,
+    reservation: nav_planner::producer::OwnerResultReservation,
 ) -> Option<InspectTerminal> {
     let InspectJobOutput {
         request_id,
@@ -2810,7 +2814,7 @@ fn own_inspect_output(
     let route = match route {
         Some(route) => {
             let lease = lease.as_ref()?;
-            Some(nav::producer::publish_compact_route(
+            Some(nav_planner::producer::publish_compact_route(
                 lease,
                 ticket.identity,
                 ticket.revision,
@@ -2840,7 +2844,7 @@ fn poll_admitted_inspection(
     ticket: InspectTicketRef,
     request_id: u64,
     generation: u64,
-    ledger: &nav::producer::OwnerResultLedger,
+    ledger: &nav_planner::producer::OwnerResultLedger,
 ) -> InspectPollAttempt {
     let Ok(shared) = inspection_work_service() else {
         return InspectPollAttempt::Unavailable;
@@ -2852,10 +2856,10 @@ fn poll_admitted_inspection(
         Ok(Some(Settlement::Completed(output))) => {
             match reserve_inspect_owner_result(output, ledger) {
                 Ok(reservation) => Some(reservation),
-                Err(nav::producer::OwnerResultRefusal::Full { .. }) => {
+                Err(nav_planner::producer::OwnerResultRefusal::Full { .. }) => {
                     return InspectPollAttempt::OwnerFull;
                 }
-                Err(nav::producer::OwnerResultRefusal::TooLarge { .. }) => {
+                Err(nav_planner::producer::OwnerResultRefusal::TooLarge { .. }) => {
                     route_too_large = true;
                     None
                 }
@@ -2923,13 +2927,17 @@ fn poll_admitted_inspection(
 }
 
 pub(super) fn poll_inspection(navs: &Arc<Mutex<HashMap<String, NavBot>>>, name: &str) {
-    poll_inspection_with_ledger(navs, name, nav::producer::OwnerResultLedger::shared());
+    poll_inspection_with_ledger(
+        navs,
+        name,
+        nav_planner::producer::OwnerResultLedger::shared(),
+    );
 }
 
 fn poll_inspection_with_ledger(
     navs: &Arc<Mutex<HashMap<String, NavBot>>>,
     name: &str,
-    ledger: &nav::producer::OwnerResultLedger,
+    ledger: &nav_planner::producer::OwnerResultLedger,
 ) {
     let (ticket, generation, request_id, active_world) = {
         let mut all = navs
@@ -3233,7 +3241,7 @@ fn no_path_reason(
     state: &WorldState,
     avoid: &[AvoidRect],
 ) -> String {
-    nav::router::find_blocking_zones(
+    nav_planner::router::find_blocking_zones(
         &capture.world.collision,
         &capture.world.graph,
         from,
@@ -3292,7 +3300,7 @@ fn search_missing(
     capture: &InspectCapture,
     pre: &WorldState,
     avoid: &[AvoidRect],
-) -> Option<Vec<nav::router::MissingReq>> {
+) -> Option<Vec<nav_planner::router::MissingReq>> {
     match capture.search_budget_strict {
         Some(n) => find_missing_item_reqs_with_avoid_bounded(
             &capture.world.collision,
@@ -3383,7 +3391,7 @@ fn op_at_ref(ops: &[Option<String>], option: i32) -> &str {
 
 #[cfg(test)]
 fn project_hop(
-    edge: &nav::transport::TransportEdge,
+    edge: &nav_planner::transport::TransportEdge,
     cache: Option<&Cache>,
     obj_names: Option<&ObjNames>,
 ) -> InspectHop {

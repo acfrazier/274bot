@@ -16,7 +16,7 @@ pub(super) fn here(snapshot: &GameSnapshot) -> WorldTile {
         })
 }
 
-/// Chebyshev distance between world tiles (level ignored, like `nav::tile`).
+/// Chebyshev distance between world tiles (level ignored, like `nav_planner::tile`).
 pub(super) fn cheb(a: WorldTile, b: WorldTile) -> i32 {
     (a.x - b.x).abs().max((a.z - b.z).abs())
 }

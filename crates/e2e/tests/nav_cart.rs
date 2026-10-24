@@ -26,9 +26,9 @@ use std::time::{Duration, Instant};
 use api::snapshot::WorldTile;
 use common::{fail, live, mint_seed, options, profiles, wait_ingame};
 use host_play::run_with_io;
-use nav::router::find_with;
-use nav::transport::TransportKind;
-use nav::world::NavWorld;
+use nav_planner::router::find_with;
+use nav_planner::transport::TransportKind;
+use nav_planner::world::NavWorld;
 use scenario::{default_pack_path, RunnerStatus, ScenarioRunner};
 
 /// Hajedy (brimhavencartdriver, npc 510) by the Brimhaven cart
@@ -48,11 +48,11 @@ const SHILO_DRIVER: WorldTile = WorldTile {
 
 /// A state that can take the Brimhaven→Shilo cart: the 200-coin fare in
 /// the inventory and the Shilo Village quest complete.
-fn fare_state() -> nav::WorldState {
-    nav::WorldState {
+fn fare_state() -> nav_planner::WorldState {
+    nav_planner::WorldState {
         inv: HashMap::from([(995, 200)]),
         quests: ["Shilo Village".to_string()].into(),
-        ..nav::WorldState::default()
+        ..nav_planner::WorldState::default()
     }
 }
 
@@ -82,7 +82,7 @@ fn nav_cart() {
     if carts.len() < 2 {
         fail(&format!(
             "nav_cart: pack carries {} Npc cart edges, need >= 2 \
-             (rebake with `cargo run -p nav --bin nav-pack`)",
+             (rebake with `cargo run -p nav-planner --bin nav-pack`)",
             carts.len()
         ));
     }
@@ -102,7 +102,7 @@ fn nav_cart() {
         &world.graph,
         BRIM_DRIVER,
         SHILO_DRIVER,
-        nav::router::FindOptions::default(),
+        nav_planner::router::FindOptions::default(),
         &fare_state(),
     )
     .map(|route| {
@@ -112,7 +112,7 @@ fn nav_cart() {
                 route.dest, SHILO_DRIVER
             ));
         }
-        if nav::debug_enabled() {
+        if nav_planner::debug_enabled() {
             println!(
                 "nav_cart: brimhaven cart -> shilo cart routed ({:.0} ticks, {} legs)",
                 route.ticks,

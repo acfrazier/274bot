@@ -15,8 +15,8 @@ use host_play::map_bind::{
     WalkMapDecodeFailure, WalkMapDecodeJob, WALK_MAP_DECODE_INPUT_OVERHEAD,
     WALK_MAP_DECODE_PNG_LIMIT, WALK_MAP_DECODE_SCRATCH_LIMIT,
 };
-use nav::map::identity::ImageIdentity;
-use nav::map::spatial::{TileKey, TILE_RGBA_BYTES};
+use nav_planner::map::identity::ImageIdentity;
+use nav_planner::map::spatial::{TileKey, TILE_RGBA_BYTES};
 use script::work_admission::{WorkService, WorkStartError};
 
 struct DecodeDemand {
@@ -552,8 +552,8 @@ impl Drop for WalkMapDecodeController {
 mod tests {
     use super::*;
     use api::work::{CooperativeJob, RetainedState, StepContext, StepOutcome, WorkCapacity};
-    use nav::map::identity::Digest;
-    use nav::map::spatial::TILE_PIXELS;
+    use nav_planner::map::identity::Digest;
+    use nav_planner::map::spatial::TILE_PIXELS;
     use std::sync::{Arc, Condvar, Mutex, MutexGuard};
     use std::time::{Duration, Instant};
 

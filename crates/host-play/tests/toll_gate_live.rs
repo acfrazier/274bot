@@ -24,13 +24,13 @@ use host::Pump;
 use host_play::{
     arm_walk_on, step_walk_arm_follow, ProfileOptions, SharedClientTemplate, WalkArms,
 };
-use nav::bank_fetch::BankRows;
-use nav::router::{FindOptions, Leg, Route};
-use nav::tile::Tile;
-use nav::transport::{DoorDir, TransportKind};
-use nav::world::NavWorld;
-use nav::WorldState;
 use nav_executor::{TravelOptions, TravelOutcome, Traveller};
+use nav_planner::bank_fetch::BankRows;
+use nav_planner::router::{FindOptions, Leg, Route};
+use nav_planner::tile::Tile;
+use nav_planner::transport::{DoorDir, TransportKind};
+use nav_planner::world::NavWorld;
+use nav_planner::WorldState;
 use serde_json::json;
 
 const LUMBRIDGE: WorldTile = WorldTile {

@@ -89,7 +89,8 @@ The **script** section shows rows such as `Quest` and `Queue`. `Quest` names the
 quest that runs. `Queue` has one letter for each quest: `D` done, `R` running,
 `Y` ready, `P` parked, `B` blocked or `?` not known yet. In the panel, the
 **status** section shows what the bot does in its `phase` row. It reads
-`walking`, `talking`, `fighting`, `banking`, `waiting` or `working`.
+`walking`, `talking`, `fighting`, `banking`, `waiting` or `working`. The same
+section also shows the current step comment.
 
 A quest that fails is parked (`P`) with a reason, and the Quester goes on with the
 next quest. Two stops need your action:
@@ -99,18 +100,59 @@ next quest. Two stops need your action:
 | `quest list was not observed within 30 seconds: log out and log in normally outside the tutorial (finish it if needed), then Stop/Start Quester` | Do what the message says. |
 | `cancelled by user input` | You moved the bot while the Quester walked or acted, so it stopped. Click **Start**; [Pause, resume and stop](running-scripts.md#pause-resume-and-stop) explains. |
 
+The Log window shows the run in more detail. When a guide starts, the Log names
+the guide, where it loaded from, a fingerprint of the exact file, and the first
+step's comment. Stage changes, step starts, step skips and step finishes follow.
+A skip line names the check that passed. Warnings name failed steps and the
+reason a run parked. Repeated retries fold into one line with a count. The trace
+keeps the last 32 different events.
+
+If a quest needs items first, the Quester collects them before the quest steps
+begin. Those lines look the same as the lines of a collect step. A step start
+line appears only when that step truly starts. Items that wait for a later stage
+stay out until then. Cook's Assistant talks to the cook first and collects later.
+
 ## Quester: run guides from a folder
 
 The Quester can also run quest guides from a folder on your computer. With the
 Quester picked, **Script prefs** has a section **Quest Paths (all bots)**. Tick
 **Load quest Paths from folder**, enter the folder and click **Reload Paths**.
 The setting is off at first. The default folder is `~/.274bot/quester/paths/289`.
+274bot does not create it for you.
 
 The guides are for revision 289. New guides appear as drafts. In the terminal
-app, press `o` on the Overview screen to find the same two rows.
-[Quest guides](../quester-paths.md#loading-draft-paths-without-rebuilding)
-describes the file format.
+app, press `o` on the Overview screen to find the load checkbox, the folder, and
+**Reload Paths**.
 
+Put each guide in `<folder>/<id>.json`. The `id` inside the file must match the
+file name. An optional `index.json` lists guides in the order they appear:
+
+```json
+{"schema":1,"paths":[{"id":"cook","file":"cook.json"},{"id":"my-draft","file":"my-draft.json"}]}
+```
+
+A folder guide with the same name as a shipped guide replaces it. Other folder
+guides join the list as drafts. Drafts from the index come first, then the rest
+in file name order. The picker marks changed guides and drafts. When a guide
+starts, the Log names where it loaded from.
+
+Click **Reload Paths** to read the folder again without starting a quest. Each
+start reads it too. To run an edit, stop the quest and start it again. A reload
+never swaps a guide that already runs. Delete a changed file and reload to get
+the shipped guide back. With the setting off, the folder is ignored.
+
+Each file must fit in 1 MiB. The loader reads the first 256 files in file name
+order and skips the rest. A bad file reports its name, its step, and the reason.
+A bad changed file falls back to the shipped guide. A bad draft stays in the
+list but cannot run.
+
+The rest still load. Guides the server cannot run stay unavailable. Linked
+files work if their target is a normal file. The report lists up to 31 problems.
+When more remain, a last line reads `N more validation diagnostics omitted`. The
+terminal app shows the short form only. Full details are in the Logs.
+
+[Quest guides](../scripting/quest-guides.md#quest-guide-files) describes the file
+format.
 ## Gatherer
 
 The Gatherer cuts trees, mines rock or fishes. It needs the tool for the job:
@@ -225,5 +267,5 @@ that you had on. It does not turn that one back on.
 | I want to… | Read |
 | --- | --- |
 | Start, pause and stop a script | [Run scripts on your bots](running-scripts.md) |
-| Write a quest guide for the Quester | [Quest guides](../quester-paths.md) |
+| Write a quest guide for the Quester | [Quest guides](../scripting/quest-guides.md) |
 | See what does not work yet | [Known issues](../known-issues.toml) |

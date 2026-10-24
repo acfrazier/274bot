@@ -9,14 +9,14 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use api::snapshot::{GameSnapshot, WorldTile};
-use nav::map::formats::{ClientPois, ServiceIdentity};
-use nav::map::identity::{CatalogueIdentity, Digest};
-use nav::map::poi::{Eligibility, PoiKind, PoiRecord};
-use nav::map::{MapError, Text};
-use nav::router::{FindOptions, Route};
-use nav::tile::Tile;
-use nav::transport::TransportEdge;
-use nav::world::NavWorld;
+use nav_planner::map::formats::{ClientPois, ServiceIdentity};
+use nav_planner::map::identity::{CatalogueIdentity, Digest};
+use nav_planner::map::poi::{Eligibility, PoiKind, PoiRecord};
+use nav_planner::map::{MapError, Text};
+use nav_planner::router::{FindOptions, Route};
+use nav_planner::tile::Tile;
+use nav_planner::transport::TransportEdge;
+use nav_planner::world::NavWorld;
 
 use crate::launch::BoundProfile;
 
@@ -605,7 +605,7 @@ impl<'a> WalkMapEntry<'a> {
     pub fn bank_note(self) -> Option<&'static str> {
         self.0.bank_note()
     }
-    pub fn packed_banks(self) -> impl Iterator<Item = &'a nav::pack::BankStand> + 'a {
+    pub fn packed_banks(self) -> impl Iterator<Item = &'a nav_planner::pack::BankStand> + 'a {
         self.0.packed_banks()
     }
     pub fn transports(self) -> impl Iterator<Item = &'a TransportEdge> + 'a {
@@ -857,7 +857,7 @@ impl WalkReadyImages {
     pub fn from_test_fixture(ready: Arc<host_play::map_cache::ReadyImages>) -> Self {
         Self::from_host(ready)
     }
-    pub fn image_identity(&self) -> nav::map::identity::ImageIdentity {
+    pub fn image_identity(&self) -> nav_planner::map::identity::ImageIdentity {
         self.0.manifest().identity
     }
     pub fn max_lod(&self) -> u8 {
@@ -865,7 +865,7 @@ impl WalkReadyImages {
     }
     pub fn read_tile_arc(
         &self,
-        key: nav::map::spatial::TileKey,
+        key: nav_planner::map::spatial::TileKey,
     ) -> Result<Option<Arc<[u8]>>, WalkMapCacheError> {
         self.0
             .read_tile_arc(key)
@@ -1135,7 +1135,7 @@ impl WalkRouteStamp {
 #[derive(Clone, Copy)]
 pub enum WalkRoutePath<'a> {
     Legacy(&'a Route),
-    Compact(nav::contract::RouteView<'a>),
+    Compact(nav_planner::contract::RouteView<'a>),
 }
 
 impl WalkRoutePath<'_> {
@@ -1219,7 +1219,7 @@ impl<'a> RouteProjectionView<'a> {
     /// Borrow a compact route under the supplied owner stamp.
     #[cfg(any(test, feature = "test-support"))]
     pub fn compact(
-        view: nav::contract::RouteView<'a>,
+        view: nav_planner::contract::RouteView<'a>,
         source: WalkRouteSource,
         generation: u64,
         aim: Option<WorldTile>,

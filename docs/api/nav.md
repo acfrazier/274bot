@@ -1,15 +1,15 @@
 # Nav: whole-world routing, transports, and WalkTo
 
-`crates/nav` and `crates/nav-executor` are the nav stack: `nav` owns the
-whole-world collision bake, the content-derived transport graph and the
-Dijkstra router; `nav-executor` owns the pollable route follower. The
+`crates/nav-planner` and `crates/nav-executor` form the nav stack.
+`nav-planner` owns the whole-world collision bake, the content-derived transport
+graph and Dijkstra router. `nav-executor` owns the pollable route follower. The
 follower acts only through the kernel API (`api::interact`,
 `api::settle`) and never deep-copies the world.
 
 ## Pack bake
 
 Application builds bake the pack themselves. `crates/host-play/build.rs` runs
-the shared baker (`nav::bake::bake_world`) for the selected release revision,
+the shared baker (`nav_planner::bake::bake_world`) for the selected release revision,
 stages pack + flags + reach + sidecar manifest + stamp under the install resource root
 (`nav/<revision>/` — next to the built binary, `Contents/Resources` in a macOS
 bundle, `BOT_NAV_RESOURCE_DIR` when a packager stages elsewhere) and publishes
@@ -21,10 +21,10 @@ is **289**; `BOT_NAV_REVISION=274` builds the 274 artifact instead. Revision
 `nav-pack` remains for deliberate developer/custom-input bakes. It calls the
 same baker and reads every Server mapsquare jm2 plus the door/loc/rs2 scripts
 and writes the current whole-world pack (`encode` in
-`crates/nav/src/pack.rs`):
+`crates/nav-planner/src/pack.rs`):
 
 ```bash
-cargo run -p nav --bin nav-pack [MAPS_DIR] [DOORS_CONFIG_DIR] [CONFIG_JAG]
+cargo run -p nav-planner --bin nav-pack [MAPS_DIR] [DOORS_CONFIG_DIR] [CONFIG_JAG]
 # or: nav-pack --revision 274|289 --content CONTENT_DIR --cache CACHE_DIR --cache-manifest CACHE_MANIFEST --out NAV_PACK [--flags-out F] [--snapshot-root ROOT]
 ```
 
@@ -208,7 +208,7 @@ inherit built-in facts. Local supported facts additionally verify their selected
 source inputs. Unknown client content remains unavailable/rejected, never guessed.
 
 The `tools/game-data` generator and verifier are offline `tsx` tools. Build
-`cargo build -p nav --bin cache-content-id` first. `GAME_DATA_274_ENGINE`,
+`cargo build -p nav-planner --bin cache-content-id` first. `GAME_DATA_274_ENGINE`,
 `GAME_DATA_274_CONTENT`, `GAME_DATA_289_ENGINE`, `GAME_DATA_289_CONTENT`,
 `RS2B0T`, `GAME_DATA_274_SNAPSHOTS` and `GAME_DATA_289_SNAPSHOTS` are all
 required and name explicit roots — an unset variable fails closed and names
@@ -236,7 +236,7 @@ map set. The scans are listed one file per row, not anchored by their
 directories: removing a single consumed child (`shortcuts.rs2`, a jewellery
 `*.rs2`, a `.loc` door config) fails the build even when its directory keeps
 its siblings. That inventory is revision-owned data
-(`crates/nav/src/required-content-{289,274}.tsv`, embedded in `nav::bundle` and
+(`crates/nav-planner/src/required-content-{289,274}.tsv`, embedded in `nav_planner::bundle` and
 verified against the canonical trees — the `bundle::` tests compare the scan
 classes and the map set to the actual trees; refresh the TSV when the canonical
 content legitimately changes) and it is checked on every default build —
@@ -263,7 +263,7 @@ fingerprint (size, mtime and SHA-256) of every canonical input (content tree,
 config jag, cache archives). Source and captured cache digests use one input-
 fingerprint snapshot. The decoded identity is computed from that verified
 cache snapshot and recomputed after baking before publishing. Any change to
-those inputs, to the pack format identity (`nav::pack::FORMAT_ID`), to the
+those inputs, to the pack format identity (`nav_planner::pack::FORMAT_ID`), to the
 generator, to the cache identity, a missing navpois sidecar, or a missing/
 replaced staged artifact (including the reach sidecar) rebakes. Runtime
 computes decoded identity once per prepared profile, not per bot. The bundled
@@ -308,7 +308,7 @@ Real-artifact check (needs a default application build in this target profile
 plus the canonical cache):
 `cargo test -p host-play --test bundled_nav_build -- --ignored --nocapture`.
 
-## Collision (`nav::collision`)
+## Collision (`nav_planner::collision`)
 
 `WorldCollision { origin, width, height, walk: Vec<u8>, blocked: Vec<u64>, flags: Option<Vec<u32>> }` bakes every
 mapsquare's `MAP fN` land flags and `LOC` placements into the client's
@@ -320,7 +320,7 @@ standable check (`WALK_BLOCK_FLAGS | WALK_SCENERY | WR_GRND == 0`); the
 **router does not use it** — it uses directional `PL_WALK_*` edge tests
 (see below).
 
-## Transports (`nav::transport`)
+## Transports (`nav_planner::transport`)
 
 `TransportGraph { edges, at: HashMap<WorldTile, Vec<usize>>, approaches, teleports, … }`.
 `derive_transports(content_root, loc_defs, collision)` parses the 2004 content: `doors/*.loc`
@@ -483,7 +483,7 @@ invalidate staged bundles and trigger a normal rebake, with refreshed
 pack/reach/canlight/navpois bindings. Explicit custom packs baked with the
 previous generator need to be rebaked too.
 
-### Quest-stage gates (`nav::quest_gates`)
+### Quest-stage gates (`nav_planner::quest_gates`)
 
 An edge that a quest stage opens carries `quest_gates: Option<QuestGates>`:
 typed `api::selected::QuestGate`s — a completed quest, or a closed
@@ -554,7 +554,7 @@ content entrances and binds its digest and schema into the graph. Supported
 quest-complete predicates become canonical `QuestGate::Complete` requirements;
 an intermediate or exact hidden quest stage is not inferred from completion.
 
-## Router (`nav::router`)
+## Router (`nav_planner::router`)
 
 `find(collision, graph, from, to) -> Result<Route, RouteError>` is Dijkstra
 with safe defaults (no wilderness, no any-tile teleports).
@@ -683,7 +683,7 @@ rather than rebuilding facts for each bot.
 
 The estimate builds a compact `KindRisk` for each selected NPC from its
 `NpcNameRow` and `CombatTables`, keyed by NPC id, and reads a zone's facts
-through the zone's `nav::contract::ZoneKindView` (NPC id or curated hazard
+through the zone's `nav_planner::contract::ZoneKindView` (NPC id or curated hazard
 damage); no pack kind-row index reaches the estimate, and it does not change
 routing or pack format. Maximum hits reuse the shared `npc_max_hit` helper,
 and attack intervals
@@ -735,8 +735,8 @@ the honest assessment; compat publishes it only to hostlog. Avoid uses
 strict/endpoint routing. Effective Inherit may diagnose one witness and,
 only for at most eight known nonlethal keys, try one named re-search.
 The host binds each witness key to the world's zone view
-(`nav::producer::bind_key`; a group's members through
-`nav::producer::group_members`) and reads its facts through `ZoneKindView`,
+(`nav_planner::producer::bind_key`; a group's members through
+`nav_planner::producer::group_members`) and reads its facts through `ZoneKindView`,
 as the estimate does. Every member of a group must be known and nonlethal;
 an empty group refuses.
 It is bounded best effort, not a search over survivability. Actual kernel
@@ -1085,7 +1085,7 @@ never latches a bank session, and never changes ordinary walk policies.
   a PRE-state stand proof (or wear-only). Published hops are the post-state
   from→to transports, never bank steps or Traveller actions.
 
-## BankBudget (`nav::bank_fetch`)
+## BankBudget (`nav_planner::bank_fetch`)
 
 WalkTo and script `walk_with` can opt in with `FindOptions::allow_bank_fetch`
 (the panel/TUI **bank fetch** checkbox, default off). `find` itself stays
@@ -1107,7 +1107,7 @@ and the session plans no deposit or unequip to make an excluded state
 acceptable. An item needed both carried and worn reserves a separate copy for wearing.
 Exact withdrawals use fixed bank amounts or Withdraw-X when needed.
 Access tiles come from the one rule
-the named-bank stands script bank walks use (`nav::named_banks`):
+the named-bank stands script bank walks use (`nav_planner::named_banks`):
 standable and never the stand tile itself. BankBudget takes the tiles in
 line with the stand (north, south, east or west), not the diagonals the
 named stands allow, because a teller across a booth answers only in line,
@@ -1132,11 +1132,11 @@ script walk and the panel/TUI WalkTo share one step machine, one wait
 budget and one in-flight latch.
 
 **Closed bank:** the session is planned from the account's host bank
-memory (`nav::bank_fetch::BankRows`: `Play::bank_rows(name)` for WalkTo, the
+memory (`nav_planner::bank_fetch::BankRows`: `Play::bank_rows(name)` for WalkTo, the
 slot's memory for script walks and route inspects), not from the open
 bank, so a closed bank still plans a trip. While the bank is open the
 memory mirrors it. What a shortage means depends on where the rows came
-from (`nav::bank_fetch::planning_rows`, design-bank-snapshot §2.4):
+from (`nav_planner::bank_fetch::planning_rows`, design-bank-snapshot §2.4):
 
 - `Session` (seen in an open bank since login): the rows as they are; a
   missing item is `NoPath` in place.
@@ -1151,7 +1151,7 @@ from (`nav::bank_fetch::planning_rows`, design-bank-snapshot §2.4):
 
   Radius walks to a solid tile and Area walks search a set of goals under
   what a session could fetch. With a `Hint`, that set is first diagnosed
-  once (`nav::router::find_first_missing_item_reqs_with_avoid`, the strict
+  once (`nav_planner::router::find_first_missing_item_reqs_with_avoid`, the strict
   first-goal budgets) and the chosen goal's missing items are added to the
   hint for the search, so a hint that lacks a toll or tool still plans the
   one verifying trip instead of `NoPath`.

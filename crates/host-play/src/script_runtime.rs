@@ -39,13 +39,13 @@ use script_nav::{log_walk_arm_bot, take_carried_walk};
 /// Resolve live-fixture crossing grants through the script walk product path.
 #[cfg(feature = "test-support")]
 pub fn resolve_script_cross_zones_for_live_test(
-    opts: nav::router::FindOptions,
-    world: &nav::world::NavWorld,
+    opts: nav_planner::router::FindOptions,
+    world: &nav_planner::world::NavWorld,
     from: api::WorldTile,
     to: api::WorldTile,
-    state: &nav::WorldState,
+    state: &nav_planner::WorldState,
     cross: &[&str],
-) -> Result<nav::router::FindOptions, String> {
+) -> Result<nav_planner::router::FindOptions, String> {
     script_nav::resolve_route_exclusions(
         opts,
         world,

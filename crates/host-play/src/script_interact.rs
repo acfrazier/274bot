@@ -7,9 +7,9 @@ use api::hostlog::{Category, Level};
 use api::interact::Driver;
 use api::snapshot::{GameSnapshot, WorldTile};
 use client::config::Cache;
-use nav::router::FindOptions;
-use nav::world::NavWorld;
-use nav::WorldState;
+use nav_planner::router::FindOptions;
+use nav_planner::world::NavWorld;
+use nav_planner::WorldState;
 use parking_lot::RwLock;
 
 use super::{abort_script_walk, route_inspect, NavBot, ScriptRouteExclusions, ScriptWalkArm};
@@ -805,11 +805,11 @@ where
                                     slot = name,
                                     "inspect route refused {reason}"
                                 );
-                                (nav::zones::ZoneExempt::NONE, Vec::new(), true)
+                                (nav_planner::zones::ZoneExempt::NONE, Vec::new(), true)
                             }
                         }
                     }
-                    None => (nav::zones::ZoneExempt::NONE, Vec::new(), true),
+                    None => (nav_planner::zones::ZoneExempt::NONE, Vec::new(), true),
                 };
                 route_inspect::queue_inspect(
                     navs,

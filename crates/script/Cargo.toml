@@ -25,7 +25,7 @@ path-schema = ["dep:schemars", "api/path-schema"]
 [dependencies]
 ab_glyph = "=0.2.32"
 api = { path = "../api" }
-nav = { path = "../nav" }
+nav-planner = { path = "../nav-planner" }
 schemars = { version = "=1.2.2", optional = true }
 # TS parse for import scans (always, V8-free); `load` adds the TS -> JS
 # strip for the catalog shape. `transpiling` unifies with the features
