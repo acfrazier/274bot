@@ -619,6 +619,26 @@ fn gold_script_nav() -> ScenarioNav {
 /// under the old dirty-snapshot counting. The same number now bounds
 /// the wait by game time instead of by snapshot churn.
 const SCRIPT_GOLD_WATCH_TICKS: u32 = 150;
+/// Brimhaven agility-arena watch for the first ticket after the first
+/// Tag, in observed game ticks (one per `PLAYER_INFO`; see [`Wait`]).
+///
+/// Content bound: the arena clerk moves the flashing arrow to a new
+/// pillar every 98 `map_clock` ticks (`agilityarena_clerk.rs2:78-86`
+/// sets the next pillar time to `map_clock + 98`). The player pillar
+/// timer fires at the end of a period and keeps ticket eligibility
+/// only when a pillar was tagged in that period
+/// (`agilityarena.rs2:40-48`). The first tag sets eligibility and
+/// grants no ticket; a tag in the next period grants the ticket
+/// (`agilityarena.rs2:67-84`). A first tag just after one period
+/// begins and a second tag just before the next period ends can
+/// therefore be up to 2 * 98 = 196 game ticks apart. This watch
+/// starts after the first tag, so the bound from its own start is
+/// smaller. The value 220 adds a stated 24-game-tick margin over
+/// the 196-tick bound for timer re-arm and observed-tick alignment.
+/// The ordinary gold watch and the 180 s [`SCRIPT_GOLD_DEADLINE`]
+/// stay unchanged; the deadline can still end a worst-case run
+/// first. Only the `brimhaven_agility` ticket step uses this budget.
+const BRIMHAVEN_TICKET_WATCH_TICKS: u32 = 220;
 /// Seed + tele + drain + the short watch. Not a 6-minute soak. Wall-clock
 /// whole-scenario cap (independent of game-tick budgets).
 const SCRIPT_GOLD_DEADLINE: Duration = Duration::from_secs(180);
@@ -630,6 +650,15 @@ const SCRIPT_GOLD_DEADLINE: Duration = Duration::from_secs(180);
 /// a 69.4 s margin. Only `flax_runner` uses this cap; the other pair
 /// cells keep [`SCRIPT_GOLD_DEADLINE`].
 const FLAX_RUNNER_DEADLINE: Duration = Duration::from_secs(240);
+/// BrimhavenAgility whole-run cap. A valid run can need about 318 counted
+/// game ticks: up to 122 ticks outside the ticket watch (`run-1`, 272 ticks
+/// in 179.6 s with the old 150-tick watch) plus the 196-tick content bound
+/// on a late second tag ([`BRIMHAVEN_TICKET_WATCH_TICKS`]). At 600 ms that
+/// is about 191 s, plus 11.7-16.4 s measured outside counted ticks, so about
+/// 207 s; the shared 180 s [`SCRIPT_GOLD_DEADLINE`] would end such a run
+/// (`NIGHTLY-TRIAGE-1024/brimhaven/review-opus-r2.md`, round 3, R3-1).
+/// 240 s allows about 372 ticks. Only `brimhaven_agility` uses this cap.
+const BRIMHAVEN_AGILITY_DEADLINE: Duration = Duration::from_secs(240);
 /// SmithingBot product→fresh-bank watch after the first pack item appears.
 ///
 /// **Units:** this constant is a `budget_ticks` count of observed game
