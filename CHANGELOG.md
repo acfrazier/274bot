@@ -52,6 +52,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.6` 
 - `tui-play --user NAME` stops on a missing vault before it prepares the game cache or reads the engine login key. The message is the same. A local server with no engine directory still stops with the engine-directory error.
 - Saving the first profile now waits for saved preferences before it loads
   or logs in. The panel and terminal app use their existing startup gates.
+- Selecting a bot before preferences finish loading now keeps that bot focused.
+  Startup restoration no longer changes a manual command's target during
+  preference adoption. This applies to the panel and terminal app.
+  Fleet **Log in** also keeps the bot it selects. Removing or deleting a
+  pending restore target prevents startup from restoring it. An early
+  terminal selection cancels startup focus, but keeps the boot load and login.
 - A terminal-app preference error now clears after 15 seconds without returning
   on the next refresh. Recovery clears that error without erasing a newer message.
 

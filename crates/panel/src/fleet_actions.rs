@@ -93,7 +93,15 @@ impl Session {
             plan.action(),
             FleetAction::Assign | FleetAction::AssignRestart
         );
+        let selects = plan.action() == FleetAction::Login && self.core.selected().is_none();
         self.submit(command, Targets::Plan);
+        if selects {
+            if let Some(name) = self.core.selected().map(str::to_owned) {
+                // The core chooses the first loaded member for Fleet Log in.
+                // Mirror it through the same boundary as a direct selection.
+                self.apply_focus(&name);
+            }
+        }
         if assigns {
             if let Some(name) = self.focused_name() {
                 self.restore_script_heading(&name);

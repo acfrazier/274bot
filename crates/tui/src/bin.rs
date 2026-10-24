@@ -446,8 +446,10 @@ pub struct TuiSession {
     shown_preference_error: Option<String>,
     /// The latest log toggle whose existing status still needs its settled sink.
     session_log_status_request: Option<api::identity::RequestId>,
-    /// Interactive startup waits for the initial saved preferences, not for disk.
+    /// Interactive startup's deferred load/login and focus request.
     startup_focus: Option<String>,
+    /// The operator superseded only the focus part of `startup_focus`.
+    startup_focus_cancelled: bool,
     background_bots_acked: bool,
     ack_checked_at: Option<Instant>,
     /// Background count and resource generation the notice was built for.
@@ -692,6 +694,7 @@ impl TuiSession {
             shown_preference_error: None,
             session_log_status_request: None,
             startup_focus: None,
+            startup_focus_cancelled: false,
             background_bots_acked: background_ack,
             ack_checked_at: Some(Instant::now()),
             notice_sig: None,
@@ -1082,6 +1085,11 @@ impl TuiSession {
             }
         };
         if let Some(removal) = submitted.removal() {
+            if self.startup_focus.as_deref() == Some(name) {
+                self.cancel_startup_request();
+            } else if removal.reselected().is_some() || removal.selection_cleared() {
+                self.cancel_startup_focus();
+            }
             if let Some(next) = removal.reselected() {
                 app.focused = app.names.iter().position(|n| n == next);
             } else if removal.selection_cleared() {
@@ -1123,8 +1131,30 @@ impl TuiSession {
         added
     }
 
+    /// Supersede only focus; the deferred startup load and login remain.
+    fn cancel_startup_focus(&mut self) {
+        if self.startup_focus.is_some() {
+            self.startup_focus_cancelled = true;
+        }
+    }
+
+    /// Drop the deferred request when its target no longer exists.
+    fn cancel_startup_request(&mut self) {
+        self.startup_focus = None;
+        self.startup_focus_cancelled = false;
+    }
+
+    fn queue_startup_focus(&mut self, name: String) {
+        self.startup_focus = Some(name);
+        self.startup_focus_cancelled = false;
+    }
+
     /// Select `name` (pure bookkeeping: never a spawn or login).
     fn focus(&mut self, name: &str) {
+        // Fleet, keyboard, and saved-profile selection share this boundary.
+        // An operator choice supersedes startup focus without dropping its
+        // readiness-gated load and login.
+        self.cancel_startup_focus();
         if let Err(error) = self.submit(OperatorCommand::Select, Targets::Profile(name)) {
             self.error = Some(error);
         }
@@ -2167,7 +2197,7 @@ impl TuiSession {
             .profiles()
             .map(|p| p.username().to_string())
             .collect();
-        self.startup_focus = Some(pending);
+        self.queue_startup_focus(pending);
     }
 
     fn import_rs2b0t_catalog(&mut self, app: &mut TuiApp, root: &Path) -> Result<(), String> {
@@ -2418,12 +2448,18 @@ impl TuiSession {
             return;
         };
         let command = plan.command();
+        let selects =
+            plan.action() == frontend_core::FleetAction::Login && self.core.selected().is_none();
         let assigns = matches!(
             plan.action(),
             frontend_core::FleetAction::Assign | frontend_core::FleetAction::AssignRestart
         );
         match self.submit_raw_with(app, command, Targets::Plan) {
             Ok(_) => {
+                // The core may select the first member during Fleet Log in.
+                if selects && self.core.selected().is_some() {
+                    self.cancel_startup_focus();
+                }
                 // A new result replaces the last one, even with the same
                 // text and no command record (two emptied plans).
                 self.shown_result = None;
@@ -3174,6 +3210,15 @@ impl TuiSession {
     fn pump(&mut self, app: &mut TuiApp) {
         self.expire_error(app, Instant::now());
         self.clear_resolved_error(app);
+        // A vault deletion can remove the target while preferences wait.
+        // Cancel the whole request, not just its focus, before any load.
+        if self
+            .startup_focus
+            .as_deref()
+            .is_some_and(|name| self.core.profile(name).is_none())
+        {
+            self.cancel_startup_request();
+        }
         if !self.preferences_adopted && self.preferences.ready() {
             self.preferences_adopted = true;
             self.map_desk
@@ -3181,9 +3226,12 @@ impl TuiSession {
             frontend_core::log_file::restore_session_log(&self.preferences);
         }
         if self.startup_focus.is_some() && self.preferences.ready() {
+            let cancel_focus = std::mem::take(&mut self.startup_focus_cancelled);
             if let Some(focus) = self.startup_focus.take() {
                 self.load_and_login(&focus);
-                self.focus(&focus);
+                if !cancel_focus {
+                    self.focus(&focus);
+                }
             }
         }
         self.project_preference_error(app);
@@ -4115,8 +4163,10 @@ fn new_app(title: impl Into<String>, preferences: &UiPreferences) -> TuiApp {
 fn interactive_landing(session: &mut TuiSession, args: &Args) -> Result<TuiApp, String> {
     let focus = session.bootstrap_interactive_profiles(&args.users)?;
     if let Some(focus) = &focus {
-        session.startup_focus = Some(focus.clone());
         session.focus(focus);
+        // This is the automatic boot request, not an operator selection.
+        // Queue its readiness-gated load after establishing the initial view.
+        session.queue_startup_focus(focus.clone());
     }
     let mut app = new_app(
         format!(
