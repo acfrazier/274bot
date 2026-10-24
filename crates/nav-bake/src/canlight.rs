@@ -328,7 +328,7 @@ fn list_mapsquares(maps_dir: &Path) -> Result<Vec<(i32, i32)>, CanlightError> {
             .strip_prefix('m')
             .and_then(|n| n.split_once('_'))
             .and_then(|(x, z)| Some((x.parse::<i32>().ok()?, z.parse::<i32>().ok()?)))
-            .ok_or_else(|| CanlightError::InvalidMapsquareName { path })?;
+            .ok_or(CanlightError::InvalidMapsquareName { path })?;
         squares.push(coords);
     }
     if squares.is_empty() {
