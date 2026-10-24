@@ -243,6 +243,11 @@ struct KqSlotWitness {
     bank_returns: u8,
     bank_return_latched: bool,
     safely_banked: bool,
+    /// This slot's bank was observed closed after the safe finish began.
+    /// Set only from a snapshot taken after
+    /// [`KqFleetWitness::begin_finish`], never from the historical
+    /// `safely_banked` latch.
+    finish_closed: bool,
 }
 
 #[derive(Default)]
@@ -255,6 +260,16 @@ struct KqFleetWitness {
     surface_rope_count: Option<i32>,
     surface_rope_valid: bool,
     upper_rope_valid: bool,
+    /// The coordinated safe finish has begun: every KQ witness was met
+    /// and the fleet's scripts were stopped through the product Stop
+    /// path. Bank observations before this point do not count toward
+    /// the finish.
+    finish_started: bool,
+    /// A slot reopened its bank after it had been observed closed
+    /// during the finish. Latched: a reopened bank means a script is
+    /// still running, so the finish must not pass on a later closed
+    /// sample between that script's bank cycles.
+    finish_reopened: bool,
 }
 
 impl KqFleetWitness {
@@ -480,6 +495,21 @@ impl KqFleetWitness {
         }
         slot.safely_banked |= slot.bank_returns >= 2 && at_bank && snap.bank_component_id() < 0;
 
+        // Safe-finish oracle: only snapshots observed after the finish
+        // began count, and the closed test is the current bank state
+        // (`Proof::BankClosed`: no bank component and no loaded bank;
+        // `observe` already required in-game, scene 2). A bank seen
+        // open after this slot was seen closed latches a fleet reopen.
+        let mut finish_reopened_now = false;
+        if self.finish_started {
+            if snap.bank_component_id() < 0 && !snap.bank_loaded() {
+                slot.finish_closed = true;
+            } else if slot.finish_closed {
+                finish_reopened_now = true;
+            }
+        }
+
+        self.finish_reopened |= finish_reopened_now;
         self.restock_overlap |= self
             .slots
             .iter()
@@ -569,6 +599,30 @@ impl KqFleetWitness {
                     && slot.survived
             })
             && self.slots.iter().any(|slot| slot.kills >= 2)
+    }
+
+    /// Begin the coordinated safe finish. The scenario calls this only
+    /// after [`Self::complete`] held and the fleet's scripts were
+    /// stopped, so no slot is stopped while a teammate still needs the
+    /// party, and no bank state from before the stop counts.
+    fn begin_finish(&mut self) {
+        self.finish_started = true;
+    }
+
+    fn finish_started(&self) -> bool {
+        self.finish_started
+    }
+
+    /// The finish may prove only when every slot's bank has been
+    /// observed closed since the finish began and no slot reopened
+    /// its bank after such an observation. A slot whose bank is still
+    /// open, or that has not been observed since the finish began,
+    /// keeps this false; a reopen keeps it false for the rest of the
+    /// run, so the finish step's budget ends the run as a failure.
+    fn finish_ready(&self) -> bool {
+        self.finish_started
+            && !self.finish_reopened
+            && self.slots.iter().all(|slot| slot.finish_closed)
     }
 }
 
@@ -1141,10 +1195,21 @@ fn pair_companion_frame(c: &mut Client, slot: &mut PairCompanionSlot) {
             .observe(1, &snap);
     }
     if let Some(witness) = &slot.kq_witness {
-        witness
-            .lock()
-            .expect("KQ witness mutex")
-            .observe(slot.profile, &snap);
+        let finish_started = {
+            let mut witness = witness.lock().expect("KQ witness mutex");
+            witness.observe(slot.profile, &snap);
+            witness.finish_started()
+        };
+        // During the safe finish the fleet's scripts are stopped, so a
+        // bank this companion still has open stays open until it is
+        // closed here. Before the finish this frame never sends a
+        // close: the running script owns its bank.
+        if finish_started && snap.bank_component_id() >= 0 && send_ok(slot, now) {
+            match Interactions::new(&snap, c).close_modal() {
+                SendResult::Sent { .. } | SendResult::Refused { .. } => {}
+            }
+            slot.last_action = now;
+        }
     }
 }
 
@@ -2126,6 +2191,84 @@ pub(crate) fn jive_kq_four_scenario() -> Scenario {
             budget_ticks: 3600,
         },
     });
+    // Coordinated safe finish (JIVE-KQ-1024). The step above ends only
+    // when every KQ witness holds for the whole fleet, so party
+    // coordination stays intact until no teammate still needs it.
+    // Only then does the scenario stop the fleet: `StopScript` runs
+    // the product Stop path for every stashed fleet slot
+    // (`host-play/src/live_start.rs`, the `on_stop_script` branch stops
+    // each pending card), and its `ScriptIdle` arm holds only on the
+    // host's observed idle driven slot. The 10-tick budget is the
+    // existing Stop guard (`quester.rs`, "stop Quester mid-quest").
+    // With the scripts stopped, no bot can reopen its bank while the
+    // finish closes the banks and proves the current closed state:
+    // the driven slot closes its own bank below, each companion
+    // closes its own in `pair_companion_frame`, and the final Await
+    // requires a post-finish closed observation for every slot with
+    // no reopen (`KqFleetWitness::finish_ready`). One close send is
+    // acted on by the next game tick and the companion send pacing is
+    // 400 ms (`send_ok`), under one 600 ms tick; the 120-tick budgets
+    // are the guards this file already uses for a `BankClosed` watch
+    // (`clue_duel_3554_scenario`), not expected durations. The
+    // scenario proof stays the real current-state `BankClosed` on the
+    // driven snapshot; the sticky `safely_banked` latch never proves
+    // the finish.
+    steps.push(Step {
+        name: "stop the KQ fleet after every witness is met",
+        kind: StepKind::StopScript,
+        wait: Wait {
+            arm: Proof::ScriptIdle,
+            budget_ticks: 10,
+        },
+    });
+    let finish_witness = Arc::clone(&witness);
+    steps.push(Step {
+        name: "begin the KQ safe finish after the fleet stop",
+        kind: StepKind::Perform {
+            send: Box::new(move |_, _| {
+                finish_witness
+                    .lock()
+                    .expect("KQ witness mutex")
+                    .begin_finish();
+                true
+            }),
+        },
+        wait: Wait {
+            arm: Proof::Stat { id: 16, min: 0 },
+            budget_ticks: 20,
+        },
+    });
+    steps.push(Step {
+        name: "close the driven bot's bank after the fleet stop",
+        kind: StepKind::Repeat {
+            send: Box::new(|c, snapshot| {
+                matches!(
+                    Interactions::new(snapshot, c).close_modal(),
+                    SendResult::Sent { .. } | SendResult::Refused { .. }
+                )
+            }),
+        },
+        wait: Wait {
+            arm: Proof::BankClosed,
+            budget_ticks: 120,
+        },
+    });
+    let finish_ready_witness = Arc::clone(&witness);
+    steps.push(Step {
+        name: "observe every fleet bank closed after the stop with no reopen",
+        kind: StepKind::Await {
+            evidence: "kq_safe_finish_fleet_stopped_banks_closed_no_reopen",
+            ready: Box::new(move |snap| {
+                let mut witness = finish_ready_witness.lock().expect("KQ witness mutex");
+                witness.observe(0, snap);
+                witness.finish_ready()
+            }),
+        },
+        wait: Wait {
+            arm: Proof::Stat { id: 16, min: 0 },
+            budget_ticks: 120,
+        },
+    });
     Scenario {
         name: "jive_kq_four",
         seed: Seed {
@@ -2402,5 +2545,202 @@ mod duel_round_trip_tests {
             "Lumbridge is not the lobby"
         );
         assert!(witness.observe(&at(3372, 3270, 0, 2)));
+    }
+}
+
+#[cfg(test)]
+mod kq_finish_tests {
+    use super::{jive_kq_four_scenario, KqFleetWitness, KQ_BANK};
+    use crate::{Proof, StepKind};
+    use api::snapshot::GameSnapshot;
+
+    /// One fleet member at the Shantay bank in a loaded scene, with its
+    /// bank open (component 5382, loaded) or closed. The closed form
+    /// also satisfies the scenario's real `BankClosed` proof.
+    fn at_bank(bank_open: bool) -> GameSnapshot {
+        let mut snap = GameSnapshot::new();
+        snap.seed_ingame(2);
+        snap.seed_tile(api::WorldTile {
+            x: KQ_BANK.x,
+            z: KQ_BANK.z,
+            level: KQ_BANK.level,
+        });
+        if bank_open {
+            snap.seed_bank_observation(5382, 1, Some(Vec::new()), Vec::new());
+        } else {
+            snap.seed_bank_observation(-1, 1, None, Vec::new());
+        }
+        snap
+    }
+
+    fn started_witness() -> KqFleetWitness {
+        let mut witness = KqFleetWitness::default();
+        witness.start();
+        witness
+    }
+
+    /// Pass direction: after the finish begins, each bot's bank is
+    /// first seen open (the state the stopped script left it in) and
+    /// then seen closed. The finish is ready only after the last
+    /// bot's closed observation.
+    #[test]
+    fn safe_finish_passes_when_every_bank_closes_after_the_finish() {
+        assert!(
+            Proof::BankClosed.check(&at_bank(false), None),
+            "the closed fixture is the real BankClosed state"
+        );
+        assert!(
+            !Proof::BankClosed.check(&at_bank(true), None),
+            "the open fixture is not BankClosed"
+        );
+        let mut witness = started_witness();
+        witness.begin_finish();
+        for slot in 0..4 {
+            witness.observe(slot, &at_bank(true));
+            assert!(
+                !witness.finish_ready(),
+                "slot {slot} still has its bank open"
+            );
+        }
+        for slot in 0..3 {
+            witness.observe(slot, &at_bank(false));
+            assert!(
+                !witness.finish_ready(),
+                "slot {} has not been seen closed yet",
+                slot + 1
+            );
+        }
+        witness.observe(3, &at_bank(false));
+        assert!(
+            witness.finish_ready(),
+            "every bank was observed closed after the finish began"
+        );
+    }
+
+    /// Fail direction, reopen: a bot that opens its bank again after
+    /// it was seen closed during the finish means a script is still
+    /// running. The finish must not pass, and a later closed sample
+    /// between that script's bank cycles must not pass it either.
+    #[test]
+    fn safe_finish_fails_when_a_bot_reopens_its_bank_after_the_finish() {
+        let mut witness = started_witness();
+        witness.begin_finish();
+        for slot in 0..4 {
+            witness.observe(slot, &at_bank(false));
+        }
+        assert!(witness.finish_ready());
+        witness.observe(2, &at_bank(true));
+        assert!(
+            !witness.finish_ready(),
+            "slot 2 reopened its bank after the finish"
+        );
+        witness.observe(2, &at_bank(false));
+        assert!(
+            !witness.finish_ready(),
+            "a closed sample after a reopen is a still-running script's bank cycle"
+        );
+    }
+
+    /// Fail direction, too early: the finish does not prove while a
+    /// bank is still open, from a scene that is still loading, or
+    /// from bank states observed before the finish began. The last
+    /// case is the JIVE-KQ-1024 race: a bank that was closed earlier
+    /// (the sticky `safely_banked` latch) says nothing about the
+    /// bank's state at the finish.
+    #[test]
+    fn safe_finish_does_not_prove_before_the_banks_close_after_the_finish() {
+        let mut witness = started_witness();
+        for slot in 0..4 {
+            witness.observe(slot, &at_bank(false));
+        }
+        assert!(
+            !witness.finish_ready(),
+            "closed banks before the finish do not prove the finish"
+        );
+        witness.begin_finish();
+        assert!(
+            !witness.finish_ready(),
+            "no slot has been observed since the finish began"
+        );
+        for slot in 0..4 {
+            witness.observe(slot, &at_bank(true));
+        }
+        assert!(
+            !witness.finish_ready(),
+            "every bank is still open after the finish began"
+        );
+        let mut loading = at_bank(false);
+        loading.seed_ingame(1);
+        for slot in 0..4 {
+            witness.observe(slot, &loading);
+        }
+        assert!(
+            !witness.finish_ready(),
+            "a loading scene is not a closed-bank observation"
+        );
+        for slot in 0..4 {
+            witness.observe(slot, &at_bank(false));
+        }
+        assert!(witness.finish_ready());
+    }
+
+    /// The scenario's finish is ordered: the fleet witness completes
+    /// first, then the fleet stops, then the finish begins, then the
+    /// driven bank closes, then the fleet finish proves. The
+    /// terminal proof stays the real `BankClosed`.
+    #[test]
+    fn jive_kq_stops_the_fleet_then_proves_the_safe_finish() {
+        let scenario = jive_kq_four_scenario();
+        let complete = scenario
+            .steps
+            .iter()
+            .position(|step| {
+                matches!(
+                    &step.kind,
+                    StepKind::Await { evidence, .. }
+                        if *evidence
+                            == "kq_escape_restock_second_kill_four_survivors_safely_banked"
+                )
+            })
+            .expect("fleet completion step");
+        let start = scenario
+            .steps
+            .iter()
+            .position(|step| matches!(step.kind, StepKind::StartScript))
+            .expect("fleet Start step");
+        let stop = scenario
+            .steps
+            .iter()
+            .position(|step| matches!(step.kind, StepKind::StopScript))
+            .expect("fleet Stop step");
+        assert!(start < complete && complete < stop, "Start, witness, Stop");
+        assert_eq!(
+            scenario
+                .steps
+                .iter()
+                .filter(|step| matches!(step.kind, StepKind::StopScript))
+                .count(),
+            1,
+            "exactly one coordinated stop, never a per-bot early stop"
+        );
+        assert_eq!(scenario.steps[stop].wait.arm, Proof::ScriptIdle);
+        assert!(
+            matches!(scenario.steps[stop + 1].kind, StepKind::Perform { .. }),
+            "the finish begins right after the stop"
+        );
+        let close = &scenario.steps[stop + 2];
+        assert!(
+            matches!(close.kind, StepKind::Repeat { .. }),
+            "the driven bank close repeats until it lands"
+        );
+        assert_eq!(close.wait.arm, Proof::BankClosed);
+        let finish = &scenario.steps[stop + 3];
+        assert!(matches!(
+            &finish.kind,
+            StepKind::Await { evidence, .. }
+                if *evidence == "kq_safe_finish_fleet_stopped_banks_closed_no_reopen"
+        ));
+        assert_eq!(scenario.steps.len(), stop + 4, "the finish proof is last");
+        assert_eq!(scenario.proof, Proof::BankClosed);
     }
 }
