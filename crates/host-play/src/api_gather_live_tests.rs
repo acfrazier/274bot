@@ -48,26 +48,6 @@ channel.onmessage = event => globalThis.__receivedMessages.push(event.data);
 export function tick(_api) {}
 "#;
 
-#[derive(Default)]
-struct AdmissionLog {
-    rows: Mutex<Vec<(String, String)>>,
-}
-
-impl api::hostlog::Sink for AdmissionLog {
-    fn record(&self, record: &api::hostlog::Record<'_>) {
-        if record.message.starts_with("gather foreground: dropped ") {
-            self.rows.lock().expect("admission log lock").push((
-                record.slot.unwrap_or("").to_owned(),
-                record.message.to_owned(),
-            ));
-        }
-    }
-}
-
-static ADMISSION_LOG: AdmissionLog = AdmissionLog {
-    rows: Mutex::new(Vec::new()),
-};
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SeedPhase {
     WaitIngame,
@@ -485,6 +465,132 @@ fn wire_shadow_lengths(
     (changed_bytes, unchanged_bytes)
 }
 
+/// Game rows the cell's script emits while an API session owns the slot's
+/// foreground: the typed start batch, Gather running, and the Stop batch.
+const FOREGROUND_GAME_ROWS: u64 = 3;
+
+/// The seat's cumulative rejected-row counter at the cell's boundaries.
+///
+/// `api::script_contract::dispatch_disposition` returns `Drop` for a gameplay
+/// row with no captured session authority while the API owns the foreground,
+/// and the seat counts that drop in `SlotMetrics::dropped` in the batch that
+/// carries the row. A row admitted instead of rejected does not move the
+/// counter; a row deferred to a later batch moves it late; a row kept past
+/// Stop surfaces after the Stop receipt. The cell emits exactly
+/// [`FOREGROUND_GAME_ROWS`] such rows, one at each boundary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ForegroundRejections {
+    before_api: u64,
+    after_run_and_live: u64,
+    after_reconnect: u64,
+    after_stop: u64,
+    after_receipt: u64,
+}
+
+impl ForegroundRejections {
+    fn check(self) -> Result<(), String> {
+        let owned = self
+            .after_run_and_live
+            .checked_sub(self.before_api)
+            .ok_or_else(|| format!("the rejected-row counter went backwards: {self:?}"))?;
+        if owned != 2 {
+            return Err(format!(
+                "the start and live game rows are each rejected in the batch that carries them, expected 2, got {owned}: {self:?}"
+            ));
+        }
+        if self.after_reconnect < self.after_run_and_live {
+            return Err(format!(
+                "the rejected-row counter went backwards across the reconnect: {self:?}"
+            ));
+        }
+        let stop = self
+            .after_stop
+            .checked_sub(self.after_reconnect)
+            .ok_or_else(|| format!("the rejected-row counter went backwards: {self:?}"))?;
+        if stop != 1 {
+            return Err(format!(
+                "the Stop batch rejects its game row before host dispatch, expected 1, got {stop}: {self:?}"
+            ));
+        }
+        let rows = owned + stop;
+        if rows != FOREGROUND_GAME_ROWS {
+            return Err(format!(
+                "the cell emits {FOREGROUND_GAME_ROWS} competing game rows, got {rows} rejections: {self:?}"
+            ));
+        }
+        if self.after_receipt != self.after_stop {
+            return Err(format!(
+                "no rejected game row is retained past Stop, expected {} at the receipt, got {}: {self:?}",
+                self.after_stop, self.after_receipt
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// Read the production seat counter without entering the isolate or changing
+/// custody. The seat outlives the API session, so the count stays readable
+/// after Stop.
+fn live_rejected_rows(play: &Play, name: &str) -> u64 {
+    play.script_slot_metrics(name)
+        .expect("live script slot metrics")
+        .dropped
+}
+
+/// Both directions for the cell's typed rejection receipt: the cell's own
+/// counts pass, and an admitted, deferred or late row fails.
+#[test]
+fn foreground_rejection_receipt_rejects_every_wrong_admission() {
+    let accepted = ForegroundRejections {
+        before_api: 0,
+        after_run_and_live: 2,
+        after_reconnect: 4,
+        after_stop: 5,
+        after_receipt: 5,
+    };
+    accepted.check().expect("the cell's own receipt passes");
+
+    let admitted_start_row = ForegroundRejections {
+        after_run_and_live: 1,
+        after_reconnect: 3,
+        after_stop: 4,
+        after_receipt: 4,
+        ..accepted
+    };
+    assert!(
+        admitted_start_row.check().is_err(),
+        "a start row that reached the host instead of being rejected leaves the owned count short"
+    );
+
+    let deferred_into_stop = ForegroundRejections {
+        after_stop: 6,
+        after_receipt: 6,
+        ..accepted
+    };
+    assert!(
+        deferred_into_stop.check().is_err(),
+        "a row deferred into the Stop batch is two rejections there"
+    );
+
+    let late_drop = ForegroundRejections {
+        after_receipt: 6,
+        ..accepted
+    };
+    assert!(
+        late_drop.check().is_err(),
+        "a row kept past Stop and dropped later surfaces after the Stop receipt"
+    );
+
+    let rewound = ForegroundRejections {
+        after_receipt: 4,
+        ..accepted
+    };
+    assert!(
+        rewound.check().is_err(),
+        "the counter never rewinds, so a replay could not hide as a smaller receipt"
+    );
+}
+
 #[test]
 #[ignore = "requires LIVE=1 and local R289 Gatherer fixtures"]
 fn live_gather_api_receipt_tracks_memory_reconnect_and_wire_shadow() {
@@ -503,10 +609,6 @@ fn live_gather_api_receipt_tracks_memory_reconnect_and_wire_shadow() {
         "BOT_EVIDENCE_DIR must be absolute"
     );
     std::fs::create_dir_all(&evidence_dir).expect("create receipt directory");
-    assert!(
-        api::hostlog::install_sink(&ADMISSION_LOG),
-        "run this ignored live receipt in its own test process"
-    );
     api::hostlog::set_debug(true);
     let home = ThrowawayHome::enter("receipt", &evidence_dir);
     let options = live_options(&home.path);
@@ -624,6 +726,7 @@ fn live_gather_api_receipt_tracks_memory_reconnect_and_wire_shadow() {
     let metrics_before = play
         .memory_script_metrics(&account)
         .expect("real Play memory metrics before API session");
+    let rejected_before_api = live_rejected_rows(&play, &account);
     slot_probe(&play, &account, "globalThis.__start = true");
     wait_until(
         "Gather API installed with a published status",
@@ -677,6 +780,9 @@ fn live_gather_api_receipt_tracks_memory_reconnect_and_wire_shadow() {
         received_during_seat, expected_during_seat,
         "the real receiver got exactly the run/live posts during the owned seat"
     );
+    // The start and live game rows were emitted in the batches that carried
+    // those two posts, and the seat rejected each row in its own batch.
+    let rejected_after_run_and_live = live_rejected_rows(&play, &account);
 
     {
         let mut state = setup.lock().expect("live setup lock");
@@ -700,6 +806,10 @@ fn live_gather_api_receipt_tracks_memory_reconnect_and_wire_shadow() {
     let metrics_reconnected = play
         .memory_script_metrics(&account)
         .expect("real Play memory metrics after reconnect");
+    // A kept reconnect discards gameplay rows still in the seat, so the
+    // counter may legitimately move here; only the test's three rows are
+    // accounted for at their own boundaries.
+    let rejected_after_reconnect = live_rejected_rows(&play, &account);
 
     slot_probe(&play, &account, "globalThis.__stop = true");
     wait_until("Gather API Stop terminal", Duration::from_secs(30), || {
@@ -707,6 +817,7 @@ fn live_gather_api_receipt_tracks_memory_reconnect_and_wire_shadow() {
         page.is_null()
             && slot_probe(&play, &account, "globalThis.__result")["value"]["end"] == "stopped"
     });
+    let rejected_after_stop = live_rejected_rows(&play, &account);
     let metrics_after = play
         .memory_script_metrics(&account)
         .expect("real Play memory metrics after API Stop");
@@ -750,22 +861,17 @@ fn live_gather_api_receipt_tracks_memory_reconnect_and_wire_shadow() {
         }),
         "actual snapshot.gather status transitions: {phases:?}"
     );
-    let dropped_rows: Vec<_> = ADMISSION_LOG
-        .rows
-        .lock()
-        .expect("admission log lock")
-        .iter()
-        .filter(|(slot, _)| slot == &account)
-        .map(|(_, message)| message.clone())
-        .collect();
-    assert_eq!(
-        dropped_rows,
-        vec![
-            "gather foreground: dropped 1 script game rows",
-            "gather foreground: dropped 3 script game rows total",
-        ],
-        "only the three emitted game rows count as dropped; broker posts are preserved"
-    );
+    let rejected_after_receipt = live_rejected_rows(&play, &account);
+    let foreground_rejections = ForegroundRejections {
+        before_api: rejected_before_api,
+        after_run_and_live: rejected_after_run_and_live,
+        after_reconnect: rejected_after_reconnect,
+        after_stop: rejected_after_stop,
+        after_receipt: rejected_after_receipt,
+    };
+    if let Err(error) = foreground_rejections.check() {
+        panic!("typed Gather foreground rejection receipt: {error}");
+    }
     let receipt = serde_json::json!({
         "proof": "live Gather API seat memory and reconnect receipt",
         "profile": "local-289",
@@ -773,7 +879,15 @@ fn live_gather_api_receipt_tracks_memory_reconnect_and_wire_shadow() {
         "tile": {"x": tile.x, "z": tile.z, "level": tile.level},
         "settings": {"skill": "Woodcutting", "woodcuttingResources": ["normal"], "disposition": "Power"},
         "snapshot_phases": phases,
-        "foreground_drop_trace": dropped_rows,
+        "foreground_rejections": {
+            "counter": "script::slot::SlotMetrics::dropped",
+            "expected_test_game_rows": FOREGROUND_GAME_ROWS,
+            "before_api": foreground_rejections.before_api,
+            "after_run_and_live": foreground_rejections.after_run_and_live,
+            "after_reconnect": foreground_rejections.after_reconnect,
+            "after_stop": foreground_rejections.after_stop,
+            "after_receipt": foreground_rejections.after_receipt,
+        },
         "broadcast_channel": {
             "name": channel_name,
             "sender": account,
