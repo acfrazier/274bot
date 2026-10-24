@@ -1877,16 +1877,39 @@ impl ScenarioRunner {
                 unnoted_id,
                 quantity,
                 note_id,
-            } => match crate::native_seed_deposit_attempt(
-                client,
-                &self.snapshot,
-                *unnoted_id,
-                *quantity,
-                *note_id,
-            ) {
-                Ok(_) => Ok(()),
-                Err(failure) => Err(failure.to_string()),
-            },
+            } => {
+                let result = crate::native_seed_deposit_attempt(
+                    client,
+                    &self.snapshot,
+                    *unnoted_id,
+                    *quantity,
+                    *note_id,
+                );
+                let inv_id = note_id.unwrap_or(*unnoted_id);
+                let count = |rows: &[api::snapshot::ItemView], id| {
+                    rows.iter()
+                        .filter(|row| row.def.id == id)
+                        .map(|row| row.count)
+                        .sum::<i32>()
+                };
+                api::host_log!(
+                    api::hostlog::Category::BankOp,
+                    api::hostlog::Level::Info,
+                    "[DEBUG-seed-settle] cell={} tick={} item={} result={result:?} proof={} pack={} side={} bank={} loaded={} main_gen={:?} pack_gen={:?} side_gen={:?}",
+                    self.scenario.name,
+                    self.snapshot.tick(),
+                    inv_id,
+                    self.holds(self.current_step().wait.arm),
+                    count(self.snapshot.inventory(), inv_id),
+                    count(self.snapshot.bank_side(), inv_id),
+                    count(self.snapshot.bank(), *unnoted_id),
+                    self.snapshot.bank_loaded(),
+                    self.snapshot.bank_snapshot_generation(),
+                    self.snapshot.inventory_packet_generation(),
+                    self.snapshot.bank_side_packet_generation(),
+                );
+                result.map(|_| ()).map_err(|failure| failure.to_string())
+            }
             StepKind::DrainDialogs { choice } => {
                 let mut ix = Interactions::new(&self.snapshot, client);
                 if self.snapshot.chat_continue_component_id() != -1 {
