@@ -3084,6 +3084,25 @@ fn walk_preference_adoption_does_not_apply_startup_focus_mid_command() {
 }
 
 #[test]
+fn removing_the_focused_bot_cancels_startup_focus() {
+    let _iso = IsolatedStores::enter("panel-remove-startup-focus");
+    let (mut session, vault) = multibox_unlock_fixture();
+    session.preferences.reload().unwrap();
+    session.preferences_ready = false;
+    assert!(session.unlock_at(&vault, "test-passphrase-01"));
+    session.select("alice");
+    session.focus_when_ready(super::StartupFocus::SavedProfile("alice".into()));
+    session.rail_remove("alice");
+    assert!(session.focused_name().is_none());
+    session.poll_panel_preferences();
+    assert!(
+        session.focused_name().is_none(),
+        "startup must not reload the removed focus"
+    );
+    assert!(session.startup_focus_pending.is_none());
+}
+
+#[test]
 fn multibox_profile_pick_restores_that_profiles_script_heading() {
     let (mut session, path) = multibox_unlock_fixture();
     hydrate_panel_preferences(&mut session);

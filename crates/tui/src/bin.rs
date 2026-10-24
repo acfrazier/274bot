@@ -1075,6 +1075,9 @@ impl TuiSession {
             }
         };
         if let Some(removal) = submitted.removal() {
+            if removal.reselected().is_some() || removal.selection_cleared() {
+                self.cancel_startup_focus();
+            }
             if let Some(next) = removal.reselected() {
                 app.focused = app.names.iter().position(|n| n == next);
             } else if removal.selection_cleared() {
@@ -1116,11 +1119,15 @@ impl TuiSession {
         added
     }
 
+    fn cancel_startup_focus(&mut self) {
+        self.startup_focus = None;
+    }
+
     /// Select `name` (pure bookkeeping: never a spawn or login).
     fn focus(&mut self, name: &str) {
         // Fleet, keyboard, and saved-profile selection share this boundary.
         // A choice made before hydration must supersede the startup request.
-        self.startup_focus = None;
+        self.cancel_startup_focus();
         if let Err(error) = self.submit(OperatorCommand::Select, Targets::Profile(name)) {
             self.error = Some(error);
         }
