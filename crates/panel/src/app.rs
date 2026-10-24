@@ -2221,14 +2221,7 @@ fn vault_unlock_prompt(ui: &Ui, session: &mut Session) {
         .hint(hint)
         .build();
     let w = ui.content_region_avail()[0];
-    let label = if exists {
-        "Unlock vault"
-    } else {
-        "Create vault"
-    };
-    if ui.button_with_size(label, [w, 0.0]) {
-        submit_vault_pass(session, exists);
-    }
+    vault_pass_button(ui, session, exists);
     if exists {
         if ui.button_with_size("Reset vault", [w, 0.0]) {
             session.vault_reset_understood = false;
@@ -2249,21 +2242,52 @@ fn vault_unlock_prompt(ui: &Ui, session: &mut Session) {
     }
 }
 
-/// Unlock with the passphrase exactly as typed: a vault made in the terminal
-/// may begin or end with spaces. Create keeps the vault rule (non-empty once
-/// trimmed) and stores the typed text too, so both front ends agree.
-fn submit_vault_pass(session: &mut Session, exists: bool) {
-    let typed = session.pass_scratch.as_str();
-    let usable = if exists {
+/// The prompt's **Unlock vault** (a vault file exists) or **Create vault**
+/// button, the full content width. A passphrase the command would refuse
+/// greys it out, with a tooltip that says what to type: a greyed-out button
+/// cannot be clicked, so no click is dropped without a refusal.
+fn vault_pass_button(ui: &Ui, session: &mut Session, exists: bool) {
+    let w = ui.content_region_avail()[0];
+    let label = if exists {
+        "Unlock vault"
+    } else {
+        "Create vault"
+    };
+    let usable = vault_pass_usable(&session.pass_scratch, exists);
+    {
+        let _off = (!usable).then(|| ui.begin_disabled());
+        if ui.button_with_size(label, [w, 0.0]) {
+            submit_vault_pass(session);
+        }
+    }
+    if !usable {
+        ui.set_item_tooltip(if exists {
+            "type the vault passphrase"
+        } else {
+            "type a passphrase that is not only spaces"
+        });
+    }
+}
+
+/// Whether the vault prompt's button can send `typed`: Unlock takes the
+/// passphrase exactly as typed (a vault made in the terminal may begin or
+/// end with spaces) and needs some text; Create keeps the vault rule
+/// (non-empty once trimmed). The prompt greys its button out otherwise.
+fn vault_pass_usable(typed: &str, exists: bool) -> bool {
+    if exists {
         !typed.is_empty()
     } else {
         !typed.trim().is_empty()
-    };
-    if usable {
-        let pass = Passphrase::from(typed);
-        session.request_unlock(pass);
-        session.pass_scratch.clear();
     }
+}
+
+/// Send the typed passphrase as is, for Unlock or Create; both front ends
+/// store the typed text. Only an enabled button calls this
+/// ([`vault_pass_usable`]).
+fn submit_vault_pass(session: &mut Session) {
+    let pass = Passphrase::from(session.pass_scratch.as_str());
+    session.request_unlock(pass);
+    session.pass_scratch.clear();
 }
 
 /// profile: orange current name (like script) plus Profiles (opens the
@@ -2436,7 +2460,11 @@ fn debug_caption(id: &str) -> &str {
     }
 }
 
-/// Local-engine debug cheats. Omitted on rs2b2t.
+/// Local-engine debug cheats. Omitted on rs2b2t. A cheat button draws
+/// disabled, its tooltip naming why, while a Debug command has no bot to go to
+/// ([`Session::debug_send_target`]: no focused bot, no play session; maxme
+/// follows the Debug panel's target scope), so a click always has a target
+/// when it reaches [`Session::cheat_focused`] or the bulk send.
 fn debug_section(ui: &Ui, session: &mut Session) {
     if !session.debug_ui() {
         return;
@@ -2446,6 +2474,8 @@ fn debug_section(ui: &Ui, session: &mut Session) {
     }
     let show_tutskip = session.focused_tutorial_skipped() == Some(false);
     let main = debug_main_buttons_for(session.profile_class(), show_tutskip);
+    let cheat_block = session.debug_send_target().err();
+    let maxme_block = crate::debug_panel::send_block(session);
     let avail = ui.content_region_avail()[0];
     // Packed one row even when a scrollbar trims avail below MIN_BUTTON —
     // stacking turns DebugPanel/Lumbridge/maxme/Teles into four strip-width
@@ -2465,19 +2495,22 @@ fn debug_section(ui: &Ui, session: &mut Session) {
                 ui.set_item_tooltip("DebugPanel v2 — full cheat catalog");
             }
             "TutSkip" => {
+                let _off = cheat_block.is_some().then(|| ui.begin_disabled());
                 if ui.button_with_size(caption, [w, 0.0]) {
                     session.cheat_focused("setvar tutorial 1000");
                     session.mark_tutorial_skipped();
                 }
-                ui.set_item_tooltip("setvar tutorial 1000");
+                ui.set_item_tooltip(cheat_block.unwrap_or("setvar tutorial 1000"));
             }
             "Lumbridge" => {
+                let _off = cheat_block.is_some().then(|| ui.begin_disabled());
                 if ui.button_with_size(caption, [w, 0.0]) {
                     session.cheat_focused("~home");
                 }
-                ui.set_item_tooltip("~home — Lumbridge courtyard");
+                ui.set_item_tooltip(cheat_block.unwrap_or("~home — Lumbridge courtyard"));
             }
             "maxme" => {
+                let _off = maxme_block.is_some().then(|| ui.begin_disabled());
                 if ui.button_with_size(caption, [w, 0.0]) {
                     session.open_window(PanelWindow::Debug);
                     crate::debug_panel::request_bulk_send(
@@ -2492,7 +2525,9 @@ fn debug_section(ui: &Ui, session: &mut Session) {
                         "This sets every skill to 99.".into(),
                     );
                 }
-                ui.set_item_tooltip("19× setstat 99 — confirmation is required");
+                ui.set_item_tooltip(
+                    maxme_block.unwrap_or("19× setstat 99 — confirmation is required"),
+                );
             }
             "Teles" if ui.button_with_size(caption, [w, 0.0]) => {
                 ui.open_popup("##debug-teles");
@@ -2505,6 +2540,9 @@ fn debug_section(ui: &Ui, session: &mut Session) {
 
 fn debug_teleports_popup(ui: &Ui, session: &mut Session) {
     ui.popup("##debug-teles", || {
+        // The destinations are rail cheats like Lumbridge: disabled, the
+        // tooltip naming why, while no bot can take one.
+        let cheat_block = session.debug_send_target().err();
         let dests = debug_dest_cheats();
         let scale = ui_scale(ui);
         let avail = PANEL_WIDTH;
@@ -2518,11 +2556,12 @@ fn debug_teleports_popup(ui: &Ui, session: &mut Session) {
             if i > 0 && i % cols != 0 {
                 gap_line(ui);
             }
+            let _off = cheat_block.is_some().then(|| ui.begin_disabled());
             if ui.button_with_size(dest.label, [bw, 0.0]) {
                 session.cheat_focused(dest.cheat);
                 ui.close_current_popup();
             }
-            ui.set_item_tooltip(dest.tooltip);
+            ui.set_item_tooltip(cheat_block.unwrap_or(dest.tooltip));
         }
     });
 }
@@ -3742,7 +3781,12 @@ fn persist_profile_setting(
 ) {
     if selection.compiled_id().is_some() {
         let Some(profile) = session.focused_name() else {
-            session.error = Some("parameters: select a profile first".into());
+            session.refuse_command(
+                OperatorCommand::SaveScriptSettings(frontend_core::command::CardKind::Native),
+                &[],
+                Some(crate::session::ErrorNeed::FocusedBot),
+                "parameters: select a profile first",
+            );
             return;
         };
         session
@@ -3859,7 +3903,12 @@ fn script_parameter_text_input(
         session.submit_script_command(OperatorCommand::DiscardParameterText, Targets::Application);
     } else if changed || commit {
         if commit && profile.is_none() && selection.compiled_id().is_some() {
-            session.error = Some("parameters: select a profile first".into());
+            session.refuse_command(
+                OperatorCommand::SaveScriptSettings(frontend_core::command::CardKind::Native),
+                &[],
+                Some(crate::session::ErrorNeed::FocusedBot),
+                "parameters: select a profile first",
+            );
             return;
         }
         let key = frontend_core::scripts::ParameterEditKey::new(profile, selection, def.id());
@@ -5132,6 +5181,13 @@ fn rail_toolbar(ui: &Ui, session: &mut Session) {
 #[cfg(test)]
 pub(crate) fn draw_test_rail_toolbar(ui: &Ui, session: &mut Session) {
     rail_toolbar(ui, session);
+}
+
+/// Draw the strip's Local-engine debug cheat buttons for a test, in the
+/// current window.
+#[cfg(test)]
+pub(crate) fn draw_test_debug_section(ui: &Ui, session: &mut Session) {
+    debug_section(ui, session);
 }
 
 /// Draw the right-hand strip for a test at `pos` and `size` (its own size is
@@ -6613,42 +6669,52 @@ fn profile_import_bar(ui: &Ui, session: &mut Session, width: f32, entered: bool)
                             .map(|(index, name, command)| (index, name.to_owned(), command))
                             .collect::<Vec<_>>();
                         for (index, name, planned_command) in planned {
-                            match planned_command {
+                            let staged = match planned_command {
                                 OperatorCommand::CreateProfile => {
-                                    if let Err(error) =
-                                        session.profile_import.stage_create_account(index)
-                                    {
-                                        session.error = Some(error.to_string());
-                                        break;
-                                    }
-                                    let _ = session.submit(
-                                        OperatorCommand::CreateProfile,
-                                        Targets::Application,
-                                    );
+                                    session.profile_import.stage_create_account(index)
                                 }
                                 OperatorCommand::SaveProfile => {
-                                    if let Err(error) =
-                                        session.profile_import.stage_save_account(index)
-                                    {
-                                        session.error = Some(error.to_string());
-                                        break;
-                                    }
-                                    let _ = session.submit(
-                                        OperatorCommand::SaveProfile,
-                                        Targets::Profile(&name),
-                                    );
+                                    session.profile_import.stage_save_account(index)
                                 }
                                 _ => {
-                                    session.error = Some(format!(
-                                        "Profile import account {name} has an unsupported writer."
-                                    ));
+                                    session.refuse_command(
+                                        planned_command,
+                                        &[&name],
+                                        None,
+                                        &format!(
+                                            "Profile import account {name} has an unsupported writer."
+                                        ),
+                                    );
                                     break;
                                 }
+                            };
+                            if let Err(error) = staged {
+                                session.refuse_command(
+                                    planned_command,
+                                    &[&name],
+                                    None,
+                                    &error.to_string(),
+                                );
+                                break;
                             }
+                            let targets = if planned_command == OperatorCommand::CreateProfile {
+                                Targets::Application
+                            } else {
+                                Targets::Profile(&name)
+                            };
+                            let _ = session.submit(planned_command, targets);
                             session.profile_import.cancel_staged_account(index);
                         }
                     }
-                    Err(error) => session.error = Some(error.to_string()),
+                    // Import replans the preview against the current vault
+                    // before any account row exists; a refused replan is
+                    // refused as the preview it repeats.
+                    Err(error) => session.refuse_command(
+                        OperatorCommand::PreviewProfileImport,
+                        &[],
+                        None,
+                        &error.to_string(),
+                    ),
                 }
                 changed = true;
             }
