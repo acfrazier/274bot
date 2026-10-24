@@ -97,15 +97,20 @@ pub(crate) const BOW_STRING_ID: i32 = 1777;
 const VARROCK_WEST_BANK_BOOTH_ID: i32 = 2213;
 
 pub(super) fn bank_fletcher_watch(name: &'static str, arm: Proof) -> Step {
+    bank_fletcher_watch_with_ticks(name, arm, SCRIPT_GOLD_WATCH_TICKS)
+}
+
+pub(super) fn bank_fletcher_watch_with_ticks(
+    name: &'static str,
+    arm: Proof,
+    budget_ticks: u32,
+) -> Step {
     Step {
         name,
         kind: StepKind::Perform {
             send: Box::new(|_, _| true),
         },
-        wait: Wait {
-            arm,
-            budget_ticks: SCRIPT_GOLD_WATCH_TICKS,
-        },
+        wait: Wait { arm, budget_ticks },
     }
 }
 

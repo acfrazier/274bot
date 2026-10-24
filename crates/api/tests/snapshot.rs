@@ -3649,6 +3649,39 @@ fn chat_burst_in_one_gen_gets_distinct_sequences() {
     assert_eq!(lines[1].sequence, two_seq);
 }
 
+/// A cold login clears the client chat ring (`chat_text`) after logout
+/// left it in place. The snapshot only republishes that empty ring when
+/// the chat generation moves with the clear: without a move it keeps the
+/// stale pre-login ring (the stale-history failure shape), and with one
+/// the ring and head both read empty.
+#[test]
+fn chat_clear_publishes_only_when_the_chat_generation_moves() {
+    let mut c = client_with_npc();
+    c.add_chat(0, "get tutorial: 1000", "");
+    let mut snap = GameSnapshot::new();
+    c.bump_gens(ServerProt::MESSAGE_GAME);
+    assert!(snap.rebuild_family(&c, Family::Chat));
+    assert_eq!(snap.chat(), Some("get tutorial: 1000"));
+
+    for entry in c.chat_text.iter_mut() {
+        *entry = String::new();
+    }
+    assert!(
+        !snap.rebuild_family(&c, Family::Chat),
+        "an ungated clear must not republish the chat family"
+    );
+    assert_eq!(
+        snap.chat(),
+        Some("get tutorial: 1000"),
+        "without a chat-generation move the stale ring survives"
+    );
+
+    c.gens.chat += 1;
+    assert!(snap.rebuild_family(&c, Family::Chat));
+    assert_eq!(snap.chat(), None, "the cleared ring publishes no head");
+    assert!(snap.chat_lines().is_empty(), "the cleared ring is empty");
+}
+
 /// `rebuild`/`rebuild_family` take `&Client`: a shared borrow suffices
 /// now that the ground-item sweep uses the immutable `LinkList` iterator.
 #[test]

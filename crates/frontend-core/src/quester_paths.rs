@@ -1,11 +1,10 @@
 //! Durable operator configuration and asynchronous reload for Quester Paths.
 
 use api::identity::{Scope, WorkIdentity};
-use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use crate::prefs::UiPreferences;
+use crate::prefs::{PreferenceError, PreferencePatch, UiPreferences};
 use host_play::local_state::Update;
 
 /// Shared settings label used by panel and TUI.
@@ -87,32 +86,28 @@ impl QuesterPathsView {
         preferences: &UiPreferences,
         before: &Self,
         after: &Self,
-    ) -> io::Result<Update> {
+    ) -> Result<Update, PreferenceError> {
         let enabled_changed = before.enabled != after.enabled;
         let folder_changed = before.folder != after.folder;
         if !enabled_changed && !folder_changed {
             return Ok(Update::Durable);
         }
-        let enabled = after.enabled;
-        let folder = after.folder.to_string_lossy().into_owned();
-        preferences.begin_update(move |document| {
-            let settings = document
-                .entry("quester_paths")
-                .or_insert_with(|| serde_json::json!({}));
-            if !settings.is_object() {
-                *settings = serde_json::json!({});
-            }
-            let settings = settings
-                .as_object_mut()
-                .expect("replacement quester_paths value is an object");
-            if enabled_changed {
-                settings.insert("enabled".into(), serde_json::Value::Bool(enabled));
-            }
-            if folder_changed {
-                settings.insert("folder".into(), serde_json::Value::String(folder.clone()));
-            }
-            Ok(())
-        })
+        let mut patch = PreferencePatch::default();
+        if enabled_changed {
+            patch.set_member(
+                &["quester_paths", "enabled"],
+                Some(serde_json::Value::Bool(after.enabled)),
+            )?;
+        }
+        if folder_changed {
+            patch.set_member(
+                &["quester_paths", "folder"],
+                Some(serde_json::Value::String(
+                    after.folder.to_string_lossy().into_owned(),
+                )),
+            )?;
+        }
+        preferences.begin_patch(patch)
     }
 
     /// Apply the durable source to the process-wide registry configuration.
@@ -331,9 +326,8 @@ impl QuesterPathsController {
     }
 
     /// Persist (when requested), apply and reload a changed source. The
-    /// settings apply once the write is accepted; a write still queued
-    /// when the bounded wait ends comes back [`Update::Queued`] for the
-    /// command to settle from.
+    /// settings apply once the write is accepted. A pending write returns
+    /// [`Update::Queued`] for the command to settle from the service-owned result.
     pub(crate) fn apply_changed(
         &mut self,
         preferences: &UiPreferences,

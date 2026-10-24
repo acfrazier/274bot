@@ -441,6 +441,15 @@ pub struct TuiSession {
     /// text, so a result is copied there only when it changed.
     shown_result: Option<(Option<api::identity::RequestId>, String)>,
     persist_ui: bool,
+    preferences_adopted: bool,
+    /// The retained core error last projected, so expiry does not show it again.
+    shown_preference_error: Option<String>,
+    /// The latest log toggle whose existing status still needs its settled sink.
+    session_log_status_request: Option<api::identity::RequestId>,
+    /// Interactive startup's deferred load/login and focus request.
+    startup_focus: Option<String>,
+    /// The operator superseded only the focus part of `startup_focus`.
+    startup_focus_cancelled: bool,
     background_bots_acked: bool,
     ack_checked_at: Option<Instant>,
     /// Background count and resource generation the notice was built for.
@@ -634,6 +643,7 @@ impl TuiSession {
         let preferences = core
             .preferences()
             .expect("the session's local state was bound just now");
+        let preferences_adopted = preferences.ready();
         // The bound operator preferences (the durable walk globals and
         // their store, the manual-movement pause) become the session's;
         // the app reads its walk-permission view itself when it binds them.
@@ -680,6 +690,11 @@ impl TuiSession {
             shown_result: None,
             copied_capacity: None,
             persist_ui: true,
+            preferences_adopted,
+            shown_preference_error: None,
+            session_log_status_request: None,
+            startup_focus: None,
+            startup_focus_cancelled: false,
             background_bots_acked: background_ack,
             ack_checked_at: Some(Instant::now()),
             notice_sig: None,
@@ -1070,6 +1085,11 @@ impl TuiSession {
             }
         };
         if let Some(removal) = submitted.removal() {
+            if self.startup_focus.as_deref() == Some(name) {
+                self.cancel_startup_request();
+            } else if removal.reselected().is_some() || removal.selection_cleared() {
+                self.cancel_startup_focus();
+            }
             if let Some(next) = removal.reselected() {
                 app.focused = app.names.iter().position(|n| n == next);
             } else if removal.selection_cleared() {
@@ -1111,8 +1131,30 @@ impl TuiSession {
         added
     }
 
+    /// Supersede only focus; the deferred startup load and login remain.
+    fn cancel_startup_focus(&mut self) {
+        if self.startup_focus.is_some() {
+            self.startup_focus_cancelled = true;
+        }
+    }
+
+    /// Drop the deferred request when its target no longer exists.
+    fn cancel_startup_request(&mut self) {
+        self.startup_focus = None;
+        self.startup_focus_cancelled = false;
+    }
+
+    fn queue_startup_focus(&mut self, name: String) {
+        self.startup_focus = Some(name);
+        self.startup_focus_cancelled = false;
+    }
+
     /// Select `name` (pure bookkeeping: never a spawn or login).
     fn focus(&mut self, name: &str) {
+        // Fleet, keyboard, and saved-profile selection share this boundary.
+        // An operator choice supersedes startup focus without dropping its
+        // readiness-gated load and login.
+        self.cancel_startup_focus();
         if let Err(error) = self.submit(OperatorCommand::Select, Targets::Profile(name)) {
             self.error = Some(error);
         }
@@ -2120,8 +2162,8 @@ impl TuiSession {
     }
 
     /// Settle a New profile save the writer has finished: a durable
-    /// one closes the overlay and loads, logs in and focuses the new
-    /// profile (the boot's own landing for its first profile); a
+    /// one closes the overlay and queues its startup focus. The pump
+    /// loads and logs in through the preference-readiness gate. A
     /// failed one keeps the form and its draft, with the failure in
     /// the form's notice. Runs from the pump in place of the settings
     /// popup's settle while the overlay is open: the two forms are
@@ -2155,8 +2197,7 @@ impl TuiSession {
             .profiles()
             .map(|p| p.username().to_string())
             .collect();
-        self.load_and_login(&pending);
-        self.focus(&pending);
+        self.queue_startup_focus(pending);
     }
 
     fn import_rs2b0t_catalog(&mut self, app: &mut TuiApp, root: &Path) -> Result<(), String> {
@@ -2407,12 +2448,18 @@ impl TuiSession {
             return;
         };
         let command = plan.command();
+        let selects =
+            plan.action() == frontend_core::FleetAction::Login && self.core.selected().is_none();
         let assigns = matches!(
             plan.action(),
             frontend_core::FleetAction::Assign | frontend_core::FleetAction::AssignRestart
         );
         match self.submit_raw_with(app, command, Targets::Plan) {
             Ok(_) => {
+                // The core may select the first member during Fleet Log in.
+                if selects && self.core.selected().is_some() {
+                    self.cancel_startup_focus();
+                }
                 // A new result replaces the last one, even with the same
                 // text and no command record (two emptied plans).
                 self.shown_result = None;
@@ -2916,7 +2963,7 @@ impl TuiSession {
     fn project_walk_globals(&mut self, app: &mut TuiApp) {
         let dirty = std::mem::take(&mut app.nav_preferences_dirty);
         if !dirty.is_empty() && self.persist_ui {
-            self.persist_walk_globals(app);
+            self.persist_walk_globals(app, &dirty);
         }
         app.refresh_walk_permissions();
         self.core.refresh_walk_globals();
@@ -2925,50 +2972,49 @@ impl TuiSession {
     /// One row per walk permission the operator changed since the last
     /// durable read: the buffer (`app.nav`, the acknowledgements) against
     /// the projection (`app.walk_permissions`).
-    fn persist_walk_globals(&mut self, app: &mut TuiApp) {
+    fn persist_walk_globals(&mut self, app: &mut TuiApp, dirty: &[frontend_core::NavPreference]) {
         use frontend_core::NavPreference;
-        let before = app.walk_permissions;
         let after = frontend_core::WalkGlobalsView::new(
             app.nav,
             app.script_scope_notice_ack,
             app.survivable_routing_notice_ack,
         );
-        let (was, now) = (before.globals(), after.globals());
-        let changes = [
-            (was.allow_teleports() != now.allow_teleports()).then_some(
-                OperatorCommand::SetNavPreference(
-                    NavPreference::AllowTeleports,
-                    now.allow_teleports(),
-                ),
-            ),
-            (was.allow_wilderness() != now.allow_wilderness()).then_some(
-                OperatorCommand::SetNavPreference(
-                    NavPreference::AllowWilderness,
-                    now.allow_wilderness(),
-                ),
-            ),
-            (was.allow_bank_fetch() != now.allow_bank_fetch()).then_some(
-                OperatorCommand::SetNavPreference(
-                    NavPreference::AllowBankFetch,
-                    now.allow_bank_fetch(),
-                ),
-            ),
-            (was.danger_level() != now.danger_level())
-                .then_some(OperatorCommand::SetDangerLevel(now.danger_level())),
-            (before.script_scope_notice_ack() != after.script_scope_notice_ack()).then_some(
-                OperatorCommand::SetNavPreference(
-                    NavPreference::ScriptScopeNoticeAck,
-                    after.script_scope_notice_ack(),
-                ),
-            ),
-            (before.survivable_routing_notice_ack() != after.survivable_routing_notice_ack())
-                .then_some(OperatorCommand::SetNavPreference(
-                    NavPreference::SurvivableRoutingNoticeAck,
-                    after.survivable_routing_notice_ack(),
-                )),
-        ];
+        let now = after.globals();
+        let mut danger_sent = false;
         let mut failure = None;
-        for command in changes.into_iter().flatten() {
+        for preference in dirty {
+            let command = match preference {
+                NavPreference::AllowTeleports => {
+                    OperatorCommand::SetNavPreference(*preference, now.allow_teleports())
+                }
+                NavPreference::AllowWilderness => {
+                    OperatorCommand::SetNavPreference(*preference, now.allow_wilderness())
+                }
+                NavPreference::AllowBankFetch => {
+                    OperatorCommand::SetNavPreference(*preference, now.allow_bank_fetch())
+                }
+                NavPreference::AllowDangerZones | NavPreference::SurvivableRouting => {
+                    if danger_sent {
+                        continue;
+                    }
+                    danger_sent = true;
+                    OperatorCommand::SetDangerLevel(now.danger_level())
+                }
+                NavPreference::ScriptScopeNoticeAck => {
+                    OperatorCommand::SetNavPreference(*preference, after.script_scope_notice_ack())
+                }
+                NavPreference::SurvivableRoutingNoticeAck => OperatorCommand::SetNavPreference(
+                    *preference,
+                    after.survivable_routing_notice_ack(),
+                ),
+                NavPreference::PauseScriptOnManualWalkAbort => OperatorCommand::SetNavPreference(
+                    *preference,
+                    app.pause_script_on_manual_walk_abort,
+                ),
+                NavPreference::ShowSpecialAreas => {
+                    OperatorCommand::SetNavPreference(*preference, app.map.layers.wilderness)
+                }
+            };
             if let Err(error) = self.submit_with(app, command, Targets::Application) {
                 failure = Some(error);
             }
@@ -3145,10 +3191,50 @@ impl TuiSession {
         self.error_expiry.resolve(&mut app.error, |_| met);
     }
 
+    /// Project each retained preference failure once, and clear it on recovery.
+    fn project_preference_error(&mut self, app: &mut TuiApp) {
+        let current = self.core.preference_error();
+        if self.shown_preference_error.as_deref() == current {
+            return;
+        }
+        if self.shown_preference_error.is_some() && app.error == self.shown_preference_error {
+            app.error = None;
+        }
+        self.shown_preference_error = current.map(str::to_owned);
+        if let Some(error) = &self.shown_preference_error {
+            app.error = Some(error.clone());
+        }
+    }
+
     /// Copy the focused slot's views into the app and poll the runner.
     fn pump(&mut self, app: &mut TuiApp) {
         self.expire_error(app, Instant::now());
         self.clear_resolved_error(app);
+        // A vault deletion can remove the target while preferences wait.
+        // Cancel the whole request, not just its focus, before any load.
+        if self
+            .startup_focus
+            .as_deref()
+            .is_some_and(|name| self.core.profile(name).is_none())
+        {
+            self.cancel_startup_request();
+        }
+        if !self.preferences_adopted && self.preferences.ready() {
+            self.preferences_adopted = true;
+            self.map_desk
+                .adopt_bake_choice(load_map_bake_choice(&self.preferences));
+            frontend_core::log_file::restore_session_log(&self.preferences);
+        }
+        if self.startup_focus.is_some() && self.preferences.ready() {
+            let cancel_focus = std::mem::take(&mut self.startup_focus_cancelled);
+            if let Some(focus) = self.startup_focus.take() {
+                self.load_and_login(&focus);
+                if !cancel_focus {
+                    self.focus(&focus);
+                }
+            }
+        }
+        self.project_preference_error(app);
         self.project_walk_globals(app);
         self.project_manual_walk_pause(app);
         self.project_quester_paths(app);
@@ -3189,6 +3275,8 @@ impl TuiSession {
         // core resolves every slot (and advances removals), then the TUI
         // commits the Starts that settled.
         self.core.poll();
+        self.refresh_session_log_status(app);
+        app.settings_state.preferences_pending = self.core.preferences_pending();
         self.poll_scripts(app);
         self.project_profile_import(app);
 
@@ -3891,17 +3979,35 @@ impl TuiSession {
     /// Turn the session log file on or off (`SetSessionLog`); the log
     /// pane's status line names the file the process holds open now.
     fn set_session_log(&mut self, app: &mut TuiApp, on: bool) {
-        let outcome = self.submit_with(
+        match self.submit_with(
             app,
             OperatorCommand::SetSessionLog(on),
             Targets::Application,
-        );
-        app.log.status = Some(match outcome {
-            Ok(_) => match frontend_core::log_file::session_log_path() {
-                Some(path) => format!("session file {}", path.display()),
-                None => "session file off".into(),
-            },
-            Err(error) => error,
+        ) {
+            Ok(submitted) => {
+                self.session_log_status_request = Some(submitted.request());
+                self.refresh_session_log_status(app);
+            }
+            Err(error) => app.log.status = Some(error),
+        }
+    }
+
+    fn refresh_session_log_status(&mut self, app: &mut TuiApp) {
+        let Some(request) = self.session_log_status_request else {
+            return;
+        };
+        if self
+            .core
+            .commands()
+            .report(request)
+            .is_some_and(|report| !report.is_settled())
+        {
+            return;
+        }
+        self.session_log_status_request = None;
+        app.log.status = Some(match frontend_core::log_file::session_log_path() {
+            Some(path) => format!("session file {}", path.display()),
+            None => "session file off".into(),
         });
     }
 
@@ -4057,8 +4163,10 @@ fn new_app(title: impl Into<String>, preferences: &UiPreferences) -> TuiApp {
 fn interactive_landing(session: &mut TuiSession, args: &Args) -> Result<TuiApp, String> {
     let focus = session.bootstrap_interactive_profiles(&args.users)?;
     if let Some(focus) = &focus {
-        session.load_and_login(focus);
         session.focus(focus);
+        // This is the automatic boot request, not an operator selection.
+        // Queue its readiness-gated load after establishing the initial view.
+        session.queue_startup_focus(focus.clone());
     }
     let mut app = new_app(
         format!(

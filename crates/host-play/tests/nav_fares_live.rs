@@ -134,12 +134,7 @@ fn live_manual_walk_two_fares_sixty_to_zero_and_thirty_refused() {
     let coin_id = data.item_by_alias("coins").expect("content coin alias").id;
     let prefix = std::env::var("BOT_LIVE_NAME_PREFIX").expect("explicit name prefix");
     assert_eq!(prefix, "nf");
-    let stamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_millis()
-        % 100_000_000;
-    let names: [String; 2] = std::array::from_fn(|index| format!("{prefix}{stamp}{index}"));
+    let names = host_play::mint_live_names(2);
     let mut cells = Vec::new();
     // One seeded cell exercises refusal first, then successful execution.
     for (slot, initial_coins) in [30, 60].into_iter().enumerate() {
@@ -401,7 +396,9 @@ fn live_shilo_cart_ten_coins_to_zero() {
         .unwrap()
         .as_millis()
         % 100_000_000;
-    let account = format!("{prefix}{stamp}");
+    let account = host_play::mint_live_names(1)
+        .pop()
+        .expect("one live account");
     let evidence = evidence_root.join(format!("shilo-cart-{account}-{stamp}"));
     std::fs::create_dir_all(&evidence).unwrap();
     let mut client = template.prepare_client(1, true).unwrap();

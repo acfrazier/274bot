@@ -84,17 +84,22 @@ fn session_log_writer_waits_for_peer_nav_transaction_and_preserves_its_grant() {
         done_tx.send(result).unwrap();
     });
     started_rx.recv().unwrap();
-    let premature = done_rx.recv_timeout(Duration::from_millis(100));
+    let admitted = done_rx
+        .recv_timeout(Duration::from_secs(4))
+        .expect("async admission finishes while the peer holds the file lock")
+        .unwrap();
+    let crate::prefs::Update::Queued(mut watch) = admitted else {
+        panic!("the locked save must remain pending");
+    };
+    assert!(watch.poll().is_none(), "the lock must prevent durability");
+    let held: serde_json::Value = serde_json::from_slice(&std::fs::read(&prefs).unwrap()).unwrap();
+    assert!(held.get(SESSION_LOG_KEY).is_none());
     // The lock represents the peer's transaction. Publish its grant before
     // releasing it, so the log writer must merge from this newer document.
     vault::write_private_file(&prefs, br#"{"nav":{"allow_danger_zones":true}}"#).unwrap();
     lock.unlock().unwrap();
     writer.join().unwrap();
-    assert!(
-        matches!(premature, Err(std::sync::mpsc::RecvTimeoutError::Timeout)),
-        "the log-pane writer bypassed the shared preference lock"
-    );
-    crate::prefs::settled_for_test(done_rx.recv().unwrap()).unwrap();
+    crate::prefs::settled_for_test(Ok(crate::prefs::Update::Queued(watch))).unwrap();
     let saved: serde_json::Value = serde_json::from_slice(&std::fs::read(&prefs).unwrap()).unwrap();
     assert_eq!(saved["nav"]["allow_danger_zones"], true);
     assert_eq!(saved[SESSION_LOG_KEY], true);

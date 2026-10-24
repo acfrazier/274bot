@@ -2084,6 +2084,7 @@ fn a_preference_write_sets_one_member_and_keeps_every_other() {
         br#"{"last_focus":"alice","nav":{"allow_teleports":true,"custom":{"keep":7}},"collapsed":{}}"#,
     );
     let audits = audits(preferences.service());
+    preferences.reload().unwrap();
     assert_eq!(preferences.value("last_focus").unwrap(), "alice");
 
     set_patiently(&preferences, "map_bake", serde_json::json!("always"));
@@ -2325,6 +2326,7 @@ fn a_preferences_file_the_service_cannot_hold_whole_is_never_rewritten() {
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     let document = br#"{"last_focus":"alice","not a key":1}"#;
     write_private(&path, document);
+    preferences.reload().unwrap();
     assert_eq!(preferences.value("last_focus").unwrap(), "alice");
     assert!(preferences
         .set("map_bake", serde_json::json!("always"))
@@ -2725,6 +2727,7 @@ fn preferences_refused_for_size_or_an_unrepresentable_member_are_never_quarantin
     let unrepresentable = br#"{"last_focus":"alice","nav.v2":{"zones":"all"}}"#;
     write_private(&path, unrepresentable);
     let notices = quarantine_lines(preferences.service());
+    preferences.reload().unwrap();
     assert_eq!(preferences.value("last_focus").unwrap(), "alice");
     assert!(preferences
         .set("map_bake", serde_json::json!("always"))
@@ -2754,6 +2757,7 @@ fn a_preferences_version_marker_is_kept_by_a_save_like_any_other_member() {
         br#"{"schema_version":99,"last_focus":"alice","future_preference":{"enabled":true}}"#,
     );
     let notices = quarantine_lines(preferences.service());
+    preferences.reload().unwrap();
     assert_eq!(preferences.value("last_focus").unwrap(), "alice");
     preferences
         .set("map_bake", serde_json::json!("always"))
@@ -3553,13 +3557,10 @@ fn a_rename_apart_whose_copy_cannot_be_made_leaves_the_file_untouched_and_refuse
     );
 }
 
-/// T3.3 r4: an operator command's preferences update whose bounded wait
-/// ends while the writer thread still holds its first edit comes back
-/// queued, not failed. Polling it submits the update's later edit once
-/// the first is durable, and both land: a slow disk delays the outcome
-/// and loses nothing.
+/// A compound preference patch remains queued while its file publication is
+/// held. The service owns its whole intent; polling only observes the outcome.
 #[test]
-fn a_queued_preferences_update_is_finished_by_polling_and_loses_no_edit() {
+fn a_queued_preferences_update_finishes_without_losing_compound_intent() {
     let scratch = IsolatedEnv::enter("local-state-t33-queued-update");
     let preferences = preferences_at(&scratch, "queued");
     preferences.reload().unwrap();
@@ -3576,13 +3577,14 @@ fn a_queued_preferences_update_is_finished_by_polling_and_loses_no_edit() {
             vault::write_private_file(path, bytes)
         }));
 
-    let update = preferences
-        .begin_update(|document| {
-            document.insert("a".into(), serde_json::json!(1));
-            document.insert("b".into(), serde_json::json!(2));
-            Ok(())
-        })
+    let mut patch = PreferencePatch::new();
+    patch
+        .set_member(&["a"], Some(serde_json::json!(1)))
         .unwrap();
+    patch
+        .set_member(&["b"], Some(serde_json::json!(2)))
+        .unwrap();
+    let update = preferences.begin_patch(patch).unwrap();
     let Update::Queued(mut queued) = update else {
         panic!("the held first write outlasts the bounded wait: {update:?}");
     };
@@ -3603,4 +3605,669 @@ fn a_queued_preferences_update_is_finished_by_polling_and_loses_no_edit() {
         serde_json::from_slice(&std::fs::read(preferences.path()).unwrap()).unwrap();
     assert_eq!(saved, serde_json::json!({"a": 1, "b": 2}));
     assert_eq!(preferences.value("b").unwrap(), 2);
+}
+#[test]
+fn preference_patch_rebases_nested_intent_and_refreshes_walk_projection() {
+    let scratch = IsolatedEnv::enter("local-state-preference-patch-rebase");
+    let preferences = preferences(&scratch);
+    let path = preferences.path();
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    write_private(
+        &path,
+        br#"{"nav":{"allow_teleports":false,"allow_wilderness":false},"theme":"dark"}"#,
+    );
+    preferences.reload().unwrap();
+
+    let before = preferences.document().unwrap();
+    let mut after = before.as_ref().clone();
+    after["nav"]["allow_teleports"] = serde_json::json!(true);
+    after["theme"] = serde_json::json!({"density": "compact"});
+    let patch = PreferencePatch::between(&before, &after).unwrap();
+
+    // The worker observes this outside edit before it applies member intent.
+    write_private(
+        &path,
+        br#"{"nav":{"allow_teleports":false,"allow_wilderness":true},"theme":"light","outside":7}"#,
+    );
+    let audits = audits(preferences.service());
+    let update = preferences.begin_patch(patch).unwrap();
+    match update {
+        Update::Durable => {}
+        Update::Queued(mut watch) => watch
+            .wait(WAIT)
+            .expect("the accepted patch settles")
+            .expect("the accepted patch is durable"),
+    }
+
+    let saved = preferences.document().unwrap();
+    assert_eq!(saved["nav"]["allow_teleports"], true);
+    assert_eq!(saved["nav"]["allow_wilderness"], true);
+    assert_eq!(saved["theme"], serde_json::json!({"density": "compact"}));
+    assert_eq!(saved["outside"], 7);
+    assert!(preferences.walk_globals().unwrap().allow_teleports);
+    let noop = preferences
+        .begin_set("theme", saved["theme"].clone())
+        .unwrap();
+    if let Update::Queued(mut queued) = noop {
+        queued
+            .wait(WAIT)
+            .expect("the no-op request settles")
+            .expect("the no-op request remains durable");
+    }
+    let audits = audits.lock().unwrap();
+    assert_eq!(audits.len(), 1);
+    assert_eq!(audits[0].action(), CommitAction::PreferencesWrite);
+}
+
+#[test]
+fn malformed_walk_projection_reports_safe_typed_cause() {
+    let scratch = IsolatedEnv::enter("local-state-walk-projection-error");
+    let preferences = preferences(&scratch);
+    write_private(
+        &preferences.path(),
+        br#"{"nav":{"allow_teleports":"private-sensitive-value"}}"#,
+    );
+    preferences.reload().unwrap();
+
+    let error = preferences
+        .walk_globals()
+        .expect_err("a non-boolean walk setting is not a typed view");
+    assert!(error.path().ends_with("panel-ui.json"));
+    assert!(error.cause().contains("nav.allow_teleports"));
+    assert!(!error.cause().contains("private-sensitive-value"));
+    assert_eq!(error.code(), None);
+}
+
+#[test]
+fn dropping_preference_watch_keeps_service_owned_request_and_result() {
+    let scratch = IsolatedEnv::enter("local-state-preference-watch-drop");
+    let preferences = preferences(&scratch);
+    preferences.reload().unwrap();
+    let service = Arc::clone(preferences.service());
+    let (entered_tx, entered_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let release_rx = std::sync::Mutex::new(release_rx);
+    let first = AtomicBool::new(true);
+    service.set_write_stall_for_test(Arc::new(move || {
+        if first.swap(false, Ordering::SeqCst) {
+            entered_tx.send(()).unwrap();
+            release_rx.lock().unwrap().recv().unwrap();
+        }
+    }));
+
+    let Update::Queued(watch) = preferences
+        .begin_set("nav", serde_json::json!({"allow_wilderness": true}))
+        .unwrap()
+    else {
+        panic!("a non-empty patch is service-owned")
+    };
+    let request = watch.request_id();
+    entered_rx
+        .recv_timeout(WAIT)
+        .expect("the writer reaches the held request");
+    drop(watch);
+    drop(preferences);
+
+    release_tx.send(()).unwrap();
+    let preferences = service.preferences();
+    let mut watch = preferences
+        .watch(request)
+        .expect("the result remains watchable");
+    assert_eq!(
+        watch.wait(WAIT),
+        Some(Ok(())),
+        "dropping the original watch does not cancel its accepted request"
+    );
+    assert!(preferences.unprojected_requests().is_empty());
+    assert!(matches!(
+        service.request_state(request),
+        RequestState::Settled(Settlement::Completed(_))
+    ));
+    assert_eq!(
+        preferences.value("nav"),
+        Some(serde_json::json!({"allow_wilderness": true}))
+    );
+}
+
+#[test]
+fn compound_preference_patch_rebases_after_cold_hydration_and_frontend_drop() {
+    let scratch = IsolatedEnv::enter("local-state-compound-preference-drop");
+    let root = StateRoot::new(scratch.home.join(".274bot"));
+    let path = root.preferences_file();
+    write_private(
+        &path,
+        br#"{"nav":{"allow_teleports":false,"allow_wilderness":false},"theme":"dark"}"#,
+    );
+
+    let (entered_tx, entered_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let release_rx = std::sync::Mutex::new(release_rx);
+    let first = AtomicBool::new(true);
+    let service = LocalStateService::open_process_with_read_stall_for_test(
+        root.clone(),
+        Arc::new(move || {
+            if first.swap(false, Ordering::SeqCst) {
+                entered_tx.send(()).unwrap();
+                let _ = release_rx.lock().unwrap().recv();
+            }
+        }),
+    );
+    let preferences = service.preferences();
+    let audits = audits(&service);
+    entered_rx
+        .recv_timeout(WAIT)
+        .expect("the worker is held before cold hydration");
+
+    let before = serde_json::json!({
+        "nav": {"allow_teleports": false, "allow_wilderness": false},
+        "theme": "dark"
+    });
+    let after = serde_json::json!({
+        "nav": {"allow_teleports": true, "allow_wilderness": false},
+        "theme": {"density": "compact"}
+    });
+    let patch = PreferencePatch::between(
+        before.as_object().expect("an object"),
+        after.as_object().expect("an object"),
+    )
+    .unwrap();
+    let Update::Queued(mut watch) = preferences.begin_patch(patch).unwrap() else {
+        panic!("a compound patch remains service-owned while hydration is held");
+    };
+    let request = watch.request_id();
+    assert!(watch.poll().is_none(), "the held read has not completed");
+
+    // An outside edit lands after the caller formed its patch but before the
+    // worker reads the current document.
+    write_private(
+        &path,
+        br#"{"nav":{"allow_teleports":false,"allow_wilderness":true},"theme":"light","outside":7}"#,
+    );
+    drop(watch);
+    drop(preferences);
+    release_tx.send(()).unwrap();
+
+    let preferences = service.preferences();
+    let mut watch = preferences
+        .watch(request)
+        .expect("the accepted compound request remains service-owned");
+    assert_eq!(
+        watch.wait(WAIT),
+        Some(Ok(())),
+        "the rebased compound patch has one durable result"
+    );
+    assert!(preferences.unprojected_requests().is_empty());
+    assert!(matches!(
+        service.request_state(request),
+        RequestState::Settled(Settlement::Completed(_))
+    ));
+    assert_eq!(audits.lock().unwrap().len(), 1);
+    let expected = serde_json::json!({
+        "nav": {"allow_teleports": true, "allow_wilderness": true},
+        "theme": {"density": "compact"},
+        "outside": 7
+    });
+    assert_eq!(
+        preferences.document().unwrap().as_ref(),
+        expected.as_object().expect("an object")
+    );
+    assert!(preferences.walk_globals().unwrap().allow_teleports);
+    assert!(preferences.walk_globals().unwrap().allow_wilderness);
+
+    drop(watch);
+    drop(preferences);
+    drop(service);
+    let reopened = LocalStateService::open_process(root);
+    let preferences = reopened.preferences();
+    preferences.reload().unwrap();
+    assert_eq!(
+        preferences.document().unwrap().as_ref(),
+        expected.as_object().expect("an object"),
+        "reopening reads the complete compound publication"
+    );
+}
+
+#[test]
+fn cold_preference_document_and_walk_fail_before_hydration() {
+    let scratch = IsolatedEnv::enter("local-state-preference-cold-read");
+    let (entered_tx, entered_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let release_rx = std::sync::Mutex::new(release_rx);
+    let first = AtomicBool::new(true);
+    let service = LocalStateService::open_process_with_read_stall_for_test(
+        StateRoot::new(scratch.home.join(".274bot")),
+        Arc::new(move || {
+            if first.swap(false, Ordering::SeqCst) {
+                entered_tx.send(()).unwrap();
+                release_rx.lock().unwrap().recv().unwrap();
+            }
+        }),
+    );
+    let preferences = service.preferences();
+    entered_rx
+        .recv_timeout(WAIT)
+        .expect("the worker is held before the first hydration read");
+
+    assert!(preferences.document().unwrap_err().is_not_ready());
+    assert!(preferences.walk_globals().unwrap_err().is_not_ready());
+    assert_eq!(preferences.value("nav"), None);
+
+    // Slots copy five flags or one shared handle, never a preference document.
+    assert!(std::mem::size_of::<crate::WalkGlobals>() <= 8);
+    assert!(std::mem::size_of::<Preferences>() <= std::mem::size_of::<Arc<()>>());
+    let assert_cached_reads_allocate_nothing = || {
+        let allocations = allocation_counter::measure(|| {
+            for _ in 0..256 {
+                let _ = std::hint::black_box(preferences.document());
+                let _ = std::hint::black_box(preferences.walk_globals());
+            }
+        });
+        assert_eq!(allocations.count_total, 0, "{allocations:?}");
+        assert_eq!(allocations.bytes_total, 0, "{allocations:?}");
+    };
+    assert_cached_reads_allocate_nothing();
+
+    release_tx.send(()).unwrap();
+    preferences.reload().unwrap();
+    assert!(preferences.document().unwrap().is_empty());
+    assert!(
+        !preferences.path().exists(),
+        "readiness does not save defaults"
+    );
+    assert_cached_reads_allocate_nothing();
+
+    write_private(&preferences.path(), b"{not-json");
+    assert!(preferences.reload().is_err());
+    assert!(preferences.document().is_err());
+    assert!(preferences.walk_globals().is_err());
+    assert_cached_reads_allocate_nothing();
+}
+
+#[test]
+fn preference_results_outlive_neutral_history_and_bound_new_admission() {
+    let scratch = IsolatedEnv::enter("local-state-preference-result-bound");
+    let preferences = preferences(&scratch);
+    preferences.reload().unwrap();
+    let service = Arc::clone(preferences.service());
+    let (entered_tx, entered_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let release_rx = std::sync::Mutex::new(release_rx);
+    let first = AtomicBool::new(true);
+    service.set_write_stall_for_test(Arc::new(move || {
+        if first.swap(false, Ordering::SeqCst) {
+            entered_tx.send(()).unwrap();
+            let _ = release_rx.lock().unwrap().recv();
+        }
+    }));
+    let Update::Queued(first_watch) = preferences.begin_set("first", true.into()).unwrap() else {
+        panic!("a changed preference is accepted");
+    };
+    entered_rx.recv_timeout(WAIT).unwrap();
+    let mut watches = vec![first_watch];
+    for index in 0..OPERATOR_QUEUE_CAP {
+        let Update::Queued(watch) = preferences
+            .begin_set(&format!("queued_{index}"), true.into())
+            .unwrap()
+        else {
+            panic!("each changed preference is accepted");
+        };
+        watches.push(watch);
+    }
+    assert!(matches!(
+        preferences
+            .begin_set("queue_overflow", true.into())
+            .unwrap_err()
+            .code(),
+        Some(ErrorCode::Busy { .. })
+    ));
+    let first_request = watches[0].request_id();
+    let last_request = watches.last().unwrap().request_id();
+    release_tx.send(()).unwrap();
+    assert!(matches!(
+        service.wait_request(last_request, WAIT),
+        RequestState::Settled(Settlement::Completed(_))
+    ));
+    assert!(matches!(
+        service.request_state(first_request),
+        RequestState::Forgotten
+    ));
+    assert_eq!(
+        preferences.unprojected_requests().len(),
+        PREFERENCE_WATCH_CAP
+    );
+    assert!(preferences.watch(first_request).is_some());
+    assert!(matches!(
+        preferences
+            .begin_set("result_overflow", true.into())
+            .unwrap_err()
+            .code(),
+        Some(ErrorCode::Busy { .. })
+    ));
+    assert_eq!(watches[0].wait(WAIT), Some(Ok(())));
+    assert!(preferences.watch(first_request).is_none());
+    let Update::Queued(mut next) = preferences.begin_set("next", true.into()).unwrap() else {
+        panic!("projecting a result releases one admission credit");
+    };
+    for watch in watches.iter_mut().skip(1) {
+        assert_eq!(watch.wait(WAIT), Some(Ok(())));
+    }
+    assert_eq!(next.wait(WAIT), Some(Ok(())));
+    assert!(preferences.unprojected_requests().is_empty());
+}
+
+#[test]
+fn preference_byte_limit_refuses_before_queue_capacity_and_releases_credit() {
+    let scratch = IsolatedEnv::enter("local-state-preference-byte-bound");
+    let preferences = preferences(&scratch);
+    preferences.reload().unwrap();
+    let (entered_tx, entered_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let release_rx = std::sync::Mutex::new(release_rx);
+    let first = AtomicBool::new(true);
+    preferences
+        .service()
+        .set_write_stall_for_test(Arc::new(move || {
+            if first.swap(false, Ordering::SeqCst) {
+                entered_tx.send(()).unwrap();
+                let _ = release_rx.lock().unwrap().recv();
+            }
+        }));
+    let bulk = || {
+        serde_json::Value::Object(
+            (0..200)
+                .map(|index| {
+                    (
+                        format!("member_{index}"),
+                        serde_json::Value::String("x".repeat(3000)),
+                    )
+                })
+                .collect(),
+        )
+    };
+    let Update::Queued(mut watch) = preferences.begin_set("bulk", bulk()).unwrap() else {
+        panic!("one bounded large patch is accepted");
+    };
+    entered_rx.recv_timeout(WAIT).unwrap();
+    assert!(matches!(
+        preferences.begin_set("second", bulk()).unwrap_err().code(),
+        Some(ErrorCode::Validation {
+            reason: ValidationReason::TooLong,
+            ..
+        })
+    ));
+    let mut small = Vec::new();
+    for index in 0..OPERATOR_QUEUE_CAP {
+        let Update::Queued(queued) = preferences
+            .begin_set(&format!("small_{index}"), true.into())
+            .expect("small patches still fit beside the held large intent")
+        else {
+            panic!("the held writer keeps every small patch queued");
+        };
+        small.push(queued);
+    }
+    assert_eq!(
+        preferences
+            .begin_set("queue_overflow", true.into())
+            .unwrap_err()
+            .code(),
+        Some(ErrorCode::Busy {
+            domain: LocalStateDomain::Preferences
+        }),
+        "queue capacity is separate from aggregate intent bytes"
+    );
+    assert!(PreferencePatch::set(
+        "unrepresentable",
+        serde_json::Value::String("x".repeat(api::local_state::MAX_PREF_VALUE_BYTES + 1)),
+    )
+    .is_err());
+    release_tx.send(()).unwrap();
+    assert_eq!(watch.wait(WAIT), Some(Ok(())));
+    for queued in &mut small {
+        assert_eq!(queued.wait(WAIT), Some(Ok(())));
+    }
+    let Update::Queued(mut large_after_release) = preferences.begin_set("bulk", bulk()).unwrap()
+    else {
+        panic!("settlement releases enough intent bytes for another large patch");
+    };
+    assert_eq!(large_after_release.wait(WAIT), Some(Ok(())));
+    let Update::Queued(mut next) = preferences.begin_set("next", true.into()).unwrap() else {
+        panic!("settlement releases queued intent bytes");
+    };
+    assert_eq!(next.wait(WAIT), Some(Ok(())));
+    assert!(preferences.value("second").is_none());
+    assert_eq!(preferences.value("next"), Some(true.into()));
+    for index in 0..OPERATOR_QUEUE_CAP {
+        assert_eq!(
+            preferences.value(&format!("small_{index}")),
+            Some(true.into())
+        );
+    }
+    assert!(preferences.value("queue_overflow").is_none());
+}
+
+#[test]
+fn fix_r1_shutdown_finishes_a_cold_preference_before_the_nonzero_bound() {
+    let scratch = IsolatedEnv::enter("local-state-preference-cold-shutdown-finish");
+    let root = StateRoot::new(scratch.home.join(".274bot"));
+    let (entered_tx, entered_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let release_rx = std::sync::Mutex::new(release_rx);
+    let first = AtomicBool::new(true);
+    let service = LocalStateService::open_process_with_read_stall_for_test(
+        root.clone(),
+        Arc::new(move || {
+            if first.swap(false, Ordering::SeqCst) {
+                entered_tx.send(()).unwrap();
+                let _ = release_rx.lock().unwrap().recv();
+            }
+        }),
+    );
+    service.set_shutdown_timeout(WAIT);
+    let commits = audits(&service);
+    let lines = terminals(&service);
+    let ledger = service.ledger();
+    entered_rx
+        .recv_timeout(WAIT)
+        .expect("the loadouts read holds the preferences store cold");
+    let preferences = service.preferences();
+    let mut patch =
+        PreferencePatch::member(&["nav", "allow_teleports"], Some(true.into())).unwrap();
+    patch
+        .set_member(&["nav", "allow_wilderness"], Some(true.into()))
+        .unwrap();
+    let Update::Queued(watch) = preferences.begin_patch(patch).unwrap() else {
+        panic!("the cold store accepts the compound preference patch");
+    };
+    let request = watch.request_id();
+    drop(watch);
+    drop(preferences);
+    let shutdown = std::thread::spawn(move || drop(service));
+    {
+        let deadline = Instant::now() + WAIT;
+        let mut state = ledger.0.state.lock();
+        while !state.shutdown {
+            assert!(
+                !ledger.0.wake.wait_until(&mut state, deadline).timed_out(),
+                "shutdown starts before the loadouts read is released"
+            );
+        }
+    }
+    release_tx.send(()).unwrap();
+    shutdown.join().unwrap();
+    assert!(ledger.wait_writer_exit(WAIT));
+    assert!(
+        matches!(
+            ledger.request_state(request),
+            RequestState::Settled(Settlement::Completed(_))
+        ),
+        "the accepted cold patch gets its terminal result before shutdown returns"
+    );
+    let state = ledger.0.state.lock();
+    let store = state.stores.get(&StoreKey::Preferences).unwrap();
+    assert_eq!(
+        store
+            .settled
+            .iter()
+            .filter(|entry| entry.request == request)
+            .count(),
+        1,
+        "the accepted patch settles exactly once"
+    );
+    assert!(state.preference_watches[&request].settlement.is_some());
+    drop(state);
+    let commits = commits.lock().unwrap();
+    assert_eq!(commits.len(), 1, "one saved-state info line");
+    assert_eq!(commits[0].identity().account().profile(), "operator");
+    assert_eq!(commits[0].action(), CommitAction::PreferencesWrite);
+    assert_eq!(commits[0].origin(), AuditOrigin::Submitted { request });
+    assert!(
+        lines.lock().unwrap().is_empty(),
+        "no duplicate terminal line"
+    );
+    let saved: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(root.preferences_file()).unwrap()).unwrap();
+    assert_eq!(
+        saved,
+        serde_json::json!({"nav":{"allow_teleports":true,"allow_wilderness":true}})
+    );
+}
+
+#[test]
+fn fix_r1_semantic_noop_rewrite_has_one_saved_state_info_line() {
+    let scratch = IsolatedEnv::enter("local-state-preference-noop-audit");
+    let preferences = preferences(&scratch);
+    let bytes = b"{ \"nav\" : { \"allow_teleports\" : true } }\n";
+    write_private(&preferences.path(), bytes);
+    preferences.reload().unwrap();
+    let commits = audits(preferences.service());
+    let publications = Arc::new(AtomicUsize::new(0));
+    let counted = Arc::clone(&publications);
+    preferences
+        .service()
+        .set_write_hook(Arc::new(move |path, bytes| {
+            counted.fetch_add(1, Ordering::SeqCst);
+            vault::write_private_file(path, bytes)
+        }));
+    let Update::Queued(mut watch) = preferences
+        .begin_patch(
+            PreferencePatch::member(&["nav", "allow_teleports"], Some(true.into())).unwrap(),
+        )
+        .unwrap()
+    else {
+        panic!("the semantic no-op is accepted");
+    };
+    assert_eq!(watch.wait(WAIT), Some(Ok(())));
+    assert_eq!(
+        publications.load(Ordering::SeqCst),
+        1,
+        "the file is rewritten"
+    );
+    let commits = commits.lock().unwrap();
+    assert_eq!(commits.len(), 1, "every actual rewrite logs one info line");
+    assert_eq!(commits[0].identity().account().profile(), "operator");
+    assert_eq!(commits[0].action(), CommitAction::PreferencesWrite);
+    let saved: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(preferences.path()).unwrap()).unwrap();
+    assert_eq!(saved, serde_json::json!({"nav":{"allow_teleports":true}}));
+}
+
+#[test]
+fn shutdown_cancels_a_cold_compound_preference_once_without_saving_defaults() {
+    let scratch = IsolatedEnv::enter("local-state-preference-cold-cancel");
+    let root = StateRoot::new(scratch.home.join(".274bot"));
+    let (entered_tx, entered_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let release_rx = std::sync::Mutex::new(release_rx);
+    let first = AtomicBool::new(true);
+    let service = LocalStateService::open_process_with_read_stall_for_test(
+        root.clone(),
+        Arc::new(move || {
+            if first.swap(false, Ordering::SeqCst) {
+                entered_tx.send(()).unwrap();
+                let _ = release_rx.lock().unwrap().recv();
+            }
+        }),
+    );
+    service.set_shutdown_timeout(Duration::ZERO);
+    let lines = terminals(&service);
+    let ledger = service.ledger();
+    entered_rx.recv_timeout(WAIT).unwrap();
+    let preferences = service.preferences();
+    let mut patch = PreferencePatch::member(&["first"], Some(1.into())).unwrap();
+    patch.set_member(&["second"], Some(2.into())).unwrap();
+    let Update::Queued(watch) = preferences.begin_patch(patch).unwrap() else {
+        panic!("the compound request is queued behind cold hydration");
+    };
+    let request = watch.request_id();
+    drop(watch);
+    drop(preferences);
+    drop(service);
+    assert_eq!(
+        ledger.request_state(request),
+        RequestState::Settled(Settlement::Cancelled(Cancellation::Shutdown))
+    );
+    release_tx.send(()).unwrap();
+    assert!(ledger.wait_writer_exit(WAIT));
+    assert_eq!(lines.lock().unwrap().len(), 1);
+    assert!(!root.preferences_file().exists());
+    let reopened = LocalStateService::open_process(root);
+    let preferences = reopened.preferences();
+    preferences.reload().unwrap();
+    assert!(preferences.document().unwrap().is_empty());
+    assert!(!preferences.path().exists());
+}
+
+#[test]
+fn nested_preference_intent_replaces_a_scalar_parent_without_losing_siblings() {
+    let scratch = IsolatedEnv::enter("local-state-preference-scalar-parent");
+    let preferences = preferences(&scratch);
+    write_private(&preferences.path(), br#"{"nav":7,"other":{"keep":true}}"#);
+    preferences.reload().unwrap();
+    let patch = PreferencePatch::member(&["nav", "allow_teleports"], Some(true.into())).unwrap();
+    let Update::Queued(mut watch) = preferences.begin_patch(patch).unwrap() else {
+        panic!("the scalar-to-object edit is accepted");
+    };
+    assert_eq!(watch.wait(WAIT), Some(Ok(())));
+    assert_eq!(
+        preferences.value("nav"),
+        Some(serde_json::json!({"allow_teleports":true}))
+    );
+    assert_eq!(
+        preferences.value("other"),
+        Some(serde_json::json!({"keep":true}))
+    );
+    let Update::Queued(mut watch) = preferences.begin_set("nav", 9.into()).unwrap() else {
+        panic!("the object-to-scalar edit is accepted");
+    };
+    assert_eq!(watch.wait(WAIT), Some(Ok(())));
+    assert_eq!(preferences.value("nav"), Some(9.into()));
+    assert!(preferences.walk_globals().is_err());
+    assert_eq!(
+        preferences.value("other"),
+        Some(serde_json::json!({"keep":true}))
+    );
+}
+
+#[test]
+fn preference_audit_is_bounded_redacted_and_absent_for_a_noop() {
+    let before = serde_json::json!({"nav":{"allow_teleports":false},"quester_paths":{"folder":"old-private-path"}});
+    let after = serde_json::json!({"nav":{"allow_teleports":true},"quester_paths":{"folder":"new-private-path"},"password":"private-password"});
+    let before = before.as_object().unwrap();
+    let after = after.as_object().unwrap();
+    let summary = preference_audit_summary(before, after).unwrap().text;
+    assert!(summary.contains("nav.allow_teleports"));
+    assert!(summary.contains("false") && summary.contains("true"));
+    assert!(!summary.contains("old-private-path"));
+    assert!(!summary.contains("new-private-path"));
+    assert!(!summary.contains("private-password"));
+    assert!(preference_audit_summary(after, after).is_none());
+    let wide = (0..1000)
+        .map(|index| (format!("member_{index}_{}", "x".repeat(100)), true.into()))
+        .collect();
+    let summary = preference_audit_summary(&serde_json::Map::new(), &wide)
+        .unwrap()
+        .text;
+    assert!(summary.len() <= PREFERENCE_AUDIT_MAX_BYTES);
+    assert!(summary.contains(" omitted"));
+    assert!(summary.split("; ").count() <= PREFERENCE_AUDIT_MAX_CHANGES + 1);
 }

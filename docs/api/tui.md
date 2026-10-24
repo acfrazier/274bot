@@ -53,6 +53,12 @@ the account's own password. Enter on the password field saves through
 `CreateProfile`. The new profile then loads, logs in and takes focus.
 The same form opens later with `N` in the Fleet pane or the palette's
 **New profile**.
+Startup loading waits for saved preferences.
+An explicit bot selection before preferences are ready cancels only the automatic startup focus.
+The boot profile still loads and logs in.
+A newly saved profile also keeps its load and login. If it is saved from **New profile** while the boot load still waits for preferences, it replaces that boot load: the new profile loads and logs in, and the boot profile does not (load it from the Fleet pane).
+Fleet **Log in** follows the same rule when it selects the first loaded bot.
+Removing or deleting the pending startup profile cancels its load as well.
 
 `--map-bundle OUT --revision 289 --cache JAG_DIR --unpack SNAPSHOT_ROOT` is a
 release-packaging run, not a panel: it bakes the WalkTo map catalogue and
@@ -90,6 +96,11 @@ label in its border. Everything is plain text as well as colour.
 | Chat | game chat ring and NPC dialogue Continue / Answer; a recording script's paint shows here instead (`p` toggles back), with its buttons as `[N] label` rows. A script that uses the standard paint-controls helper shows working **Pause** (reads **Resume** while paused) and **Stop** rows; they act on the bot whose paint is shown and are dimmed when the run cannot take them ([script.md](script.md)). An open dialogue marks the tab `Chat!` and the BOT line `DIALOGUE`. |
 | Logs | the shared structured log (same filters, search, follow, Save and session file as the panel) |
 | Settings | popup: `random_events`, `lamp_skill`, `lamp_auto`, `allow teleports` / `allow wilderness` / `allow bank fetch` / **Danger routing** (Never, When survivable (the default), Always; When survivable currently acts as Never), **Pause script on manual movement**, **map bake** `ask`/`always` (`map_bake` in `panel-ui.json`), **memory** `lowmem` / `highmem` (persisted on the profile), Quester paths gate + folder + reload. A memory switch queues the entire mode for the **next login after a clean logout**: live textures, tabs, music and sound stay unchanged. A socket reconnect, automatic or explicit **Log in** after a dirty drop, keeps the applied mode and leaves the change queued. Settings and Overview show the applied and queued modes; logged-in slots offer **r Relog now** through the ordinary login queue only while a different mode is queued and no relog is in flight. After a clean logout, the notice says it applies at the next **Log in**, without a Relog now offer. Parked after a dirty drop, it instead explains that **Log in** keeps the current mode; reconnect before using **Relog now**. The TUI map is catalogue-only, so it never bakes terrain or asks. |
+
+The Settings border shows **Saving preferences…** while a shared save is
+pending. The process writer keeps the accepted save after you close the popup.
+Refresh does not replace an unsaved checkbox or folder draft with an unchanged
+saved value.
 
 ## Keys
 

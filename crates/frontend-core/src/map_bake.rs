@@ -13,6 +13,7 @@
 
 use std::error::Error;
 use std::fmt;
+#[cfg(any(test, feature = "test-support"))]
 use std::io;
 use std::path::Path;
 
@@ -143,7 +144,7 @@ pub fn persist_map_bake_choice_for_test(
 pub(crate) fn persist_map_bake_choice(
     preferences: &crate::prefs::UiPreferences,
     choice: MapBakeChoice,
-) -> io::Result<host_play::local_state::Update> {
+) -> Result<host_play::local_state::Update, crate::prefs::PreferenceError> {
     preferences.begin_set(MAP_BAKE_KEY, choice.as_str().into())
 }
 

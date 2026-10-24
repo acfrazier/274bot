@@ -63,8 +63,13 @@ offers `auto` or each listed rs2b2t world; the selected world is used on the
 next slot start. Live slot rows display the current world.
 
 Last focused profile is restored from `~/.274bot/panel-ui.json`
-(`last_focus`). Collapsible section open/closed state persists there per
-profile; **script** and **parameters** default closed.
+(`last_focus`) after preferences are ready, unless you select a bot first.
+Preference adoption during a command never changes that command's target.
+This includes the first bot selected by Fleet **Log in**.
+Removing or deleting a pending restore target cancels that restore.
+Before preferences identify the saved target, any removal cancels the restore.
+Collapsible section open/closed state persists there per profile.
+**script** and **parameters** default closed.
 
 ## Log and panel layout
 
@@ -617,6 +622,14 @@ from the wall keeps its place. **Name** and **Status** only sort the view:
 they never change the saved order, and reordering needs **Load order**. A
 reorder stays pending until the file is written; if the write fails, the
 error is shown and the last saved order comes back.
+
+Shared preferences still use `panel-ui.json`. Reads use the latest cached
+saved state. Saves run on the process writer, so a slow disk does not block
+the panel, TUI or bot thread. Closing a settings window does not cancel an
+accepted save. Reopening it retains the pending save. Until the first read
+finishes, displayed defaults are provisional and walk permissions stay closed.
+Refresh preserves unsaved checkbox and folder entries when their saved values
+did not change.
 The table's columns share the
 window's width, so it never scrolls sideways, and the toolbar and column
 toggles wrap at a narrow width.

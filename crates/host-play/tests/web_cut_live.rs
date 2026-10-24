@@ -765,19 +765,12 @@ fn live_fresh_accounts_cross_both_mage_arena_webs_with_content_actions() {
         .duration_since(UNIX_EPOCH)
         .expect("clock")
         .as_millis();
-    let mut entropy = serial ^ ((std::process::id() as u128) << 64);
-    let alphabet = b"abcdefghijklmnopqrstuvwxyz0123456789";
-    let mut token = [b'0'; 6];
-    for digit in &mut token {
-        *digit = alphabet[(entropy % alphabet.len() as u128) as usize];
-        entropy /= alphabet.len() as u128;
-    }
-    let token = String::from_utf8(token.to_vec()).expect("ascii account token");
+    let usernames = host_play::mint_live_names(2);
 
     for (slot, scenario, wield_slash_weapon) in
         [(0, "knife-only", false), (1, "slash-equipped", true)]
     {
-        let username = format!("{prefix}{token}_{slot}");
+        let username = usernames[slot as usize].clone();
         assert!(username.len() <= 12, "engine account name exceeds 12 chars");
         let uid = ((serial % 1_000_000_000) as i32).saturating_add(slot);
         let (mut client, mut snapshot, mut pump) = login_fresh(&template, &username, uid);

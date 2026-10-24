@@ -15,7 +15,7 @@ use host_play::map_cache::fixture::{
     fixture_descriptor, ship_fixture_terrain, CountingMapProducer,
 };
 use host_play::map_cache::{MapCacheRoot, MapDemand, MapDemandManager, MapJobStatus};
-use panel::ui_state::{load_from, save_to};
+use panel::ui_state::load;
 use serde_json::json;
 
 static NEXT: AtomicUsize = AtomicUsize::new(0);
@@ -168,7 +168,8 @@ fn current_reader_opens_real_0181_home_and_preserves_every_meaning_on_save() {
     // preferences and the loadouts form go through one process service.
     let service = LocalStateService::open_process(StateRoot::new(scratch.0.clone()));
     let preferences = frontend_core::UiPreferences::of_service_for_test(&service);
-    let prefs = load_from(&preferences);
+    preferences.reload().unwrap();
+    let prefs = load(&preferences);
     assert_eq!(prefs.last_focus.as_deref(), Some("fixture-manual"));
     assert!(!prefs.collapsed["fixture-auto"]["script"]);
     assert!(prefs.collapsed["fixture-auto"]["debug"]);
@@ -230,14 +231,24 @@ fn current_reader_opens_real_0181_home_and_preserves_every_meaning_on_save() {
     assert_eq!(prefs.chrome.bg, "#101820");
     assert_eq!(prefs.chrome.text, "#F0F4F8");
     let expected_prefs = prefs.clone();
-    save_to(&preferences, &prefs);
+    // Force two real changed-member rewrites, then compare the restored meaning.
+    for show_nav_path in [!prefs.nav.show_nav_path, prefs.nav.show_nav_path] {
+        let patch = frontend_core::prefs::PreferencePatch::member(
+            &["nav", "show_nav_path"],
+            Some(show_nav_path.into()),
+        )
+        .unwrap();
+        match preferences.begin_patch(patch).unwrap() {
+            host_play::local_state::Update::Durable => {}
+            host_play::local_state::Update::Queued(mut watch) => {
+                assert_eq!(watch.wait(Duration::from_secs(10)), Some(Ok(())));
+            }
+        }
+    }
     let reopened = LocalStateService::open_process(StateRoot::new(scratch.0.clone()));
-    assert_eq!(
-        load_from(&frontend_core::UiPreferences::of_service_for_test(
-            &reopened
-        )),
-        expected_prefs
-    );
+    let reopened_preferences = frontend_core::UiPreferences::of_service_for_test(&reopened);
+    reopened_preferences.reload().unwrap();
+    assert_eq!(load(&reopened_preferences), expected_prefs);
 
     let mut loadouts = Loadouts::operator(&service);
     assert_eq!(loadouts.load_error(), None);
@@ -316,7 +327,9 @@ fn a_0181_home_opens_walkto_on_shipped_terrain_without_asking_and_keeps_its_file
 
     // The panel's gate starts from the 0.1.8.1 prefs, which never answered.
     let service = LocalStateService::open_process(StateRoot::new(bot.clone()));
-    let prefs = load_from(&frontend_core::UiPreferences::of_service_for_test(&service));
+    let preferences = frontend_core::UiPreferences::of_service_for_test(&service);
+    preferences.reload().unwrap();
+    let prefs = load(&preferences);
     assert_eq!(prefs.map_bake, MapBakeChoice::Ask);
     let root = MapCacheRoot::from_home(&home);
     assert!(!root.path().exists(), "0.1.8.1 wrote no map cache");

@@ -3287,6 +3287,230 @@ fn fresh_tutorial_leaving_the_session_clears_the_baseline() {
     );
 }
 
+#[test]
+fn fresh_tutorial_relog_with_a_retained_old_reply_keeps_waiting() {
+    let mut c = seeded_client();
+    // The pre-relog reply: the same line the reseed step later asks the
+    // new session to send again (`reseed_after_relog` in
+    // `clue_walk_arrive_live`, whose wait is FreshTutorial).
+    c.add_chat(0, "get tutorial: 1000", "");
+    c.bump_gens(ServerProt::MESSAGE_GAME);
+    let mut runner = ScenarioRunner::with_world(fresh_tutorial_scenario(), None);
+    runner.set_scene_settle(Duration::ZERO);
+    runner.tick(&mut c);
+    assert!(
+        matches!(runner.status(), RunnerStatus::Running { .. }),
+        "the pre-relog line at the baseline must not satisfy the reseed: {:?}",
+        runner.status()
+    );
+
+    // Relog: leave the session (the step baseline clears), then return
+    // with the old line still retained in the snapshot ring. The runner
+    // re-baselines on that retained line, so it stays stale.
+    c.ingame = false;
+    c.bump_gens(ServerProt::REBUILD_NORMAL);
+    runner.tick(&mut c);
+    assert_eq!(runner.fresh_chat_baseline, None);
+    c.ingame = true;
+    advance_one_game_tick(&mut runner, &mut c, false);
+    advance_one_game_tick(&mut runner, &mut c, false);
+    assert!(
+        matches!(runner.status(), RunnerStatus::Running { .. }),
+        "a retained pre-relog line must not pass after the relog: {:?}",
+        runner.status()
+    );
+
+    // Only a strictly newer reply from the new session satisfies it.
+    c.add_chat(0, "get tutorial: 1000", "");
+    c.bump_gens(ServerProt::MESSAGE_GAME);
+    advance_one_game_tick(&mut runner, &mut c, false);
+    assert_eq!(runner.status(), RunnerStatus::Passed);
+}
+
+/// The brimhaven_agility watch chain in miniature: a preceding watch
+/// (one Coin stands in for obstacle XP), the first-tag chat prompt, the
+/// first tag's no-ticket state, and the later earned ticket
+/// (`scenarios/production/agility.rs` keeps the same milestones). The
+/// prompt arm takes its chat baseline from the preceding watch's start,
+/// so a prompt sent while that watch runs counts and an older one does
+/// not.
+fn brimhaven_tag_ticket_scenario() -> Scenario {
+    let watch = |name: &'static str, arm: Proof| Step {
+        name,
+        kind: StepKind::Perform {
+            send: Box::new(|_, _| true),
+        },
+        wait: wait(arm, 10),
+    };
+    Scenario {
+        name: "brimhaven-tag-ticket",
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: false,
+        },
+        steps: vec![
+            watch(
+                "watch obstacle XP from a real hop before the first Tag",
+                Proof::ItemId { id: 995, count: 1 },
+            ),
+            watch(
+                "watch the first Tag prompt for the next pillar",
+                Proof::FreshChatSincePreviousStep {
+                    needle: "tag the next",
+                },
+            ),
+            watch(
+                "confirm the first Tag grants no ticket",
+                Proof::ItemIdAtMost { id: 2996, count: 0 },
+            ),
+            watch(
+                "watch a later Tag grant the first ticket",
+                Proof::ItemId { id: 2996, count: 1 },
+            ),
+        ],
+        proof: Proof::ItemId { id: 2996, count: 1 },
+        companions: vec![],
+        settings: ScenarioSettings::default(),
+    }
+}
+
+/// The content's two consecutive first-tag messages, in send order
+/// (`agilityarena.rs2:72-73`): the second line pushes the matching first
+/// line off the chat head in the same burst.
+fn send_first_tag_prompt(c: &mut Client) {
+    c.add_chat(
+        0,
+        "You get tickets by tagging more than one pillar in a row, tag the next",
+        "",
+    );
+    c.add_chat(0, "pillar!", "");
+    c.bump_gens(ServerProt::MESSAGE_GAME);
+}
+
+#[test]
+fn brimhaven_two_line_tag_prompt_passes_then_waits_for_the_ticket() {
+    let mut c = seeded_client();
+    set_inv(&mut c, &[]);
+    let mut runner = ScenarioRunner::with_world(brimhaven_tag_ticket_scenario(), None);
+    runner.set_scene_settle(Duration::ZERO);
+    runner.tick(&mut c);
+    assert_eq!(
+        runner.status(),
+        RunnerStatus::Running { step: 0, total: 4 },
+        "no obstacle progress yet: the preceding watch must wait"
+    );
+
+    // The prompt bursts while the preceding watch is still running, so
+    // it is newer than that watch's start baseline but older than the
+    // prompt step's own start.
+    send_first_tag_prompt(&mut c);
+    set_inv(&mut c, &[(995, 1)]);
+    assert_running_for_game_ticks(
+        &mut runner,
+        &mut c,
+        3,
+        "the burst passes the preceding, prompt and no-ticket watches, then waits for a ticket",
+    );
+    assert_eq!(
+        runner.status(),
+        RunnerStatus::Running { step: 3, total: 4 },
+        "the run must sit on the later-ticket watch, not pass on the prompt alone"
+    );
+
+    set_inv(&mut c, &[(995, 1), (2996, 1)]);
+    advance_game_ticks_until_done(&mut runner, &mut c);
+    assert_eq!(runner.status(), RunnerStatus::Passed);
+}
+
+#[test]
+fn brimhaven_prompt_from_before_the_previous_watch_is_stale_history() {
+    let mut c = seeded_client();
+    // No ticket is seeded: with one held, the later no-ticket step
+    // could never pass, so the run would fail even if the prompt step
+    // wrongly accepted the stale line.
+    set_inv(&mut c, &[(995, 1)]);
+    // The matching line is already in the ring before the preceding
+    // watch (and therefore before its baseline) begins. It must never
+    // satisfy the prompt step.
+    send_first_tag_prompt(&mut c);
+    let mut runner = ScenarioRunner::with_world(brimhaven_tag_ticket_scenario(), None);
+    runner.set_scene_settle(Duration::ZERO);
+    for _ in 0..20 {
+        advance_one_game_tick(&mut runner, &mut c, false);
+    }
+    match runner.status() {
+        RunnerStatus::Failed(msg) => {
+            assert!(
+                msg.contains("watch the first Tag prompt for the next pillar"),
+                "a prompt from before the previous-watch baseline must fail at the prompt step: {msg}"
+            );
+            assert!(
+                msg.contains("fresh_chat_since_previous_step"),
+                "the failure must name the prompt arm: {msg}"
+            );
+            assert!(
+                msg.contains("not seen within 10 game ticks"),
+                "the prompt step must exhaust its own 10-game-tick budget: {msg}"
+            );
+        }
+        other => panic!(
+            "a prompt received before the previous-watch baseline must not pass, got {other:?}"
+        ),
+    }
+}
+
+#[test]
+fn brimhaven_run_without_a_tag_prompt_fails() {
+    let mut c = seeded_client();
+    // No ticket is seeded: with one held, the later no-ticket step
+    // could never pass, so the run would fail even if the prompt step
+    // were skipped or wrongly satisfied.
+    set_inv(&mut c, &[(995, 1)]);
+    c.add_chat(0, "pillar!", "");
+    c.bump_gens(ServerProt::MESSAGE_GAME);
+    let mut runner = ScenarioRunner::with_world(brimhaven_tag_ticket_scenario(), None);
+    runner.set_scene_settle(Duration::ZERO);
+    for _ in 0..20 {
+        advance_one_game_tick(&mut runner, &mut c, false);
+    }
+    match runner.status() {
+        RunnerStatus::Failed(msg) => {
+            assert!(
+                msg.contains("watch the first Tag prompt for the next pillar"),
+                "a run with no tag prompt must fail at the prompt step: {msg}"
+            );
+            assert!(
+                msg.contains("fresh_chat_since_previous_step"),
+                "the failure must name the prompt arm: {msg}"
+            );
+            assert!(
+                msg.contains("not seen within 10 game ticks"),
+                "the prompt step must exhaust its own 10-game-tick budget: {msg}"
+            );
+        }
+        other => panic!("a run with no tag prompt must fail, got {other:?}"),
+    }
+}
+
+#[test]
+fn brimhaven_run_without_ticket_progress_fails() {
+    let mut c = seeded_client();
+    set_inv(&mut c, &[]);
+    let mut runner = ScenarioRunner::with_world(brimhaven_tag_ticket_scenario(), None);
+    runner.set_scene_settle(Duration::ZERO);
+    runner.tick(&mut c);
+    send_first_tag_prompt(&mut c);
+    set_inv(&mut c, &[(995, 1)]);
+    for _ in 0..24 {
+        advance_one_game_tick(&mut runner, &mut c, false);
+    }
+    assert!(
+        matches!(runner.status(), RunnerStatus::Failed(_)),
+        "the prompt alone must not pass without the later ticket, got {:?}",
+        runner.status()
+    );
+}
+
 fn visited_within_scenario() -> Scenario {
     let watch = |name: &'static str, min: i32, max: i32| Step {
         name,
