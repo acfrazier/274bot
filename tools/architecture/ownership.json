@@ -6023,6 +6023,10 @@
       "owner": "T1"
     },
     {
+      "path": "tools/nightly/nightly-mac-guest.py",
+      "owner": "T1"
+    },
+    {
       "path": "tools/nightly/nightly-mac.sh",
       "owner": "T1"
     },
@@ -6044,6 +6048,10 @@
     },
     {
       "path": "tools/nightly/test_latency_proxy.py",
+      "owner": "T1"
+    },
+    {
+      "path": "tools/nightly/test_nightly_mac_guest.py",
       "owner": "T1"
     },
     {
