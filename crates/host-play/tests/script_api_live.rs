@@ -756,7 +756,8 @@ fn runtime_cell(restart: bool) {
         let keep = logged(&logs, "runtime-keep: ");
         assert_eq!(keep["ok"], true, "{keep}");
         let names = keep["value"].as_array().expect("native keep-list result");
-        assert!(names.iter().any(|name| name == "Trout"), "{keep}");
+        // `keep_list::food_forms` lowercases food names; extras retain their spelling.
+        assert!(names.iter().any(|name| name == "trout"), "{keep}");
         assert!(names.iter().any(|name| name == "Coins"), "{keep}");
         observed_logs.push(logs);
         play.script_stop(&account);
