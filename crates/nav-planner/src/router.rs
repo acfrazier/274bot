@@ -889,17 +889,6 @@ pub struct AvoidRect {
     pub level: Option<i32>,
 }
 
-impl AvoidRect {
-    /// Whether `tile` sits inside this rect (inclusive bounds, optional level).
-    pub fn contains(self, tile: WorldTile) -> bool {
-        if let Some(lvl) = self.level {
-            if tile.level != lvl {
-                return false;
-            }
-        }
-        tile.x >= self.min_x && tile.x <= self.max_x && tile.z >= self.min_z && tile.z <= self.max_z
-    }
-}
 
 /// Which blocker-attribution rule a cooperative diagnosis uses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

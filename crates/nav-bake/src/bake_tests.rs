@@ -44,7 +44,7 @@ fn generator_identity_tracks_the_manual_id_format_and_sources() {
 }
 
 #[test]
-fn router_source_bytes_invalidate_a_warm_reach_stamp() {
+fn movement_sources_invalidate_a_warm_reach_stamp() {
     // Reach production and routing share the movement primitive, not search code.
     assert!(!GENERATOR_SOURCES.contains(&"crates/nav-planner/src/router.rs"));
     assert!(
@@ -65,14 +65,14 @@ fn router_source_bytes_invalidate_a_warm_reach_stamp() {
         .iter()
         .map(|path| (*path, "fn a() {}"))
         .collect();
-    let mut router_only = baseline.clone();
-    for (label, text) in &mut router_only {
+    let mut movement_only = baseline.clone();
+    for (label, text) in &mut movement_only {
         if *label == "crates/nav-planner/src/movement.rs" {
             *text = "fn step_ok_changed() {}";
         }
     }
     assert_eq!(
-        router_only
+        movement_only
             .iter()
             .find(|(path, _)| *path == "crates/nav-planner/src/paint.rs")
             .map(|(_, text)| *text),
@@ -81,9 +81,9 @@ fn router_source_bytes_invalidate_a_warm_reach_stamp() {
     );
 
     let warm = generator_identity(&baseline);
-    let after_router = generator_identity(&router_only);
+    let after_movement = generator_identity(&movement_only);
     assert_ne!(
-        warm, after_router,
+        warm, after_movement,
         "shared movement bytes join generator_identity"
     );
 
@@ -132,7 +132,7 @@ fn router_source_bytes_invalidate_a_warm_reach_stamp() {
     let expected = crate::bundle::StampExpectation {
         revision: 289,
         format: "274V16",
-        generator: &after_router,
+        generator: &after_movement,
         cache_id: "cache-1",
         inputs: &inputs,
         staged_pack_bytes: Some(11),
@@ -153,8 +153,11 @@ fn router_source_bytes_invalidate_a_warm_reach_stamp() {
     };
     let error = baked
         .covers(&expected)
-        .expect_err("router source change must fail covers and force reach rebake");
-    assert!(error.contains("generator"), "{error}");
+        .expect_err("shared movement change must fail covers and force reach rebake");
+    assert!(
+        matches!(&error, crate::GenerationError::InvalidInput(detail) if detail.contains("generator")),
+        "{error}"
+    );
 }
 
 #[test]
@@ -189,7 +192,10 @@ fn a_missing_door_config_fails_the_bake() {
     let error = bake_world(&request)
         .err()
         .expect("a bake without all door inputs");
-    assert!(error.contains("doubledoors.loc"), "{error}");
+    assert!(
+        matches!(&error, crate::GenerationError::InvalidInput(detail) if detail.contains("doubledoors.loc")),
+        "{error}"
+    );
     std::fs::remove_dir_all(root).unwrap();
 }
 

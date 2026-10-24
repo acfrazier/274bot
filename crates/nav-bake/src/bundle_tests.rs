@@ -3,6 +3,13 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use super::*;
 
+fn invalid_input_detail(error: &crate::GenerationError) -> &str {
+    match error {
+        crate::GenerationError::InvalidInput(detail) => detail,
+        other => panic!("expected invalid input, got {other:?}"),
+    }
+}
+
 const STAMP_POIS_SHA256: &str = "5656565656565656565656565656565656565656565656565656565656565656";
 const STAMP_MANIFEST_SHA256: &str =
     "6767676767676767676767676767676767676767676767676767676767676767";
@@ -82,65 +89,62 @@ fn a_matching_stamp_covers_and_every_change_is_stale() {
 
     let mut changed = expectation(&inputs);
     changed.cache_id = "cache-2";
-    assert!(baked
-        .covers(&changed)
-        .unwrap_err()
-        .contains("cache identity"));
+    assert!(invalid_input_detail(&baked.covers(&changed).unwrap_err()).contains("cache identity"));
 
     let mut changed = expectation(&inputs);
     changed.generator = "gen-2";
-    assert!(baked.covers(&changed).unwrap_err().contains("generator"));
+    assert!(invalid_input_detail(&baked.covers(&changed).unwrap_err()).contains("generator"));
 
     let mut changed = expectation(&inputs);
     changed.format = "274V9";
-    assert!(baked.covers(&changed).unwrap_err().contains("format"));
+    assert!(invalid_input_detail(&baked.covers(&changed).unwrap_err()).contains("format"));
 
     let mut changed = expectation(&inputs);
     changed.revision = 274;
-    assert!(baked.covers(&changed).unwrap_err().contains("revision"));
+    assert!(invalid_input_detail(&baked.covers(&changed).unwrap_err()).contains("revision"));
 
     let mut changed = expectation(&inputs);
     changed.staged_pack_bytes = None;
-    assert!(baked.covers(&changed).unwrap_err().contains("missing"));
+    assert!(invalid_input_detail(&baked.covers(&changed).unwrap_err()).contains("missing"));
 
     let mut changed = expectation(&inputs);
     changed.staged_flags_bytes = Some(8);
-    assert!(baked.covers(&changed).unwrap_err().contains("bytes"));
+    assert!(invalid_input_detail(&baked.covers(&changed).unwrap_err()).contains("bytes"));
 
     let mut changed = expectation(&inputs);
     changed.staged_reach_bytes = None;
-    assert!(baked.covers(&changed).unwrap_err().contains("reach"));
+    assert!(invalid_input_detail(&baked.covers(&changed).unwrap_err()).contains("reach"));
 
     let mut changed = expectation(&inputs);
     changed.staged_canlight_bytes = None;
-    assert!(baked.covers(&changed).unwrap_err().contains("canlight"));
+    assert!(invalid_input_detail(&baked.covers(&changed).unwrap_err()).contains("canlight"));
 
     let mut changed = expectation(&inputs);
     changed.staged_pois_bytes = None;
-    assert!(baked.covers(&changed).unwrap_err().contains("navpois"));
+    assert!(invalid_input_detail(&baked.covers(&changed).unwrap_err()).contains("navpois"));
 
     let mut changed = expectation(&inputs);
     changed.staged_pois_sha256 =
         Some("0000000000000000000000000000000000000000000000000000000000000000");
-    assert!(baked.covers(&changed).unwrap_err().contains("digest"));
+    assert!(invalid_input_detail(&baked.covers(&changed).unwrap_err()).contains("digest"));
     let mut changed = expectation(&inputs);
     changed.staged_pack_sha256 = Some(STAMP_INPUT_SHA256);
-    assert!(baked.covers(&changed).unwrap_err().contains("digest"));
+    assert!(invalid_input_detail(&baked.covers(&changed).unwrap_err()).contains("digest"));
     let mut changed = expectation(&inputs);
     changed.staged_flags_sha256 = Some(STAMP_INPUT_SHA256);
-    assert!(baked.covers(&changed).unwrap_err().contains("digest"));
+    assert!(invalid_input_detail(&baked.covers(&changed).unwrap_err()).contains("digest"));
     let mut changed = expectation(&inputs);
     changed.staged_reach_sha256 = Some(STAMP_INPUT_SHA256);
-    assert!(baked.covers(&changed).unwrap_err().contains("digest"));
+    assert!(invalid_input_detail(&baked.covers(&changed).unwrap_err()).contains("digest"));
     let mut changed = expectation(&inputs);
     changed.staged_canlight_sha256 = Some(STAMP_INPUT_SHA256);
-    assert!(baked.covers(&changed).unwrap_err().contains("digest"));
+    assert!(invalid_input_detail(&baked.covers(&changed).unwrap_err()).contains("digest"));
     let mut changed = expectation(&inputs);
     changed.staged_manifest_sha256 = Some(STAMP_INPUT_SHA256);
-    assert!(baked.covers(&changed).unwrap_err().contains("digest"));
+    assert!(invalid_input_detail(&baked.covers(&changed).unwrap_err()).contains("digest"));
     let mut changed = expectation(&inputs);
     changed.staged_manifest_bytes = None;
-    assert!(baked.covers(&changed).unwrap_err().contains("manifest"));
+    assert!(invalid_input_detail(&baked.covers(&changed).unwrap_err()).contains("manifest"));
     let modified = [InputFingerprint {
         path: "/content/maps/m1.jm2".into(),
         bytes: 10,
@@ -148,20 +152,19 @@ fn a_matching_stamp_covers_and_every_change_is_stale() {
         sha256: STAMP_INPUT_SHA256.into(),
     }];
 
-    assert!(baked
-        .covers(&expectation(&modified))
-        .unwrap_err()
-        .contains("changed"));
+    assert!(
+        invalid_input_detail(&baked.covers(&expectation(&modified)).unwrap_err()).contains("changed")
+    );
     let same_metadata_replacement = [InputFingerprint {
         path: "/content/maps/m1.jm2".into(),
         bytes: 10,
         modified_nanos: 5,
         sha256: "99".repeat(32),
     }];
-    assert!(baked
-        .covers(&expectation(&same_metadata_replacement))
-        .unwrap_err()
-        .contains("changed"));
+    assert!(
+        invalid_input_detail(&baked.covers(&expectation(&same_metadata_replacement)).unwrap_err())
+            .contains("changed")
+    );
 
     let added = [
         modified[0].clone(),
@@ -172,10 +175,10 @@ fn a_matching_stamp_covers_and_every_change_is_stale() {
             sha256: STAMP_INPUT_SHA256.into(),
         },
     ];
-    assert!(baked
-        .covers(&expectation(&added))
-        .unwrap_err()
-        .contains("inputs changed"));
+    assert!(
+        invalid_input_detail(&baked.covers(&expectation(&added)).unwrap_err())
+            .contains("inputs changed")
+    );
 }
 
 #[test]
@@ -212,7 +215,7 @@ fn legacy_v8_stamp_without_manifest_or_input_hashes_is_stale() {
     let err = stamp
         .covers(&expectation(&stamp.inputs))
         .expect_err("pre-N4 stamp is stale");
-    assert!(err.contains("format"), "{err}");
+    assert!(invalid_input_detail(&err).contains("format"), "{err}");
 }
 
 #[test]

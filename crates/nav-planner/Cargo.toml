@@ -4,6 +4,9 @@ version.workspace = true
 edition = "2021"
 publish = false
 
+[lints]
+workspace = true
+
 [features]
 test-support = ["dep:proc-macro2", "dep:syn"]
 
