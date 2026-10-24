@@ -320,6 +320,7 @@ pub struct CardLifecycle {
 #[derive(Debug, Clone, Copy)]
 pub struct CompiledCard {
     pub id: CompiledId,
+    pub native_kind: request::NativeKind,
     pub name: &'static str,
     pub description: &'static str,
     pub category: &'static str,

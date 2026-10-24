@@ -219,7 +219,7 @@ mod reach_entity;
 #[cfg(feature = "load")]
 mod scene_query;
 #[cfg(feature = "load")]
-mod sherlock;
+pub mod sherlock;
 #[cfg(feature = "load")]
 mod shop;
 #[cfg(feature = "load")]
@@ -238,4 +238,5 @@ mod walk;
 mod walk_wait;
 
 #[cfg(feature = "memory-profile")]
+#[path = "load/memory_profile.rs"]
 pub mod memory_profile;

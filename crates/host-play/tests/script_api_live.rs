@@ -365,6 +365,8 @@ fn start_fixture_at(
     journal: bool,
     start_tile: Option<WorldTile>,
 ) -> (Play, String, Arc<Mutex<Fixture>>) {
+    script::registry::install_cards(&script::sherlock::CARDS)
+        .expect("install canonical Sherlock card for live API fixtures");
     api::hostlog::set_debug(true);
     assert!(api::hostlog::install_sink(&ADMISSION));
     let home = PathBuf::from(std::env::var_os("HOME").expect("throwaway HOME"));

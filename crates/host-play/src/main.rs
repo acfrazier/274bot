@@ -74,6 +74,10 @@ where
 }
 
 fn main() -> ExitCode {
+    if let Err(error) = script::registry::install_cards(&script::sherlock::CARDS) {
+        api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Error, "{error}");
+        return ExitCode::FAILURE;
+    }
     if let Err(error) = script::bootstrap_v8_platform() {
         api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Error, "{error}");
         return ExitCode::FAILURE;

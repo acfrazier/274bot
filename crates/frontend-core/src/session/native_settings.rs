@@ -783,6 +783,8 @@ mod tests {
     }
 
     fn native_fixture(test: &str) -> Fixture {
+        script::registry::install_cards(&script::sherlock::CARDS)
+            .expect("install canonical Sherlock card for native settings tests");
         let iso = script::IsolatedEnv::enter(&format!("frontend-core-native-settings-{test}"));
         let dir = iso.dir.clone();
         let mut vault = Vault::create(&dir.join("vault"), PASSPHRASE).unwrap();

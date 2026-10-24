@@ -177,6 +177,7 @@ impl TestPaint {
     }
 }
 
+#[cfg(feature = "canvas-raster")]
 /// One caption banner rasterized off-screen: the measured text width and the
 /// RGBA8 image the canvas ops cover. Tests assert the fill covers the glyphs
 /// and that paint reached pixels.
@@ -189,6 +190,7 @@ pub struct CaptionRaster {
     text_width: f64,
 }
 
+#[cfg(feature = "canvas-raster")]
 impl CaptionRaster {
     /// The applet-space left edge.
     pub fn x(&self) -> i32 {
@@ -221,6 +223,7 @@ impl CaptionRaster {
     }
 }
 
+#[cfg(feature = "canvas-raster")]
 /// Rasterize one native-font caption banner exactly as the overlay's canvas
 /// path draws it: monospace text over a translucent fill (tests).
 pub fn caption_raster(text: &str) -> CaptionRaster {

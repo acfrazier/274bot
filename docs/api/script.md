@@ -46,6 +46,13 @@ Compiled cards and the slot use `script::native::Script` exclusively. Each
 schema, per-account bulk-copy exclusions, typed preparer and Rust factory.
 Browse, scenario Starts and Start handles all use that registry; there is no
 second parameter-default table or crate-root `Script` trait.
+The descriptor also defines its native request kind and optional lifecycle hooks.
+
+The built-in registry contains Gatherer, Grinch and Quester. Hosts install Sherlock
+with `script::registry::install_cards(&script::sherlock::CARDS)` before reading the
+registry. Reinstalling that canonical slice is idempotent. Duplicate card IDs
+reject the complete new slice. Each slot refreshes its cached slice on the first
+frame after a publication.
 
 Start prepares settings and selected resources on a `FamilyPreparation`
 worker, then installs only if the captured slot/control generation is current.
