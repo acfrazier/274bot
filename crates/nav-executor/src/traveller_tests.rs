@@ -13,10 +13,10 @@ use crate::traveller::{
     door_tile, BlockedWhy, FollowRun, HopFailure, LegPhase, NpcHopBlockReason, Poll, TransportHop,
     TravelOptions, TravelOutcome, Traveller, WebCutFailure,
 };
-use nav::essence::essence_session_for_wizard;
-use nav::executor_adapter::{CELLAR_SHIFT, SHANTAY_HENGE_LOC_ID};
-use nav::router::{Leg, Route};
-use nav::transport::{DoorDir, TransportEdge, TransportKind};
+use nav_planner::essence::essence_session_for_wizard;
+use nav_planner::executor_adapter::{CELLAR_SHIFT, SHANTAY_HENGE_LOC_ID};
+use nav_planner::router::{Leg, Route};
+use nav_planner::transport::{DoorDir, TransportEdge, TransportKind};
 
 #[path = "traveller/npc_hop_tests.rs"]
 mod npc_hop_tests;
@@ -1181,8 +1181,8 @@ fn follow_blocks_transport_when_worn_all_item_is_only_carried() {
 #[test]
 fn gated_transport_rechecks_evidence_after_approach_before_send() {
     use api::selected::Truth;
-    use nav::quest_gates::QuestGates;
-    use nav::test_support::{family, range, tbwt_evidence, window};
+    use nav_planner::quest_gates::QuestGates;
+    use nav_planner::test_support::{family, range, tbwt_evidence, window};
 
     let proven = tbwt_evidence(range(Some(3), Some(3)));
     let blocked = tbwt_evidence(range(Some(4), Some(4)));
@@ -3484,7 +3484,7 @@ fn follow_ardougne_lever_answers_the_wilderness_warning_then_arrives() {
     let mut c = scene_client();
     plant_loc(
         &mut c,
-        nav::executor_adapter::ARDOUGNE_WILDERNESS_LEVER_LOC_ID,
+        nav_planner::executor_adapter::ARDOUGNE_WILDERNESS_LEVER_LOC_ID,
         "Lever",
         "Pull",
         1,
@@ -3497,7 +3497,7 @@ fn follow_ardougne_lever_answers_the_wilderness_warning_then_arrives() {
     };
     let mut t = Traveller::new();
     let mut edge = shantay_edge();
-    edge.loc_id = nav::executor_adapter::ARDOUGNE_WILDERNESS_LEVER_LOC_ID;
+    edge.loc_id = nav_planner::executor_adapter::ARDOUGNE_WILDERNESS_LEVER_LOC_ID;
     edge.ticks = 2;
     edge.consumed_req.clear();
     let to = edge.to;
@@ -6597,7 +6597,7 @@ fn follow_fails_fast_when_the_game_reports_cant_reach() {
 
 #[test]
 fn follow_lumbridge_stairs_approaches_operable_side_on_real_289_pack() {
-    let Some(world) = nav::world::NavWorld::load_default_pack_or_skip() else {
+    let Some(world) = nav_planner::world::NavWorld::load_default_pack_or_skip() else {
         return;
     };
     let edge = world

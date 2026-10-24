@@ -167,9 +167,9 @@ fn a_resize_recomputes_every_click_target() {
 #[test]
 fn the_footer_always_names_the_keyboard_scope() {
     let mut app = fleet_app(&["alice"]);
-    app.world = Some(std::sync::Arc::new(nav::world::NavWorld::from_grid(
-        &nav::grid::StepGrid::fixture_open_3x3(),
-    )));
+    app.world = Some(std::sync::Arc::new(
+        nav_planner::world::NavWorld::from_grid(&nav_planner::grid::StepGrid::fixture_open_3x3()),
+    ));
     let footer = |app: &mut crate::app::TuiApp| draw(app, 80, 24)[23].clone();
     assert!(footer(&mut app).starts_with("KEYS Fleet ▸"));
     app.on_key(ch('/'));

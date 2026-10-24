@@ -68,7 +68,7 @@ impl Script for SettlementWalker {
                 candidate_goals: None,
                 loc_id: Some(0),
                 radius: 1,
-                arrival: nav::arrival::ArrivalKind::Reach,
+                arrival: nav_planner::arrival::ArrivalKind::Reach,
                 options: script::native::WalkOptions {
                     allow_danger_zones: script::native::WalkBit::Allow,
                     ..Default::default()
@@ -118,9 +118,9 @@ fn packed_world() -> Arc<NavWorld> {
         let z = (tile.z - origin.z) as usize;
         flags[z * SIZE + x] |= CollisionFlag::SQ_BLOCKED as u32;
     }
-    let (walk, blocked) = nav::collision::pack_walk(&flags);
+    let (walk, blocked) = nav_planner::collision::pack_walk(&flags);
     Arc::new(NavWorld::from_parts(
-        nav::collision::WorldCollision {
+        nav_planner::collision::WorldCollision {
             origin,
             width: SIZE,
             height: SIZE,
@@ -128,7 +128,7 @@ fn packed_world() -> Arc<NavWorld> {
             blocked,
             flags: None,
         },
-        nav::transport::TransportGraph::default(),
+        nav_planner::transport::TransportGraph::default(),
         Vec::new(),
     ))
 }
@@ -543,9 +543,9 @@ fn depleted_large_loc_refreshes_to_plain_tile_radius_before_settling() {
     };
     let mut flags = vec![0u32; 160 * 160];
     flags[80 * 160 + 80] = CollisionFlag::SQ_BLOCKED as u32;
-    let (walk, blocked) = nav::collision::pack_walk(&flags);
+    let (walk, blocked) = nav_planner::collision::pack_walk(&flags);
     let world = Arc::new(NavWorld::from_parts(
-        nav::collision::WorldCollision {
+        nav_planner::collision::WorldCollision {
             origin,
             width: 160,
             height: 160,
@@ -553,7 +553,7 @@ fn depleted_large_loc_refreshes_to_plain_tile_radius_before_settling() {
             blocked,
             flags: None,
         },
-        nav::transport::TransportGraph::default(),
+        nav_planner::transport::TransportGraph::default(),
         Vec::new(),
     ));
     let mut rig = SettlementRig::new(world);
@@ -614,9 +614,9 @@ fn offscene_solid_strip_walk_makes_progress_without_unchanged_refreshes() {
                 CollisionFlag::SQ_BLOCKED as u32;
         }
     }
-    let (walk, blocked) = nav::collision::pack_walk(&flags);
+    let (walk, blocked) = nav_planner::collision::pack_walk(&flags);
     let world = Arc::new(NavWorld::from_parts(
-        nav::collision::WorldCollision {
+        nav_planner::collision::WorldCollision {
             origin,
             width: SIZE,
             height: SIZE,
@@ -624,7 +624,7 @@ fn offscene_solid_strip_walk_makes_progress_without_unchanged_refreshes() {
             blocked,
             flags: None,
         },
-        nav::transport::TransportGraph::default(),
+        nav_planner::transport::TransportGraph::default(),
         Vec::new(),
     ));
     let start = WorldTile {

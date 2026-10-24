@@ -13,11 +13,11 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use frontend_core::scripts::LoadShape;
 use frontend_core::test_support::tui::start_script_source;
-use nav::bank_fetch::BankRows;
-use nav::router::FindOptions;
-use nav::tile::Tile;
-use nav::world::NavWorld;
-use nav::WorldState;
+use nav_planner::bank_fetch::BankRows;
+use nav_planner::router::FindOptions;
+use nav_planner::tile::Tile;
+use nav_planner::world::NavWorld;
+use nav_planner::WorldState;
 use ratatui::backend::TestBackend;
 use ratatui::Terminal;
 
@@ -163,7 +163,7 @@ fn reachable_destination(world: &NavWorld, here: Tile) -> Result<Tile, String> {
                 &BankRows::default(),
                 host_play::admission::Admission::manual(
                     FindOptions {
-                        zones: nav::zones::ZoneExempt::all(),
+                        zones: nav_planner::zones::ZoneExempt::all(),
                         ..Default::default()
                     },
                     Default::default(),
@@ -266,7 +266,7 @@ fn run_manual_click(cols: u16, rows: u16, pause_owner: bool, recovery: bool) -> 
     }
 
     let here = app.here.ok_or("TUI player tile is unavailable")?;
-    let route_from = nav::tile::Tile {
+    let route_from = nav_planner::tile::Tile {
         x: here.x,
         z: here.z,
         level: here.level,

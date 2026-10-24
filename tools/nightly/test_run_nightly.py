@@ -995,8 +995,8 @@ class RevisionBuildOverlayTests(unittest.TestCase):
     def test_274_uses_the_runner_inventory_for_its_build_tree(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            source = root / "runner" / "crates" / "nav" / "src" / "required-content-274.tsv"
-            target = root / "tree" / "crates" / "nav" / "src" / "required-content-274.tsv"
+            source = root / "runner" / "crates" / "nav-planner" / "src" / "required-content-274.tsv"
+            target = root / "tree" / "crates" / "nav-planner" / "src" / "required-content-274.tsv"
             source.parent.mkdir(parents=True)
             target.parent.mkdir(parents=True)
             source.write_text("pinned content inventory\n", encoding="utf-8")
@@ -1010,7 +1010,7 @@ class RevisionBuildOverlayTests(unittest.TestCase):
     def test_289_does_not_require_or_apply_the_274_inventory(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            target = root / "tree" / "crates" / "nav" / "src" / "required-content-274.tsv"
+            target = root / "tree" / "crates" / "nav-planner" / "src" / "required-content-274.tsv"
             target.parent.mkdir(parents=True)
             target.write_text("dev inventory\n", encoding="utf-8")
             with mock.patch.object(rn, "REVISION", "289"), \
@@ -1022,7 +1022,7 @@ class RevisionBuildOverlayTests(unittest.TestCase):
     def test_274_fails_closed_when_its_inventory_is_missing(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            target = root / "tree" / "crates" / "nav" / "src" / "required-content-274.tsv"
+            target = root / "tree" / "crates" / "nav-planner" / "src" / "required-content-274.tsv"
             target.parent.mkdir(parents=True)
             target.write_text("dev inventory\n", encoding="utf-8")
             with mock.patch.object(rn, "REVISION", "274"), \

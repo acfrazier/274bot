@@ -3,7 +3,7 @@
 //!
 //! This is the owner boundary for script's risk module (T5.1): the route,
 //! zone table, wilderness and exemptions it judges are served here as
-//! `nav::contract` views over the storage host-play retains. Script's risk
+//! `nav_planner::contract` views over the storage host-play retains. Script's risk
 //! facts are keyed by NPC id, never by the pack's kind rows.
 use std::future::Future;
 use std::sync::{Arc, OnceLock};
@@ -12,11 +12,11 @@ use crate::walk_plan::RoutePath;
 use api::condition::PoisonState;
 use api::quest_progress::EvidenceStamp;
 use api::snapshot::{GameSnapshot, SnapshotView};
-use nav::contract::BoundZoneKey;
-use nav::producer;
-use nav::router::{AvoidRect, FindOptions, Route};
-use nav::world::NavWorld;
-use nav::zones::{ZoneExempt, ZoneKey};
+use nav_planner::contract::BoundZoneKey;
+use nav_planner::producer;
+use nav_planner::router::{AvoidRect, FindOptions, Route};
+use nav_planner::world::NavWorld;
+use nav_planner::zones::{ZoneExempt, ZoneKey};
 use script::combat::frame::Frame;
 pub use script::combat::risk::RiskInput;
 use script::combat::risk::{self, Estimate, RiskTables, RouteAssessment, UnknownWhy, Verdict};
@@ -32,7 +32,7 @@ pub struct RouteBasis {
     pub(crate) _route: RoutePath,
     pub options: FindOptions,
     pub avoid: Arc<[AvoidRect]>,
-    pub quest_evidence: Option<nav::quest_gates::QuestEvidence>,
+    pub quest_evidence: Option<nav_planner::quest_gates::QuestEvidence>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -354,7 +354,7 @@ pub(crate) fn assess_route_path(
 }
 
 fn assess_view(
-    route: nav::contract::RouteView<'_>,
+    route: nav_planner::contract::RouteView<'_>,
     world: &NavWorld,
     admission: &Admission,
 ) -> Arc<RouteAssessment> {
@@ -402,7 +402,7 @@ pub fn permits(
 }
 
 fn permits_view(
-    route: nav::contract::RouteView<'_>,
+    route: nav_planner::contract::RouteView<'_>,
     world: &NavWorld,
     admission: &Admission,
     assessment: &RouteAssessment,
@@ -447,7 +447,7 @@ fn permits_view(
 fn route_path_view<'a>(
     route: &'a RoutePath,
     world: &'a NavWorld,
-) -> Option<nav::contract::RouteView<'a>> {
+) -> Option<nav_planner::contract::RouteView<'a>> {
     match route {
         RoutePath::Legacy(route) => producer::route_view(world, route).ok(),
         RoutePath::Compact { .. } => route.view(),
@@ -457,7 +457,7 @@ fn retained_bot_route_view<'a>(
     legacy: Option<&'a Route>,
     compact: Option<&'a RoutePath>,
     world: &'a NavWorld,
-) -> Option<nav::contract::RouteView<'a>> {
+) -> Option<nav_planner::contract::RouteView<'a>> {
     compact
         .and_then(RoutePath::view)
         .or_else(|| legacy.and_then(|route| producer::route_view(world, route).ok()))
@@ -465,7 +465,7 @@ fn retained_bot_route_view<'a>(
 
 /// Assess one borrowed compact route without synchronously initializing risk tables.
 pub(crate) async fn assess_view_cooperative<F, U>(
-    route: nav::contract::RouteView<'_>,
+    route: nav_planner::contract::RouteView<'_>,
     world: &NavWorld,
     admission: &Admission,
     yield_unit: &mut F,
@@ -509,7 +509,7 @@ where
 
 /// Cooperative counterpart of [`permits`] over the same borrowed route view.
 pub(crate) async fn permits_view_cooperative<F, U>(
-    route: nav::contract::RouteView<'_>,
+    route: nav_planner::contract::RouteView<'_>,
     world: &NavWorld,
     admission: &Admission,
     assessment: &RouteAssessment,
