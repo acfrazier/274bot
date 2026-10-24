@@ -1,6 +1,6 @@
 use super::*;
-use crate::map::formats::MAX_POIS;
-use crate::map::poi::CapabilityEvidence;
+use nav_planner::map::formats::MAX_POIS;
+use nav_planner::map::poi::CapabilityEvidence;
 use client::config::{LocType, NpcType};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -412,8 +412,8 @@ fn record_count_stays_inside_the_shared_limit() {
 
 #[test]
 fn generator_identity_tracks_source_bytes() {
-    let a = pois_generator_identity(&[("src/map/services.rs", "fn a() {}")]);
-    let b = pois_generator_identity(&[("src/map/services.rs", "fn b() {}")]);
+    let a = pois_generator_identity(&[("crates/nav-bake/src/services.rs", "fn a() {}")]);
+    let b = pois_generator_identity(&[("crates/nav-bake/src/services.rs", "fn b() {}")]);
     assert_ne!(a, b);
     assert_eq!(a.len(), 64);
 }
@@ -461,7 +461,6 @@ fn hunter_tether_defaults_to_wander_plus_two_and_never_below_wander() {
 
 #[test]
 fn hunter_move_restriction_follows_the_engine_names_and_fails_closed() {
-    use crate::map::services::MoveRestrict;
     for (setting, expected) in [
         ("", Some(MoveRestrict::Normal)),
         (
