@@ -399,7 +399,8 @@ mod tests {
 
         slot.reset_session_work();
         slot.sync_compiled_clue(true);
-        assert_calls(&[Call::Reset, Call::Resume, Call::Hold(true)]);
+        assert_calls(&[Call::Reset, Call::Pause, Call::Hold(true)]);
+        slot.on_is_up(true);
         slot.sync_compiled_clue(false);
         assert_calls(&[Call::Resume, Call::Hold(false)]);
 
