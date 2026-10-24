@@ -23,6 +23,7 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[2]
 MAP_PATH = Path(__file__).with_name("map.toml")
 _CELL_NAME = re.compile(r"[A-Za-z0-9_.:-]+\Z")
+CLIENT_SUBMODULE_PATH = "vendor/fr-client-rust"
 
 
 class MapError(ValueError):
@@ -231,9 +232,12 @@ def validate_map(raw: dict[str, Any]) -> dict[str, Any]:
         raise MapError("map.toml must contain only live, not_live, and cover")
     for section_name in ("live", "not_live"):
         section = raw[section_name]
-        if not isinstance(section, dict) or set(section) != {"globs"}:
-            raise MapError(f"[{section_name}] must define only globs")
+        allowed = {"globs"} if section_name == "live" else {"globs", "exceptions"}
+        if not isinstance(section, dict) or "globs" not in section or set(section) - allowed:
+            raise MapError(f"[{section_name}] has invalid fields")
         _validate_globs(section["globs"], section_name)
+        if "exceptions" in section:
+            _validate_globs(section["exceptions"], f"{section_name}.exceptions")
     if not isinstance(raw["cover"], list):
         raise MapError("cover must be an array of tables")
     for index, row in enumerate(raw["cover"]):
@@ -285,11 +289,12 @@ def make_plan(paths: list[str], config: dict[str, Any]) -> Plan:
     unique_paths = sorted(set(paths))
     live_globs = config["live"]["globs"]
     excluded_globs = config["not_live"]["globs"]
+    live_exceptions = config["not_live"].get("exceptions", [])
     live_paths: list[str] = []
     not_live: list[str] = []
     unclassified: list[str] = []
     for path in unique_paths:
-        excluded = matches_any(path, excluded_globs)
+        excluded = matches_any(path, excluded_globs) and not matches_any(path, live_exceptions)
         is_live = matches_any(path, live_globs)
         if excluded:
             not_live.append(path)
@@ -315,6 +320,89 @@ def make_plan(paths: list[str], config: dict[str, Any]) -> Plan:
     return Plan(ordered_cells, tuple(uncovered), tuple(unclassified), tuple(not_live))
 
 
+def _git_output(repo: Path, *args: str) -> str:
+    result = subprocess.run(
+        ["git", *args],
+        cwd=repo,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode:
+        detail = result.stderr.strip() or f"git exited {result.returncode}"
+        raise MapError(f"git {' '.join(args)} failed: {detail}")
+    return result.stdout
+
+
+def _gitlink_commit(repo: Path, revision: str) -> str | None:
+    output = _git_output(repo, "ls-tree", "-z", revision, "--", CLIENT_SUBMODULE_PATH)
+    for entry in output.split("\0"):
+        if not entry:
+            continue
+        metadata, path = entry.split("\t", 1)
+        mode, kind, oid = metadata.split()
+        if path == CLIENT_SUBMODULE_PATH and mode == "160000" and kind == "commit":
+            return oid
+    return None
+
+
+def _submodule_commit_paths(repo: Path, base: str, head: str) -> list[str]:
+    old = _gitlink_commit(repo, base)
+    new = _gitlink_commit(repo, head)
+    if old is None and new is None:
+        return []
+
+    submodule = (repo / CLIENT_SUBMODULE_PATH).resolve()
+    if not submodule.is_dir() or not (submodule / ".git").exists():
+        raise MapError(
+            f"client submodule is not initialized; run: "
+            f"git submodule update --init {CLIENT_SUBMODULE_PATH}"
+        )
+    for oid in (old, new):
+        if oid is None:
+            continue
+        result = subprocess.run(
+            ["git", "-C", str(submodule), "cat-file", "-e", f"{oid}^{{commit}}"],
+            cwd=repo,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode:
+            raise MapError(
+                f"client submodule commit {oid} is missing locally; fetch it with: "
+                f"git -C {CLIENT_SUBMODULE_PATH} fetch origin {oid}"
+            )
+
+    if old is not None and new is not None:
+        if old == new:
+            return []
+        changed = _git_output(
+            repo,
+            "-C",
+            str(submodule),
+            "diff",
+            "--name-only",
+            old,
+            new,
+        )
+    else:
+        changed = _git_output(
+            repo,
+            "-C",
+            str(submodule),
+            "ls-tree",
+            "-r",
+            "--name-only",
+            old or new or "",
+        )
+    return [
+        f"{CLIENT_SUBMODULE_PATH}/{path}"
+        for path in changed.splitlines()
+        if path
+    ]
+
+
 def diff_paths(diff_range: str, repo: Path = ROOT) -> list[str]:
     if diff_range.count("..") != 1 or diff_range.startswith("..") or diff_range.endswith("..") or "..." in diff_range:
         raise MapError("--diff needs one BASE..HEAD range")
@@ -328,7 +416,13 @@ def diff_paths(diff_range: str, repo: Path = ROOT) -> list[str]:
     if result.returncode:
         detail = result.stderr.strip() or f"git diff exited {result.returncode}"
         raise MapError(detail)
-    return result.stdout.splitlines()
+    base, head = diff_range.split("..")
+    paths: list[str] = []
+    for path in result.stdout.splitlines():
+        paths.append(path)
+        if path == CLIENT_SUBMODULE_PATH:
+            paths.extend(_submodule_commit_paths(repo, base, head))
+    return list(dict.fromkeys(paths))
 
 
 def format_plan(plan: Plan) -> str:
@@ -392,6 +486,20 @@ class LiveMapTests(unittest.TestCase):
         self.assertEqual(plan.uncovered, ())
         self.assertEqual(plan.unclassified, ())
         self.assertEqual(plan.not_live, ("crates/nav/src/router_tests.rs", "tools/check.py"))
+
+    def test_explicit_live_test_exception_overrides_not_live_glob(self) -> None:
+        path = "crates/host-play/tests/survivable_admission_live.rs"
+        config = validate_map(
+            {
+                "live": {"globs": [path]},
+                "not_live": {"globs": ["**/tests/**"], "exceptions": [path]},
+                "cover": [{"globs": [path], "cells": ["host.admission|cargo test --locked -p host-play --test survivable_admission_live real_compat_v1_crossing_and_own_sustain_at_45_and_14_hp"]}],
+            }
+        )
+        plan = make_plan([path], config)
+        self.assertEqual([cell.name for cell in plan.cells], ["host.admission"])
+        self.assertEqual(plan.not_live, ())
+        self.assertEqual(plan.uncovered, ())
 
     def test_commands_deduplicate_by_command(self) -> None:
         config = validate_map(
@@ -506,6 +614,117 @@ class LiveMapTests(unittest.TestCase):
             self.assertEqual([cell.name for cell in plan.cells], ["nav.routes"])
             self.assertEqual(plan.uncovered, ())
             self.assertEqual(plan.unclassified, ("mystery/file.rs",))
+
+    def test_diff_expands_real_submodule_paths_and_requires_missing_commit_fetch(self) -> None:
+        raw_evidence = os.environ.get("LIVE_MAP_TEST_TMPDIR")
+        self.assertTrue(raw_evidence, "set LIVE_MAP_TEST_TMPDIR to a path under 274bot-evidence")
+        evidence = Path(raw_evidence).resolve()
+        self.assertIn("274bot-evidence", evidence.parts)
+        try:
+            evidence.relative_to(Path(tempfile.gettempdir()).resolve())
+        except ValueError:
+            pass
+        else:
+            self.fail("LIVE_MAP_TEST_TMPDIR must not be under the system temporary directory")
+        evidence.mkdir(parents=True, exist_ok=True)
+
+        with tempfile.TemporaryDirectory(prefix="live-map-submodule-", dir=evidence) as temp:
+            root = Path(temp)
+            client = root / "client"
+            parent = root / "parent"
+            client.mkdir()
+            parent.mkdir()
+            for repo in (client, parent):
+                _git(repo, "init", "--quiet")
+                _git(repo, "config", "user.name", "Live Map Test")
+                _git(repo, "config", "user.email", "live-map-test@example.invalid")
+
+            client_file = client / "crates/client/src/client/client.rs"
+            client_file.parent.mkdir(parents=True)
+            client_file.write_text("pub fn login() { /* before */ }\n", encoding="utf-8")
+            _git(client, "add", "crates/client/src/client/client.rs")
+            _git(client, "commit", "--quiet", "-m", "client baseline")
+
+            _git(
+                parent,
+                "-c",
+                "protocol.file.allow=always",
+                "submodule",
+                "add",
+                str(client),
+                CLIENT_SUBMODULE_PATH,
+            )
+            _git(parent, "config", "user.name", "Live Map Test")
+            _git(parent, "config", "user.email", "live-map-test@example.invalid")
+            _git(parent, "commit", "--quiet", "-m", "baseline")
+            base = _git_output(parent, "rev-parse", "HEAD").strip()
+
+            client_file.write_text("pub fn login() { /* after */ }\n", encoding="utf-8")
+            _git(client, "add", "crates/client/src/client/client.rs")
+            _git(client, "commit", "--quiet", "-m", "change login")
+            login_commit = _git_output(client, "rev-parse", "HEAD").strip()
+            submodule = parent / CLIENT_SUBMODULE_PATH
+            _git(submodule, "fetch", "origin", login_commit)
+            _git(submodule, "checkout", "--detach", login_commit)
+            _git(parent, "add", CLIENT_SUBMODULE_PATH)
+            _git(parent, "commit", "--quiet", "-m", "update client login")
+            login_update = _git_output(parent, "rev-parse", "HEAD").strip()
+
+            config = load_map()
+            login_plan = make_plan(diff_paths(f"{base}..{login_update}", parent), config)
+            self.assertEqual(
+                {cell.name for cell in login_plan.cells},
+                {
+                    "host.transport-dead-server",
+                    "host.transport-relog",
+                    "panel.headed-nav-script",
+                    "panel.headed-render",
+                },
+            )
+            self.assertEqual(login_plan.uncovered, ())
+            self.assertEqual(login_plan.unclassified, ())
+
+            test_file = client / "crates/client/src/client/client_tests.rs"
+            test_file.write_text("#[test] fn test_only_bump() {}\n", encoding="utf-8")
+            _git(client, "add", "crates/client/src/client/client_tests.rs")
+            _git(client, "commit", "--quiet", "-m", "test-only change")
+            test_commit = _git_output(client, "rev-parse", "HEAD").strip()
+            _git(submodule, "fetch", "origin", test_commit)
+            _git(submodule, "checkout", "--detach", test_commit)
+            _git(parent, "add", CLIENT_SUBMODULE_PATH)
+            _git(parent, "commit", "--quiet", "-m", "update client tests")
+            test_update = _git_output(parent, "rev-parse", "HEAD").strip()
+
+            test_plan = make_plan(diff_paths(f"{login_update}..{test_update}", parent), config)
+            self.assertEqual([cell.name for cell in test_plan.cells], ["panel.headed-render"])
+            self.assertEqual(test_plan.not_live, (f"{CLIENT_SUBMODULE_PATH}/crates/client/src/client/client_tests.rs",))
+            self.assertEqual(test_plan.uncovered, ())
+            self.assertEqual(test_plan.unclassified, ())
+
+            missing = "deadbeef" * 5
+            _git(
+                parent,
+                "update-index",
+                "--add",
+                "--cacheinfo",
+                f"160000,{missing},{CLIENT_SUBMODULE_PATH}",
+            )
+            _git(parent, "commit", "--quiet", "-m", "missing old submodule object")
+            missing_base = _git_output(parent, "rev-parse", "HEAD").strip()
+            _git(
+                parent,
+                "update-index",
+                "--cacheinfo",
+                f"160000,{test_commit},{CLIENT_SUBMODULE_PATH}",
+            )
+            _git(parent, "commit", "--quiet", "-m", "restore real submodule object")
+            missing_head = _git_output(parent, "rev-parse", "HEAD").strip()
+            with self.assertRaises(MapError) as error:
+                diff_paths(f"{missing_base}..{missing_head}", parent)
+            self.assertIn(
+                f"git -C {CLIENT_SUBMODULE_PATH} fetch origin {missing}",
+                str(error.exception),
+            )
 
     def test_diff_lists_removed_paths_for_renames(self) -> None:
         with tempfile.TemporaryDirectory(prefix="live-map-rename-") as temp:

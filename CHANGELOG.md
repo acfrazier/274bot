@@ -22,6 +22,7 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.6` 
 ### Fixed during development
 
 - `tui-play --user NAME` stops on a missing vault before it prepares the game cache or reads the engine login key. The message is the same. A local server with no engine directory still stops with the engine-directory error.
+- The live-proof map now expands client-submodule changes to their changed files and selects both CPU and GPU coverage where needed. Essence changes select the 289 router cells as well as the still-gated 274 cell.
 
 ## [0.2.6] — 2026-10-23 — Beta 2
 
