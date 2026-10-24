@@ -1192,6 +1192,16 @@ fn native_seed_deposit_send_latch_resets_for_next_seed() {
     let mut client = native_seed_client();
     let _peer = attach_loopback(&mut client);
     plant_loaded_empty_bank(&mut client);
+    // This episode retains both seeds in the bank. The shared empty-bank
+    // fixture has one slot, and the client discards updates beyond capacity.
+    client.set_iface_mut(
+        601,
+        client::config::if_type::IfTypeMut {
+            link_obj_type: Some(vec![0, 0]),
+            link_obj_number: Some(vec![0, 0]),
+            ..Default::default()
+        },
+    );
     plant_bank_side_full(&mut client, COINS_ID, 200);
     runner.tick(&mut client);
     let first_sent = client.out.pos;
