@@ -39,6 +39,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.6` 
 
 - `tui-play --user NAME` stops on a missing vault before it prepares the game cache or reads the engine login key. The message is the same. A local server with no engine directory still stops with the engine-directory error.
 
+#### Developer tools
+
+- Live checks that prepare bank stock now send each seed deposit once and wait
+  for the bank to confirm it. A missing seed or refused deposit still fails.
+  Their receipts retain deposit attempts, proof ticks and inventory revisions.
+
 #### Survival
 
 - Strange fruit waits for the game's food delay after a bite. Eating the fruit also delays the next combat attack.

@@ -50,6 +50,9 @@ pub struct Evidence {
     /// Pre-Start ground-loot isolation guard, when the scenario used one.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ground_guard: Option<GroundGuardEvidence>,
+    /// Native seed-deposit attempts and their final bank proof, in observation order.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub seed_deposits: Vec<SeedDepositEvidence>,
     /// `scene_state` at the terminal state.
     pub scene: i32,
 }
@@ -83,6 +86,23 @@ pub struct GroundGuardItem {
     pub id: i32,
     pub count: i32,
     pub tile: [i32; 3],
+}
+
+/// One C5 native seed-deposit observation. Packet generations distinguish a
+/// posted empty pack from a main bank table that still predates the send.
+#[derive(Debug, Clone, Serialize)]
+pub struct SeedDepositEvidence {
+    pub step: usize,
+    pub tick: u32,
+    pub inv_id: i32,
+    pub result: &'static str,
+    pub proof: bool,
+    pub pack: i32,
+    pub side: i32,
+    pub bank: i32,
+    pub main_generation: Option<u64>,
+    pub pack_generation: Option<u64>,
+    pub side_generation: Option<u64>,
 }
 
 /// One inventory slot's row; `name` resolves through the runner's obj
@@ -166,6 +186,7 @@ impl Evidence {
             protect_window: None,
             random_event: None,
             ground_guard: None,
+            seed_deposits: Vec::new(),
             scene: snap.scene_state(),
         }
     }
