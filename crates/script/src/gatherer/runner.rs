@@ -29,7 +29,7 @@ use api::game_data::GatherForbiddenState;
 use api::gather_methods::known_rows;
 use api::selected::{RunKey, Truth};
 use api::snapshot::{ItemView, StatView, WorldTile};
-use nav::contract::ArrivalKind;
+use nav_planner::contract::ArrivalKind;
 use std::sync::Arc;
 use std::task::Poll;
 
@@ -141,7 +141,7 @@ fn walk_failure_message(receipt: &WalkReceipt) -> String {
 fn hazard_retreat_stand(
     here: WorldTile,
     hazard: WorldTile,
-    collision: Option<nav::contract::CollisionView<'_>>,
+    collision: Option<nav_planner::contract::CollisionView<'_>>,
 ) -> Option<WorldTile> {
     const SPAN: usize = (HAZARD_RETREAT_RADIUS as usize) * 2 + 1;
     let mut dx = here.x.saturating_sub(hazard.x).signum();
@@ -2183,7 +2183,7 @@ impl Gatherer {
     fn retreat_from_hazard(
         &mut self,
         tick: &mut NativeTick<'_>,
-        collision: Option<nav::contract::CollisionView<'_>>,
+        collision: Option<nav_planner::contract::CollisionView<'_>>,
     ) {
         let now = tick.cx.evidence().tick;
         if self
@@ -3545,7 +3545,7 @@ mod tests {
         here: WorldTile,
         radius: i32,
         mut blocked: impl FnMut(WorldTile) -> bool,
-    ) -> nav::collision::WorldCollision {
+    ) -> nav_planner::collision::WorldCollision {
         let origin = WorldTile {
             x: here.x - radius,
             z: here.z - radius,
@@ -3566,8 +3566,8 @@ mod tests {
                 }
             }
         }
-        let (walk, packed) = nav::collision::pack_walk(&flags);
-        nav::collision::WorldCollision {
+        let (walk, packed) = nav_planner::collision::pack_walk(&flags);
+        nav_planner::collision::WorldCollision {
             origin,
             width: size,
             height: size,
@@ -3963,7 +3963,8 @@ mod tests {
         });
         let lease = crate::gatherer::select::tests::test_nav_lease_for_collision(&collision);
         assert_eq!(
-            nav::router::local_step_component(&collision, here, HAZARD_RETREAT_RADIUS).len(),
+            nav_planner::router::local_step_component(&collision, here, HAZARD_RETREAT_RADIUS)
+                .len(),
             1,
             "the router cannot leave a four-neighbour cage"
         );
@@ -4044,14 +4045,14 @@ mod tests {
             level: 0,
         }));
         assert_eq!(
-            nav::paint::flood_component_id(&collision, &[here], island),
+            nav_planner::paint::flood_component_id(&collision, &[here], island),
             None
         );
         let stand =
             hazard_retreat_stand(here, hazard, Some(lease.collision())).expect("a reachable stand");
         assert_ne!(stand, island);
         assert_eq!(
-            nav::paint::flood_component_id(&collision, &[here], stand),
+            nav_planner::paint::flood_component_id(&collision, &[here], stand),
             Some(0)
         );
     }
@@ -4100,7 +4101,7 @@ mod tests {
         assert_ne!(stand, hazard);
         assert!(world.collision.walkable(stand));
         assert_eq!(
-            nav::paint::flood_component_id(&world.collision, &[here], stand),
+            nav_planner::paint::flood_component_id(&world.collision, &[here], stand),
             Some(0)
         );
         assert!(

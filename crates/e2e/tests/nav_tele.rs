@@ -31,9 +31,9 @@ use std::time::{Duration, Instant};
 use api::snapshot::WorldTile;
 use common::{fail, live, mint_seed, options, profiles, wait_ingame};
 use host_play::run_with_io;
-use nav::router::{find_allow_teleports, find_with, FindOptions, Leg};
-use nav::transport::TransportKind;
-use nav::world::NavWorld;
+use nav_planner::router::{find_allow_teleports, find_with, FindOptions, Leg};
+use nav_planner::transport::TransportKind;
+use nav_planner::world::NavWorld;
 use scenario::{default_pack_path, RunnerStatus, ScenarioRunner};
 
 /// The Al Kharid Duel Arena (m51_50 local (51,35)): the packed
@@ -56,10 +56,10 @@ const COURTYARD: WorldTile = WorldTile {
 const RING: i32 = 2552;
 
 /// A state holding the charged ring: the packed rub edge's `item_req`.
-fn ring_state() -> nav::WorldState {
-    nav::WorldState {
+fn ring_state() -> nav_planner::WorldState {
+    nav_planner::WorldState {
         inv: HashMap::from([(RING, 1)]),
-        ..nav::WorldState::default()
+        ..nav_planner::WorldState::default()
     }
 }
 
@@ -89,7 +89,7 @@ fn nav_tele() {
     else {
         fail(&format!(
             "nav_tele: pack carries no dueling-ring rub edge to the Duel Arena {DUEL_ARENA:?} \
-             (rebake with `cargo run -p nav --bin nav-pack`)"
+             (rebake with `cargo run -p nav-planner --bin nav-pack`)"
         ));
     };
     if e.option != 4 {
@@ -109,7 +109,7 @@ fn nav_tele() {
         &world.graph,
         COURTYARD,
         DUEL_ARENA,
-        &nav::WorldState::default(),
+        &nav_planner::WorldState::default(),
     )
     .unwrap_or_else(|e| {
         fail(&format!(
@@ -157,7 +157,7 @@ fn nav_tele() {
         })
         .expect("the routed legs include the ring rub edge");
     let _ = rub;
-    if nav::debug_enabled() {
+    if nav_planner::debug_enabled() {
         println!(
             "nav_tele: courtyard -> Duel Arena routed ({:.0} ticks, {} legs)",
             routed.ticks,

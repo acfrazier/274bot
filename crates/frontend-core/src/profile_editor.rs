@@ -344,6 +344,9 @@ impl ProfileEditor {
                 "credentials: wrong save row for this form".to_string(),
             );
         }
+        if creating && self.draft.password_is_empty() {
+            return refused(self, "credentials: password required".to_string());
+        }
         let Some(profile) =
             core.compose_profile(rename_from.as_deref(), &username, &self.draft, true)
         else {

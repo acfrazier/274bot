@@ -11,14 +11,14 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use api::work::{Checkpoint as WorkCheckpoint, MapBakePhase, StepContext, WorkCharge};
-use nav::map::cache::{BakeStage, CompletedUnit, UnitKey};
-use nav::map::formats::{
+use nav_planner::map::cache::{BakeStage, CompletedUnit, UnitKey};
+use nav_planner::map::formats::{
     ClientPois, ColorFormat, Coverage, CoverageLevel, ImageManifest, PlaneBounds, TileReceipt,
 };
-use nav::map::identity::{Digest, CATALOGUE_SCHEMA, IMAGE_SCHEMA};
-use nav::map::poi::PoiRecord;
-use nav::map::spatial::{TileKey, WorldBounds, TILE_GUTTER, TILE_INTERIOR};
-use nav::map::Rows;
+use nav_planner::map::identity::{Digest, CATALOGUE_SCHEMA, IMAGE_SCHEMA};
+use nav_planner::map::poi::PoiRecord;
+use nav_planner::map::spatial::{TileKey, WorldBounds, TILE_GUTTER, TILE_INTERIOR};
+use nav_planner::map::Rows;
 
 use super::{
     ArtifactKind, BakePlan, BakeRequest, BakeWriter, MapBakeCursor, MapBakeCursorOutput,
@@ -272,8 +272,8 @@ impl CountingMapProducer {
 
 struct CountingCursor {
     artifact: ArtifactKind,
-    catalogue_identity: nav::map::identity::CatalogueIdentity,
-    image_identity: nav::map::identity::ImageIdentity,
+    catalogue_identity: nav_planner::map::identity::CatalogueIdentity,
+    image_identity: nav_planner::map::identity::ImageIdentity,
     partial_dir: Arc<PathBuf>,
     plan: BakePlan,
     progress: MapProgressSnapshot,
@@ -389,7 +389,7 @@ impl MapBakeCursor for CountingCursor {
                     return Ok(MapBakeCursorStep::Yielded);
                 };
                 if writer.directory() != self.partial_dir.as_path() {
-                    return Err(MapCacheError::Map(nav::map::MapError::Path));
+                    return Err(MapCacheError::Map(nav_planner::map::MapError::Path));
                 }
                 let key = CountingMapProducer::TILES[self.next_tile];
                 let unit = UnitKey::Terrain { tile: key };

@@ -58,7 +58,7 @@ export function jm2SectionName(line: string) {
     return trimmed.slice('==== '.length, -' ===='.length);
 }
 /**
- * LOC placements only — mirrors `crates/nav/src/transport.rs` `parse_jm2_locs` gating.
+ * LOC placements only — mirrors `crates/nav-planner/src/transport.rs` `parse_jm2_locs` gating.
  * One jm2 is parsed once against the whole selected loc-id set; a singleton set is
  * the one-id case. Fail-closed: bad tokens, ranges, and extra tokens throw.
  */

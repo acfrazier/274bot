@@ -5,8 +5,8 @@ use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use api::snapshot::WorldTile;
-use nav::paint::{bake_reach, can_step_off, reached};
-use nav::world::NavWorld;
+use nav_planner::paint::{bake_reach, can_step_off, reached};
+use nav_planner::world::NavWorld;
 
 /// Lumbridge courtyard fallback when no nav pack is on disk.
 const LUMBRIDGE: WorldTile = WorldTile {
@@ -84,8 +84,8 @@ pub fn tele_args(tile: WorldTile) -> String {
 mod tests {
     use api::snapshot::WorldTile;
     use client::dash3d::CollisionFlag;
-    use nav::collision::WorldCollision;
-    use nav::transport::TransportGraph;
+    use nav_planner::collision::WorldCollision;
+    use nav_planner::transport::TransportGraph;
 
     use super::*;
 
@@ -102,10 +102,10 @@ mod tests {
         assert_eq!(tele_args(t), api::interact::tele_args(0, 3220, 3218));
     }
 
-    fn door(at: WorldTile, to: WorldTile) -> nav::transport::TransportEdge {
-        nav::transport::TransportEdge {
+    fn door(at: WorldTile, to: WorldTile) -> nav_planner::transport::TransportEdge {
+        nav_planner::transport::TransportEdge {
             takeoff: None,
-            kind: nav::transport::TransportKind::Door,
+            kind: nav_planner::transport::TransportKind::Door,
             player_delta: None,
             at,
             to,
@@ -148,7 +148,7 @@ mod tests {
         };
         let mut graph = TransportGraph::default();
         graph.edges.push(door(at, to));
-        let (walk, blocked) = nav::collision::pack_walk(&flags);
+        let (walk, blocked) = nav_planner::collision::pack_walk(&flags);
         let world = NavWorld::from_parts(
             WorldCollision {
                 origin: WorldTile {
@@ -203,7 +203,7 @@ mod tests {
         };
         let mut graph = TransportGraph::default();
         graph.edges.push(door(at, to));
-        let (walk, blocked) = nav::collision::pack_walk(&flags);
+        let (walk, blocked) = nav_planner::collision::pack_walk(&flags);
         let world = NavWorld::from_parts(
             WorldCollision {
                 origin: WorldTile {

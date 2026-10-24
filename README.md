@@ -63,7 +63,7 @@ save a profile.
 | Learn the window and what its buttons do | [Panel guide](docs/api/panel.md) |
 | Run bots in a terminal, for example on a server | [Terminal app guide](docs/api/tui.md) |
 | Move my accounts over from rs2b0t | [Import your accounts from rs2b0t](docs/manual/importing-from-rs2b0t.md) |
-| Use or write quest guides | [Quest guides](docs/quester-paths.md) |
+| Use or write quest guides | [Quest guides](docs/scripting/quest-guides.md) |
 | Choose a game server, world or revision | [Choose a game server and a world](docs/manual/servers-and-worlds.md) |
 | Look up a word | [Glossary](docs/manual/glossary.md) |
 | See what changed | [CHANGELOG.md](CHANGELOG.md) |

@@ -50,6 +50,9 @@ pub enum Command {
     MoveProfileDown,
     MoveMarkedToTop,
     ImportProfiles,
+    /// Add a profile to the vault with its own password (opens the
+    /// shared New profile form).
+    NewProfile,
     /// A fleet action over the marked profiles, or the loaded shown rows
     /// with no marks: core plans it (`PlanFleetAction`), the confirm
     /// overlay shows its prompt when it asks first.
@@ -117,6 +120,7 @@ pub const FLEET_KEYS: &[(char, Command)] = &[
     ('m', Command::Fleet(FleetAction::Login)),
     ('U', Command::Fleet(FleetAction::Logout)),
     ('W', Command::PickWorld),
+    ('N', Command::NewProfile),
 ];
 
 /// Overview shortcuts: they act on the selected bot, shown in the pane.
@@ -226,6 +230,7 @@ impl Command {
         Command::ImportProfiles,
         Command::Login,
         Command::Logout,
+        Command::NewProfile,
         Command::Remove,
         Command::Settings,
         Command::Loadouts,
@@ -288,7 +293,8 @@ impl Command {
             | Command::Fleet(
                 FleetAction::Login | FleetAction::Logout | FleetAction::SwitchWorld(_),
             )
-            | Command::ImportProfiles => Group::Fleet,
+            | Command::ImportProfiles
+            | Command::NewProfile => Group::Fleet,
             Command::Login
             | Command::Logout
             | Command::Remove
@@ -361,6 +367,7 @@ impl Command {
             Command::ImportProfiles => "Import rs2b0t profiles…",
             Command::Login => "Log in",
             Command::Logout => "Log out",
+            Command::NewProfile => "New profile",
             Command::Remove => "Remove from fleet…",
             Command::Settings => "Settings",
             Command::Loadouts => "Loadouts",
@@ -393,7 +400,7 @@ impl Command {
     pub fn button(self, app: &TuiApp) -> &'static str {
         match self {
             Command::Fleet(FleetAction::Login) => "Load+login",
-            Command::Fleet(FleetAction::Logout) => "Logout",
+            Command::Fleet(FleetAction::Logout) => "Log out",
             Command::Remove => "Remove",
             Command::ManualWalk => "Manual walk",
             Command::DismissNotice => "Got it",
@@ -460,7 +467,7 @@ impl Command {
                 Group::App => "app".into(),
                 Group::Logs => "log".into(),
                 Group::Fleet => match self {
-                    Command::ImportProfiles => "vault".into(),
+                    Command::ImportProfiles | Command::NewProfile => "vault".into(),
                     _ => "fleet table".into(),
                 },
                 Group::Script

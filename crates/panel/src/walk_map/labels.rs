@@ -1,7 +1,7 @@
 //! Map-canvas label ranking and overlap. Markers are independent of this
 //! filter; only the text rectangles compete.
 
-use nav::map::poi::PoiKind;
+use nav_planner::map::poi::PoiKind;
 
 /// Axis-aligned label box in canvas points.
 #[derive(Clone, Copy, Debug, PartialEq)]

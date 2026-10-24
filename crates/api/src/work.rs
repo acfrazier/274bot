@@ -162,7 +162,7 @@ impl Track {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum WorkFamily {
     /// Route search. Producer T5; consumers T1 and T2. Activation
-    /// T5.W(route) after T1.2 and T5.1. Bound by `nav::contract::RouteService`.
+    /// T5.W(route) after T1.2 and T5.1. Bound by `nav_planner::contract::RouteService`.
     Route,
     /// Inspection search. Producer T5 (`host-play/src/route_inspect.rs`).
     /// Activation T5.W(inspection).
@@ -438,7 +438,7 @@ pub trait WorkPhase: Copy + Eq + fmt::Debug {
 }
 
 /// Per-family typed contract. Implemented for route as
-/// `nav::contract::RouteService`. Other families record phases/units on
+/// `nav_planner::contract::RouteService`. Other families record phases/units on
 /// [`WorkFamily`] until T5.W supplies their input types.
 ///
 /// Submission derives the family, charge and revision from this spec

@@ -237,6 +237,12 @@ impl ProfileDraft {
         self.password.is_empty()
     }
 
+    /// The password field's length in characters, for a masked field's
+    /// typing feedback (the password itself is never shown).
+    pub fn password_len(&self) -> usize {
+        self.password.chars().count()
+    }
+
     /// Edit buffer of the password field. The text is zeroed when the draft
     /// is dropped or cleared.
     pub fn password_mut(&mut self) -> &mut String {
