@@ -61,6 +61,14 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.6` 
 - A terminal-app preference error now clears after 15 seconds without returning
   on the next refresh. Recovery clears that error without erasing a newer message.
 
+#### Developer tools
+
+- Live checks that prepare bank stock now send each seed deposit once and wait
+  for the bank to confirm it within the step's existing game-tick budget.
+  A delayed confirmation no longer fails after two ticks.
+  A missing seed or refused deposit still fails.
+  Their receipts retain deposit attempts, proof ticks and inventory revisions.
+
 #### Survival
 
 - Strange fruit waits for the game's food delay after a bite. Eating the fruit also delays the next combat attack.

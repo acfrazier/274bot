@@ -14,7 +14,7 @@ use nav_executor::{TravelOptions, TravelOutcome, Traveller};
 use nav_planner::router::{FindOptions, Route};
 use nav_planner::world::NavWorld;
 
-use crate::evidence::{Evidence, GroundGuardEvidence, GroundGuardItem};
+use crate::evidence::{Evidence, GroundGuardEvidence, GroundGuardItem, SeedDepositEvidence};
 use crate::proof::Proof;
 use crate::random_episode::{Frame, RandomEventEpisode, Verdict};
 #[cfg(test)]
@@ -445,6 +445,7 @@ pub struct ScenarioRunner {
     speed_chat_baseline: Option<i32>,
     evidence: Option<Evidence>,
     ground_guard: Option<GroundGuardEvidence>,
+    seed_deposits: Vec<SeedDepositEvidence>,
     /// Cumulative skill XP baselines: captured at StartScript for its later
     /// watches, otherwise when the first XP watch for that skill begins.
     xp_baselines: Vec<(i32, i32)>,
@@ -580,6 +581,7 @@ impl ScenarioRunner {
             engine_speed_sent: false,
             evidence: None,
             ground_guard: None,
+            seed_deposits: Vec::new(),
             xp_baselines: Vec::new(),
             fresh_xp_baseline: None,
             fresh_chat_baseline: None,
@@ -1038,7 +1040,7 @@ impl ScenarioRunner {
                 // prompts) and closes the quest-scroll modals until its
                 // arm holds, so the send stays armed — and the step's
                 // game-tick budget keeps counting.
-                self.step_sent = !matches!(
+                self.step_sent |= !matches!(
                     self.current_step().kind,
                     StepKind::DrainDialogs { .. }
                         | StepKind::Relog
@@ -1165,6 +1167,9 @@ impl ScenarioRunner {
                     _ => true,
                 };
                 if nav_done {
+                    if matches!(self.current_step().kind, StepKind::NativeSeedDeposit { .. }) {
+                        self.trace_seed_deposit("ProofObserved");
+                    }
                     let shot_label = match &self.current_step().kind {
                         StepKind::Shot { label } => Some(*label),
                         _ => None,
@@ -1857,6 +1862,37 @@ impl ScenarioRunner {
         }
     }
 
+    fn trace_seed_deposit(&mut self, result: &'static str) {
+        let StepKind::NativeSeedDeposit {
+            unnoted_id,
+            note_id,
+            ..
+        } = self.current_step().kind
+        else {
+            return;
+        };
+        let count = |rows: &[api::snapshot::ItemView], id| {
+            rows.iter()
+                .filter(|row| row.def.id == id)
+                .map(|row| row.count)
+                .sum::<i32>()
+        };
+        let inv_id = note_id.unwrap_or(unnoted_id);
+        self.seed_deposits.push(SeedDepositEvidence {
+            step: self.step,
+            tick: self.snapshot.tick(),
+            inv_id,
+            result,
+            proof: self.holds(self.current_step().wait.arm),
+            pack: count(self.snapshot.inventory(), inv_id),
+            side: count(self.snapshot.bank_side(), inv_id),
+            bank: count(self.snapshot.bank(), unnoted_id),
+            main_generation: self.snapshot.bank_snapshot_generation(),
+            pack_generation: self.snapshot.inventory_packet_generation(),
+            side_generation: self.snapshot.bank_side_packet_generation(),
+        });
+    }
+
     /// Send the current step's action once. `Perform` runs its closure;
     /// `Walk` and `Follow` arm the whole-world route (`find_with` over the
     /// collision + transport graph) and drive `Traveller::follow`.
@@ -1877,16 +1913,35 @@ impl ScenarioRunner {
                 unnoted_id,
                 quantity,
                 note_id,
-            } => match crate::native_seed_deposit_attempt(
-                client,
-                &self.snapshot,
-                *unnoted_id,
-                *quantity,
-                *note_id,
-            ) {
-                Ok(_) => Ok(()),
-                Err(failure) => Err(failure.to_string()),
-            },
+            } => {
+                let result = crate::native_seed_deposit_attempt(
+                    client,
+                    &self.snapshot,
+                    *unnoted_id,
+                    *quantity,
+                    *note_id,
+                );
+                let outcome = match result {
+                    Ok(crate::SeedDepositProgress::DepositSent) => "DepositSent",
+                    Ok(crate::SeedDepositProgress::AlreadyDeposited) => "AlreadyDeposited",
+                    Ok(crate::SeedDepositProgress::BankPending) => "BankPending",
+                    Err(crate::SeedDepositFailure::MissingRow { .. }) => "MissingRow",
+                    Err(crate::SeedDepositFailure::MissingOperation { .. }) => "MissingOperation",
+                    Err(crate::SeedDepositFailure::SendRefused { .. }) => "SendRefused",
+                };
+                self.trace_seed_deposit(outcome);
+                match result {
+                    Ok(
+                        crate::SeedDepositProgress::DepositSent
+                        | crate::SeedDepositProgress::AlreadyDeposited,
+                    ) => {
+                        self.step_sent = true;
+                        Ok(())
+                    }
+                    Ok(crate::SeedDepositProgress::BankPending) => Ok(()),
+                    Err(failure) => Err(failure.to_string()),
+                }
+            }
             StepKind::DrainDialogs { choice } => {
                 let mut ix = Interactions::new(&self.snapshot, client);
                 if self.snapshot.chat_continue_component_id() != -1 {
@@ -2280,6 +2335,7 @@ impl ScenarioRunner {
             .map(ProtectWindowObservation::evidence);
         evidence.random_event = self.random_event.as_ref().map(RandomEventEpisode::receipt);
         evidence.ground_guard = self.ground_guard.take();
+        evidence.seed_deposits = std::mem::take(&mut self.seed_deposits);
         self.evidence = Some(evidence);
     }
 
@@ -2307,6 +2363,7 @@ impl ScenarioRunner {
             .map(ProtectWindowObservation::evidence);
         evidence.random_event = self.random_event.as_ref().map(RandomEventEpisode::receipt);
         evidence.ground_guard = self.ground_guard.take();
+        evidence.seed_deposits = std::mem::take(&mut self.seed_deposits);
         self.evidence = Some(evidence);
     }
 }
