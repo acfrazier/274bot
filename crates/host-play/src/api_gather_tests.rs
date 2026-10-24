@@ -938,9 +938,7 @@ impl GatherReconnectRig {
                 .get();
             let mut slot = script::SlotScript::new();
             slot.bind_incarnation(incarnation);
-            slot.bind_surface_factory(Arc::new(
-                script::load::surface::JsSurfaceFactory::default(),
-            ));
+            slot.bind_surface_factory(Arc::new(script::load::surface::JsSurfaceFactory::default()));
             scripts
                 .lock()
                 .unwrap()
