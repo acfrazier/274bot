@@ -5800,6 +5800,7 @@ fn s2b_admission_per_bot_layouts() {
     // layouts: test-only inspection budgets and bank fixtures are included.
     // S0c moves the platform-specific isolate mutexes into the surface run.
     // The shared 64-bit slot layout no longer contains those mutexes.
+    // S0d adds a 16 B per-slot generation cache for lock-free compiled-card reads.
     #[cfg(all(
         target_os = "macos",
         target_arch = "aarch64",
@@ -5812,7 +5813,7 @@ fn s2b_admission_per_bot_layouts() {
             std::mem::size_of::<script::combat::Combat>(),
             std::mem::size_of::<script::combat::WalkGuard>()
         ),
-        (3784, 1608, 512, 264)
+        (3784, 1624, 512, 264)
     );
     #[cfg(all(
         target_os = "linux",
@@ -5827,7 +5828,7 @@ fn s2b_admission_per_bot_layouts() {
             std::mem::size_of::<script::combat::Combat>(),
             std::mem::size_of::<script::combat::WalkGuard>()
         ),
-        (3784, 1608, 512, 264)
+        (3784, 1624, 512, 264)
     );
     assert!(std::mem::size_of::<script::combat::Combat>() <= 512);
     assert!(std::mem::size_of::<script::combat::WalkGuard>() <= 264);
