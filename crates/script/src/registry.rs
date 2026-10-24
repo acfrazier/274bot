@@ -423,7 +423,10 @@ mod tests {
                 loadouts: Arc::default(),
             })
             .unwrap();
-        factory.last_run().unwrap().set_readiness(SurfaceReady::Ready);
+        factory
+            .last_run()
+            .unwrap()
+            .set_readiness(SurfaceReady::Ready);
         let _ = surface_slot.poll_start();
         assert_eq!(surface_slot.state(), RunState::Running);
         surface_slot.sync_compiled_clue(false);

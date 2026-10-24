@@ -49,7 +49,8 @@ pub fn scenario_with_profiles_for_test(
     mainland: bool,
     additional_profile: (&'static str, &'static str),
 ) -> Result<Scenario, String> {
-    let mut scenario = registered_scenario(name).ok_or_else(|| format!("unknown scenario {name}"))?;
+    let mut scenario =
+        registered_scenario(name).ok_or_else(|| format!("unknown scenario {name}"))?;
     scenario.seed.mainland = mainland;
     scenario
         .seed
@@ -63,7 +64,8 @@ pub fn scenario_with_start_script_for_test(
     name: &str,
     start_script: &'static str,
 ) -> Result<Scenario, String> {
-    let mut scenario = registered_scenario(name).ok_or_else(|| format!("unknown scenario {name}"))?;
+    let mut scenario =
+        registered_scenario(name).ok_or_else(|| format!("unknown scenario {name}"))?;
     scenario.settings.start_script = Some(start_script);
     Ok(scenario.into())
 }
@@ -74,7 +76,8 @@ pub fn scenario_with_nav_for_test(
     allow_teleports: bool,
     allow_wilderness: bool,
 ) -> Result<Scenario, String> {
-    let mut scenario = registered_scenario(name).ok_or_else(|| format!("unknown scenario {name}"))?;
+    let mut scenario =
+        registered_scenario(name).ok_or_else(|| format!("unknown scenario {name}"))?;
     scenario.settings.nav.allow_teleports = allow_teleports;
     scenario.settings.nav.allow_wilderness = allow_wilderness;
     Ok(scenario.into())
