@@ -2,15 +2,13 @@
 #![deny(clippy::disallowed_methods)]
 #![deny(clippy::disallowed_macros)]
 
-//! Nav: whole-world collision bake, transport graph, Dijkstra router
-//! (`find` / `find_with`), WalkTo grid, arrival detection, and the
-//! content-derived bank stand table. The `nav-executor` crate drives routes.
+//! Navigation collision, transport graph, Dijkstra routing, arrival detection,
+//! and immutable map views. `nav-bake` owns release generation, and
+//! `nav-executor` drives routes.
 //! Pack magic `274V`, version byte 17.
 
 pub mod arrival;
-pub mod bake;
 pub mod bank_fetch;
-pub mod bundle;
 pub mod camera;
 pub mod canlight;
 pub mod collision;
@@ -20,6 +18,7 @@ pub mod executor_adapter;
 pub mod grid;
 pub mod manifest;
 pub mod map;
+pub mod movement;
 pub mod named_banks;
 pub mod pack;
 pub mod paint;

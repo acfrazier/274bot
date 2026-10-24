@@ -44,7 +44,7 @@ use std::env;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use nav_planner::bake::{
+use nav_bake::bake::{
     self, config_jag_for, content_inputs, verify_cache_manifest, BakeRequest, BakedNav,
 };
 use nav_planner::manifest::{nav_manifest_path, CacheManifest};

@@ -41,6 +41,7 @@ use api::work::{Checkpoint, StepContext, WorkPhase};
 use client::dash3d::CollisionFlag;
 
 use crate::collision::WorldCollision;
+use crate::movement::step_ok;
 use crate::contract::{ContractError, NavLease, PackId, RouteView};
 use crate::essence::{EssenceSession, ESSENCE_MINE_EXIT_TICKS, ESSENCE_MINE_PORTALS};
 use crate::quest_gates::QuestFamilyMismatch;
@@ -4072,15 +4073,6 @@ const STEPS: [(i32, i32); 8] = [
     (1, 1),
 ];
 
-/// The client's `PL_WALK_*` movement masks, as `u32` to match the flag word.
-const MASK_N: u32 = CollisionFlag::PL_WALK_N as u32;
-const MASK_E: u32 = CollisionFlag::PL_WALK_E as u32;
-const MASK_S: u32 = CollisionFlag::PL_WALK_S as u32;
-const MASK_W: u32 = CollisionFlag::PL_WALK_W as u32;
-const MASK_NE: u32 = CollisionFlag::PL_WALK_NE as u32;
-const MASK_SE: u32 = CollisionFlag::PL_WALK_SE as u32;
-const MASK_NW: u32 = CollisionFlag::PL_WALK_NW as u32;
-const MASK_SW: u32 = CollisionFlag::PL_WALK_SW as u32;
 
 /// Dijkstra over `collision` walk steps (each costing the search's run
 /// rate) and `graph` transport edges (each costing `edge.ticks`), all in
@@ -9052,72 +9044,6 @@ fn wildy_step_ok(
     allow_wilderness || graph.wilderness.contains(cur) || !graph.wilderness.contains(next)
 }
 
-/// Whether a one-tile step from `cur` by `d` is allowed — the client's
-/// `tryMove` movement test against the collision bake's derived walkable
-/// word, not the blanket `walkable()`. A step into a neighbour clears that
-/// neighbour's `PL_WALK_*` mask for the face/corner the step enters
-/// through; a diagonal step additionally clears both orthogonal neighbours'
-/// cardinal masks, exactly like `tryMove`'s BFS. The derived word carries
-/// the `SQ_BLOCKED` base on any wall/scenery/ground tile, so those tiles
-/// reject entry from every direction. Every step stays inside the bake's
-/// x/z grid (the whole-world mapsquare bbox); each level tests its own
-/// plane (an unstamped plane is unrestricted within it).
-pub fn step_ok(collision: &WorldCollision, cur: WorldTile, d: (i32, i32)) -> bool {
-    let nb = WorldTile {
-        x: cur.x + d.0,
-        z: cur.z + d.1,
-        level: cur.level,
-    };
-    let lx = nb.x - collision.origin.x;
-    let lz = nb.z - collision.origin.z;
-    if lx < 0 || lz < 0 {
-        return false;
-    }
-    if lx as usize >= collision.width || lz as usize >= collision.height {
-        return false;
-    }
-    let f = |x: i32, z: i32| collision.walkable_word(x, z, nb.level);
-    if let Some(mask) = cardinal_entry_mask(d) {
-        // Cardinal: the destination's face toward `cur`.
-        return f(nb.x, nb.z) & mask == 0;
-    }
-    match (d.0, d.1) {
-        // Diagonal: the destination's corner mask plus both orthogonals.
-        (-1, -1) => {
-            f(nb.x, nb.z) & MASK_NE == 0
-                && f(cur.x - 1, cur.z) & MASK_E == 0
-                && f(cur.x, cur.z - 1) & MASK_N == 0
-        }
-        (1, -1) => {
-            f(nb.x, nb.z) & MASK_NW == 0
-                && f(cur.x + 1, cur.z) & MASK_W == 0
-                && f(cur.x, cur.z - 1) & MASK_N == 0
-        }
-        (-1, 1) => {
-            f(nb.x, nb.z) & MASK_SE == 0
-                && f(cur.x - 1, cur.z) & MASK_E == 0
-                && f(cur.x, cur.z + 1) & MASK_S == 0
-        }
-        (1, 1) => {
-            f(nb.x, nb.z) & MASK_SW == 0
-                && f(cur.x + 1, cur.z) & MASK_W == 0
-                && f(cur.x, cur.z + 1) & MASK_S == 0
-        }
-        _ => false,
-    }
-}
-
-/// The `PL_WALK_*` mask a cardinal step by `d` tests on the tile it enters
-/// (the face toward the tile it leaves); `None` for any other delta.
-pub(crate) fn cardinal_entry_mask(d: (i32, i32)) -> Option<u32> {
-    match d {
-        (0, 1) => Some(MASK_S),
-        (0, -1) => Some(MASK_N),
-        (1, 0) => Some(MASK_W),
-        (-1, 0) => Some(MASK_E),
-        _ => None,
-    }
-}
 
 /// Return the component reachable from `origin` using baked client-style
 /// walk steps within the requested Chebyshev radius. This deliberately omits

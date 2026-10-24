@@ -2006,7 +2006,7 @@ fn saved_collision_prefs_without_drawing_do_not_load_navflags() {
         level: 0,
     };
     let flags = vec![0u32, 0, 0, 0];
-    let bytes = nav_planner::pack::encode_flags_sidecar(origin, 1, 1, &flags);
+    let bytes = nav_bake::pack::encode_flags_sidecar(origin, 1, 1, &flags);
     std::fs::write(&path, &bytes).unwrap();
     let digest = nav_planner::manifest::hash_bytes(&bytes);
 
@@ -2081,7 +2081,7 @@ fn remove_only_focused_drawing_slot_releases_flags() {
         level: 0,
     };
     let flags = vec![0u32, 0, 0, 0];
-    let bytes = nav_planner::pack::encode_flags_sidecar(origin, 1, 1, &flags);
+    let bytes = nav_bake::pack::encode_flags_sidecar(origin, 1, 1, &flags);
     std::fs::write(&path, &bytes).unwrap();
     let digest = nav_planner::manifest::hash_bytes(&bytes);
 

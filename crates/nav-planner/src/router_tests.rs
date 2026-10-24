@@ -18,6 +18,7 @@ use std::time::{Duration, Instant};
 use crate::bank_fetch::fetchable_state;
 use crate::collision::{bake_from_maps, WorldCollision};
 use crate::grid::StepGrid;
+use crate::movement::step_ok;
 use crate::pack::{BankAccess, BankStand};
 use crate::quest_gates::{QuestEvidence, QuestFamilyMismatch, QuestGates};
 use crate::router::{
@@ -25,7 +26,7 @@ use crate::router::{
     find_first_with, find_first_with_fallback, find_many_with, find_many_with_avoid_bounded,
     find_many_with_avoid_bounded_until, find_missing_item_reqs, find_missing_item_reqs_with_avoid,
     find_on_grid, find_unresolved_quest_gates, find_with, find_with_avoid, find_with_avoid_bounded,
-    find_with_model, local_step_component, missing_item_reqs, step_ok, AvoidRect, CostModel,
+    find_with_model, local_step_component, missing_item_reqs, AvoidRect, CostModel,
     FallbackRoute, FindOptions, GridLeg, Leg, MissingReq, ReverseProof, RouteError, TargetError,
     BANK_TARGET_BUDGET, FIRST_TARGET_BUDGET, PER_STEP_WALK,
 };

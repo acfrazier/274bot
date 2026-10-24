@@ -340,7 +340,7 @@ fn derive_synthetic_hunter_zones_with(
     derive_zone_table(
         &content.root,
         collision,
-        &crate::transport::TransportGraph::default(),
+        &nav_planner::transport::TransportGraph::default(),
         &npc_types,
         door_ids,
         opened_door_ids,
@@ -442,7 +442,7 @@ fn stationary_melee_shape_uses_exact_wall_faces_and_open_door_faces() {
     let closed_shape = stationary_melee_shape(&west_wall, spawn, 1, &HashSet::new()).unwrap();
     assert_eq!(closed_shape & (1u64 << 3), 0);
 
-    let door_faces = openable_door_faces(&[crate::map::services::OpenableDoor {
+    let door_faces = openable_door_faces(&[crate::services::OpenableDoor {
         x: 3,
         z: 3,
         level: 0,
@@ -794,7 +794,7 @@ fn npc_steps_match_engine_can_travel_per_strategy() {
 
 #[test]
 fn blocked_normal_ghast_walks_the_bog_its_wander_witness_crosses() {
-    use crate::map::services::MoveRestrict;
+    use crate::services::MoveRestrict;
     // REVIEW-NAV-WWM-ROUTE R1: `ghast_invis` (size 2, `moverestrict=
     // blocked+normal`) wanders from its spawn (3478,3328) to (3477,3325),
     // cardinal-adjacent to the player tile (3476,3325). The engine steps it
