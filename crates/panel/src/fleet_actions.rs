@@ -9,9 +9,9 @@
 //! [`frontend_core::OperatorSession::fleet_result`]; nothing here copies it.
 //! A pick in the world picker takes the same path ([`Session::plan_world_switch`]).
 
-use frontend_core::{ErrorNeed, FleetAction, OperatorCommand, Targets};
+use frontend_core::{FleetAction, OperatorCommand, Targets};
 
-use crate::session::{PanelWindow, Session};
+use crate::session::{ErrorNeed, PanelWindow, Session};
 
 impl Session {
     /// Plan `action` over the fleet model's marks (or, with none, its loaded

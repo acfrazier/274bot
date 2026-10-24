@@ -8,7 +8,7 @@
 use frontend_core::scripts::ScriptRunState;
 use frontend_core::{FleetAction, MarkOp, MarkPredicate, OperatorCommand};
 
-use crate::app::{Refusal, TuiApp, WalkSendMode};
+use crate::app::{ErrorNeed, Refusal, TuiApp, WalkSendMode};
 use crate::layout::Screen;
 use crate::script_shape::SCRIPT_KEYS;
 
@@ -494,136 +494,41 @@ impl Command {
         }
     }
 
-    /// `Err(reason)` when the command cannot run now.
-    pub fn availability(self, app: &TuiApp) -> Result<(), &'static str> {
-        let bot = || {
-            app.focused_name()
-                .map(|_| ())
-                .ok_or("no bot selected (Fleet: Enter or click a row)")
-        };
-        let map = || {
-            app.map_active
-                .then_some(())
-                .ok_or("open the Map first (F4)")
-        };
-        let load_order = || {
-            (app.fleet_model.order() == frontend_core::FleetOrder::LoadOrder)
-                .then_some(())
-                .ok_or("choose Load order to reorder")
-        };
-        let rows_shown = || {
-            (!app.fleet_model.shown().is_empty())
-                .then_some(())
-                .ok_or("no rows shown")
-        };
-        match self {
-            Command::ShowMessage => app.error.as_ref().map(|_| ()).ok_or("no message"),
-            Command::MarkAllShown | Command::InvertShown | Command::MarkWhere(_) => rows_shown(),
-            Command::UnmarkShown => (app.fleet_model.counts().shown_marked() > 0)
-                .then_some(())
-                .ok_or("no shown row is marked"),
-            Command::ClearMarks => (!app.fleet_model.marks().is_empty())
-                .then_some(())
-                .ok_or("no rows selected"),
-            Command::PickWorld => app
-                .cursor_profile()
-                .map(|_| ())
-                .ok_or("no fleet row under the cursor"),
-            Command::PickWorldMarked => (!app.fleet_model.marks().is_empty()
-                || !app.fleet_model.shown().is_empty())
-            .then_some(())
-            .ok_or("no rows shown or marked"),
-            Command::Fleet(action) => (!action.needs_card() || !app.fleet_model.card().is_own())
-                .then_some(())
-                .ok_or("pick a card first"),
-            Command::MoveProfileUp | Command::MoveProfileDown => {
-                load_order()?;
-                let (delta, reason) = if self == Command::MoveProfileUp {
-                    (-1, "no shown row above the cursor")
-                } else {
-                    (1, "no shown row below the cursor")
-                };
-                app.table
-                    .reorder_step(&app.fleet_model, delta)
-                    .map(|_| ())
-                    .ok_or(reason)
-            }
-            Command::MoveMarkedToTop => {
-                load_order()?;
-                (!app.fleet_model.marks().is_empty())
-                    .then_some(())
-                    .ok_or("mark fleet rows first (Space)")
-            }
-            Command::Login | Command::Logout | Command::Remove => bot(),
-            Command::ManualWalk => {
-                bot()?;
-                app.here
-                    .map(|_| ())
-                    .ok_or("the bot has no observed position yet")
-            }
-            Command::DismissNotice => app
-                .background_notice
-                .as_ref()
-                .map(|_| ())
-                .ok_or("no background-bots notice"),
-            Command::ScriptStart => {
-                bot()?;
-                app.script_sel
-                    .as_ref()
-                    .map(|_| ())
-                    .ok_or("browse to pick a script first")
-            }
-            Command::ScriptPause => {
-                bot()?;
-                matches!(
-                    app.script_state,
-                    ScriptRunState::Running | ScriptRunState::Paused
-                )
-                .then_some(())
-                .ok_or("no running script")
-            }
-            Command::ScriptStop => {
-                bot()?;
-                (app.script_state != ScriptRunState::Idle || app.script_queued)
-                    .then_some(())
-                    .ok_or("no script running")
-            }
-            Command::ScriptParams => {
-                if app.params_card().is_none() {
-                    Err("pick a script first")
-                } else if app.params_unavailable.is_some() {
-                    Err("the selected script parameters are unavailable")
-                } else if app.params_schema.as_ref().is_empty() {
-                    Err("the selected script has no parameters")
-                } else {
-                    Ok(())
-                }
-            }
-            Command::ScriptReload => (app.reload_confirm || app.script_sel.is_some())
-                .then_some(())
-                .ok_or("pick a script first"),
-            Command::ScriptReloadCancel => app
-                .reload_confirm
-                .then_some(())
-                .ok_or("no reload awaiting confirmation"),
-            Command::ToggleGameChat => app
-                .chat_data
-                .script_paint
-                .as_ref()
-                .map(|_| ())
-                .ok_or("no script paint to toggle"),
+    /// `Err(reason)` when the command cannot run now: the first missing
+    /// precondition, in the order the command checks them.
+    pub fn availability(self, app: &TuiApp) -> Result<(), Unavailable> {
+        use Unavailable::*;
+        let preconditions: &[Unavailable] = match self {
+            Command::ShowMessage => &[NoMessage],
+            Command::MarkAllShown | Command::InvertShown | Command::MarkWhere(_) => &[NoRowsShown],
+            Command::UnmarkShown => &[NoShownRowMarked],
+            Command::ClearMarks => &[NoRowsMarked],
+            Command::PickWorld => &[NoCursorRow],
+            Command::PickWorldMarked => &[NoRowsShownOrMarked],
+            Command::Fleet(action) if action.needs_card() => &[NoFleetCard],
+            Command::MoveProfileUp => &[NotLoadOrder, NoRowAbove],
+            Command::MoveProfileDown => &[NotLoadOrder, NoRowBelow],
+            Command::MoveMarkedToTop => &[NotLoadOrder, NoRowsMarkedToMove],
+            Command::Login | Command::Logout | Command::Remove => &[NoFocusedBot],
+            Command::ManualWalk => &[NoFocusedBot, NoPosition],
+            Command::DismissNotice => &[NoNotice],
+            Command::ScriptStart => &[NoFocusedBot, NoScriptPicked],
+            Command::ScriptPause => &[NoFocusedBot, NoScriptToPause],
+            Command::ScriptStop => &[NoFocusedBot, NoScriptToStop],
+            Command::ScriptParams => &[NoParamsCard, ParamsUnavailable, NoParams],
+            Command::ScriptReload => &[NoReloadCard],
+            Command::ScriptReloadCancel => &[NoReloadWaiting],
+            Command::ToggleGameChat => &[NoScriptPaint],
             Command::MapSearch
             | Command::MapRecenter
             | Command::MapGroup
-            | Command::MapWilderness => map(),
-            Command::MapWalk | Command::MapTeleport => {
-                map()?;
-                app.map_model
-                    .pending()
-                    .map(|_| ())
-                    .ok_or("select a tile first (Enter or click)")
-            }
-            _ => Ok(()),
+            | Command::MapWilderness => &[MapClosed],
+            Command::MapWalk | Command::MapTeleport => &[MapClosed, NoTile],
+            _ => &[],
+        };
+        match preconditions.iter().find(|reason| reason.missing(app)) {
+            Some(&reason) => Err(reason),
+            None => Ok(()),
         }
     }
 
@@ -717,16 +622,141 @@ impl Command {
         }
     }
 
-    /// The refusal of `self` for `reason` ([`Self::availability`]) when
-    /// `self` runs an operator command: the session logs it at the command
-    /// boundary and shows `"{label}: {reason}"` on the message line.
-    pub fn refusal(self, app: &TuiApp, reason: &str) -> Option<Refusal> {
-        Some(Refusal {
-            command: self.operator_command(app)?,
+    /// The refusal of `self` for `reason` ([`Self::availability`]). The
+    /// message line shows `"{label}: {reason}"`, and the message waits for
+    /// `reason`'s precondition ([`Unavailable::need`]), so every key,
+    /// palette entry and menu item that refuses gets the same resolution.
+    /// When `self` runs an operator command, the session also logs the
+    /// refusal at the command boundary; a command that only changes the
+    /// screen logs nothing.
+    pub fn refusal(self, app: &TuiApp, reason: Unavailable) -> Refusal {
+        Refusal {
+            command: self.operator_command(app),
             bot: self.refused_bot(app),
-            reason: format!("{}: {reason}", self.label(app)).into(),
-            need: None,
-        })
+            reason: format!("{}: {}", self.label(app), reason.text()).into(),
+            need: reason.need(),
+        }
+    }
+}
+
+/// Why a command cannot run now ([`Command::availability`]): one missing
+/// precondition each. The same value says what its refusal waits for
+/// ([`Self::need`]) and checks whether that still holds ([`Self::missing`]),
+/// so a refusal clears when, and only when, the gate that made it would
+/// no longer give it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Unavailable {
+    NoMessage,
+    NoRowsShown,
+    NoShownRowMarked,
+    NoRowsMarked,
+    NoCursorRow,
+    NoRowsShownOrMarked,
+    NoFleetCard,
+    NotLoadOrder,
+    NoRowAbove,
+    NoRowBelow,
+    NoRowsMarkedToMove,
+    NoFocusedBot,
+    NoPosition,
+    NoNotice,
+    NoScriptPicked,
+    NoScriptToPause,
+    NoScriptToStop,
+    NoParamsCard,
+    ParamsUnavailable,
+    NoParams,
+    NoReloadCard,
+    NoReloadWaiting,
+    NoScriptPaint,
+    MapClosed,
+    NoTile,
+    /// The map's group walk has no checked bot (`TuiApp::map_enter`).
+    NoCheckedBots,
+}
+
+impl Unavailable {
+    /// The reason as the message line and the palette show it.
+    pub fn text(self) -> &'static str {
+        match self {
+            Unavailable::NoMessage => "no message",
+            Unavailable::NoRowsShown => "no rows shown",
+            Unavailable::NoShownRowMarked => "no shown row is marked",
+            Unavailable::NoRowsMarked => "no rows selected",
+            Unavailable::NoCursorRow => "no fleet row under the cursor",
+            Unavailable::NoRowsShownOrMarked => "no rows shown or marked",
+            Unavailable::NoFleetCard => "pick a card first",
+            Unavailable::NotLoadOrder => "choose Load order to reorder",
+            Unavailable::NoRowAbove => "no shown row above the cursor",
+            Unavailable::NoRowBelow => "no shown row below the cursor",
+            Unavailable::NoRowsMarkedToMove => "mark fleet rows first (Space)",
+            Unavailable::NoFocusedBot => "no bot selected (Fleet: Enter or click a row)",
+            Unavailable::NoPosition => "the bot has no observed position yet",
+            Unavailable::NoNotice => "no background-bots notice",
+            Unavailable::NoScriptPicked => "browse to pick a script first",
+            Unavailable::NoScriptToPause => "no running script",
+            Unavailable::NoScriptToStop => "no script running",
+            Unavailable::NoParamsCard | Unavailable::NoReloadCard => "pick a script first",
+            Unavailable::ParamsUnavailable => "the selected script parameters are unavailable",
+            Unavailable::NoParams => "the selected script has no parameters",
+            Unavailable::NoReloadWaiting => "no reload awaiting confirmation",
+            Unavailable::NoScriptPaint => "no script paint to toggle",
+            Unavailable::MapClosed => "open the Map first (F4)",
+            Unavailable::NoTile => "select a tile first (Enter or click)",
+            Unavailable::NoCheckedBots => "no bots selected",
+        }
+    }
+
+    /// Whether the precondition is still missing in `app`.
+    pub fn missing(self, app: &TuiApp) -> bool {
+        match self {
+            Unavailable::NoMessage => app.error.is_none(),
+            Unavailable::NoRowsShown => app.fleet_model.shown().is_empty(),
+            Unavailable::NoShownRowMarked => app.fleet_model.counts().shown_marked() == 0,
+            Unavailable::NoRowsMarked | Unavailable::NoRowsMarkedToMove => {
+                app.fleet_model.marks().is_empty()
+            }
+            Unavailable::NoCursorRow => app.cursor_profile().is_none(),
+            Unavailable::NoRowsShownOrMarked => {
+                app.fleet_model.marks().is_empty() && app.fleet_model.shown().is_empty()
+            }
+            Unavailable::NoFleetCard => app.fleet_model.card().is_own(),
+            Unavailable::NotLoadOrder => {
+                app.fleet_model.order() != frontend_core::FleetOrder::LoadOrder
+            }
+            Unavailable::NoRowAbove => app.table.reorder_step(&app.fleet_model, -1).is_none(),
+            Unavailable::NoRowBelow => app.table.reorder_step(&app.fleet_model, 1).is_none(),
+            Unavailable::NoFocusedBot => !app.has_focus(),
+            Unavailable::NoPosition => app.here.is_none(),
+            Unavailable::NoNotice => app.background_notice.is_none(),
+            Unavailable::NoScriptPicked | Unavailable::NoParamsCard => app.script_sel.is_none(),
+            Unavailable::NoScriptToPause => !matches!(
+                app.script_state,
+                ScriptRunState::Running | ScriptRunState::Paused
+            ),
+            Unavailable::NoScriptToStop => {
+                app.script_state == ScriptRunState::Idle && !app.script_queued
+            }
+            Unavailable::ParamsUnavailable => app.params_unavailable.is_some(),
+            Unavailable::NoParams => app.params_schema.as_ref().is_empty(),
+            Unavailable::NoReloadCard => !app.reload_confirm && app.script_sel.is_none(),
+            Unavailable::NoReloadWaiting => !app.reload_confirm,
+            Unavailable::NoScriptPaint => app.chat_data.script_paint.is_none(),
+            Unavailable::MapClosed => !app.map_active,
+            Unavailable::NoTile => app.map_model.pending().is_none(),
+            Unavailable::NoCheckedBots => app.walk_send.checked_count(app.fleet_model.marks()) == 0,
+        }
+    }
+
+    /// What a refusal for this reason waits for: the precondition itself,
+    /// so the action that supplies it clears the message. "No message" is
+    /// the one exception: its own refusal is a message, so it would clear
+    /// itself at once; a newer message or the timeout replaces it.
+    pub fn need(self) -> Option<ErrorNeed> {
+        match self {
+            Unavailable::NoMessage => None,
+            reason => Some(ErrorNeed::Precondition(reason)),
+        }
     }
 }
 

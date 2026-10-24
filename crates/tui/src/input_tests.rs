@@ -21,8 +21,19 @@ fn names(app: &TuiApp) -> Vec<&str> {
 /// the command boundary and shows it on the message line.
 fn refused(action: AppAction, command: OperatorCommand) -> String {
     match action {
-        AppAction::Refused(refusal) if refusal.command == command => refusal.reason.into_owned(),
+        AppAction::Refused(refusal) if refusal.command == Some(command) => {
+            refusal.reason.into_owned()
+        }
         other => panic!("expected a refusal of {command:?}, got {other:?}"),
+    }
+}
+
+/// The reason of the refusal `action` hands to the session for a command
+/// that only changes the screen: it shows on the message line, logs nothing.
+fn shown_only(action: AppAction) -> String {
+    match action {
+        AppAction::Refused(refusal) if refusal.command.is_none() => refusal.reason.into_owned(),
+        other => panic!("expected a screen-only refusal, got {other:?}"),
     }
 }
 
@@ -474,7 +485,10 @@ fn card_actions_are_unavailable_on_own_until_a_card_is_picked() {
     for action in FleetAction::ALL {
         let command = Command::Fleet(action);
         if action.needs_card() {
-            assert_eq!(command.availability(&app), Err("pick a card first"));
+            assert_eq!(
+                command.availability(&app),
+                Err(crate::commands::Unavailable::NoFleetCard)
+            );
             let shown = refused(
                 app.run_command(command),
                 OperatorCommand::PlanFleetAction(action),
@@ -1465,11 +1479,11 @@ fn the_move_commands_match_the_keys_and_follow_their_availability() {
     let mut app = reorder_app();
     assert_eq!(
         Command::MoveProfileUp.availability(&app),
-        Err("no shown row above the cursor")
+        Err(crate::commands::Unavailable::NoRowAbove)
     );
     assert_eq!(
         Command::MoveMarkedToTop.availability(&app),
-        Err("mark fleet rows first (Space)")
+        Err(crate::commands::Unavailable::NoRowsMarkedToMove)
     );
     assert_eq!(Command::MoveProfileDown.availability(&app), Ok(()));
     assert_eq!(
@@ -1497,7 +1511,7 @@ fn the_move_commands_match_the_keys_and_follow_their_availability() {
     ] {
         assert_eq!(
             command.availability(&app),
-            Err("choose Load order to reorder"),
+            Err(crate::commands::Unavailable::NotLoadOrder),
             "{command:?}"
         );
         let message = refused(app.run_command(command), OperatorCommand::ReorderProfiles);
@@ -1607,15 +1621,10 @@ fn w_names_the_cursor_row_and_the_palette_entry_names_none() {
 
     // With no row there is nothing for W to name; the reason shows.
     let mut empty = fleet_app(&[]);
-    assert_eq!(empty.on_key(ch('W')), AppAction::None);
-    let shown = empty.error.take().expect("the reason shows");
+    let shown = shown_only(empty.on_key(ch('W')));
     assert!(shown.ends_with("no fleet row under the cursor"), "{shown}");
-    assert_eq!(empty.run_command(Command::PickWorldMarked), AppAction::None);
-    assert!(empty
-        .error
-        .take()
-        .expect("the reason shows")
-        .ends_with("no rows shown or marked"));
+    let shown = shown_only(empty.run_command(Command::PickWorldMarked));
+    assert!(shown.ends_with("no rows shown or marked"), "{shown}");
 }
 
 /// The palette lists both commands (the cursor one with its `W` key), help

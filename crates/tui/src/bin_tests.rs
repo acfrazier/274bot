@@ -2343,10 +2343,10 @@ fn empty_group_walk_preserves_selection_and_reports_refusal() {
     assert_eq!(
         refused,
         AppAction::Refused(crate::app::Refusal {
-            command: OperatorCommand::GroupWalk,
+            command: Some(OperatorCommand::GroupWalk),
             bot: None,
             reason: "no bots selected".into(),
-            need: Some(frontend_core::ErrorNeed::CheckedBots),
+            need: crate::commands::Unavailable::NoCheckedBots.need(),
         })
     );
     dispatch(&mut session, &mut app, refused);
@@ -5376,7 +5376,7 @@ fn palette_apply_settings_to_marked_copies_only_to_marked_same_card_bots() {
     let command = crate::commands::Command::Fleet(frontend_core::FleetAction::CopySettings);
     assert_eq!(
         command.availability(&app),
-        Err("pick a card first"),
+        Err(crate::commands::Unavailable::NoFleetCard),
         "each bot's own card cannot be copied"
     );
     // The fleet card follows the focused bot: alice's card.
@@ -6059,7 +6059,7 @@ fn alt_keys_reorder_the_saved_load_order_and_the_drawn_table() {
     let up = app.on_key(alt_key(crossterm::event::KeyCode::Up));
     assert!(
         matches!(&up, AppAction::Refused(refusal)
-            if refusal.command == OperatorCommand::ReorderProfiles),
+            if refusal.command == Some(OperatorCommand::ReorderProfiles)),
         "{up:?}"
     );
     dispatch(&mut session, &mut app, up);
@@ -6168,7 +6168,7 @@ fn move_marked_to_top_leads_the_saved_order_with_the_marked_profiles() {
     let before = app.run_command(crate::commands::Command::MoveMarkedToTop);
     assert!(
         matches!(&before, AppAction::Refused(refusal)
-            if refusal.command == OperatorCommand::ReorderProfiles),
+            if refusal.command == Some(OperatorCommand::ReorderProfiles)),
         "nothing is marked: {before:?}"
     );
     for name in ["dave", "carol"] {
@@ -6216,12 +6216,12 @@ fn reorder_is_unavailable_outside_load_order() {
     ] {
         assert_eq!(
             command.availability(&app),
-            Err("choose Load order to reorder"),
+            Err(crate::commands::Unavailable::NotLoadOrder),
             "{command:?}"
         );
         assert!(
             matches!(&app.run_command(command), AppAction::Refused(refusal)
-                if refusal.command == OperatorCommand::ReorderProfiles),
+                if refusal.command == Some(OperatorCommand::ReorderProfiles)),
             "{command:?}"
         );
     }
@@ -6231,7 +6231,7 @@ fn reorder_is_unavailable_outside_load_order() {
     ] {
         assert!(matches!(
             &app.on_key(alt_key(code)),
-            AppAction::Refused(refusal) if refusal.command == OperatorCommand::ReorderProfiles
+            AppAction::Refused(refusal) if refusal.command == Some(OperatorCommand::ReorderProfiles)
         ));
     }
     assert_eq!(saved_order(&session), ["alice", "bob", "carol", "dave"]);
@@ -7002,10 +7002,10 @@ fn a_refusal_before_submission_logs_once_and_the_resolving_action_clears_it() {
         &mut session,
         &mut app,
         AppAction::Refused(Refusal {
-            command: OperatorCommand::StartScript,
+            command: Some(OperatorCommand::StartScript),
             bot: Some("alice".into()),
             reason: "script: browse to pick one first".into(),
-            need: Some(frontend_core::ErrorNeed::PickedCard),
+            need: crate::commands::Unavailable::NoScriptPicked.need(),
         }),
     );
     assert_eq!(
@@ -7019,6 +7019,58 @@ fn a_refusal_before_submission_logs_once_and_the_resolving_action_clears_it() {
     session.pump(&mut app);
     assert_eq!(app.error, None, "picking a card resolved the message");
     let _iso = iso;
+}
+
+/// Draw the app at 120x40 and 80x24 and check its message line (`msg: …`,
+/// one row, cut at the width): it holds the start of `shown`, or, with
+/// `None`, is empty (`msg: —`) and holds no `gone`. The log pane may still
+/// show the refusal's line. With `dir`, each frame is also written there by
+/// the terminal app's capture harness (`manual_click_live_tests::capture`:
+/// text and JSON cell receipts). Returns the frames drawn.
+fn capture_message_line(
+    dir: Option<&std::path::Path>,
+    session: &TuiSession,
+    app: &mut TuiApp,
+    label: &str,
+    shown: Option<&str>,
+    gone: &str,
+) -> usize {
+    let sizes = [(120, 40), (80, 24)];
+    for (cols, rows) in sizes {
+        let text = crate::test_support::text(&crate::test_support::draw(app, cols, rows));
+        let head = |message: &str| {
+            let start: String = message.chars().take(40).collect();
+            format!("msg: {start}")
+        };
+        match shown {
+            Some(message) => assert!(
+                text.contains(&head(message)),
+                "{label} {cols}x{rows}:\n{text}"
+            ),
+            None => assert!(
+                text.contains("msg: —") && !text.contains(&head(gone)),
+                "{label} {cols}x{rows}:\n{text}"
+            ),
+        }
+        if let Some(dir) = dir {
+            let proof = serde_json::json!({
+                "label": label,
+                "message": app.error,
+                "refusals": session.core.refusals(),
+            });
+            super::manual_click_live_tests::capture(
+                app,
+                cols,
+                rows,
+                dir,
+                &format!("{cols}x{rows}"),
+                label,
+                &proof,
+            )
+            .unwrap();
+        }
+    }
+    sizes.len()
 }
 
 /// PANEL-STATE-GAP-1023 (R2-M1): the message line at 120x40 and 80x24 for
@@ -7038,47 +7090,10 @@ fn the_message_line_shows_and_expires_refusals_at_both_sizes() {
         std::fs::create_dir_all(dir).unwrap();
     }
     let second = Duration::from_secs(1);
-    // Draw both sizes. The message line (`msg: …`, one row, cut at the
-    // width) holds the start of `shown`, or, with `None`, is empty (`msg: —`)
-    // and holds no `gone`. The log pane may still show the refusal's line.
     let mut frames = 0;
     let mut shot =
         |session: &TuiSession, app: &mut TuiApp, label: &str, shown: Option<&str>, gone: &str| {
-            for (cols, rows) in [(120, 40), (80, 24)] {
-                let text = crate::test_support::text(&crate::test_support::draw(app, cols, rows));
-                let head = |message: &str| {
-                    let start: String = message.chars().take(40).collect();
-                    format!("msg: {start}")
-                };
-                match shown {
-                    Some(message) => assert!(
-                        text.contains(&head(message)),
-                        "{label} {cols}x{rows}:\n{text}"
-                    ),
-                    None => assert!(
-                        text.contains("msg: —") && !text.contains(&head(gone)),
-                        "{label} {cols}x{rows}:\n{text}"
-                    ),
-                }
-                if let Some(dir) = dir.as_deref() {
-                    let proof = serde_json::json!({
-                        "label": label,
-                        "message": app.error,
-                        "refusals": session.core.refusals(),
-                    });
-                    super::manual_click_live_tests::capture(
-                        app,
-                        cols,
-                        rows,
-                        dir,
-                        &format!("{cols}x{rows}"),
-                        label,
-                        &proof,
-                    )
-                    .unwrap();
-                }
-                frames += 1;
-            }
+            frames += capture_message_line(dir.as_deref(), session, app, label, shown, gone);
         };
     let before = session.core.refusals();
 
@@ -7230,7 +7245,7 @@ fn the_terminal_apps_own_refusals_log_at_the_command_boundary() {
     // A key (the Script pane's Stop) with no script running.
     let action = app.run_command(crate::commands::Command::ScriptStop);
     assert!(
-        matches!(&action, AppAction::Refused(refusal) if refusal.command == OperatorCommand::StopScript),
+        matches!(&action, AppAction::Refused(refusal) if refusal.command == Some(OperatorCommand::StopScript)),
         "{action:?}"
     );
     dispatch(&mut session, &mut app, action);
@@ -7279,5 +7294,159 @@ fn the_terminal_apps_own_refusals_log_at_the_command_boundary() {
     assert!(refusal_logged(
         "command refused: PlanFleetAction(Stop) on no bots: fleet: no plan is waiting"
     ));
+    let _iso = iso;
+}
+
+/// PANEL-STATE-GAP-1023 (R3-M1): a command the gate refuses waits for the
+/// precondition its reason names, whichever way it was asked for. Log in
+/// with no bot focused, from its Overview key, the palette and a context
+/// menu: the refusal logs once, stays while no bot is focused, and focusing
+/// `alice` through her Fleet row clears it at once, before its timeout. A
+/// command that only changes the screen waits the same way and logs
+/// nothing: Parameters with no script picked clears when a card is picked.
+/// With `TUI_CAPTURE_DIR` set, the key case is captured at 120x40 and 80x24
+/// before and after the focus.
+#[test]
+fn a_gate_refusal_clears_when_its_precondition_is_supplied() {
+    use crate::commands::Command;
+    use crate::overlay::{ContextItem, ContextMenu, Modal};
+    use crate::test_support::{ch, key};
+    use crossterm::event::KeyCode;
+
+    let refused = "Log in: no bot selected (Fleet: Enter or click a row)";
+    let dir = std::env::var_os("TUI_CAPTURE_DIR").map(std::path::PathBuf::from);
+    if let Some(dir) = dir.as_deref() {
+        std::fs::create_dir_all(dir).unwrap();
+    }
+    for path in ["key", "palette", "menu"] {
+        let iso = IsolatedStores::enter(&format!("tui-gate-focus-{path}"));
+        let (mut session, mut app) = tui_with_profiles(&iso, &["alice"]);
+        assert_eq!(app.focused_name(), None);
+        let action = match path {
+            "key" => {
+                let shown = app.show_screen(crate::layout::Screen::Overview);
+                dispatch(&mut session, &mut app, shown);
+                app.on_key(ch('i'))
+            }
+            "palette" => {
+                let opened = app.run_command(Command::Palette);
+                dispatch(&mut session, &mut app, opened);
+                for c in "Log in".chars() {
+                    app.on_key(ch(c));
+                }
+                app.on_key(key(KeyCode::Enter))
+            }
+            _ => {
+                app.modal = Some(Modal::Context(ContextMenu {
+                    title: "Overview".into(),
+                    items: vec![ContextItem::Run(Command::Login)],
+                    cursor: 0,
+                    at: (0, 0),
+                }));
+                app.on_key(key(KeyCode::Enter))
+            }
+        };
+        let before = session.core.refusals();
+        dispatch(&mut session, &mut app, action);
+        assert_eq!(session.core.refusals(), before + 1, "{path}: one refusal");
+        assert_eq!(app.error.as_deref(), Some(refused), "{path}");
+        assert!(refusal_logged(&format!(
+            "command refused: Login on no bots: {refused}"
+        )));
+        session.expire_error(&mut app, Instant::now());
+        session.pump(&mut app);
+        assert_eq!(app.error.as_deref(), Some(refused), "{path}: no bot yet");
+        if path == "key" {
+            capture_message_line(
+                dir.as_deref(),
+                &session,
+                &mut app,
+                "11-log-in-refused-no-focus",
+                Some(refused),
+                refused,
+            );
+        }
+
+        let alice = app
+            .fleet_model
+            .rows()
+            .iter()
+            .position(|row| row.name() == "alice")
+            .unwrap();
+        let focus = app.focus_row(alice);
+        dispatch(&mut session, &mut app, focus);
+        session.pump(&mut app);
+        assert_eq!(app.focused_name().as_deref(), Some("alice"));
+        assert_eq!(
+            app.error, None,
+            "{path}: focusing alice resolved the refusal before its timeout"
+        );
+        if path == "key" {
+            capture_message_line(
+                dir.as_deref(),
+                &session,
+                &mut app,
+                "12-log-in-resolved-by-focus",
+                None,
+                refused,
+            );
+        }
+        let _iso = iso;
+    }
+
+    let iso = IsolatedStores::enter("tui-gate-params-card");
+    let (mut session, mut app) = tui_with_profiles(&iso, &["alice"]);
+    let before = session.core.refusals();
+    let action = app.run_command(Command::ScriptParams);
+    dispatch(&mut session, &mut app, action);
+    let shown = app.error.clone().expect("the refusal shows");
+    assert!(shown.ends_with(": pick a script first"), "{shown}");
+    assert_eq!(
+        session.core.refusals(),
+        before,
+        "a screen change logs nothing"
+    );
+    session.pump(&mut app);
+    assert_eq!(app.error.as_deref(), Some(shown.as_str()), "no card yet");
+    app.script_sel = Some(ScriptChoice::loaded(CardSource::Catalog, "BoneBurier"));
+    session.pump(&mut app);
+    assert_eq!(app.error, None, "picking a card resolved the message");
+    let _iso = iso;
+}
+
+/// PANEL-STATE-GAP-1023 (F2 census): a Guardian edit in the settings popup
+/// opened with no bot focused has no profile to save on. It is refused at
+/// the command boundary (before, it was dropped without a word), and
+/// focusing a bot, which binds the popup, clears the message.
+#[test]
+fn a_settings_edit_with_no_bound_profile_is_refused() {
+    let iso = IsolatedStores::enter("tui-settings-no-profile");
+    let (mut session, mut app) = tui_with_profiles(&iso, &["alice"]);
+    assert_eq!(app.focused_name(), None);
+    let open = app.run_command(crate::commands::Command::Settings);
+    dispatch(&mut session, &mut app, open);
+    session.pump(&mut app);
+    assert_eq!(app.settings_profile, None, "no bot to bind");
+    let before = session.core.refusals();
+    app.settings_dirty = true;
+    session.pump(&mut app);
+    let refused = "settings: no bot selected (Fleet: Enter or click a row)";
+    assert_eq!(session.core.refusals(), before + 1);
+    assert_eq!(app.error.as_deref(), Some(refused));
+    assert!(refusal_logged(&format!(
+        "command refused: SetGuardian on no bots: {refused}"
+    )));
+
+    let alice = app
+        .fleet_model
+        .rows()
+        .iter()
+        .position(|row| row.name() == "alice")
+        .unwrap();
+    let focus = app.focus_row(alice);
+    dispatch(&mut session, &mut app, focus);
+    session.pump(&mut app);
+    assert_eq!(app.settings_profile.as_deref(), Some("alice"));
+    assert_eq!(app.error, None, "focusing a bot resolved the message");
     let _iso = iso;
 }

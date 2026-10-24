@@ -15,9 +15,9 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use frontend_core::MarkOp;
 
-use crate::app::{AppAction, Refusal, TuiApp};
+use crate::app::{AppAction, ErrorNeed, Refusal, TuiApp};
 use crate::commands::{
-    script_key_command, Command, Group, CHAT_KEYS, FLEET_KEYS, MAP_KEYS, OVERVIEW_KEYS,
+    script_key_command, Command, Group, Unavailable, CHAT_KEYS, FLEET_KEYS, MAP_KEYS, OVERVIEW_KEYS,
 };
 use crate::fleet::{toggled_mark, FilterEdit, HeaderPart, MARK_COLUMNS};
 use crate::help::HelpState;
@@ -304,19 +304,12 @@ impl TuiApp {
         self.focus_pane(order[next]);
     }
 
-    /// `command` is unavailable for `reason`. A command that runs an
-    /// operator command is refused at the shared command boundary
-    /// ([`AppAction::Refused`]: one log line, the reason on the message
-    /// line); a command that only changes the screen says why on the
-    /// message line.
-    pub(crate) fn unavailable(&mut self, command: Command, reason: &str) -> AppAction {
-        match command.refusal(self, reason) {
-            Some(refusal) => AppAction::Refused(refusal),
-            None => {
-                self.error = Some(format!("{}: {reason}", command.label(self)));
-                AppAction::None
-            }
-        }
+    /// `command` is unavailable for `reason`: it is refused
+    /// ([`AppAction::Refused`]: the reason on the message line until its
+    /// precondition holds, and one log line at the shared command boundary
+    /// when it runs an operator command).
+    pub(crate) fn unavailable(&mut self, command: Command, reason: Unavailable) -> AppAction {
+        AppAction::Refused(command.refusal(self, reason))
     }
 
     /// Run `command` if it is available now; otherwise say why on the
@@ -541,14 +534,14 @@ impl TuiApp {
         };
         if !row.loaded() {
             return AppAction::Refused(Refusal {
-                command: frontend_core::OperatorCommand::Select,
+                command: Some(frontend_core::OperatorCommand::Select),
                 bot: Some(row.name().to_owned()),
                 reason: format!(
                     "{} is not loaded: mark it and press m to log in",
                     row.name()
                 )
                 .into(),
-                need: None,
+                need: Some(ErrorNeed::Loaded(row.name().to_owned())),
             });
         }
         let name = row.name().to_owned();
@@ -701,7 +694,7 @@ impl TuiApp {
             }
             SettingsKey::Refused(reason) => {
                 return AppAction::Refused(Refusal {
-                    command: frontend_core::OperatorCommand::SetGuardian,
+                    command: Some(frontend_core::OperatorCommand::SetGuardian),
                     bot: self.settings_profile.clone(),
                     reason: reason.into(),
                     need: None,
