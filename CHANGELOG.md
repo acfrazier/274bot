@@ -38,9 +38,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.6` 
 
 #### Profile settings
 
-- Survival and script-setting audit lines use the values before and after
-  the durable commit, including when one commit batches edits. Failed writes
-  and superseded same-setting edits do not add audit lines.
+- When you save Survival or script settings, the session log shows each setting's
+  value before and after the saved change. A failed save adds no line.
+  An edit replaced before it is saved also adds no line.
 - The Cure poison labels now limit **When needed** to combat and protected walks and do not claim a poison status row.
 
 ## [0.2.6] — 2026-10-23 — Beta 2
