@@ -89,7 +89,7 @@ A separate row maps `survivable_admission_live.rs` to both admission tests.
 | `host.api-gather-wire-shadow` | The live source starts Gatherer at `crates/host-play/src/api_gather_live_tests.rs:13-29,490-539`.<br>The cell requests `disposition: 'Power'` (`api_gather_live_tests.rs:25`). Its walk is the resource approach at `crates/script/src/gatherer/runner.rs:1321-1327`.<br>`crates/host-play/src/script_observe.rs:1546-1572` creates `ScriptWalkArm` and calls `queue_native_route` at `crates/host-play/src/script_nav.rs:4567-4573`. |
 | `host.gatherer-bank-cost-fallback` | The cell runs the live test at `crates/host-play/tests/gatherer_live.rs:7945-7949`.<br>`gatherer::runner::trip_walk` submits `Walk` at `crates/script/src/gatherer/runner.rs:445-472`.<br>`crates/host-play/src/script_observe.rs:1546-1572` creates `ScriptWalkArm` and calls `queue_native_route` at `crates/host-play/src/script_nav.rs:4567-4573`. |
 | `host.grinch-cross-region-return` | The live selector is at `crates/host-play/tests/grinch_live.rs:119-123`.<br>Return recovery submits `Walk` at `crates/script/src/grinch.rs:885-903`.<br>`crates/host-play/src/script_observe.rs:1546-1572` creates `ScriptWalkArm` and calls `queue_native_route` at `crates/host-play/src/script_nav.rs:4567-4573`. |
-| `host.sherlock-search-live` | The live cell starts compiled Sherlock at `crates/host-play/tests/clue_walk_arrive_live.rs:193-212`.<br>The walk-near step is at `crates/script/src/clue/isolate.rs:1640-1653`.<br>`crates/host-play/src/script_interact.rs:529-585` creates `ScriptWalkArm` and calls `queue_route_in_snapshot_avoiding` at `crates/host-play/src/script_nav.rs:4932-4957`. |
+| `host.sherlock-search-live` | The live cell starts compiled Sherlock at `crates/host-play/tests/clue_walk_arrive_live.rs:193-212`.<br>The walk-near step is at `crates/script-js/src/compat/clue/isolate.rs:1640-1653`.<br>`crates/host-play/src/script_interact.rs:529-585` creates `ScriptWalkArm` and calls `queue_route_in_snapshot_avoiding` at `crates/host-play/src/script_nav.rs:4932-4957`. |
 | `host.survivable-admission` | The live test checks refusal and opt-in at `crates/host-play/tests/survivable_admission_live.rs:283-286`. |
 | `host.survivable-compat-v1-crossing` | The live test loads a real compat-v1 class whose `Traversal.walkTo` call is at `crates/host-play/tests/survivable_admission_live.rs:837-870,943-950`. It asserts the live admission snapshot and crossing assessment at `:963-983`; the selector is `real_compat_v1_crossing_and_own_sustain_at_45_and_14_hp` (`:868-870`). |
 
@@ -186,12 +186,12 @@ runs and `isohome` exposes the read-only navigation snapshot.
 
 ## Script surface boundary
 
-The exact core paths beside `script/src/load/**` share the external-script
+The exact core paths beside `script-js/src/runtime/**`, `script-js/src/materialize/**` and `script-js/src/library/**` share the external-script
 start, snapshot, tick and Stop boundary. They do not add a second loader.
 
 | Cell | Call path |
 |---|---|
-| `host.script-runtime-load` | `script_api_live::runtime_cell` starts through `Play::script_start_load`, `SlotScript::start_surface` and `JsSurfaceFactory::spawn` in `load/surface.rs`. It observes a real tick, then Stop and physical retirement. |
+| `host.script-runtime-load` | `script_api_live::runtime_cell` starts through `Play::script_start_load`, `SlotScript::start_surface` and `JsSurfaceFactory::spawn` in `script-js/src/surface.rs`. It observes a real tick, then Stop and physical retirement. |
 | `host.api-gather-wire-shadow` | The v2 Gatherer request enters `SlotScript::start_api_gather`. The real reconnect and wire-shadow checks cross the shared native fact and seat rows. |
 | `scenario.auto-fighter-mage-live` | The registered `auto_fighter_mage` scenario starts the catalog AutoFighter with Fire Strike. Its `Autocast.arm` call enters the Rust `Autocast` family and its observation accessor. |
 | `host.script-progress-journal` | `journal_cell` reads Romeo & Juliet twice. The second read uses `script_api_live_read_again`; the progress requests enter `SlotScript::start_api_progress`. The cell compares the closed-journal stamps and verifies that the quiet paint lease ends. |
