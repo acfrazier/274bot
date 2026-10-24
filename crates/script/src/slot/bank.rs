@@ -623,7 +623,6 @@ impl SlotScript {
             })
     }
 
-    #[cfg(feature = "load")]
     pub(super) fn start_bank(&mut self, id: RequestId, request: BankSeatArgs) {
         let started = self.bank.get_or_insert_with(Default::default).start(
             id,
@@ -657,6 +656,7 @@ impl SlotScript {
             .retain(|(id, _)| seat.results().iter().any(|result| result.id == *id));
     }
 
+    #[cfg(feature = "load")]
     pub(super) fn tick_bank(&mut self, ctx: &mut ScriptCtx<'_>) {
         self.stop_cancelled_bank_work();
         let Some(mut bank) = self.bank.take() else {
