@@ -17,7 +17,7 @@ fn attach_flags_then_drop_leaves_walk_intact() {
         flags: None,
     };
     let w = c.walkable_word(0, 0, 0);
-    c.attach_flags(flags.clone());
+    c.attach_flags(flags);
     assert!(c.flags.is_some());
     assert_eq!(c.walkable_word(0, 0, 0), w);
     c.drop_flags();

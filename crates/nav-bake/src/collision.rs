@@ -139,7 +139,7 @@ pub fn bake_from_maps(
     })
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments, reason = "Stamping combines grid geometry, mapsquare data, loc definitions, and doors.")]
 /// Stamp one mapsquare's MAP flags and LOC placements into the bbox grid.
 fn stamp_square(
     flags: &mut [u32],
@@ -286,7 +286,7 @@ fn stamp_square(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments, reason = "Mirrors the client's wall-stamping inputs without changing their meaning.")]
 /// Client `CollisionMap.add_wall` mirror: stamp wall direction flags on the
 /// wall tile and the tiles it borders, exactly like the client.
 fn add_wall(
@@ -382,7 +382,7 @@ fn add_wall(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments, reason = "Mirrors the client's loc-stamping inputs without changing their meaning.")]
 /// Client `CollisionMap.add_loc` mirror: stamp a `WALK_SCENERY` footprint,
 /// swapping width/length for north/south angles.
 fn add_loc(

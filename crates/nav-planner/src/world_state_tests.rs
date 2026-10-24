@@ -370,11 +370,10 @@ fn stage_gates_open_on_evidence_never_on_snapshot_facts() {
     assert!(!snapshot_only.allows_without_carry_worn(&e));
 
     let proven = snapshot_only
-        .clone()
         .with_quest_evidence(tbwt_evidence(range(Some(3), Some(3))));
     assert!(proven.allows(&e));
     assert!(proven.allows_without_carry_worn(&e));
-    let mut unpaid = proven.clone();
+    let mut unpaid = proven;
     unpaid.inv.clear();
     assert!(!unpaid.allows(&e), "evidence waives no other requirement");
 }

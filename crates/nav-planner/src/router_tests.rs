@@ -992,15 +992,10 @@ fn router_takes_a_transport_from_a_standable_tile_within_the_interact_radius() {
     assert_eq!(w1.first(), Some(&tile(2, 2, 0)));
     assert_eq!(w1.last(), Some(&tile(4, 2, 0)));
     // Never steps onto the blocked `at` tile.
-    let stepped: Vec<WorldTile> = r
-        .legs
-        .iter()
-        .flat_map(|l| match l {
-            Leg::Walk { tiles } => tiles.clone(),
-            Leg::Transport { .. } => vec![],
-        })
-        .collect();
-    assert!(!stepped.contains(&tile(2, 0, 0)));
+    assert!(!r.legs.iter().any(|leg| matches!(
+        leg,
+        Leg::Walk { tiles } if tiles.contains(&tile(2, 0, 0))
+    )));
 }
 
 #[test]
@@ -1287,7 +1282,7 @@ fn exact_stage_window_door_routes_only_on_proven_evidence() {
     let needs =
         |state: &WorldState| find_unresolved_quest_gates(&wc, &g, from, &[to], opts, state, &[]);
     let named: Result<Option<Arc<[QuestGate]>>, QuestFamilyMismatch> =
-        Ok(Some(Arc::from(vec![exact.clone()])));
+        Ok(Some(Arc::from(vec![exact])));
 
     let proven = evidenced(tbwt_evidence(gate_range(Some(3), Some(3))));
     let crossed = route(&proven).expect("a proven window opens the door");
@@ -1533,10 +1528,10 @@ fn rope_and_stage_door_diagnoses_name_each_missing_kind() {
             "rope only",
             with_rope(undecided()),
             None,
-            read.clone(),
+            read,
             false,
         ),
-        ("stage only", proven(), Some(rope.clone()), None, false),
+        ("stage only", proven(), Some(rope), None, false),
         ("both", with_rope(proven()), Some(vec![]), None, true),
         ("stage disproven", disproven(), None, None, false),
     ] {
@@ -1593,7 +1588,7 @@ fn many_targets_keep_shortcuts_duplicates_budget_and_deadline_distinct() {
         &state,
         &[],
         5,
-        Some(Instant::now() - Duration::from_secs(1)),
+        Some(Instant::now().checked_sub(Duration::from_secs(1)).unwrap()),
     );
     assert!(!deadline.complete());
     assert_eq!(deadline.results()[1], Err(TargetError::NotSettled));
@@ -2129,7 +2124,7 @@ fn fallback_fails_only_when_its_own_budget_is_spent_with_the_preferred() {
 /// the preferred-only search's, and its fallback answer is what the
 /// fallback-only search reports, or undecided where that search needs more
 /// settles than the shared one spent.
-#[allow(clippy::too_many_arguments)] // the first_search surface
+#[expect(clippy::too_many_arguments, reason = "Matches the full search surface for route-equivalence assertions.")]
 fn assert_fallback_matches_alone(
     wc: &WorldCollision,
     graph: &TransportGraph,
@@ -2707,7 +2702,7 @@ fn bank_targets_match_independent_find_with_on_real_289_pack() {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments, reason = "Matches the full search surface for route-equivalence assertions.")]
 fn compare_real_bank_targets(
     world: &crate::world::NavWorld,
     label: &str,
@@ -4365,7 +4360,7 @@ fn glory_teleport_cap_is_exact_at_level_30() {
     let dest = tile(3104, 3759, 0);
     let mut graph = teleport(dest, 2, vec![], vec![(1712, 1)]);
     graph.teleports[0].wildy_cap = Some(30);
-    graph.wilderness = rules.clone();
+    graph.wilderness = rules;
     let glory = WorldState {
         inv: HashMap::from([(1712, 1)]),
         ..WorldState::default()
@@ -6358,7 +6353,7 @@ fn expired_many_deadline_cannot_publish_a_completion_route() {
         &WorldState::empty(),
         &[],
         BANK_TARGET_BUDGET,
-        Some(Instant::now() - Duration::from_secs(1)),
+        Some(Instant::now().checked_sub(Duration::from_secs(1)).unwrap()),
     );
     assert!(!search.complete());
     assert_eq!(search.completion_partitions(), 0);

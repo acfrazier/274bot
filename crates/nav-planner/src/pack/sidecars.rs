@@ -35,7 +35,7 @@ pub fn decode_flags_sidecar(
 /// one `Arc<Vec<u32>>` so the payload is not copied into an `Arc<[u32]>`
 /// layout. Prefer [`read_flags_sidecar`] when loading from disk so the raw
 /// file buffer is never retained beside the decoded payload.
-#[allow(clippy::type_complexity)]
+#[expect(clippy::type_complexity, reason = "Returns grid geometry with the shared flags payload, without copying that payload.")]
 pub fn decode_flags_sidecar_arc(
     bytes: &[u8],
 ) -> Result<(WorldTile, usize, usize, Arc<Vec<u32>>), PackError> {
