@@ -1393,8 +1393,9 @@ fn process_step(
             api::host_log!(
                 api::hostlog::Category::Lifecycle,
                 api::hostlog::Level::Warn,
-                "{} slice overrun count={count} elapsed={elapsed:?} allowance={:?}",
+                "{} slice overrun count={count} family={:?} elapsed={elapsed:?} allowance={:?}",
                 executor_log_label(entry),
+                entry.family,
                 timing.allowance,
             );
         }
