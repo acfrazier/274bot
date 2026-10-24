@@ -17,13 +17,15 @@ use nav_planner::grid::StepGrid;
 use nav_planner::pack::{
     decode, decode_canlight_sidecar, decode_flags_sidecar, decode_grid, decode_reach_sidecar,
     read_canlight_sidecar, read_flags_sidecar, read_reach_sidecar, read_reach_sidecar_header,
-    sha256_hex, walkable_dots, BankAccess, BankStand, PackError, MAX_GRID, MAGIC_FLAGS,
-    VERSION, VERSION_FLAGS,
+    sha256_hex, walkable_dots, BankAccess, BankStand, PackError, MAGIC_FLAGS, MAX_GRID, VERSION,
+    VERSION_FLAGS,
 };
 use nav_planner::quest_gates::{QuestFamilyId, QuestGates};
 use nav_planner::router::AvoidRect;
 use nav_planner::tile::Tile;
-use nav_planner::transport::{DoorDir, TransportEdge, TransportGraph, TransportKind, WildernessRules};
+use nav_planner::transport::{
+    DoorDir, TransportEdge, TransportGraph, TransportKind, WildernessRules,
+};
 use nav_planner::world::NavWorld;
 use nav_planner::zones::{Zone, ZoneClass, ZoneGroup, ZoneKind, ZoneTable};
 
@@ -2348,7 +2350,6 @@ fn exact_takeoff_roundtrips_and_invalid_planes_are_rejected() {
         Err(PackError::BadLength(_))
     ));
 }
-
 
 /// A 2×2 open collision: the smallest pack body the gate tests append to.
 fn tiny_collision() -> WorldCollision {

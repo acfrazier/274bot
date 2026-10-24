@@ -1,10 +1,8 @@
 use super::*;
-use nav_planner::canlight::{
-    canlight_at, expected_header_binding, header_binding, policy_digest,
-};
 use crate::collision::bake_from_maps;
 use api::obj_names::LocDefs;
 use client::config::LocType;
+use nav_planner::canlight::{canlight_at, expected_header_binding, header_binding, policy_digest};
 use std::collections::HashSet;
 use std::fs;
 use std::path::PathBuf;
@@ -75,7 +73,10 @@ data=coord_pair,0_50_53_53_33,0_50_53_53_35
 ";
     let zones = parse_bank_zones(text).unwrap();
     assert_eq!(zones.len(), 2);
-    assert!(parse_bank_zones("").unwrap_err().to_string().contains("header"));
+    assert!(parse_bank_zones("")
+        .unwrap_err()
+        .to_string()
+        .contains("header"));
     assert!(parse_bank_zones("[bank_zones]\ntable=coord_pair_table\n")
         .unwrap_err()
         .to_string()
@@ -95,7 +96,6 @@ data=coord_pair,0_50_53_53_33,0_50_53_53_35
         .to_string()
         .contains("unexpected"));
 }
-
 
 #[test]
 fn equal_pack_inputs_with_different_active_loc_masks_have_different_identities() {
@@ -147,7 +147,6 @@ fn equal_pack_inputs_with_different_active_loc_masks_have_different_identities()
     let moved_id = identity_digest(289, b"same-bank-zones", &moved_bits);
     assert_ne!(open_id, moved_id, "mask identity follows baked output");
 }
-
 
 fn bake_square(
     maps: &Path,

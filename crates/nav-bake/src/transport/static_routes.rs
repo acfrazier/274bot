@@ -469,7 +469,6 @@ pub(super) const CART_ROUTES: &[CartRoute] = &[
     },
 ];
 
-
 /// Cart edges from the 2004 route table: one `Talk-to` edge per journey,
 /// keyed from the cart driver NPC's tile.
 pub(super) fn cart_edges(

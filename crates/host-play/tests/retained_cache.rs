@@ -18,8 +18,8 @@ fn rebuilt_artifacts_bind_decoded_inputs_and_actual_baker_sources() {
         let engine = home.join(engine);
         let cache_dir = engine.join("data/pack/client");
         let cache = CacheManifest::capture(revision, &cache_dir).unwrap();
-        let id = nav_bake::bake::decoded_identity(revision, &cache_dir, &home.join(snapshots))
-            .unwrap();
+        let id =
+            nav_bake::bake::decoded_identity(revision, &cache_dir, &home.join(snapshots)).unwrap();
         let pack = root.join(format!("nav/{revision}/274bot.navpack"));
         let manifest: NavManifest = serde_json::from_slice(
             &std::fs::read(nav_planner::manifest::nav_manifest_path(&pack)).unwrap(),

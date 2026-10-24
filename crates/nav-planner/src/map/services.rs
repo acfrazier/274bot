@@ -3,9 +3,7 @@
 use super::identity::Digest;
 use sha2::{Digest as _, Sha256};
 
-
 pub const POIS_POLICY_ALGORITHM: &str = "openbank-reach-1";
-
 
 pub fn pois_policy_digest() -> Digest {
     let mut h = Sha256::new();
@@ -15,5 +13,3 @@ pub fn pois_policy_digest() -> Digest {
     h.update(POIS_POLICY_ALGORITHM.as_bytes());
     Digest(h.finalize().into())
 }
-
-

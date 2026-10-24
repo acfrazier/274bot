@@ -1,7 +1,7 @@
 use super::*;
+use client::config::{LocType, NpcType};
 use nav_planner::map::formats::MAX_POIS;
 use nav_planner::map::poi::CapabilityEvidence;
-use client::config::{LocType, NpcType};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 

@@ -185,7 +185,6 @@ fn find_uses_the_derived_world_across_the_corridor() {
     assert_eq!(edge.loc_id, 1530);
 }
 
-
 #[test]
 fn derived_world_routes_across_a_fixture_rect() {
     let w = NavWorld::from_grid(&StepGrid::fixture_rect_at(
@@ -239,4 +238,3 @@ fn load_pack_keeps_stale_v5_wire_as_bad_version() {
     ));
     let _ = std::fs::remove_dir_all(&dir);
 }
-

@@ -23,8 +23,8 @@ use crate::router::{
     find_first_with, find_first_with_fallback, find_many_with, find_many_with_avoid_bounded,
     find_many_with_avoid_bounded_until, find_missing_item_reqs, find_missing_item_reqs_with_avoid,
     find_on_grid, find_unresolved_quest_gates, find_with, find_with_avoid, find_with_avoid_bounded,
-    find_with_model, local_step_component, missing_item_reqs, AvoidRect, CostModel,
-    FallbackRoute, FindOptions, GridLeg, Leg, MissingReq, ReverseProof, RouteError, TargetError,
+    find_with_model, local_step_component, missing_item_reqs, AvoidRect, CostModel, FallbackRoute,
+    FindOptions, GridLeg, Leg, MissingReq, ReverseProof, RouteError, TargetError,
     BANK_TARGET_BUDGET, FIRST_TARGET_BUDGET, PER_STEP_WALK,
 };
 use crate::test_support::{
@@ -541,7 +541,6 @@ fn bake_at(
     }
 }
 
-
 /// A 5×5 grid split by a wall between x=1 and x=2: the client's `W_E` on
 /// column 1 and `W_W` on column 2, so no step (or diagonal) crosses.
 fn walled_5x5() -> WorldCollision {
@@ -1037,7 +1036,6 @@ fn find_face_flags_block_only_the_matching_direction() {
     let r = find(&wc, &g, tile(0, 2, 0), tile(0, 0, 0)).expect("north-to-south still walks");
     assert!(r.legs.iter().all(|l| matches!(l, Leg::Walk { .. })));
 }
-
 
 #[test]
 fn find_transport_changes_level_and_walks_upstairs() {

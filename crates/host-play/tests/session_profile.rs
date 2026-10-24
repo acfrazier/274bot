@@ -1579,8 +1579,7 @@ fn packaged_v16_bundle_supersedes_a_stale_v10_home_pack() {
 #[test]
 fn revision_274_without_sidecar_is_legacy_and_decodes_once() {
     let fixture = Fixture::new();
-    let bytes =
-        nav_bake::pack::encode_grid(&nav_planner::grid::StepGrid::fixture_door_corridor());
+    let bytes = nav_bake::pack::encode_grid(&nav_planner::grid::StepGrid::fixture_door_corridor());
     let pack = fixture.0.join("legacy.navpack");
     std::fs::write(&pack, &bytes).unwrap();
     let mut options = fixture.options(274);

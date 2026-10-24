@@ -31,7 +31,10 @@ fn generator_identity_tracks_the_manual_id_format_and_sources() {
     let base = generator_identity(&[("crates/nav-bake/src/pack.rs", "fn a() {}")]);
     assert_eq!(base.len(), 64);
     assert!(base.chars().all(|c| c.is_ascii_hexdigit()));
-    assert_ne!(base, generator_identity(&[("crates/nav-bake/src/pack.rs", "fn b() {}")]));
+    assert_ne!(
+        base,
+        generator_identity(&[("crates/nav-bake/src/pack.rs", "fn b() {}")])
+    );
     assert_ne!(
         base,
         generator_identity(&[("crates/nav-bake/src/collision.rs", "fn a() {}")])

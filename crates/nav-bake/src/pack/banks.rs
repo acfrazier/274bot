@@ -44,7 +44,6 @@ pub(super) fn write_bank_stands(out: &mut Vec<u8>, banks: &[BankStand]) -> Resul
     Ok(())
 }
 
-
 /// A length-prefixed UTF-8 string (the bank stand name fields).
 pub(super) fn write_name(out: &mut Vec<u8>, s: &str) -> Result<(), PackError> {
     out.extend_from_slice(
@@ -55,7 +54,6 @@ pub(super) fn write_name(out: &mut Vec<u8>, s: &str) -> Result<(), PackError> {
     out.extend_from_slice(s.as_bytes());
     Ok(())
 }
-
 
 /// Bake the bank stand table from the Server content tree (the maps
 /// dir's parent): the same jm2 LOC pass the collision bake uses

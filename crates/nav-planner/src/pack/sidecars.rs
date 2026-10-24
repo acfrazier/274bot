@@ -23,7 +23,6 @@ pub const VERSION_CANLIGHT: u8 = 1;
 /// Static canlight sidecar magic.
 pub const MAGIC_CANLIGHT: &[u8; 4] = b"274L";
 
-
 pub fn decode_flags_sidecar(
     bytes: &[u8],
 ) -> Result<(WorldTile, usize, usize, Vec<u32>), PackError> {
@@ -236,7 +235,6 @@ pub fn sha256_from_hex(hex: &str) -> Result<[u8; 32], String> {
     Ok(out)
 }
 
-
 /// Deserialize a paint-reach sidecar, validating magic, version, grid
 /// header, word count and that the trailing payload is exactly that many
 /// `u64le` words. Binding bytes are not interpreted here — the caller
@@ -280,7 +278,6 @@ pub fn read_reach_sidecar_header(
 /// binding is pack+policy identity, not pack SHA alone.
 pub type CanlightSidecar = ReachSidecar;
 
-
 /// Deserialize a static canlight sidecar. Binding bytes are not interpreted
 /// here — the caller compares them to pack+policy identity.
 pub fn decode_canlight_sidecar(bytes: &[u8]) -> Result<CanlightSidecar, PackError> {
@@ -294,7 +291,6 @@ pub fn read_canlight_sidecar(
 ) -> Result<CanlightSidecarLoad, PackError> {
     read_bitset_sidecar(reader, length, MAGIC_CANLIGHT, VERSION_CANLIGHT)
 }
-
 
 pub(super) fn decode_bitset_sidecar(
     bytes: &[u8],

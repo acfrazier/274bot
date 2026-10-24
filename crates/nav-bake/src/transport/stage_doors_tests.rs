@@ -2,9 +2,9 @@
 //! synthetic content shaped like the 289 openers each test cites.
 
 use super::*;
+use client::dash3d::CollisionFlag;
 use nav_planner::router::{find_first_with, find_with, FindOptions, Leg, RouteError};
 use nav_planner::world_state::WorldState;
-use client::dash3d::CollisionFlag;
 
 /// The shared engine facts every stage-door fixture needs: the pinned
 /// engine door and ladder procs ([`ENGINE_DOOR_PROCS`], verbatim),

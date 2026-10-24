@@ -5,7 +5,10 @@ use nav_planner::manifest::{hash_bytes, CacheManifest, NavManifest};
 use crate::GenerationError;
 
 /// Bind generated pack and sidecar bytes to their selected cache identity.
-#[expect(clippy::too_many_arguments, reason = "the manifest binds every existing artifact and zone count")]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the manifest binds every existing artifact and zone count"
+)]
 pub fn capture_nav_manifest(
     revision: u16,
     cache: &CacheManifest,

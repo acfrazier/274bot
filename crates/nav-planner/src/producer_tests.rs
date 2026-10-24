@@ -117,8 +117,8 @@ fn bind_records_the_pack_digest_once() {
 fn from_bytes_records_the_bytes_digest() {
     // Literal legacy grid: version 1, origin zero, 3×3 walk bytes, no doors.
     let bytes = [
-        b'2', b'7', b'4', b'N', 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        3, 0, 0, 0, 3, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0,
+        b'2', b'7', b'4', b'N', 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 0, 0, 0, 3, 0, 0, 0, 1,
+        1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0,
     ];
     let world = Arc::new(NavWorld::from_bytes(&bytes).unwrap());
     assert_eq!(identity(&world).unwrap().content(), PackDigest::of(&bytes));

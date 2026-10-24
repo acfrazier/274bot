@@ -28,4 +28,3 @@ fn expected_header_binding_roundtrips_hex_and_rejects_malformed() {
     assert!(expected_header_binding("zz", &"aa".repeat(32)).is_err());
     assert!(expected_header_binding(&"aa".repeat(32), "short").is_err());
 }
-

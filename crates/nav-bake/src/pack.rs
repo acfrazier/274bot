@@ -13,9 +13,9 @@ pub use encode::{encode, encode_grid};
 pub use mapsquare::{merge_squares, parse_mapsquare_jm2, Mapsquare};
 pub use sidecars::{encode_canlight_sidecar, encode_flags_sidecar, encode_reach_sidecar};
 
-pub(crate) use mapsquare::{parse_loc_fields, parse_map_line, section, SQUARE};
 #[cfg(test)]
 pub(crate) use mapsquare::parse_mapsquare_text;
+pub(crate) use mapsquare::{parse_loc_fields, parse_map_line, section, SQUARE};
 
 #[cfg(test)]
 #[path = "pack_tests.rs"]

@@ -2,7 +2,6 @@
 
 use crate::router::AvoidRect;
 
-
 pub struct HazardSpec {
     pub id: &'static str,
     pub label: &'static str,

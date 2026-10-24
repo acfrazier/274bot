@@ -9,7 +9,10 @@ use crate::pack::{
 
 #[test]
 fn decoder_rejects_stale_pack_version_before_reading_body() {
-    assert!(matches!(decode(b"274V\x10"), Err(PackError::BadVersion(16))));
+    assert!(matches!(
+        decode(b"274V\x10"),
+        Err(PackError::BadVersion(16))
+    ));
 }
 
 #[test]
@@ -39,7 +42,10 @@ fn flags_decoder_rejects_partial_words() {
     bytes.extend_from_slice(&1u32.to_le_bytes());
     bytes.extend_from_slice(&1u32.to_le_bytes());
     bytes.push(0x7f);
-    assert!(matches!(decode_flags_sidecar(&bytes), Err(PackError::Truncated)));
+    assert!(matches!(
+        decode_flags_sidecar(&bytes),
+        Err(PackError::Truncated)
+    ));
 }
 
 #[test]
@@ -51,7 +57,10 @@ fn reach_decoder_rejects_incomplete_word_payload() {
     bytes.extend_from_slice(&1u32.to_le_bytes());
     bytes.extend_from_slice(&[0; 32]);
     bytes.extend_from_slice(&[0; 7]);
-    assert!(matches!(decode_reach_sidecar(&bytes), Err(PackError::Truncated)));
+    assert!(matches!(
+        decode_reach_sidecar(&bytes),
+        Err(PackError::Truncated)
+    ));
 }
 
 #[test]
@@ -77,6 +86,9 @@ fn packed_walk_roundtrips_blocked_base() {
     let (faces, blocked) = pack_walk(&flags);
     assert_eq!(faces, [0, 0, 0, 0x10]);
     assert_eq!(blocked, [0b1010]);
-    assert_eq!(walk_word_from_parts(faces[1], true) & SQ_BLOCKED, SQ_BLOCKED);
+    assert_eq!(
+        walk_word_from_parts(faces[1], true) & SQ_BLOCKED,
+        SQ_BLOCKED
+    );
     assert_eq!(walk_word_from_parts(faces[3], false), 0x10);
 }

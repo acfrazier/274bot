@@ -8,18 +8,16 @@
 use std::collections::HashSet;
 use std::path::Path;
 
+use crate::pack::{parse_loc_fields, parse_map_line, section};
+use crate::GenerationError;
 use api::obj_names::LocDefs;
 use api::snapshot::WorldTile;
 use client::dash3d::{CollisionFlag, LocAngle};
-use crate::GenerationError;
-use crate::pack::{parse_loc_fields, parse_map_line, section};
 use nav_planner::collision::{game_plane, WorldCollision};
 use nav_planner::pack::PackError;
 
-
 const SQUARE: i32 = 64;
 const LEVELS: i32 = 4;
-
 
 /// One inclusive `inzone` AABB from `bank_zones.dbrow`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
