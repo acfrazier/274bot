@@ -29,9 +29,14 @@ pub fn scenario(name: &str) -> Option<Scenario> {
     registered_scenario(name).map(Scenario::from)
 }
 
-fn registered_scenario(name: &str) -> Option<scenario::Scenario> {
+/// Install the catalog-backed compiled cards without starting the V8 platform.
+pub fn install_catalog_cards() {
     script::registry::install_cards(&script::sherlock::CARDS)
-        .expect("install canonical Sherlock card for live fixture scenarios");
+        .expect("install canonical Sherlock card for front-end fixtures");
+}
+
+fn registered_scenario(name: &str) -> Option<scenario::Scenario> {
+    install_catalog_cards();
     scenario::get(name)
 }
 
