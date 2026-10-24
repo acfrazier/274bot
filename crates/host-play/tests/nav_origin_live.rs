@@ -92,10 +92,9 @@ fn live_walkto_from_ardougne_pocket_near_and_far() {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_millis();
-    let name = match std::env::var("BOT_LIVE_NAME_PREFIX") {
-        Ok(prefix) => format!("{prefix}{}", serial % 100_000_000),
-        Err(_) => format!("navorigin{}", serial % 1_000),
-    };
+    let name = host_play::mint_live_names(1)
+        .pop()
+        .expect("one live account");
     let mut client = template
         .prepare_client((serial % 1_000_000_000) as i32, true)
         .expect("client");
