@@ -371,8 +371,7 @@ fn runtime_profile_fixture(
 }
 
 fn preparation_only_session() -> Session {
-    script::registry::install_cards(&script::sherlock::CARDS)
-        .expect("install canonical Sherlock card for panel session tests");
+    frontend_core::test_support::live::install_catalog_cards();
     let mut session = Session::new();
     session.core.set_spawn_workers(false);
     session
