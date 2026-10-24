@@ -15,7 +15,6 @@ const RING_OF_DUELING: &str = "ring_of_dueling.rs2";
 const GAMES_NECKLACE: &str = "necklace_of_minigames.rs2";
 const AMULET_OF_GLORY: &str = "amulet_of_glory.rs2";
 
-
 /// Load zones + formula. Missing sources yield the empty default (fixtures).
 /// Present-but-unparseable sources are `Err` so the bake fails closed.
 pub(super) fn load_wilderness_rules(content_root: &Path) -> Result<WildernessRules, String> {
