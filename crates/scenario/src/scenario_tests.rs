@@ -1078,6 +1078,7 @@ fn native_seed_deposit_waits_for_main_bank_after_side_row_disappears() {
         client.handle_packet(ServerProt::UPDATE_INV_FULL, &mut bank_full);
         client.bump_gens(ServerProt::PLAYER_INFO);
         runner.tick(&mut client);
+        runner.tick(&mut client);
         assert_eq!(runner.status(), RunnerStatus::Passed);
         assert_eq!(client.out.pos, sent);
     }
@@ -1187,6 +1188,7 @@ fn native_seed_deposit_send_latch_resets_for_next_seed() {
     client.handle_packet(ServerProt::UPDATE_INV_FULL, &mut empty_side);
     let mut bank_full = inv_full_packet(601, &[(COINS_ID + 1, 200), (LOBSTER_ID + 1, 200)]);
     client.handle_packet(ServerProt::UPDATE_INV_FULL, &mut bank_full);
+    runner.tick(&mut client);
     runner.tick(&mut client);
     assert_eq!(runner.status(), RunnerStatus::Passed);
 }
