@@ -101,6 +101,7 @@ fn error_reason(error: ActionError) -> Arc<str> {
             format!("ground-take-already-owned:{id}").into()
         }
         ActionError::WalkGoals(reason) => format!("walk-goals:{reason:?}").into(),
+        ActionError::ServerOrdered(reason) => format!("server-ordered:{reason}").into(),
     }
 }
 

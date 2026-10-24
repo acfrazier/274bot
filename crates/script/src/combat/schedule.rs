@@ -5,6 +5,12 @@ use super::tables::FoodFact;
 /// Shared by the combat machine and the walk guard.
 pub(crate) const EAT_OBSERVATION_WINDOW_TICKS: u8 = 6;
 
+/// `consume.rs2:109` passes this delay to the shared `player_consume_item`
+/// next-food guard for Strange fruit.
+const STRANGE_FRUIT_EAT_DELAY_ARG: u8 = 2;
+/// `consume.rs2:109,129-131` adds three ticks to the existing action clock.
+const STRANGE_FRUIT_SKILL_DELAY_ARG: u16 = 3;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum OpKind {
@@ -30,6 +36,7 @@ pub enum InputEffect<'a> {
     ElementalShield,
     RangedAttack,
     Food(&'a FoodFact),
+    CureFruit,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Interaction {
@@ -148,6 +155,21 @@ impl Schedule {
                 self.clear(tick, wait, fight);
             }
             OpKind::Drink => {
+                if matches!(effect, InputEffect::CureFruit) {
+                    // consume.rs2:122-127 rejects while %eat_delay >= map_clock,
+                    // then sets it to map_clock + the content delay. The first
+                    // next-food click accepted after T is therefore at T+3.
+                    let eat = OpKind::Eat.index();
+                    self.earliest[eat] =
+                        tick.wrapping_add(STRANGE_FRUIT_EAT_DELAY_ARG.wrapping_add(1) as u16);
+                    self.ready_mask |= 1 << eat;
+                    if self.cycle.known {
+                        self.cycle.deadline = self
+                            .cycle
+                            .deadline
+                            .wrapping_add(STRANGE_FRUIT_SKILL_DELAY_ARG);
+                    }
+                }
                 self.input_lock = tick.wrapping_add(3);
                 self.lock_valid = true;
                 self.clear(tick, 3, fight);
@@ -264,6 +286,47 @@ mod tests {
         assert!(!schedule.locked(14));
         assert!(!schedule.restore_ready(13));
         assert!(schedule.restore_ready(14));
+    }
+    #[test]
+    fn fruit_admission_shares_food_clock_without_settling_pending_eat() {
+        let mut schedule = Schedule::default();
+        schedule.admitted(
+            OpKind::Eat,
+            10,
+            4,
+            true,
+            InputEffect::Food(&ordinary_food()),
+        );
+        assert!(schedule.pending(OpKind::Eat));
+        assert!(!schedule.ready(OpKind::Eat, 12));
+        assert!(schedule.ready(OpKind::Eat, 13));
+
+        schedule.admitted(OpKind::Drink, 13, 4, true, InputEffect::CureFruit);
+
+        assert!(schedule.pending(OpKind::Eat));
+        assert!(schedule.pending(OpKind::Drink));
+        assert!(!schedule.ready(OpKind::Eat, 15));
+        assert!(schedule.ready(OpKind::Eat, 16));
+    }
+
+    #[test]
+    fn fruit_extends_known_attack_clock_by_three_ticks_including_wrap() {
+        for swing in [9, u16::MAX - 2] {
+            let mut schedule = Schedule::default();
+            schedule.observe_swing(swing, 4);
+            let tick = swing.wrapping_add(1);
+            let previous = schedule.cycle.deadline;
+            schedule.admitted(OpKind::Drink, tick, 4, true, InputEffect::CureFruit);
+            assert_eq!(
+                schedule.cycle.deadline,
+                previous.wrapping_add(3),
+                "Strange fruit adds the content skill delay to the attack clock"
+            );
+            assert!(schedule.cycle.known);
+        }
+        let mut unknown = Schedule::default();
+        unknown.admitted(OpKind::Drink, 10, 4, true, InputEffect::CureFruit);
+        assert!(!unknown.cycle.known, "a fruit does not invent a swing");
     }
 
     #[test]

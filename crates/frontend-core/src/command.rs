@@ -112,6 +112,10 @@ pub enum OperatorCommand {
     /// one hostile random's policy (`OperatorSession::set_random_event_policy`,
     /// `session.rs:2171-2191`).
     SetGuardian,
+    /// Persist the Cure poison setting staged for the profile
+    /// (`OperatorSession::set_survival_settings`): written through
+    /// `save_profile` and mirrored to a running slot once durable.
+    SetSurvival,
     /// Quit the application (panel window close, TUI `q`/`Ctrl-Q`). One
     /// member per loaded slot, each completed by its slot's retirement.
     Quit,
@@ -711,7 +715,7 @@ const ROUTED_MOVEMENT: &[ProcessCapability] = &[
 impl OperatorCommand {
     /// Every row once (parameterized rows with a representative value), for
     /// exhaustive checks.
-    pub const ALL: [OperatorCommand; 96] = [
+    pub const ALL: [OperatorCommand; 97] = [
         Self::Load,
         Self::Remove,
         Self::Login,
@@ -722,6 +726,7 @@ impl OperatorCommand {
         Self::SetWorld(WorldChoice::Automatic),
         Self::SetMemoryMode(MemoryMode::Low),
         Self::SetGuardian,
+        Self::SetSurvival,
         Self::Quit,
         Self::UnlockVault,
         Self::CreateVault,
@@ -1088,6 +1093,7 @@ impl OperatorCommand {
             | Self::SetWorld(_)
             | Self::SetMemoryMode(_)
             | Self::SetGuardian
+            | Self::SetSurvival
             | Self::AssignScript
             | Self::SaveScriptSettings(_)
             | Self::SetRaster(_)

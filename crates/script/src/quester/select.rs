@@ -222,6 +222,7 @@ mod tests {
         let cx = ActionContext {
             condition: None,
             poison_unknown_pulse: u8::MAX,
+            cure_poison: crate::survival::CurePoison::WhenNeeded,
             evidence: stamp(),
             pin: &pin,
             snapshot: view,

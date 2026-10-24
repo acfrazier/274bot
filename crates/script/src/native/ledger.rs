@@ -120,6 +120,7 @@ pub enum HostEffect {
     Walk(WalkRequest),
     BankPick(BankPickRequest),
     AssessWalk(WalkRequest),
+    ServerOrdered(crate::surface::ServerOrderedEnvelope),
 }
 
 /// A host continuation retains this fence after consuming the request payload.
@@ -155,6 +156,12 @@ impl HostAuthority {
     pub fn request_id(&self) -> NonZeroU64 {
         self.request
     }
+
+    /// Revoke only this request at a real dispatch boundary in integration tests.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn cancel_request_for_test(&self) {
+        self.owner.cancel_interaction(self.request);
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -171,6 +178,7 @@ impl HostAction {
                 self.owner.interaction_live(self.request_id)
             }
             HostEffect::Walk(_) => self.owner.walk_live(self.request_id),
+            HostEffect::ServerOrdered(_) => self.owner.batch_live(self.request_id),
         }
     }
     pub fn run(&self) -> RunKey {
@@ -200,6 +208,9 @@ pub struct Ledger {
     pub(crate) interaction_request: Option<NonZeroU64>,
     pub(crate) bank_pick: Option<BankPickReceipt>,
     pub(crate) bank_pick_request: Option<NonZeroU64>,
+    // Keep the 72-byte terminal envelope lazy instead of widening every native ledger.
+    pub(crate) server_ordered: Option<Box<super::ServerOrderedCompletion>>,
+    pub(crate) server_ordered_request: Option<NonZeroU64>,
     pub(crate) assess_owner: Option<Arc<Owner>>,
     pub(crate) assess_receipt: Option<AssessReceipt>,
     pub(crate) assess_request: Option<NonZeroU64>,
@@ -225,6 +236,8 @@ impl Default for Ledger {
             interaction_request: None,
             bank_pick: None,
             bank_pick_request: None,
+            server_ordered: None,
+            server_ordered_request: None,
             assess_owner: None,
             assess_receipt: None,
             assess_request: None,
@@ -292,6 +305,8 @@ impl Ledger {
         self.interaction_request = None;
         self.bank_pick = None;
         self.bank_pick_request = None;
+        self.server_ordered = None;
+        self.server_ordered_request = None;
         self.batch_receipts.fill(None);
         self.next_batch_receipt = 0;
         self.quiet_since = None;
@@ -345,6 +360,29 @@ impl Ledger {
         {
             self.interaction = Some(receipt);
         }
+    }
+
+    pub fn complete_server_ordered(
+        &mut self,
+        authority: &HostAuthority,
+        completion: super::ServerOrderedCompletion,
+    ) {
+        let request = authority.request_id();
+        // Cancellation can revoke authority after a committed prefix. Retain
+        // its terminal evidence, but never settle a replacement owner or run.
+        if completion.dispatch.request_id != request.get()
+            || completion.evidence.run != authority.run()
+            || self.server_ordered_request != Some(request)
+            || self.server_ordered.is_some()
+            || !self.owner.as_ref().is_some_and(|owner| {
+                owner.run == authority.run() && owner.id == authority.action_id()
+            })
+        {
+            return;
+        }
+        authority.owner.cancel_interaction(request);
+        self.server_ordered = Some(Box::new(completion));
+        self.server_ordered_request = None;
     }
 
     pub fn complete_bank_pick(&mut self, authority: &HostAuthority, receipt: BankPickReceipt) {

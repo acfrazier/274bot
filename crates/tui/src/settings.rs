@@ -15,12 +15,12 @@ use ratatui::text::Span;
 use ratatui::widgets::{Block, Borders, Clear, Widget};
 
 use frontend_core::quester_paths::{QuesterPathsView, LOAD_PATHS_LABEL, RELOAD_PATHS_LABEL};
+use frontend_core::{CurePoison, GuardianPolicy, SettingsDraft, GUARDIAN_EVENTS};
 use frontend_core::{
     FormNotice, MapBakeChoice, MemoryNotice, NavPreference, BANK_FETCH_PERMISSION_SCOPE,
     GLOBAL_DANGER_WARNING, GLOBAL_PERMISSION_LABELS, NOTHING_SAVED, QUESTER_HEADING,
     QUEST_PATHS_HEADING, ROUTING_SCOPE_NOTE, SCRIPT_SCOPE_NOTICE,
 };
-use frontend_core::{GuardianPolicy, SettingsDraft, GUARDIAN_EVENTS};
 
 /// The popup's title while no profile is bound to it.
 pub const TITLE: &str = "settings";
@@ -46,6 +46,7 @@ pub struct SettingsState {
     /// 0=random events, 1=lamp skill, 2=lamp auto, 3=event, 4=event policy,
     /// 5=teleports, 6=wilderness, 7=bank fetch, 8=danger zones,
     /// 9=manual-walk pause, 10=map bake, 11=memory, 12=folder gate,
+    /// 13=paths folder, 14=reload paths, 15=cure poison.
     pub row: usize,
     /// Selected per-event policy row.
     pub random_event_index: usize,
@@ -54,7 +55,7 @@ pub struct SettingsState {
     /// Text changed during this folder edit and needs persistence when closed.
     pub folder_changed: bool,
     /// Hit targets from the last drawn viewport, including wrapped rows.
-    pub row_areas: [Rect; 15],
+    pub row_areas: [Rect; 16],
 }
 
 impl SettingsState {
@@ -77,6 +78,7 @@ pub enum SettingsEdit {
         policy: GuardianPolicy,
     },
     Lowmem(bool),
+    CurePoison(CurePoison),
 }
 
 /// The outcome of one settings key.
@@ -218,7 +220,7 @@ impl<'a> SettingsPane<'a> {
                 SettingsKey::Consumed
             }
             KeyCode::Down | KeyCode::Char('j') => {
-                self.state.row = (self.state.row + 1).min(14);
+                self.state.row = (self.state.row + 1).min(15);
                 SettingsKey::Consumed
             }
             KeyCode::Enter => self.activate(),
@@ -327,6 +329,9 @@ impl<'a> SettingsPane<'a> {
                 SettingsKey::Consumed
             }
             14 => SettingsKey::ReloadPaths,
+            15 => SettingsKey::Changed(SettingsEdit::CurePoison(
+                self.settings.survival().cure_poison().next(),
+            )),
             _ => SettingsKey::Consumed,
         }
     }
@@ -414,7 +419,7 @@ impl Widget for SettingsPane<'_> {
             .as_deref()
             .is_some_and(|ack| !*ack);
         let danger_level = self.nav.danger_level();
-        let selected_row = self.state.row.min(14);
+        let selected_row = self.state.row.min(15);
         let danger_help = (selected_row == 8
             && danger_level == frontend_core::DangerLevel::WhenSurvivable)
             .then_some(frontend_core::walk_permissions::survivable_routing_tooltip());
@@ -508,13 +513,18 @@ impl Widget for SettingsPane<'_> {
             format!("{}{}: {}", marker(12), LOAD_PATHS_LABEL, paths_enabled),
             format!("{}Paths folder: {}{}", marker(13), path_folder, folder_hint),
             format!("{}{}", marker(14), reload),
+            format!(
+                "{}cure poison: {}",
+                marker(15),
+                self.settings.survival().cure_poison().label()
+            ),
         ];
         let quester_heading = format!("{QUESTER_HEADING}: {QUEST_PATHS_HEADING}");
         let note_style = Style::default().fg(Color::DarkGray);
         let heading_style = Style::default().add_modifier(Modifier::BOLD);
         // Lead-ins sit above their first row. A lead-in adds to its row's block
         // height, but the row keeps its own index, hit target, and scroll slot.
-        let headers: [Option<(&str, Style)>; 15] = [
+        let headers: [Option<(&str, Style)>; 16] = [
             None,
             None,
             None,
@@ -533,13 +543,14 @@ impl Widget for SettingsPane<'_> {
             Some((quester_heading.as_str(), heading_style)),
             None,
             None,
+            Some(("Survival and supplies", heading_style)),
         ];
         let width = area.width.min(100);
         let columns = usize::from(width - 2);
         let row_heights = rows.each_ref().map(|row| wrapped_rows(row, columns));
         let header_heights =
             headers.map(|header| header.map_or(0, |(text, _)| wrapped_rows(text, columns)));
-        let block_heights: [u16; 15] =
+        let block_heights: [u16; 16] =
             std::array::from_fn(|index| header_heights[index] + row_heights[index]);
         let selected = self.state.row.min(rows.len() - 1);
         let memory_height = wrapped_rows(memory_note, columns);
@@ -791,7 +802,7 @@ mod tests {
     use ratatui::backend::TestBackend;
     use ratatui::Terminal;
 
-    use frontend_core::{GuardianPolicy, SettingsDraft};
+    use frontend_core::{CurePoison, GuardianPolicy, SettingsDraft};
     use frontend_core::{MapBakeChoice, MemoryNotice, NavPreference};
 
     use frontend_core::WalkGlobals;
@@ -817,6 +828,53 @@ mod tests {
             .iter()
             .map(|cell| cell.symbol())
             .collect()
+    }
+
+    /// The same render as [`render`], as one line per terminal row, so a
+    /// wrapped row's text stays contiguous inside its terminal lines.
+    fn render_lines(pane: SettingsPane<'_>, w: u16, h: u16) -> String {
+        let mut terminal = Terminal::new(TestBackend::new(w, h)).unwrap();
+        terminal
+            .draw(|frame| frame.render_widget(pane, frame.area()))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let mut out = String::new();
+        for y in 0..buffer.area.height {
+            for x in 0..buffer.area.width {
+                out.push_str(buffer[(x, y)].symbol());
+            }
+            out.push('\n');
+        }
+        out
+    }
+
+    #[test]
+    fn cure_poison_row_is_visible_at_common_sizes() {
+        for (w, h) in [(80u16, 24u16), (120, 40)] {
+            let settings = SettingsDraft::default();
+            let mut nav = WalkGlobals::default();
+            let mut bake = MapBakeChoice::Ask;
+            let mut state = SettingsState {
+                open: true,
+                row: 15,
+                ..Default::default()
+            };
+            let text = render_lines(
+                SettingsPane::new(&settings, &mut nav, &mut bake, &mut state),
+                w,
+                h,
+            );
+            assert!(
+                text.contains("Survival and supplies"),
+                "{w}x{h}: the group heading paints:\n{text}"
+            );
+            assert!(
+                text.contains(
+                    "> cure poison: When needed: drink for health in combat or protected walks"
+                ),
+                "{w}x{h}: the selected cure poison row paints:\n{text}"
+            );
+        }
     }
 
     /// The popup returns the selected profile edit for its caller to stage.
@@ -856,6 +914,35 @@ mod tests {
             !settings.random_events(),
             "the caller applies the first edit"
         );
+    }
+
+    #[test]
+    fn popup_cycles_cure_poison_without_mutating_the_draft() {
+        let mut settings = SettingsDraft::default();
+        let mut nav = WalkGlobals::default();
+        let mut bake = MapBakeChoice::Ask;
+        let mut state = SettingsState {
+            open: true,
+            row: 15,
+            ..Default::default()
+        };
+        assert_eq!(
+            settings.survival().cure_poison(),
+            CurePoison::WhenNeeded,
+            "default: cure when needed"
+        );
+        for want in [
+            CurePoison::Always,
+            CurePoison::Never,
+            CurePoison::WhenNeeded,
+        ] {
+            let got = {
+                let mut pane = SettingsPane::new(&settings, &mut nav, &mut bake, &mut state);
+                pane.on_key(key(KeyCode::Enter))
+            };
+            assert_eq!(got, SettingsKey::Changed(SettingsEdit::CurePoison(want)));
+            settings.survival_mut().set_cure_poison(want);
+        }
     }
 
     #[test]
@@ -1083,11 +1170,20 @@ mod tests {
         assert!(text.contains(frontend_core::walk_permissions::WHEN_SURVIVABLE_HELD_LABEL));
         assert!(text.contains("Effective level: Never"));
         assert!(text.contains("not available yet"));
-        assert!(!text.contains("274V17"));
-        assert!(!text.contains("rebake"));
-        assert!(!text.contains("turn back"));
-        assert!(!text.contains("eating"));
-        assert!(!text.contains("praying"));
+        // The held wording itself must not promise behaviours the held
+        // routing does not have. Scope the absence checks to that
+        // wording: the popup also carries the cure poison row, whose
+        // label legitimately mentions the eating line.
+        let held = format!(
+            "{} {}",
+            frontend_core::walk_permissions::survivable_routing_tooltip(),
+            frontend_core::walk_permissions::survivable_routing_notice()
+        );
+        assert!(!held.contains("274V17"));
+        assert!(!held.contains("rebake"));
+        assert!(!held.contains("turn back"));
+        assert!(!held.contains("eating"));
+        assert!(!held.contains("praying"));
     }
 
     #[test]

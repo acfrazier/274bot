@@ -924,8 +924,11 @@ pub(crate) fn result_line(ui: &Ui, session: &Session) {
     });
     if ui.is_item_hovered() {
         ui.tooltip(|| {
+            // `text_wrapped` would push its own wrap position (the window
+            // edge) over this one, and a tooltip sizes itself to its text:
+            // the edge is then zero wide and the text stacks one letter high.
             let _wrap = ui.push_text_wrap_pos(scale_px(ui, 420.0));
-            ui.text_wrapped(result.text());
+            ui.text(result.text());
         });
     }
 }

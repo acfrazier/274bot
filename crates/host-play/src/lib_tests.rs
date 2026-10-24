@@ -20050,6 +20050,7 @@ fn inventory_from_ifaces_maps_1_based_ids_to_0_based() {
     let mut rec = NavRec {
         walked: None,
         held_ops: 0,
+        held_item_ids: Vec::new(),
         npc_ops: 0,
         if_button_components: Vec::new(),
         move_calls: 0,
@@ -25654,6 +25655,7 @@ struct NavRec {
     walked: Option<(i32, i32)>,
     /// Held-item ops (OP_HELD1..=5): the jewellery rub arm's press.
     held_ops: usize,
+    held_item_ids: Vec<i32>,
     /// NPC operation presses emitted by transport hops.
     npc_ops: usize,
     /// The component ids pressed via IF_BUTTON, in order (the follow's
@@ -25667,14 +25669,17 @@ struct NavRec {
 }
 
 impl Driver for NavRec {
-    fn set_menu(&mut self, _slot: i32, action: i32, _a: i32, _b: i32, c: i32) {
+    fn set_menu(&mut self, _slot: i32, action: i32, a: i32, _b: i32, c: i32) {
         self.menu_order.push((action, c));
         match action {
             MiniMenuAction::OP_HELD1
             | MiniMenuAction::OP_HELD2
             | MiniMenuAction::OP_HELD3
             | MiniMenuAction::OP_HELD4
-            | MiniMenuAction::OP_HELD5 => self.held_ops += 1,
+            | MiniMenuAction::OP_HELD5 => {
+                self.held_ops += 1;
+                self.held_item_ids.push(a);
+            }
             MiniMenuAction::OP_NPC1
             | MiniMenuAction::OP_NPC2
             | MiniMenuAction::OP_NPC3
@@ -29727,6 +29732,9 @@ fn abort_walk_request_stops_only_the_machines_own_follow() {
 
 #[path = "script_native_walk_tests.rs"]
 mod native_walk;
+
+#[path = "script_server_ordered_tests.rs"]
+mod server_ordered;
 
 #[path = "script_progress_tests.rs"]
 mod script_progress;

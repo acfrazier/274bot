@@ -2275,7 +2275,8 @@ impl SlotScript {
                 crate::native::HostEffect::Interaction(req) => seat_interact_class(req, owner),
                 crate::native::HostEffect::Walk(_)
                 | crate::native::HostEffect::BankPick(_)
-                | crate::native::HostEffect::AssessWalk(_) => {
+                | crate::native::HostEffect::AssessWalk(_)
+                | crate::native::HostEffect::ServerOrdered(_) => {
                     (api::script_contract::EmissionClass::Gameplay, None)
                 }
             };
@@ -2494,6 +2495,17 @@ impl SlotScript {
     ) {
         if let Some(ledger) = self.native_runtime.ledger.as_mut() {
             ledger.complete_interaction(authority, receipt);
+        }
+    }
+
+    /// Deliver one terminal ordered dispatch within its original run/session.
+    pub fn complete_native_server_ordered(
+        &mut self,
+        authority: &crate::native::HostAuthority,
+        completion: crate::native::ServerOrderedCompletion,
+    ) {
+        if let Some(ledger) = self.native_runtime.ledger.as_mut() {
+            ledger.complete_server_ordered(authority, completion);
         }
     }
 

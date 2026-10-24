@@ -1143,6 +1143,18 @@ class QuestJobTests(unittest.TestCase):
         self.assertEqual((quest["game_port"], quest["http_port"], quest["label"]), (47594, 3080, "Engine B"))
         self.assertEqual(quest["tick_ms"], None)
 
+    def test_isolated_cells_keep_the_configured_guest_root_without_other_host_environment(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            with mock.patch.object(rn, "ISOHOME", "/tmp/isohome"), \
+                    mock.patch.dict(os.environ, {"ISOHOME_ROOT": str(root / "isohome"),
+                                                 "UNRELATED_SECRET": "not-for-the-cell"}):
+                env = rn.cell_env(root / "home", root / "tmp", root / "evidence", "walk", "nm")
+
+            self.assertEqual(env["ISOHOME_ROOT"], str(root / "isohome"))
+            self.assertEqual(env["ISOHOME_DIR"], str(root / "home"))
+            self.assertNotIn("UNRELATED_SECRET", env)
+
     def test_only_the_non_windows_quest_cell_environment_gets_300_ms(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1368,146 +1380,77 @@ class MacQuietLockTests(unittest.TestCase):
 
 @unittest.skipUnless(os.name == "posix" and Path("/bin/bash").is_file(),
                      "the Mac nightly launcher requires Bash")
-class NightlyMacEnvironmentTests(unittest.TestCase):
-    @staticmethod
-    def make_source(root: Path) -> Path:
-        source = root / "source"
-        source.mkdir()
-        subprocess.run(["git", "init", "-q", str(source)], check=True)
-        git("symbolic-ref", "HEAD", "refs/heads/dev", cwd=source)
-        (source / "source.txt").write_text("first\n", encoding="utf-8")
-        git("add", ".", cwd=source)
-        git("-c", "user.name=test", "-c", "user.email=test@example.invalid",
-            "commit", "-qm", "first", cwd=source)
-        return source
-
-    def test_launcher_adds_cargo_home_to_launchd_path(self):
+class NightlyMacLauncherTests(unittest.TestCase):
+    def test_launcher_runs_guest_controller(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            source = self.make_source(root)
             home = root / "home"
-            cargo_home = home / ".cargo"
-            cargo_bin = cargo_home / "bin"
-            cargo_bin.mkdir(parents=True)
-            cargo = cargo_bin / "cargo"
-            cargo.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-            cargo.chmod(0o755)
-
             config = home / ".config" / "274bot-nightly" / "mac-nightly.env"
             config.parent.mkdir(parents=True)
-            capture = root / "environment.txt"
+            runner = root / "runner"
             python = root / "capture-python"
+            vm_tool = root / "mac_vm.py"
+            capture = root / "arguments.txt"
+            vm_tool.write_text("# test helper\n", encoding="utf-8")
             python.write_text(
                 "#!/bin/sh\n"
-                "printf '%s\\t%s\\t%s\\t%s\\t%s\\n' \"$NIGHTLY_JOB\" \"$CARGO_HOME\" "
-                "\"$PATH\" \"$(command -v cargo)\" \"$NIGHTLY_NAV_FIXTURE\" >> \"$MAC_CAPTURE\"\n",
+                "printf '%s\\n' \"$@\" > \"$MAC_CAPTURE\"\n"
+                "printf '%s\\n' \"$NIGHTLY_MAC_VM_TOOL\" \"$NIGHTLY_MAC_BASE\" >> \"$MAC_CAPTURE\"\n",
                 encoding="utf-8",
             )
             python.chmod(0o755)
-            values = {
-                "NIGHTLY_MAC_RUNNER": root / "runner",
-                "NIGHTLY_MAC_ROOT": root / "nightly-root",
-                "NIGHTLY_MAC_RUNS": root / "runs",
-                "NIGHTLY_MAC_STATUS": root / "status",
-                "NIGHTLY_MAC_CATALOG": root / "catalog",
-                "NIGHTLY_MAC_ENGINE_A": root / "engine-a",
-                "NIGHTLY_MAC_ENGINE_Q": root / "engine-q",
-                "NIGHTLY_MAC_QUIET_LOCK": root / "MAC-QUIET.lock",
-                "NIGHTLY_MAC_ISOHOME": root / "isohome",
-                "NIGHTLY_MAC_PYTHON": python,
-                "NIGHTLY_MAC_SOURCE_REPO": source,
-            }
             config.write_text(
-                "".join(f"{name}={value}\n" for name, value in values.items()),
+                f"NIGHTLY_MAC_RUNNER={runner}\n"
+                f"NIGHTLY_MAC_PYTHON={python}\n"
+                f"NIGHTLY_MAC_VM_TOOL={vm_tool}\n"
+                "NIGHTLY_MAC_BASE=274bot-mac-base\n",
                 encoding="utf-8",
             )
-            launchd_path = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+
+            result = subprocess.run(
+                ["/bin/bash", str(HERE / "nightly-mac.sh"), "--branch", "dev"],
+                capture_output=True,
+                check=False,
+                env={"HOME": str(home), "MAC_CAPTURE": str(capture), "PATH": "/usr/bin:/bin"},
+                text=True,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            arguments = capture.read_text(encoding="utf-8").splitlines()
+            self.assertEqual(
+                arguments,
+                [
+                    "-u",
+                    str(runner / "tools/nightly/nightly-mac-guest.py"),
+                    "--branch",
+                    "dev",
+                    str(vm_tool),
+                    "274bot-mac-base",
+                ],
+            )
+
+    def test_launcher_requires_vm_tool_configuration(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            home = root / "home"
+            config = home / ".config" / "274bot-nightly" / "mac-nightly.env"
+            config.parent.mkdir(parents=True)
+            config.write_text(
+                f"NIGHTLY_MAC_RUNNER={root / 'runner'}\n"
+                f"NIGHTLY_MAC_PYTHON={root / 'python'}\n",
+                encoding="utf-8",
+            )
+
             result = subprocess.run(
                 ["/bin/bash", str(HERE / "nightly-mac.sh")],
                 capture_output=True,
                 check=False,
-                env={
-                    "HOME": str(home),
-                    "MAC_CAPTURE": str(capture),
-                    "PATH": launchd_path,
-                },
+                env={"HOME": str(home), "PATH": "/usr/bin:/bin"},
                 text=True,
             )
-            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            rows = [line.split("\t") for line in capture.read_text(encoding="utf-8").splitlines()]
 
-            self.assertEqual([row[0] for row in rows], ["main", "quest"])
-            for row in rows:
-                self.assertEqual(row[1], str(cargo_home))
-                self.assertTrue(row[2].startswith(f"{cargo_bin}{os.pathsep}"))
-                self.assertEqual(row[3], str(cargo))
-                self.assertEqual(row[4], str(values["NIGHTLY_MAC_ROOT"] / "fixtures" / "274bot-289-v17.navpack"))
-
-    def test_launcher_pins_one_fetched_dev_commit_for_both_jobs(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            source = self.make_source(root)
-            first = git("rev-parse", "HEAD", cwd=source)
-            (source / "source.txt").write_text("second\n", encoding="utf-8")
-            git("add", ".", cwd=source)
-            git("-c", "user.name=test", "-c", "user.email=test@example.invalid",
-                "commit", "-qm", "second", cwd=source)
-            second = git("rev-parse", "HEAD", cwd=source)
-            git("update-ref", "refs/heads/dev", first, cwd=source)
-
-            home = root / "home"
-            config = home / ".config" / "274bot-nightly" / "mac-nightly.env"
-            config.parent.mkdir(parents=True)
-            capture = root / "pinned-jobs.txt"
-            python = root / "capture-python"
-            python.write_text(
-                "#!/bin/sh\n"
-                "repo_head=$(git -C \"$NIGHTLY_REPO\" rev-parse refs/heads/dev)\n"
-                "printf '%s\\t%s\\t%s\\t%s\\t%s\\n' \"$NIGHTLY_JOB\" \"$NIGHTLY_REPO\" "
-                "\"$NIGHTLY_PINNED_COMMIT\" \"$repo_head\" \"$*\" >> \"$MAC_CAPTURE\"\n"
-                "if [ \"$NIGHTLY_JOB\" = main ]; then\n"
-                "  git -C \"$NIGHTLY_MAC_SOURCE_REPO\" update-ref refs/heads/dev \"$MAC_NEXT_COMMIT\"\n"
-                "fi\n",
-                encoding="utf-8",
-            )
-            python.chmod(0o755)
-            values = {
-                "NIGHTLY_MAC_RUNNER": root / "runner",
-                "NIGHTLY_MAC_ROOT": root / "nightly-root",
-                "NIGHTLY_MAC_RUNS": root / "runs",
-                "NIGHTLY_MAC_STATUS": root / "status",
-                "NIGHTLY_MAC_CATALOG": root / "catalog",
-                "NIGHTLY_MAC_ENGINE_A": root / "engine-a",
-                "NIGHTLY_MAC_ENGINE_Q": root / "engine-q",
-                "NIGHTLY_MAC_QUIET_LOCK": root / "MAC-QUIET.lock",
-                "NIGHTLY_MAC_ISOHOME": root / "isohome",
-                "NIGHTLY_MAC_PYTHON": python,
-                "NIGHTLY_MAC_SOURCE_REPO": source,
-            }
-            config.write_text(
-                "".join(f"{name}={value}\n" for name, value in values.items()),
-                encoding="utf-8",
-            )
-            result = subprocess.run(
-                ["/bin/bash", str(HERE / "nightly-mac.sh")],
-                capture_output=True,
-                check=False,
-                env={
-                    "HOME": str(home),
-                    "MAC_CAPTURE": str(capture),
-                    "MAC_NEXT_COMMIT": second,
-                    "PATH": "/usr/local/bin:/usr/bin:/bin",
-                },
-                text=True,
-            )
-            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            rows = [line.split("\t") for line in capture.read_text(encoding="utf-8").splitlines()]
-            self.assertEqual([row[0] for row in rows], ["main", "quest"])
-            self.assertEqual([row[2] for row in rows], [first, first])
-            self.assertEqual([row[3] for row in rows], [first, first])
-            self.assertEqual(rows[0][1], rows[1][1])
-            self.assertTrue(all("--branch dev" in row[4] for row in rows))
-            self.assertEqual(git("rev-parse", "refs/heads/dev", cwd=source), second)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("NIGHTLY_MAC_VM_TOOL", result.stderr)
 
 
 class SourceManifestTests(unittest.TestCase):

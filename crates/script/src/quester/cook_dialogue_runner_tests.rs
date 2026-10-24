@@ -213,6 +213,9 @@ impl CookDialogueFixture {
                 HostEffect::AssessWalk(_) => {
                     panic!("held Cook hand-in must not require a walk assessment")
                 }
+                HostEffect::ServerOrdered(_) => {
+                    panic!("Cook hand-in must use ordinary interactions")
+                }
             }
         }
         flow

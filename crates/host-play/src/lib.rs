@@ -108,6 +108,11 @@ pub use walk_arm::{
 pub use walk_permissions::{DangerLevel, WalkGlobals, NET_AVAILABLE};
 mod play_scripts;
 pub use play_scripts::{PreparedScriptConfig, ScriptNavPaint, ScriptStartHandle};
+
+#[cfg(feature = "test-support")]
+pub use play_scripts::{
+    register_guard_action_observer_for_test, GuardActionObserver, GuardDrinkAction,
+};
 mod play_slots;
 #[cfg(test)]
 use api::snapshot::{GameSnapshot, WorldTile};
@@ -252,7 +257,9 @@ pub struct Play {
     queue: SharedLoginQueue,
     per_frame: SlotFrame,
     #[cfg(any(test, feature = "test-support"))]
-    post_native_player_info: Option<play_slots::PostNativePlayerInfo>,
+    post_native_player_info: Option<play_slots::PostFrameObserver>,
+    #[cfg(feature = "test-support")]
+    post_host_frame: Option<play_slots::PostFrameObserver>,
     spawned: HashSet<String>,
     arms: HashMap<String, Arc<SlotArm>>,
     /// Vault profiles keyed by username (a later spawn/reconnect looks up
@@ -617,6 +624,8 @@ mod bank_memory_live;
 pub mod bank_npc_live;
 #[cfg(test)]
 mod slot_condition_live_tests;
+#[cfg(test)]
+mod survival_eat_live_tests;
 
 #[cfg(all(target_os = "linux", feature = "test-support"))]
 pub use script_runtime::measures_captured_native_bank_pick_cpu;

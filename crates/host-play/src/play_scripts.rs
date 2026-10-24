@@ -12,6 +12,96 @@ use crate::script_runtime::{
 };
 use crate::Play;
 
+#[cfg(feature = "test-support")]
+use std::sync::LazyLock;
+
+#[cfg(feature = "test-support")]
+use api::snapshot::GameSnapshot;
+#[cfg(feature = "test-support")]
+use script::combat::{tables::PotionKind, GuardOp};
+
+#[cfg(feature = "test-support")]
+type GuardActionEvents = Arc<parking_lot::Mutex<Vec<GuardDrinkAction>>>;
+
+#[cfg(feature = "test-support")]
+static GUARD_ACTION_OBSERVERS: LazyLock<parking_lot::Mutex<HashMap<String, GuardActionEvents>>> =
+    LazyLock::new(Default::default);
+
+#[cfg(feature = "test-support")]
+fn guard_action_observers() -> &'static parking_lot::Mutex<HashMap<String, GuardActionEvents>> {
+    &GUARD_ACTION_OBSERVERS
+}
+
+/// One accepted antipoison Drink emitted by the native host walk guard.
+#[cfg(feature = "test-support")]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+pub struct GuardDrinkAction {
+    /// Snapshot tick for the accepted action.
+    pub snapshot_tick: u32,
+    /// Potion name that the guard sent.
+    pub item_name: String,
+}
+
+/// Scoped reader for accepted host guard antipoison Drink actions.
+#[cfg(feature = "test-support")]
+pub struct GuardActionObserver {
+    account: String,
+    actions: GuardActionEvents,
+}
+
+#[cfg(feature = "test-support")]
+impl GuardActionObserver {
+    /// Read the actions captured for this observer's account.
+    pub fn actions(&self) -> Vec<GuardDrinkAction> {
+        self.actions.lock().clone()
+    }
+}
+
+#[cfg(feature = "test-support")]
+impl Drop for GuardActionObserver {
+    fn drop(&mut self) {
+        let mut observers = guard_action_observers().lock();
+        if observers
+            .get(&self.account)
+            .is_some_and(|actions| Arc::ptr_eq(actions, &self.actions))
+        {
+            observers.remove(&self.account);
+        }
+    }
+}
+
+/// Observe accepted host guard antipoison Drinks for one account in tests.
+#[cfg(feature = "test-support")]
+pub fn register_guard_action_observer_for_test(account: &str) -> GuardActionObserver {
+    let actions = Arc::new(parking_lot::Mutex::new(Vec::new()));
+    guard_action_observers()
+        .lock()
+        .insert(account.to_owned(), Arc::clone(&actions));
+    GuardActionObserver {
+        account: account.to_owned(),
+        actions,
+    }
+}
+
+/// Record an accepted antipoison Drink from the host walk guard in tests.
+#[cfg(feature = "test-support")]
+pub(crate) fn notify_guard_action_for_test(account: &str, snapshot: &GameSnapshot, op: &GuardOp) {
+    let GuardOp::Drink {
+        name,
+        kind: PotionKind::Antipoison | PotionKind::SuperAntipoison,
+    } = op
+    else {
+        return;
+    };
+    let observer = guard_action_observers().lock().get(account).cloned();
+    if let Some(observer) = observer {
+        observer.lock().push(GuardDrinkAction {
+            snapshot_tick: snapshot.tick(),
+            item_name: name.to_string(),
+        });
+    }
+}
+
 fn invalidate_bank_pick(navs: &Arc<Mutex<HashMap<String, NavBot>>>, name: &str) {
     if let Some(bot) = navs.lock().unwrap().get_mut(name) {
         bot.bank_pick.reset();
@@ -399,6 +489,21 @@ impl Play {
         self.game_data = Some(data);
     }
 }
+
+#[cfg(any(test, feature = "test-support"))]
+impl ScriptNavPaint {
+    /// Read the per-frame host policy only while a native guarded route is live.
+    pub fn native_walk_cure_poison_for_test(
+        &self,
+        name: &str,
+    ) -> Option<script::survival::CurePoison> {
+        let navs = self.navs.lock().ok()?;
+        let bot = navs.get(name)?;
+        bot.native_walk.as_ref().filter(|owner| owner.live())?;
+        bot.walk_guard.as_ref()?;
+        bot.has_route().then_some(bot.cure_poison)
+    }
+}
 impl Play {
     /// Install a read-only harness observer before spawning slots. It runs once
     /// after native execution and same-frame walk completion for each received
@@ -409,6 +514,17 @@ impl Play {
         observer: impl Fn(&client::client::Client, &str) + Send + Sync + 'static,
     ) {
         self.post_native_player_info = Some(Arc::new(observer));
+    }
+
+    /// Install a read-only harness observer before spawning slots. It runs each
+    /// client frame after the real host policy copy and native observation.
+    /// Its storage and call exist only with the test-support feature.
+    #[cfg(feature = "test-support")]
+    pub fn set_post_host_frame_observer(
+        &mut self,
+        observer: impl Fn(&client::client::Client, &str) + Send + Sync + 'static,
+    ) {
+        self.post_host_frame = Some(Arc::new(observer));
     }
 
     /// Overlay handle for catalog `walk` / `ctx.walk` Traveller (Play's

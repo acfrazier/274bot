@@ -34,6 +34,9 @@ struct Runtime {
     wall: Instant,
     evidence: Option<EvidenceStamp>,
     reach: Option<api::query::ReachQueryView>,
+    condition: Option<api::condition::BotCondition>,
+    poison_unknown_pulse: u8,
+    cure_poison: crate::survival::CurePoison,
 }
 impl Runtime {
     fn context<R>(
@@ -61,8 +64,9 @@ impl Runtime {
             .map_or(0, |owner| owner.id.get());
         let mut actions = NativeActions { _private: () };
         let mut cx = ActionContext {
-            condition: None,
-            poison_unknown_pulse: u8::MAX,
+            condition: self.condition,
+            poison_unknown_pulse: self.poison_unknown_pulse,
+            cure_poison: self.cure_poison,
             evidence,
             pin: &self.pin,
             snapshot: SnapshotView::new(Some(snapshot), evidence).with_reach(self.reach.as_ref()),
@@ -145,6 +149,9 @@ impl Harness {
             wall: Instant::now(),
             evidence: None,
             reach: None,
+            condition: None,
+            poison_unknown_pulse: u8::MAX,
+            cure_poison: crate::survival::CurePoison::WhenNeeded,
         };
         let (machine, lease) = runtime.context(&scene.snapshot, origin, origin, |actions, cx| {
             let lease = actions.begin::<Lease>((), cx).unwrap();
@@ -586,6 +593,396 @@ fn user_input_walk_receipt(harness: &mut Harness, tick: u64) {
         assessment: None,
         escape: None,
     });
+}
+#[test]
+fn combat_machine_cure_row_precedes_eat_row() {
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum EatingBranch {
+        WindDown,
+        Escape,
+        Emergency,
+        PrayerRecovery,
+        Ordinary,
+    }
+
+    for branch in [
+        EatingBranch::WindDown,
+        EatingBranch::Escape,
+        EatingBranch::Emergency,
+        EatingBranch::PrayerRecovery,
+        EatingBranch::Ordinary,
+    ] {
+        let mut scene = Scene::new("khazard_warlord");
+        scene.face_us();
+        scene.npcs[0].animation = scene.melee_seq();
+        scene.npcs[0].animation_frame = 0;
+        let mut food = scene.held("lobster", 0);
+        food.actions = vec![Some("Eat".into())];
+        scene.inventory.push(food);
+        scene.inventory.push(scene.held("4doseantipoison", 1));
+        if branch == EatingBranch::PrayerRecovery {
+            scene.stat(5, 0, 99);
+            scene.inventory.push(scene.held("4doseprayerrestore", 2));
+        }
+        scene.refresh();
+
+        let evidence = EvidenceStamp {
+            run: RunKey {
+                slot: 1,
+                run: 1,
+                session: 1,
+            },
+            tick: 1,
+            sequence: 1,
+        };
+        let frame = Frame::borrow(SnapshotView::new(Some(&scene.snapshot), evidence)).unwrap();
+        let mut threats = ThreatSet::default();
+        threats.observe(&frame, &scene.tables, 1);
+        let danger = threats
+            .danger(&frame, &scene.tables, 1, false, false)
+            .expect("the warlord has known melee danger");
+        assert!(danger > 0);
+        let lines = select::lines(Some(danger), 40);
+        let hp = if branch == EatingBranch::Emergency {
+            lines.emergency
+        } else {
+            lines.eat
+        };
+        scene.stat(3, hp, 40);
+        scene.refresh();
+
+        let mut request = scene.request();
+        request.allow.food = true;
+        request.allow.prayer = branch == EatingBranch::PrayerRecovery;
+        request.allow.potions = branch == EatingBranch::PrayerRecovery;
+        request.allow.retaliate_toggle = false;
+        if branch == EatingBranch::Escape {
+            request.fallback = Fallback::Retreat {
+                tile: tile(2610, 3200),
+            };
+        }
+        let mut harness = Harness::new(&scene, request);
+        harness.machine.phase = match branch {
+            EatingBranch::WindDown => Phase::WindDown,
+            EatingBranch::Escape => Phase::Escape,
+            EatingBranch::Emergency | EatingBranch::PrayerRecovery | EatingBranch::Ordinary => {
+                Phase::Fight
+            }
+        };
+        if matches!(
+            branch,
+            EatingBranch::WindDown | EatingBranch::PrayerRecovery
+        ) {
+            harness.machine.baseline_on |= BASELINE_READY;
+        }
+        if branch == EatingBranch::Escape {
+            harness.machine.escape_since = 1;
+        }
+        let condition = api::condition::BotCondition {
+            tick: 1,
+            session: api::condition::SessionMark::Live,
+            hp: u8::try_from(hp).unwrap(),
+            hp_max: 40,
+            hp_known: true,
+            poison: api::condition::PoisonState::Onset {
+                since: 1,
+                q: Some(11),
+                hit_since_line: false,
+            },
+            food: api::condition::FoodSummary {
+                ordinary_count: 1,
+                ordinary_heal_total: 12,
+                best_heal: 12,
+                smallest_heal: 12,
+                ..api::condition::FoodSummary::default()
+            },
+            cures: api::condition::CureDoses {
+                antipoison: 1,
+                ..api::condition::CureDoses::default()
+            },
+        };
+        harness.runtime.condition = Some(condition);
+        harness.runtime.poison_unknown_pulse = scene.tables.unknown_poison_pulse();
+
+        assert!(matches!(harness.poll(&scene.snapshot, 1), Poll::Pending));
+        let batch = harness.drain(None);
+        assert_len(&batch, 1);
+        assert!(
+            matches!(
+                batch.get(0),
+                Some(HostEffect::Interaction(InteractReq::Held { name, action, .. }))
+                    if name == "Antipoison(4)" && action == "Drink"
+            ),
+            "branch={branch:?}: expected a held antipoison drink before food"
+        );
+        let antipoison_id = scene.data.item_by_alias("4doseantipoison").unwrap().id;
+        scene.inventory.retain(|item| item.def.id != antipoison_id);
+        scene.refresh();
+        harness.runtime.condition.as_mut().unwrap().tick = 4;
+        assert!(matches!(harness.poll(&scene.snapshot, 4), Poll::Pending));
+        let after_settlement = harness.drain(None);
+        assert!(
+            !harness.machine.pending_row(RowKind::Drink),
+            "dose drop should settle the cure receipt"
+        );
+        assert!(
+            (0..after_settlement.len()).any(|index| {
+                matches!(
+                    after_settlement.get(index),
+                    Some(HostEffect::Interaction(InteractReq::Held { action, .. }))
+                        if action == "Eat"
+                )
+            }),
+            "branch={branch:?}: the bite must be planned after the dose drop settles"
+        );
+    }
+}
+
+#[test]
+fn combat_machine_never_policy_keeps_the_cure_and_eats() {
+    let mut scene = Scene::new("khazard_warlord");
+    scene.face_us();
+    scene.npcs[0].animation = scene.melee_seq();
+    scene.stat(3, 5, 40);
+    let mut food = scene.held("lobster", 0);
+    food.actions = vec![Some("Eat".into())];
+    scene.inventory.push(food);
+    scene.inventory.push(scene.held("4doseantipoison", 1));
+    scene.refresh();
+    let mut request = scene.request();
+    request.allow.food = true;
+    request.allow.prayer = false;
+    request.allow.potions = true;
+    request.allow.retaliate_toggle = false;
+    let mut harness = Harness::new(&scene, request);
+    harness.machine.phase = Phase::Fight;
+    harness.runtime.cure_poison = crate::survival::CurePoison::Never;
+    harness.runtime.condition = Some(api::condition::BotCondition {
+        tick: 1,
+        session: api::condition::SessionMark::Live,
+        hp: 5,
+        hp_max: 40,
+        hp_known: true,
+        poison: api::condition::PoisonState::Onset {
+            since: 1,
+            q: Some(11),
+            hit_since_line: false,
+        },
+        cures: api::condition::CureDoses {
+            antipoison: 1,
+            ..Default::default()
+        },
+        ..Default::default()
+    });
+    harness.runtime.poison_unknown_pulse = scene.tables.unknown_poison_pulse();
+    assert!(matches!(harness.poll(&scene.snapshot, 1), Poll::Pending));
+    let batch = harness.drain(None);
+    assert!(
+        (0..batch.len()).any(|index| matches!(
+            batch.get(index),
+            Some(HostEffect::Interaction(InteractReq::Held { name, action, .. }))
+                if name == "Lobster" && action == "Eat"
+        )),
+        "Never must allow the due health bite"
+    );
+    assert!(
+        (0..batch.len()).all(|index| !matches!(
+            batch.get(index),
+            Some(HostEffect::Interaction(InteractReq::Held { action, .. }))
+                if action == "Drink"
+        )),
+        "Never must not consume the held antipoison"
+    );
+}
+
+#[test]
+fn combat_machine_drinks_antipoison_when_lethal() {
+    let mut scene = Scene::new("khazard_warlord");
+    scene.face_us();
+    scene.stat(3, 200, 255);
+    scene.inventory.push(scene.held("4doseantipoison", 0));
+    scene.refresh();
+    let mut request = scene.request();
+    request.fallback = Fallback::Fight;
+    request.allow.food = false;
+    let mut harness = Harness::new(&scene, request);
+    harness.machine.phase = Phase::Fight;
+    harness.runtime.condition = Some(api::condition::BotCondition {
+        tick: 1,
+        session: api::condition::SessionMark::Live,
+        hp: 200,
+        hp_max: 255,
+        hp_known: true,
+        poison: api::condition::PoisonState::Onset {
+            since: 1,
+            q: Some(11),
+            hit_since_line: false,
+        },
+        food: api::condition::FoodSummary::default(),
+        cures: api::condition::CureDoses {
+            antipoison: 1,
+            ..api::condition::CureDoses::default()
+        },
+    });
+    harness.runtime.poison_unknown_pulse = scene.tables.unknown_poison_pulse();
+    assert!(matches!(harness.poll(&scene.snapshot, 1), Poll::Pending));
+    let batch = harness.drain(None);
+    assert!(
+        matches!(
+            batch.get(0),
+            Some(HostEffect::Interaction(InteractReq::Held { name, action, .. }))
+                if name == "Antipoison(4)" && action == "Drink"
+        ),
+        "lethal onset should be cured at the line"
+    );
+}
+
+#[test]
+fn combat_machine_uses_strange_fruit_and_settles_by_count_drop() {
+    let mut scene = Scene::new("khazard_warlord");
+    scene.face_us();
+    scene.stat(3, 200, 255);
+    scene.inventory.push(scene.held("macro_triffidfruit", 0));
+    scene.refresh();
+    let mut request = scene.request();
+    request.fallback = Fallback::Fight;
+    request.allow.food = false;
+    let mut harness = Harness::new(&scene, request);
+    harness.machine.phase = Phase::Fight;
+    harness.runtime.condition = Some(api::condition::BotCondition {
+        tick: 1,
+        session: api::condition::SessionMark::Live,
+        hp: 200,
+        hp_max: 255,
+        hp_known: true,
+        poison: api::condition::PoisonState::Onset {
+            since: 1,
+            q: Some(11),
+            hit_since_line: false,
+        },
+        food: api::condition::FoodSummary::default(),
+        cures: api::condition::CureDoses {
+            strange_fruit: 1,
+            ..api::condition::CureDoses::default()
+        },
+    });
+    harness.runtime.poison_unknown_pulse = scene.tables.unknown_poison_pulse();
+    assert!(matches!(harness.poll(&scene.snapshot, 1), Poll::Pending));
+    let batch = harness.drain(None);
+    assert!(
+        matches!(
+            batch.get(0),
+            Some(HostEffect::Interaction(InteractReq::Held { name, action, .. }))
+                if name == "Strange fruit" && action == "Eat"
+        ),
+        "the held fruit is the cure fallback"
+    );
+
+    let fruit_id = scene.data.item_by_alias("macro_triffidfruit").unwrap().id;
+    scene.inventory.retain(|item| item.def.id != fruit_id);
+    scene.refresh();
+    harness.runtime.condition.as_mut().unwrap().tick = 4;
+    assert!(matches!(harness.poll(&scene.snapshot, 4), Poll::Pending));
+    let _ = harness.drain(None);
+    assert!(!harness.machine.pending_row(RowKind::CureFruit));
+}
+#[test]
+fn combat_machine_waits_for_shared_food_clock_before_cure_fruit() {
+    let mut scene = Scene::new("khazard_warlord");
+    scene.face_us();
+    scene.npcs[0].animation = scene.melee_seq();
+    scene.stat(3, 5, 40);
+    let mut lobster = scene.held("lobster", 0);
+    lobster.actions = vec![Some("Eat".into())];
+    scene.inventory.push(lobster);
+    scene.inventory.push(scene.held("macro_triffidfruit", 1));
+    scene.refresh();
+
+    let mut request = scene.request();
+    request.allow.food = true;
+    request.allow.prayer = false;
+    request.allow.potions = true;
+    request.allow.retaliate_toggle = false;
+    request.fallback = Fallback::Fight;
+    let mut harness = Harness::new(&scene, request);
+    harness.machine.phase = Phase::Fight;
+    let condition = |tick| api::condition::BotCondition {
+        tick,
+        session: api::condition::SessionMark::Live,
+        hp: 5,
+        hp_max: 40,
+        hp_known: true,
+        poison: api::condition::PoisonState::Onset {
+            since: 1,
+            q: Some(11),
+            hit_since_line: false,
+        },
+        cures: api::condition::CureDoses {
+            strange_fruit: 1,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    harness.runtime.cure_poison = crate::survival::CurePoison::Never;
+    harness.runtime.condition = Some(condition(1));
+    harness.runtime.poison_unknown_pulse = scene.tables.unknown_poison_pulse();
+
+    let bite = harness.pending_batch(&scene, 1);
+    assert!(
+        (0..bite.len()).any(|index| matches!(
+            bite.get(index),
+            Some(HostEffect::Interaction(InteractReq::Held { name, action, .. }))
+                if name == "Lobster" && action == "Eat"
+        )),
+        "the first click must be the accepted ordinary bite"
+    );
+    assert!((0..bite.len()).all(|index| !matches!(
+        bite.get(index),
+        Some(HostEffect::Interaction(InteractReq::Held { name, action, .. }))
+            if name == "Strange fruit" && action == "Eat"
+    )));
+
+    harness.runtime.cure_poison = crate::survival::CurePoison::WhenNeeded;
+    for tick in 2..=3 {
+        harness.runtime.condition = Some(condition(tick));
+        scene.refresh();
+        let batch = harness.pending_batch(&scene, u64::from(tick));
+        assert!(
+            (0..batch.len()).all(|index| !matches!(
+                batch.get(index),
+                Some(HostEffect::Interaction(InteractReq::Held { name, action, .. }))
+                    if name == "Strange fruit" && action == "Eat"
+            )),
+            "the shared food clock must defer fruit at T+1 and T+2"
+        );
+    }
+
+    harness.runtime.condition = Some(condition(4));
+    scene.refresh();
+    let fruit = harness.pending_batch(&scene, 4);
+    assert_eq!(
+        (0..fruit.len())
+            .filter(|index| matches!(
+                fruit.get(*index),
+                Some(HostEffect::Interaction(InteractReq::Held { name, action, .. }))
+                    if name == "Strange fruit" && action == "Eat"
+            ))
+            .count(),
+        1,
+        "the cure fruit is admitted exactly once at T+3"
+    );
+
+    let fruit_id = scene.data.item_by_alias("macro_triffidfruit").unwrap().id;
+    scene.inventory.retain(|item| item.def.id != fruit_id);
+    scene.refresh();
+    harness.runtime.condition = Some(condition(5));
+    harness.pending_batch(&scene, 5);
+    assert!(harness.machine.pending_row(RowKind::Eat));
+    assert!(!harness.machine.pending_row(RowKind::CureFruit));
+    assert!(harness.machine.schedule.pending(OpKind::Eat));
+    assert!(!harness.machine.schedule.pending(OpKind::Drink));
+    assert!(!harness.machine.schedule.ready(OpKind::Eat, 6));
+    assert!(harness.machine.schedule.ready(OpKind::Eat, 7));
 }
 
 #[test]
@@ -1238,7 +1635,7 @@ fn combat_and_guard_share_projectile_first_protect_policy() {
     let mut guard =
         crate::combat::WalkGuard::begin_with(&request, &snapshot, Arc::clone(&scene.tables))
             .expect("Guard starts with level 43 Prayer");
-    let guard_op = guard.tick(&snapshot);
+    let guard_op = guard.tick(&snapshot, None, crate::survival::CurePoison::WhenNeeded);
     let expected_button = scene
         .data
         .prayer_by_name("Protect from Missiles")
@@ -1461,6 +1858,64 @@ fn case27_recovery_food_is_narrow_and_uses_strict_heal_gate() {
     scene.refresh();
     assert_len(&harness.pending_batch(&scene, 3), 0);
     assert!(harness.pending(&scene, 4).is_none());
+}
+
+/// Regression pin (`SURVIVAL-1.2`, design A12). With no poison and no cure
+/// held the cure arm stays silent, so the fight's prayer rows and their order
+/// against the eating branches must match the base `9cfa0d18e`: the restore
+/// is the only row when no bite is due, and it follows the bite when one is.
+#[test]
+fn combat_prayer_rows_unchanged() {
+    // No bite due: prayer recovery is the whole plan.
+    let mut scene = Scene::new("khazard_warlord");
+    let mut harness = fight(&mut scene);
+    let prayer = scene
+        .data
+        .item_by_alias("1doseprayerrestore")
+        .and_then(|item| item.name.clone())
+        .expect("the prayer restore item has a display name");
+    scene.stat(3, 30, 40);
+    scene.stat(5, 0, 43);
+    scene.face_us();
+    scene.inventory.push(scene.held("lobster", 0));
+    scene.inventory.push(scene.held("1doseprayerrestore", 1));
+    scene.refresh();
+    let plan = harness.pending_batch(&scene, 3);
+    assert_len(&plan, 1);
+    assert!(
+        matches!(
+            plan.get(0),
+            Some(HostEffect::Interaction(InteractReq::Held { name, action, .. }))
+                if name == &prayer && action == "Drink"
+        ),
+        "prayer recovery is planned alone when no bite is due"
+    );
+
+    // A bite due: the ordinary eating branch keeps its row, then the restore.
+    let mut scene = Scene::new("khazard_warlord");
+    let mut harness = fight(&mut scene);
+    let prayer = scene
+        .data
+        .item_by_alias("1doseprayerrestore")
+        .and_then(|item| item.name.clone())
+        .expect("the prayer restore item has a display name");
+    scene.stat(3, 18, 40);
+    scene.stat(5, 0, 43);
+    scene.face_us();
+    scene.inventory.push(scene.held("lobster", 0));
+    scene.inventory.push(scene.held("1doseprayerrestore", 1));
+    scene.refresh();
+    let plan = harness.pending_batch(&scene, 3);
+    assert_len(&plan, 2);
+    held_row(&plan, 0, "Eat");
+    assert!(
+        matches!(
+            plan.get(1),
+            Some(HostEffect::Interaction(InteractReq::Held { name, action, .. }))
+                if name == &prayer && action == "Drink"
+        ),
+        "prayer recovery follows the eating branch"
+    );
 }
 
 #[test]

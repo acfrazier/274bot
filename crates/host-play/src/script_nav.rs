@@ -4037,6 +4037,12 @@ fn captured_route_quests(
 pub(crate) struct NavBot {
     /// The slot-thread condition owner, also read by admission at arm time.
     pub(crate) condition: super::slot_condition::SlotCondition,
+    /// The profile's Cure poison policy for this slot, copied from the
+    /// arm's mirror on every observed frame beside the condition fact.
+    /// Host consumers with no script context (the walk guard) read it
+    /// next to [`NavBot::condition`]; native machines read the same
+    /// value through `ActionContext::cure_poison`.
+    pub(crate) cure_poison: script::survival::CurePoison,
     /// Shared session globals, attached before a production slot starts.
     pub(crate) walk_globals: Option<Arc<Mutex<super::WalkGlobals>>>,
     pub(crate) quest_context: Option<RouteQuestContext>,

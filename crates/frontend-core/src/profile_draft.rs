@@ -45,6 +45,127 @@ impl GuardianPolicy {
 /// display order.
 pub const GUARDIAN_EVENTS: [(&str, &str); 8] = vault::RANDOM_EVENT_POLICY_EVENTS;
 
+/// When combat or a protected walk drinks a held antipoison: the profile's
+/// Cure poison setting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum CurePoison {
+    /// Drink during combat or a protected walk when poison makes a health
+    /// bite necessary.
+    #[default]
+    WhenNeeded,
+    /// Drink when combat or a protected walk reports poison.
+    Always,
+    /// Do not drink for poison.
+    Never,
+}
+
+impl CurePoison {
+    pub(crate) fn from_vault(policy: vault::CurePoison) -> Self {
+        match policy {
+            vault::CurePoison::WhenNeeded => Self::WhenNeeded,
+            vault::CurePoison::Always => Self::Always,
+            vault::CurePoison::Never => Self::Never,
+        }
+    }
+
+    pub(crate) fn to_vault(self) -> vault::CurePoison {
+        match self {
+            Self::WhenNeeded => vault::CurePoison::WhenNeeded,
+            Self::Always => vault::CurePoison::Always,
+            Self::Never => vault::CurePoison::Never,
+        }
+    }
+
+    /// The stable key of this value in [`SURVIVAL_FIELDS`] (the stored
+    /// form in the vault row).
+    pub fn key(self) -> &'static str {
+        SURVIVAL_FIELDS
+            .iter()
+            .find(|(value, _, _)| *value == self)
+            .map(|(_, key, _)| *key)
+            .unwrap_or("when_needed")
+    }
+
+    /// The label of this value in [`SURVIVAL_FIELDS`]: the words the
+    /// panel and the TUI show for the row.
+    pub fn label(self) -> &'static str {
+        SURVIVAL_FIELDS
+            .iter()
+            .find(|(value, _, _)| *value == self)
+            .map(|(_, _, label)| *label)
+            .unwrap_or("")
+    }
+
+    /// The next value in display order (the TUI cycles the row).
+    pub fn next(self) -> Self {
+        match self {
+            Self::WhenNeeded => Self::Always,
+            Self::Always => Self::Never,
+            Self::Never => Self::WhenNeeded,
+        }
+    }
+}
+
+/// The Survival and supplies group's Cure poison row: (value, stable
+/// key, label), in display order. The key is the stored form in the
+/// vault row.
+pub const SURVIVAL_FIELDS: [(CurePoison, &str, &str); 3] = [
+    (
+        CurePoison::WhenNeeded,
+        "when_needed",
+        "When needed: drink for health in combat or protected walks",
+    ),
+    (
+        CurePoison::Always,
+        "always",
+        "Always: drink when poison is reported in combat or protected walks",
+    ),
+    (CurePoison::Never, "never", "Never: do not drink for poison"),
+];
+
+/// The profile's Survival and supplies group, as the front ends read it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct SurvivalSettings {
+    cure_poison: CurePoison,
+}
+
+impl SurvivalSettings {
+    pub(crate) fn from_vault(settings: vault::SurvivalSettings) -> Self {
+        Self {
+            cure_poison: CurePoison::from_vault(settings.cure_poison),
+        }
+    }
+
+    /// The Cure poison setting.
+    pub fn cure_poison(&self) -> CurePoison {
+        self.cure_poison
+    }
+
+    /// Edit buffer of [`Self::cure_poison`].
+    pub fn cure_poison_mut(&mut self) -> &mut CurePoison {
+        &mut self.cure_poison
+    }
+}
+
+/// The edit buffer of one draft's Survival and supplies group. Writing
+/// through it stages the draft only; nothing is saved until a command
+/// commits the draft.
+pub struct SurvivalDraft<'a> {
+    settings: &'a mut vault::SurvivalSettings,
+}
+
+impl SurvivalDraft<'_> {
+    /// The Cure poison setting.
+    pub fn cure_poison(&self) -> CurePoison {
+        CurePoison::from_vault(self.settings.cure_poison)
+    }
+
+    /// Stage the Cure poison setting.
+    pub fn set_cure_poison(&mut self, policy: CurePoison) {
+        self.settings.cure_poison = policy.to_vault();
+    }
+}
+
 impl RasterMode {
     pub(crate) fn from_vault(mode: vault::RasterMode) -> Self {
         match mode {
@@ -159,6 +280,18 @@ impl SettingsDraft {
     pub fn set_random_event_policy(&mut self, event: &str, policy: GuardianPolicy) {
         self.settings
             .set_random_event_policy(event, policy.to_vault());
+    }
+
+    /// The Survival and supplies group.
+    pub fn survival(&self) -> SurvivalSettings {
+        SurvivalSettings::from_vault(self.settings.survival)
+    }
+
+    /// Edit buffer of [`Self::survival`].
+    pub fn survival_mut(&mut self) -> SurvivalDraft<'_> {
+        SurvivalDraft {
+            settings: &mut self.settings.survival,
+        }
     }
 
     /// The game image raster mode.
@@ -304,6 +437,11 @@ impl<'a> ProfileView<'a> {
     /// The response to the hostile random `event`.
     pub fn random_event_policy(&self, event: &str) -> GuardianPolicy {
         GuardianPolicy::from_vault(self.profile.settings.random_event_policy(event))
+    }
+
+    /// The Survival and supplies group.
+    pub fn survival(&self) -> SurvivalSettings {
+        SurvivalSettings::from_vault(self.profile.settings.survival)
     }
 
     /// Cached TutSkip result (`None` until read).

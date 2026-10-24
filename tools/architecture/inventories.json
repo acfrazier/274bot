@@ -1298,6 +1298,30 @@
       "reason": "T3.3 operator command seam."
     },
     {
+      "id": "seam_type|crates/frontend-core/src/profile_draft.rs|CurePoison",
+      "path": "crates/frontend-core/src/profile_draft.rs",
+      "symbol": "CurePoison",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "Survival profile policy shared with the panel and TUI."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/profile_draft.rs|SurvivalSettings",
+      "path": "crates/frontend-core/src/profile_draft.rs",
+      "symbol": "SurvivalSettings",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "Copyable survival policy view with no owned allocation."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/profile_draft.rs|SurvivalDraft",
+      "path": "crates/frontend-core/src/profile_draft.rs",
+      "symbol": "SurvivalDraft",
+      "classification": "borrowed",
+      "owner": "T3",
+      "reason": "Mutable borrowed profile survival settings used by the forms."
+    },
+    {
       "id": "seam_type|crates/frontend-core/src/profile_draft.rs|GuardianPolicy",
       "path": "crates/frontend-core/src/profile_draft.rs",
       "symbol": "GuardianPolicy",
@@ -1384,6 +1408,14 @@
       "classification": "borrowed",
       "owner": "T3",
       "reason": "T3.3 operator command seam."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/session/commands.rs|SurvivalEdit",
+      "path": "crates/frontend-core/src/session/commands.rs",
+      "symbol": "SurvivalEdit",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "Move-only SetSurvival edit holding a scalar policy without an allocation."
     },
     {
       "id": "seam_type|crates/frontend-core/src/session/commands.rs|GuardianEdit",
@@ -2658,7 +2690,41 @@
       "reason": "F0-5 frontend seam; register in the introducing commit, no allowance."
     }
   ],
-  "violations": [],
+  "violations": [
+    {
+      "id": "test_nav_implementation_import|crates/script/src/combat/guard.rs|cfg(test)::tests|nav_planner::producer::route_view|qualified_path",
+      "category": "test_nav_implementation_import",
+      "path": "crates/script/src/combat/guard.rs",
+      "symbol": "nav_planner::producer::route_view",
+      "cfg_or_target": "cfg(test)::tests",
+      "owner": "T5",
+      "reason": "Survival replay-versus-guard oracle borrows a synthetic route through its real owner lease; the facade has no synthetic route constructor.",
+      "removal_endpoint": "T5.1",
+      "classification": "qualified_path"
+    },
+    {
+      "id": "test_nav_implementation_import|crates/script/src/combat/guard.rs|cfg(test)::tests|nav_planner::router::Leg::Walk|macro_token_path",
+      "category": "test_nav_implementation_import",
+      "path": "crates/script/src/combat/guard.rs",
+      "symbol": "nav_planner::router::Leg::Walk",
+      "cfg_or_target": "cfg(test)::tests",
+      "owner": "T5",
+      "reason": "Survival replay-versus-guard oracle builds one quiet walking leg; the facade has no synthetic route constructor.",
+      "removal_endpoint": "T5.1",
+      "classification": "macro_token_path"
+    },
+    {
+      "id": "test_nav_implementation_import|crates/script/src/combat/guard.rs|cfg(test)::tests|nav_planner::router::Route|qualified_path",
+      "category": "test_nav_implementation_import",
+      "path": "crates/script/src/combat/guard.rs",
+      "symbol": "nav_planner::router::Route",
+      "cfg_or_target": "cfg(test)::tests",
+      "owner": "T5",
+      "reason": "Survival replay-versus-guard oracle retains its exact synthetic route while comparing the two real decisions.",
+      "removal_endpoint": "T5.1",
+      "classification": "qualified_path"
+    }
+  ],
   "test_exceptions": [
     {
       "id": "test_import_exception|crates/script/src/combat/risk/tests.rs|cfg(test)::module:tests|nav_planner::router::AvoidRect|exact_test_fixture_oracle_import",

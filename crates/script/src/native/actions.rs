@@ -5,7 +5,7 @@ use crate::native_bank::{BankPickReceipt, BankPickRequest};
 use std::panic::{catch_unwind, resume_unwind, AssertUnwindSafe};
 
 impl ActionContext<'_> {
-    fn owner(&self) -> Result<Arc<Owner>, ActionError> {
+    pub(super) fn owner(&self) -> Result<Arc<Owner>, ActionError> {
         let owner = self
             .ledger
             .as_ref()
@@ -919,6 +919,7 @@ mod tests {
         let mut cx = ActionContext {
             condition: None,
             poison_unknown_pulse: u8::MAX,
+            cure_poison: crate::survival::CurePoison::WhenNeeded,
             evidence,
             pin: &pin,
             snapshot: SnapshotView::new(None, evidence),
@@ -1284,6 +1285,7 @@ mod tests {
             condition: None,
             poison_unknown_pulse: u8::MAX,
             evidence,
+            cure_poison: crate::survival::CurePoison::WhenNeeded,
             pin: &pin,
             snapshot: SnapshotView::new(snapshot, evidence),
             retained: &mut retained,
