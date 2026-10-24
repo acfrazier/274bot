@@ -7,7 +7,7 @@ pub(crate) mod npc;
 pub mod ops;
 pub mod request;
 
-pub(crate) mod compat;
+pub mod compat;
 #[cfg(test)]
 mod prompt_args_tests;
 pub(crate) mod seat_open;
