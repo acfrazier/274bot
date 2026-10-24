@@ -663,7 +663,7 @@ fn source_service(service: &HandlerService, digest: Option<&Digest>) -> Capabili
         capability: Capability::Bank,
         trigger: service.trigger,
         eligibility: service.eligibility,
-        reference: Text::new(&service.reference).unwrap_or_else(|_| Text::new("rs2").unwrap()),
+        reference: Text::new(&service.reference).unwrap_or_else(|_| Text::new("rs2").expect("Static service reference is valid")),
         source_sha256: digest.copied().unwrap_or(Digest([0; 32])),
     }
 }
@@ -1362,7 +1362,7 @@ fn analyse_bank_handlers(
                     } else {
                         ServiceTrigger::Operation {
                             slot: OperationSlot::new(slot)
-                                .unwrap_or(OperationSlot::new(1).unwrap()),
+                                .unwrap_or(OperationSlot::new(1).expect("Operation slot 1 is valid")),
                         }
                     };
                     let service = HandlerService {
@@ -1410,7 +1410,7 @@ fn record_handler(
     if resolved.is_empty() {
         analysis
             .unresolved
-            .entry(service.reference.clone())
+            .entry(service.reference)
             .or_default()
             .push(name.to_string());
         return;

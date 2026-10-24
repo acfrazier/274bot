@@ -148,18 +148,18 @@ pub fn merge_squares(squares: &[Mapsquare]) -> StepGrid {
         !squares.is_empty(),
         "merge_squares needs at least one mapsquare"
     );
-    let min_x = squares.iter().map(|s| s.x * SQUARE as i32).min().unwrap();
-    let min_z = squares.iter().map(|s| s.z * SQUARE as i32).min().unwrap();
+    let min_x = squares.iter().map(|s| s.x * SQUARE as i32).min().expect("Mapsquare list is nonempty after assertion");
+    let min_z = squares.iter().map(|s| s.z * SQUARE as i32).min().expect("Mapsquare list is nonempty after assertion");
     let max_x = squares
         .iter()
         .map(|s| (s.x + 1) * SQUARE as i32)
         .max()
-        .unwrap();
+        .expect("Mapsquare list is nonempty after assertion");
     let max_z = squares
         .iter()
         .map(|s| (s.z + 1) * SQUARE as i32)
         .max()
-        .unwrap();
+        .expect("Mapsquare list is nonempty after assertion");
     let (width, height) = ((max_x - min_x) as usize, (max_z - min_z) as usize);
     let mut walk = vec![0u8; width * height];
     let mut doors = Vec::new();

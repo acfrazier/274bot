@@ -100,7 +100,7 @@ fn movement_sources_invalidate_a_warm_reach_stamp() {
         path: "/content/maps/m1.jm2".into(),
         bytes: 10,
         modified_nanos: 5,
-        sha256: input_sha.clone(),
+        sha256: input_sha,
     }];
     let baked = crate::bundle::BakeStamp {
         content_id: None,

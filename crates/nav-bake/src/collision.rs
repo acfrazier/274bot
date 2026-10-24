@@ -64,22 +64,22 @@ pub fn bake_from_maps(
         .iter()
         .map(|(x, _)| x * SQUARE as i32)
         .min()
-        .unwrap();
+        .expect("Mapsquare list is nonempty after validation");
     let min_z = squares
         .iter()
         .map(|(_, z)| z * SQUARE as i32)
         .min()
-        .unwrap();
+        .expect("Mapsquare list is nonempty after validation");
     let max_x = squares
         .iter()
         .map(|(x, _)| (x + 1) * SQUARE as i32)
         .max()
-        .unwrap();
+        .expect("Mapsquare list is nonempty after validation");
     let max_z = squares
         .iter()
         .map(|(_, z)| (z + 1) * SQUARE as i32)
         .max()
-        .unwrap();
+        .expect("Mapsquare list is nonempty after validation");
     let (width, height) = ((max_x - min_x) as usize, (max_z - min_z) as usize);
     let plane_cells = width * height;
     let mut flags = vec![0u32; LEVELS * plane_cells];

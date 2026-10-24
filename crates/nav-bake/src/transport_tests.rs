@@ -6182,7 +6182,7 @@ fn membergate_routes_taverley_bank_only_when_map_members() {
         ),
         "empty reverse is also NoPath"
     );
-    let members = empty.clone().with_map_members(true);
+    let members = empty.with_map_members(true);
     let there = find_with(
         &wc,
         &graph,
@@ -9569,7 +9569,7 @@ if ($is_inside = false) {
         },
         WorldState {
             worn: HashSet::new(),
-            ..chef.clone()
+            ..chef
         },
     ] {
         assert_eq!(
