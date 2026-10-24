@@ -3,6 +3,10 @@
   "contract": "\u00a721 Appendix A as amended by \u00a723 \u00a73 (isolate_generated.rs T1); tools/seat-model/** T1 per Main decision 2026-10-12 F0-CHECKER (ADR0008 note)",
   "paths": [
     {
+      "path": "crates/nav-bake/tests/world_roundtrip.rs",
+      "owner": "T5"
+    },
+    {
       "path": "crates/api/build.rs",
       "owner": "T2"
     },
@@ -1723,6 +1727,42 @@
       "owner": "T5"
     },
     {
+      "path": "crates/nav-bake/src/collision.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/nav-bake/src/collision_tests.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/nav-bake/src/pack.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/nav-bake/src/pack/banks.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/nav-bake/src/pack/encode.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/nav-bake/src/pack/mapsquare.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/nav-bake/src/pack/sidecars.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/nav-bake/src/pack/zones.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/nav-bake/src/pack_tests.rs",
+      "owner": "T5"
+    },
+    {
       "path": "crates/nav-bake/tests/paint_sidecars.rs",
       "owner": "T5"
     },
@@ -2003,7 +2043,7 @@
       "owner": "T5"
     },
     {
-      "path": "crates/nav-planner/src/pack/config_parse.rs",
+      "path": "crates/nav-bake/src/pack/config_parse.rs",
       "owner": "T5"
     },
     {
