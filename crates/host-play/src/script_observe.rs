@@ -443,6 +443,18 @@ pub(crate) fn script_observe_cached_with_channels(
             inp.with_server_ordered_input(|state| state.invalidate_content_expectation());
         }
     }
+    // One relaxed load of the slot's Cure poison mirror per frame: a
+    // durable settings write is visible on the next frame the slot
+    // observes. The NavBot copy serves host consumers with no script
+    // context (the walk guard); the same value posts to native
+    // machines in the compiled tick below.
+    let cure_poison = service_arm.map(SlotArm::cure_poison).unwrap_or_default();
+    {
+        let mut navs = navs.lock().unwrap();
+        if let Some(bot) = navs.get_mut(name) {
+            bot.cure_poison = cure_poison;
+        }
+    }
     let mut wrote = false;
     let mut journal_wall_now = None;
     let mut journal_paint_hidden = false;
@@ -1001,6 +1013,7 @@ pub(crate) fn script_observe_cached_with_channels(
                         bank_memory: bank_memory.as_deref(),
                         condition,
                         poison_unknown_pulse,
+                        cure_poison,
                         collision: world
                             .as_deref()
                             .and_then(|world| nav_planner::producer::collision_view(world).ok()),
@@ -1029,6 +1042,7 @@ pub(crate) fn script_observe_cached_with_channels(
             bot.work_scope = slot.work_scope();
             bot.native_permissions = slot.native_walk_permissions();
             bot.compat_v1 = slot.api_family() == Some(script::ApiFamily::V1);
+            bot.cure_poison = cure_poison;
         }
         emit_script_debug_logs(&mut slot, name);
         if slot.load_active() && slot.state() != script::RunState::Running {

@@ -181,7 +181,7 @@
         "test": 0
       },
       "clippy::too_many_arguments": {
-        "non_test": 26,
+        "non_test": 27,
         "test": 2
       },
       "dead_code": {

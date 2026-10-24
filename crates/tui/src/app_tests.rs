@@ -734,8 +734,8 @@ fn manual_movement_pause_toggle_is_reachable_and_last_settings_row_stays_clamped
         app.on_key(key(KeyCode::Down));
     }
     assert_eq!(
-        app.settings_state.row, 14,
-        "Reload Paths remains reachable at the final settings row"
+        app.settings_state.row, 15,
+        "navigation clamps at the final settings row (cure poison), past Reload Paths at 14"
     );
 }
 
