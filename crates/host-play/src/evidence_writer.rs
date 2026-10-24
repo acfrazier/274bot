@@ -26,6 +26,26 @@ use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
+/// Add the source commit and worktree state to a live-test receipt.
+#[cfg(any(test, feature = "test-support"))]
+pub fn record_source_identity(receipt: &mut serde_json::Value) {
+    let git = |args: &[&str]| {
+        let output = std::process::Command::new("git")
+            .args(args)
+            .current_dir(env!("CARGO_MANIFEST_DIR"))
+            .output()
+            .expect("read live receipt source identity");
+        assert!(
+            output.status.success(),
+            "git {args:?} failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout).expect("UTF-8 git output")
+    };
+    receipt["commit"] = serde_json::json!(git(&["rev-parse", "HEAD"]).trim());
+    receipt["worktree_dirty"] = serde_json::json!(!git(&["status", "--porcelain"]).is_empty());
+}
+
 /// How many captures may wait for the background thread.
 pub const DEFAULT_QUEUE_BOUND: usize = 8;
 /// How long `submit` waits for queue space before it drops with an error.

@@ -2829,16 +2829,17 @@ mod tests {
         // window (`combat/risk/replay.rs:391-400`). A marked six-damage poison
         // has a pulse of 6 (`replay.rs:212-222`), so the line is 2 * 6 + 1 = 13.
         let lease = crate::gatherer::select::tests::test_nav_lease(|_| {});
-        let route = nav::router::Route {
-            legs: vec![nav::router::Leg::Walk {
+        let route = nav_planner::router::Route {
+            legs: vec![nav_planner::router::Leg::Walk {
                 tiles: (10..=20).map(|x| tile(x, 100)).collect(),
             }],
             dest: tile(20, 100),
             ticks: 0.0,
         };
-        let path =
-            crate::combat::risk::RoutePath::new(nav::producer::route_view(&lease, &route).unwrap())
-                .unwrap();
+        let path = crate::combat::risk::RoutePath::new(
+            nav_planner::producer::route_view(&lease, &route).unwrap(),
+        )
+        .unwrap();
         let plan = crate::combat::risk::RoutePlan::default();
         let mut input = crate::combat::risk::RiskInput {
             hp: 8,

@@ -94,6 +94,17 @@ const COMBAT_SEED: &[&str] = &[
     "give lobster 5",
     "setvar prayer14 1",
 ];
+const COMBAT_FRUIT_SEED: &[&str] = &[
+    "setstat attack 1",
+    "setstat strength 1",
+    "setstat defence 1",
+    "setstat hitpoints 10",
+    "setstat prayer 43",
+    "give bronze_scimitar 1",
+    "give lobster 5",
+    "give macro_triffidfruit 1",
+    "setvar prayer14 1",
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum EatCase {
@@ -250,7 +261,7 @@ impl Script for NativeWalkScript {
                 candidate_goals: None,
                 loc_id: None,
                 radius: 12,
-                arrival: nav::arrival::ArrivalKind::Reach,
+                arrival: nav_planner::arrival::ArrivalKind::Reach,
                 options: script::native::WalkOptions::default(),
                 required_after: tick.cx.evidence(),
                 evidence: None,
@@ -568,6 +579,10 @@ fn combat_seed_ready(snapshot: &GameSnapshot) -> bool {
         && varp(snapshot, PROTECT_FROM_MELEE_VARP) == 1
 }
 
+fn combat_fruit_seed_ready(snapshot: &GameSnapshot) -> bool {
+    combat_seed_ready(snapshot) && bank_core_live::count(snapshot.inventory(), fruit_id()) == 1
+}
+
 fn stat_levels(snapshot: &GameSnapshot, index: i32) -> Option<(i32, i32)> {
     snapshot
         .stats()
@@ -594,8 +609,8 @@ fn route_sample(play: &super::Play, account: &str) -> Option<RouteSample> {
                 .legs
                 .iter()
                 .map(|leg| match leg {
-                    nav::router::Leg::Walk { tiles } => tiles.len(),
-                    nav::router::Leg::Transport { .. } => 0,
+                    nav_planner::router::Leg::Walk { tiles } => tiles.len(),
+                    nav_planner::router::Leg::Transport { .. } => 0,
                 })
                 .sum(),
         ),
@@ -603,8 +618,8 @@ fn route_sample(play: &super::Play, account: &str) -> Option<RouteSample> {
             view.leg_count(),
             view.legs()
                 .map(|leg| match leg {
-                    nav::contract::LegView::Walk(tiles) => tiles.len(),
-                    nav::contract::LegView::Transport(_) => 0,
+                    nav_planner::contract::LegView::Walk(tiles) => tiles.len(),
+                    nav_planner::contract::LegView::Transport(_) => 0,
                 })
                 .sum(),
         ),
@@ -697,6 +712,21 @@ fn captured_actions(capture: &Arc<StdMutex<CombatCapture>>) -> Vec<Value> {
         .unwrap_or_else(|error| error.into_inner())
         .actions
         .clone()
+}
+
+fn capture_sample(
+    capture: &Arc<StdMutex<CombatCapture>>,
+    frame: ObservedFrame,
+    last_tick: &mut Option<u32>,
+    frames: &mut Vec<ObservedFrame>,
+) -> Vec<Value> {
+    // Actions can arrive after the first sample of their snapshot tick.
+    let actions = captured_actions(capture);
+    if *last_tick != Some(frame.tick) {
+        *last_tick = Some(frame.tick);
+        frames.push(frame);
+    }
+    actions
 }
 
 fn is_eat(action: &Value) -> bool {
@@ -1164,7 +1194,11 @@ fn evaluate_fruit(
     if frames
         .iter()
         .filter(|frame| frame.tick >= bite_tick)
-        .any(|frame| frame.hp == 0 || frame.non_poison_damage || !frame.route_active)
+        .any(|frame| {
+            frame.hp == 0
+                || frame.non_poison_damage
+                || (bite.source == "guard" && !frame.route_active)
+        })
     {
         return OracleDecision::Fail(
             "fixture: fruit route died, lost its guard, or took other damage".into(),
@@ -1186,11 +1220,17 @@ fn evaluate_fruit(
     let fruits = actions
         .iter()
         .filter(|action| {
-            action["kind"] == "guard"
+            (action["kind"] == "guard"
                 && action["op"] == "eat"
                 && action["item"]
                     .as_str()
-                    .is_some_and(|name| name.eq_ignore_ascii_case("Strange fruit"))
+                    .is_some_and(|name| name.eq_ignore_ascii_case("Strange fruit")))
+                || (action["kind"] == "interaction"
+                    && action["request"]["op"] == "held"
+                    && action["request"]["action"] == "Eat"
+                    && action["request"]["name"]
+                        .as_str()
+                        .is_some_and(|name| name.eq_ignore_ascii_case("Strange fruit")))
         })
         .collect::<Vec<_>>();
     let due = bite_tick + 3;
@@ -1204,6 +1244,17 @@ fn evaluate_fruit(
     }
     if fruits.len() > 1 {
         return OracleDecision::Fail("product: fruit was retried instead of cured once".into());
+    }
+    if bite.source == "interaction"
+        && fruits.iter().any(|action| {
+            !has_decoded_wire(action)
+                || action["run"].as_str() != bite.owner_run.as_deref()
+                || action["action_id"].as_u64() != bite.fight_action
+        })
+    {
+        return OracleDecision::Fail(
+            "oracle: fruit did not share the real wire-decoded Eat fight action".into(),
+        );
     }
     if let Some(action) = fruits.first() {
         if action["accepted"] != true {
@@ -1390,15 +1441,7 @@ fn captured_evidence(capture: &Arc<StdMutex<CombatCapture>>) -> Value {
 fn write_receipt(evidence: &Path, receipt: &Value) -> PathBuf {
     std::fs::create_dir_all(evidence).expect("create cell evidence directory");
     let mut receipt = receipt.clone();
-    let commit = std::process::Command::new("git")
-        .args(["rev-parse", "HEAD"])
-        .current_dir(env!("CARGO_MANIFEST_DIR"))
-        .output()
-        .expect("read receipt git commit");
-    assert!(commit.status.success(), "git rev-parse HEAD failed");
-    receipt["commit"] = json!(String::from_utf8(commit.stdout)
-        .expect("UTF-8 commit")
-        .trim());
+    crate::evidence_writer::record_source_identity(&mut receipt);
     let path = evidence.join("receipt.json");
     std::fs::write(
         &path,
@@ -1534,13 +1577,19 @@ fn run_walk_case(case: EatCase, fruit_delay: bool) {
             thread::sleep(Duration::from_millis(50));
             continue;
         };
-        if last_tick == Some(frame.tick) {
-            thread::sleep(Duration::from_millis(50));
-            continue;
+        let tick = frame.tick;
+        let actions = capture_sample(&cell.capture, frame, &mut last_tick, &mut frames);
+        if fruit_delay && policy_tick.is_none() && !eat_actions(&actions).is_empty() {
+            if let Some(arm) = cell.play.arm(&cell.account) {
+                arm.set_cure_poison(vault::CurePoison::WhenNeeded);
+                policy_tick = Some(tick);
+            } else {
+                failure = Some((
+                    "fixture",
+                    "live arm disappeared before enabling cure".into(),
+                ));
+            }
         }
-        last_tick = Some(frame.tick);
-        frames.push(frame);
-        let tick = frames.last().expect("just pushed").tick;
         if seed_tick.is_none() && !seed_scheduled && {
             let live = cell.live.lock();
             walk_poison_seed_ready(
@@ -1574,21 +1623,7 @@ fn run_walk_case(case: EatCase, fruit_delay: bool) {
                 ));
             }
         }
-        let actions = captured_actions(&cell.capture);
         let eats = eat_actions(&actions);
-        if fruit_delay && policy_tick.is_none() {
-            if let Some(bite_tick) = eats.first().and_then(|eat| eat.tick.0) {
-                cell.play
-                    .arm(&cell.account)
-                    .expect("live arm")
-                    .set_cure_poison(vault::CurePoison::WhenNeeded);
-                policy_tick = Some(tick);
-                assert_eq!(
-                    tick, bite_tick,
-                    "enable fruit cure immediately after the accepted bite"
-                );
-            }
-        }
         let decision = seed_tick.map_or(OracleDecision::Pending, |seed| {
             if fruit_delay {
                 evaluate_fruit(&frames, &actions, policy_tick)
@@ -1678,9 +1713,21 @@ export function tick(api) {
   }
 }"#;
 
-fn run_combat_cell() {
-    const COMBAT_LABEL: &str = "L-EAT-POISON-API-COMBAT";
-    let cell = start_cell(COMBAT_LABEL, COMBAT_SEED, combat_seed_ready, COW_FIELD);
+fn run_combat_cell(fruit_delay: bool) {
+    let label = if fruit_delay {
+        "L-CURE-FRUIT-API-COMBAT"
+    } else {
+        "L-EAT-POISON-API-COMBAT"
+    };
+    let (seed, ready) = if fruit_delay {
+        (
+            COMBAT_FRUIT_SEED,
+            combat_fruit_seed_ready as fn(&GameSnapshot) -> bool,
+        )
+    } else {
+        (COMBAT_SEED, combat_seed_ready as fn(&GameSnapshot) -> bool)
+    };
+    let cell = start_cell(label, seed, ready, COW_FIELD);
     let mut frames = Vec::new();
     let mut failure = None;
     let mut passed = false;
@@ -1695,6 +1742,7 @@ fn run_combat_cell() {
     let mut seed_tick = None;
     let mut poison_send = None;
     let mut seed_scheduled = false;
+    let mut policy_tick = None;
     if failure.is_none() {
         {
             let live = cell.live.lock();
@@ -1743,12 +1791,19 @@ fn run_combat_cell() {
             thread::sleep(Duration::from_millis(50));
             continue;
         };
-        if last_tick == Some(frame.tick) {
-            thread::sleep(Duration::from_millis(50));
-            continue;
-        }
-        last_tick = Some(frame.tick);
         let tick = frame.tick;
+        let actions = capture_sample(&cell.capture, frame, &mut last_tick, &mut frames);
+        if fruit_delay && policy_tick.is_none() && !eat_actions(&actions).is_empty() {
+            if let Some(arm) = cell.play.arm(&cell.account) {
+                arm.set_cure_poison(vault::CurePoison::WhenNeeded);
+                policy_tick = Some(tick);
+            } else {
+                failure = Some((
+                    "fixture",
+                    "live arm disappeared before enabling cure".into(),
+                ));
+            }
+        }
         let cow_visible = cell.live.lock().snapshot.npcs().iter().any(|npc| {
             npc.name
                 .as_deref()
@@ -1756,8 +1811,6 @@ fn run_combat_cell() {
                 && (3240..=3266).contains(&npc.tile.x)
                 && (3254..=3299).contains(&npc.tile.z)
         });
-        frames.push(frame);
-        let actions = captured_actions(&cell.capture);
         let attacks = attack_actions(&actions);
         if !cow_visible && seed_tick.is_none() && tick.saturating_sub(setup_tick) > 15 {
             failure = Some((
@@ -1805,7 +1858,12 @@ fn run_combat_cell() {
         }
         let eats = eat_actions(&actions);
         let decision = seed_tick.map_or(OracleDecision::Pending, |seed| {
-            evaluate_combat(seed, &frames, &eats, &attacks)
+            match evaluate_combat(seed, &frames, &eats, &attacks) {
+                OracleDecision::Pass if fruit_delay => {
+                    evaluate_fruit(&frames, &actions, policy_tick)
+                }
+                decision => decision,
+            }
         });
         match decision {
             OracleDecision::Pending => {}
@@ -1838,7 +1896,7 @@ fn run_combat_cell() {
     cell.play.script_stop(&cell.account);
     let actions = captured_actions(&cell.capture);
     let receipt = json!({
-        "cell": COMBAT_LABEL,
+        "cell": label,
         "api_path": "api.combat.fight",
         "fight_source": FIGHT_CONSUMER,
         "real_content": true,
@@ -1847,7 +1905,8 @@ fn run_combat_cell() {
         "account": cell.account,
         "map_members": true,
         "protect_from_melee_varp": PROTECT_FROM_MELEE_VARP,
-        "cure_poison": "never",
+        "cure_poison": if fruit_delay { "never, then when-needed after the bite" } else { "never" },
+        "policy_change_tick": policy_tick,
         "setup_tick": setup_tick,
         "fight_start_tick": fight_start_tick,
         "poison_seed_tick": seed_tick,
@@ -1882,7 +1941,7 @@ fn run_combat_cell() {
     let receipt_path = write_receipt(&cell.evidence, &receipt);
     assert!(
         passed,
-        "{COMBAT_LABEL} failed: {}; receipt={}",
+        "{label} failed: {}; receipt={}",
         failure.map_or_else(|| "no passing receipt".to_owned(), |(_, reason)| reason),
         receipt_path.display()
     );
@@ -1919,7 +1978,13 @@ fn live_survival_strange_fruit_after_bite() {
 #[test]
 #[ignore = "requires LIVE=1, Engine A at 600 ms, and the accepted R289 cache/nav fixtures"]
 fn live_survival_eat_poison_through_api_combat_fight() {
-    run_combat_cell();
+    run_combat_cell(false);
+}
+
+#[test]
+#[ignore = "requires LIVE=1, Engine A at 600 ms, and the accepted R289 cache/nav fixtures"]
+fn live_survival_strange_fruit_through_api_combat_fight() {
+    run_combat_cell(true);
 }
 
 #[cfg(test)]
@@ -1968,6 +2033,33 @@ mod oracle_tests {
     }
 
     #[test]
+    fn fruit_oracle_requires_real_combat_actions_from_the_same_fight() {
+        let (mut frames, mut actions) = fruit_receipt(85, true);
+        for frame in &mut frames {
+            frame.route_active = false;
+        }
+        for (action, name) in actions.iter_mut().zip(["Lobster", "Strange fruit"]) {
+            action["kind"] = json!("interaction");
+            action["request"] = json!({"op": "held", "name": name, "action": "Eat"});
+            action["run"] = json!("run-1");
+            action["action_id"] = json!(7);
+            action["wire_decoded"] = json!(true);
+            action["wire_opcodes"] = json!([76]);
+        }
+        assert_eq!(
+            evaluate_fruit(&frames, &actions, Some(82)),
+            OracleDecision::Pass
+        );
+        actions[1]["action_id"] = json!(8);
+        assert!(matches!(evaluate_fruit(&frames, &actions, Some(82)),
+            OracleDecision::Fail(reason) if reason.starts_with("oracle:")));
+        actions[1]["action_id"] = json!(7);
+        actions[1]["wire_decoded"] = json!(false);
+        assert!(matches!(evaluate_fruit(&frames, &actions, Some(82)),
+            OracleDecision::Fail(reason) if reason.starts_with("oracle:")));
+    }
+
+    #[test]
     fn fruit_oracle_rejects_early_or_late_clicks_and_missing_cure() {
         for tick in [83, 84, 86] {
             let (frames, actions) = fruit_receipt(tick, true);
@@ -1977,6 +2069,67 @@ mod oracle_tests {
         let (frames, actions) = fruit_receipt(85, false);
         assert!(matches!(evaluate_fruit(&frames, &actions, Some(82)),
             OracleDecision::Fail(reason) if reason.contains("did not cure")));
+    }
+
+    #[test]
+    fn fruit_sample_reads_actions_that_arrive_on_a_repeated_tick() {
+        let capture = Arc::new(StdMutex::new(CombatCapture::default()));
+        let mut last_tick = None;
+        let mut frames = Vec::new();
+        assert!(capture_sample(
+            &capture,
+            mark_frame(82, 4, 10, 5, 82),
+            &mut last_tick,
+            &mut frames
+        )
+        .is_empty());
+        let (_, actions) = fruit_receipt(85, true);
+        capture.lock().unwrap().actions = actions;
+        let observed = capture_sample(
+            &capture,
+            mark_frame(82, 4, 10, 5, 82),
+            &mut last_tick,
+            &mut frames,
+        );
+        assert_eq!(
+            eat_actions(&observed).len(),
+            1,
+            "a bite captured after the first sample must be read in the same tick"
+        );
+        assert_eq!(
+            frames.len(),
+            1,
+            "repeated ticks do not duplicate frame rows"
+        );
+    }
+
+    #[test]
+    fn fruit_oracle_records_late_policy_as_fixture_failure_before_assertion() {
+        let (frames, actions) = fruit_receipt(85, true);
+        let decision = evaluate_fruit(&frames, &actions, Some(83));
+        let evidence =
+            std::env::temp_dir().join(format!("274bot-fruit-late-policy-{}", std::process::id()));
+        let receipt = json!({
+            "outcome": "FAIL",
+            "classification": "fixture",
+            "failure": match &decision {
+                OracleDecision::Fail(reason) => reason.as_str(),
+                _ => "missing classified failure",
+            },
+            "policy_change_tick": 83,
+        });
+        let path = write_receipt(&evidence, &receipt);
+        let recorded: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+        std::fs::remove_dir_all(&evidence).unwrap();
+        assert!(matches!(decision,
+            OracleDecision::Fail(reason) if reason.starts_with("fixture:")));
+        assert_eq!(recorded["classification"], "fixture");
+        assert_eq!(recorded["policy_change_tick"], 83);
+        assert!(recorded["failure"]
+            .as_str()
+            .unwrap()
+            .contains("immediately"));
+        assert!(recorded["worktree_dirty"].is_boolean());
     }
 
     #[test]

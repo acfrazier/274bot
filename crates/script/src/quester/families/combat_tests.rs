@@ -3595,3 +3595,153 @@ fn combat_kit_carry_keeps_compiled_alias_ids() {
         "kit carry keeps the compiled alias identities, not the display-name picks"
     );
 }
+#[cfg(test)]
+mod abort_hold_cure_policy_tests {
+    use super::*;
+    use crate::native::HostEffect;
+    use crate::quester::families::tests::{def, local_player, with_tick};
+    use api::selected::ClientRevision;
+    use api::snapshot::{
+        GameSnapshot, HitmarkView, HitmarksView, ItemActionFamily, ItemContainer, ItemView,
+        StatView, VarpView, WorldStateView,
+    };
+    use std::sync::Arc;
+    use std::task::Poll;
+
+    fn held_item(id: i32, name: &str, action: &str, slot: i32) -> ItemView {
+        ItemView {
+            def: def(id, name),
+            container: ItemContainer::Inventory,
+            action_family: ItemActionFamily::Held,
+            slot,
+            count: 1,
+            actions: vec![Some(action.into())],
+            component_id: 3214,
+        }
+    }
+
+    fn snapshot_with_bite_and_cure(tables: &CombatTables) -> GameSnapshot {
+        let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+        let lobster = data.item_by_alias("lobster").unwrap();
+        let antipoison = tables
+            .potion(crate::combat::tables::PotionKind::Antipoison)
+            .unwrap();
+        let antipoison_id = antipoison.doses[0].unwrap().id;
+        let at = api::WorldTile {
+            x: 2600,
+            z: 3200,
+            level: 0,
+        };
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_world(WorldStateView {
+            map_base_x: 2560,
+            map_base_z: 3160,
+            members: true,
+            ..WorldStateView::default()
+        });
+        snapshot.seed_local_player(local_player(at));
+        snapshot.seed_stats(
+            (0..25)
+                .map(|index| StatView {
+                    index,
+                    name: String::new(),
+                    effective: if index == 3 {
+                        5
+                    } else if index == 5 {
+                        43
+                    } else {
+                        40
+                    },
+                    base: if index == 5 { 43 } else { 40 },
+                    xp: 0,
+                    used: api::snapshot::stat_used(index as usize),
+                })
+                .collect(),
+        );
+        snapshot.seed_varps(
+            data.prayers()
+                .iter()
+                .map(|row| VarpView {
+                    index: row.varp,
+                    value: 0,
+                })
+                .collect(),
+        );
+        snapshot.seed_inventory(
+            vec![
+                held_item(lobster.id, lobster.name.as_deref().unwrap(), "Eat", 0),
+                held_item(antipoison_id, "Antipoison", "Drink", 1),
+            ],
+            28,
+        );
+        snapshot.seed_equipment(Vec::new());
+        snapshot.seed_npcs(Vec::new());
+        snapshot.seed_players(Vec::new());
+        snapshot.seed_projectiles(Vec::new());
+        snapshot.seed_side_tabs(Vec::new(), 0);
+        snapshot.seed_hitmarks(HitmarksView {
+            marks: [HitmarkView {
+                value: 0,
+                kind: 0,
+                cycle: 0,
+            }; 4],
+            loop_cycle: 0,
+        });
+        snapshot
+    }
+
+    #[test]
+    fn abort_hold_respects_never_policy_when_antipoison_and_bite_are_due() {
+        let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+        let tables = Arc::new(CombatTables::build(Arc::clone(&data)).unwrap());
+        let snapshot = snapshot_with_bite_and_cure(&tables);
+        let mut ledger_state = None;
+        let handle = with_tick(&snapshot, &mut ledger_state, 0, |native| {
+            native
+                .actions
+                .begin::<AbortHold>(
+                    AbortHoldArgs {
+                        tables: Arc::clone(&tables),
+                        allow_prayer: false,
+                    },
+                    &mut native.cx,
+                )
+                .unwrap()
+        });
+
+        let outcome = with_tick(&snapshot, &mut ledger_state, 1, |native| {
+            native.cx.condition = Some(api::condition::BotCondition {
+                tick: 1,
+                session: api::condition::SessionMark::Live,
+                hp: 5,
+                hp_max: 40,
+                hp_known: true,
+                poison: api::condition::PoisonState::Onset {
+                    since: 1,
+                    q: Some(11),
+                    hit_since_line: false,
+                },
+                cures: api::condition::CureDoses {
+                    antipoison: 1,
+                    ..Default::default()
+                },
+                ..Default::default()
+            });
+            native.cx.cure_poison = crate::survival::CurePoison::Never;
+            native.actions.poll(&handle, &mut native.cx)
+        });
+        assert!(matches!(outcome, Poll::Pending));
+        let outbox = &ledger_state.as_ref().unwrap().outbox;
+        assert_eq!(outbox.len(), 1);
+        assert!(matches!(
+            &outbox[0].effect,
+            HostEffect::Interaction(InteractReq::Held { name, action, .. })
+                if name == "Lobster" && action == "Eat"
+        ));
+        assert!(outbox.iter().all(|entry| !matches!(
+            &entry.effect,
+            HostEffect::Interaction(InteractReq::Held { action, .. }) if action == "Drink"
+        )));
+    }
+}

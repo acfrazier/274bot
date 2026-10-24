@@ -414,14 +414,8 @@ fn run_condition_cell(super_dose: bool, deposit: bool) {
         drop(live);
         std::thread::sleep(Duration::from_millis(50));
     }
-    let commit = std::process::Command::new("git")
-        .args(["rev-parse", "HEAD"])
-        .current_dir(env!("CARGO_MANIFEST_DIR"))
-        .output()
-        .expect("read receipt git commit");
-    assert!(commit.status.success(), "git rev-parse HEAD failed");
-    let commit = String::from_utf8(commit.stdout).expect("UTF-8 commit");
-    let receipt = serde_json::json!({ "scenario": label, "commit": commit.trim(), "account": account, "map_members": true, "no_script": true, "ready_tick": ready_tick, "seed_tick": seed_tick, "since": oracle.since, "marks": oracle.marks, "immune_origin": oracle.immune_origin, "passed": passed, "failure": failure, "frames": rows });
+    let mut receipt = serde_json::json!({ "scenario": label, "account": account, "map_members": true, "no_script": true, "ready_tick": ready_tick, "seed_tick": seed_tick, "since": oracle.since, "marks": oracle.marks, "immune_origin": oracle.immune_origin, "passed": passed, "failure": failure, "frames": rows });
+    crate::evidence_writer::record_source_identity(&mut receipt);
     std::fs::write(
         evidence.join("receipt.json"),
         serde_json::to_vec_pretty(&receipt).unwrap(),

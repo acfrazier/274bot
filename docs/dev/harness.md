@@ -837,6 +837,27 @@ cargo test -p host-play --lib walk_guard_live_tests::replay_walk_guard_w1_retain
   -- --exact --ignored --nocapture
 ```
 
+## Survival fruit cells
+
+Run these ignored `host-play` library tests with `live-harness,test-support`
+against Engine A at 600 ms:
+
+- `survival_eat_live_tests::live_survival_strange_fruit_after_bite`
+- `survival_eat_live_tests::live_survival_strange_fruit_through_api_combat_fight`
+
+Use an isolated HOME, a unique `BOT_LIVE_NAME_PREFIX` of one to four characters,
+and the accepted revision-289 cache and nav pack. Set `LIVE=1`, `BOT_CPU=1`,
+`BOT_NAV_BUILD=skip`, and an absolute `LIVE_EVIDENCE_DIR`.
+Both cells seed only their account. The combat cell attacks real Cows.
+Each cell enables poison cure after the first health bite. It requires exactly
+one Strange fruit click at the first content-allowed tick, T+3, and an observed
+cure. The combat cell also requires decoded wire actions from the same fight.
+
+The harness reads captured actions on every sample, including repeated ticks.
+A late policy change produces a classified fixture failure. The receipt is
+written before the final assertion. Receipts include `commit` and
+`worktree_dirty`, so an uncommitted mutation is not reported as clean source.
+
 ## JS API v2 checks
 
 ### Declarations and sample

@@ -8,6 +8,8 @@ pub(crate) const EAT_OBSERVATION_WINDOW_TICKS: u8 = 6;
 /// `consume.rs2:109` passes this delay to the shared `player_consume_item`
 /// next-food guard for Strange fruit.
 const STRANGE_FRUIT_EAT_DELAY_ARG: u8 = 2;
+/// `consume.rs2:109,129-131` adds three ticks to the existing action clock.
+const STRANGE_FRUIT_SKILL_DELAY_ARG: u16 = 3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
@@ -161,6 +163,12 @@ impl Schedule {
                     self.earliest[eat] =
                         tick.wrapping_add(STRANGE_FRUIT_EAT_DELAY_ARG.wrapping_add(1) as u16);
                     self.ready_mask |= 1 << eat;
+                    if self.cycle.known {
+                        self.cycle.deadline = self
+                            .cycle
+                            .deadline
+                            .wrapping_add(STRANGE_FRUIT_SKILL_DELAY_ARG);
+                    }
                 }
                 self.input_lock = tick.wrapping_add(3);
                 self.lock_valid = true;
@@ -299,6 +307,26 @@ mod tests {
         assert!(schedule.pending(OpKind::Drink));
         assert!(!schedule.ready(OpKind::Eat, 15));
         assert!(schedule.ready(OpKind::Eat, 16));
+    }
+
+    #[test]
+    fn fruit_extends_known_attack_clock_by_three_ticks_including_wrap() {
+        for swing in [9, u16::MAX - 2] {
+            let mut schedule = Schedule::default();
+            schedule.observe_swing(swing, 4);
+            let tick = swing.wrapping_add(1);
+            let previous = schedule.cycle.deadline;
+            schedule.admitted(OpKind::Drink, tick, 4, true, InputEffect::CureFruit);
+            assert_eq!(
+                schedule.cycle.deadline,
+                previous.wrapping_add(3),
+                "Strange fruit adds the content skill delay to the attack clock"
+            );
+            assert!(schedule.cycle.known);
+        }
+        let mut unknown = Schedule::default();
+        unknown.admitted(OpKind::Drink, 10, 4, true, InputEffect::CureFruit);
+        assert!(!unknown.cycle.known, "a fruit does not invent a swing");
     }
 
     #[test]
