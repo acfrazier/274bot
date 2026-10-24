@@ -35,6 +35,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.6` 
 - Selecting a bot before preferences finish loading now keeps that bot focused.
   Startup restoration no longer changes a manual command's target during
   preference adoption. This applies to the panel and terminal app.
+  Fleet **Log in** also keeps the bot it selects. Removing or deleting a
+  pending restore target prevents startup from restoring it. An early
+  terminal selection cancels startup focus, but keeps the boot load and login.
 
 ## [0.2.6] — 2026-10-23 — Beta 2
 

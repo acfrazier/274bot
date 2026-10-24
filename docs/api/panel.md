@@ -65,6 +65,9 @@ next slot start. Live slot rows display the current world.
 Last focused profile is restored from `~/.274bot/panel-ui.json`
 (`last_focus`) after preferences are ready, unless you select a bot first.
 Preference adoption during a command never changes that command's target.
+This includes the first bot selected by Fleet **Log in**.
+Removing or deleting a pending restore target cancels that restore.
+Before preferences identify the saved target, any removal cancels the restore.
 Collapsible section open/closed state persists there per profile.
 **script** and **parameters** default closed.
 
