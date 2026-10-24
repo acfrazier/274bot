@@ -1840,6 +1840,36 @@ fn run_stop_retires_script_walks_and_keeps_the_manual_walk() -> Result<(), Strin
     let (stamp, dir) = prepare_evidence(&inputs, "state-gap-stop", &walkers[0])?;
     let mut receipt = serde_json::Map::new();
 
+    // The seeded fountain tile is blocked in the map picker, so a WalkTo from
+    // it is refused. The WalkTo bot first completes a short real script walk
+    // to its normalized standable tile and stops that script.
+    session.select(&manual);
+    let fountain = player_tile(&session, &manual)?;
+    let standable = session
+        .select_picker_tile(&world, fountain)
+        .ok_or("standable fixture tile")?;
+    frontend_core::test_support::scripts::play_start_load(
+        &session.core,
+        &manual,
+        walk_source(standable),
+        frontend_core::scripts::LoadShape::CompatClass,
+        None,
+        vec![],
+    )?;
+    pump_until(&mut session, "fixture walk arrives", WALK_WAIT, |session| {
+        let proof = current_probe(session, &manual)?;
+        Ok(proof["script"]["walk_result"] == true && player_tile(session, &manual)? == standable)
+    })?;
+    stop_script(&mut session, &manual);
+    pump_until(
+        &mut session,
+        "fixture script Idle",
+        TERMINAL_WAIT,
+        |session| {
+            Ok(session.core.script_state(&manual) == frontend_core::scripts::ScriptRunState::Idle)
+        },
+    )?;
+
     // Three script walks, each really under way: the route is armed, the
     // bot has moved, and the host row publishes the destination.
     let starts: Vec<Tile> = walkers
