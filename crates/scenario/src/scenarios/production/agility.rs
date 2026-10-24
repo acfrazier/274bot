@@ -814,6 +814,7 @@ fn gnome_radius_witness_step() -> Step {
                     .expect("gnome radius witness mutex")
                     .observe(snapshot)
             }),
+            summary: None,
         },
         wait: Wait {
             arm: Proof::Stat { id: 16, min: 0 },

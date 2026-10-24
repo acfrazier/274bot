@@ -1000,6 +1000,7 @@ fn scenario_for(
                 let capture = ready_capture.lock().unwrap_or_else(|e| e.into_inner());
                 capture.invalid_reason.is_some() || case_ready(case, &capture)
             }),
+            summary: None,
         },
         wait: Wait {
             arm: Proof::Stat { id: 0, min: 1 },
@@ -1617,6 +1618,7 @@ fn ranged_natural_actor_observed_step(
                 }
                 true
             }),
+            summary: None,
         },
         wait: Wait {
             arm: Proof::NpcNameNear {
@@ -1724,6 +1726,7 @@ fn ranged_dialogue_open_observed_step(case: Case, capture: Arc<Mutex<CombatCaptu
                 }
                 open
             }),
+            summary: None,
         },
         wait: Wait {
             arm: Proof::IngameScene2,
@@ -1807,6 +1810,7 @@ fn ranged_dialogue_settled_step(case: Case, capture: Arc<Mutex<CombatCapture>>) 
                 }
                 event["dialogue_settled"] == true
             }),
+            summary: None,
         },
         wait: Wait {
             arm: Proof::NoActiveContinue,
@@ -1890,6 +1894,7 @@ fn ranged_tele_observed_step(case: Case, capture: Arc<Mutex<CombatCapture>>) -> 
                     false
                 }
             }),
+            summary: None,
         },
         wait: Wait {
             arm: Proof::IngameScene2,

@@ -1159,6 +1159,7 @@ fn build_fixture(request: FixtureSeed<'_>) -> Result<QuesterFixture, String> {
                 validate_start_seed(snapshot, &gate_stats, &gate_inventory, &gate_equipment).is_ok()
                     && validate_start_stand(snapshot.tile(), stand).is_ok()
             }),
+            summary: None,
         },
         wait: Wait {
             arm: Proof::SideTabAvailable { index: 3 },

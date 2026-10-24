@@ -90,6 +90,73 @@ fn stop_script_requires_a_host_observed_idle_slot() {
     assert_eq!(runner.status(), RunnerStatus::Passed);
 }
 
+/// A failing Await appends its read-only terminal summary to the
+/// receipt message, on its own tick budget and on the whole-run
+/// deadline alike; an Await without one keeps the plain message.
+#[test]
+fn await_terminal_summary_reaches_the_failure_receipt() {
+    fn await_runner(
+        summary: Option<Box<dyn Fn() -> String + Send + Sync>>,
+        budget: u32,
+        deadline: Duration,
+    ) -> ScenarioRunner {
+        let mut scenario = stat_scenario(0, budget);
+        scenario.steps[0].kind = StepKind::Await {
+            evidence: "never_ready",
+            ready: Box::new(|_| false),
+            summary,
+        };
+        scenario.settings.deadline = deadline;
+        let mut runner = ScenarioRunner::new(scenario);
+        runner.set_scene_settle(Duration::ZERO);
+        runner
+    }
+    let summary = || -> Option<Box<dyn Fn() -> String + Send + Sync>> {
+        Some(Box::new(|| "unmet=[alpha beta] s0 disp=1".to_string()))
+    };
+
+    let mut runner = await_runner(summary(), 3, Duration::from_secs(3600));
+    let mut c = seeded_client();
+    advance_game_ticks_until_done(&mut runner, &mut c);
+    let RunnerStatus::Failed(message) = runner.status() else {
+        panic!("budget failure expected: {:?}", runner.status());
+    };
+    assert!(
+        message.contains("never_ready") || message.contains("not seen within 3"),
+        "{message}"
+    );
+    assert!(
+        message.contains("[unmet=[alpha beta] s0 disp=1]"),
+        "{message}"
+    );
+
+    let mut runner = await_runner(summary(), 100_000, Duration::ZERO);
+    let mut c = seeded_client();
+    for _ in 0..10 {
+        c.bump_gens(ServerProt::PLAYER_INFO);
+        runner.tick(&mut c);
+        if matches!(runner.status(), RunnerStatus::Failed(_)) {
+            break;
+        }
+    }
+    let RunnerStatus::Failed(message) = runner.status() else {
+        panic!("deadline failure expected: {:?}", runner.status());
+    };
+    assert!(message.contains("deadline"), "{message}");
+    assert!(
+        message.contains("[unmet=[alpha beta] s0 disp=1]"),
+        "{message}"
+    );
+
+    let mut runner = await_runner(None, 3, Duration::from_secs(3600));
+    let mut c = seeded_client();
+    advance_game_ticks_until_done(&mut runner, &mut c);
+    let RunnerStatus::Failed(message) = runner.status() else {
+        panic!("budget failure expected: {:?}", runner.status());
+    };
+    assert!(!message.contains("unmet=["), "{message}");
+}
+
 #[test]
 fn wait_script_stop_is_none_unless_the_scenario_sets_it() {
     let v1 = ScenarioRunner::new(crate::get("bone_burier").expect("v1"));
