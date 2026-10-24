@@ -286,11 +286,12 @@ The paired operator-owned architecture patch admits exactly these additions:
 | host-play | nav-bake | build and dev |
 | host-play | nav-planner | existing normal and retained build |
 | e2e | nav-bake | normal tool edge |
-| panel | nav-bake | dev only |
+| panel, frontend-core, tui | nav-bake | dev only, for producer fixtures |
 
-Planner, executor, script, script-js, panel, and runtime host-play have no normal
-edge to the baker. Checker tests reject those edges, including otherwise
-identical normal-edge versions of admitted dev/build fixtures. Update crate
+Planner, executor, script, script-js, frontend-core, TUI, panel, and runtime
+host-play have no normal edge to the baker. Checker tests reject those edges,
+including otherwise identical normal-edge versions of admitted dev/build fixtures.
+Update crate
 membership, member ownership, moved bins, source inventories, deny-list paths,
 and old exceptions together. Scripts cannot import raw atlas storage.
 
