@@ -429,18 +429,12 @@ impl HeldWaitFacts {
     /// count unchanged.
     pub fn replay(self) -> impl Iterator<Item = InteractReq> {
         let pair = u64::from(self.stamped && self.settles == 0 && self.enqueues == 0);
-        std::iter::repeat_n(
-            InteractReq::WaitSettled,
-            row_count(self.settles),
-        )
-        .chain(std::iter::repeat_n(
-            InteractReq::WaitEnqueued,
-            row_count(self.enqueues + pair),
-        ))
-        .chain(std::iter::repeat_n(
-            InteractReq::WaitSettled,
-            row_count(pair),
-        ))
+        std::iter::repeat_n(InteractReq::WaitSettled, row_count(self.settles))
+            .chain(std::iter::repeat_n(
+                InteractReq::WaitEnqueued,
+                row_count(self.enqueues + pair),
+            ))
+            .chain(std::iter::repeat_n(InteractReq::WaitSettled, row_count(pair)))
     }
 
     /// Number of rows that [`Self::replay`] yields.
