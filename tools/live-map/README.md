@@ -16,13 +16,15 @@ Run each listed cell three times on the changed code. The tool also lists
 uncovered live paths and unclassified paths. Exit code 0 means no gaps. Exit
 code 1 means a live path has no cell or a path is unclassified. Exit code 2
 means the input or Git diff is invalid.
+Do not use a broad live glob to hide an uncovered path.
 
 Run the self-tests with temporary Git repositories. The real-submodule test
-uses a temporary path under the evidence folder. Set `LIVE_MAP_TEST_TMPDIR` to
-that folder. Do not set it to `/tmp`.
+stores its temporary repository under the evidence folder. Set the required
+`LIVE_MAP_TEST_TMPDIR` variable to a directory under that folder. Do not use
+`/tmp`.
 
 ```sh
-LIVE_MAP_TEST_TMPDIR=/path/to/274bot-evidence/request-id/fix-r3 \
+LIVE_MAP_TEST_TMPDIR=/path/to/274bot-evidence/request-id/fix-r4 \
   python3 -B tools/live-map/live_map.py --self-test
 ```
 
@@ -53,6 +55,7 @@ All cells not listed below normally run on merlot. Engine A uses game port
 | `host.sherlock-search-live` | Run on merlot or chardonnay when that host has Engine A at `127.0.0.1:44594` and `127.0.0.1:1080`. The cell uses loopback ports and has no host-specific code. Use chardonnay when merlot is measured or reserved. It needs `LIVE=1`, `BOT_CPU=1`, `BOT_LIVE_NAME_PREFIX`, `WORLD_NAV_PACK`, `WORLD_ENGINE_DIR`, `BOT_CACHE_DIR`, `RS2B0T`, `WORLD_GAME_PORT`, `WORLD_HTTP_PORT`, and `LIVE_EVIDENCE_DIR`. The command also uses `ISOHOME`. Leave `QUESTER_TICK_MS` unset. |
 | `host.quester-path-engine-q`, `scenario.quester-engine-q` | Run on the Engine Q host. This setup uses merlot at `127.0.0.1:44694` and `127.0.0.1:1180`. Set `QUESTER_TICK_MS=300` only for these cells. |
 | `nav.essence-follow` | The orchestrator must start a 274 engine on the cell host at `127.0.0.1:43594`. The orchestrator supplies `ENGINE_274_DIR` and `NAV_PACK_274`. Do not run this cell until the orchestrator provides both inputs and starts the engine. |
+| `nav.essence-289-engine-a` | Run on merlot or chardonnay when that host has Engine A at `127.0.0.1:44594` and `127.0.0.1:1080`. Use chardonnay when merlot is measured or reserved. |
 | `panel.headed-render` | Run on merlot with its interactive GPU and display. The command removes `BOT_CPU` so the client uses the GPU renderer. |
 
 
@@ -78,8 +81,8 @@ It checks `LIVE=1` and writes receipts when `LIVE_EVIDENCE_DIR` is set at
 
 ## ScriptWalkArm call paths
 
-The `script_nav.rs` and `script_walk.rs` mapping row selects four live
-scenario cells and the direct compat-v1 admission test.
+The `script_nav.rs` and `script_walk.rs` row selects four live scenario cells.
+A separate row maps `survivable_admission_live.rs` to both admission tests.
 
 | Cell | Call path |
 |---|---|
@@ -87,6 +90,7 @@ scenario cells and the direct compat-v1 admission test.
 | `host.gatherer-bank-cost-fallback` | The cell runs the live test at `crates/host-play/tests/gatherer_live.rs:7945-7949`.<br>`gatherer::runner::trip_walk` submits `Walk` at `crates/script/src/gatherer/runner.rs:445-472`.<br>`crates/host-play/src/script_observe.rs:1546-1572` creates `ScriptWalkArm` and calls `queue_native_route` at `crates/host-play/src/script_nav.rs:4567-4573`. |
 | `host.grinch-cross-region-return` | The live selector is at `crates/host-play/tests/grinch_live.rs:119-123`.<br>Return recovery submits `Walk` at `crates/script/src/grinch.rs:885-903`.<br>`crates/host-play/src/script_observe.rs:1546-1572` creates `ScriptWalkArm` and calls `queue_native_route` at `crates/host-play/src/script_nav.rs:4567-4573`. |
 | `host.sherlock-search-live` | The live cell starts compiled Sherlock at `crates/host-play/tests/clue_walk_arrive_live.rs:193-212`.<br>The walk-near step is at `crates/script/src/clue/isolate.rs:1640-1653`.<br>`crates/host-play/src/script_interact.rs:529-585` creates `ScriptWalkArm` and calls `queue_route_in_snapshot_avoiding` at `crates/host-play/src/script_nav.rs:4932-4957`. |
+| `host.survivable-admission` | The live test checks refusal and opt-in at `crates/host-play/tests/survivable_admission_live.rs:283-286`. |
 | `host.survivable-compat-v1-crossing` | The live test loads a real compat-v1 class whose `Traversal.walkTo` call is at `crates/host-play/tests/survivable_admission_live.rs:837-870,943-950`. It asserts the live admission snapshot and crossing assessment at `:963-983`; the selector is `real_compat_v1_crossing_and_own_sustain_at_45_and_14_hp` (`:868-870`). |
 
 The four scenario cells advance routes through the live slot loop at
@@ -95,15 +99,23 @@ The four scenario cells advance routes through the live slot loop at
 
 ## Essence router call paths
 
-The essence row keeps `nav.essence-follow`. It needs the 274 engine and
-remains unrun until the orchestrator starts that engine (`127.0.0.1:43594`).
-The two 289 cells below run the production router path. They do not enter the
-essence mine, so they do not replace the 274 essence scenario.
+The essence files and the shared `navigation.rs` file select the 289
+`nav.essence-289-engine-a` cell and the separate 274 `nav.essence-follow`
+cell. The 289 cell runs `script_nav_essence` on revision 289 and Engine A. The
+registered `nav_essence` scenario enters the mine through Aubury, latches an
+essence session, and follows out through the exit portal
+(`crates/scenario/src/catalog.rs:81`, `crates/scenario/src/scenarios/navigation.rs:616-714`).
+It passed once on chardonnay Engine A. The receipt is
+`LIVE-MAP-1023/fix-r4/nav-essence-engine-a.log`.
+
+The e2e `nav.essence-follow` cell still needs a local 274 engine and a rebaked
+274 navigation pack (`crates/e2e/tests/nav_essence.rs:233-255,271-298`). It
+does not replace or gate the 289 cell.
 
 | Cell | Router call path |
 |---|---|
-| `nav.route-search-live` | The TUI runs `nav_routes_scenario` (`crates/scenario/src/scenarios/navigation.rs:1480-1511`). Its Follow steps call `ScenarioRunner::arm_route` (`crates/scenario/src/runner.rs:1942-1998`), which calls `nav_planner::router::find_with` and passes `self.traveller.essence()`. `Traveller::essence` is at `crates/nav-executor/src/traveller.rs:438-443`. |
-| `panel.headed-nav-script` | The panel runs the same `nav_routes_scenario` (`crates/scenario/src/scenarios/navigation.rs:1480-1511`). Its Follow steps call `ScenarioRunner::arm_route` (`crates/scenario/src/runner.rs:1942-1998`), which calls `nav_planner::router::find_with` and passes `self.traveller.essence()`. `Traveller::essence` is at `crates/nav-executor/src/traveller.rs:438-443`. |
+| `nav.essence-289-engine-a` | `tui-play --live script_nav_essence` runs the registered scenario. It follows Aubury's wizard entry into the mine, sets an `EssenceSession`, then routes back through the exit portal (`crates/scenario/src/catalog.rs:81`, `crates/scenario/src/scenarios/navigation.rs:616-714`). |
+| `nav.essence-follow` | The e2e test runs the same scenario in `nav_essence_follow` and needs a local 274 engine (`crates/e2e/tests/nav_essence.rs:233-255,271-298`). |
 
 ## Input values
 
