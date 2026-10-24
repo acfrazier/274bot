@@ -561,10 +561,13 @@ folder and search. **WalkTo**, **MultiBox** and **Grid** stay toggles.
 not one concatenated process log. When nothing is focused the view shows
 the `PROCESS` key.
 
-**Script** Browse / Load / Reload / Start / Pause / Stop are wired
-([script.md](script.md)). Browse lists compiled native cards
-(Gatherer, Grinch, Quester, Sherlock) first, then loaded JS/catalog cards.
-Load is enabled except while a script is active.
+ **Script** Browse / Load / Reload / Start / Pause / Stop are wired
+ ([script.md](script.md)). Browse lists compiled native cards
+ (Gatherer, Grinch, Quester, plus Sherlock in builds with the JS runtime) first, then loaded JS/catalog cards.
+ Sherlock is available only in builds with the JS runtime. Sherlock was meant to be
+ native. In practice it became a port of the compatibility clue machine, so it needs the
+ JS runtime build until the native clue rewrite replaces that machine. Sherlock itself
+ never creates a V8 isolate. Load is enabled except while a script is active.
 **Reload** hashes the selected File/catalog card; unchanged origins report
 “Nothing changed; nothing to reload” and skip transpile; confirm restarts
 matching running bots and **Stops** matching paused bots. Browse’s
