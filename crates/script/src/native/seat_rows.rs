@@ -1,3 +1,4 @@
+use crate::interact::InteractReq;
 use crate::native::request::NativeKind;
 use crate::native::seat::{SeatEntry, SeatResult as NativeSeatResult, SeatTerminal};
 use crate::native::NativePhase;
@@ -355,7 +356,7 @@ pub struct SeatInteractDecoded {
     /// In-isolate machine mirror that owned this emission, if any.
     pub mirror_owner: Option<RequestId>,
     /// Request payload to dispatch with the captured lineage.
-    pub request: crate::shim::InteractReq,
+    pub request: InteractReq,
 }
 
 /// Fully decoded wire batch, including controls, mirror revocations, and rows.
@@ -426,18 +427,18 @@ impl HeldWaitFacts {
     /// settles, then the enqueues. When the facts cancel to the identity map,
     /// one enqueue and settle pair keeps the scheduler stamp and leaves the
     /// count unchanged.
-    pub fn replay(self) -> impl Iterator<Item = crate::shim::InteractReq> {
+    pub fn replay(self) -> impl Iterator<Item = InteractReq> {
         let pair = u64::from(self.stamped && self.settles == 0 && self.enqueues == 0);
         std::iter::repeat_n(
-            crate::shim::InteractReq::WaitSettled,
+            InteractReq::WaitSettled,
             row_count(self.settles),
         )
         .chain(std::iter::repeat_n(
-            crate::shim::InteractReq::WaitEnqueued,
+            InteractReq::WaitEnqueued,
             row_count(self.enqueues + pair),
         ))
         .chain(std::iter::repeat_n(
-            crate::shim::InteractReq::WaitSettled,
+            InteractReq::WaitSettled,
             row_count(pair),
         ))
     }
