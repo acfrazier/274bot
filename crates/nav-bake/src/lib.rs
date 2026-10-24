@@ -220,9 +220,7 @@ pub enum GenerationError {
     },
     /// The selected quest family identity could not be built.
     #[error("quest family: {error:?}")]
-    QuestFamilyIdentityFailed {
-        error: api::selected::FactError,
-    },
+    QuestFamilyIdentityFailed { error: api::selected::FactError },
     /// A transport-content validation failed.
     #[error("{detail}")]
     TransportValidation {

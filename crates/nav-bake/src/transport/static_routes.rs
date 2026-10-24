@@ -419,10 +419,7 @@ pub(super) fn cart_edges(
         CART_REQUIRES_ZOMBIE_QUEEN.len(),
         "every planner cart route must have its bake-time quest policy"
     );
-    for (r, requires_zombie_queen) in SHILO_CART_ROUTES
-        .iter()
-        .zip(CART_REQUIRES_ZOMBIE_QUEEN)
-    {
+    for (r, requires_zombie_queen) in SHILO_CART_ROUTES.iter().zip(CART_REQUIRES_ZOMBIE_QUEEN) {
         let quest_req = if requires_zombie_queen {
             let Some(name) = zombie_queen_name else {
                 bump(skipped, SKIP_HAJEDY_JOURNAL_NAME, 1);

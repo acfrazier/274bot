@@ -136,9 +136,7 @@ fn a_matching_stamp_covers_and_every_change_is_stale() {
             crate::StagedArtifact::Pack => changed.staged_pack_bytes = Some(changed_size),
             crate::StagedArtifact::Flags => changed.staged_flags_bytes = Some(changed_size),
             crate::StagedArtifact::Reach => changed.staged_reach_bytes = Some(changed_size),
-            crate::StagedArtifact::Canlight => {
-                changed.staged_canlight_bytes = Some(changed_size)
-            }
+            crate::StagedArtifact::Canlight => changed.staged_canlight_bytes = Some(changed_size),
             _ => unreachable!("only staged size fields are enumerated"),
         }
         let stamped_bytes = match artifact {
@@ -163,7 +161,10 @@ fn a_matching_stamp_covers_and_every_change_is_stale() {
         (crate::StagedArtifact::Pack, "nav/289/274bot.navpack"),
         (crate::StagedArtifact::Flags, "nav/289/274bot.navflags"),
         (crate::StagedArtifact::Reach, "nav/289/274bot.navreach"),
-        (crate::StagedArtifact::Canlight, "nav/289/274bot.navcanlight"),
+        (
+            crate::StagedArtifact::Canlight,
+            "nav/289/274bot.navcanlight",
+        ),
     ] {
         let mut changed = expectation(&inputs);
         match artifact {
@@ -205,7 +206,11 @@ fn a_matching_stamp_covers_and_every_change_is_stale() {
     let mut no_stamped_pois_bytes = baked.clone();
     no_stamped_pois_bytes.pois_bytes = None;
     assert_eq!(
-        stale_stamp_error(no_stamped_pois_bytes.covers(&expectation(&inputs)).unwrap_err()),
+        stale_stamp_error(
+            no_stamped_pois_bytes
+                .covers(&expectation(&inputs))
+                .unwrap_err()
+        ),
         crate::StaleStampError::NavPoisBytesMissingFromStamp
     );
 
@@ -243,7 +248,11 @@ fn a_matching_stamp_covers_and_every_change_is_stale() {
     let mut no_manifest_digest = baked.clone();
     no_manifest_digest.manifest_sha256 = None;
     assert_eq!(
-        stale_stamp_error(no_manifest_digest.covers(&expectation(&inputs)).unwrap_err()),
+        stale_stamp_error(
+            no_manifest_digest
+                .covers(&expectation(&inputs))
+                .unwrap_err()
+        ),
         crate::StaleStampError::ManifestDigestMissingFromStamp
     );
 

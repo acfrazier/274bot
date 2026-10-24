@@ -165,9 +165,7 @@ fn parse_bank_zones_inner(text: &str) -> Result<Vec<BankZone>, CanlightError> {
                 });
             }
             let Some((from, to)) = pair.split_once(',') else {
-                return Err(CanlightError::BankZonesPairMissingCoordinate {
-                    line: line_number,
-                });
+                return Err(CanlightError::BankZonesPairMissingCoordinate { line: line_number });
             };
             zones.push(BankZone {
                 from: unpack_packed_coord_inner(from.trim())?,
@@ -198,13 +196,16 @@ pub fn unpack_packed_coord(token: &str) -> Result<WorldTile, GenerationError> {
 fn unpack_packed_coord_inner(token: &str) -> Result<WorldTile, CanlightError> {
     let mut parts = token.split('_');
     let mut next = |component: &'static str| -> Result<i32, CanlightError> {
-        let part = parts.next().ok_or_else(|| CanlightError::PackedCoordinateMalformed {
-            token: token.to_owned(),
-        })?;
-        part.parse::<i32>().map_err(|_| CanlightError::PackedCoordinateComponentInvalid {
-            token: token.to_owned(),
-            component,
-        })
+        let part = parts
+            .next()
+            .ok_or_else(|| CanlightError::PackedCoordinateMalformed {
+                token: token.to_owned(),
+            })?;
+        part.parse::<i32>()
+            .map_err(|_| CanlightError::PackedCoordinateComponentInvalid {
+                token: token.to_owned(),
+                component,
+            })
     };
     let level = next("level")?;
     let map_x = next("mapX")?;
@@ -370,12 +371,11 @@ fn stamp_active_loc_coverage(
 ) -> Result<(), CanlightError> {
     for &(square_x, square_z) in squares {
         let path = maps_dir.join(format!("m{square_x}_{square_z}.jm2"));
-        let text = std::fs::read_to_string(&path).map_err(|source| {
-            CanlightError::MapsquareRead {
+        let text =
+            std::fs::read_to_string(&path).map_err(|source| CanlightError::MapsquareRead {
                 path: path.clone(),
                 source,
-            }
-        })?;
+            })?;
         stamp_square_active_locs(collision, square_x, square_z, &text, loc_defs, unsafe_locs)
             .map_err(|source| CanlightError::MapsquareInvalid {
                 path: path.clone(),

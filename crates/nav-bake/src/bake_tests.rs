@@ -160,9 +160,7 @@ fn movement_sources_invalidate_a_warm_reach_stamp() {
     assert!(
         matches!(
             &error,
-            crate::GenerationError::StaleStamp(
-                crate::StaleStampError::GeneratorChanged
-            )
+            crate::GenerationError::StaleStamp(crate::StaleStampError::GeneratorChanged)
         ),
         "{error}"
     );

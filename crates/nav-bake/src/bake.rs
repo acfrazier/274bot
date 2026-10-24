@@ -187,11 +187,12 @@ pub fn verify_cache_manifest(
             source,
         }
     })?;
-    let manifest: CacheManifest =
-        serde_json::from_slice(&bytes).map_err(|source| crate::GenerationError::CacheManifestParse {
+    let manifest: CacheManifest = serde_json::from_slice(&bytes).map_err(|source| {
+        crate::GenerationError::CacheManifestParse {
             path: manifest_path.to_path_buf(),
             source,
-        })?;
+        }
+    })?;
     if revision != 274 && revision != 289 {
         return Err(crate::GenerationError::UnsupportedRevision { revision });
     }
@@ -212,13 +213,12 @@ pub fn verify_cache_manifest(
         .archives
         .get("config")
         .ok_or(crate::GenerationError::CacheManifestConfigMissing)?;
-    let actual_config =
-        nav_planner::manifest::hash_file(config_jag).map_err(|detail| {
-            crate::SourceInputError::HashFailed {
-                path: config_jag.to_path_buf(),
-                detail,
-            }
-        })?;
+    let actual_config = nav_planner::manifest::hash_file(config_jag).map_err(|detail| {
+        crate::SourceInputError::HashFailed {
+            path: config_jag.to_path_buf(),
+            detail,
+        }
+    })?;
     if &actual_config != expected_config {
         return Err(crate::GenerationError::ConfigCacheMismatch {
             revision,
@@ -243,11 +243,12 @@ pub fn verify_cache_manifest_from_fingerprints(
             source,
         }
     })?;
-    let manifest: CacheManifest =
-        serde_json::from_slice(&bytes).map_err(|source| crate::GenerationError::CacheManifestParse {
+    let manifest: CacheManifest = serde_json::from_slice(&bytes).map_err(|source| {
+        crate::GenerationError::CacheManifestParse {
             path: manifest_path.to_path_buf(),
             source,
-        })?;
+        }
+    })?;
     if manifest.revision != revision {
         return Err(crate::GenerationError::CacheManifestRevisionMismatch {
             manifest_revision: manifest.revision,
@@ -282,11 +283,12 @@ pub fn decoded_identity(
     snapshot_root: &Path,
 ) -> Result<String, crate::GenerationError> {
     let versionlist_path = cache_dir.join("versionlist");
-    let versionlist = std::fs::read(&versionlist_path)
-        .map_err(|source| crate::GenerationError::VersionlistRead {
+    let versionlist = std::fs::read(&versionlist_path).map_err(|source| {
+        crate::GenerationError::VersionlistRead {
             path: versionlist_path.clone(),
             source,
-        })?;
+        }
+    })?;
     let version = client::unpack::version_hash(&versionlist);
     let before = CacheManifest::capture(revision, cache_dir)
         .map_err(|detail| crate::GenerationError::CacheManifestCapture { detail })?;
@@ -320,11 +322,12 @@ pub fn decoded_identity_from_snapshot(
         return Err(crate::GenerationError::CacheInputsChangedDuringIdentityPreparation);
     }
     let versionlist_path = cache_dir.join("versionlist");
-    let versionlist = std::fs::read(&versionlist_path)
-        .map_err(|source| crate::GenerationError::VersionlistRead {
+    let versionlist = std::fs::read(&versionlist_path).map_err(|source| {
+        crate::GenerationError::VersionlistRead {
             path: versionlist_path.clone(),
             source,
-        })?;
+        }
+    })?;
     let versionlist_fingerprint = crate::bundle::fingerprint_for_path(inputs, &versionlist_path)?;
     if nav_planner::manifest::hash_bytes(&versionlist) != versionlist_fingerprint.sha256 {
         return Err(crate::GenerationError::VersionlistChangedDuringIdentityPreparation);
@@ -518,11 +521,11 @@ fn derive_zone_table(
                 value: trigger,
             });
         };
-        let kind = *kind_indices
-            .get(&spawn.npc_id)
-            .ok_or_else(|| crate::GenerationError::HunterKindMissing {
+        let kind = *kind_indices.get(&spawn.npc_id).ok_or_else(|| {
+            crate::GenerationError::HunterKindMissing {
                 npc_id: definition.id.clone(),
-            })?;
+            }
+        })?;
         let tile = WorldTile {
             x: spawn.x,
             z: spawn.z,
@@ -556,10 +559,12 @@ fn derive_zone_table(
         } else if definition.stationary() && ap {
             let (min_x, min_z, max_x, max_z) =
                 stationary_ranged_bounds(tile, size, definition.huntrange, definition.attackrange)
-                    .map_err(|detail| crate::GenerationError::StationaryHunterBoundsInvalid {
-                        npc_id: definition.id.clone(),
-                        detail,
-                    })?;
+                    .map_err(
+                        |detail| crate::GenerationError::StationaryHunterBoundsInvalid {
+                            npc_id: definition.id.clone(),
+                            detail,
+                        },
+                    )?;
             let mut zone = Zone::npc(tile, 0, class, cap, kind);
             zone.min_x = min_x;
             zone.min_z = min_z;
@@ -578,11 +583,12 @@ fn derive_zone_table(
                 }
             })?;
             let tether_range = if ap { definition.attackrange } else { 1 };
-            let tether = definition.maxrange.checked_add(tether_range).ok_or_else(|| {
-                crate::GenerationError::HunterTetherRangeOverflow {
+            let tether = definition
+                .maxrange
+                .checked_add(tether_range)
+                .ok_or_else(|| crate::GenerationError::HunterTetherRangeOverflow {
                     npc_id: definition.id.clone(),
-                }
-            })?;
+                })?;
             let radius = u8::try_from(acquisition.min(tether)).map_err(|_| {
                 crate::GenerationError::HunterRadiusTooLarge {
                     npc_id: definition.id.clone(),
@@ -648,8 +654,8 @@ fn derive_zone_table(
     let mut carves = Vec::new();
     for mut row in pending {
         if let Some(bits) = row.shape_bits {
-            row.zone.shape =
-                u16::try_from(shapes.len()).map_err(|_| crate::GenerationError::ZoneShapeCountOverflow)?;
+            row.zone.shape = u16::try_from(shapes.len())
+                .map_err(|_| crate::GenerationError::ZoneShapeCountOverflow)?;
             shapes.push(bits);
         }
         let level = i32::from(row.zone.level);
@@ -710,8 +716,7 @@ fn derive_zone_table(
                 }
                 zone.group = group_index;
                 members.push(
-                    u16::try_from(index)
-                        .map_err(|_| crate::GenerationError::ZoneCountOverflow)?,
+                    u16::try_from(index).map_err(|_| crate::GenerationError::ZoneCountOverflow)?,
                 );
             }
         }
@@ -1438,9 +1443,8 @@ pub fn bake_world(request: &BakeRequest<'_>) -> Result<BakedNav, crate::Generati
             let data = api::game_data::for_revision(game_revision).map_err(|detail| {
                 crate::GenerationError::SelectedGameDataUnavailable { revision, detail }
             })?;
-            data.quest_identity_for_bake().map_err(|error| {
-                crate::GenerationError::QuestFamilyIdentityFailed { error }
-            })
+            data.quest_identity_for_bake()
+                .map_err(|error| crate::GenerationError::QuestFamilyIdentityFailed { error })
         })
         .transpose()?;
     let quest_source = selected
