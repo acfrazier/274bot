@@ -155,7 +155,7 @@ jobs:
           echo "$FLATC_SHA256  /tmp/flatc.zip" | sha256sum --check -
           unzip -q /tmp/flatc.zip -d /tmp/flatc
           sudo install -m 0755 /tmp/flatc/flatc /usr/local/bin/flatc
-          cargo_flatbuffers="$(grep -F 'flatbuffers = { version = ' crates/script/Cargo.toml | cut -d '"' -f2)"
+          cargo_flatbuffers="$(grep -F 'flatbuffers = { version = ' crates/script-js/Cargo.toml | cut -d '"' -f2)"
           cargo_flatbuffers="${cargo_flatbuffers#=}"
           test -n "$cargo_flatbuffers"
           test "$(flatc --version)" = "flatc version $cargo_flatbuffers"
@@ -175,8 +175,8 @@ jobs:
         run: |
           generated="$(mktemp -d)"
           trap 'rm -rf "$generated"' EXIT
-          flatc --rust -o "$generated" crates/script/schema/isolate.fbs
-          diff -ru crates/script/schema/generated "$generated"
+          flatc --rust -o "$generated" crates/script-js/schema/isolate.fbs
+          diff -ru crates/script-js/schema/generated "$generated"
   test_lanes:
     name: test (${{ matrix.lane }})
     if: ${{ github.event_name == 'pull_request' || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev' || startsWith(github.ref, 'refs/heads/release/') }}
@@ -203,7 +203,7 @@ jobs:
             save_cache: false
             real_nav_pack: true
             os: ubuntu-24.04
-            command: "cargo test -p script --features load --tests"
+            command: "cargo test -p script-js --tests"
           - lane: script-no-default
             free_disk: false
             cache_key: workspace
