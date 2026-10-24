@@ -570,19 +570,43 @@ class TartVM:
         self.module = None
         self.session: Optional[Dict[str, Any]] = None
         self.session_id: Optional[str] = None
+        self.vm_name: Optional[str] = None
+        self.start_process: Optional[subprocess.Popen] = None
         self.active_pid_file: Optional[str] = None
         self.active_status_file: Optional[str] = None
         self.supervisor_path: Optional[Path] = None
 
     def start(self) -> Dict[str, Any]:
+        module = load_vm_module(self.settings.vm_tool)
+        self.module = module
+        session_id = f"nightly-{uuid.uuid4().hex[:12]}"
+        self.session_id = session_id
+        self.vm_name = module.VM_PREFIX + session_id
         command = [
             self.settings.python, str(self.settings.vm_tool), "start", "--name", "nightly",
+            "--session-id", session_id,
             "--cpu", str(VM_CPUS), "--memory", str(VM_MEMORY_MB), "--disk-size", str(VM_DISK_GB),
             "--base", self.settings.base, "--skip-tcc-bootstrap",
         ]
         log(f"starting Tart clone from {self.settings.base} ({VM_CPUS} CPU, "
             f"{VM_MEMORY_MB // 1024} GiB RAM, {VM_DISK_GB} GB disk)")
-        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        blocked_signals = {signal.SIGTERM, signal.SIGINT, signal.SIGHUP}
+        old_mask = signal.pthread_sigmask(signal.SIG_BLOCK, blocked_signals)
+        try:
+            process = subprocess.Popen(
+                command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                start_new_session=True,
+            )
+            self.start_process = process
+        except BaseException:
+            self.session_id = None
+            self.vm_name = None
+            raise
+        finally:
+            signal.pthread_sigmask(signal.SIG_SETMASK, old_mask)
         floor_error: Optional[str] = None
         while True:
             try:
@@ -594,29 +618,69 @@ class TartVM:
                 except DiskFloorError as error:
                     floor_error = str(error)
                     log(floor_error + "; waiting for Tart start to return so the clone can be stopped")
+        self.start_process = None
         if process.returncode:
             detail = (stderr or stdout or "").strip()
             raise NightlyError(f"mac_vm.py start failed ({process.returncode}): {detail}")
         try:
             result = json.loads(stdout)
-            self.session_id = str(result["id"])
-            self.module = load_vm_module(self.settings.vm_tool)
-            self.session = self.module.load_session(self.session_id)
-        except (ValueError, KeyError, AttributeError, OSError) as error:
+            if not isinstance(result, dict):
+                raise TypeError("start result is not an object")
+            if result.get("id") != session_id:
+                raise ValueError("start result has a different session ID")
+            self.session = module.load_session(session_id)
+        except (ValueError, TypeError, KeyError, AttributeError, OSError) as error:
             if floor_error:
                 raise DiskFloorError(floor_error) from error
             raise NightlyError(f"mac_vm.py returned an invalid session: {error}") from error
         if not isinstance(self.session, dict):
-            raise NightlyError("mac_vm.py returned a session with an invalid type")
+            raise NightlyError("mac_vm.py session has an invalid type")
         required = ("id", "vm", "ip", "guest_home", "share")
         absent = [name for name in required if not self.session.get(name)]
         if absent:
             raise NightlyError("mac_vm.py session is missing: " + ", ".join(absent))
+        if self.session["vm"] != self.vm_name:
+            raise NightlyError("mac_vm.py returned a different clone name")
         if floor_error:
             raise DiskFloorError(floor_error)
         self.disk_check()
         log(f"started {result['vm']} ({result['id']}) at {result['ip']}")
         return self.session
+
+    def terminate_start(self) -> bool:
+        process = self.start_process
+        if process is None:
+            return True
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        except OSError as error:
+            log(f"could not signal mac_vm.py start process group: {error}")
+        try:
+            process.wait(timeout=15)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            except OSError as error:
+                log(f"could not kill mac_vm.py start process group: {error}")
+                try:
+                    process.kill()
+                except OSError:
+                    pass
+            try:
+                process.wait(timeout=15)
+            except (OSError, subprocess.TimeoutExpired) as error:
+                log(f"mac_vm.py start process did not stop: {error}")
+                return False
+        except OSError as error:
+            log(f"could not wait for mac_vm.py start process: {error}")
+            return False
+        self.start_process = None
+        log("stopped mac_vm.py start process group")
+        return True
 
     def guest_sh(self, command: str, *, timeout: float = 45) -> str:
         if self.module is None or self.session is None:
@@ -729,6 +793,8 @@ class TartVM:
         log(f"stopped and deleted Tart clone {self.session_id}")
         self.session = None
         self.session_id = None
+        self.vm_name = None
+        self.start_process = None
 
 
 def load_vm_module(path: Path):
@@ -1341,54 +1407,66 @@ class NightlyOrchestrator:
         result = 0
         error: Optional[BaseException] = None
         try:
-            self.vm.start()
-            self.session = self.vm.session
-            self.check_disk()
-            self.stage_inputs()
-            tools: Optional[Dict[str, str]] = None
             if self.sync_quiet_lock():
-                log("stopped before guest bootstrap because MAC-QUIET.lock appeared")
+                log("skipped before guest start because MAC-QUIET.lock exists")
             else:
-                tools = self.run_bootstrap()
-            if tools is not None:
-                for branch in self.branches:
-                    if self.sync_quiet_lock():
-                        log(f"skipped {branch}; MAC-QUIET.lock is present")
-                        break
-                    self.active_job = branch
-                    self.write_status(f"running branch {branch}")
-                    log(f"starting exact commit {self.pins[branch]} for {branch}")
-                    for job in ("main", "quest"):
+                self.vm.start()
+                self.session = self.vm.session
+                self.check_disk()
+                self.stage_inputs()
+                tools: Optional[Dict[str, str]] = None
+                if self.sync_quiet_lock():
+                    log("stopped before guest bootstrap because MAC-QUIET.lock appeared")
+                else:
+                    tools = self.run_bootstrap()
+                if tools is not None:
+                    for branch in self.branches:
                         if self.sync_quiet_lock():
-                            log(f"skipped {job} for {branch}; MAC-QUIET.lock is present")
+                            log(f"skipped {branch}; MAC-QUIET.lock is present")
                             break
-                        self.active_job = f"{branch} {job}"
-                        self.write_status("running")
-                        log(f"starting {job} for {branch}")
-                        code = self.vm.run_supervised(
-                            self.guest_command(branch, job, tools),
-                            f"{branch_slug(branch)}-{job}", self.sync_quiet_lock,
-                        )
-                        if code:
-                            self.run_failures.append(f"{branch} {job}: exit {code}")
-                            log(f"{branch} {job} exited {code}; the other job remains required")
-                        try:
-                            self.export_runs()
-                        except Exception as export_error:
-                            self.run_failures.append(f"{branch} {job}: result export failed")
-                            log(f"could not export {branch} {job} results yet: {export_error}")
-                        if self.sync_quiet_lock():
-                            log("not starting another job because MAC-QUIET.lock is present")
+                        self.active_job = branch
+                        self.write_status(f"running branch {branch}")
+                        log(f"starting exact commit {self.pins[branch]} for {branch}")
+                        for job in ("main", "quest"):
+                            if self.sync_quiet_lock():
+                                log(f"skipped {job} for {branch}; MAC-QUIET.lock is present")
+                                break
+                            self.active_job = f"{branch} {job}"
+                            self.write_status("running")
+                            log(f"starting {job} for {branch}")
+                            command = self.guest_command(branch, job, tools)
+                            if self.sync_quiet_lock():
+                                log(f"skipped {job} for {branch}; MAC-QUIET.lock is present before cell batch")
+                                break
+                            code = self.vm.run_supervised(
+                                command,
+                                f"{branch_slug(branch)}-{job}", self.sync_quiet_lock,
+                            )
+                            if code:
+                                self.run_failures.append(f"{branch} {job}: exit {code}")
+                                log(f"{branch} {job} exited {code}; the other job remains required")
+                            try:
+                                self.export_runs()
+                            except Exception as export_error:
+                                self.run_failures.append(f"{branch} {job}: result export failed")
+                                log(f"could not export {branch} {job} results yet: {export_error}")
+                            if self.sync_quiet_lock():
+                                log("not starting another job because MAC-QUIET.lock is present")
+                                break
+                        self.clean_branch_targets(branch)
+                        if self.quiet_stopped:
                             break
-                    self.clean_branch_targets(branch)
-                    if self.quiet_stopped:
-                        break
             if self.run_failures:
                 result = 1
         except BaseException as caught:
             error = caught
             result = 1
         finally:
+            if not self.vm.terminate_start():
+                log("could not terminate mac_vm.py start process before clone teardown")
+                if error is None:
+                    error = NightlyError("mac_vm.py start process did not stop")
+                result = 1
             self.vm.terminate_active()
             if self.vm.session is not None:
                 self.session = self.vm.session

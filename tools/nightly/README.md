@@ -271,10 +271,11 @@ starts the read-only malbec mirror immediately (after its key is installed).
 
 ## Change the branches
 
-Edit [`branches.conf`](branches.conf), commit, and update each runner checkout.
-The first line is the fix line. Linux reads the list from
-`/srv/nightly/runner`. Mac reads it from the worktree in `NIGHTLY_MAC_RUNNER`.
-The next run reads the updated list.
+Edit [`branches.conf`](branches.conf), commit, and refresh the stable runner copy.
+The first line is the fix line. Linux reads the list from `/srv/nightly/runner`.
+Mac reads it from the stable copy in `~/.local/lib/274bot-nightly/runner`.
+Do not point the Mac schedule at a task worktree. Refresh the copy after each
+merge that changes `tools/nightly`.
 
 ## Deployment
 
@@ -457,20 +458,25 @@ The clone uses 8 vCPU, 24 GiB RAM and a 160 GB disk. The controller protects
 a 120 GiB free-space floor on `/Volumes/dev-scratch`.
 `panel-play` runs in the guest's Aqua session. The user must be logged in.
 The controller checks
-`/Volumes/dev-scratch/274bot-evidence/MAC-QUIET.lock` before it starts work.
-The runner checks the guest copy at each cell and lane boundary. While the
-LaunchAgent runs, `/Volumes/dev-scratch/274bot-evidence/NIGHTLY/.mac-nightly-running`
-contains the PID, job, state, branch commits and Tart session ID.
+`/Volumes/dev-scratch/274bot-evidence/MAC-QUIET.lock` immediately before guest
+start and immediately before each cell batch. The runner checks the guest copy
+at each cell and lane boundary. While the LaunchAgent runs,
+`/Volumes/dev-scratch/274bot-evidence/NIGHTLY/.mac-nightly-running` contains
+the PID, job, state, branch commits and Tart session ID.
+The controller records the `mac_vm.py` start process and the clone name before
+the helper starts. Teardown stops and deletes the clone after an interruption.
 Bootstrap and job logs remain in the helper session's host `share/logs/`
 directory after the clone is deleted. The controller also prints the final
 log lines when a task finishes, including failures before the first run folder.
 Cell environments preserve the configured guest `ISOHOME_ROOT`; they do not
 use the host's `/Volumes/dev-scratch/isohome` default inside the guest.
-From 20:00, reserve one macOS VM slot for the nightly. Agents can use only
-the other slot until the nightly stops its clone. Tart permits two macOS VMs
-on this host. Do not stop another agent's guest to obtain the nightly slot.
+The helper counts every running Tart VM toward Apple's two-guest limit,
+including unprefixed operator guests. It never stops or deletes those guests.
+If two guests already run, the nightly refuses to clone.
 
-1. Write `~/.config/274bot-nightly/mac-nightly.env` with the paths for merlot.
+1. Copy `tools/nightly` from the primary checkout to a stable runner directory.
+   Refresh this copy after each merge that changes the nightly runner. Do not
+   use a task worktree because cleanup can remove it.
    The host stages the runner, catalog, fixtures, engines and isohome helper
    as read-only inputs. Main uses the host Engine A forward; quest runs private
    Engine Q in the clone.
@@ -478,11 +484,14 @@ on this host. Do not stop another agent's guest to obtain the nightly slot.
    revision as the other nightlies. Do not use the operator's working copy.
    Change the pin between runs, never during a run.
    ```sh
-   mkdir -p ~/.config/274bot-nightly ~/.local/lib/274bot-nightly \
+   mkdir -p ~/.local/lib/274bot-nightly/runner/tools/nightly \
+     ~/.config/274bot-nightly ~/.local/lib/274bot-nightly \
      ~/.local/state/274bot-nightly-mac ~/.local/state/274bot-nightly-malbec-pull \
      ~/Library/LaunchAgents
+   rsync -a --delete "$HOME/experiments/274bot/tools/nightly/" \
+     "$HOME/.local/lib/274bot-nightly/runner/tools/nightly/"
    cat > ~/.config/274bot-nightly/mac-nightly.env <<EOF
-   NIGHTLY_MAC_RUNNER=/Volumes/dev-scratch/274bot-worktrees/nightly-tart
+   NIGHTLY_MAC_RUNNER=$HOME/.local/lib/274bot-nightly/runner
    NIGHTLY_MAC_ROOT=/Volumes/dev-scratch/274bot-nightly
    NIGHTLY_MAC_RUNS=/Volumes/dev-scratch/274bot-evidence/NIGHTLY
    NIGHTLY_MAC_STATUS=/Volumes/dev-scratch/274bot-evidence/NIGHTLY/.mac-nightly-running
@@ -499,6 +508,9 @@ on this host. Do not stop another agent's guest to obtain the nightly slot.
    EOF
    chmod 600 ~/.config/274bot-nightly/mac-nightly.env
    ```
+   The wrapper reads this environment file at launch. Do not reload the
+   LaunchAgent while `MAC-QUIET.lock` exists. Main can reload it after the
+   measurement window.
 2. Create the dedicated read-only key on merlot (keep the private key here):
    ```sh
    ssh-keygen -t ed25519 -N '' -C '274bot-nightly-malbec-mirror' \

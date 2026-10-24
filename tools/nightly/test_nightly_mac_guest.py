@@ -265,12 +265,25 @@ class TartStartTests(unittest.TestCase):
             "guest_home": "/Users/bot/headed/nightly-test", "share": "/tmp/nightly-test/share",
         }
         process = mock.Mock(returncode=0)
-        process.communicate.return_value = (json.dumps(session), "")
         module = mock.Mock()
-        module.load_session.return_value = session
+        module.VM_PREFIX = "274bot-mac-"
+
+        def load_session(session_id):
+            session["id"] = session_id
+            session["vm"] = module.VM_PREFIX + session_id
+            return session
+
+        module.load_session.side_effect = load_session
+
+        def create_start_process(command, **_kwargs):
+            session_id = command[command.index("--session-id") + 1]
+            load_session(session_id)
+            process.communicate.return_value = (json.dumps(session), "")
+            return process
+
         vm = nightly.TartVM(settings, lambda: 200 * nightly.GIB)
 
-        with mock.patch.object(nightly.subprocess, "Popen", return_value=process) as popen, \
+        with mock.patch.object(nightly.subprocess, "Popen", side_effect=create_start_process) as popen, \
                 mock.patch.object(nightly, "load_vm_module", return_value=module):
             observed = vm.start()
 
@@ -281,6 +294,42 @@ class TartStartTests(unittest.TestCase):
         self.assertEqual(command[command.index("--disk-size") + 1], "160")
         self.assertEqual(command[command.index("--base") + 1], "274bot-mac-base")
         self.assertIn("--skip-tcc-bootstrap", command)
+
+        interrupted = mock.Mock(returncode=None, pid=32145)
+        interrupted.poll.return_value = None
+        interrupted.wait.return_value = 0
+        interrupted.communicate.side_effect = SystemExit(143)
+        interrupted_vm = nightly.TartVM(settings, lambda: 200 * nightly.GIB)
+        with mock.patch.object(nightly.subprocess, "Popen", return_value=interrupted) as popen, \
+                mock.patch.object(nightly, "load_vm_module", return_value=module):
+            with self.assertRaises(SystemExit):
+                interrupted_vm.start()
+
+        session_id = interrupted_vm.session_id
+        with self.subTest("start process and clone name are recorded"):
+            self.assertTrue(session_id)
+            self.assertEqual(
+                getattr(interrupted_vm, "vm_name", None),
+                "274bot-mac-" + str(session_id),
+            )
+            self.assertIs(getattr(interrupted_vm, "start_process", None), interrupted)
+        with self.subTest("owned start process is terminated"):
+            terminate_start = getattr(interrupted_vm, "terminate_start", None)
+            self.assertTrue(callable(terminate_start))
+            if callable(terminate_start):
+                with mock.patch.object(nightly.os, "killpg") as kill_group:
+                    self.assertTrue(terminate_start())
+                kill_group.assert_called_once_with(interrupted.pid, nightly.signal.SIGTERM)
+                interrupted.wait.assert_called_once_with(timeout=15)
+        with self.subTest("recorded clone is stopped after interrupted start"):
+            with mock.patch.object(
+                    nightly, "run_command",
+                    return_value=subprocess.CompletedProcess([], 0, "", "")) as run_command:
+                interrupted_vm.stop()
+            self.assertIn(str(session_id), run_command.call_args.args[0])
+        self.assertTrue(popen.call_args.kwargs["start_new_session"])
+        start_command = popen.call_args.args[0]
+        self.assertEqual(start_command[start_command.index("--session-id") + 1], str(session_id))
 
 
 class TartSupervisorTests(unittest.TestCase):
@@ -315,8 +364,10 @@ class FakeVM:
         self.staged_isohome_mode = None
         self.run_calls = []
         self.stop_calls = 0
+        self.start_calls = 0
 
     def start(self):
+        self.start_calls += 1
         self.session_id = "nightly-test"
         if self.fail_start:
             raise nightly.NightlyError("simulated start failure after clone creation")
@@ -341,6 +392,7 @@ class FakeVM:
             })
         if "--export-runs" in command:
             guest_runs = Path(self.session["guest_home"]) / "nightly/runs"
+            guest_runs.mkdir(parents=True, exist_ok=True)
             nightly.export_run_archives(guest_runs, Path(self.session["share"]) / "results")
         return ""
 
@@ -355,6 +407,9 @@ class FakeVM:
             nightly.write_sha256sums(run)
         self.run_calls.append((list(command), key))
         return 0
+
+    def terminate_start(self):
+        return True
 
     def terminate_active(self):
         return True
@@ -452,6 +507,69 @@ class NightlyOrchestrationTests(unittest.TestCase):
             self.assertFalse(settings.status.exists())
             self.assertFalse((settings.root.parent / "sessions/nightly-test/share/input").exists())
             self.assertFalse((settings.root.parent / "sessions/nightly-test/share/results").exists())
+
+            with self.subTest("deployment runner uses a stable path"):
+                readme = (HERE / "README.md").read_text(encoding="utf-8")
+                self.assertIn(
+                    "NIGHTLY_MAC_RUNNER=$HOME/.local/lib/274bot-nightly/runner", readme
+                )
+                self.assertNotIn("worktrees/nightly-tart", readme)
+
+            with self.subTest("quiet lock prevents guest start"):
+                with tempfile.TemporaryDirectory() as quiet_temporary:
+                    quiet_settings = self.make_settings(Path(quiet_temporary))
+                    quiet_vms = []
+
+                    def quiet_vm_factory(*args):
+                        vm = FakeVM(*args)
+                        quiet_vms.append(vm)
+                        return vm
+
+                    quiet_controller = nightly.NightlyOrchestrator(
+                        quiet_settings, ["dev"], vm_factory=quiet_vm_factory
+                    )
+                    write_status = quiet_controller.write_status
+
+                    def write_start_status_then_lock(state):
+                        write_status(state)
+                        if state == "starting":
+                            quiet_settings.quiet_lock.touch()
+
+                    quiet_controller.write_status = write_start_status_then_lock
+                    output = io.StringIO()
+                    with contextlib.redirect_stdout(output):
+                        self.assertEqual(quiet_controller.run(), 0)
+                    self.assertEqual(quiet_vms[0].start_calls, 0)
+                    self.assertIn("skipped before guest start", output.getvalue())
+
+            with self.subTest("quiet lock prevents each cell batch"):
+                with tempfile.TemporaryDirectory() as batch_temporary:
+                    batch_settings = self.make_settings(Path(batch_temporary))
+                    batch_vms = []
+
+                    def batch_vm_factory(*args):
+                        vm = FakeVM(*args)
+                        batch_vms.append(vm)
+                        return vm
+
+                    batch_controller = nightly.NightlyOrchestrator(
+                        batch_settings, ["dev"], vm_factory=batch_vm_factory
+                    )
+                    write_status = batch_controller.write_status
+
+                    def write_running_status_then_lock(state):
+                        write_status(state)
+                        if state == "running":
+                            batch_settings.quiet_lock.touch()
+
+                    batch_controller.write_status = write_running_status_then_lock
+                    output = io.StringIO()
+                    with contextlib.redirect_stdout(output):
+                        self.assertEqual(batch_controller.run(), 0)
+                    self.assertEqual(
+                        [key for _command, key in batch_vms[0].run_calls], ["bootstrap"]
+                    )
+                    self.assertIn("MAC-QUIET.lock is present before cell batch", output.getvalue())
 
     def test_stops_clone_and_releases_lock_after_start_fails(self):
         with tempfile.TemporaryDirectory() as temporary:
