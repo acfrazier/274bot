@@ -75,6 +75,37 @@ impl LoginNotice {
     }
 }
 
+/// [`LoginNotice::update`] for a bot's boxed slots: `state` (its clock,
+/// created by its first failed login) and `text` (the row's boxed notice).
+/// A bot that never failed a login and shows no notice stays as it was: two
+/// empty pointers, no allocation. The text moves out of its box and back
+/// without copying.
+#[expect(
+    clippy::box_collection,
+    reason = "the row's one-pointer slot; a bare `String` is 24 bytes on every row"
+)]
+pub(crate) fn update_slot(
+    state: &mut Option<Box<LoginNotice>>,
+    text: &mut Option<Box<String>>,
+    failure: Option<LoginFailure<'_>>,
+    logged_in: bool,
+    now: Instant,
+) -> bool {
+    let failing = failure.is_some() && !logged_in;
+    if state.is_none() && text.is_none() && !failing {
+        return false;
+    }
+    let state = state.get_or_insert_with(Box::default);
+    let mut line = text.as_mut().map(|held| std::mem::take(&mut **held));
+    let changed = state.update(&mut line, failure, logged_in, now);
+    match (line, text.as_mut()) {
+        (Some(line), Some(held)) => **held = line,
+        (Some(line), None) => *text = Some(Box::new(line)),
+        (None, _) => *text = None,
+    }
+    changed
+}
+
 #[cfg(test)]
 #[path = "login_notice_tests.rs"]
 mod tests;

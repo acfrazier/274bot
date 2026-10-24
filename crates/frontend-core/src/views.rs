@@ -265,7 +265,12 @@ pub struct FleetRow {
     /// state line): the newest failed login, kept through the retry's
     /// state changes until the bot logs in, a newer login fails, or
     /// [`crate::ERROR_MESSAGE_TIMEOUT`] passes ([`crate::login_notice`]).
-    login_notice: Option<String>,
+    /// Boxed: a bot with no failed login pays one pointer, not a `String`.
+    #[expect(
+        clippy::box_collection,
+        reason = "the row's one-pointer slot; a bare `String` is 24 bytes on every row"
+    )]
+    login_notice: Option<Box<String>>,
     /// Newest lifecycle operation on this slot (Load, Log in/out, Remove,
     /// Start/Pause/Resume/Stop, Apply to all) or failed profile write. Kept
     /// per slot, so it outlives the bounded operation history.
@@ -447,7 +452,7 @@ impl FleetRow {
     /// through the retry's state changes until the bot logs in, a newer
     /// login fails, or [`crate::ERROR_MESSAGE_TIMEOUT`] passes.
     pub fn login_notice(&self) -> Option<&str> {
-        self.login_notice.as_deref()
+        self.login_notice.as_deref().map(String::as_str)
     }
 
     /// The last error as history, for a `last error` row: only while the
@@ -592,7 +597,7 @@ impl FleetRow {
 
     /// Set the current login notice line (test fixtures).
     pub fn set_login_notice(&mut self, notice: Option<String>) {
-        self.login_notice = notice;
+        self.login_notice = notice.map(Box::new);
     }
 
     /// Set the newest operation brief (test fixtures).
@@ -937,7 +942,9 @@ struct RowState {
     /// [`SlotArm::lifetime_id`] of the worker the row last saw (0: none).
     lifetime: u64,
     /// The clock of the row's login notice ([`FleetRow::login_notice`]).
-    notice: LoginNotice,
+    /// Boxed and created by the bot's first failed login: a bot that never
+    /// failed one pays one pointer.
+    notice: Option<Box<LoginNotice>>,
 }
 
 /// The front end's walk arms (routes its WalkTo armed), keyed by slot.
@@ -1275,9 +1282,13 @@ fn update_row(row: &mut FleetRow, state: &mut RowState, input: &Inputs<'_>) -> b
             })
         });
     let logged_in = matches!(phase, Phase::Loading | Phase::Ready);
-    changed |= state
-        .notice
-        .update(&mut row.login_notice, failure, logged_in, input.now);
+    changed |= crate::login_notice::update_slot(
+        &mut state.notice,
+        &mut row.login_notice,
+        failure,
+        logged_in,
+        input.now,
+    );
     changed
 }
 

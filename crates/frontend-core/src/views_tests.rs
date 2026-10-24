@@ -1326,3 +1326,13 @@ fn login_notice_clears_on_a_successful_login() {
     assert_eq!(detail(&s).row.login_notice(), None, "resolved by the login");
     assert_eq!(detail(&s).login_notice_line(), None);
 }
+
+/// Size tripwire: a bot with no login notice pays one pointer on its row and
+/// one in its derivation state (168 + 16 bytes before the notice; an inline
+/// `Option<String>` and clock made it 192 + 120), so keep the notice boxed.
+#[cfg(target_pointer_width = "64")]
+#[test]
+fn a_bot_without_a_login_notice_costs_two_pointers() {
+    assert_eq!(std::mem::size_of::<FleetRow>(), 176);
+    assert_eq!(std::mem::size_of::<RowState>(), 24);
+}
