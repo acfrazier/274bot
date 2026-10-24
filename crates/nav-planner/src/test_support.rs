@@ -55,7 +55,10 @@ pub fn family(byte: u8) -> QuestFamilyId {
 }
 
 pub fn family_schema(byte: u8, schema: u16) -> QuestFamilyId {
-    QuestFamilyId::new([byte; 32], NonZeroU16::new(schema).expect("Quest fixture schemas must be nonzero"))
+    QuestFamilyId::new(
+        [byte; 32],
+        NonZeroU16::new(schema).expect("Quest fixture schemas must be nonzero"),
+    )
 }
 
 pub fn stamp(tick: u64) -> EvidenceStamp {

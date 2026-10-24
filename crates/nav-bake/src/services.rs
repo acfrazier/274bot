@@ -1389,7 +1389,10 @@ fn analyse_bank_handlers(
     analysis
 }
 
-#[expect(clippy::too_many_arguments, reason = "Keeps NPC and loc identities and configs explicit while recording a handler.")]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Keeps NPC and loc identities and configs explicit while recording a handler."
+)]
 fn record_handler(
     kind: &str,
     name: &str,
@@ -1763,7 +1766,10 @@ struct LocHit {
     link_below: bool,
 }
 
-#[expect(clippy::type_complexity, reason = "The scan returns both counters and both content-indexed hit collections.")]
+#[expect(
+    clippy::type_complexity,
+    reason = "The scan returns both counters and both content-indexed hit collections."
+)]
 fn scan_maps(
     content_root: &Path,
     interesting_npcs: &HashSet<i32>,

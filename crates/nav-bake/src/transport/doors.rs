@@ -32,7 +32,10 @@ use super::*;
 /// generic one — and closed door members declared outside the door
 /// configs likewise through [`generic_closed_doors`]. In-place swap doors
 /// (curtains, fur doors: [`swap_doors`]) cross like a straight door.
-#[expect(clippy::too_many_arguments, reason = "Derivation needs content indexes, collision, observable gates, and audit outputs.")]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Derivation needs content indexes, collision, observable gates, and audit outputs."
+)]
 pub(super) fn door_edges(
     content_root: &Path,
     ids: &HashMap<String, i32>,

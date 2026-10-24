@@ -134,7 +134,10 @@ pub struct NavManifest {
 impl NavManifest {
     /// Verify the pack identity and its zone-table counts from the decoded
     /// table supplied by the caller.
-    #[expect(clippy::too_many_arguments, reason = "Verifies all independently bound navigation artifacts and zone counts.")]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Verifies all independently bound navigation artifacts and zone counts."
+    )]
     pub fn verify(
         &self,
         revision: u16,

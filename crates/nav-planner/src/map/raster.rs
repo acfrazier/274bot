@@ -2459,7 +2459,10 @@ fn draw_floor_cell(
     }
 }
 
-#[expect(clippy::too_many_arguments, reason = "Drawing needs the buffer, world geometry, placement, definition, and assets.")]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Drawing needs the buffer, world geometry, placement, definition, and assets."
+)]
 fn draw_location(
     rgba: &mut [u8],
     west: i32,

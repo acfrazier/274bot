@@ -1524,13 +1524,7 @@ fn rope_and_stage_door_diagnoses_name_each_missing_kind() {
             read.clone(),
             false,
         ),
-        (
-            "rope only",
-            with_rope(undecided()),
-            None,
-            read,
-            false,
-        ),
+        ("rope only", with_rope(undecided()), None, read, false),
         ("stage only", proven(), Some(rope), None, false),
         ("both", with_rope(proven()), Some(vec![]), None, true),
         ("stage disproven", disproven(), None, None, false),
@@ -2124,7 +2118,10 @@ fn fallback_fails_only_when_its_own_budget_is_spent_with_the_preferred() {
 /// the preferred-only search's, and its fallback answer is what the
 /// fallback-only search reports, or undecided where that search needs more
 /// settles than the shared one spent.
-#[expect(clippy::too_many_arguments, reason = "Matches the full search surface for route-equivalence assertions.")]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Matches the full search surface for route-equivalence assertions."
+)]
 fn assert_fallback_matches_alone(
     wc: &WorldCollision,
     graph: &TransportGraph,
@@ -2702,7 +2699,10 @@ fn bank_targets_match_independent_find_with_on_real_289_pack() {
     }
 }
 
-#[expect(clippy::too_many_arguments, reason = "Matches the full search surface for route-equivalence assertions.")]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Matches the full search surface for route-equivalence assertions."
+)]
 fn compare_real_bank_targets(
     world: &crate::world::NavWorld,
     label: &str,
