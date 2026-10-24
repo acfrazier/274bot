@@ -563,7 +563,10 @@ impl JsLibrary {
                 self.clear_failure(&card.identity_key());
                 Ok(())
             }
-            Err(crate::StartLoadError::RuntimeLoad(diagnostic)) => {
+            Err(
+                crate::StartLoadError::RuntimeLoad(diagnostic)
+                | crate::StartLoadError::Surface(crate::surface::SurfaceError::Spawn(diagnostic)),
+            ) => {
                 let user_diagnostic = missing_compat_api_export(card.source, &diagnostic)
                     .map(|export| {
                         format!(
@@ -589,6 +592,7 @@ impl JsLibrary {
                 | crate::StartLoadError::Refused(diagnostic)
                 | crate::StartLoadError::NoLoadouts(diagnostic),
             ) => Err(diagnostic),
+            Err(crate::StartLoadError::Surface(error)) => Err(error.to_string()),
         }
     }
 

@@ -431,8 +431,12 @@ impl From<script::StartLoadError> for ScriptStartError {
                 (ScriptStartErrorKind::NoLoadouts, reason)
             }
             script::StartLoadError::Waiting(reason) => (ScriptStartErrorKind::Waiting, reason),
-            script::StartLoadError::RuntimeLoad(reason) => {
+            script::StartLoadError::RuntimeLoad(reason)
+            | script::StartLoadError::Surface(script::surface::SurfaceError::Spawn(reason)) => {
                 (ScriptStartErrorKind::RuntimeLoad, reason)
+            }
+            script::StartLoadError::Surface(error) => {
+                (ScriptStartErrorKind::Refused, error.to_string())
             }
         };
         Self { kind, message }

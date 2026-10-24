@@ -135,8 +135,6 @@ pub use library::{
 };
 
 #[cfg(feature = "load")]
-pub(crate) use isolate::TickOutcome;
-#[cfg(feature = "load")]
 pub use isolate::{
     isolate_capacity_status, HeldWaitFacts, IsolateCapacityStatus, LoadIsolate, LoadIsolateError,
     QueuedInteract, QueuedSeatBatch, Ready, ScriptStopReceipt, TeardownProof, ValidationBatch,
