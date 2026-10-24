@@ -66,7 +66,7 @@ fn nav_zanaris() {
         .collect();
     if shed.is_empty() {
         fail(
-            "nav_zanaris: pack carries no shed Door edge with a worn req              (rebake with `cargo run -p nav-planner --bin nav-pack`)",
+            "nav_zanaris: pack carries no shed Door edge with a worn req              (rebake with `cargo run -p nav-bake --bin nav-pack`)",
         );
     }
     let e = &shed[0];

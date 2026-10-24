@@ -50,6 +50,7 @@ headings to jump to the part you need.
 | Reproduce the architecture check, or change a crate dependency | [Architecture check in detail](dev/architecture-check.md) |
 | Regenerate the game data the app ships with | [Generate the selected game data](dev/selected-data-generation.md) |
 | Learn the crates and who owns what | [Architecture](dev/architecture.md) |
+| Change navigation generation or the combined v18 schema | [Baked reachability contract](dev/baked-reachability.md) |
 | Change the Quester guide format or step handlers | [Quest paths for contributors](dev/quest-paths.md) |
 | Learn the terms the code uses | [CONTEXT.md](../CONTEXT.md) |
 | Read the Rust API for reading and acting | [Reference pages in `docs/api`](api/README.md) |

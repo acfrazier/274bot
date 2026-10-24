@@ -1,7 +1,7 @@
 //! Ordinary application builds own the navigation artifact.
 //!
 //! A default build bakes (or reuses) the selected release revision's nav pack
-//! and flags with the shared baker ([`nav_planner::bake`]), stages them under the
+//! and flags with the shared baker ([`nav_bake::bake`]), stages them under the
 //! install resource root the running binary resolves — the cargo profile
 //! directory for a plain executable, `Contents/Resources` for a macOS bundle,
 //! `BOT_NAV_RESOURCE_DIR` when a packager stages elsewhere — and publishes
@@ -19,7 +19,7 @@
 //! bake consumes implicitly — the pack id tables, the files of each recursive
 //! script scan (one row per file, so a missing child fails even when its
 //! directory keeps siblings), the bank booth config and the revision's
-//! canonical mapsquares ([`nav_planner::bundle::required_content_inputs`]) — on every
+//! canonical mapsquares ([`nav_bake::bundle::required_content_inputs`]) — on every
 //! build, before a warm staged artifact set is accepted. A deliberate content
 //! edit or addition is not judged here; it flows through the ordinary input
 //! fingerprints and rebakes. The developer CLI keeps its tolerant behavior.
@@ -39,16 +39,16 @@
 
 use std::path::{Path, PathBuf};
 
-use nav_planner::bake::{
+use nav_bake::bake::{
     config_jag_for, content_inputs, decoded_identity_from_snapshot, generator_identity,
     pois_generator_identity, verify_cache_manifest_from_fingerprints, BakeRequest,
     GENERATOR_SOURCES, POIS_GENERATOR_SOURCES,
 };
-use nav_planner::bundle::{
+use nav_bake::bundle::{
     artifact_layout, fingerprints, merge_identity_rows, resource_root_for_build, BakeStamp,
-    NavIdentityRow, StampExpectation,
+    StampExpectation,
 };
-use nav_planner::manifest::CacheManifest;
+use nav_planner::manifest::{CacheManifest, NavIdentityRow};
 use nav_planner::pack::FORMAT_ID;
 /// Environment inputs, all re-checked by cargo before this script is skipped.
 const ENV_KEYS: [&str; 7] = [
@@ -70,7 +70,8 @@ fn main() {
 
     // The bake generator identity is part of the artifact stamp: any change to
     // the baker or the pack format invalidates staged artifacts.
-    let nav_dir = manifest_dir.join("../nav-planner");
+    // Generator labels are relative to the workspace, not one crate.
+    let nav_dir = manifest_dir.join("../..");
     let mut sources = Vec::new();
     for relative in GENERATOR_SOURCES {
         let path = nav_dir.join(relative);
@@ -161,7 +162,7 @@ fn main() {
     // derived transports, and the canonical mapsquares themselves. The baker
     // skips what is absent, so they are required here — before a warm staged
     // stamp can be accepted, not only when this build has to bake.
-    match nav_planner::bundle::missing_content_inputs(revision, &content_dir) {
+    match nav_bake::bundle::missing_content_inputs(revision, &content_dir) {
         Ok(missing) if missing.is_empty() => {}
         Ok(missing) => fail(&incomplete_content(revision, &content_dir, &missing)),
         Err(e) => fail(&e),
@@ -185,7 +186,7 @@ fn main() {
         Ok(rows) => rows,
         Err(e) => fail(&e),
     };
-    let captured_manifest = match nav_planner::bundle::cache_manifest_from_fingerprints(
+    let captured_manifest = match nav_bake::bundle::cache_manifest_from_fingerprints(
         revision,
         &cache_dir,
         &input_fingerprints,
@@ -245,7 +246,7 @@ fn main() {
             "decoded navigation cache: {e}; supply BOT_NAV_SNAPSHOT_ROOT with a complete matching offline snapshot"
         ))
     });
-    let source_sha256 = nav_planner::bundle::source_digest_from_fingerprints(
+    let source_sha256 = nav_bake::bundle::source_digest_from_fingerprints(
         &content_dir,
         &[&config_jag],
         &input_fingerprints,
@@ -349,7 +350,7 @@ fn main() {
                 staged
                     .as_ref()
                     .and_then(|stamp| stamp.covers(&expectation).err())
-                    .as_deref(),
+                    .as_ref(),
             ) {
                 Ok(row) => row,
                 Err(e) => fail(&e),
@@ -362,7 +363,7 @@ fn main() {
         Ok(rows) => rows,
         Err(e) => fail(&e),
     };
-    let final_manifest = match nav_planner::bundle::cache_manifest_from_fingerprints(
+    let final_manifest = match nav_bake::bundle::cache_manifest_from_fingerprints(
         revision,
         &cache_dir,
         &final_inputs,
@@ -402,7 +403,7 @@ fn main() {
 #[allow(clippy::too_many_arguments)]
 fn bake_and_stage(
     revision: u16,
-    inputs: &nav_planner::bake::ContentInputs,
+    inputs: &nav_bake::bake::ContentInputs,
     config_jag: &Path,
     cache: &CacheManifest,
     manifest_source: Option<&Path>,
@@ -410,15 +411,15 @@ fn bake_and_stage(
     pois_generator: &str,
     cache_id: &str,
     content_id: &str,
-    input_fingerprints: &[nav_planner::bundle::InputFingerprint],
+    input_fingerprints: &[nav_bake::bundle::InputFingerprint],
     resource_root: &Path,
-    layout: &nav_planner::bundle::ArtifactLayout,
-    stale_reason: Option<&str>,
+    layout: &nav_bake::bundle::ArtifactLayout,
+    stale_reason: Option<&nav_bake::GenerationError>,
 ) -> Result<NavIdentityRow, String> {
     if let Some(reason) = stale_reason {
         println!("cargo:warning=nav bundle: rebaking ({reason})");
     }
-    let baked = nav_planner::bake::bake_world(&BakeRequest {
+    let baked = nav_bake::bake::bake_world(&BakeRequest {
         revision: Some(revision),
         maps_dir: &inputs.maps_dir,
         doors_dir: &inputs.doors_dir,
@@ -694,6 +695,6 @@ fn incomplete_content(revision: u16, content_dir: &Path, missing: &[String]) -> 
     )
 }
 
-fn fail(message: &str) -> ! {
+fn fail(message: &(impl std::fmt::Display + ?Sized)) -> ! {
     panic!("navigation build: {message}");
 }

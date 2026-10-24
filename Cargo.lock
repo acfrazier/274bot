@@ -1475,6 +1475,7 @@ dependencies = [
  "host-play",
  "image",
  "libc",
+ "nav-bake",
  "nav-planner",
  "scenario",
  "serde",
@@ -1691,6 +1692,7 @@ dependencies = [
  "host",
  "host-play",
  "libc",
+ "nav-bake",
  "nav-planner",
  "parking_lot",
  "png",
@@ -2075,6 +2077,7 @@ dependencies = [
  "host",
  "libc",
  "native-tls",
+ "nav-bake",
  "nav-executor",
  "nav-planner",
  "parking_lot",
@@ -2693,6 +2696,20 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "tempfile",
+]
+
+[[package]]
+name = "nav-bake"
+version = "0.2.6"
+dependencies = [
+ "allocation-counter",
+ "api",
+ "client",
+ "nav-planner",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
@@ -3399,6 +3416,7 @@ dependencies = [
  "frontend-core",
  "host-play",
  "libc",
+ "nav-bake",
  "nav-planner",
  "objc2 0.5.2",
  "objc2-app-kit 0.2.2",
@@ -5566,6 +5584,7 @@ dependencies = [
  "host",
  "host-play",
  "libc",
+ "nav-bake",
  "nav-planner",
  "ratatui",
  "serde_json",

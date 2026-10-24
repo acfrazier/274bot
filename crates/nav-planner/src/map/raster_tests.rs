@@ -663,7 +663,7 @@ fn raster_producer_deadlines_still_stop_after_one_unit_crosses_the_deadline() {
     assert!(!context.continued_after_yield());
     let last_check = tick * (clock.reads.load(Ordering::Relaxed) - 1) as u32;
     assert!(last_check >= duration);
-    assert!(last_check - duration < tick);
+    assert!(last_check.checked_sub(duration).unwrap() < tick);
 
     let clock = RasterStepClock::new(tick);
     let mut context = clock.context(&cancellation, 64, duration);
@@ -678,7 +678,7 @@ fn raster_producer_deadlines_still_stop_after_one_unit_crosses_the_deadline() {
     assert!(!context.continued_after_yield());
     let last_check = tick * (clock.reads.load(Ordering::Relaxed) - 1) as u32;
     assert!(last_check >= duration);
-    assert!(last_check - duration < tick);
+    assert!(last_check.checked_sub(duration).unwrap() < tick);
     assert_eq!(sink.write_attempts, 0);
 }
 
