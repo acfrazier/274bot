@@ -6058,7 +6058,7 @@ fn brimhaven_agility_registers_fee_tags_ticket_and_subsequent_xp() {
                 id: AGILITY_STAT,
                 min: 1,
             },
-            Proof::Chat {
+            Proof::FreshChatSincePreviousStep {
                 needle: "tag the next",
             },
             Proof::Varp { id: 309, min: 15 },
