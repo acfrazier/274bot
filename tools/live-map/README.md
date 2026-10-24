@@ -81,7 +81,7 @@ It checks `LIVE=1` and writes receipts when `LIVE_EVIDENCE_DIR` is set at
 
 ## ScriptWalkArm call paths
 
-The `script_nav.rs` and `script_walk.rs` row selects four live scenario cells.
+The `script_nav.rs` and `script_walk.rs` row selects five live cells: four scenario cells and the compat-v1 crossing cell.
 A separate row maps `survivable_admission_live.rs` to both admission tests.
 
 | Cell | Call path |
