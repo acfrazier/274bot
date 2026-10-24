@@ -30,6 +30,7 @@ client = { workspace = true }
 frontend-core = { path = ".", features = ["test-support"] }
 # The capacity smoke forces the macOS/Windows measure and reads receipts.
 host-play = { path = "../host-play", features = ["test-support"] }
+nav-bake = { path = "../nav-bake" }
 png = "=0.18.1"
 scenario = { path = "../scenario" }
 

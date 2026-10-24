@@ -11,7 +11,7 @@ use client::dash3d::CollisionFlag;
 
 use crate::collision::{WorldCollision, SQ_BLOCKED};
 use crate::contract::{LegView, RouteView};
-use crate::router::step_ok;
+use crate::movement::step_ok;
 use crate::transport::{TransportGraph, TransportKind};
 
 /// One tile of the remaining path: a walk tile or a transport hop tile

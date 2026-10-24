@@ -28,7 +28,8 @@ pub struct StepGrid {
 impl StepGrid {
     /// Build a grid from raw parts. `walk` is row-major `z` then `x` (same
     /// indexing as [`StepGrid::walkable`]), one byte per tile, `1` = walkable.
-    pub(crate) fn from_parts(
+    /// The caller supplies exactly `width * height` walk bytes.
+    pub fn from_parts(
         origin: Tile,
         width: usize,
         height: usize,
@@ -42,6 +43,23 @@ impl StepGrid {
             origin,
             doors,
         }
+    }
+
+    pub fn origin(&self) -> Tile {
+        self.origin
+    }
+
+    pub fn width(&self) -> usize {
+        self.width
+    }
+
+    pub fn height(&self) -> usize {
+        self.height
+    }
+
+    /// Borrow the row-major walk bytes used by the grid encoder.
+    pub fn walk_bytes(&self) -> &[u8] {
+        &self.walk
     }
 
     /// True if `t` is on this grid's level, inside its bounds, and marked
