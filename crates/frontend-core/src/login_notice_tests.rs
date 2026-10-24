@@ -116,3 +116,54 @@ fn logging_in_resolves_the_notice() {
     assert!(!clock.update(&mut notice, failure(next), true, next));
     assert_eq!(notice, None);
 }
+
+/// A bot that never failed a login keeps both slots empty, so it costs no
+/// allocation; the first failure fills them, and later updates move the
+/// text through its box without replacing the box.
+#[test]
+fn the_slots_fill_on_the_first_failure_and_keep_their_box() {
+    let base = Instant::now();
+    let mut state = None;
+    let mut text = None;
+    assert!(!update_slot(&mut state, &mut text, None, false, base));
+    assert!(!update_slot(&mut state, &mut text, None, true, base));
+    assert!(
+        state.is_none() && text.is_none(),
+        "no failure, no allocation"
+    );
+    assert!(update_slot(
+        &mut state,
+        &mut text,
+        failure(base),
+        false,
+        base
+    ));
+    let held: *const String = &**text.as_ref().expect("the failure raised a notice");
+    assert!(state.is_some());
+    let later = base + Duration::from_secs(1);
+    assert!(!update_slot(
+        &mut state,
+        &mut text,
+        failure(base),
+        false,
+        later
+    ));
+    assert!(
+        std::ptr::eq(held, &**text.as_ref().unwrap()),
+        "text kept its box"
+    );
+    assert!(update_slot(&mut state, &mut text, None, true, later));
+    assert!(text.is_none(), "a login clears the row's notice");
+    assert!(
+        state.is_some(),
+        "the clock stays so a stale failure cannot return"
+    );
+    assert!(!update_slot(
+        &mut state,
+        &mut text,
+        failure(base),
+        false,
+        later
+    ));
+    assert!(text.is_none());
+}
