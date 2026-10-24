@@ -103,7 +103,7 @@ pub(super) const ESSENCE_MINE_PAD: WorldTile = WorldTile {
 /// Essence-mine entry edges from the fixed wizard table: one direct
 /// teleport hop per wizard, landing on the mine pad. The return is not
 /// packed — the mine exit portal's hop is synthesized per-slot from the
-/// traveller's [`crate::essence::EssenceSession`], so the mine is never
+/// traveller's [`nav_planner::essence::EssenceSession`], so the mine is never
 /// a corridor between arbitrary overworld tiles. The gate is resolved from
 /// the quest journal's row for `%runemysteries` at its content completion
 /// threshold; the varp is never transmitted, so a `varp_req` cannot pass.

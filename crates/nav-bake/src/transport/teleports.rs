@@ -4,7 +4,7 @@ use super::*;
 /// `skill_magic/configs/magic_spells.dbrow` plus the jewellery rub
 /// teleports from `general/scripts/enchanted_jewellry/*.rs2`, all into
 /// [`TransportGraph::teleports`] — never `edges`/`at`, so the default
-/// [`crate::router::find`] never sees them.
+/// [`nav_planner::router::find`] never sees them.
 pub(super) fn teleport_edges(
     content_root: &Path,
     graph: &mut TransportGraph,
