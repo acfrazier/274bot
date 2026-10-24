@@ -20,6 +20,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.6` 
 - The panel's profile form also refuses to create a profile with an empty password, with the message `credentials: password required`, and saves nothing.
 - Hovering the Fleet's result line (for example "9 bots stopped") now shows its text in a normal tooltip. It was a thin column one letter wide and as tall as the window.
 
+### Host
+
+- The session log warning for a long background work step (`background work slice overrun`) now names the kind of work that ran long, for example profile preparation. The warning only names the work. The step still takes the same time.
+
 ### Survival
 
 - Combat and protected walks use a held antipoison dose or Strange fruit
