@@ -1,5 +1,6 @@
 use super::*;
 use sha2::{Digest, Sha256};
+use std::fs;
 use std::sync::Arc;
 
 /// On-disk flags header length: magic(4) + version(1) + origin(12) + width/height(8).

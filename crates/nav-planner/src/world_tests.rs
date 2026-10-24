@@ -7,6 +7,7 @@ use crate::grid::StepGrid;
 use crate::pack::PackError;
 use crate::router::{find, Leg};
 use crate::tile::Tile;
+use crate::transport::TransportKind;
 
 fn tile(x: i32, z: i32, level: i32) -> WorldTile {
     WorldTile { x, z, level }
@@ -227,13 +228,13 @@ fn load_pack_keeps_stale_v5_wire_as_bad_version() {
     ));
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("fixture-v5.navpack");
-    std::fs::write(&path, &bytes).unwrap();
+    std::fs::write(&path, bytes).unwrap();
     assert!(matches!(
         NavWorld::load_pack(&path),
         Err(PackError::BadVersion(5))
     ));
     assert!(matches!(
-        NavWorld::from_bytes(&bytes),
+        NavWorld::from_bytes(bytes),
         Err(PackError::BadVersion(5))
     ));
     let _ = std::fs::remove_dir_all(&dir);

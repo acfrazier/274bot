@@ -1,3 +1,7 @@
+#![deny(clippy::disallowed_types)]
+#![deny(clippy::disallowed_methods)]
+#![deny(clippy::disallowed_macros)]
+
 //! `nav-pack` CLI: bake the whole world — every `maps/*.jm2` mapsquare —
 //! into a per-level [`WorldCollision`] (four planes like the client's
 //! `collision[4]`), derive the [`TransportGraph`] from
