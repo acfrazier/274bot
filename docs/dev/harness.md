@@ -415,6 +415,19 @@ run, so simultaneous processes do not share an account and
 `BOT_LIVE_NAME_PREFIX` tags an owner's fixtures. Keep the strict journal click
 accounting: Stop/Pause recovery adopts the retained page without a new click.
 
+### Headed checks
+
+The live map has two headed panel cells on merlot against Engine A at
+`127.0.0.1:44594` and `127.0.0.1:1080`. `panel.headed-nav-script` sets
+`BOT_CPU=1` and covers CPU client paths. `panel.headed-render` removes
+`BOT_CPU` to select the GPU renderer and covers GPU client and imgui paths.
+Changes to the client login path also select both relog cells.
+
+Run each cell in merlot's interactive display session with a throwaway HOME.
+The CPU cell is not a substitute for the GPU cell. `--verify-cells` checks the
+proxy test selector; it does not run either headed command or validate its
+`--live` argument or host.
+
 ### Headed recording
 
 Overnight `--live script_<name>` runs can record video of the panel window
