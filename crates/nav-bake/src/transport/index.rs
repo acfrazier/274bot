@@ -253,8 +253,12 @@ pub(super) fn parse_jm2_npcs(text: &str, mx: i32, mz: i32) -> Vec<NpcPlacement> 
 }
 
 /// Every `.loc` config text under `scripts`, recursively.
-pub(super) fn visit_loc_configs(dir: &Path, cb: &mut impl FnMut(&str)) {
+pub(crate) fn visit_loc_configs(dir: &Path, cb: &mut impl FnMut(&str)) {
     visit_configs(dir, "loc", cb);
+}
+/// Every `.npc` config text under `scripts`, recursively.
+pub(crate) fn visit_npc_configs(dir: &Path, cb: &mut impl FnMut(&str)) {
+    visit_configs(dir, "npc", cb);
 }
 
 /// Every `.<ext>` config text under `dir`, recursively.
