@@ -103,15 +103,9 @@ fn live_tutorial_reseed_wields_bow() {
         .duration_since(UNIX_EPOCH)
         .expect("clock")
         .as_millis();
-    let mut entropy = serial ^ ((std::process::id() as u128) << 64);
-    let alphabet = b"abcdefghijklmnopqrstuvwxyz0123456789";
-    let mut token = [b'0'; 6];
-    for digit in &mut token {
-        *digit = alphabet[(entropy % alphabet.len() as u128) as usize];
-        entropy /= alphabet.len() as u128;
-    }
-    let token = String::from_utf8(token.to_vec()).expect("ascii account token");
-    let username = format!("{prefix}{token}_0");
+    let username = host_play::mint_live_names(1)
+        .pop()
+        .expect("one live account");
     assert!(username.len() <= 12, "engine account name exceeds 12 chars");
     let uid = (serial % 1_000_000_000) as i32;
 
