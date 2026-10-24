@@ -434,7 +434,10 @@ impl HeldWaitFacts {
                 InteractReq::WaitEnqueued,
                 row_count(self.enqueues + pair),
             ))
-            .chain(std::iter::repeat_n(InteractReq::WaitSettled, row_count(pair)))
+            .chain(std::iter::repeat_n(
+                InteractReq::WaitSettled,
+                row_count(pair),
+            ))
     }
 
     /// Number of rows that [`Self::replay`] yields.
