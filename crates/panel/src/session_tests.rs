@@ -6703,6 +6703,7 @@ fn chooser_world_edit_persists_and_updates_running_slot() {
 fn save_credentials_creates_new_profile_when_username_is_new() {
     let path = tmp_vault("new-user.vault");
     let mut s = Session::new();
+    hydrate_panel_preferences(&mut s);
     install_vault(
         &mut s.core,
         VaultFixture::create(&path, "test-passphrase-01"),
@@ -6749,6 +6750,7 @@ fn save_credentials_rejects_empty_username() {
 fn save_credentials_without_focus_upserts_spawns_and_selects() {
     let path = tmp_vault("empty-first-run.vault");
     let mut s = Session::new();
+    hydrate_panel_preferences(&mut s);
     install_vault(
         &mut s.core,
         VaultFixture::create(&path, "test-passphrase-01"),
@@ -6820,36 +6822,39 @@ fn first_profile_save_waits_for_preferences_before_selecting_and_loading_once() 
         session.pump_status();
         thread::sleep(Duration::from_millis(5));
     }
-    for _ in 0..4 {
-        session.poll_panel_preferences();
-        session.pump_status();
-    }
     assert!(session.panel_preferences_ready());
     assert_eq!(session.focused_name().as_deref(), Some("alice"));
-    assert!(session
-        .core
-        .play_for_test()
-        .unwrap()
-        .arm("alice")
-        .unwrap()
-        .wants_login());
-    assert_eq!(session.core.slots().len(), 1);
-    assert_eq!(
+    let arm = session.core.play_for_test().unwrap().arm("alice").unwrap();
+    assert!(arm.wants_login());
+    let selections = |session: &Session| {
         session
             .core
             .commands()
             .reports()
             .filter(|report| report.command() == frontend_core::OperatorCommand::Select)
-            .count(),
-        1,
-        "the saved profile must be selected exactly once"
-    );
+            .count()
+    };
+    // `select` also submits the render-focus mirror. Further pumps must
+    // neither repeat that selection nor replace the loaded login arm.
+    let selected = selections(&session);
+    assert!(selected > 0);
+    for _ in 0..4 {
+        session.poll_panel_preferences();
+        session.pump_status();
+        assert_eq!(selections(&session), selected);
+        assert_eq!(session.core.slots().len(), 1);
+        assert!(Arc::ptr_eq(
+            &arm,
+            &session.core.play_for_test().unwrap().arm("alice").unwrap()
+        ));
+    }
 }
 
 #[test]
 fn save_credentials_does_not_duplicate_running_slot() {
     let path = tmp_vault("no-dup-slot.vault");
     let mut s = Session::new();
+    hydrate_panel_preferences(&mut s);
     install_vault(
         &mut s.core,
         VaultFixture::create(&path, "test-passphrase-01"),
@@ -6877,6 +6882,7 @@ fn save_credentials_does_not_duplicate_running_slot() {
 fn save_credentials_rename_editing_profile_replaces_old_key() {
     let path = tmp_vault("rename-creds.vault");
     let mut s = Session::new();
+    hydrate_panel_preferences(&mut s);
     install_vault(
         &mut s.core,
         VaultFixture::create(&path, "test-passphrase-01"),
@@ -6914,6 +6920,7 @@ fn first_time_save_spawns_nothing_until_the_write_is_durable() {
     let dir = TestDir::new("save-first-time");
     let path = dir.join("vault.vault");
     let mut s = Session::new();
+    hydrate_panel_preferences(&mut s);
     s.core.set_spawn_workers(false);
     s.core.set_play(Some(empty_play()));
     install_vault(
@@ -9142,6 +9149,7 @@ fn background_count_ignores_terminal_status_rows() {
 fn a_profile_still_saving_cannot_be_selected_loaded_or_deleted_from_the_chooser() {
     let path = tmp_vault("saving-gate.vault");
     let mut s = Session::new();
+    hydrate_panel_preferences(&mut s);
     s.core.set_spawn_workers(false);
     s.core.set_play(Some(empty_play()));
     let mut vault = VaultFixture::create(&path, "test-passphrase-01");
