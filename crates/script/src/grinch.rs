@@ -52,10 +52,12 @@ pub const CARD: CompiledCard = CompiledCard {
         "Collect selected visible holiday items around the Start tile, bank them and return.",
     category: "Gathering",
     schema_version: 1,
+
     schema,
     per_account_settings: &[],
     prepare,
     create,
+    lifecycle: None,
 };
 
 /// Immutable choices prepared once for one settings revision.

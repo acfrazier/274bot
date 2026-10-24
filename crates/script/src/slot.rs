@@ -24,10 +24,12 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::ctx::ScriptCtx;
-#[cfg(feature = "load")]
-use crate::isolate_fb::{DecodedSeatBatch, IsolateBuf, SeatStartArgs, SnapshotFingerprint};
-#[cfg(feature = "load")]
-use crate::load::{GameplayFactory, LoadIsolate, LoadShape, Ready};
+use crate::native::recovery_hints::RecoveryHintsCell;
+use crate::native::seat_rows::{DecodedSeatBatch, SeatStartArgs};
+use crate::surface::{
+    PostedSnapshotFacts, SurfaceError, SurfaceFactory, SurfaceFamily, SurfaceKind, SurfaceReady,
+    SurfaceRun, SurfaceStart,
+};
 use crate::watchdog::{ProgressWatchdog, Tile as WatchdogTile, WatchdogAction};
 use api::native_input::NativeInputAuthority;
 use api::random::{DetectedRandom, RandomClaim};
@@ -42,8 +44,7 @@ static SEAT_REQUEST_IDS: RequestIdMinter = match RequestIdMinter::starting_at(1 
 
 enum SeatEffect {
     Native(crate::native::HostAction),
-    #[cfg(feature = "load")]
-    Interact(crate::load::QueuedInteract),
+    Interact(crate::interact::QueuedInteract),
 }
 
 /// Read-only, allocation-free counters for this slot's armed gameplay seat.
@@ -83,10 +84,10 @@ fn native_walk_id(raw: u64) -> Option<RequestId> {
         .flatten()
 }
 
-fn seat_walk_id(req: &crate::shim::InteractReq, owner: Option<RequestId>) -> Option<RequestId> {
+fn seat_walk_id(req: &crate::interact::InteractReq, owner: Option<RequestId>) -> Option<RequestId> {
     match req {
-        crate::shim::InteractReq::Walk { request_id, .. }
-        | crate::shim::InteractReq::WalkNear { request_id, .. } => {
+        crate::interact::InteractReq::Walk { request_id, .. }
+        | crate::interact::InteractReq::WalkNear { request_id, .. } => {
             RequestId::from_raw(*request_id).or(owner)
         }
         // WalkTo is one immediate click, and WalkNearestBank has no
@@ -101,13 +102,11 @@ fn seat_walk_id(req: &crate::shim::InteractReq, owner: Option<RequestId>) -> Opt
 /// refuses no other row. Resume pages the folded batch into the seat
 /// (`SlotScript::consume_held_fold`), so `GameplaySeat::take` drops none of
 /// its rows, however many opens, closes and inspections it carries.
-#[cfg(feature = "load")]
 const HELD_LIFECYCLE_ROWS: usize = api::script_contract::MAX_ENCODED_GAMEPLAY;
 
 /// Lifecycle rows of which the host applies only the latest value. The fold
 /// keeps one row for each key, the newest, and appends these rows after the
 /// ordered lane.
-#[cfg(feature = "load")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum HeldReplacement {
     /// `script_interact.rs` writes the last `SetCameraYaw` of a drain.
@@ -127,12 +126,12 @@ enum HeldReplacement {
     LoopSettled,
 }
 
-#[cfg(feature = "load")]
+
 impl HeldReplacement {
     const KEYS: usize = 7;
 
-    fn of(req: &crate::shim::InteractReq) -> Option<Self> {
-        use crate::shim::InteractReq;
+    fn of(req: &crate::interact::InteractReq) -> Option<Self> {
+        use crate::interact::InteractReq;
         Some(match req {
             InteractReq::SetCameraYaw { .. } => Self::CameraYaw,
             InteractReq::RecoveryAnchor { .. } | InteractReq::RecoveryAnchorNone => {
@@ -149,11 +148,10 @@ impl HeldReplacement {
 }
 
 /// Status sent to a script whose BroadcastChannel post the hold refused.
-#[cfg(feature = "load")]
 const HELD_CHANNEL_POST_REFUSED: &str = "BroadcastChannel post dropped while the session was held";
 
 fn seat_interact_class(
-    req: &crate::shim::InteractReq,
+    req: &crate::interact::InteractReq,
     owner: Option<RequestId>,
 ) -> (
     api::script_contract::EmissionClass,
@@ -161,16 +159,16 @@ fn seat_interact_class(
 ) {
     use api::script_contract::{EmissionClass, Release};
     match req {
-        crate::shim::InteractReq::AbortWalk { request_id } => (
+        crate::interact::InteractReq::AbortWalk { request_id } => (
             EmissionClass::Release,
             RequestId::from_raw(*request_id)
                 .or(owner)
                 .map(Release::AbortWalk),
         ),
-        crate::shim::InteractReq::GatherStop { .. } => {
+        crate::interact::InteractReq::GatherStop { .. } => {
             (EmissionClass::Release, Some(Release::GatherStop))
         }
-        crate::shim::InteractReq::CombatStop { .. } => {
+        crate::interact::InteractReq::CombatStop { .. } => {
             (EmissionClass::Release, Some(Release::CombatStop))
         }
         _ if req.is_game() => (EmissionClass::Gameplay, None),
@@ -183,13 +181,13 @@ fn seat_interact_class(
 /// the welcome modal or of a watchdog recovery keeps these rows (operator
 /// decision 2026-10-16: aborts are never dropped, and the newest run policy
 /// is delivered after the hold).
-fn seat_reserved_row(req: &crate::shim::InteractReq) -> bool {
+fn seat_reserved_row(req: &crate::interact::InteractReq) -> bool {
     matches!(
         req,
-        crate::shim::InteractReq::AbortWalk { .. }
-            | crate::shim::InteractReq::GatherStop { .. }
-            | crate::shim::InteractReq::CombatStop { .. }
-            | crate::shim::InteractReq::RunPolicyOverride { .. }
+        crate::interact::InteractReq::AbortWalk { .. }
+            | crate::interact::InteractReq::GatherStop { .. }
+            | crate::interact::InteractReq::CombatStop { .. }
+            | crate::interact::InteractReq::RunPolicyOverride { .. }
     )
 }
 
@@ -244,12 +242,13 @@ fn seat_reserved_row(req: &crate::shim::InteractReq) -> bool {
 /// event waits for the 500-tick event timer (`login.rs2:40`,
 /// `macro_events.rs2:2-12`). So a second guardian hold does not start while
 /// the pages of the first fold wait.
-#[cfg(feature = "load")]
 fn carry_waiting_controls(
-    waiting: &mut crate::load::QueuedSeatBatch,
-    newer: &mut crate::load::QueuedSeatBatch,
+    waiting: &mut crate::native::seat_rows::QueuedSeatBatch,
+    newer: &mut crate::native::seat_rows::QueuedSeatBatch,
 ) {
-    use crate::machine::{MachineEvent, MachineEventKind};
+    use crate::native::seat_rows::{
+        SeatMachineEvent as MachineEvent, SeatMachineEventKind as MachineEventKind,
+    };
     fn ahead<T>(newer: &mut Vec<T>, waiting: &mut Vec<T>, repeats: impl Fn(&[T], &T) -> bool) {
         let later = std::mem::replace(newer, std::mem::take(waiting));
         for control in later {
@@ -304,14 +303,14 @@ fn carry_waiting_controls(
     );
 }
 
-#[cfg(feature = "load")]
+
 fn seat_live_details<'a>(
     seat: &'a GameplaySeat<SeatEffect>,
     api: Option<&api_seat::ApiSeat>,
     compiled: Option<&CompiledRun>,
     compiled_owner: Option<RequestId>,
-) -> [crate::isolate_fb::SeatLiveDetails<'a>; api::script_contract::MAX_LIVE] {
-    use crate::isolate_fb::{SeatLiveDetails, SeatPromptInput};
+) -> [crate::native::seat_rows::SeatLiveDetails<'a>; api::script_contract::MAX_LIVE] {
+    use crate::native::seat_rows::{SeatLiveDetails, SeatPromptInput};
     use crate::native::NativePhase;
     let unused_id = seat.live().first().map_or_else(
         || RequestId::isolate(1).expect("isolate namespace"),
@@ -348,41 +347,32 @@ fn seat_live_details<'a>(
     details
 }
 
-#[cfg(feature = "load")]
+
 const CUT_RESTART_LIMIT: usize = 3;
-#[cfg(feature = "load")]
+
 const CUT_RESTART_WINDOW: Duration = Duration::from_secs(5 * 60);
 
 /// Failure at initial loaded-script Start, distinct from an operational refusal.
-#[cfg(feature = "load")]
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum StartLoadError {
     /// The caller must retain this Start until an operator hold is resolved.
+    #[error("{0}")]
     Waiting(String),
+    #[error("{0}")]
     Refused(String),
     /// No saved loadouts exist for a required saved selection.
+    #[error("{0}")]
     NoLoadouts(String),
+    #[error("{0}")]
     RuntimeLoad(String),
+    #[error("{0}")]
+    Surface(#[from] SurfaceError),
 }
 
-#[cfg(feature = "load")]
-impl std::fmt::Display for StartLoadError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Waiting(message)
-            | Self::Refused(message)
-            | Self::NoLoadouts(message)
-            | Self::RuntimeLoad(message) => f.write_str(message),
-        }
-    }
-}
 
-#[cfg(feature = "load")]
-impl std::error::Error for StartLoadError {}
-
-/// Lifecycle of the script slot. `starting` is the Load-setup window
-/// (spawn has returned, V8 is not ready). `paused` covers both operator
-/// Pause and the not-`is_up` gate; `stopping` is the Load-join window.
+/// Lifecycle of the script slot. `starting` is the surface setup window.
+/// `paused` covers both operator Pause and the not-`is_up` gate.
+/// `stopping` is the surface retirement window.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RunState {
     Idle,
@@ -412,22 +402,8 @@ pub struct ScriptLifecycleReceipt {
     pub reason: String,
 }
 
-/// Frozen Load identity retained for watchdog recreate. Shared via Arc so
-/// observe never copies source bytes.
-#[cfg(feature = "load")]
-#[derive(Clone)]
-pub struct SlotLoadIdentity {
-    pub source: Arc<str>,
-    pub shape: LoadShape,
-    pub siblings: Arc<[(String, String)]>,
-    pub settings_bag: Option<Arc<serde_json::Map<String, serde_json::Value>>>,
-    pub game_data: Option<Arc<api::game_data::SelectedGameData>>,
-    pub named_banks: Arc<api::named_banks::NamedBankFacts>,
-    pub loadouts: Arc<[api::loadout::Loadout]>,
-    pub api_family: Option<crate::ApiFamily>,
-}
 
-#[cfg(feature = "load")]
+
 #[derive(Clone)]
 enum AfterStop {
     Idle,
@@ -486,8 +462,8 @@ pub struct SlotScript {
     seat_fence: Fence<ExecutionId>,
     seat_delivery: Vec<SeatEffect>,
     seat_native_delivery: VecDeque<crate::native::HostAction>,
-    #[cfg(feature = "load")]
-    seat_interact_delivery: Vec<crate::load::QueuedInteract>,
+    
+    seat_interact_delivery: Vec<crate::interact::QueuedInteract>,
     /// Guardian hold is separate from the shared seat-held state.
     guardian_held: bool,
     /// The slot loop holds the frame for a reason that is not the guardian:
@@ -498,12 +474,10 @@ pub struct SlotScript {
     /// Walk aborts that the script sent while the frame was held, oldest
     /// first, for the first frame after the hold (operator decision
     /// 2026-10-16). One for each walk request, at most `MAX_WALK_RELEASES`.
-    #[cfg(feature = "load")]
-    held_aborts: Vec<crate::load::QueuedInteract>,
+    held_aborts: Vec<crate::interact::QueuedInteract>,
     /// The newest run-policy update that the script sent while the frame was
     /// held, for the first frame after the hold. The outer option is "an
     /// update was kept". The inner option is replace versus clear.
-    #[cfg(feature = "load")]
     held_policy: Option<Option<api::run_policy::RunPolicyOverride>>,
     /// A missing host session also freezes the shared seat.
     seat_session_held: bool,
@@ -511,11 +485,9 @@ pub struct SlotScript {
     held_walk_terminals: Vec<RequestId>,
     /// Watchdog facts already filtered and dispatched by the owner seat,
     /// consumed by the host's lifecycle drain rather than the game driver.
-    #[cfg(feature = "load")]
-    seat_lifecycle: Vec<crate::shim::InteractReq>,
+    seat_lifecycle: Vec<crate::interact::InteractReq>,
     /// Channels that already received the held-post refusal status in the
     /// current hold. Cleared when the folded batch is consumed after resume.
-    #[cfg(feature = "load")]
     held_channel_refusals: Vec<u64>,
     api: Option<Box<api_seat::ApiSeat>>,
     bank: Option<Box<bank_seat::BankSeat>>,
@@ -539,9 +511,8 @@ pub struct SlotScript {
     /// The compiled card's own interact queue: what its tick enqueued, drained
     /// by the host on the same frames the isolate's queue is. Never both — a
     /// slot runs a compiled script XOR a Load isolate.
-    #[cfg(feature = "load")]
-    compiled_interacts: Vec<crate::shim::InteractReq>,
-    #[cfg(feature = "load")]
+    compiled_interacts: Vec<crate::interact::InteractReq>,
+    
     compiled_interact_outcome_seqs: Vec<u64>,
     /// A compiled clue-machine session abort is owed to the pump thread.
     /// `reset_session_work` may run on the control thread and must not touch
@@ -550,52 +521,34 @@ pub struct SlotScript {
     /// frame. It drops the machine's live step and its token alone: the strip
     /// list and the abandon latch are the session's own and survive a
     /// connection boundary.
-    #[cfg(feature = "load")]
     clue_abort_owed: bool,
     /// A whole clue-machine instance reset is owed to the pump thread:
     /// operator Stop is a fresh task instance, so the machine's step, its
     /// strip list and its abandon latch all start over. Marked by `stop` and
     /// applied by [`SlotScript::sync_compiled_clue`] the way the abort is; it
     /// subsumes [`Self::clue_abort_owed`].
-    #[cfg(feature = "load")]
     clue_stop_owed: bool,
-    /// JS Load isolate, spawned by `start_load` on Start (not on Load).
-    #[cfg(feature = "load")]
-    load: Option<LoadIsolate>,
-    /// True once [`LoadIsolate::poll_ready`] has returned Ready.
-    #[cfg(feature = "load")]
-    load_ready: bool,
+    /// The active surface run, created only on Start.
+    surface: Option<Box<dyn SurfaceRun>>,
+    /// True after the surface reports that setup completed.
+    surface_ready: bool,
     /// Reaper completion for a non-blocking Stop.
-    #[cfg(feature = "load")]
     stop_rx: Option<std::sync::mpsc::Receiver<Vec<String>>>,
-    #[cfg(feature = "load")]
+    
     after_stop: AfterStop,
     /// An operator Load Start has not settled yet (see [`StartOutcome`]).
     start_pending: bool,
     start_outcome: Option<StartOutcome>,
     /// `runtime_generation` before the unsettled setup's bump. A setup
     /// that fails restores it: a failed Start never counted as a Start.
-    #[cfg(feature = "load")]
     setup_generation_base: Option<u64>,
-    /// Per-slot last-post snapshot fingerprint (delta posts: only the
-    /// fields that changed are re-sent) and the `NavWorld` identity the
-    /// packed banks keyframe on. Cleared on Start so the first post is a
-    /// keyframe.
-    #[cfg(feature = "load")]
-    last_snapshot: Option<SnapshotFingerprint>,
-    #[cfg(feature = "load")]
+    
     last_world_id: Option<usize>,
-    #[cfg(feature = "load")]
+    
     reach_cache: api::query::ReachPackCache,
-    /// Reusable FlatBuffer builder for this slot's host→isolate snapshot
-    /// posts. One per slot; the V8 isolate thread holds its own for
-    /// interact/paint. Never a JSON document on either path.
-    #[cfg(feature = "load")]
-    ipc: IsolateBuf,
     last_error: Option<String>,
     /// Work generation that owns the active tick error, if any. A successful
     /// tick from a later session must not clear an older diagnostic.
-    #[cfg(feature = "load")]
     active_tick_error_generation: Option<u64>,
     lifecycle_receipt: Option<ScriptLifecycleReceipt>,
     /// Isolate log lines not yet taken by the panel (`take_pending_logs`).
@@ -611,14 +564,14 @@ pub struct SlotScript {
     work_epoch: u64,
     /// Frozen source/settings used for watchdog recreate. Cleared on
     /// operator Stop / new manual Start.
-    #[cfg(feature = "load")]
-    load_identity: Option<SlotLoadIdentity>,
+    surface_start: Option<SurfaceStart>,
+    /// Process-owned factories bound by the host composition.
+    factories: [Option<Arc<dyn SurfaceFactory>>; SurfaceKind::COUNT],
     watchdog: ProgressWatchdog,
     /// Fixed-size rolling window for terminate-driven runtime recreates.
     /// The third cut inside [`CUT_RESTART_WINDOW`] stops the script.
-    #[cfg(feature = "load")]
     cut_restart_times: [Option<Instant>; CUT_RESTART_LIMIT],
-    #[cfg(feature = "load")]
+    
     cut_restart_next: usize,
     /// Stable source identity key for this execution (`catalog:Name` / file path).
     source_identity: Option<String>,
@@ -626,14 +579,8 @@ pub struct SlotScript {
     runtime_generation: u64,
     last_settings_fp: Option<String>,
     native_input: Arc<NativeInputAuthority>,
-    /// Frozen `RecoveryHints`, kept across watchdog isolate restarts.
-    #[cfg(feature = "load")]
-    recovery_hints: Arc<crate::load::RecoveryHintsCell>,
-    /// Test-only spawn failure seam: when set, the next `spawn_isolate`
-    /// returns a deterministic thread-spawn diagnostic instead of spawning.
-    /// Never set outside `#[cfg(test)]`; production builds have no field.
-    #[cfg(all(test, feature = "load"))]
-    fail_spawn_for_test: bool,
+    /// Recovery hints retained across surface run restarts.
+    recovery_hints: Arc<RecoveryHintsCell>,
 }
 
 impl Default for SlotScript {
@@ -657,19 +604,19 @@ impl SlotScript {
             seat_fence: Fence::new(),
             seat_delivery: Vec::new(),
             seat_native_delivery: VecDeque::new(),
-            #[cfg(feature = "load")]
+            
             seat_interact_delivery: Vec::new(),
             guardian_held: false,
             seat_host_held: false,
-            #[cfg(feature = "load")]
+            
             held_aborts: Vec::new(),
-            #[cfg(feature = "load")]
+            
             held_policy: None,
             seat_session_held: false,
             held_walk_terminals: Vec::new(),
-            #[cfg(feature = "load")]
+            
             seat_lifecycle: Vec::new(),
-            #[cfg(feature = "load")]
+            
             held_channel_refusals: Vec::new(),
             api: None,
             bank: None,
@@ -683,36 +630,32 @@ impl SlotScript {
             incarnation: 0,
             world_members: api::selected::Truth::Unknown,
             control_generation: 0,
-            #[cfg(feature = "load")]
+            
             compiled_interacts: Vec::new(),
-            #[cfg(feature = "load")]
+            
             compiled_interact_outcome_seqs: Vec::new(),
-            #[cfg(feature = "load")]
+            
             clue_abort_owed: false,
-            #[cfg(feature = "load")]
+            
             clue_stop_owed: false,
-            #[cfg(feature = "load")]
-            load: None,
-            #[cfg(feature = "load")]
-            load_ready: false,
-            #[cfg(feature = "load")]
+            
+            surface: None,
+            
+            surface_ready: false,
+            
             stop_rx: None,
-            #[cfg(feature = "load")]
+            
             after_stop: AfterStop::Idle,
             start_pending: false,
             start_outcome: None,
-            #[cfg(feature = "load")]
+            
             setup_generation_base: None,
-            #[cfg(feature = "load")]
-            last_snapshot: None,
-            #[cfg(feature = "load")]
+            
             last_world_id: None,
-            #[cfg(feature = "load")]
+            
             reach_cache: api::query::ReachPackCache::default(),
-            #[cfg(feature = "load")]
-            ipc: IsolateBuf::new(),
             last_error: None,
-            #[cfg(feature = "load")]
+            
             active_tick_error_generation: None,
             lifecycle_receipt: None,
             pending_logs: Vec::new(),
@@ -724,21 +667,19 @@ impl SlotScript {
             bank_op_result_seq: 0,
             bank_op_result: false,
             work_epoch: 0,
-            #[cfg(feature = "load")]
-            load_identity: None,
+            
+            surface_start: None,
+            factories: [None; SurfaceKind::COUNT],
             watchdog: ProgressWatchdog::new(),
-            #[cfg(feature = "load")]
+            
             cut_restart_times: [None; CUT_RESTART_LIMIT],
-            #[cfg(feature = "load")]
+            
             cut_restart_next: 0,
             source_identity: None,
             runtime_generation: 0,
             last_settings_fp: None,
             native_input: NativeInputAuthority::new(),
-            #[cfg(feature = "load")]
-            recovery_hints: Arc::new(crate::load::RecoveryHintsCell::new()),
-            #[cfg(all(test, feature = "load"))]
-            fail_spawn_for_test: false,
+            recovery_hints: Arc::new(RecoveryHintsCell::new()),
         }
     }
     /// Install this Play's account-bound authority, without taking another slot lock.
@@ -752,6 +693,12 @@ impl SlotScript {
     /// ([`crate::native::NativeTick::state`]).
     pub fn bind_local_state(&mut self, state: Arc<crate::local_state::SlotState>) {
         self.local_state = Some(state);
+    }
+
+    /// Bind the process-owned factory for one surface kind.
+    pub fn bind_surface_factory(&mut self, factory: Arc<dyn SurfaceFactory>) {
+        let index = factory.kind().index();
+        self.factories[index] = Some(factory);
     }
 
     /// The bound local-state capability, if any.
@@ -793,12 +740,10 @@ impl SlotScript {
         });
         if let Some(run) = rekeyed {
             self.discard_seat_gameplay_delivery();
-            #[cfg(not(feature = "load"))]
-            let _ = run;
-            #[cfg(feature = "load")]
+            
             self.align_api_session(run.session);
-            #[cfg(feature = "load")]
-            if let Some(isolate) = &self.load {
+            
+            if let Some(isolate) = &self.surface {
                 // The local work epoch can have advanced on transient down
                 // observations before F0 mints this session. The carrier's
                 // pending Starts must use the owner's actual execution key.
@@ -932,7 +877,7 @@ impl SlotScript {
         } else {
             seat.held_tick();
         }
-        let abort = |req: &crate::shim::InteractReq| keep && seat_reserved_row(req);
+        let abort = |req: &crate::interact::InteractReq| keep && seat_reserved_row(req);
         let abort_action = |action: &crate::native::HostAction| {
             let crate::native::HostEffect::Interaction(req) = &action.effect else {
                 return false;
@@ -942,7 +887,7 @@ impl SlotScript {
         let mut dropped = self.seat_native_delivery.len();
         self.seat_native_delivery.retain(abort_action);
         dropped -= self.seat_native_delivery.len();
-        #[cfg(feature = "load")]
+        
         {
             dropped += self.seat_interact_delivery.len() + self.compiled_interacts.len();
             self.seat_interact_delivery
@@ -994,7 +939,7 @@ impl SlotScript {
             keep
         });
         let native_dropped = native_before - self.seat_native_delivery.len();
-        #[cfg(feature = "load")]
+        
         let dropped = {
             let interact_before = self.seat_interact_delivery.len();
             self.seat_interact_delivery.retain(|queued| {
@@ -1009,8 +954,6 @@ impl SlotScript {
             });
             native_dropped + interact_before - self.seat_interact_delivery.len()
         };
-        #[cfg(not(feature = "load"))]
-        let dropped = native_dropped;
         seat.count_dropped(dropped);
     }
 
@@ -1023,18 +966,30 @@ impl SlotScript {
         self.seat_compiled_owner = None;
         self.seat_delivery.clear();
         self.seat_native_delivery.clear();
-        #[cfg(feature = "load")]
+        
         self.seat_interact_delivery.clear();
-        #[cfg(feature = "load")]
+        
         self.held_aborts.clear();
-        #[cfg(feature = "load")]
+        
         {
             self.held_policy = None;
         }
-        #[cfg(feature = "load")]
+        
         self.seat_lifecycle.clear();
-        #[cfg(feature = "load")]
+        
         self.held_channel_refusals.clear();
+    }
+
+    /// Arm the real gameplay seat for an external conformance test.
+    #[cfg(feature = "test-hooks")]
+    pub fn arm_seat_for_test(&mut self, run: api::selected::RunKey) {
+        self.arm_seat(run);
+    }
+
+    /// Return the number of interactions waiting for host delivery.
+    #[cfg(feature = "test-hooks")]
+    pub fn seat_interact_delivery_len(&self) -> usize {
+        self.seat_interact_delivery.len()
     }
 
     fn arm_compiled_seat(&mut self, run: api::selected::RunKey, card: crate::CompiledId) {
@@ -1052,7 +1007,7 @@ impl SlotScript {
         let kind = match card.0 {
             "Gatherer" | "Grinch" => crate::native::request::NativeKind::Gather,
             "Quester" => crate::native::request::NativeKind::Quester,
-            #[cfg(feature = "load")]
+            
             "Sherlock" => crate::native::request::NativeKind::Clue,
             #[cfg(any(test, feature = "test-hooks"))]
             "test" => crate::native::request::NativeKind::BankNearest,
@@ -1079,77 +1034,12 @@ impl SlotScript {
 
     /// True when either a compiled script or a JS isolate is installed.
     fn has_instance(&self) -> bool {
-        self.compiled.is_some() || self.load_active()
+        self.compiled.is_some() || self.surface_active()
     }
 
-    /// Start a JS Load isolate (the isolate is spawned here, on Start, not
-    /// at Load) with no operator loadouts posted. Same state gating as
-    /// [`SlotScript::start_compiled`]. The composition root posts the
-    /// operator's rows through [`SlotScript::start_load_with_loadouts`]
-    /// from its local-state lease; nothing here opens a store.
-    #[cfg(feature = "load")]
-    pub fn start_load(
-        &mut self,
-        source: String,
-        shape: LoadShape,
-        siblings: Vec<(String, String)>,
-    ) -> Result<(), String> {
-        self.start_load_with_loadouts(source, shape, siblings, &[])
-    }
-
-    /// Start with explicit loadouts, avoiding operator filesystem inputs in
-    /// disposable live fixtures. Commands are posted before the first tick.
-    #[cfg(feature = "load")]
-    pub fn start_load_with_loadouts(
-        &mut self,
-        source: String,
-        shape: LoadShape,
-        siblings: Vec<(String, String)>,
-        loadouts: &[api::loadout::Loadout],
-    ) -> Result<(), String> {
-        self.start_load_with_loadouts_and_game_data(
-            source,
-            shape,
-            siblings,
-            loadouts,
-            None,
-            std::sync::Arc::new(api::named_banks::NamedBankFacts::empty()),
-        )
-    }
-
-    /// Start with explicit loadouts and immutable selected-revision facts.
-    #[cfg(feature = "load")]
-    pub fn start_load_with_loadouts_and_game_data(
-        &mut self,
-        source: String,
-        shape: LoadShape,
-        siblings: Vec<(String, String)>,
-        loadouts: &[api::loadout::Loadout],
-        game_data: Option<std::sync::Arc<api::game_data::SelectedGameData>>,
-        named_banks: std::sync::Arc<api::named_banks::NamedBankFacts>,
-    ) -> Result<(), String> {
-        self.start_load_with_loadouts_and_game_data_typed(
-            source,
-            shape,
-            siblings,
-            loadouts,
-            game_data,
-            named_banks,
-        )
-        .map_err(|e| e.to_string())
-    }
-
-    #[cfg(feature = "load")]
-    fn start_load_with_loadouts_and_game_data_typed(
-        &mut self,
-        source: String,
-        shape: LoadShape,
-        siblings: Vec<(String, String)>,
-        loadouts: &[api::loadout::Loadout],
-        game_data: Option<std::sync::Arc<api::game_data::SelectedGameData>>,
-        named_banks: std::sync::Arc<api::named_banks::NamedBankFacts>,
-    ) -> Result<(), StartLoadError> {
-        match self.state {
+    /// Start one surface card with its immutable shared inputs.
+    pub fn start_surface(&mut self, start: SurfaceStart) -> Result<(), StartLoadError> {
+        let result = match self.state {
             RunState::Running | RunState::Paused | RunState::Starting => Err(
                 StartLoadError::Refused("script already active: stop it first".to_string()),
             ),
@@ -1171,18 +1061,7 @@ impl SlotScript {
                     // in the log instead of silently replacing it.
                     self.pending_logs.push(e.clone());
                 }
-                self.load_identity = Some(SlotLoadIdentity {
-                    api_family: crate::resolve_api_family(&source)
-                        .ok()
-                        .map(|(_, family)| family),
-                    source: Arc::from(source),
-                    shape,
-                    siblings: siblings.into(),
-                    settings_bag: None,
-                    game_data,
-                    named_banks,
-                    loadouts: Arc::from(loadouts.to_vec()),
-                });
+                self.surface_start = Some(start);
                 self.after_stop = AfterStop::Start;
                 self.reset_for_fresh_start();
                 // The generation moves now, not when the reap finishes, so
@@ -1199,29 +1078,23 @@ impl SlotScript {
                         "compiled script active: stop it first".to_string(),
                     ));
                 }
-                let identity = SlotLoadIdentity {
-                    api_family: crate::resolve_api_family(&source)
-                        .ok()
-                        .map(|(_, family)| family),
-                    source: Arc::from(source),
-                    shape,
-                    siblings: siblings.into(),
-                    settings_bag: None,
-                    game_data,
-                    named_banks,
-                    loadouts: Arc::from(loadouts.to_vec()),
-                };
-                self.spawn_isolate(identity, true)
-                    .map_err(StartLoadError::RuntimeLoad)?;
+                self.spawn_surface(start, true)?;
                 self.reset_for_fresh_start();
                 self.begin_start_outcome();
                 Ok(())
             }
+        };
+        if result.is_ok() {
+            self.last_settings_fp = self
+                .surface_start
+                .as_ref()
+                .and_then(|start| start.settings_bag.as_deref())
+                .map(settings_fp);
         }
+        result
     }
 
     /// Operator-Start bookkeeping shared by an immediate and a queued Start.
-    #[cfg(feature = "load")]
     fn reset_for_fresh_start(&mut self) {
         self.watchdog.arm_fresh(Instant::now());
         self.want_run = true;
@@ -1240,7 +1113,7 @@ impl SlotScript {
         self.cut_restart_next = 0;
     }
 
-    #[cfg(feature = "load")]
+    
     fn begin_start_outcome(&mut self) {
         self.start_pending = true;
         self.start_outcome = None;
@@ -1264,45 +1137,29 @@ impl SlotScript {
         }
     }
 
-    /// Spawn the isolate for `identity` and enter Starting. `bump` moves
-    /// the runtime generation (a queued Start already moved it).
-    #[cfg(feature = "load")]
-    fn spawn_isolate(&mut self, identity: SlotLoadIdentity, bump: bool) -> Result<(), String> {
+    /// Spawn the surface and enter Starting. A queued Start already moved
+    /// the runtime generation, so its respawn does not bump it again.
+    fn spawn_surface(&mut self, start: SurfaceStart, bump: bool) -> Result<(), StartLoadError> {
         self.bank_runtime_boundary();
-        #[cfg(test)]
-        if std::mem::take(&mut self.fail_spawn_for_test) {
-            return Err("isolate thread: test-injected spawn failure".to_string());
-        }
         let run_generation = self
             .runtime_generation
             .checked_add(u64::from(bump))
-            .ok_or_else(|| "run generation exhausted".to_string())?;
+            .ok_or_else(|| StartLoadError::RuntimeLoad("run generation exhausted".to_string()))?;
         let execution = ExecutionId::first(api::selected::RunKey {
             slot: self.incarnation,
             run: run_generation,
             session: self.work_epoch,
         });
-        let isolate = GameplayFactory::spawn_with_content(
-            identity.source.to_string(),
-            identity.shape,
-            identity.siblings.iter().cloned().collect(),
-            identity.game_data.clone(),
-            Arc::clone(&identity.named_banks),
-            Some(execution),
-        )
-        .map_err(|error| error.to_string())?;
-        isolate.post_loadouts(&identity.loadouts);
-        isolate.post_recovery_hints(Arc::clone(&self.recovery_hints));
-        if let Some(bag) = identity.settings_bag.as_deref() {
-            isolate.post_settings_bag(bag);
-        }
-        self.load = Some(isolate);
-        self.load_ready = false;
-        self.load_identity = Some(identity);
-        self.last_snapshot = None;
+        let kind = start.card.kind();
+        let factory = self.factories[kind.index()]
+            .as_ref()
+            .ok_or(SurfaceError::NoFactory(kind))?;
+        let run = factory.spawn(&start, execution, Arc::clone(&self.recovery_hints))?;
+        self.surface = Some(run);
+        self.surface_ready = false;
+        self.surface_start = Some(start);
         self.last_world_id = None;
         self.reach_cache.clear();
-        self.ipc = IsolateBuf::new();
         self.last_error = None;
         self.active_tick_error_generation = None;
         self.lifecycle_receipt = None;
@@ -1315,45 +1172,22 @@ impl SlotScript {
         }
         Ok(())
     }
-    /// Test-only: arm the spawn-failure seam, then drive the real typed
-    /// Start producer. Lets a test assert the `Idle|Error` branch maps a
-    /// spawn failure to `RuntimeLoad` (not `Refused`) without spawning.
-    #[cfg(all(test, feature = "load"))]
-    pub(crate) fn start_with_injected_spawn_failure_for_test(
-        &mut self,
-        source: String,
-        shape: crate::load::LoadShape,
-        siblings: Vec<(String, String)>,
-        loadouts: &[api::loadout::Loadout],
-        game_data: Option<std::sync::Arc<api::game_data::SelectedGameData>>,
-        named_banks: std::sync::Arc<api::named_banks::NamedBankFacts>,
-    ) -> Result<(), StartLoadError> {
-        self.fail_spawn_for_test = true;
-        self.start_load_with_loadouts_and_game_data_typed(
-            source,
-            shape,
-            siblings,
-            loadouts,
-            game_data,
-            named_banks,
-        )
-    }
 
-    #[cfg(feature = "load")]
+    
     fn begin_async_stop(&mut self, after: AfterStop) -> bool {
-        let Some(isolate) = self.load.take() else {
+        let Some(isolate) = self.surface.take() else {
             return false;
         };
         self.teardown_api(StopReason::Replaced);
         let (tx, rx) = std::sync::mpsc::channel();
-        isolate.join_detached(tx);
+        isolate.stop(tx);
         self.stop_rx = Some(rx);
-        self.load_ready = false;
+        self.surface_ready = false;
         self.setup_generation_base = None;
         self.state = RunState::Stopping;
         self.after_stop = after.clone();
         if matches!(after, AfterStop::Idle) {
-            self.load_identity = None;
+            self.surface_start = None;
             self.source_identity = None;
             self.runtime_generation = self.runtime_generation.wrapping_add(1);
             self.watchdog.cancel_clear();
@@ -1364,21 +1198,19 @@ impl SlotScript {
 
     fn finish_idle_stop(&mut self) {
         self.teardown_compiled(StopReason::Operator);
-        #[cfg(feature = "load")]
+        
         self.teardown_api(StopReason::Operator);
-        #[cfg(feature = "load")]
+        
         self.compiled_interacts.clear();
-        #[cfg(feature = "load")]
+        
         {
             self.compiled_interact_outcome_seqs.clear();
-            self.last_snapshot = None;
             self.last_world_id = None;
-            self.ipc = IsolateBuf::new();
-            self.load_ready = false;
+            self.surface_ready = false;
             self.stop_rx = None;
             self.after_stop = AfterStop::Idle;
             self.setup_generation_base = None;
-            self.load_identity = None;
+            self.surface_start = None;
         }
         self.watchdog.cancel_clear();
         self.want_run = false;
@@ -1393,14 +1225,13 @@ impl SlotScript {
 
     /// Resolve Start/Stop without blocking. The slot thread and UI pump
     /// call this once per frame.
-    #[cfg(feature = "load")]
     fn observe_load_lifecycle(&mut self) {
-        if let Some(isolate) = self.load.as_ref() {
-            if !self.load_ready {
+        if let Some(isolate) = self.surface.as_ref() {
+            if !self.surface_ready {
                 match isolate.poll_ready() {
-                    Ready::Pending => {}
-                    Ready::Ready => {
-                        self.load_ready = true;
+                    SurfaceReady::Pending => {}
+                    SurfaceReady::Ready => {
+                        self.surface_ready = true;
                         self.setup_generation_base = None;
                         if self.state == RunState::Starting {
                             if self.want_run {
@@ -1420,13 +1251,13 @@ impl SlotScript {
                         }
                         self.settle_start(StartOutcome::Ready);
                     }
-                    Ready::Failed(e) => {
-                        let isolate = self.load.take().expect("failed setup still owns isolate");
+                    SurfaceReady::Failed(e) => {
+                        let isolate = self.surface.take().expect("failed setup still owns isolate");
                         self.teardown_api(StopReason::Replaced);
                         let (tx, rx) = std::sync::mpsc::channel();
-                        isolate.join_detached(tx);
+                        isolate.stop(tx);
                         self.stop_rx = Some(rx);
-                        self.load_ready = false;
+                        self.surface_ready = false;
                         self.state = RunState::Stopping;
                         self.after_stop = AfterStop::Fail(e);
                         self.want_run = false;
@@ -1434,7 +1265,7 @@ impl SlotScript {
                 }
             }
         }
-        let script_cut = self.load.as_ref().is_some_and(LoadIsolate::take_script_cut);
+        let script_cut = self.surface.as_ref().is_some_and(|surface| surface.take_script_cut());
         if script_cut {
             self.handle_script_cut(Instant::now());
         }
@@ -1450,7 +1281,7 @@ impl SlotScript {
             Err(std::sync::mpsc::TryRecvError::Disconnected) => self.complete_stop(),
         }
     }
-    #[cfg(feature = "load")]
+    
     fn handle_script_cut(&mut self, now: Instant) {
         self.cut_restart_times[self.cut_restart_next] = Some(now);
         self.cut_restart_next = (self.cut_restart_next + 1) % CUT_RESTART_LIMIT;
@@ -1473,7 +1304,7 @@ impl SlotScript {
             }
             return;
         }
-        if let Err(error) = self.apply_load_restart(now) {
+        if let Err(error) = self.apply_surface_restart(now) {
             self.pending_logs.push(error.clone());
             self.last_error = Some(error.clone());
             self.want_run = false;
@@ -1484,9 +1315,9 @@ impl SlotScript {
         }
     }
 
-    #[cfg(feature = "load")]
+    
     fn finish_cut_limit(&mut self, error: String) {
-        self.load_identity = None;
+        self.surface_start = None;
         self.source_identity = None;
         self.watchdog.cancel_clear();
         self.active_tick_error_generation = None;
@@ -1497,12 +1328,10 @@ impl SlotScript {
         self.last_settings_fp = None;
     }
 
-    #[cfg(feature = "load")]
+    
     fn complete_stop(&mut self) {
         self.stop_rx = None;
-        self.last_snapshot = None;
         self.last_world_id = None;
-        self.ipc = IsolateBuf::new();
         self.pending_withdraw_x = None;
         self.pending_bank_op = None;
         self.work_epoch = self.work_epoch.wrapping_add(1);
@@ -1518,18 +1347,18 @@ impl SlotScript {
             AfterStop::Fail(e) => self.fail_setup(e),
             AfterStop::CutLimit(error) => self.finish_cut_limit(error),
             // The cooldown was stamped when the restart was decided.
-            AfterStop::Restart => match self.load_identity.clone() {
+            AfterStop::Restart => match self.surface_start.clone() {
                 Some(identity) => {
-                    if let Err(e) = self.spawn_isolate(identity, true) {
-                        self.fail_setup(e);
+                    if let Err(e) = self.spawn_surface(identity, true) {
+                        self.fail_setup(e.to_string());
                     }
                 }
                 None => self.fail_setup("watchdog restart: no retained identity".into()),
             },
-            AfterStop::Start => match self.load_identity.clone() {
+            AfterStop::Start => match self.surface_start.clone() {
                 Some(identity) => {
-                    if let Err(e) = self.spawn_isolate(identity, false) {
-                        self.fail_setup(e);
+                    if let Err(e) = self.spawn_surface(identity, false) {
+                        self.fail_setup(e.to_string());
                     }
                 }
                 None => self.fail_setup("start: no retained identity".into()),
@@ -1540,12 +1369,11 @@ impl SlotScript {
     /// A setup that never reached Ready: no runtime ran, so the slot goes
     /// back to Idle with the diagnostic Start used to return, and the
     /// generation that setup took is given back.
-    #[cfg(feature = "load")]
     fn fail_setup(&mut self, e: String) {
         self.last_error = Some(e.clone());
         self.active_tick_error_generation = None;
         self.pending_logs.push(e.clone());
-        self.load_identity = None;
+        self.surface_start = None;
         self.source_identity = None;
         if let Some(base) = self.setup_generation_base.take() {
             self.runtime_generation = base;
@@ -1568,7 +1396,7 @@ impl SlotScript {
         self.native_runtime.clock.observe(Instant::now(), false);
         self.revoke_native_input();
         self.interrupt_compiled(Interrupt::Pause);
-        #[cfg(feature = "load")]
+        
         self.interrupt_api(Interrupt::Pause);
         if let Some(pending) = &mut self.pending_withdraw_x {
             pending.freeze();
@@ -1577,8 +1405,8 @@ impl SlotScript {
             pending.freeze();
         }
         if self.has_instance() && matches!(self.state, RunState::Running | RunState::Starting) {
-            #[cfg(feature = "load")]
-            if let Some(isolate) = &self.load {
+            
+            if let Some(isolate) = &self.surface {
                 isolate.pause();
             }
             {
@@ -1600,7 +1428,7 @@ impl SlotScript {
         self.native_runtime.consume_manual_takeover();
 
         self.interrupt_compiled(Interrupt::Resume);
-        #[cfg(feature = "load")]
+        
         self.interrupt_api(Interrupt::Resume);
         if self.state == RunState::Error {
             return;
@@ -1613,26 +1441,17 @@ impl SlotScript {
             pending.resume();
         }
         if self.has_instance() && self.state == RunState::Paused {
-            #[cfg(feature = "load")]
-            if let Some(isolate) = &self.load {
+            
+            if let Some(isolate) = &self.surface {
                 isolate.resume();
             }
             {
                 let _ = self.watchdog.set_frozen(false, Instant::now());
             }
-            self.state = {
-                #[cfg(feature = "load")]
-                {
-                    if self.load.is_some() && !self.load_ready {
-                        RunState::Starting
-                    } else {
-                        RunState::Running
-                    }
-                }
-                #[cfg(not(feature = "load"))]
-                {
-                    RunState::Running
-                }
+            self.state = if self.surface.is_some() && !self.surface_ready {
+                RunState::Starting
+            } else {
+                RunState::Running
             };
             self.native_input.resume();
         }
@@ -1691,21 +1510,21 @@ impl SlotScript {
         self.seat_compiled_owner = None;
         self.seat_delivery.clear();
         self.seat_native_delivery.clear();
-        #[cfg(feature = "load")]
+        
         self.seat_interact_delivery.clear();
-        #[cfg(feature = "load")]
+        
         self.held_aborts.clear();
-        #[cfg(feature = "load")]
+        
         {
             self.held_policy = None;
         }
-        #[cfg(feature = "load")]
+        
         self.seat_lifecycle.clear();
-        #[cfg(feature = "load")]
+        
         self.held_channel_refusals.clear();
-        #[cfg(feature = "load")]
+        
         self.teardown_api(reason);
-        #[cfg(feature = "load")]
+        
         self.bank_runtime_boundary();
         self.native_runtime.revoke();
         self.evidence_wait_run = None;
@@ -1719,40 +1538,40 @@ impl SlotScript {
         // and its abandon latch all start over — which is the marker
         // `reset_session_work` must not make: that one is a connection
         // boundary and drops the step alone.
-        #[cfg(feature = "load")]
-        if !self.load_active() && self.state != RunState::Stopping {
+        
+        if !self.surface_active() && self.state != RunState::Stopping {
             self.clue_stop_owed = true;
             self.clue_abort_owed = false;
         }
         // A failed setup already ends Idle with its diagnostic; a Stop
         // during its reap must not turn that into a silent cancel.
-        #[cfg(feature = "load")]
+        
         if self.state == RunState::Stopping && matches!(self.after_stop, AfterStop::Fail(_)) {
             return;
         }
         self.last_error = None;
         self.teardown_compiled(reason);
-        #[cfg(feature = "load")]
+        
         {
             self.active_tick_error_generation = None;
         }
         // A Start that has not reached Ready never ran: nothing to commit.
         self.settle_start(StartOutcome::Cancelled);
-        #[cfg(feature = "load")]
+        
         if self.state == RunState::Stopping {
             // Already reaping: a queued Start or a watchdog restart after
             // it is dropped, and the reap ends Idle.
             self.after_stop = AfterStop::Idle;
             self.setup_generation_base = None;
             self.want_run = false;
-            self.load_identity = None;
+            self.surface_start = None;
             self.source_identity = None;
             self.runtime_generation = self.runtime_generation.wrapping_add(1);
             self.watchdog.cancel_clear();
             self.last_settings_fp = None;
             return;
         }
-        #[cfg(feature = "load")]
+        
         if self.begin_async_stop(AfterStop::Idle) {
             self.want_run = false;
             return;
@@ -1769,7 +1588,7 @@ impl SlotScript {
             self.evidence_wait_run = None;
             self.native_runtime.clear_note_progress();
             self.native_input.sync_live(false);
-            #[cfg(feature = "load")]
+            
             self.discard_mouse_interacts();
             if self.pending_withdraw_x.is_some() {
                 self.complete_withdraw_x(false);
@@ -1804,7 +1623,7 @@ impl SlotScript {
     /// [`SlotScript::reset_session_work`], except that a Load script's work
     /// is held whole for the next session, whether automatic relog proceeds
     /// or a repeat guard waits for explicit Log in
-    /// ([`LoadIsolate::reconnect_session_work`]); a compiled script's live
+    /// ([`SurfaceRun::reconnect_session_work`]); a compiled script's live
     /// step still ends. Returns whether the host should re-arm, on the new
     /// session, the script walk it was following: the script's work was held
     /// and the walk is not the watchdog's own recovery walk, which the
@@ -1818,7 +1637,7 @@ impl SlotScript {
         self.evidence_wait_run = None;
         self.native_runtime.clock.observe(Instant::now(), false);
         self.on_is_up(false);
-        #[cfg(feature = "load")]
+        
         let discarded_walks = if reconnect {
             let seat_walks = self
                 .seat
@@ -1862,26 +1681,26 @@ impl SlotScript {
         } else {
             self.seat_delivery.clear();
             self.seat_native_delivery.clear();
-            #[cfg(feature = "load")]
+            
             self.seat_interact_delivery.clear();
-            #[cfg(feature = "load")]
+            
             self.held_aborts.clear();
-            #[cfg(feature = "load")]
+            
             {
                 self.held_policy = None;
             }
         }
-        #[cfg(feature = "load")]
+        
         self.seat_lifecycle.clear();
-        #[cfg(feature = "load")]
+        
         self.held_channel_refusals.clear();
         self.seat_fence.revoke();
-        #[cfg(feature = "load")]
+        
         self.api_session_boundary(reconnect);
-        #[cfg(feature = "load")]
+        
         self.bank_session_boundary(reconnect);
-        #[cfg(feature = "load")]
-        if !self.load_active() {
+        
+        if !self.surface_active() {
             // Same rule as Stop: the compiled machine's abort lands on the
             // pump thread, never here. A connection boundary aborts the live
             // step and its token and keeps the rest of the session — the
@@ -1889,7 +1708,7 @@ impl SlotScript {
             // this is the weaker marker and never `clue_stop_owed`.
             self.clue_abort_owed = true;
         }
-        #[cfg(feature = "load")]
+        
         {
             let execution = ExecutionId::first(api::selected::RunKey {
                 slot: self.incarnation,
@@ -1897,8 +1716,8 @@ impl SlotScript {
                 session: self.work_epoch,
             });
             let carried_error = self.active_tick_error_generation.is_some();
-            let held = reconnect && self.load.is_some();
-            if let Some(isolate) = &self.load {
+            let held = reconnect && self.surface.is_some();
+            if let Some(isolate) = &mut self.surface {
                 let generation = if held {
                     isolate.reconnect_session_work(Some(execution))
                 } else {
@@ -1913,7 +1732,6 @@ impl SlotScript {
             } else {
                 self.active_tick_error_generation = None;
             }
-            self.last_snapshot = None;
             self.last_world_id = None;
             self.reach_cache.clear();
 
@@ -1921,53 +1739,30 @@ impl SlotScript {
             let _ = self.watchdog.on_session_reset(Instant::now());
             held && abort != WatchdogAction::AbortWalk
         }
-        #[cfg(not(feature = "load"))]
-        {
-            let _ = reconnect;
-            false
-        }
     }
 
-    /// Post the host's FlatBuffer snapshot blob into a Load isolate (no-op
-    /// for a compiled script). Call it before [`SlotScript::on_game_tick`]
-    /// so the posted blob is what the tick's JS reads. `false`: the wedged
-    /// isolate refused the post — nothing in it reached the script, the
-    /// next encode is a keyframe, and the isolate refuses the paired tick.
-    #[cfg(feature = "load")]
-    pub fn post_snapshot(&mut self, bytes: Vec<u8>) -> bool {
-        let Some(isolate) = &self.load else {
-            return false;
-        };
-        let accepted = isolate.post_snapshot(bytes);
-        if !accepted {
-            self.last_snapshot = None;
-        }
-        accepted
-    }
-    /// Deliver one broker FlatBuffer batch to the current Load runtime.
+    /// Deliver one broker event batch to the current surface.
     /// Generation/lifecycle fencing is performed by the Play broker before
     /// this crossing; a compiled card has no BroadcastChannel surface.
-    #[cfg(feature = "load")]
-    pub fn post_channel_events(&mut self, bytes: Vec<u8>) -> bool {
-        self.load
+    pub fn post_channel_events(&mut self, events: &[crate::interact::InteractReq]) -> bool {
+        self.surface
             .as_ref()
-            .is_some_and(|isolate| isolate.post_channel_events(bytes))
+            .is_some_and(|surface| surface.post_channel_events(events))
     }
 
     /// Post the merged operator settings bag into a Load isolate.
-    #[cfg(feature = "load")]
     pub fn post_settings_bag(&mut self, bag: &serde_json::Map<String, serde_json::Value>) {
-        if self.load.is_none() {
+        if self.surface.is_none() {
             return;
         }
         let fp = settings_fp(bag);
         if self.last_settings_fp.as_deref() == Some(fp.as_str()) {
             return;
         }
-        if let Some(isolate) = &self.load {
+        if let Some(isolate) = &self.surface {
             isolate.post_settings_bag(bag);
         }
-        if let Some(identity) = &mut self.load_identity {
+        if let Some(identity) = &mut self.surface_start {
             identity.settings_bag = Some(Arc::new(bag.clone()));
         }
         self.last_settings_fp = Some(fp);
@@ -1975,7 +1770,6 @@ impl SlotScript {
 
     /// Deliver settings only when identity and runtime generation match.
     /// Returns false when the edit is stale or the bag is unchanged.
-    #[cfg(feature = "load")]
     pub fn post_settings_bag_fenced(
         &mut self,
         bag: &serde_json::Map<String, serde_json::Value>,
@@ -1996,7 +1790,7 @@ impl SlotScript {
             if !matches!(self.after_stop, AfterStop::Start | AfterStop::Restart) {
                 return false;
             }
-            let Some(load_identity) = &mut self.load_identity else {
+            let Some(load_identity) = &mut self.surface_start else {
                 return false;
             };
             load_identity.settings_bag = Some(Arc::new(bag.clone()));
@@ -2007,7 +1801,7 @@ impl SlotScript {
             RunState::Running | RunState::Paused | RunState::Starting => {}
             _ => return false,
         }
-        if self.load.is_none() {
+        if self.surface.is_none() {
             return false;
         }
         self.post_settings_bag(bag);
@@ -2033,9 +1827,9 @@ impl SlotScript {
     /// Selected-revision facts pinned by a compiled run or a live Load seat.
     pub fn compiled_game_data(&self) -> Option<Arc<api::game_data::SelectedGameData>> {
         let selected = self.compiled.as_ref().map(|run| Arc::clone(&run.selected));
-        #[cfg(feature = "load")]
+        
         let selected = selected.or_else(|| self.api_game_data()).or_else(|| {
-            self.load_identity
+            self.surface_start
                 .as_ref()
                 .and_then(|identity| identity.game_data.as_ref())
                 .map(Arc::clone)
@@ -2043,15 +1837,9 @@ impl SlotScript {
         selected
     }
 
-    /// Pump-thread sync of the compiled clue machine: the owed abort or
-    /// instance reset (Stop, a session reset, a panic) and this frame's
-    /// pause/hold freeze, applied whether or not the frame dispatches a tick.
-    ///
-    /// Call it on the slot's own thread, once per observed frame — never from
-    /// the control thread, and never for a Load slot (that slot's isolate
-    /// thread runs the same hooks for its own instance). The machine's
-    /// runtime is thread-local, so the instance this reaches is exactly the
-    /// one this slot's compiled card calls.
+    /// Apply registered card lifecycle hooks on the owning slot thread.
+    /// Owed Stop or session-reset work runs even without an active card.
+    /// Surface runs own their lifecycle hooks on their runtime thread.
     pub fn sync_compiled_clue(&mut self, held: bool) {
         let now = std::time::Instant::now();
         // The safety lease uses wall time even when no script tick is eligible.
@@ -2059,38 +1847,30 @@ impl SlotScript {
         // Pause, hold, not-ready, recovery hold and Blocked freeze the clock.
         let eligible = self.dispatch_open() && !held;
         self.native_runtime.clock.observe(now, eligible);
-        #[cfg(feature = "load")]
-        {
-            if self.load_active() {
-                return;
-            }
-            if self.clue_stop_owed {
-                // Stop is a fresh task instance: the whole session starts
-                // over, strip list and abandon latch included. It subsumes
-                // any session abort marked before it.
-                self.clue_stop_owed = false;
-                self.clue_abort_owed = false;
-                crate::clue::on_stop();
-            } else if self.clue_abort_owed {
-                // The abort is about the machine's own session, not the
-                // instance, so it is consumed even when no card is installed —
-                // and it keeps the strip list the session still owes a reclaim
-                // for.
-                self.clue_abort_owed = false;
-                crate::clue::on_reset();
+        if self.surface_active() {
+            return;
+        }
+        let stop_owed = std::mem::take(&mut self.clue_stop_owed);
+        let abort_owed = std::mem::take(&mut self.clue_abort_owed);
+        for card in crate::compiled_cards() {
+            let Some(hooks) = card.lifecycle else {
+                continue;
+            };
+            if stop_owed {
+                (hooks.on_stop)();
+            } else if abort_owed {
+                (hooks.on_reset)();
             }
             if self.compiled.is_none() {
-                return;
+                continue;
             }
             if self.state == RunState::Running && self.want_run {
-                crate::clue::on_resume();
+                (hooks.on_resume)();
             } else {
-                crate::clue::on_pause();
+                (hooks.on_pause)();
             }
-            crate::clue::on_hold(held);
+            (hooks.on_hold)(held);
         }
-        #[cfg(not(feature = "load"))]
-        let _ = held;
     }
 
     /// Share the host SlotInput authority. Call on spawn before Start.
@@ -2111,13 +1891,13 @@ impl SlotScript {
 
     fn revoke_native_input(&mut self) {
         self.native_input.revoke();
-        #[cfg(feature = "load")]
+        
         self.discard_mouse_interacts();
     }
 
-    #[cfg(feature = "load")]
+    
     fn discard_mouse_interacts(&self) {
-        if let Some(isolate) = &self.load {
+        if let Some(isolate) = &self.surface {
             isolate.discard_mouse_interacts();
         }
     }
@@ -2143,7 +1923,7 @@ impl SlotScript {
                 .is_some_and(|(pairs, run)| pairs.held(run))
     }
     fn foreground_action_active(&self) -> bool {
-        #[cfg(feature = "load")]
+        
         if !self.compiled_interacts.is_empty() || !self.seat_interact_delivery.is_empty() {
             return true;
         }
@@ -2158,88 +1938,29 @@ impl SlotScript {
         let live = self.dispatch_open();
         self.native_input.sync_live(live);
         if !live {
-            #[cfg(feature = "load")]
+            
             self.discard_mouse_interacts();
         }
     }
 
-    #[cfg(feature = "load")]
+    
     pub fn post_loadouts(&mut self, loadouts: &[api::loadout::Loadout]) {
-        if let Some(isolate) = &self.load {
+        if let Some(isolate) = &self.surface {
             isolate.post_loadouts(loadouts);
         }
-        if let Some(identity) = &mut self.load_identity {
+        if let Some(identity) = &mut self.surface_start {
             identity.loadouts = Arc::from(loadouts.to_vec());
         }
     }
 
-    /// Start a JS Load isolate with `loadouts` posted and optionally post
-    /// the operator settings bag.
-    #[cfg(feature = "load")]
-    pub fn start_load_with_settings(
+    /// Validate the saved loadout selection before starting the surface.
+    pub fn start_surface_with_settings(
         &mut self,
-        source: String,
-        shape: LoadShape,
-        bag: Option<&serde_json::Map<String, serde_json::Value>>,
-        siblings: Vec<(String, String)>,
-        loadouts: &[api::loadout::Loadout],
-    ) -> Result<(), String> {
-        self.start_load_with_settings_and_game_data(
-            source,
-            shape,
-            bag,
-            siblings,
-            loadouts,
-            None,
-            std::sync::Arc::new(api::named_banks::NamedBankFacts::empty()),
-        )
-    }
-
-    /// Start with settings, the operator's loadout rows and the immutable
-    /// facts selected by the owning Play.
-    #[cfg(feature = "load")]
-    #[allow(clippy::too_many_arguments)] // the composition's start inputs, each owned by a different seam
-    pub fn start_load_with_settings_and_game_data(
-        &mut self,
-        source: String,
-        shape: LoadShape,
-        bag: Option<&serde_json::Map<String, serde_json::Value>>,
-        siblings: Vec<(String, String)>,
-        loadouts: &[api::loadout::Loadout],
-        game_data: Option<std::sync::Arc<api::game_data::SelectedGameData>>,
-        named_banks: std::sync::Arc<api::named_banks::NamedBankFacts>,
-    ) -> Result<(), String> {
-        self.start_load_with_settings_and_game_data_typed(
-            source,
-            shape,
-            bag,
-            siblings,
-            loadouts,
-            game_data,
-            named_banks,
-        )
-        .map_err(|e| e.to_string())
-    }
-
-    /// Typed initial-start boundary; refuses active slots before evaluating
-    /// source. `loadouts` are the operator's rows the composition leased
-    /// from the local-state service: a `loadout` setting in `bag` must
-    /// name one of them, or the start is refused before anything spawns.
-    #[cfg(feature = "load")]
-    #[allow(clippy::too_many_arguments)] // the composition's start inputs, each owned by a different seam
-    pub fn start_load_with_settings_and_game_data_typed(
-        &mut self,
-        source: String,
-        shape: LoadShape,
-        bag: Option<&serde_json::Map<String, serde_json::Value>>,
-        siblings: Vec<(String, String)>,
-        loadouts: &[api::loadout::Loadout],
-        game_data: Option<std::sync::Arc<api::game_data::SelectedGameData>>,
-        named_banks: std::sync::Arc<api::named_banks::NamedBankFacts>,
+        start: SurfaceStart,
     ) -> Result<(), StartLoadError> {
-        if let Some(bag) = bag {
+        if let Some(bag) = start.settings_bag.as_deref() {
             let wanted = bag.get("loadout").map(|value| value.as_str().unwrap_or(""));
-            crate::loadouts_store::resolve_script_loadout_setting(loadouts, wanted)
+            crate::loadouts_store::resolve_script_loadout_setting(&start.loadouts, wanted)
                 .map(|_| ())
                 .map_err(|error| match error {
                     error @ crate::loadouts_store::LoadoutResolutionError::NoLoadouts { .. } => {
@@ -2248,44 +1969,19 @@ impl SlotScript {
                     other => StartLoadError::Refused(other.to_string()),
                 })?;
         }
-        self.start_load_with_loadouts_and_game_data_typed(
-            source,
-            shape,
-            siblings,
-            loadouts,
-            game_data,
-            named_banks,
-        )?;
-        if let Some(bag) = bag {
-            self.post_settings_bag(bag);
-        }
-        Ok(())
+        self.start_surface(start)
     }
 
-    /// Encode `input` into this slot's reusable isolate buffer and return
-    /// the finished bytes. Stores the new last-post fingerprint so the
-    /// next observe is a delta. The actual changed-field mask advances the
-    /// isolate evidence sequence without cloning the fingerprint.
-    #[cfg(feature = "load")]
-    pub fn encode_snapshot_delta(
+    /// Prepare native pages and post one typed snapshot delta.
+    pub fn post_snapshot_delta(
         &mut self,
-        input: &crate::isolate_fb::SnapshotInput<'_>,
+        input: &crate::native::snapshot_source::SnapshotInput<'_>,
+        native: crate::native::snapshot_source::NativeFactsInput<'_>,
         force_banks: bool,
-    ) -> Vec<u8> {
-        self.encode_snapshot_delta_with_native(
-            input,
-            crate::isolate_fb::NativeFactsInput::default(),
-            force_banks,
-        )
-    }
-
-    #[cfg(feature = "load")]
-    pub fn encode_snapshot_delta_with_native(
-        &mut self,
-        input: &crate::isolate_fb::SnapshotInput<'_>,
-        native: crate::isolate_fb::NativeFactsInput<'_>,
-        force_banks: bool,
-    ) -> Vec<u8> {
+    ) -> bool {
+        let Some(surface) = self.surface.as_mut() else {
+            return false;
+        };
         let mut native = native;
         native.api_gather = self.api.as_ref().and_then(|seat| seat.page.as_deref());
         native.api_gather_outcome = self.api.as_ref().and_then(|seat| seat.terminal.as_ref());
@@ -2309,7 +2005,7 @@ impl SlotScript {
                 self.seat_compiled_owner,
             )
         });
-        let mut bank_values = [crate::isolate_fb::SeatResultValue {
+        let mut bank_values = [crate::native::seat_rows::SeatResultValue {
             id: RequestId::isolate(1).expect("isolate namespace"),
             value: &[],
         }; api::script_contract::MAX_RESULTS];
@@ -2319,7 +2015,7 @@ impl SlotScript {
             .map_or(0, |bank| bank.result_values(&mut bank_values));
         if let (Some(seat), Some(details)) = (self.seat.as_ref(), details.as_ref()) {
             native.seat_page = Some(
-                crate::isolate_fb::SeatPageInput::new(
+                crate::native::seat_rows::SeatPageInput::new(
                     seat.live(),
                     seat.results(),
                     &details[..seat.live().len()],
@@ -2330,28 +2026,20 @@ impl SlotScript {
                 .expect("slot-owned bank result invariant"),
             );
         }
-        let (bytes, fp, evidence_changed) =
-            self.ipc.encode_snapshot_delta_with_native_and_evidence(
-                self.last_snapshot.as_ref(),
-                input,
-                native,
-                force_banks,
-            );
-        self.last_snapshot = Some(fp);
-        if let Some(isolate) = self.load.as_ref() {
-            isolate.record_snapshot_evidence_change(evidence_changed);
-        }
-        bytes
+        surface.post_snapshot_delta(input, native, force_banks)
     }
 
-    #[cfg(feature = "load")]
-    pub fn encode_snapshot_wake_with_native(
+    /// Prepare native pages and post one typed snapshot wake.
+    pub fn post_snapshot_wake(
         &mut self,
-        input: &crate::isolate_fb::SnapshotInput<'_>,
-        native: crate::isolate_fb::NativeFactsInput<'_>,
+        input: &crate::native::snapshot_source::SnapshotInput<'_>,
+        native: crate::native::snapshot_source::NativeFactsInput<'_>,
         force_banks: bool,
         preserve_inv: bool,
-    ) -> Vec<u8> {
+    ) -> bool {
+        let Some(surface) = self.surface.as_mut() else {
+            return false;
+        };
         let mut native = native;
         native.api_gather = self.api.as_ref().and_then(|seat| seat.page.as_deref());
         native.api_gather_outcome = self.api.as_ref().and_then(|seat| seat.terminal.as_ref());
@@ -2375,7 +2063,7 @@ impl SlotScript {
                 self.seat_compiled_owner,
             )
         });
-        let mut bank_values = [crate::isolate_fb::SeatResultValue {
+        let mut bank_values = [crate::native::seat_rows::SeatResultValue {
             id: RequestId::isolate(1).expect("isolate namespace"),
             value: &[],
         }; api::script_contract::MAX_RESULTS];
@@ -2385,7 +2073,7 @@ impl SlotScript {
             .map_or(0, |bank| bank.result_values(&mut bank_values));
         if let (Some(seat), Some(details)) = (self.seat.as_ref(), details.as_ref()) {
             native.seat_page = Some(
-                crate::isolate_fb::SeatPageInput::new(
+                crate::native::seat_rows::SeatPageInput::new(
                     seat.live(),
                     seat.results(),
                     &details[..seat.live().len()],
@@ -2396,43 +2084,31 @@ impl SlotScript {
                 .expect("slot-owned bank result invariant"),
             );
         }
-        let (bytes, fp, evidence_changed) = self.ipc.encode_snapshot_wake_with_native_and_evidence(
-            self.last_snapshot.as_mut(),
-            input,
-            native,
-            force_banks,
-            preserve_inv,
-        );
-        self.last_snapshot = Some(fp);
-        if let Some(isolate) = self.load.as_ref() {
-            isolate.record_snapshot_evidence_change(evidence_changed);
-        }
-        bytes
+        surface.post_snapshot_wake(input, native, force_banks, preserve_inv)
     }
 
     /// Last accepted snapshot identities, used to detect host completions
     /// without retaining another per-slot generation table.
-    #[cfg(feature = "load")]
-    pub fn last_snapshot_fingerprint(&self) -> Option<&SnapshotFingerprint> {
-        self.last_snapshot.as_ref()
+    pub fn posted_snapshot_facts(&self) -> Option<PostedSnapshotFacts> {
+        self.surface
+            .as_ref()
+            .and_then(|surface| surface.posted_snapshot_facts())
     }
 
     /// The `NavWorld` identity the packed banks were posted against
     /// (`None` before the first post / after a Start). A world rebuild
     /// changes the identity, forcing the banks table onto the next post.
-    #[cfg(feature = "load")]
     pub fn last_world_id(&self) -> Option<usize> {
         self.last_world_id
     }
 
     /// Store the `NavWorld` identity the packed banks were just posted
     /// against.
-    #[cfg(feature = "load")]
     pub fn store_last_world_id(&mut self, id: Option<usize>) {
         self.last_world_id = id;
     }
 
-    #[cfg(feature = "load")]
+    
     pub fn reach_pack_cache(&mut self) -> &mut api::query::ReachPackCache {
         &mut self.reach_cache
     }
@@ -2450,15 +2126,11 @@ impl SlotScript {
         if self.native_quiet_read(now).is_some() {
             return true;
         }
-        #[cfg(feature = "load")]
+        
         {
-            self.load
+            self.surface
                 .as_ref()
-                .is_some_and(|isolate| isolate.compat_journal_paint_hidden(now))
-        }
-        #[cfg(not(feature = "load"))]
-        {
-            false
+                .is_some_and(|surface| surface.journal_paint_hidden(now))
         }
     }
 
@@ -2476,8 +2148,8 @@ impl SlotScript {
         }) {
             return true;
         }
-        #[cfg(feature = "load")]
-        if let Some(isolate) = &self.load {
+        
+        if let Some(isolate) = &self.surface {
             return isolate.live_walking_operation();
         }
         false
@@ -2493,7 +2165,7 @@ impl SlotScript {
     /// Live work a manual movement takes over: a walking operation, a live
     /// native ledger owner, or a Gather or Combat API session.
     pub fn manual_input_owner(&self) -> bool {
-        #[cfg(feature = "load")]
+        
         if self.api_session_takes_manual_input() {
             return true;
         }
@@ -2504,14 +2176,12 @@ impl SlotScript {
         // A deliberate takeover is gameplay progress, even if the human
         // clicked an unwalkable tile and no player-info movement follows.
         self.watchdog.stamp_gameplay(Instant::now());
-        #[cfg(feature = "load")]
-        if let Some(isolate) = &self.load {
+        
+        if let Some(isolate) = &self.surface {
             isolate.note_manual_walk_takeover(intent_seq);
         }
-        #[cfg(feature = "load")]
+        
         self.api_user_input();
-        #[cfg(not(feature = "load"))]
-        let _ = intent_seq;
         let Some(ledger) = self.native_runtime.ledger.as_mut() else {
             return;
         };
@@ -2587,10 +2257,8 @@ impl SlotScript {
             .and_then(|owner| owner.active_walk())
             .and_then(|request| native_walk_id(request.get()));
         seat.retire_inactive_native_walks(active_native_walk);
-        #[cfg(feature = "load")]
+        
         let bank_owner = self.bank.as_ref().and_then(|bank| bank.action_owner);
-        #[cfg(not(feature = "load"))]
-        let bank_owner = None;
         let owner = bank_owner
             .or(self.seat_compiled_owner)
             .or_else(|| seat.session());
@@ -2613,7 +2281,7 @@ impl SlotScript {
                 continue;
             }
             let (class, release) = match &action.effect {
-                crate::native::HostEffect::Interaction(crate::shim::InteractReq::AbortWalk {
+                crate::native::HostEffect::Interaction(crate::interact::InteractReq::AbortWalk {
                     request_id,
                 }) => (
                     api::script_contract::EmissionClass::Release,
@@ -2640,7 +2308,7 @@ impl SlotScript {
         }
     }
 
-    #[cfg(feature = "load")]
+    
     fn capture_compiled_seat_interacts(&mut self) {
         let Some(seat) = self.seat.as_mut() else {
             return;
@@ -2651,15 +2319,15 @@ impl SlotScript {
         let stamps = &mut self.compiled_interact_outcome_seqs;
         debug_assert_eq!(reqs.len(), stamps.len());
         for (req, observed_walk_outcome_seq) in reqs.drain(..).zip(stamps.drain(..)) {
-            if matches!(&req, crate::shim::InteractReq::NoteProgress) {
+            if matches!(&req, crate::interact::InteractReq::NoteProgress) {
                 self.pending_logs
                     .push("seat compiled interaction refused: NoteProgress is host-owned".into());
                 continue;
             }
             let (class, release) = seat_interact_class(&req, owner);
             let walk = seat_walk_id(&req, owner);
-            let reserved_policy = matches!(req, crate::shim::InteractReq::RunPolicyOverride { .. });
-            let effect = SeatEffect::Interact(crate::load::QueuedInteract {
+            let reserved_policy = matches!(req, crate::interact::InteractReq::RunPolicyOverride { .. });
+            let effect = SeatEffect::Interact(crate::interact::QueuedInteract {
                 req,
                 observed_walk_outcome_seq,
             });
@@ -2687,21 +2355,21 @@ impl SlotScript {
         for row in delivery.drain(..) {
             match row {
                 SeatEffect::Native(action) => self.seat_native_delivery.push_back(action),
-                #[cfg(feature = "load")]
+                
                 SeatEffect::Interact(interact)
                     if matches!(
                         &interact.req,
-                        crate::shim::InteractReq::NoteProgress
-                            | crate::shim::InteractReq::LoopSettled
-                            | crate::shim::InteractReq::WaitEnqueued
-                            | crate::shim::InteractReq::WaitSettled
-                            | crate::shim::InteractReq::RecoveryAnchor { .. }
-                            | crate::shim::InteractReq::RecoveryAnchorNone
+                        crate::interact::InteractReq::NoteProgress
+                            | crate::interact::InteractReq::LoopSettled
+                            | crate::interact::InteractReq::WaitEnqueued
+                            | crate::interact::InteractReq::WaitSettled
+                            | crate::interact::InteractReq::RecoveryAnchor { .. }
+                            | crate::interact::InteractReq::RecoveryAnchorNone
                     ) =>
                 {
                     self.seat_lifecycle.push(interact.req);
                 }
-                #[cfg(feature = "load")]
+                
                 SeatEffect::Interact(interact) => self.seat_interact_delivery.push(interact),
             }
         }
@@ -2869,8 +2537,7 @@ impl SlotScript {
     /// Diagnostic/test drain without the observed-outcome stamp. Production
     /// host dispatch uses [`Self::drain_host_interacts`] so pre-takeover walking
     /// decisions cannot become fresh merely by passing through a raw queue.
-    #[cfg(feature = "load")]
-    pub fn drain_interacts(&mut self) -> Vec<crate::shim::InteractReq> {
+    pub fn drain_interacts(&mut self) -> Vec<crate::interact::InteractReq> {
         if self.seat.is_some() {
             self.dispatch_seat_rows();
             return std::mem::take(&mut self.seat_interact_delivery)
@@ -2884,13 +2551,13 @@ impl SlotScript {
             .collect()
     }
 
-    #[cfg(feature = "load")]
-    fn drain_interacts_stamped(&mut self) -> Vec<crate::load::QueuedInteract> {
+    
+    fn drain_interacts_stamped(&mut self) -> Vec<crate::interact::QueuedInteract> {
         debug_assert!(
-            !(self.compiled.is_some() && self.load.is_some()),
+            !(self.compiled.is_some() && self.surface.is_some()),
             "a slot never owns both a compiled script and a Load isolate"
         );
-        match &self.load {
+        match &self.surface {
             Some(isolate) => isolate.drain_interacts_stamped(),
             None => {
                 let reqs = std::mem::take(&mut self.compiled_interacts);
@@ -2899,7 +2566,7 @@ impl SlotScript {
                 reqs.into_iter()
                     .zip(stamps)
                     .map(
-                        |(req, observed_walk_outcome_seq)| crate::load::QueuedInteract {
+                        |(req, observed_walk_outcome_seq)| crate::interact::QueuedInteract {
                             req,
                             observed_walk_outcome_seq,
                         },
@@ -2911,7 +2578,6 @@ impl SlotScript {
 
     /// One physical isolate batch is the custody unit: its generation and
     /// observed-walk stamp cannot be borrowed from a later producer tick.
-    #[cfg(feature = "load")]
     fn consume_seat_batch(
         &mut self,
         batch: DecodedSeatBatch,
@@ -2923,9 +2589,19 @@ impl SlotScript {
         }
     }
 
+    /// Admit and apply one decoded batch through the real seat path.
+    #[cfg(feature = "test-hooks")]
+    pub fn consume_seat_batch_for_test(
+        &mut self,
+        batch: DecodedSeatBatch,
+        observed_walk_outcome_seq: u64,
+        machine_events: &[crate::native::seat_rows::SeatMachineEvent],
+    ) {
+        self.consume_seat_batch(batch, observed_walk_outcome_seq, machine_events);
+    }
+
     /// Preflight a batch before any of its rows reaches the seat. A
     /// malformed batch is dropped whole, and its rows are counted.
-    #[cfg(feature = "load")]
     fn admit_seat_batch(&mut self, batch: &DecodedSeatBatch) -> bool {
         let Some(seat) = self.seat.as_ref() else {
             self.pending_logs
@@ -2970,7 +2646,6 @@ impl SlotScript {
 
     /// Apply an admitted batch: push its rows, then its controls and
     /// starts, then take and dispatch.
-    #[cfg(feature = "load")]
     fn apply_seat_batch(
         &mut self,
         mut batch: DecodedSeatBatch,
@@ -3107,11 +2782,10 @@ impl SlotScript {
     /// Pin each row's push-time authority and queue it in the seat. A row
     /// whose lineage names a start of `starts` that the seat has not
     /// admitted yet has conditional custody until that start is admitted.
-    #[cfg(feature = "load")]
     fn push_seat_rows(
         &mut self,
-        rows: impl Iterator<Item = crate::isolate_fb::SeatInteractDecoded>,
-        starts: &[crate::isolate_fb::SeatStartInput],
+        rows: impl Iterator<Item = crate::native::seat_rows::SeatInteractDecoded>,
+        starts: &[crate::native::seat_rows::SeatStartInput],
         observed_walk_outcome_seq: u64,
     ) {
         use api::script_contract::{AuthorityStatus, EmissionClass};
@@ -3178,9 +2852,9 @@ impl SlotScript {
             let walk = seat_walk_id(&row.request, row.mirror_owner.or(row.lineage));
             let reserved_policy = matches!(
                 row.request,
-                crate::shim::InteractReq::RunPolicyOverride { .. }
+                crate::interact::InteractReq::RunPolicyOverride { .. }
             );
-            let effect = SeatEffect::Interact(crate::load::QueuedInteract {
+            let effect = SeatEffect::Interact(crate::interact::QueuedInteract {
                 req: row.request,
                 observed_walk_outcome_seq,
             });
@@ -3208,11 +2882,11 @@ impl SlotScript {
         }
     }
 
-    #[cfg(feature = "load")]
+    
     fn compact_held_seat_batches(
         &mut self,
-        mut batches: Vec<crate::load::QueuedSeatBatch>,
-    ) -> Vec<crate::load::QueuedSeatBatch> {
+        mut batches: Vec<crate::native::seat_rows::QueuedSeatBatch>,
+    ) -> Vec<crate::native::seat_rows::QueuedSeatBatch> {
         let Some(mut latest) = batches.pop() else {
             return batches;
         };
@@ -3237,16 +2911,16 @@ impl SlotScript {
         // The folded batch is releases, the policy row, the lane, then the
         // replacements. Resume pages it into the seat
         // (`consume_held_fold`), so the replacements land after the lane.
-        use crate::shim::InteractReq;
+        use crate::interact::InteractReq;
         for waiting in batches.iter_mut().rev().filter(|batch| batch.held_fold) {
             carry_waiting_controls(waiting, &mut latest);
         }
-        let mut releases: Vec<crate::isolate_fb::SeatInteractDecoded> = Vec::new();
+        let mut releases: Vec<crate::native::seat_rows::SeatInteractDecoded> = Vec::new();
         let mut walk_releases = 0;
-        let mut lane: Vec<crate::isolate_fb::SeatInteractDecoded> = Vec::new();
-        let mut replacements: Vec<crate::isolate_fb::SeatInteractDecoded> = Vec::new();
+        let mut lane: Vec<crate::native::seat_rows::SeatInteractDecoded> = Vec::new();
+        let mut replacements: Vec<crate::native::seat_rows::SeatInteractDecoded> = Vec::new();
         let mut policy = None;
-        let mut waits = crate::load::HeldWaitFacts::default();
+        let mut waits = crate::native::seat_rows::HeldWaitFacts::default();
         let mut refused_posts: Vec<u64> = Vec::new();
         let mut dropped = 0;
         for batch in batches.iter_mut().chain(std::iter::once(&mut latest)) {
@@ -3336,11 +3010,10 @@ impl SlotScript {
     /// Returns the rest of the batch when the seat has no room for its
     /// next page in this frame. The caller keeps it, and every later batch
     /// behind it, for the next frame.
-    #[cfg(feature = "load")]
     fn consume_held_fold(
         &mut self,
-        mut queued: crate::load::QueuedSeatBatch,
-    ) -> Option<crate::load::QueuedSeatBatch> {
+        mut queued: crate::native::seat_rows::QueuedSeatBatch,
+    ) -> Option<crate::native::seat_rows::QueuedSeatBatch> {
         if !self.admit_seat_batch(&queued.batch) {
             return None;
         }
@@ -3392,7 +3065,6 @@ impl SlotScript {
 
     /// Tell each script channel whose post the hold refused, once in each
     /// hold, through the broker's status delivery path.
-    #[cfg(feature = "load")]
     fn notify_held_channel_refusals(&mut self, refused: Vec<u64>) {
         let mut statuses = Vec::new();
         for channel_id in refused {
@@ -3400,13 +3072,13 @@ impl SlotScript {
                 continue;
             }
             self.held_channel_refusals.push(channel_id);
-            statuses.push(crate::shim::InteractReq::ChannelStatus {
+            statuses.push(crate::interact::InteractReq::ChannelStatus {
                 channel_id,
                 message: HELD_CHANNEL_POST_REFUSED.into(),
             });
         }
         if !statuses.is_empty() {
-            let _ = self.post_channel_events(crate::isolate_fb::encode_interact_batch(&statuses));
+            let _ = self.post_channel_events(&statuses);
         }
     }
 
@@ -3416,8 +3088,7 @@ impl SlotScript {
     /// them. The replay gives the watchdog count that the held facts give in
     /// event order, for every starting count. The hold has ended, so the
     /// channel refusal notices of the hold end too.
-    #[cfg(feature = "load")]
-    fn release_held_fold(&mut self, batch: &mut crate::load::QueuedSeatBatch) {
+    fn release_held_fold(&mut self, batch: &mut crate::native::seat_rows::QueuedSeatBatch) {
         self.held_channel_refusals.clear();
         let waits = std::mem::take(&mut batch.held_waits);
         self.seat_lifecycle
@@ -3427,12 +3098,11 @@ impl SlotScript {
 
     /// A Paused guardian frame still receives isolate batches. Fold their
     /// repeated control pages before the host resumes ordinary dispatch.
-    #[cfg(feature = "load")]
     pub fn retain_held_seat_batches(&mut self) {
         if !self.seat.as_ref().is_some_and(|seat| seat.held()) {
             return;
         }
-        let Some(isolate) = &self.load else {
+        let Some(isolate) = &self.surface else {
             return;
         };
         let generation = isolate.generation();
@@ -3468,34 +3138,41 @@ impl SlotScript {
             carried.push(queued);
         }
         let carried = self.compact_held_seat_batches(carried);
-        self.load
+        self.surface
             .as_ref()
             .expect("batch producer")
             .restore_seat_batches(carried);
     }
 
-    #[cfg(all(feature = "load", feature = "test-hooks"))]
+    #[cfg(feature = "test-hooks")]
     pub fn seat_batch_backlog(&self) -> usize {
-        self.load
+        self.surface
             .as_ref()
-            .map_or(0, LoadIsolate::seat_batch_backlog)
+            .map_or(0, |surface| surface.seat_batch_backlog())
+    }
+
+    /// Return the number of retained fold batches, not their row count.
+    #[cfg(feature = "test-hooks")]
+    pub fn held_fold_len(&self) -> usize {
+        self.surface
+            .as_ref()
+            .map_or(0, |surface| surface.held_fold_len())
     }
 
     /// Drain one host frame's decoded isolate messages, separating the latest
     /// run-policy replacement from game/lifecycle interacts. The outer option
     /// is "an update was sent"; the inner option is replace versus clear.
-    #[cfg(feature = "load")]
     pub fn drain_host_interacts(
         &mut self,
     ) -> (
         Option<Option<api::run_policy::RunPolicyOverride>>,
-        Vec<crate::load::QueuedInteract>,
+        Vec<crate::interact::QueuedInteract>,
         bool,
     ) {
         let batches = self
-            .load
+            .surface
             .as_ref()
-            .map_or_else(Vec::new, LoadIsolate::drain_seat_batches);
+            .map_or_else(Vec::new, |surface| surface.drain_seat_batches());
         let mut carried = Vec::new();
         // Set when the retained guardian-hold batch still has pages that
         // the seat cannot take in this frame.
@@ -3503,7 +3180,7 @@ impl SlotScript {
         // Reserved rows of batches that a watchdog recovery hold drops.
         let mut watchdog_kept = Vec::new();
         for mut queued in batches {
-            let current_generation = self.load.as_ref().expect("batch producer").generation();
+            let current_generation = self.surface.as_ref().expect("batch producer").generation();
             if queued.generation != current_generation {
                 self.pending_logs
                     .push("dropped stale seat batch generation".into());
@@ -3578,13 +3255,13 @@ impl SlotScript {
                 for row in queued.batch.reqs.drain(..) {
                     if seat_reserved_row(&row.request) {
                         dropped -= 1;
-                        watchdog_kept.push(crate::load::QueuedInteract {
+                        watchdog_kept.push(crate::interact::QueuedInteract {
                             req: row.request,
                             observed_walk_outcome_seq,
                         });
                     }
                 }
-                queued.held_waits = crate::load::HeldWaitFacts::default();
+                queued.held_waits = crate::native::seat_rows::HeldWaitFacts::default();
                 self.seat.as_mut().expect("armed").count_dropped(dropped);
                 carried.push(queued);
                 continue;
@@ -3615,7 +3292,7 @@ impl SlotScript {
             } else {
                 carried
             };
-            self.load
+            self.surface
                 .as_ref()
                 .expect("batch producer")
                 .restore_seat_batches(carried);
@@ -3630,18 +3307,18 @@ impl SlotScript {
         reqs.extend(watchdog_kept);
         let mut policy = None;
         reqs.retain(|queued| match &queued.req {
-            crate::shim::InteractReq::RunPolicyOverride { policy: update } => {
+            crate::interact::InteractReq::RunPolicyOverride { policy: update } => {
                 policy = Some(*update);
                 false
             }
-            crate::shim::InteractReq::GatherStop { .. }
-            | crate::shim::InteractReq::CombatStop { .. } => {
+            crate::interact::InteractReq::GatherStop { .. }
+            | crate::interact::InteractReq::CombatStop { .. } => {
                 self.consume_api_release(&queued.req);
                 false
             }
-            crate::shim::InteractReq::GatherRun { .. }
-            | crate::shim::InteractReq::CombatFight { .. }
-            | crate::shim::InteractReq::ProgressRead { .. } => {
+            crate::interact::InteractReq::GatherRun { .. }
+            | crate::interact::InteractReq::CombatFight { .. }
+            | crate::interact::InteractReq::ProgressRead { .. } => {
                 self.pending_logs
                     .push("dropped malformed legacy API start outside typed seat".into());
                 if let Some(seat) = self.seat.as_mut() {
@@ -3669,11 +3346,10 @@ impl SlotScript {
     /// reserves one release slot for each walk (`MAX_WALK_RELEASES`), so this
     /// keeps one abort for each walk request and at most
     /// `MAX_WALK_RELEASES`. The drain counts a further abort as dropped.
-    #[cfg(feature = "load")]
     fn keep_held_aborts(
         &mut self,
         policy: &mut Option<Option<api::run_policy::RunPolicyOverride>>,
-        reqs: &mut Vec<crate::load::QueuedInteract>,
+        reqs: &mut Vec<crate::interact::QueuedInteract>,
     ) {
         let held = self.guardian_held
             || self.seat_host_held
@@ -3700,7 +3376,7 @@ impl SlotScript {
         let mut dropped = 0;
         let kept = &mut self.held_aborts;
         reqs.retain(|queued| {
-            if !matches!(queued.req, crate::shim::InteractReq::AbortWalk { .. }) {
+            if !matches!(queued.req, crate::interact::InteractReq::AbortWalk { .. }) {
                 return true;
             }
             // Only aborts are kept, so an equal row is the same walk's abort.
@@ -3721,20 +3397,27 @@ impl SlotScript {
     /// Diagnostic/test injection: stamps raw rows with the runtime's current
     /// observed outcome. Production Pause/restoration must retain the original
     /// stamp through [`Self::restore_host_interacts`].
-    #[cfg(feature = "load")]
-    pub fn restore_interacts(&mut self, drained: Vec<crate::shim::InteractReq>) {
+    pub fn restore_interacts(&mut self, drained: Vec<crate::interact::InteractReq>) {
         debug_assert!(
-            !(self.compiled.is_some() && self.load.is_some()),
+            !(self.compiled.is_some() && self.surface.is_some()),
             "a slot never owns both a compiled script and a Load isolate"
         );
-        match &self.load {
-            Some(isolate) => isolate.restore_interacts(drained),
+        match &self.surface {
+            Some(surface) => surface.restore_interacts_stamped(
+                drained
+                    .into_iter()
+                    .map(|req| crate::interact::QueuedInteract {
+                        req,
+                        observed_walk_outcome_seq: 0,
+                    })
+                    .collect(),
+            ),
             None => {
                 let seq = self.native_runtime.observed_walk_outcome.seq();
                 self.restore_host_interacts(
                     drained
                         .into_iter()
-                        .map(|req| crate::load::QueuedInteract {
+                        .map(|req| crate::interact::QueuedInteract {
                             req,
                             observed_walk_outcome_seq: seq,
                         })
@@ -3744,9 +3427,9 @@ impl SlotScript {
         }
     }
 
-    #[cfg(feature = "load")]
-    pub fn restore_host_interacts(&mut self, drained: Vec<crate::load::QueuedInteract>) {
-        match &self.load {
+    
+    pub fn restore_host_interacts(&mut self, drained: Vec<crate::interact::QueuedInteract>) {
+        match &self.surface {
             Some(isolate) => isolate.restore_interacts_stamped(drained),
             None => {
                 let (mut reqs, mut stamps): (Vec<_>, Vec<_>) = drained
@@ -3761,33 +3444,32 @@ impl SlotScript {
         }
     }
 
-    #[cfg(feature = "load")]
-    pub fn drain_lifecycle(&mut self) -> Vec<crate::shim::InteractReq> {
+    
+    pub fn drain_lifecycle(&mut self) -> Vec<crate::interact::InteractReq> {
         let mut facts = self
-            .load
+            .surface
             .as_ref()
-            .map_or_else(Vec::new, LoadIsolate::drain_lifecycle);
+            .map_or_else(Vec::new, |surface| surface.drain_lifecycle());
         facts.append(&mut self.seat_lifecycle);
         facts
     }
 
-    #[cfg(feature = "load")]
+    
     pub fn request_recovery_anchor(&self) {
-        if let Some(isolate) = &self.load {
+        if let Some(isolate) = &self.surface {
             isolate.request_recovery_anchor();
         }
     }
 
-    #[cfg(feature = "load")]
-    pub fn load_identity(&self) -> Option<&SlotLoadIdentity> {
-        self.load_identity.as_ref()
+    
+    pub fn surface_start(&self) -> Option<&SurfaceStart> {
+        self.surface_start.as_ref()
     }
 
-    /// API family captured with the active Load identity at Start.
-    #[cfg(feature = "load")]
-    pub fn api_family(&self) -> Option<crate::ApiFamily> {
-        self.load.as_ref()?;
-        self.load_identity.as_ref()?.api_family
+    /// The API family captured by the active surface card.
+    pub fn surface_family(&self) -> Option<SurfaceFamily> {
+        self.surface.as_ref()?;
+        self.surface_start.as_ref()?.card.family()
     }
 
     pub fn watchdog(&self) -> &ProgressWatchdog {
@@ -3809,7 +3491,7 @@ impl SlotScript {
         self.watchdog.stamp_game_packet_tick(now);
     }
 
-    #[cfg(feature = "load")]
+    
     fn duel_fight_pen_anchor_unreachable(player: WatchdogTile, anchor: WatchdogTile) -> bool {
         let pen_index = |tile: WatchdogTile| crate::duel_arena::pen_at(tile.x, tile.z, tile.level);
         let Some(player_pen) = pen_index(player) else {
@@ -3818,7 +3500,7 @@ impl SlotScript {
         Some(player_pen) != pen_index(anchor)
     }
 
-    #[cfg(feature = "load")]
+    
     fn hold_fight_pen_recovery_if_needed(
         &mut self,
         player: Option<WatchdogTile>,
@@ -3827,7 +3509,7 @@ impl SlotScript {
         let (Some(player), Some(anchor)) = (player, anchor) else {
             return None;
         };
-        if !self.load_active() || !Self::duel_fight_pen_anchor_unreachable(player, anchor) {
+        if !self.surface_active() || !Self::duel_fight_pen_anchor_unreachable(player, anchor) {
             return None;
         }
         let action = self.watchdog.hold_in_fight_pen(anchor);
@@ -3849,9 +3531,9 @@ impl SlotScript {
         xp: &[i32],
         frozen: bool,
         running: bool,
-        lifecycle: &[crate::shim::InteractReq],
+        lifecycle: &[crate::interact::InteractReq],
     ) -> WatchdogAction {
-        if !self.load_active() && self.compiled.is_none() {
+        if !self.surface_active() && self.compiled.is_none() {
             self.evidence_wait_run = None;
             self.native_runtime.clear_note_progress();
             return WatchdogAction::None;
@@ -3880,8 +3562,8 @@ impl SlotScript {
         if matches!(freeze_action, WatchdogAction::AbortWalk) {
             return freeze_action;
         }
-        #[cfg(feature = "load")]
-        if self.load_active() {
+        
+        if self.surface_active() {
             if let (Some(anchor), Some((x, z, level))) =
                 (self.watchdog.held_fight_pen_anchor(), here)
             {
@@ -3900,7 +3582,7 @@ impl SlotScript {
         } else {
             self.native_runtime.clear_note_progress();
         }
-        use crate::shim::InteractReq;
+        use crate::interact::InteractReq;
         let mut anchor_reply = None;
         for op in lifecycle {
             match op {
@@ -3921,7 +3603,7 @@ impl SlotScript {
         }
         if let Some(reply) = anchor_reply {
             let player = here.map(|(x, z, level)| WatchdogTile { x, z, level });
-            #[cfg(feature = "load")]
+            
             if let Some(action) = self.hold_fight_pen_recovery_if_needed(player, reply) {
                 return action;
             }
@@ -3986,7 +3668,7 @@ impl SlotScript {
                     anchor,
                 );
             }
-            #[cfg(feature = "load")]
+            
             // `api.gather` has a separate recovery-anchor path; keep its
             // Duel Arena fight-pen check consistent with lifecycle anchors.
             if let Some(anchor) = self.api_recovery_anchor() {
@@ -4028,7 +3710,7 @@ impl SlotScript {
         if self.compiled.is_some() {
             return self.restart_compiled(now);
         }
-        #[cfg(feature = "load")]
+        
         {
             if self.state == RunState::Stopping {
                 // A respawn is already queued behind this reap.
@@ -4039,18 +3721,15 @@ impl SlotScript {
                     }
                 };
             }
-            self.apply_load_restart(now)
+            self.apply_surface_restart(now)
         }
-        #[cfg(not(feature = "load"))]
-        Err("watchdog restart: no retained identity".into())
     }
 
     /// Common retained-identity recreate used by the stall watchdog and by a
     /// confirmed JavaScript cut. Policy checks belong to the callers: a
     /// Pause-deadline cut deliberately recreates while operator-paused.
-    #[cfg(feature = "load")]
-    fn apply_load_restart(&mut self, now: Instant) -> Result<(), String> {
-        let Some(identity) = self.load_identity.clone() else {
+    fn apply_surface_restart(&mut self, now: Instant) -> Result<(), String> {
+        let Some(identity) = self.surface_start.clone() else {
             return Err("watchdog restart: no retained identity".into());
         };
         self.revoke_native_input();
@@ -4063,7 +3742,8 @@ impl SlotScript {
             self.watchdog.on_restart_applied(now);
             return Ok(());
         }
-        self.spawn_isolate(identity, true)?;
+        self.spawn_surface(identity, true)
+            .map_err(|error| error.to_string())?;
         self.watchdog.on_restart_applied(now);
         Ok(())
     }
@@ -4081,34 +3761,25 @@ impl SlotScript {
     }
 
     /// Latest shared output frame, from the single active execution kind.
-    pub fn paint(&self) -> Option<Arc<crate::shim::ScriptPaint>> {
+    pub fn paint(&self) -> Option<Arc<crate::paint::ScriptPaint>> {
         if let Some(run) = &self.compiled {
             return run.output.paint.clone();
         }
-        #[cfg(feature = "load")]
-        {
-            self.load.as_ref().and_then(|iso| iso.paint())
-        }
-        #[cfg(not(feature = "load"))]
-        {
-            None
-        }
+        self.surface.as_ref().and_then(|surface| surface.paint())
     }
 
     /// Forward a one-shot paint-button id to the Load isolate. No-op for a
     /// compiled script or a slot with no isolate.
-    #[cfg(feature = "load")]
     pub fn paint_click(&self, id: &str) {
-        if let Some(isolate) = &self.load {
+        if let Some(isolate) = &self.surface {
             isolate.paint_click(id);
         }
     }
 
     /// Forward a persistent strip/rail/tabs selection to the Load isolate.
     /// No-op for a compiled script or a slot with no isolate.
-    #[cfg(feature = "load")]
     pub fn paint_select(&self, key: &str, name: &str) {
-        if let Some(isolate) = &self.load {
+        if let Some(isolate) = &self.surface {
             isolate.paint_select(key, name);
         }
     }
@@ -4117,44 +3788,38 @@ impl SlotScript {
     /// `inst.ignoredRandoms?.()`, default `[]`; empty for a compiled
     /// script — there is no instance). Cached on the isolate thread
     /// after each tick; no probe round-trip.
-    #[cfg(feature = "load")]
     pub fn ignored_randoms(&self) -> Vec<String> {
         if self.state != RunState::Running || !self.want_run {
             return Vec::new();
         }
-        match &self.load {
+        match &self.surface {
             Some(isolate) => isolate.ignored_randoms(),
             None => Vec::new(),
         }
     }
 
-    /// Evaluate `expr` in the Load isolate's global scope (test/status
-    /// read-back; e.g. the host asserting a posted snapshot field). Errors
-    /// when the slot has no Load isolate.
-    #[cfg(feature = "load")]
-    pub fn probe(&self, expr: &str) -> Result<serde_json::Value, String> {
-        match &self.load {
+    /// Evaluate a test or status expression in the active surface.
+    pub fn probe(&self, expr: &str) -> Result<serde_json::Value, SurfaceError> {
+        match &self.surface {
             Some(isolate) => isolate.probe(expr),
-            None => Err("no load isolate".to_string()),
+            None => Err(SurfaceError::Probe("no load isolate".to_string())),
         }
     }
     /// Whether this slot's isolate owns an interruptible execution.
-    #[cfg(feature = "load")]
     #[doc(hidden)]
-    pub fn load_execution_active(&self) -> bool {
-        self.load
+    pub fn surface_execution_active(&self) -> bool {
+        self.surface
             .as_ref()
-            .is_some_and(LoadIsolate::execution_active)
+            .is_some_and(|surface| surface.execution_active())
     }
 
     /// Monotonic identity and activity of this slot's latest interruptible
     /// isolate execution.
-    #[cfg(feature = "load")]
     #[doc(hidden)]
-    pub fn load_execution_sequence(&self) -> (u64, bool) {
-        self.load
+    pub fn surface_execution_sequence(&self) -> (u64, bool) {
+        self.surface
             .as_ref()
-            .map_or((0, false), LoadIsolate::execution_sequence)
+            .map_or((0, false), |surface| surface.execution_sequence())
     }
 
     /// Poll evidence-ready machines at the latest observed tick. This does
@@ -4167,15 +3832,14 @@ impl SlotScript {
             self.native_runtime.clear_note_progress();
             return;
         }
-        #[cfg(feature = "load")]
-        if let Some(isolate) = &self.load {
+        
+        if let Some(isolate) = &self.surface {
             if let Some(failure) = trapped_failure(ctx) {
                 self.stop_blocked(failure, ctx.tick);
                 return;
             }
-            let evidence_sequence = isolate.snapshot_evidence_sequence();
             let input_identity = self.native_input.lock().identity();
-            isolate.on_snapshot_change_at(ctx.tick, input_identity, evidence_sequence);
+            isolate.on_snapshot_change_at(ctx.tick, input_identity);
             self.tick_api(ctx);
             self.tick_bank(ctx);
             self.capture_native_seat_rows();
@@ -4202,15 +3866,15 @@ impl SlotScript {
             self.native_runtime.clear_note_progress();
             return;
         }
-        #[cfg(feature = "load")]
-        if self.load.is_some() {
+        
+        if self.surface.is_some() {
             if let Some(failure) = trapped_failure(ctx) {
                 self.stop_blocked(failure, ctx.tick);
                 return;
             }
         }
-        #[cfg(feature = "load")]
-        if let Some(isolate) = &self.load {
+        
+        if let Some(isolate) = &self.surface {
             isolate.on_game_tick_at(ctx.tick, self.native_input.lock().identity());
             if ctx.compiled.hold {
                 self.seat_held_tick();
@@ -4251,7 +3915,7 @@ impl SlotScript {
         // Park this slot's interact queue in the ctx for the tick: the verbs
         // the card dispatches then land on the same drain the isolate's
         // forwarded requests ride.
-        #[cfg(feature = "load")]
+        
         {
             ctx.compiled.interacts = Some(std::mem::take(&mut self.compiled_interacts));
         }
@@ -4288,12 +3952,10 @@ impl SlotScript {
                             .map(|seat| seat.as_mut() as &mut dyn crate::native::SeatPromptPort),
                     },
                 );
-                #[cfg(feature = "load")]
+                
                 {
                     ctx.compiled.interacts = interacts;
                 }
-                #[cfg(not(feature = "load"))]
-                let _ = interacts;
                 run.finish_tick();
                 result
             }
@@ -4301,7 +3963,7 @@ impl SlotScript {
         if result.is_ok() {
             self.watchdog.stamp_scheduler(Instant::now());
         }
-        #[cfg(feature = "load")]
+        
         {
             self.compiled_interacts = ctx.compiled.interacts.take().unwrap_or_default();
             self.compiled_interact_outcome_seqs.resize(
@@ -4310,7 +3972,7 @@ impl SlotScript {
             );
         }
         self.capture_native_seat_rows();
-        #[cfg(feature = "load")]
+        
         self.capture_compiled_seat_interacts();
         let ready_observation = ctx.here.is_some()
             && ctx.snapshot.is_some_and(|snapshot| {
@@ -4377,7 +4039,7 @@ impl SlotScript {
                     }
                 }
                 self.revoke_native_input();
-                #[cfg(feature = "load")]
+                
                 {
                     self.compiled_interacts.clear();
                     self.compiled_interact_outcome_seqs.clear();
@@ -4425,7 +4087,7 @@ impl SlotScript {
     /// A Blocked flow is terminal even when the card omitted its status;
     /// a published Blocked phase is terminal only when it carries a failure.
     fn stop_blocked(&mut self, failure: ScriptFailure, tick: u64) {
-        #[cfg(feature = "load")]
+        
         if self.compiled.is_none() {
             let generation = self.runtime_generation;
             let reason = format!("{}: {}", failure.code, failure.message);
@@ -4475,9 +4137,9 @@ impl SlotScript {
         if self.state != RunState::Running || !self.want_run {
             return RandomClaim::Host;
         }
-        #[cfg(feature = "load")]
+        
         if self
-            .load
+            .surface
             .as_ref()
             .is_some_and(|isolate| isolate.ignores_random(&ev.name))
         {
@@ -4498,31 +4160,15 @@ impl SlotScript {
         }
     }
 
-    #[cfg(all(feature = "memory-profile", feature = "load"))]
     pub fn memory_metrics(&self) -> Option<serde_json::Value> {
-        self.load.as_ref().map(|i| i.memory_metrics())
+        self.surface.as_ref().and_then(|surface| surface.memory_metrics())
     }
 
-    #[cfg(all(feature = "memory-profile", feature = "load"))]
     pub fn memory_progress(&self) -> serde_json::Value {
-        let mut value = self
-            .load
-            .as_ref()
-            .map(|i| i.memory_progress())
-            .unwrap_or(serde_json::json!({}));
-        if let Some(fp) = &self.last_snapshot {
-            let rows = |rs: &[crate::isolate_fb::ItemRowFp]| {
-                rs.iter()
-                    .take(32)
-                    .map(|r| serde_json::json!({"name":r.name,"count":r.count,"ops":r.ops}))
-                    .collect::<Vec<_>>()
-            };
-            value["inventory"] = serde_json::json!(rows(&fp.inv));
-            value["bank"] = serde_json::json!(rows(&fp.bank));
-            value["bank_open"] = serde_json::json!(fp.bank_open);
-            value["bank_loaded"] = serde_json::json!(fp.bank_loaded);
-        }
-        value
+        self.surface.as_ref().map_or_else(
+            || serde_json::json!({}),
+            |surface| surface.memory_progress(),
+        )
     }
 
     pub fn last_error(&self) -> Option<&str> {
@@ -4548,10 +4194,9 @@ impl SlotScript {
 
     /// Drain isolate tick / `this.log` lines. Tick errors update
     /// [`Self::last_error`]. Copies are kept for [`Self::take_pending_logs`].
-    #[cfg(feature = "load")]
     pub fn drain_logs(&mut self) -> Vec<String> {
         self.observe_lifecycle();
-        let (logs, outcomes, stopped, script_stop) = match &self.load {
+        let (logs, outcomes, stopped, script_stop) = match &self.surface {
             Some(isolate) => {
                 let logs = isolate.drain_logs();
                 let outcomes = isolate.drain_tick_outcomes();
@@ -4566,7 +4211,7 @@ impl SlotScript {
         };
         for outcome in outcomes {
             match outcome {
-                crate::load::TickOutcome::Error {
+                crate::surface::TickOutcome::Error {
                     tick,
                     generation,
                     message,
@@ -4574,13 +4219,13 @@ impl SlotScript {
                     self.last_error = Some(format!("tick {tick}: {message}"));
                     self.active_tick_error_generation = Some(generation);
                 }
-                crate::load::TickOutcome::Success { generation, .. }
+                crate::surface::TickOutcome::Success { generation, .. }
                     if self.active_tick_error_generation == Some(generation) =>
                 {
                     self.last_error = None;
                     self.active_tick_error_generation = None;
                 }
-                crate::load::TickOutcome::Success { .. } => {}
+                crate::surface::TickOutcome::Success { .. } => {}
             }
         }
         self.pending_logs.extend(logs.iter().cloned());
@@ -4613,34 +4258,30 @@ impl SlotScript {
 
     /// Take log lines staged by [`Self::drain_logs`] (panel log pane).
     pub fn take_pending_logs(&mut self) -> Vec<String> {
-        #[cfg(feature = "load")]
+        
         self.observe_lifecycle();
         std::mem::take(&mut self.pending_logs)
     }
 
-    /// Whether a JS Load isolate is installed (feature-gated; always false
-    /// in a build without the `load` feature).
-    #[cfg(feature = "load")]
-    pub fn load_active(&self) -> bool {
-        self.load.is_some()
-    }
-    #[cfg(not(feature = "load"))]
-    pub fn load_active(&self) -> bool {
-        false
+    /// Whether a surface run is installed.
+    pub fn surface_active(&self) -> bool {
+        self.surface.is_some()
     }
 
-    /// Whether a Load-isolate delta fingerprint was stored (always false for
-    /// compiled-only slots). Used by host-play tests for OPT-004.
+    /// Borrow the active run for cross-crate surface-owner tests.
+    #[cfg(feature = "test-hooks")]
+    #[doc(hidden)]
+    pub fn with_surface_run_for_test<R>(
+        &mut self,
+        inspect: impl FnOnce(&mut dyn SurfaceRun) -> R,
+    ) -> Option<R> {
+        self.surface.as_deref_mut().map(inspect)
+    }
+
+    /// Whether the surface retains facts from an accepted snapshot.
     #[doc(hidden)]
     pub fn has_snapshot_fingerprint(&self) -> bool {
-        #[cfg(feature = "load")]
-        {
-            self.last_snapshot.is_some()
-        }
-        #[cfg(not(feature = "load"))]
-        {
-            false
-        }
+        self.posted_snapshot_facts().is_some()
     }
 }
 
@@ -4649,12 +4290,12 @@ impl Drop for SlotScript {
         self.preparing = None;
         self.pending_compiled_start = None;
         self.teardown_compiled(StopReason::Removed);
-        #[cfg(feature = "load")]
+        
         self.teardown_api(StopReason::Removed);
-        #[cfg(feature = "load")]
-        if let Some(isolate) = self.load.take() {
+        
+        if let Some(isolate) = self.surface.take() {
             let (tx, _rx) = std::sync::mpsc::channel();
-            isolate.join_detached(tx);
+            isolate.stop(tx);
         }
     }
 }
@@ -4704,7 +4345,7 @@ fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
     "(no message)".to_string()
 }
 
-#[cfg(feature = "load")]
+
 fn settings_fp(bag: &serde_json::Map<String, serde_json::Value>) -> String {
     serde_json::to_string(bag).unwrap_or_default()
 }
@@ -4713,10 +4354,10 @@ fn settings_fp(bag: &serde_json::Map<String, serde_json::Value>) -> String {
 #[path = "slot_tests.rs"]
 mod tests;
 
-#[cfg(all(test, feature = "load"))]
+#[cfg(test)]
 #[path = "slot/seat_wire_tests.rs"]
 mod seat_wire_tests;
 
-#[cfg(all(test, feature = "load"))]
+#[cfg(test)]
 #[path = "slot/seat_family_tests.rs"]
 mod seat_family_tests;

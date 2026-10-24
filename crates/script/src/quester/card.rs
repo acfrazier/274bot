@@ -24,6 +24,7 @@ pub const CARD: CompiledCard = CompiledCard {
     per_account_settings: &["partner_account", "gang", "crest_gauntlets"],
     prepare,
     create,
+    lifecycle: None,
 };
 
 #[derive(Deserialize)]

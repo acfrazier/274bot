@@ -93,17 +93,22 @@ export async function tick(api) {{
         );
         let mut slot = script::SlotScript::new();
         slot.bind_incarnation(1);
+        slot.bind_surface_factory(Arc::new(
+            script::load::surface::JsSurfaceFactory::default(),
+        ));
         let settings = serde_json::json!({"useMageBank": defaults, "useZanarisBank": defaults});
-        slot.start_load_with_settings_and_game_data(
-            source,
-            script::LoadShape::NativeTick,
-            settings.as_object(),
-            vec![],
-            &[],
+        let start = crate::script_runtime::js_surface_start(
+            crate::script_runtime::js_start_card(
+                source,
+                script::LoadShape::NativeTick,
+                vec![],
+            ),
+            settings.as_object().cloned().map(Arc::new),
             Some(api::game_data::for_revision(client::io::ClientRevision::R289).unwrap()),
             Arc::new(NamedBankFacts::from_banks(banks.clone())),
-        )
-        .unwrap();
+            Arc::from(Vec::<api::loadout::Loadout>::new()),
+        );
+        slot.start_surface_with_settings(start).unwrap();
         let ready_deadline = Instant::now() + Duration::from_secs(10);
         loop {
             match slot.poll_start() {
@@ -162,8 +167,7 @@ export async function tick(api) {{
                 None,
                 0,
                 |input, native| {
-                    let bytes = slot.encode_snapshot_delta_with_native(input, native, false);
-                    assert!(slot.post_snapshot(bytes));
+                    assert!(slot.post_snapshot_delta(input, native, false));
                 },
             );
             let (_, legacy, _) = slot.drain_host_interacts();
@@ -2720,16 +2724,18 @@ export default class T extends LoopingBot {
     let slot = crate::script_slot_or_insert(&scripts, "test");
     {
         let mut slot = slot.lock().unwrap();
-        slot.start_load_with_settings_and_game_data(
-            source.into(),
-            script::LoadShape::CompatClass,
+        let start = crate::script_runtime::js_surface_start(
+            crate::script_runtime::js_start_card(
+                source.into(),
+                script::LoadShape::CompatClass,
+                vec![],
+            ),
             None,
-            vec![],
-            &[],
             Some(api::game_data::for_revision(client::io::ClientRevision::R289).unwrap()),
             Arc::new(NamedBankFacts::from_banks(vec![])),
-        )
-        .unwrap();
+            Arc::from(Vec::<api::loadout::Loadout>::new()),
+        );
+        slot.start_surface_with_settings(start).unwrap();
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
             match slot.poll_start() {

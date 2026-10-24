@@ -1078,7 +1078,7 @@ impl SlotScript {
         if self.quest_pairs.as_ref().is_some_and(|pairs| pairs.busy()) {
             return Err(StartError::Unavailable("Stop this pair first".into()));
         }
-        if !matches!(self.state, RunState::Idle | RunState::Error) || self.load_active() {
+        if !matches!(self.state, RunState::Idle | RunState::Error) || self.surface_active() {
             return Err(StartError::Busy);
         }
         if self.incarnation == 0 {
@@ -1322,7 +1322,6 @@ impl SlotScript {
         self.bank_op_result_seq = 0;
         self.bank_op_result = false;
         self.last_settings_fp = None;
-        #[cfg(feature = "load")]
         {
             self.compiled_interacts.clear();
             self.compiled_interact_outcome_seqs.clear();
@@ -1340,7 +1339,6 @@ impl SlotScript {
 
     pub fn observe_lifecycle(&mut self) {
         self.poll_compiled();
-        #[cfg(feature = "load")]
         self.observe_load_lifecycle();
     }
 
@@ -1478,7 +1476,6 @@ impl SlotScript {
 
     pub(super) fn fail_compiled(&mut self, failure: ScriptFailure) {
         self.revoke_native_input();
-        #[cfg(feature = "load")]
         {
             self.compiled_interacts.clear();
             self.compiled_interact_outcome_seqs.clear();
@@ -1536,7 +1533,7 @@ impl SlotScript {
         script: Box<dyn Script>,
         selected: Option<Arc<api::game_data::SelectedGameData>>,
     ) -> Result<(), String> {
-        if !matches!(self.state, RunState::Idle | RunState::Error) || self.load_active() {
+        if !matches!(self.state, RunState::Idle | RunState::Error) || self.surface_active() {
             return Err(StartError::Busy.to_string());
         }
         let selected = match selected {

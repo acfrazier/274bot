@@ -76,6 +76,14 @@ use api::selected::RunKey;
 use std::task::Poll;
 use std::time::Duration;
 
+static CLUE_LIFECYCLE: crate::native::CardLifecycle = crate::native::CardLifecycle {
+    on_stop: crate::clue::on_stop,
+    on_reset: crate::clue::on_reset,
+    on_resume: crate::clue::on_resume,
+    on_pause: crate::clue::on_pause,
+    on_hold: crate::clue::on_hold,
+};
+
 pub(crate) const CARD: CompiledCard = CompiledCard {
     id: CompiledId("Sherlock"),
     name: "Sherlock",
@@ -86,6 +94,7 @@ pub(crate) const CARD: CompiledCard = CompiledCard {
     per_account_settings: &[],
     prepare,
     create,
+    lifecycle: Some(&CLUE_LIFECYCLE),
 };
 
 #[derive(serde::Deserialize)]

@@ -4143,7 +4143,7 @@ fn takeover_is_taken_for_a_live_native_owner_without_a_walk() {
     {
         let slot = slot.lock().unwrap();
         assert!(!slot.live_walking_operation());
-        assert!(!slot.load_active());
+        assert!(!slot.surface_active());
     }
     assert!(!rig.navs.lock().unwrap()["alice"].walk_work_live());
     let before = rig.navs.lock().unwrap()["alice"].walk_outcome_seq;
@@ -5948,7 +5948,7 @@ mod s2b_admission_contract {
                 },
             ]);
             assert_eq!(
-                rig.slot().lock().unwrap().api_family(),
+                rig.slot().lock().unwrap().surface_family(),
                 Some(script::ApiFamily::V1)
             );
             rig.frames(1);
@@ -6006,7 +6006,7 @@ mod s2b_admission_contract {
         nav_snapshot_at(&mut rig.client, &mut rig.snap, 0, 0);
         observed_loadout(&mut rig.snap);
         assert_eq!(
-            rig.slot().lock().unwrap().api_family(),
+            rig.slot().lock().unwrap().surface_family(),
             Some(script::ApiFamily::V1)
         );
         rig.t23_bank_frame(1, true);
@@ -6328,15 +6328,18 @@ mod s2b_admission_contract {
             ));
         };
 
-        slot.lock()
-            .unwrap()
-            .start_load_with_loadouts(
+        let start = crate::script_runtime::js_surface_start(
+            crate::script_runtime::js_start_card(
                 "export function tick(api) {}".into(),
                 script::LoadShape::NativeTick,
                 Vec::new(),
-                &[],
-            )
-            .unwrap();
+            ),
+            None,
+            None,
+            Arc::new(api::named_banks::NamedBankFacts::empty()),
+            Arc::from(Vec::<api::loadout::Loadout>::new()),
+        );
+        slot.lock().unwrap().start_surface(start).unwrap();
         assert_frozen(script::RunState::Starting);
         assert!(wait_until(5_000, || {
             let mut slot = slot.lock().unwrap();

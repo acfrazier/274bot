@@ -1,6 +1,6 @@
 use super::*;
 use crate::ctx::test_support::NullDriver;
-use crate::isolate_fb::{DecodedSeatBatch, SeatInteractDecoded, SeatStartArgs, SeatStartInput};
+use crate::native::seat_rows::{DecodedSeatBatch, SeatInteractDecoded, SeatStartArgs, SeatStartInput};
 use crate::native::request::NativeKind;
 use crate::native::{HostEffect, InteractionReceipt};
 use crate::shim::InteractReq;
@@ -12,16 +12,20 @@ use api::snapshot::{GameSnapshot, QuestStatusView};
 fn load() -> SlotScript {
     let mut slot = SlotScript::new();
     slot.bind_incarnation(400);
-    slot.start_load_with_settings_and_game_data(
-        "export function tick() {}".into(),
-        crate::load::LoadShape::NativeTick,
-        None,
-        vec![],
-        &[],
-        Some(api::game_data::for_revision(ClientRevision::R289).unwrap()),
-        Arc::default(),
-    )
+    let factory = Arc::new(crate::surface::test_support::StubSurfaceFactory::new());
+    slot.bind_surface_factory(factory.clone());
+    slot.start_surface(crate::surface::SurfaceStart {
+        card: Arc::new(crate::surface::test_support::StubSurfaceCard),
+        settings_bag: None,
+        game_data: Some(api::game_data::for_revision(ClientRevision::R289).unwrap()),
+        named_banks: Arc::default(),
+        loadouts: Arc::default(),
+    })
     .unwrap();
+    factory
+        .last_run()
+        .expect("stub surface run")
+        .set_readiness(crate::surface::SurfaceReady::Ready);
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         match slot.poll_start() {

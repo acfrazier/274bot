@@ -656,7 +656,6 @@ impl SlotScript {
             .retain(|(id, _)| seat.results().iter().any(|result| result.id == *id));
     }
 
-    #[cfg(feature = "load")]
     pub(super) fn tick_bank(&mut self, ctx: &mut ScriptCtx<'_>) {
         self.stop_cancelled_bank_work();
         let Some(mut bank) = self.bank.take() else {
@@ -667,7 +666,7 @@ impl SlotScript {
             return;
         }
         let identity = self
-            .load_identity
+            .surface_start
             .as_ref()
             .expect("bank start belongs to Load");
         let pin = identity

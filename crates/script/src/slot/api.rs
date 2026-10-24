@@ -224,7 +224,7 @@ impl SlotScript {
     }
 
     /// Read-only receipt seam for the ignored public Script API live cells.
-    #[cfg(all(feature = "load", feature = "test-hooks"))]
+    #[cfg(feature = "test-hooks")]
     #[doc(hidden)]
     pub fn api_live_test_probe(&mut self) -> serde_json::Value {
         let stamp = |value: api::quest_progress::EvidenceStamp| {
@@ -433,9 +433,8 @@ impl SlotScript {
         }
     }
 
-    #[cfg(feature = "load")]
     pub(super) fn start_api_gather(&mut self, token: u64, settings: &Arc<SettingsBag>) {
-        if !self.load_active() {
+        if !self.surface_active() {
             return;
         }
         let seat = self.api.get_or_insert_with(|| Box::new(ApiSeat::default()));
@@ -458,7 +457,7 @@ impl SlotScript {
             return;
         }
         let selected = self
-            .load_identity
+            .surface_start
             .as_ref()
             .and_then(|identity| identity.game_data.clone());
         let Some(selected) = selected else {
@@ -485,7 +484,7 @@ impl SlotScript {
         );
         let banks = Arc::clone(
             &self
-                .load_identity
+                .surface_start
                 .as_ref()
                 .expect("Load identity")
                 .named_banks,
