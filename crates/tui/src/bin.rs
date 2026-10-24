@@ -859,18 +859,13 @@ impl TuiSession {
         command: OperatorCommand,
         targets: Targets<'_>,
     ) -> Result<frontend_core::Submitted, String> {
-        let deletes_startup_target = self.pending_startup_profile_delete(&command, targets);
         let submitted = self
             .submit_raw(command, targets)
             .map_err(|error| error.to_string())?;
-        let result = match submitted.operation().and_then(|op| self.core.failure(op)) {
+        match submitted.operation().and_then(|op| self.core.failure(op)) {
             Some(failure) => Err(failure),
             None => Ok(submitted),
-        };
-        if result.is_ok() && deletes_startup_target {
-            self.cancel_startup_request();
         }
-        result
     }
 
     /// [`Self::submit`] without reading the operation's failure.
@@ -935,30 +930,23 @@ impl TuiSession {
         command: OperatorCommand,
         targets: Targets<'_>,
     ) -> Result<frontend_core::Submitted, String> {
-        let deletes_startup_target = self.pending_startup_profile_delete(&command, targets);
-        let result = {
-            let (core, mut surface) = self.core_and_surface_with(app);
-            let submitted =
-                core.submit(command, targets, &mut surface)
-                    .map_err(|error| match error {
-                        frontend_core::SubmitError::NoTarget(OperatorCommand::GroupWalk) => {
-                            "no bots selected".to_string()
-                        }
-                        error => error.to_string(),
-                    })?;
+        let (core, mut surface) = self.core_and_surface_with(app);
+        let submitted =
+            core.submit(command, targets, &mut surface)
+                .map_err(|error| match error {
+                    frontend_core::SubmitError::NoTarget(OperatorCommand::GroupWalk) => {
+                        "no bots selected".to_string()
+                    }
+                    error => error.to_string(),
+                })?;
 
-            if let Some(reason) = core.command_failure(submitted.request()) {
-                return Err(reason.to_string());
-            }
-            match submitted.operation().and_then(|op| core.failure(op)) {
-                Some(failure) => Err(failure),
-                None => Ok(submitted),
-            }
-        };
-        if result.is_ok() && deletes_startup_target {
-            self.cancel_startup_request();
+        if let Some(reason) = core.command_failure(submitted.request()) {
+            return Err(reason.to_string());
         }
-        result
+        match submitted.operation().and_then(|op| core.failure(op)) {
+            Some(failure) => Err(failure),
+            None => Ok(submitted),
+        }
     }
     /// Submit with app-owned models without collapsing a bulk report into
     /// its first failed member.
@@ -968,18 +956,9 @@ impl TuiSession {
         command: OperatorCommand,
         targets: Targets<'_>,
     ) -> Result<frontend_core::Submitted, String> {
-        let deletes_startup_target = self.pending_startup_profile_delete(&command, targets);
-        let submitted = {
-            let (core, mut surface) = self.core_and_surface_with(app);
-            core.submit(command, targets, &mut surface)
-                .map_err(|error| error.to_string())?
-        };
-        if deletes_startup_target
-            && self.core.command_failure(submitted.request()).is_none()
-        {
-            self.cancel_startup_request();
-        }
-        Ok(submitted)
+        let (core, mut surface) = self.core_and_surface_with(app);
+        core.submit(command, targets, &mut surface)
+            .map_err(|error| error.to_string())
     }
 
     /// [`Self::core_and_surface_with`] lending the shared profile
@@ -1017,18 +996,9 @@ impl TuiSession {
         command: OperatorCommand,
         targets: Targets<'_>,
     ) -> Result<frontend_core::Submitted, String> {
-        let deletes_startup_target = self.pending_startup_profile_delete(&command, targets);
-        let submitted = {
-            let (core, mut surface) = self.core_and_surface_with_editor(app);
-            core.submit(command, targets, &mut surface)
-                .map_err(|error| error.to_string())?
-        };
-        if deletes_startup_target
-            && self.core.command_failure(submitted.request()).is_none()
-        {
-            self.cancel_startup_request();
-        }
-        Ok(submitted)
+        let (core, mut surface) = self.core_and_surface_with_editor(app);
+        core.submit(command, targets, &mut surface)
+            .map_err(|error| error.to_string())
     }
 
     /// Log in the focused member (explicit handshake; recreates a terminal
@@ -1165,27 +1135,6 @@ impl TuiSession {
     fn cancel_startup_request(&mut self) {
         self.startup_focus = None;
         self.startup_focus_cancelled = false;
-    }
-
-    /// Whether a profile delete targets the pending startup profile.
-    fn pending_startup_profile_delete(
-        &self,
-        command: &OperatorCommand,
-        targets: Targets<'_>,
-    ) -> bool {
-        if !matches!(command, OperatorCommand::DeleteProfile) {
-            return false;
-        }
-        let Some(startup) = self.startup_focus.as_deref() else {
-            return false;
-        };
-        match targets {
-            Targets::Profile(name) => name == startup,
-            Targets::Profiles(names) => names.iter().any(|name| name == startup),
-            Targets::Selected => self.core.selected() == Some(startup),
-            Targets::Everyone => self.core.profile(startup).is_some(),
-            Targets::Application | Targets::Marked | Targets::Plan => false,
-        }
     }
 
     fn queue_startup_focus(&mut self, name: String) {
@@ -2467,14 +2416,8 @@ impl TuiSession {
             return;
         };
         let command = plan.command();
-        let login_plan = plan.action() == frontend_core::FleetAction::Login;
-        let selected_before = if login_plan {
-            self.core
-                .selected()
-                .map(|name| self.core.profile_identity_or_synthetic(name))
-        } else {
-            None
-        };
+        let selects =
+            plan.action() == frontend_core::FleetAction::Login && self.core.selected().is_none();
         let assigns = matches!(
             plan.action(),
             frontend_core::FleetAction::Assign | frontend_core::FleetAction::AssignRestart
@@ -2482,14 +2425,8 @@ impl TuiSession {
         match self.submit_raw_with(app, command, Targets::Plan) {
             Ok(_) => {
                 // The core may select the first member during Fleet Log in.
-                if login_plan {
-                    let selected_after = self
-                        .core
-                        .selected()
-                        .map(|name| self.core.profile_identity_or_synthetic(name));
-                    if selected_after != selected_before {
-                        self.cancel_startup_focus();
-                    }
+                if selects && self.core.selected().is_some() {
+                    self.cancel_startup_focus();
                 }
                 // A new result replaces the last one, even with the same
                 // text and no command record (two emptied plans).
@@ -3151,6 +3088,15 @@ impl TuiSession {
 
     /// Copy the focused slot's views into the app and poll the runner.
     fn pump(&mut self, app: &mut TuiApp) {
+        // A vault deletion can remove the target while preferences wait.
+        // Cancel the whole request, not just its focus, before any load.
+        if self
+            .startup_focus
+            .as_deref()
+            .is_some_and(|name| self.core.profile(name).is_none())
+        {
+            self.cancel_startup_request();
+        }
         if !self.preferences_adopted && self.preferences.ready() {
             self.preferences_adopted = true;
             self.map_desk

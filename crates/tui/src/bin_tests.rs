@@ -1171,6 +1171,7 @@ fn fleet_login_selection_keeps_startup_load_without_overriding_focus() {
     );
     // This models the deferred request left by a profile save, with no
     // existing core selection for the planned Log in to replace.
+    session.startup_focus = Some("alice".into());
     let mut app = new_app("fleet login", &session.preferences);
     app.names = session.names.clone();
     session
@@ -1547,6 +1548,7 @@ fn deleting_pending_startup_profile_cancels_load_and_focus() {
     let request = session.bootstrap_interactive_profiles(&[]).unwrap();
     assert_eq!(request.as_deref(), Some("alice"));
     // Recreate the deferred state while leaving core selection empty.
+    session.startup_focus = request;
     let mut app = new_app("deleted startup profile", &session.preferences);
     app.names = session.names.clone();
 
