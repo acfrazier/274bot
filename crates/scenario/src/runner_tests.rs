@@ -4262,6 +4262,86 @@ fn ardy_fighter_bank_style_watch_accepts_the_final_r10_receipt() {
     assert_eq!(oracle_finish(&mut runner, &mut c), RunnerStatus::Passed);
 }
 
+/// The 2026-10-24 nightly receipt on `dev` `58080a889`
+/// (`NIGHTLY/2026-10-24-dev-58080a889/cells/ardy_fighter_bank`): three
+/// pre-style trips deposited four Bones and two successful steals were eaten,
+/// then the final leg's restock was refused at both Baker's stands before a
+/// catch. The receipt's final tile is the East Ardougne booth with that
+/// catch's Bones still in the pack and no food held, so the fourth deposit
+/// lands 213 game ticks after the third (the return, one refusal run at each
+/// stand, the catch and the bank walk), beyond the former one-refusal-run
+/// leg. Projected on: one steal held, the style, and the ordinary bank chain.
+#[test]
+fn ardy_fighter_bank_style_watch_accepts_the_nightly_1024_receipt() {
+    let (mut runner, mut c) = ardy_bank_after_start();
+    ardy_pre_style_trip(&mut runner, &mut c, 1, 90);
+    set_world_tile(&mut c, ARDY_ORACLE.field);
+    oracle_settle(&mut runner, &mut c, 20);
+    ardy_steal(&mut c, 1901);
+    oracle_settle(&mut runner, &mut c, 2);
+    set_inv(&mut c, &[]);
+    ardy_pre_style_trip(&mut runner, &mut c, 2, 70);
+    set_world_tile(&mut c, ARDY_ORACLE.field);
+    oracle_settle(&mut runner, &mut c, 20);
+    ardy_steal(&mut c, ARDY_CAKE);
+    oracle_settle(&mut runner, &mut c, 2);
+    set_inv(&mut c, &[]);
+    // The third trip deposits two Bones in one observed rise (banked 2 to 4).
+    set_world_tile(&mut c, ARDY_ORACLE.field);
+    c.stat_xp[ARDY_ATTACK_STAT] += 40;
+    c.bump_gens(ServerProt::UPDATE_STAT);
+    oracle_settle(&mut runner, &mut c, 1);
+    set_inv(&mut c, &[(ARDY_BONES, 1)]);
+    oracle_settle(&mut runner, &mut c, 90);
+    set_world_tile(&mut c, ARDY_ORACLE.bank);
+    oracle_open_bank(&mut c, &[(ARDY_BONES, 2)]);
+    oracle_settle(&mut runner, &mut c, 1);
+    set_inv(&mut c, &[]);
+    oracle_open_bank(&mut c, &[(ARDY_BONES, 4)]);
+    oracle_settle(&mut runner, &mut c, 1);
+    oracle_close_bank(&mut c);
+    oracle_settle(&mut runner, &mut c, 1);
+    assert_ardy_running(&runner, "the third deposit (four Bones banked)");
+    // Final leg: return and one refused run at each stand (no progress
+    // signal), the catch, then the walk to the booth.
+    set_world_tile(&mut c, ARDY_ORACLE.field);
+    oracle_settle(&mut runner, &mut c, 119);
+    c.stat_xp[ARDY_ATTACK_STAT] += 40;
+    c.bump_gens(ServerProt::UPDATE_STAT);
+    oracle_settle(&mut runner, &mut c, 1);
+    set_inv(&mut c, &[(ARDY_BONES, 1)]);
+    oracle_settle(&mut runner, &mut c, 90);
+    set_world_tile(&mut c, ARDY_ORACLE.bank);
+    oracle_open_bank(&mut c, &[(ARDY_BONES, 4)]);
+    oracle_settle(&mut runner, &mut c, 1);
+    set_inv(&mut c, &[]);
+    oracle_open_bank(&mut c, &[(ARDY_BONES, 5)]);
+    oracle_settle(&mut runner, &mut c, 1);
+    assert_ardy_running(&runner, "the fourth deposit after two refusal runs");
+    oracle_close_bank(&mut c);
+    oracle_settle(&mut runner, &mut c, 1);
+    set_world_tile(&mut c, ARDY_ORACLE.field);
+    oracle_settle(&mut runner, &mut c, 20);
+    ardy_steal(&mut c, ARDY_CAKE);
+    oracle_settle(&mut runner, &mut c, 2);
+    set_combat_style(&mut c, 1);
+    oracle_settle(&mut runner, &mut c, 7);
+    oracle_gain_strength(&mut c);
+    oracle_settle(&mut runner, &mut c, 2);
+    set_inv(&mut c, &[(ARDY_BONES, 1)]);
+    oracle_settle(&mut runner, &mut c, 2);
+    set_world_tile(&mut c, ARDY_ORACLE.bank);
+    oracle_open_bank(&mut c, &[(ARDY_BONES, 6)]);
+    set_inv(&mut c, &[]);
+    oracle_settle(&mut runner, &mut c, 2);
+    oracle_close_bank(&mut c);
+    oracle_settle(&mut runner, &mut c, 2);
+    set_world_tile(&mut c, ARDY_ORACLE.field);
+    oracle_settle(&mut runner, &mut c, 2);
+    oracle_gain_strength(&mut c);
+    assert_eq!(oracle_finish(&mut runner, &mut c), RunnerStatus::Passed);
+}
+
 /// A trip session longer than content allows fails, even after an earlier
 /// trip restarted the budget.
 #[test]
