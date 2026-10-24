@@ -55,9 +55,7 @@ pub fn bake_from_maps(
         squares.push(coords);
     }
     if squares.is_empty() {
-        return Err(PackError::BadLength(
-            "no m<x>_<z>.jm2 mapsquares found".into(),
-        ).into());
+        return Err(PackError::BadLength("no m<x>_<z>.jm2 mapsquares found".into()).into());
     }
     squares.sort_unstable();
 

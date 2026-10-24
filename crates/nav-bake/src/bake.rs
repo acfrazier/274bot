@@ -1346,8 +1346,9 @@ pub fn bake_world(request: &BakeRequest<'_>) -> Result<BakedNav, crate::Generati
                 }
             };
             let data = api::game_data::for_revision(revision)?;
-            data.quest_identity_for_bake()
-                .map_err(|error| crate::GenerationError::InvalidInput(format!("quest family: {error:?}")))
+            data.quest_identity_for_bake().map_err(|error| {
+                crate::GenerationError::InvalidInput(format!("quest family: {error:?}"))
+            })
         })
         .transpose()?;
     let quest_source = selected

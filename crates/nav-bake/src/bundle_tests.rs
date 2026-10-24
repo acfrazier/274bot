@@ -230,20 +230,26 @@ fn current_format_stamp_without_manifest_pois_or_input_hashes_is_stale() {
 
     let mut no_pois = baked.clone();
     no_pois.pois_sha256 = None;
-    assert!(invalid_input_detail(&no_pois.covers(&expectation(&inputs)).unwrap_err())
-        .contains("navpois"));
+    assert!(
+        invalid_input_detail(&no_pois.covers(&expectation(&inputs)).unwrap_err())
+            .contains("navpois")
+    );
 
     let mut no_manifest = baked.clone();
     no_manifest.manifest_sha256 = None;
     no_manifest.manifest_bytes = None;
     no_manifest.relative_manifest = None;
-    assert!(invalid_input_detail(&no_manifest.covers(&expectation(&inputs)).unwrap_err())
-        .contains("manifest"));
+    assert!(
+        invalid_input_detail(&no_manifest.covers(&expectation(&inputs)).unwrap_err())
+            .contains("manifest")
+    );
 
     let mut empty_input_hash = baked.clone();
     empty_input_hash.inputs[0].sha256 = String::new();
-    assert!(invalid_input_detail(&empty_input_hash.covers(&expectation(&inputs)).unwrap_err())
-        .contains("changed"));
+    assert!(
+        invalid_input_detail(&empty_input_hash.covers(&expectation(&inputs)).unwrap_err())
+            .contains("changed")
+    );
 }
 
 #[test]
