@@ -1,6 +1,7 @@
 use super::TransportEdge;
 
-const WEB_USE_OPTION: i32 = 0;
+/// `oplocu` option used to use a held knife on slashable webs.
+pub const WEB_USE_OPTION: i32 = 0;
 
 /// Select the action a live web should use from its matching packed action
 /// edges. A qualifying worn Slash takes precedence; the held knife is the

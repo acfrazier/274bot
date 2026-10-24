@@ -403,71 +403,9 @@ pub(super) fn boat_edges(
 // Shilo↔Brimhaven cart: the 2004 route pair (`TransportKind::Npc`).
 // ---------------------------------------------------------------------------
 
-/// One Shilo↔Brimhaven cart journey: `at` the cart driver NPC's spawn tile
-/// (jm2 `==== NPC ====` placement, id resolved through `pack/npc.pack`),
-/// `to` the destination cart tile the script's `p_teleport(` literal lands
-/// on. The whole hop is one `Talk-to` (`opnpc1`), and the scripts carry no
-/// `p_delay`, so `ticks` is the 1 op base like the spirit trees.
-#[derive(Debug, Clone, Copy)]
-pub(super) struct CartRoute {
-    /// npc.pack id of the cart driver who starts the journey.
-    npc: i32,
-    at: WorldTile,
-    to: WorldTile,
-    /// `(obj id, count)` minimum fare: the live percentage is evaluated
-    /// against the carried balance by [`TransportEdge::consumption_count`].
-    fare: Option<(i32, i32)>,
-    /// Whether the content's Zombie Queen completion gates this direction.
-    requires_zombie_queen: bool,
-}
-
-/// The 2004 cart journeys: destinations from the `p_teleport(` calls in
-/// `content/scripts/areas/area_brimhaven/scripts/hajedy.rs2` /
-/// `content/scripts/areas/area_shilo/scripts/vigroy.rs2`, origin tiles from
-/// the `==== NPC ====` placements in `content/maps/*.jm2`, and ids from
-/// `pack/npc.pack`. Both routes use `calc_shilocart_cost`:
-/// `(coins carried * 5) / 100`, clamped to 10–200 coins — packed supply
-/// holds the 10-coin minimum, not the maximum. Hajedy's completion gate is
-/// resolved to the quest journal's display name from current content;
-/// Vigroy's block carries no gate.
-pub(super) const CART_ROUTES: &[CartRoute] = &[
-    // Hajedy (brimhavencartdriver, npc 510) by the Brimhaven cart
-    // (m43_50 local (27,11) = 2779,3211): `p_teleport(0_44_46_18_7)`
-    // lands at the Shilo Village cart (2834,2951).
-    CartRoute {
-        npc: 510,
-        at: WorldTile {
-            x: 2779,
-            z: 3211,
-            level: 0,
-        },
-        to: WorldTile {
-            x: 2834,
-            z: 2951,
-            level: 0,
-        },
-        fare: Some((995, 10)),
-        requires_zombie_queen: true,
-    },
-    // Vigroy (shilocartdriver, npc 511) at the Shilo Village cart
-    // (m44_46 local (18,10) = 2834,2954): `p_teleport(0_43_50_24_14)`
-    // lands at the Brimhaven cart (2776,3214).
-    CartRoute {
-        npc: 511,
-        at: WorldTile {
-            x: 2834,
-            z: 2954,
-            level: 0,
-        },
-        to: WorldTile {
-            x: 2776,
-            z: 3214,
-            level: 0,
-        },
-        fare: Some((995, 10)),
-        requires_zombie_queen: false,
-    },
-];
+/// Hajedy's content has a Zombie Queen completion gate; Vigroy's does not.
+/// Ordering matches the planner's canonical Shilo cart journey slice.
+const CART_REQUIRES_ZOMBIE_QUEEN: [bool; 2] = [true, false];
 
 /// Cart edges from the 2004 route table: one `Talk-to` edge per journey,
 /// keyed from the cart driver NPC's tile.
@@ -476,8 +414,16 @@ pub(super) fn cart_edges(
     zombie_queen_name: Option<&str>,
     skipped: &mut HashMap<&'static str, usize>,
 ) {
-    for r in CART_ROUTES {
-        let quest_req = if r.requires_zombie_queen {
+    assert_eq!(
+        SHILO_CART_ROUTES.len(),
+        CART_REQUIRES_ZOMBIE_QUEEN.len(),
+        "every planner cart route must have its bake-time quest policy"
+    );
+    for (r, requires_zombie_queen) in SHILO_CART_ROUTES
+        .iter()
+        .zip(CART_REQUIRES_ZOMBIE_QUEEN)
+    {
+        let quest_req = if requires_zombie_queen {
             let Some(name) = zombie_queen_name else {
                 bump(skipped, SKIP_HAJEDY_JOURNAL_NAME, 1);
                 continue;
@@ -493,16 +439,16 @@ pub(super) fn cart_edges(
             forbidden_worn: Vec::new(),
             kind: TransportKind::Npc,
             player_delta: None,
-            at: r.at,
-            to: r.to,
-            loc_id: r.npc,
+            at: r.origin(),
+            to: r.destination(),
+            loc_id: r.npc_id(),
             option: 1,
             ticks: 1,
             dir: None,
             open_loc_id: None,
             skill_req: vec![],
             item_req: vec![],
-            consumed_req: r.fare.map(|(id, n)| vec![(id, n)]).unwrap_or_default(),
+            consumed_req: vec![r.minimum_fare()],
             item_returns: vec![],
             quest_req,
             varp_req: vec![],
