@@ -11,43 +11,18 @@ pub const FLAGS_HEADER_LEN: usize = 4 + 1 + 12 + 8;
 const FLAGS_READ_CHUNK: usize = 64 * 1024;
 
 /// Flags sidecar format version.
-pub(super) const VERSION_FLAGS: u8 = 1;
+pub const VERSION_FLAGS: u8 = 1;
 /// Flags sidecar magic.
-pub(super) const MAGIC_FLAGS: &[u8; 4] = b"274F";
+pub const MAGIC_FLAGS: &[u8; 4] = b"274F";
 /// Paint-reach sidecar format version.
-pub(super) const VERSION_REACH: u8 = 1;
+pub const VERSION_REACH: u8 = 1;
 /// Paint-reach sidecar magic.
-pub(super) const MAGIC_REACH: &[u8; 4] = b"274R";
+pub const MAGIC_REACH: &[u8; 4] = b"274R";
 /// Static canlight sidecar format version.
-pub(super) const VERSION_CANLIGHT: u8 = 1;
+pub const VERSION_CANLIGHT: u8 = 1;
 /// Static canlight sidecar magic.
-pub(super) const MAGIC_CANLIGHT: &[u8; 4] = b"274L";
+pub const MAGIC_CANLIGHT: &[u8; 4] = b"274L";
 
-/// Serialize the raw baked flags to the sidecar byte format: magic
-/// `b"274F"`, version 1, the same origin/width/height header as the pack,
-/// then
-/// the level-major u32le flags. The flag count is implicit — the trailing
-/// bytes are the flags, so a `width × height` test grid round-trips
-/// without plane arithmetic ([`decode_flags_sidecar`] reads to the end).
-pub fn encode_flags_sidecar(
-    origin: WorldTile,
-    width: usize,
-    height: usize,
-    flags: &[u32],
-) -> Vec<u8> {
-    let mut out = Vec::with_capacity(4 + 1 + 12 + 8 + flags.len() * 4);
-    out.extend_from_slice(MAGIC_FLAGS);
-    out.push(VERSION_FLAGS);
-    for v in [origin.x, origin.z, origin.level] {
-        out.extend_from_slice(&v.to_le_bytes());
-    }
-    out.extend_from_slice(&(width as u32).to_le_bytes());
-    out.extend_from_slice(&(height as u32).to_le_bytes());
-    for f in flags {
-        out.extend_from_slice(&f.to_le_bytes());
-    }
-    out
-}
 
 pub fn decode_flags_sidecar(
     bytes: &[u8],
@@ -261,26 +236,6 @@ pub fn sha256_from_hex(hex: &str) -> Result<[u8; 32], String> {
     Ok(out)
 }
 
-/// Serialize a paint-reach bitset: magic `b"274R"`, version 1, the same
-/// origin/width/height header as the pack, explicit word count, the 32-byte
-/// pack SHA-256 binding, then `word_count` little-endian `u64` words.
-pub fn encode_reach_sidecar(
-    origin: WorldTile,
-    width: usize,
-    height: usize,
-    bits: &[u64],
-    binding: &[u8; 32],
-) -> Vec<u8> {
-    encode_bitset_sidecar(
-        MAGIC_REACH,
-        VERSION_REACH,
-        origin,
-        width,
-        height,
-        bits,
-        binding,
-    )
-}
 
 /// Deserialize a paint-reach sidecar, validating magic, version, grid
 /// header, word count and that the trailing payload is exactly that many
@@ -325,25 +280,6 @@ pub fn read_reach_sidecar_header(
 /// binding is pack+policy identity, not pack SHA alone.
 pub type CanlightSidecar = ReachSidecar;
 
-/// Serialize a static canlight bitset: magic `b"274L"`, version 1, the same
-/// header dialect as [`encode_reach_sidecar`].
-pub fn encode_canlight_sidecar(
-    origin: WorldTile,
-    width: usize,
-    height: usize,
-    bits: &[u64],
-    binding: &[u8; 32],
-) -> Vec<u8> {
-    encode_bitset_sidecar(
-        MAGIC_CANLIGHT,
-        VERSION_CANLIGHT,
-        origin,
-        width,
-        height,
-        bits,
-        binding,
-    )
-}
 
 /// Deserialize a static canlight sidecar. Binding bytes are not interpreted
 /// here — the caller compares them to pack+policy identity.
@@ -359,30 +295,6 @@ pub fn read_canlight_sidecar(
     read_bitset_sidecar(reader, length, MAGIC_CANLIGHT, VERSION_CANLIGHT)
 }
 
-pub(super) fn encode_bitset_sidecar(
-    magic: &[u8; 4],
-    version: u8,
-    origin: WorldTile,
-    width: usize,
-    height: usize,
-    bits: &[u64],
-    binding: &[u8; 32],
-) -> Vec<u8> {
-    let mut out = Vec::with_capacity(4 + 1 + 12 + 8 + 4 + 32 + bits.len() * 8);
-    out.extend_from_slice(magic);
-    out.push(version);
-    for v in [origin.x, origin.z, origin.level] {
-        out.extend_from_slice(&v.to_le_bytes());
-    }
-    out.extend_from_slice(&(width as u32).to_le_bytes());
-    out.extend_from_slice(&(height as u32).to_le_bytes());
-    out.extend_from_slice(&(bits.len() as u32).to_le_bytes());
-    out.extend_from_slice(binding);
-    for word in bits {
-        out.extend_from_slice(&word.to_le_bytes());
-    }
-    out
-}
 
 pub(super) fn decode_bitset_sidecar(
     bytes: &[u8],
