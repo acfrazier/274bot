@@ -1074,7 +1074,12 @@ fn stationary_melee_shape(
             spawn.level,
             CollisionFlag::W_W as u8,
         ) {
-            set_shape_cell(&mut mask, 0, u32::try_from(offset + 1).expect("Offset is bounded by the u8 hunter size"), side)?;
+            set_shape_cell(
+                &mut mask,
+                0,
+                u32::try_from(offset + 1).expect("Offset is bounded by the u8 hunter size"),
+                side,
+            )?;
         }
         let east_x = spawn
             .x
@@ -1107,7 +1112,12 @@ fn stationary_melee_shape(
             spawn.level,
             CollisionFlag::W_S as u8,
         ) {
-            set_shape_cell(&mut mask, u32::try_from(offset + 1).expect("Offset is bounded by the u8 hunter size"), 0, side)?;
+            set_shape_cell(
+                &mut mask,
+                u32::try_from(offset + 1).expect("Offset is bounded by the u8 hunter size"),
+                0,
+                side,
+            )?;
         }
         let north_z = spawn
             .z

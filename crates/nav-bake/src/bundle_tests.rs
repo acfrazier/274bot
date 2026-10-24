@@ -376,8 +376,7 @@ fn generated_rows_win_over_superseded_checked_in_rows() {
         pois_sha256: None,
         relative_path: "prebuilt/274bot.navpack".into(),
     };
-    let (rows, notes) =
-        merge_identity_rows(vec![generated], vec![superseded, kept.clone()]);
+    let (rows, notes) = merge_identity_rows(vec![generated], vec![superseded, kept.clone()]);
     assert_eq!(rows.len(), 2);
     assert_eq!(rows[0], kept);
     assert_eq!(rows[1].nav_sha256, "aa".repeat(32));
