@@ -2331,7 +2331,7 @@ impl<Io> OperatorSession<Io> {
             self.settle_operations();
             self.log_operations();
         }
-        self.refresh_views();
+        self.refresh_views(now);
         self.resources
             .poll(now, self.play.as_ref(), self.selected.as_deref());
         self.refresh_capacity(now);
@@ -2424,10 +2424,10 @@ impl<Io> OperatorSession<Io> {
                 self.start_places.insert(name.clone(), place);
             }
         }
-        self.refresh_views();
+        self.refresh_views(Instant::now());
     }
 
-    fn refresh_views(&mut self) {
+    fn refresh_views(&mut self, now: Instant) {
         let selected = self.selected.as_deref();
         let card = selected
             .and_then(|name| self.vault.as_ref()?.get(name))
@@ -2455,6 +2455,7 @@ impl<Io> OperatorSession<Io> {
             walks: walks.as_deref(),
             card,
             start_places: &self.start_places,
+            now,
         };
         self.views.refresh(&input, &self.op_changes);
     }

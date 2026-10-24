@@ -6832,3 +6832,164 @@ fn profiles_list_and_editor_split_by_width_and_scroll_on_their_own() {
         }
     }
 }
+
+/// The banner and then the status rows one frame draws for `session`,
+/// split at a marker line.
+fn draw_banner_and_status(session: &crate::session::Session) -> (String, String) {
+    const MARK: &str = "--status rows--";
+    let mut ctx = crate::test_support::imgui_context();
+    let drawn = DrawnText::default();
+    ctx.set_clipboard_backend(drawn.clone());
+    ctx.prepare_frame(
+        dear_imgui_rs::FramePrepareOptions::new([900.0, 400.0], 1.0 / 60.0).renderer_has_textures(),
+    );
+    {
+        let ui = ctx.frame();
+        ui.log_to_clipboard(0u32);
+        ui.window("banner")
+            .size([880.0, 380.0], dear_imgui_rs::Condition::Always)
+            .build(|| {
+                super::banner(ui, session, None);
+                ui.text(MARK);
+                if let Some(detail) = session.core.fleet_view().detail() {
+                    super::status_detail_rows(ui, detail, "—", "lowmem");
+                }
+            });
+        ui.log_finish();
+    }
+    ctx.render();
+    let text = drawn.0.take();
+    let (banner, status) = text.split_once(MARK).expect("the marker line");
+    (banner.to_owned(), status.to_owned())
+}
+
+/// LOGIN-NOTICE-1024: the headed check's sequence on the panel. bob's
+/// refused login stays on the top line, in the words of the error state
+/// line, while the retry's Connecting, a queue wait and a parked logged
+/// out replace the state line under it; the status rows show it in place
+/// of the `last error` row. It is gone at the shared 15 s timeout, and
+/// the error is then history.
+#[test]
+fn the_panel_top_line_keeps_a_login_notice_through_retry_states_until_it_expires() {
+    use crate::session::{Session, SlotIo};
+    use frontend_core::surface::{FrameBuf, SlotInput};
+    use frontend_core::ERROR_MESSAGE_TIMEOUT as TIMEOUT;
+    use host_play::{SlotArm, SlotStatus, StartupPhase};
+
+    let _guard = crate::test_support::imgui_context_guard();
+    let refused = "Error connecting to server. (connect: Connection refused)";
+    let top = format!("Login {refused}");
+    let mut s = Session::new();
+    let mut play = frontend_core::test_support::empty_play(&host_play::PlayOptions {
+        host: "127.0.0.1".into(),
+        transport: client::Transport::Tcp,
+        port: 1,
+        cache_dir: "/tmp".into(),
+        lowmem: true,
+        mainland: false,
+    });
+    play.attach_arm("alice", SlotArm::new(1, false));
+    play.attach_arm("bob", SlotArm::new(2, false));
+    for name in ["alice", "bob"] {
+        s.core.fleet_mut().add(name);
+        s.core.insert_slot_io(
+            name,
+            SlotIo {
+                input: SlotInput::new(),
+                pixels: FrameBuf::new(),
+            },
+        );
+    }
+    s.set_focus_for_test("bob");
+    s.core.set_play(Some(play));
+    s.login_all();
+    let edit = |s: &Session, edit: &dyn Fn(&mut SlotStatus)| {
+        let play = s.core.play_for_test().unwrap();
+        let mut rows = play.statuses.lock().unwrap();
+        match rows.iter_mut().find(|row| row.username == "bob") {
+            Some(row) => edit(row),
+            None => {
+                let mut row = SlotStatus {
+                    username: "bob".into(),
+                    ..SlotStatus::default()
+                };
+                edit(&mut row);
+                rows.push(row);
+            }
+        }
+    };
+
+    let t0 = Instant::now();
+    edit(&s, &|r| {
+        r.startup_phase = StartupPhase::Error;
+        r.startup_phase_started = t0;
+        r.error = Some(refused.into());
+    });
+    s.core.poll_at(t0);
+    let (banner, status) = draw_banner_and_status(&s);
+    assert_eq!(banner.matches(&top).count(), 1, "said once:\n{banner}");
+    assert!(!status.contains("last error"), "{status}");
+
+    let mut seen = Vec::new();
+    for (at, label, state, step) in [
+        (
+            1,
+            "retry connecting",
+            "Logging in",
+            &(|r: &mut SlotStatus| {
+                r.startup_phase = StartupPhase::Connecting;
+                r.startup_phase_started = Instant::now();
+                r.error = None;
+            }) as &dyn Fn(&mut SlotStatus),
+        ),
+        (
+            2,
+            "queue wait",
+            "Waiting in login queue (2/3)",
+            &|r: &mut SlotStatus| {
+                r.startup_phase = StartupPhase::Queueing;
+                r.startup_phase_started = Instant::now();
+                (r.queue_position, r.queue_total) = (2, 3);
+            },
+        ),
+    ] {
+        edit(&s, step);
+        s.core.poll_at(t0 + Duration::from_secs(at));
+        let (banner, status) = draw_banner_and_status(&s);
+        assert!(banner.contains(&top), "{label}:\n{banner}");
+        assert!(
+            banner.contains(state),
+            "{label}: the live state too:\n{banner}"
+        );
+        assert!(
+            status.contains(&format!("login {refused}")) && !status.contains("last error"),
+            "{label}:\n{status}"
+        );
+        seen.push(banner);
+    }
+
+    s.logout("bob");
+    let parked = "Logged out (Log in to connect)";
+    for at in [Duration::from_secs(3), TIMEOUT - Duration::from_secs(1)] {
+        s.core.poll_at(t0 + at);
+        let (banner, _) = draw_banner_and_status(&s);
+        assert!(banner.contains(&top), "{at:?}:\n{banner}");
+        assert!(banner.contains(parked), "{at:?}:\n{banner}");
+        let top_at = banner.find(&top).unwrap();
+        assert!(
+            top_at < banner.find(parked).unwrap(),
+            "the notice comes first"
+        );
+        seen.push(banner);
+    }
+
+    s.core.poll_at(t0 + TIMEOUT);
+    let (banner, status) = draw_banner_and_status(&s);
+    assert!(!banner.contains("Login Error"), "expired:\n{banner}");
+    assert!(banner.contains(parked), "{banner}");
+    assert!(
+        status.contains(&format!("last error {refused}")),
+        "the error is history now:\n{status}"
+    );
+    println!("LOGIN_NOTICE_PANEL_TOP {seen:#?}\nLOGIN_NOTICE_PANEL_EXPIRED {banner}");
+}

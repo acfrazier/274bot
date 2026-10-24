@@ -1,13 +1,14 @@
 //! Status pane (spec `2026-09-01-headless-tui-design.md`): the selected
 //! slot's key/value rows — state, player, tile, walk, queue, modals, mem —
-//! plus the guardian status, the last login error while retrying and the
-//! newest operation, then the process meter. The values come from the
-//! shared `frontend-core` projection ([`SlotDetail`], [`ResourceView`]), the
-//! same the panel's status and resource sections show; this pane only lays
-//! them out.
+//! plus the guardian status, the current login notice (or, once it has
+//! cleared, the last login error while retrying) and the newest operation,
+//! then the process meter. The values come from the shared `frontend-core`
+//! projection ([`SlotDetail`], [`ResourceView`]), the same the panel's
+//! status and resource sections show; this pane only lays them out.
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
+use ratatui::style::{Color, Style};
 use ratatui::text::Line;
 use ratatui::widgets::{Block, Borders, Paragraph, Widget, Wrap};
 
@@ -81,7 +82,11 @@ impl Widget for StatusPane<'_> {
                         lines.push(Line::from(format!("reason: {reason}")));
                     }
                 }
-                if let (false, Some(error)) = (d.row().phase().is_error(), d.row().error()) {
+                // The current login notice takes the history row's place
+                // while it stands (the panel's status rows do the same).
+                if let Some(notice) = d.login_notice_line() {
+                    lines.push(Line::styled(notice, Style::default().fg(Color::Red)));
+                } else if let Some(error) = d.row().last_error() {
                     lines.push(Line::from(format!("last error: {error}")));
                 }
                 if let Some(op) = d.row().last_op() {
@@ -205,6 +210,56 @@ mod tests {
         detail.set_row(row);
         detail.set_state("login code 3: invalid username or password");
         let text = render(StatusPane::new(Some(&detail), "—", "lowmem"), 60, 12);
+        assert!(!text.contains("last error"), "{text:?}");
+    }
+
+    /// LOGIN-NOTICE-1024: while a login notice stands, it shows in red in
+    /// place of the last-error row, beside the live state; once it has
+    /// cleared, the history row comes back. An error state line that
+    /// already says the failure is not repeated.
+    #[test]
+    fn a_login_notice_replaces_the_last_error_row_while_it_stands() {
+        let refused = "Error connecting to server. (connect: Connection refused)";
+        let notice = format!("login {refused}");
+        let mut detail = SlotDetail::default();
+        let mut row = FleetRow::fixture("bob", Phase::LoggedOut, None, None);
+        row.set_error(Some(refused.into()));
+        row.set_login_notice(Some(notice.clone()));
+        detail.set_row(row);
+        detail.set_state("logged out (Log in to connect)");
+        let mut terminal = Terminal::new(TestBackend::new(80, 12)).unwrap();
+        terminal
+            .draw(|frame| {
+                frame.render_widget(StatusPane::new(Some(&detail), "—", "lowmem"), frame.area())
+            })
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let text: String = buffer.content().iter().map(|cell| cell.symbol()).collect();
+        assert!(
+            text.contains("state: logged out (Log in to connect)"),
+            "{text:?}"
+        );
+        assert!(text.contains(&notice), "{text:?}");
+        assert!(!text.contains("last error"), "{text:?}");
+        // Cell index, not byte offset: the border symbols are multibyte.
+        let at = text[..text.find(&notice).unwrap()].chars().count();
+        let (x, y) = ((at % 80) as u16, (at / 80) as u16);
+        assert_eq!(buffer[(x, y)].fg, ratatui::style::Color::Red);
+
+        let mut row = detail.row().snapshot();
+        row.set_login_notice(None);
+        detail.set_row(row);
+        let text = render(StatusPane::new(Some(&detail), "—", "lowmem"), 80, 12);
+        assert!(text.contains(&format!("last error: {refused}")), "{text:?}");
+        assert!(!text.contains(&notice), "{text:?}");
+
+        let mut row = FleetRow::fixture("bob", Phase::LoginError, None, None);
+        row.set_error(Some(refused.into()));
+        row.set_login_notice(Some(notice.clone()));
+        detail.set_row(row);
+        detail.set_state(&notice);
+        let text = render(StatusPane::new(Some(&detail), "—", "lowmem"), 80, 12);
+        assert_eq!(text.matches(&notice).count(), 1, "{text:?}");
         assert!(!text.contains("last error"), "{text:?}");
     }
 
