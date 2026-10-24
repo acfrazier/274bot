@@ -509,7 +509,7 @@ fn current_format_stamp_without_manifest_pois_or_input_hashes_is_stale() {
     no_manifest.relative_manifest = None;
     assert_eq!(
         stale_stamp_error(no_manifest.covers(&expectation(&inputs)).unwrap_err()),
-        crate::StaleStampError::ManifestBytesMissingFromStamp
+        crate::StaleStampError::ManifestDigestMissingFromStamp
     );
 
     let mut empty_input_hash = baked;
