@@ -9232,3 +9232,56 @@ fn a_refusal_before_submission_logs_once_and_the_resolving_action_clears_it() {
         );
     }
 }
+
+/// Whether the process log holds a refusal line containing `line`.
+fn refusal_logged(line: &str) -> bool {
+    use frontend_core::log::{global, LogScope, LogView};
+    let mut view = LogView::new(LogScope::Process);
+    view.edit_filter(|filter| filter.set_text(line));
+    global().refresh(&mut view);
+    view.rows()
+        .iter()
+        .any(|row| row.message().starts_with("command refused: "))
+}
+
+/// PANEL-STATE-GAP-1023 (F2): a command the panel refuses before it can
+/// submit it is refused at the shared command boundary, as every other
+/// refusal is: one `info` line names the command, the bots and the reason,
+/// and the banner shows the reason. The Refresh catalog button with no
+/// catalog configured, Load on a path that is not a file, and Use this
+/// folder on a folder with no catalog.
+#[test]
+fn the_panels_own_refusals_log_at_the_command_boundary() {
+    let iso = IsolatedStores::enter("psg-panel-own-refusals");
+    let mut s = Session::new();
+    s.persist_ui = false;
+    assert_eq!(s.catalog_root().unwrap(), None);
+    let before = s.core.refusals();
+
+    s.begin_refresh_catalog();
+    assert_eq!(
+        s.error.as_deref(),
+        Some("Refresh catalog: no catalog configured")
+    );
+    assert_eq!(s.core.refusals(), before + 1, "one refusal counted");
+    assert!(refusal_logged(
+        "command refused: ImportCatalog on no bots: Refresh catalog: no catalog configured"
+    ));
+
+    let missing = iso.dir().join("psg-missing.ts");
+    s.load_js(&missing);
+    assert_eq!(s.core.refusals(), before + 2);
+    assert!(refusal_logged(&format!(
+        "command refused: LoadScriptFile on no bots: script: not a file: {}",
+        missing.display()
+    )));
+
+    let empty = iso.dir().join("psg-no-catalog");
+    std::fs::create_dir_all(&empty).unwrap();
+    let refused = s.import_rs2b0t_catalog(&empty).unwrap_err();
+    assert!(refused.starts_with("no catalog at "), "{refused}");
+    assert_eq!(s.core.refusals(), before + 3);
+    assert!(refusal_logged(&format!(
+        "command refused: ImportCatalog on no bots: {refused}"
+    )));
+}

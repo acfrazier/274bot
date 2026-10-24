@@ -1822,46 +1822,57 @@ impl TuiSession {
                             .map(|(index, name, command)| (index, name.to_owned(), command))
                             .collect::<Vec<_>>();
                         for (index, name, planned_command) in planned {
-                            match planned_command {
+                            let staged = match planned_command {
                                 OperatorCommand::CreateProfile => {
-                                    if let Err(error) =
-                                        self.profile_import.stage_create_account(index)
-                                    {
-                                        app.error = Some(format!("profile import: {error}"));
-                                        break;
-                                    }
-                                    if let Err(error) = self.submit(
-                                        OperatorCommand::CreateProfile,
-                                        Targets::Application,
-                                    ) {
-                                        app.error = Some(format!("profile import: {error}"));
-                                    }
+                                    self.profile_import.stage_create_account(index)
                                 }
                                 OperatorCommand::SaveProfile => {
-                                    if let Err(error) =
-                                        self.profile_import.stage_save_account(index)
-                                    {
-                                        app.error = Some(format!("profile import: {error}"));
-                                        break;
-                                    }
-                                    if let Err(error) = self.submit(
-                                        OperatorCommand::SaveProfile,
-                                        Targets::Profile(&name),
-                                    ) {
-                                        app.error = Some(format!("profile import: {error}"));
-                                    }
+                                    self.profile_import.stage_save_account(index)
                                 }
                                 _ => {
-                                    app.error = Some(format!(
-                                        "profile import account {name} has an unsupported writer"
-                                    ));
+                                    self.refuse_command(
+                                        app,
+                                        planned_command,
+                                        &[&name],
+                                        None,
+                                        &format!(
+                                            "profile import account {name} has an unsupported writer"
+                                        ),
+                                    );
                                     break;
                                 }
+                            };
+                            if let Err(error) = staged {
+                                self.refuse_command(
+                                    app,
+                                    planned_command,
+                                    &[&name],
+                                    None,
+                                    &format!("profile import: {error}"),
+                                );
+                                break;
+                            }
+                            let targets = if planned_command == OperatorCommand::CreateProfile {
+                                Targets::Application
+                            } else {
+                                Targets::Profile(&name)
+                            };
+                            if let Err(error) = self.submit(planned_command, targets) {
+                                app.error = Some(format!("profile import: {error}"));
                             }
                             self.profile_import.cancel_staged_account(index);
                         }
                     }
-                    Err(error) => app.error = Some(format!("profile import: {error}")),
+                    // Import replans the preview against the current vault
+                    // before any account row exists; a refused replan is
+                    // refused as the preview it repeats.
+                    Err(error) => self.refuse_command(
+                        app,
+                        OperatorCommand::PreviewProfileImport,
+                        &[],
+                        None,
+                        &format!("profile import: {error}"),
+                    ),
                 }
             }
             ImportAction::Back => {
@@ -2348,7 +2359,7 @@ impl TuiSession {
             let prompt = plan.prompt().to_owned();
             app.confirm(ConfirmKind::FleetPlan { action, prompt });
         } else {
-            self.run_fleet_plan(app);
+            self.run_fleet_plan(app, action);
         }
     }
 
@@ -2380,10 +2391,18 @@ impl TuiSession {
     /// targets and card decide everything: marks made or changed since
     /// the plan do not join it. The one result view reports the outcome.
     /// An Assign changes the focused bot's heading when it was a target, so
-    /// the Script pane re-reads it (a pending Browse pick stays).
-    fn run_fleet_plan(&mut self, app: &mut TuiApp) {
+    /// the Script pane re-reads it (a pending Browse pick stays). With no
+    /// plan waiting, the confirmed `action` is refused at the command
+    /// boundary.
+    fn run_fleet_plan(&mut self, app: &mut TuiApp, action: frontend_core::FleetAction) {
         let Some(plan) = self.core.fleet_plan() else {
-            app.error = Some("fleet: no plan is waiting".into());
+            self.refuse_command(
+                app,
+                OperatorCommand::PlanFleetAction(action),
+                &[],
+                None,
+                "fleet: no plan is waiting",
+            );
             return;
         };
         let command = plan.command();
@@ -4384,7 +4403,14 @@ fn dispatch(session: &mut TuiSession, app: &mut TuiApp, action: AppAction) {
     match action {
         AppAction::Quit => session.quit(app),
         AppAction::Refused(refusal) => {
-            session.refuse_command(app, refusal.command, &[], refusal.need, refusal.reason);
+            let bot = refusal.bot.as_deref();
+            session.refuse_command(
+                app,
+                refusal.command,
+                bot.as_slice(),
+                refusal.need,
+                &refusal.reason,
+            );
         }
         AppAction::Focus(name) => {
             session.focus(&name);
@@ -4460,7 +4486,7 @@ fn dispatch(session: &mut TuiSession, app: &mut TuiApp, action: AppAction) {
             frontend_core::FleetAction::SwitchWorld(world),
             profile.as_deref(),
         ),
-        AppAction::RunFleetPlan => session.run_fleet_plan(app),
+        AppAction::RunFleetPlan(action) => session.run_fleet_plan(app, action),
         AppAction::CancelFleetPlan => session.cancel_fleet_plan(app),
         AppAction::ScriptReload => session.script_reload(app),
         AppAction::ScriptReloadCancel => session.script_reload_cancel(app),

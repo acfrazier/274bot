@@ -6,9 +6,9 @@
 //! focus, so no letter leaks into another pane or a text field.
 
 use frontend_core::scripts::ScriptRunState;
-use frontend_core::{FleetAction, MarkPredicate};
+use frontend_core::{FleetAction, MarkOp, MarkPredicate, OperatorCommand};
 
-use crate::app::{TuiApp, WalkSendMode};
+use crate::app::{Refusal, TuiApp, WalkSendMode};
 use crate::layout::Screen;
 use crate::script_shape::SCRIPT_KEYS;
 
@@ -625,6 +625,108 @@ impl Command {
             }
             _ => Ok(()),
         }
+    }
+
+    /// The operator command `self` runs, for the refusal line the command
+    /// boundary writes when `self` is unavailable ([`Self::availability`]).
+    /// `None` for a command that only changes what the screen shows (a
+    /// pane, a picker, a popup, a map view toggle): refusing it refuses no
+    /// operator command.
+    fn operator_command(self, app: &TuiApp) -> Option<OperatorCommand> {
+        Some(match self {
+            Command::Fleet(action) => OperatorCommand::PlanFleetAction(action),
+            Command::MarkAllShown => OperatorCommand::MarkFleet(MarkOp::Shown),
+            Command::UnmarkShown => OperatorCommand::MarkFleet(MarkOp::UnmarkShown),
+            Command::InvertShown => OperatorCommand::MarkFleet(MarkOp::InvertShown),
+            Command::MarkWhere(predicate) => OperatorCommand::MarkFleet(MarkOp::Where(predicate)),
+            Command::ClearMarks => OperatorCommand::ClearMarks,
+            Command::MoveProfileUp | Command::MoveProfileDown | Command::MoveMarkedToTop => {
+                OperatorCommand::ReorderProfiles
+            }
+            Command::CycleFleetSort => {
+                OperatorCommand::SetFleetSort(crate::fleet::next_order(app.fleet_model.order()))
+            }
+            Command::Login => OperatorCommand::Login,
+            Command::Logout => OperatorCommand::Logout,
+            Command::Remove => OperatorCommand::Remove,
+            Command::DismissNotice => OperatorCommand::AcknowledgeNotice,
+            Command::ScriptStart => OperatorCommand::StartScript,
+            Command::ScriptPause if app.script_state == ScriptRunState::Paused => {
+                OperatorCommand::ResumeScript
+            }
+            Command::ScriptPause => OperatorCommand::PauseScript,
+            Command::ScriptStop => OperatorCommand::StopScript,
+            Command::ScriptReload if app.reload_confirm => OperatorCommand::ConfirmReload,
+            Command::ScriptReload => OperatorCommand::ReloadScripts,
+            Command::ScriptReloadCancel => OperatorCommand::CancelReload,
+            Command::MapWalk if app.walk_send.mode == WalkSendMode::Group => {
+                OperatorCommand::GroupWalk
+            }
+            Command::MapWalk => OperatorCommand::WalkTo,
+            Command::MapTeleport => OperatorCommand::Teleport,
+            Command::LogSave => OperatorCommand::SaveLog,
+            Command::Help
+            | Command::Palette
+            | Command::Quit
+            | Command::ShowFleet
+            | Command::Show(_)
+            | Command::FocusNext
+            | Command::FocusPrev
+            | Command::SelectNextBot
+            | Command::SelectPrevBot
+            | Command::ToggleMouse
+            | Command::ShowMessage
+            | Command::FilterFleet
+            | Command::PickFleetCard
+            | Command::PickWorld
+            | Command::PickWorldMarked
+            | Command::ImportProfiles
+            | Command::NewProfile
+            | Command::Settings
+            | Command::Loadouts
+            | Command::ManualWalk
+            | Command::ScriptBrowse
+            | Command::ScriptLoad
+            | Command::ScriptParams
+            | Command::ImportCatalog
+            | Command::ToggleGameChat
+            | Command::MapSearch
+            | Command::MapRecenter
+            | Command::MapGroup
+            | Command::MapWilderness
+            | Command::LogSessionFile => return None,
+        })
+    }
+
+    /// The bot `self` acts on, named on its refusal line: the focused bot
+    /// for a command on the selected bot, none for a fleet or app command.
+    fn refused_bot(self, app: &TuiApp) -> Option<String> {
+        match self {
+            Command::Login
+            | Command::Logout
+            | Command::Remove
+            | Command::DismissNotice
+            | Command::ScriptStart
+            | Command::ScriptPause
+            | Command::ScriptStop
+            | Command::ScriptReload
+            | Command::ScriptReloadCancel
+            | Command::MapTeleport => app.focused_name(),
+            Command::MapWalk if app.walk_send.mode != WalkSendMode::Group => app.focused_name(),
+            _ => None,
+        }
+    }
+
+    /// The refusal of `self` for `reason` ([`Self::availability`]) when
+    /// `self` runs an operator command: the session logs it at the command
+    /// boundary and shows `"{label}: {reason}"` on the message line.
+    pub fn refusal(self, app: &TuiApp, reason: &str) -> Option<Refusal> {
+        Some(Refusal {
+            command: self.operator_command(app)?,
+            bot: self.refused_bot(app),
+            reason: format!("{}: {reason}", self.label(app)).into(),
+            need: None,
+        })
     }
 }
 

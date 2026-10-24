@@ -194,11 +194,14 @@ impl WalkSendState {
 }
 
 /// A command the app refuses before any submission: the session logs it at the
-/// command boundary and shows `reason`, which clears when `need` holds.
+/// command boundary (the command, `bot` and `reason`) and shows `reason`,
+/// which clears when `need` holds.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Refusal {
     pub command: OperatorCommand,
-    pub reason: &'static str,
+    /// The bot the refused command named, if it named one.
+    pub bot: Option<String>,
+    pub reason: std::borrow::Cow<'static, str>,
     pub need: Option<ErrorNeed>,
 }
 
@@ -299,8 +302,8 @@ pub enum AppAction {
     /// at once when it needs no confirmation, otherwise the confirm
     /// overlay shows the plan's prompt.
     PlanFleet(frontend_core::FleetAction),
-    /// Confirm: run the waiting fleet plan (`Targets::Plan`).
-    RunFleetPlan,
+    /// Confirm: run the waiting fleet plan for this action (`Targets::Plan`).
+    RunFleetPlan(frontend_core::FleetAction),
     /// Cancel: drop the waiting fleet plan (`CancelFleetPlan`).
     CancelFleetPlan,
     /// Reload the focused heading's card, or confirm a shown warning.
@@ -1049,7 +1052,8 @@ impl TuiApp {
                 if self.walk_send.checked_count(self.fleet_model.marks()) == 0 {
                     return AppAction::Refused(Refusal {
                         command: OperatorCommand::GroupWalk,
-                        reason: "no bots selected",
+                        bot: None,
+                        reason: "no bots selected".into(),
                         need: Some(ErrorNeed::CheckedBots),
                     });
                 }
@@ -1706,7 +1710,8 @@ impl TuiApp {
                 Some(sel) => AppAction::ScriptStart(sel),
                 None => AppAction::Refused(Refusal {
                     command: OperatorCommand::StartScript,
-                    reason: "script: browse to pick one first",
+                    bot: self.focused_name(),
+                    reason: "script: browse to pick one first".into(),
                     need: Some(ErrorNeed::PickedCard),
                 }),
             },

@@ -1713,10 +1713,10 @@ fn background_notice_needs_an_explicit_got_it() {
     assert_eq!(app.on_click(col + 1, row), AppAction::AckBackground);
     assert_eq!(app.on_key(ch('n')), AppAction::AckBackground);
     app.background_notice = None;
-    assert_eq!(
-        app.on_key(ch('n')),
-        AppAction::None,
-        "no notice, nothing to dismiss"
+    assert!(
+        matches!(&app.on_key(ch('n')), AppAction::Refused(refusal)
+            if refusal.command == frontend_core::OperatorCommand::AcknowledgeNotice),
+        "no notice, nothing to dismiss: the command is refused"
     );
 }
 
@@ -1790,8 +1790,12 @@ fn script_commands_are_reachable_at_80x24() {
         assert_eq!(app.on_key(ch(c)), want, "{c} asks core for a plan");
         assert!(app.modal.is_none(), "{c}: only core decides to ask");
     }
-    // `C` cancels only a shown reload warning.
-    assert_eq!(app.on_key(ch('C')), AppAction::None);
+    // `C` cancels only a shown reload warning; without one it is refused.
+    assert!(matches!(
+        &app.on_key(ch('C')),
+        AppAction::Refused(refusal)
+            if refusal.command == frontend_core::OperatorCommand::CancelReload
+    ));
     app.reload_confirm = true;
     assert_eq!(app.on_key(ch('C')), AppAction::ScriptReloadCancel);
     // Browse and Load open in the tab and keep the keys until closed.
