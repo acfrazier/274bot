@@ -163,14 +163,15 @@ graph, derived from the manifests:
 - `api` → `client`
 - `host` → `api`, `client`, `vault`
 - `nav` → `api`, `client`
+- `nav-bake` → `api`, `client`, `nav`
 - `nav-executor` → `api`, `nav`, `client`; `nav` also **dev** for planner test-support fixtures
 - `script` → `api`, `nav`, `vault` (runtime); `client` **dev-only**
-- `host-play` → `api`, `client`, `host`, `script`, `vault`; `nav` runtime and **build**; `nav-executor` runtime; `scenario` **optional** (and **dev**); `script` also **dev**
+- `host-play` → `api`, `client`, `host`, `script`, `vault`; `nav` runtime and **build**; `nav-bake` **build and dev**; `nav-executor` runtime; `scenario` **optional** (and **dev**); `script` also **dev**
 - `scenario` → `api`, `client`, `nav`, `nav-executor`, `script`
-- `frontend-core` → `api`, `host`, `host-play`, `nav`, `script`, `vault`; `client`, `host-play`, `scenario` **dev-only**
-- `panel` → `api`, `client`, `frontend-core`, `host`, `host-play`, `nav`, `scenario`, `script`, `vault`; `frontend-core` and `host-play` also **dev**
-- `tui` → `api`, `client`, `frontend-core`, `host-play`, `nav`, `scenario`, `script`, `vault`; `host` **dev-only**; `frontend-core` and `host-play` also **dev**
-- `e2e` → `api`, `client`, `host`, `host-play`, `nav`, `scenario`, `vault`; `host-play` also **dev**
+- `frontend-core` → `api`, `host`, `host-play`, `nav`, `script`, `vault`; `client`, `host-play`, `nav-bake`, `scenario` **dev-only**
+- `panel` → `api`, `client`, `frontend-core`, `host`, `host-play`, `nav`, `scenario`, `script`, `vault`; `nav-bake` **dev-only**; `frontend-core` and `host-play` also **dev**
+- `tui` → `api`, `client`, `frontend-core`, `host-play`, `nav`, `scenario`, `script`, `vault`; `host`, `nav-bake` **dev-only**; `frontend-core` and `host-play` also **dev**
+- `e2e` → `api`, `client`, `host`, `host-play`, `nav`, `nav-bake`, `scenario`, `vault`; `host-play` also **dev**
 
 `e2e` does **not** Cargo-depend on `script`, `panel`, or `tui`. The suite
 launches product binaries as child processes. That is orchestration, not a
@@ -328,21 +329,19 @@ Ground stamps and simulation observation generations remain on the world.
 An attached head still preserves its last 3D scene while `scene_state == 1`.
 The synchronous GPU workspace wait remains a T4.4 limitation.
 
-### nav
+### nav-planner
 
 | module | owns (one reason to change) | notes |
 | --- | --- | --- |
 | `lib.rs` | crate facade and re-exports | declares every module below |
 | `arrival.rs` | arrival detection | on tile or adjacent to solid |
-| `bake.rs` | shared world bake | one derivation for CLI and build script |
 | `bank_fetch.rs` | BankBudget fetch-and-wear plan | plan only, router stays fail-closed |
-| `bundle.rs` | build-time bundling and stamps | identities, no runtime state |
 | `camera.rs` | path-facing orbit yaw | pure, host writes yaw per observe |
-| `canlight.rs` | canlight sidecar bake | static allow-loc-add subset |
-| `collision.rs` | whole-world collision bake | four planes plus walkable word |
+| `canlight.rs` | canlight lookup and identity binding | static policy and checked sidecar identity |
+| `collision.rs` | runtime collision models | four planes, walk words, and shared packing primitives |
 | `essence.rs` | essence-mine return latch | session-gated return hop |
 | `grid.rs` | walkability grids | step-grid surface |
-| `manifest.rs` | bound pack manifest | bake identity checks |
+| `manifest.rs` | runtime manifest and identity schemas | hashes, verification, and `NavIdentityRow` |
 | `map.rs` | bounded map-data boundary | errors, capped records/text and header-first checks; no UI or game actions |
 | `map/identity.rs` | map identity byte layouts | independent image/catalogue keys; exact encoder/dependency policy |
 | `map/poi.rs` | source-tagged discovery evidence | classifier, physical placements and separate nav-bound stands; not account eligibility |
@@ -354,39 +353,58 @@ The synchronous GPU workspace wait remains a T4.4 limitation.
 | `map/catalogue.rs` | client-only POI derivation | isolated from terrain policy so classifier changes do not invalidate baked imagery |
 | `map/raster.rs` | terrain raster and PNG pyramid | deterministic, sparse, bounded mapsquare neighbourhoods |
 | `map/producer.rs` | pure producer entry points | host owns leases, locking, cancellation and publication |
-| `map/services.rs` | nav-bake producer of the `274bot.navpois` sidecar | jm2 NPC rows, bank-service handlers, labels |
+| `map/services.rs` | navpois policy identity | one shared digest formula |
 | `named_banks.rs` | selected-world bank stand resolution | captured account eligibility stays with the caller, no `script` dep |
-| `pack.rs` | pack wire codec and bake hub | pack encode and decode, stable exports |
-| `pack/config_parse.rs` | pack config parsers | content config text |
-| `pack/mapsquare.rs` | mapsquare parse and geometry | mapsquare bake rows |
-| `pack/banks.rs` | bank table codec and derivation | booth tiles and stands |
-| `pack/sidecars.rs` | sidecar formats and codecs | flags, paint-reach, canlight |
-| `pack/zones.rs` | zone table codec | wire geometry and stable identity of exclusion zones |
+| `pack.rs` | runtime pack decoding | version, geometry, length and identity checks |
+| `pack/banks.rs` | bank schema and decoding | booth/NPC access data |
+| `pack/sidecars.rs` | sidecar decoding and binding | flags, paint-reach, canlight |
+| `pack/zones.rs` | zone table decoding | validated exclusion geometry |
 | `paint.rs` | nav-paint buffers | no imgui, no client draw |
 | `quest_gates.rs` | quest-stage gates on transport edges | typed gates over selected progress signals |
 | `router.rs` | world-space Dijkstra | exact-coordinate compact storage, shared synchronous/cooperative kernel, total-ticks cost and gated edges |
+| `movement.rs` | shared directional step rule | router and release producer use the same `step_ok` |
 | `router/grid.rs` | compatibility step-grid A-star | retained for fixture tests; production travel uses the collision+transport router |
 | `router/resources.rs` | resource labels on walk nodes | change only at paid hops |
 | `tile.rs` | tile coords and distance | x, z, level |
 | `transport.rs` | transport graph orchestration | types, ordering, shared cost and geometry |
-| `transport/condparse.rs` | shared condition text helpers | fail-closed, same behavior |
-| `transport/index.rs`, `transport/script_text.rs`, `transport/rs2_syntax.rs` | shared placement readers, script text and a small RuneScript statement parser | producers, consumed by family derivers |
-| `transport/observable.rs` | quest-journal observability proof | green-row rule |
-| `transport/gates.rs`, `transport/quest_doors.rs`, `transport/doors.rs`, `transport/door_members.rs`, `transport/scripted_doors.rs`, `transport/stage_doors.rs`, `transport/stage_doors_forced.rs`, `transport/brass_key.rs`, `transport/membergate.rs`, `transport/members_guard.rs`, `transport/webs.rs`, `transport/vertical.rs`, `transport/shortcuts.rs` | door, gate, vertical, and shortcut families | one family each; stage doors evaluate the engine's door openers |
-| `transport/engine_door_procs.rs2`, `transport/engine_forced_procs.rs2` | engine opener procedures | content text read by the stage-door deriver |
-| `transport/static_routes.rs`, `transport/npc_hops.rs`, `transport/gliders.rs`, `transport/spirit_trees.rs`, `transport/levers.rs`, `transport/toll.rs`, `transport/magic_guild.rs`, `transport/ranging_guild.rs`, `transport/zanaris.rs`, `transport/teleports.rs`, `transport/wilderness.rs` | fixed-route, guild, teleport, and wilderness-legality families | one family each |
+| `transport/` | runtime fare, web-action and Wilderness helpers | source derivation belongs to `nav-bake` |
 | `executor_adapter.rs` | raw forwarding surface for `nav-executor` only | plan-count/leg helpers, web/door predicates, shared constants; not part of `contract` |
 | `test_support.rs`, `test_support/source_scan.rs` | planner fixture builders and source scanner | test scope plus `test-support` feature gates |
 | `walk_destinations.rs` | shared walk-destination pins | town tiles for WalkTo confirm |
+| `required-content-{274,289}.tsv` | shared canonical content inputs | Quester coverage, nightly staging, and the baker use the same data |
 | `world.rs` | bound world handle | packed collision plus transport graph |
 | `world_state.rs` | search gating facts | fail-closed edge requirements |
-| `zones.rs`, `zones/curated.rs` | exclusion zones, their spatial index and the per-search exemption filter | content-derived; curated groups and hazards in the child |
-| `bin/nav-pack.rs` | `nav-pack` CLI | whole-world bake entrypoint |
-| `bin/nav-input-audit.rs` | input audit CLI | offline cache and content audit |
-| `bin/cache-content-id.rs` | `cache-content-id` CLI | read-only identity export |
-| `required-content-274.tsv`, `required-content-289.tsv` | canonical content inventory | build-checked data, not code |
+| `zones.rs`, `zones/curated.rs` | exclusion data, spatial index and search exemptions | shared runtime hazard facts |
 
-The planner's `clippy.toml` denies action types, functions, methods, and
+### nav-bake
+
+This producer depends on the planner. Runtime planning never depends on this crate.
+The combined future v18 schema is in the [baked reachability contract](baked-reachability.md).
+BR1 retains v17 and makes one generator-identity change to `nav-bake-3`.
+
+| module | owns (one reason to change) | notes |
+| --- | --- | --- |
+| `bake.rs` | release bake orchestration and zone derivation | shared by the CLI and application build |
+| `bundle.rs` | staging, fingerprints, stamps and required inputs | runtime identity schemas remain in planner |
+| `manifest.rs` | generated navigation manifest assembly | no runtime schema copy |
+| `collision.rs` | collision construction and stamping | shared runtime models remain in planner |
+| `pack/` and `pack.rs` | source parsers, bank derivation and encoding | pack and sidecar output bytes |
+| `canlight.rs` | static canlight producer | reads shared runtime policy identity |
+| `services.rs` | navpois and hunter inputs | jm2 placements, handlers and labels |
+| `zones.rs` | curated group generation inputs | shared hazard facts remain in planner |
+| `transport/` and `transport.rs` | transport derivation and parser support | all 26 source families, nested helpers and embedded procedures |
+| `bin/nav-pack.rs` | custom-input bake CLI | explicit output paths |
+| `bin/nav-input-audit.rs` | offline input audit | developer tool, not runtime routing |
+| `bin/cache-content-id.rs` | offline identity export | reads the selected cache and snapshot |
+
+`host-play` admits build and dev dependencies on the baker. Panel, frontend-core,
+and TUI admit only producer-fixture dev edges. The latter two include host-play's
+shared map and upgrade fixtures. The e2e tool admits its input-audit edge.
+The host retains its planner build dependency for schemas, hashes and `FORMAT_ID`.
+An environment skip flag does not remove nonoptional Cargo build dependencies.
+
+
+The planner's and baker's `clippy.toml` files deny action types, functions, methods, and
 macros by compiler identity. `tools/architecture/nav_clippy.py --write`
 generates the lists and their inventory from rustdoc JSON.
 `python3 -B tools/architecture/nav_clippy.py --check` checks the inventory

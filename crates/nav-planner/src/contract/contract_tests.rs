@@ -146,10 +146,10 @@ fn production_area_arrival(
     crate::arrival::arrived_in_area(here, centre, r, |t| collision.standable(t))
 }
 
-/// Production step validity: `nav_planner::router::step_ok` as Gatherer's retreat
+/// Production step validity: `nav_planner::movement::step_ok` as Gatherer's retreat
 /// flood calls it (`gatherer/runner.rs:185`), on the mover's own plane.
 fn production_step(collision: &WorldCollision, from: WorldTile, d: (i32, i32)) -> bool {
-    crate::router::step_ok(collision, from, d)
+    crate::movement::step_ok(collision, from, d)
 }
 
 /// Every tile of the `half`-radius window around `centre` on `centre`'s
@@ -475,7 +475,7 @@ fn step_ok_diagonal_uses_orthogonal_faces() {
         "packed walk must keep W_S on the northern neighbour"
     );
     assert!(
-        !crate::router::step_ok(&collision, from, (1, 1)),
+        !crate::movement::step_ok(&collision, from, (1, 1)),
         "NE requires the northern neighbour's south face open"
     );
     let blocked = lease_from(collision);
@@ -1486,7 +1486,7 @@ fn transport_legs_report_the_router_edges_and_the_production_admission_facts() {
     );
     // The returned token is a router fact: without hop 1's return, hop 2
     // stays shut even though everything else is proven.
-    let mut no_return = first.clone();
+    let mut no_return = first;
     no_return.item_returns.clear();
     let (collision2, graph2) = two_door_world(no_return, second.clone());
     assert_eq!(

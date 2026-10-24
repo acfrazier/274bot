@@ -31,6 +31,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.6` 
 - When a bot is poisoned, fighting and walk protection count the next poison hit before they decide to eat. A bot at full hitpoints no longer eats food that would heal nothing.
 - A new profile setting group, Survival and supplies, holds Cure poison: when needed (default), always, or never.
 
+### Developer tools
+
+- Navigation generation now lives in `nav-bake`. Build `nav-pack`, `cache-content-id`, and `nav-input-audit` from that crate. Runtime planning stays in `nav-planner`. This ownership change keeps v17 pack bytes and routes unchanged, apart from the generator identity in generated metadata.
+
 ### Fixed during development
 
 - `tui-play --user NAME` stops on a missing vault before it prepares the game cache or reads the engine login key. The message is the same. A local server with no engine directory still stops with the engine-directory error.

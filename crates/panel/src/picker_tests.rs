@@ -788,7 +788,7 @@ fn sidecar_file_roundtrips_and_rejects_garbage() {
         0,
         CollisionFlag::WALK_SCENERY as u32,
     ];
-    let bytes = nav_planner::pack::encode_flags_sidecar(
+    let bytes = nav_bake::pack::encode_flags_sidecar(
         WorldTile {
             x: 3200,
             z: 3200,
@@ -896,7 +896,7 @@ fn flags_sidecar_requires_exact_identity_and_drops_on_toggle_off() {
         level: 0,
     };
     let flags = vec![CollisionFlag::W_N as u32, 0, 0, 0];
-    let bytes = nav_planner::pack::encode_flags_sidecar(origin, 1, 1, &flags);
+    let bytes = nav_bake::pack::encode_flags_sidecar(origin, 1, 1, &flags);
     std::fs::write(&path, &bytes).unwrap();
     let digest = nav_planner::manifest::hash_bytes(&bytes);
 
@@ -947,7 +947,7 @@ fn bundled_flags_decode_without_content_hash_and_reuse_sidecar() {
         level: 0,
     };
     let flags = vec![CollisionFlag::W_N as u32, 0, 0, 0];
-    let bytes = nav_planner::pack::encode_flags_sidecar(origin, 1, 1, &flags);
+    let bytes = nav_bake::pack::encode_flags_sidecar(origin, 1, 1, &flags);
     std::fs::write(&path, &bytes).unwrap();
     // Digest is still bound (identity names flags) but must not be rehashed.
     let digest = nav_planner::manifest::hash_bytes(&bytes);
@@ -1158,7 +1158,7 @@ fn flags_load_once_on_ensure_and_drop_releases() {
         level: 0,
     };
     let flags = vec![CollisionFlag::W_N as u32, 0, 0, 0];
-    let bytes = nav_planner::pack::encode_flags_sidecar(origin, 1, 1, &flags);
+    let bytes = nav_bake::pack::encode_flags_sidecar(origin, 1, 1, &flags);
     std::fs::write(&path, &bytes).unwrap();
     let digest = nav_planner::manifest::hash_bytes(&bytes);
 

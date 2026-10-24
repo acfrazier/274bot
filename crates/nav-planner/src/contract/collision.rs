@@ -74,9 +74,9 @@ impl<'a> CollisionView<'a> {
     }
 
     /// One-tile step validity: the client's directional `tryMove` test
-    /// (`router.rs:3335-3387`), including diagonal orthogonal-face rules.
+    /// in `movement`, including diagonal orthogonal-face rules.
     /// Different planes or a non-adjacent pair are not a step. The plane
-    /// check is this view's: `router::step_ok` copies `from.level` onto the
+    /// check is this view's: `movement::step_ok` copies `from.level` onto the
     /// neighbour and would otherwise ignore `to.level`.
     pub fn step_ok(self, from: WorldTile, to: WorldTile) -> bool {
         if from.level != to.level {
@@ -86,7 +86,7 @@ impl<'a> CollisionView<'a> {
         if d == (0, 0) {
             return false;
         }
-        crate::router::step_ok(self.collision, from, d)
+        crate::movement::step_ok(self.collision, from, d)
     }
 
     /// Packed-bake Reach or Area arrival. Reach is production

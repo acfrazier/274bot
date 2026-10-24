@@ -82,20 +82,20 @@ fn nav_elkoy() {
     if elk.len() != 2 {
         fail(&format!(
             "nav_elkoy: pack carries {} Elkoy escort edges, need 2 \
-             (rebake with `cargo run -p nav-planner --bin nav-pack`)",
+             (rebake with `cargo run -p nav-bake --bin nav-pack`)",
             elk.len()
         ));
     }
     if !elk.iter().any(|e| e.at == ELKOY_MAZE_SIDE && e.to == MAZE) {
         fail(&format!(
             "nav_elkoy: the maze-side Elkoy {ELKOY_MAZE_SIDE:?} -> village {MAZE:?} \
-             escort is missing (rebake with `cargo run -p nav-planner --bin nav-pack`)"
+             escort is missing (rebake with `cargo run -p nav-bake --bin nav-pack`)"
         ));
     }
     if !elk.iter().any(|e| e.to == ENTRANCE) {
         fail(&format!(
             "nav_elkoy: the village Elkoy -> entrance {ENTRANCE:?} escort is missing \
-             (rebake with `cargo run -p nav-planner --bin nav-pack`)"
+             (rebake with `cargo run -p nav-bake --bin nav-pack`)"
         ));
     }
     for e in &elk {

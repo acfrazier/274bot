@@ -393,7 +393,7 @@ fn runtime_external_nav_binds_without_rehashing_selected_content() {
     std::fs::create_dir(&content).unwrap();
     std::fs::write(content.join("world"), b"world-a").unwrap();
     let (walk, blocked) = nav_planner::collision::pack_walk(&[0; 8]);
-    let bytes = nav_planner::pack::encode(
+    let bytes = nav_bake::pack::encode(
         &nav_planner::collision::WorldCollision {
             origin: api::snapshot::WorldTile {
                 x: 3200,
@@ -413,7 +413,7 @@ fn runtime_external_nav_binds_without_rehashing_selected_content() {
     let pack = root.join("world.navpack");
     std::fs::write(&pack, &bytes).unwrap();
     let mut manifest =
-        host_play::profile::NavManifest::capture(289, &cache, &bytes, None, None, None, None, 0, 0)
+        nav_bake::manifest::capture_nav_manifest(289, &cache, &bytes, None, None, None, None, 0, 0)
             .unwrap();
     manifest.content_id = Some(
         compute_decoded_content_identity(289, &retained, &retained)
@@ -421,7 +421,7 @@ fn runtime_external_nav_binds_without_rehashing_selected_content() {
             .content_id_hex(),
     );
     manifest.source_sha256 =
-        Some(nav_planner::bundle::source_digest(&content, &[&root.join("cache/config")]).unwrap());
+        Some(nav_bake::bundle::source_digest(&content, &[&root.join("cache/config")]).unwrap());
     std::fs::write(
         host_play::profile::nav_manifest_path(&pack),
         serde_json::to_vec(&manifest).unwrap(),
