@@ -874,6 +874,8 @@ pub struct Session {
     pub core: OperatorSession<SlotIo>,
     /// Last vault/connection error shown in the banner.
     pub error: Option<String>,
+    /// The banner message's expiry clock ([`Self::expire_error`]).
+    error_expiry: frontend_core::ErrorExpiry,
     /// BOT_MAINLAND=1 / host-play --mainland; not a panel checkbox.
     pub mainland: Arc<AtomicBool>,
     /// The log section's filtered view and controls over the shared
@@ -1432,6 +1434,7 @@ impl Session {
             })),
             core,
             error: None,
+            error_expiry: frontend_core::ErrorExpiry::default(),
             mainland: Arc::new(AtomicBool::new(
                 env::var("BOT_MAINLAND").as_deref() == Ok("1"),
             )),
@@ -2360,9 +2363,18 @@ impl Session {
         }
     }
 
+    /// Clear the banner message once it has stood for
+    /// [`frontend_core::ERROR_MESSAGE_TIMEOUT`] with nothing resolving or
+    /// replacing it (the same rule as the terminal app's message line).
+    pub(crate) fn expire_error(&mut self, now: Instant) {
+        self.error_expiry
+            .observe(&mut self.error, self.core.refusals(), now);
+    }
+
     /// Poll slot statuses and append log lines for transitions (slot up,
     /// login errors, ingame, scene changes). Call once per UI frame.
     pub fn pump_status(&mut self) {
+        self.expire_error(Instant::now());
         self.core.advance_removals(Instant::now());
         // The fleet model follows the core's rows and the vault at this
         // sync, whether or not a fleet surface is drawn (two integer

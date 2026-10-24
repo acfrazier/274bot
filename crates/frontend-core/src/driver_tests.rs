@@ -4096,3 +4096,413 @@ fn a_relog_elsewhere_or_a_refused_world_fails_the_member() {
     assert_eq!(terminal(&d, run, "bob"), Some(rejected));
     assert_eq!(member_detail(&d, run, "bob"), "world 2 refused the login");
 }
+
+// ---- PANEL-STATE-GAP-1023: one projection of what each bot is doing ----
+
+const NINE: [&str; 9] = [
+    "alice", "bob", "carol", "dave", "erin", "frank", "grace", "heidi", "ivan",
+];
+
+/// Publish `names` as clients in game, the way their slot threads do.
+fn publish_in_game(d: &HeadlessDriver, names: &[&str]) {
+    let mut rows = d.session().play().expect("play").statuses.lock().unwrap();
+    for name in names {
+        rows.retain(|row| row.username != *name);
+        rows.push(host_play::SlotStatus {
+            username: (*name).into(),
+            connected: true,
+            ingame: true,
+            scene_state: 2,
+            ..host_play::SlotStatus::default()
+        });
+    }
+}
+
+/// Set (or clear) the published script-walk destination of `names`.
+fn publish_walks(d: &HeadlessDriver, names: &[&str], walk: Option<(i32, i32, i32)>) {
+    let (x, z, level) = walk.unwrap_or((-1, -1, -1));
+    let mut rows = d.session().play().expect("play").statuses.lock().unwrap();
+    for row in rows
+        .iter_mut()
+        .filter(|row| names.contains(&row.username.as_str()))
+    {
+        (row.walk_x, row.walk_z, row.walk_level) = (x, z, level);
+    }
+}
+
+fn start_loop_scripts(d: &mut HeadlessDriver, names: &[&str]) {
+    for name in names {
+        d.session()
+            .play()
+            .expect("play")
+            .script_start_load(
+                name,
+                "export function tick(api) {}".into(),
+                script::LoadShape::NativeTick,
+                None,
+                vec![],
+            )
+            .expect("start");
+    }
+    for name in names {
+        wait_state(d, name, ScriptRunState::Running);
+    }
+}
+
+/// Every row's `(name, label)` as the fleet model hands them to a front end.
+fn row_labels(d: &HeadlessDriver) -> Vec<(String, String)> {
+    d.models()
+        .fleet()
+        .rows()
+        .iter()
+        .map(|row| (row.name().to_owned(), row.brief().to_owned()))
+        .collect()
+}
+
+fn all_labels(label: &str) -> Vec<(String, String)> {
+    NINE.iter()
+        .map(|name| ((*name).to_owned(), label.to_owned()))
+        .collect()
+}
+
+/// A driver with the nine bots loaded, in game, each running a script, with
+/// script walks published on the first three and every bot marked.
+fn nine_running_with_three_walks(test: &str) -> TestDriver {
+    let mut d = driver(test, &NINE);
+    load(&mut d, &NINE);
+    publish_in_game(&d, &NINE);
+    start_loop_scripts(&mut d, &NINE);
+    publish_walks(&d, &NINE[..3], Some((2550, 3348, 0)));
+    d.poll();
+    mark(&mut d, &NINE);
+    d.poll();
+    d
+}
+
+/// PANEL-STATE-GAP-1023, acceptance 1-3: Stop on nine marked bots in game,
+/// three of them walking for their script, completes all nine, retires the
+/// three script-walk observations in the runtime's status rows (not only in
+/// the projection), keeps every client logged in, and leaves zero active
+/// scripts and zero script walks.
+#[test]
+fn stopping_nine_marked_bots_retires_the_three_script_walks() {
+    let mut d = nine_running_with_three_walks("psg-stop-nine");
+    assert_eq!(row_labels(&d), all_labels("running"));
+    let walking: Vec<_> = d
+        .models()
+        .fleet()
+        .rows()
+        .iter()
+        .filter(|row| row.script_walk())
+        .map(|row| row.name().to_owned())
+        .collect();
+    assert_eq!(walking, ["alice", "bob", "carol"]);
+    assert_eq!(d.models().fleet().counts().marked(), 9);
+
+    assert_eq!(plan(&mut d, crate::FleetAction::Stop), Some(done()));
+    assert_eq!(plan_names(&d), NINE);
+    let stop = run_plan(&mut d);
+    for name in NINE {
+        assert_eq!(terminal(&d, stop, name), Some(done()), "Stop {name}");
+        wait_state(&mut d, name, ScriptRunState::Idle);
+    }
+    d.poll();
+    let result = d.session().fleet_result().expect("result");
+    assert!(result.settled(), "{}", result.text());
+    assert_eq!(result.counts().done, 9, "{}", result.text());
+
+    // The runtime owner retired the destinations: the host rows say so.
+    for row in d
+        .session()
+        .play()
+        .expect("play")
+        .statuses
+        .lock()
+        .unwrap()
+        .iter()
+    {
+        assert_eq!(
+            row.script_walk(),
+            None,
+            "{} kept a walk target",
+            row.username
+        );
+    }
+    // The projection: every client still in game, no script, no script walk.
+    assert_eq!(row_labels(&d), all_labels("idle"));
+    for row in d.models().fleet().rows() {
+        assert_eq!(
+            (
+                row.script().is_live(),
+                row.script_walk(),
+                row.manual_walk(),
+                row.connected(),
+                row.phase()
+            ),
+            (false, false, false, true, crate::Phase::Ready),
+            "{}",
+            row.name()
+        );
+    }
+}
+
+/// PANEL-STATE-GAP-1023, acceptance 4: after that Stop, changing focus,
+/// marks, the filter and the displayed script choice never brings a walk
+/// label back: a label is a fact about the bot, not about a view of it.
+#[test]
+fn old_walk_labels_do_not_return_after_focus_mark_filter_or_choice_changes() {
+    use crate::{MarkOp, MarkPredicate};
+    let mut d = nine_running_with_three_walks("psg-views");
+    assert_eq!(plan(&mut d, crate::FleetAction::Stop), Some(done()));
+    run_plan(&mut d);
+    for name in NINE {
+        wait_state(&mut d, name, ScriptRunState::Idle);
+    }
+    d.poll();
+    let idle = all_labels("idle");
+    assert_eq!(row_labels(&d), idle);
+
+    // Focus: every bot in turn, the three that walked first.
+    for name in ["alice", "bob", "carol", "dave", "ivan"] {
+        d.submit(OperatorCommand::Select, Targets::Profile(name))
+            .expect("select");
+        d.poll();
+        assert_eq!(row_labels(&d), idle, "focus on {name}");
+        assert_eq!(
+            d.session()
+                .fleet_view()
+                .detail()
+                .map(|detail| detail.row().brief()),
+            Some("idle"),
+            "the focused detail agrees"
+        );
+    }
+
+    // Marks: clear, mark the three, mark by every status.
+    d.submit(OperatorCommand::ClearMarks, Targets::Application)
+        .expect("clear marks");
+    mark(&mut d, &NINE[..3]);
+    d.poll();
+    assert_eq!(row_labels(&d), idle, "marks");
+    for predicate in MarkPredicate::ALL {
+        d.submit(
+            OperatorCommand::MarkFleet(MarkOp::Where(predicate)),
+            Targets::Application,
+        )
+        .expect("mark by status");
+        d.poll();
+        assert_eq!(row_labels(&d), idle, "mark by {}", predicate.label());
+    }
+    d.submit(OperatorCommand::ClearMarks, Targets::Application)
+        .expect("clear marks");
+    d.submit(
+        OperatorCommand::MarkFleet(MarkOp::Where(MarkPredicate::Running)),
+        Targets::Application,
+    )
+    .expect("mark running");
+    assert_eq!(
+        d.models().fleet().counts().marked(),
+        0,
+        "nothing is running"
+    );
+
+    // Filters: by label text, by name.
+    for (text, shown) in [("running", 0), ("idle", 9), ("alice", 1), ("", 9)] {
+        let filter = d.models_mut().fleet_mut().staged_filter_mut();
+        filter.clear();
+        filter.push_str(text);
+        d.submit(OperatorCommand::SetFleetFilter, Targets::Application)
+            .expect("filter");
+        d.poll();
+        assert_eq!(d.models().fleet().shown().len(), shown, "filter {text:?}");
+        assert_eq!(row_labels(&d), idle, "filter {text:?}");
+    }
+
+    // The displayed script choice: a pending Browse pick on a bot that
+    // walked changes its heading and nothing about what it is doing.
+    d.models_mut()
+        .scripts_mut()
+        .set_pending_browse("alice", gatherer());
+    d.poll();
+    assert_eq!(row_labels(&d), idle, "script choice");
+    let alice = d
+        .session()
+        .bot_projection(Some(d.models().scripts()), "alice")
+        .expect("alice");
+    assert_eq!(alice.displayed_script(), Some("Gatherer"));
+    assert_eq!(alice.label(), "idle");
+}
+
+/// PANEL-STATE-GAP-1023, acceptance 6 and 7 (application half): a WalkTo
+/// walk is a separate fact that a script Stop leaves visible; the label, the
+/// Stop decision and the status filters all read the same row facts.
+#[test]
+fn a_manual_walk_stays_visible_after_stop_and_the_decisions_read_the_same_facts() {
+    use crate::{MarkOp, MarkPredicate};
+    let mut d = nine_running_with_three_walks("psg-manual");
+    let arm = std::sync::Arc::new(std::sync::Mutex::new(host_play::WalkArm::default()));
+    d.session()
+        .walk_arms()
+        .lock()
+        .unwrap()
+        .insert("ivan".to_owned(), std::sync::Arc::clone(&arm));
+    arm.lock().unwrap().route = Some(std::sync::Arc::new(nav_planner::router::Route {
+        legs: Vec::new(),
+        dest: api::snapshot::WorldTile {
+            x: 3220,
+            z: 3200,
+            level: 0,
+        },
+        ticks: 1.0,
+    }));
+    d.poll();
+
+    // Ivan's script goes first, so his walk is the only thing he is doing.
+    d.session().play().expect("play").script_stop("ivan");
+    wait_state(&mut d, "ivan", ScriptRunState::Idle);
+    d.poll();
+    {
+        let ivan = d
+            .session()
+            .bot_projection(Some(d.models().scripts()), "ivan")
+            .expect("ivan");
+        assert_eq!(
+            (
+                ivan.script(),
+                ivan.script_walk(),
+                ivan.manual_walk(),
+                ivan.label()
+            ),
+            (ScriptRunState::Idle, false, true, "running"),
+            "a walk alone reads as activity"
+        );
+        assert_eq!(
+            ivan.stop_eligibility(),
+            crate::StopEligibility::NoScript,
+            "a walk is not a script: Stop has nothing to stop"
+        );
+    }
+
+    // Stop the other eight, including the three with script walks.
+    d.submit(OperatorCommand::ClearMarks, Targets::Application)
+        .expect("clear marks");
+    mark(&mut d, &NINE[..8]);
+    assert_eq!(plan(&mut d, crate::FleetAction::Stop), Some(done()));
+    assert_eq!(plan_names(&d), &NINE[..8]);
+    run_plan(&mut d);
+    for name in &NINE[..8] {
+        wait_state(&mut d, name, ScriptRunState::Idle);
+    }
+    d.poll();
+    let mut want = all_labels("idle");
+    want[8].1 = "running".into();
+    assert_eq!(row_labels(&d), want, "only the manual walker is running");
+    assert!(
+        d.models().fleet().rows()[8].manual_walk(),
+        "the manual walk survived the Stop"
+    );
+    assert!(d.session().walk_route_armed("ivan"));
+
+    // The Mark-by-status predicates read the same facts as the label.
+    for (predicate, marked) in [
+        (MarkPredicate::Running, ["ivan"].as_slice()),
+        (MarkPredicate::Idle, &NINE[..8]),
+    ] {
+        d.submit(OperatorCommand::ClearMarks, Targets::Application)
+            .expect("clear marks");
+        d.submit(
+            OperatorCommand::MarkFleet(MarkOp::Where(predicate)),
+            Targets::Application,
+        )
+        .expect("mark by status");
+        let fleet = d.models().fleet();
+        let got: Vec<_> = fleet
+            .rows()
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| fleet.is_marked(*index))
+            .map(|(_, row)| row.name())
+            .collect();
+        assert_eq!(got, marked, "Mark by status > {}", predicate.label());
+    }
+
+    // Stop of the walker alone is refused for want of a script, and the
+    // refusal comes from the same fact the projection shows.
+    d.submit(OperatorCommand::ClearMarks, Targets::Application)
+        .expect("clear marks");
+    mark(&mut d, &["ivan"]);
+    let planned = d
+        .submit(
+            OperatorCommand::PlanFleetAction(crate::FleetAction::Stop),
+            Targets::Application,
+        )
+        .expect("plan admitted");
+    assert_eq!(
+        d.session().command_failure(planned.request()),
+        Some("Stop: no bot to act on (ivan: no script running)")
+    );
+    assert!(d.session().fleet_plan().is_none());
+    assert!(arm.lock().unwrap().route.is_some());
+
+    arm.lock().unwrap().route = None;
+    d.poll();
+    assert_eq!(row_labels(&d), all_labels("idle"));
+}
+
+/// PANEL-STATE-GAP-1023, acceptance 5: repeating Stop on bots that are
+/// already stopped is refused at the command boundary, and that refusal logs
+/// one `info` line naming the command, the bots and the reason. The first
+/// Stop, which ran, logs none. The bots have names of their own because the
+/// process log is shared by every test.
+#[test]
+fn a_repeated_stop_logs_one_refusal_line() {
+    use crate::log::{global, LogScope, LogView};
+    const BOTS: [&str; 3] = ["psg5-a", "psg5-b", "psg5-c"];
+    let mut d = driver("psg-refusal", &BOTS);
+    load(&mut d, &BOTS);
+    publish_in_game(&d, &BOTS);
+    start_loop_scripts(&mut d, &BOTS);
+    mark(&mut d, &BOTS);
+    d.poll();
+    let refusal_lines = |d: &HeadlessDriver| -> Vec<String> {
+        let _ = d;
+        let mut view = LogView::new(LogScope::Process);
+        view.edit_filter(|filter| filter.set_text("command refused"));
+        global().refresh(&mut view);
+        view.rows()
+            .iter()
+            .map(|row| row.message().to_owned())
+            .filter(|line| line.contains("psg5-"))
+            .collect()
+    };
+
+    assert_eq!(plan(&mut d, crate::FleetAction::Stop), Some(done()));
+    run_plan(&mut d);
+    for name in BOTS {
+        wait_state(&mut d, name, ScriptRunState::Idle);
+    }
+    d.poll();
+    assert_eq!(refusal_lines(&d), Vec::<String>::new(), "a Stop that ran");
+
+    let before = d.session().refusals();
+    let planned = d
+        .submit(
+            OperatorCommand::PlanFleetAction(crate::FleetAction::Stop),
+            Targets::Application,
+        )
+        .expect("plan admitted");
+    assert!(d.session().command_failure(planned.request()).is_some());
+    assert_eq!(d.session().refusals(), before + 1);
+    let lines = refusal_lines(&d);
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    let line = &lines[0];
+    for part in [
+        "PlanFleetAction(Stop)",
+        "no bot to act on",
+        "psg5-a: no script running",
+        "psg5-b: no script running",
+        "psg5-c: no script running",
+    ] {
+        assert!(line.contains(part), "{part:?} missing from {line:?}");
+    }
+}
