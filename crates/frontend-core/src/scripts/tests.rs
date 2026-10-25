@@ -96,7 +96,7 @@ fn empty_play() -> Play {
 
 /// Members loaded (arms attached, no worker threads) from a fresh vault.
 fn fixture(test: &str, members: &[&str]) -> Fixture {
-    crate::test_support::live::install_catalog_cards();
+    crate::test_support::scripts::install_catalog_cards();
     let iso = script::IsolatedEnv::enter(&format!("frontend-core-scripts-{test}"));
     let dir = iso.dir.clone();
     let mut vault = Vault::create(&dir.join("vault"), "test-passphrase-01").unwrap();

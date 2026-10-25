@@ -783,7 +783,7 @@ mod tests {
     }
 
     fn native_fixture(test: &str) -> Fixture {
-        crate::test_support::live::install_catalog_cards();
+        crate::test_support::scripts::install_catalog_cards();
         let iso = script::IsolatedEnv::enter(&format!("frontend-core-native-settings-{test}"));
         let dir = iso.dir.clone();
         let mut vault = Vault::create(&dir.join("vault"), PASSPHRASE).unwrap();

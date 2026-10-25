@@ -216,12 +216,10 @@ struct StoreEntry {
 }
 
 /// Bound on the short persisted card list.
-
 const MAX_STORE_BYTES: u64 = 4 * 1024 * 1024;
 
 /// A stored entry path is restorable only when absolute (a relative one would
 /// resolve against wherever the host happens to be started) and free of `..`.
-
 fn restorable_path(stored: &str) -> Result<PathBuf, String> {
     let path = PathBuf::from(stored);
     if !path.is_absolute() {
@@ -249,7 +247,6 @@ enum StoredSource {
 /// read or never end). There is no permission check on purpose: sources live
 /// wherever the operator keeps them, including filesystems that report every
 /// file world-writable.
-
 fn read_stored_source(path: &Path) -> StoredSource {
     match vault::read_regular_file(path, MAX_SOURCE_BYTES) {
         Ok(text) => StoredSource::Text(text),
@@ -264,7 +261,6 @@ fn read_stored_source(path: &Path) -> StoredSource {
 /// `$RS2B0T` catalog, persisted to `store`, with origin bytes cached
 /// under `cache`. Same `(source, name)` overwrites; only WalkTo is
 /// reserved; non-bot shapes are rejected at Load.
-
 pub struct JsLibrary {
     store: PathBuf,
     cache: JsCache,
