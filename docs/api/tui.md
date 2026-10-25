@@ -42,7 +42,7 @@ prompt and end it with Enter (`\r` or `\n`). `BOT_VAULT_PASS` and
 `--vault-pass` were removed; see [vault.md](vault.md#passphrase-sourcing).
 
 At an interactive start the boot loads and logs in the first `--user`
-profile, or the vault's first profile without one. `tui-play --user`
+profile, or the first profile in saved order without one. `tui-play --user`
 only selects a profile already in the vault. It creates none (unlike
 `host-play --user`, which mints missing users with random game
 passwords). An unknown `--user` name exits 1 with a message that names
@@ -53,12 +53,21 @@ the account's own password. Enter on the password field saves through
 `CreateProfile`. The new profile then loads, logs in and takes focus.
 The same form opens later with `N` in the Fleet pane or the palette's
 **New profile**.
-Startup loading waits for saved preferences.
-An explicit bot selection before preferences are ready cancels only the automatic startup focus.
-The boot profile still loads and logs in.
-A newly saved profile also keeps its load and login. If it is saved from **New profile** while the boot load still waits for preferences, it replaces that boot load: the new profile loads and logs in, and the boot profile does not (load it from the Fleet pane).
-Fleet **Log in** follows the same rule when it selects the first loaded bot.
-Removing or deleting the pending startup profile cancels its load as well.
+Startup loading waits for shared preparation to adopt preferences and
+reconcile saved profile order. Without `--user`, the default target is
+chosen from that order only after preparation succeeds. An explicit
+`--user` target is tracked by vault UID, so a rename while preferences
+load does not lose the request.
+An explicit focus change replaces only the automatic startup focus.
+Queued startup profiles still load and log in. A profile saved from **New profile**
+while the boot load waits joins the startup queue rather than replacing
+the boot target. Each unique target loads and logs in once in saved
+order, and the newly saved profile becomes the startup-focus target
+unless the operator changes focus. Fleet **Log in** follows the same
+rule when it selects the first loaded bot. Removing or deleting one
+pending startup target cancels only that profile's queued load and login.
+Removing a member before the default target is chosen cancels that
+default choice, but keeps other queued profiles.
 
 `--map-bundle OUT --revision 289 --cache JAG_DIR --unpack SNAPSHOT_ROOT` is a
 release-packaging run, not a panel: it bakes the WalkTo map catalogue and

@@ -2854,6 +2854,7 @@ fn multibox_before_unlock_registers_auto_focused_profile() {
     assert!(session.core.slots().is_empty());
     assert!(session.core.members().is_empty());
     assert!(session.unlock_at(&path, "test-passphrase-01"));
+    session.poll_panel_preferences();
     assert_eq!(session.focused_name().as_deref(), Some("alice"));
     assert!(session
         .core
@@ -2889,6 +2890,7 @@ fn single_mode_unlock_makes_the_focused_bot_a_fleet_member() {
     let (mut session, path) = multibox_unlock_fixture();
     hydrate_panel_preferences(&mut session);
     assert!(session.unlock_at(&path, "test-passphrase-01"));
+    session.poll_panel_preferences();
     assert_eq!(session.focused_name().as_deref(), Some("alice"));
     assert!(session.core.slots().contains_key("alice"));
     assert!(!session.multibox, "no MultiBox, no rail");
@@ -2912,6 +2914,62 @@ fn single_mode_unlock_makes_the_focused_bot_a_fleet_member() {
         session.core.members(),
         ["alice".to_string(), "bob".to_string()]
     );
+}
+
+#[test]
+fn o1_panel_late_preferences_publish_order_before_startup_load() {
+    let iso = IsolatedStores::enter("o1-panel-late-order");
+    let (mut session, vault) = multibox_unlock_fixture();
+    let root = iso.dir().join("saved-state");
+    let preferences = frontend_core::UiPreferences::open_for_test(root.clone());
+    preferences
+        .set(
+            frontend_core::PROFILE_ORDER_KEY,
+            serde_json::json!({"2": 10, "1": 20}),
+        )
+        .unwrap();
+    preferences
+        .set("last_focus", serde_json::json!("alice"))
+        .unwrap();
+    let service = host_play::local_state::LocalStateService::open_process(
+        host_play::local_state::StateRoot::new(root),
+    );
+    session.core.bind_local_state(service);
+    session.preferences = session.core.preferences().unwrap();
+    session.preferences_ready = false;
+    assert!(session.unlock_at(&vault, "test-passphrase-01"));
+    assert!(
+        session.core.slots().is_empty(),
+        "unlock only installs the vault"
+    );
+    session.preferences.reload().unwrap();
+    session.poll_panel_preferences();
+    assert_eq!(session.core.profile_names(), ["bob", "alice"]);
+    assert_eq!(session.focused_name().as_deref(), Some("alice"));
+    session.load("bob");
+    assert_eq!(session.core.members(), ["bob", "alice"]);
+    let focus = session.focus.lock().unwrap();
+    assert_eq!(focus.focused.as_deref(), Some("bob"));
+    assert!(session
+        .core
+        .play_for_test()
+        .unwrap()
+        .arm("alice")
+        .unwrap()
+        .wants_login());
+}
+
+#[test]
+fn o1_panel_warm_unlock_only_installs_the_vault() {
+    let _iso = IsolatedStores::enter("o1-panel-warm-order");
+    let (mut session, vault) = multibox_unlock_fixture();
+    hydrate_panel_preferences(&mut session);
+    assert!(session.unlock_at(&vault, "test-passphrase-01"));
+    assert!(session.core.slots().is_empty());
+    assert!(session.focused_name().is_none());
+    session.poll_panel_preferences();
+    assert_eq!(session.core.members(), ["alice"]);
+    assert_eq!(session.focused_name().as_deref(), Some("alice"));
 }
 
 #[test]
@@ -3232,6 +3290,7 @@ fn multibox_profile_pick_restores_that_profiles_script_heading() {
     let (mut session, path) = multibox_unlock_fixture();
     hydrate_panel_preferences(&mut session);
     assert!(session.unlock_at(&path, "test-passphrase-01"));
+    session.poll_panel_preferences();
     let thiever = Some(ScriptChoice::loaded(CardSource::Catalog, "Thiever"));
     let gatherer = Some(ScriptChoice::compiled(
         CompiledCardId::lookup("Gatherer").unwrap(),
@@ -3299,6 +3358,7 @@ fn multibox_roundtrip_keeps_profile_assignments_and_settings_isolated() {
     hydrate_panel_preferences(&mut session);
     session.set_multibox(true);
     assert!(session.unlock_at(&path, "test-passphrase-01"));
+    session.poll_panel_preferences();
 
     for (step, selected) in [
         ("unlock", "alice"),

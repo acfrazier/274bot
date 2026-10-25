@@ -62,8 +62,9 @@ not create Debug reply-log entries. The Profiles editor
 offers `auto` or each listed rs2b2t world; the selected world is used on the
 next slot start. Live slot rows display the current world.
 
-Last focused profile is restored from `~/.274bot/panel-ui.json`
-(`last_focus`) after preferences are ready, unless you select a bot first.
+After unlock, the next preference-ready poll reconciles saved profile order
+before restoring `last_focus` from `~/.274bot/panel-ui.json`.
+An earlier explicit selection keeps its focus instead.
 Preference adoption during a command never changes that command's target.
 This includes the first bot selected by Fleet **Log in**.
 Removing or deleting a pending restore target cancels that restore.
@@ -102,11 +103,12 @@ still showing after its run stopped keeps its rows.
 
 ## Wiring
 
-`Session::unlock` starts an empty `Play` (shared `Arc<Cache>`, login FIFO)
-via `host_play::run_with_io`, then selects the restored `last_focus` (or
-the first vault name), which spawns **that one slot**. Parked profiles do
-not get a `Client` until you select them; once spawned they stay up so the
-picker can change focus.
+`Session::unlock` installs an empty `Play` (shared `Arc<Cache>`, login FIFO).
+It does not load or select a profile. A later poll waits for the unlocked vault
+and durable preferences, then reconciles saved profile order before choosing
+the restored `last_focus` or the first profile. It loads only that profile.
+Parked profiles receive no `Client` until selection. Loaded clients remain
+available when focus changes.
 Each running slot has its own `PixelBuf` + `SlotInput`. A per-frame
 observe hook applies the focus `set_draw` switch and the mainland hop.
 The runner is configured with **docking on, multi-viewports off** (single

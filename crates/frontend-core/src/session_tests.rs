@@ -362,7 +362,7 @@ fn load_follows_saved_auto_login_while_login_arms_an_explicit_handshake() {
         arm(&s, "auto").wants_login(),
         "Load follows saved auto-login"
     );
-    assert_eq!(s.members(), ["manual".to_string(), "auto".to_string()]);
+    assert_eq!(s.members(), ["auto".to_string(), "manual".to_string()]);
     assert_eq!(s.selected(), None, "Load is not selection");
 
     let login = s.login("manual", &mut surface);
@@ -3051,4 +3051,103 @@ fn dirty(
         target,
         &crate::ProfileDraft::from_parts(username, password, settings.clone()),
     )
+}
+
+/// Reopen both durable stores, adopt ranks while locked, then insert clients
+/// without a poll between unlock and Load. The vault UID survives a rename.
+#[test]
+fn o1_restart_applies_saved_order_before_individual_loads() {
+    let path = vault_path("o1-restart-order");
+    let vault = vault_with(
+        "o1-restart-order",
+        &[("A", 1, false), ("B", 2, false), ("C", 3, false)],
+    );
+    drop(vault);
+    let root = path.parent().unwrap().join("state");
+    {
+        let preferences = crate::UiPreferences::open_for_test(root.clone());
+        preferences
+            .set(
+                crate::PROFILE_ORDER_KEY,
+                serde_json::json!({"3": 10, "1": 20, "2": 30}),
+            )
+            .unwrap();
+    }
+    let service = host_play::local_state::LocalStateService::open_process(
+        host_play::local_state::StateRoot::new(root),
+    );
+    let mut session = OperatorSession::<u32>::new(InstancePermit::SkipLock);
+    session.set_spawn_workers(false);
+    session.bind_local_state(service);
+    session.preferences().unwrap().reload().unwrap();
+    session.adopt_operator_preferences();
+    assert!(!session.vault_open());
+    let mut vault = Vault::unlock(&path, "test-passphrase-01").unwrap();
+    let mut renamed = vault.get("A").unwrap().clone();
+    renamed.username = "A-renamed".into();
+    vault.remove("A").unwrap();
+    vault.upsert(renamed).unwrap();
+    session.start(vault, empty_play());
+    assert_eq!(session.profile_names(), ["C", "A-renamed", "B"]);
+    let mut surface = Recorder::default();
+    for (name, expected) in [
+        ("B", vec!["B"]),
+        ("C", vec!["C", "B"]),
+        ("A-renamed", vec!["C", "A-renamed", "B"]),
+    ] {
+        session.load(name, &mut surface);
+        assert_eq!(session.members(), expected);
+    }
+    assert!(
+        session.order_writes.is_empty(),
+        "projection alone must not save"
+    );
+}
+
+#[test]
+fn o1_same_length_uid_name_projection_invalidates_without_a_save() {
+    let mut session = session(
+        "o1-sequence-generation",
+        &[("A", 1, false), ("B", 2, false)],
+    );
+    session.reconcile_profile_order();
+    session.order_saved = true;
+    let mut fleet = crate::FleetModel::new();
+    assert!(fleet.refresh(&session));
+    assert_eq!(
+        fleet
+            .rows()
+            .iter()
+            .map(|row| row.name())
+            .collect::<Vec<_>>(),
+        ["A", "B"]
+    );
+    // The authoritative vault now maps the same two UIDs to exchanged names.
+    // Stored rank keys do not change, but cached Fleet rows must rebuild.
+    let vault = session.vault.as_mut().unwrap();
+    let mut a = vault.get("A").unwrap().clone();
+    let mut b = vault.get("B").unwrap().clone();
+    a.username = "B".into();
+    b.username = "A".into();
+    vault.upsert(a).unwrap();
+    vault.upsert(b).unwrap();
+    session.order_reconciled_at = None;
+    let generation = session.profiles_generation;
+    session.reconcile_profile_order();
+    assert_eq!(session.profile_order().names(), ["B", "A"]);
+    assert_ne!(
+        session.profiles_generation, generation,
+        "publish the changed sequence"
+    );
+    assert!(fleet.refresh(&session));
+    assert_eq!(
+        fleet
+            .rows()
+            .iter()
+            .map(|row| row.name())
+            .collect::<Vec<_>>(),
+        ["B", "A"]
+    );
+    assert_eq!(session.order_write_seq, 0, "no rank changed");
+    assert!(session.order_writes.is_empty());
 }
