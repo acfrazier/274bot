@@ -1742,8 +1742,10 @@ impl Session {
             // Startup selection is a between-command effect. Lazy policy
             // reads may adopt preferences, but must not replace a command's
             // captured profile or map context.
-            if let Some(focus) = self.startup_focus_pending.take() {
-                self.apply_startup_focus(focus);
+            if self.startup_focus_pending.is_some() && self.core.prepare_startup() {
+                if let Some(focus) = self.startup_focus_pending.take() {
+                    self.apply_startup_focus(focus);
+                }
             }
         }
     }
@@ -2202,7 +2204,7 @@ impl Session {
     /// parked until selected (select keeps a slot once it has run).
     pub fn unlock_at(&mut self, path: &Path, pass: &str) -> bool {
         if self.start_vault(path, pass) {
-            self.focus_when_ready(StartupFocus::Restore);
+            self.startup_focus_pending = Some(StartupFocus::Restore);
             true
         } else {
             false
@@ -2760,9 +2762,9 @@ impl Session {
         Ok(())
     }
 
-    /// Automatic profile loads share the initial preference-readiness gate.
+    /// A durable profile save can select immediately once shared startup is ready.
     fn focus_when_ready(&mut self, focus: StartupFocus) {
-        if self.preferences_ready {
+        if self.preferences_ready && self.core.prepare_startup() {
             self.apply_startup_focus(focus);
         } else {
             self.startup_focus_pending = Some(focus);

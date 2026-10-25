@@ -157,6 +157,9 @@ fn a_steady_refresh_allocates_nothing() {
         let mut allocated = 0;
         for _ in 0..1_000 {
             session.poll();
+            let startup_before = events();
+            assert!(session.prepare_startup());
+            assert_eq!(events() - startup_before, 0, "ready startup gate allocated");
             let before = events();
             assert!(!model.refresh(&session), "nothing moved");
             allocated += events() - before;

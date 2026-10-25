@@ -75,6 +75,16 @@ cells = [
   "panel.state-gap-stop-live|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip MANUAL_LIVE_EVIDENCE=${LIVE_EVIDENCE_DIR:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} ISOHOME_DIR=${PANEL_LIVE_HOME:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p panel --lib -- --ignored --exact manual_click_live_tests::live_stop_retires_script_walks_and_keeps_the_manual_walk --nocapture --test-threads=1",
 ]
 
+# Startup ordering and preference arrival use controlled real-session stores.
+# These regressions complement the mapped game cells, not desktop interaction.
+[[cover]]
+globs = ["crates/frontend-core/src/profile_order.rs", "crates/frontend-core/src/session.rs", "crates/panel/src/session.rs", "crates/tui/src/bin.rs"]
+cells = [
+  "frontend-core.startup-order-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p frontend-core --lib o1_ -- --nocapture",
+  "panel.startup-order-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p panel --lib o1_ -- --nocapture",
+  "tui.startup-order-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p tui --lib o1_ -- --nocapture",
+]
+
 # These UI paths have controlled-state driver proof, not game-world fixtures.
 [[cover]]
 globs = ["crates/frontend-core/src/error_expiry.rs", "crates/frontend-core/src/lib.rs", "crates/frontend-core/src/session/commands.rs"]
