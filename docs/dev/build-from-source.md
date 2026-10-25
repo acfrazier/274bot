@@ -107,6 +107,11 @@ Start, Pause, Stop and paint controls. They omit Load, Reload, catalog and
 rs2b0t profile-import UI. Sherlock still requires a build with the JS runtime;
 it does not create an isolate itself.
 
+On Linux, panel keeps its existing Wayland window decorations. Their
+`winit` → `sctk-adwaita` path uses `tiny-skia` and `ab_glyph`, independently
+of the script runtime. Native builds do not enable the script canvas raster
+or its embedded Liberation fonts.
+
 Saved File and catalog assignments remain stored and readable. Start refuses
 them because no JS factory is available; it does not discard the assignment
 or start another card. Omit `--no-default-features`, or add `--features js`,
