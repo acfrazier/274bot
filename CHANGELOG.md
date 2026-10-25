@@ -31,6 +31,7 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.6` 
 - A message on the panel's red line or the terminal app's message line now goes away by itself 15 seconds after it appears. An action that fixes the problem clears it at once. In the terminal app, a message that a key, palette entry or menu item shows because its command cannot run now clears as soon as the reason it names is gone: for example, focusing a bot clears "Log in: no bot selected", and picking a script clears "Script parameters: pick a script first". The one exception is "no message", which only a newer message replaces. The terminal app's "is not loaded" message clears when that bot is logged in, and focusing a bot clears "no focused profile" and the Guardian settings message. In the panel, focusing a bot clears "focus a bot first", and a finished save clears "profile is still saving". A newer message replaces it and starts its own 15 seconds. The same text shown again without a new refusal keeps its first 15 seconds. Before, a message stayed until you did something else that happened to clear it.
 - Hovering the Fleet's result line (for example "9 bots stopped") now shows its text in a normal tooltip. It was a thin column one letter wide and as tall as the window.
 - After a failed login, the panel's top line now keeps the login error in red for 15 seconds, also while the bot tries again, waits in the login queue or is logged out in that time. The bot's current state shows under the error. Before, the next state replaced the error almost at once, and the error came back when the next attempt failed. A successful login clears the error at once. A newer failed login replaces it and starts the 15 seconds again, also when its words are the same. The status rows of the panel and the terminal app show this error in red in place of the `last error` row. After the 15 seconds the `last error` row comes back, as before.
+- Right after you unlock the vault, and when you load bots one at a time, each bot now takes its place in your saved profile order at once. Before, such a bot could appear in the wrong place until the next refresh.
 
 ### Host
 
@@ -50,6 +51,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.6` 
 
 ### Fixed during development
 
+- Startup waits for saved preferences before it chooses and loads a profile.
+  Saving a new profile during that wait keeps the terminal app's original boot load and login.
+  Renaming the boot profile keeps its pending load attached to the same profile.
 - `tui-play --user NAME` stops on a missing vault before it prepares the game cache or reads the engine login key. The message is the same. A local server with no engine directory still stops with the engine-directory error.
 - Saving the first profile now waits for saved preferences before it loads
   or logs in. The panel and terminal app use their existing startup gates.
