@@ -20,6 +20,7 @@ use crate::help::{filter_rows, help_rows, render_help, HelpState};
 use crate::layout::{contains, Screen};
 use crate::new_profile::NewProfileView;
 use crate::palette::{palette_commands, render_palette, PaletteState};
+#[cfg(feature = "js")]
 use crate::profile_import::{ImportAction, ImportView};
 use crate::world_picker::WorldPicker;
 
@@ -36,6 +37,7 @@ pub enum Modal {
     /// WASD walking is armed for the selected bot until Esc.
     Manual,
     /// Import rs2b0t's profile export: path, preview, report.
+    #[cfg(feature = "js")]
     ProfileImport(ImportView),
     /// Add a profile to the vault: username and its own password, over
     /// the shared profile form the binary owns.
@@ -57,6 +59,7 @@ impl Modal {
             Modal::Context(_) => "Menu",
             Modal::Message { .. } => "Message",
             Modal::Manual => "Manual walk",
+            #[cfg(feature = "js")]
             Modal::ProfileImport(_) => "rs2b0t import",
             Modal::NewProfile(_) => "New profile",
             Modal::FleetCard(_) => "Fleet card",
@@ -72,6 +75,7 @@ impl Modal {
             Modal::Context(_) => "Up/Down · Enter run · Esc close",
             Modal::Message { .. } => "Up/Down scroll · Esc close",
             Modal::Manual => "W A S D / arrows step one tile · Esc disarm",
+            #[cfg(feature = "js")]
             Modal::ProfileImport(view) => view.hints(),
             Modal::NewProfile(view) => view.hints(),
             Modal::FleetCard(_) => "Up/Down · Enter pick · Esc keep the card",
@@ -347,8 +351,11 @@ impl TuiApp {
                 _ => (Some(Modal::Message { scroll }), AppAction::None),
             },
             Modal::Manual => self.manual_key(key),
+            #[cfg(feature = "js")]
             Modal::ProfileImport(mut view) => match view.on_key(key) {
-                Some(ImportAction::Close) => (None, AppAction::ProfileImport(ImportAction::Close)),
+                Some(ImportAction::Close) => {
+                    (None, AppAction::ProfileImport(ImportAction::Close))
+                }
                 Some(action) => (
                     Some(Modal::ProfileImport(view)),
                     AppAction::ProfileImport(action),
@@ -560,8 +567,8 @@ impl TuiApp {
             Modal::Help(state) if inside => (Some(Modal::Help(state)), AppAction::None),
             Modal::Help(_) | Modal::Message { .. } => (None, AppAction::None),
             Modal::Manual => (Some(Modal::Manual), AppAction::None),
-            // A click never closes the import: the typed path or the
-            // report would be lost. Esc closes it.
+            // A click never closes the import; Esc closes it.
+            #[cfg(feature = "js")]
             Modal::ProfileImport(view) => (Some(Modal::ProfileImport(view)), AppAction::None),
             // A click never closes the form either: the typed password
             // would be lost. Esc closes it.
@@ -590,6 +597,7 @@ impl TuiApp {
             Some(Modal::Message { scroll }) => {
                 *scroll = scroll.saturating_add_signed(delta as i16 * 3);
             }
+            #[cfg(feature = "js")]
             Some(Modal::ProfileImport(view)) => view.scroll_by(delta),
             Some(Modal::FleetCard(picker)) => picker.step(delta as isize),
             Some(Modal::WorldPicker(picker)) => picker.step(delta as isize),
@@ -627,6 +635,7 @@ impl TuiApp {
             }
             Modal::Message { scroll } => self.draw_message(*scroll, area, buf),
             Modal::Manual => self.draw_manual(area, buf),
+            #[cfg(feature = "js")]
             Modal::ProfileImport(view) => self.regions.modal = view.render(area, buf),
             Modal::NewProfile(view) => self.regions.modal = view.render(area, buf),
         }

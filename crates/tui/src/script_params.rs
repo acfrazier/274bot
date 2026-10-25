@@ -936,17 +936,23 @@ impl Widget for ParamsPane<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "js")]
     use std::sync::atomic::{AtomicU64, Ordering};
 
     use crossterm::event::KeyCode;
+    #[cfg(feature = "js")]
     use frontend_core::scripts::CardSource;
-    use frontend_core::test_support::scripts::{unavailable_quest, TestSchema, TestStore};
+    use frontend_core::test_support::scripts::TestSchema;
+    #[cfg(feature = "js")]
+    use frontend_core::test_support::scripts::{unavailable_quest, TestStore};
     use ratatui::backend::TestBackend;
     use ratatui::layout::Rect;
     use ratatui::widgets::Paragraph;
     use ratatui::Terminal;
 
+    #[cfg(feature = "js")]
     static TEST_DIRS: AtomicU64 = AtomicU64::new(0);
+    #[cfg(feature = "js")]
 
     fn temp_dir(label: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!(
@@ -959,6 +965,7 @@ mod tests {
         dir
     }
 
+    #[cfg(feature = "js")]
     fn bury_schema() -> TestSchema {
         TestSchema::setting(
             "buryBones",
@@ -975,6 +982,7 @@ mod tests {
         schema
     }
 
+    #[cfg(feature = "js")]
     /// Commit sink over a legacy store, standing in for the coordinator.
     fn store_commit<'s>(
         store: &'s mut TestStore,
@@ -996,6 +1004,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "js")]
     #[test]
     fn params_pane_space_toggles_a_bool_param() {
         let dir = temp_dir("bool");
@@ -1022,6 +1031,7 @@ mod tests {
         assert_eq!(bag.get("buryBones"), Some(&serde_json::json!(false)));
     }
 
+    #[cfg(feature = "js")]
     #[test]
     fn global_walk_permission_is_inherited_and_script_additive_when_off() {
         let dir = temp_dir("walk-permissions");
@@ -1116,6 +1126,7 @@ mod tests {
         assert_eq!(bag.get("allow_teleports"), Some(&serde_json::json!(true)));
     }
 
+    #[cfg(feature = "js")]
     #[test]
     fn params_pane_space_cycles_loadout_combo_from_store() {
         let dir = temp_dir("loadout");
@@ -1145,6 +1156,7 @@ mod tests {
         assert_eq!(bag.get("loadout"), Some(&serde_json::json!("mine")));
     }
 
+    #[cfg(feature = "js")]
     #[test]
     fn alcher_numeric_enter_saves_and_esc_cancels() {
         let dir = temp_dir("alcher-num");
@@ -1235,6 +1247,7 @@ mod tests {
         assert!(pane.state.error.is_some());
     }
 
+    #[cfg(feature = "js")]
     #[test]
     fn alcher_string_array_csv_persists_as_array() {
         let dir = temp_dir("alcher-items");
@@ -1274,6 +1287,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "js")]
     #[test]
     fn optioned_string_array_space_toggles_choice_and_cancel_keeps_old() {
         let dir = temp_dir("choices");
@@ -1320,6 +1334,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "js")]
     #[test]
     fn tile_and_list_coercion_rejects_invalid_without_replacing() {
         let dir = temp_dir("coerce");
@@ -1418,6 +1433,7 @@ mod tests {
         assert_eq!(pane.bag.get("alchs"), Some(&serde_json::json!(27)));
     }
 
+    #[cfg(feature = "js")]
     #[test]
     fn overlay_clears_background_and_keeps_cursor_visible_on_long_schema() {
         let dir = temp_dir("draw");
@@ -1485,6 +1501,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "js")]
     #[test]
     fn editing_consumes_letters_instead_of_moving_the_row() {
         let dir = temp_dir("letters");
@@ -1514,6 +1531,7 @@ mod tests {
         assert_eq!(pane.bag.get("customItem"), Some(&serde_json::json!("j")));
     }
 
+    #[cfg(feature = "js")]
     #[test]
     fn item_choices_paint_identity_label_and_persist_key() {
         let dir = temp_dir("item-labels");
@@ -1597,6 +1615,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "js")]
     #[test]
     fn gatherer_dynamic_lists_keep_unknowns_and_allow_radius_edits() {
         let dir = temp_dir("gather-picker");
@@ -1678,6 +1697,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "js")]
     #[test]
     fn multiselect_picker_searches_lists_larger_than_sixteen() {
         let dir = temp_dir("picker-search");
@@ -1753,6 +1773,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "js")]
     #[test]
     fn dynamic_picker_without_facts_is_disabled_not_a_text_box() {
         let dir = temp_dir("picker-unavailable");
@@ -1808,6 +1829,7 @@ mod tests {
         assert!(text.contains("options unavailable"), "{text:?}");
     }
 
+    #[cfg(feature = "js")]
     #[test]
     fn scalar_fishing_cycle_skips_refused_groups_and_wraps() {
         let dir = temp_dir("fishing-cycle");
@@ -1885,6 +1907,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "js")]
     #[test]
     fn gather_site_picker_filters_and_accepts_explicit_selection() {
         let dir = temp_dir("site-picker");
@@ -2022,6 +2045,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "js")]
     #[test]
     fn invalid_gather_site_remains_disabled_and_explains_why() {
         let dir = temp_dir("site-disabled");
@@ -2095,6 +2119,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "js")]
     #[test]
     fn incompatible_saved_site_reason_is_visible_with_choices_at_80_columns() {
         let dir = temp_dir("site-reason-with-choices");
@@ -2214,6 +2239,7 @@ mod tests {
         assert!(compact.contains(&expected_compact), "{text:?}");
     }
 
+    #[cfg(feature = "js")]
     #[test]
     fn quester_picker_keeps_unknown_path_visible_and_removable() {
         let dir = temp_dir("quest-unknown");
@@ -2290,6 +2316,7 @@ mod tests {
         assert_eq!(pane.bag.get("quests"), Some(&serde_json::json!([])));
     }
 
+    #[cfg(feature = "js")]
     #[test]
     fn unavailable_quest_is_never_added_by_the_real_picker() {
         let dir = temp_dir("quest-unavailable-add");
@@ -2329,6 +2356,7 @@ mod tests {
         assert_eq!(pane.bag.get("quests"), Some(&serde_json::json!(["cook"])));
     }
 
+    #[cfg(feature = "js")]
     #[test]
     fn stored_unavailable_quest_reason_is_not_clipped_at_80_columns() {
         let dir = temp_dir("quest-unavailable-reason");
@@ -2398,6 +2426,7 @@ mod tests {
         assert!(picker.contains(&full), "picker clips the reason: {picker}");
     }
 
+    #[cfg(feature = "js")]
     #[test]
     fn empty_loadout_source_shows_a_clear_disabled_state() {
         let dir = temp_dir("empty-loadout-options");
@@ -2449,6 +2478,7 @@ mod tests {
             .collect();
         assert!(text.contains("no loadouts available"), "{text:?}");
     }
+    #[cfg(feature = "js")]
     #[test]
     fn preserved_only_priority_array_opens_and_removal_is_persisted() {
         for (label, open_key) in [("enter", KeyCode::Enter), ("space", KeyCode::Char(' '))] {
@@ -2527,6 +2557,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "js")]
     #[test]
     fn closed_removable_preserved_array_shows_its_value_and_reason() {
         let dir = temp_dir("preserved-priority-closed-row");
@@ -2588,6 +2619,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "js")]
     #[test]
     fn restart_badge_is_visible_at_reference_and_compact_sizes() {
         let dir = temp_dir("restart-badge");

@@ -3,33 +3,56 @@
 //! These tests intentionally run inside `bin` so input is routed through
 //! `TuiApp::on_key` and the same `dispatch` used by `tui-play`.
 
+#[cfg(feature = "js")]
 use std::collections::HashMap;
+#[cfg(feature = "js")]
 use std::env;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(feature = "js")]
+use std::path::PathBuf;
+#[cfg(feature = "js")]
 use std::sync::{Arc, Mutex};
+#[cfg(feature = "js")]
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+#[cfg(feature = "js")]
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+#[cfg(feature = "js")]
 use frontend_core::scripts::LoadShape;
+#[cfg(feature = "js")]
 use frontend_core::test_support::tui::start_script_source;
+#[cfg(feature = "js")]
 use nav_planner::bank_fetch::BankRows;
+#[cfg(feature = "js")]
 use nav_planner::router::FindOptions;
+#[cfg(feature = "js")]
 use nav_planner::tile::Tile;
+#[cfg(feature = "js")]
 use nav_planner::world::NavWorld;
+#[cfg(feature = "js")]
 use nav_planner::WorldState;
 use ratatui::backend::TestBackend;
 use ratatui::Terminal;
 
-use super::{dispatch, TuiApp, TuiSession};
+use super::TuiApp;
+#[cfg(feature = "js")]
+use super::{dispatch, TuiSession};
 
+#[cfg(feature = "js")]
 const LOCAL_GAME_PORT: u16 = 45_594;
+#[cfg(feature = "js")]
 const LOCAL_ASSET_PORT: u16 = 2_080;
+#[cfg(feature = "js")]
 const LIVE_WAIT: Duration = Duration::from_secs(150);
+#[cfg(feature = "js")]
 const WALK_WAIT: Duration = Duration::from_secs(40);
+#[cfg(feature = "js")]
 const TERMINAL_WAIT: Duration = Duration::from_secs(20);
+#[cfg(feature = "js")]
 const SETTLE_WAIT: Duration = Duration::from_secs(5);
 
+#[cfg(feature = "js")]
 struct LiveInputs {
     cache: PathBuf,
     engine: PathBuf,
@@ -37,6 +60,7 @@ struct LiveInputs {
     evidence: PathBuf,
 }
 
+#[cfg(feature = "js")]
 fn live_inputs() -> Result<LiveInputs, String> {
     assert_eq!(
         env::var("LIVE").as_deref(),
@@ -99,6 +123,7 @@ fn live_inputs() -> Result<LiveInputs, String> {
     })
 }
 
+#[cfg(feature = "js")]
 fn prime_local_cache(cache: &Path) -> Result<(), String> {
     fs::create_dir_all(cache).map_err(|error| error.to_string())?;
     let checksums = client::client::Client::get_jag_checksums_for(
@@ -134,6 +159,7 @@ fn prime_local_cache(cache: &Path) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(feature = "js")]
 fn stamp() -> String {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -142,6 +168,7 @@ fn stamp() -> String {
         .to_string()
 }
 
+#[cfg(feature = "js")]
 fn reachable_destination(world: &NavWorld, here: Tile) -> Result<Tile, String> {
     let scratch = Arc::new(Mutex::new(HashMap::new()));
     for distance in [40, 32, 24, 16] {
@@ -182,6 +209,7 @@ fn reachable_destination(world: &NavWorld, here: Tile) -> Result<Tile, String> {
     Err("no reachable live long-walk destination near the seeded mainland tile".into())
 }
 
+#[cfg(feature = "js")]
 fn walk_source(destination: Tile) -> String {
     format!(
         r#"import {{ Traversal }} from '../../api/walking/Traversal.js';
@@ -206,6 +234,7 @@ fn walk_source(destination: Tile) -> String {
     )
 }
 
+#[cfg(feature = "js")]
 fn run_manual_click(cols: u16, rows: u16, pause_owner: bool, recovery: bool) -> Result<(), String> {
     let inputs = live_inputs()?;
     prime_local_cache(&inputs.cache)?;
@@ -495,6 +524,7 @@ fn run_manual_click(cols: u16, rows: u16, pause_owner: bool, recovery: bool) -> 
     Ok(())
 }
 
+#[cfg(feature = "js")]
 fn assert_correlated_user_input(before: &serde_json::Value, after: &serde_json::Value) {
     assert_eq!(after["nav"]["reason"], "UserInput");
     assert_eq!(
@@ -580,24 +610,28 @@ pub(super) fn capture(
     .map_err(|error| error.to_string())
 }
 
+#[cfg(feature = "js")]
 #[test]
 #[ignore = "requires LIVE=1, local R289 engine/nav pack and a throwaway HOME"]
 fn live_manual_click_tui_120x40() {
     run_manual_click(120, 40, false, false).unwrap();
 }
 
+#[cfg(feature = "js")]
 #[test]
 #[ignore = "requires LIVE=1, local R289 engine/nav pack and a throwaway HOME"]
 fn live_manual_click_tui_80x24() {
     run_manual_click(80, 24, false, false).unwrap();
 }
 
+#[cfg(feature = "js")]
 #[test]
 #[ignore = "requires LIVE=1, local R289 engine/nav pack and a throwaway HOME"]
 fn live_manual_click_tui_recovery_pause_resume_120x40() {
     run_manual_click(120, 40, true, true).unwrap();
 }
 
+#[cfg(feature = "js")]
 #[test]
 #[ignore = "requires LIVE=1, local R289 engine/nav pack and a throwaway HOME"]
 fn live_manual_click_tui_recovery_pause_resume_80x24() {
