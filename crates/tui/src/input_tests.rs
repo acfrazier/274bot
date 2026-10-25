@@ -1,7 +1,7 @@
 use crossterm::event::{KeyCode, MouseEventKind};
 
 use api::snapshot::ChatOptionView;
-use frontend_core::scripts::{CardRuntime, CardSource, ScriptChoice};
+use frontend_core::scripts::{CardRuntime, CardSource, CompiledCardId, ScriptChoice};
 
 use crate::app::{AppAction, TuiApp};
 use crate::bin::seam::Seam;
@@ -638,6 +638,7 @@ fn c_opens_the_fleet_card_picker_that_enter_picks_and_esc_keeps() {
         tags: Vec::new(),
         kind: CardRuntime::Compat,
         source: CardSource::File,
+        #[cfg(feature = "js")]
         unloadable: None,
     };
     let mut app = fleet_app(&["alice", "bob"]);
@@ -915,6 +916,7 @@ fn switching_tabs_and_selecting_is_always_safe() {
     assert_eq!(names(&app), ["alice", "bob"]);
 }
 
+#[cfg(feature = "js")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ScriptPopup {
     Browse,
@@ -922,9 +924,11 @@ enum ScriptPopup {
     Catalog,
 }
 
+#[cfg(feature = "js")]
 const SCRIPT_POPUPS: [ScriptPopup; 3] =
     [ScriptPopup::Browse, ScriptPopup::Load, ScriptPopup::Catalog];
 
+#[cfg(feature = "js")]
 fn popup_open(app: &TuiApp, popup: ScriptPopup) -> bool {
     match popup {
         ScriptPopup::Browse => app.script_browse_open,
@@ -935,6 +939,7 @@ fn popup_open(app: &TuiApp, popup: ScriptPopup) -> bool {
 
 /// A folder with a sub folder and a script file for the Load and catalog
 /// folder lists.
+#[cfg(feature = "js")]
 fn scratch_dir(tag: &str) -> std::path::PathBuf {
     let dir = std::env::temp_dir().join(format!(
         "274bot-tui-{tag}-{}-{}",
@@ -949,6 +954,7 @@ fn scratch_dir(tag: &str) -> std::path::PathBuf {
     dir
 }
 
+#[cfg(feature = "js")]
 fn browse_card(name: &str) -> crate::script_shape::BrowseCard {
     crate::script_shape::BrowseCard {
         name: name.into(),
@@ -957,11 +963,13 @@ fn browse_card(name: &str) -> crate::script_shape::BrowseCard {
         tags: Vec::new(),
         kind: CardRuntime::Compat,
         source: CardSource::File,
+        #[cfg(feature = "js")]
         unloadable: None,
     }
 }
 
 /// Open `popup` the way an operator does, from the Script tab.
+#[cfg(feature = "js")]
 fn open_popup(app: &mut TuiApp, popup: ScriptPopup, dir: &std::path::Path) {
     assert_eq!(app.on_key(key(KeyCode::F(5))), AppAction::None);
     match popup {
@@ -994,6 +1002,7 @@ fn open_popup(app: &mut TuiApp, popup: ScriptPopup, dir: &std::path::Path) {
 /// letter gets past them (the old router let `q` open the quit dialog over
 /// Browse and `t` start a script from it). Only their own keys act; Esc
 /// closes them. Ctrl-Q still asks to quit and cancelling returns to them.
+#[cfg(feature = "js")]
 #[test]
 fn script_popups_own_every_key_until_closed() {
     let dir = scratch_dir("popup-keys");
@@ -1083,6 +1092,7 @@ fn script_popups_own_every_key_until_closed() {
 /// A click outside an open Script popup reaches nothing behind it: Browse
 /// and Load close (the pick stays), the catalog prompt stays open because
 /// dismissing it means Not now. The wheel moves the popup's own list.
+#[cfg(feature = "js")]
 #[test]
 fn script_popups_swallow_clicks_outside_themselves() {
     let dir = scratch_dir("popup-clicks");
@@ -1137,6 +1147,36 @@ fn script_popups_swallow_clicks_outside_themselves() {
         assert!(app.modal.is_none());
     }
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[cfg(not(feature = "js"))]
+#[test]
+fn script_browse_popup_owns_keys_and_closes_on_outside_click() {
+    let mut app = fleet_app(&["alice", "bob"]);
+    let id = CompiledCardId::QUESTER;
+    app.script_sel = Some(ScriptChoice::compiled(id));
+    app.script_cards = vec![crate::script_shape::BrowseCard {
+        name: id.as_str().into(),
+        description: String::new(),
+        category: "Questing".into(),
+        tags: Vec::new(),
+        kind: CardRuntime::Compiled,
+        source: CardSource::Builtin,
+    }];
+    app.script_card_choices = vec![ScriptChoice::compiled(id)];
+
+    assert_eq!(app.on_key(key(KeyCode::F(5))), AppAction::None);
+    assert_eq!(app.on_key(ch('b')), AppAction::ScriptBrowse);
+    assert!(app.script_popup_open());
+    for key in [ch('q'), ch('?'), ch(':'), ch('t'), ch('f')] {
+        assert_eq!(app.on_key(key), AppAction::None);
+        assert!(app.script_popup_open(), "Browse remains open for {key:?}");
+    }
+
+    let rows = draw(&mut app, 120, 40);
+    let (map_x, map_y) = find(&rows, " Map F4 ").expect("map tab");
+    assert_eq!(app.on_click(map_x + 1, map_y), AppAction::None);
+    assert!(!app.script_popup_open(), "outside click closes Browse");
 }
 
 /// Screen text with every run of whitespace (including the row breaks
