@@ -1488,3 +1488,63 @@ fn a_steady_frame_with_the_picker_open_keeps_its_labels_and_submits_nothing() {
     assert!(rig.session.core.fleet_plan().is_none());
     assert_eq!(rig.picker(), [(1, false), (2, true), (3, false)]);
 }
+
+/// LOGOUT-RETRY-1025: a bot whose login is refused and retried is reached
+/// by the Fleet window's Log out all, which parks it so the slot makes no
+/// further login attempt, while a bot that never logged in is skipped.
+#[test]
+fn logout_retry_all_takes_a_retrying_login_and_skips_a_bot_that_never_logged_in() {
+    let mut rig = Rig::with_play("fleet-logout-retry", &["alice", "bob"], &["alice", "bob"]);
+    let arm = rig
+        .session
+        .core
+        .play_for_test()
+        .unwrap()
+        .arm("bob")
+        .expect("bob's arm");
+    arm.arm_explicit_login();
+    {
+        let play = rig.session.core.play_for_test().unwrap();
+        play.statuses.lock().unwrap().push(host_play::SlotStatus {
+            username: "bob".into(),
+            startup_phase: host_play::StartupPhase::Error,
+            startup_phase_started: Instant::now(),
+            error: Some("Error connecting to server.".into()),
+            ..host_play::SlotStatus::default()
+        });
+    }
+    rig.settle();
+    let bob = rig.session.core.fleet_view().row("bob").unwrap().snapshot();
+    assert_eq!(
+        (bob.phase(), bob.retrying()),
+        (frontend_core::Phase::LoginError, true)
+    );
+    assert!(arm.wants_login(), "the slot would retry");
+
+    let logout = rig.action(FleetAction::Logout);
+    assert!(!logout.disabled, "Log out all is enabled: {logout:?}");
+    rig.click_action(FleetAction::Logout);
+    let plan = rig.layout.plan.clone().expect("the plan row is drawn");
+    assert!(
+        plan.prompt.starts_with("Log out 1 shown bot: bob."),
+        "{}",
+        plan.prompt
+    );
+    assert!(
+        plan.prompt.contains("alice: not logged in"),
+        "{}",
+        plan.prompt
+    );
+    rig.click(plan.confirm);
+    rig.settle();
+    assert!(arm.login_latched(), "bob is parked logged out");
+    assert!(!arm.wants_login(), "no further login attempt");
+    let alice = rig
+        .session
+        .core
+        .play_for_test()
+        .unwrap()
+        .arm("alice")
+        .unwrap();
+    assert!(!alice.login_latched(), "alice never logged in");
+}

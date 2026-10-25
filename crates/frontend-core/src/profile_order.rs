@@ -95,6 +95,13 @@ pub struct ProfileOrder {
     renumbered: bool,
 }
 
+/// Storage changes need a save. Projection changes only invalidate views.
+#[derive(Debug, Default)]
+pub(crate) struct Reconciled {
+    pub(crate) stored_changed: bool,
+    pub(crate) sequence_changed: bool,
+}
+
 impl ProfileOrder {
     /// A copy, taken before a reorder or for a queued write.
     pub(crate) fn snapshot(&self) -> Self {
@@ -189,14 +196,13 @@ impl ProfileOrder {
     /// current name, and a profile the order lacks is appended (seeded in
     /// vault order when nothing is stored). An entry the vault lacks stays
     /// stored, unordered, while `pending(uid)` says its deletion is not
-    /// durable, and is dropped otherwise. Returns whether the stored value
-    /// changed (an entry added or dropped, or the keys renumbered when
-    /// read): a write is needed. A rename alone needs none.
+    /// durable, and is dropped otherwise. Report storage changes separately
+    /// from the displayed sequence: a rename needs a view refresh, not a save.
     pub(crate) fn reconcile<'a>(
         &mut self,
         vault: impl Iterator<Item = (i32, &'a str)>,
         pending: impl Fn(i32) -> bool,
-    ) -> bool {
+    ) -> Reconciled {
         let mut entries: Vec<Entry> = self.live.drain(..).chain(self.held.drain(..)).collect();
         entries.sort_by_key(|entry| (entry.key, entry.uid));
         let mut profiles: Vec<(i32, &str)> = vault.collect();
@@ -229,6 +235,11 @@ impl ProfileOrder {
             }
             live.push((Entry { uid, key: next }, name.to_string()));
         }
+        let sequence_changed = self
+            .names
+            .iter()
+            .map(String::as_str)
+            .ne(live.iter().map(|(_, name)| name.as_str()));
         self.names.clear();
         for (entry, name) in live {
             self.live.push(entry);
@@ -239,7 +250,10 @@ impl ProfileOrder {
             self.renumber();
         }
         let renumbered = std::mem::take(&mut self.renumbered);
-        added || dropped || renumbered
+        Reconciled {
+            stored_changed: added || dropped || renumbered,
+            sequence_changed,
+        }
     }
 
     /// Give every entry an evenly spaced key (no gap left): the live
@@ -423,13 +437,22 @@ mod tests {
         ProfileOrder::of_names_for_test(names)
     }
 
+    #[cfg(target_pointer_width = "64")]
+    #[test]
+    fn order_projection_keeps_its_process_only_size() {
+        assert_eq!(std::mem::size_of::<ProfileOrder>(), 80);
+        assert_eq!(std::mem::size_of::<super::Reconciled>(), 2);
+    }
+
     fn names(order: &ProfileOrder) -> Vec<&str> {
         order.names().iter().map(String::as_str).collect()
     }
 
     /// Reconcile with `rows`, every deletion durable.
     fn sync(order: &mut ProfileOrder, rows: &[(i32, &str)]) -> bool {
-        order.reconcile(rows.iter().copied(), |_| false)
+        order
+            .reconcile(rows.iter().copied(), |_| false)
+            .stored_changed
     }
 
     fn stored_len(order: &ProfileOrder) -> usize {
@@ -467,19 +490,29 @@ mod tests {
     #[test]
     fn a_deleted_profile_is_held_while_pending_and_dropped_once_durable() {
         let mut saved = order(&["alice", "bob", "carol"]);
-        assert!(!saved.reconcile([(1, "alice"), (3, "carol")].into_iter(), |uid| uid == 2));
+        assert!(
+            !saved
+                .reconcile([(1, "alice"), (3, "carol")].into_iter(), |uid| uid == 2)
+                .stored_changed
+        );
         assert_eq!(names(&saved), ["alice", "carol"]);
         assert!(saved.holds_deleted());
         assert_eq!(stored_len(&saved), 3, "pending: still stored");
         // The deletion failed: bob is back in his place.
         assert!(
-            !saved.reconcile([(1, "alice"), (2, "bob"), (3, "carol")].into_iter(), |_| {
-                false
-            })
+            !saved
+                .reconcile([(1, "alice"), (2, "bob"), (3, "carol")].into_iter(), |_| {
+                    false
+                })
+                .stored_changed
         );
         assert_eq!(names(&saved), ["alice", "bob", "carol"]);
         // Deleted again, now durable: dropped, and a write is needed.
-        assert!(!saved.reconcile([(1, "alice"), (3, "carol")].into_iter(), |uid| uid == 2));
+        assert!(
+            !saved
+                .reconcile([(1, "alice"), (3, "carol")].into_iter(), |uid| uid == 2)
+                .stored_changed
+        );
         assert!(sync(&mut saved, &[(1, "alice"), (3, "carol")]));
         assert!(!saved.holds_deleted());
         assert_eq!(stored_len(&saved), 2);
