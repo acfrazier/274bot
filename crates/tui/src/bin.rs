@@ -42,6 +42,7 @@ use frontend_core::scripts::{
     CardSource, CatalogActionKind, CompiledCardId, LoadoutForm, OwnedSchema, PaintFrame,
     ScriptChoice,
 };
+use frontend_core::selection::ProfileIdentity;
 #[cfg(test)]
 use frontend_core::test_support::VaultFixture;
 use frontend_core::walk_map::{
@@ -446,9 +447,13 @@ pub struct TuiSession {
     shown_preference_error: Option<String>,
     /// The latest log toggle whose existing status still needs its settled sink.
     session_log_status_request: Option<api::identity::RequestId>,
-    /// Interactive startup's deferred load/login and focus request.
-    startup_focus: Option<String>,
-    /// The operator superseded only the focus part of `startup_focus`.
+    /// Unique profiles queued for startup Load + Login, keyed by vault UID.
+    startup_profiles: Vec<ProfileIdentity>,
+    /// The last queued profile that should receive automatic startup focus.
+    startup_focus: Option<ProfileIdentity>,
+    /// Defer the default boot choice until shared startup preparation orders profiles.
+    startup_default_pending: bool,
+    /// The operator superseded only startup focus. Queued loads remain.
     startup_focus_cancelled: bool,
     background_bots_acked: bool,
     ack_checked_at: Option<Instant>,
@@ -693,7 +698,9 @@ impl TuiSession {
             preferences_adopted,
             shown_preference_error: None,
             session_log_status_request: None,
+            startup_profiles: Vec::new(),
             startup_focus: None,
+            startup_default_pending: false,
             startup_focus_cancelled: false,
             background_bots_acked: background_ack,
             ack_checked_at: Some(Instant::now()),
@@ -1077,6 +1084,7 @@ impl TuiSession {
             app.error = Some(error);
         }
         self.apply_script_notice(app);
+        let startup_identity = self.core.profile_identity(name);
         let submitted = match self.submit(OperatorCommand::Remove, Targets::Profile(name)) {
             Ok(submitted) => submitted,
             Err(error) => {
@@ -1085,9 +1093,13 @@ impl TuiSession {
             }
         };
         if let Some(removal) = submitted.removal() {
-            if self.startup_focus.as_deref() == Some(name) {
-                self.cancel_startup_request();
-            } else if removal.reselected().is_some() || removal.selection_cleared() {
+            // An explicit removal cancels an automatic default not yet chosen.
+            self.startup_default_pending = false;
+            let cancelled_startup_target =
+                startup_identity.is_some_and(|identity| self.cancel_startup_target(identity));
+            if !cancelled_startup_target
+                && (removal.reselected().is_some() || removal.selection_cleared())
+            {
                 self.cancel_startup_focus();
             }
             if let Some(next) = removal.reselected() {
@@ -1131,22 +1143,113 @@ impl TuiSession {
         added
     }
 
-    /// Supersede only focus; the deferred startup load and login remain.
+    fn startup_profile_name(&self, identity: ProfileIdentity) -> Option<&str> {
+        self.core
+            .profiles()
+            .find(|profile| ProfileIdentity::uid(profile.uid()) == identity)
+            .map(|profile| profile.username())
+    }
+
+    /// Remove deleted profiles without cancelling other startup targets.
+    fn prune_startup_targets(&mut self) {
+        let core = &self.core;
+        self.startup_profiles.retain(|identity| {
+            core.profiles()
+                .any(|profile| ProfileIdentity::uid(profile.uid()) == *identity)
+        });
+        if self
+            .startup_focus
+            .is_some_and(|identity| !self.startup_profiles.contains(&identity))
+        {
+            self.startup_focus = self.startup_profiles.last().copied();
+        }
+        if self.startup_profiles.is_empty() && !self.startup_default_pending {
+            self.startup_focus = None;
+            self.startup_focus_cancelled = false;
+        }
+    }
+
+    /// Cancel only `identity` from the deferred startup work.
+    fn cancel_startup_target(&mut self, identity: ProfileIdentity) -> bool {
+        let before = self.startup_profiles.len();
+        self.startup_profiles.retain(|queued| *queued != identity);
+        let cancelled = self.startup_profiles.len() != before;
+        if cancelled && self.startup_focus == Some(identity) {
+            self.startup_focus = self.startup_profiles.last().copied();
+        }
+        if self.startup_profiles.is_empty() && !self.startup_default_pending {
+            self.startup_focus = None;
+            self.startup_focus_cancelled = false;
+        }
+        cancelled
+    }
+
+    /// Supersede only focus; the deferred startup loads and logins remain.
     fn cancel_startup_focus(&mut self) {
-        if self.startup_focus.is_some() {
+        if self.startup_default_pending
+            || !self.startup_profiles.is_empty()
+            || self.startup_focus.is_some()
+        {
             self.startup_focus_cancelled = true;
         }
     }
 
-    /// Drop the deferred request when its target no longer exists.
-    fn cancel_startup_request(&mut self) {
-        self.startup_focus = None;
+    fn queue_startup_profile(&mut self, identity: ProfileIdentity) {
+        if !self.startup_profiles.contains(&identity) {
+            self.startup_profiles.push(identity);
+        }
+    }
+
+    fn queue_startup_focus(&mut self, name: &str) {
+        let Some(identity) = self.core.profile_identity(name) else {
+            return;
+        };
+        self.queue_startup_profile(identity);
+        self.startup_focus = Some(identity);
         self.startup_focus_cancelled = false;
     }
 
-    fn queue_startup_focus(&mut self, name: String) {
-        self.startup_focus = Some(name);
-        self.startup_focus_cancelled = false;
+    /// Choose the default only after shared preparation reconciles profile order.
+    fn queue_default_startup(&mut self) {
+        self.startup_default_pending = false;
+        let Some(name) = self.core.profile_order().names().first() else {
+            return;
+        };
+        let Some(identity) = self.core.profile_identity(name) else {
+            return;
+        };
+        self.queue_startup_profile(identity);
+        if self.startup_focus.is_none() && !self.startup_focus_cancelled {
+            self.startup_focus = Some(identity);
+        }
+    }
+
+    /// Load and log in each unique startup target in the reconciled saved order.
+    fn apply_startup_requests(&mut self) {
+        self.prune_startup_targets();
+        let core = &self.core;
+        self.startup_profiles.sort_unstable_by_key(|identity| {
+            core.profiles()
+                .find(|profile| ProfileIdentity::uid(profile.uid()) == *identity)
+                .and_then(|profile| core.profile_order().position(profile.username()))
+                .unwrap_or(usize::MAX)
+        });
+        let queued = std::mem::take(&mut self.startup_profiles);
+        let focus = self.startup_focus.take();
+        let cancel_focus = std::mem::take(&mut self.startup_focus_cancelled);
+        self.startup_default_pending = false;
+        for identity in queued {
+            if let Some(name) = self.startup_profile_name(identity).map(str::to_owned) {
+                self.load_and_login(&name);
+            }
+        }
+        if !cancel_focus {
+            if let Some(name) =
+                focus.and_then(|identity| self.startup_profile_name(identity).map(str::to_owned))
+            {
+                self.focus(&name);
+            }
+        }
     }
 
     /// Select `name` (pure bookkeeping: never a spawn or login).
@@ -2197,7 +2300,7 @@ impl TuiSession {
             .profiles()
             .map(|p| p.username().to_string())
             .collect();
-        self.queue_startup_focus(pending);
+        self.queue_startup_focus(&pending);
     }
 
     fn import_rs2b0t_catalog(&mut self, app: &mut TuiApp, root: &Path) -> Result<(), String> {
@@ -3210,29 +3313,20 @@ impl TuiSession {
     fn pump(&mut self, app: &mut TuiApp) {
         self.expire_error(app, Instant::now());
         self.clear_resolved_error(app);
-        // A vault deletion can remove the target while preferences wait.
-        // Cancel the whole request, not just its focus, before any load.
-        if self
-            .startup_focus
-            .as_deref()
-            .is_some_and(|name| self.core.profile(name).is_none())
-        {
-            self.cancel_startup_request();
-        }
+        self.prune_startup_targets();
         if !self.preferences_adopted && self.preferences.ready() {
             self.preferences_adopted = true;
             self.map_desk
                 .adopt_bake_choice(load_map_bake_choice(&self.preferences));
             frontend_core::log_file::restore_session_log(&self.preferences);
         }
-        if self.startup_focus.is_some() && self.preferences.ready() {
-            let cancel_focus = std::mem::take(&mut self.startup_focus_cancelled);
-            if let Some(focus) = self.startup_focus.take() {
-                self.load_and_login(&focus);
-                if !cancel_focus {
-                    self.focus(&focus);
-                }
+        let startup_pending = self.startup_default_pending || !self.startup_profiles.is_empty();
+        if startup_pending && self.core.prepare_startup() {
+            self.names = self.core.profile_names();
+            if self.startup_default_pending {
+                self.queue_default_startup();
             }
+            self.apply_startup_requests();
         }
         self.project_preference_error(app);
         self.project_walk_globals(app);
@@ -4164,9 +4258,11 @@ fn interactive_landing(session: &mut TuiSession, args: &Args) -> Result<TuiApp, 
     let focus = session.bootstrap_interactive_profiles(&args.users)?;
     if let Some(focus) = &focus {
         session.focus(focus);
-        // This is the automatic boot request, not an operator selection.
-        // Queue its readiness-gated load after establishing the initial view.
-        session.queue_startup_focus(focus.clone());
+        // Retain the explicit profile's UID before any later rename.
+        session.queue_startup_focus(focus);
+    } else if !session.names.is_empty() {
+        // The shared preparation step chooses the default from saved order.
+        session.startup_default_pending = true;
     }
     let mut app = new_app(
         format!(
@@ -4180,7 +4276,7 @@ fn interactive_landing(session: &mut TuiSession, args: &Args) -> Result<TuiApp, 
     app.focused = focus
         .as_ref()
         .and_then(|focus| session.names.iter().position(|name| name == focus));
-    if focus.is_none() {
+    if session.names.is_empty() {
         app.open_modal(Modal::NewProfile(
             crate::new_profile::NewProfileView::default(),
         ));
@@ -4348,14 +4444,9 @@ fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
 }
 
 impl TuiSession {
-    /// Profiles for an interactive boot: `--user` only selects
-    /// profiles the vault already holds. It never creates one: a
-    /// created profile would need a password the operator did not
-    /// type. An unknown `--user` name stops the boot and names how
-    /// to add it. The focus is the first `--user` (or the vault's
-    /// first profile); an empty vault has none, and the caller opens
-    /// the New profile form on it instead of stopping. A fresh vault
-    /// stays empty — no seeded `test` profile (M-311).
+    /// Validate explicit `--user` profiles before the event loop. The default
+    /// startup target waits for shared preparation to reconcile saved order.
+    /// An empty vault opens the New profile form; no profile is seeded.
     fn bootstrap_interactive_profiles(
         &mut self,
         users: &[String],
@@ -4370,10 +4461,7 @@ impl TuiSession {
                 return Err(unknown_profile_error(user));
             }
         }
-        Ok(users
-            .first()
-            .cloned()
-            .or_else(|| self.names.first().cloned()))
+        Ok(users.first().cloned())
     }
 }
 

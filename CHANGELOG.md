@@ -48,6 +48,13 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.6` 
 
 - Navigation generation now lives in `nav-bake`. Build `nav-pack`, `cache-content-id`, and `nav-input-audit` from that crate. Runtime planning stays in `nav-planner`. This ownership change keeps v17 pack bytes and routes unchanged, apart from the generator identity in generated metadata.
 
+### Fixed
+
+- Saved profile order applies immediately after unlock and when bots load one at a time.
+- Startup waits for saved preferences before it chooses and loads a profile.
+  Saving a new profile during that wait keeps the terminal app's original boot load and login.
+  Renaming the boot profile keeps its pending load attached to the same profile.
+
 ### Fixed during development
 
 - `tui-play --user NAME` stops on a missing vault before it prepares the game cache or reads the engine login key. The message is the same. A local server with no engine directory still stops with the engine-directory error.
