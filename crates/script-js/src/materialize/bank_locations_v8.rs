@@ -1306,7 +1306,7 @@ globalThis.checkFourScopes = () => __scope_cache_control(true);
         assert_eq!(warm, allocation_counter::AllocationInfo::default());
     }
     const BANK_SHAPE_TEST_NAME: &str =
-        "load::bank_locations_v8::tests::bank_result_shapes_cover_callbacks_and_bound_v8_heap";
+        "bank_locations_v8::tests::bank_result_shapes_cover_callbacks_and_bound_v8_heap";
     const BANK_SHAPE_CHILD_ENV: &str = "SCRIPT_BANK_RESULT_SHAPE_TEST_CHILD";
     const BANK_RESULT_SHAPE_SETUP: &str = r#"
 globalThis.__bank_tile_calls = 0;

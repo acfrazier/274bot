@@ -257,8 +257,9 @@ cells = [
   "host.api-gather-wire-shadow|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 GATHERER_NAV_PACK=${NAV_PACK_289:?} GATHERER_NAV_FLAGS=${NAV_FLAGS_289:?} GATHERER_ENGINE_DIR=${ENGINE_A_DIR:?} GATHERER_WC_TILE=3197,3209,0 BOT_CACHE_DIR=${BOT_CACHE_DIR:?} BOT_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe,memory-profile --lib -- --ignored --exact api_gather_live_tests::live_gather_api_receipt_tracks_memory_reconnect_and_wire_shadow --nocapture --test-threads=1",
 ]
 [[cover]]
-# The runtime cell crosses JsSurfaceFactory::spawn in script-js/src/surface.rs.
-# Exact core paths below share that start/post/tick/stop boundary.
+# These cells collectively cover the runtime and its exact Core seams.
+# The runtime cell crosses JsSurfaceFactory::spawn and start/post/tick/stop.
+# Jive KQ also exercises catalog imports and registry/settings paths.
 globs = [
   "crates/script-js/src/materialize/**",
   "crates/script-js/src/runtime/**",
