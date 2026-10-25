@@ -1328,10 +1328,10 @@ fn login_notice_clears_on_a_successful_login() {
 }
 
 /// Size tripwire: a bot with no login notice pays one pointer on its row and
-/// one in its derivation state (176 + 16 bytes before the notice; an inline
-/// `Option<String>` and clock made it 192 + 120), so keep the notice boxed.
-/// The row is 176 because `retrying` and `guard_parked` (two bools) joined
-/// the 168-byte row and its alignment padding grew by one word.
+/// one in its derivation state: the row is 168 bytes + 8 for the boxed notice
+/// = 176, the state 16 + 8 = 24 (an inline `Option<String>` and clock made
+/// it 192 + 120), so keep the notice boxed. `guard_parked` sits in the row's
+/// padding beside the other flags and does not grow it.
 #[cfg(target_pointer_width = "64")]
 #[test]
 fn a_bot_without_a_login_notice_costs_two_pointers() {
