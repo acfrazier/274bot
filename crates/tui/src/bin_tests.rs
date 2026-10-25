@@ -8291,6 +8291,155 @@ fn publish_status(session: &TuiSession, name: &str, edit: impl FnOnce(&mut host_
     }
 }
 
+/// LOGOUT-RETRY-1025: the `[Log out u]` button is dim for a bot that never
+/// logged in and lit for a bot whose refused login is retrying; its key
+/// refuses the first and parks the second, and Fleet Log out takes the
+/// second the same way. At 120x40 and 80x24, with `TUI_CAPTURE_DIR` set the
+/// frames go to `<dir>/logout-retry`.
+#[test]
+fn logout_retry_reaches_a_retrying_login_by_key_and_fleet_and_refuses_a_never_logged_in_bot() {
+    use crate::commands::Command;
+    use crate::test_support::ch;
+    let refused = "Error connecting to server. (connect: Connection refused)";
+    let iso = IsolatedStores::enter("tui-logout-retry");
+    let (mut session, mut app) = tui_with_profiles(&iso, &["alice", "bob"]);
+    let dir = std::env::var_os("TUI_CAPTURE_DIR")
+        .map(|dir| std::path::PathBuf::from(dir).join("logout-retry"));
+    if let Some(dir) = dir.as_deref() {
+        std::fs::create_dir_all(dir).unwrap();
+    }
+    // The `[Log out u]` button's first cell is lit or dim, at both sizes.
+    let logout_button = |app: &mut TuiApp, label: &str, lit: bool| {
+        for (cols, rows) in [(120, 40), (80, 24)] {
+            let mut terminal =
+                ratatui::Terminal::new(ratatui::backend::TestBackend::new(cols, rows)).unwrap();
+            terminal.draw(|frame| app.draw(frame)).unwrap();
+            let buffer = terminal.backend().buffer();
+            let mut found = None;
+            for y in 0..rows {
+                let line: String = (0..cols).map(|x| buffer[(x, y)].symbol()).collect();
+                if let Some(at) = line.find("[Log out u]") {
+                    let x = line[..at].chars().count() as u16;
+                    found = Some(
+                        buffer[(x, y)]
+                            .modifier
+                            .contains(ratatui::style::Modifier::DIM),
+                    );
+                }
+            }
+            let dim = found.unwrap_or_else(|| panic!("{label} {cols}x{rows}: no [Log out u]"));
+            assert_eq!(!dim, lit, "{label} {cols}x{rows}");
+            if let Some(dir) = dir.as_deref() {
+                let proof = serde_json::json!({
+                    "label": label,
+                    "log_out_button_lit": !dim,
+                    "message": app.error,
+                });
+                super::manual_click_live_tests::capture(
+                    app,
+                    cols,
+                    rows,
+                    dir,
+                    &format!("{cols}x{rows}"),
+                    label,
+                    &proof,
+                )
+                .unwrap();
+            }
+        }
+    };
+    let arm =
+        |session: &TuiSession, name: &str| session.core.play_for_test().unwrap().arm(name).unwrap();
+
+    // alice never logged in: Log out is dim and refuses with one reason.
+    app.focused = Some(0);
+    dispatch(&mut session, &mut app, AppAction::Focus("alice".into()));
+    app.key_focus = crate::layout::Pane::Detail;
+    session.pump(&mut app);
+    assert!(Command::Logout.availability(&app).is_err());
+    logout_button(&mut app, "01-never-logged-in", false);
+    let before = session.core.refusals();
+    press_key(&mut session, &mut app, ch('u'));
+    assert_eq!(session.core.refusals(), before + 1);
+    assert_eq!(app.error.as_deref(), Some("Log out: not logged in"));
+    assert!(
+        !arm(&session, "alice").login_latched(),
+        "nothing was latched"
+    );
+
+    // bob's refused login keeps retrying: Log out is lit and parks him.
+    app.focused = Some(1);
+    dispatch(&mut session, &mut app, AppAction::Focus("bob".into()));
+    app.key_focus = crate::layout::Pane::Detail;
+    session
+        .submit(OperatorCommand::Login, Targets::Profile("bob"))
+        .expect("login");
+    publish_status(&session, "bob", |r| {
+        r.startup_phase = host_play::StartupPhase::Error;
+        r.startup_phase_started = Instant::now();
+        r.error = Some(refused.into());
+    });
+    session.core.poll();
+    session.pump(&mut app);
+    assert!(arm(&session, "bob").wants_login(), "the slot would retry");
+    assert_eq!(Command::Logout.availability(&app), Ok(()));
+    // The refusal waited for a bot Log out can act on: bob's retry is one.
+    session.clear_resolved_error(&mut app);
+    assert_eq!(app.error, None, "the not-logged-in refusal resolved");
+    logout_button(&mut app, "02-retrying", true);
+    press_key(&mut session, &mut app, ch('u'));
+    assert!(arm(&session, "bob").login_latched(), "bob is parked");
+    assert!(
+        !arm(&session, "bob").wants_login(),
+        "no further login attempt"
+    );
+    session.core.poll();
+    session.pump(&mut app);
+    assert!(Command::Logout.availability(&app).is_err());
+    logout_button(&mut app, "03-parked", false);
+
+    // Fleet Log out (`U`) reaches a retrying bot through the shared plan.
+    session
+        .submit(OperatorCommand::Login, Targets::Profile("bob"))
+        .expect("login");
+    publish_status(&session, "bob", |r| {
+        r.startup_phase = host_play::StartupPhase::Error;
+        r.startup_phase_started = Instant::now();
+        r.error = Some(refused.into());
+    });
+    session.core.poll();
+    session.pump(&mut app);
+    assert!(arm(&session, "bob").wants_login());
+    app.key_focus = crate::layout::Pane::Fleet;
+    session
+        .submit_with(
+            &mut app,
+            OperatorCommand::PlanFleetAction(frontend_core::FleetAction::Logout),
+            Targets::Application,
+        )
+        .expect("the plan is made");
+    let plan = session
+        .core
+        .fleet_plan()
+        .expect("bob has a login to cancel");
+    assert_eq!(plan.target_names().collect::<Vec<_>>(), ["bob"]);
+    assert!(
+        plan.prompt().contains("alice: not logged in"),
+        "{}",
+        plan.prompt()
+    );
+    dispatch(
+        &mut session,
+        &mut app,
+        AppAction::RunFleetPlan(frontend_core::FleetAction::Logout),
+    );
+    session.core.poll();
+    assert!(arm(&session, "bob").login_latched(), "bob is parked again");
+    assert!(!arm(&session, "bob").wants_login());
+    assert!(!arm(&session, "alice").login_latched());
+    let _iso = iso;
+}
+
 /// LOGIN-NOTICE-1024: bob's refused login at 120x40 and 80x24. The
 /// notice stays in red in the status pane through the retry's Connecting,
 /// a queue wait and a parked logged out, with the live state line above

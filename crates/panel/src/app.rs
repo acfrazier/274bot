@@ -68,7 +68,8 @@ use frontend_core::scripts::{
     ScriptChoice, ScriptRunState, SettingView,
 };
 use frontend_core::{
-    FleetOrder, FleetRow, OperatorCommand, Phase, ProfileIdentity, ReorderOp, ResourceView, Targets,
+    FleetOrder, FleetRow, LogoutEligibility, OperatorCommand, Phase, ProfileIdentity, ReorderOp,
+    ResourceView, Targets,
 };
 
 #[path = "live_harness.rs"]
@@ -2384,38 +2385,24 @@ fn paint_inverse_combo_arrow(ui: &Ui) {
     .build();
 }
 
-fn logout_enabled(
-    vault_open: bool,
-    focused: bool,
-    connected: bool,
-    queued: bool,
-    guard_parked: bool,
-) -> bool {
-    vault_open && focused && (connected || queued || guard_parked)
+fn logout_enabled(vault_open: bool, eligibility: Option<LogoutEligibility>) -> bool {
+    vault_open && eligibility.is_some_and(LogoutEligibility::eligible)
 }
 
 /// Log in / Log out above WalkTo. Always drawn; disabled while the vault
-/// is locked or no profile is focused. Log out needs a connected, genuinely
-/// queued or repeat-guard-parked focused slot, so an unloaded profile cannot
-/// be latched accidentally.
+/// is locked or no profile is focused. Log out follows the shared
+/// projection ([`LogoutEligibility`], also Fleet's and the TUI's): a
+/// connected slot, a pending or retrying login, a queued place or a
+/// repeat-guard park. An unloaded or logged-out profile cannot be latched
+/// accidentally.
 fn login_logout_row(ui: &Ui, session: &mut Session) {
     let avail = ui.content_region_avail()[0];
     let cells = scaled_button_cells(ui, avail, 2);
     let vault_open = session.core.vault_open();
     let focused = session.focused_name();
     let can_login = vault_open && focused.is_some();
-    let focused_queued = focused
-        .as_deref()
-        .and_then(|name| session.queue_for(name))
-        .is_some();
-    let guard_parked = session.focused_guard_parked();
-    let can_logout = logout_enabled(
-        vault_open,
-        focused.is_some(),
-        session.focused_connected(),
-        focused_queued,
-        guard_parked,
-    );
+    let eligibility = session.focused_logout_eligibility();
+    let can_logout = logout_enabled(vault_open, eligibility);
     {
         let _off = (!can_login).then(|| ui.begin_disabled());
         if ui.button_with_size("Log in", [cells[0].0, 0.0]) {
@@ -2445,12 +2432,21 @@ fn login_logout_row(ui: &Ui, session: &mut Session) {
             "unlock the vault first"
         } else if focused.is_none() {
             "pick a profile"
-        } else if focused_queued {
-            "cancel the focused slot's queued login"
-        } else if guard_parked {
-            "end the parked session — its held script work is discarded"
         } else {
-            "log out the focused slot — it stays in the picker"
+            match eligibility {
+                Some(LogoutEligibility::RetryingLogin) => {
+                    "stop the focused slot's login retries — it stays in the picker"
+                }
+                Some(LogoutEligibility::Queued) => "cancel the focused slot's queued login",
+                Some(LogoutEligibility::LoggingIn) => "cancel the focused slot's login",
+                Some(LogoutEligibility::GuardParked) => {
+                    "end the parked session — its held script work is discarded"
+                }
+                Some(LogoutEligibility::LoggedIn) => {
+                    "log out the focused slot — it stays in the picker"
+                }
+                Some(LogoutEligibility::NotLoggedIn) | None => "the focused slot is not logged in",
+            }
         });
     }
 }

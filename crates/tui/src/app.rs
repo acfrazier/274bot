@@ -909,6 +909,17 @@ impl TuiApp {
     pub(crate) fn has_focus(&self) -> bool {
         self.focused.is_some_and(|i| i < self.names.len())
     }
+    /// Whether Log out acts on the focused bot: the shared projection's
+    /// answer from its fleet row, the same one Fleet Log out uses.
+    pub(crate) fn focused_logout_eligible(&self) -> bool {
+        self.focused
+            .and_then(|i| self.names.get(i))
+            .and_then(|name| {
+                let index = self.fleet_model.index_of_name(name)?;
+                self.fleet_model.rows().get(index)
+            })
+            .is_some_and(|row| row.logout_eligibility().eligible())
+    }
     pub(crate) fn profile_id_for_name(&self, name: &str) -> frontend_core::ProfileIdentity {
         frontend_core::profile_id_for_name(&self.names, &self.profile_ids, name)
     }

@@ -1336,3 +1336,83 @@ fn a_bot_without_a_login_notice_costs_two_pointers() {
     assert_eq!(std::mem::size_of::<FleetRow>(), 176);
     assert_eq!(std::mem::size_of::<RowState>(), 24);
 }
+
+/// LOGOUT-RETRY-1025: Log out acts on every state with a login or a
+/// session to end, among them a refused login that is retrying, and on
+/// nothing else.
+#[test]
+fn logout_retry_eligible_for_pending_and_retrying_logins_only() {
+    use crate::LogoutEligibility::{
+        GuardParked, LoggedIn, LoggingIn, NotLoggedIn, Queued, RetryingLogin,
+    };
+    let place = QueuePlace::of(&SlotStatus {
+        startup_phase: StartupPhase::Queueing,
+        queue_position: 1,
+        queue_total: 2,
+        ..SlotStatus::default()
+    });
+    assert!(place.is_some());
+    let case = |phase: Phase, edit: &dyn Fn(&mut FleetRow)| {
+        let mut row = FleetRow::fixture("bot", phase, None, None);
+        edit(&mut row);
+        row.logout_eligibility()
+    };
+    let plain = |_: &mut FleetRow| {};
+    for (phase, want) in [
+        (Phase::Offline, NotLoggedIn),
+        (Phase::LoggedOut, NotLoggedIn),
+        (Phase::Failed, NotLoggedIn),
+        (Phase::LoginError, NotLoggedIn),
+        (Phase::Preparing, LoggingIn),
+        (Phase::Waiting, LoggingIn),
+        (Phase::Connecting, LoggingIn),
+        (Phase::Loading, LoggingIn),
+        (Phase::Ready, LoggedIn),
+    ] {
+        assert_eq!(case(phase, &plain), want, "{phase:?}");
+    }
+    assert_eq!(
+        case(Phase::LoginError, &|row| row.retrying = true),
+        RetryingLogin,
+        "a refused login that the host retries"
+    );
+    assert_eq!(
+        case(Phase::Queued, &|row| row.queue = place),
+        Queued,
+        "a place in the login queue"
+    );
+    assert_eq!(
+        case(Phase::LoggedOut, &|row| row.guard_parked = true),
+        GuardParked
+    );
+    assert_eq!(case(Phase::Offline, &|row| row.loaded = false), NotLoggedIn);
+    assert_eq!(
+        FleetRow::for_profile("unloaded").logout_eligibility(),
+        NotLoggedIn
+    );
+}
+
+/// The poll derives the facts Log out reads: a refused login that the slot
+/// still wants is retrying (eligible); once Log out parks the slot it is not.
+#[test]
+fn logout_retry_poll_projects_a_retrying_login_as_eligible_until_log_out_parks_it() {
+    let mut s = fleet("logout-retry", &["lr-bob"], false);
+    let arm = s.play().unwrap().arm("lr-bob").expect("arm");
+    arm.arm_explicit_login();
+    publish(&s, "lr-bob", |r| {
+        phase_to(r, StartupPhase::Error);
+        r.error = Some("Error connecting to server.".into());
+    });
+    s.poll();
+    let retrying = row(&s, "lr-bob");
+    assert_eq!(
+        (retrying.phase, retrying.retrying),
+        (Phase::LoginError, true)
+    );
+    assert!(retrying.logout_eligibility().eligible());
+    arm.request_logout();
+    s.poll();
+    let parked = row(&s, "lr-bob");
+    assert_eq!(parked.phase, Phase::LoggedOut);
+    assert!(!parked.logout_eligibility().eligible());
+}
