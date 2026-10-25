@@ -104,6 +104,7 @@ jobs:
           cargo clippy -p host-play --all-targets --no-deps --features memory-profile-no-alloc -- -D warnings
           cargo clippy -p tui --all-targets --no-deps --features memory-profile -- -D warnings
           cargo clippy -p script --no-default-features --all-targets --no-deps -- -D warnings
+          cargo clippy -p host-play --no-default-features --all-targets --no-deps -- -D warnings
           cargo clippy --manifest-path vendor/fr-client-rust/Cargo.toml --workspace --all-targets --no-deps --features render-test-hooks -- -D warnings
           cargo clippy -p host --all-targets --no-deps --features render-test-hooks -- -D warnings
 
@@ -211,6 +212,13 @@ jobs:
             real_nav_pack: true
             os: ubuntu-24.04
             command: "cargo test -p script --no-default-features"
+          - lane: native-only
+            free_disk: false
+            cache_key: workspace
+            save_cache: false
+            real_nav_pack: true
+            os: ubuntu-24.04
+            command: "cargo build -p panel --no-default-features && cargo build -p tui --no-default-features && cargo build -p host-play --no-default-features && cargo test -p host-play --no-default-features --lib && for package in panel tui host-play; do deps=$(cargo tree -p $package --no-default-features -e normal --prefix none --color never) || exit; if grep -E '^(script-js|v8|rustyscript|deno_core|deno_ast|flatbuffers|tiny-skia|ab_glyph|tokio) v' <<<$deps; then exit 1; else code=$?; [ $code -eq 1 ] || exit $code; fi; done"
           - lane: grinch-oracles
             free_disk: false
             cache_key: workspace
