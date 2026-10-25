@@ -625,13 +625,13 @@ impl InteractReq {
 #[derive(Debug, Clone, PartialEq)]
 pub struct QueuedInteract {
     /// Legacy gameplay or lifecycle request.
-    pub req: crate::shim::InteractReq,
+    pub req: InteractReq,
     /// Push-time walk outcome sequence shared by this physical batch.
     pub observed_walk_outcome_seq: u64,
 }
 
-impl std::borrow::Borrow<crate::shim::InteractReq> for QueuedInteract {
-    fn borrow(&self) -> &crate::shim::InteractReq {
+impl std::borrow::Borrow<InteractReq> for QueuedInteract {
+    fn borrow(&self) -> &InteractReq {
         &self.req
     }
 }

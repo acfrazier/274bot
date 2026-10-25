@@ -20,6 +20,7 @@ pub mod abi;
 mod actions;
 pub mod custody;
 pub mod divergence;
+pub mod recovery_hints;
 pub mod request;
 pub mod seat;
 pub mod seat_rows;
@@ -31,11 +32,11 @@ pub use services::{
     ServiceError,
 };
 pub mod death;
-pub(crate) mod ledger;
+pub mod ledger;
 mod owner;
 mod server_ordered;
 pub mod thieve;
-pub(crate) mod thieving_core;
+pub mod thieving_core;
 pub use server_ordered::ServerOrderedCompletion;
 pub mod walk;
 pub mod walk_wait;
@@ -302,7 +303,21 @@ pub type PrepareCard =
 pub type CreateScript =
     fn(RunKey, Arc<PreparedConfig>, &mut RetainedMemory) -> Result<Box<dyn Script>, StartError>;
 
-#[derive(Debug)]
+/// Static lifecycle hooks registered by a compiled card.
+///
+/// The card descriptor owns these function pointers. They carry no per-bot
+/// state. The owning slot invokes them on its pump thread, never a control
+/// thread.
+#[derive(Debug, Clone, Copy)]
+pub struct CardLifecycle {
+    pub on_stop: fn(),
+    pub on_reset: fn(),
+    pub on_resume: fn(),
+    pub on_pause: fn(),
+    pub on_hold: fn(bool),
+}
+
+#[derive(Debug, Clone, Copy)]
 pub struct CompiledCard {
     pub id: CompiledId,
     pub name: &'static str,
@@ -313,6 +328,7 @@ pub struct CompiledCard {
     pub per_account_settings: &'static [&'static str],
     pub prepare: PrepareCard,
     pub create: CreateScript,
+    pub lifecycle: Option<&'static CardLifecycle>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -361,16 +377,32 @@ pub struct RetainedMemory {
     clue: crate::clue::ClueRecovery,
     gather: crate::gatherer::GatherRetained,
     quester: crate::quester::QuesterRetained,
-    #[cfg(feature = "load")]
     sherlock: SherlockRetained,
 }
 
 /// Watchdog-retained death state; active clue tokens and action ownership stay card-local.
-#[cfg(feature = "load")]
 #[derive(Default)]
-pub(crate) struct SherlockRetained {
-    pub(crate) death_seq: Option<i32>,
-    pub(crate) death_pending: bool,
+pub struct SherlockRetained {
+    death_seq: Option<i32>,
+    death_pending: bool,
+}
+
+impl SherlockRetained {
+    pub fn death_seq(&self) -> Option<i32> {
+        self.death_seq
+    }
+
+    pub fn set_death_seq(&mut self, death_seq: Option<i32>) {
+        self.death_seq = death_seq;
+    }
+
+    pub fn death_pending(&self) -> bool {
+        self.death_pending
+    }
+
+    pub fn set_death_pending(&mut self, death_pending: bool) {
+        self.death_pending = death_pending;
+    }
 }
 
 impl RetainedMemory {
@@ -386,8 +418,7 @@ impl RetainedMemory {
         &mut self.quester
     }
 
-    #[cfg(feature = "load")]
-    pub(crate) fn sherlock(&mut self) -> &mut SherlockRetained {
+    pub fn sherlock(&mut self) -> &mut SherlockRetained {
         &mut self.sherlock
     }
 }
@@ -497,6 +528,14 @@ pub struct NativeTick<'a> {
 }
 
 impl<'frame> NativeTick<'frame> {
+    pub fn frame(&self) -> &HostFrame<'frame> {
+        &self.frame
+    }
+
+    pub fn frame_mut(&mut self) -> &mut HostFrame<'frame> {
+        &mut self.frame
+    }
+
     /// Bind the actual native frame to the host's current execution fence,
     /// session gate and optional T5.2 state capability. A standalone test
     /// frame without the host authority cannot mint a service.
@@ -557,15 +596,33 @@ impl NativeTick<'_> {
 /// The existing Sherlock adapter's single borrowed host bridge. No driver or
 /// action facility escapes here. The host/Load clue extraction replaces this
 /// bridge; effects still use the slot's existing compiled queue in the meantime.
-#[cfg_attr(
-    not(feature = "load"),
-    expect(dead_code, reason = "fields read by sherlock.rs, un-gated at S0b")
-)]
-pub(crate) struct HostFrame<'a> {
-    pub here: Option<(i32, i32, i32)>,
-    pub snapshot: Option<&'a api::snapshot::GameSnapshot>,
-    pub obj_names: Option<&'a api::obj_names::ObjNames>,
-    pub compiled: crate::CompiledTick<'a>,
+pub struct HostFrame<'a> {
+    pub(crate) here: Option<(i32, i32, i32)>,
+    pub(crate) snapshot: Option<&'a api::snapshot::GameSnapshot>,
+    pub(crate) obj_names: Option<&'a api::obj_names::ObjNames>,
+    pub(crate) compiled: crate::CompiledTick<'a>,
+}
+
+impl<'a> HostFrame<'a> {
+    pub fn here(&self) -> Option<(i32, i32, i32)> {
+        self.here
+    }
+
+    pub fn snapshot(&self) -> Option<&'a api::snapshot::GameSnapshot> {
+        self.snapshot
+    }
+
+    pub fn obj_names(&self) -> Option<&'a api::obj_names::ObjNames> {
+        self.obj_names
+    }
+
+    pub fn compiled(&self) -> &crate::CompiledTick<'a> {
+        &self.compiled
+    }
+
+    pub fn compiled_mut(&mut self) -> &mut crate::CompiledTick<'a> {
+        &mut self.compiled
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1087,6 +1144,9 @@ impl<'a> ActionContext<'a> {
     pub fn poison_unknown_pulse(&self) -> u8 {
         self.poison_unknown_pulse
     }
+    pub fn eligible(&self) -> bool {
+        self.eligible
+    }
     /// The profile's Cure poison setting for this frame.
     pub fn cure_poison(&self) -> crate::survival::CurePoison {
         self.cure_poison
@@ -1175,7 +1235,7 @@ pub enum ActionError {
 
 /// A poll-time admission that has used this tick's event must retry later.
 /// Callers commit request state only after this returns `Ready(Ok(_))`.
-pub(crate) fn defer_budget<T>(result: Result<T, ActionError>) -> Poll<Result<T, ActionError>> {
+pub fn defer_budget<T>(result: Result<T, ActionError>) -> Poll<Result<T, ActionError>> {
     match result {
         Err(ActionError::BudgetExhausted) => Poll::Pending,
         result => Poll::Ready(result),

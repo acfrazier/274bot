@@ -1200,13 +1200,12 @@ fn seed_runner(
 
 struct ScriptCard {
     /// Native Gatherer does not need a foreign catalog card.
-    catalog: Option<script::JsCard>,
-    bag: serde_json::Map<String, serde_json::Value>,
-    siblings: Vec<(String, String)>,
-    loadouts: Vec<api::loadout::Loadout>,
+    catalog: Option<Arc<script::load::surface::JsStartCard>>,
+    bag: Arc<script::native::SettingsBag>,
+    loadouts: Arc<[api::loadout::Loadout]>,
 }
 
-fn scenario_loadouts(settings: &scenario::ScenarioSettings) -> Vec<api::loadout::Loadout> {
+fn scenario_loadouts(settings: &scenario::ScenarioSettings) -> Arc<[api::loadout::Loadout]> {
     settings
         .fixture_loadouts
         .unwrap_or(&[])
@@ -1217,7 +1216,8 @@ fn scenario_loadouts(settings: &scenario::ScenarioSettings) -> Vec<api::loadout:
                 |loadout, &(item, qty)| loadout.with_carry(item, qty),
             )
         })
-        .collect()
+        .collect::<Vec<_>>()
+        .into()
 }
 
 /// Prepared memory-benchmark run shared by panel-play and tui-play.
@@ -1411,13 +1411,12 @@ impl Run {
             if scenario_name == "gatherer" && config.n > 1 {
                 Some(ScriptCard {
                     catalog: None,
-                    bag: script::settings_store::merge_bag(
+                    bag: Arc::new(script::settings_store::merge_bag(
                         (script::gatherer::CARD.schema)(),
                         &serde_json::Map::new(),
                         inject.as_ref(),
-                    ),
-                    siblings: Vec::new(),
-                    loadouts: Vec::new(),
+                    )),
+                    loadouts: Arc::from(Vec::<api::loadout::Loadout>::new()),
                 })
             } else {
                 let root = std::env::var_os("RS2B0T")
@@ -1447,9 +1446,10 @@ impl Run {
                     },
                 )?;
                 Some(ScriptCard {
-                    catalog: Some(card),
-                    bag,
-                    siblings,
+                    catalog: Some(crate::script_runtime::js_start_card(
+                        card.js, card.shape, siblings,
+                    )),
+                    bag: Arc::new(bag),
                     loadouts: scenario_loadouts(&benchmark.settings),
                 })
             }
@@ -1607,7 +1607,6 @@ impl Run {
         let ScriptCard {
             catalog,
             bag: card_bag,
-            siblings,
             loadouts,
         } = card;
         let Some(card) = catalog else {
@@ -1622,8 +1621,11 @@ impl Run {
                 return Ok(false);
             }
             drop(start_hold);
-            return match play.script_start_typed(name, script::gatherer::CARD.id, card_bag.clone())
-            {
+            return match play.script_start_typed(
+                name,
+                script::gatherer::CARD.id,
+                card_bag.as_ref().clone(),
+            ) {
                 Ok(()) => Ok(true),
                 Err(script::StartLoadError::Waiting(_)) => Ok(false),
                 Err(error) => Err(format!("gatherer_native_start_failed:{name}:{error}")),
@@ -1642,22 +1644,24 @@ impl Run {
         if self.scenario_name.as_deref() == Some("thiever")
             && std::env::var("BOT_MEMORY_SUSTAIN").as_deref() == Ok("1")
         {
-            let mut bag = card_bag.clone();
+            let mut bag = card_bag.as_ref().clone();
             bag.insert("banking".into(), serde_json::json!("Auto"));
             bag.insert("loadout".into(), serde_json::json!("Memory food"));
             bag.insert("foodWithdraw".into(), serde_json::json!(22));
             bag.insert("bankAtFood".into(), serde_json::json!(3));
             let slot = crate::script_slot_or_insert(&play.scripts, name);
             let mut slot = slot.lock().unwrap();
-            slot.start_load_with_loadouts_and_game_data(
-                card.js.clone(),
-                card.shape,
-                siblings.clone(),
-                &[api::loadout::Loadout::new("Memory food").with_carry("Lobster", 1)],
+            let loadouts: Arc<[api::loadout::Loadout]> =
+                vec![api::loadout::Loadout::new("Memory food").with_carry("Lobster", 1)].into();
+            let start = crate::script_runtime::js_surface_start(
+                Arc::clone(card),
+                Some(Arc::new(bag)),
                 play.game_data(),
                 play.named_banks(),
-            )?;
-            slot.post_settings_bag(&bag);
+                loadouts,
+            );
+            slot.start_surface(start)
+                .map_err(|error| error.to_string())?;
             drop(slot);
             play.wake(name);
             return Ok(true);
@@ -1665,15 +1669,15 @@ impl Run {
         // Fixtures must not read the operator's saved loadouts.
         let slot = crate::script_slot_or_insert(&play.scripts, name);
         let mut slot = slot.lock().unwrap();
-        slot.start_load_with_loadouts_and_game_data(
-            card.js.clone(),
-            card.shape,
-            siblings.clone(),
-            loadouts,
+        let start = crate::script_runtime::js_surface_start(
+            Arc::clone(card),
+            Some(Arc::clone(card_bag)),
             play.game_data(),
             play.named_banks(),
-        )?;
-        slot.post_settings_bag(card_bag);
+            Arc::clone(loadouts),
+        );
+        slot.start_surface(start)
+            .map_err(|error| error.to_string())?;
         drop(slot);
         play.wake(name);
         Ok(true)
@@ -2746,16 +2750,18 @@ mod tests {
         library
             .ensure_js(script::ScriptSource::File, &lookup)
             .unwrap();
+        let card = library
+            .get(script::ScriptSource::File, &lookup)
+            .unwrap()
+            .clone();
         run.card = Some(ScriptCard {
-            catalog: Some(
-                library
-                    .get(script::ScriptSource::File, &lookup)
-                    .unwrap()
-                    .clone(),
-            ),
-            bag: serde_json::Map::new(),
-            siblings: vec![],
-            loadouts: vec![],
+            catalog: Some(crate::script_runtime::js_start_card(
+                card.js,
+                card.shape,
+                vec![],
+            )),
+            bag: Arc::new(serde_json::Map::new()),
+            loadouts: Arc::from(Vec::<api::loadout::Loadout>::new()),
         });
         run.scenario_name = Some("thiever".into());
         for sustain in ["0", "1"] {

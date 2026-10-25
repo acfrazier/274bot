@@ -259,6 +259,24 @@ fn persisting_a_relative_catalog_root_stores_it_absolute() {
     assert_eq!(rs2b0t_root_checked_at(&file), Ok(Some(expected)));
 }
 
+fn failed_surface_start() -> crate::StartLoadError {
+    use crate::surface::test_support::{StubSurfaceCard, StubSurfaceFactory};
+    use std::sync::Arc;
+
+    let factory = Arc::new(StubSurfaceFactory::new());
+    factory.fail_next_spawn("failed to spawn isolate thread: injected spawn failure");
+    let mut slot = crate::SlotScript::new();
+    slot.bind_surface_factory(factory);
+    slot.start_surface(crate::surface::SurfaceStart {
+        card: Arc::new(StubSurfaceCard),
+        settings_bag: None,
+        game_data: None,
+        named_banks: Arc::default(),
+        loadouts: Arc::default(),
+    })
+    .expect_err("injected spawn failure must err")
+}
+
 #[test]
 fn runtime_load_start_failure_records_a_runtime_load_stage_and_refusals_do_not() {
     let dir = scratch("start-result-stage");
@@ -266,21 +284,13 @@ fn runtime_load_start_failure_records_a_runtime_load_stage_and_refusals_do_not()
     let path = bot_script(&dir, "bot.ts");
     let card = lib.load(&path).expect("bot loads");
     // Drive the real Start producer with a deterministic spawn failure,
-    // then assert it classifies as RuntimeLoad (not Refused).
-    let mut slot = crate::slot::SlotScript::new();
-    let producer_err = slot
-        .start_with_injected_spawn_failure_for_test(
-            "export function tick() {}".into(),
-            crate::load::LoadShape::NativeTick,
-            vec![],
-            &[],
-            None,
-            std::sync::Arc::new(api::named_banks::NamedBankFacts::empty()),
-        )
-        .expect_err("injected spawn failure must err");
+    // then assert it retains the typed surface spawn cause (not Refused).
+    let producer_err = failed_surface_start();
     let diagnostic = match &producer_err {
-        crate::StartLoadError::RuntimeLoad(diagnostic) => diagnostic.clone(),
-        other => panic!("producer must map spawn failure to RuntimeLoad, got {other:?}"),
+        crate::StartLoadError::Surface(crate::surface::SurfaceError::Spawn(diagnostic)) => {
+            diagnostic.clone()
+        }
+        other => panic!("producer must retain the surface spawn cause, got {other:?}"),
     };
     assert!(
         diagnostic.contains("isolate thread"),
@@ -306,6 +316,17 @@ fn runtime_load_start_failure_records_a_runtime_load_stage_and_refusals_do_not()
         1,
         "refusals leave diagnostics untouched"
     );
+    for error in [
+        crate::surface::SurfaceError::NoFactory(crate::surface::SurfaceKind::Js),
+        crate::surface::SurfaceError::ForeignCard(crate::surface::SurfaceKind::Js),
+    ] {
+        let diagnostic = error.to_string();
+        assert_eq!(
+            lib.record_start_result(&card, Err(crate::StartLoadError::Surface(error))),
+            Err(diagnostic)
+        );
+        assert_eq!(lib.load_failures().len(), 1, "refusals retain diagnostics");
+    }
     // Success clears the recorded failure.
     lib.record_start_result(&card, Ok(()))
         .expect("success clears");
@@ -314,22 +335,12 @@ fn runtime_load_start_failure_records_a_runtime_load_stage_and_refusals_do_not()
 
 #[test]
 fn start_load_reports_runtime_spawn_failure_not_refusal() {
-    let mut slot = crate::slot::SlotScript::new();
-    let err = slot
-        .start_with_injected_spawn_failure_for_test(
-            "export function tick() {}".into(),
-            crate::load::LoadShape::NativeTick,
-            vec![],
-            &[],
-            None,
-            std::sync::Arc::new(api::named_banks::NamedBankFacts::empty()),
-        )
-        .expect_err("injected spawn failure must err");
+    let err = failed_surface_start();
     match err {
-        crate::StartLoadError::RuntimeLoad(diagnostic) => {
+        crate::StartLoadError::Surface(crate::surface::SurfaceError::Spawn(diagnostic)) => {
             assert!(diagnostic.contains("isolate thread"), "{diagnostic}")
         }
-        other => panic!("spawn failure must be RuntimeLoad, got {other:?}"),
+        other => panic!("spawn failure must retain the surface cause, got {other:?}"),
     }
 }
 

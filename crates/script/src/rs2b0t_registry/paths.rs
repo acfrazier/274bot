@@ -181,7 +181,7 @@ pub fn rs2b0t_root_checked() -> Result<Option<PathBuf>, String> {
 /// (`.` dropped, `..` folded), without touching the filesystem or resolving
 /// symlinks. Persisted paths go through this so they mean the same file
 /// wherever the host is started later, and pass restore's checks.
-pub(crate) fn absolute_clean(path: &Path) -> std::io::Result<PathBuf> {
+pub fn absolute_clean(path: &Path) -> std::io::Result<PathBuf> {
     let mut clean = PathBuf::new();
     for component in std::path::absolute(path)?.components() {
         match component {

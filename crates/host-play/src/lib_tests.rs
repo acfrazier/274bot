@@ -9205,16 +9205,19 @@ fn t23_bank_start_compat_slot(scripts: &ScriptWall, name: &str, source: &str) {
     let mut slot = slot.lock().unwrap();
     let game_data =
         api::game_data::for_revision(api::selected::ClientRevision::R289).expect("R289 game data");
-    slot.start_load_with_settings_and_game_data(
-        source.to_string(),
-        script::LoadShape::CompatClass,
+    let start = crate::script_runtime::js_surface_start(
+        crate::script_runtime::js_start_card(
+            source.to_string(),
+            script::LoadShape::CompatClass,
+            vec![],
+        ),
         None,
-        vec![],
-        &[],
         Some(Arc::clone(&game_data)),
         Arc::new(api::named_banks::NamedBankFacts::empty()),
-    )
-    .expect("compat bank slot starts");
+        Arc::from(Vec::<api::loadout::Loadout>::new()),
+    );
+    slot.start_surface_with_settings(start)
+        .expect("compat bank slot starts");
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         match slot.poll_start() {
@@ -18062,7 +18065,7 @@ fn script_observe_compiled_running_skips_isolate_snapshot_encode() {
         .unwrap()
         .lock()
         .unwrap()
-        .load_active());
+        .surface_active());
     script_observe(
         &mut c,
         "alice",
@@ -18086,7 +18089,7 @@ fn script_observe_compiled_running_skips_isolate_snapshot_encode() {
             .unwrap()
             .lock()
             .unwrap()
-            .has_snapshot_fingerprint(),
+            .has_posted_snapshot(),
         "compiled-only Running must not encode isolate snapshot delta"
     );
 }
@@ -18183,7 +18186,7 @@ fn script_observe_load_isolate_still_encodes_snapshot_on_tick_edge() {
         .unwrap()
         .lock()
         .unwrap()
-        .load_active());
+        .surface_active());
     script_observe(
         &mut c,
         "alice",
@@ -18207,7 +18210,7 @@ fn script_observe_load_isolate_still_encodes_snapshot_on_tick_edge() {
             .unwrap()
             .lock()
             .unwrap()
-            .has_snapshot_fingerprint(),
+            .has_posted_snapshot(),
         "Load isolate must still encode snapshot delta on tick edge"
     );
     script_slot(&scripts, "alice")
@@ -22303,16 +22306,19 @@ impl ReconnectRig {
         let slot = script_slot_or_insert(&scripts, "alice");
         let ready_session = {
             let mut slot = slot.lock().unwrap();
-            slot.start_load_with_settings_and_game_data(
-                source,
-                script::LoadShape::CompatClass,
+            let start = crate::script_runtime::js_surface_start(
+                crate::script_runtime::js_start_card(
+                    source,
+                    script::LoadShape::CompatClass,
+                    vec![],
+                ),
                 None,
-                vec![],
-                &[],
                 Some(selected),
                 named_banks,
-            )
-            .expect("start bank-wake Load slot");
+                Arc::from(Vec::<api::loadout::Loadout>::new()),
+            );
+            slot.start_surface_with_settings(start)
+                .expect("start bank-wake Load slot");
             let deadline = Instant::now() + Duration::from_secs(10);
             loop {
                 match slot.poll_start() {
@@ -22442,7 +22448,7 @@ impl ReconnectRig {
         crate::script_runtime::pump_route_work(&self.navs, "alice");
         let slot = self.slot();
         let slot = slot.lock().unwrap();
-        if slot.load_active() {
+        if slot.surface_active() {
             slot.probe("true").unwrap();
         }
     }
@@ -31110,16 +31116,19 @@ export default class T extends LoopingBot {
     }
 }
 "#;
-        slot.start_load_with_settings_and_game_data(
-            source.to_owned(),
-            script::LoadShape::CompatClass,
+        let start = crate::script_runtime::js_surface_start(
+            crate::script_runtime::js_start_card(
+                source.to_owned(),
+                script::LoadShape::CompatClass,
+                vec![],
+            ),
             None,
-            vec![],
-            &[],
             Some(selected),
             Arc::new(api::named_banks::NamedBankFacts::empty()),
-        )
-        .expect("start compatibility route script");
+            Arc::from(Vec::<api::loadout::Loadout>::new()),
+        );
+        slot.start_surface_with_settings(start)
+            .expect("start compatibility route script");
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
             match slot.poll_start() {

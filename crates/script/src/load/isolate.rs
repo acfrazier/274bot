@@ -278,18 +278,7 @@ enum ThreadMsg {
     Paint(std::sync::Arc<crate::shim::ScriptPaint>),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum TickOutcome {
-    Success {
-        tick: u64,
-        generation: u64,
-    },
-    Error {
-        tick: u64,
-        generation: u64,
-        message: String,
-    },
-}
+pub(crate) use crate::surface::TickOutcome;
 
 /// One JS bot running in its own rustyscript/V8 isolate. Spawned only
 /// on Start; the Runtime lives on the thread and is reached through a
@@ -380,11 +369,7 @@ pub struct LoadIsolate {
 
 /// ScriptRunner.stop receipt copied off the isolate thread. This is a
 /// single bounded value, independent of the panel's destructive log queue.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ScriptStopReceipt {
-    pub tick: u64,
-    pub reason: String,
-}
+pub use crate::surface::ScriptStopReceipt;
 
 /// Non-blocking isolate boot result. Commands already queue until setup
 /// finishes, so the host never waits on V8 creation on the caller thread.
@@ -414,10 +399,12 @@ enum SetupState {
 
 /// The only production gameplay construction path is the slot-owned factory.
 /// UI and control callers cannot create an isolate with this crate-private type.
+#[derive(Default)]
 pub(crate) struct GameplayFactory;
 
 impl GameplayFactory {
     pub(crate) fn spawn_with_content(
+        &self,
         js: String,
         shape: LoadShape,
         siblings: Vec<(String, String)>,
@@ -1125,7 +1112,7 @@ impl LoadIsolate {
 
     /// Give a success-path unit test enough scheduling headroom while
     /// retaining a bounded hook deadline.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) fn set_onstop_timeout_for_test(&self, timeout: Duration) {
         self.teardown.lock().unwrap().test_hook_timeout = Some(timeout);
     }
@@ -1165,6 +1152,18 @@ impl LoadIsolate {
         self.seat_batches.lock().unwrap().len()
     }
 
+    /// Return the number of queued batches retained by the guardian fold.
+    #[cfg(feature = "test-hooks")]
+    pub fn held_fold_len(&self) -> usize {
+        self.pump_logs();
+        self.seat_batches
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|batch| batch.held_fold)
+            .count()
+    }
+
     /// Restore an unconsumed batch prefix ahead of anything that arrived
     /// afterward. Generation and per-batch walk stamps are never rewritten.
     pub(crate) fn restore_seat_batches(&self, mut drained: Vec<QueuedSeatBatch>) {
@@ -1190,20 +1189,6 @@ impl LoadIsolate {
         let mut queued = self.interacts.lock().unwrap();
         drained.append(&mut queued);
         *queued = drained;
-    }
-
-    /// Diagnostics/tests only: reconstructs zero stamps. Production restore
-    /// MUST use `restore_interacts_stamped`.
-    pub(crate) fn restore_interacts(&self, drained: Vec<crate::shim::InteractReq>) {
-        self.restore_interacts_stamped(
-            drained
-                .into_iter()
-                .map(|req| QueuedInteract {
-                    req,
-                    observed_walk_outcome_seq: 0,
-                })
-                .collect(),
-        );
     }
 
     /// Drop queued canvas mouse rows so Pause/logout cannot replay them.

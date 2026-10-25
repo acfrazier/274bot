@@ -101,6 +101,8 @@ mod skills_v8;
 mod snapshot;
 mod supply_v8;
 #[cfg(feature = "load")]
+pub mod surface;
+#[cfg(feature = "load")]
 mod targets_v8;
 #[cfg(feature = "load")]
 mod tools_v8;
@@ -132,10 +134,6 @@ pub use library::{
     CatalogPreparationSnapshot, CatalogSnapshotError, CatalogWorkerError,
 };
 
-#[cfg(feature = "load")]
-pub(crate) use isolate::GameplayFactory;
-#[cfg(feature = "load")]
-pub(crate) use isolate::TickOutcome;
 #[cfg(feature = "load")]
 pub use isolate::{
     isolate_capacity_status, HeldWaitFacts, IsolateCapacityStatus, LoadIsolate, LoadIsolateError,

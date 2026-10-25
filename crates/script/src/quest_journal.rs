@@ -2,19 +2,18 @@
 
 #[path = "quest_journal/native.rs"]
 mod native;
-pub(crate) use native::ROOT_289;
-#[cfg(feature = "load")]
-pub(crate) use native::{title_matches, TITLE_289};
+pub use native::ROOT_289;
+pub use native::{title_matches, TITLE_289};
 pub use native::{JournalMachine, JournalRequest};
 
 #[cfg(test)]
-pub(crate) use native::tests::widget as test_widget;
+pub use native::tests::widget as test_widget;
 
 #[cfg(feature = "load")]
 #[path = "quest_journal/isolate.rs"]
 mod isolate;
 #[cfg(feature = "load")]
-pub(crate) use isolate::{
+pub use isolate::{
     bind_compat_runtime, dispatch, on_hold, on_pause, on_reset, on_resume, on_stop,
     CompatJournalLease, QuestJournal,
 };

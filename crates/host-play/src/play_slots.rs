@@ -628,7 +628,7 @@ pub(super) fn reset_slot_session_work(
         let Ok(mut slot) = slot.lock() else {
             return None;
         };
-        if keep_work && slot.load_active() {
+        if keep_work && slot.surface_active() {
             let carry = slot.reconnect_session_work();
             Some(carry.then(|| slot.runtime_generation()))
         } else {
@@ -703,7 +703,7 @@ fn reset_slot_session_boundary(
             .and_then(|slot| {
                 slot.lock()
                     .ok()
-                    .map(|slot| (slot.runtime_generation(), slot.load_active()))
+                    .map(|slot| (slot.runtime_generation(), slot.surface_active()))
             })
             .unwrap_or((0, false));
         let deliveries = if kept && !stopping {

@@ -507,16 +507,7 @@ impl Gatherer {
                 now: tick.cx.evidence().tick,
                 skill_stat: self.skill_stat(snapshot.stats()),
                 avoided: &self.avoid,
-                collision: {
-                    #[cfg(feature = "load")]
-                    {
-                        tick.frame.compiled.collision
-                    }
-                    #[cfg(not(feature = "load"))]
-                    {
-                        None
-                    }
-                },
+                collision: tick.frame.compiled.collision,
             },
         ) {
             ResourceReturn::Ready(selected) => {
@@ -1518,7 +1509,6 @@ impl Gatherer {
                 .snapshot()
                 .local_player()
                 .map(|player| player.value.player.network);
-            #[cfg(feature = "load")]
             let arrived_at = self.target.as_ref().and_then(|target| {
                 let api::selected::EntityId::Loc(id) = target.entity else {
                     return None;
@@ -1531,8 +1521,6 @@ impl Gatherer {
                     id,
                 )
             });
-            #[cfg(not(feature = "load"))]
-            let arrived_at: Option<bool> = None;
             api::host_log!(
                 api::hostlog::Category::NavTrace,
                 api::hostlog::Level::Debug,
@@ -2022,16 +2010,7 @@ impl Gatherer {
                 now: tick.cx.evidence().tick,
                 skill_stat,
                 fishing: &mut self.scratch.fishing,
-                collision: {
-                    #[cfg(feature = "load")]
-                    {
-                        tick.frame.compiled.collision
-                    }
-                    #[cfg(not(feature = "load"))]
-                    {
-                        None
-                    }
-                },
+                collision: tick.frame.compiled.collision,
             },
         );
         self.zone_gated = selected.zone_gated;
@@ -2167,16 +2146,7 @@ impl Gatherer {
     }
 
     fn escape_hazard(&mut self, tick: &mut NativeTick<'_>) {
-        let collision = {
-            #[cfg(feature = "load")]
-            {
-                tick.frame.compiled.collision
-            }
-            #[cfg(not(feature = "load"))]
-            {
-                None
-            }
-        };
+        let collision = tick.frame.compiled.collision;
         self.retreat_from_hazard(tick, collision);
     }
 

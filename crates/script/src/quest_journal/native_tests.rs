@@ -24,7 +24,7 @@ fn fixture() -> (GameSnapshot, JournalRequest) {
     )
 }
 
-pub(crate) fn widget(component_id: i32, text: &str) -> WidgetView {
+pub fn widget(component_id: i32, text: &str) -> WidgetView {
     WidgetView {
         kind: WidgetKind::Widget,
         component_id,

@@ -1,6 +1,7 @@
 //! JS API v2 core: syntax-aware version routing, NativeApi runtime, and
 //! fail-closed request / snapshot behaviour.
 
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use script::isolate_fb::{
@@ -38,6 +39,30 @@ fn write_file(dir: &std::path::Path, name: &str, source: &str) -> std::path::Pat
 
 fn test_library(dir: &std::path::Path) -> JsLibrary {
     JsLibrary::with_cache(dir.join("js-scripts.json"), dir.join("js-cache"))
+}
+
+fn start_js_surface(
+    slot: &mut SlotScript,
+    source: &str,
+    shape: LoadShape,
+) -> Result<(), script::slot::StartLoadError> {
+    let source = Arc::<str>::from(source);
+    let family = script::resolve_api_family(&source)
+        .ok()
+        .map(|(_, family)| family);
+    slot.bind_surface_factory(Arc::new(script::load::surface::JsSurfaceFactory::default()));
+    slot.start_surface(script::surface::SurfaceStart {
+        card: Arc::new(script::load::surface::JsStartCard {
+            source,
+            shape,
+            siblings: Arc::<[(String, String)]>::from([]),
+            family,
+        }),
+        settings_bag: None,
+        game_data: None,
+        named_banks: Arc::new(api::named_banks::NamedBankFacts::empty()),
+        loadouts: Arc::<[api::loadout::Loadout]>::from([]),
+    })
 }
 
 fn post_base_with_hold(iso: &LoadIsolate, tick: u64, hold: bool) {
@@ -376,8 +401,7 @@ export function tick() {}
     assert_eq!(lifecycle, vec![InteractReq::LoopSettled]);
 
     let mut slot = SlotScript::new();
-    slot.start_load(source.into(), LoadShape::NativeTick, vec![])
-        .unwrap();
+    start_js_surface(&mut slot, source, LoadShape::NativeTick).unwrap();
     let t = Instant::now();
     slot.note_game_packet_tick(t);
     assert_eq!(

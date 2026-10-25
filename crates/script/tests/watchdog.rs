@@ -1,6 +1,8 @@
 //! Native progress watchdog: isolate lifecycle facts, single-flight loop,
 //! recoveryAnchor bridge, and slot identity/restart.
 
+use std::sync::Arc;
+
 use std::time::{Duration, Instant};
 
 use script::isolate_fb::{ReachViewInput, SnapshotInput, TileInput};
@@ -17,6 +19,58 @@ fn wait_slot_state(slot: &mut SlotScript, want: script::RunState) {
         std::thread::sleep(Duration::from_millis(2));
     }
     assert_eq!(slot.state(), want, "last_error={:?}", slot.last_error());
+}
+
+fn bind_js_surface_factory(slot: &mut SlotScript) {
+    slot.bind_surface_factory(Arc::new(script::load::surface::JsSurfaceFactory::default()));
+}
+
+fn new_js_slot() -> SlotScript {
+    let mut slot = SlotScript::new();
+    bind_js_surface_factory(&mut slot);
+    slot
+}
+
+fn test_surface_start(
+    source: impl Into<Arc<str>>,
+    shape: LoadShape,
+    siblings: Vec<(String, String)>,
+    settings_bag: Option<Arc<script::native::SettingsBag>>,
+) -> script::surface::SurfaceStart {
+    let source = source.into();
+    let family = script::resolve_api_family(&source)
+        .ok()
+        .map(|(_, family)| family);
+    let card: Arc<dyn script::surface::SurfaceCard> =
+        Arc::new(script::load::surface::JsStartCard {
+            source,
+            shape,
+            siblings: Arc::from(siblings),
+            family,
+        });
+    script::surface::SurfaceStart {
+        card,
+        settings_bag,
+        game_data: None,
+        named_banks: Arc::new(api::named_banks::NamedBankFacts::empty()),
+        loadouts: Arc::from(Vec::<api::loadout::Loadout>::new()),
+    }
+}
+
+fn default_test_surface_start(
+    source: impl Into<Arc<str>>,
+    shape: LoadShape,
+    siblings: Vec<(String, String)>,
+) -> script::surface::SurfaceStart {
+    test_surface_start(source, shape, siblings, None)
+}
+
+fn js_start_card(start: &script::surface::SurfaceStart) -> &script::load::surface::JsStartCard {
+    start
+        .card
+        .as_any()
+        .downcast_ref::<script::load::surface::JsStartCard>()
+        .expect("JavaScript start card")
 }
 
 fn post_snapshot_input(iso: &LoadIsolate, input: &SnapshotInput<'_>) {
@@ -387,21 +441,21 @@ export default class T extends LoopingBot {
 
 #[test]
 fn slot_stop_cancels_restart_and_clears_identity() {
-    let mut slot = SlotScript::new();
-    slot.start_load(
-        "export default class T extends LoopingBot { loop() {} }".into(),
+    let mut slot = new_js_slot();
+    slot.start_surface(default_test_surface_start(
+        "export default class T extends LoopingBot { loop() {} }",
         LoadShape::CompatClass,
         vec![],
-    )
+    ))
     .unwrap();
-    assert!(slot.load_identity().is_some());
+    assert!(slot.surface_start().is_some());
     let t = Instant::now();
     slot.feed_watchdog(t, Some((1, 1, 0)), &[], false, true, &[]);
     let later = t + script::watchdog::HARD_STALL;
     let action = slot.feed_watchdog(later, Some((1, 1, 0)), &[], false, true, &[]);
     assert!(matches!(action, WatchdogAction::Restart { .. }));
     slot.stop();
-    assert!(slot.load_identity().is_none());
+    assert!(slot.surface_start().is_none());
     assert_eq!(slot.watchdog().state(), WatchdogState::Idle);
     assert_eq!(
         slot.feed_watchdog(
@@ -418,22 +472,22 @@ fn slot_stop_cancels_restart_and_clears_identity() {
 
 #[test]
 fn slot_restart_preserves_source_settings_and_cooldown() {
-    let mut slot = SlotScript::new();
+    let mut slot = new_js_slot();
     let src =
         "export default class T extends LoopingBot { loop() { this.n = (this.n || 0) + 1; } }";
     let mut bag = serde_json::Map::new();
     bag.insert("spell".into(), serde_json::json!("High"));
-    slot.start_load_with_settings(
-        src.into(),
+    slot.start_surface_with_settings(test_surface_start(
+        src,
         LoadShape::CompatClass,
-        Some(&bag),
         vec![("sib.js".into(), "export const x = 1;".into())],
-        &[],
-    )
+        Some(Arc::new(bag)),
+    ))
     .unwrap();
     // Start returns before V8 setup; recover from a live slot.
     wait_slot_state(&mut slot, script::RunState::Running);
-    let before = slot.load_identity().unwrap().clone();
+    let before = slot.surface_start().unwrap().clone();
+    let before_card = js_start_card(&before);
     assert_eq!(
         before
             .settings_bag
@@ -466,15 +520,19 @@ fn slot_restart_preserves_source_settings_and_cooldown() {
     );
     slot.restart_from_identity(t + script::watchdog::WEDGE)
         .unwrap();
-    let after = slot.load_identity().unwrap();
-    assert_eq!(&*after.source, &*before.source);
-    assert_eq!(after.shape, before.shape);
-    assert_eq!(&*after.siblings, &*before.siblings);
+    let after = slot.surface_start().unwrap();
+    let after_card = js_start_card(after);
+    assert_eq!(&*after_card.source, &*before_card.source);
+    assert_eq!(after_card.shape, before_card.shape);
+    assert_eq!(&*after_card.siblings, &*before_card.siblings);
     assert_eq!(after.settings_bag, before.settings_bag);
     assert!(slot.watchdog().last_recovery().is_some());
     // The recreate follows the old isolate's reap; it runs the same identity.
     wait_slot_state(&mut slot, script::RunState::Running);
-    assert_eq!(&*slot.load_identity().unwrap().source, &*before.source);
+    assert_eq!(
+        &*js_start_card(slot.surface_start().unwrap()).source,
+        &*before_card.source
+    );
     slot.note_game_packet_tick(t + script::watchdog::WEDGE + script::watchdog::WEDGE);
     let later = slot.feed_watchdog(
         t + script::watchdog::WEDGE + script::watchdog::WEDGE,
@@ -498,14 +556,18 @@ fn slot_restart_preserves_source_settings_and_cooldown() {
 /// the restarted script takes the anchor the previous run latched.
 #[test]
 fn watchdog_restart_hands_the_latched_recovery_anchor_to_the_new_isolate() {
-    let mut slot = SlotScript::new();
+    let mut slot = new_js_slot();
     let src = r#"
 import { RecoveryHints } from '../../runtime/RecoveryHints.js';
 globalThis.__hints = RecoveryHints;
 export default class T extends LoopingBot { loop() {} }
 "#;
-    slot.start_load(src.into(), LoadShape::CompatClass, vec![])
-        .unwrap();
+    slot.start_surface(default_test_surface_start(
+        src,
+        LoadShape::CompatClass,
+        vec![],
+    ))
+    .unwrap();
     wait_slot_state(&mut slot, script::RunState::Running);
     let take =
         "(() => { const t = __hints.takeAnchor(); return t ? [t.x, t.z, t.level] : null; })()";
@@ -534,32 +596,33 @@ export default class T extends LoopingBot { loop() {} }
 
 #[test]
 fn slot_start_while_running_still_errors() {
-    let mut slot = SlotScript::new();
-    slot.start_load(
-        "export default class T extends LoopingBot { loop() {} }".into(),
+    let mut slot = new_js_slot();
+    slot.start_surface(default_test_surface_start(
+        "export default class T extends LoopingBot { loop() {} }",
         LoadShape::CompatClass,
         vec![],
-    )
+    ))
     .unwrap();
     let err = slot
-        .start_load(
-            "export default class U extends LoopingBot { loop() {} }".into(),
+        .start_surface(default_test_surface_start(
+            "export default class U extends LoopingBot { loop() {} }",
             LoadShape::CompatClass,
             vec![],
-        )
-        .unwrap_err();
+        ))
+        .unwrap_err()
+        .to_string();
     assert!(err.contains("already active"));
     slot.stop();
 }
 
 #[test]
 fn explicit_note_progress_is_real_host_effect() {
-    let mut slot = SlotScript::new();
-    slot.start_load(
-        "export default class T extends LoopingBot { loop() {} }".into(),
+    let mut slot = new_js_slot();
+    slot.start_surface(default_test_surface_start(
+        "export default class T extends LoopingBot { loop() {} }",
         LoadShape::CompatClass,
         vec![],
-    )
+    ))
     .unwrap();
     let t = Instant::now();
     slot.feed_watchdog(t, Some((1, 1, 0)), &[], false, true, &[]);
@@ -763,12 +826,12 @@ export default class T extends LoopingBot {
 
 #[test]
 fn pause_aborts_recovery_state_even_when_already_frozen() {
-    let mut slot = SlotScript::new();
-    slot.start_load(
-        "export default class T extends LoopingBot { loop() {} }".into(),
+    let mut slot = new_js_slot();
+    slot.start_surface(default_test_surface_start(
+        "export default class T extends LoopingBot { loop() {} }",
         LoadShape::CompatClass,
         vec![],
-    )
+    ))
     .unwrap();
     let t = Instant::now();
     slot.note_game_packet_tick(t);
@@ -813,12 +876,12 @@ fn pause_aborts_recovery_state_even_when_already_frozen() {
 
 #[test]
 fn session_reset_aborts_recovery_state() {
-    let mut slot = SlotScript::new();
-    slot.start_load(
-        "export default class T extends LoopingBot { loop() {} }".into(),
+    let mut slot = new_js_slot();
+    slot.start_surface(default_test_surface_start(
+        "export default class T extends LoopingBot { loop() {} }",
         LoadShape::CompatClass,
         vec![],
-    )
+    ))
     .unwrap();
     let t = Instant::now();
     slot.note_game_packet_tick(t);
@@ -855,12 +918,12 @@ fn session_reset_aborts_recovery_state() {
 
 #[test]
 fn restart_load_from_identity_refuses_pause_and_frozen() {
-    let mut slot = SlotScript::new();
-    slot.start_load(
-        "export default class T extends LoopingBot { loop() { globalThis.__alive = 1; } }".into(),
+    let mut slot = new_js_slot();
+    slot.start_surface(default_test_surface_start(
+        "export default class T extends LoopingBot { loop() { globalThis.__alive = 1; } }",
         LoadShape::CompatClass,
         vec![],
-    )
+    ))
     .unwrap();
     let t = Instant::now();
     slot.feed_watchdog(t, Some((0, 0, 0)), &[], false, true, &[]);

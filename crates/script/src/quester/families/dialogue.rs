@@ -29,14 +29,14 @@ pub const PAGE_SETTLE_TICKS: u64 = 1;
 
 /// The native dialogue acknowledgement shared with the v1 adapter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct PageAcknowledgement {
+pub struct PageAcknowledgement {
     modal: i32,
     continue_visible: bool,
     fingerprint: u64,
 }
 
 impl PageAcknowledgement {
-    pub(crate) fn capture(modal: i32, continue_visible: bool, fingerprint: u64) -> Self {
+    pub fn capture(modal: i32, continue_visible: bool, fingerprint: u64) -> Self {
         Self {
             modal,
             continue_visible,
@@ -44,7 +44,7 @@ impl PageAcknowledgement {
         }
     }
 
-    pub(crate) fn acknowledged(self, modal: i32, continue_visible: bool, fingerprint: u64) -> bool {
+    pub fn acknowledged(self, modal: i32, continue_visible: bool, fingerprint: u64) -> bool {
         modal != self.modal
             || continue_visible != self.continue_visible
             || fingerprint != self.fingerprint

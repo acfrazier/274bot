@@ -600,6 +600,8 @@ the operator's consent and adopts the tiles already verified).
 | `native/death.rs`, `native/thieve.rs`, `native/thieving_core.rs` | shared death latch; native thieving machine and its core | content-derived respawn square |
 | `native_bank.rs`, `native_equipment.rs`, `native_production.rs`, `native_shop.rs`, `trade_screen.rs`, `bank.rs`, `bank/ops.rs`, `bank/npc.rs` | snapshot-driven cores shared by compiled cards and compat families | one bank transfer kernel, wear/remove, production, shop purchase and player-trade screen |
 | `slot.rs` | per-uid runner lifecycle | intent and presence gates, tick edge |
+| `surface.rs`, `surface/test_support.rs` | runtime-neutral surface cards, run contract and core test factory | slot lifecycle owns trait objects and typed facts, not JS or wire state |
+| `native/recovery_hints.rs` | shared recovery-anchor cell | slot-owned hints survive surface retirement and restart |
 | `slot/compiled.rs` | off-pump compiled preparation, fenced install/configure and shared output | lazy per-active-card state; compiled XOR Load |
 | `slot/api.rs`, `slot/progress.rs` | API-owned Gatherer seat; one-attempt progress policy | registration and authority stay native |
 | `slot/combat.rs` | API-owned combat seat; one `api.combat.fight` session per slot | mirrors the gather seat; Pause, reconnect and manual movement cancel at any point |
@@ -653,6 +655,7 @@ the operator's consent and adopts the tiles already verified).
 | `load/mod.rs` | Load facade: shapes, cards, isolate | feature-gated library and isolate |
 | `load/library.rs`, `load/library/catalog.rs` | JS card library and catalog apply | file store in root |
 | `load/isolate.rs`, `load/isolate/thread.rs`, `load/isolate/teardown.rs` | V8 isolate thread and teardown | caller handle in root |
+| `load/surface.rs` | JS cards, gameplay factory and per-run wire state | builder and fingerprint retire before isolate join; snapshot facts borrow retained state without allocation |
 | `load/platform.rs` | process-wide V8 platform bootstrap | protected on embedder main; unprotected only in tests |
 | `load/bindings.rs` | isolate bootstrap registration | register order and wrappers |
 | `load/callback_v8.rs` | caller-callback invocation | one mechanism for typed helpers |
@@ -664,7 +667,8 @@ the operator's consent and adopts the tiles already verified).
 | `canvas/mod.rs` | canvas recorder | state and recording API |
 | `canvas/geom.rs`, `canvas/raster.rs`, `canvas/style.rs`, `canvas/compose.rs` | canvas geometry, raster, style, composition | one slice each |
 | `shim/mod.rs` | import-remap facade | re-exports, JS bytes untouched |
-| `shim/content.rs`, `shim/paint.rs`, `shim/interact.rs`, `shim/modules.rs` | shim Rust producers | wire, paint, and content |
+| `interact.rs`, `paint.rs` | runtime-neutral interaction and paint vocabulary | shared by native and loaded scripts |
+| `shim/content.rs`, `shim/rows.rs`, `shim/modules.rs` | shim Rust producers | content, V8 rows, and module remapping |
 | `shim/*.js` | embedded JS sources | name maps, coercion, await plumbing only |
 
 Native bank booth approach borrows the current scene and the host's cached

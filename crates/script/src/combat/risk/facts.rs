@@ -5,7 +5,7 @@
 //! of acquiring a guessed zero-risk interpretation.
 
 use std::future::Future;
-#[cfg(all(test, feature = "load"))]
+#[cfg(test)]
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use api::game_data::{NpcAttackKind, NpcNameRow};
@@ -296,10 +296,10 @@ pub struct RiskTables {
     pub poison_unknown_v: u8,
 }
 
-#[cfg(all(test, feature = "load"))]
+#[cfg(test)]
 static RISK_TABLE_BUILD_COUNT: AtomicUsize = AtomicUsize::new(0);
 
-#[cfg(all(test, feature = "load"))]
+#[cfg(test)]
 pub(super) fn build_count_for_test() -> usize {
     RISK_TABLE_BUILD_COUNT.load(Ordering::Relaxed)
 }
@@ -325,7 +325,7 @@ impl RiskTables {
         F: FnMut() -> U,
         U: Future<Output = ()>,
     {
-        #[cfg(all(test, feature = "load"))]
+        #[cfg(test)]
         RISK_TABLE_BUILD_COUNT.fetch_add(1, Ordering::Relaxed);
 
         let rows = combat

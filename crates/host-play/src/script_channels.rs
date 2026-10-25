@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use parking_lot::Mutex;
-use script::shim::InteractReq;
+use script::interact::InteractReq;
 
 const PREFIX: &str = "rs2b0t:kq:v1:";
 const MAX_GROUPS: usize = 16;

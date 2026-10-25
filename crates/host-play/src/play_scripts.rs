@@ -366,27 +366,20 @@ impl ScriptStartHandle {
             } => {
                 // Caller-owned rows (a harness scenario's fixtures) or the
                 // operator's current rows from the state service.
-                let leased;
-                let loadouts = match loadouts {
-                    Some(loadouts) => Ok(loadouts),
-                    None => match self.operator_loadouts(name) {
-                        Ok(rows) => {
-                            leased = rows;
-                            Ok(leased.as_slice())
-                        }
-                        Err(error) => Err(error),
-                    },
+                let loadouts: Result<Arc<[api::loadout::Loadout]>, String> = match loadouts {
+                    Some(loadouts) => Ok(Arc::from(loadouts.to_vec())),
+                    None => self.operator_loadouts(name).map(Arc::from),
                 };
                 match loadouts {
-                    Ok(loadouts) => slot.start_load_with_settings_and_game_data_typed(
-                        source,
-                        shape,
-                        bag.as_ref(),
-                        siblings,
-                        loadouts,
-                        self.game_data.clone(),
-                        Arc::clone(&self.named_banks),
-                    ),
+                    Ok(loadouts) => {
+                        slot.start_surface_with_settings(script_runtime::js_surface_start(
+                            script_runtime::js_start_card(source, shape, siblings),
+                            bag.map(Arc::new),
+                            self.game_data.clone(),
+                            Arc::clone(&self.named_banks),
+                            loadouts,
+                        ))
+                    }
                     Err(error) => Err(Refused(error)),
                 }
             }
