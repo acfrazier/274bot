@@ -7910,11 +7910,13 @@ fn logout_retry_focused_eligibility_follows_the_shared_projection() {
 
     // The repeat guard's park (offline, unqueued, may hold script work) is
     // eligible; another bot's park is not this bot's.
+    let arm = s.core.play_for_test().unwrap().arm("alice").unwrap();
+    arm.arm_explicit_login();
+    arm.complete_login_for_test();
+    arm.exit_and_trip_repeat_guard_for_test();
     publish(&s, &|row| {
-        row.login_latch_reason = Some(host_play::LoginLatchReason::RepeatedUnexpectedLogouts {
-            count: 3,
-            window_seconds: 600,
-        });
+        row.login_latched = true;
+        row.login_latch_reason = arm.login_latch_reason();
     });
     s.core.poll_host();
     assert_eq!(s.focused_logout_eligibility(), Some(E::GuardParked));
