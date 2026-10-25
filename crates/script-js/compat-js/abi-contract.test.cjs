@@ -457,8 +457,57 @@ test('the contract callback rows equal the family-expanded native ABI census', (
         assert.ok(callback.multiplicity.includes(bound), `${callback.native_family}/${callback.member}`);
     }
 });
+function requireCitationRoots(roots) {
+    for (const [source, root] of roots) {
+        const files = fs.readdirSync(root, { recursive: true })
+            .filter(relative => fs.statSync(path.join(root, relative)).isFile());
+        assert.ok(files.length > 0, `${source} citation root resolves zero files: ${root}`);
+    }
+    return roots;
+}
+
+function citationFile(roots, source, relative) {
+    const base = roots.get(source);
+    assert.ok(base, `Unknown callback citation source: ${source}`);
+    const matches = [...roots.values()]
+        .map(root => path.join(root, relative))
+        .filter(file => fs.existsSync(file));
+    assert.equal(matches.length, 1, `${source}/${relative} resolves under ${matches.length} roots`);
+    const file = path.join(base, relative);
+    assert.equal(matches[0], file, `${source}/${relative} resolves outside its declared root`);
+    return file;
+}
+
+test('callback citations reject empty roots and ambiguous ownership', () => {
+    const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 't2-abi-citation-roots-'));
+    try {
+        const empty = path.join(scratch, 'empty');
+        const core = path.join(scratch, 'core');
+        const js = path.join(scratch, 'js');
+        for (const root of [empty, core, js]) fs.mkdirSync(root);
+        assert.throws(
+            () => requireCitationRoots(new Map([['S', empty]])),
+            /citation root resolves zero files/,
+        );
+        fs.writeFileSync(path.join(core, 'shared.rs'), '');
+        fs.writeFileSync(path.join(js, 'shared.rs'), '');
+        const roots = requireCitationRoots(new Map([['S', core], ['JS', js]]));
+        assert.throws(
+            () => citationFile(roots, 'JS', 'shared.rs'),
+            /resolves under 2 roots/,
+        );
+    } finally {
+        fs.rmSync(scratch, { recursive: true, force: true });
+    }
+});
+
 test('callback source citations resolve and identify each member', { skip: !frozenRoot }, () => {
-    const citationPattern = /\$(TS|S)\/([^:;\s]+):([0-9,-]+)/g;
+    const citationPattern = /\$(TS|JS|S)\/([^:;\s]+):([0-9,-]+)/g;
+    const roots = requireCitationRoots(new Map([
+        ['TS', path.join(frozenRoot, 'src', 'bot')],
+        ['S', path.join(crate, '../script/src')],
+        ['JS', path.join(crate, 'src')],
+    ]));
     const sourceCache = new Map();
     let citationCount = 0;
     for (const row of callbackSnapshot.rows) {
@@ -466,10 +515,7 @@ test('callback source citations resolve and identify each member', { skip: !froz
         assert.ok(citations.length > 0, `${row.member} has source evidence`);
         let citedText = '';
         for (const [, source, relative, ranges] of citations) {
-            const base = source === 'TS'
-                ? path.join(frozenRoot, 'src', 'bot')
-                : path.join(crate, 'src');
-            const file = path.join(base, relative);
+            const file = citationFile(roots, source, relative);
             assert.ok(fs.existsSync(file), `${row.member} evidence file exists: ${file}`);
             let lines = sourceCache.get(file);
             if (!lines) {
@@ -488,6 +534,7 @@ test('callback source citations resolve and identify each member', { skip: !froz
         assert.ok(normalizedEvidence.includes(memberToken), `${row.member} appears at a cited source line`);
     }
     assert.ok(citationCount > 0);
+    assert.equal(citationCount, 219, 'checked callback citation range parts');
 });
 
 

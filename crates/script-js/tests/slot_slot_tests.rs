@@ -92,7 +92,6 @@ fn probe(slot: &mut SlotScript, expr: &str) -> serde_json::Value {
 fn surface_tick(slot: &mut SlotScript, tick: u64) {
     slot.with_surface_run_for_test(|run| run.on_game_tick_at(tick, 0))
         .expect("active JavaScript surface");
-    let _ = probe(slot, "true");
 }
 
 fn slot_tick(slot: &mut SlotScript, tick: u64, here: Option<(i32, i32, i32)>) {
