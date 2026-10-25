@@ -494,7 +494,19 @@ impl<'a> ScriptPane<'a> {
     }
 
     fn card_selected(&self, card: &BrowseCard) -> bool {
-        card_selection(card).as_ref() == self.sel
+        let Some(sel) = self.sel else {
+            return false;
+        };
+        #[cfg(feature = "js")]
+        if card.kind != CardRuntime::Compiled {
+            if let Some((source, name)) = sel.loaded_card() {
+                return card.source == source && card.name == name;
+            }
+        }
+        card.kind == CardRuntime::Compiled
+            && sel
+                .compiled_id()
+                .is_some_and(|id| CompiledCardId::lookup(&card.name) == Some(id))
     }
 
     /// The click inside the pane. Buttons live on the second inner line;

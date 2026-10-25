@@ -1686,11 +1686,29 @@ impl TuiApp {
 
     /// Move the Browse selection `step` cards through the list (wrapping).
     fn move_script_sel(&mut self, step: i32) {
-        let card_indices: Vec<usize> = self
-            .script_cards
-            .iter()
-            .enumerate()
-            .filter_map(|(index, card)| card_selection(card).map(|_| index))
+        let lines = {
+            #[cfg(feature = "js")]
+            {
+                crate::script_shape::browse_lines(
+                    &self.script_cards,
+                    &self.script_category_order,
+                    frontend_core::scripts::paths::rs2b0t_import_deferred(),
+                )
+            }
+            #[cfg(not(feature = "js"))]
+            {
+                crate::script_shape::browse_lines(
+                    &self.script_cards,
+                    &self.script_category_order,
+                )
+            }
+        };
+        let card_indices: Vec<usize> = lines
+            .into_iter()
+            .filter_map(|line| match line {
+                crate::script_shape::BrowseLine::Card(index) => Some(index),
+                _ => None,
+            })
             .collect();
         if card_indices.is_empty() {
             return;
