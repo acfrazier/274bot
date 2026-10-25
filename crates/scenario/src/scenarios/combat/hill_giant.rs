@@ -52,7 +52,8 @@ const HILL_GIANT_BANK_INJECT: &[ScriptSettingInject] = &[
 ];
 /// Deposit-only trip end with the one loot slot already narrowed: only Big
 /// bones may fill it and shared junk is off, so the deposit watch cannot land
-/// on a chance Limpwurt root (`HillGiant.ts:35,43-44,85`) or gem (`giant.rs2:51-52`).
+/// on a chance Limpwurt root (`giant.rs2:51-52`) or a shared gem
+/// (`bankCommonJunk`; `HillGiant.ts:35,43-44,85`).
 const HILL_GIANT_LOOT_DEPOSIT_INJECT: &[ScriptSettingInject] = &[
     ScriptSettingInject {
         id: "loadout",
