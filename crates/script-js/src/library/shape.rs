@@ -262,7 +262,6 @@ fn unwrap_ts_assertion(expr: &deno_ast::swc::ast::Expr) -> &deno_ast::swc::ast::
 /// type-only imports) and re-emit as a JavaScript module V8 can parse.
 /// Plain JS passes through unchanged in behaviour. A parse failure means
 /// the source is not readable TypeScript/JavaScript.
-
 pub fn transpile_ts(source: &str) -> Result<String, String> {
     let specifier = deno_ast::ModuleSpecifier::parse("file:///bot.ts")
         .map_err(|e| format!("ts specifier: {e}"))?;
@@ -577,7 +576,6 @@ fn same_path(a: &Path, b: &Path) -> bool {
 
 /// One sibling graph node in discovery order: relative import, module URL,
 /// disk path, and bounded UTF-8 source.
-
 pub(crate) type PreparationSibling = (String, String, PathBuf, String);
 
 #[derive(Debug)]
@@ -896,7 +894,6 @@ fn cached_preparation_js(
 /// Same-folder `./Foo.js` imports beside `card_path`: read the `.ts` twin
 /// (or `.js` origin), cache under `js-cache`, return `(module_url, js)` pairs
 /// for extra rustyscript modules at Start.
-
 pub fn resolve_sibling_modules(
     card_path: &Path,
     origin: &str,
@@ -915,7 +912,6 @@ pub fn resolve_sibling_modules(
 
 /// Resolve the supported sibling graph with source and result bounds. The
 /// entry script's JavaScript output is included in `current_result_bytes`.
-
 pub(crate) fn resolve_sibling_modules_bounded(
     card_path: &Path,
     origin: &str,
@@ -941,7 +937,6 @@ pub(crate) fn resolve_sibling_modules_bounded(
 
 /// Raw entry plus the supported sibling graph fingerprint, under the same
 /// source/count limits as candidate preparation.
-
 pub(crate) fn raw_content_fingerprint_bounded(
     card_path: &Path,
     origin: &str,
@@ -956,7 +951,6 @@ pub(crate) fn raw_content_fingerprint_bounded(
 }
 
 /// Bounded counterpart used only while preparing or revalidating a reload.
-
 pub(crate) fn first_unloadable_for_card_bounded(
     origin: &str,
     card_path: &Path,
@@ -1010,7 +1004,6 @@ pub fn raw_content_fingerprint(card_path: &Path, origin: &str) -> String {
 
 /// rustyscript evaluates side modules in vec order. An importer whose
 /// `./dep.js` is later in the list gets "module … is not loaded".
-
 fn order_siblings_deps_first(
     nodes: Vec<(String, String, String, String)>,
 ) -> Vec<(String, String)> {
@@ -1133,7 +1126,6 @@ pub(super) fn catalog_unloadable(
 
 /// A diagnosed foreign-script defect applies only to the exact audited pair.
 /// A changed card or helper is a different version, not a global name ban.
-
 pub(super) fn catalog_defect_reason(
     name: &str,
     origin_sha: &str,

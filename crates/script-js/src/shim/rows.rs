@@ -38,7 +38,6 @@ impl<'de> serde::Deserialize<'de> for RejectedRow {
 /// One queued row, read on its own: a row serde cannot read at all (a
 /// BigInt, say) is refused like any other malformed row instead of failing
 /// every row beside it.
-
 pub struct QueuedRow(pub(crate) MaybeInteractReq);
 
 impl QueuedRow {
@@ -57,7 +56,6 @@ impl<'de> serde::Deserialize<'de> for QueuedRow {
 
 /// Any value, as much of it as a log line names: a string's text, an
 /// object's string `op`, or the kind of anything else.
-
 enum Shape {
     Str(String),
     Object(Option<String>),

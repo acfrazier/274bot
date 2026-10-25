@@ -448,7 +448,7 @@ fn runtime_profile_fixture(
 
 fn preparation_only_session() -> Session {
     #[cfg(feature = "js")]
-    frontend_core::test_support::live::install_catalog_cards();
+    frontend_core::test_support::scripts::install_catalog_cards();
     let mut session = Session::new();
     session.core.set_spawn_workers(false);
     session
