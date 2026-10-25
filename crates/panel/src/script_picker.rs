@@ -1,12 +1,12 @@
 //! Script Browse picker helpers: category order, rs2b0t catalog prompt, badges.
 
 #[cfg(feature = "js")]
+use frontend_core::scripts::paths;
+use frontend_core::scripts::{CardRuntime, CardSource};
+#[cfg(feature = "js")]
 use std::path::{Path, PathBuf};
 #[cfg(feature = "js")]
 use std::time::{SystemTime, UNIX_EPOCH};
-use frontend_core::scripts::{CardRuntime, CardSource};
-#[cfg(feature = "js")]
-use frontend_core::scripts::paths;
 
 /// Browse uses a non-modal [`dear_imgui_rs::Ui::window`], not a popup modal.
 pub const BROWSE_WINDOW_TITLE: &str = "Scripts";

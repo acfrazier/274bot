@@ -31,7 +31,6 @@ pub enum PanelWindow {
 }
 
 impl PanelWindow {
-
     #[cfg(feature = "js")]
     pub const ALL: [PanelWindow; 12] = [
         PanelWindow::Profiles,

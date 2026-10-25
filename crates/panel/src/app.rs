@@ -25,16 +25,16 @@ use crate::rail::{
     rail_split_ratio, BASE_WINDOW_H, BASE_WINDOW_W, FOLD_GLYPH, RAIL_W, REMOVE_GLYPH, TILE_H,
     TILE_W, UNFOLD_GLYPH,
 };
+#[cfg(feature = "js")]
+use crate::script_picker::{
+    self, card_transpile_label, centered_row_x, dialog_date_color, format_mtime, DialogMode,
+    FILE_DIALOG_FIRST_H, FILE_DIALOG_FIRST_W, GLYPH_CHEVRON, GLYPH_FILE, GLYPH_FOLDER,
+};
 use crate::script_picker::{
     card_columns, card_desc_height, card_kind_source, card_rect_activated, card_width,
     chip_frame_padding, chip_text_color, chip_wraps, display_category, move_category,
     overlay_first_pos, resolve_category_order, title_clip_width, CARD_GAP, CARD_MIN_W,
     SCRIPTS_FIRST_H, SCRIPTS_FIRST_W,
-};
-#[cfg(feature = "js")]
-use crate::script_picker::{
-    self, card_transpile_label, centered_row_x, dialog_date_color, format_mtime, DialogMode,
-    FILE_DIALOG_FIRST_H, FILE_DIALOG_FIRST_W, GLYPH_CHEVRON, GLYPH_FILE, GLYPH_FOLDER,
 };
 use crate::walk_map::WalkMapRenderer;
 use crate::window::{self, Gpu, RedrawMode, ShotStatus, Theme};
@@ -4691,8 +4691,7 @@ fn script_prefs_disabled_hint(session: &Session) -> Option<&'static str> {
     }
     #[cfg(not(feature = "js"))]
     {
-        sel.loaded_card()
-            .map(|_| "JavaScript runtime unavailable")
+        sel.loaded_card().map(|_| "JavaScript runtime unavailable")
     }
 }
 

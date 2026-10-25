@@ -35,9 +35,9 @@ use frontend_core::launch::{
     ValidatedProfile,
 };
 use frontend_core::prefs::{PreferencePatch, UiPreferences, Update};
-use frontend_core::scripts::{LoadoutForm, PaintFrame, ScriptChoice, ScriptRunState};
 #[cfg(feature = "js")]
 use frontend_core::scripts::{CardSource, SchemaRef};
+use frontend_core::scripts::{LoadoutForm, PaintFrame, ScriptChoice, ScriptRunState};
 use frontend_core::surface::{FrameBuf, InputEv, InputSender, SlotInput};
 use frontend_core::walk_map::{
     select_walk_route_source, RouteProjectionView, WalkMapDemand, WalkMapJobState, WalkMapStage,
@@ -2547,9 +2547,9 @@ impl Session {
         #[cfg(not(feature = "js"))]
         if fleet_start.is_some()
             || start_file.is_some()
-            || start_script.as_deref().is_some_and(|name| {
-                frontend_core::scripts::CompiledCardId::lookup(name).is_none()
-            })
+            || start_script
+                .as_deref()
+                .is_some_and(|name| frontend_core::scripts::CompiledCardId::lookup(name).is_none())
         {
             return Err("JavaScript runtime unavailable".into());
         }
@@ -2714,8 +2714,7 @@ impl Session {
             } else {
                 #[cfg(feature = "js")]
                 {
-                    if let Some((fixture, stem)) =
-                        frontend_core::live::live_file_fixture(card_name)
+                    if let Some((fixture, stem)) = frontend_core::live::live_file_fixture(card_name)
                     {
                         self.scripts.stage_load_file(fixture.clone());
                         let submitted = self

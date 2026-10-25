@@ -5,9 +5,9 @@ use nav_planner::world::NavWorld;
 
 #[cfg(feature = "js")]
 use super::route_inspect;
-use super::{script_slot, ScriptWall};
 #[cfg(feature = "js")]
 use super::PostedWalkOutcome;
+use super::{script_slot, ScriptWall};
 /// The FlatBuffer snapshot blob posted into a Load isolate each
 /// PLAYER_INFO (schema: `crates/script/schema/isolate.fbs`) carries the
 /// shim-readable fields (`tick, here, ingame, inv, stats, booths, banks,

@@ -205,7 +205,11 @@ fn wait_compiled_script_state(
         if state == expected {
             return;
         }
-        assert_ne!(state, script::RunState::Error, "{profile} ended in {state:?}");
+        assert_ne!(
+            state,
+            script::RunState::Error,
+            "{profile} ended in {state:?}"
+        );
         assert!(
             Instant::now() < guard,
             "{profile} never reached {expected:?}"

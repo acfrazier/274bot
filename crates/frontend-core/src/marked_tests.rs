@@ -15,9 +15,9 @@ use super::{
     prepare_apply_settings_marked, restart_scope, BulkScope, MarkedAction, MarkedBlock,
     RestartScope,
 };
-use crate::scripts::{CardSource, ScriptChoice, ScriptRunState, Scripts};
 #[cfg(feature = "js")]
 use crate::scripts::ScriptStartErrorKind;
+use crate::scripts::{CardSource, ScriptChoice, ScriptRunState, Scripts};
 use crate::selection::{marked_startable, start_marked, MarkedSelection, ProfileIdentity};
 use crate::session::OperatorSession;
 use crate::surface::HeadlessSurface;
@@ -126,9 +126,11 @@ impl Fixture {
     }
 
     fn assign_compiled(&mut self, name: &str, id: script::CompiledId) {
-        assert!(self
-            .scripts
-            .persist_assignment(&mut self.core, name, script::compiled_assignment(id)));
+        assert!(self.scripts.persist_assignment(
+            &mut self.core,
+            name,
+            script::compiled_assignment(id)
+        ));
         self.core.flush_writes();
     }
     #[cfg(feature = "js")]

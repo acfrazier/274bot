@@ -14,9 +14,9 @@ use frontend_core::{
     scripts::{paths, CardSource, CatalogActionKind},
 };
 
-use crate::session::Session;
 #[cfg(feature = "js")]
 use crate::session::PanelWindow;
+use crate::session::Session;
 #[cfg(feature = "js")]
 fn default_catalog_browse_dir(last: Option<&Path>) -> PathBuf {
     crate::script_picker::default_load_browse_dir(last)

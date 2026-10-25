@@ -6,13 +6,13 @@ use std::num::NonZeroU64;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
+#[cfg(feature = "js")]
+use super::CatalogError;
 use super::{
     parse_parameter_text, CardRuntime, CardSource, CompiledCardId, Notice, ParameterCommit,
     ParameterEditKey, SchemaRef, ScriptChoice, ScriptRunState, ScriptStartErrorKind, Scripts,
     SettingView,
 };
-#[cfg(feature = "js")]
-use super::CatalogError;
 use crate::command::{
     CardKind, CommandBook, CommandFailure, Completion, OperatorCommand, Pending, Stage, Subject,
 };
@@ -2726,8 +2726,8 @@ fn gatherer_settings_record(
     allow_wilderness: bool,
     allow_danger_zones: bool,
 ) -> Map<String, Value> {
-    let card = script::compiled_card(script::CompiledId("Gatherer"))
-        .expect("Gatherer is core-registered");
+    let card =
+        script::compiled_card(script::CompiledId("Gatherer")).expect("Gatherer is core-registered");
     vault::CompiledSettingsRecord {
         schema_version: card.schema_version,
         values: gatherer_native_values(
@@ -3411,11 +3411,7 @@ fn valid_native_draft_survives_unrelated_writes() {
         let entry = f
             .saved_bag("alice", &script::compiled_identity_key(id))
             .unwrap();
-        assert_eq!(
-            entry["values"]["radius"],
-            json!(12),
-            "{writer}"
-        );
+        assert_eq!(entry["values"]["radius"], json!(12), "{writer}");
         expected
             .script_settings
             .insert(script::compiled_identity_key(id), entry);
@@ -3502,9 +3498,10 @@ fn rejected_native_live_preparation_does_not_reject_profile_form_durability() {
     let mut row = f.core.vault().unwrap().get("alice").unwrap().clone();
     row.password = "new-password".into();
     let key = script::compiled_identity_key(script::CompiledId("Gatherer"));
-    row.settings
-        .script_settings
-        .insert(key.clone(), gatherer_settings_record(13, false, true, false));
+    row.settings.script_settings.insert(
+        key.clone(),
+        gatherer_settings_record(13, false, true, false),
+    );
     let mut live = f
         .scripts
         .profile_save_live(&f.core, "alice", &row.settings)
@@ -3625,7 +3622,9 @@ fn durable_native_reply_never_configures_a_replacement_run() {
             .script_native_settings_revision("alice"),
         Some(1)
     );
-    let saved = f.saved_bag("alice", &key).expect("validated settings are durable");
+    let saved = f
+        .saved_bag("alice", &key)
+        .expect("validated settings are durable");
     assert_eq!(saved["values"]["radius"], json!(13));
     assert_eq!(saved["values"]["allowWilderness"], json!(true));
 }

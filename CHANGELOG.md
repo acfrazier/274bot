@@ -7,6 +7,13 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.6` 
 
 ### Panel and terminal app
 
+- Source builds can now omit the JavaScript runtime with
+  `--no-default-features`. These builds keep Gatherer, Grinch and Quester,
+  their settings, and native Start, Pause, Stop and paint controls. They do
+  not offer Load, Reload, catalog or rs2b0t profile import. Default builds
+  still include JavaScript. Sherlock needs the JS-runtime build until its
+  native clue rewrite, although Sherlock itself creates no V8 isolate.
+
 - **Log out** now stops a bot whose login keeps failing. A bot that cannot
   log in (the server is down or refuses it) retries with a growing wait of up
   to 60 seconds. In 0.2.6 the panel's **Log out** button was greyed out for

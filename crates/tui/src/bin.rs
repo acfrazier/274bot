@@ -38,9 +38,9 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 
 use frontend_core::resources::background_ack_text;
-use frontend_core::scripts::{CompiledCardId, LoadoutForm, PaintFrame, ScriptChoice};
 #[cfg(feature = "js")]
 use frontend_core::scripts::{CardSource, CatalogActionKind, OwnedSchema};
+use frontend_core::scripts::{CompiledCardId, LoadoutForm, PaintFrame, ScriptChoice};
 use frontend_core::selection::ProfileIdentity;
 #[cfg(test)]
 use frontend_core::test_support::VaultFixture;
@@ -62,9 +62,9 @@ use crate::loadouts::LoadoutsIntent;
 use crate::overlay::{ConfirmKind, Modal};
 #[cfg(feature = "js")]
 use crate::profile_import::ImportAction;
-use crate::script_shape::{categories_present, resolve_category_order, BrowseCard};
 #[cfg(feature = "js")]
 use crate::script_shape::rs2b0t_root_has_index;
+use crate::script_shape::{categories_present, resolve_category_order, BrowseCard};
 #[cfg(feature = "js")]
 use frontend_core::rs2b0t_import::Stage;
 
@@ -915,8 +915,7 @@ impl TuiSession {
                 walk_cleared: &mut self.walk_reset,
                 map_desk: &mut self.map_desk,
                 models: {
-                    let models =
-                        frontend_core::Models::none().with_scripts(&mut self.scripts);
+                    let models = frontend_core::Models::none().with_scripts(&mut self.scripts);
                     #[cfg(feature = "js")]
                     let models = models.with_import(&mut self.profile_import);
                     models.with_loadouts(&mut self.loadouts)
@@ -940,8 +939,7 @@ impl TuiSession {
                 walk_cleared: &mut self.walk_reset,
                 map_desk: &mut self.map_desk,
                 models: {
-                    let models =
-                        frontend_core::Models::none().with_scripts(&mut self.scripts);
+                    let models = frontend_core::Models::none().with_scripts(&mut self.scripts);
                     #[cfg(feature = "js")]
                     let models = models.with_import(&mut self.profile_import);
                     models
@@ -1010,8 +1008,7 @@ impl TuiSession {
                 walk_cleared: &mut self.walk_reset,
                 map_desk: &mut self.map_desk,
                 models: {
-                    let models =
-                        frontend_core::Models::none().with_scripts(&mut self.scripts);
+                    let models = frontend_core::Models::none().with_scripts(&mut self.scripts);
                     #[cfg(feature = "js")]
                     let models = models.with_import(&mut self.profile_import);
                     models
@@ -1315,7 +1312,9 @@ impl TuiSession {
         #[cfg(not(feature = "js"))]
         if let Some(card_name) = start_script.as_deref() {
             if CompiledCardId::lookup(card_name).is_none() {
-                return Err(format!("live script {card_name} requires JavaScript support"));
+                return Err(format!(
+                    "live script {card_name} requires JavaScript support"
+                ));
             }
         }
         let live_core = self.core.resolve_live_core(
@@ -2728,7 +2727,6 @@ impl TuiSession {
         {
             Err("parameters unavailable".into())
         }
-
     }
     /// Open the params popup over the focused profile's bag for the card.
     fn open_params(&mut self, app: &mut TuiApp) {
@@ -4767,7 +4765,8 @@ fn dispatch(session: &mut TuiSession, app: &mut TuiApp, action: AppAction) {
         AppAction::ScriptStart(sel) => session.script_start(app, &sel),
         AppAction::ScriptPause => session.script_toggle_pause(app),
         AppAction::ScriptStop => session.script_stop(app),
-        AppAction::ScriptBrowse => {
+        AppAction::ScriptBrowse =>
+        {
             #[cfg(feature = "js")]
             if app.script_browse_open {
                 session.on_script_browse_open(app);

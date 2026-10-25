@@ -27,9 +27,7 @@ use frontend_core::launch::{
     InstanceKind, InstancePermit, ProfileArgs, ProfileClass, ProfileEnv, ProfileTemplate,
     ValidatedProfile, ValidationPending,
 };
-use frontend_core::scripts::{
-    CardSource, CompiledCardId, Loadouts, ScriptChoice, ScriptRunState,
-};
+use frontend_core::scripts::{CardSource, CompiledCardId, Loadouts, ScriptChoice, ScriptRunState};
 #[cfg(feature = "js")]
 use frontend_core::scripts::{LoadShape, LoadStage};
 use frontend_core::surface::InputSender;

@@ -3,12 +3,12 @@ use crate::test_support::TestDir;
 use frontend_core::scripts::{CardSource, CompiledCardId, ScriptChoice, ScriptRunState};
 #[cfg(feature = "js")]
 use frontend_core::scripts::{LoadStage, ReloadOutcome};
-use frontend_core::test_support::scripts::{Assignment, TestSchema};
 #[cfg(feature = "js")]
 use frontend_core::test_support::scripts::{
     compiled_identity_key, nothing_changed_reload_message, raw_content_fingerprint,
     session_script_bag, TestLibrary,
 };
+use frontend_core::test_support::scripts::{Assignment, TestSchema};
 use frontend_core::test_support::session::install_vault;
 use frontend_core::test_support::{FixtureProfile, IsolatedStores, VaultFixture};
 use frontend_core::FleetAction;
@@ -2566,7 +2566,11 @@ fn marked_compiled_start_keeps_assignments_across_focus_changes() {
     settle_fleet_result(&mut s);
 
     let result = s.core.fleet_result().expect("the Start result");
-    assert!(result.text().contains("alice (already active)"), "{}", result.text());
+    assert!(
+        result.text().contains("alice (already active)"),
+        "{}",
+        result.text()
+    );
     assert_eq!(
         s.profile_assignment("alice"),
         Some(Assignment::compiled(card))
