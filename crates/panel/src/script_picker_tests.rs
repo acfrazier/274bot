@@ -1,12 +1,19 @@
 use super::{
-    apply_load_browse_select, breadcrumb_prefixes, card_columns, card_rect_activated, card_width,
-    chip_frame_padding, chip_text_color, dialog_date_color, dialog_rows, display_category,
-    format_mtime, move_category, name_matches_search, needs_rs2b0t_catalog_prompt,
-    resolve_category_order, rs2b0t_root_has_index, sidebar_places, sort_dialog_rows, DialogMode,
-    DialogRow, DialogSort, LoadBrowseEntry, CARD_GAP, CARD_MIN_W, CHIP_PAD_Y, UNCATEGORIZED,
+    card_columns, card_rect_activated, card_width, chip_frame_padding, chip_text_color,
+    display_category, move_category, resolve_category_order, CARD_GAP, CARD_MIN_W, CHIP_PAD_Y,
+    UNCATEGORIZED,
 };
+#[cfg(feature = "js")]
+use super::{
+    apply_load_browse_select, breadcrumb_prefixes, dialog_date_color, dialog_rows, format_mtime,
+    name_matches_search, needs_rs2b0t_catalog_prompt, rs2b0t_root_has_index, sidebar_places,
+    sort_dialog_rows, DialogMode, DialogRow, DialogSort, LoadBrowseEntry,
+};
+#[cfg(feature = "js")]
 use crate::test_support::TestDir;
+#[cfg(feature = "js")]
 use std::path::{Path, PathBuf};
+#[cfg(feature = "js")]
 use std::time::{Duration, UNIX_EPOCH};
 
 #[test]
@@ -29,6 +36,7 @@ fn category_order_drag_reorder_moves_in_front() {
 }
 
 #[test]
+#[cfg(feature = "js")]
 fn needs_catalog_prompt_when_no_root_and_not_deferred() {
     assert!(needs_rs2b0t_catalog_prompt(None, false));
     assert!(!needs_rs2b0t_catalog_prompt(
@@ -39,6 +47,7 @@ fn needs_catalog_prompt_when_no_root_and_not_deferred() {
 }
 
 #[test]
+#[cfg(feature = "js")]
 fn load_browse_up_navigates_to_parent() {
     let mut dir = PathBuf::from("/tmp/274bot-load-up-child");
     let mut sel = 2;
@@ -48,6 +57,7 @@ fn load_browse_up_navigates_to_parent() {
 }
 
 #[test]
+#[cfg(feature = "js")]
 fn rs2b0t_root_has_index_checks_catalog_file() {
     let dir = TestDir::new("index-check");
     let root = dir.join("rs2b0t");
@@ -74,6 +84,7 @@ fn empty_category_is_uncategorized() {
 }
 
 #[test]
+#[cfg(feature = "js")]
 fn sidebar_skips_missing_dirs() {
     let home = TestDir::new("sidebar");
     std::fs::create_dir_all(home.join("Desktop")).unwrap();
@@ -86,6 +97,7 @@ fn sidebar_skips_missing_dirs() {
 }
 
 #[test]
+#[cfg(feature = "js")]
 fn breadcrumbs_are_prefixes() {
     let crumbs = breadcrumb_prefixes(Path::new("/tmp/foo/bar"));
     assert_eq!(crumbs.first().map(|(l, _)| l.as_str()), Some("/"));
@@ -99,6 +111,7 @@ fn breadcrumbs_are_prefixes() {
 }
 
 #[test]
+#[cfg(feature = "js")]
 fn search_filters_case_insensitive() {
     assert!(name_matches_search("Alcher.ts", "alc"));
     assert!(name_matches_search("Alcher.ts", ""));
@@ -106,6 +119,7 @@ fn search_filters_case_insensitive() {
 }
 
 #[test]
+#[cfg(feature = "js")]
 fn dialog_rows_file_vs_folder_and_search() {
     let dir = TestDir::new("dialog-rows");
     std::fs::create_dir_all(dir.join("src")).unwrap();
@@ -123,6 +137,7 @@ fn dialog_rows_file_vs_folder_and_search() {
 }
 
 #[test]
+#[cfg(feature = "js")]
 fn sort_dialog_rows_name_keeps_dirs_first() {
     let mut rows = vec![
         DialogRow {
@@ -149,6 +164,7 @@ fn sort_dialog_rows_name_keeps_dirs_first() {
 }
 
 #[test]
+#[cfg(feature = "js")]
 fn format_mtime_epoch_is_utc() {
     assert_eq!(
         format_mtime(Some(UNIX_EPOCH + Duration::from_secs(0))),
@@ -158,6 +174,7 @@ fn format_mtime_epoch_is_utc() {
 }
 
 #[test]
+#[cfg(feature = "js")]
 fn load_date_column_is_black_on_alt_row_not_when_selected() {
     assert_eq!(dialog_date_color(false, true), [0.0, 0.0, 0.0, 1.0]);
     assert_eq!(dialog_date_color(true, true), crate::theme::TEXT_DIM);
@@ -166,6 +183,7 @@ fn load_date_column_is_black_on_alt_row_not_when_selected() {
 }
 
 #[test]
+#[cfg(feature = "js")]
 fn kind_badge_is_js_for_catalog_cards() {
     use frontend_core::scripts::{CardRuntime, CardSource};
     assert_eq!(super::kind_badge(CardRuntime::Compat), "JS");
@@ -185,6 +203,7 @@ fn overlay_first_pos_centers_in_game_pane() {
     assert!((pos[1] - 20.0).abs() < 0.01);
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn centered_row_x_centers_two_buttons() {
     let x = super::centered_row_x(600.0, 2, 80.0, 6.0);
@@ -192,6 +211,7 @@ fn centered_row_x_centers_two_buttons() {
 }
 
 #[test]
+#[cfg(feature = "js")]
 fn default_load_browse_dir_uses_process_cwd() {
     let cwd = std::env::current_dir().unwrap();
     assert_eq!(super::default_load_browse_dir(None), cwd);
@@ -223,6 +243,7 @@ fn unselected_description_clips_to_three_lines() {
 }
 
 #[test]
+#[cfg(feature = "js")]
 fn card_transpile_label_only_for_the_front_of_the_queue() {
     use frontend_core::scripts::CardSource;
     assert_eq!(
