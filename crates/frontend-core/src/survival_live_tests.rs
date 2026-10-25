@@ -634,6 +634,7 @@ fn run_guard_cure_live(
         unpack_dir: Some(vault_path.with_extension("runtime-cache")),
         nav_pack: Some(nav_pack),
         nav_flags: Some(nav_flags),
+        #[cfg(feature = "js")]
         catalog_root: script_js::rs2b0t_root(),
         vault_path: Some(vault_path.to_path_buf()),
         ..ProfileOptions::default()
