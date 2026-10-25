@@ -1150,7 +1150,7 @@ fn a_script_walk_ends_with_its_run_and_a_manual_walk_survives_the_stop() {
         assert!(scripts.persist_assignment(
             &mut s,
             name,
-            script::compiled_assignment(script::CompiledId("Sherlock")),
+            script::compiled_assignment(script::CompiledId("Gatherer")),
         ));
     }
     s.flush_writes();

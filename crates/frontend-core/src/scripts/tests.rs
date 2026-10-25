@@ -1122,21 +1122,24 @@ fn bag(pairs: &[(&str, Value)]) -> Map<String, Value> {
 #[test]
 fn browse_card_list_includes_compiled_cards() {
     let f = native_fixture("compiled-card-list", &["alice"]);
-    assert!(
-        script::compiled_id("Sherlock").is_some(),
-        "canonical Sherlock card is installed for Browse"
-    );
     let cards: Vec<_> = f.scripts.browse_cards().collect();
-    let sherlock = cards
-        .iter()
-        .find(|card| card.name() == "Sherlock")
-        .expect("compiled Sherlock is available to Browse when registered");
-    assert_eq!(sherlock.kind(), CardRuntime::Compiled);
-    assert_eq!(sherlock.category(), "Treasure Trails");
-    assert_eq!(
-        sherlock.selection(),
-        ScriptChoice::from_script(script::ScriptSel::Compiled(script::CompiledId("Sherlock")))
-    );
+    #[cfg(feature = "js")]
+    {
+        assert!(
+            script::compiled_id("Sherlock").is_some(),
+            "canonical Sherlock card is installed for Browse"
+        );
+        let sherlock = cards
+            .iter()
+            .find(|card| card.name() == "Sherlock")
+            .expect("compiled Sherlock is available to Browse when registered");
+        assert_eq!(sherlock.kind(), CardRuntime::Compiled);
+        assert_eq!(sherlock.category(), "Treasure Trails");
+        assert_eq!(
+            sherlock.selection(),
+            ScriptChoice::from_script(script::ScriptSel::Compiled(script::CompiledId("Sherlock")))
+        );
+    }
     let grinch = cards
         .iter()
         .find(|card| card.name() == "Grinch")
@@ -1686,9 +1689,9 @@ fn compiled_scenario_start_script_holds_without_failing_preparation() {
         fire_pending_catalog_start, PendingCatalogStart, StartArming, StartScriptPump,
     };
     let mut f = native_fixture("compiled-scenario-copy", &["alice", "bob"]);
-    let id = script::CompiledId("Sherlock");
+    let id = script::CompiledId("Gatherer");
     for name in ["alice", "bob"] {
-        start_sherlock(&mut f, name);
+        start_gatherer(&mut f, name);
         f.core.stop_script(name);
         f.wait_state(name, ScriptRunState::Idle);
     }
@@ -2360,7 +2363,7 @@ fn a_start_carries_its_operation_to_the_row_and_the_log() {
 #[test]
 fn marked_start_skips_active_rows_and_duplicate_start_is_idempotent() {
     let mut f = native_fixture("bulk-selection", &["alice", "bob", "carol"]);
-    let id = script::CompiledId("Sherlock");
+    let id = script::CompiledId("Gatherer");
     f.assign_compiled("alice", id);
     f.start_running("alice");
 
@@ -2588,12 +2591,12 @@ fn cancelling_a_new_prompt_does_not_release_an_accepted_native_copy() {
     assert!(f.run_has_bag("bob", &want));
 }
 
-fn start_sherlock(f: &mut Fixture, name: &str) {
+fn start_compiled(f: &mut Fixture, name: &str, id: script::CompiledId) {
     f.scripts
         .start_sel(
             &mut f.core,
             name,
-            &script::ScriptSel::Compiled(script::CompiledId("Sherlock")),
+            &script::ScriptSel::Compiled(id),
             None,
             super::StartKind::Start,
             false,
@@ -2604,6 +2607,16 @@ fn start_sherlock(f: &mut Fixture, name: &str) {
     assert_eq!(f.state(name), ScriptRunState::Running);
 }
 
+fn start_gatherer(f: &mut Fixture, name: &str) {
+    start_compiled(f, name, script::CompiledId("Gatherer"));
+}
+
+#[cfg(feature = "js")]
+fn start_sherlock(f: &mut Fixture, name: &str) {
+    start_compiled(f, name, script::CompiledId("Sherlock"));
+}
+
+#[cfg(feature = "js")]
 fn save_native_partner(f: &mut Fixture, name: &str, partner: &str) {
     let mut row = f.core.profile_for_edit(name).unwrap().clone();
     row.settings.clue_duel_partner = partner.into();
@@ -2616,6 +2629,7 @@ fn save_native_partner(f: &mut Fixture, name: &str, partner: &str) {
         .unwrap();
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn compiled_restore_keeps_legacy_sherlock_permissions_and_refuses_malformed_schema() {
     let mut f = native_fixture("native-restore", &["alice"]);
@@ -2701,9 +2715,9 @@ fn compiled_restore_keeps_legacy_sherlock_permissions_and_refuses_malformed_sche
 #[test]
 fn native_invalid_preparation_keeps_assignment_and_durable_settings() {
     let mut f = native_fixture("native-invalid", &["alice"]);
-    let previous = script::CompiledId("Gatherer");
+    let previous = script::CompiledId("Grinch");
     f.assign_compiled("alice", previous);
-    let id = script::CompiledId("Sherlock");
+    let id = script::CompiledId("Gatherer");
     f.scripts
         .set_compiled_overrides(
             &mut f.core,
@@ -2830,6 +2844,7 @@ fn gatherer_profile_loads_integral_legacy_float_and_rejects_fraction() {
     }
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn native_settings_wait_for_durability_and_remain_per_account() {
     let mut f = native_fixture("native-durable", &["alice", "bob"]);
@@ -2905,6 +2920,7 @@ fn native_settings_wait_for_durability_and_remain_per_account() {
     assert_eq!(revision(&f, "bob"), bob_revision);
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn native_settings_reply_loses_to_profile_recreation() {
     let mut f = native_fixture("native-stale-preparation", &["alice"]);
@@ -2944,6 +2960,7 @@ fn native_settings_reply_loses_to_profile_recreation() {
     );
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn profile_form_save_survives_stop_and_restart_with_stale_live_delivery() {
     for restart in [false, true] {
@@ -2993,7 +3010,7 @@ fn unrelated_writes_never_persist_invalid_native_drafts_or_poison_start() {
     let writers = ["assignment", "ready"];
     for writer in writers {
         let mut f = native_fixture("native-draft-isolation", &["alice"]);
-        let id = script::CompiledId("Sherlock");
+        let id = script::CompiledId("Gatherer");
         if writer == "ready" {
             f.scripts
                 .start_sel(
@@ -3041,7 +3058,7 @@ fn unrelated_writes_never_persist_invalid_native_drafts_or_poison_start() {
             .iter()
             .any(|failure| failure.error().contains("unknown")));
         f.core.stop_script("alice");
-        start_sherlock(&mut f, "alice");
+        start_gatherer(&mut f, "alice");
     }
 }
 
@@ -3053,7 +3070,7 @@ fn valid_native_draft_survives_unrelated_writes() {
     let writers = ["assignment", "ready"];
     for writer in writers {
         let mut f = native_fixture("native-valid-draft", &["alice"]);
-        let id = script::CompiledId("Sherlock");
+        let id = script::CompiledId("Gatherer");
         if writer == "ready" {
             f.scripts
                 .start_sel(
@@ -3073,7 +3090,7 @@ fn valid_native_draft_survives_unrelated_writes() {
                 &mut f.core,
                 "alice",
                 CompiledCardId::from_script(id),
-                bag(&[(script::CLUE_DUEL_PARTNER, json!("bob"))]),
+                bag(&[("radius", json!(12))]),
             )
             .unwrap();
         match writer {
@@ -3104,8 +3121,8 @@ fn valid_native_draft_survives_unrelated_writes() {
             .saved_bag("alice", &script::compiled_identity_key(id))
             .unwrap();
         assert_eq!(
-            entry["values"][script::CLUE_DUEL_PARTNER],
-            "bob",
+            entry["values"]["radius"],
+            json!(12),
             "{writer}"
         );
         expected
@@ -3124,6 +3141,7 @@ fn valid_native_draft_survives_unrelated_writes() {
     }
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn profile_partner_delivery_survives_unrelated_write() {
     let mut f = native_fixture("native-partner-unrelated", &["alice"]);
@@ -3157,6 +3175,7 @@ fn profile_partner_delivery_survives_unrelated_write() {
             && write.result.delivery() == Some(&super::LiveDelivery::Applied)));
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn rejected_native_live_preparation_does_not_reject_profile_form_durability() {
     let mut f = native_fixture("native-form-preparation-failure", &["alice"]);
@@ -3184,6 +3203,7 @@ fn rejected_native_live_preparation_does_not_reject_profile_form_durability() {
     ));
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn durable_native_reply_never_configures_a_replacement_run() {
     let mut f = native_fixture("native-stale-durable", &["alice"]);
@@ -3238,7 +3258,7 @@ fn deleting_a_profile_cancels_its_unsettled_native_start() {
         .start_sel(
             &mut f.core,
             "alice",
-            &script::ScriptSel::Compiled(script::CompiledId("Sherlock")),
+            &script::ScriptSel::Compiled(script::CompiledId("Gatherer")),
             None,
             super::StartKind::Start,
             false,
@@ -3258,6 +3278,7 @@ fn deleting_a_profile_cancels_its_unsettled_native_start() {
     assert!(f.core.durable_profile("alice").is_none());
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn native_bulk_reports_and_preserves_each_account_partner() {
     let mut f = native_fixture("native-bulk", &["alice", "bob"]);
@@ -3317,7 +3338,7 @@ fn native_bulk_reports_and_preserves_each_account_partner() {
 #[test]
 fn failed_native_copy_does_not_assign_an_unassigned_bot() {
     let mut f = native_fixture("native-copy-no-assign", &["alice", "bob"]);
-    let id = script::CompiledId("Sherlock");
+    let id = script::CompiledId("Gatherer");
     let key = script::compiled_identity_key(id);
     assert!(f
         .scripts
@@ -3568,7 +3589,7 @@ fn restart_prompt_skips_reassigned_profile_without_reassigning_or_starting() {
     assert!(f.scripts.persist_assignment(
         &mut f.core,
         "alice",
-        script::compiled_assignment(script::CompiledId("Sherlock")),
+        script::compiled_assignment(script::CompiledId("Grinch")),
     ));
     f.core.flush_writes();
 
@@ -3581,7 +3602,7 @@ fn restart_prompt_skips_reassigned_profile_without_reassigning_or_starting() {
     assert_eq!(start_accepted(&f, "alice"), starts_before);
     assert_eq!(
         super::sel_from_assignment(&Scripts::assignment(&f.core, "alice").unwrap()),
-        Some(script::ScriptSel::Compiled(script::CompiledId("Sherlock")))
+        Some(script::ScriptSel::Compiled(script::CompiledId("Grinch")))
     );
     assert!(!f.scripts.restart_required_for("alice", &selection));
     assert!(matches!(
@@ -3624,7 +3645,7 @@ fn restart_badge_clears_after_assignment_changes() {
     assert!(f.scripts.persist_assignment(
         &mut f.core,
         "alice",
-        script::compiled_assignment(script::CompiledId("Sherlock")),
+        script::compiled_assignment(script::CompiledId("Grinch")),
     ));
     f.core.flush_writes();
 
@@ -3926,7 +3947,7 @@ fn start_all_over_n_members_dispatches_at_most_the_permit_budget_in_the_click_fr
     let names = bulk_names(5);
     let name_refs: Vec<&str> = names.iter().map(String::as_str).collect();
     let mut f = native_fixture("pace-click", &name_refs);
-    let id = script::CompiledId("Sherlock");
+    let id = script::CompiledId("Gatherer");
     for name in &names {
         f.assign_compiled(name, id);
     }
@@ -3987,7 +4008,7 @@ fn stop_all_cancels_queued_starts() {
     let names = bulk_names(5);
     let name_refs: Vec<&str> = names.iter().map(String::as_str).collect();
     let mut f = native_fixture("pace-stop", &name_refs);
-    let id = script::CompiledId("Sherlock");
+    let id = script::CompiledId("Gatherer");
     for name in &names {
         f.assign_compiled(name, id);
     }
@@ -4024,8 +4045,8 @@ fn reassign_while_queued_does_not_start_stale_work() {
     let names = bulk_names(5);
     let name_refs: Vec<&str> = names.iter().map(String::as_str).collect();
     let mut f = native_fixture("pace-reassign", &name_refs);
-    let first = script::CompiledId("Sherlock");
-    let second = script::CompiledId("Gatherer");
+    let first = script::CompiledId("Gatherer");
+    let second = script::CompiledId("Grinch");
     for name in &names {
         f.assign_compiled(name, first);
     }
@@ -4067,8 +4088,8 @@ fn prepared_start_rechecks_assignment_removal_and_logout_before_dispatch() {
             &format!("pace-inflight-{scenario}"),
             &["inflight-alice", "inflight-bob"],
         );
-        let first = script::CompiledId("Sherlock");
-        let replacement = script::CompiledId("Gatherer");
+        let first = script::CompiledId("Gatherer");
+        let replacement = script::CompiledId("Grinch");
         for name in ["inflight-alice", "inflight-bob"] {
             f.assign_compiled(name, first);
         }
@@ -4117,7 +4138,7 @@ fn remove_while_queued_does_not_start_stale_work() {
     let names = bulk_names(5);
     let name_refs: Vec<&str> = names.iter().map(String::as_str).collect();
     let mut f = native_fixture("pace-remove", &name_refs);
-    let id = script::CompiledId("Sherlock");
+    let id = script::CompiledId("Gatherer");
     for name in &names {
         f.assign_compiled(name, id);
     }
@@ -4163,7 +4184,7 @@ fn logout_while_queued_does_not_start_stale_work() {
     let names = bulk_names(5);
     let name_refs: Vec<&str> = names.iter().map(String::as_str).collect();
     let mut f = native_fixture("pace-logout", &name_refs);
-    let id = script::CompiledId("Sherlock");
+    let id = script::CompiledId("Gatherer");
     for name in &names {
         f.assign_compiled(name, id);
     }
@@ -4195,7 +4216,7 @@ fn single_start_of_a_queued_member_is_immediate() {
     let names = bulk_names(5);
     let name_refs: Vec<&str> = names.iter().map(String::as_str).collect();
     let mut f = native_fixture("pace-single", &name_refs);
-    let id = script::CompiledId("Sherlock");
+    let id = script::CompiledId("Gatherer");
     for name in &names {
         f.assign_compiled(name, id);
     }
@@ -4726,7 +4747,7 @@ fn marked_catalog_assignment_reports_pending_until_scan_settles() {
 #[test]
 fn marked_start_removed_member_is_named_and_never_dispatched() {
     let mut f = native_fixture("pace-marked-remove", &["alice", "bob", "carol"]);
-    let id = script::CompiledId("Sherlock");
+    let id = script::CompiledId("Gatherer");
     for name in ["alice", "bob", "carol"] {
         f.assign_compiled(name, id);
     }
@@ -4768,7 +4789,7 @@ fn start_all_while_a_marked_batch_waits_joins_its_report() {
     let names = bulk_names(5);
     let name_refs: Vec<&str> = names.iter().map(String::as_str).collect();
     let mut f = native_fixture("pace-overlap-marked", &name_refs);
-    let id = script::CompiledId("Sherlock");
+    let id = script::CompiledId("Gatherer");
     for name in &names {
         f.assign_compiled(name, id);
     }
@@ -4906,7 +4927,7 @@ fn logout_while_waiting_after_a_second_start_all_is_reported() {
     let names: Vec<String> = (0..4).map(|i| format!("lgo-bot{i}")).collect();
     let name_refs: Vec<&str> = names.iter().map(String::as_str).collect();
     let mut f = native_fixture("pace-overlap-logout", &name_refs);
-    let id = script::CompiledId("Sherlock");
+    let id = script::CompiledId("Gatherer");
     for name in &names {
         f.assign_compiled(name, id);
     }
@@ -4939,7 +4960,7 @@ fn logout_while_waiting_after_a_second_start_all_is_reported() {
 #[test]
 fn stop_on_marked_rows_reports_waiting_rows_as_cancelled() {
     let mut f = native_fixture("pace-stop-marked", &["alice", "bob", "carol"]);
-    let id = script::CompiledId("Sherlock");
+    let id = script::CompiledId("Gatherer");
     for name in ["alice", "bob", "carol"] {
         f.assign_compiled(name, id);
     }

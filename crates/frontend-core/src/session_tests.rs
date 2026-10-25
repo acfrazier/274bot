@@ -225,7 +225,7 @@ fn start_compiled_script(
     assert!(scripts.persist_assignment(
         session,
         profile,
-        script::compiled_assignment(script::CompiledId("Sherlock")),
+        script::compiled_assignment(script::CompiledId("Gatherer")),
     ));
     session.flush_writes();
     scripts.start_profile(session, profile, None).unwrap();
