@@ -644,6 +644,17 @@ impl Guardian {
         if !on_box || !settings.random_events {
             self.box_solve = BoxSolve::default();
         }
+        if fresh && self.claim != RandomClaim::Host {
+            // No native action runs under a script claim. Shift the origin
+            // by those observed ticks so neither wait spends Host's budget.
+            let paused = (tick as u32).wrapping_sub(self.last_tick as u32);
+            match &mut self.box_solve.phase {
+                BoxPhase::Opening { tick } | BoxPhase::Answering { tick, .. } => {
+                    *tick = tick.wrapping_add(paused);
+                }
+                _ => {}
+            }
+        }
         let inert_box = on_box && self.box_solve.phase == BoxPhase::Stalled;
 
         // A pause counts down once per game tick; the Rub resumes when it

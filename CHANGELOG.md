@@ -44,6 +44,7 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.6` 
   This also affected 0.2.6.
 - Strange box handling now retries a missing Open response or answer result.
   It uses game ticks and the game's messages and inventory changes.
+  Time while a script owns the box does not consume the Guardian's wait budget.
   After bounded retries, it reports the last failure and releases the script
   instead of waiting forever. A fresh message that the box replicated starts
   another bounded set of attempts. This also affected 0.2.6.
