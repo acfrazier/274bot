@@ -52,8 +52,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.6` 
 ### Random events
 
 - The Guardian now handles a held random event when a running Load script
-  stops ignoring it, stops running, or resets. A later change by a running
-  script can return the same event to that script.
+  stops ignoring it, is paused or stopped, or fails. A later change by a
+  running script can return the same event to that script.
   Before, a Strange box could remain unhandled and interrupt every walk.
   This also affected 0.2.6.
 - Strange box handling now retries a missing Open response or answer result.
