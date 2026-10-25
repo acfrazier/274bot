@@ -468,6 +468,7 @@ fn the_unlock_focus_is_a_fleet_member_and_starts_a_loaded_script() {
     s.core.set_spawn_workers(false);
     assert!(!s.multibox);
     assert!(s.unlock_at(&vault_path, "test-passphrase-01"));
+    s.poll_panel_preferences();
     assert_eq!(s.focused_name().as_deref(), Some("alice"));
     assert!(s
         .core

@@ -4686,3 +4686,99 @@ fn a_refusal_line_names_the_command_the_bots_and_the_reason() {
     let bare = lines_with("on application: NotStaged");
     assert!(!bare.is_empty(), "the typed reason is in the line");
 }
+
+// ---- LOGOUT-RETRY-1025: Log out reaches a login that is still retrying ----
+
+/// Publish `name` as a bot whose login was refused and whose slot still
+/// wants the login, so the host retries it after its backoff.
+fn publish_refused_retry(d: &mut HeadlessDriver, name: &str) {
+    publish(d, name, |row| {
+        row.connected = false;
+        row.ingame = false;
+        row.startup_phase = host_play::StartupPhase::Error;
+        row.startup_phase_started = std::time::Instant::now();
+        row.error = Some("Error connecting to server. (connect: Connection refused)".into());
+    });
+}
+
+/// A bot whose login is refused and retried keeps retrying for ever unless
+/// Log out reaches it. Fleet Log out (one shared plan for panel and TUI)
+/// takes it, parks it so the slot makes no further login attempt, and
+/// refuses a bot that never logged in with the one reason it always had.
+#[test]
+fn logout_retry_fleet_takes_a_bot_whose_login_is_retrying_and_stops_the_retries() {
+    let mut d = driver("logout-retry-fleet", &["alice", "bob", "carol"]);
+    load(&mut d, &["alice", "bob", "carol"]);
+    d.submit(OperatorCommand::Login, Targets::Profile("bob"))
+        .expect("login");
+    publish_refused_retry(&mut d, "bob");
+    let bob = d.session().fleet_view().row("bob").expect("bob").snapshot();
+    assert_eq!(
+        (bob.phase(), bob.retrying()),
+        (crate::Phase::LoginError, true),
+        "bob is between retries"
+    );
+    let arm = arm_of(&d, "bob");
+    assert!(arm.wants_login(), "the slot would retry");
+
+    mark(&mut d, &["alice", "bob", "carol"]);
+    let planned = d
+        .submit(
+            OperatorCommand::PlanFleetAction(crate::FleetAction::Logout),
+            Targets::Application,
+        )
+        .expect("plan admitted");
+    assert_eq!(
+        d.session().command_failure(planned.request()),
+        None,
+        "bob has a login to cancel"
+    );
+    assert_eq!(plan_names(&d), ["bob"]);
+    let prompt = d.session().fleet_plan().expect("plan").prompt().to_owned();
+    assert!(
+        prompt.starts_with("Log out 3 marked bot")
+            || prompt.starts_with("Log out 1 marked bot: bob."),
+        "{prompt}"
+    );
+    assert!(
+        prompt.contains("alice: not logged in") && prompt.contains("carol: not logged in"),
+        "the bots that never logged in are skipped: {prompt}"
+    );
+    let run = run_plan(&mut d);
+    assert_eq!(terminal(&d, run, "bob"), Some(done()));
+    assert!(arm.login_latched(), "bob is parked logged out");
+    assert!(!arm.wants_login(), "the retry loop has nothing to retry");
+    for name in ["alice", "carol"] {
+        assert!(
+            !arm_of(&d, name).login_latched(),
+            "{name} was never logged out: it never logged in"
+        );
+    }
+    d.poll();
+    let bob = d.session().fleet_view().row("bob").expect("bob").snapshot();
+    assert_eq!(bob.phase(), crate::Phase::LoggedOut);
+    assert!(
+        !bob.logout_eligibility().eligible(),
+        "a parked bot has nothing more to cancel"
+    );
+}
+
+/// With only never-logged-in bots marked, Log out still has no bot to act
+/// on, and the refusal names each one.
+#[test]
+fn logout_retry_fleet_still_refuses_bots_that_never_logged_in() {
+    let mut d = driver("logout-retry-refusal", &["alice", "bob"]);
+    load(&mut d, &["alice", "bob"]);
+    mark(&mut d, &["alice", "bob"]);
+    let planned = d
+        .submit(
+            OperatorCommand::PlanFleetAction(crate::FleetAction::Logout),
+            Targets::Application,
+        )
+        .expect("plan admitted");
+    assert_eq!(
+        d.session().command_failure(planned.request()),
+        Some("Log out: no bot to act on (alice: not logged in, bob: not logged in)")
+    );
+    assert!(d.session().fleet_plan().is_none());
+}

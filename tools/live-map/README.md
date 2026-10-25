@@ -156,6 +156,30 @@ boundary on an injected clock, and the drawn panel and terminal text.
 | `tui/src/status.rs` | `tui.login-notice-headless` runs the status pane test and the 120x40 and 80x24 capture test `bin::tests::a_login_notice_stands_through_retry_states_and_expires_at_both_sizes`. Set `TUI_CAPTURE_DIR` to retain text and JSON captures. |
 | (panel top line) | `panel.login-notice-headless` draws the panel banner and status rows through the sequence above. The `panel/src/app.rs` change also selects the panel cells of its own cover entries. |
 
+## Log out of a retrying login
+
+`frontend-core.logout-retry-refused` runs
+`log_out_stops_a_login_that_keeps_retrying_for_the_single_command_and_the_fleet_plan`
+in `crates/frontend-core/tests/logout_retry_refused.rs`. A real slot worker
+logs in through `HeadlessDriver` to a local listener that accepts each
+connection and closes it, so the login fails and is retried with the host's
+backoff, and every attempt is counted on the wire. After two attempts the
+cell checks that Log out is eligible in every state the retry loop passes
+through, then logs the bot out, first with the single command that the panel
+button and the TUI key submit, then with the Fleet Log out plan. A bot that
+never logged in is skipped. Accepts are counted from the moment Log out is
+sent, with no settling period. The requirement is that no new login attempt
+starts after Log out, so at most one accept is allowed (an attempt that had
+already passed the host's pre-connect check may still open one socket inside
+the client connect, `vendor/fr-client-rust/crates/client/src/io/client_stream.rs:760-768,810-811`,
+which the client closes at once) and none after it for 20 seconds, longer than
+the next backoff step. The cell takes about 65 seconds of wall clock and needs
+no game engine.
+
+| Changed paths | Proof |
+|---|---|
+| `frontend-core/src/bot_projection.rs` (`LogoutEligibility`), `frontend-core/src/slot_view.rs`, `panel/src/app.rs`, `tui/src/app.rs` | `frontend-core.logout-retry-refused` (above). `frontend-core.logout-retry-headless` runs the projection table, the Fleet and Log out marked plans, the poll test and the repeat-guard tests (guard trip, operator Log out then Log in, a worker that ends, a reaped worker). `panel.logout-retry-headless` runs the button gate, the drawn side-panel Log out button, the focused-slot projection and the Fleet window's Log out all. `tui.logout-retry-headless` runs the `u` key, the dim and lit `[Log out u]` button and Fleet Log out at 120x40 and 80x24 (set `LIVE_EVIDENCE_DIR` to retain captures). |
+
 ## Essence router call paths
 
 The essence files and the shared `navigation.rs` file select the 289

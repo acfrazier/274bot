@@ -7,6 +7,18 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.6` 
 
 ### Panel and terminal app
 
+- **Log out** now stops a bot whose login keeps failing. A bot that cannot
+  log in (the server is down or refuses it) retries with a growing wait of up
+  to 60 seconds. In 0.2.6 the panel's **Log out** button was greyed out for
+  such a bot and Fleet **Log out all** said "not logged in", so only quitting
+  stopped it. Log out is now offered for a bot that is logging in, waiting to
+  retry or queued, in the panel and the terminal app, for one bot and for
+  Fleet. It parks the bot logged out: no new login attempt starts after you
+  press it. A bot that never logged in still has nothing to log out of, and
+  the terminal app's `u` now says so instead of marking it logged out. The
+  login error line still fades after 15 seconds. **Log out marked** now
+  skips a bot whose login error is waiting for you to act; in 0.2.6 it logged
+  that bot out.
 - Saving shared preferences no longer waits for disk on the panel, TUI or bot
   thread. Accepted saves continue when you close a settings window. A slow
   save no longer erases an unsaved checkbox or folder entry during refresh.
@@ -31,6 +43,7 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.6` 
 - A message on the panel's red line or the terminal app's message line now goes away by itself 15 seconds after it appears. An action that fixes the problem clears it at once. In the terminal app, a message that a key, palette entry or menu item shows because its command cannot run now clears as soon as the reason it names is gone: for example, focusing a bot clears "Log in: no bot selected", and picking a script clears "Script parameters: pick a script first". The one exception is "no message", which only a newer message replaces. The terminal app's "is not loaded" message clears when that bot is logged in, and focusing a bot clears "no focused profile" and the Guardian settings message. In the panel, focusing a bot clears "focus a bot first", and a finished save clears "profile is still saving". A newer message replaces it and starts its own 15 seconds. The same text shown again without a new refusal keeps its first 15 seconds. Before, a message stayed until you did something else that happened to clear it.
 - Hovering the Fleet's result line (for example "9 bots stopped") now shows its text in a normal tooltip. It was a thin column one letter wide and as tall as the window.
 - After a failed login, the panel's top line now keeps the login error in red for 15 seconds, also while the bot tries again, waits in the login queue or is logged out in that time. The bot's current state shows under the error. Before, the next state replaced the error almost at once, and the error came back when the next attempt failed. A successful login clears the error at once. A newer failed login replaces it and starts the 15 seconds again, also when its words are the same. The status rows of the panel and the terminal app show this error in red in place of the `last error` row. After the 15 seconds the `last error` row comes back, as before.
+- Right after you unlock the vault, and when you load bots one at a time, each bot now takes its place in your saved profile order at once. Before, such a bot could appear in the wrong place until the next refresh.
 
 ### Host
 
@@ -50,6 +63,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.6` 
 
 ### Fixed during development
 
+- Startup waits for saved preferences before it chooses and loads a profile.
+  Saving a new profile during that wait keeps the terminal app's original boot load and login.
+  Renaming the boot profile keeps its pending load attached to the same profile.
 - `tui-play --user NAME` stops on a missing vault before it prepares the game cache or reads the engine login key. The message is the same. A local server with no engine directory still stops with the engine-directory error.
 - Saving the first profile now waits for saved preferences before it loads
   or logs in. The panel and terminal app use their existing startup gates.

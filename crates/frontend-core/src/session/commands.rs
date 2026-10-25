@@ -2251,7 +2251,7 @@ impl<Io> OperatorSession<Io> {
         surface: &mut S,
         submitted: &mut Submitted,
     ) {
-        use crate::views::Phase;
+        use crate::bot_projection::LogoutEligibility;
         let planned = self.planned_marks();
         let mut rows = match planned.as_ref() {
             Some(marks) => self.gone_marks(Some(marks)),
@@ -2259,18 +2259,22 @@ impl<Io> OperatorSession<Io> {
         };
         let mut eligible = Vec::new();
         for name in self.admitted_names(request) {
-            let phase = self.fleet_view().row(&name).map(|row| row.phase());
             let member = self.members().contains(&name);
-            match phase.filter(|_| member) {
-                None | Some(Phase::Offline | Phase::LoggedOut | Phase::Failed) => {
-                    rows.push(crate::BulkRow::new(
-                        &name,
-                        crate::BulkOutcome::skipped("not logged in"),
-                    ));
-                    let skipped = Applied::Skipped(SkipReason::NotLoggedIn);
-                    self.settle_member(request, OperatorCommand::Logout, &name, skipped, submitted);
-                }
-                Some(_) => eligible.push(name),
+            let logout = self
+                .fleet_view()
+                .row(&name)
+                .filter(|_| member)
+                .map(|row| row.logout_eligibility())
+                .unwrap_or(LogoutEligibility::NotLoggedIn);
+            if logout.eligible() {
+                eligible.push(name);
+            } else {
+                rows.push(crate::BulkRow::new(
+                    &name,
+                    crate::BulkOutcome::skipped(LogoutEligibility::REFUSAL),
+                ));
+                let skipped = Applied::Skipped(SkipReason::NotLoggedIn);
+                self.settle_member(request, OperatorCommand::Logout, &name, skipped, submitted);
             }
         }
         if !eligible.is_empty() {

@@ -446,6 +446,58 @@ fn login_and_logout_reach_only_the_bots_they_apply_to() {
     );
 }
 
+/// LOGOUT-RETRY-1025: Log out marked reaches a bot whose refused login is
+/// still retrying and skips one that never logged in and one whose error
+/// withdrew the login (nothing retries it).
+#[test]
+fn logout_retry_marked_takes_a_retrying_login_and_skips_one_held_by_an_error() {
+    let mut f = fixture("marked-logout-retry", &["alice", "bob", "carol"], 3);
+    for name in ["bob", "carol"] {
+        f.core
+            .play()
+            .unwrap()
+            .arm(name)
+            .unwrap()
+            .arm_explicit_login();
+    }
+    f.core
+        .play()
+        .unwrap()
+        .arm("carol")
+        .unwrap()
+        .hold_login_on_error_for_test();
+    {
+        let mut rows = f.core.play().unwrap().statuses.lock().unwrap();
+        for name in ["bob", "carol"] {
+            rows.push(SlotStatus {
+                username: name.into(),
+                startup_phase: host_play::StartupPhase::Error,
+                startup_phase_started: Instant::now(),
+                error: Some("Error connecting to server.".into()),
+                ..SlotStatus::default()
+            });
+        }
+    }
+    f.core.poll();
+    let phase = |f: &Fixture, name: &str| {
+        let row = f.core.fleet_view().row(name).unwrap();
+        (row.phase(), row.retrying())
+    };
+    assert_eq!(phase(&f, "bob"), (crate::Phase::LoginError, true));
+    assert_eq!(phase(&f, "carol"), (crate::Phase::LoginError, false));
+
+    let out = marked_row(&mut f, crate::OperatorCommand::Logout, &[1, 2, 3]);
+
+    assert_eq!(
+        out.summary(),
+        "Log out marked: logging out 1, skipped 2: alice: not logged in, carol: not logged in"
+    );
+    let arm = |f: &Fixture, name: &str| f.core.play().unwrap().arm(name).unwrap();
+    assert!(arm(&f, "bob").login_latched(), "bob is parked");
+    assert!(!arm(&f, "bob").wants_login(), "bob's retries stop");
+    assert!(!arm(&f, "alice").login_latched());
+}
+
 #[test]
 fn marked_logout_cancels_a_memory_relog_login_half() {
     let mut f = fixture("marked-logout-relog", &["alice", "bob"], 2);
