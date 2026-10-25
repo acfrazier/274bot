@@ -5,7 +5,7 @@
     "selector": "reader.chatContinueComId",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
-    "runtime": "crates/script/src/shim/client_adapter.js:128",
+    "runtime": "crates/script-js/src/shim/client_adapter.js:128",
     "async": false
   },
   {
@@ -14,7 +14,7 @@
     "selector": "reader.bankComId",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
-    "runtime": "crates/script/src/shim/client_adapter.js:248",
+    "runtime": "crates/script-js/src/shim/client_adapter.js:248",
     "async": false
   },
   {
@@ -23,7 +23,7 @@
     "selector": "Game.castOnNpc",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
-    "runtime": "crates/script/src/shim/game.js:208",
+    "runtime": "crates/script-js/src/shim/game.js:208",
     "async": true
   },
   {
@@ -32,7 +32,7 @@
     "selector": "purgePackAtBank",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: the multi-step bank transaction is not implemented.",
-    "runtime": "crates/script/src/shim/banking.js:141",
+    "runtime": "crates/script-js/src/shim/banking.js:141",
     "async": true
   },
   {
@@ -41,7 +41,7 @@
     "selector": "withdrawCoins",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: the multi-step bank transaction is not implemented.",
-    "runtime": "crates/script/src/shim/banking.js:145",
+    "runtime": "crates/script-js/src/shim/banking.js:145",
     "async": true
   },
   {
@@ -50,7 +50,7 @@
     "selector": "bankPace",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: randomized pacing is not carried into native compatibility.",
-    "runtime": "crates/script/src/shim/banking.js:149",
+    "runtime": "crates/script-js/src/shim/banking.js:149",
     "async": true
   },
   {
@@ -59,7 +59,7 @@
     "selector": "bankPaceTicks",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: randomized pacing is not carried into native compatibility.",
-    "runtime": "crates/script/src/shim/banking.js:153",
+    "runtime": "crates/script-js/src/shim/banking.js:153",
     "async": false
   },
   {
@@ -68,7 +68,7 @@
     "selector": "sortBank",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
-    "runtime": "crates/script/src/shim/bank_sort.js:8",
+    "runtime": "crates/script-js/src/shim/bank_sort.js:8",
     "async": true
   },
   {
@@ -77,7 +77,7 @@
     "selector": "findQuestJunk",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
-    "runtime": "crates/script/src/shim/bank_quest_junk.js:6",
+    "runtime": "crates/script-js/src/shim/bank_quest_junk.js:6",
     "async": false
   },
   {
@@ -86,7 +86,7 @@
     "selector": "Shop.buyById",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
-    "runtime": "crates/script/src/shim/shop.js:64",
+    "runtime": "crates/script-js/src/shim/shop.js:64",
     "async": false
   },
   {
@@ -95,7 +95,7 @@
     "selector": "ChatDialog.makeOne",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
-    "runtime": "crates/script/src/shim/chat_dialog.js:66",
+    "runtime": "crates/script-js/src/shim/chat_dialog.js:66",
     "async": true
   },
   {
@@ -104,7 +104,7 @@
     "selector": "Quests.journal",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
-    "runtime": "crates/script/src/shim/quests.js:25",
+    "runtime": "crates/script-js/src/shim/quests.js:25",
     "async": false
   },
   {
@@ -113,7 +113,7 @@
     "selector": "Traversal.remaining",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
-    "runtime": "crates/script/src/shim/traversal.js:93",
+    "runtime": "crates/script-js/src/shim/traversal.js:93",
     "async": false
   },
   {
@@ -122,7 +122,7 @@
     "selector": "Traversal.requestRepath",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
-    "runtime": "crates/script/src/shim/traversal.js:99",
+    "runtime": "crates/script-js/src/shim/traversal.js:99",
     "async": false
   },
   {
@@ -131,7 +131,7 @@
     "selector": "gotoNpc",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
-    "runtime": "crates/script/src/shim/primitives.js:73",
+    "runtime": "crates/script-js/src/shim/primitives.js:73",
     "async": true
   },
   {
@@ -140,7 +140,7 @@
     "selector": "talkChoosingBy",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
-    "runtime": "crates/script/src/shim/primitives.js:108",
+    "runtime": "crates/script-js/src/shim/primitives.js:108",
     "async": true
   },
   {
@@ -149,7 +149,7 @@
     "selector": "shouldWalkHomeToGatherAnchor",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
-    "runtime": "crates/script/src/shim/anchor.js:9",
+    "runtime": "crates/script-js/src/shim/anchor.js:9",
     "async": false
   },
   {
@@ -158,7 +158,7 @@
     "selector": "shouldSoftHomeFromGatherMiss",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: no arguments are inspected and no successful result is produced.",
-    "runtime": "crates/script/src/shim/anchor.js:13",
+    "runtime": "crates/script-js/src/shim/anchor.js:13",
     "async": false
   },
   {
@@ -167,7 +167,7 @@
     "selector": "walkApproach",
     "operation": "not-impl",
     "reason": "Unconditional not-impl; retains frozen parameter types but has no successful result or required arguments.",
-    "runtime": "crates/script/src/shim/hunting_supply.js:82",
+    "runtime": "crates/script-js/src/shim/hunting_supply.js:82",
     "async": false
   },
   {
@@ -176,7 +176,7 @@
     "selector": "withdrawTo",
     "operation": "not-impl",
     "reason": "Unconditional not-impl; retains frozen parameter types but has no successful result or required arguments.",
-    "runtime": "crates/script/src/shim/hunting_supply.js:86",
+    "runtime": "crates/script-js/src/shim/hunting_supply.js:86",
     "async": false
   },
   {
@@ -185,7 +185,7 @@
     "selector": "Fight.hasChaseTarget",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: full hunting combat compatibility waits for the compat rearchitecture; no successful result is produced.",
-    "runtime": "crates/script/src/shim/hunting_combat.js:139",
+    "runtime": "crates/script-js/src/shim/hunting_combat.js:139",
     "async": false
   },
   {
@@ -194,7 +194,7 @@
     "selector": "ClueDuelSearch.tick",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: clue-duel search remains a behavior family for the compat rearchitecture; no successful result is produced.",
-    "runtime": "crates/script/src/shim/clue_duel.js:41",
+    "runtime": "crates/script-js/src/shim/clue_duel.js:41",
     "async": true
   },
   {
@@ -203,7 +203,7 @@
     "selector": "resetClueDuelSearch",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: clue-duel search state remains a behavior family for the compat rearchitecture; no successful result is produced.",
-    "runtime": "crates/script/src/shim/clue_duel_travel.js:10",
+    "runtime": "crates/script-js/src/shim/clue_duel_travel.js:10",
     "async": false
   }
 ,
@@ -213,7 +213,7 @@
     "selector": "stableClosedPoll",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: rs2b0t's time-based trade-closure pacing is not carried into native compatibility.",
-    "runtime": "crates/script/src/shim/drive_partner_trade.js:59",
+    "runtime": "crates/script-js/src/shim/drive_partner_trade.js:59",
     "async": false
   },
   {
@@ -222,7 +222,7 @@
     "selector": "nearestWalkableBank",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: caller-owned walk-cost callbacks are not handled by the native bank selector.",
-    "runtime": "crates/script/src/shim/bank_locations.js:61",
+    "runtime": "crates/script-js/src/shim/bank_locations.js:61",
     "async": false
   },
   {
@@ -231,7 +231,7 @@
     "selector": "nearestWalkableBankAsync",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: caller-owned async walk-cost callbacks are not handled by the native bank selector.",
-    "runtime": "crates/script/src/shim/bank_locations.js:65",
+    "runtime": "crates/script-js/src/shim/bank_locations.js:65",
     "async": true
   },
   {
@@ -240,7 +240,7 @@
     "selector": "bankCostForFinder",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: the PathFinder callback wrapper is not exposed by the native bank selector.",
-    "runtime": "crates/script/src/shim/bank_locations.js:69",
+    "runtime": "crates/script-js/src/shim/bank_locations.js:69",
     "async": false
   },
   {
@@ -249,7 +249,7 @@
     "selector": "bankCostForNavigator",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: the Navigator callback wrapper is not exposed by the native bank selector.",
-    "runtime": "crates/script/src/shim/bank_locations.js:73",
+    "runtime": "crates/script-js/src/shim/bank_locations.js:73",
     "async": false
   },
   {
@@ -258,7 +258,7 @@
     "selector": "buildCatalog",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: live market catalog construction waits for the native catalog family.",
-    "runtime": "crates/script/src/shim/catalog.js:63",
+    "runtime": "crates/script-js/src/shim/catalog.js:63",
     "async": false
   },
   {
@@ -267,7 +267,7 @@
     "selector": "searchCatalog",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: live market catalog search waits for the native catalog family.",
-    "runtime": "crates/script/src/shim/catalog.js:67",
+    "runtime": "crates/script-js/src/shim/catalog.js:67",
     "async": false
   },
   {
@@ -276,7 +276,7 @@
     "selector": "resolveByName",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: live market name resolution waits for the native catalog family.",
-    "runtime": "crates/script/src/shim/catalog.js:71",
+    "runtime": "crates/script-js/src/shim/catalog.js:71",
     "async": false
   },
   {
@@ -285,7 +285,7 @@
     "selector": "resetLiveCatalog",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: live market catalog lifetime management waits for the native catalog family.",
-    "runtime": "crates/script/src/shim/catalog.js:75",
+    "runtime": "crates/script-js/src/shim/catalog.js:75",
     "async": false
   },
   {
@@ -294,7 +294,7 @@
     "selector": "trailWalkOpts",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: rs2b0t clue walking pace and options are not carried into native compatibility.",
-    "runtime": "crates/script/src/shim/clue_executor.js:18",
+    "runtime": "crates/script-js/src/shim/clue_executor.js:18",
     "async": false
   },
   {
@@ -303,7 +303,7 @@
     "selector": "extraItemShop",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: clue-tool acquisition policy waits for the native clue behavior family.",
-    "runtime": "crates/script/src/shim/clue_tool_acquire.js:22",
+    "runtime": "crates/script-js/src/shim/clue_tool_acquire.js:22",
     "async": false
   },
   {
@@ -312,7 +312,7 @@
     "selector": "gateItemShop",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: clue-tool acquisition policy waits for the native clue behavior family.",
-    "runtime": "crates/script/src/shim/clue_tool_acquire.js:26",
+    "runtime": "crates/script-js/src/shim/clue_tool_acquire.js:26",
     "async": false
   },
   {
@@ -321,7 +321,7 @@
     "selector": "resolveLoopCadence",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: rs2b0t's loop-cadence pacing is not carried into native compatibility.",
-    "runtime": "crates/script/src/shim/bot.js:11",
+    "runtime": "crates/script-js/src/shim/bot.js:11",
     "async": false
   },
   {
@@ -330,7 +330,7 @@
     "selector": "BranchTask.validate",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: behavior-tree task execution waits for the native compat rearchitecture.",
-    "runtime": "crates/script/src/shim/bot.js:20",
+    "runtime": "crates/script-js/src/shim/bot.js:20",
     "async": false
   },
   {
@@ -339,7 +339,7 @@
     "selector": "BranchTask.success",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: behavior-tree task execution waits for the native compat rearchitecture.",
-    "runtime": "crates/script/src/shim/bot.js:24",
+    "runtime": "crates/script-js/src/shim/bot.js:24",
     "async": false
   },
   {
@@ -348,7 +348,7 @@
     "selector": "BranchTask.failure",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: behavior-tree task execution waits for the native compat rearchitecture.",
-    "runtime": "crates/script/src/shim/bot.js:28",
+    "runtime": "crates/script-js/src/shim/bot.js:28",
     "async": false
   },
   {
@@ -357,7 +357,7 @@
     "selector": "LeafTask.execute",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: behavior-tree task execution waits for the native compat rearchitecture.",
-    "runtime": "crates/script/src/shim/bot.js:38",
+    "runtime": "crates/script-js/src/shim/bot.js:38",
     "async": false
   },
   {
@@ -366,7 +366,7 @@
     "selector": "invalidateLocSnapshots",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: client snapshot invalidation has no native adapter.",
-    "runtime": "crates/script/src/shim/client_adapter.js:5",
+    "runtime": "crates/script-js/src/shim/client_adapter.js:5",
     "async": false
   },
   {
@@ -375,7 +375,7 @@
     "selector": "detach",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: client detachment has no native adapter.",
-    "runtime": "crates/script/src/shim/client_adapter.js:6",
+    "runtime": "crates/script-js/src/shim/client_adapter.js:6",
     "async": false
   },
   {
@@ -384,7 +384,7 @@
     "selector": "activeStatsReady",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: active-stat readiness has no native adapter.",
-    "runtime": "crates/script/src/shim/client_adapter.js:7",
+    "runtime": "crates/script-js/src/shim/client_adapter.js:7",
     "async": false
   },
   {
@@ -393,7 +393,7 @@
     "selector": "currentLoginStatsReady",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: login-stat readiness has no native adapter.",
-    "runtime": "crates/script/src/shim/client_adapter.js:8",
+    "runtime": "crates/script-js/src/shim/client_adapter.js:8",
     "async": false
   },
   {
@@ -402,7 +402,7 @@
     "selector": "locHullHeight",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: location model hull height has no native adapter.",
-    "runtime": "crates/script/src/shim/client_adapter.js:9",
+    "runtime": "crates/script-js/src/shim/client_adapter.js:9",
     "async": false
   },
   {
@@ -411,7 +411,7 @@
     "selector": "resolveLocModelExtents",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: location model extents have no native adapter.",
-    "runtime": "crates/script/src/shim/client_adapter.js:10",
+    "runtime": "crates/script-js/src/shim/client_adapter.js:10",
     "async": false
   },
   {
@@ -420,7 +420,7 @@
     "selector": "attach",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: client attachment has no native adapter.",
-    "runtime": "crates/script/src/shim/client_adapter.js:11",
+    "runtime": "crates/script-js/src/shim/client_adapter.js:11",
     "async": false
   },
   {
@@ -429,7 +429,7 @@
     "selector": "setPacketListener",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: packet listeners have no native adapter.",
-    "runtime": "crates/script/src/shim/client_adapter.js:12",
+    "runtime": "crates/script-js/src/shim/client_adapter.js:12",
     "async": false
   },
   {
@@ -438,7 +438,7 @@
     "selector": "resetObjCatalog",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: the cached object catalogue has no reset operation.",
-    "runtime": "crates/script/src/shim/client_adapter.js:13",
+    "runtime": "crates/script-js/src/shim/client_adapter.js:13",
     "async": false
   },
   {
@@ -447,7 +447,7 @@
     "selector": "readRetaliateControls",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: retaliation controls have no native adapter.",
-    "runtime": "crates/script/src/shim/client_adapter.js:14",
+    "runtime": "crates/script-js/src/shim/client_adapter.js:14",
     "async": false
   },
   {
@@ -456,7 +456,7 @@
     "selector": "readModalButtons",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: modal-button reads have no native adapter.",
-    "runtime": "crates/script/src/shim/client_adapter.js:15",
+    "runtime": "crates/script-js/src/shim/client_adapter.js:15",
     "async": false
   },
   {
@@ -465,7 +465,7 @@
     "selector": "readSelectButtonLabelsByVarp",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: select-button labels have no native adapter.",
-    "runtime": "crates/script/src/shim/client_adapter.js:16",
+    "runtime": "crates/script-js/src/shim/client_adapter.js:16",
     "async": false
   },
   {
@@ -474,7 +474,7 @@
     "selector": "combatShowingThreshold",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: the combat-showing threshold has no native adapter.",
-    "runtime": "crates/script/src/shim/client_adapter.js:17",
+    "runtime": "crates/script-js/src/shim/client_adapter.js:17",
     "async": false
   },
   {
@@ -483,7 +483,7 @@
     "selector": "resolveWoodcuttingLocation",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: script-specific camps have no verified native location source.",
-    "runtime": "crates/script/src/shim/data/woodcutting_locations.js:9",
+    "runtime": "crates/script-js/src/shim/data/woodcutting_locations.js:9",
     "async": false
   },
   {
@@ -492,7 +492,7 @@
     "selector": "resolveRunPolicy",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: run policy has no native state adapter.",
-    "runtime": "crates/script/src/shim/run_manager.js:9",
+    "runtime": "crates/script-js/src/shim/run_manager.js:9",
     "async": false
   },
   {
@@ -501,7 +501,7 @@
     "selector": "shouldEnableRun",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: run policy has no native state adapter.",
-    "runtime": "crates/script/src/shim/run_manager.js:13",
+    "runtime": "crates/script-js/src/shim/run_manager.js:13",
     "async": false
   },
   {
@@ -510,7 +510,7 @@
     "selector": "loopReadyOrDetached",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: runner lifecycle state has no native adapter.",
-    "runtime": "crates/script/src/shim/script_runner.js:22",
+    "runtime": "crates/script-js/src/shim/script_runner.js:22",
     "async": false
   },
   {
@@ -519,7 +519,7 @@
     "selector": "stopReasonOf",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: runner lifecycle state has no native adapter.",
-    "runtime": "crates/script/src/shim/script_runner.js:26",
+    "runtime": "crates/script-js/src/shim/script_runner.js:26",
     "async": false
   },
   {
@@ -528,7 +528,7 @@
     "selector": "settingOptionLabel",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: settings option labels have no native resolver.",
-    "runtime": "crates/script/src/shim/settings.js:78",
+    "runtime": "crates/script-js/src/shim/settings.js:78",
     "async": false
   },
   {
@@ -537,7 +537,7 @@
     "selector": "suspectOrder",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: suspect ordering has no verified native content source.",
-    "runtime": "crates/script/src/shim/murder_areas.js:42",
+    "runtime": "crates/script-js/src/shim/murder_areas.js:42",
     "async": false
   },
   {
@@ -546,7 +546,7 @@
     "selector": "resolveDock",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: paint layout resolution remains unavailable.",
-    "runtime": "crates/script/src/shim/paintLogic.js:32",
+    "runtime": "crates/script-js/src/shim/paintLogic.js:32",
     "async": false
   },
   {
@@ -555,7 +555,7 @@
     "selector": "toCanvasPoint",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: canvas coordinate conversion remains unavailable.",
-    "runtime": "crates/script/src/shim/paintLogic.js:36",
+    "runtime": "crates/script-js/src/shim/paintLogic.js:36",
     "async": false
   },
   {
@@ -564,7 +564,7 @@
     "selector": "cycleOption",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: paint option cycling remains unavailable.",
-    "runtime": "crates/script/src/shim/paintLogic.js:40",
+    "runtime": "crates/script-js/src/shim/paintLogic.js:40",
     "async": false
   },
   {
@@ -573,7 +573,7 @@
     "selector": "hitRegion",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: paint hit testing remains unavailable.",
-    "runtime": "crates/script/src/shim/paintLogic.js:44",
+    "runtime": "crates/script-js/src/shim/paintLogic.js:44",
     "async": false
   },
   {
@@ -582,7 +582,7 @@
     "selector": "clipText",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: paint text clipping remains unavailable.",
-    "runtime": "crates/script/src/shim/paintLogic.js:48",
+    "runtime": "crates/script-js/src/shim/paintLogic.js:48",
     "async": false
   },
   {
@@ -591,7 +591,7 @@
     "selector": "paintCols",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: paint column layout remains unavailable.",
-    "runtime": "crates/script/src/shim/paintLogic.js:52",
+    "runtime": "crates/script-js/src/shim/paintLogic.js:52",
     "async": false
   },
   {
@@ -600,7 +600,7 @@
     "selector": "cellWidths",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: paint column sizing remains unavailable.",
-    "runtime": "crates/script/src/shim/paintLogic.js:56",
+    "runtime": "crates/script-js/src/shim/paintLogic.js:56",
     "async": false
   },
   {
@@ -609,7 +609,7 @@
     "selector": "gridRows",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: paint grid sizing remains unavailable.",
-    "runtime": "crates/script/src/shim/paintLogic.js:60",
+    "runtime": "crates/script-js/src/shim/paintLogic.js:60",
     "async": false
   },
   {
@@ -618,7 +618,7 @@
     "selector": "listScroll",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: paint list scrolling remains unavailable.",
-    "runtime": "crates/script/src/shim/paintLogic.js:64",
+    "runtime": "crates/script-js/src/shim/paintLogic.js:64",
     "async": false
   },
   {
@@ -627,7 +627,7 @@
     "selector": "paintClip",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: paint text clipping remains unavailable.",
-    "runtime": "crates/script/src/shim/paintLogic.js:68",
+    "runtime": "crates/script-js/src/shim/paintLogic.js:68",
     "async": false
   },
   {
@@ -636,7 +636,7 @@
     "selector": "gatherPaintAccent",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: paint accent selection remains unavailable.",
-    "runtime": "crates/script/src/shim/paintLogic.js:72",
+    "runtime": "crates/script-js/src/shim/paintLogic.js:72",
     "async": false
   },
   {
@@ -645,7 +645,7 @@
     "selector": "stripSegments",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: paint strip layout remains unavailable.",
-    "runtime": "crates/script/src/shim/paintLogic.js:76",
+    "runtime": "crates/script-js/src/shim/paintLogic.js:76",
     "async": false
   },
   {
@@ -654,7 +654,7 @@
     "selector": "railRows",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: paint rail layout remains unavailable.",
-    "runtime": "crates/script/src/shim/paintLogic.js:80",
+    "runtime": "crates/script-js/src/shim/paintLogic.js:80",
     "async": false
   },
   {
@@ -663,7 +663,7 @@
     "selector": "statColumns",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: paint statistic layout remains unavailable.",
-    "runtime": "crates/script/src/shim/paintLogic.js:84",
+    "runtime": "crates/script-js/src/shim/paintLogic.js:84",
     "async": false
   },
   {
@@ -672,7 +672,7 @@
     "selector": "PaintState.publishRegions",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: mutable paint state remains unavailable.",
-    "runtime": "crates/script/src/shim/paintLogic.js:93",
+    "runtime": "crates/script-js/src/shim/paintLogic.js:93",
     "async": false
   },
   {
@@ -681,7 +681,7 @@
     "selector": "PaintState.pointerDown",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: mutable paint state remains unavailable.",
-    "runtime": "crates/script/src/shim/paintLogic.js:97",
+    "runtime": "crates/script-js/src/shim/paintLogic.js:97",
     "async": false
   },
   {
@@ -690,7 +690,7 @@
     "selector": "PaintState.pointerMove",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: mutable paint state remains unavailable.",
-    "runtime": "crates/script/src/shim/paintLogic.js:101",
+    "runtime": "crates/script-js/src/shim/paintLogic.js:101",
     "async": false
   },
   {
@@ -699,7 +699,7 @@
     "selector": "PaintState.pointerIsInside",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: mutable paint state remains unavailable.",
-    "runtime": "crates/script/src/shim/paintLogic.js:105",
+    "runtime": "crates/script-js/src/shim/paintLogic.js:105",
     "async": false
   },
   {
@@ -708,7 +708,7 @@
     "selector": "PaintState.consumeClick",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: mutable paint state remains unavailable.",
-    "runtime": "crates/script/src/shim/paintLogic.js:109",
+    "runtime": "crates/script-js/src/shim/paintLogic.js:109",
     "async": false
   },
   {
@@ -717,7 +717,7 @@
     "selector": "PaintState.wheel",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: mutable paint state remains unavailable.",
-    "runtime": "crates/script/src/shim/paintLogic.js:113",
+    "runtime": "crates/script-js/src/shim/paintLogic.js:113",
     "async": false
   },
   {
@@ -726,7 +726,7 @@
     "selector": "PaintState.consumeWheel",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: mutable paint state remains unavailable.",
-    "runtime": "crates/script/src/shim/paintLogic.js:117",
+    "runtime": "crates/script-js/src/shim/paintLogic.js:117",
     "async": false
   },
   {
@@ -735,7 +735,7 @@
     "selector": "PaintState.isHovered",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: mutable paint state remains unavailable.",
-    "runtime": "crates/script/src/shim/paintLogic.js:121",
+    "runtime": "crates/script-js/src/shim/paintLogic.js:121",
     "async": false
   },
   {
@@ -744,7 +744,7 @@
     "selector": "PaintState.get",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: mutable paint state remains unavailable.",
-    "runtime": "crates/script/src/shim/paintLogic.js:125",
+    "runtime": "crates/script-js/src/shim/paintLogic.js:125",
     "async": false
   },
   {
@@ -753,7 +753,7 @@
     "selector": "PaintState.set",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: mutable paint state remains unavailable.",
-    "runtime": "crates/script/src/shim/paintLogic.js:129",
+    "runtime": "crates/script-js/src/shim/paintLogic.js:129",
     "async": false
   },
   {
@@ -762,7 +762,7 @@
     "selector": "PaintState.reset",
     "operation": "not-impl",
     "reason": "Unconditional not-impl: mutable paint state remains unavailable.",
-    "runtime": "crates/script/src/shim/paintLogic.js:133",
+    "runtime": "crates/script-js/src/shim/paintLogic.js:133",
     "async": false
   }
   ,
@@ -773,7 +773,7 @@
     "operation": "not-impl",
     "preserveParameters": true,
     "reason": "Unconditional not-impl: target item-on-location interaction is not provided by the native host.",
-    "runtime": "crates/script/src/shim/input.js:154",
+    "runtime": "crates/script-js/src/shim/input.js:154",
     "async": false
   },
   {
@@ -783,7 +783,7 @@
     "operation": "not-impl",
     "preserveParameters": true,
     "reason": "Unconditional not-impl: target item-on-NPC interaction is not provided by the native host.",
-    "runtime": "crates/script/src/shim/input.js:157",
+    "runtime": "crates/script-js/src/shim/input.js:157",
     "async": false
   },
   {
@@ -793,7 +793,7 @@
     "operation": "not-impl",
     "preserveParameters": true,
     "reason": "Unconditional not-impl: target item-on-object interaction is not provided by the native host.",
-    "runtime": "crates/script/src/shim/input.js:160",
+    "runtime": "crates/script-js/src/shim/input.js:160",
     "async": false
   },
   {
@@ -803,7 +803,7 @@
     "operation": "not-impl",
     "preserveParameters": true,
     "reason": "Unconditional not-impl: target item-on-item interaction is not provided by the native host.",
-    "runtime": "crates/script/src/shim/input.js:163",
+    "runtime": "crates/script-js/src/shim/input.js:163",
     "async": false
   },
   {
@@ -813,7 +813,7 @@
     "operation": "not-impl",
     "preserveParameters": true,
     "reason": "Unconditional not-impl: spell-on-NPC interaction is not provided by the native host.",
-    "runtime": "crates/script/src/shim/input.js:166",
+    "runtime": "crates/script-js/src/shim/input.js:166",
     "async": false
   },
   {
@@ -823,7 +823,7 @@
     "operation": "not-impl",
     "preserveParameters": true,
     "reason": "Unconditional not-impl: spell-on-location interaction is not provided by the native host.",
-    "runtime": "crates/script/src/shim/input.js:169",
+    "runtime": "crates/script-js/src/shim/input.js:169",
     "async": false
   },
   {
@@ -833,7 +833,7 @@
     "operation": "not-impl",
     "preserveParameters": true,
     "reason": "Unconditional not-impl: spell-on-item interaction is not provided by the native host.",
-    "runtime": "crates/script/src/shim/input.js:172",
+    "runtime": "crates/script-js/src/shim/input.js:172",
     "async": false
   },
   {
@@ -843,7 +843,7 @@
     "operation": "not-impl",
     "preserveParameters": true,
     "reason": "Unconditional not-impl: dialog continuation is not provided by the native host.",
-    "runtime": "crates/script/src/shim/input.js:175",
+    "runtime": "crates/script-js/src/shim/input.js:175",
     "async": false
   },
   {
@@ -853,7 +853,7 @@
     "operation": "not-impl",
     "preserveParameters": true,
     "reason": "Unconditional not-impl: the frame column helper is not provided by the paint host.",
-    "runtime": "crates/script/src/shim/paint.js:151",
+    "runtime": "crates/script-js/src/shim/paint.js:151",
     "async": false
   },
   {
@@ -863,7 +863,7 @@
     "operation": "not-impl",
     "preserveParameters": true,
     "reason": "Unconditional not-impl: frame text wrapping is not provided by the paint host.",
-    "runtime": "crates/script/src/shim/paint.js:152",
+    "runtime": "crates/script-js/src/shim/paint.js:152",
     "async": false
   },
   {
@@ -873,7 +873,7 @@
     "operation": "not-impl",
     "preserveParameters": true,
     "reason": "Unconditional not-impl: frame lists are not provided by the paint host.",
-    "runtime": "crates/script/src/shim/paint.js:153",
+    "runtime": "crates/script-js/src/shim/paint.js:153",
     "async": false
   },
   {
@@ -883,7 +883,7 @@
     "operation": "not-impl",
     "preserveParameters": true,
     "reason": "Unconditional not-impl: frame fills are not provided by the paint host.",
-    "runtime": "crates/script/src/shim/paint.js:154",
+    "runtime": "crates/script-js/src/shim/paint.js:154",
     "async": false
   },
   {
@@ -893,7 +893,7 @@
     "operation": "not-impl",
     "preserveParameters": true,
     "reason": "Unconditional not-impl: frame grids are not provided by the paint host.",
-    "runtime": "crates/script/src/shim/paint.js:155",
+    "runtime": "crates/script-js/src/shim/paint.js:155",
     "async": false
   },
   {
@@ -903,7 +903,7 @@
     "operation": "not-impl",
     "preserveParameters": true,
     "reason": "Unconditional not-impl: frame steppers are not provided by the paint host.",
-    "runtime": "crates/script/src/shim/paint.js:156",
+    "runtime": "crates/script-js/src/shim/paint.js:156",
     "async": false
   }
 ]

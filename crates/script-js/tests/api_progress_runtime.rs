@@ -195,7 +195,7 @@ fn done_page(token: u64) -> ProgressPage {
 fn quest_paths_is_synchronous_and_lists_every_released_path() {
     let index: script::quester::queue::ReleaseIndex =
         serde_json::from_str(script::quester::compile::INDEX_JSON).unwrap();
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("paths/289");
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../script/paths/289");
     let expected_rows: Vec<_> = index
         .paths
         .into_iter()

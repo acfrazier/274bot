@@ -594,6 +594,7 @@ function rustSources(root) {
         }
     };
     visit(root);
+    if (!files.length) fail(`Rust source scan selected zero files: ${root}`);
     return files;
 }
 
@@ -619,9 +620,18 @@ function rustFamilySources(root, nativeFamilies) {
     return result;
 }
 
-function deriveNavFamilies({ frozenSourceRoot, nativeSourceRoot, nativeFamilyFamilies, registry }) {
+function deriveNavFamilies({ frozenSourceRoot, nativeSourceRoots, nativeFamilyFamilies, registry }) {
     const navFamilies = frozenSourceNavFamilies(frozenSourceRoot, registry);
-    const nativeFamilySources = rustFamilySources(nativeSourceRoot, new Set(nativeFamilyFamilies.keys()));
+    const nativeFamilies = new Set(nativeFamilyFamilies.keys());
+    const nativeFamilySources = new Map();
+    for (const root of nativeSourceRoots) {
+        for (const [nativeFamily, sources] of rustFamilySources(root, nativeFamilies)) {
+            if (nativeFamilySources.has(nativeFamily)) {
+                fail(`Native family source appears under both roots: ${nativeFamily}`);
+            }
+            nativeFamilySources.set(nativeFamily, sources);
+        }
+    }
     for (const [nativeFamily, familyId] of nativeFamilyFamilies) {
         const sources = nativeFamilySources.get(nativeFamily) || [];
         if (sources.some(source => NAV_RUST_USE.test(source.source))) navFamilies.add(familyId);
@@ -1079,7 +1089,7 @@ function collectModuleNotImplValueExports(registry, shimSources, navFamilies) {
                     selector: member,
                     module: entry.module,
                     state: 'not-impl',
-                    source: `crates/script/src/shim/${entry.shim}:${line}`,
+                    source: `crates/script-js/src/shim/${entry.shim}:${line}`,
                     reason: 'The exported value throws when accessed through notImplValue.',
                 });
             }
