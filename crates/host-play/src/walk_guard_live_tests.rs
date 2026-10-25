@@ -1612,6 +1612,7 @@ fn scenario_for(
                 let capture = ready_capture.lock().unwrap_or_else(|e| e.into_inner());
                 capture.invalid_reason.is_some() || capture.started
             }),
+            summary: None,
         },
         wait: Wait {
             arm: Proof::Stat { id: 0, min: 1 },
