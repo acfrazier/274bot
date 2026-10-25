@@ -5005,6 +5005,16 @@ export function presentOps(actions: readonly (string | null)[] | null): string[]
 export function opIndex(actions: readonly (string | null)[], action: string): number;
 export function entitySnapView(row: Record<string, unknown> | null): Record<string, unknown> | null;
 export function optionalText(value: unknown): string | null;
+export const HOST_CONTROLS: readonly [
+    {
+        readonly id: "__rs2b0t.pause";
+        readonly label: "Pause";
+    },
+    {
+        readonly id: "__rs2b0t.stop";
+        readonly label: "Stop";
+    }
+];
 
 }
 
