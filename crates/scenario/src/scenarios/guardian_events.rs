@@ -404,8 +404,8 @@ pub(crate) fn guardian_event_cell(
     }
 }
 
-/// Seed one real Strange box in the account inventory and let a Load script
-/// retain it before native Guardian claims, solves and releases it.
+/// Prove a Load ignore-list handoff, then stop a new ignoring Load run with
+/// another held box and require the Guardian to consume that box too.
 pub(crate) fn guardian_event_strange_box_load_claim_scenario() -> Scenario {
     let mut steps = script_live_seed_steps();
     steps.push(start_catalog_step());
@@ -463,6 +463,57 @@ pub(crate) fn guardian_event_strange_box_load_claim_scenario() -> Scenario {
         "prove the Load script resumes after native Guardian solves the box",
         STRANGE_BOX_RESUMED_RECEIPT,
     ));
+    steps.push(Step {
+        name: "stop the first Load run after its claim handoff",
+        kind: StepKind::StopScript,
+        wait: Wait {
+            arm: Proof::ScriptIdle,
+            budget_ticks: 10,
+        },
+    });
+    steps.push(start_catalog_step());
+    steps.push(receipt_step(
+        "prove the new Load run ignores boxes before the Stop case",
+        STRANGE_BOX_ARMED_RECEIPT,
+    ));
+    steps.push(Step {
+        name: "seed another account-owned Strange box for the Stop case",
+        kind: StepKind::Perform {
+            send: Box::new(|client, _| cheat(client, "give macro_cube 1").is_sent()),
+        },
+        wait: Wait {
+            arm: Proof::ItemId {
+                id: STRANGE_BOX_ID,
+                count: 1,
+            },
+            budget_ticks: 60,
+        },
+    });
+    steps.push(receipt_step(
+        "prove the new Load run owns the box before Stop",
+        STRANGE_BOX_OWNED_RECEIPT,
+    ));
+    steps.push(Step {
+        name: "stop Load while its ignore claim owns the held Strange box",
+        kind: StepKind::StopScript,
+        wait: Wait {
+            arm: Proof::ScriptIdle,
+            budget_ticks: 10,
+        },
+    });
+    steps.push(Step {
+        name: "prove Guardian solves the stopped script's held Strange box",
+        kind: StepKind::Perform {
+            send: Box::new(|_, _| true),
+        },
+        wait: Wait {
+            arm: Proof::ItemIdAtMost {
+                id: STRANGE_BOX_ID,
+                count: 0,
+            },
+            budget_ticks: STRANGE_BOX_WATCH_TICKS,
+        },
+    });
 
     Scenario {
         name: "guardian_event_strange_box_load_claim",
@@ -471,8 +522,9 @@ pub(crate) fn guardian_event_strange_box_load_claim_scenario() -> Scenario {
             mainland: true,
         },
         steps,
-        proof: Proof::ScriptReceipt {
-            prefix: STRANGE_BOX_RESUMED_RECEIPT,
+        proof: Proof::ItemIdAtMost {
+            id: STRANGE_BOX_ID,
+            count: 0,
         },
         companions: vec![],
         settings: ScenarioSettings {

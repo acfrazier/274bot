@@ -25811,6 +25811,125 @@ fn load_changed_ignore_list_reclaims_the_same_box_without_restarting_it() {
         driver.menus.is_empty(),
         "claim refresh preserves the solver"
     );
+
+    publish(true, 5);
+    tick_at(&mut client, &mut snap);
+    assert_eq!(
+        guardian
+            .tick(&mut driver, &snap, &settings, 0, Some(&mut source))
+            .claim,
+        RandomClaim::Handle
+    );
+    slot.lock().unwrap().stop();
+    tick_at(&mut client, &mut snap);
+    let status = guardian.tick(&mut driver, &snap, &settings, 0, Some(&mut source));
+    assert_eq!(
+        status.claim,
+        RandomClaim::Host,
+        "Stop returns the held event"
+    );
+    assert!(status.hold);
+}
+
+#[test]
+fn load_stop_or_slot_reset_returns_the_box_before_a_compiled_script_starts() {
+    struct NoRandomCallback(Arc<Mutex<usize>>);
+    impl script::native::Script for NoRandomCallback {
+        fn tick(
+            &mut self,
+            _ctx: &mut script::native::NativeTick<'_>,
+        ) -> Result<script::native::ScriptFlow, script::native::ScriptFailure> {
+            Ok(script::native::ScriptFlow::Continue)
+        }
+        fn on_random(&mut self, _event: &DetectedRandom) -> RandomClaim {
+            *self.0.lock().unwrap() += 1;
+            RandomClaim::Handle
+        }
+    }
+    for reset in [false, true] {
+        let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
+        let slot = script_slot_or_insert(&scripts, "alice");
+        {
+            let mut slot = slot.lock().unwrap();
+            slot.start_load_settled(
+                "export default class T extends LoopingBot {
+                    ignoredRandoms() { return ['Strange box']; }
+                    loop() {}
+                }"
+                .into(),
+                script::LoadShape::CompatClass,
+                vec![],
+            )
+            .unwrap();
+            slot.on_game_tick(&mut script::ScriptCtx {
+                driver: &mut NavRec::default(),
+                tick: 1,
+                here: None,
+                walk: None,
+                walk_with: None,
+                inv: None,
+                snapshot: None,
+                obj_names: None,
+                compiled: script::CompiledTick::default(),
+            });
+            slot.probe("1").unwrap();
+            assert_eq!(slot.ignored_randoms(), vec!["Strange box"]);
+        }
+        let mut client = guardian_client();
+        plant_inv_item(&mut client, 3062);
+        let item = &mut Arc::get_mut(&mut client.cache).unwrap().objs[3062];
+        item.name = "Strange box".into();
+        item.iop = [Some("Open".into()), None, None, None, None];
+        let mut source =
+            crate::play_slots::ScriptRandomClaims::new(Arc::clone(&scripts), "alice".into());
+        let mut guardian = Guardian::new();
+        let mut driver = GuardRec::default();
+        let settings = ProfileSettings::default();
+        let mut snap = GameSnapshot::new();
+        tick_at(&mut client, &mut snap);
+        assert_eq!(
+            guardian
+                .tick(&mut driver, &snap, &settings, 0, Some(&mut source))
+                .claim,
+            RandomClaim::Handle
+        );
+        assert!(driver.menus.is_empty());
+
+        {
+            let mut slot = slot.lock().unwrap();
+            if reset {
+                *slot = script::SlotScript::new();
+            } else {
+                slot.stop();
+            }
+        }
+        tick_at(&mut client, &mut snap);
+        let status = guardian.tick(&mut driver, &snap, &settings, 0, Some(&mut source));
+        assert_eq!(status.claim, RandomClaim::Host, "reset={reset}");
+        assert!(status.hold);
+        assert_eq!(
+            driver.menus.len(),
+            1,
+            "the next observed tick opens the box"
+        );
+        assert!(wait_settled(|| {
+            let mut slot = slot.lock().unwrap();
+            slot.observe_lifecycle();
+            slot.state() == script::RunState::Idle
+        }));
+
+        let calls = Arc::new(Mutex::new(0));
+        slot.lock()
+            .unwrap()
+            .start_test_script(Box::new(NoRandomCallback(Arc::clone(&calls))), None)
+            .unwrap();
+        tick_at(&mut client, &mut snap);
+        let status = guardian.tick(&mut driver, &snap, &settings, 0, Some(&mut source));
+        assert_eq!(status.claim, RandomClaim::Host);
+        assert!(status.hold);
+        assert_eq!(*calls.lock().unwrap(), 0, "no new event edge or callback");
+        assert_eq!(driver.menus.len(), 1, "the in-flight Open is preserved");
+    }
 }
 
 #[test]

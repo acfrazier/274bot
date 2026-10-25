@@ -4091,18 +4091,18 @@ impl SlotScript {
         self.state
     }
 
-    /// Current Load ignore membership, independent of the event's rising
-    /// edge. Compiled scripts retain their callback claim instead.
+    /// Inactive slots return the event to Host. Running Load scripts publish
+    /// current ignore membership; running compiled scripts retain their edge claim.
     pub fn current_random_claim(&self, ev: &DetectedRandom) -> Option<RandomClaim> {
+        if self.state != RunState::Running || !self.want_run {
+            return Some(RandomClaim::Host);
+        }
         let isolate = self.surface.as_ref()?;
-        Some(
-            if self.state == RunState::Running && self.want_run && isolate.ignores_random(&ev.name)
-            {
-                RandomClaim::Handle
-            } else {
-                RandomClaim::Host
-            },
-        )
+        Some(if isolate.ignores_random(&ev.name) {
+            RandomClaim::Handle
+        } else {
+            RandomClaim::Host
+        })
     }
 
     /// The random-event rising-edge knock. Load reads its current cached
