@@ -74,13 +74,16 @@ where
 }
 
 fn main() -> ExitCode {
-    if let Err(error) = script_js::install_cards() {
-        api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Error, "{error}");
-        return ExitCode::FAILURE;
-    }
-    if let Err(error) = script_js::bootstrap_v8_platform() {
-        api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Error, "{error}");
-        return ExitCode::FAILURE;
+    #[cfg(feature = "js")]
+    {
+        if let Err(error) = script_js::install_cards() {
+            api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Error, "{error}");
+            return ExitCode::FAILURE;
+        }
+        if let Err(error) = script_js::bootstrap_v8_platform() {
+            api::host_log!(stderr; api::hostlog::Category::Lifecycle, api::hostlog::Level::Error, "{error}");
+            return ExitCode::FAILURE;
+        }
     }
     let args = match parse_args_from(env::args().skip(1)) {
         Ok(args) => args,

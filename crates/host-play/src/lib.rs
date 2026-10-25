@@ -9,6 +9,7 @@ pub mod audio;
 pub mod cache;
 pub mod catalog_core;
 pub mod evidence_writer;
+#[cfg(feature = "js")]
 pub mod external_loader;
 pub mod fd_limit;
 pub mod live_gate;
@@ -83,6 +84,7 @@ mod rss;
 mod scatter;
 #[cfg(feature = "test-support")]
 mod script_api_live_probe;
+#[cfg(feature = "js")]
 mod script_channels;
 mod script_runtime;
 mod slot_bank_memory;
@@ -275,6 +277,7 @@ pub struct Play {
     /// Shared by operator and slot-thread starts; the copy scope owns its token.
     script_start_hold: Arc<Mutex<std::sync::Weak<String>>>,
     /// Same-process, same-world BroadcastChannel broker for paired parties.
+    #[cfg(feature = "js")]
     channels: script_channels::ChannelBroker,
     /// Per-slot cheat commands the panel queued; each slot thread runs
     /// `api::interact::cheat` on its own Driver and flushes the socket.
@@ -598,7 +601,12 @@ mod combat_proof;
 #[path = "combat_live_proof_tests.rs"]
 mod combat_live_proof_tests;
 
-#[cfg(all(test, feature = "live-harness", feature = "test-support"))]
+#[cfg(all(
+    test,
+    feature = "js",
+    feature = "live-harness",
+    feature = "test-support"
+))]
 mod manual_takeover_compat_live_tests;
 
 #[cfg(test)]
@@ -609,15 +617,15 @@ mod walk_guard_live_tests;
 #[path = "lib_tests.rs"]
 mod tests;
 
-#[cfg(test)]
+#[cfg(all(test, feature = "js"))]
 mod api_combat_live_tests;
 #[cfg(test)]
 mod api_gather_live_tests;
-#[cfg(test)]
+#[cfg(all(test, feature = "js"))]
 mod api_gather_tests;
 #[cfg(test)]
 mod bank_core_live;
-#[cfg(test)]
+#[cfg(all(test, feature = "js"))]
 mod bank_fetch_closed_live;
 #[cfg(test)]
 mod bank_memory_live;

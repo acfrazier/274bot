@@ -524,6 +524,7 @@ impl Play {
             focused: None,
             scripts: Arc::new(Mutex::new(HashMap::new())),
             script_start_hold: Arc::new(Mutex::new(std::sync::Weak::new())),
+            #[cfg(feature = "js")]
             channels: super::script_channels::ChannelBroker::default(),
             cheats: Arc::new(Mutex::new(HashMap::new())),
             wires: Arc::new(Mutex::new(HashMap::new())),
