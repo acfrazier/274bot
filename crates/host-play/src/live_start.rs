@@ -12,9 +12,10 @@ use crate::catalog_core::CoreWatch;
 use crate::paired_core::{PairWatch, StartBarrier};
 #[cfg(feature = "js")]
 use crate::paired_core::{pair_settings, PairCase};
+use crate::ScriptStartHandle;
 
-/// One isolate Start the live prepare stashes for the StartScript pump.
-/// Fleet runs stash one entry per started slot.
+/// One stashed script Start for the live prepare/StartScript pump.
+/// Compiled cards and JS builds' loaded cards share the same lifecycle.
 #[derive(Clone)]
 pub struct PendingCatalogStart {
     pub slot: String,
@@ -86,7 +87,7 @@ impl PendingCatalogStart {
             #[cfg(feature = "js")]
             js: String::new(),
             #[cfg(feature = "js")]
-            shape: script_js::LoadShape::NativeTick,
+            shape: script_js::LoadShape::Reject,
             bag: Some(bag),
             #[cfg(feature = "js")]
             siblings: Vec::new(),
@@ -233,9 +234,10 @@ fn start_stashed_catalog_card(
     };
     #[cfg(not(feature = "js"))]
     let Some(id) = card.compiled else {
-        return Err(script::StartLoadError::Refused(
-            "JavaScript starts are unavailable without the js feature".into(),
-        ));
+        return Err(script::surface::SurfaceError::NoFactory(
+            script::surface::SurfaceKind::Js,
+        )
+        .into());
     };
     #[cfg(not(feature = "js"))]
     let request = || StartRequest::Compiled {
@@ -503,6 +505,6 @@ pub fn pair_starts(
     ])
 }
 
-#[cfg(all(test, feature = "js"))]
+#[cfg(test)]
 #[path = "live_start_tests.rs"]
 mod tests;

@@ -63,6 +63,56 @@ fn surface_start_errors_keep_runtime_and_refusal_classification() {
     }
 }
 
+#[cfg(not(feature = "js"))]
+#[test]
+fn saved_loaded_assignments_keep_their_identity_without_a_js_factory() {
+    for (source_kind, source, identity) in [
+        ("catalog", script::ScriptSource::Catalog, "SavedCatalogCard"),
+        ("file", script::ScriptSource::File, "saved-script.js"),
+    ] {
+        let mut f = fixture("saved-loaded-no-js", &["alice"]);
+        let assignment = vault::ScriptAssignment {
+            source_kind: source_kind.into(),
+            identity: identity.into(),
+            display_name: "Saved script".into(),
+            unavailable: None,
+        };
+        let saved = serde_json::to_string(&assignment).unwrap();
+        let restored: vault::ScriptAssignment = serde_json::from_str(&saved).unwrap();
+        assert_eq!(restored, assignment);
+        assert!(super::assignment_has_sel(&restored));
+        let selection = super::sel_from_assignment(&restored).expect("saved selection parses");
+        assert_eq!(
+            selection,
+            script::ScriptSel::Loaded(source, identity.into())
+        );
+        assert!(f
+            .scripts
+            .persist_assignment(&mut f.core, "alice", restored.clone()));
+        f.core.flush_writes();
+        let error = f
+            .scripts
+            .start_sel(
+                &mut f.core,
+                "alice",
+                &selection,
+                None,
+                super::StartKind::Start,
+                false,
+            )
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            script::StartLoadError::Surface(script::surface::SurfaceError::NoFactory(
+                script::surface::SurfaceKind::Js
+            ))
+        ));
+        assert_eq!(f.state("alice"), ScriptRunState::Idle);
+        assert!(!f.scripts.starts_pending());
+        assert_eq!(Scripts::assignment(&f.core, "alice"), Some(restored));
+    }
+}
+
 /// Hang guard for every wait in this file, never a pass condition and never a
 /// latency target. Each wait ends on the product's own settlement signal
 /// (`starts_pending()`, `catalog_work_pending()`, the slot's run state): every

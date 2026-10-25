@@ -18,6 +18,7 @@ fn prepared_thiever() -> Observation {
 }
 
 fn empty_play() -> crate::Play {
+    #[cfg(feature = "js")]
     script_js::install_cards().expect("install canonical Sherlock card for live start tests");
     crate::run_with_io(
         &crate::PlayOptions {
@@ -34,6 +35,7 @@ fn empty_play() -> crate::Play {
     )
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn catalog_start_waits_without_arming_or_failing_current_session_witness() {
     let _iso = script::IsolatedEnv::enter("catalog-copy-witness");
@@ -84,6 +86,10 @@ fn catalog_start_waits_without_arming_or_failing_current_session_witness() {
 #[test]
 fn no_slot_scenario_start_holds_and_retries_the_armed_core() {
     let play = empty_play();
+    #[cfg(feature = "js")]
+    let id = script::CompiledId("Sherlock");
+    #[cfg(not(feature = "js"))]
+    let id = script::CompiledId("Gatherer");
     let watch = CoreWatch::default();
     watch.configure(CoreCase::Thiever, "catalogtest");
     watch.observe("catalogtest", prepared_thiever(), false);
@@ -95,7 +101,7 @@ fn no_slot_scenario_start_holds_and_retries_the_armed_core() {
     };
     let mut pending = vec![PendingCatalogStart::compiled(
         "catalogtest",
-        script::CompiledId("Sherlock"),
+        id,
         Map::new(),
     )];
     for _ in 0..2 {
@@ -117,6 +123,7 @@ fn no_slot_scenario_start_holds_and_retries_the_armed_core() {
     }
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn unknown_loadout_refusal_holds_and_retries() {
     // Unknown and ambiguous selections are ordinary refusals; only an empty
@@ -153,6 +160,7 @@ fn unknown_loadout_refusal_holds_and_retries() {
     }
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn empty_loadout_store_fails_the_start_fast() {
     let play = empty_play();
@@ -190,6 +198,7 @@ fn empty_loadout_store_fails_the_start_fast() {
     assert!(!pending[0].started);
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn js_setup_failure_settles_as_a_failed_pump() {
     // A JS card admitted at Start whose setup then throws settles Failed:
