@@ -340,7 +340,7 @@
     "module": "api/combat/hunting/logic.js",
     "selector": "prayerFor",
     "reason": "This compatibility helper is a site advisory; live Hunt protection selection is performed by the native fight machine.",
-    "runtime": "crates/script/src/hunt_catalog.rs:444",
+    "runtime": "crates/script-js/src/compat/hunt_catalog.rs:444",
     "declaration": "/** Site/advisory overhead helper; the live Hunt fight picker is native. */\nexport function prayerFor(style: Style, fireAtRange: boolean): string | null;"
   },
   {
@@ -348,7 +348,7 @@
     "module": "api/combat/hunting/logic.js",
     "selector": "prayerSipDue",
     "reason": "The compatibility helper uses the shared native C5 prayer floor to decide when to sip.",
-    "runtime": "crates/script/src/hunt_catalog.rs:451",
+    "runtime": "crates/script-js/src/compat/hunt_catalog.rs:451",
     "declaration": "/** Whether to sip at the native C5 floor: max(3, max - (7 + floor(max / 4))). */\nexport function prayerSipDue(points: number, max: number): boolean;"
   },
   {
