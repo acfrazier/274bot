@@ -42,6 +42,51 @@ const EVADE_GIVE_UP_TICKS: u16 = 1_002;
 const STUNNED_MARKERS: &[&str] = &["You've been stunned!", "You're stunned!"];
 /// NPC packets use the preferred 15-tile radius (`info.ts:310`, `build.ts:57`).
 const NPC_VIEW_RADIUS: i32 = 15;
+/// Open has one `p_delay(0)` before its modal. Answers close the modal and
+/// consume/replicate a box without a delay. Allow the input-processing tick,
+/// that one delayed tick, and one packet-delivery tick, counted only through
+/// PLAYER_INFO (`macro_event_strange_box.rs2:231-275,298-304`;
+/// `PlayerOps.ts:376-379`; client packet drain: `client.rs:12744`).
+const BOX_OUTCOME_TICKS: u32 = 3;
+/// Keep an operation's initial attempt plus two retries below the content's
+/// earliest 16-tick box-split cycle (three waits use nine ticks, with at most
+/// one dispatch tick between waits). Award replication takes 150 ticks
+/// (`macro_event_strange_box.rs2:8-9,320-322`).
+const BOX_MAX_FAILURES: u8 = 3;
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+enum BoxPhase {
+    #[default]
+    Ready,
+    Opening {
+        tick: u32,
+    },
+    Answering {
+        tick: u32,
+        count: i32,
+        sequence: i32,
+    },
+    Retry,
+    Stalled,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BoxFailure {
+    OpenTimeout,
+    AnswerTimeout,
+    WrongAnswer,
+    MissingModels,
+    UnknownQuestion,
+    OpenRefused(api::interact::SendReason),
+    AnswerRefused,
+}
+
+#[derive(Debug, Default)]
+struct BoxSolve {
+    phase: BoxPhase,
+    failures: u8,
+    last_failure: Option<BoxFailure>,
+}
 
 /// The chrome contract both views bind (guardian spec `RandomStatus`):
 /// published every tick on the slot status row.
@@ -259,10 +304,8 @@ pub struct Guardian {
     /// Mime: the emote button went out for the open chat — no repeat
     /// press until the chat closes.
     mime_answered: bool,
-    /// Box: the held-box count when the answer went out; the solver
-    /// waits for it to drop (the answer consumed a box) before handling
-    /// the next held box (rs2b0t waits on the count drop the same way).
-    box_answer_count: Option<i32>,
+    /// Content-bounded box outcome waits and the last failed operation.
+    box_solve: BoxSolve,
     /// Lamp: Rub went out — do not Rub again until the skill IF closes.
     lamp_rubbed: bool,
     /// Lamp: Rub attempts sent in the current episode (re-Rubs after a
@@ -299,9 +342,6 @@ pub struct Guardian {
     /// status row still detects it) until the lamp leaves the pack or
     /// `lamp_auto` is switched off. Confirm is never replayed.
     lamp_stalled: bool,
-    /// Box: Open went out — do not Open again until the cube IF closes
-    /// and the answer is consumed.
-    box_opened: bool,
     /// Maze: the active solve state, None while trapped without a route.
     maze: Option<maze::MazeSolve>,
     /// Maze: solver ticks spent on this visit ([`maze::SOLVE_TICKS`] cap).
@@ -350,7 +390,7 @@ impl Guardian {
             tool_stalled: false,
             mime_last_seen: None,
             mime_answered: false,
-            box_answer_count: None,
+            box_solve: BoxSolve::default(),
             lamp_rubbed: false,
             lamp_rubs: 0,
             lamp_skill_sent: false,
@@ -361,7 +401,6 @@ impl Guardian {
             lamp_confirm_count: None,
             lamp_park: 0,
             lamp_stalled: false,
-            box_opened: false,
             maze: None,
             maze_ticks: 0,
             maze_stalled: false,
@@ -587,6 +626,14 @@ impl Guardian {
                 .as_ref()
                 .is_some_and(|event| event.kind == RandomKind::LostTool);
 
+        let on_box = ev
+            .as_ref()
+            .is_some_and(|event| event.kind == RandomKind::Box);
+        if !on_box || !settings.random_events {
+            self.box_solve = BoxSolve::default();
+        }
+        let inert_box = on_box && self.box_solve.phase == BoxPhase::Stalled;
+
         // A pause counts down once per game tick; the Rub resumes when it
         // reaches zero.
         if fresh {
@@ -636,6 +683,7 @@ impl Guardian {
             && settings.random_events
             && self.claim == RandomClaim::Host
             && !inert_lamp
+            && !inert_box
             && !inert_tool
             && !inert_trap
             && !ent_hold
@@ -670,6 +718,8 @@ impl Guardian {
                     .as_ref()
                     .is_some_and(|event| event.kind == RandomKind::LostTool));
         let inert_trap = inert_trap || (on_maze && self.maze_stalled);
+        // Release exhausted box retries in the same publication.
+        let inert_box = inert_box || self.box_solve.phase == BoxPhase::Stalled;
         let cooldown = ev
             .as_ref()
             .and_then(|e| e.npc_index)
@@ -682,12 +732,14 @@ impl Guardian {
             ours: settings.random_events
                 && !inert_lamp
                 && !inert_tool
+                && !inert_box
                 && !inert_trap
                 && ev.as_ref().map(|e| e.ours).unwrap_or(false),
             handling: self.in_flight,
             hold: settings.random_events
                 && self.claim == RandomClaim::Host
                 && !inert_trap
+                && !inert_box
                 && (self.in_flight
                     || self.acting
                     || ent_hold
@@ -1289,9 +1341,8 @@ impl Guardian {
         self.tool_refit_after_sequence = None;
         self.mime_last_seen = None;
         self.mime_answered = false;
-        self.box_answer_count = None;
+        self.box_solve = BoxSolve::default();
         self.clear_lamp();
-        self.box_opened = false;
         self.maze = None;
         self.plant = PlantProbe::Idle;
     }
@@ -1637,64 +1688,124 @@ impl Guardian {
         self.mime_answered = false;
     }
 
-    /// Solve a held Strange box (rs2b0t `solveAllBoxes`): Open the box,
-    /// read the cube question + three obj models, press the matching
-    /// answer button, wait for one box to be consumed, then repeat while
-    /// the inventory holds a box. Unknown question / missing model →
-    /// fail closed: no click, the trapped hold stays.
+    /// Solve boxes from their modal, inventory and server-message outcomes.
+    /// Missing outcomes retry within observed game ticks, then release the
+    /// slot with the last failure retained until the event leaves.
     fn step_box<D: Driver>(&mut self, driver: &mut D, snap: &GameSnapshot) {
-        // Total held quantity (rs2b0t `Inventory.count('Strange box')`:
-        // the box can sit as one row of a multi-box stack).
         let count: i32 = snap
             .inventory()
             .iter()
-            .filter(|i| i.def.id == STRANGE_BOX_OBJ)
-            .map(|i| i.count.max(0))
+            .filter(|item| item.def.id == STRANGE_BOX_OBJ)
+            .map(|item| item.count.max(0))
             .sum();
         if count == 0 {
+            self.box_solve = BoxSolve::default();
             self.acting = false;
             return;
         }
-        // An answer went out: wait for one box to be consumed before
-        // acting again (rs2b0t waits on the count drop).
-        if let Some(before) = self.box_answer_count {
-            if count >= before {
+        let tick = snap.tick();
+        match self.box_solve.phase {
+            BoxPhase::Stalled => {
+                self.acting = false;
                 return;
             }
-            self.box_answer_count = None;
-            self.box_opened = false;
+            BoxPhase::Answering {
+                tick: sent,
+                count: before,
+                sequence,
+            } => {
+                let succeeded = count < before
+                    || Self::server_chat_has_after(snap, sequence, |text| {
+                        text.contains(
+                            "You have completed this cube, but there are more for you to do.",
+                        )
+                    });
+                if succeeded {
+                    self.box_solve = BoxSolve {
+                        phase: BoxPhase::Retry,
+                        ..BoxSolve::default()
+                    };
+                } else if Self::server_chat_has_after(snap, sequence, |text| {
+                    text.contains("Oh dear, you have answered the question incorrectly")
+                }) {
+                    self.fail_box(BoxFailure::WrongAnswer);
+                    return;
+                } else if tick.wrapping_sub(sent) >= BOX_OUTCOME_TICKS {
+                    self.fail_box(BoxFailure::AnswerTimeout);
+                    return;
+                } else {
+                    return;
+                }
+            }
+            BoxPhase::Opening { tick: sent } if snap.modals().main != CUBE_IF_ROOT => {
+                if tick.wrapping_sub(sent) >= BOX_OUTCOME_TICKS {
+                    self.fail_box(BoxFailure::OpenTimeout);
+                }
+                return;
+            }
+            _ => {}
         }
-        if snap.modals().main == CUBE_IF_ROOT {
+        if snap.modals().main == CUBE_IF_ROOT && self.box_solve.phase != BoxPhase::Retry {
+            let started = match self.box_solve.phase {
+                BoxPhase::Opening { tick } => tick,
+                _ => {
+                    self.box_solve.phase = BoxPhase::Opening { tick };
+                    tick
+                }
+            };
             let ctx = ReadContext::new(snap);
             let question = ctx.component_text(CUBE_IF_QUESTION).unwrap_or("");
             let models = CUBE_IF_MODELS.map(|id| ctx.component_model_obj_id(id));
-            if models.iter().any(|m| m.is_none()) {
-                return;
-            }
             let Some(answer) = solve_cube(question, models) else {
+                if tick.wrapping_sub(started) >= BOX_OUTCOME_TICKS {
+                    self.fail_box(if models.iter().any(Option::is_none) {
+                        BoxFailure::MissingModels
+                    } else {
+                        BoxFailure::UnknownQuestion
+                    });
+                }
                 return;
             };
-            self.box_answer_count = Some(count);
-            press(driver, CUBE_IF_BUTTONS[answer]);
-            return;
-        }
-        if self.box_opened {
+            if press(driver, CUBE_IF_BUTTONS[answer]) {
+                self.box_solve.phase = BoxPhase::Answering {
+                    tick,
+                    count,
+                    sequence: snap.chat_lines().first().map_or(0, |line| line.sequence),
+                };
+            } else {
+                self.fail_box(BoxFailure::AnswerRefused);
+            }
             return;
         }
         let Some(held) = snap
             .inventory()
             .iter()
-            .find(|i| i.def.id == STRANGE_BOX_OBJ)
+            .find(|item| item.def.id == STRANGE_BOX_OBJ)
         else {
-            self.acting = false;
             return;
         };
         let mut ix = Interactions::new(snap, driver);
         match ix.interact(OpTarget::Item(held), ActionSpec::Label("Open".to_string())) {
-            SendResult::Sent { .. } => {
-                self.box_opened = true;
-            }
-            SendResult::Refused { .. } => self.acting = false,
+            SendResult::Sent { .. } => self.box_solve.phase = BoxPhase::Opening { tick },
+            SendResult::Refused { reason, .. } => self.fail_box(BoxFailure::OpenRefused(reason)),
+        }
+    }
+
+    fn fail_box(&mut self, failure: BoxFailure) {
+        self.box_solve.failures += 1;
+        self.box_solve.last_failure = Some(failure);
+        if self.box_solve.failures >= BOX_MAX_FAILURES {
+            self.box_solve.phase = BoxPhase::Stalled;
+            self.acting = false;
+            api::host_log!(
+                Category::RandomEvent,
+                Level::Warn,
+                "strange box: stopped after {} failed attempts; last failure: {:?}",
+                self.box_solve.failures,
+                self.box_solve.last_failure
+            );
+        } else {
+            self.box_solve.phase = BoxPhase::Retry;
         }
     }
 

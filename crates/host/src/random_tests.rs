@@ -7,6 +7,13 @@ use client::dash3d::{ClientNpc, ClientObj, LocAngle, LocShape};
 use client::datastruct::LinkList;
 use std::sync::Arc;
 
+#[test]
+#[cfg(target_pointer_width = "64")]
+fn guardian_per_bot_state_stays_inline_and_small() {
+    // Bounded box outcomes and the retained failure add 8 inline bytes to the 936-byte Guardian.
+    assert_eq!(std::mem::size_of::<Guardian>(), 944);
+}
+
 fn cfg() -> ClientConfig {
     ClientConfig {
         host: "127.0.0.1".into(),
@@ -4779,17 +4786,173 @@ fn strange_box_unknown_question_sends_no_click() {
     assert!(status.hold);
     assert_eq!(drv.actions, vec![0]);
 
-    // Tick 2: an unsolvable cube question → fail closed: no click,
-    // the trapped hold stays while the box is held.
+    // An unknown question gets no guessed answer; a missing model update
+    // spends the same bounded retry budget as a missing modal.
     drv.menus.clear();
     drv.actions.clear();
     open_cube(&mut c, "??", [3063, 3071, 3079]);
     tick_at(&mut c, &mut snap);
     let status = g.tick(&mut drv, &snap, &settings, 0, None);
     assert_eq!(status.kind, Some(RandomKind::Box));
-    assert!(status.hold, "an unsolvable cube keeps the trapped hold");
+    assert!(
+        status.hold,
+        "the first unknown question still has retry budget"
+    );
     assert!(drv.menus.is_empty(), "unknown question: no click");
     assert!(drv.actions.is_empty());
+    for _ in 0..10 {
+        tick_at(&mut c, &mut snap);
+        g.tick(&mut drv, &snap, &settings, 0, None);
+    }
+    let status = g.tick(&mut drv, &snap, &settings, 0, None);
+    assert!(
+        !status.hold && !status.ours,
+        "an unknown question cannot hold forever"
+    );
+    assert!(
+        drv.menus
+            .iter()
+            .all(|row| row.1 != MiniMenuAction::IF_BUTTON),
+        "unknown questions are never answered by guessing"
+    );
+}
+
+#[test]
+fn strange_box_lost_open_retries_then_releases_within_twelve_ticks() {
+    let mut c = new_client();
+    ingame_scene(&mut c);
+    plant_player(&mut c, "Test", 3314, 3234);
+    plant_inv_box(&mut c, 1);
+    let mut g = Guardian::new();
+    let mut drv = FakeDriver::default();
+    let settings = ProfileSettings::default();
+    let mut snap = GameSnapshot::new();
+    let mut released = None;
+    for elapsed in 1..=12 {
+        tick_at(&mut c, &mut snap);
+        let status = g.tick(&mut drv, &snap, &settings, u64::MAX, None);
+        assert_eq!(status.kind, Some(RandomKind::Box));
+        if !status.hold {
+            assert!(!status.ours, "a spent retry budget cannot interrupt walks");
+            released = Some(elapsed);
+            break;
+        }
+        let sends = drv.menus.len();
+        for _ in 0..10 {
+            let same_tick = g.tick(&mut drv, &snap, &settings, u64::MAX, None);
+            assert!(
+                same_tick.hold,
+                "wall time and repeated frames do not expire waits"
+            );
+        }
+        assert_eq!(drv.menus.len(), sends, "one action per observed game tick");
+    }
+    assert_eq!(released, Some(12));
+    assert_eq!(drv.menus.len(), 3, "initial Open plus two retries");
+    for _ in 0..20 {
+        tick_at(&mut c, &mut snap);
+        let status = g.tick(&mut drv, &snap, &settings, 0, None);
+        assert!(
+            !status.hold && !status.ours,
+            "the same failed event stays inert"
+        );
+    }
+    assert_eq!(drv.menus.len(), 3);
+}
+
+#[test]
+fn strange_box_dismissed_answers_retry_then_release_within_sixteen_ticks() {
+    let mut c = new_client();
+    ingame_scene(&mut c);
+    plant_player(&mut c, "Test", 3314, 3234);
+    plant_inv_box(&mut c, 1);
+    let mut g = Guardian::new();
+    let mut drv = FakeDriver::default();
+    let settings = ProfileSettings::default();
+    let mut snap = GameSnapshot::new();
+    let mut released = None;
+    let mut last_action = None;
+    for elapsed in 1..=16 {
+        if last_action == Some(MiniMenuAction::OP_HELD1) {
+            open_cube(&mut c, "What colour is the Square?", [3069, 3065, 3075]);
+        } else {
+            c.main_modal_id = -1;
+            c.gens.iface += 1;
+        }
+        drv.menus.clear();
+        tick_at(&mut c, &mut snap);
+        let status = g.tick(&mut drv, &snap, &settings, 0, None);
+        last_action = drv.menus.last().map(|row| row.1);
+        if !status.hold {
+            assert!(!status.ours);
+            released = Some(elapsed);
+            break;
+        }
+    }
+    assert_eq!(
+        released,
+        Some(15),
+        "three missing answer outcomes are bounded"
+    );
+}
+
+#[test]
+fn strange_box_lost_open_recovers_when_the_retried_modal_arrives() {
+    let mut c = new_client();
+    ingame_scene(&mut c);
+    plant_player(&mut c, "Test", 0, 0);
+    plant_inv_box(&mut c, 1);
+    let mut g = Guardian::new();
+    let mut drv = FakeDriver::default();
+    let settings = ProfileSettings::default();
+    let mut snap = GameSnapshot::new();
+    for _ in 0..5 {
+        tick_at(&mut c, &mut snap);
+        assert!(g.tick(&mut drv, &snap, &settings, 0, None).hold);
+    }
+    assert_eq!(drv.menus.len(), 2, "the missing first modal is retried");
+    open_cube(&mut c, "What colour is the Square?", [3069, 3065, 3075]);
+    tick_at(&mut c, &mut snap);
+    g.tick(&mut drv, &snap, &settings, 0, None);
+    assert_eq!(drv.menus.last().unwrap().1, MiniMenuAction::IF_BUTTON);
+    clear_inv(&mut c);
+    tick_at(&mut c, &mut snap);
+    let status = g.tick(&mut drv, &snap, &settings, 0, None);
+    assert!(!status.hold && !status.ours);
+}
+
+#[test]
+fn strange_box_fresh_server_outcomes_settle_even_without_a_net_count_drop() {
+    for (type_, sender, accepted) in [(0, "", true), (2, "Other", false)] {
+        let mut c = new_client();
+        ingame_scene(&mut c);
+        plant_player(&mut c, "Test", 0, 0);
+        plant_inv_box(&mut c, 1);
+        let mut g = Guardian::new();
+        let mut drv = FakeDriver::default();
+        let settings = ProfileSettings::default();
+        let mut snap = GameSnapshot::new();
+        tick_at(&mut c, &mut snap);
+        g.tick(&mut drv, &snap, &settings, 0, None);
+        open_cube(&mut c, "What colour is the Square?", [3069, 3065, 3075]);
+        tick_at(&mut c, &mut snap);
+        g.tick(&mut drv, &snap, &settings, 0, None);
+        drv.menus.clear();
+        c.main_modal_id = -1;
+        c.gens.iface += 1;
+        c.add_chat(
+            type_,
+            "You have completed this cube, but there are more for you to do.",
+            sender,
+        );
+        tick_at(&mut c, &mut snap);
+        g.tick(&mut drv, &snap, &settings, 0, None);
+        assert_eq!(
+            !drv.menus.is_empty(),
+            accepted,
+            "only a content message proves consumption"
+        );
+    }
 }
 
 // --- Task 11: maze behavioural port ---
