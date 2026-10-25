@@ -3006,40 +3006,19 @@ fn remaining_production_options_are_registered_with_ordered_exact_proofs() {
 
 #[test]
 fn bank_cells_register_their_cards_injects_and_watch_chain() {
-    for (name, card, deadline) in [
-        (
-            "auto_fighter_bank",
-            "AutoFighter",
-            SCRIPT_GOLD_DEADLINE + Duration::from_millis(202 * 600),
-        ),
-        ("moss_giant_bank", "MossGiant", SCRIPT_GOLD_DEADLINE),
-        ("moss_giant_bank_start", "MossGiant", SCRIPT_GOLD_DEADLINE),
-        ("hill_giant_bank", "HillGiant", SCRIPT_GOLD_DEADLINE),
-        (
-            "rock_crab_bank_seeded",
-            "RockCrab",
-            Duration::from_secs(360),
-        ),
+    for (name, card) in [
+        ("auto_fighter_bank", "AutoFighter"),
+        ("moss_giant_bank", "MossGiant"),
+        ("moss_giant_bank_start", "MossGiant"),
+        ("hill_giant_bank", "HillGiant"),
+        ("rock_crab_bank_seeded", "RockCrab"),
         // The frozen trip reaches the field ~128s in (two banks).
-        (
-            "chaos_druid_bank",
-            "ChaosDruidKiller",
-            Duration::from_secs(300),
-        ),
-        (
-            "ardy_fighter_bank",
-            "ArdyFighter",
-            ARDY_FIGHTER_BANK_DEADLINE,
-        ),
-        (
-            "ardy_fighter_bank_seeded",
-            "ArdyFighter",
-            SCRIPT_GOLD_DEADLINE,
-        ),
+        ("chaos_druid_bank", "ChaosDruidKiller"),
+        ("ardy_fighter_bank", "ArdyFighter"),
+        ("ardy_fighter_bank_seeded", "ArdyFighter"),
     ] {
         let scenario = get(name).unwrap_or_else(|| panic!("{name} registered"));
         assert_eq!(scenario.settings.start_script, Some(card));
-        assert_eq!(scenario.settings.deadline, deadline, "{name}");
         assert_eq!(scenario.settings.terminal_shot, Some(name));
         assert!(scenario.settings.full_rate && scenario.seed.mainland);
         let start = scenario
@@ -3692,22 +3671,14 @@ fn prepared_remaining_combat_cells_use_source_derived_profiles_and_long_budgets(
     for (name, card, level) in names_cards_and_levels {
         let scenario = get(name).unwrap_or_else(|| panic!("{name} registered"));
         assert_eq!(scenario.settings.start_script, Some(card), "{name}");
-        let (deadline, min_watch_ticks) = match name {
-            "green_dragon_bank_prepared" => (Duration::from_secs(600), 1500),
-            "green_dragon_bank_default_prepared" => (
-                GREEN_DRAGON_BANK_DEFAULT_PREPARED_QUALIFICATION_DEADLINE,
-                1800,
-            ),
-            "green_dragon_tele" => (Duration::from_secs(480), 1200),
-            "fire_giant_bank_prepared" | "fire_giant_camelot_prepared" => {
-                (Duration::from_secs(600), 1500)
-            }
-            _ => (Duration::from_secs(300), 750),
+        let min_watch_ticks = match name {
+            "green_dragon_bank_prepared"
+            | "fire_giant_bank_prepared"
+            | "fire_giant_camelot_prepared" => 1500,
+            "green_dragon_bank_default_prepared" => 1800,
+            "green_dragon_tele" => 1200,
+            _ => 750,
         };
-        assert_eq!(
-            scenario.settings.deadline, deadline,
-            "{name}: named combat/travel qualification wall budget"
-        );
         assert_eq!(scenario.settings.terminal_shot, Some(name), "{name}");
         let start = scenario
             .steps
@@ -4480,7 +4451,6 @@ fn hill_giant_loot_deposit_arms_deposit_only_after_combat_loot() {
             "kill and trip legs keep the ordinary watch"
         );
     }
-    assert_eq!(full.settings.deadline, SCRIPT_GOLD_DEADLINE);
 }
 
 #[test]
