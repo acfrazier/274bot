@@ -14622,7 +14622,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/combat/hunting/combat.ts:325; $S/hunt.rs:623"
+      "evidence": "$TS/api/combat/hunting/combat.ts:325; $JS/compat/hunt.rs:626"
     },
     {
       "family_id": "hunt",
@@ -14639,7 +14639,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/combat/hunting/combat.ts:325; $S/hunt.rs:623"
+      "evidence": "$TS/api/combat/hunting/combat.ts:325; $JS/compat/hunt.rs:626"
     },
     {
       "family_id": "hunt",
@@ -14656,7 +14656,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/combat/hunting/combat.ts:325; $S/hunt.rs:623"
+      "evidence": "$TS/api/combat/hunting/combat.ts:325; $JS/compat/hunt.rs:626"
     },
     {
       "family_id": "hunt",
@@ -14673,7 +14673,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/combat/hunting/combat.ts:325; $S/hunt.rs:623"
+      "evidence": "$TS/api/combat/hunting/combat.ts:325; $JS/compat/hunt.rs:626"
     },
     {
       "family_id": "hunt",
@@ -14690,7 +14690,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/combat/hunting/combat.ts:325; $S/hunt.rs:623"
+      "evidence": "$TS/api/combat/hunting/combat.ts:325; $JS/compat/hunt.rs:626"
     },
     {
       "family_id": "hunt",
@@ -14707,7 +14707,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/combat/hunting/combat.ts:325; $S/hunt.rs:623"
+      "evidence": "$TS/api/combat/hunting/combat.ts:325; $JS/compat/hunt.rs:626"
     },
     {
       "family_id": "hunt",
@@ -14724,7 +14724,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/combat/hunting/combat.ts:325; $S/hunt.rs:623"
+      "evidence": "$TS/api/combat/hunting/combat.ts:325; $JS/compat/hunt.rs:626"
     },
     {
       "family_id": "hunt",
@@ -14741,7 +14741,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/combat/hunting/combat.ts:325; $S/hunt.rs:623"
+      "evidence": "$TS/api/combat/hunting/combat.ts:325; $JS/compat/hunt.rs:626"
     },
     {
       "family_id": "hunt",
@@ -14758,7 +14758,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/combat/hunting/combat.ts:325; $S/hunt.rs:623"
+      "evidence": "$TS/api/combat/hunting/combat.ts:325; $JS/compat/hunt.rs:626"
     },
     {
       "family_id": "hunt",
@@ -14775,7 +14775,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/combat/hunting/combat.ts:325; $S/hunt.rs:623"
+      "evidence": "$TS/api/combat/hunting/combat.ts:325; $JS/compat/hunt.rs:626"
     },
     {
       "family_id": "hunt",
@@ -14792,7 +14792,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/combat/hunting/combat.ts:325; $S/hunt.rs:623"
+      "evidence": "$TS/api/combat/hunting/combat.ts:325; $JS/compat/hunt.rs:626"
     },
     {
       "family_id": "hunt",
@@ -14809,7 +14809,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/combat/hunting/combat.ts:325; $S/hunt.rs:623"
+      "evidence": "$TS/api/combat/hunting/combat.ts:325; $JS/compat/hunt.rs:626"
     },
     {
       "family_id": "hunt",
@@ -14826,7 +14826,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/combat/hunting/supply.ts:549; $S/hunt.rs:700-702"
+      "evidence": "$TS/api/combat/hunting/supply.ts:549; $JS/compat/hunt.rs:703-705"
     },
     {
       "family_id": "hunt",
@@ -14843,7 +14843,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/combat/hunting/supply.ts:549; $S/hunt.rs:700-702"
+      "evidence": "$TS/api/combat/hunting/supply.ts:549; $JS/compat/hunt.rs:703-705"
     },
     {
       "family_id": "hunt",
@@ -14860,7 +14860,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/combat/hunting/supply.ts:549; $S/hunt.rs:700-702"
+      "evidence": "$TS/api/combat/hunting/supply.ts:549; $JS/compat/hunt.rs:703-705"
     },
     {
       "family_id": "hunt",
@@ -14877,7 +14877,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/combat/hunting/supply.ts:549; $S/hunt.rs:700-702"
+      "evidence": "$TS/api/combat/hunting/supply.ts:549; $JS/compat/hunt.rs:703-705"
     },
     {
       "family_id": "hunt",
@@ -14894,7 +14894,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/combat/hunting/supply.ts:549; $S/hunt.rs:700-702"
+      "evidence": "$TS/api/combat/hunting/supply.ts:549; $JS/compat/hunt.rs:703-705"
     },
     {
       "family_id": "hunt",
@@ -14911,7 +14911,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/combat/hunting/supply.ts:549; $S/hunt.rs:700-702"
+      "evidence": "$TS/api/combat/hunting/supply.ts:549; $JS/compat/hunt.rs:703-705"
     },
     {
       "family_id": "hunt",
@@ -14928,7 +14928,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/combat/hunting/supply.ts:549; $S/hunt.rs:700-702"
+      "evidence": "$TS/api/combat/hunting/supply.ts:549; $JS/compat/hunt.rs:703-705"
     },
     {
       "family_id": "hunt",
@@ -14945,7 +14945,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/combat/hunting/supply.ts:549; $S/hunt.rs:700-702"
+      "evidence": "$TS/api/combat/hunting/supply.ts:549; $JS/compat/hunt.rs:703-705"
     },
     {
       "family_id": "hunt",
@@ -14962,7 +14962,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/combat/hunting/supply.ts:549; $S/hunt.rs:700-702"
+      "evidence": "$TS/api/combat/hunting/supply.ts:549; $JS/compat/hunt.rs:703-705"
     },
     {
       "family_id": "hunt",
@@ -14979,7 +14979,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/combat/hunting/supply.ts:549; $S/hunt.rs:700-702"
+      "evidence": "$TS/api/combat/hunting/supply.ts:549; $JS/compat/hunt.rs:703-705"
     },
     {
       "family_id": "hunt",
@@ -14996,7 +14996,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/combat/hunting/supply.ts:549; $S/hunt.rs:700-702"
+      "evidence": "$TS/api/combat/hunting/supply.ts:549; $JS/compat/hunt.rs:703-705"
     },
     {
       "family_id": "hunt",
@@ -15013,7 +15013,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/combat/hunting/supply.ts:549; $S/hunt.rs:700-702"
+      "evidence": "$TS/api/combat/hunting/supply.ts:549; $JS/compat/hunt.rs:703-705"
     },
     {
       "family_id": "walking",
@@ -15030,7 +15030,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/walking/Reach.ts:224; $S/reach_entity.rs:603-607"
+      "evidence": "$TS/api/walking/Reach.ts:224; $JS/compat/reach_entity.rs:602-606"
     },
     {
       "family_id": "hunt",
@@ -15047,7 +15047,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/combat/hunting/combat.ts:425,677; $S/hunt.rs:624-629"
+      "evidence": "$TS/api/combat/hunting/combat.ts:425,677; $JS/compat/hunt.rs:627-632"
     },
     {
       "family_id": "hunt",
@@ -15064,7 +15064,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/combat/hunting/combat.ts:425,677; $S/hunt.rs:624-629"
+      "evidence": "$TS/api/combat/hunting/combat.ts:425,677; $JS/compat/hunt.rs:627-632"
     },
     {
       "family_id": "hunt",
@@ -15081,7 +15081,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/combat/hunting/combat.ts:425,677; $S/hunt.rs:624-629"
+      "evidence": "$TS/api/combat/hunting/combat.ts:425,677; $JS/compat/hunt.rs:627-632"
     },
     {
       "family_id": "hunt",
@@ -15098,7 +15098,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/combat/hunting/combat.ts:425,677; $S/hunt.rs:624-629"
+      "evidence": "$TS/api/combat/hunting/combat.ts:425,677; $JS/compat/hunt.rs:627-632"
     },
     {
       "family_id": "hunt",
@@ -15115,7 +15115,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/combat/hunting/combat.ts:425,677; $S/hunt.rs:624-629"
+      "evidence": "$TS/api/combat/hunting/combat.ts:425,677; $JS/compat/hunt.rs:627-632"
     },
     {
       "family_id": "hunt",
@@ -15132,7 +15132,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/combat/hunting/combat.ts:425,677; $S/hunt.rs:624-629"
+      "evidence": "$TS/api/combat/hunting/combat.ts:425,677; $JS/compat/hunt.rs:627-632"
     },
     {
       "family_id": "hunt",
@@ -15149,7 +15149,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/combat/hunting/combat.ts:425,677; $S/hunt.rs:624-629"
+      "evidence": "$TS/api/combat/hunting/combat.ts:425,677; $JS/compat/hunt.rs:627-632"
     },
     {
       "family_id": "hunt",
@@ -15166,7 +15166,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/combat/hunting/combat.ts:425,677; $S/hunt.rs:624-629"
+      "evidence": "$TS/api/combat/hunting/combat.ts:425,677; $JS/compat/hunt.rs:627-632"
     },
     {
       "family_id": "hunt",
@@ -15183,7 +15183,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/combat/hunting/combat.ts:425,677; $S/hunt.rs:624-629"
+      "evidence": "$TS/api/combat/hunting/combat.ts:425,677; $JS/compat/hunt.rs:627-632"
     },
     {
       "family_id": "hunt",
@@ -15200,7 +15200,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/combat/hunting/combat.ts:425,677; $S/hunt.rs:624-629"
+      "evidence": "$TS/api/combat/hunting/combat.ts:425,677; $JS/compat/hunt.rs:627-632"
     },
     {
       "family_id": "hunt",
@@ -15217,7 +15217,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/combat/hunting/combat.ts:425,677; $S/hunt.rs:624-629"
+      "evidence": "$TS/api/combat/hunting/combat.ts:425,677; $JS/compat/hunt.rs:627-632"
     },
     {
       "family_id": "hunt",
@@ -15234,7 +15234,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/combat/hunting/combat.ts:425,677; $S/hunt.rs:624-629"
+      "evidence": "$TS/api/combat/hunting/combat.ts:425,677; $JS/compat/hunt.rs:627-632"
     },
     {
       "family_id": "hunt",
@@ -15251,7 +15251,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/combat/hunting/combat.ts:717; $S/hunt.rs:627-629; $S/walk.rs:1612-1619; $S/boat_fare.rs:1441-1448; $S/anchor_return.rs:175-180; $S/reach.rs:287-293; $S/reach_entity.rs:861-868,1513-1519"
+      "evidence": "$TS/api/combat/hunting/combat.ts:717; $JS/compat/hunt.rs:630-632; $JS/compat/walk.rs:1612-1619; $JS/compat/boat_fare.rs:1441-1448; $JS/compat/anchor_return.rs:175-180; $JS/compat/reach.rs:287-293; $JS/compat/reach_entity.rs:860-867,1512-1518"
     },
     {
       "family_id": "hunt",
@@ -15268,7 +15268,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/combat/hunting/combat.ts:717; $S/hunt.rs:627-629; $S/walk.rs:1612-1619; $S/boat_fare.rs:1441-1448; $S/anchor_return.rs:175-180; $S/reach.rs:287-293; $S/reach_entity.rs:861-868,1513-1519"
+      "evidence": "$TS/api/combat/hunting/combat.ts:717; $JS/compat/hunt.rs:630-632; $JS/compat/walk.rs:1612-1619; $JS/compat/boat_fare.rs:1441-1448; $JS/compat/anchor_return.rs:175-180; $JS/compat/reach.rs:287-293; $JS/compat/reach_entity.rs:860-867,1512-1518"
     },
     {
       "family_id": "hunt",
@@ -15285,7 +15285,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/combat/hunting/combat.ts:717; $S/hunt.rs:627-629; $S/walk.rs:1612-1619; $S/boat_fare.rs:1441-1448; $S/anchor_return.rs:175-180; $S/reach.rs:287-293; $S/reach_entity.rs:861-868,1513-1519"
+      "evidence": "$TS/api/combat/hunting/combat.ts:717; $JS/compat/hunt.rs:630-632; $JS/compat/walk.rs:1612-1619; $JS/compat/boat_fare.rs:1441-1448; $JS/compat/anchor_return.rs:175-180; $JS/compat/reach.rs:287-293; $JS/compat/reach_entity.rs:860-867,1512-1518"
     },
     {
       "family_id": "hunt",
@@ -15302,7 +15302,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/combat/hunting/combat.ts:717; $S/hunt.rs:627-629; $S/walk.rs:1612-1619; $S/boat_fare.rs:1441-1448; $S/anchor_return.rs:175-180; $S/reach.rs:287-293; $S/reach_entity.rs:861-868,1513-1519"
+      "evidence": "$TS/api/combat/hunting/combat.ts:717; $JS/compat/hunt.rs:630-632; $JS/compat/walk.rs:1612-1619; $JS/compat/boat_fare.rs:1441-1448; $JS/compat/anchor_return.rs:175-180; $JS/compat/reach.rs:287-293; $JS/compat/reach_entity.rs:860-867,1512-1518"
     },
     {
       "family_id": "hunt",
@@ -15319,7 +15319,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/combat/hunting/combat.ts:717; $S/hunt.rs:627-629; $S/walk.rs:1612-1619; $S/boat_fare.rs:1441-1448; $S/anchor_return.rs:175-180; $S/reach.rs:287-293; $S/reach_entity.rs:861-868,1513-1519"
+      "evidence": "$TS/api/combat/hunting/combat.ts:717; $JS/compat/hunt.rs:630-632; $JS/compat/walk.rs:1612-1619; $JS/compat/boat_fare.rs:1441-1448; $JS/compat/anchor_return.rs:175-180; $JS/compat/reach.rs:287-293; $JS/compat/reach_entity.rs:860-867,1512-1518"
     },
     {
       "family_id": "hunt",
@@ -15336,7 +15336,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/combat/hunting/combat.ts:717; $S/hunt.rs:627-629; $S/walk.rs:1612-1619; $S/boat_fare.rs:1441-1448; $S/anchor_return.rs:175-180; $S/reach.rs:287-293; $S/reach_entity.rs:861-868,1513-1519"
+      "evidence": "$TS/api/combat/hunting/combat.ts:717; $JS/compat/hunt.rs:630-632; $JS/compat/walk.rs:1612-1619; $JS/compat/boat_fare.rs:1441-1448; $JS/compat/anchor_return.rs:175-180; $JS/compat/reach.rs:287-293; $JS/compat/reach_entity.rs:860-867,1512-1518"
     },
     {
       "family_id": "hunt",
@@ -15353,7 +15353,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/combat/hunting/combat.ts:717; $S/hunt.rs:627-629; $S/walk.rs:1612-1619; $S/boat_fare.rs:1441-1448; $S/anchor_return.rs:175-180; $S/reach.rs:287-293; $S/reach_entity.rs:861-868,1513-1519"
+      "evidence": "$TS/api/combat/hunting/combat.ts:717; $JS/compat/hunt.rs:630-632; $JS/compat/walk.rs:1612-1619; $JS/compat/boat_fare.rs:1441-1448; $JS/compat/anchor_return.rs:175-180; $JS/compat/reach.rs:287-293; $JS/compat/reach_entity.rs:860-867,1512-1518"
     },
     {
       "family_id": "hunt",
@@ -15370,7 +15370,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/combat/hunting/combat.ts:717; $S/hunt.rs:627-629; $S/walk.rs:1612-1619; $S/boat_fare.rs:1441-1448; $S/anchor_return.rs:175-180; $S/reach.rs:287-293; $S/reach_entity.rs:861-868,1513-1519"
+      "evidence": "$TS/api/combat/hunting/combat.ts:717; $JS/compat/hunt.rs:630-632; $JS/compat/walk.rs:1612-1619; $JS/compat/boat_fare.rs:1441-1448; $JS/compat/anchor_return.rs:175-180; $JS/compat/reach.rs:287-293; $JS/compat/reach_entity.rs:860-867,1512-1518"
     },
     {
       "family_id": "hunt",
@@ -15387,7 +15387,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/combat/hunting/combat.ts:717; $S/hunt.rs:627-629; $S/walk.rs:1612-1619; $S/boat_fare.rs:1441-1448; $S/anchor_return.rs:175-180; $S/reach.rs:287-293; $S/reach_entity.rs:861-868,1513-1519"
+      "evidence": "$TS/api/combat/hunting/combat.ts:717; $JS/compat/hunt.rs:630-632; $JS/compat/walk.rs:1612-1619; $JS/compat/boat_fare.rs:1441-1448; $JS/compat/anchor_return.rs:175-180; $JS/compat/reach.rs:287-293; $JS/compat/reach_entity.rs:860-867,1512-1518"
     },
     {
       "family_id": "hunt",
@@ -15404,7 +15404,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/combat/hunting/combat.ts:717; $S/hunt.rs:627-629; $S/walk.rs:1612-1619; $S/boat_fare.rs:1441-1448; $S/anchor_return.rs:175-180; $S/reach.rs:287-293; $S/reach_entity.rs:861-868,1513-1519"
+      "evidence": "$TS/api/combat/hunting/combat.ts:717; $JS/compat/hunt.rs:630-632; $JS/compat/walk.rs:1612-1619; $JS/compat/boat_fare.rs:1441-1448; $JS/compat/anchor_return.rs:175-180; $JS/compat/reach.rs:287-293; $JS/compat/reach_entity.rs:860-867,1512-1518"
     },
     {
       "family_id": "hunt",
@@ -15421,7 +15421,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/combat/hunting/combat.ts:717; $S/hunt.rs:627-629; $S/walk.rs:1612-1619; $S/boat_fare.rs:1441-1448; $S/anchor_return.rs:175-180; $S/reach.rs:287-293; $S/reach_entity.rs:861-868,1513-1519"
+      "evidence": "$TS/api/combat/hunting/combat.ts:717; $JS/compat/hunt.rs:630-632; $JS/compat/walk.rs:1612-1619; $JS/compat/boat_fare.rs:1441-1448; $JS/compat/anchor_return.rs:175-180; $JS/compat/reach.rs:287-293; $JS/compat/reach_entity.rs:860-867,1512-1518"
     },
     {
       "family_id": "hunt",
@@ -15438,7 +15438,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/combat/hunting/combat.ts:717; $S/hunt.rs:627-629; $S/walk.rs:1612-1619; $S/boat_fare.rs:1441-1448; $S/anchor_return.rs:175-180; $S/reach.rs:287-293; $S/reach_entity.rs:861-868,1513-1519"
+      "evidence": "$TS/api/combat/hunting/combat.ts:717; $JS/compat/hunt.rs:630-632; $JS/compat/walk.rs:1612-1619; $JS/compat/boat_fare.rs:1441-1448; $JS/compat/anchor_return.rs:175-180; $JS/compat/reach.rs:287-293; $JS/compat/reach_entity.rs:860-867,1512-1518"
     },
     {
       "family_id": "walking",
@@ -15455,7 +15455,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/combat/hunting/combat.ts:717; $S/hunt.rs:627-629; $S/walk.rs:1612-1619; $S/boat_fare.rs:1441-1448; $S/anchor_return.rs:175-180; $S/reach.rs:287-293; $S/reach_entity.rs:861-868,1513-1519"
+      "evidence": "$TS/api/combat/hunting/combat.ts:717; $JS/compat/hunt.rs:630-632; $JS/compat/walk.rs:1612-1619; $JS/compat/boat_fare.rs:1441-1448; $JS/compat/anchor_return.rs:175-180; $JS/compat/reach.rs:287-293; $JS/compat/reach_entity.rs:860-867,1512-1518"
     },
     {
       "family_id": "walking",
@@ -15472,7 +15472,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/combat/hunting/combat.ts:717; $S/hunt.rs:627-629; $S/walk.rs:1612-1619; $S/boat_fare.rs:1441-1448; $S/anchor_return.rs:175-180; $S/reach.rs:287-293; $S/reach_entity.rs:861-868,1513-1519"
+      "evidence": "$TS/api/combat/hunting/combat.ts:717; $JS/compat/hunt.rs:630-632; $JS/compat/walk.rs:1612-1619; $JS/compat/boat_fare.rs:1441-1448; $JS/compat/anchor_return.rs:175-180; $JS/compat/reach.rs:287-293; $JS/compat/reach_entity.rs:860-867,1512-1518"
     },
     {
       "family_id": "walking",
@@ -15489,7 +15489,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/combat/hunting/combat.ts:717; $S/hunt.rs:627-629; $S/walk.rs:1612-1619; $S/boat_fare.rs:1441-1448; $S/anchor_return.rs:175-180; $S/reach.rs:287-293; $S/reach_entity.rs:861-868,1513-1519"
+      "evidence": "$TS/api/combat/hunting/combat.ts:717; $JS/compat/hunt.rs:630-632; $JS/compat/walk.rs:1612-1619; $JS/compat/boat_fare.rs:1441-1448; $JS/compat/anchor_return.rs:175-180; $JS/compat/reach.rs:287-293; $JS/compat/reach_entity.rs:860-867,1512-1518"
     },
     {
       "family_id": "walking",
@@ -15506,7 +15506,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/combat/hunting/combat.ts:717; $S/hunt.rs:627-629; $S/walk.rs:1612-1619; $S/boat_fare.rs:1441-1448; $S/anchor_return.rs:175-180; $S/reach.rs:287-293; $S/reach_entity.rs:861-868,1513-1519"
+      "evidence": "$TS/api/combat/hunting/combat.ts:717; $JS/compat/hunt.rs:630-632; $JS/compat/walk.rs:1612-1619; $JS/compat/boat_fare.rs:1441-1448; $JS/compat/anchor_return.rs:175-180; $JS/compat/reach.rs:287-293; $JS/compat/reach_entity.rs:860-867,1512-1518"
     },
     {
       "family_id": "tasks",
@@ -15523,7 +15523,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/combat/hunting/combat.ts:717; $S/hunt.rs:627-629; $S/walk.rs:1612-1619; $S/boat_fare.rs:1441-1448; $S/anchor_return.rs:175-180; $S/reach.rs:287-293; $S/reach_entity.rs:861-868,1513-1519"
+      "evidence": "$TS/api/combat/hunting/combat.ts:717; $JS/compat/hunt.rs:630-632; $JS/compat/walk.rs:1612-1619; $JS/compat/boat_fare.rs:1441-1448; $JS/compat/anchor_return.rs:175-180; $JS/compat/reach.rs:287-293; $JS/compat/reach_entity.rs:860-867,1512-1518"
     },
     {
       "family_id": "quests",
@@ -15540,7 +15540,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/combat/hunting/combat.ts:717; $S/hunt.rs:627-629; $S/walk.rs:1612-1619; $S/boat_fare.rs:1441-1448; $S/anchor_return.rs:175-180; $S/reach.rs:287-293; $S/reach_entity.rs:861-868,1513-1519"
+      "evidence": "$TS/api/combat/hunting/combat.ts:717; $JS/compat/hunt.rs:630-632; $JS/compat/walk.rs:1612-1619; $JS/compat/boat_fare.rs:1441-1448; $JS/compat/anchor_return.rs:175-180; $JS/compat/reach.rs:287-293; $JS/compat/reach_entity.rs:860-867,1512-1518"
     },
     {
       "family_id": "bank",
@@ -15591,7 +15591,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/death_recovery.rs:200-205,244-256 (frozen result ignored at :255)"
+      "evidence": "$JS/compat/death_recovery.rs:200-205,244-256 (frozen result ignored at :255)"
     },
     {
       "family_id": "bank",
@@ -15659,7 +15659,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/thieving/stealRules.ts:37-43; $S/bank_withdraw.rs:190-198,353-357"
+      "evidence": "$TS/api/thieving/stealRules.ts:37-43; $JS/compat/bank_withdraw.rs:190-198,353-357"
     },
     {
       "family_id": "thieving",
@@ -15676,7 +15676,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/thieving/stealRules.ts:37-43; $S/bank_withdraw.rs:190-198,353-357"
+      "evidence": "$TS/api/thieving/stealRules.ts:37-43; $JS/compat/bank_withdraw.rs:190-198,353-357"
     },
     {
       "family_id": "shop",
@@ -15693,7 +15693,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/shop/Shop.ts:124; $S/shop.rs:550-554; crates/script/tests/shop.rs:468"
+      "evidence": "$TS/api/shop/Shop.ts:124; $JS/compat/shop.rs:550-554; crates/script-js/tests/shop.rs:468"
     },
     {
       "family_id": "trade",
@@ -15710,7 +15710,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/trade/Trade.ts:99,114; $S/trade.rs:407-411; crates/script/tests/trade.rs:777"
+      "evidence": "$TS/api/trade/Trade.ts:99,114; $JS/compat/trade.rs:407-411; crates/script-js/tests/trade.rs:777"
     },
     {
       "family_id": "tasks",
@@ -15727,7 +15727,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/tasks/PeriodicBank.ts:16,49; $S/periodic_bank.rs"
+      "evidence": "$TS/api/tasks/PeriodicBank.ts:16,49; $JS/compat/periodic_bank.rs"
     },
     {
       "family_id": "tasks",
@@ -15744,7 +15744,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/tasks/PeriodicBank.ts:17,50; $S/periodic_bank.rs"
+      "evidence": "$TS/api/tasks/PeriodicBank.ts:17,50; $JS/compat/periodic_bank.rs"
     },
     {
       "family_id": "tasks",
@@ -15761,7 +15761,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/tasks/PeriodicBank.ts:18,51; $S/periodic_bank.rs"
+      "evidence": "$TS/api/tasks/PeriodicBank.ts:18,51; $JS/compat/periodic_bank.rs"
     },
     {
       "family_id": "walking",
@@ -15778,7 +15778,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/reach_entity.rs:570-579,599-603,613-617,661"
+      "evidence": "$JS/compat/reach_entity.rs:569-578,598-602,612-616,660"
     },
     {
       "family_id": "walking",
@@ -15795,7 +15795,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/reach_entity.rs:578,626"
+      "evidence": "$JS/compat/reach_entity.rs:579-587,622-635"
     },
     {
       "family_id": "walking",
@@ -15812,7 +15812,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/walking/Reach.ts:182-187,252-265; $S/reach_entity.rs:1029-1046"
+      "evidence": "$TS/api/walking/Reach.ts:182-187,252-265; $JS/compat/reach_entity.rs:1028-1045"
     },
     {
       "family_id": "walking",
@@ -15829,7 +15829,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/walking/Reach.ts:183-192,264; $S/reach_entity.rs:1034-1075"
+      "evidence": "$TS/api/walking/Reach.ts:183-192,264; $JS/compat/reach_entity.rs:1033-1074"
     },
     {
       "family_id": "trade",
@@ -15846,7 +15846,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/trade/drivePartnerTrade.ts; $S/drive_partner_trade.rs:214-240"
+      "evidence": "$TS/api/trade/drivePartnerTrade.ts; $JS/compat/drive_partner_trade.rs:214-240"
     },
     {
       "family_id": "trade",
@@ -15863,7 +15863,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/trade/drivePartnerTrade.ts; $S/drive_partner_trade.rs:214-240"
+      "evidence": "$TS/api/trade/drivePartnerTrade.ts; $JS/compat/drive_partner_trade.rs:214-240"
     },
     {
       "family_id": "trade",
@@ -15880,7 +15880,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/trade/drivePartnerTrade.ts; $S/drive_partner_trade.rs:214-240"
+      "evidence": "$TS/api/trade/drivePartnerTrade.ts; $JS/compat/drive_partner_trade.rs:214-240"
     },
     {
       "family_id": "trade",
@@ -15897,7 +15897,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/trade/drivePartnerTrade.ts; $S/drive_partner_trade.rs:214-240"
+      "evidence": "$TS/api/trade/drivePartnerTrade.ts; $JS/compat/drive_partner_trade.rs:214-240"
     },
     {
       "family_id": "trade",
@@ -15914,7 +15914,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/trade/drivePartnerTrade.ts; $S/drive_partner_trade.rs:214-240"
+      "evidence": "$TS/api/trade/drivePartnerTrade.ts; $JS/compat/drive_partner_trade.rs:214-240"
     },
     {
       "family_id": "trade",
@@ -15931,7 +15931,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/trade/drivePartnerTrade.ts; $S/drive_partner_trade.rs:214-240"
+      "evidence": "$TS/api/trade/drivePartnerTrade.ts; $JS/compat/drive_partner_trade.rs:214-240"
     },
     {
       "family_id": "thieving",
@@ -15948,7 +15948,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/thieving/CakeStall.ts:72,83; $S/cake_stall/runtime.rs:727-749"
+      "evidence": "$TS/api/thieving/CakeStall.ts:72,83; $JS/compat/cake_stall/runtime.rs:727-749"
     },
     {
       "family_id": "thieving",
@@ -15965,7 +15965,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/thieving/CakeStall.ts:72,83; $S/cake_stall/runtime.rs:727-749"
+      "evidence": "$TS/api/thieving/CakeStall.ts:72,83; $JS/compat/cake_stall/runtime.rs:727-749"
     },
     {
       "family_id": "thieving",
@@ -15982,7 +15982,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/thieving/CakeStall.ts:72,83; $S/cake_stall/runtime.rs:727-749"
+      "evidence": "$TS/api/thieving/CakeStall.ts:72,83; $JS/compat/cake_stall/runtime.rs:727-749"
     },
     {
       "family_id": "tasks",
@@ -15999,7 +15999,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/tasks/PeriodicBank.ts:19,45; $S/periodic_bank.rs"
+      "evidence": "$TS/api/tasks/PeriodicBank.ts:19,45; $JS/compat/periodic_bank.rs"
     },
     {
       "family_id": "tasks",
@@ -16016,7 +16016,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/bank/Bank.ts:86-94,322-327,395-406,428-445; $TS/api/bank/Banking.ts:53-59,209-235; $TS/api/tasks/PeriodicBank.ts:45-60; $S/bank/seat_open.rs; $S/bank/seat_transfer.rs; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,850-859,1497-1505; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
+      "evidence": "$TS/api/bank/Bank.ts:86-94,322-327,395-406,428-445; $TS/api/bank/Banking.ts:53-59,209-235; $TS/api/tasks/PeriodicBank.ts:45-60; $S/bank/seat_open.rs; $S/bank/seat_transfer.rs; $JS/compat/dialog.rs:160-163,323-327,355-358; $JS/compat/reach.rs:202-205,260-268; $JS/compat/reach_entity.rs:483-489,526-544,849-858,1496-1504; $JS/compat/walk.rs:1533-1536,1810-1812; $JS/compat/boat_fare.rs:1352-1357; $JS/compat/anchor_return.rs:101-104"
     },
     {
       "family_id": "bank",
@@ -16033,7 +16033,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/bank/Bank.ts:86-94,322-327,395-406,428-445; $TS/api/bank/Banking.ts:53-59,209-235; $TS/api/tasks/PeriodicBank.ts:45-60; $S/bank/seat_open.rs; $S/bank/seat_transfer.rs; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,850-859,1497-1505; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
+      "evidence": "$TS/api/bank/Bank.ts:86-94,322-327,395-406,428-445; $TS/api/bank/Banking.ts:53-59,209-235; $TS/api/tasks/PeriodicBank.ts:45-60; $S/bank/seat_open.rs; $S/bank/seat_transfer.rs; $JS/compat/dialog.rs:160-163,323-327,355-358; $JS/compat/reach.rs:202-205,260-268; $JS/compat/reach_entity.rs:483-489,526-544,849-858,1496-1504; $JS/compat/walk.rs:1533-1536,1810-1812; $JS/compat/boat_fare.rs:1352-1357; $JS/compat/anchor_return.rs:101-104"
     },
     {
       "family_id": "bank",
@@ -16050,7 +16050,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/bank/Bank.ts:86-94,322-327,395-406,428-445; $TS/api/bank/Banking.ts:53-59,209-235; $TS/api/tasks/PeriodicBank.ts:45-60; $S/bank/seat_open.rs; $S/bank/seat_transfer.rs; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,850-859,1497-1505; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
+      "evidence": "$TS/api/bank/Bank.ts:86-94,322-327,395-406,428-445; $TS/api/bank/Banking.ts:53-59,209-235; $TS/api/tasks/PeriodicBank.ts:45-60; $S/bank/seat_open.rs; $S/bank/seat_transfer.rs; $JS/compat/dialog.rs:160-163,323-327,355-358; $JS/compat/reach.rs:202-205,260-268; $JS/compat/reach_entity.rs:483-489,526-544,849-858,1496-1504; $JS/compat/walk.rs:1533-1536,1810-1812; $JS/compat/boat_fare.rs:1352-1357; $JS/compat/anchor_return.rs:101-104"
     },
     {
       "family_id": "bank",
@@ -16067,7 +16067,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/bank/Bank.ts:86-94,322-327,395-406,428-445; $TS/api/bank/Banking.ts:53-59,209-235; $TS/api/tasks/PeriodicBank.ts:45-60; $S/bank/seat_open.rs; $S/bank/seat_transfer.rs; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,850-859,1497-1505; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
+      "evidence": "$TS/api/bank/Bank.ts:86-94,322-327,395-406,428-445; $TS/api/bank/Banking.ts:53-59,209-235; $TS/api/tasks/PeriodicBank.ts:45-60; $S/bank/seat_open.rs; $S/bank/seat_transfer.rs; $JS/compat/dialog.rs:160-163,323-327,355-358; $JS/compat/reach.rs:202-205,260-268; $JS/compat/reach_entity.rs:483-489,526-544,849-858,1496-1504; $JS/compat/walk.rs:1533-1536,1810-1812; $JS/compat/boat_fare.rs:1352-1357; $JS/compat/anchor_return.rs:101-104"
     },
     {
       "family_id": "bank",
@@ -16084,7 +16084,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/bank/Bank.ts:86-94,322-327,395-406,428-445; $TS/api/bank/Banking.ts:53-59,209-235; $TS/api/tasks/PeriodicBank.ts:45-60; $S/bank/seat_open.rs; $S/bank/seat_transfer.rs; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,850-859,1497-1505; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
+      "evidence": "$TS/api/bank/Bank.ts:86-94,322-327,395-406,428-445; $TS/api/bank/Banking.ts:53-59,209-235; $TS/api/tasks/PeriodicBank.ts:45-60; $S/bank/seat_open.rs; $S/bank/seat_transfer.rs; $JS/compat/dialog.rs:160-163,323-327,355-358; $JS/compat/reach.rs:202-205,260-268; $JS/compat/reach_entity.rs:483-489,526-544,849-858,1496-1504; $JS/compat/walk.rs:1533-1536,1810-1812; $JS/compat/boat_fare.rs:1352-1357; $JS/compat/anchor_return.rs:101-104"
     },
     {
       "family_id": "bank",
@@ -16101,7 +16101,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/bank/Bank.ts:86-94,322-327,395-406,428-445; $TS/api/bank/Banking.ts:53-59,209-235; $TS/api/tasks/PeriodicBank.ts:45-60; $S/bank/seat_open.rs; $S/bank/seat_transfer.rs; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,850-859,1497-1505; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
+      "evidence": "$TS/api/bank/Bank.ts:86-94,322-327,395-406,428-445; $TS/api/bank/Banking.ts:53-59,209-235; $TS/api/tasks/PeriodicBank.ts:45-60; $S/bank/seat_open.rs; $S/bank/seat_transfer.rs; $JS/compat/dialog.rs:160-163,323-327,355-358; $JS/compat/reach.rs:202-205,260-268; $JS/compat/reach_entity.rs:483-489,526-544,849-858,1496-1504; $JS/compat/walk.rs:1533-1536,1810-1812; $JS/compat/boat_fare.rs:1352-1357; $JS/compat/anchor_return.rs:101-104"
     },
     {
       "family_id": "quests",
@@ -16118,7 +16118,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/bank/Bank.ts:86-94,322-327,395-406,428-445; $TS/api/bank/Banking.ts:53-59,209-235; $TS/api/tasks/PeriodicBank.ts:45-60; $S/bank/seat_open.rs; $S/bank/seat_transfer.rs; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,850-859,1497-1505; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
+      "evidence": "$TS/api/bank/Bank.ts:86-94,322-327,395-406,428-445; $TS/api/bank/Banking.ts:53-59,209-235; $TS/api/tasks/PeriodicBank.ts:45-60; $S/bank/seat_open.rs; $S/bank/seat_transfer.rs; $JS/compat/dialog.rs:160-163,323-327,355-358; $JS/compat/reach.rs:202-205,260-268; $JS/compat/reach_entity.rs:483-489,526-544,849-858,1496-1504; $JS/compat/walk.rs:1533-1536,1810-1812; $JS/compat/boat_fare.rs:1352-1357; $JS/compat/anchor_return.rs:101-104"
     },
     {
       "family_id": "walking",
@@ -16135,7 +16135,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/bank/Bank.ts:86-94,322-327,395-406,428-445; $TS/api/bank/Banking.ts:53-59,209-235; $TS/api/tasks/PeriodicBank.ts:45-60; $S/bank/seat_open.rs; $S/bank/seat_transfer.rs; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,850-859,1497-1505; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
+      "evidence": "$TS/api/bank/Bank.ts:86-94,322-327,395-406,428-445; $TS/api/bank/Banking.ts:53-59,209-235; $TS/api/tasks/PeriodicBank.ts:45-60; $S/bank/seat_open.rs; $S/bank/seat_transfer.rs; $JS/compat/dialog.rs:160-163,323-327,355-358; $JS/compat/reach.rs:202-205,260-268; $JS/compat/reach_entity.rs:483-489,526-544,849-858,1496-1504; $JS/compat/walk.rs:1533-1536,1810-1812; $JS/compat/boat_fare.rs:1352-1357; $JS/compat/anchor_return.rs:101-104"
     },
     {
       "family_id": "walking",
@@ -16152,7 +16152,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/bank/Bank.ts:86-94,322-327,395-406,428-445; $TS/api/bank/Banking.ts:53-59,209-235; $TS/api/tasks/PeriodicBank.ts:45-60; $S/bank/seat_open.rs; $S/bank/seat_transfer.rs; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,850-859,1497-1505; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
+      "evidence": "$TS/api/bank/Bank.ts:86-94,322-327,395-406,428-445; $TS/api/bank/Banking.ts:53-59,209-235; $TS/api/tasks/PeriodicBank.ts:45-60; $S/bank/seat_open.rs; $S/bank/seat_transfer.rs; $JS/compat/dialog.rs:160-163,323-327,355-358; $JS/compat/reach.rs:202-205,260-268; $JS/compat/reach_entity.rs:483-489,526-544,849-858,1496-1504; $JS/compat/walk.rs:1533-1536,1810-1812; $JS/compat/boat_fare.rs:1352-1357; $JS/compat/anchor_return.rs:101-104"
     },
     {
       "family_id": "walking",
@@ -16169,7 +16169,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/bank/Bank.ts:86-94,322-327,395-406,428-445; $TS/api/bank/Banking.ts:53-59,209-235; $TS/api/tasks/PeriodicBank.ts:45-60; $S/bank/seat_open.rs; $S/bank/seat_transfer.rs; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,850-859,1497-1505; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
+      "evidence": "$TS/api/bank/Bank.ts:86-94,322-327,395-406,428-445; $TS/api/bank/Banking.ts:53-59,209-235; $TS/api/tasks/PeriodicBank.ts:45-60; $S/bank/seat_open.rs; $S/bank/seat_transfer.rs; $JS/compat/dialog.rs:160-163,323-327,355-358; $JS/compat/reach.rs:202-205,260-268; $JS/compat/reach_entity.rs:483-489,526-544,849-858,1496-1504; $JS/compat/walk.rs:1533-1536,1810-1812; $JS/compat/boat_fare.rs:1352-1357; $JS/compat/anchor_return.rs:101-104"
     },
     {
       "family_id": "walking",
@@ -16186,7 +16186,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/bank/Bank.ts:86-94,322-327,395-406,428-445; $TS/api/bank/Banking.ts:53-59,209-235; $TS/api/tasks/PeriodicBank.ts:45-60; $S/bank/seat_open.rs; $S/bank/seat_transfer.rs; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,850-859,1497-1505; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
+      "evidence": "$TS/api/bank/Bank.ts:86-94,322-327,395-406,428-445; $TS/api/bank/Banking.ts:53-59,209-235; $TS/api/tasks/PeriodicBank.ts:45-60; $S/bank/seat_open.rs; $S/bank/seat_transfer.rs; $JS/compat/dialog.rs:160-163,323-327,355-358; $JS/compat/reach.rs:202-205,260-268; $JS/compat/reach_entity.rs:483-489,526-544,849-858,1496-1504; $JS/compat/walk.rs:1533-1536,1810-1812; $JS/compat/boat_fare.rs:1352-1357; $JS/compat/anchor_return.rs:101-104"
     },
     {
       "family_id": "walking",
@@ -16203,7 +16203,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/bank/Bank.ts:86-94,322-327,395-406,428-445; $TS/api/bank/Banking.ts:53-59,209-235; $TS/api/tasks/PeriodicBank.ts:45-60; $S/bank/seat_open.rs; $S/bank/seat_transfer.rs; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,850-859,1497-1505; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
+      "evidence": "$TS/api/bank/Bank.ts:86-94,322-327,395-406,428-445; $TS/api/bank/Banking.ts:53-59,209-235; $TS/api/tasks/PeriodicBank.ts:45-60; $S/bank/seat_open.rs; $S/bank/seat_transfer.rs; $JS/compat/dialog.rs:160-163,323-327,355-358; $JS/compat/reach.rs:202-205,260-268; $JS/compat/reach_entity.rs:483-489,526-544,849-858,1496-1504; $JS/compat/walk.rs:1533-1536,1810-1812; $JS/compat/boat_fare.rs:1352-1357; $JS/compat/anchor_return.rs:101-104"
     },
     {
       "family_id": "walking",
@@ -16220,7 +16220,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/bank/Bank.ts:86-94,322-327,395-406,428-445; $TS/api/bank/Banking.ts:53-59,209-235; $TS/api/tasks/PeriodicBank.ts:45-60; $S/bank/seat_open.rs; $S/bank/seat_transfer.rs; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,850-859,1497-1505; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
+      "evidence": "$TS/api/bank/Bank.ts:86-94,322-327,395-406,428-445; $TS/api/bank/Banking.ts:53-59,209-235; $TS/api/tasks/PeriodicBank.ts:45-60; $S/bank/seat_open.rs; $S/bank/seat_transfer.rs; $JS/compat/dialog.rs:160-163,323-327,355-358; $JS/compat/reach.rs:202-205,260-268; $JS/compat/reach_entity.rs:483-489,526-544,849-858,1496-1504; $JS/compat/walk.rs:1533-1536,1810-1812; $JS/compat/boat_fare.rs:1352-1357; $JS/compat/anchor_return.rs:101-104"
     },
     {
       "family_id": "tasks",
@@ -16237,7 +16237,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/bank/Bank.ts:86-94,322-327,395-406,428-445; $TS/api/bank/Banking.ts:53-59,209-235; $TS/api/tasks/PeriodicBank.ts:45-60; $S/bank/seat_open.rs; $S/bank/seat_transfer.rs; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,850-859,1497-1505; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
+      "evidence": "$TS/api/bank/Bank.ts:86-94,322-327,395-406,428-445; $TS/api/bank/Banking.ts:53-59,209-235; $TS/api/tasks/PeriodicBank.ts:45-60; $S/bank/seat_open.rs; $S/bank/seat_transfer.rs; $JS/compat/dialog.rs:160-163,323-327,355-358; $JS/compat/reach.rs:202-205,260-268; $JS/compat/reach_entity.rs:483-489,526-544,849-858,1496-1504; $JS/compat/walk.rs:1533-1536,1810-1812; $JS/compat/boat_fare.rs:1352-1357; $JS/compat/anchor_return.rs:101-104"
     },
     {
       "family_id": "quests",
@@ -16254,7 +16254,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/bank/Bank.ts:86-94,322-327,395-406,428-445; $TS/api/bank/Banking.ts:53-59,209-235; $TS/api/tasks/PeriodicBank.ts:45-60; $S/bank/seat_open.rs; $S/bank/seat_transfer.rs; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,850-859,1497-1505; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104"
+      "evidence": "$TS/api/bank/Bank.ts:86-94,322-327,395-406,428-445; $TS/api/bank/Banking.ts:53-59,209-235; $TS/api/tasks/PeriodicBank.ts:45-60; $S/bank/seat_open.rs; $S/bank/seat_transfer.rs; $JS/compat/dialog.rs:160-163,323-327,355-358; $JS/compat/reach.rs:202-205,260-268; $JS/compat/reach_entity.rs:483-489,526-544,849-858,1496-1504; $JS/compat/walk.rs:1533-1536,1810-1812; $JS/compat/boat_fare.rs:1352-1357; $JS/compat/anchor_return.rs:101-104"
     },
     {
       "family_id": "bank",
@@ -16288,7 +16288,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$TS/api/bank/Bank.ts:86-94; $S/shim/bank.js; $S/bank/seat_transfer.rs"
+      "evidence": "$TS/api/bank/Bank.ts:86-94; $JS/shim/bank.js; $S/bank/seat_transfer.rs"
     },
     {
       "family_id": "trade",
@@ -16305,7 +16305,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/drive_partner_trade.rs:201-203,214-240"
+      "evidence": "$JS/compat/drive_partner_trade.rs:201-203,214-240"
     },
     {
       "family_id": "trade",
@@ -16322,7 +16322,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/drive_partner_trade.rs:201-203,214-240"
+      "evidence": "$JS/compat/drive_partner_trade.rs:201-203,214-240"
     },
     {
       "family_id": "trade",
@@ -16339,7 +16339,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/drive_partner_trade.rs:201-203,214-240"
+      "evidence": "$JS/compat/drive_partner_trade.rs:201-203,214-240"
     },
     {
       "family_id": "trade",
@@ -16356,7 +16356,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/drive_partner_trade.rs:201-203,214-240"
+      "evidence": "$JS/compat/drive_partner_trade.rs:201-203,214-240"
     },
     {
       "family_id": "trade",
@@ -16373,7 +16373,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/drive_partner_trade.rs:201-203,214-240"
+      "evidence": "$JS/compat/drive_partner_trade.rs:201-203,214-240"
     },
     {
       "family_id": "thieving",
@@ -16390,7 +16390,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/cake_stall/runtime.rs:727-749"
+      "evidence": "$JS/compat/cake_stall/runtime.rs:727-749"
     },
     {
       "family_id": "thieving",
@@ -16407,7 +16407,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/cake_stall/runtime.rs:727-749"
+      "evidence": "$JS/compat/cake_stall/runtime.rs:727-749"
     },
     {
       "family_id": "thieving",
@@ -16424,7 +16424,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/cake_stall/runtime.rs:727-749"
+      "evidence": "$JS/compat/cake_stall/runtime.rs:727-749"
     },
     {
       "family_id": "thieving",
@@ -16441,7 +16441,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/cake_stall/runtime.rs:727-749"
+      "evidence": "$JS/compat/cake_stall/runtime.rs:727-749"
     },
     {
       "family_id": "hunt",
@@ -16458,7 +16458,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,152-222; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,155-225; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -16475,7 +16475,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,152-222; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,155-225; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -16492,7 +16492,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,152-222; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,155-225; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -16509,7 +16509,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,152-222; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,155-225; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -16526,7 +16526,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,152-222; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,155-225; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -16543,7 +16543,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,152-222; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,155-225; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -16560,7 +16560,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,152-222; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,155-225; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -16577,7 +16577,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,152-222; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,155-225; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -16594,7 +16594,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,152-222; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,155-225; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -16611,7 +16611,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,152-222; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,155-225; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -16628,7 +16628,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,152-222; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,155-225; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -16645,7 +16645,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,152-222; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,155-225; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -16662,7 +16662,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,203-212; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,206-215; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -16679,7 +16679,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,203-212; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,206-215; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -16696,7 +16696,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,203-212; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,206-215; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -16713,7 +16713,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,203-212; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,206-215; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -16730,7 +16730,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,203-212; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,206-215; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -16747,7 +16747,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,203-212; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,206-215; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -16764,7 +16764,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,203-212; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,206-215; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -16781,7 +16781,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,203-212; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,206-215; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -16798,7 +16798,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,203-212; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,206-215; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -16815,7 +16815,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,203-212; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,206-215; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -16832,7 +16832,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,203-212; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,206-215; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -16849,7 +16849,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,203-212; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,206-215; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -16866,7 +16866,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,184-190; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,187-193; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -16883,7 +16883,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,184-190; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,187-193; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -16900,7 +16900,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,184-190; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,187-193; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -16917,7 +16917,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,184-190; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,187-193; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -16934,7 +16934,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,184-190; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,187-193; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -16951,7 +16951,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,184-190; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,187-193; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -16968,7 +16968,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,184-190; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,187-193; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -16985,7 +16985,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,184-190; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,187-193; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -17002,7 +17002,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,184-190; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,187-193; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -17019,7 +17019,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,184-190; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,187-193; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -17036,7 +17036,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,184-190; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,187-193; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -17053,7 +17053,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,184-190; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,187-193; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -17070,7 +17070,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,184-190; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,187-193; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -17087,7 +17087,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,184-190; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,187-193; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -17104,7 +17104,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,184-190; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,187-193; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -17121,7 +17121,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,184-190; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,187-193; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -17138,7 +17138,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,184-190; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,187-193; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -17155,7 +17155,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,184-190; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,187-193; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -17172,7 +17172,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,184-190; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,187-193; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -17189,7 +17189,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,184-190; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,187-193; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -17206,7 +17206,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,184-190; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,187-193; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -17223,7 +17223,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,184-190; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,187-193; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -17240,7 +17240,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,184-190; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,187-193; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -17257,7 +17257,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,184-190; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,187-193; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -17274,7 +17274,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,184-190; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,187-193; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -17291,7 +17291,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,184-190; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,187-193; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -17308,7 +17308,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,184-190; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,187-193; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -17325,7 +17325,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,184-190; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,187-193; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -17342,7 +17342,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,184-190; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,187-193; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -17359,7 +17359,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,184-190; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,187-193; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -17376,7 +17376,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,184-190; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,187-193; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -17393,7 +17393,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,184-190; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,187-193; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -17410,7 +17410,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,184-190; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,187-193; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -17427,7 +17427,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,184-190; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,187-193; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -17444,7 +17444,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,184-190; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,187-193; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -17461,7 +17461,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,184-190; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,187-193; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -17478,7 +17478,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,168-181; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,171-184; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -17495,7 +17495,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,168-181; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,171-184; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -17512,7 +17512,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,168-181; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,171-184; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -17529,7 +17529,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,168-181; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,171-184; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -17546,7 +17546,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,168-181; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,171-184; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -17563,7 +17563,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,168-181; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,171-184; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -17580,7 +17580,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,168-181; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,171-184; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -17597,7 +17597,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,168-181; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,171-184; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -17614,7 +17614,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,168-181; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,171-184; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -17631,7 +17631,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,168-181; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,171-184; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -17648,7 +17648,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,168-181; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,171-184; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -17665,7 +17665,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,168-181; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,171-184; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -17682,7 +17682,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,168-181; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,171-184; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -17699,7 +17699,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,168-181; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,171-184; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -17716,7 +17716,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,168-181; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,171-184; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -17733,7 +17733,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,168-181; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,171-184; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -17750,7 +17750,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,168-181; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,171-184; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -17767,7 +17767,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,168-181; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,171-184; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -17784,7 +17784,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,168-181; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,171-184; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -17801,7 +17801,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,168-181; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,171-184; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -17818,7 +17818,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,168-181; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,171-184; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -17835,7 +17835,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,168-181; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,171-184; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -17852,7 +17852,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,168-181; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,171-184; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -17869,7 +17869,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,168-181; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,171-184; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -17886,7 +17886,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,192-200; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,195-203; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -17903,7 +17903,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,192-200; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,195-203; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -17920,7 +17920,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,192-200; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,195-203; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -17937,7 +17937,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,192-200; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,195-203; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -17954,7 +17954,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,192-200; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,195-203; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -17971,7 +17971,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,192-200; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,195-203; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -17988,7 +17988,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,192-200; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,195-203; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -18005,7 +18005,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,192-200; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,195-203; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -18022,7 +18022,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,192-200; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,195-203; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -18039,7 +18039,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,192-200; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,195-203; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -18056,7 +18056,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,192-200; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,195-203; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -18073,7 +18073,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,192-200; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,195-203; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -18090,7 +18090,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,203-212; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,206-215; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -18107,7 +18107,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,203-212; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,206-215; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -18124,7 +18124,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,203-212; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,206-215; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -18141,7 +18141,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,203-212; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,206-215; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -18158,7 +18158,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,203-212; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,206-215; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -18175,7 +18175,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,203-212; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,206-215; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -18192,7 +18192,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,203-212; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,206-215; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -18209,7 +18209,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,203-212; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,206-215; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -18226,7 +18226,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,203-212; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,206-215; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -18243,7 +18243,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,203-212; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,206-215; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -18260,7 +18260,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,203-212; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,206-215; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -18277,7 +18277,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,203-212; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,206-215; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -18294,7 +18294,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,168-181; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,171-184; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -18311,7 +18311,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,168-181; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,171-184; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -18328,7 +18328,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,168-181; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,171-184; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -18345,7 +18345,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,168-181; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,171-184; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -18362,7 +18362,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,168-181; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,171-184; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -18379,7 +18379,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,168-181; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,171-184; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -18396,7 +18396,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,168-181; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,171-184; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -18413,7 +18413,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,168-181; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,171-184; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -18430,7 +18430,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,168-181; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,171-184; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -18447,7 +18447,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,168-181; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,171-184; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -18464,7 +18464,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,168-181; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,171-184; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -18481,7 +18481,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,168-181; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,171-184; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -18498,7 +18498,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,192-200; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,195-203; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -18515,7 +18515,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,192-200; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,195-203; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -18532,7 +18532,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,192-200; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,195-203; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -18549,7 +18549,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,192-200; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,195-203; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -18566,7 +18566,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,192-200; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,195-203; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -18583,7 +18583,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,192-200; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,195-203; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -18600,7 +18600,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,192-200; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,195-203; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -18617,7 +18617,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,192-200; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,195-203; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -18634,7 +18634,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,192-200; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,195-203; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -18651,7 +18651,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,192-200; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,195-203; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -18668,7 +18668,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,192-200; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,195-203; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -18685,7 +18685,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,192-200; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,195-203; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -18702,7 +18702,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,176-182; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,179-185; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -18719,7 +18719,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,176-182; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,179-185; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -18736,7 +18736,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,176-182; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,179-185; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -18753,7 +18753,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,176-182; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,179-185; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -18770,7 +18770,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,176-182; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,179-185; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -18787,7 +18787,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,176-182; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,179-185; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -18804,7 +18804,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,176-182; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,179-185; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -18821,7 +18821,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,176-182; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,179-185; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -18838,7 +18838,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,176-182; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,179-185; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -18855,7 +18855,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,176-182; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,179-185; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -18872,7 +18872,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,176-182; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,179-185; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -18889,7 +18889,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,176-182; $S/hunt_fight.rs:2229-2243"
+      "evidence": "$JS/compat/hunt.rs:53-91,179-185; $JS/compat/hunt_fight.rs:2232-2246"
     },
     {
       "family_id": "hunt",
@@ -18906,7 +18906,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,152-222"
+      "evidence": "$JS/compat/hunt.rs:53-91,155-225"
     },
     {
       "family_id": "hunt",
@@ -18923,7 +18923,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,152-222"
+      "evidence": "$JS/compat/hunt.rs:53-91,155-225"
     },
     {
       "family_id": "hunt",
@@ -18940,7 +18940,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,152-222"
+      "evidence": "$JS/compat/hunt.rs:53-91,155-225"
     },
     {
       "family_id": "hunt",
@@ -18957,7 +18957,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,152-222"
+      "evidence": "$JS/compat/hunt.rs:53-91,155-225"
     },
     {
       "family_id": "hunt",
@@ -18974,7 +18974,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,152-222"
+      "evidence": "$JS/compat/hunt.rs:53-91,155-225"
     },
     {
       "family_id": "hunt",
@@ -18991,7 +18991,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,152-222"
+      "evidence": "$JS/compat/hunt.rs:53-91,155-225"
     },
     {
       "family_id": "hunt",
@@ -19008,7 +19008,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,152-222"
+      "evidence": "$JS/compat/hunt.rs:53-91,155-225"
     },
     {
       "family_id": "hunt",
@@ -19025,7 +19025,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,152-222"
+      "evidence": "$JS/compat/hunt.rs:53-91,155-225"
     },
     {
       "family_id": "hunt",
@@ -19042,7 +19042,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,152-222"
+      "evidence": "$JS/compat/hunt.rs:53-91,155-225"
     },
     {
       "family_id": "hunt",
@@ -19059,7 +19059,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,152-222"
+      "evidence": "$JS/compat/hunt.rs:53-91,155-225"
     },
     {
       "family_id": "hunt",
@@ -19076,7 +19076,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,152-222"
+      "evidence": "$JS/compat/hunt.rs:53-91,155-225"
     },
     {
       "family_id": "hunt",
@@ -19093,7 +19093,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,152-222"
+      "evidence": "$JS/compat/hunt.rs:53-91,155-225"
     },
     {
       "family_id": "hunt",
@@ -19110,7 +19110,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,152-222; $S/hunt_leave.rs:972-977"
+      "evidence": "$JS/compat/hunt.rs:53-91,155-225; $JS/compat/hunt_leave.rs:972-977"
     },
     {
       "family_id": "hunt",
@@ -19127,7 +19127,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,152-222; $S/hunt_leave.rs:972-977"
+      "evidence": "$JS/compat/hunt.rs:53-91,155-225; $JS/compat/hunt_leave.rs:972-977"
     },
     {
       "family_id": "hunt",
@@ -19144,7 +19144,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,152-222; $S/hunt_leave.rs:972-977"
+      "evidence": "$JS/compat/hunt.rs:53-91,155-225; $JS/compat/hunt_leave.rs:972-977"
     },
     {
       "family_id": "hunt",
@@ -19161,7 +19161,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,152-222; $S/hunt_leave.rs:972-977"
+      "evidence": "$JS/compat/hunt.rs:53-91,155-225; $JS/compat/hunt_leave.rs:972-977"
     },
     {
       "family_id": "hunt",
@@ -19178,7 +19178,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,152-222; $S/hunt_leave.rs:972-977"
+      "evidence": "$JS/compat/hunt.rs:53-91,155-225; $JS/compat/hunt_leave.rs:972-977"
     },
     {
       "family_id": "hunt",
@@ -19195,7 +19195,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,152-222; $S/hunt_leave.rs:972-977"
+      "evidence": "$JS/compat/hunt.rs:53-91,155-225; $JS/compat/hunt_leave.rs:972-977"
     },
     {
       "family_id": "hunt",
@@ -19212,7 +19212,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,152-222; $S/hunt_leave.rs:972-977"
+      "evidence": "$JS/compat/hunt.rs:53-91,155-225; $JS/compat/hunt_leave.rs:972-977"
     },
     {
       "family_id": "hunt",
@@ -19229,7 +19229,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,152-222; $S/hunt_leave.rs:972-977"
+      "evidence": "$JS/compat/hunt.rs:53-91,155-225; $JS/compat/hunt_leave.rs:972-977"
     },
     {
       "family_id": "hunt",
@@ -19246,7 +19246,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,152-222; $S/hunt_leave.rs:972-977"
+      "evidence": "$JS/compat/hunt.rs:53-91,155-225; $JS/compat/hunt_leave.rs:972-977"
     },
     {
       "family_id": "hunt",
@@ -19263,7 +19263,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,152-222; $S/hunt_leave.rs:972-977"
+      "evidence": "$JS/compat/hunt.rs:53-91,155-225; $JS/compat/hunt_leave.rs:972-977"
     },
     {
       "family_id": "hunt",
@@ -19280,7 +19280,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,152-222; $S/hunt_leave.rs:972-977"
+      "evidence": "$JS/compat/hunt.rs:53-91,155-225; $JS/compat/hunt_leave.rs:972-977"
     },
     {
       "family_id": "hunt",
@@ -19297,7 +19297,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,152-222; $S/hunt_leave.rs:972-977"
+      "evidence": "$JS/compat/hunt.rs:53-91,155-225; $JS/compat/hunt_leave.rs:972-977"
     },
     {
       "family_id": "hunt",
@@ -19314,7 +19314,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,192-200; $S/hunt_bank.rs:2163-2167"
+      "evidence": "$JS/compat/hunt.rs:53-91,195-203; $JS/compat/hunt_bank.rs:2164-2168"
     },
     {
       "family_id": "hunt",
@@ -19331,7 +19331,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,192-200; $S/hunt_bank.rs:2163-2167"
+      "evidence": "$JS/compat/hunt.rs:53-91,195-203; $JS/compat/hunt_bank.rs:2164-2168"
     },
     {
       "family_id": "hunt",
@@ -19348,7 +19348,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,192-200; $S/hunt_bank.rs:2163-2167"
+      "evidence": "$JS/compat/hunt.rs:53-91,195-203; $JS/compat/hunt_bank.rs:2164-2168"
     },
     {
       "family_id": "hunt",
@@ -19365,7 +19365,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,192-200; $S/hunt_bank.rs:2163-2167"
+      "evidence": "$JS/compat/hunt.rs:53-91,195-203; $JS/compat/hunt_bank.rs:2164-2168"
     },
     {
       "family_id": "hunt",
@@ -19382,7 +19382,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,192-200; $S/hunt_bank.rs:2163-2167"
+      "evidence": "$JS/compat/hunt.rs:53-91,195-203; $JS/compat/hunt_bank.rs:2164-2168"
     },
     {
       "family_id": "hunt",
@@ -19399,7 +19399,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,192-200; $S/hunt_bank.rs:2163-2167"
+      "evidence": "$JS/compat/hunt.rs:53-91,195-203; $JS/compat/hunt_bank.rs:2164-2168"
     },
     {
       "family_id": "hunt",
@@ -19416,7 +19416,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,192-200; $S/hunt_bank.rs:2163-2167"
+      "evidence": "$JS/compat/hunt.rs:53-91,195-203; $JS/compat/hunt_bank.rs:2164-2168"
     },
     {
       "family_id": "hunt",
@@ -19433,7 +19433,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,192-200; $S/hunt_bank.rs:2163-2167"
+      "evidence": "$JS/compat/hunt.rs:53-91,195-203; $JS/compat/hunt_bank.rs:2164-2168"
     },
     {
       "family_id": "hunt",
@@ -19450,7 +19450,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,192-200; $S/hunt_bank.rs:2163-2167"
+      "evidence": "$JS/compat/hunt.rs:53-91,195-203; $JS/compat/hunt_bank.rs:2164-2168"
     },
     {
       "family_id": "hunt",
@@ -19467,7 +19467,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,192-200; $S/hunt_bank.rs:2163-2167"
+      "evidence": "$JS/compat/hunt.rs:53-91,195-203; $JS/compat/hunt_bank.rs:2164-2168"
     },
     {
       "family_id": "hunt",
@@ -19484,7 +19484,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,192-200; $S/hunt_bank.rs:2163-2167"
+      "evidence": "$JS/compat/hunt.rs:53-91,195-203; $JS/compat/hunt_bank.rs:2164-2168"
     },
     {
       "family_id": "hunt",
@@ -19501,7 +19501,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,192-200; $S/hunt_bank.rs:2163-2167"
+      "evidence": "$JS/compat/hunt.rs:53-91,195-203; $JS/compat/hunt_bank.rs:2164-2168"
     },
     {
       "family_id": "hunt",
@@ -19518,7 +19518,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,184-190; $S/hunt_bank.rs:2165-2166"
+      "evidence": "$JS/compat/hunt.rs:53-91,187-193; $JS/compat/hunt_bank.rs:2166-2167"
     },
     {
       "family_id": "hunt",
@@ -19535,7 +19535,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,184-190; $S/hunt_bank.rs:2165-2166"
+      "evidence": "$JS/compat/hunt.rs:53-91,187-193; $JS/compat/hunt_bank.rs:2166-2167"
     },
     {
       "family_id": "hunt",
@@ -19552,7 +19552,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,184-190; $S/hunt_bank.rs:2165-2166"
+      "evidence": "$JS/compat/hunt.rs:53-91,187-193; $JS/compat/hunt_bank.rs:2166-2167"
     },
     {
       "family_id": "hunt",
@@ -19569,7 +19569,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,184-190; $S/hunt_bank.rs:2165-2166"
+      "evidence": "$JS/compat/hunt.rs:53-91,187-193; $JS/compat/hunt_bank.rs:2166-2167"
     },
     {
       "family_id": "hunt",
@@ -19586,7 +19586,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,184-190; $S/hunt_bank.rs:2165-2166"
+      "evidence": "$JS/compat/hunt.rs:53-91,187-193; $JS/compat/hunt_bank.rs:2166-2167"
     },
     {
       "family_id": "hunt",
@@ -19603,7 +19603,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,184-190; $S/hunt_bank.rs:2165-2166"
+      "evidence": "$JS/compat/hunt.rs:53-91,187-193; $JS/compat/hunt_bank.rs:2166-2167"
     },
     {
       "family_id": "hunt",
@@ -19620,7 +19620,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,184-190; $S/hunt_bank.rs:2165-2166"
+      "evidence": "$JS/compat/hunt.rs:53-91,187-193; $JS/compat/hunt_bank.rs:2166-2167"
     },
     {
       "family_id": "hunt",
@@ -19637,7 +19637,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,184-190; $S/hunt_bank.rs:2165-2166"
+      "evidence": "$JS/compat/hunt.rs:53-91,187-193; $JS/compat/hunt_bank.rs:2166-2167"
     },
     {
       "family_id": "hunt",
@@ -19654,7 +19654,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,184-190; $S/hunt_bank.rs:2165-2166"
+      "evidence": "$JS/compat/hunt.rs:53-91,187-193; $JS/compat/hunt_bank.rs:2166-2167"
     },
     {
       "family_id": "hunt",
@@ -19671,7 +19671,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,184-190; $S/hunt_bank.rs:2165-2166"
+      "evidence": "$JS/compat/hunt.rs:53-91,187-193; $JS/compat/hunt_bank.rs:2166-2167"
     },
     {
       "family_id": "hunt",
@@ -19688,7 +19688,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,184-190; $S/hunt_bank.rs:2165-2166"
+      "evidence": "$JS/compat/hunt.rs:53-91,187-193; $JS/compat/hunt_bank.rs:2166-2167"
     },
     {
       "family_id": "hunt",
@@ -19705,7 +19705,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,184-190; $S/hunt_bank.rs:2165-2166"
+      "evidence": "$JS/compat/hunt.rs:53-91,187-193; $JS/compat/hunt_bank.rs:2166-2167"
     },
     {
       "family_id": "hunt",
@@ -19722,7 +19722,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,192-200; $S/hunt_bank.rs:2168"
+      "evidence": "$JS/compat/hunt.rs:53-91,195-203; $JS/compat/hunt_bank.rs:2169"
     },
     {
       "family_id": "hunt",
@@ -19739,7 +19739,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,192-200; $S/hunt_bank.rs:2168"
+      "evidence": "$JS/compat/hunt.rs:53-91,195-203; $JS/compat/hunt_bank.rs:2169"
     },
     {
       "family_id": "hunt",
@@ -19756,7 +19756,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,192-200; $S/hunt_bank.rs:2168"
+      "evidence": "$JS/compat/hunt.rs:53-91,195-203; $JS/compat/hunt_bank.rs:2169"
     },
     {
       "family_id": "hunt",
@@ -19773,7 +19773,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,192-200; $S/hunt_bank.rs:2168"
+      "evidence": "$JS/compat/hunt.rs:53-91,195-203; $JS/compat/hunt_bank.rs:2169"
     },
     {
       "family_id": "hunt",
@@ -19790,7 +19790,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,192-200; $S/hunt_bank.rs:2168"
+      "evidence": "$JS/compat/hunt.rs:53-91,195-203; $JS/compat/hunt_bank.rs:2169"
     },
     {
       "family_id": "hunt",
@@ -19807,7 +19807,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,192-200; $S/hunt_bank.rs:2168"
+      "evidence": "$JS/compat/hunt.rs:53-91,195-203; $JS/compat/hunt_bank.rs:2169"
     },
     {
       "family_id": "hunt",
@@ -19824,7 +19824,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,192-200; $S/hunt_bank.rs:2168"
+      "evidence": "$JS/compat/hunt.rs:53-91,195-203; $JS/compat/hunt_bank.rs:2169"
     },
     {
       "family_id": "hunt",
@@ -19841,7 +19841,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,192-200; $S/hunt_bank.rs:2168"
+      "evidence": "$JS/compat/hunt.rs:53-91,195-203; $JS/compat/hunt_bank.rs:2169"
     },
     {
       "family_id": "hunt",
@@ -19858,7 +19858,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,192-200; $S/hunt_bank.rs:2168"
+      "evidence": "$JS/compat/hunt.rs:53-91,195-203; $JS/compat/hunt_bank.rs:2169"
     },
     {
       "family_id": "hunt",
@@ -19875,7 +19875,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,192-200; $S/hunt_bank.rs:2168"
+      "evidence": "$JS/compat/hunt.rs:53-91,195-203; $JS/compat/hunt_bank.rs:2169"
     },
     {
       "family_id": "hunt",
@@ -19892,7 +19892,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,192-200; $S/hunt_bank.rs:2168"
+      "evidence": "$JS/compat/hunt.rs:53-91,195-203; $JS/compat/hunt_bank.rs:2169"
     },
     {
       "family_id": "hunt",
@@ -19909,7 +19909,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,192-200; $S/hunt_bank.rs:2168"
+      "evidence": "$JS/compat/hunt.rs:53-91,195-203; $JS/compat/hunt_bank.rs:2169"
     },
     {
       "family_id": "hunt",
@@ -19926,7 +19926,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,192-200"
+      "evidence": "$JS/compat/hunt.rs:53-91,195-203"
     },
     {
       "family_id": "hunt",
@@ -19943,7 +19943,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,192-200"
+      "evidence": "$JS/compat/hunt.rs:53-91,195-203"
     },
     {
       "family_id": "hunt",
@@ -19960,7 +19960,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,192-200"
+      "evidence": "$JS/compat/hunt.rs:53-91,195-203"
     },
     {
       "family_id": "hunt",
@@ -19977,7 +19977,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,192-200"
+      "evidence": "$JS/compat/hunt.rs:53-91,195-203"
     },
     {
       "family_id": "hunt",
@@ -19994,7 +19994,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,192-200"
+      "evidence": "$JS/compat/hunt.rs:53-91,195-203"
     },
     {
       "family_id": "hunt",
@@ -20011,7 +20011,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,192-200"
+      "evidence": "$JS/compat/hunt.rs:53-91,195-203"
     },
     {
       "family_id": "hunt",
@@ -20028,7 +20028,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,192-200"
+      "evidence": "$JS/compat/hunt.rs:53-91,195-203"
     },
     {
       "family_id": "hunt",
@@ -20045,7 +20045,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,192-200"
+      "evidence": "$JS/compat/hunt.rs:53-91,195-203"
     },
     {
       "family_id": "hunt",
@@ -20062,7 +20062,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,192-200"
+      "evidence": "$JS/compat/hunt.rs:53-91,195-203"
     },
     {
       "family_id": "hunt",
@@ -20079,7 +20079,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,192-200"
+      "evidence": "$JS/compat/hunt.rs:53-91,195-203"
     },
     {
       "family_id": "hunt",
@@ -20096,7 +20096,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,192-200"
+      "evidence": "$JS/compat/hunt.rs:53-91,195-203"
     },
     {
       "family_id": "hunt",
@@ -20113,7 +20113,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,192-200"
+      "evidence": "$JS/compat/hunt.rs:53-91,195-203"
     },
     {
       "family_id": "hunt",
@@ -20130,7 +20130,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,192-200"
+      "evidence": "$JS/compat/hunt.rs:53-91,195-203"
     },
     {
       "family_id": "hunt",
@@ -20147,7 +20147,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,192-200"
+      "evidence": "$JS/compat/hunt.rs:53-91,195-203"
     },
     {
       "family_id": "hunt",
@@ -20164,7 +20164,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,192-200"
+      "evidence": "$JS/compat/hunt.rs:53-91,195-203"
     },
     {
       "family_id": "hunt",
@@ -20181,7 +20181,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,192-200"
+      "evidence": "$JS/compat/hunt.rs:53-91,195-203"
     },
     {
       "family_id": "hunt",
@@ -20198,7 +20198,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,192-200"
+      "evidence": "$JS/compat/hunt.rs:53-91,195-203"
     },
     {
       "family_id": "hunt",
@@ -20215,7 +20215,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,192-200"
+      "evidence": "$JS/compat/hunt.rs:53-91,195-203"
     },
     {
       "family_id": "hunt",
@@ -20232,7 +20232,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,192-200"
+      "evidence": "$JS/compat/hunt.rs:53-91,195-203"
     },
     {
       "family_id": "hunt",
@@ -20249,7 +20249,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,192-200"
+      "evidence": "$JS/compat/hunt.rs:53-91,195-203"
     },
     {
       "family_id": "hunt",
@@ -20266,7 +20266,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,192-200"
+      "evidence": "$JS/compat/hunt.rs:53-91,195-203"
     },
     {
       "family_id": "hunt",
@@ -20283,7 +20283,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,192-200"
+      "evidence": "$JS/compat/hunt.rs:53-91,195-203"
     },
     {
       "family_id": "hunt",
@@ -20300,7 +20300,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,192-200"
+      "evidence": "$JS/compat/hunt.rs:53-91,195-203"
     },
     {
       "family_id": "hunt",
@@ -20317,7 +20317,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,192-200"
+      "evidence": "$JS/compat/hunt.rs:53-91,195-203"
     },
     {
       "family_id": "hunt",
@@ -20334,7 +20334,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,152-222"
+      "evidence": "$JS/compat/hunt.rs:53-91,155-225"
     },
     {
       "family_id": "hunt",
@@ -20351,7 +20351,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,152-222"
+      "evidence": "$JS/compat/hunt.rs:53-91,155-225"
     },
     {
       "family_id": "hunt",
@@ -20368,7 +20368,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,152-222"
+      "evidence": "$JS/compat/hunt.rs:53-91,155-225"
     },
     {
       "family_id": "hunt",
@@ -20385,7 +20385,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,152-222"
+      "evidence": "$JS/compat/hunt.rs:53-91,155-225"
     },
     {
       "family_id": "hunt",
@@ -20402,7 +20402,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,152-222"
+      "evidence": "$JS/compat/hunt.rs:53-91,155-225"
     },
     {
       "family_id": "hunt",
@@ -20419,7 +20419,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,152-222"
+      "evidence": "$JS/compat/hunt.rs:53-91,155-225"
     },
     {
       "family_id": "hunt",
@@ -20436,7 +20436,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,152-222"
+      "evidence": "$JS/compat/hunt.rs:53-91,155-225"
     },
     {
       "family_id": "hunt",
@@ -20453,7 +20453,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,152-222"
+      "evidence": "$JS/compat/hunt.rs:53-91,155-225"
     },
     {
       "family_id": "hunt",
@@ -20470,7 +20470,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,152-222"
+      "evidence": "$JS/compat/hunt.rs:53-91,155-225"
     },
     {
       "family_id": "hunt",
@@ -20487,7 +20487,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,152-222"
+      "evidence": "$JS/compat/hunt.rs:53-91,155-225"
     },
     {
       "family_id": "hunt",
@@ -20504,7 +20504,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,152-222"
+      "evidence": "$JS/compat/hunt.rs:53-91,155-225"
     },
     {
       "family_id": "hunt",
@@ -20521,7 +20521,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:50-88,152-222"
+      "evidence": "$JS/compat/hunt.rs:53-91,155-225"
     },
     {
       "family_id": "hunt",
@@ -20538,7 +20538,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:323-356; $S/hunt/acquire.rs:107; $S/hunt/teleport_out.rs:137"
+      "evidence": "$JS/compat/hunt.rs:326-359; $JS/compat/hunt/acquire.rs:107; $JS/compat/hunt/teleport_out.rs:137"
     },
     {
       "family_id": "hunt",
@@ -20555,7 +20555,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:323-356; $S/hunt/acquire.rs:107; $S/hunt/teleport_out.rs:137"
+      "evidence": "$JS/compat/hunt.rs:326-359; $JS/compat/hunt/acquire.rs:107; $JS/compat/hunt/teleport_out.rs:137"
     },
     {
       "family_id": "hunt",
@@ -20572,7 +20572,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:323-356; $S/hunt/acquire.rs:107; $S/hunt/teleport_out.rs:137"
+      "evidence": "$JS/compat/hunt.rs:326-359; $JS/compat/hunt/acquire.rs:107; $JS/compat/hunt/teleport_out.rs:137"
     },
     {
       "family_id": "hunt",
@@ -20589,7 +20589,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:323-356; $S/hunt/acquire.rs:107; $S/hunt/teleport_out.rs:137"
+      "evidence": "$JS/compat/hunt.rs:326-359; $JS/compat/hunt/acquire.rs:107; $JS/compat/hunt/teleport_out.rs:137"
     },
     {
       "family_id": "hunt",
@@ -20606,7 +20606,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:323-356; $S/hunt/acquire.rs:107; $S/hunt/teleport_out.rs:137"
+      "evidence": "$JS/compat/hunt.rs:326-359; $JS/compat/hunt/acquire.rs:107; $JS/compat/hunt/teleport_out.rs:137"
     },
     {
       "family_id": "hunt",
@@ -20623,7 +20623,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:323-356; $S/hunt/acquire.rs:107; $S/hunt/teleport_out.rs:137"
+      "evidence": "$JS/compat/hunt.rs:326-359; $JS/compat/hunt/acquire.rs:107; $JS/compat/hunt/teleport_out.rs:137"
     },
     {
       "family_id": "hunt",
@@ -20640,7 +20640,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:323-356; $S/hunt/acquire.rs:107; $S/hunt/teleport_out.rs:137"
+      "evidence": "$JS/compat/hunt.rs:326-359; $JS/compat/hunt/acquire.rs:107; $JS/compat/hunt/teleport_out.rs:137"
     },
     {
       "family_id": "hunt",
@@ -20657,7 +20657,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:323-356; $S/hunt/acquire.rs:107; $S/hunt/teleport_out.rs:137"
+      "evidence": "$JS/compat/hunt.rs:326-359; $JS/compat/hunt/acquire.rs:107; $JS/compat/hunt/teleport_out.rs:137"
     },
     {
       "family_id": "hunt",
@@ -20674,7 +20674,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:323-356; $S/hunt/acquire.rs:107; $S/hunt/teleport_out.rs:137"
+      "evidence": "$JS/compat/hunt.rs:326-359; $JS/compat/hunt/acquire.rs:107; $JS/compat/hunt/teleport_out.rs:137"
     },
     {
       "family_id": "hunt",
@@ -20691,7 +20691,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:323-356; $S/hunt/acquire.rs:107; $S/hunt/teleport_out.rs:137"
+      "evidence": "$JS/compat/hunt.rs:326-359; $JS/compat/hunt/acquire.rs:107; $JS/compat/hunt/teleport_out.rs:137"
     },
     {
       "family_id": "hunt",
@@ -20708,7 +20708,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:323-356; $S/hunt/acquire.rs:107; $S/hunt/teleport_out.rs:137"
+      "evidence": "$JS/compat/hunt.rs:326-359; $JS/compat/hunt/acquire.rs:107; $JS/compat/hunt/teleport_out.rs:137"
     },
     {
       "family_id": "hunt",
@@ -20725,7 +20725,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt.rs:323-356; $S/hunt/acquire.rs:107; $S/hunt/teleport_out.rs:137"
+      "evidence": "$JS/compat/hunt.rs:326-359; $JS/compat/hunt/acquire.rs:107; $JS/compat/hunt/teleport_out.rs:137"
     },
     {
       "family_id": "hunt",
@@ -20742,7 +20742,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt/wait.rs:40-44"
+      "evidence": "$JS/compat/hunt/wait.rs:40-44"
     },
     {
       "family_id": "hunt",
@@ -20759,7 +20759,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt/wait.rs:40-44"
+      "evidence": "$JS/compat/hunt/wait.rs:40-44"
     },
     {
       "family_id": "hunt",
@@ -20776,7 +20776,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt/wait.rs:40-44"
+      "evidence": "$JS/compat/hunt/wait.rs:40-44"
     },
     {
       "family_id": "hunt",
@@ -20793,7 +20793,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt/wait.rs:40-44"
+      "evidence": "$JS/compat/hunt/wait.rs:40-44"
     },
     {
       "family_id": "hunt",
@@ -20810,7 +20810,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt/wait.rs:40-44"
+      "evidence": "$JS/compat/hunt/wait.rs:40-44"
     },
     {
       "family_id": "hunt",
@@ -20827,7 +20827,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt/wait.rs:40-44"
+      "evidence": "$JS/compat/hunt/wait.rs:40-44"
     },
     {
       "family_id": "hunt",
@@ -20844,7 +20844,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt/wait.rs:40-44"
+      "evidence": "$JS/compat/hunt/wait.rs:40-44"
     },
     {
       "family_id": "hunt",
@@ -20861,7 +20861,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt/wait.rs:40-44"
+      "evidence": "$JS/compat/hunt/wait.rs:40-44"
     },
     {
       "family_id": "hunt",
@@ -20878,7 +20878,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt/wait.rs:40-44"
+      "evidence": "$JS/compat/hunt/wait.rs:40-44"
     },
     {
       "family_id": "hunt",
@@ -20895,7 +20895,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt/wait.rs:40-44"
+      "evidence": "$JS/compat/hunt/wait.rs:40-44"
     },
     {
       "family_id": "hunt",
@@ -20912,7 +20912,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt/wait.rs:40-44"
+      "evidence": "$JS/compat/hunt/wait.rs:40-44"
     },
     {
       "family_id": "hunt",
@@ -20929,7 +20929,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/hunt/wait.rs:40-44"
+      "evidence": "$JS/compat/hunt/wait.rs:40-44"
     },
     {
       "family_id": "hunt",
@@ -20949,7 +20949,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$TS/api/combat/hunting/combat.ts:554; $S/hunt.rs:798-821"
+      "evidence": "$TS/api/combat/hunting/combat.ts:554; $JS/compat/hunt.rs:801-824"
     },
     {
       "family_id": "hunt",
@@ -20969,7 +20969,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$TS/api/combat/hunting/combat.ts:554; $S/hunt.rs:798-821"
+      "evidence": "$TS/api/combat/hunting/combat.ts:554; $JS/compat/hunt.rs:801-824"
     },
     {
       "family_id": "hunt",
@@ -20989,7 +20989,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$TS/api/combat/hunting/combat.ts:554; $S/hunt.rs:798-821"
+      "evidence": "$TS/api/combat/hunting/combat.ts:554; $JS/compat/hunt.rs:801-824"
     },
     {
       "family_id": "hunt",
@@ -21009,7 +21009,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$TS/api/combat/hunting/combat.ts:554; $S/hunt.rs:798-821"
+      "evidence": "$TS/api/combat/hunting/combat.ts:554; $JS/compat/hunt.rs:801-824"
     },
     {
       "family_id": "hunt",
@@ -21029,7 +21029,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$TS/api/combat/hunting/combat.ts:554; $S/hunt.rs:798-821"
+      "evidence": "$TS/api/combat/hunting/combat.ts:554; $JS/compat/hunt.rs:801-824"
     },
     {
       "family_id": "hunt",
@@ -21049,7 +21049,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$TS/api/combat/hunting/combat.ts:554; $S/hunt.rs:798-821"
+      "evidence": "$TS/api/combat/hunting/combat.ts:554; $JS/compat/hunt.rs:801-824"
     },
     {
       "family_id": "hunt",
@@ -21069,7 +21069,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$TS/api/combat/hunting/combat.ts:554; $S/hunt.rs:798-821"
+      "evidence": "$TS/api/combat/hunting/combat.ts:554; $JS/compat/hunt.rs:801-824"
     },
     {
       "family_id": "hunt",
@@ -21089,7 +21089,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$TS/api/combat/hunting/combat.ts:554; $S/hunt.rs:798-821"
+      "evidence": "$TS/api/combat/hunting/combat.ts:554; $JS/compat/hunt.rs:801-824"
     },
     {
       "family_id": "hunt",
@@ -21109,7 +21109,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$TS/api/combat/hunting/combat.ts:554; $S/hunt.rs:798-821"
+      "evidence": "$TS/api/combat/hunting/combat.ts:554; $JS/compat/hunt.rs:801-824"
     },
     {
       "family_id": "hunt",
@@ -21129,7 +21129,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$TS/api/combat/hunting/combat.ts:554; $S/hunt.rs:798-821"
+      "evidence": "$TS/api/combat/hunting/combat.ts:554; $JS/compat/hunt.rs:801-824"
     },
     {
       "family_id": "hunt",
@@ -21149,7 +21149,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$TS/api/combat/hunting/combat.ts:554; $S/hunt.rs:798-821"
+      "evidence": "$TS/api/combat/hunting/combat.ts:554; $JS/compat/hunt.rs:801-824"
     },
     {
       "family_id": "hunt",
@@ -21169,7 +21169,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$TS/api/combat/hunting/combat.ts:554; $S/hunt.rs:798-821"
+      "evidence": "$TS/api/combat/hunting/combat.ts:554; $JS/compat/hunt.rs:801-824"
     },
     {
       "family_id": "hunt",
@@ -21189,7 +21189,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-621,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,613-624,801-824"
     },
     {
       "family_id": "hunt",
@@ -21209,7 +21209,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-621,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,613-624,801-824"
     },
     {
       "family_id": "hunt",
@@ -21229,7 +21229,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-621,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,613-624,801-824"
     },
     {
       "family_id": "hunt",
@@ -21249,7 +21249,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-621,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,613-624,801-824"
     },
     {
       "family_id": "hunt",
@@ -21269,7 +21269,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-621,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,613-624,801-824"
     },
     {
       "family_id": "hunt",
@@ -21289,7 +21289,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-621,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,613-624,801-824"
     },
     {
       "family_id": "hunt",
@@ -21309,7 +21309,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-621,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,613-624,801-824"
     },
     {
       "family_id": "hunt",
@@ -21329,7 +21329,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-621,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,613-624,801-824"
     },
     {
       "family_id": "hunt",
@@ -21349,7 +21349,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-621,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,613-624,801-824"
     },
     {
       "family_id": "hunt",
@@ -21369,7 +21369,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-621,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,613-624,801-824"
     },
     {
       "family_id": "hunt",
@@ -21389,7 +21389,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-621,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,613-624,801-824"
     },
     {
       "family_id": "hunt",
@@ -21409,7 +21409,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-621,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,613-624,801-824"
     },
     {
       "family_id": "hunt",
@@ -21429,7 +21429,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-621,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,613-624,801-824"
     },
     {
       "family_id": "hunt",
@@ -21449,7 +21449,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-621,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,613-624,801-824"
     },
     {
       "family_id": "hunt",
@@ -21469,7 +21469,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-621,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,613-624,801-824"
     },
     {
       "family_id": "hunt",
@@ -21489,7 +21489,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-621,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,613-624,801-824"
     },
     {
       "family_id": "hunt",
@@ -21509,7 +21509,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-621,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,613-624,801-824"
     },
     {
       "family_id": "hunt",
@@ -21529,7 +21529,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-621,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,613-624,801-824"
     },
     {
       "family_id": "hunt",
@@ -21549,7 +21549,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-621,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,613-624,801-824"
     },
     {
       "family_id": "hunt",
@@ -21569,7 +21569,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-621,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,613-624,801-824"
     },
     {
       "family_id": "hunt",
@@ -21589,7 +21589,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-621,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,613-624,801-824"
     },
     {
       "family_id": "hunt",
@@ -21609,7 +21609,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-621,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,613-624,801-824"
     },
     {
       "family_id": "hunt",
@@ -21629,7 +21629,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-621,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,613-624,801-824"
     },
     {
       "family_id": "hunt",
@@ -21649,7 +21649,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-621,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,613-624,801-824"
     },
     {
       "family_id": "hunt",
@@ -21669,7 +21669,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-621,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,613-624,801-824"
     },
     {
       "family_id": "hunt",
@@ -21689,7 +21689,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-621,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,613-624,801-824"
     },
     {
       "family_id": "hunt",
@@ -21709,7 +21709,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-621,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,613-624,801-824"
     },
     {
       "family_id": "hunt",
@@ -21729,7 +21729,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-621,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,613-624,801-824"
     },
     {
       "family_id": "hunt",
@@ -21749,7 +21749,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-621,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,613-624,801-824"
     },
     {
       "family_id": "hunt",
@@ -21769,7 +21769,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-621,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,613-624,801-824"
     },
     {
       "family_id": "hunt",
@@ -21789,7 +21789,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-621,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,613-624,801-824"
     },
     {
       "family_id": "hunt",
@@ -21809,7 +21809,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-621,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,613-624,801-824"
     },
     {
       "family_id": "hunt",
@@ -21829,7 +21829,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-621,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,613-624,801-824"
     },
     {
       "family_id": "hunt",
@@ -21849,7 +21849,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-621,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,613-624,801-824"
     },
     {
       "family_id": "hunt",
@@ -21869,7 +21869,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-621,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,613-624,801-824"
     },
     {
       "family_id": "hunt",
@@ -21889,7 +21889,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-621,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,613-624,801-824"
     },
     {
       "family_id": "hunt",
@@ -21909,7 +21909,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-621,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,613-624,801-824"
     },
     {
       "family_id": "hunt",
@@ -21929,7 +21929,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-621,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,613-624,801-824"
     },
     {
       "family_id": "hunt",
@@ -21949,7 +21949,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-621,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,613-624,801-824"
     },
     {
       "family_id": "hunt",
@@ -21969,7 +21969,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-621,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,613-624,801-824"
     },
     {
       "family_id": "hunt",
@@ -21989,7 +21989,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-621,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,613-624,801-824"
     },
     {
       "family_id": "hunt",
@@ -22009,7 +22009,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-621,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,613-624,801-824"
     },
     {
       "family_id": "hunt",
@@ -22029,7 +22029,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-621,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,613-624,801-824"
     },
     {
       "family_id": "hunt",
@@ -22049,7 +22049,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-621,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,613-624,801-824"
     },
     {
       "family_id": "hunt",
@@ -22069,7 +22069,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-621,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,613-624,801-824"
     },
     {
       "family_id": "hunt",
@@ -22089,7 +22089,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-621,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,613-624,801-824"
     },
     {
       "family_id": "hunt",
@@ -22109,7 +22109,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-621,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,613-624,801-824"
     },
     {
       "family_id": "hunt",
@@ -22129,7 +22129,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-621,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,613-624,801-824"
     },
     {
       "family_id": "hunt",
@@ -22149,7 +22149,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-621,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,613-624,801-824"
     },
     {
       "family_id": "hunt",
@@ -22169,7 +22169,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-621,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,613-624,801-824"
     },
     {
       "family_id": "hunt",
@@ -22189,7 +22189,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-621,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,613-624,801-824"
     },
     {
       "family_id": "hunt",
@@ -22209,7 +22209,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-621,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,613-624,801-824"
     },
     {
       "family_id": "hunt",
@@ -22229,7 +22229,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-621,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,613-624,801-824"
     },
     {
       "family_id": "hunt",
@@ -22249,7 +22249,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-621,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,613-624,801-824"
     },
     {
       "family_id": "hunt",
@@ -22269,7 +22269,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-621,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,613-624,801-824"
     },
     {
       "family_id": "hunt",
@@ -22289,7 +22289,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-621,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,613-624,801-824"
     },
     {
       "family_id": "hunt",
@@ -22309,7 +22309,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-621,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,613-624,801-824"
     },
     {
       "family_id": "hunt",
@@ -22329,7 +22329,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-621,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,613-624,801-824"
     },
     {
       "family_id": "hunt",
@@ -22349,7 +22349,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-621,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,613-624,801-824"
     },
     {
       "family_id": "hunt",
@@ -22369,7 +22369,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-621,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,613-624,801-824"
     },
     {
       "family_id": "hunt",
@@ -22389,7 +22389,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,618-621,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,621-624,801-824"
     },
     {
       "family_id": "hunt",
@@ -22409,7 +22409,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,618-621,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,621-624,801-824"
     },
     {
       "family_id": "hunt",
@@ -22429,7 +22429,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,618-621,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,621-624,801-824"
     },
     {
       "family_id": "hunt",
@@ -22449,7 +22449,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,618-621,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,621-624,801-824"
     },
     {
       "family_id": "hunt",
@@ -22469,7 +22469,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,618-621,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,621-624,801-824"
     },
     {
       "family_id": "hunt",
@@ -22489,7 +22489,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,618-621,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,621-624,801-824"
     },
     {
       "family_id": "hunt",
@@ -22509,7 +22509,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,618-621,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,621-624,801-824"
     },
     {
       "family_id": "hunt",
@@ -22529,7 +22529,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,618-621,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,621-624,801-824"
     },
     {
       "family_id": "hunt",
@@ -22549,7 +22549,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,618-621,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,621-624,801-824"
     },
     {
       "family_id": "hunt",
@@ -22569,7 +22569,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,618-621,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,621-624,801-824"
     },
     {
       "family_id": "hunt",
@@ -22589,7 +22589,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,618-621,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,621-624,801-824"
     },
     {
       "family_id": "hunt",
@@ -22609,7 +22609,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,618-621,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,621-624,801-824"
     },
     {
       "family_id": "hunt",
@@ -22629,7 +22629,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-612,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,613-615,801-824"
     },
     {
       "family_id": "hunt",
@@ -22649,7 +22649,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-612,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,613-615,801-824"
     },
     {
       "family_id": "hunt",
@@ -22669,7 +22669,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-612,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,613-615,801-824"
     },
     {
       "family_id": "hunt",
@@ -22689,7 +22689,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-612,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,613-615,801-824"
     },
     {
       "family_id": "hunt",
@@ -22709,7 +22709,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-612,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,613-615,801-824"
     },
     {
       "family_id": "hunt",
@@ -22729,7 +22729,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-612,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,613-615,801-824"
     },
     {
       "family_id": "hunt",
@@ -22749,7 +22749,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-612,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,613-615,801-824"
     },
     {
       "family_id": "hunt",
@@ -22769,7 +22769,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-612,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,613-615,801-824"
     },
     {
       "family_id": "hunt",
@@ -22789,7 +22789,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-612,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,613-615,801-824"
     },
     {
       "family_id": "hunt",
@@ -22809,7 +22809,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-612,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,613-615,801-824"
     },
     {
       "family_id": "hunt",
@@ -22829,7 +22829,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-612,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,613-615,801-824"
     },
     {
       "family_id": "hunt",
@@ -22849,7 +22849,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-612,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,613-615,801-824"
     },
     {
       "family_id": "hunt",
@@ -22869,7 +22869,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-612,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,613-615,801-824"
     },
     {
       "family_id": "hunt",
@@ -22889,7 +22889,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-612,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,613-615,801-824"
     },
     {
       "family_id": "hunt",
@@ -22909,7 +22909,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-612,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,613-615,801-824"
     },
     {
       "family_id": "hunt",
@@ -22929,7 +22929,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-612,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,613-615,801-824"
     },
     {
       "family_id": "hunt",
@@ -22949,7 +22949,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-612,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,613-615,801-824"
     },
     {
       "family_id": "hunt",
@@ -22969,7 +22969,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-612,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,613-615,801-824"
     },
     {
       "family_id": "hunt",
@@ -22989,7 +22989,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-612,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,613-615,801-824"
     },
     {
       "family_id": "hunt",
@@ -23009,7 +23009,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-612,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,613-615,801-824"
     },
     {
       "family_id": "hunt",
@@ -23029,7 +23029,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-612,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,613-615,801-824"
     },
     {
       "family_id": "hunt",
@@ -23049,7 +23049,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-612,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,613-615,801-824"
     },
     {
       "family_id": "hunt",
@@ -23069,7 +23069,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-612,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,613-615,801-824"
     },
     {
       "family_id": "hunt",
@@ -23089,7 +23089,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-612,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,613-615,801-824"
     },
     {
       "family_id": "hunt",
@@ -23109,7 +23109,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-612,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,613-615,801-824"
     },
     {
       "family_id": "hunt",
@@ -23129,7 +23129,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-612,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,613-615,801-824"
     },
     {
       "family_id": "hunt",
@@ -23149,7 +23149,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-612,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,613-615,801-824"
     },
     {
       "family_id": "hunt",
@@ -23169,7 +23169,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-612,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,613-615,801-824"
     },
     {
       "family_id": "hunt",
@@ -23189,7 +23189,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-612,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,613-615,801-824"
     },
     {
       "family_id": "hunt",
@@ -23209,7 +23209,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-612,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,613-615,801-824"
     },
     {
       "family_id": "hunt",
@@ -23229,7 +23229,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-612,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,613-615,801-824"
     },
     {
       "family_id": "hunt",
@@ -23249,7 +23249,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-612,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,613-615,801-824"
     },
     {
       "family_id": "hunt",
@@ -23269,7 +23269,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-612,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,613-615,801-824"
     },
     {
       "family_id": "hunt",
@@ -23289,7 +23289,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-612,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,613-615,801-824"
     },
     {
       "family_id": "hunt",
@@ -23309,7 +23309,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-612,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,613-615,801-824"
     },
     {
       "family_id": "hunt",
@@ -23329,7 +23329,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/hunt.rs:50-88,610-612,798-821"
+      "evidence": "$JS/compat/hunt.rs:53-91,613-615,801-824"
     },
     {
       "family_id": "duel",
@@ -23346,7 +23346,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/duel.rs:174-178,1023"
+      "evidence": "$JS/compat/duel.rs:963-989,136-141"
     },
     {
       "family_id": "duel",
@@ -23363,7 +23363,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/duel.rs:174-178,559"
+      "evidence": "$JS/compat/duel.rs:506-527,316-331"
     },
     {
       "family_id": "duel",
@@ -23380,7 +23380,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$S/duel.rs:174-178,694"
+      "evidence": "$JS/compat/duel.rs:631-662,697-700"
     },
     {
       "family_id": "clues",
@@ -23400,7 +23400,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/clue/family.rs:26-33; $TS/api/ai/clues/SolveClue.ts:126-130,345-346"
+      "evidence": "$JS/compat/clue/family.rs:26-33; $TS/api/ai/clues/SolveClue.ts:126-130,345-346"
     },
     {
       "family_id": "clues",
@@ -23420,7 +23420,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/clue/family.rs:43-49,100-113; $TS/api/ai/clues/SolveClue.ts:211-213"
+      "evidence": "$JS/compat/clue/family.rs:43-49,100-113; $TS/api/ai/clues/SolveClue.ts:211-213"
     },
     {
       "family_id": "clues",
@@ -23440,7 +23440,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/clue/family.rs:43-49,73-85,114-123; $TS/api/ai/clues/SolveClue.ts:232-233,343-346,433-434"
+      "evidence": "$JS/compat/clue/family.rs:43-49,73-85,114-123; $TS/api/ai/clues/SolveClue.ts:232-233,343-346,433-434"
     },
     {
       "family_id": "clues",
@@ -23460,7 +23460,7 @@
         "proposed_path": "call-sync",
         "proposal_approved": false
       },
-      "evidence": "$S/clue/family.rs:43-49,73-85,124-133; $TS/api/ai/clues/SolveClue.ts:278-280,343-345,433-434"
+      "evidence": "$JS/compat/clue/family.rs:43-49,73-85,124-133; $TS/api/ai/clues/SolveClue.ts:278-280,343-345,433-434"
     }
   ],
   "not_impl_debt": [
