@@ -1,28 +1,40 @@
 //! Script Browse picker helpers: category order, rs2b0t catalog prompt, badges.
 
+#[cfg(feature = "js")]
 use std::path::{Path, PathBuf};
+#[cfg(feature = "js")]
 use std::time::{SystemTime, UNIX_EPOCH};
-
-use frontend_core::scripts::{paths, CardRuntime, CardSource};
+use frontend_core::scripts::{CardRuntime, CardSource};
+#[cfg(feature = "js")]
+use frontend_core::scripts::paths;
 
 /// Browse uses a non-modal [`dear_imgui_rs::Ui::window`], not a popup modal.
 pub const BROWSE_WINDOW_TITLE: &str = "Scripts";
 
 /// Nerd Fonts' Font Awesome Solid PUA icons, included in the panel's 3270
 /// base font. Drawn as `ui.text` / button prefixes — no PushFont.
+#[cfg(feature = "js")]
 pub const GLYPH_HOME: &str = "\u{f015}";
+#[cfg(feature = "js")]
 pub const GLYPH_DESKTOP: &str = "\u{f108}";
+#[cfg(feature = "js")]
 pub const GLYPH_DOCUMENTS: &str = "\u{f15c}";
+#[cfg(feature = "js")]
 pub const GLYPH_DOWNLOADS: &str = "\u{f019}";
+#[cfg(feature = "js")]
 pub const GLYPH_FOLDER: &str = "\u{f07b}";
+#[cfg(feature = "js")]
 pub const GLYPH_FILE: &str = "\u{f15b}";
+#[cfg(feature = "js")]
 pub const GLYPH_CHEVRON: &str = "\u{f054}";
 
 /// Scripts window `FirstUseEver` size (same as WalkTo unconstrained).
 pub const SCRIPTS_FIRST_W: f32 = 720.0;
 pub const SCRIPTS_FIRST_H: f32 = 560.0;
+#[cfg(feature = "js")]
 /// Shared file dialog `FirstUseEver`.
 pub const FILE_DIALOG_FIRST_W: f32 = 640.0;
+#[cfg(feature = "js")]
 pub const FILE_DIALOG_FIRST_H: f32 = 480.0;
 
 pub const CARD_MIN_W: f32 = 220.0;
@@ -43,6 +55,7 @@ pub fn card_desc_height(line_h: f32, selected: bool, full_h: f32) -> f32 {
     }
 }
 
+#[cfg(feature = "js")]
 /// File dialog mode: Load a script file, or import a catalog folder.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DialogMode {
@@ -50,6 +63,7 @@ pub enum DialogMode {
     Folder,
 }
 
+#[cfg(feature = "js")]
 /// One place-button on the file-dialog sidebar.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SidebarPlace {
@@ -58,6 +72,7 @@ pub struct SidebarPlace {
     pub path: PathBuf,
 }
 
+#[cfg(feature = "js")]
 /// One table row in the shared file dialog.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DialogRow {
@@ -66,6 +81,7 @@ pub struct DialogRow {
     pub mtime: Option<SystemTime>,
 }
 
+#[cfg(feature = "js")]
 impl DialogRow {
     /// File or folder name shown in the dialog table.
     pub fn name(&self) -> &str {
@@ -73,6 +89,7 @@ impl DialogRow {
     }
 }
 
+#[cfg(feature = "js")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DialogSort {
     Name,
@@ -139,6 +156,7 @@ pub fn card_rect_activated(hovering: bool, released: bool, dragging: bool) -> bo
     hovering && released && !dragging
 }
 
+#[cfg(feature = "js")]
 /// Status on the card currently at the front of the warmup queue.
 pub fn card_transpile_label(
     front: Option<(CardSource, &str)>,
@@ -158,6 +176,7 @@ pub fn card_transpile_label(
     }
 }
 
+#[cfg(feature = "js")]
 /// Home / Desktop / Documents / Downloads under `home`, skipping missing paths.
 pub fn sidebar_places(home: &Path) -> Vec<SidebarPlace> {
     let candidates = [
@@ -173,6 +192,7 @@ pub fn sidebar_places(home: &Path) -> Vec<SidebarPlace> {
         .collect()
 }
 
+#[cfg(feature = "js")]
 /// Clickable breadcrumb prefixes for `path` (root first).
 pub fn breadcrumb_prefixes(path: &Path) -> Vec<(String, PathBuf)> {
     let mut acc = PathBuf::new();
@@ -190,11 +210,13 @@ pub fn breadcrumb_prefixes(path: &Path) -> Vec<(String, PathBuf)> {
     out
 }
 
+#[cfg(feature = "js")]
 pub fn name_matches_search(name: &str, query: &str) -> bool {
     let q = query.trim();
     q.is_empty() || name.to_lowercase().contains(&q.to_lowercase())
 }
 
+#[cfg(feature = "js")]
 /// Directory listing for the shared dialog. File mode: dirs + `.ts`/`.js`.
 /// Folder mode: dirs only. Dotfiles skipped.
 pub fn dialog_rows(dir: &Path, mode: DialogMode, search: &str) -> Vec<DialogRow> {
@@ -229,6 +251,7 @@ pub fn dialog_rows(dir: &Path, mode: DialogMode, search: &str) -> Vec<DialogRow>
     rows
 }
 
+#[cfg(feature = "js")]
 pub fn sort_dialog_rows(rows: &mut [DialogRow], col: DialogSort, desc: bool) {
     rows.sort_by(|a, b| {
         let ord = match col {
@@ -247,6 +270,7 @@ pub fn sort_dialog_rows(rows: &mut [DialogRow], col: DialogSort, desc: bool) {
     });
 }
 
+#[cfg(feature = "js")]
 /// UTC `YYYY-MM-DD HH:MM` from mtime, empty if unknown.
 pub fn format_mtime(t: Option<SystemTime>) -> String {
     let Some(t) = t else {
@@ -264,6 +288,7 @@ pub fn format_mtime(t: Option<SystemTime>) -> String {
     format!("{y:04}-{mo:02}-{day:02} {h:02}:{m:02}")
 }
 
+#[cfg(feature = "js")]
 /// Load date-column color. Odd `ROW_BG` stripes are the light alt fill;
 /// disabled gray washes out there, so unselected dates are black.
 /// The selected/highlighted row keeps dim text (its fill is already dark).
@@ -275,6 +300,7 @@ pub fn dialog_date_color(selected: bool, alt_row: bool) -> [f32; 4] {
     }
 }
 
+#[cfg(feature = "js")]
 /// Howard Hinnant's civil_from_days (UTC).
 fn civil_from_days(days: i32) -> (i32, u32, u32) {
     let z = days + 719_468;
@@ -355,6 +381,7 @@ pub fn overlay_first_pos(
     ]
 }
 
+#[cfg(feature = "js")]
 /// Window-relative X so `n` buttons of `btn_w` sit centred in `avail`.
 pub fn centered_row_x(avail: f32, n: usize, btn_w: f32, gap: f32) -> f32 {
     let n = n.max(1) as f32;
@@ -362,17 +389,20 @@ pub fn centered_row_x(avail: f32, n: usize, btn_w: f32, gap: f32) -> f32 {
     ((avail - total) * 0.5).max(0.0)
 }
 
+#[cfg(feature = "js")]
 /// True when the operator has not set `$RS2B0T`, has no persisted root, and
 /// has not deferred the first-run catalog import.
 pub fn needs_rs2b0t_catalog_prompt(rs2b0t_root: Option<&Path>, import_deferred: bool) -> bool {
     rs2b0t_root.is_none() && !import_deferred
 }
 
+#[cfg(feature = "js")]
 /// True when `root/src/bot/scripts/index.ts` exists.
 pub fn rs2b0t_root_has_index(root: &Path) -> bool {
     paths::registry_index_path(root).is_file()
 }
 
+#[cfg(feature = "js")]
 /// Default Load browser directory: last dir from prefs, else the process
 /// working directory (where the OS started the app), else `$HOME`.
 pub fn default_load_browse_dir(last: Option<&Path>) -> PathBuf {
@@ -386,10 +416,12 @@ pub fn default_load_browse_dir(last: Option<&Path>) -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("/"))
 }
 
+#[cfg(feature = "js")]
 fn is_load_script_file(name: &str) -> bool {
     name.ends_with(".ts") || name.ends_with(".js")
 }
 
+#[cfg(feature = "js")]
 /// One row in the out-of-tree Load file browser.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LoadBrowseEntry {
@@ -398,6 +430,7 @@ pub enum LoadBrowseEntry {
     File(String),
 }
 
+#[cfg(feature = "js")]
 /// Directory listing for the Load picker (subdirs + `.ts`/`.js` files).
 pub fn load_browse_entries(dir: &Path) -> Vec<LoadBrowseEntry> {
     let mut out = vec![LoadBrowseEntry::Up];
@@ -427,6 +460,7 @@ pub fn load_browse_entries(dir: &Path) -> Vec<LoadBrowseEntry> {
     out
 }
 
+#[cfg(feature = "js")]
 /// Apply a Load browser row click (Up → parent, Subdir → descend, File → select).
 pub fn apply_load_browse_select(
     dir: &mut PathBuf,

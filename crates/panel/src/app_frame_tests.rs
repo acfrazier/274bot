@@ -342,6 +342,7 @@ fn session_with_play(label: &str, names: &[&str]) -> (Session, TestDir) {
     session.core.set_spawn_workers(false);
     install_vault(&mut session.core, vault);
     session.persist_ui = false;
+    #[cfg(feature = "js")]
     session
         .scripts
         .use_library_at(dir.join("js-scripts.json"), dir.join("js-cache"));
@@ -586,6 +587,7 @@ const BOT_TS: &str = "export default class T extends LoopingBot { override loop(
 /// Property 2: script preparation, Start, reload validation and Stop settle
 /// through frames alone. Every wait is a count of real frames until the
 /// product's own state changes.
+#[cfg(feature = "js")]
 fn frames_settle_script_start_reload_and_stop(drive: Drive) {
     let (session, dir) = session_with_play("frame-scripts", &["alice"]);
     let Some(mut rig) = Rig::new(drive, session) else {
@@ -621,6 +623,7 @@ fn frames_settle_script_start_reload_and_stop(drive: Drive) {
     });
 }
 
+#[cfg(feature = "js")]
 scenario!(script_lifecycle, frames_settle_script_start_reload_and_stop);
 
 /// Property 3: a status published to the host is visible to the live
