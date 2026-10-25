@@ -48,10 +48,10 @@ const NPC_VIEW_RADIUS: i32 = 15;
 /// PLAYER_INFO (`macro_event_strange_box.rs2:231-275,298-304`;
 /// `PlayerOps.ts:376-379`; client packet drain: `client.rs:12744`).
 const BOX_OUTCOME_TICKS: u32 = 3;
-/// Keep an operation's initial attempt plus two retries below the content's
-/// earliest 16-tick box-split cycle (three waits use nine ticks, with at most
-/// one dispatch tick between waits). Award replication takes 150 ticks
-/// (`macro_event_strange_box.rs2:8-9,320-322`).
+/// Chosen bound: one attempt plus two retries tolerates transient missing
+/// outcomes without holding the script indefinitely. Each attempt waits for
+/// Open's modal or the answer's inventory/server-message result within
+/// BOX_OUTCOME_TICKS. Content does not prescribe the number of retries.
 const BOX_MAX_FAILURES: u8 = 3;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
