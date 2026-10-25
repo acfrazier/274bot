@@ -448,6 +448,7 @@ fn build_case(case: FixtureCase) -> Result<(Cell, StartFamily, [i32; 3]), String
                 evidence:
                     "all skills exactly 99, expected ingredients, empty equipment and Cook stand",
                 ready: maxed_gate,
+                summary: None,
             },
             wait: Wait {
                 arm: Proof::SideTabAvailable { index: 3 },

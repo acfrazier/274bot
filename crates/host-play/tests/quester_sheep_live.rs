@@ -369,6 +369,7 @@ fn sheep_bank_seed_steps(
                 state.closed_generation = Some(snapshot.bank_session_generation());
                 true
             }),
+            summary: None,
         },
         Proof::SideTabAvailable { index: 3 },
         200,
@@ -432,6 +433,7 @@ fn sheep_bank_seed_steps(
                 }));
                 true
             }),
+            summary: None,
         },
         Proof::SideTabAvailable { index: 3 },
         200,
@@ -468,6 +470,7 @@ fn sheep_bank_seed_steps(
                     && item_count(snapshot.bank(), shears_id) == 0
                     && item_count(snapshot.bank(), wool_id) == 0
             }),
+            summary: None,
         },
         Proof::SideTabAvailable { index: 3 },
         200,
@@ -522,6 +525,7 @@ fn sheep_bank_seed_steps(
                 }
                 exact
             }),
+            summary: None,
         },
         Proof::SideTabAvailable { index: 3 },
         300,
@@ -690,18 +694,15 @@ fn build_case() -> Result<SheepCase, String> {
     let gate_seed = Arc::clone(&bank_seed);
     cell.scenario.steps.insert(gate_index, Step {
         name: "prove maxed empty no-loadout Sheep fixture before Start",
-        kind: StepKind::Await {
-            evidence: "all skills 99, empty inventory, closed bank, Sheep NotStarted, real bank seed and post-relog stand",
-            ready: Box::new(move |snapshot| {
-                let Ok(state) = gate_seed.lock() else {
-                    return false;
-                };
-                state
-                    .receipt
-                    .as_ref()
-                    .is_some_and(|receipt| validate_maxed_start(snapshot, receipt).is_ok())
-            }),
-        },
+        kind: StepKind::Await { evidence: "all skills 99, empty inventory, closed bank, Sheep NotStarted, real bank seed and post-relog stand", ready: Box::new(move |snapshot| {
+            let Ok(state) = gate_seed.lock() else {
+                return false;
+            };
+            state
+                .receipt
+                .as_ref()
+                .is_some_and(|receipt| validate_maxed_start(snapshot, receipt).is_ok())
+        }), summary: None },
         wait: Wait {
             arm: Proof::SideTabAvailable { index: 3 },
             budget_ticks: 200,

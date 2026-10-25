@@ -327,6 +327,7 @@ fn squire_stage_5_room_portrait() {
                                 .iter()
                                 .any(|item| item.def.id == KNIGHTS_PORTRAIT_ID && item.count > 0)
                     }),
+                    summary: None,
                 },
                 wait: scenario::Wait {
                     arm: scenario::Proof::SideTabAvailable { index: 3 },
