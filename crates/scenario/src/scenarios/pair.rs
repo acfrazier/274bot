@@ -49,10 +49,11 @@ const KQ_WATCHDOG: Duration = Duration::from_secs(2_094);
 /// Selected-revision Kalphite Queen drops which cannot be confused with the
 /// seeded loadout. Ammunition is deliberately excluded: recovered arrows
 /// are not boss-loot evidence. Banking a listed drop is an observation,
-/// never a gate: the Queen's table rolls `random(128)` and 22 of those
-/// rolls drop items outside this list (mithril, iron, and rune arrows and
-/// the amulet of power; `lostcity-289/content/scripts/drop
-/// tables/scripts/kalphite_queen.rs2:80-87,100-103`), so a sequence of
+/// never a gate: the Queen's table rolls `random(128)` and 27 of those
+/// rolls drop items outside this list: mithril, iron and rune arrows (15),
+/// law runes (5) and the amulet of power (7); the last two are also in the
+/// seeded loadout (`lostcity-289/content/scripts/drop
+/// tables/scripts/kalphite_queen.rs2:82-87,96-97,102-103`), so a sequence of
 /// legitimate kills can bank no listed item (JIVE-KQ-1024 round 3).
 const KQ_LOOT_IDS: &[i32] = &[
     1245, 565, 1452, 560, 3140, 1249, 554, 985, 987, 3053, 379, 561, 1462, 413, 1359, 1113, 830,
