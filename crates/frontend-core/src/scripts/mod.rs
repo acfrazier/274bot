@@ -2095,6 +2095,7 @@ impl Scripts {
             .is_ok()
     }
 
+    #[cfg(feature = "js")]
     pub(crate) fn mark_assignment_unavailable<Io>(
         &mut self,
         core: &mut OperatorSession<Io>,
@@ -2624,6 +2625,7 @@ impl Scripts {
     pub(crate) fn tally_fail(&mut self, profile: &str, reason: &str) {
         self.tally_record(profile, Outcome::Failed(reason.to_string()), LogTo::Slot);
     }
+    #[cfg(feature = "js")]
     pub(crate) fn tally_queued_pending(&mut self, profile: &str) {
         self.tally_record(
             profile,

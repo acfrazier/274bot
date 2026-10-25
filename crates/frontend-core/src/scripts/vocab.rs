@@ -104,6 +104,7 @@ pub enum CardRuntime {
     Compiled,
 }
 
+#[cfg(feature = "js")]
 impl CardRuntime {
     pub(crate) fn from_script(kind: script::ScriptKind) -> Self {
         match kind {

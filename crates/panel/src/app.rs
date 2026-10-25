@@ -25,16 +25,16 @@ use crate::rail::{
     rail_split_ratio, BASE_WINDOW_H, BASE_WINDOW_W, FOLD_GLYPH, RAIL_W, REMOVE_GLYPH, TILE_H,
     TILE_W, UNFOLD_GLYPH,
 };
-#[cfg(feature = "js")]
 use crate::script_picker::{
-    self, card_transpile_label, centered_row_x, dialog_date_color, format_mtime, DialogMode,
-    FILE_DIALOG_FIRST_H, FILE_DIALOG_FIRST_W, GLYPH_CHEVRON, GLYPH_FILE, GLYPH_FOLDER,
-};
-use crate::script_picker::{
-    card_columns, card_desc_height, card_kind_source, card_rect_activated, card_width,
+    self, card_columns, card_desc_height, card_kind_source, card_rect_activated, card_width,
     chip_frame_padding, chip_text_color, chip_wraps, display_category, move_category,
     overlay_first_pos, resolve_category_order, title_clip_width, CARD_GAP, CARD_MIN_W,
     SCRIPTS_FIRST_H, SCRIPTS_FIRST_W,
+};
+#[cfg(feature = "js")]
+use crate::script_picker::{
+    card_transpile_label, centered_row_x, dialog_date_color, format_mtime, DialogMode,
+    FILE_DIALOG_FIRST_H, FILE_DIALOG_FIRST_W, GLYPH_CHEVRON, GLYPH_FILE, GLYPH_FOLDER,
 };
 use crate::walk_map::WalkMapRenderer;
 use crate::window::{self, Gpu, RedrawMode, ShotStatus, Theme};
@@ -42,8 +42,10 @@ use dear_imgui_rs::internal::RawWrapper;
 use dear_imgui_rs::{
     ChildFlags, ColorDisplayMode, ComboBoxOptions, ComboBoxPreviewMode, Condition, DockBuilder,
     DockNodeFlags, DragDropTargetFlags, Id, Key, MouseButton, SplitDirection, StyleColor, StyleVar,
-    TableColumnFlags, TableFlags, TreeNodeFlags, Ui, WindowClass, WindowFlags,
+    TreeNodeFlags, Ui, WindowClass, WindowFlags,
 };
+#[cfg(feature = "js")]
+use dear_imgui_rs::{TableColumnFlags, TableFlags};
 use frontend_core::launch::{
     InstanceConflict, InstanceKind, InstancePermit, Passphrase, PreparationCompletion,
     PreparationJob, ProfilePreparation, ProgressStage, ProgressUnit, ProgressView, ValidationJob,
@@ -66,9 +68,11 @@ use crate::theme::{
     DOCKHOST_PADDING, ERROR, GREEN, PANEL_WIDTH, PANEL_WINDOW, RAIL_WINDOW, TEXT, TEXT_DIM, WARN,
 };
 use frontend_core::resources::{background_ack_text, format_background, format_bots};
+#[cfg(feature = "js")]
+use frontend_core::scripts::CardSource;
 use frontend_core::scripts::{
-    format_setting_value, BrowseCard, CardSource, CompiledCardId, PaintFrame, SchemaRef,
-    ScriptChoice, ScriptRunState, SettingView,
+    format_setting_value, BrowseCard, CompiledCardId, PaintFrame, SchemaRef, ScriptChoice,
+    ScriptRunState, SettingView,
 };
 use frontend_core::{
     FleetOrder, FleetRow, LogoutEligibility, OperatorCommand, Phase, ProfileIdentity, ReorderOp,
