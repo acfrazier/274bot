@@ -164,6 +164,20 @@
       }
     },
     "script": {
+      "clippy::large_enum_variant": {
+        "non_test": 7,
+        "test": 0
+      },
+      "clippy::manual_clamp": {
+        "non_test": 1,
+        "test": 0
+      },
+      "clippy::too_many_arguments": {
+        "non_test": 17,
+        "test": 2
+      }
+    },
+    "script-js": {
       "clippy::all": {
         "non_test": 1,
         "test": 0
@@ -173,16 +187,12 @@
         "test": 0
       },
       "clippy::large_enum_variant": {
-        "non_test": 10,
-        "test": 0
-      },
-      "clippy::manual_clamp": {
-        "non_test": 1,
+        "non_test": 3,
         "test": 0
       },
       "clippy::too_many_arguments": {
-        "non_test": 27,
-        "test": 2
+        "non_test": 8,
+        "test": 0
       },
       "dead_code": {
         "non_test": 3,

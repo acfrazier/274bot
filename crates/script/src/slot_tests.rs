@@ -1369,7 +1369,23 @@ fn queued_stub_walk_batch(generation: u64) -> crate::native::seat_rows::QueuedSe
     }
 }
 
+fn align_ready_test_seat(slot: &mut SlotScript) {
+    let ready = slot
+        .seat
+        .as_ref()
+        .expect("surface seat")
+        .run()
+        .session_key();
+    assert_eq!(
+        ready.map(api::identity::SessionKey::epoch),
+        Some(slot.work_epoch()),
+        "the test's ready session matches its new connection"
+    );
+    slot.align_seat_session(ready);
+}
+
 fn run_stub_walk_tick(slot: &mut SlotScript, n: u64) -> (i32, i32, i32) {
+    align_ready_test_seat(slot);
     let here = (2823, 3555, 0);
     let mut input = empty_snapshot(n);
     input.here = Some(TileInput {
@@ -1485,6 +1501,7 @@ fn stub_walk_in_slot_custody_at_reconnect_requests_fresh_walk() {
     );
 
     run.set_generation(1);
+    align_ready_test_seat(&mut slot);
     run.queue_seat_batches([queued_stub_walk_batch(1)]);
     let (_, fresh, _) = slot.drain_host_interacts();
     let fresh: Vec<_> = fresh
@@ -1519,6 +1536,10 @@ fn ignored_maze_trap_cleans_up_core_api_work() {
     let selected =
         api::game_data::for_revision(api::selected::ClientRevision::R289).expect("selected data");
     let (mut slot, _, run) = ready_stub_slot_with_incarnation(1206);
+    slot.surface_start
+        .as_mut()
+        .expect("surface identity")
+        .game_data = Some(Arc::clone(&selected));
     run.set_ignored_randoms(vec!["Maze".into(), "Mime".into()]);
     for (kind, name) in [(RandomKind::Maze, "Maze"), (RandomKind::Mime, "Mime")] {
         assert_eq!(
