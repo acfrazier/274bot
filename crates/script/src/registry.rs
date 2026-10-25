@@ -9,20 +9,11 @@ use std::sync::{Mutex, OnceLock, RwLock};
 pub struct CompiledId(pub &'static str);
 
 /// Why an additional compiled-card slice was not installed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum CardInstallError {
+    #[error("duplicate compiled card id: {}", .0.0)]
     DuplicateId(CompiledId),
 }
-
-impl std::fmt::Display for CardInstallError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::DuplicateId(id) => write!(f, "duplicate compiled card id: {}", id.0),
-        }
-    }
-}
-
-impl std::error::Error for CardInstallError {}
 
 static CARDS: &[CompiledCard] = &[
     crate::gatherer::CARD,
