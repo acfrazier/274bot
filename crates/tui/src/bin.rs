@@ -1302,7 +1302,9 @@ impl TuiSession {
         let fleet_start = view.fleet_start();
         #[cfg(feature = "js")]
         let inject_companion_as = view.inject_companion_as().map(str::to_owned);
-        let mut settings_inject = scenario.settings_inject();
+        let settings_inject = scenario.settings_inject();
+        #[cfg(feature = "js")]
+        let mut settings_inject = settings_inject;
         #[cfg(feature = "js")]
         let fixture_loadouts = scenario.fixture_loadouts();
         #[cfg(not(feature = "js"))]
@@ -1317,12 +1319,22 @@ impl TuiSession {
                 ));
             }
         }
+        #[cfg(feature = "js")]
         let live_core = self.core.resolve_live_core(
             &name,
             profile_count,
             self.live_catalog_core,
             self.live_pair_core,
         )?;
+        #[cfg(not(feature = "js"))]
+        {
+            self.core.resolve_live_core(
+                &name,
+                profile_count,
+                self.live_catalog_core,
+                self.live_pair_core,
+            )?;
+        }
         let profiles = frontend_core::live::LiveProfiles::mint(profile_count);
         let names = profiles.names();
         // The driven slot's bag names its companion, exactly as the panel
@@ -2481,7 +2493,9 @@ impl TuiSession {
         self.scripts.take_start_failures();
         self.apply_script_notice(app);
         #[cfg(feature = "js")]
-        app.reload_confirm = self.scripts.reload_awaiting_confirm();
+        {
+            app.reload_confirm = self.scripts.reload_awaiting_confirm();
+        }
         // Follow an Apply-to-all report shown in the popup as its writes
         // settle (rewritten in place; nothing allocates while unchanged).
         if let (Some(shown), Some(report)) = (
@@ -2647,7 +2661,9 @@ impl TuiSession {
             Err(error) => app.error = Some(error),
         }
         #[cfg(feature = "js")]
-        app.reload_confirm = self.scripts.reload_awaiting_confirm();
+        {
+            app.reload_confirm = self.scripts.reload_awaiting_confirm();
+        }
         self.apply_script_notice(app);
     }
 
