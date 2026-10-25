@@ -8,7 +8,7 @@ use std::fmt::Write as _;
 use api::identity::{Cancellation, RequestId, Settlement};
 
 use super::commands::Applied;
-use crate::bot_projection::{BotProjection, StopEligibility};
+use crate::bot_projection::{BotProjection, LogoutEligibility, StopEligibility};
 use crate::bulk::{BulkOutcome, BulkRow};
 use crate::command::{Completion, Rejection};
 use crate::fleet::CardChoice;
@@ -597,10 +597,10 @@ fn classify<Io>(
             }
         }
         FleetAction::Logout => {
-            if logged_in || logging_in {
+            if bot.logout_eligibility().eligible() {
                 Ok(active)
             } else {
-                Err("not logged in")
+                Err(LogoutEligibility::REFUSAL)
             }
         }
         // The relog keeps a running script's run: nothing is interrupted.

@@ -7831,53 +7831,100 @@ fn login_all_during_loading_scene_publishes_no_control_owned_place() {
     );
 }
 
+/// Log out follows the shared projection for the focused bot. A connected
+/// session is eligible before the scene is ready and in game, a refused login that the
+/// slot still retries is eligible too, and a bot that never logged in or
+/// that Log out already parked is not (an operator logout's latch does not
+/// make it eligible again; only the repeat guard's park does).
 #[test]
-fn focused_connection_is_distinct_from_game_readiness() {
+fn logout_retry_focused_eligibility_follows_the_shared_projection() {
+    use frontend_core::LogoutEligibility as E;
     let mut s = Session::new();
-    s.set_focus_for_test("alice");
-    assert!(!s.focused_connected());
-    assert!(!s.focused_ingame());
-    let play = empty_play();
-    play.statuses.lock().unwrap().push(SlotStatus {
-        username: "alice".into(),
-        connected: true,
-        ingame: false,
-        startup_phase: StartupPhase::LoadingScene,
-        ..SlotStatus::default()
-    });
+    let mut play = empty_play();
+    for (name, uid) in [("alice", 1), ("bob", 2)] {
+        play.attach_arm(name, SlotArm::new(uid, true));
+        s.core.fleet_mut().add(name);
+    }
     s.core.set_play(Some(play));
-    s.statuses.refresh_from_play(&s.core);
-    assert!(s.focused_connected());
+    s.set_focus_for_test("alice");
+    assert_eq!(s.focused_logout_eligibility(), Some(E::NotLoggedIn));
+    let publish = |s: &Session, edit: &dyn Fn(&mut SlotStatus)| {
+        let play = s.core.play_for_test().unwrap();
+        let mut rows = play.statuses.lock().unwrap();
+        if rows.is_empty() {
+            rows.push(SlotStatus {
+                username: "alice".into(),
+                ..SlotStatus::default()
+            });
+        }
+        edit(&mut rows[0]);
+    };
+    publish(&s, &|row| {
+        row.connected = true;
+        row.ingame = false;
+        row.startup_phase = StartupPhase::LoadingScene;
+    });
+    s.core.poll_host();
+    assert_eq!(
+        s.focused_logout_eligibility(),
+        Some(E::LoggingIn),
+        "connected, scene still loading"
+    );
     assert!(!s.focused_ingame());
-}
+    publish(&s, &|row| {
+        row.ingame = true;
+        row.scene_state = 2;
+        row.startup_phase = StartupPhase::Ready;
+    });
+    s.core.poll_host();
+    assert_eq!(s.focused_logout_eligibility(), Some(E::LoggedIn));
 
-/// Only the repeat guard's park (offline, unqueued, possibly holding script
-/// work) enables Logout for an offline slot; an operator logout's latch
-/// does not, so an already logged-out profile is not latched again.
-#[test]
-fn focused_guard_park_is_only_the_repeat_guard_latch() {
-    let mut s = Session::new();
-    s.set_focus_for_test("alice");
-    let play = empty_play();
-    play.statuses.lock().unwrap().push(SlotStatus {
-        username: "alice".into(),
-        login_latch_reason: Some(host_play::LoginLatchReason::OperatorLogout),
-        ..SlotStatus::default()
+    // A refused login the slot still wants: the host retries it.
+    s.core
+        .play_for_test()
+        .unwrap()
+        .arm("alice")
+        .unwrap()
+        .arm_explicit_login();
+    publish(&s, &|row| {
+        row.connected = false;
+        row.ingame = false;
+        row.scene_state = 0;
+        row.startup_phase = StartupPhase::Error;
+        row.error = Some("Error connecting to server.".into());
     });
-    s.core.set_play(Some(play));
-    s.statuses.refresh_from_play(&s.core);
-    assert!(!s.focused_guard_parked());
-    s.core.play_for_test().unwrap().statuses.lock().unwrap()[0].login_latch_reason =
-        Some(host_play::LoginLatchReason::RepeatedUnexpectedLogouts {
+    s.core.poll_host();
+    assert_eq!(s.focused_logout_eligibility(), Some(E::RetryingLogin));
+
+    // Log out parks it: nothing is left to cancel.
+    s.logout("alice");
+    s.core.poll_host();
+    assert_eq!(s.focused_logout_eligibility(), Some(E::NotLoggedIn));
+    assert!(!s
+        .core
+        .play_for_test()
+        .unwrap()
+        .arm("alice")
+        .unwrap()
+        .wants_login());
+
+    // The repeat guard's park (offline, unqueued, may hold script work) is
+    // eligible; another bot's park is not this bot's.
+    publish(&s, &|row| {
+        row.login_latch_reason = Some(host_play::LoginLatchReason::RepeatedUnexpectedLogouts {
             count: 3,
             window_seconds: 600,
         });
-    s.statuses.refresh_from_play(&s.core);
-    assert!(s.focused_guard_parked());
+    });
+    s.core.poll_host();
+    assert_eq!(s.focused_logout_eligibility(), Some(E::GuardParked));
     s.set_focus_for_test("bob");
-    assert!(
-        !s.focused_guard_parked(),
-        "another slot's park is not bob's"
+    assert_eq!(s.focused_logout_eligibility(), Some(E::NotLoggedIn));
+    s.set_focus_for_test("nobody");
+    assert_eq!(
+        s.focused_logout_eligibility(),
+        Some(E::NotLoggedIn),
+        "an unprojected focus has nothing to cancel"
     );
 }
 

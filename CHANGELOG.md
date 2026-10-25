@@ -50,6 +50,16 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.6` 
 
 ### Fixed during development
 
+- **Log out** now stops a bot whose login keeps failing. A bot that cannot
+  log in (the server is down or refuses it) retries with a growing wait of up
+  to 60 seconds. Before this, the panel's **Log out** button was greyed out
+  and Fleet **Log out all** said "not logged in", so only quitting stopped it.
+  Log out is now offered for a bot that is logging in, waiting to retry or
+  queued, in the panel and the terminal app, for one bot and for Fleet. It
+  parks the bot logged out with no further attempts. A bot that never logged
+  in still has nothing to log out of, and the terminal app's `u` now says so
+  instead of marking it logged out. The login error line still fades after
+  15 seconds.
 - `tui-play --user NAME` stops on a missing vault before it prepares the game cache or reads the engine login key. The message is the same. A local server with no engine directory still stops with the engine-directory error.
 - Saving the first profile now waits for saved preferences before it loads
   or logs in. The panel and terminal app use their existing startup gates.

@@ -334,13 +334,20 @@ fn parameters_rail_does_not_call_an_unloaded_catalog_card_parameterless() {
 }
 
 #[test]
-fn logout_is_enabled_only_for_a_connected_queued_or_guard_parked_focus() {
-    assert!(!logout_enabled(false, true, true, false, false));
-    assert!(!logout_enabled(true, false, true, false, false));
-    assert!(!logout_enabled(true, true, false, false, false));
-    assert!(logout_enabled(true, true, true, false, false));
-    assert!(logout_enabled(true, true, false, true, false));
-    assert!(logout_enabled(true, true, false, false, true));
+fn logout_retry_button_is_enabled_only_for_a_focus_with_a_login_or_session_to_end() {
+    use frontend_core::LogoutEligibility as E;
+    for eligible in [
+        E::LoggedIn,
+        E::LoggingIn,
+        E::RetryingLogin,
+        E::Queued,
+        E::GuardParked,
+    ] {
+        assert!(logout_enabled(true, Some(eligible)), "{eligible:?}");
+        assert!(!logout_enabled(false, Some(eligible)), "vault locked");
+    }
+    assert!(!logout_enabled(true, Some(E::NotLoggedIn)));
+    assert!(!logout_enabled(true, None), "no focused profile");
 }
 
 fn checked_fixture(revision: u16) -> (TestDir, PathBuf, PathBuf) {

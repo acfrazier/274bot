@@ -248,6 +248,10 @@ pub struct FleetRow {
     /// error that holds the login until the operator acts, and in every
     /// other phase.
     retrying: bool,
+    /// The repeat guard parked the slot after repeated unexpected logouts:
+    /// offline and unqueued, it may still hold a script's work, which a
+    /// Log out ends.
+    guard_parked: bool,
     /// Authenticated client session, independent of game readiness.
     connected: bool,
     script: RunState,
@@ -289,6 +293,7 @@ impl Default for FleetRow {
             phase: Phase::Offline,
             queue: None,
             retrying: false,
+            guard_parked: false,
             connected: false,
             script: RunState::Idle,
             script_walk: false,
@@ -312,6 +317,7 @@ impl FleetRow {
         self.phase = source.phase;
         self.queue = source.queue;
         self.retrying = source.retrying;
+        self.guard_parked = source.guard_parked;
         self.connected = source.connected;
         self.script = source.script;
         self.script_walk = source.script_walk;
@@ -335,6 +341,7 @@ impl FleetRow {
             phase: Phase::Offline,
             queue: None,
             retrying: false,
+            guard_parked: false,
             connected: false,
             script: RunState::Idle,
             script_walk: false,
@@ -378,6 +385,7 @@ impl FleetRow {
         self.phase = Phase::Offline;
         self.queue = None;
         self.retrying = false;
+        self.guard_parked = false;
         self.connected = false;
         self.script = RunState::Idle;
         self.script_walk = false;
@@ -418,6 +426,11 @@ impl FleetRow {
     /// the login.
     pub fn retrying(&self) -> bool {
         self.retrying
+    }
+
+    /// The repeat guard parked the slot (see [`crate::LogoutEligibility`]).
+    pub fn guard_parked(&self) -> bool {
+        self.guard_parked
     }
 
     /// Authenticated client session, independent of game readiness.
@@ -1208,6 +1221,12 @@ fn update_row(row: &mut FleetRow, state: &mut RowState, input: &Inputs<'_>) -> b
     let mut changed = false;
     let world = status.and_then(|s| s.world);
     let connected = status.is_some_and(|s| s.connected);
+    let guard_parked = status.is_some_and(|s| {
+        matches!(
+            s.login_latch_reason,
+            Some(host_play::LoginLatchReason::RepeatedUnexpectedLogouts { .. })
+        )
+    });
     // The script walk is published on the host row and belongs to the script
     // run: a destination left on the row after the run ended is not a walk.
     // A WalkTo walk lives on the front end's arm and belongs to no run.
@@ -1227,6 +1246,7 @@ fn update_row(row: &mut FleetRow, state: &mut RowState, input: &Inputs<'_>) -> b
         row.phase,
         row.queue,
         row.retrying,
+        row.guard_parked,
         row.connected,
         row.script,
         row.script_walk,
@@ -1236,6 +1256,7 @@ fn update_row(row: &mut FleetRow, state: &mut RowState, input: &Inputs<'_>) -> b
         phase,
         queue,
         retrying,
+        guard_parked,
         connected,
         script,
         script_walk,
@@ -1245,6 +1266,7 @@ fn update_row(row: &mut FleetRow, state: &mut RowState, input: &Inputs<'_>) -> b
         row.phase = phase;
         row.queue = queue;
         row.retrying = retrying;
+        row.guard_parked = guard_parked;
         row.connected = connected;
         row.script = script;
         row.script_walk = script_walk;
