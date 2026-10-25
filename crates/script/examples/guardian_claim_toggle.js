@@ -1,6 +1,9 @@
 // Real Load fixture for the seeded Strange box Guardian handoff cell.
 // Keep the first observed box script-owned for thirty observed game ticks.
-import { BotHost, EventSignal, Inventory, Paint } from "@rs2b0t/api";
+import { Inventory } from "../../api/inventory/Inventory.js";
+import { BotHost } from "../../runtime/BotHost.js";
+import { EventSignal } from "../../api/execution/EventSignal.js";
+import { Paint } from "../../paint/Paint.js";
 const STRANGE_BOX_ID = 3062;
 const STRANGE_BOX_EVENT = "strange box";
 const IGNORE_TICKS = 30;

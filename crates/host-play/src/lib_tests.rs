@@ -25814,6 +25814,36 @@ fn load_changed_ignore_list_reclaims_the_same_box_without_restarting_it() {
 }
 
 #[test]
+fn seeded_box_claim_fixture_loads_its_real_imports_and_arms() {
+    let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
+    let slot = script_slot_or_insert(&scripts, "alice");
+    let mut slot = slot.lock().unwrap();
+    slot.start_load_settled(
+        include_str!("../../script/examples/guardian_claim_toggle.js").into(),
+        script::LoadShape::CompatClass,
+        vec![],
+    )
+    .expect("the live fixture imports its supported modules");
+    slot.on_game_tick(&mut script::ScriptCtx {
+        driver: &mut NavRec::default(),
+        tick: 1,
+        here: None,
+        walk: None,
+        walk_with: None,
+        inv: None,
+        snapshot: None,
+        obj_names: None,
+        compiled: script::CompiledTick::default(),
+    });
+    assert_eq!(
+        slot.probe("globalThis.__rs2b0t_host.paint.lines.includes('guardian-box:armed')")
+            .unwrap(),
+        true
+    );
+    assert_eq!(slot.ignored_randoms(), vec!["strange box"]);
+}
+
+#[test]
 fn event_signal_pending_reads_true_during_dialog_hold() {
     // Task 12: the guardian's dialog hold is posted into the isolate
     // (`hold: true` on the blob), so `EventSignal.pending()` reads
