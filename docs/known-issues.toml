@@ -363,3 +363,18 @@ first = "0.2.6"
 target = "none"
 severity = "low"
 owner = "panel"
+
+[[item]]
+id = "boat-fare-luthas-reach-stop"
+kind = "known-issue"
+area = "Scripts"
+text = """When a script walks from Karamja to the mainland without the 30 coins for
+  the boat (`Traversal.walkTo`), the host earns the fare by working for Luthas.
+  If the bot cannot reach Luthas once after filling the banana crate, the walk
+  returns `false` instead of trying again from where the bot stands, so the
+  fare is not paid and the bot does not cross."""
+first = "0.2.6"
+listed = "0.2.7"
+target = "none"
+severity = "medium"
+owner = "T2.rest walking"
