@@ -208,12 +208,46 @@ fn strange_box_load_claim_seeds_inventory_and_bounds_the_handoff() {
     assert_eq!(cell.trigger, Trigger::Seeded);
     assert_eq!(cell.oracle, Oracle::StrangeBoxHandoff);
     assert_eq!(observe.wait.budget_ticks, 120);
-    assert!(matches!(
-        scenario.proof,
-        Proof::ScriptReceipt {
-            prefix: "guardian-box:resumed"
+    let resumed = scenario
+        .steps
+        .iter()
+        .position(|step| {
+            step.wait.arm
+                == Proof::ScriptReceipt {
+                    prefix: STRANGE_BOX_RESUMED_RECEIPT,
+                }
+        })
+        .expect("the original handoff still requires script resumption");
+    let restart = scenario
+        .steps
+        .iter()
+        .rposition(|step| matches!(step.kind, StepKind::StartScript))
+        .expect("the second Load Start");
+    let owned = scenario
+        .steps
+        .iter()
+        .rposition(|step| {
+            step.wait.arm
+                == Proof::ScriptReceipt {
+                    prefix: STRANGE_BOX_OWNED_RECEIPT,
+                }
+        })
+        .expect("the second box is script-owned");
+    let stop = scenario
+        .steps
+        .iter()
+        .rposition(|step| matches!(step.kind, StepKind::StopScript))
+        .expect("Stop while the second box is still ignored");
+    assert!(resumed < restart && restart < owned && owned < stop);
+    assert_eq!(scenario.steps[stop].wait.arm, Proof::ScriptIdle);
+    assert_eq!(
+        scenario.steps[stop + 1].wait.arm,
+        Proof::ItemIdAtMost {
+            id: STRANGE_BOX_ID,
+            count: 0,
         }
-    ));
+    );
+    assert_eq!(scenario.proof, scenario.steps[stop + 1].wait.arm);
 }
 
 #[test]
