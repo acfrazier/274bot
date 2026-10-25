@@ -47,7 +47,7 @@ fn every_cell_is_registered_once_with_one_authentic_trigger() {
         .filter(|cell| matches!(cell.3, Trigger::General(_)))
         .map(|cell| match cell.3 {
             Trigger::General(id) => id,
-            Trigger::Skill(_) => unreachable!(),
+            Trigger::Skill(_) | Trigger::Seeded => unreachable!(),
         })
         .collect::<Vec<_>>();
     assert_eq!(general, (1..=8).collect::<Vec<_>>());
@@ -55,7 +55,7 @@ fn every_cell_is_registered_once_with_one_authentic_trigger() {
         .iter()
         .filter_map(|cell| match cell.3 {
             Trigger::Skill(id) => Some(id),
-            Trigger::General(_) => None,
+            Trigger::General(_) | Trigger::Seeded => None,
         })
         .collect::<Vec<_>>();
     assert_eq!(skill, (1..=12).collect::<Vec<_>>());
