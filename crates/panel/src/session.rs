@@ -35,9 +35,9 @@ use frontend_core::launch::{
     ValidatedProfile,
 };
 use frontend_core::prefs::{PreferencePatch, UiPreferences, Update};
-use frontend_core::scripts::{
-    CardSource, LoadoutForm, PaintFrame, SchemaRef, ScriptChoice, ScriptRunState,
-};
+use frontend_core::scripts::{LoadoutForm, PaintFrame, ScriptChoice, ScriptRunState};
+#[cfg(feature = "js")]
+use frontend_core::scripts::{CardSource, SchemaRef};
 use frontend_core::surface::{FrameBuf, InputEv, InputSender, SlotInput};
 use frontend_core::walk_map::{
     select_walk_route_source, RouteProjectionView, WalkMapDemand, WalkMapJobState, WalkMapStage,
@@ -1020,15 +1020,18 @@ pub struct Session {
     /// Chooser ✕ waiting on the same confirm popup; `None` not pending.
     pub pending_profile_delete: Option<String>,
     pub delete_understood: bool,
+    #[cfg(feature = "js")]
     /// The rs2b0t profile import in the Profiles window: whether it is
-    /// open, its flow (shared with the TUI), the text it shows (rebuilt on
-    /// each step and while its writes settle) and the delete-file confirm.
-    /// The text is the flow's own lines, which the flow redacts as it
-    /// builds them, so no export password is held here.
+    /// open, its flow, the text it shows while writes settle, and the
+    /// delete-file confirm.
     pub profile_import_open: bool,
+    #[cfg(feature = "js")]
     pub profile_import: frontend_core::rs2b0t_import::ProfileImport,
+    #[cfg(feature = "js")]
     pub profile_import_lines: Vec<String>,
+    #[cfg(feature = "js")]
     pub profile_import_settled: bool,
+    #[cfg(feature = "js")]
     pub import_delete_understood: bool,
     /// Where the Profiles divider sits, as a fraction of the split region:
     /// `[0]` the list's width side by side, `[1]` its height stacked.
@@ -1076,24 +1079,34 @@ pub struct Session {
     pub scripts: frontend_core::Scripts,
     /// Browse picker open flag (the Scripts window in `app.rs`).
     pub script_browse_open: bool,
+    #[cfg(feature = "js")]
     /// Load file browser open flag (the Load window in `app.rs`).
     pub script_load_open: bool,
+    #[cfg(feature = "js")]
     /// Current directory in the out-of-tree Load file browser.
     pub script_load_dir: PathBuf,
+    #[cfg(feature = "js")]
     /// Selected row in the Load file browser.
     pub script_load_sel: usize,
+    #[cfg(feature = "js")]
     /// Search box in the shared file dialog (Load or Import catalog).
     pub script_dialog_search: String,
+    #[cfg(feature = "js")]
     /// Shared file-dialog sort column.
     pub script_dialog_sort: crate::script_picker::DialogSort,
+    #[cfg(feature = "js")]
     pub script_dialog_sort_desc: bool,
+    #[cfg(feature = "js")]
     /// First-run rs2b0t clone-root folder picker (when `$RS2B0T` unset).
     pub rs2b0t_catalog_open: bool,
+    #[cfg(feature = "js")]
     /// Show **Not now** (first-run only; later Import catalog… does not defer).
     pub rs2b0t_catalog_defer_ok: bool,
+    #[cfg(feature = "js")]
     /// Browse already asked for a clone root this session (no root known):
     /// a later Browse only brings its window forward.
     pub(crate) rs2b0t_browse_prompted: bool,
+    #[cfg(feature = "js")]
     /// Current directory in the rs2b0t folder picker.
     pub rs2b0t_catalog_dir: PathBuf,
     /// Script Browse category filter (`None` = all categories).
@@ -1140,9 +1153,11 @@ pub struct Session {
     catalog_core_watch: Arc<Mutex<Option<host_play::catalog_core::CoreWatch>>>,
     #[cfg(test)]
     paired_core_watch: Arc<Mutex<Option<host_play::paired_core::PairWatch>>>,
-    #[cfg(test)]
+    #[cfg(all(test, feature = "js"))]
     external_core_watch: Arc<Mutex<Option<host_play::external_loader::ExternalWatch>>>,
+    #[cfg(feature = "js")]
     external_core_enabled: bool,
+    #[cfg(feature = "js")]
     external_ts: Option<PathBuf>,
     /// Focused-slot speaker, reconciled from the client's applied memory mode,
     /// never from the queued setting.
@@ -1590,10 +1605,15 @@ impl Session {
             statuses: frontend_core::StatusBuf::default(),
             profile_editor: frontend_core::ProfileEditor::new(),
             window_focus: None,
+            #[cfg(feature = "js")]
             profile_import_open: false,
+            #[cfg(feature = "js")]
             profile_import: frontend_core::rs2b0t_import::ProfileImport::new(),
+            #[cfg(feature = "js")]
             profile_import_lines: Vec::new(),
+            #[cfg(feature = "js")]
             profile_import_settled: false,
+            #[cfg(feature = "js")]
             import_delete_understood: false,
             profiles_split: [0.4, 0.35],
             fleet_open: false,
@@ -1653,15 +1673,25 @@ impl Session {
             script_sel: None,
             scripts,
             script_browse_open: false,
+            #[cfg(feature = "js")]
             script_load_open: false,
+            #[cfg(feature = "js")]
             script_load_dir: crate::script_picker::default_load_browse_dir(None),
+            #[cfg(feature = "js")]
             script_load_sel: 0,
+            #[cfg(feature = "js")]
             script_dialog_search: String::new(),
+            #[cfg(feature = "js")]
             script_dialog_sort: crate::script_picker::DialogSort::Name,
+            #[cfg(feature = "js")]
             script_dialog_sort_desc: false,
+            #[cfg(feature = "js")]
             rs2b0t_catalog_open: false,
+            #[cfg(feature = "js")]
             rs2b0t_catalog_defer_ok: false,
+            #[cfg(feature = "js")]
             rs2b0t_browse_prompted: false,
+            #[cfg(feature = "js")]
             rs2b0t_catalog_dir: crate::script_picker::default_load_browse_dir(None),
             browse_category_filter: None,
             script_prefs_open: false,
@@ -1685,9 +1715,11 @@ impl Session {
             catalog_core_watch: Arc::new(Mutex::new(None)),
             #[cfg(test)]
             paired_core_watch: Arc::new(Mutex::new(None)),
-            #[cfg(test)]
+            #[cfg(all(test, feature = "js"))]
             external_core_watch: Arc::new(Mutex::new(None)),
+            #[cfg(feature = "js")]
             external_core_enabled: false,
+            #[cfg(feature = "js")]
             external_ts: None,
             audio: Arc::new(AudioGate::default()),
             mem_relog_armed: None,
@@ -1885,11 +1917,15 @@ impl Session {
         self.ui.focused_50 = self.draw.focused_50();
         self.map_desk
             .adopt_bake_choice(frontend_core::load_map_bake_choice(&self.preferences));
-        self.script_load_dir =
-            crate::script_picker::default_load_browse_dir(self.ui.script_load_last_dir.as_deref());
-        self.rs2b0t_catalog_dir = crate::script_picker::default_load_browse_dir(
-            self.ui.script_catalog_last_dir.as_deref(),
-        );
+        #[cfg(feature = "js")]
+        {
+            self.script_load_dir = crate::script_picker::default_load_browse_dir(
+                self.ui.script_load_last_dir.as_deref(),
+            );
+            self.rs2b0t_catalog_dir = crate::script_picker::default_load_browse_dir(
+                self.ui.script_catalog_last_dir.as_deref(),
+            );
+        }
         crate::log_pane::apply_session_log_pref(self);
 
         self.clear_cached_panel_members(document);
@@ -1973,14 +2009,17 @@ impl Session {
         self.pair_core_enabled = enabled;
     }
 
+    #[cfg(feature = "js")]
     pub fn set_external_core_enabled(&mut self, enabled: bool) {
         self.external_core_enabled = enabled;
     }
 
+    #[cfg(feature = "js")]
     pub fn external_core_enabled(&self) -> bool {
         self.external_core_enabled
     }
 
+    #[cfg(feature = "js")]
     pub fn set_external_ts(&mut self, path: Option<PathBuf>) {
         self.external_ts = path;
     }
@@ -2002,12 +2041,12 @@ impl Session {
             .unwrap_or_else(|| frontend_core::live::default_fixture_path(scenario))
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "js"))]
     pub fn external_core_watch(&self) -> Option<host_play::external_loader::ExternalWatch> {
         self.external_core_watch.lock().unwrap().clone()
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "js"))]
     pub(crate) fn install_external_core_watch(
         &self,
         watch: Option<host_play::external_loader::ExternalWatch>,
@@ -2018,7 +2057,7 @@ impl Session {
             .install_external_watch_for_test(watch);
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "js"))]
     pub fn pump_external_loader(&mut self) {
         self.core.pump_live_external_loader(
             &mut self.scripts,
@@ -2431,6 +2470,7 @@ impl Session {
         Ok(())
     }
 
+    #[cfg(feature = "js")]
     /// Live setup runs before the interactive event loop. Keep its catalogue
     /// receipt off the UI path's synchronous scan, then consume it before the
     /// scenario selects a card from that catalogue.
@@ -2462,6 +2502,7 @@ impl Session {
         {
             self.catalog_core_watch.lock().unwrap().take();
             self.paired_core_watch.lock().unwrap().take();
+            #[cfg(feature = "js")]
             self.external_core_watch.lock().unwrap().take();
         }
         if self.fixture_mode == frontend_core::live::FixtureMode::Prepare {
@@ -2495,10 +2536,21 @@ impl Session {
         let capture = view.capture();
         let full_rate = view.full_rate();
         let nav = view.nav();
+        #[cfg(feature = "js")]
         let inject_companion_as = view.inject_companion_as().map(str::to_owned);
         let start_script = view.start_script().map(str::to_owned);
         let start_file = view.start_file().map(str::to_owned);
         let fleet_start = view.fleet_start();
+
+        #[cfg(not(feature = "js"))]
+        if fleet_start.is_some()
+            || start_file.is_some()
+            || start_script.as_deref().is_some_and(|name| {
+                frontend_core::scripts::CompiledCardId::lookup(name).is_none()
+            })
+        {
+            return Err("JavaScript runtime unavailable".into());
+        }
 
         let profiles = match self.fixture_mode {
             frontend_core::live::FixtureMode::RunPrepared => {
@@ -2530,18 +2582,20 @@ impl Session {
             frontend_core::live::FixtureMode::Prepare => unreachable!("prepare rejected above"),
         };
         let names = profiles.names();
+        #[cfg(feature = "js")]
         if self.external_core_enabled && (self.catalog_core_enabled || self.pair_core_enabled) {
             return Err(
                 "external loader watch is mutually exclusive with catalog/pair core".into(),
             );
         }
-        let live_core = self.core.resolve_live_core(
+        let _live_core = self.core.resolve_live_core(
             &scenario_name,
             names.len(),
             self.catalog_core_enabled,
             self.pair_core_enabled,
         )?;
-        if live_core != frontend_core::live::LiveCoreMode::Pair {
+        #[cfg(feature = "js")]
+        if _live_core != frontend_core::live::LiveCoreMode::Pair {
             if let Some(key) = inject_companion_as.as_deref() {
                 if names.len() > 1 {
                     inject.get_or_insert_with(serde_json::Map::new).insert(
@@ -2560,6 +2614,7 @@ impl Session {
                 .unwrap_or_else(|| "unlock_at failed".into()));
         }
         self.core.configure_live_core(names)?;
+        #[cfg(feature = "js")]
         if self.external_core_enabled {
             self.core
                 .configure_live_external_loader(names[0].clone(), self.external_ts.as_deref())?;
@@ -2582,7 +2637,9 @@ impl Session {
         self.nav_overlay = Some(from_scenario(&nav, &self.ui.nav));
         self.sync_sidecar_cadence();
 
+        #[cfg(feature = "js")]
         let fixture_loadouts = scenario.fixture_loadouts();
+        #[cfg(feature = "js")]
         let fleet_cards = scenario.fleet_cards(names)?;
         let play_config = self.launcher.play_config();
         let budget = frontend_core::live::budget_s_from_env();
@@ -2598,96 +2655,126 @@ impl Session {
         self.live_script_stop_wait_started = None;
 
         if let Some(fleet) = fleet_start {
-            self.fill_live_catalog()?;
-            for card in &fleet_cards {
-                if !self.scripts.card_is_prepared(CardSource::Catalog, card) {
-                    self.scripts
-                        .transpile_blocking(CardSource::Catalog, card)
-                        .map_err(|error| error.to_string())?;
+            #[cfg(feature = "js")]
+            {
+                self.fill_live_catalog()?;
+                for card in &fleet_cards {
+                    if !self.scripts.card_is_prepared(CardSource::Catalog, card) {
+                        self.scripts
+                            .transpile_blocking(CardSource::Catalog, card)
+                            .map_err(|error| error.to_string())?;
+                    }
                 }
+                let plan = frontend_core::live::StartPlan::fleet_catalog(
+                    &mut self.scripts,
+                    fleet,
+                    names,
+                    &fixture_loadouts,
+                )?;
+                self.stage_live_starts(plan);
             }
-            let plan = frontend_core::live::StartPlan::fleet_catalog(
-                &mut self.scripts,
-                fleet,
-                names,
-                &fixture_loadouts,
-            )?;
-            self.stage_live_starts(plan);
+            #[cfg(not(feature = "js"))]
+            {
+                let _ = fleet;
+                return Err("JavaScript runtime unavailable".into());
+            }
         } else if let Some(file_name) = start_file.as_deref() {
-            let identity = self.scripts.load_live_example_identity(file_name)?;
-            self.script_sel = Some(ScriptChoice::loaded(CardSource::File, &identity));
-            let bag = self.pending_card_settings_bag(CardSource::File, &identity);
-            let choice = self
-                .script_sel
-                .as_ref()
-                .expect("live loaded-card selection is set");
-            let plan = self.core.live_runner().stage_loaded_card(
-                &mut self.scripts,
-                names,
-                choice,
-                bag,
-                inject_companion_as.as_deref(),
-                fixture_loadouts,
-            );
-            plan?;
+            #[cfg(feature = "js")]
+            {
+                let identity = self.scripts.load_live_example_identity(file_name)?;
+                self.script_sel = Some(ScriptChoice::loaded(CardSource::File, &identity));
+                let bag = self.pending_card_settings_bag(CardSource::File, &identity);
+                let choice = self
+                    .script_sel
+                    .as_ref()
+                    .expect("live loaded-card selection is set");
+                let plan = self.core.live_runner().stage_loaded_card(
+                    &mut self.scripts,
+                    names,
+                    choice,
+                    bag,
+                    inject_companion_as.as_deref(),
+                    fixture_loadouts,
+                );
+                plan?;
+            }
+            #[cfg(not(feature = "js"))]
+            {
+                let _ = file_name;
+                return Err("JavaScript runtime unavailable".into());
+            }
         } else if let Some(card_name) = start_script.as_deref() {
             if let Some(card) = frontend_core::scripts::CompiledCardId::lookup(card_name) {
                 self.script_sel = Some(ScriptChoice::compiled(card));
                 let bag = self.scripts.compiled_bag(&self.core, &names[0], card)?;
                 let plan = frontend_core::live::StartPlan::compiled(names[0].clone(), card, bag);
                 self.stage_live_starts(plan);
-            } else if let Some((fixture, stem)) = frontend_core::live::live_file_fixture(card_name)
-            {
-                self.scripts.stage_load_file(fixture.clone());
-                let submitted = self
-                    .submit_script_command(OperatorCommand::LoadScriptFile, Targets::Application)
-                    .ok_or_else(|| {
-                        format!("load {card_name} fixture: command was not submitted")
-                    })?;
-                if let Some(error) = self.core.command_failure(submitted.request()) {
-                    return Err(format!("load {card_name} fixture: {error}"));
-                }
-                if self.scripts.card(CardSource::File, &stem).is_none() {
-                    return Err(format!("file fixture {card_name} missing after load"));
-                }
-                self.script_sel = Some(ScriptChoice::loaded(CardSource::File, &stem));
-                let bag = self.pending_card_settings_bag(CardSource::File, &stem);
-                let choice = self
-                    .script_sel
-                    .as_ref()
-                    .expect("live loaded-card selection is set");
-                self.core.live_runner().stage_loaded_card(
-                    &mut self.scripts,
-                    names,
-                    choice,
-                    bag,
-                    inject_companion_as.as_deref(),
-                    fixture_loadouts,
-                )?;
             } else {
-                self.fill_live_catalog()?;
-                self.scripts
-                    .transpile_blocking(CardSource::Catalog, card_name)
-                    .map_err(|error| format!("transpile {card_name}: {error}"))?;
-                if self.scripts.card(CardSource::Catalog, card_name).is_none() {
-                    return Err(format!(
-                        "$RS2B0T catalog has no {card_name} card (is $RS2B0T set?)"
-                    ));
+                #[cfg(feature = "js")]
+                {
+                    if let Some((fixture, stem)) =
+                        frontend_core::live::live_file_fixture(card_name)
+                    {
+                        self.scripts.stage_load_file(fixture.clone());
+                        let submitted = self
+                            .submit_script_command(
+                                OperatorCommand::LoadScriptFile,
+                                Targets::Application,
+                            )
+                            .ok_or_else(|| {
+                                format!("load {card_name} fixture: command was not submitted")
+                            })?;
+                        if let Some(error) = self.core.command_failure(submitted.request()) {
+                            return Err(format!("load {card_name} fixture: {error}"));
+                        }
+                        if self.scripts.card(CardSource::File, &stem).is_none() {
+                            return Err(format!("file fixture {card_name} missing after load"));
+                        }
+                        self.script_sel = Some(ScriptChoice::loaded(CardSource::File, &stem));
+                        let bag = self.pending_card_settings_bag(CardSource::File, &stem);
+                        let choice = self
+                            .script_sel
+                            .as_ref()
+                            .expect("live loaded-card selection is set");
+                        self.core.live_runner().stage_loaded_card(
+                            &mut self.scripts,
+                            names,
+                            choice,
+                            bag,
+                            inject_companion_as.as_deref(),
+                            fixture_loadouts,
+                        )?;
+                    } else {
+                        self.fill_live_catalog()?;
+                        self.scripts
+                            .transpile_blocking(CardSource::Catalog, card_name)
+                            .map_err(|error| format!("transpile {card_name}: {error}"))?;
+                        if self.scripts.card(CardSource::Catalog, card_name).is_none() {
+                            return Err(format!(
+                                "$RS2B0T catalog has no {card_name} card (is $RS2B0T set?)"
+                            ));
+                        }
+                        self.script_sel =
+                            Some(ScriptChoice::loaded(CardSource::Catalog, card_name));
+                        let bag = self.pending_card_settings_bag(CardSource::Catalog, card_name);
+                        let choice = self
+                            .script_sel
+                            .as_ref()
+                            .expect("live loaded-card selection is set");
+                        self.core.live_runner().stage_loaded_card(
+                            &mut self.scripts,
+                            names,
+                            choice,
+                            bag,
+                            inject_companion_as.as_deref(),
+                            fixture_loadouts,
+                        )?;
+                    }
                 }
-                self.script_sel = Some(ScriptChoice::loaded(CardSource::Catalog, card_name));
-                let bag = self.pending_card_settings_bag(CardSource::Catalog, card_name);
-                let choice = self
-                    .script_sel
-                    .as_ref()
-                    .expect("live loaded-card selection is set");
-                self.core.live_runner().stage_loaded_card(
-                    &mut self.scripts,
-                    names,
-                    choice,
-                    bag,
-                    inject_companion_as.as_deref(),
-                    fixture_loadouts,
-                )?;
+                #[cfg(not(feature = "js"))]
+                {
+                    return Err("JavaScript runtime unavailable".into());
+                }
             }
         }
         self.login_all();
@@ -2874,7 +2961,8 @@ impl Session {
         self.ingest_tutorial_chat(&current);
         self.maybe_getvar_tutorial(&current);
         self.maybe_drain_getvar_dialogue(&current);
-        // Script lifecycle lines also feed the frontend-core-owned external proof.
+        // Script lifecycle lines also feed the JS external proof.
+        #[cfg(feature = "js")]
         self.core
             .live_runner()
             .note_external_loader_logs(self.core.script_lines());
@@ -3644,6 +3732,16 @@ impl Session {
     /// Split borrow: the core plus the panel adapter over the other fields,
     /// with every operator model the panel holds lent to the command.
     fn core_and_surface(&mut self) -> (&mut OperatorSession<SlotIo>, PanelSurface<'_>) {
+        let models = frontend_core::Models::none()
+            .with_scripts(&mut self.scripts)
+            .with_fleet(&mut self.fleet_model)
+            .with_editor(&mut self.profile_editor)
+            .with_loadouts(&mut self.loadouts)
+            .with_quester(&mut self.quester_paths)
+            .with_walk_globals(&mut self.walk_permissions)
+            .with_draw(&mut self.draw);
+        #[cfg(feature = "js")]
+        let models = models.with_import(&mut self.profile_import);
         (
             &mut self.core,
             PanelSurface {
@@ -3651,15 +3749,7 @@ impl Session {
                 audio: &self.audio,
                 memory_override: self.memory_override,
                 map_desk: &mut self.map_desk,
-                models: frontend_core::Models::none()
-                    .with_scripts(&mut self.scripts)
-                    .with_fleet(&mut self.fleet_model)
-                    .with_editor(&mut self.profile_editor)
-                    .with_import(&mut self.profile_import)
-                    .with_loadouts(&mut self.loadouts)
-                    .with_quester(&mut self.quester_paths)
-                    .with_walk_globals(&mut self.walk_permissions)
-                    .with_draw(&mut self.draw),
+                models,
                 frame_hook: None,
             },
         )
@@ -4899,6 +4989,7 @@ impl Session {
         self.core.script_last_error(&name)
     }
 
+    #[cfg(feature = "js")]
     /// Merged operator bag for the Browse-selected JS card (schema defaults,
     /// persisted overrides, optional scenario inject).
     pub fn merged_settings_bag(
@@ -4918,6 +5009,7 @@ impl Session {
         self.scripts.set_inject(inject);
     }
 
+    #[cfg(feature = "js")]
     /// Schema defaults + overrides + inject. Empty schema still keeps
     /// inject keys (Thiever `target: Guard`). `None` only when the merged
     /// bag is empty.
@@ -4935,6 +5027,7 @@ impl Session {
         }
     }
 
+    #[cfg(feature = "js")]
     /// [`Self::pending_settings_bag`] for a loaded card by lookup.
     fn pending_card_settings_bag(
         &self,
@@ -5117,7 +5210,7 @@ mod tests;
 #[path = "silent_exit_tests.rs"]
 mod silent_exit_tests;
 
-#[cfg(test)]
+#[cfg(all(test, feature = "js"))]
 mod fleet_hold_tests {
     use super::*;
     use host_play::external_loader::{

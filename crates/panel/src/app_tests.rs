@@ -311,9 +311,15 @@ fn profiles_controls_remain_reachable_when_the_dock_runs_past_1024() {
 fn catalog_assignment_without_catalog_has_a_distinct_prefs_hint() {
     let mut session = crate::session::Session::new();
     session.script_sel = Some(ScriptChoice::loaded(CardSource::Catalog, "Sherlock"));
+    #[cfg(feature = "js")]
     assert_eq!(
         super::script_prefs_disabled_hint(&session),
         Some("script catalog unavailable")
+    );
+    #[cfg(not(feature = "js"))]
+    assert_eq!(
+        super::script_prefs_disabled_hint(&session),
+        Some("JavaScript runtime unavailable")
     );
 }
 
@@ -321,10 +327,16 @@ fn catalog_assignment_without_catalog_has_a_distinct_prefs_hint() {
 fn parameters_rail_does_not_call_an_unloaded_catalog_card_parameterless() {
     let mut session = crate::session::Session::new();
     session.script_sel = Some(ScriptChoice::loaded(CardSource::Catalog, "Sherlock"));
+    #[cfg(feature = "js")]
     assert_eq!(
         super::parameters_rail_placeholder(&session),
         Some("(script catalog unavailable)"),
         "0.1.9 printed '(no parameters)' for a card whose catalog was never read"
+    );
+    #[cfg(not(feature = "js"))]
+    assert_eq!(
+        super::parameters_rail_placeholder(&session),
+        Some("(JavaScript runtime unavailable)")
     );
     session.script_sel = None;
     assert_eq!(
@@ -1927,6 +1939,7 @@ fn parse_args_run_prepared_requires_script_live() {
         .is_err());
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn parse_live_args_accepts_external_loader_without_scenario_catalog() {
     assert_eq!(
@@ -1936,6 +1949,7 @@ fn parse_live_args_accepts_external_loader_without_scenario_catalog() {
     assert!(frontend_core::test_support::live::scenario("external_loader").is_none());
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn parse_args_external_ts_refuses_relative_and_keeps_ordinary_watchers_off() {
     let err = parse_args(["--external-ts", "ExampleBot.ts"], None).unwrap_err();
@@ -3284,6 +3298,7 @@ fn record_presented_upload_ignores_a_failed_take_after_focus_switch() {
     assert_eq!(last, Some(("bob".into(), 4)));
 }
 
+#[cfg(feature = "js")]
 fn passed_prereq_runner() -> frontend_core::live::Runner {
     let mut runner = frontend_core::test_support::live::passing_runner_for_test(
         "t",
@@ -3297,6 +3312,7 @@ fn passed_prereq_runner() -> frontend_core::live::Runner {
     runner
 }
 
+#[cfg(feature = "js")]
 fn drive_external_watch_to_capture(watch: &host_play::external_loader::ExternalWatch) {
     use host_play::external_loader::{BONES_COUNT, FROZEN_SHA256, NOTHING_CHANGED, SCRIPT_NAME};
     use std::path::Path;
@@ -3348,6 +3364,7 @@ fn drive_external_watch_to_capture(watch: &host_play::external_loader::ExternalW
     );
 }
 
+#[cfg(feature = "js")]
 fn alice_scene2_session() -> crate::session::Session {
     let mut s = crate::session::Session::new();
     s.core.live_runner().install(passed_prereq_runner());
@@ -3363,6 +3380,7 @@ fn alice_scene2_session() -> crate::session::Session {
     s
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn earlier_fixture_written_cannot_discharge_external_terminal_hold() {
     let mut s = alice_scene2_session();
@@ -3418,6 +3436,7 @@ fn earlier_fixture_written_cannot_discharge_external_terminal_hold() {
     );
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn missing_external_terminal_shot_fails_after_drain() {
     let mut s = alice_scene2_session();
@@ -3724,6 +3743,7 @@ fn parameters_and_script_prefs_share_show_parameters_rail() {
 /// SetCursorScreenPos after the badge used to EndChild past CursorMaxPos
 /// and abort ErrorCheckUsingSetCursorPosToExtendParentBoundaries
 /// (panel-play SIGABRT on Browse, window `##scard-File-trade_bot`).
+#[cfg(feature = "js")]
 #[test]
 fn browse_file_card_without_desc_does_not_assert_on_endchild() {
     let _guard = crate::test_support::imgui_context_guard();
@@ -4140,6 +4160,7 @@ fn discarding_invalid_script_parameter_removes_its_dock_banner() {
     );
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn main_script_recovery_names_the_hidden_card_and_field() {
     let _guard = crate::test_support::imgui_context_guard();
@@ -6795,6 +6816,7 @@ fn walk_send_window_opens_on_screen_and_fits_its_list() {
 
 // ---- Profiles: the rs2b0t import and the split editor pane ------------------
 
+#[cfg(feature = "js")]
 /// An rs2b0t export (generic names and passwords) with one new account and
 /// one the vault already holds.
 fn write_rs2b0t_export(dir: &std::path::Path) -> PathBuf {
@@ -6807,6 +6829,7 @@ fn write_rs2b0t_export(dir: &std::path::Path) -> PathBuf {
     path
 }
 
+#[cfg(feature = "js")]
 /// Open the import and preview `export` through the Profiles controls.
 fn preview_rs2b0t_export(ui: &mut ProfilesUi, export: &std::path::Path) -> Shown {
     ui.click(At::Window, "Import from rs2b0t…");
@@ -6818,6 +6841,7 @@ fn preview_rs2b0t_export(ui: &mut ProfilesUi, export: &std::path::Path) -> Shown
     ui.click(At::Window, "Preview")
 }
 
+#[cfg(feature = "js")]
 /// The import runs path → preview → Import → report → delete through the
 /// Profiles window's own controls: the preview writes nothing, Import
 /// writes the new account and keeps the existing one (Skip), and the
@@ -6863,6 +6887,7 @@ fn the_profiles_import_runs_from_its_path_to_deleting_the_export() {
     assert!(ui.session.profile_import.is_fresh());
 }
 
+#[cfg(feature = "js")]
 /// Import over a form with unsaved edits asks Discard / Keep editing
 /// first; Keep editing stays on the form, Discard opens the import.
 #[test]
@@ -6899,6 +6924,7 @@ fn opening_the_import_over_unsaved_edits_asks_first() {
     assert_eq!(ui.session.profile_editor.target(), None);
 }
 
+#[cfg(feature = "js")]
 /// Edit over an import preview drops the preview, which wrote nothing.
 #[test]
 fn opening_an_edit_drops_an_import_preview() {
@@ -6920,6 +6946,7 @@ fn opening_an_edit_drops_an_import_preview() {
     assert_eq!(ui.disk(), [row("alice", 42, "apass")]);
 }
 
+#[cfg(feature = "js")]
 /// While the import's writes are being saved the editor pane keeps its
 /// report: Edit and New profile wait, and work once the writes settle.
 #[test]

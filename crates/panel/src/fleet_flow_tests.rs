@@ -4,7 +4,8 @@
 
 use dear_imgui_rs::{Condition, FramePrepareOptions, MouseButton};
 use frontend_core::command::Subject;
-use frontend_core::scripts::{CompiledCardId, ScriptChoice, ScriptRunState};
+use frontend_core::scripts::{CompiledCardId, ScriptChoice};
+use frontend_core::scripts::ScriptRunState;
 use frontend_core::test_support::scripts::Assignment;
 use frontend_core::test_support::session::install_vault;
 use frontend_core::test_support::{FixtureProfile, IsolatedStores, VaultFixture};
@@ -22,6 +23,7 @@ use crate::test_support::TestDir;
 const SIZE: [f32; 2] = [760.0, 460.0];
 /// Where the pointer rests when no item should be hovered.
 const AWAY: [f32; 2] = [1200.0, 700.0];
+#[cfg(feature = "js")]
 const BOT_TS: &str = "export default class T extends LoopingBot { override loop() {} }\n";
 
 fn centre([min_x, min_y, max_x, max_y]: [f32; 4]) -> [f32; 2] {
@@ -35,6 +37,7 @@ struct Rig {
     /// The session's WalkTo arms: a test arms a manual walk through these.
     walks: host_play::WalkArms,
     layout: FleetLayout,
+    #[cfg(feature = "js")]
     dir: TestDir,
     // Last: the context singleton drops before the guard.
     _guard: std::sync::MutexGuard<'static, ()>,
@@ -55,6 +58,7 @@ impl Rig {
         session.core.set_walk_arms(std::sync::Arc::clone(&walks));
         install_vault(&mut session.core, vault);
         session.persist_ui = false;
+        #[cfg(feature = "js")]
         session
             .scripts
             .use_library_at(dir.join("js-scripts.json"), dir.join("js-cache"));
@@ -67,6 +71,7 @@ impl Rig {
             session,
             walks,
             layout: FleetLayout::default(),
+            #[cfg(feature = "js")]
             dir,
             _guard: guard,
         };
@@ -248,6 +253,7 @@ impl Rig {
     }
 
     /// Give each of `names` the saved bot script and start it on its own.
+    #[cfg(feature = "js")]
     fn start_scripts(&mut self, names: &[&str]) {
         let path = self.dir.join("bot.ts");
         std::fs::write(&path, BOT_TS).unwrap();
@@ -267,6 +273,21 @@ impl Rig {
             std::thread::sleep(Duration::from_millis(5));
         }
         for name in names {
+            self.wait_state(name, ScriptRunState::Running);
+        }
+    }
+    #[cfg(not(feature = "js"))]
+    fn start_scripts(&mut self, names: &[&str]) {
+        let card = CompiledCardId::lookup("Gatherer").expect("compiled Gatherer card");
+        for name in names {
+            self.session
+                .persist_successful_assignment(name, Assignment::compiled(card));
+        }
+        self.session.core.flush_writes();
+        for name in names {
+            self.session
+                .script_start_profile(name)
+                .expect("compiled script starts");
             self.wait_state(name, ScriptRunState::Running);
         }
     }
@@ -1129,6 +1150,7 @@ fn a_name_click_focuses_the_bot_and_its_mark_box_only_marks_it() {
     assert_eq!(rig.marked_names(), ["bob"]);
 }
 
+#[cfg(feature = "js")]
 const THIEVER_TS: &str = "export const SETTINGS = { target: { type: 'string', default: 'Man' } };\nexport default class T extends LoopingBot { override loop() {} }\n";
 
 /// The Scripts window's Apply to same-card members entry raises the fleet
@@ -1136,6 +1158,7 @@ const THIEVER_TS: &str = "export const SETTINGS = { target: { type: 'string', de
 /// fleet toolbar is on screen: not beside the Fleet window's (or the rail's,
 /// or the strip's), and alone when every toolbar is gone. The old entry
 /// drew its own prepared-sync row beside the Fleet window's.
+#[cfg(feature = "js")]
 #[test]
 fn the_copy_confirmation_is_drawn_once() {
     let mut rig = Rig::with_play("fleet-copy-once", &["alice", "bob"], &["alice", "bob"]);

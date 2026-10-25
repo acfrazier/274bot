@@ -1,11 +1,13 @@
 use super::*;
 use crate::test_support::TestDir;
-use frontend_core::scripts::{
-    CardSource, CompiledCardId, LoadStage, ReloadOutcome, ScriptChoice, ScriptRunState,
-};
+use frontend_core::scripts::{CardSource, CompiledCardId, ScriptChoice, ScriptRunState};
+#[cfg(feature = "js")]
+use frontend_core::scripts::{LoadStage, ReloadOutcome};
+use frontend_core::test_support::scripts::{Assignment, TestSchema};
+#[cfg(feature = "js")]
 use frontend_core::test_support::scripts::{
     compiled_identity_key, nothing_changed_reload_message, raw_content_fingerprint,
-    session_script_bag, Assignment, TestLibrary, TestSchema,
+    session_script_bag, TestLibrary,
 };
 use frontend_core::test_support::session::install_vault;
 use frontend_core::test_support::{FixtureProfile, IsolatedStores, VaultFixture};
@@ -18,17 +20,22 @@ use std::time::{Duration, Instant};
 /// the rows' own semantics (pacing, queued replacements, reports).
 trait EveryoneScripts {
     fn script_start_all(&mut self);
+    #[cfg(feature = "js")]
     fn script_stop_all(&mut self);
 }
 
 impl EveryoneScripts for Session {
     fn script_start_all(&mut self) {
-        let root = self.start_catalog_root();
-        self.scripts.stage_start_catalog_root(root);
+        #[cfg(feature = "js")]
+        {
+            let root = self.start_catalog_root();
+            self.scripts.stage_start_catalog_root(root);
+        }
         self.submit_script_command(OperatorCommand::StartScript, Targets::Everyone);
         self.apply_script_notice();
     }
 
+    #[cfg(feature = "js")]
     fn script_stop_all(&mut self) {
         self.submit_script_command(OperatorCommand::StopScript, Targets::Everyone);
         self.apply_script_notice();
@@ -62,6 +69,7 @@ fn settle_fleet_result(s: &mut Session) {
 
 /// Pump catalogue, worker validation and Start receipts until all script
 /// lifecycle work has settled.
+#[cfg(feature = "js")]
 fn settle(s: &mut Session) {
     let deadline = Instant::now() + Duration::from_secs(60);
     while (s.reload_validation_pending()
@@ -84,6 +92,7 @@ fn settle(s: &mut Session) {
     assert!(!s.scripts.starts_pending(), "script Start did not settle");
 }
 
+#[cfg(feature = "js")]
 fn reload(s: &mut Session) -> ReloadOutcome {
     s.begin_script_reload_clicked();
     settle(s);
@@ -91,6 +100,7 @@ fn reload(s: &mut Session) -> ReloadOutcome {
         .expect("reload operation must publish an outcome")
 }
 
+#[cfg(feature = "js")]
 fn refresh_catalog(s: &mut Session, root: &std::path::Path) -> ReloadOutcome {
     s.begin_refresh_catalog_at(root);
     settle(s);
@@ -140,11 +150,13 @@ fn select_for_profile(
 }
 
 /// Operator Start of `sel` on `profile` through the shared command rows.
+#[cfg(feature = "js")]
 fn start_sel(s: &mut Session, profile: &str, selection: ScriptChoice) -> Result<(), String> {
     select_for_profile(s, profile, selection)?;
     s.script_start_profile(profile)
 }
 
+#[cfg(feature = "js")]
 fn prepare_transpile(s: &mut Session, source: CardSource, lookup: &str) {
     s.scripts.stage_transpile_target(source, lookup);
     let submitted = s
@@ -157,6 +169,7 @@ fn prepare_transpile(s: &mut Session, source: CardSource, lookup: &str) {
     );
 }
 
+#[cfg(feature = "js")]
 fn run_generations(s: &Session, names: &[&str]) -> Vec<(String, u64)> {
     let play = s.core.play_for_test().unwrap();
     names
@@ -216,6 +229,7 @@ fn focus_restores_assignment_not_other_profile_pending() {
 }
 
 #[test]
+#[cfg(feature = "js")]
 fn two_profiles_keep_isolated_settings_after_legacy_claim() {
     let (mut s, dir) = session_with_profiles(&["alice", "bob"]);
     let store = dir.join("script-settings.json");
@@ -286,6 +300,7 @@ fn start_all_without_play_reports_per_profile_and_is_idempotent() {
 }
 
 #[test]
+#[cfg(feature = "js")]
 fn same_stem_files_are_distinct_and_hash_whitespace() {
     IsolatedStores::ensure_thread();
     let dir = tmp("files");
@@ -315,6 +330,7 @@ fn same_stem_files_are_distinct_and_hash_whitespace() {
         .unwrap());
 }
 
+#[cfg(feature = "js")]
 const BOT_TS: &str = "export default class T extends LoopingBot { override loop() {} }\n";
 
 fn empty_play() -> host_play::Play {
@@ -330,6 +346,7 @@ fn empty_play() -> host_play::Play {
 
 fn session_with_play(names: &[&str]) -> (Session, TestDir) {
     let (mut s, dir) = session_with_profiles(names);
+    #[cfg(feature = "js")]
     s.scripts
         .use_library_at(dir.join("js-scripts.json"), dir.join("js-cache"));
     let mut play = empty_play();
@@ -344,6 +361,7 @@ fn session_with_play(names: &[&str]) -> (Session, TestDir) {
     (s, dir)
 }
 
+#[cfg(feature = "js")]
 fn write_bot(dir: &std::path::Path, file: &str, src: &str) -> std::path::PathBuf {
     let path = dir.join(file);
     if let Some(parent) = path.parent() {
@@ -353,6 +371,7 @@ fn write_bot(dir: &std::path::Path, file: &str, src: &str) -> std::path::PathBuf
     path
 }
 
+#[cfg(feature = "js")]
 fn fake_catalog(root: &std::path::Path, bots: &[(&str, &str)]) {
     let scripts = root.join("src/bot/scripts");
     fs::create_dir_all(&scripts).unwrap();
@@ -374,6 +393,7 @@ fn fake_catalog(root: &std::path::Path, bots: &[(&str, &str)]) {
     fs::write(scripts.join("index.ts"), index).unwrap();
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn initial_runtime_load_failure_survives_another_card_start() {
     let (mut s, dir) = session_with_play(&["alice", "bob"]);
@@ -430,6 +450,7 @@ fn initial_runtime_load_failure_survives_another_card_start() {
 /// the bot runs and is a fleet member, so a loaded script starts on it.
 /// (Before, the unlock opened its slot without loading it, and Start
 /// refused with `no slot: <name>`; found in the F4 rs2b2t live session.)
+#[cfg(feature = "js")]
 #[test]
 fn the_unlock_focus_is_a_fleet_member_and_starts_a_loaded_script() {
     IsolatedStores::ensure_thread();
@@ -464,6 +485,7 @@ fn the_unlock_focus_is_a_fleet_member_and_starts_a_loaded_script() {
     assert_eq!(s.core.members(), ["alice".to_string()]);
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn initial_load_refusal_preserves_failure_and_retry_clears_only_its_identity() {
     let (mut s, dir) = session_with_play(&["alice", "bob"]);
@@ -622,6 +644,7 @@ fn claim_legacy_read_path_writes_vault_once() {
     );
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn external_ts_load_start_stop_persists_assignment_only_on_success() {
     let (mut s, dir) = session_with_play(&["alice"]);
@@ -649,6 +672,7 @@ fn external_ts_load_start_stop_persists_assignment_only_on_success() {
     );
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn load_js_selects_without_auto_start_and_same_path_does_not_duplicate() {
     let (mut s, dir) = session_with_play(&["alice"]);
@@ -681,6 +705,7 @@ fn load_js_selects_without_auto_start_and_same_path_does_not_duplicate() {
 }
 
 #[test]
+#[cfg(feature = "js")]
 fn reload_unchanged_reports_exact_string() {
     let (mut s, dir) = session_with_play(&["alice"]);
     let path = write_bot(&dir, "same.ts", BOT_TS);
@@ -697,6 +722,7 @@ fn reload_unchanged_reports_exact_string() {
 }
 
 #[test]
+#[cfg(feature = "js")]
 fn ui_reload_validation_keeps_the_control_thread_responsive() {
     let (mut session, dir) = session_with_play(&["alice"]);
     let path = write_bot(&dir, "runaway.ts", BOT_TS);
@@ -751,6 +777,7 @@ fn ui_reload_validation_keeps_the_control_thread_responsive() {
     );
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn catalog_validation_keeps_the_control_thread_responsive() {
     let (mut session, dir) = session_with_play(&["alice"]);
@@ -818,6 +845,7 @@ fn catalog_validation_keeps_the_control_thread_responsive() {
 }
 
 #[test]
+#[cfg(feature = "js")]
 fn external_unchanged_reload_dispatches_validation_once() {
     let (mut session, dir) = session_with_play(&["alice"]);
     let path = write_bot(&dir, "ExampleBot.ts", BOT_TS);
@@ -892,6 +920,7 @@ fn external_unchanged_reload_dispatches_validation_once() {
     );
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn reload_clicked_warns_before_replacing_running() {
     let (mut s, dir) = session_with_play(&["alice"]);
@@ -926,6 +955,7 @@ fn reload_clicked_warns_before_replacing_running() {
 }
 
 #[test]
+#[cfg(feature = "js")]
 fn reload_commit_gates_pause_during_prep() {
     let (mut s, dir) = session_with_play(&["alice"]);
     let path = write_bot(&dir, "pause.ts", BOT_TS);
@@ -965,6 +995,7 @@ fn reload_commit_gates_pause_during_prep() {
 }
 
 #[test]
+#[cfg(feature = "js")]
 fn prepare_failure_preserves_old_instance() {
     let (mut s, dir) = session_with_play(&["alice"]);
     let path = write_bot(&dir, "keep.ts", BOT_TS);
@@ -1002,6 +1033,7 @@ fn prepare_failure_preserves_old_instance() {
 }
 
 #[test]
+#[cfg(feature = "js")]
 fn live_settings_reach_running_and_paused() {
     let (mut s, dir) = session_with_play(&["alice"]);
     let src = "export default class T extends LoopingBot { override loop() {} }\n";
@@ -1050,6 +1082,7 @@ fn live_settings_reach_running_and_paused() {
 }
 
 #[test]
+#[cfg(feature = "js")]
 fn catalog_prepare_failure_does_not_mutate_or_block_valid() {
     let (mut s, dir) = session_with_play(&["alice"]);
     let root = dir.join("catalog");
@@ -1118,6 +1151,7 @@ fn catalog_prepare_failure_does_not_mutate_or_block_valid() {
     );
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn catalog_mixed_batch_keeps_two_failures_after_success() {
     let (mut s, dir) = session_with_play(&["alice"]);
@@ -1179,6 +1213,7 @@ fn catalog_mixed_batch_keeps_two_failures_after_success() {
         .contains("BadParse"));
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn marked_gatherer_start_and_focus_edits_keep_running_thievers_assignment() {
     let (mut s, dir) = session_with_play(&["alice", "bob"]);
@@ -1279,6 +1314,7 @@ fn marked_gatherer_start_and_focus_edits_keep_running_thievers_assignment() {
     s.script_stop_all();
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn catalog_refresh_warns_before_stopping_running() {
     let (mut s, dir) = session_with_play(&["alice"]);
@@ -1317,6 +1353,7 @@ fn catalog_refresh_warns_before_stopping_running() {
     s.core.play_for_test().unwrap().script_stop("alice");
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn start_after_launch_runs_saved_catalog_assignment_before_any_browse() {
     let (mut s, dir) = session_with_play(&["alice"]);
@@ -1343,6 +1380,7 @@ fn start_after_launch_runs_saved_catalog_assignment_before_any_browse() {
 /// The bot's Start runs the card its Script section shows. An earlier Browse
 /// pick stays the shared Browse card after the fleet assigns another card;
 /// it must not replace the card shown (operator report, 2026-10-23).
+#[cfg(feature = "js")]
 #[test]
 fn start_runs_the_shown_card_after_a_fleet_assign_over_an_older_browse_pick() {
     let (mut s, dir) = session_with_play(&["alice"]);
@@ -1415,6 +1453,7 @@ fn focus_profile(s: &mut Session, name: &str) {
     s.restore_script_heading(name);
 }
 
+#[cfg(feature = "js")]
 fn start_file_on(s: &mut Session, profile: &str, path: &std::path::Path) {
     focus_profile(s, profile);
     let sel = ScriptChoice::loaded(CardSource::File, &path.to_string_lossy());
@@ -1424,12 +1463,14 @@ fn start_file_on(s: &mut Session, profile: &str, path: &std::path::Path) {
     assert_eq!(s.error, None, "{profile} start: {:?}", s.error);
 }
 
+#[cfg(feature = "js")]
 fn warn_shared_reload(s: &mut Session, path: &std::path::Path) {
     fs::write(path, format!("{BOT_TS}// changed\n")).unwrap();
     focus_profile(s, "alice");
     assert_eq!(reload(s), ReloadOutcome::NeedsConfirm);
 }
 
+#[cfg(feature = "js")]
 fn assert_applied(out: ReloadOutcome, restarted: usize, failed: usize) {
     match out.applied_counts() {
         Some((got_r, _, got_f)) => {
@@ -1442,6 +1483,7 @@ fn assert_applied(out: ReloadOutcome, restarted: usize, failed: usize) {
     }
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn cancel_reload_preserves_running_and_paused_executions() {
     let (mut s, dir) = session_with_play(&["alice", "bob"]);
@@ -1477,6 +1519,7 @@ fn cancel_reload_preserves_running_and_paused_executions() {
     s.core.play_for_test().unwrap().script_stop("bob");
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn reload_confirm_does_not_authorize_switched_selection() {
     let (mut s, dir) = session_with_play(&["alice", "bob"]);
@@ -1533,6 +1576,7 @@ fn reload_confirm_does_not_authorize_switched_selection() {
     s.core.play_for_test().unwrap().script_stop("bob");
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn reload_warn_survives_focus_only() {
     let (mut s, dir) = session_with_play(&["alice", "bob"]);
@@ -1564,6 +1608,7 @@ fn reload_warn_survives_focus_only() {
     s.core.play_for_test().unwrap().script_stop("alice");
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn catalog_confirm_gates_newly_paused() {
     let (mut s, dir) = session_with_play(&["alice"]);
@@ -1624,6 +1669,7 @@ fn catalog_confirm_gates_newly_paused() {
     s.core.play_for_test().unwrap().script_stop("alice");
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn reload_toplevel_throw_fails_before_replacement() {
     let (mut s, dir) = session_with_play(&["alice"]);
@@ -1660,6 +1706,7 @@ fn reload_toplevel_throw_fails_before_replacement() {
     s.core.play_for_test().unwrap().script_stop("alice");
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn reload_missing_named_export_fails_before_replacement() {
     let (mut s, dir) = session_with_play(&["alice"]);
@@ -1696,6 +1743,7 @@ fn reload_missing_named_export_fails_before_replacement() {
     s.core.play_for_test().unwrap().script_stop("alice");
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn catalog_disk_change_after_warn_does_not_start_stale_prepared() {
     let (mut s, dir) = session_with_play(&["alice"]);
@@ -1738,6 +1786,7 @@ fn catalog_disk_change_after_warn_does_not_start_stale_prepared() {
     s.core.play_for_test().unwrap().script_stop("alice");
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn reload_removal_skips_target_and_reloads_peer() {
     let (mut s, dir) = session_with_play(&["alice", "bob"]);
@@ -1759,6 +1808,7 @@ fn reload_removal_skips_target_and_reloads_peer() {
     s.core.play_for_test().unwrap().script_stop("alice");
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn reload_reports_true_startup_failure_without_aborting_peer() {
     let (mut s, dir) = session_with_play(&["alice", "bob"]);
@@ -1782,6 +1832,7 @@ fn reload_reports_true_startup_failure_without_aborting_peer() {
     s.core.play_for_test().unwrap().script_stop("alice");
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn reload_native_stop_skips_target_and_reloads_peer() {
     let (mut s, dir) = session_with_play(&["alice", "bob"]);
@@ -1805,6 +1856,7 @@ fn reload_native_stop_skips_target_and_reloads_peer() {
     s.core.play_for_test().unwrap().script_stop("alice");
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn reload_session_stop_skips_target_and_reloads_peer() {
     let (mut s, dir) = session_with_play(&["alice", "bob"]);
@@ -1824,6 +1876,7 @@ fn reload_session_stop_skips_target_and_reloads_peer() {
     s.core.play_for_test().unwrap().script_stop("alice");
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn reload_stop_all_clears_pending_without_restart() {
     let (mut s, dir) = session_with_play(&["alice", "bob"]);
@@ -1838,6 +1891,7 @@ fn reload_stop_all_clears_pending_without_restart() {
     wait_state(&s, "bob", ScriptRunState::Idle);
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn stop_all_during_a_reload_reap_drops_the_queued_replacement() {
     let (mut s, dir) = session_with_play(&["alice"]);
@@ -1874,6 +1928,7 @@ fn stop_all_during_a_reload_reap_drops_the_queued_replacement() {
     );
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn reload_logout_skips_target_and_reloads_peer() {
     let (mut s, dir) = session_with_play(&["alice", "bob"]);
@@ -1908,6 +1963,7 @@ fn reload_logout_skips_target_and_reloads_peer() {
     s.core.play_for_test().unwrap().script_stop("bob");
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn reload_logout_all_skips_replacement() {
     let (mut s, dir) = session_with_play(&["alice", "bob"]);
@@ -1948,6 +2004,7 @@ fn reload_logout_all_skips_replacement() {
     s.core.play_for_test().unwrap().script_stop("bob");
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn reload_reassignment_skips_target_and_reloads_peer() {
     let (mut s, dir) = session_with_play(&["alice", "bob"]);
@@ -1983,6 +2040,7 @@ fn reload_reassignment_skips_target_and_reloads_peer() {
     s.core.play_for_test().unwrap().script_stop("bob");
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn reload_new_start_after_stop_is_not_consumed() {
     let (mut s, dir) = session_with_play(&["alice", "bob"]);
@@ -2019,6 +2077,7 @@ fn reload_new_start_after_stop_is_not_consumed() {
     s.core.play_for_test().unwrap().script_stop("bob");
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn reload_of_a_running_script_restarts_it() {
     let (mut s, dir) = session_with_play(&["alice"]);
@@ -2046,6 +2105,7 @@ fn reload_of_a_running_script_restarts_it() {
     play.script_stop("alice");
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn start_all_lists_a_member_whose_setup_fails_after_the_click() {
     let (mut s, dir) = session_with_play(&["alice", "bob"]);
@@ -2084,6 +2144,7 @@ fn start_all_lists_a_member_whose_setup_fails_after_the_click() {
 /// line follows the paced Starts: the marked row whose setup fails after
 /// the click is listed there when it lands, and the banner never carries a
 /// second copy.
+#[cfg(feature = "js")]
 #[test]
 fn fleet_result_follows_the_paced_starts_of_a_marked_start() {
     let (mut s, dir) = session_with_play(&["alice", "bob", "carol", "dave"]);
@@ -2145,6 +2206,7 @@ fn fleet_result_follows_the_paced_starts_of_a_marked_start() {
 /// interrupted bot; the one result follows the paced Starts to their end.
 /// Assign on each bot's own card is refused with its reason and changes
 /// nothing.
+#[cfg(feature = "js")]
 #[test]
 fn fleet_assign_and_restart_swaps_the_card_and_follows_the_paced_starts() {
     let (mut s, dir) = session_with_play(&["alice", "bob"]);
@@ -2223,6 +2285,7 @@ fn fleet_assign_and_restart_swaps_the_card_and_follows_the_paced_starts() {
     }
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn catalog_native_stop_skips_target_and_reloads_peer() {
     let (mut s, dir) = session_with_play(&["alice", "bob"]);
@@ -2262,12 +2325,14 @@ fn catalog_native_stop_skips_target_and_reloads_peer() {
     s.core.play_for_test().unwrap().script_stop("alice");
 }
 
+#[cfg(feature = "js")]
 const THIEVER_TS: &str = "export const SETTINGS = { target: { type: 'string', default: 'Man' } };\nexport default class T extends LoopingBot { override loop() {} }\n";
 
 /// The Scripts window's Apply to same-card members: the focused profile's
 /// bag for its card reaches the other same-card member (saved and pushed to
 /// its run) after the plan row's confirmation; a member on another card is
 /// skipped and untouched. The prompt and the result are the fleet plan's.
+#[cfg(feature = "js")]
 #[test]
 fn apply_to_all_reaches_same_card_members_only() {
     let (mut s, dir) = session_with_play(&["alice", "bob", "carol"]);
@@ -2328,6 +2393,7 @@ fn apply_to_all_reaches_same_card_members_only() {
 
 /// A parameter edit whose save fails never reaches the running script:
 /// the run is posted only once the write is durable.
+#[cfg(feature = "js")]
 #[test]
 fn a_failed_parameter_save_is_not_pushed_to_the_run() {
     let (mut s, dir) = session_with_play(&["alice"]);
@@ -2369,6 +2435,7 @@ fn a_failed_parameter_save_is_not_pushed_to_the_run() {
 
 /// A banner set after a Start (here a profile-write failure) survives that
 /// Start settling Ready, even when the Start cleared a load failure.
+#[cfg(feature = "js")]
 #[test]
 fn panel_ready_start_keeps_a_newer_banner() {
     let (mut s, dir) = session_with_play(&["alice"]);
@@ -2392,6 +2459,7 @@ fn panel_ready_start_keeps_a_newer_banner() {
     s.core.play_for_test().unwrap().script_stop("alice");
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn start_all_paces_admission_through_the_shared_coordinator() {
     let names = ["p0", "p1", "p2", "p3", "p4"];
@@ -2421,6 +2489,7 @@ fn start_all_paces_admission_through_the_shared_coordinator() {
 /// The Fleet window's Copy settings plans the focused bot's parameters for
 /// the marked same-card bots only: an unmarked bot on the same card is
 /// left out and named as such, and nothing is written before Confirm.
+#[cfg(feature = "js")]
 #[test]
 fn fleet_apply_settings_is_narrowed_to_the_marked_bots() {
     let (mut s, dir) = session_with_play(&["alice", "bob", "dave"]);
@@ -2473,6 +2542,44 @@ fn fleet_apply_settings_is_narrowed_to_the_marked_bots() {
     );
 }
 
+#[test]
+fn marked_compiled_start_keeps_assignments_across_focus_changes() {
+    let (mut s, _dir) = session_with_play(&["alice", "bob"]);
+    let card = CompiledCardId::lookup("Gatherer").expect("compiled Gatherer card");
+    for name in ["alice", "bob"] {
+        s.persist_successful_assignment(name, Assignment::compiled(card));
+    }
+    s.core.flush_writes();
+    s.script_start_profile("alice").expect("compiled Start");
+    wait_state(&s, "alice", ScriptRunState::Running);
+
+    let alice = s.core.profile_identity("alice").unwrap();
+    let bob = s.core.profile_identity("bob").unwrap();
+    s.fleet_model.set_mark_for_test(alice, true);
+    s.fleet_model.set_mark_for_test(bob, true);
+    focus_profile(&mut s, "bob");
+    pin_fleet_card(&mut s, ScriptChoice::compiled(card));
+    plan(&mut s, FleetAction::Start);
+    wait_state(&s, "bob", ScriptRunState::Running);
+    settle_fleet_result(&mut s);
+
+    let result = s.core.fleet_result().expect("the Start result");
+    assert!(result.text().contains("alice (already active)"), "{}", result.text());
+    assert_eq!(
+        s.profile_assignment("alice"),
+        Some(Assignment::compiled(card))
+    );
+    assert_eq!(
+        s.profile_assignment("bob"),
+        Some(Assignment::compiled(card))
+    );
+    assert_eq!(s.core.script_state("alice"), ScriptRunState::Running);
+    assert_eq!(s.core.script_state("bob"), ScriptRunState::Running);
+    for name in ["alice", "bob"] {
+        s.core.play_for_test().unwrap().script_stop(name);
+    }
+}
+#[cfg(feature = "js")]
 #[test]
 fn memory_relog_warns_before_cancelling_a_queued_start() {
     let names = ["p0", "p1", "p2", "p3", "p4"];

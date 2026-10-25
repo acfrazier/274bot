@@ -167,6 +167,7 @@ impl LiveBoot {
             }
             LiveBoot::Script { name } => {
                 let scenario_name = name.strip_prefix("script_").unwrap_or(&name);
+                #[cfg(feature = "js")]
                 let scenario = if session.external_core_enabled()
                     && scenario_name == frontend_core::live::external_loader_scenario_name()
                 {
@@ -175,6 +176,9 @@ impl LiveBoot {
                     frontend_core::live::Scenario::try_get(scenario_name)?
                         .ok_or_else(|| format!("unknown scenario {scenario_name}"))?
                 };
+                #[cfg(not(feature = "js"))]
+                let scenario = frontend_core::live::Scenario::try_get(scenario_name)?
+                    .ok_or_else(|| format!("unknown scenario {scenario_name}"))?;
                 let scenario_deadline = scenario.view().deadline();
                 session.live_prepare_script(scenario)?;
                 arm_scenario_shots(session, Arc::clone(&shots), shot_dir);
@@ -436,6 +440,7 @@ pub(super) fn enqueue_pair_terminal_shots(
     }
 }
 
+#[cfg(feature = "js")]
 /// Post-run (or failure) capture of the owned external actor at scene 2.
 /// Prerequisite fixture writes use a distinct label and cannot discharge this.
 pub(super) fn enqueue_external_terminal_shot(
@@ -574,6 +579,7 @@ pub(super) fn enqueue_soak_capture(session: &Session, shots: &Mutex<ShotState>, 
         enqueue_pair_terminal_shots(session, shots, label);
         return;
     }
+    #[cfg(feature = "js")]
     if runner.external_loader_configured() {
         enqueue_external_terminal_shot(session, shots, label);
         return;
@@ -633,13 +639,8 @@ pub(super) fn hold_script_terminal_shot(
     let owned;
     let mut pair_labels: Option<[String; 2]> = None;
     let runner = session.core.live_runner();
-    let status = match (
-        shots,
-        terminal_shot,
-        runner.pair_core_configured(),
-        runner.external_loader_configured() && runner.external_loader_needs_terminal_hold(),
-    ) {
-        (Some(shots), Some(label), true, _) => {
+    let status = match (shots, terminal_shot, runner.pair_core_configured()) {
+        (Some(shots), Some(label), true) => {
             enqueue_pair_terminal_shots(session, shots, label);
             match pair_terminal_actor_names(session) {
                 Some((a, b)) => {
@@ -651,7 +652,11 @@ pub(super) fn hold_script_terminal_shot(
                 None => fallback,
             }
         }
-        (Some(shots), _, _, true) => {
+        #[cfg(feature = "js")]
+        (Some(shots), _, false)
+            if runner.external_loader_configured()
+                && runner.external_loader_needs_terminal_hold() =>
+        {
             let label = frontend_core::live::external_loader_terminal_shot();
             enqueue_external_terminal_shot(session, shots, label);
             owned = shots.lock().unwrap().status(label);
@@ -660,7 +665,7 @@ pub(super) fn hold_script_terminal_shot(
             }
             return hold_terminal_shot(live, Some(label), &owned);
         }
-        (Some(shots), Some(label), _, _) => {
+        (Some(shots), Some(label), _) => {
             // `ui_frame` snapshots the status before `live_script_tick`. A
             // native-core failure may re-arm a previously Written shot above,
             // so the caller's fallback can describe the old capture. Re-read
@@ -818,49 +823,58 @@ pub(super) fn live_script_tick(
         return None;
     }
     let now = Instant::now();
-    session
-        .core
-        .live_runner()
-        .note_external_loader_prerequisite();
-    session.core.pump_live_external_loader(
-        &mut session.scripts,
-        &mut session.script_sel,
-        &session.statuses,
-        now,
-    );
+    #[cfg(feature = "js")]
+    {
+        session
+            .core
+            .live_runner()
+            .note_external_loader_prerequisite();
+        session.core.pump_live_external_loader(
+            &mut session.scripts,
+            &mut session.script_sel,
+            &session.statuses,
+            now,
+        );
+    }
     let runner = session.core.live_runner();
     let status = runner.status();
     let evidence = runner.evidence_json();
     let terminal_shot = runner.terminal_shot();
 
-    // A failed proof still owns its execution. Stop must reach its bounded
-    // outcome before a terminal capture or scenario failure can exit the host.
-    if runner.external_loader_cleanup_pending() {
-        return None;
-    }
-    if let Some(shots) = shots {
-        if runner.external_loader_needs_terminal_hold()
-            || runner.external_loader_terminal_capture_due()
-        {
-            let label = frontend_core::live::external_loader_terminal_shot();
-            enqueue_external_terminal_shot(session, shots, label);
-            let issued = !matches!(shots.lock().unwrap().status(label), ShotStatus::Missing);
-            if issued {
-                runner.note_external_loader_capture_requested();
-            } else if runner.external_loader_terminal_capture_due() {
-                runner.fail_external_loader(
-                    "external loader terminal capture without ingame && scene_state == 2",
-                );
+    #[cfg(feature = "js")]
+    {
+        // A failed proof still owns its execution. Stop must reach its bounded
+        // outcome before a terminal capture or scenario failure can exit the host.
+        if runner.external_loader_cleanup_pending() {
+            return None;
+        }
+        if let Some(shots) = shots {
+            if runner.external_loader_needs_terminal_hold()
+                || runner.external_loader_terminal_capture_due()
+            {
+                let label = frontend_core::live::external_loader_terminal_shot();
+                enqueue_external_terminal_shot(session, shots, label);
+                let issued = !matches!(shots.lock().unwrap().status(label), ShotStatus::Missing);
+                if issued {
+                    runner.note_external_loader_capture_requested();
+                } else if runner.external_loader_terminal_capture_due() {
+                    runner.fail_external_loader(
+                        "external loader terminal capture without ingame && scene_state == 2",
+                    );
+                }
             }
         }
     }
     let decision = runner.watch_decision(live.core_deadline, now);
+    #[cfg(feature = "js")]
     let live_line = || {
         decision
             .external_record()
             .or(evidence.as_deref())
             .unwrap_or("")
     };
+    #[cfg(not(feature = "js"))]
+    let live_line = || evidence.as_deref().unwrap_or("");
     let proof_name = live.name.clone();
     let emit_proof = |ok: bool| {
         decision.for_each_record(|tag, witness| {
@@ -912,6 +926,7 @@ pub(super) fn live_script_tick(
         live.failed = Some(message.clone());
         return Some(message);
     }
+    #[cfg(feature = "js")]
     if let Some(message) = decision.external().failure_message().map(str::to_owned) {
         match hold_script_terminal_shot(live, session, terminal_shot, terminal_shot_status, shots) {
             Ok(true) => return None,
