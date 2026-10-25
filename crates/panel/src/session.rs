@@ -4770,23 +4770,19 @@ impl Session {
         self.core.fleet_view().row(name).and_then(|row| row.queue())
     }
 
-    /// Whether the focused slot has an authenticated client session. Control
-    /// actions such as Logout use this rather than the game-action gate.
-    pub fn focused_connected(&self) -> bool {
-        let Some(name) = self.focused_name() else {
-            return false;
-        };
-        self.statuses.get(&name).is_some_and(|s| s.connected())
-    }
-
-    /// Whether the repeat guard parked the focused slot after repeated
-    /// unexpected exits. It is offline and unqueued but may still hold a
-    /// script's work, which a Logout ends.
-    pub fn focused_guard_parked(&self) -> bool {
-        let Some(name) = self.focused_name() else {
-            return false;
-        };
-        self.statuses.get(&name).is_some_and(|s| s.guard_parked())
+    /// Whether Log out acts on the focused slot: the shared projection's
+    /// answer, the same one Fleet Log out and the TUI use. `None` without a
+    /// focused slot.
+    pub fn focused_logout_eligibility(&self) -> Option<frontend_core::LogoutEligibility> {
+        let name = self.focused_name()?;
+        Some(
+            self.core
+                .fleet_view()
+                .row(&name)
+                .map_or(frontend_core::LogoutEligibility::NotLoggedIn, |row| {
+                    row.logout_eligibility()
+                }),
+        )
     }
 
     /// Whether the focused slot has a scene/player observation safe for game

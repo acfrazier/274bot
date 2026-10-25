@@ -1,7 +1,7 @@
 //! The per-slot status rows as a front end reads them: a retained buffer
 //! refreshed once per poll and borrowed row views over it.
 
-use host_play::{LoginLatchReason, SlotStatus};
+use host_play::SlotStatus;
 
 use crate::OperatorSession;
 
@@ -116,15 +116,6 @@ impl<'a> SlotView<'a> {
     /// Whether the 289 tutorial pending-text box is showing.
     pub fn tutorial_pending(&self) -> bool {
         self.0.tutorial_pending
-    }
-
-    /// Whether the login guardian parked the slot after repeated
-    /// unexpected logouts.
-    pub fn guard_parked(&self) -> bool {
-        matches!(
-            self.0.login_latch_reason,
-            Some(LoginLatchReason::RepeatedUnexpectedLogouts { .. })
-        )
     }
 
     /// Whether the slot's script paints a frame.
