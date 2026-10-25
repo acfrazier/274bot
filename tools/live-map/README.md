@@ -133,6 +133,29 @@ These drivers do not prove the visual appearance of the disabled Debug and
 Loadouts controls. A visible panel change still needs the operator's headed
 check before push. The state-gap cell tests its real game behavior separately.
 
+## Login notice
+
+`frontend-core.login-notice-refused` runs
+`a_refused_login_notice_outlives_log_out_and_renews_on_real_retries` in
+`crates/frontend-core/tests/login_notice_refused.rs`. Real slot workers log in
+to the refused endpoint `127.0.0.1:1` through `HeadlessDriver`; only client
+asset startup is bypassed. After the first refusal the test logs the bot out.
+The notice must stay in every poll while the bot is logged out and clear at
+15 seconds. A second Log in lets the host retry after its backoff, and each
+refusal must renew the notice so that it never lapses. The cell takes about
+40 seconds of wall clock and needs no game engine.
+
+The headless cells drive controlled host rows through the real poll and the
+real front-end widgets. They check the parts a refused endpoint cannot
+produce on demand: a queue wait, a successful login, the exact 15-second
+boundary on an injected clock, and the drawn panel and terminal text.
+
+| Changed paths | Proof |
+|---|---|
+| `frontend-core/src/login_notice.rs`, `frontend-core/src/session.rs` | `frontend-core.login-notice-refused` (above). `frontend-core.login-notice-headless` runs the notice clock tests (`login_notice_tests.rs`) and the poll-driven `views::tests::login_notice_*`: Error, Connecting, Queued and Logged out before the timeout keep the notice; a same-text failure renews it; a login clears it. |
+| `tui/src/status.rs` | `tui.login-notice-headless` runs the status pane test and the 120x40 and 80x24 capture test `bin::tests::a_login_notice_stands_through_retry_states_and_expires_at_both_sizes`. Set `TUI_CAPTURE_DIR` to retain text and JSON captures. |
+| (panel top line) | `panel.login-notice-headless` draws the panel banner and status rows through the sequence above. The `panel/src/app.rs` change also selects the panel cells of its own cover entries. |
+
 ## Essence router call paths
 
 The essence files and the shared `navigation.rs` file select the 289

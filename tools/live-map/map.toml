@@ -84,6 +84,20 @@ cells = [
   "frontend-core.error-expiry-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p frontend-core --lib error_expiry::tests::",
 ]
 
+# The login notice: a failed login kept apart from the phase until a login,
+# a newer failure or the shared timeout. The poll (session.rs) projects it and
+# both front ends show it. The refused cell runs real slot workers against the
+# refused endpoint 127.0.0.1:1 on the wall clock; the headless cells drive
+# controlled host rows. See README.md "Login notice".
+[[cover]]
+globs = ["crates/frontend-core/src/login_notice.rs", "crates/frontend-core/src/session.rs", "crates/tui/src/status.rs"]
+cells = [
+  "frontend-core.login-notice-refused|${ISOHOME:?} nice -n 10 cargo test --locked -p frontend-core --test login_notice_refused -- --ignored --nocapture",
+  "frontend-core.login-notice-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p frontend-core --lib login_notice",
+  "tui.login-notice-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p tui --lib login_notice",
+  "panel.login-notice-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p panel --lib login_notice",
+]
+
 [[cover]]
 globs = ["crates/frontend-core/src/resources.rs"]
 cells = [

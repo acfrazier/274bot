@@ -13171,7 +13171,8 @@ fn shop_buyout_variants_prove_product_bank_and_resumed_purchase() {
         let scenario = get(name).unwrap_or_else(|| panic!("{name} is registered"));
         assert_eq!(scenario.settings.start_script, Some("ShopBuyout"));
         let expected_deadline = match name {
-            "shop_buyout_betty" | "shop_buyout_bob" => SHOP_BUYOUT_BETTY_DEADLINE,
+            "shop_buyout_betty" => SHOP_BUYOUT_BETTY_DEADLINE,
+            "shop_buyout_bob" => SHOP_BUYOUT_BOB_DEADLINE,
             "shop_buyout_gerrant" => SHOP_BUYOUT_GERRANT_DEADLINE,
             "shop_buyout_nurmof" => SHOP_BUYOUT_NURMOF_DEADLINE,
             _ => SCRIPT_GOLD_DEADLINE,
