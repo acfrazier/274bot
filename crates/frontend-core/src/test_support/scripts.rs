@@ -16,6 +16,11 @@ use crate::scripts::{
 use crate::session::OperatorSession;
 use crate::views::SlotDetail;
 
+/// Install the catalog-backed compiled cards without starting the V8 platform.
+pub fn install_catalog_cards() {
+    script_js::install_cards().expect("install canonical Sherlock card for front-end fixtures");
+}
+
 /// A script assignment a test saves with
 /// [`Scripts::persist_assignment`]: the catalog card, file, compiled card or
 /// missing file a profile last ran. Panel and TUI tests never name the vault

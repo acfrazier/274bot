@@ -33,7 +33,6 @@ pub(crate) fn selected_data() -> Option<Arc<SelectedGameData>> {
 
 /// Cache both the selected combat index and an actionable build failure until
 /// this isolate's selected content is reconfigured.
-
 pub(crate) fn combat_tables(
 ) -> Result<Arc<script::combat::tables::CombatTables>, script::native::ActionError> {
     COMBAT.with(|slot| {
@@ -58,7 +57,6 @@ pub(crate) fn random_event_casket_id() -> Option<i32> {
 /// retained by this isolate thread until reconfiguration. `Ok(None)` means
 /// the selected family is genuinely absent; a work refusal or outage is an
 /// error, never an empty catalogue.
-
 pub(crate) fn gathering() -> Result<Option<Arc<GatherCatalog>>, String> {
     if let Some(held) = GATHERING.with(|slot| slot.borrow().clone()) {
         return Ok(Some(held));
@@ -73,7 +71,6 @@ pub(crate) fn gathering() -> Result<Option<Arc<GatherCatalog>>, String> {
 /// The isolate is neither UI nor slot pump. On temporary Full it retains one
 /// Arc input, parks for a capacity notification and retries with a fresh
 /// WorkIdentity. Accepted work is joined without a fixed busy-queue timeout.
-
 fn acquire_gathering() -> Result<Option<Arc<GatherCatalog>>, String> {
     let data = selected_data().ok_or("missing-selected-data")?;
     if let Some(catalogue) = data.try_gathering() {
