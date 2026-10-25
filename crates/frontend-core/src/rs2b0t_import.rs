@@ -972,6 +972,7 @@ pub struct AccountPlan {
     problem: Option<CredentialProblem>,
     /// The row to write (New and Overwrite only).
     row: Option<Profile>,
+    #[cfg(feature = "js")]
     /// The vault row it replaces (Overwrite only), for the log line.
     old: Option<Profile>,
     imported: Vec<String>,
@@ -1150,6 +1151,7 @@ pub fn plan_import(
             status,
             problem,
             row: None,
+            #[cfg(feature = "js")]
             old: None,
             imported: Vec::new(),
             kept: Vec::new(),
@@ -1178,7 +1180,9 @@ pub fn plan_import(
             continue;
         }
         let mapped = map_account(account, file.storage.get(&account.username), catalog);
-        let (status, row, old) = match existing {
+        #[cfg(feature = "js")]
+        let mut old = None;
+        let (status, row) = match existing {
             None => {
                 let mut settings = ProfileSettings::default();
                 mapped.apply(&mut settings);
@@ -1189,16 +1193,20 @@ pub fn plan_import(
                     settings,
                 };
                 next_uid += 1;
-                (AccountStatus::New, Some(row), None)
+                (AccountStatus::New, Some(row))
             }
             Some(current) => {
                 let mut row = current.clone();
                 row.password = account.password.clone();
                 mapped.apply(&mut row.settings);
                 if row == *current {
-                    (AccountStatus::Unchanged, None, None)
+                    (AccountStatus::Unchanged, None)
                 } else {
-                    (AccountStatus::Overwrite, Some(row), Some(current.clone()))
+                    #[cfg(feature = "js")]
+                    {
+                        old = Some(current.clone());
+                    }
+                    (AccountStatus::Overwrite, Some(row))
                 }
             }
         };
@@ -1208,6 +1216,7 @@ pub fn plan_import(
             status,
             problem,
             row,
+            #[cfg(feature = "js")]
             old,
             imported: described.imported,
             kept: described.kept,

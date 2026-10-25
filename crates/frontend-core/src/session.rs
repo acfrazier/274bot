@@ -1305,6 +1305,7 @@ impl<Io> OperatorSession<Io> {
         self.script_settings_logs.insert(op, audit);
     }
 
+    #[cfg(feature = "js")]
     pub(crate) fn log_legacy_script_settings(
         &mut self,
         card: &str,
