@@ -3193,6 +3193,7 @@ fn native_paint_controls_case(
 ) {
     let mut d = paint_driver_with_card(test, &["alice"], card);
     d.poll();
+    publish_native_paint(&d, "alice", paint);
     let running = shown(&d, "alice");
     assert_eq!(
         labels(&running),
@@ -3274,6 +3275,7 @@ fn native_gatherer_paint_controls_pause_resume_and_stop() {
 /// status lines, the host controls, and the run number it stamps as
 /// the frame generation), published on a running slot, pauses,
 /// resumes and stops that run the same way.
+#[cfg(feature = "js")]
 #[test]
 fn native_sherlock_paint_controls_pause_resume_and_stop() {
     let paint = std::sync::Arc::new(script::shim::ScriptPaint {
@@ -4260,8 +4262,8 @@ fn start_compiled_scripts(d: &mut HeadlessDriver, names: &[&str]) {
     set_card(
         d,
         crate::FleetCard::pinned(crate::scripts::ScriptChoice::compiled(
-            crate::scripts::CompiledCardId::lookup("Sherlock")
-                .expect("Sherlock is compiled"),
+            crate::scripts::CompiledCardId::lookup("Gatherer")
+                .expect("Gatherer is compiled"),
         )),
     );
     assert_eq!(plan(d, crate::FleetAction::Assign), Some(done()));

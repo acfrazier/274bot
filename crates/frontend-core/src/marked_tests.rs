@@ -1026,7 +1026,7 @@ fn marked_startable_follows_card_then_saved_assignment() {
         !marked_startable(&marks, &f.core, None),
         "no card and no saved assignment starts nothing"
     );
-    f.assign_compiled("bob", script::CompiledId("Sherlock"));
+    f.assign_compiled("bob", script::CompiledId("Gatherer"));
     assert!(
         marked_startable(&marks, &f.core, None),
         "one marked saved assignment is enough"
