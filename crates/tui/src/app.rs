@@ -42,13 +42,13 @@ use crate::loadouts::{LoadoutsPane, LoadoutsState};
 use crate::map::{Map, MapAction, MapView, ObservedMark, ZOOMS};
 use crate::overlay::Modal;
 use crate::script_params::{ParamsCommit, ParamsKey, ParamsPane, ParamsState};
-use crate::script_shape::{
-    browse_lines, card_selection, rs2b0t_root_has_index, BrowseCard, BrowseLine, ScriptClick,
-    ScriptPane,
-};
+use crate::script_shape::{card_selection, BrowseCard, ScriptClick, ScriptPane};
+#[cfg(feature = "js")]
+use crate::script_shape::rs2b0t_root_has_index;
 use crate::settings::{SettingsEdit, SettingsState};
 use crate::status::StatusPane;
 
+#[cfg(feature = "js")]
 fn default_catalog_browse_dir() -> std::path::PathBuf {
     let home = frontend_core::scripts::paths::bot_home();
     if home.as_os_str() == "." {
@@ -58,12 +58,14 @@ fn default_catalog_browse_dir() -> std::path::PathBuf {
     }
 }
 
+#[cfg(feature = "js")]
 fn default_load_browse_dir(last: Option<&std::path::Path>) -> std::path::PathBuf {
     last.filter(|p| p.is_dir())
         .map(std::path::Path::to_path_buf)
         .unwrap_or_else(default_catalog_browse_dir)
 }
 
+#[cfg(feature = "js")]
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum LoadEntry {
     Up,
@@ -71,6 +73,7 @@ enum LoadEntry {
     File(String),
     Cancel,
 }
+
 
 /// Catalogue demand state. Drawing an inactive map never changes this state;
 /// only the explicit Map pane transition may request the catalogue-only stage.
@@ -311,9 +314,7 @@ pub enum AppAction {
     /// Remove this member from the fleet (clean logout, then stop). The
     /// name was frozen when the operator confirmed.
     Remove(String),
-    /// Start the Browse-selected JS card on the focused slot:
-    /// `tui-play` dispatches `Play::script_start_load` with the card's
-    /// source and shape.
+    /// Start the Browse-selected script on the focused slot.
     ScriptStart(ScriptChoice),
     /// Toggle pause/resume on the focused slot's script (`Play::script_pause`
     /// / [`Play::script_resume`], like the panel's `script_toggle_pause`).
@@ -333,8 +334,10 @@ pub enum AppAction {
     /// Cancel: drop the waiting fleet plan (`CancelFleetPlan`).
     CancelFleetPlan,
     /// Reload the focused heading's card, or confirm a shown warning.
+    #[cfg(feature = "js")]
     ScriptReload,
     /// Discard a prepared reload without touching any run.
+    #[cfg(feature = "js")]
     ScriptReloadCancel,
     /// Prepare Apply to all for the params popup's card.
     ScriptSyncPrepare,
@@ -347,18 +350,23 @@ pub enum AppAction {
     /// Leave the current runs active and defer these settings.
     ScriptRestartLater,
     /// Open the first-run rs2b0t catalog folder browser.
+    #[cfg(feature = "js")]
     ScriptImportCatalog,
     /// Defer the rs2b0t catalog import (Not now).
+    #[cfg(feature = "js")]
     ScriptDeferCatalog,
     /// Import catalog from the chosen clone root.
+    #[cfg(feature = "js")]
     ScriptUseCatalog,
     /// Load the JS bot at `path` into the library and select it.
+    #[cfg(feature = "js")]
     ScriptLoad(std::path::PathBuf),
     /// Persist the background-bots notice ("Got it, don't show again").
     AckBackground,
     /// Commit a changed TUI settings draft to the shared form-save model.
     SettingsDraftEdited(SettingsEdit),
     /// One step of the rs2b0t profile import; the binary owns the flow.
+    #[cfg(feature = "js")]
     ProfileImport(crate::profile_import::ImportAction),
     /// Open the shared New profile form (`OpenNewProfileForm`); the
     /// overlay is already open, the binary opens the editor behind it.
@@ -403,6 +411,7 @@ fn parse_coordinate(value: &str) -> Option<Tile> {
     Some(Tile { x, z, level })
 }
 
+#[cfg(feature = "js")]
 enum CatalogEntry {
     Up,
     Subdir(String),
@@ -595,6 +604,7 @@ pub struct TuiApp {
     /// binary records it as the focused profile's pending selection.
     pub browse_changed: bool,
     /// A reload warning awaits confirmation: Reload reads "Confirm".
+    #[cfg(feature = "js")]
     pub reload_confirm: bool,
     /// Registry cards the Browse picker lists (copied from the session each pump).
     pub script_cards: Vec<BrowseCard>,
@@ -607,14 +617,21 @@ pub struct TuiApp {
     /// The Browse picker is open.
     pub script_browse_open: bool,
     /// First-run rs2b0t clone-root folder browser.
+    #[cfg(feature = "js")]
     pub rs2b0t_catalog_open: bool,
+    #[cfg(feature = "js")]
     pub rs2b0t_catalog_dir: std::path::PathBuf,
     /// Highlight row in the catalog folder browser.
+    #[cfg(feature = "js")]
     pub catalog_sel: usize,
     /// The Load file browser is open.
+    #[cfg(feature = "js")]
     pub script_load_open: bool,
+    #[cfg(feature = "js")]
     pub script_load_dir: std::path::PathBuf,
+    #[cfg(feature = "js")]
     pub script_load_sel: usize,
+    #[cfg(feature = "js")]
     pub script_load_last_dir: Option<std::path::PathBuf>,
     /// Selected card's settings schema (refreshed each pump from the library).
     pub params_schema: OwnedSchema,
@@ -720,17 +737,25 @@ impl TuiApp {
             script_queued: false,
             script_sel: None,
             browse_changed: false,
+            #[cfg(feature = "js")]
             reload_confirm: false,
             script_cards: Vec::new(),
             script_card_choices: Vec::new(),
             script_category_order: Vec::new(),
             script_browse_open: false,
+            #[cfg(feature = "js")]
             rs2b0t_catalog_open: false,
+            #[cfg(feature = "js")]
             rs2b0t_catalog_dir: default_catalog_browse_dir(),
+            #[cfg(feature = "js")]
             catalog_sel: 0,
+            #[cfg(feature = "js")]
             script_load_open: false,
+            #[cfg(feature = "js")]
             script_load_dir: default_load_browse_dir(None),
+            #[cfg(feature = "js")]
             script_load_sel: 0,
+            #[cfg(feature = "js")]
             script_load_last_dir: None,
             params_schema: OwnedSchema::default(),
             params_unavailable: None,
@@ -1507,6 +1532,7 @@ impl TuiApp {
             ..Default::default()
         };
     }
+    #[cfg(feature = "js")]
     fn load_entries(&self) -> Vec<LoadEntry> {
         let mut out = vec![LoadEntry::Up];
         let mut subdirs = Vec::new();
@@ -1536,6 +1562,7 @@ impl TuiApp {
         out
     }
 
+    #[cfg(feature = "js")]
     fn load_on_key(&mut self, key: KeyEvent) -> AppAction {
         let entries = self.load_entries();
         match key.code {
@@ -1584,6 +1611,7 @@ impl TuiApp {
     }
 
     /// Open the out-of-tree Load file browser.
+    #[cfg(feature = "js")]
     pub fn open_script_load_browser(&mut self, last_dir: Option<&std::path::Path>) {
         self.script_load_dir = default_load_browse_dir(last_dir);
         self.script_load_sel = 0;
@@ -1591,6 +1619,7 @@ impl TuiApp {
     }
 
     /// First-run catalog folder browser keys.
+    #[cfg(feature = "js")]
     fn catalog_on_key(&mut self, key: KeyEvent) -> AppAction {
         let entries = self.catalog_entries();
         match key.code {
@@ -1629,6 +1658,7 @@ impl TuiApp {
         AppAction::None
     }
 
+    #[cfg(feature = "js")]
     fn catalog_entries(&self) -> Vec<CatalogEntry> {
         let mut out = vec![CatalogEntry::Up];
         if let Ok(read) = std::fs::read_dir(&self.rs2b0t_catalog_dir) {
@@ -1654,17 +1684,13 @@ impl TuiApp {
         out
     }
 
-    /// Move the Browse selection `step` cards through the grouped list
-    /// (wrapping).
+    /// Move the Browse selection `step` cards through the list (wrapping).
     fn move_script_sel(&mut self, step: i32) {
-        let deferred = frontend_core::scripts::paths::rs2b0t_import_deferred();
-        let lines = browse_lines(&self.script_cards, &self.script_category_order, deferred);
-        let card_indices: Vec<usize> = lines
+        let card_indices: Vec<usize> = self
+            .script_cards
             .iter()
-            .filter_map(|l| match l {
-                BrowseLine::Card(i) => Some(*i),
-                _ => None,
-            })
+            .enumerate()
+            .filter_map(|(index, card)| card_selection(card).map(|_| index))
             .collect();
         if card_indices.is_empty() {
             return;
@@ -1676,11 +1702,11 @@ impl TuiApp {
                 None => self
                     .script_cards
                     .iter()
-                    .position(|c| card_selection(c).as_ref() == Some(sel)),
+                    .position(|card| card_selection(card).as_ref() == Some(sel)),
                 Some((source, name)) => self
                     .script_cards
                     .iter()
-                    .position(|c| c.source == source && c.name == name),
+                    .position(|card| card.source == source && card.name == name),
             })
             .and_then(|card_idx| card_indices.iter().position(|&i| i == card_idx))
             .unwrap_or(0);
@@ -1690,23 +1716,28 @@ impl TuiApp {
         self.browse_changed = true;
     }
 
-    /// Browse, the Load file browser or the catalog folder prompt is open.
-    /// Each is drawn in the Script tab and, like an overlay, owns every key
-    /// and click until it closes.
+    /// Whether the script popup is open.
     pub(crate) fn script_popup_open(&self) -> bool {
-        self.script_load_open || self.rs2b0t_catalog_open || self.script_browse_open
+        #[cfg(feature = "js")]
+        {
+            self.script_load_open || self.rs2b0t_catalog_open || self.script_browse_open
+        }
+        #[cfg(not(feature = "js"))]
+        {
+            self.script_browse_open
+        }
     }
 
-    /// Keys while a Script popup is open: its own navigation, Enter and
-    /// Esc act; every other key is ignored, so no global chord, other
-    /// pane's letter or script letter gets past it. `None` when no popup is
-    /// open. Load sits over the catalog prompt, which sits over Browse.
+    /// Keys while a Script popup is open; every other key is ignored.
     pub(crate) fn script_popup_key(&mut self, key: KeyEvent) -> Option<AppAction> {
-        if self.script_load_open {
-            return Some(self.load_on_key(key));
-        }
-        if self.rs2b0t_catalog_open {
-            return Some(self.catalog_on_key(key));
+        #[cfg(feature = "js")]
+        {
+            if self.script_load_open {
+                return Some(self.load_on_key(key));
+            }
+            if self.rs2b0t_catalog_open {
+                return Some(self.catalog_on_key(key));
+            }
         }
         if !self.script_browse_open {
             return None;
@@ -1719,31 +1750,32 @@ impl TuiApp {
             KeyCode::Char('k') if text => self.move_script_sel(-1),
             KeyCode::Down => self.move_script_sel(1),
             KeyCode::Char('j') if text => self.move_script_sel(1),
-            // The pick stays for Start.
             KeyCode::Enter | KeyCode::Esc => self.script_browse_open = false,
             _ => {}
         }
         Some(AppAction::None)
     }
 
-    /// A click while a Script popup is open. Inside the Script pane it
-    /// picks a row or presses one of the pane's buttons; outside it reaches
-    /// nothing: Browse and Load close (the pick stays), the catalog prompt
-    /// stays open because dismissing it means Not now.
+    /// Handle clicks while a Script popup is open.
     pub(crate) fn script_popup_click(&mut self, col: u16, row: u16) -> AppAction {
         if crate::layout::contains(self.script_area, col, row) {
             return self.script_click(col, row);
         }
+        #[cfg(feature = "js")]
         if !self.rs2b0t_catalog_open {
             self.script_load_open = false;
+            self.script_browse_open = false;
+        }
+        #[cfg(not(feature = "js"))]
+        {
             self.script_browse_open = false;
         }
         AppAction::None
     }
 
-    /// The wheel over anything while a Script popup is open moves that
-    /// popup's list (`delta` -1 up, 1 down).
+    /// Move the open script picker on wheel input.
     pub(crate) fn script_popup_scroll(&mut self, delta: isize) {
+        #[cfg(feature = "js")]
         if self.script_load_open {
             let last = self.load_entries().len().saturating_sub(1);
             self.script_load_sel = self.script_load_sel.saturating_add_signed(delta).min(last);
@@ -1753,35 +1785,44 @@ impl TuiApp {
         } else if self.script_browse_open {
             self.move_script_sel(delta as i32);
         }
+        #[cfg(not(feature = "js"))]
+        if self.script_browse_open {
+            self.move_script_sel(delta as i32);
+        }
     }
 
-    /// The script pane's clicks: a button runs its command (the same path
-    /// as its key and the palette), picker rows store the selection.
+    /// The script pane's clicks: a button runs its command, picker rows store
+    /// the selection.
     pub(crate) fn script_click(&mut self, col: u16, row: u16) -> AppAction {
-        if self.script_load_open {
-            return self.load_click(col, row);
+        #[cfg(feature = "js")]
+        {
+            if self.script_load_open {
+                return self.load_click(col, row);
+            }
+            if self.rs2b0t_catalog_open {
+                return self.catalog_click(col, row);
+            }
         }
-        if self.rs2b0t_catalog_open {
-            return self.catalog_click(col, row);
-        }
-        let deferred = frontend_core::scripts::paths::rs2b0t_import_deferred();
         let pane = ScriptPane::new(
             self.script_state,
             self.script_sel.as_ref(),
             &self.script_cards,
             &self.script_category_order,
-            deferred,
             self.script_browse_open,
-            self.script_load_open,
-            "",
             !self.params_schema.as_ref().is_empty(),
-        )
-        .with_reload_confirm(self.reload_confirm);
+        );
+        #[cfg(feature = "js")]
+        let pane = pane.with_js_controls(
+            frontend_core::scripts::paths::rs2b0t_import_deferred(),
+            self.script_load_open,
+            self.reload_confirm,
+        );
         match pane.on_click(self.script_area, col, row) {
             ScriptClick::Button(label) => {
                 script_command(label).map_or(AppAction::None, |command| self.run_command(command))
             }
             ScriptClick::Params => self.run_command(Command::ScriptParams),
+            #[cfg(feature = "js")]
             ScriptClick::ImportCatalog => self.run_command(Command::ImportCatalog),
             ScriptClick::Pick(idx) => {
                 if let Some(card) = self.script_cards.get(idx) {
@@ -1794,9 +1835,7 @@ impl TuiApp {
         }
     }
 
-    /// One script command after the router checked it is available:
-    /// Browse toggles the picker, Start carries the heading card, Load
-    /// opens the file browser, the rest map to their actions.
+    /// One script command after the router checked it is available.
     pub(crate) fn script_run(&mut self, command: Command) -> AppAction {
         match command {
             Command::ScriptBrowse => {
@@ -1819,19 +1858,25 @@ impl TuiApp {
             },
             Command::ScriptPause => AppAction::ScriptPause,
             Command::ScriptStop => AppAction::ScriptStop,
+            #[cfg(feature = "js")]
             Command::ScriptLoad => {
                 let last = self.script_load_last_dir.clone();
                 self.open_script_load_browser(last.as_deref());
                 AppAction::None
             }
             Command::ScriptParams => AppAction::ScriptParams,
+            #[cfg(feature = "js")]
             Command::ScriptReload => AppAction::ScriptReload,
+            #[cfg(feature = "js")]
             Command::ScriptReloadCancel => AppAction::ScriptReloadCancel,
+            #[cfg(feature = "js")]
             Command::ImportCatalog => AppAction::ScriptImportCatalog,
             _ => AppAction::None,
         }
     }
 
+
+    #[cfg(feature = "js")]
     fn load_click(&mut self, col: u16, row: u16) -> AppAction {
         let inner = Block::default()
             .borders(Borders::ALL)
@@ -1853,6 +1898,7 @@ impl TuiApp {
         AppAction::None
     }
 
+    #[cfg(feature = "js")]
     fn catalog_click(&mut self, col: u16, row: u16) -> AppAction {
         let inner = Block::default()
             .borders(Borders::ALL)
@@ -2168,6 +2214,7 @@ impl TuiApp {
     }
 
     pub(crate) fn draw_script(&mut self, frame: &mut Frame<'_>, area: Rect) {
+        #[cfg(feature = "js")]
         if self.script_load_open {
             let block = Block::default().borders(Borders::ALL).title("load script");
             let inner = block.inner(area);
@@ -2195,6 +2242,7 @@ impl TuiApp {
                 .render(inner, frame.buffer_mut());
             return;
         }
+        #[cfg(feature = "js")]
         if self.rs2b0t_catalog_open {
             let block = Block::default()
                 .borders(Borders::ALL)
@@ -2230,18 +2278,21 @@ impl TuiApp {
             self.script_sel.as_ref(),
             &self.script_cards,
             &self.script_category_order,
-            frontend_core::scripts::paths::rs2b0t_import_deferred(),
             self.script_browse_open,
-            self.script_load_open,
-            "",
             !self.params_schema.as_ref().is_empty(),
-        )
-        .with_reload_confirm(self.reload_confirm)
-        .with_native_status(
-            self.focused_detail()
-                .and_then(|detail| detail.native_status()),
-        )
-        .with_walk_risk(self.focused_detail().and_then(|detail| detail.walk_risk()));
+        );
+        #[cfg(feature = "js")]
+        let pane = pane.with_js_controls(
+            frontend_core::scripts::paths::rs2b0t_import_deferred(),
+            self.script_load_open,
+            self.reload_confirm,
+        );
+        let pane = pane
+            .with_native_status(
+                self.focused_detail()
+                    .and_then(|detail| detail.native_status()),
+            )
+            .with_walk_risk(self.focused_detail().and_then(|detail| detail.walk_risk()));
         frame.render_widget(pane, area);
     }
 }

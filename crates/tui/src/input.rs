@@ -154,11 +154,14 @@ impl TuiApp {
         if let Some(modal) = &self.modal {
             return modal.scope();
         }
-        if self.script_load_open {
-            return "Script: load file";
-        }
-        if self.rs2b0t_catalog_open {
-            return "Script: catalog folder";
+        #[cfg(feature = "js")]
+        {
+            if self.script_load_open {
+                return "Script: load file";
+            }
+            if self.rs2b0t_catalog_open {
+                return "Script: catalog folder";
+            }
         }
         if self.script_browse_open {
             return "Script: Browse";
@@ -207,14 +210,19 @@ impl TuiApp {
             "Log search" => "type to search · Enter done · Esc done",
             "Log drawer" | "Logs" => "/ search · v level · s source · b scope · f follow · Up/Down scroll · w save",
             "Map search" => "name or x,z,plane · Up/Down results · Enter jump · Esc close",
+            #[cfg(feature = "js")]
             "Script: load file" => "Up/Down · Enter open · Esc close",
+            #[cfg(feature = "js")]
             "Script: catalog folder" => "Up/Down · Enter open · Esc not now",
             "Script: Browse" => "Up/Down pick · Enter or Esc closes, the pick stays",
             "Overview" if self.memory.is_some_and(frontend_core::MemoryNotice::can_relog) =>
                 "i log in · u log out · r Relog now · x remove · o settings · l loadouts · w manual walk",
             "Overview" => "i log in · u log out · x remove · o settings · l loadouts · w manual walk",
             "Map" => "arrows pan · +/- zoom · Enter select/walk · / search · g group · t teleport · Esc back",
+            #[cfg(feature = "js")]
             "Script" => "b browse · t start · P pause · e stop · f load · v params · R reload · T/E all",
+            #[cfg(not(feature = "js"))]
+            "Script" => "b browse · t start · P pause · e stop · v params · T/E all",
             "Chat" if self.chat_data.is_modal_open() => "Up/Down choose · Space/Enter answer · p paint/chat",
             "Chat" => "p paint/chat · 1-9 paint buttons · Up/Down/Enter paint button",
             _ => "",
@@ -402,6 +410,7 @@ impl TuiApp {
                 self.params_state.open = false;
                 self.loadouts_state.reopen();
             }
+            #[cfg(feature = "js")]
             Command::ImportProfiles => self.open_modal(Modal::ProfileImport(
                 crate::profile_import::ImportView::default(),
             )),
@@ -413,8 +422,18 @@ impl TuiApp {
             }
             Command::ManualWalk => self.open_modal(Modal::Manual),
             Command::DismissNotice => return AppAction::AckBackground,
-            Command::ScriptBrowse | Command::ScriptLoad | Command::ImportCatalog => {
-                // These open inside the Script tab: show it first.
+            Command::ScriptBrowse => {
+                // The picker opens inside the Script tab.
+                let show = if self.screen == Screen::Script {
+                    AppAction::None
+                } else {
+                    self.show_screen(Screen::Script)
+                };
+                let run = self.script_run(command);
+                return AppAction::batch(show, run);
+            }
+            #[cfg(feature = "js")]
+            Command::ScriptLoad | Command::ImportCatalog => {
                 let show = if self.screen == Screen::Script {
                     AppAction::None
                 } else {
@@ -426,9 +445,11 @@ impl TuiApp {
             Command::ScriptStart
             | Command::ScriptPause
             | Command::ScriptStop
-            | Command::ScriptParams
-            | Command::ScriptReload
-            | Command::ScriptReloadCancel => return self.script_run(command),
+            | Command::ScriptParams => return self.script_run(command),
+            #[cfg(feature = "js")]
+            Command::ScriptReload | Command::ScriptReloadCancel => {
+                return self.script_run(command);
+            }
             Command::ToggleGameChat => {
                 self.chat_data.show_game_chat = !self.chat_data.show_game_chat;
             }
