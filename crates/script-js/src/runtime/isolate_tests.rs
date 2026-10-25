@@ -13,6 +13,7 @@ fn run_exact_child(test: &str, env: &str) {
     let mut child = std::process::Command::new(std::env::current_exe().unwrap())
         .args(["--exact", test, "--nocapture"])
         .env(env, "1")
+        .stdout(std::process::Stdio::piped())
         .spawn()
         .unwrap();
     // Harness liveness bound only: the product deadline oracle is the inner
@@ -24,6 +25,12 @@ fn run_exact_child(test: &str, env: &str) {
     loop {
         if let Some(status) = child.try_wait().unwrap() {
             assert!(status.success(), "{test} child failed: {status}");
+            let output = child.wait_with_output().unwrap();
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            assert!(
+                stdout.contains(&format!("test {test} ... ok")) && stdout.contains("1 passed"),
+                "{test} child did not run exactly once\nstdout: {stdout}"
+            );
             return;
         }
         if Instant::now() >= deadline {
@@ -32,6 +39,12 @@ fn run_exact_child(test: &str, env: &str) {
         }
         std::thread::sleep(Duration::from_millis(5));
     }
+}
+
+#[test]
+#[should_panic(expected = "child did not run exactly once")]
+fn exact_child_rejects_an_empty_test_selection() {
+    run_exact_child("missing::relocated::test", "SCRIPT_EMPTY_CHILD_SELECTION");
 }
 
 #[test]
@@ -59,7 +72,7 @@ fn startup_non_yielding_module_has_bounded_join() {
         return;
     }
     run_exact_child(
-        "load::isolate::tests::startup_non_yielding_module_has_bounded_join",
+        "isolate::tests::startup_non_yielding_module_has_bounded_join",
         CHILD,
     );
 }
@@ -125,7 +138,7 @@ fn validate_non_yielding_module_is_bounded() {
         return;
     }
     run_exact_child(
-        "load::isolate::tests::validate_non_yielding_module_is_bounded",
+        "isolate::tests::validate_non_yielding_module_is_bounded",
         CHILD,
     );
 }
@@ -198,7 +211,7 @@ fn pause_interrupts_a_newly_started_runaway_tick() {
         return;
     }
     run_exact_child(
-        "load::isolate::tests::pause_interrupts_a_newly_started_runaway_tick",
+        "isolate::tests::pause_interrupts_a_newly_started_runaway_tick",
         CHILD,
     );
 }
@@ -239,7 +252,7 @@ fn paint_generation_allocator_separates_reset_and_replacement() {
     }
 
     run_exact_child(
-        "load::isolate::tests::paint_generation_allocator_separates_reset_and_replacement",
+        "isolate::tests::paint_generation_allocator_separates_reset_and_replacement",
         CHILD,
     );
 }

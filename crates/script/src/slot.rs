@@ -1568,14 +1568,12 @@ impl SlotScript {
         // and its abandon latch all start over — which is the marker
         // `reset_session_work` must not make: that one is a connection
         // boundary and drops the step alone.
-
         if !self.surface_active() && self.state != RunState::Stopping {
             self.card_stop_owed = true;
             self.card_abort_owed = false;
         }
         // A failed setup already ends Idle with its diagnostic; a Stop
         // during its reap must not turn that into a silent cancel.
-
         if self.state == RunState::Stopping && matches!(self.after_stop, AfterStop::Fail(_)) {
             return;
         }
@@ -1725,36 +1723,34 @@ impl SlotScript {
             self.card_abort_owed = true;
         }
 
-        {
-            let execution = ExecutionId::first(api::selected::RunKey {
-                slot: self.incarnation,
-                run: self.runtime_generation,
-                session: self.work_epoch,
-            });
-            let carried_error = self.active_tick_error_generation.is_some();
-            let held = reconnect && self.surface.is_some();
-            if let Some(isolate) = &mut self.surface {
-                let generation = if held {
-                    isolate.reconnect_session_work(Some(execution))
-                } else {
-                    isolate.reset_session_work(Some(execution))
-                };
-                if held {
-                    for token in &discarded_walks {
-                        isolate.rearm_host_discarded_walk(*token);
-                    }
-                }
-                self.active_tick_error_generation = carried_error.then_some(generation);
+        let execution = ExecutionId::first(api::selected::RunKey {
+            slot: self.incarnation,
+            run: self.runtime_generation,
+            session: self.work_epoch,
+        });
+        let carried_error = self.active_tick_error_generation.is_some();
+        let held = reconnect && self.surface.is_some();
+        if let Some(isolate) = &mut self.surface {
+            let generation = if held {
+                isolate.reconnect_session_work(Some(execution))
             } else {
-                self.active_tick_error_generation = None;
+                isolate.reset_session_work(Some(execution))
+            };
+            if held {
+                for token in &discarded_walks {
+                    isolate.rearm_host_discarded_walk(*token);
+                }
             }
-            self.last_world_id = None;
-            self.reach_cache.clear();
-
-            let abort = self.watchdog.abort_owned_recovery();
-            let _ = self.watchdog.on_session_reset(Instant::now());
-            held && abort != WatchdogAction::AbortWalk
+            self.active_tick_error_generation = carried_error.then_some(generation);
+        } else {
+            self.active_tick_error_generation = None;
         }
+        self.last_world_id = None;
+        self.reach_cache.clear();
+
+        let abort = self.watchdog.abort_owned_recovery();
+        let _ = self.watchdog.on_session_reset(Instant::now());
+        held && abort != WatchdogAction::AbortWalk
     }
 
     /// Deliver one broker event batch to the current surface.

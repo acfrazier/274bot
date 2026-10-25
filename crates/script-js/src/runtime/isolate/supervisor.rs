@@ -630,19 +630,23 @@ mod tests {
     #[test]
     fn poisoned_retiree_does_not_stop_process_supervisor() {
         const CHILD: &str = "SCRIPT_POISONED_RETIREE_CHILD";
+        const TEST_NAME: &str =
+            "isolate::supervisor::tests::poisoned_retiree_does_not_stop_process_supervisor";
         if std::env::var_os(CHILD).is_none() {
-            let status = std::process::Command::new(std::env::current_exe().unwrap())
-                .args([
-                    "--exact",
-                    "load::isolate::supervisor::tests::poisoned_retiree_does_not_stop_process_supervisor",
-                    "--nocapture",
-                ])
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", TEST_NAME, "--nocapture"])
                 .env(CHILD, "1")
-                .status()
+                .output()
                 .unwrap();
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
             assert!(
-                status.success(),
-                "poisoned retirement child failed: {status}"
+                output.status.success(),
+                "poisoned retirement child failed\nstdout: {stdout}\nstderr: {stderr}"
+            );
+            assert!(
+                stdout.contains(&format!("test {TEST_NAME} ... ok")) && stdout.contains("1 passed"),
+                "poisoned retirement child did not run exactly once\nstdout: {stdout}\nstderr: {stderr}"
             );
             return;
         }
