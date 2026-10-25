@@ -61,6 +61,11 @@ const HOLD_RISE_TICKS: u32 = 5;
 /// A dialogue event must be engaged (Talk-to, or the walk to range that
 /// precedes it) within this many game ticks of the NPC appearing.
 const DIALOG_ENGAGE_TICKS: u32 = 15;
+/// The Load script must own the seeded box for this many observed game ticks
+/// before native Guardian may claim it.
+const STRANGE_BOX_SCRIPT_OWNED_TICKS: u32 = 5;
+/// Game-tick deadline for the seeded box to be claimed, consumed and released.
+const STRANGE_BOX_HANDOFF_TICKS: u32 = 80;
 /// Tiles of path slack before a move toward the attacker's start counts as
 /// walking back: a flee route around an obstacle may bend briefly.
 const WALK_BACK_SLACK: i32 = 2;
@@ -78,7 +83,7 @@ const ENDURE_TICKS: u32 = 30;
 /// Bounded trace of key events in the receipt.
 const MAX_TRACE: usize = 160;
 
-/// How the cell summons its event.
+/// How the event appears in the cell.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Trigger {
     /// `::macro_event <id>` (content `_test` cheat; ids from
@@ -86,21 +91,24 @@ pub enum Trigger {
     General(i32),
     /// `::skill_macro_event <id>` (engine patch [`SKILL_EVENT_PATCH`]).
     Skill(i32),
+    /// The event item is seeded into the account before the Load script starts.
+    Seeded,
 }
 
 impl Trigger {
-    /// The chat command, with the engine's `~` debugproc prefix.
+    /// The chat command or seed description for this cell.
     pub fn command(self) -> String {
         match self {
             Self::General(id) => format!("~macro_event {id}"),
             Self::Skill(id) => format!("~skill_macro_event {id}"),
+            Self::Seeded => "pre-seeded account state".to_string(),
         }
     }
 
-    /// The patched cheat's answer prefix; `None` for the built-in cheat.
+    /// The patched cheat's answer prefix; `None` for built-in or seeded cases.
     fn ack_prefix(self) -> Option<String> {
         match self {
-            Self::General(_) => None,
+            Self::General(_) | Self::Seeded => None,
             Self::Skill(id) => Some(format!("skill_macro_event {id}:")),
         }
     }
@@ -122,6 +130,9 @@ pub enum Oracle {
     Pick,
     /// Strange box: open and answer the cube until the box is consumed.
     StrangeBox,
+    /// The Load script owns the seeded box for an observed window, then
+    /// native Guardian claims and solves that same box.
+    StrangeBoxHandoff,
     /// Mime or Maze: solve the trap and come back.
     Trap(TrapKind),
     /// Lost pickaxe / axe head: take the head, reattach, re-wield.
@@ -392,6 +403,10 @@ pub struct RandomEventEpisode {
     // Items and traps.
     item_seen: Option<u32>,
     item_cleared: Option<u32>,
+    /// The first observed frame proving the seeded box stayed script-owned.
+    script_owned: Option<u32>,
+    /// Whether the box was still present when native Guardian first held.
+    box_at_hold: Option<bool>,
     lost: Option<u32>,
     restored: Option<u32>,
     reward: Option<u32>,
@@ -433,6 +448,8 @@ impl RandomEventEpisode {
             absent_ticks: 0,
             npc_gone: None,
             item_seen: None,
+            script_owned: None,
+            box_at_hold: None,
             item_cleared: None,
             lost: None,
             restored: None,
@@ -510,7 +527,11 @@ impl RandomEventEpisode {
     /// on the same frame; the runner sends it and the episode records it.
     pub(crate) fn next_send(&mut self, frame: &Frame) -> Option<String> {
         self.baseline.as_ref()?;
-        if !frame.ready || self.acked || self.onset.is_some() {
+        if !frame.ready
+            || self.acked
+            || self.onset.is_some()
+            || matches!(self.cell.trigger, Trigger::Seeded)
+        {
             return None;
         }
         let busy_since_send = self.send_tick.is_some()
@@ -544,7 +565,32 @@ impl RandomEventEpisode {
                 json!({"xp": frame.skill_xp, "hp": frame.hp}),
             );
             self.baseline = Some(frame.clone());
-            self.last = Some(frame);
+            self.last = Some(frame.clone());
+            if matches!(self.cell.trigger, Trigger::Seeded) {
+                if !matches!(self.cell.oracle, Oracle::StrangeBoxHandoff) {
+                    return Verdict::Fail(
+                        "fixture: seeded trigger requires the Strange Box handoff oracle".into(),
+                    );
+                }
+                if frame.count(STRANGE_BOX_ID) == 0 {
+                    return Verdict::Fail(
+                        "fixture: the seeded Strange box is absent at the observation baseline"
+                            .into(),
+                    );
+                }
+                self.onset = Some(frame.tick);
+                self.item_seen = Some(frame.tick);
+                self.note(
+                    &frame,
+                    "seeded_box",
+                    json!({"id": STRANGE_BOX_ID, "count": frame.count(STRANGE_BOX_ID)}),
+                );
+                if frame.hold {
+                    self.hold_rise = Some(frame.tick);
+                    self.box_at_hold = Some(frame.count(STRANGE_BOX_ID) > 0);
+                    self.note(&frame, "hold_rise", Value::Null);
+                }
+            }
             return Verdict::Pending;
         }
         let fresh = self
@@ -560,9 +606,31 @@ impl RandomEventEpisode {
         let baseline_seq = self.baseline.as_ref().map(Frame::head).unwrap_or(0);
 
         // Hold edges, sampled on every frame.
-        if frame.hold && self.hold_rise.is_none() && self.send_tick.is_some() {
+        if frame.hold
+            && self.hold_rise.is_none()
+            && (self.send_tick.is_some() || matches!(self.cell.trigger, Trigger::Seeded))
+        {
             self.hold_rise = Some(frame.tick);
+            if matches!(self.cell.oracle, Oracle::StrangeBoxHandoff) {
+                self.box_at_hold = Some(frame.count(STRANGE_BOX_ID) > 0);
+            }
             self.note(frame, "hold_rise", Value::Null);
+        }
+        if matches!(self.cell.oracle, Oracle::StrangeBoxHandoff)
+            && self.hold_rise.is_none()
+            && self.script_owned.is_none()
+            && !frame.hold
+            && frame.count(STRANGE_BOX_ID) > 0
+            && self.onset.is_some_and(|onset| {
+                frame.tick.saturating_sub(onset) >= STRANGE_BOX_SCRIPT_OWNED_TICKS
+            })
+        {
+            self.script_owned = Some(frame.tick);
+            self.note(
+                frame,
+                "script_owned",
+                json!({"ticks": frame.tick.saturating_sub(self.onset.unwrap_or(frame.tick))}),
+            );
         }
         if let Some(last) = self.last.as_ref() {
             if last.hold && !frame.hold && self.hold_rise.is_some() {
@@ -577,7 +645,7 @@ impl RandomEventEpisode {
         if let Some(hp) = frame.hp {
             self.min_hp = Some(self.min_hp.map_or(hp, |min| min.min(hp)));
         }
-        if self.send_tick.is_some() {
+        if self.send_tick.is_some() || matches!(self.cell.trigger, Trigger::Seeded) {
             if let Some(last) = self.last.clone() {
                 if frame.hp != last.hp {
                     let attacker = self.attacker_fact(frame);
@@ -607,7 +675,8 @@ impl RandomEventEpisode {
         if frame
             .chat_after(baseline_seq)
             .any(|(_, text)| text.contains(DEATH_MESSAGE))
-            || (self.send_tick.is_some() && frame.hp == Some(0))
+            || ((self.send_tick.is_some() || matches!(self.cell.trigger, Trigger::Seeded))
+                && frame.hp == Some(0))
         {
             return Verdict::Fail(format!(
                 "the bot died at game tick {} at {:?} during the {} event",
@@ -619,7 +688,10 @@ impl RandomEventEpisode {
             let trap_move = matches!(self.cell.oracle, Oracle::Trap(_))
                 && (trapped_area(last.0, last.1, last.2).is_some()
                     || trapped_area(now.0, now.1, now.2).is_some());
-            if jump && !trap_move && self.send_tick.is_some() {
+            if jump
+                && !trap_move
+                && (self.send_tick.is_some() || matches!(self.cell.trigger, Trigger::Seeded))
+            {
                 return Verdict::Fail(format!(
                     "teleported from {last:?} to {now:?} at game tick {} (the content's failed-event \
                      teleport, macro_event_fail_teleport): the {} event was not handled",
@@ -705,7 +777,9 @@ impl RandomEventEpisode {
             Oracle::Dialog { .. } | Oracle::Pick => frame
                 .tile
                 .is_some_and(|(x, z, _)| frame.npcs.iter().any(|npc| cheb((x, z), npc.tile) <= 15)),
-            Oracle::StrangeBox => frame.count(STRANGE_BOX_ID) > baseline.count(STRANGE_BOX_ID),
+            Oracle::StrangeBox | Oracle::StrangeBoxHandoff => {
+                frame.count(STRANGE_BOX_ID) > baseline.count(STRANGE_BOX_ID)
+            }
             Oracle::Trap(trap) => frame
                 .tile
                 .is_some_and(|(x, z, level)| trapped_area(x, z, level) == Some(trap.kind())),
@@ -766,6 +840,7 @@ impl RandomEventEpisode {
                 self.resolve_when(frame, self.item_cleared.is_some() && !frame.hold);
                 None
             }
+            Oracle::StrangeBoxHandoff => self.judge_strange_box_handoff(frame, onset),
             Oracle::Trap(trap) => {
                 let inside = frame
                     .tile
@@ -827,6 +902,66 @@ impl RandomEventEpisode {
                 None
             }
         }
+    }
+
+    fn judge_strange_box_handoff(&mut self, frame: &Frame, onset: u32) -> Option<Verdict> {
+        let count = frame.count(STRANGE_BOX_ID);
+        if self.hold_rise.is_none() {
+            if count == 0 {
+                return Some(Verdict::Fail(
+                    "the seeded Strange box disappeared before native Guardian claimed it".into(),
+                ));
+            }
+            if frame.tick.saturating_sub(onset) > STRANGE_BOX_HANDOFF_TICKS {
+                return Some(Verdict::Fail(format!(
+                    "native Guardian did not claim the seeded Strange box within \
+                     {STRANGE_BOX_HANDOFF_TICKS} game ticks"
+                )));
+            }
+            return None;
+        }
+
+        let hold_rise = self.hold_rise.unwrap_or(onset);
+        let owned_ticks = self
+            .script_owned
+            .map_or(0, |tick| tick.saturating_sub(onset));
+        if owned_ticks < STRANGE_BOX_SCRIPT_OWNED_TICKS {
+            return Some(Verdict::Fail(format!(
+                "native Guardian claimed before the Load script retained the Strange box for \
+                 {STRANGE_BOX_SCRIPT_OWNED_TICKS} observed game ticks (hold at {hold_rise}, \
+                 onset at {onset})"
+            )));
+        }
+        if self.box_at_hold != Some(true) {
+            return Some(Verdict::Fail(
+                "the seeded Strange box was not present when native Guardian claimed it".into(),
+            ));
+        }
+        if count == 0 && self.item_cleared.is_none() {
+            self.item_cleared = Some(frame.tick);
+            self.note(frame, "box_consumed", Value::Null);
+        }
+        if !frame.hold {
+            if self.item_cleared.is_none() {
+                return Some(Verdict::Fail(
+                    "native Guardian released the seeded Strange box before solving it".into(),
+                ));
+            }
+            if self.resolved.is_none() {
+                if let Some(xp) = frame.skill_xp {
+                    self.resolved = Some((frame.tick, xp));
+                }
+                self.note(frame, "resolved", json!(frame.skill_xp));
+            }
+            return Some(Verdict::Pass);
+        }
+        if frame.tick.saturating_sub(onset) > STRANGE_BOX_HANDOFF_TICKS {
+            return Some(Verdict::Fail(format!(
+                "native Guardian did not consume and release the seeded Strange box within \
+                 {STRANGE_BOX_HANDOFF_TICKS} game ticks"
+            )));
+        }
+        None
     }
 
     fn resolve_when(&mut self, frame: &Frame, done: bool) {
@@ -1034,6 +1169,8 @@ impl RandomEventEpisode {
             "acked": self.acked,
             "onset": self.onset,
             "hold_rise": self.hold_rise,
+            "script_owned": self.script_owned,
+            "box_at_hold": self.box_at_hold,
             "hold_fall": self.hold_fall,
             "hold_ticks": self.hold_ticks,
             "min_hp": self.min_hp,

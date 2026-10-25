@@ -391,7 +391,7 @@ impl Guardian {
         snap: &GameSnapshot,
         settings: &ProfileSettings,
         now_ms: u64,
-        knock: Option<&mut dyn FnMut(&DetectedRandom) -> RandomClaim>,
+        knock: Option<&mut dyn RandomClaimSource>,
     ) -> RandomStatus {
         self.tick_with_live_policies(
             driver,
@@ -415,7 +415,7 @@ impl Guardian {
         settings: &ProfileSettings,
         context: &GuardianLiveContext<'_>,
         now_ms: u64,
-        knock: Option<&mut dyn FnMut(&DetectedRandom) -> RandomClaim>,
+        mut knock: Option<&mut dyn RandomClaimSource>,
     ) -> RandomStatus {
         let tick = snap.tick() as u64;
         let fresh = self.last_tick != tick;
@@ -487,22 +487,27 @@ impl Guardian {
                 );
             }
             self.pin_plant_event(snap, &mut ev);
-            // Rising-edge knock: ask the running script once per detected
-            // event. A vanished event resets the claim to Host (the host
-            // owns whatever appears next). No knock supplied → Host.
-            // An inert leftover lamp (`lamp_auto` off) does not knock —
-            // it is XP in the pack, not a handler latch.
+            // Compiled callbacks remain rising-edge only. Load membership
+            // can change while this exact event persists, independently of
+            // its solver state. No callback source means Host.
             let sig = ev.as_ref().map(|e| format!("{:?}:{}", e.kind, e.name));
             if sig != self.sig {
                 self.sig = sig;
-                self.claim = match (&ev, knock) {
-                    (Some(ev), Some(knock))
+                self.claim = match (&ev, knock.as_mut()) {
+                    (Some(ev), Some(source))
                         if !(ev.kind == RandomKind::Lamp && !settings.lamp_auto) =>
                     {
-                        knock(ev)
+                        source.on_random(ev)
                     }
                     _ => RandomClaim::Host,
                 };
+            }
+            if let (Some(ev), Some(source)) = (&ev, knock) {
+                if !(ev.kind == RandomKind::Lamp && !settings.lamp_auto) {
+                    if let Some(claim) = source.current_claim(ev) {
+                        self.claim = claim;
+                    }
+                }
             }
         }
         let unsupported_policy = ev.as_ref().and_then(|event| {
