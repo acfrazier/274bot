@@ -47,6 +47,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.6` 
   After bounded retries, it reports the last failure and releases the script
   instead of waiting forever. This also affected 0.2.6.
 
+### Scripts
+
+- `Prayer.clear()` no longer repeats a prayer click before the game confirms
+  it in release builds. Its result now counts the clicks it sends.
+
 ### Survival
 
 - Combat and protected walks use a held antipoison dose or Strange fruit
