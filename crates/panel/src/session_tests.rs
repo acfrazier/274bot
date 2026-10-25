@@ -5295,9 +5295,12 @@ fn focus_first_prefers_last_focus() {
 
 #[test]
 fn select_saves_last_focus() {
+    // Model initial preference hydration completing after this focus write.
+    // The test-only preference mirror must retain the committed key.
     seed_ui_state(&crate::ui_state::PanelUiState::default());
     let path = tmp_vault("select-last-focus.vault");
     let mut s = Session::new();
+    s.preferences.reload().unwrap();
     install_vault(
         &mut s.core,
         VaultFixture::create(&path, "test-passphrase-01"),
@@ -5305,6 +5308,10 @@ fn select_saves_last_focus() {
     vault_upsert(&mut s.core, profile("alice", "pw", 42));
     s.select("alice");
     await_preference(&mut s, "last_focus", serde_json::json!("alice"));
+    let stored = s.preferences.reload().unwrap();
+    assert_eq!(stored.get("last_focus"), Some(&serde_json::json!("alice")));
+    s.preferences_ready = false;
+    s.poll_panel_preferences();
     assert_eq!(s.ui.last_focus.as_deref(), Some("alice"));
 }
 
