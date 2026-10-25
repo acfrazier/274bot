@@ -1793,6 +1793,7 @@ fn ordered_observation_survives_real_client_socket_adoption_without_reset() {
     );
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn ordered_existing_compat_loop_keeps_twenty_eight_immediate_true_drops_without_host_rate_refusal()
 {

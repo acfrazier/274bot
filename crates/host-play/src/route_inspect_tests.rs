@@ -8,6 +8,7 @@ use nav_planner::collision::{pack_walk, WorldCollision};
 use nav_planner::pack::{BankAccess, BankStand};
 use nav_planner::transport::{TransportEdge, TransportGraph};
 use nav_planner::world::NavWorld;
+#[cfg(feature = "js")]
 use sha2::Digest;
 use std::thread;
 use std::time::{Duration, Instant};

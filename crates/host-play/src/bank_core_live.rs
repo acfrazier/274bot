@@ -985,7 +985,6 @@ fn live_bank_core_exact_withdraw_at_draynor() {
     }
 }
 
-#[cfg(feature = "js")]
 const WITHDRAW_SEED: &str = "givebank coins 50";
 
 #[cfg(feature = "js")]
