@@ -20,6 +20,7 @@ pub const CARD: CompiledCard = CompiledCard {
     per_account_settings: &[],
     prepare,
     create,
+    lifecycle: None,
 };
 
 pub struct Prepared {

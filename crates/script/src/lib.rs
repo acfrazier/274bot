@@ -18,10 +18,8 @@ pub mod bank_hints;
 pub mod boost_potions;
 pub mod canvas;
 pub mod card;
-#[cfg(feature = "load")]
 pub mod channel;
 pub mod combat;
-#[cfg(feature = "load")]
 mod combat_session;
 /// Curated script site configuration and the hostile-attacker predicate.
 pub mod content;
@@ -55,13 +53,13 @@ pub mod isolate_fb;
 pub mod isolated_env;
 #[cfg(feature = "load")]
 pub mod js_cache;
-mod keep_list;
+pub mod keep_list;
 #[cfg(feature = "load")]
 pub mod load;
 pub mod loadout_plan;
 pub mod loadouts_store;
 pub mod local_state;
-mod module_imports;
+pub mod module_imports;
 pub mod native;
 pub mod native_bank;
 pub mod native_equipment;
@@ -77,7 +75,7 @@ pub mod registry;
 pub mod rs2b0t_registry;
 pub mod settings_store;
 pub mod shim;
-mod shop_open;
+pub mod shop_open;
 pub mod slot;
 /// Sealed external-script authority and shared server-ordered host input.
 pub mod surface;
@@ -128,7 +126,6 @@ pub use settings_store::{
     card_key, coerce_setting_value, default_script_settings_path, format_setting_value, merge_bag,
     parameter_rows, setting_visible, ScriptSettingsStore, CLUE_DUEL_PARTNER,
 };
-#[cfg(feature = "load")]
 pub use slot::StartLoadError;
 pub use slot::{
     CompiledDelivery, RunState, ScriptLifecycleReceipt, ScriptTerminalState, SlotScript,
@@ -201,7 +198,7 @@ mod machine;
 /// Frozen market catalog facts over the selected revision's items.
 #[cfg(feature = "load")]
 mod market_catalog;
-mod melee_weapons;
+pub mod melee_weapons;
 #[cfg(feature = "load")]
 mod modals;
 /// One decoded snapshot scene per isolate thread, read by the step machines.

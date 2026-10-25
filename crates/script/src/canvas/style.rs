@@ -16,7 +16,7 @@ fn mono_font() -> &'static FontRef<'static> {
     MONO.get_or_init(|| FontRef::try_from_slice(MONO_BYTES).expect("Liberation Mono Regular"))
 }
 
-pub(crate) fn font_for(mono: bool) -> &'static FontRef<'static> {
+pub fn font_for(mono: bool) -> &'static FontRef<'static> {
     if mono {
         mono_font()
     } else {

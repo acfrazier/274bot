@@ -226,6 +226,22 @@ Run commands from the repository root. Keep writable cache and unpack paths in
 fresh run directories. `AGENTS.md:149` requires a throwaway HOME for product
 runs and `isohome` exposes the read-only navigation snapshot.
 
+## Script surface boundary
+
+The exact core paths beside `script/src/load/**` share the external-script
+start, snapshot, tick and Stop boundary. They do not add a second loader.
+
+| Cell | Call path |
+|---|---|
+| `host.script-runtime-load` | `script_api_live::runtime_cell` starts through `Play::script_start_load`, `SlotScript::start_surface` and `JsSurfaceFactory::spawn` in `load/surface.rs`. It observes a real tick, then Stop and physical retirement. |
+| `host.api-gather-wire-shadow` | The v2 Gatherer request enters `SlotScript::start_api_gather`. The real reconnect and wire-shadow checks cross the shared native fact and seat rows. |
+| `scenario.auto-fighter-mage-live` | The registered `auto_fighter_mage` scenario starts the catalog AutoFighter with Fire Strike. Its `Autocast.arm` call enters the Rust `Autocast` family and its observation accessor. |
+| `host.script-progress-journal` | `journal_cell` reads Romeo & Juliet twice. The second read uses `script_api_live_read_again`; the progress requests enter `SlotScript::start_api_progress`. The cell compares the closed-journal stamps and verifies that the quiet paint lease ends. |
+
+Classify compiler-only or test-only changed hunks in the task report when
+they have no game behavior to exercise. Keep their compile or test proof.
+Do not hide a whole production file in `not_live` for such a change.
+
 ## Add a cell
 
 1. Write and run the live cell against real game content. Do not seed the target resource or entity.

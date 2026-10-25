@@ -191,7 +191,7 @@ fn submit_progress(
 
 impl SlotScript {
     pub(in crate::slot) fn start_api_progress(&mut self, token: u64, quest: &str) {
-        if !self.load_active() {
+        if !self.surface_active() {
             return;
         }
         let seat = self.api.get_or_insert_with(|| Box::new(ApiSeat::default()));
@@ -241,7 +241,7 @@ impl SlotScript {
             return;
         };
         let Some(selected) = self
-            .load_identity
+            .surface_start
             .as_ref()
             .and_then(|identity| identity.game_data.clone())
         else {

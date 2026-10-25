@@ -252,15 +252,18 @@ fn start_source(
             static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
             slot.bind_incarnation(NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
         }
-        slot.start_load_with_loadouts_and_game_data(
-            source.into(),
-            script::LoadShape::NativeTick,
-            vec![],
-            &[],
+        let start = crate::script_runtime::js_surface_start(
+            crate::script_runtime::js_start_card(
+                source.into(),
+                script::LoadShape::NativeTick,
+                vec![],
+            ),
+            None,
             Some(selected),
             Arc::new(api::named_banks::NamedBankFacts::empty()),
-        )
-        .expect("v2 isolate starts");
+            Arc::from(Vec::<api::loadout::Loadout>::new()),
+        );
+        slot.start_surface(start).expect("v2 isolate starts");
     }
     let deadline = Instant::now() + Duration::from_secs(60);
     loop {
@@ -937,6 +940,7 @@ impl GatherReconnectRig {
                 .get();
             let mut slot = script::SlotScript::new();
             slot.bind_incarnation(incarnation);
+            slot.bind_surface_factory(Arc::new(script::load::surface::JsSurfaceFactory::default()));
             scripts
                 .lock()
                 .unwrap()
@@ -988,7 +992,7 @@ impl GatherReconnectRig {
         let names = Arc::clone(&self.names);
         let cell = self.slot();
         let mut slot = cell.lock().unwrap();
-        let bytes = with_script_snapshot_input(
+        let pages = with_script_snapshot_input(
             tick,
             Some((tile.x, tile.z, tile.level)),
             true,
@@ -1007,18 +1011,11 @@ impl GatherReconnectRig {
             None,
             PostedWalkOutcome::default(),
             PostedInspect::default(),
-            |input, native| slot.encode_snapshot_delta_with_native(input, native, false),
-        );
-        let encoded = script::isolate_fb::Snapshot::from_bytes(&bytes).unwrap();
-        let pages = (
-            encoded
-                .api_gather()
-                .is_some_and(|page| page.request_id() != 0),
-            encoded.api_gather_outcome().is_some(),
-        );
-        assert!(
-            slot.post_snapshot(bytes),
-            "reconnect keyframe is accepted by the real isolate"
+            |input, native| {
+                script::load::surface::post_snapshot_delta_pages_for_test(
+                    &mut slot, input, native, false,
+                )
+            },
         );
         let mut context = script::ScriptCtx {
             driver: &mut self.client,
@@ -1689,7 +1686,7 @@ fn recreated_load_isolates_never_inherit_old_seat_pages_or_authority() {
                         let cell = rig.slot();
                         let mut slot = cell.lock().unwrap();
                         slot.poll_start();
-                        if slot.state() == script::RunState::Running && slot.load_active() {
+                        if slot.state() == script::RunState::Running && slot.surface_active() {
                             break;
                         }
                         assert!(

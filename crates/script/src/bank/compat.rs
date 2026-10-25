@@ -11,7 +11,7 @@ pub(crate) const WALK_BOUND_MS: u64 = 60_000;
 pub(crate) const BANK_READY_MS: u64 = 5_000;
 
 /// JS truthiness for values already converted at a callback boundary.
-pub(crate) fn truthy(value: &Value) -> bool {
+pub fn truthy(value: &Value) -> bool {
     match value {
         Value::Null => false,
         Value::Bool(value) => *value,
@@ -23,7 +23,8 @@ pub(crate) fn truthy(value: &Value) -> bool {
     }
 }
 
-pub(crate) fn read_tile(value: &Value) -> Option<WorldTile> {
+/// Read a posted tile, including the supported nested `tile` form.
+pub fn read_tile(value: &Value) -> Option<WorldTile> {
     let value = value.get("tile").unwrap_or(value);
     Some(WorldTile {
         x: i32::try_from(value.get("x")?.as_i64()?).ok()?,
@@ -36,7 +37,8 @@ pub(crate) fn read_tile(value: &Value) -> Option<WorldTile> {
     })
 }
 
-pub(crate) fn read_destination(value: &Value) -> Option<BankSeatDestination> {
+/// Read a bank destination and its optional object or NPC access declaration.
+pub fn read_destination(value: &Value) -> Option<BankSeatDestination> {
     let tile = read_tile(value)?;
     let mut destination = BankSeatDestination {
         tile,
@@ -74,7 +76,7 @@ pub(crate) fn read_destination(value: &Value) -> Option<BankSeatDestination> {
 }
 /// Frozen `withdrawOp` amounts (`api/bank/bankOps.ts:5`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum WithdrawAmount {
+pub enum WithdrawAmount {
     All,
     Ten,
     Five,
@@ -85,7 +87,7 @@ pub(crate) enum WithdrawAmount {
 
 impl WithdrawAmount {
     /// The frozen `switch (amount)` cases; anything else matches none.
-    pub(crate) fn parse(amount: &str) -> Option<Self> {
+    pub fn parse(amount: &str) -> Option<Self> {
         Some(match amount {
             "all" => Self::All,
             "10" => Self::Ten,
@@ -112,7 +114,7 @@ fn after_withdraw(op: &str, at: usize) -> Option<&str> {
 /// Frozen `withdrawOp(ops, amount)` (`api/bank/bankOps.ts:5-21`): the index
 /// of the first op whose label matches the amount's pattern, read off the
 /// row's own ops. Unanchored patterns match `withdraw` anywhere in the label.
-pub(crate) fn withdraw_op<'a>(
+pub fn withdraw_op<'a>(
     ops: impl IntoIterator<Item = &'a str>,
     amount: WithdrawAmount,
 ) -> Option<usize> {
@@ -146,7 +148,7 @@ pub(crate) fn withdraw_op<'a>(
 }
 /// JS `Number(value)` for the values a caller passes (an absent argument
 /// arrives as `null` and reads as `undefined`: NaN).
-pub(crate) fn js_number(value: &Value) -> f64 {
+pub fn js_number(value: &Value) -> f64 {
     match value {
         Value::Number(n) => n.as_f64().unwrap_or(f64::NAN),
         Value::Bool(b) => f64::from(u8::from(*b)),

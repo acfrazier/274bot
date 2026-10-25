@@ -6,12 +6,12 @@ use crate::shim::InteractReq;
 use api::game_data::AutocastControls;
 
 pub(crate) const TAB_WAIT_MS: u64 = 2_000;
-pub(crate) const STEP_MS: u64 = 3_000;
+pub const STEP_MS: u64 = 3_000;
 const COMBAT_TAB: i32 = 0;
 
 /// The posted facts an autocast arm decides from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct ArmObservation {
+pub struct ArmObservation {
     pub(crate) ingame: bool,
     pub(crate) active_side_tab: i32,
     pub(crate) combat_tab_root: i32,
@@ -19,25 +19,43 @@ pub(crate) struct ArmObservation {
 }
 
 impl ArmObservation {
+    pub const fn new(
+        ingame: bool,
+        active_side_tab: i32,
+        combat_tab_root: i32,
+        magic_varp_value: i32,
+    ) -> Self {
+        Self {
+            ingame,
+            active_side_tab,
+            combat_tab_root,
+            magic_varp_value,
+        }
+    }
+
+    pub const fn ingame(&self) -> bool {
+        self.ingame
+    }
+
     #[cfg(feature = "load")]
     /// A logout forgets the session: only pages posted since login count.
     pub(crate) fn from_scene(scene: &Scene, magic_varp: i32) -> Self {
         let session = scene.since_login();
-        Self {
-            ingame: session.ingame().unwrap_or(false),
-            active_side_tab: session.side_tab().unwrap_or(-1),
-            combat_tab_root: session.combat_tab_root().unwrap_or(-1),
-            magic_varp_value: session.varps().map_or(0, |rows| {
+        Self::new(
+            session.ingame().unwrap_or(false),
+            session.side_tab().unwrap_or(-1),
+            session.combat_tab_root().unwrap_or(-1),
+            session.varps().map_or(0, |rows| {
                 rows.iter()
                     .find(|row| row.index == magic_varp)
                     .map_or(0, |row| row.value)
             }),
-        }
+        )
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ArmFailure {
+pub enum ArmFailure {
     Aborted,
     StaffMissing,
     TabTimeout,
@@ -63,27 +81,27 @@ enum Phase {
 /// One autocast arm. `poll` stages an emission; `emitted` commits its phase
 /// transition only after the caller admits that interaction.
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct Arm {
+pub struct Arm {
     spell_com: i32,
     phase: Phase,
 }
 
 #[derive(Debug, PartialEq)]
-pub(crate) enum ArmStep {
+pub enum ArmStep {
     Emit(InteractReq, u64),
     Wait,
     Done(Result<(), ArmFailure>),
 }
 
 impl Arm {
-    pub(crate) fn new(spell_com: i32) -> Self {
+    pub fn new(spell_com: i32) -> Self {
         Self {
             spell_com,
             phase: Phase::Start,
         }
     }
 
-    pub(crate) fn poll(
+    pub fn poll(
         &mut self,
         obs: ArmObservation,
         controls: &AutocastControls,
@@ -162,7 +180,7 @@ impl Arm {
 
     /// Commit the transition associated with the most recent `Emit`, after
     /// the caller admits it. Calling this in any other phase is a no-op.
-    pub(crate) fn emitted(&mut self) {
+    pub fn emitted(&mut self) {
         self.phase = match self.phase {
             Phase::PendingTab => Phase::WaitTab,
             Phase::PendingChoose => Phase::WaitPanel,

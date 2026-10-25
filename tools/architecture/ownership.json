@@ -3943,6 +3943,10 @@
       "owner": "T2"
     },
     {
+      "path": "crates/script/src/load/surface.rs",
+      "owner": "T1"
+    },
+    {
       "path": "crates/script/src/load/targets_v8.rs",
       "owner": "T2"
     },
@@ -4013,6 +4017,10 @@
     {
       "path": "crates/script/src/native/owner.rs",
       "owner": "T1"
+    },
+    {
+      "path": "crates/script/src/native/recovery_hints.rs",
+      "owner": "T2"
     },
     {
       "path": "crates/script/src/native/seat_rows.rs",
@@ -4907,6 +4915,10 @@
       "owner": "T1"
     },
     {
+      "path": "crates/script/src/surface/test_support.rs",
+      "owner": "T1"
+    },
+    {
       "path": "crates/script/src/task_clock.rs",
       "owner": "T1"
     },
@@ -5517,6 +5529,10 @@
     {
       "path": "crates/script/tests/t2_entities_generation.rs",
       "owner": "T2"
+    },
+    {
+      "path": "crates/script/tests/surface_facts_alloc.rs",
+      "owner": "T1"
     },
     {
       "path": "crates/script/tests/t2_gathering_family.rs",

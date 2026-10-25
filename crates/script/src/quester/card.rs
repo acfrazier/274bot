@@ -24,6 +24,7 @@ pub const CARD: CompiledCard = CompiledCard {
     per_account_settings: &["partner_account", "gang", "crest_gauntlets"],
     prepare,
     create,
+    lifecycle: None,
 };
 
 #[derive(Deserialize)]
@@ -227,7 +228,6 @@ fn walk_permission_setting(id: &str, label: &str, help: &str) -> SettingDef {
     definition
 }
 
-#[cfg(feature = "load")]
 pub fn released_paths() -> &'static [crate::api_progress::QuestPathRow] {
     static ROWS: LazyLock<Vec<crate::api_progress::QuestPathRow>> = LazyLock::new(|| {
         BUNDLED_INDEX

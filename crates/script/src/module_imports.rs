@@ -8,21 +8,32 @@ use deno_ast::swc::ast::{ImportSpecifier, ModuleDecl, ModuleExportName, ModuleIt
 use deno_ast::ProgramRef;
 
 /// One static module dependency of a source, in source order.
-pub(crate) struct ModuleImport {
+pub struct ModuleImport {
     /// The quoted module specifier.
-    pub specifier: String,
+    pub(crate) specifier: String,
     /// `(local, exported)` bindings of an `import` (default imports bind
     /// their local name to itself). Empty for re-exports and side-effect imports.
-    pub bindings: Vec<(String, String)>,
+    pub(crate) bindings: Vec<(String, String)>,
     /// False when TS strips the whole declaration (`import type`,
     /// `import { type A }`, `export type { A } from`).
     #[cfg(feature = "load")]
-    pub runtime: bool,
+    pub(crate) runtime: bool,
+}
+
+impl ModuleImport {
+    pub fn into_specifier(self) -> String {
+        self.specifier
+    }
+
+    #[cfg(feature = "load")]
+    pub fn is_runtime(&self) -> bool {
+        self.runtime
+    }
 }
 
 /// Every static dependency of `source`. A source that does not parse as
 /// TypeScript has none here; the transpile at Load reports that failure.
-pub(crate) fn module_imports(source: &str) -> Vec<ModuleImport> {
+pub fn module_imports(source: &str) -> Vec<ModuleImport> {
     let Ok(specifier) = deno_ast::ModuleSpecifier::parse("file:///module.ts") else {
         return Vec::new();
     };

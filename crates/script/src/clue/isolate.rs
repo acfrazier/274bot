@@ -317,15 +317,15 @@ mod verbs;
 use acquire::*;
 #[cfg(test)]
 use combat::{keeper_type, key_step};
-pub(crate) use combat::{Delegation, Outcome};
-pub(crate) use entrana::BANK_APPROACH_FAILED;
+pub use combat::{Delegation, Outcome};
+pub use entrana::BANK_APPROACH_FAILED;
 #[cfg(test)]
 use entrana::{entrana_coord, pick_pack_restricted, pick_worn};
-pub(crate) use family::Clue;
+pub use family::Clue;
 use puzzle::*;
 use scene::*;
 use talk::*;
-pub(crate) use verbs::verb_req;
+pub use verbs::verb_req;
 
 use crate::clue::ARRIVE_RADIUS;
 use crate::food_policy::food_forms_for;
@@ -2004,21 +2004,21 @@ fn pack_full_warning(name: &str, hard: bool) -> String {
     )
 }
 
-pub(crate) fn on_pause() {
+pub fn on_pause() {
     RUNTIME.with(|rt| {
         let held = rt.borrow().clock.held;
         rt.borrow_mut().apply_freeze(true, held);
     });
 }
 
-pub(crate) fn on_resume() {
+pub fn on_resume() {
     RUNTIME.with(|rt| {
         let held = rt.borrow().clock.held;
         rt.borrow_mut().apply_freeze(false, held);
     });
 }
 
-pub(crate) fn on_hold(held: bool) {
+pub fn on_hold(held: bool) {
     RUNTIME.with(|rt| {
         let paused = rt.borrow().clock.paused;
         rt.borrow_mut().apply_freeze(paused, held);
@@ -2033,7 +2033,7 @@ pub(crate) fn on_hold(held: bool) {
 /// bank with `ownsEquipment()` false, while the frozen `validate` keeps its
 /// leave-in-pack latch across a relog too. Operator Stop is
 /// [`on_stop`], not this.
-pub(crate) fn on_reset() {
+pub fn on_reset() {
     RUNTIME.with(|rt| rt.borrow_mut().abort());
 }
 
@@ -2055,7 +2055,7 @@ pub(crate) fn on_stop() {
 /// captured `game_data`, and its death latch reads the current decoded
 /// `observed` chat ring. Sherlock's native death authority enters only through
 /// `next_native`.
-pub(crate) fn dispatch(selected: Option<&SelectedGameData>, input: &Value) -> Value {
+pub fn dispatch(selected: Option<&SelectedGameData>, input: &Value) -> Value {
     match input.get("op").and_then(Value::as_str).unwrap_or("") {
         "trailKit" => acquire::trail_kit(input.get("scrollId")),
         "nextCoordTool" => acquire::next_coord_tool(input.get("held")),
@@ -2109,7 +2109,7 @@ pub(crate) fn dispatch(selected: Option<&SelectedGameData>, input: &Value) -> Va
 
 /// Rust-native next-page adapter. Death authority and observed tick are typed
 /// host arguments, never optional JSON keys accepted from callers.
-pub(crate) fn next_native(
+pub fn next_native(
     selected: Option<&SelectedGameData>,
     input: &Value,
     death_observed: bool,
