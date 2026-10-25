@@ -699,18 +699,31 @@ mod tests {
         let started = Arc::new(AtomicBool::new(false));
         let released = Arc::new(AtomicBool::new(false));
         let _release_on_panic = ReleaseHeldWork(Arc::clone(&released));
-        // Reserve bounded jobs until the byte ledger reports Full. One
-        // 48 MiB reservation is smaller than this folder reload's charge,
-        // so the next attempt must wait rather than refuse the reload.
+        // Keep retrying when unrelated work causes Full. Stop only when our
+        // own held jobs leave too little room for the folder reload.
+        let service = script::work_admission::WorkService::shared()
+            .expect("WorkAdmission service");
+        let deadline = Instant::now() + Duration::from_secs(60);
         let mut held = Vec::new();
-        for index in 0..64_u64 {
+        let mut index = 0_u64;
+        loop {
+            assert!(
+                Instant::now() < deadline,
+                "fixture could not reserve enough WorkAdmission capacity"
+            );
+            let observed = service.lock().publication_epoch();
             let worker_started = Arc::clone(&started);
             let worker_released = Arc::clone(&released);
             let request = script::preparation::submit_cooperative(
                 script::preparation::PreparationKind::Catalogue,
                 api::identity::Scope::Process,
-                script::preparation::PreparationInput::new(777_001 + index, 48 * 1024 * 1024, 0, 0)
-                    .expect("bounded temporary admission load"),
+                script::preparation::PreparationInput::new(
+                    777_001 + index,
+                    48 * 1024 * 1024,
+                    0,
+                    0,
+                )
+                .expect("bounded temporary admission load"),
                 move |_| {
                     worker_started.store(true, Ordering::Release);
                     if worker_released.load(Ordering::Acquire) {
@@ -727,11 +740,31 @@ mod tests {
                     }
                 },
             );
+            index += 1;
             match request {
                 Ok(job) => held.push(job),
                 Err(script::preparation::PreparationError::Refused(
                     api::work::SubmissionRefusal::Full,
-                )) => break,
+                )) => {
+                    let (epoch, jobs) = {
+                        let service = service.lock();
+                        (service.publication_epoch(), service.capacity().jobs())
+                    };
+                    if epoch == observed && jobs == held.len() {
+                        break;
+                    }
+                    match script::work_admission::WorkService::wait_for_publication_change(
+                        &service,
+                        epoch,
+                        Duration::from_secs(1),
+                    ) {
+                        script::work_admission::PublicationWaitOutcome::Changed
+                        | script::work_admission::PublicationWaitOutcome::TimedOut => {}
+                        script::work_admission::PublicationWaitOutcome::Unavailable => {
+                            panic!("WorkAdmission became unavailable during the fixture")
+                        }
+                    }
+                }
                 Err(error) => panic!("temporary capacity fixture: {error}"),
             }
         }
