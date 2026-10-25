@@ -516,6 +516,7 @@ export async function tick(api) {
 "#;
 
 fn start_load(live: &LiveCell, source: &str) {
+    #[cfg(feature = "js")]
     live.play
         .script_start_load(
             &live.account,
@@ -525,6 +526,8 @@ fn start_load(live: &LiveCell, source: &str) {
             vec![],
         )
         .expect("start public Load v2 script");
+    #[cfg(not(feature = "js"))]
+    panic!("seat Load scenarios require host-play's `js` feature");
 }
 
 fn run_promise_cell() {
