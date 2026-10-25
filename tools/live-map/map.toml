@@ -104,7 +104,7 @@ cells = [
 # none arrives after Log out (single command and Fleet plan). See README.md
 # "Log out of a retrying login".
 [[cover]]
-globs = ["crates/frontend-core/src/bot_projection.rs", "crates/panel/src/app.rs", "crates/tui/src/app.rs"]
+globs = ["crates/frontend-core/src/bot_projection.rs", "crates/frontend-core/src/slot_view.rs", "crates/panel/src/app.rs", "crates/tui/src/app.rs"]
 cells = [
   "frontend-core.logout-retry-refused|${ISOHOME:?} nice -n 10 cargo test --locked -p frontend-core --test logout_retry_refused -- --ignored --nocapture",
   "frontend-core.logout-retry-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p frontend-core --lib logout_retry",
