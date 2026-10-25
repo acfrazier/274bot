@@ -8,8 +8,8 @@ use std::{sync::Arc, task::Poll, time::Duration};
 
 // Selected 289 interface.pack: questjournal_scroll and :ifquestname. The
 // generic player/quest_journal.rs2 opens this root for every roster journal.
-pub(crate) const ROOT_289: i32 = 8134;
-pub(crate) const TITLE_289: i32 = 8144;
+pub const ROOT_289: i32 = 8134;
+pub const TITLE_289: i32 = 8144;
 /// Each phase's window in observed game ticks (5 × 600 ms = the former 3 s).
 /// A host hitch that freezes the snapshot does not spend it.
 const WINDOW_TICKS: u64 = 5;
@@ -45,7 +45,7 @@ fn failure(reason: &'static str) -> ActionError {
     ActionError::Failed(Arc::from(reason))
 }
 
-pub(crate) fn title_matches(actual: &str, expected: &str) -> bool {
+pub fn title_matches(actual: &str, expected: &str) -> bool {
     // The selected server prefixes the title with @dre@. Do not infer a title
     // from body position or accept a different quest on the same root.
     actual.strip_prefix("@dre@").unwrap_or(actual).trim() == expected
@@ -310,4 +310,4 @@ impl NativeMachine for JournalMachine {
 
 #[cfg(test)]
 #[path = "native_tests.rs"]
-pub(crate) mod tests;
+pub mod tests;

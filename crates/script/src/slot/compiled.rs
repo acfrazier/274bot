@@ -425,9 +425,9 @@ pub(super) fn frame_context<'a>(
 }
 
 /// Borrowed, owner-controlled seat capabilities passed to one compiled tick.
-pub(super) struct SeatTickPorts<'a> {
-    pub authority: Option<crate::native::ServiceAuthority<'a>>,
-    pub prompt: Option<&'a mut dyn crate::native::SeatPromptPort>,
+pub struct SeatTickPorts<'a> {
+    pub(crate) authority: Option<crate::native::ServiceAuthority<'a>>,
+    pub(crate) prompt: Option<&'a mut dyn crate::native::SeatPromptPort>,
 }
 
 impl CompiledRun {
@@ -979,7 +979,6 @@ pub(super) fn prepare_run(
 /// Off-pump preparation for an API seat's unlisted native card (no Browse
 /// registry entry): `build` creates the card from the selected data on the
 /// preparation worker and returns its prepared configuration.
-#[cfg(feature = "load")]
 pub(super) fn prepare_native_run(
     run: RunKey,
     selected: Arc<api::game_data::SelectedGameData>,
@@ -1081,7 +1080,7 @@ impl SlotScript {
         if self.quest_pairs.as_ref().is_some_and(|pairs| pairs.busy()) {
             return Err(StartError::Unavailable("Stop this pair first".into()));
         }
-        if !matches!(self.state, RunState::Idle | RunState::Error) || self.load_active() {
+        if !matches!(self.state, RunState::Idle | RunState::Error) || self.surface_active() {
             return Err(StartError::Busy);
         }
         if self.incarnation == 0 {
@@ -1325,7 +1324,6 @@ impl SlotScript {
         self.bank_op_result_seq = 0;
         self.bank_op_result = false;
         self.last_settings_fp = None;
-        #[cfg(feature = "load")]
         {
             self.compiled_interacts.clear();
             self.compiled_interact_outcome_seqs.clear();
@@ -1343,8 +1341,7 @@ impl SlotScript {
 
     pub fn observe_lifecycle(&mut self) {
         self.poll_compiled();
-        #[cfg(feature = "load")]
-        self.observe_load_lifecycle();
+        self.observe_surface_lifecycle();
     }
 
     pub fn native_run(&self) -> Option<RunKey> {
@@ -1363,7 +1360,6 @@ impl SlotScript {
             .compiled
             .as_ref()
             .and_then(|run| run.output.status.clone());
-        #[cfg(feature = "load")]
         let status = status.or_else(|| self.api_status());
         status.or_else(|| self.terminal_native_status.clone())
     }
@@ -1482,11 +1478,10 @@ impl SlotScript {
 
     pub(super) fn fail_compiled(&mut self, failure: ScriptFailure) {
         self.revoke_native_input();
-        #[cfg(feature = "load")]
         {
             self.compiled_interacts.clear();
             self.compiled_interact_outcome_seqs.clear();
-            self.clue_abort_owed = true;
+            self.card_abort_owed = true;
         }
         self.pending_logs.push(failure.message.to_string());
         self.last_error = Some(failure.message.to_string());
@@ -1540,7 +1535,7 @@ impl SlotScript {
         script: Box<dyn Script>,
         selected: Option<Arc<api::game_data::SelectedGameData>>,
     ) -> Result<(), String> {
-        if !matches!(self.state, RunState::Idle | RunState::Error) || self.load_active() {
+        if !matches!(self.state, RunState::Idle | RunState::Error) || self.surface_active() {
             return Err(StartError::Busy.to_string());
         }
         let selected = match selected {
@@ -1583,11 +1578,19 @@ impl SlotScript {
 
 #[cfg(all(test, feature = "load"))]
 #[derive(Default)]
-pub(crate) struct TestOutput {
-    pub statuses: Vec<ScriptStatus>,
-    pub paints: Vec<Arc<crate::shim::ScriptPaint>>,
-    pub logs: Vec<String>,
+pub struct TestOutput {
+    pub(crate) statuses: Vec<ScriptStatus>,
+    pub(crate) paints: Vec<Arc<crate::shim::ScriptPaint>>,
+    pub(crate) logs: Vec<String>,
 }
+
+#[cfg(all(test, feature = "load"))]
+impl TestOutput {
+    pub fn paints(&self) -> &[Arc<crate::paint::ScriptPaint>] {
+        &self.paints
+    }
+}
+
 #[cfg(all(test, feature = "load"))]
 impl NativeOutput for TestOutput {
     fn status(&mut self, status: ScriptStatus) {

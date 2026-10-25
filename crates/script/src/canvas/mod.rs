@@ -27,7 +27,7 @@ pub use geom::{
 #[cfg(feature = "load")]
 pub use raster::{dirty_bounds, rasterize};
 #[cfg(feature = "load")]
-pub(crate) use style::font_for;
+pub use style::font_for;
 pub use style::{font_px_allowed, measure_with, pack_rgba, parse_color, parse_font, unpack_rgba};
 
 use geom::{append_arc, finite_f32};
@@ -36,6 +36,31 @@ use geom::{append_arc, finite_f32};
 pub const APPLET_W: i32 = api::native_input::APPLET_W;
 /// Client applet height in pixels (bound to `api::native_input::APPLET_H`).
 pub const APPLET_H: i32 = api::native_input::APPLET_H;
+
+/// A failure returned by a Canvas operation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum CanvasError {
+    #[error("IndexSizeError: radius must be non-negative")]
+    NegativeRadius,
+    #[error("canvas: createLinearGradient not finite")]
+    LinearGradientNotFinite,
+    #[error("canvas: exceeded gradients")]
+    ExceededGradients,
+    #[error("canvas: createRadialGradient not finite")]
+    RadialGradientNotFinite,
+    #[error("IndexSizeError: radii must be non-negative")]
+    NegativeRadii,
+    #[error("IndexSizeError: offset must be in [0, 1]")]
+    OffsetOutOfRange,
+    #[error("SyntaxError: invalid color")]
+    InvalidColor,
+    #[error("canvas: unknown gradient")]
+    UnknownGradient,
+    #[error("canvas: exceeded gradient stops")]
+    ExceededGradientStops,
+    #[error("canvas: measureText exceeds {MAX_PAINT_TEXT} byte cap")]
+    MeasureTextTooLong,
+}
 
 /// Max recorded canvas ops per onPaint call / paint frame.
 pub const MAX_CANVAS_OPS: usize = 256;
@@ -704,7 +729,7 @@ pub fn quadratic_curve_to(cx: f64, cy: f64, x: f64, y: f64) {
     push_seg(PathSeg::QuadTo { cx, cy, x, y });
 }
 
-pub fn arc(x: f64, y: f64, r: f64, start: f64, end: f64, ccw: bool) -> Result<(), String> {
+pub fn arc(x: f64, y: f64, r: f64, start: f64, end: f64, ccw: bool) -> Result<(), CanvasError> {
     let Some(x) = finite_f32(x) else {
         return Ok(());
     };
@@ -721,7 +746,7 @@ pub fn arc(x: f64, y: f64, r: f64, start: f64, end: f64, ccw: bool) -> Result<()
         return Ok(());
     };
     if r < 0.0 {
-        return Err("IndexSizeError: radius must be non-negative".into());
+        return Err(CanvasError::NegativeRadius);
     }
     RECORDER.with(|rec| {
         let mut rec = rec.borrow_mut();
@@ -805,19 +830,19 @@ pub fn clip() {
     });
 }
 
-pub fn create_linear(x0: f64, y0: f64, x1: f64, y1: f64) -> Result<u32, String> {
-    let x0 = finite_f32(x0).ok_or_else(|| "canvas: createLinearGradient not finite".to_string())?;
-    let y0 = finite_f32(y0).ok_or_else(|| "canvas: createLinearGradient not finite".to_string())?;
-    let x1 = finite_f32(x1).ok_or_else(|| "canvas: createLinearGradient not finite".to_string())?;
-    let y1 = finite_f32(y1).ok_or_else(|| "canvas: createLinearGradient not finite".to_string())?;
+pub fn create_linear(x0: f64, y0: f64, x1: f64, y1: f64) -> Result<u32, CanvasError> {
+    let x0 = finite_f32(x0).ok_or(CanvasError::LinearGradientNotFinite)?;
+    let y0 = finite_f32(y0).ok_or(CanvasError::LinearGradientNotFinite)?;
+    let x1 = finite_f32(x1).ok_or(CanvasError::LinearGradientNotFinite)?;
+    let y1 = finite_f32(y1).ok_or(CanvasError::LinearGradientNotFinite)?;
     RECORDER.with(|r| {
         let mut rec = r.borrow_mut();
         if rec.overflow {
-            return Err("canvas: exceeded gradients".into());
+            return Err(CanvasError::ExceededGradients);
         }
         if rec.gradients.len() >= MAX_GRADIENTS {
             rec.fail(BoundFail::Gradients);
-            return Err("canvas: exceeded gradients".into());
+            return Err(CanvasError::ExceededGradients);
         }
         let id = rec.gradients.len() as u32;
         rec.gradients.push(LiveGradient {
@@ -833,24 +858,31 @@ pub fn create_linear(x0: f64, y0: f64, x1: f64, y1: f64) -> Result<u32, String> 
     })
 }
 
-pub fn create_radial(x0: f64, y0: f64, r0: f64, x1: f64, y1: f64, r1: f64) -> Result<u32, String> {
-    let x0 = finite_f32(x0).ok_or_else(|| "canvas: createRadialGradient not finite".to_string())?;
-    let y0 = finite_f32(y0).ok_or_else(|| "canvas: createRadialGradient not finite".to_string())?;
-    let r0 = finite_f32(r0).ok_or_else(|| "canvas: createRadialGradient not finite".to_string())?;
-    let x1 = finite_f32(x1).ok_or_else(|| "canvas: createRadialGradient not finite".to_string())?;
-    let y1 = finite_f32(y1).ok_or_else(|| "canvas: createRadialGradient not finite".to_string())?;
-    let r1 = finite_f32(r1).ok_or_else(|| "canvas: createRadialGradient not finite".to_string())?;
+pub fn create_radial(
+    x0: f64,
+    y0: f64,
+    r0: f64,
+    x1: f64,
+    y1: f64,
+    r1: f64,
+) -> Result<u32, CanvasError> {
+    let x0 = finite_f32(x0).ok_or(CanvasError::RadialGradientNotFinite)?;
+    let y0 = finite_f32(y0).ok_or(CanvasError::RadialGradientNotFinite)?;
+    let r0 = finite_f32(r0).ok_or(CanvasError::RadialGradientNotFinite)?;
+    let x1 = finite_f32(x1).ok_or(CanvasError::RadialGradientNotFinite)?;
+    let y1 = finite_f32(y1).ok_or(CanvasError::RadialGradientNotFinite)?;
+    let r1 = finite_f32(r1).ok_or(CanvasError::RadialGradientNotFinite)?;
     if r0 < 0.0 || r1 < 0.0 {
-        return Err("IndexSizeError: radii must be non-negative".into());
+        return Err(CanvasError::NegativeRadii);
     }
     RECORDER.with(|r| {
         let mut rec = r.borrow_mut();
         if rec.overflow {
-            return Err("canvas: exceeded gradients".into());
+            return Err(CanvasError::ExceededGradients);
         }
         if rec.gradients.len() >= MAX_GRADIENTS {
             rec.fail(BoundFail::Gradients);
-            return Err("canvas: exceeded gradients".into());
+            return Err(CanvasError::ExceededGradients);
         }
         let id = rec.gradients.len() as u32;
         rec.gradients.push(LiveGradient {
@@ -868,27 +900,27 @@ pub fn create_radial(x0: f64, y0: f64, r0: f64, x1: f64, y1: f64, r1: f64) -> Re
     })
 }
 
-pub fn add_color_stop(id: u32, offset: f64, color: &str) -> Result<(), String> {
+pub fn add_color_stop(id: u32, offset: f64, color: &str) -> Result<(), CanvasError> {
     if !offset.is_finite() || !(0.0..=1.0).contains(&offset) {
-        return Err("IndexSizeError: offset must be in [0, 1]".into());
+        return Err(CanvasError::OffsetOutOfRange);
     }
-    let color = parse_color(color).ok_or_else(|| "SyntaxError: invalid color".to_string())?;
+    let color = parse_color(color).ok_or(CanvasError::InvalidColor)?;
     RECORDER.with(|r| {
         let mut rec = r.borrow_mut();
         let idx = id as usize;
         let len = match rec.gradients.get(idx).map(|g| &g.paint) {
             Some(FillPaint::Linear { stops, .. } | FillPaint::Radial { stops, .. }) => stops.len(),
             Some(FillPaint::Solid) => 0,
-            None => return Err("canvas: unknown gradient".into()),
+            None => return Err(CanvasError::UnknownGradient),
         };
         if len >= MAX_GRADIENT_STOPS {
             rec.fail(BoundFail::GradStops);
-            return Err("canvas: exceeded gradient stops".into());
+            return Err(CanvasError::ExceededGradientStops);
         }
         let g = rec
             .gradients
             .get_mut(idx)
-            .ok_or_else(|| "canvas: unknown gradient".to_string())?;
+            .ok_or(CanvasError::UnknownGradient)?;
         let stops = match &mut g.paint {
             FillPaint::Linear { stops, .. } | FillPaint::Radial { stops, .. } => stops,
             FillPaint::Solid => return Ok(()),
@@ -903,12 +935,10 @@ pub fn add_color_stop(id: u32, offset: f64, color: &str) -> Result<(), String> {
 
 /// Advance-sum width for the current font. Oversized input fails closed
 /// instead of inventing width 0.
-pub fn measure_text(text: &str) -> Result<f64, String> {
+pub fn measure_text(text: &str) -> Result<f64, CanvasError> {
     if text.len() > MAX_PAINT_TEXT {
         RECORDER.with(|r| r.borrow_mut().fail(BoundFail::Text));
-        return Err(format!(
-            "canvas: measureText exceeds {MAX_PAINT_TEXT} byte cap"
-        ));
+        return Err(CanvasError::MeasureTextTooLong);
     }
     RECORDER.with(|r| {
         let rec = r.borrow();
@@ -982,7 +1012,7 @@ pub struct DirtyRect {
 }
 
 #[cfg(feature = "load")]
-pub(crate) fn clip_to_applet(x: i64, y: i64, w: i64, h: i64) -> Option<DirtyRect> {
+pub fn clip_to_applet(x: i64, y: i64, w: i64, h: i64) -> Option<DirtyRect> {
     let x1 = x.max(0);
     let y1 = y.max(0);
     let x2 = x.saturating_add(w).min(i64::from(APPLET_W));
@@ -1000,7 +1030,7 @@ pub(crate) fn clip_to_applet(x: i64, y: i64, w: i64, h: i64) -> Option<DirtyRect
 }
 
 #[cfg(feature = "load")]
-pub(crate) fn normalize_rect(x: i32, y: i32, w: i32, h: i32) -> Option<(i64, i64, i64, i64)> {
+pub fn normalize_rect(x: i32, y: i32, w: i32, h: i32) -> Option<(i64, i64, i64, i64)> {
     let mut x = i64::from(x);
     let mut y = i64::from(y);
     let mut w = i64::from(w);

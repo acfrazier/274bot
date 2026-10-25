@@ -15,7 +15,7 @@ pub use crate::card::{
 };
 
 #[cfg(feature = "load")]
-pub(crate) use paths::absolute_clean;
+pub use paths::absolute_clean;
 pub use paths::{
     clear_rs2b0t_import_at, default_rs2b0t_import_file, default_rs2b0t_path_file,
     persist_rs2b0t_root, persist_rs2b0t_root_at, registry_index_path, rs2b0t_import_deferred,
@@ -23,7 +23,7 @@ pub use paths::{
     rs2b0t_root_checked_at, script_file_path, set_rs2b0t_import_deferred_at,
 };
 #[cfg(feature = "load")]
-pub(crate) use settings::insert_shop_db_from_root;
+pub use settings::insert_shop_db_from_root;
 use settings::parse_settings_export;
 pub(crate) use settings::{
     catalog_option_table, is_revision_fact_option_ident, w1c_equipment_option_families,
@@ -80,13 +80,13 @@ pub fn parse_registry_card_with_sources(
 /// Parsed registry index retained while a bounded catalogue refresh prepares
 /// each changed card without rescanning the registry for every candidate.
 #[derive(Debug)]
-pub(crate) struct RegistryIndex {
+pub struct RegistryIndex {
     imports: HashMap<String, ImportBinding>,
     registers: Vec<RegisterInfo>,
 }
 
 impl RegistryIndex {
-    pub(crate) fn parse(index_ts: &str) -> Result<Self, String> {
+    pub fn parse(index_ts: &str) -> Result<Self, String> {
         let imports = scan_imports(index_ts);
         let registers = scan_registers(index_ts);
         if registers.is_empty() {
@@ -96,7 +96,7 @@ impl RegistryIndex {
     }
 
     #[cfg(feature = "load")]
-    pub(crate) fn registrations(&self) -> Result<Vec<RegistryCard>, String> {
+    pub fn registrations(&self) -> Result<Vec<RegistryCard>, String> {
         self.cards_with_sources(&HashMap::new())
     }
 
@@ -125,7 +125,7 @@ impl RegistryIndex {
     }
 
     #[cfg(any(feature = "load", test))]
-    pub(crate) fn card_with_sources_bounded(
+    pub fn card_with_sources_bounded(
         &self,
         sources: &HashMap<String, String>,
         name: &str,
@@ -269,7 +269,7 @@ fn settings_blob_bounded(
 
 #[cfg(feature = "load")]
 /// `import … from './Logic.js'` next to `./Folder/Script.js` → `./Folder/Logic.js`.
-pub(crate) fn same_dir_import_rel(script_rel: &str, import_rel: &str) -> Option<String> {
+pub fn same_dir_import_rel(script_rel: &str, import_rel: &str) -> Option<String> {
     let import = import_rel.strip_prefix("./")?;
     if import.contains('/') || import.contains('\\') || import.contains("..") {
         return None;
@@ -297,7 +297,7 @@ fn scan_imports(src: &str) -> HashMap<String, ImportBinding> {
 }
 
 #[cfg(feature = "load")]
-pub(crate) fn same_dir_import_rels(script_rel: &str, src: &str) -> Vec<String> {
+pub fn same_dir_import_rels(script_rel: &str, src: &str) -> Vec<String> {
     let mut out = Vec::new();
     for binding in scan_imports(src).into_values() {
         if let Some(sib) = same_dir_import_rel(script_rel, &binding.rel_path) {

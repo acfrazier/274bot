@@ -415,12 +415,12 @@ fn bank_access(
             )
         }
     };
-    Ok(BankSeatObjectAccess {
-        name: bank_required_string(object, "name", None)?,
-        op: bank_required_string(object, "op", None)?,
+    Ok(BankSeatObjectAccess::new(
+        bank_required_string(object, "name", None)?,
+        bank_required_string(object, "op", None)?,
         open_first_name,
         open_first_op,
-    })
+    ))
 }
 
 fn bank_optional_access(
@@ -439,11 +439,11 @@ fn bank_npc_access(
 ) -> Result<crate::bank::request::BankSeatNpcAccess, String> {
     use crate::bank::request::BankSeatNpcAccess;
     let object = bank_object(value, description)?;
-    Ok(BankSeatNpcAccess {
-        name: bank_required_string(object, "name", None)?,
-        op: bank_required_string(object, "op", None)?,
-        choose: bank_string(object, "choose", None)?,
-    })
+    Ok(BankSeatNpcAccess::new(
+        bank_required_string(object, "name", None)?,
+        bank_required_string(object, "op", None)?,
+        bank_string(object, "choose", None)?,
+    ))
 }
 
 fn bank_optional_npc_access(
@@ -465,17 +465,17 @@ fn bank_destination(
     };
     let object = bank_object(value, "destination")?;
     let tile_value = object.get("tile").unwrap_or(value);
-    Ok(Some(BankSeatDestination {
-        tile: bank_tile(tile_value, "destination.tile")?,
-        object_access: bank_optional_access(
+    Ok(Some(BankSeatDestination::new(
+        bank_tile(tile_value, "destination.tile")?,
+        bank_optional_access(
             bank_field(object, "object_access", Some("access")),
             "destination.access",
         )?,
-        npc_access: bank_optional_npc_access(
+        bank_optional_npc_access(
             bank_field(object, "npc_access", Some("npcAccess")),
             "destination.npcAccess",
         )?,
-    }))
+    )))
 }
 
 fn bank_string_list(value: Option<&Value>, name: &str) -> Result<Vec<String>, String> {
@@ -623,58 +623,61 @@ fn parse_bank_start(
             match kind.as_str() {
                 "deposit" => {
                     let mut args = Args::new(Op::DepositLabel);
-                    args.item_name = Some(bank_required_string(object, "name", None)?);
-                    args.menu_op = Some(bank_required_string(object, "op", None)?);
+                    args.set_item_name(Some(bank_required_string(object, "name", None)?));
+                    args.set_menu_op(Some(bank_required_string(object, "op", None)?));
                     args
                 }
                 "withdraw" => {
                     let amount = object.get("amount").unwrap_or(&Value::Null);
                     let mut args = Args::new(Op::WithdrawLabel);
-                    args.item_name = Some(bank_required_string(object, "name", None)?);
+                    args.set_item_name(Some(bank_required_string(object, "name", None)?));
                     if let Some(label) = amount.as_str() {
-                        args.menu_op = Some(if label.eq_ignore_ascii_case("all") {
+                        args.set_menu_op(Some(if label.eq_ignore_ascii_case("all") {
                             "Withdraw All".into()
                         } else {
                             label.to_owned()
-                        });
+                        }));
                     } else {
-                        args.quantity = Some(bank_withdraw_threshold(amount));
+                        args.set_quantity(Some(bank_withdraw_threshold(amount)));
                     }
                     args
                 }
                 "withdraw-id" => {
                     let mut args = Args::new(Op::WithdrawLabel);
-                    args.item_id = Some(bank_i32(object.get("id").ok_or("id is required")?, "id")?);
+                    args.set_item_id(Some(bank_i32(
+                        object.get("id").ok_or("id is required")?,
+                        "id",
+                    )?));
                     let op = bank_required_string(object, "op", None)?;
-                    args.menu_op = Some(
+                    args.set_menu_op(Some(
                         if matches!(op.to_lowercase().as_str(), "withdraw-all" | "all") {
                             "Withdraw All".into()
                         } else {
                             op.replace('-', " ")
                         },
-                    );
+                    ));
                     args
                 }
                 "withdraw-x" => {
                     let mut args = Args::new(Op::WithdrawDelta);
-                    args.item_name = Some(bank_required_string(object, "name", None)?);
-                    args.quantity = Some(bank_positive_withdraw_count(
+                    args.set_item_name(Some(bank_required_string(object, "name", None)?));
+                    args.set_quantity(Some(bank_positive_withdraw_count(
                         object.get("count").unwrap_or(&Value::Null),
                         "count",
-                    )?);
+                    )?));
                     args
                 }
                 "withdraw-x-id" => {
                     let id = bank_required_id(object.get("id").ok_or("id is required")?, "id")?;
                     let mut args = Args::new(Op::WithdrawDelta);
-                    args.item_id = Some(id);
-                    args.quantity = Some(bank_positive_withdraw_count(
+                    args.set_item_id(Some(id));
+                    args.set_quantity(Some(bank_positive_withdraw_count(
                         object.get("count").unwrap_or(&Value::Null),
                         "count",
-                    )?);
-                    args.lands_as_id = Some(bank_required_lands_as(
+                    )?));
+                    args.set_lands_as_id(Some(bank_required_lands_as(
                         object.get("lands_as").unwrap_or(&Value::Null),
-                    )?);
+                    )?));
                     args
                 }
                 _ => return Err(format!("unknown bank operation {kind:?}")),
@@ -682,21 +685,21 @@ fn parse_bank_start(
         }
         "bank_withdraw_load" => {
             let mut args = Args::new(Op::WithdrawLoad);
-            args.withdraw_load_selector = Some(if let Some(id) = object.get("id") {
+            args.set_withdraw_load_selector(Some(if let Some(id) = object.get("id") {
                 WithdrawLoadSelector::Id(bank_required_id(id, "id")?)
             } else {
                 WithdrawLoadSelector::Name(bank_required_string(object, "name", None)?)
-            });
+            }));
             args
         }
         "bank_note_mode" => {
             let mut args = Args::new(Op::SetNoteMode);
-            args.note_mode = bank_boolean(object, "on", false)?;
+            args.set_note_mode(bank_boolean(object, "on", false)?);
             args
         }
         "bank_close" => {
             let mut args = Args::new(Op::Close);
-            args.timeout_ms = bank_number(object, "timeout_ms")?;
+            args.set_timeout_ms(bank_number(object, "timeout_ms")?);
             args
         }
         "bank_deposit" => {
@@ -704,7 +707,7 @@ fn parse_bank_start(
                 Args::new(Op::DepositAll)
             } else if object.get("keep").is_some_and(|keep| !keep.is_null()) {
                 let mut args = Args::new(Op::DepositKeep);
-                args.keep_names = bank_string_list(object.get("keep"), "keep")?;
+                args.set_keep_names(bank_string_list(object.get("keep"), "keep")?);
                 args
             } else {
                 Args::new(Op::DepositMatch)
@@ -717,12 +720,12 @@ fn parse_bank_start(
             let booth_op = bank_string(object, "booth_action", None)?;
             let object_access = match (booth_name, booth_op) {
                 (None, None) => None,
-                (name, op) => Some(crate::bank::request::BankSeatObjectAccess {
-                    name: name.unwrap_or_else(|| "Bank booth".into()),
-                    op: op.unwrap_or_else(|| "Use-quickly".into()),
-                    open_first_name: None,
-                    open_first_op: None,
-                }),
+                (name, op) => Some(crate::bank::request::BankSeatObjectAccess::new(
+                    name.unwrap_or_else(|| "Bank booth".into()),
+                    op.unwrap_or_else(|| "Use-quickly".into()),
+                    None,
+                    None,
+                )),
             };
             let operation = match mode.as_str() {
                 "open-booth" => Op::OpenBooth,
@@ -731,101 +734,105 @@ fn parse_bank_start(
                 _ => return Err(format!("unknown bank open mode {mode:?}")),
             };
             let mut args = Args::new(operation);
-            args.stand = stand;
-            args.object_access = object_access;
+            args.set_stand(stand);
+            args.set_object_access(object_access);
             args
         }
         "bank_access" => {
             let mut args = Args::new(Op::OpenObject);
-            args.object_access = Some(bank_access(&value, family)?);
+            args.set_object_access(Some(bank_access(&value, family)?));
             args
         }
         "bank_npc_access" => {
             let mut args = Args::new(Op::OpenNpc);
-            args.npc_access = Some(bank_npc_access(&value, family)?);
+            args.set_npc_access(Some(bank_npc_access(&value, family)?));
             args
         }
         "bank_open_access" => {
             let mut args = Args::new(Op::OpenAccess);
-            args.object_access =
-                bank_optional_access(bank_field(object, "access", None), "access")?;
-            args.npc_access = bank_optional_npc_access(
+            args.set_object_access(bank_optional_access(
+                bank_field(object, "access", None),
+                "access",
+            )?);
+            args.set_npc_access(bank_optional_npc_access(
                 bank_field(object, "npc_access", Some("npcAccess")),
                 "npc_access",
-            )?;
-            args.fallback_access =
-                bank_optional_access(bank_field(object, "fallback", None), "fallback")?;
+            )?);
+            args.set_fallback_access(bank_optional_access(
+                bank_field(object, "fallback", None),
+                "fallback",
+            )?);
             args
         }
         "banking_open" => {
             let mut args = Args::new(Op::Open);
-            args.stand = bank_optional_tile(object, "stand", None)?;
-            args.destination = bank_destination(object.get("destination"))?;
+            args.set_stand(bank_optional_tile(object, "stand", None)?);
+            args.set_destination(bank_destination(object.get("destination"))?);
             let booth_name = bank_string(object, "boothName", None)?;
             let booth_op = bank_string(object, "boothOp", None)?;
-            args.object_access = match (booth_name, booth_op) {
+            args.set_object_access(match (booth_name, booth_op) {
                 (None, None) => None,
-                (name, op) => Some(crate::bank::request::BankSeatObjectAccess {
-                    name: name.unwrap_or_else(|| "Bank booth".into()),
-                    op: op.unwrap_or_else(|| "Use-quickly".into()),
-                    open_first_name: None,
-                    open_first_op: None,
-                }),
-            };
-            args.prefer_nearby = match object.get("preferNearby") {
+                (name, op) => Some(crate::bank::request::BankSeatObjectAccess::new(
+                    name.unwrap_or_else(|| "Bank booth".into()),
+                    op.unwrap_or_else(|| "Use-quickly".into()),
+                    None,
+                    None,
+                )),
+            });
+            args.set_prefer_nearby(match object.get("preferNearby") {
                 None | Some(Value::Null) => None,
                 Some(Value::Bool(value)) => Some(*value),
                 Some(_) => return Err("preferNearby must be a boolean".into()),
-            };
-            args.nearby_radius = bank_number(object, "nearbyRadius")?;
-            args.obstacles = bank_string_list(object.get("obstacles"), "obstacles")?;
+            });
+            args.set_nearby_radius(bank_number(object, "nearbyRadius")?);
+            args.set_obstacles(bank_string_list(object.get("obstacles"), "obstacles")?);
             args
         }
         "bank_select" => {
             let mut args = Args::new(Op::Select);
-            args.stand = bank_optional_tile(object, "from", None)?;
-            args.allow_wilderness = bank_boolean(object, "allow_wilderness", false)?;
-            args.use_mage_bank = match object.get("use_mage_bank") {
+            args.set_stand(bank_optional_tile(object, "from", None)?);
+            args.set_allow_wilderness(bank_boolean(object, "allow_wilderness", false)?);
+            args.set_use_mage_bank(match object.get("use_mage_bank") {
                 None | Some(Value::Null) => None,
                 Some(Value::Bool(value)) => Some(*value),
                 Some(_) => return Err("use_mage_bank must be a boolean".into()),
-            };
-            args.use_zanaris_bank = match object.get("use_zanaris_bank") {
+            });
+            args.set_use_zanaris_bank(match object.get("use_zanaris_bank") {
                 None | Some(Value::Null) => None,
                 Some(Value::Bool(value)) => Some(*value),
                 Some(_) => return Err("use_zanaris_bank must be a boolean".into()),
-            };
+            });
             args
         }
         "bank_nearest" => {
             let mut args = Args::new(Op::BankNearest);
-            args.destination = bank_destination(object.get("destination"))?;
+            args.set_destination(bank_destination(object.get("destination"))?);
             let booth_name = bank_string(object, "booth_name", None)?;
             let booth_op = bank_string(object, "booth_op", None)?;
-            args.object_access = match (booth_name, booth_op) {
+            args.set_object_access(match (booth_name, booth_op) {
                 (None, None) => None,
-                (name, op) => Some(crate::bank::request::BankSeatObjectAccess {
-                    name: name.unwrap_or_else(|| "Bank booth".into()),
-                    op: op.unwrap_or_else(|| "Use-quickly".into()),
-                    open_first_name: None,
-                    open_first_op: None,
-                }),
-            };
-            args.return_to = bank_optional_tile(object, "return_to", None)?;
-            args.deposit_all = bank_boolean(object, "deposit_all", false)?;
-            args.common_junk = bank_boolean(object, "common_junk", true)?;
+                (name, op) => Some(crate::bank::request::BankSeatObjectAccess::new(
+                    name.unwrap_or_else(|| "Bank booth".into()),
+                    op.unwrap_or_else(|| "Use-quickly".into()),
+                    None,
+                    None,
+                )),
+            });
+            args.set_return_to(bank_optional_tile(object, "return_to", None)?);
+            args.set_deposit_all(bank_boolean(object, "deposit_all", false)?);
+            args.set_common_junk(bank_boolean(object, "common_junk", true)?);
             args
         }
         "bank_wait" => match bank_required_string(object, "kind", None)?.as_str() {
             "ready" => {
                 let mut args = Args::new(Op::WaitReady);
-                args.timeout_ms = bank_number(object, "timeout_ms")?;
+                args.set_timeout_ms(bank_number(object, "timeout_ms")?);
                 args
             }
             "snapshot-after" => {
                 let mut args = Args::new(Op::WaitSnapshotAfter);
-                args.timeout_ms = bank_number(object, "timeout_ms")?;
-                args.baseline_generation = bank_number(object, "baseline_generation")?;
+                args.set_timeout_ms(bank_number(object, "timeout_ms")?);
+                args.set_baseline_generation(bank_number(object, "baseline_generation")?);
                 args
             }
             other => return Err(format!("unknown bank wait kind {other:?}")),
@@ -1693,17 +1700,19 @@ fn enqueue_bank_child(
 ) -> Result<(), String> {
     let descriptor =
         bank_family_descriptor(family).ok_or_else(|| format!("unknown bank family {family:?}"))?;
-    if bank_family_for_operation(args.operation) != family {
+    let operation = args.operation();
+    if bank_family_for_operation(operation) != family {
         return Err(format!(
             "bank operation {:?} does not belong to {family}",
-            args.operation
+            operation
         ));
     }
-    args.validate(descriptor.kind)?;
-    let transfer_busy = bank_transfer_operation(args.operation)
-        || (args.operation == crate::bank::request::BankSeatOperation::BankNearest
-            && (args.deposit_all
-                || args.hooks_present & crate::bank::request::BANK_NEAREST_HOOK_DEPOSIT != 0));
+    args.validate(descriptor.kind)
+        .map_err(|error| error.to_string())?;
+    let transfer_busy = bank_transfer_operation(operation)
+        || (operation == crate::bank::request::BankSeatOperation::BankNearest
+            && (args.deposit_all()
+                || args.hooks_present() & crate::bank::request::BANK_NEAREST_HOOK_DEPOSIT != 0));
     HOST.with(|host| {
         let mut host = host.borrow_mut();
         if host.execution.is_none() {
@@ -1752,19 +1761,18 @@ impl NativeBankChild {
         if cx.context.parent_revoked {
             return Err("parent not live".into());
         }
-        let family = bank_family_for_operation(args.operation);
+        let operation = args.operation();
+        let family = bank_family_for_operation(operation);
         let descriptor = bank_family_descriptor(family)
             .ok_or_else(|| format!("unknown bank family {family:?}"))?;
-        let (hook_indices, hooks_present) = bank_hook_indices(
-            descriptor,
-            args.operation,
-            hook_map,
-            cx.hooks.len(),
-            |index| cx.has(index),
-        )?;
-        require_bank_hooks(args.operation, hooks_present)?;
-        args.hooks_present = hooks_present;
-        args.validate(descriptor.kind)?;
+        let (hook_indices, hooks_present) =
+            bank_hook_indices(descriptor, operation, hook_map, cx.hooks.len(), |index| {
+                cx.has(index)
+            })?;
+        require_bank_hooks(operation, hooks_present)?;
+        args.set_hooks_present(hooks_present);
+        args.validate(descriptor.kind)
+            .map_err(|error| error.to_string())?;
         let handle = HOST
             .with(|host| host.borrow_mut().allocate_handle())
             .ok_or_else(|| "native bank seat identity exhausted".to_owned())?;
@@ -1992,7 +2000,7 @@ fn queue_bank_decision(
     sequence: DecisionSequence,
     answer: Value,
 ) -> Result<(), String> {
-    let answer = crate::channel::encode(&answer)?;
+    let answer = crate::channel::encode(&answer).map_err(|error| error.to_string())?;
     if answer.len() > isolate_fb::MAX_SEAT_BINARY_BYTES {
         return Err(format!(
             "native bank decision exceeds {} bytes",
@@ -3496,14 +3504,15 @@ fn start_bank_family(
         Ok(args) => args,
         Err(error) => return Started::Refused(error),
     };
-    if bank_family_for_operation(args.operation) != family {
+    let operation = args.operation();
+    if bank_family_for_operation(operation) != family {
         return Started::Refused(format!(
             "bank operation {:?} does not belong to {family}",
-            args.operation
+            operation
         ));
     }
     if let Err(error) = args.validate(descriptor.kind) {
-        return Started::Refused(error);
+        return Started::Refused(error.to_string());
     }
     if family == "bank_deposit"
         && HOST.with(|host| {
@@ -3529,18 +3538,18 @@ fn start_bank_family(
     }
     let hook_map = &hook_map[..descriptor.callbacks.len()];
     let (hook_indices, hooks_present) =
-        match bank_hook_indices(descriptor, args.operation, hook_map, hooks.len(), |index| {
+        match bank_hook_indices(descriptor, operation, hook_map, hooks.len(), |index| {
             hooks[index].present
         }) {
             Ok(result) => result,
             Err(error) => return Started::Refused(error),
         };
-    if let Err(error) = require_bank_hooks(args.operation, hooks_present) {
+    if let Err(error) = require_bank_hooks(operation, hooks_present) {
         return Started::Refused(error);
     }
-    args.hooks_present = hooks_present;
+    args.set_hooks_present(hooks_present);
     if let Err(error) = args.validate(descriptor.kind) {
-        return Started::Refused(error);
+        return Started::Refused(error.to_string());
     }
     if HOST.with(|host| host.borrow().pending_starts.len() >= MAX_PENDING_SEAT_STARTS) {
         return Started::Refused("native seat start carry is full".into());
@@ -4279,15 +4288,15 @@ pub(crate) mod tests {
             (json!(true), 1),
         ] {
             let args = parse(amount);
-            assert_eq!(args.operation, BankSeatOperation::WithdrawLabel);
-            assert_eq!(args.item_name.as_deref(), Some("Feather"));
-            assert_eq!(args.menu_op, None);
-            assert_eq!(args.quantity, Some(threshold));
+            assert_eq!(args.operation(), BankSeatOperation::WithdrawLabel);
+            assert_eq!(args.item_name(), Some("Feather"));
+            assert_eq!(args.menu_op(), None);
+            assert_eq!(args.quantity(), Some(threshold));
             args.validate(native::request::NativeKind::BankPlan)
                 .unwrap();
         }
         let args = parse(json!(9_007_199_254_741_000u64));
-        assert_eq!(args.quantity, Some(9_007_199_254_740_991));
+        assert_eq!(args.quantity(), Some(9_007_199_254_740_991));
 
         for (amount, label) in [
             (json!("all"), "Withdraw All"),
@@ -4295,9 +4304,9 @@ pub(crate) mod tests {
             (json!("Withdraw 5"), "Withdraw 5"),
         ] {
             let args = parse(amount);
-            assert_eq!(args.operation, BankSeatOperation::WithdrawLabel);
-            assert_eq!(args.menu_op.as_deref(), Some(label));
-            assert_eq!(args.quantity, None);
+            assert_eq!(args.operation(), BankSeatOperation::WithdrawLabel);
+            assert_eq!(args.menu_op(), Some(label));
+            assert_eq!(args.quantity(), None);
             args.validate(native::request::NativeKind::BankPlan)
                 .unwrap();
         }
@@ -4312,26 +4321,26 @@ pub(crate) mod tests {
                 json!({ "kind": "withdraw-id", "id": 314, "op": op }),
             )
             .unwrap();
-            assert_eq!(args.operation, BankSeatOperation::WithdrawLabel);
-            assert_eq!(args.item_id, Some(314));
-            assert_eq!(args.menu_op.as_deref(), Some(action));
-            assert_eq!(args.quantity, None);
+            assert_eq!(args.operation(), BankSeatOperation::WithdrawLabel);
+            assert_eq!(args.item_id(), Some(314));
+            assert_eq!(args.menu_op(), Some(action));
+            assert_eq!(args.quantity(), None);
             args.validate(native::request::NativeKind::BankPlan)
                 .unwrap();
         }
         let absent =
             parse_bank_start("bank_op", json!({ "kind": "withdraw", "name": "Feather" })).unwrap();
-        assert_eq!(absent.quantity, Some(1));
-        assert_eq!(absent.menu_op, None);
+        assert_eq!(absent.quantity(), Some(1));
+        assert_eq!(absent.menu_op(), None);
 
         let args = parse_bank_start(
             "bank_op",
             json!({ "kind": "withdraw-x", "name": "Feather", "count": "5" }),
         )
         .unwrap();
-        assert_eq!(args.operation, BankSeatOperation::WithdrawDelta);
-        assert_eq!(args.item_name.as_deref(), Some("Feather"));
-        assert_eq!(args.quantity, Some(5));
+        assert_eq!(args.operation(), BankSeatOperation::WithdrawDelta);
+        assert_eq!(args.item_name(), Some("Feather"));
+        assert_eq!(args.quantity(), Some(5));
         args.validate(native::request::NativeKind::BankPlan)
             .unwrap();
 
@@ -4340,10 +4349,10 @@ pub(crate) mod tests {
             json!({ "kind": "withdraw-x-id", "id": 314.0, "count": true, "lands_as": "9" }),
         )
         .unwrap();
-        assert_eq!(args.operation, BankSeatOperation::WithdrawDelta);
-        assert_eq!(args.item_id, Some(314));
-        assert_eq!(args.quantity, Some(1));
-        assert_eq!(args.lands_as_id, Some(9));
+        assert_eq!(args.operation(), BankSeatOperation::WithdrawDelta);
+        assert_eq!(args.item_id(), Some(314));
+        assert_eq!(args.quantity(), Some(1));
+        assert_eq!(args.lands_as_id(), Some(9));
         args.validate(native::request::NativeKind::BankPlan)
             .unwrap();
     }
@@ -4353,20 +4362,20 @@ pub(crate) mod tests {
         use crate::bank::request::{BankSeatOperation, WithdrawLoadSelector};
 
         let named = parse_bank_start("bank_withdraw_load", json!({ "name": "Lobster" })).unwrap();
-        assert_eq!(named.operation, BankSeatOperation::WithdrawLoad);
+        assert_eq!(named.operation(), BankSeatOperation::WithdrawLoad);
         assert_eq!(
-            named.withdraw_load_selector,
-            Some(WithdrawLoadSelector::Name("Lobster".into()))
+            named.withdraw_load_selector(),
+            Some(&WithdrawLoadSelector::Name("Lobster".into()))
         );
         named
             .validate(native::request::NativeKind::BankPlan)
             .unwrap();
 
         let by_id = parse_bank_start("bank_withdraw_load", json!({ "id": 42 })).unwrap();
-        assert_eq!(by_id.operation, BankSeatOperation::WithdrawLoad);
+        assert_eq!(by_id.operation(), BankSeatOperation::WithdrawLoad);
         assert_eq!(
-            by_id.withdraw_load_selector,
-            Some(WithdrawLoadSelector::Id(42))
+            by_id.withdraw_load_selector(),
+            Some(&WithdrawLoadSelector::Id(42))
         );
         by_id
             .validate(native::request::NativeKind::BankPlan)
@@ -5753,7 +5762,7 @@ pub(crate) mod tests {
             },
         ];
         HOST.with(|host| host.borrow_mut().ops = placed);
-        let skipped = MaybeInteractReq::Skip(crate::shim::RejectedRow("a number".into()));
+        let skipped = MaybeInteractReq::Skip(crate::shim::RejectedRow::new("a number".into()));
         let rows = vec![js(2), skipped, js(5)];
         assert_eq!(
             merge_ops(rows),

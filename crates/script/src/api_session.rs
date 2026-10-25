@@ -266,7 +266,7 @@ impl Family for CombatSession {
         }
         let request = match crate::api_combat::CombatSessionRequest::from_value(&args) {
             Ok(request) => Arc::new(request),
-            Err(reason) => return Begin::Refuse(reason),
+            Err(reason) => return Begin::Refuse(reason.to_string()),
         };
         let Some(token) = cx.seat_token() else {
             return Begin::Refuse("token-exhausted".into());

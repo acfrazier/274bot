@@ -3,7 +3,7 @@ use crate::interact::InteractReq;
 #[cfg(feature = "load")]
 #[derive(serde::Deserialize)]
 #[serde(untagged)]
-pub(crate) enum MaybeInteractReq {
+pub enum MaybeInteractReq {
     Req(InteractReq),
     Skip(RejectedRow),
 }
@@ -13,7 +13,17 @@ pub(crate) enum MaybeInteractReq {
 /// silently. Accepts every value kind, as the `IgnoredAny` it replaced did.
 #[cfg(feature = "load")]
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) struct RejectedRow(pub(crate) String);
+pub struct RejectedRow(pub(crate) String);
+#[cfg(feature = "load")]
+impl RejectedRow {
+    pub fn new(message: String) -> Self {
+        Self(message)
+    }
+
+    pub fn message(&self) -> &str {
+        &self.0
+    }
+}
 
 #[cfg(feature = "load")]
 impl<'de> serde::Deserialize<'de> for RejectedRow {
@@ -31,7 +41,13 @@ impl<'de> serde::Deserialize<'de> for RejectedRow {
 /// BigInt, say) is refused like any other malformed row instead of failing
 /// every row beside it.
 #[cfg(feature = "load")]
-pub(crate) struct QueuedRow(pub(crate) MaybeInteractReq);
+pub struct QueuedRow(pub(crate) MaybeInteractReq);
+#[cfg(feature = "load")]
+impl QueuedRow {
+    pub fn into_inner(self) -> MaybeInteractReq {
+        self.0
+    }
+}
 
 #[cfg(feature = "load")]
 impl<'de> serde::Deserialize<'de> for QueuedRow {

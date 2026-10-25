@@ -251,7 +251,7 @@ impl ProgressWatchdog {
         self.wait_inflight > 0
     }
 
-    #[cfg(all(test, feature = "load"))]
+    #[cfg(test)]
     pub(crate) fn wait_inflight(&self) -> u32 {
         self.wait_inflight
     }
@@ -862,6 +862,7 @@ mod tests {
         w.arm_fresh(t);
         w.on_wait_enqueued(t + Duration::from_millis(1));
         assert!(w.wait_active());
+        assert_eq!(w.wait_inflight(), 1);
         stamp_packets(&mut w, t, t + SCHEDULER_WARN + Duration::from_secs(1));
         assert_eq!(
             w.observe(t + SCHEDULER_WARN + Duration::from_secs(1), true),

@@ -62,7 +62,6 @@ pub(crate) enum Note {
 }
 
 impl Note {
-    #[cfg(feature = "load")]
     pub fn message(self, name: &str) -> String {
         match self {
             Self::NoBanker => format!("no '{name}' in the scene to bank with"),

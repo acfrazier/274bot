@@ -157,9 +157,9 @@ pub(crate) fn post_script_snapshot(
     navs: &Arc<Mutex<HashMap<String, NavBot>>>,
     name: &str,
     walk_seq: u64,
-    bytes: Vec<u8>,
+    post: impl FnOnce(&mut SlotScript) -> bool,
 ) -> bool {
-    let accepted = slot.post_snapshot(bytes);
+    let accepted = post(slot);
     if accepted {
         if let Some(bot) = navs.lock().unwrap().get_mut(name) {
             bot.mark_walk_outcome_posted(walk_seq);
@@ -538,7 +538,7 @@ pub(crate) fn script_observe_cached_with_channels(
         if matches!(
             slot.state(),
             script::RunState::Starting | script::RunState::Paused
-        ) && slot.load_active()
+        ) && slot.surface_active()
         {
             let (update, queued, _) = drain_observed_host_interacts(&mut slot);
             if let Some(update) = update {
@@ -620,7 +620,7 @@ pub(crate) fn script_observe_cached_with_channels(
         // Region loads briefly clear `up`; the isolate and its browser-style
         // channel survive them. Session boundaries suspend the broker in the
         // slot loop before this observation runs.
-        channel_active = slot.load_active()
+        channel_active = slot.surface_active()
             && matches!(
                 slot.state(),
                 script::RunState::Running | script::RunState::Paused
@@ -761,7 +761,7 @@ pub(crate) fn script_observe_cached_with_channels(
                 }
             }
         }
-        host_results_dirty |= slot.last_snapshot_fingerprint().is_some_and(|last| {
+        host_results_dirty |= slot.posted_snapshot_facts().is_some_and(|last| {
             last.withdraw_x_result_seq != slot.withdraw_x_result().0
                 || last.bank_op_result_seq != slot.bank_op_result().0
         });
@@ -801,7 +801,7 @@ pub(crate) fn script_observe_cached_with_channels(
             // loop/pump freeze, without being treated as that external freeze.
             let recovery_hold = slot.watchdog().holds_script_actions();
             let isolate_hold = hold || recovery_hold || prayer_cleanup_hold;
-            if slot.load_active() {
+            if slot.surface_active() {
                 let (
                     teleports_enabled,
                     walk_seq,
@@ -889,7 +889,7 @@ pub(crate) fn script_observe_cached_with_channels(
                     canlight,
                 );
 
-                let bytes = with_script_snapshot_input_shorts(
+                with_script_snapshot_input_shorts(
                     tick,
                     here,
                     up,
@@ -927,19 +927,20 @@ pub(crate) fn script_observe_cached_with_channels(
                     packed.flood.as_deref(),
                     packed.stamp,
                     |input, native| {
-                        if wake_waits {
-                            slot.encode_snapshot_wake_with_native(
-                                input,
-                                native,
-                                force_banks,
-                                inv.is_none() && input.inv_size == 0,
-                            )
-                        } else {
-                            slot.encode_snapshot_delta_with_native(input, native, force_banks)
-                        }
+                        post_script_snapshot(&mut slot, navs, name, walk_seq, |slot| {
+                            if wake_waits {
+                                slot.post_snapshot_wake(
+                                    input,
+                                    native,
+                                    force_banks,
+                                    inv.is_none() && input.inv_size == 0,
+                                )
+                            } else {
+                                slot.post_snapshot_delta(input, native, force_banks)
+                            }
+                        })
                     },
                 );
-                post_script_snapshot(&mut slot, navs, name, walk_seq, bytes);
                 slot.store_last_world_id(world_id);
             }
             if isolate_hold {
@@ -951,7 +952,7 @@ pub(crate) fn script_observe_cached_with_channels(
                 // hold: nav follow of the owned recovery route continues,
                 // but script walk arms are not provided. Compiled: skip on
                 // guardian hold.
-                if slot.load_active() {
+                if slot.surface_active() {
                     slot.on_game_tick(&mut ScriptCtx {
                         driver,
                         tick,
@@ -987,7 +988,7 @@ pub(crate) fn script_observe_cached_with_channels(
                 let bank_memory = bank_memory.map(parking_lot::RwLock::read);
                 // Keep the real lifecycle gate stable through this callback.
                 // Its guard drops before host effect dispatch below.
-                let service_gate_guard = if slot.native_run().is_some() || slot.load_active() {
+                let service_gate_guard = if slot.native_run().is_some() || slot.surface_active() {
                     service_arm.map(SlotArm::session_gate)
                 } else {
                     None
@@ -1056,17 +1057,17 @@ pub(crate) fn script_observe_cached_with_channels(
             let bot = navs.entry(name.to_owned()).or_default();
             bot.work_scope = slot.work_scope();
             bot.native_permissions = slot.native_walk_permissions();
-            bot.compat_v1 = slot.api_family() == Some(script::ApiFamily::V1);
+            bot.compat_v1 = slot.surface_family() == Some(script::surface::SurfaceFamily::JsV1);
             bot.cure_poison = cure_poison;
         }
         emit_script_debug_logs(&mut slot, name);
-        if slot.load_active() && slot.state() != script::RunState::Running {
+        if slot.surface_active() && slot.state() != script::RunState::Running {
             slot.retain_held_seat_batches();
         }
         // Ordinary Pause leaves the isolate queue untouched. Guardian hold
         // has already discarded gameplay and bounded repeated control pages.
         // Running frames drain those controls through the seat below.
-        if slot.load_active() || slot.native_run().is_some() {
+        if slot.surface_active() || slot.native_run().is_some() {
             let mut lifecycle = Vec::new();
             if slot.state() == script::RunState::Running {
                 lifecycle.extend(slot.drain_lifecycle());
@@ -1194,7 +1195,7 @@ pub(crate) fn script_observe_cached_with_channels(
             }
             slot.sync_native_input_gate();
         }
-        if slot.load_active() {
+        if slot.surface_active() {
             if slot.state() == script::RunState::Running {
                 // The seat admits controls and filters captured gameplay before
                 // this host stage. A live API Session still fences a carried
@@ -1343,7 +1344,8 @@ pub(crate) fn script_observe_cached_with_channels(
                         bot.work_scope = slot.work_scope();
                         bot.quest_context = super::script_nav::route_quest_context(&slot, tick);
                         bot.native_permissions = slot.native_walk_permissions();
-                        bot.compat_v1 = slot.api_family() == Some(script::ApiFamily::V1);
+                        bot.compat_v1 =
+                            slot.surface_family() == Some(script::surface::SurfaceFamily::JsV1);
                     }
                     let interact_context = InteractContext {
                         snapshot,
@@ -2102,24 +2104,24 @@ fn host_completion_changed(
     bot: &NavBot,
     bank_selection: script::isolate_fb::BankSelectionInput,
 ) -> bool {
-    slot.last_snapshot_fingerprint().is_some_and(|last| {
+    slot.posted_snapshot_facts().is_some_and(|last| {
         let inspect = &bot.inspect;
-        let old = &last.route_inspect;
+        let route = last.route_inspect;
         last.bank_selection != bank_selection
             || last.walk_outcome_seq != bot.walk_outcome_seq
-            || (old.latest.seq, old.latest.generation, old.latest.request_id)
+            || route.latest
                 != inspect
                     .latest
                     .as_ref()
                     .map_or((0, 0, 0), |end| (end.seq, end.generation, end.request_id))
-            || (old.prev.seq, old.prev.generation, old.prev.request_id)
+            || route.prev
                 != inspect
                     .prev
                     .as_ref()
                     .map_or((0, 0, 0), |end| (end.seq, end.generation, end.request_id))
-            || old.replaced_id != inspect.replaced_id
-            || old.replaced_prev_id != inspect.replaced_prev_id
-            || [old.refused_id, old.refused_id_2, old.refused_id_3] != inspect.refused
+            || route.replaced_id != inspect.replaced_id
+            || route.replaced_prev_id != inspect.replaced_prev_id
+            || route.refused != inspect.refused
     })
 }
 
@@ -2127,7 +2129,7 @@ pub(crate) fn deliver_channel_events(
     scripts: &ScriptWall,
     deliveries: Vec<super::script_channels::Delivery>,
 ) {
-    let mut batches: HashMap<(String, u64), Vec<script::shim::InteractReq>> = HashMap::new();
+    let mut batches: HashMap<(String, u64), Vec<script::interact::InteractReq>> = HashMap::new();
     for delivery in deliveries {
         batches
             .entry((delivery.account, delivery.generation))
@@ -2142,7 +2144,7 @@ pub(crate) fn deliver_channel_events(
             continue;
         };
         if slot.runtime_generation() != generation
-            || !slot.load_active()
+            || !slot.surface_active()
             || !matches!(
                 slot.state(),
                 script::RunState::Running | script::RunState::Paused
@@ -2150,8 +2152,7 @@ pub(crate) fn deliver_channel_events(
         {
             continue;
         }
-        let bytes = script::isolate_fb::encode_interact_batch(&events);
-        let _ = slot.post_channel_events(bytes);
+        let _ = slot.post_channel_events(&events);
     }
 }
 
@@ -2275,7 +2276,7 @@ where
     let consumes_snapshot = script_slot(scripts, name).is_some_and(|slot| {
         slot.lock()
             .ok()
-            .is_some_and(|slot| slot.state() == script::RunState::Running && slot.load_active())
+            .is_some_and(|slot| slot.state() == script::RunState::Running && slot.surface_active())
     });
     if consumes_snapshot {
         project()

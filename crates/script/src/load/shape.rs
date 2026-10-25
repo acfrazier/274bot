@@ -380,11 +380,12 @@ pub fn scan_same_folder_js_imports(source: &str) -> Vec<String> {
 pub fn scan_import_specifiers(source: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for import in crate::module_imports::module_imports(source) {
-        if import.runtime
-            && looks_like_module_specifier(&import.specifier)
-            && !out.contains(&import.specifier)
-        {
-            out.push(import.specifier);
+        if !import.is_runtime() {
+            continue;
+        }
+        let specifier = import.into_specifier();
+        if looks_like_module_specifier(&specifier) && !out.contains(&specifier) {
+            out.push(specifier);
         }
     }
     out

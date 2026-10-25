@@ -8,6 +8,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::script_snapshot_fb;
 use super::SettledStart;
+use crate::PostedWalkOutcome;
 
 const HINT: usize = 0;
 const BOARD: usize = 1;
@@ -1302,41 +1303,62 @@ fn walk_refusal_guard_is_released_only_by_an_accepted_post() {
         },
     );
     let guard = || navs.lock().unwrap()["alice"].walk_live_refusal_id;
-    // The bytes are never decoded for this guard; only acceptance matters.
-    let bytes = Vec::new;
+    let post = |slot: &mut script::SlotScript, seq| {
+        super::with_script_snapshot_input(
+            1,
+            None,
+            true,
+            None,
+            None,
+            None,
+            None,
+            None,
+            false,
+            false,
+            false,
+            0,
+            false,
+            0,
+            false,
+            None,
+            PostedWalkOutcome {
+                seq,
+                ..Default::default()
+            },
+            Default::default(),
+            |input, native| {
+                super::post_script_snapshot(slot, &navs, "alice", seq, |slot| {
+                    slot.post_snapshot_delta(input, native, false)
+                })
+            },
+        )
+    };
     // No isolate takes the post: refused.
     let mut idle = script::SlotScript::new();
-    assert!(!super::post_script_snapshot(
-        &mut idle,
-        &navs,
-        "alice",
-        3,
-        bytes()
-    ));
+    assert!(!post(&mut idle, 3));
     assert_eq!(guard(), 9, "a refused post leaves the refusal guarded");
     let mut slot = script::SlotScript::new();
-    slot.start_load_with_loadouts_settled(
-        "export function tick(api) {}".into(),
-        script::LoadShape::NativeTick,
-        vec![],
-        &[],
-    )
-    .expect("the isolate starts");
-    assert!(super::post_script_snapshot(
-        &mut slot,
-        &navs,
-        "alice",
-        2,
-        bytes()
-    ));
+    let factory = Arc::new(script::surface::test_support::StubSurfaceFactory::new());
+    slot.bind_surface_factory(factory.clone());
+    slot.start_surface(script::surface::SurfaceStart {
+        card: Arc::new(script::surface::test_support::StubSurfaceCard),
+        settings_bag: None,
+        game_data: None,
+        named_banks: Arc::default(),
+        loadouts: Arc::default(),
+    })
+    .expect("the surface starts");
+    factory
+        .last_run()
+        .expect("stub surface run")
+        .set_readiness(script::surface::SurfaceReady::Ready);
+    assert_eq!(
+        slot.poll_start(),
+        script::StartPoll::Settled(script::StartOutcome::Ready)
+    );
+    assert!(post(&mut slot, 2));
     assert_eq!(guard(), 9, "the post carried an older outcome");
-    assert!(super::post_script_snapshot(
-        &mut slot,
-        &navs,
-        "alice",
-        3,
-        bytes()
-    ));
+    assert!(post(&mut slot, 3));
     assert_eq!(guard(), 0, "the latest outcome reached the isolate");
     slot.stop();
 }

@@ -22,7 +22,7 @@ fn row(request: InteractReq) -> SeatInteractDecoded {
 
 fn page(slot: &SlotScript, reqs: Vec<InteractReq>) -> crate::load::QueuedSeatBatch {
     crate::load::QueuedSeatBatch {
-        generation: slot.load.as_ref().unwrap().generation(),
+        generation: slot.surface.as_ref().unwrap().generation(),
         observed_walk_outcome_seq: 0,
         batch: decoded(Vec::new(), reqs.into_iter().map(row).collect()),
         machine_events: Vec::new(),
@@ -34,19 +34,19 @@ fn page(slot: &SlotScript, reqs: Vec<InteractReq>) -> crate::load::QueuedSeatBat
 /// One held host frame: the new page arrives behind the held batch, as the
 /// isolate queues it, and the host drains the frame.
 fn held_frame(slot: &mut SlotScript, reqs: Vec<InteractReq>) {
-    let mut pages = slot.load.as_ref().unwrap().drain_seat_batches();
+    let mut pages = slot.surface.as_ref().unwrap().drain_seat_batches();
     pages.push(page(slot, reqs));
-    slot.load.as_ref().unwrap().restore_seat_batches(pages);
+    slot.surface.as_ref().unwrap().restore_seat_batches(pages);
     let _ = slot.drain_host_interacts();
 }
 
 fn held_rows(slot: &SlotScript) -> Vec<InteractReq> {
-    let pages = slot.load.as_ref().unwrap().drain_seat_batches();
+    let pages = slot.surface.as_ref().unwrap().drain_seat_batches();
     let rows = pages
         .iter()
         .flat_map(|page| page.batch.reqs.iter().map(|row| row.request.clone()))
         .collect();
-    slot.load.as_ref().unwrap().restore_seat_batches(pages);
+    slot.surface.as_ref().unwrap().restore_seat_batches(pages);
     rows
 }
 
@@ -375,15 +375,25 @@ fn held_settle_then_enqueue_keeps_the_later_wait() {
 fn paint_slot(source: &str, incarnation: u64) -> SlotScript {
     let mut slot = SlotScript::new();
     slot.bind_incarnation(incarnation);
-    slot.start_load_with_settings_and_game_data(
-        source.into(),
-        crate::load::LoadShape::CompatClass,
-        None,
-        vec![],
-        &[],
-        Some(selected()),
-        Arc::default(),
-    )
+    let source: std::sync::Arc<str> = source.into();
+    let family = crate::resolve_api_family(&source)
+        .ok()
+        .map(|(_, family)| family);
+    slot.bind_surface_factory(std::sync::Arc::new(
+        crate::load::surface::JsSurfaceFactory::default(),
+    ));
+    slot.start_surface(crate::surface::SurfaceStart {
+        card: std::sync::Arc::new(crate::load::surface::JsStartCard {
+            source,
+            shape: crate::load::LoadShape::CompatClass,
+            siblings: std::sync::Arc::from(Vec::<(String, String)>::new()),
+            family,
+        }),
+        settings_bag: None,
+        game_data: Some(selected()),
+        named_banks: std::sync::Arc::default(),
+        loadouts: std::sync::Arc::default(),
+    })
     .unwrap();
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
@@ -422,11 +432,14 @@ fn paint_tick(slot: &mut SlotScript, tick: u64, held: bool) {
         z: 3245,
         level: 0,
     });
-    let bytes = slot.encode_snapshot_delta(&input, false);
-    assert!(slot.post_snapshot(bytes));
-    let isolate = slot.load.as_ref().unwrap();
-    isolate.on_game_tick(tick);
-    isolate.probe("true").unwrap();
+    assert!(slot.post_snapshot_delta(
+        &input,
+        crate::native::snapshot_source::NativeFactsInput::default(),
+        false,
+    ));
+    let run = slot.surface.as_ref().unwrap();
+    run.on_game_tick_at(tick, 0);
+    run.probe("true").unwrap();
 }
 
 // R4-M1 (Codex), real producer: 18 held `onPaint` floors end at Floor(18).
@@ -532,7 +545,7 @@ export default class T extends LoopingBot {
     slot.seat_guardian_hold(true);
     let _ = slot.drain_host_interacts();
     paint_tick(&mut slot, 3, true);
-    let pages = slot.load.as_ref().unwrap().drain_seat_batches();
+    let pages = slot.surface.as_ref().unwrap().drain_seat_batches();
     let newer: Vec<_> = pages
         .last()
         .unwrap()
@@ -541,7 +554,7 @@ export default class T extends LoopingBot {
         .iter()
         .map(|row| row.request.clone())
         .collect();
-    slot.load.as_ref().unwrap().restore_seat_batches(pages);
+    slot.surface.as_ref().unwrap().restore_seat_batches(pages);
     let _ = slot.drain_host_interacts();
     assert_eq!(
         slot.probe("globalThis.__hold_wait_parked").unwrap(),
@@ -1091,9 +1104,9 @@ fn held_resume_pages_around_queued_rows_and_later_batches_queue_behind() {
             )
             .unwrap();
     }
-    let mut pages = slot.load.as_ref().unwrap().drain_seat_batches();
+    let mut pages = slot.surface.as_ref().unwrap().drain_seat_batches();
     pages.push(page(&slot, vec![lane_open(999)]));
-    slot.load.as_ref().unwrap().restore_seat_batches(pages);
+    slot.surface.as_ref().unwrap().restore_seat_batches(pages);
     let before = dropped(&slot);
     let (_, first, _) = slot.drain_host_interacts();
     let (_, second, _) = slot.drain_host_interacts();
@@ -1253,7 +1266,10 @@ fn held_resume_frees_the_walk_slot_that_a_blocked_full_queue_waits_for() {
     retained.extend((1..=30).map(lane_open));
     let mut fold = page(&slot, retained.clone());
     fold.held_fold = true;
-    slot.load.as_ref().unwrap().restore_seat_batches(vec![fold]);
+    slot.surface
+        .as_ref()
+        .unwrap()
+        .restore_seat_batches(vec![fold]);
     let before = dropped(&slot);
     let (delivered, frames) = drain_retained_with_progress(&mut slot, &retained, 4);
     let left = held_rows(&slot);
@@ -1273,7 +1289,7 @@ fn held_second_hold_keeps_the_controls_of_a_waiting_fold() {
     let mut slot = with_seat(888);
     let mut admit = page(&slot, Vec::new());
     admit.batch.starts = vec![start_input(&slot, 1, NativeKind::Hunt)];
-    slot.load
+    slot.surface
         .as_ref()
         .unwrap()
         .restore_seat_batches(vec![admit]);
@@ -1294,7 +1310,10 @@ fn held_second_hold_keeps_the_controls_of_a_waiting_fold() {
         of: id(1),
         reason: api::script_contract::CallbackCancelReason::ParentAborted,
     }];
-    slot.load.as_ref().unwrap().restore_seat_batches(vec![fold]);
+    slot.surface
+        .as_ref()
+        .unwrap()
+        .restore_seat_batches(vec![fold]);
     slot.seat_guardian_hold(false);
     for yaw in 1..=141 {
         slot.seat
@@ -1366,7 +1385,7 @@ fn rehold_while_the_fold_waits(
     newer: Vec<crate::load::QueuedSeatBatch>,
 ) -> crate::load::QueuedSeatBatch {
     slot.seat_guardian_hold(true);
-    slot.load
+    slot.surface
         .as_ref()
         .unwrap()
         .restore_seat_batches(vec![initial]);
@@ -1374,16 +1393,16 @@ fn rehold_while_the_fold_waits(
     for batch in newer {
         slot.seat_guardian_hold(false);
         fill_seat_queue(slot);
-        let mut batches = slot.load.as_ref().unwrap().drain_seat_batches();
+        let mut batches = slot.surface.as_ref().unwrap().drain_seat_batches();
         batches.push(batch);
-        slot.load.as_ref().unwrap().restore_seat_batches(batches);
+        slot.surface.as_ref().unwrap().restore_seat_batches(batches);
         let (_, first, _) = slot.drain_host_interacts();
         assert_eq!(first.len(), 141, "the blocking rows take the frame");
         assert_eq!(held_rows(slot).len(), 20, "the fold still waits");
         slot.seat_guardian_hold(true);
         let _ = slot.drain_host_interacts();
     }
-    let mut carried = slot.load.as_ref().unwrap().drain_seat_batches();
+    let mut carried = slot.surface.as_ref().unwrap().drain_seat_batches();
     assert_eq!(carried.len(), 1, "one folded batch");
     carried.pop().unwrap()
 }
@@ -1400,7 +1419,7 @@ fn held_rehold_keeps_a_phase_that_returns_to_an_earlier_value() {
     let mut slot = with_seat(889);
     let mut admit = page(&slot, Vec::new());
     admit.batch.starts = vec![start_input(&slot, 1, NativeKind::Hunt)];
-    slot.load
+    slot.surface
         .as_ref()
         .unwrap()
         .restore_seat_batches(vec![admit]);
@@ -1421,7 +1440,7 @@ fn held_rehold_keeps_a_phase_that_returns_to_an_earlier_value() {
         .iter()
         .map(|event| event.kind)
         .collect();
-    slot.load
+    slot.surface
         .as_ref()
         .unwrap()
         .restore_seat_batches(vec![carried]);
@@ -1466,7 +1485,7 @@ fn held_rehold_phase_a_b_a_ends_at_the_newest_phase() {
         })
         .collect();
     let carried = rehold_while_the_fold_waits(&mut slot, initial, newer);
-    slot.load
+    slot.surface
         .as_ref()
         .unwrap()
         .restore_seat_batches(vec![carried]);
@@ -1515,7 +1534,7 @@ fn held_rehold_carries_a_repeated_mirror_revoke_once() {
     .collect();
     let carried = rehold_while_the_fold_waits(&mut slot, initial, newer);
     let revokes = carried.batch.mirror_revokes.clone();
-    slot.load
+    slot.surface
         .as_ref()
         .unwrap()
         .restore_seat_batches(vec![carried]);
@@ -1654,7 +1673,7 @@ fn host_held_tick_keeps_the_walk_abort_and_drops_gameplay() {
         vec![InteractReq::AbortWalk { request_id: 5 }, walk(6)],
     );
     batch.batch.starts = vec![start_input(&slot, 1, NativeKind::Hunt)];
-    slot.load
+    slot.surface
         .as_ref()
         .unwrap()
         .restore_seat_batches(vec![batch]);
@@ -1714,9 +1733,9 @@ fn drained_frame(
     slot: &mut SlotScript,
     reqs: Vec<InteractReq>,
 ) -> (Option<Option<RunPolicyOverride>>, Vec<InteractReq>) {
-    let mut pages = slot.load.as_ref().unwrap().drain_seat_batches();
+    let mut pages = slot.surface.as_ref().unwrap().drain_seat_batches();
     pages.push(page(slot, reqs));
-    slot.load.as_ref().unwrap().restore_seat_batches(pages);
+    slot.surface.as_ref().unwrap().restore_seat_batches(pages);
     let (policy, reqs, _) = slot.drain_host_interacts();
     (policy, requests(reqs))
 }
@@ -1906,7 +1925,10 @@ fn guardian_hold_neither_completes_nor_starts_a_native() {
     let mut held = page(&slot, Vec::new());
     held.batch.starts = vec![start_input(&slot, 2, NativeKind::Hunt)];
     held.machine_events = vec![machine_event(1, Done)];
-    slot.load.as_ref().unwrap().restore_seat_batches(vec![held]);
+    slot.surface
+        .as_ref()
+        .unwrap()
+        .restore_seat_batches(vec![held]);
     let _ = slot.drain_host_interacts();
     let after_frame = state(&slot);
     slot.consume_seat_batch(

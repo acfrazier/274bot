@@ -2945,7 +2945,7 @@ fn native_observation_without_compat_harvests_completed_inspection() {
         let mut slot = slot.lock().unwrap();
         slot.start_test_script(Box::new(Observer), None)
             .expect("native observation slot starts");
-        assert!(!slot.load_active(), "there is no active compat isolate");
+        assert!(!slot.surface_active(), "there is no active compat isolate");
     }
     let request_id = 94;
     queue_inspect(

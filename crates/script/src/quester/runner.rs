@@ -4628,10 +4628,7 @@ mod tests {
                 },
             );
             tick.cx.snapshot = SnapshotView::new(Some(after), tick.cx.evidence());
-            #[cfg(feature = "load")]
-            {
-                tick.frame.snapshot = Some(after);
-            }
+            tick.frame.snapshot = Some(after);
             script.tick(tick).unwrap();
             assert!(
                 script.settling,
@@ -4727,10 +4724,7 @@ mod tests {
                 },
             );
             tick.cx.snapshot = SnapshotView::new(Some(after), tick.cx.evidence());
-            #[cfg(feature = "load")]
-            {
-                tick.frame.snapshot = Some(after);
-            }
+            tick.frame.snapshot = Some(after);
             script.tick(tick).unwrap();
             assert!(script.settling);
             script.tick(tick).unwrap();
@@ -4775,10 +4769,7 @@ mod tests {
             tick.cx.budget.observe_frame(2, Some(entered));
             assert!(tick.cx.entered_scene());
             tick.cx.snapshot = SnapshotView::new(Some(entered), tick.cx.evidence());
-            #[cfg(feature = "load")]
-            {
-                tick.frame.snapshot = Some(entered);
-            }
+            tick.frame.snapshot = Some(entered);
 
             script.tick(tick).unwrap();
             assert!(
@@ -4854,10 +4845,7 @@ mod tests {
                 },
             );
             tick.cx.snapshot = SnapshotView::new(Some(after), tick.cx.evidence());
-            #[cfg(feature = "load")]
-            {
-                tick.frame.snapshot = Some(after);
-            }
+            tick.frame.snapshot = Some(after);
             script.tick(tick).unwrap();
             assert!(script.settling);
             script.tick(tick).unwrap();

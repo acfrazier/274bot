@@ -1008,6 +1008,7 @@ import {{ Bank }} from '../../api/bank/Bank.js';
 import {{ Inventory }} from '../../api/inventory/Inventory.js';
 import {{ Banking, depositMatcher, parseBankStrategy, shouldBankNow }} from '../../api/bank/Banking.js';
 import {{ nearestBankReachable }} from '../../api/bank/BankLocations.js';
+import {{ withdrawTo }} from '../../api/thieving/stealRules.js';
 export default class BankCoreCell extends LoopingBot {{
     async loop() {{
         if (globalThis.__did) return;
@@ -1445,7 +1446,10 @@ fn live_bank_core_compat_gathering_bank_loop_at_draynor() {
                 cell.after++;
                 cell.withdraw = await Bank.withdrawX('Coins', 7);
             },
-        });",
+        });
+        cell.afterDepositHeld = Inventory.count('Coins');
+        cell.bulkWithdraw = await withdrawTo('Coins', 123);
+        cell.labelWithdraw = await withdrawTo('Coins', 124);",
         verdict: |answer, posted| {
             answered_true(answer, "trigger")?;
             answered_true(answer, "trip")?;
@@ -1461,8 +1465,11 @@ fn live_bank_core_compat_gathering_bank_loop_at_draynor() {
                 posted.banked(TINDERBOX),
             );
             if answer["after"] == serde_json::json!(1)
-                && held == (107, 0, 1)
-                && banked == (Some(43), Some(3), Some(0))
+                && answer["afterDepositHeld"] == serde_json::json!(107)
+                && answer["bulkWithdraw"] == serde_json::json!(16)
+                && answer["labelWithdraw"] == serde_json::json!(1)
+                && held == (124, 0, 1)
+                && banked == (Some(26), Some(3), Some(0))
                 && posted.bank_open
             {
                 Ok(())
