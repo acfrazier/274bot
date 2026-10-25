@@ -185,11 +185,13 @@ pub fn queue_head_handshake(position: u32, total: u32) -> QueuePlace {
     handshake_place(position, total)
 }
 
+#[cfg(feature = "js")]
 /// A script-settings file a test reads and writes (upgrade compat).
 pub struct SettingsFixture {
     store: script::ScriptSettingsStore,
 }
 
+#[cfg(feature = "js")]
 impl SettingsFixture {
     /// Open the settings at `path`.
     pub fn at(path: std::path::PathBuf) -> Self {

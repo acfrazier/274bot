@@ -1,6 +1,7 @@
 //! Front-end live-harness fixtures (see the parent module).
 
 use std::any::Any;
+#[cfg(feature = "js")]
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -29,12 +30,14 @@ pub fn scenario(name: &str) -> Option<Scenario> {
     registered_scenario(name).map(Scenario::from)
 }
 
+#[cfg(feature = "js")]
 /// Install the catalog-backed compiled cards without starting the V8 platform.
 pub fn install_catalog_cards() {
     script_js::install_cards().expect("install canonical Sherlock card for front-end fixtures");
 }
 
 fn registered_scenario(name: &str) -> Option<scenario::Scenario> {
+    #[cfg(feature = "js")]
     install_catalog_cards();
     scenario::get(name)
 }
@@ -215,6 +218,7 @@ pub fn pair_watch_for_test(
     watch
 }
 
+#[cfg(feature = "js")]
 /// Create an external-loader witness configured for one source file.
 pub fn external_watch_for_test(
     account: &str,
