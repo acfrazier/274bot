@@ -58,6 +58,7 @@ fn bone_burier_card() -> BrowseCard {
         tags: Vec::new(),
         kind: CardRuntime::Compat,
         source: CardSource::Catalog,
+        #[cfg(feature = "js")]
         unloadable: None,
     }
 }
@@ -1476,6 +1477,7 @@ fn browse_rows_select_a_card_for_start() {
             tags: Vec::new(),
             kind: CardRuntime::Compat,
             source: CardSource::File,
+            #[cfg(feature = "js")]
             unloadable: None,
         },
     ];
@@ -1515,6 +1517,7 @@ fn browse_rows_select_a_card_for_start() {
 
 /// The Load button opens the file browser; Enter on a file produces
 /// `AppAction::ScriptLoad` with that path.
+#[cfg(feature = "js")]
 #[test]
 fn load_browser_enter_returns_script_load() {
     let dir = std::env::temp_dir().join(format!("274bot-tui-load-browser-{}", std::process::id()));
@@ -1723,6 +1726,7 @@ fn background_notice_needs_an_explicit_got_it() {
 /// At 80×24 the Script tab keeps both command rows on screen and
 /// clickable; every command also has its key, and the fleet-wide ones ask
 /// to confirm their scope first.
+#[cfg(feature = "js")]
 #[test]
 fn script_commands_are_reachable_at_80x24() {
     let mut app = script_app();
@@ -1805,6 +1809,46 @@ fn script_commands_are_reachable_at_80x24() {
     assert!(!app.script_browse_open);
     assert_eq!(app.on_key(ch('f')), AppAction::None);
     assert!(app.script_load_open);
+}
+
+#[cfg(not(feature = "js"))]
+#[test]
+fn script_commands_are_reachable_at_80x24() {
+    let mut app = script_app();
+    app.script_state = ScriptRunState::Running;
+    let id = CompiledCardId::QUESTER;
+    app.script_sel = Some(ScriptChoice::compiled(id));
+    app.script_cards = vec![BrowseCard {
+        name: id.as_str().into(),
+        description: String::new(),
+        category: "Questing".into(),
+        tags: Vec::new(),
+        kind: CardRuntime::Compiled,
+        source: CardSource::Builtin,
+    }];
+    app.script_card_choices = vec![ScriptChoice::compiled(id)];
+    app.params_schema = owned_schema(&thiever_schema());
+
+    let rows = draw(&mut app, 80, 24);
+    let all = text(&rows);
+    assert!(
+        all.contains("[Browse b] [Start t] [Pause P] [Stop e]"),
+        "native script controls paint: {all}"
+    );
+    assert!(
+        all.contains("[Params v] [Start fleet T] [Stop fleet E]"),
+        "compiled settings and fleet controls paint: {all}"
+    );
+    assert!(!all.contains("[Load f]"), "file loading is not exposed: {all}");
+    assert!(!all.contains("[Reload R]"), "reload is not exposed: {all}");
+
+    assert_eq!(
+        app.on_key(ch('t')),
+        AppAction::ScriptStart(ScriptChoice::compiled(id))
+    );
+    assert_eq!(app.on_key(ch('P')), AppAction::ScriptPause);
+    assert_eq!(app.on_key(ch('e')), AppAction::ScriptStop);
+    assert_eq!(app.on_key(ch('f')), AppAction::None);
 }
 
 #[test]

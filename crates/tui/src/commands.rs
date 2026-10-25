@@ -49,6 +49,7 @@ pub enum Command {
     MoveProfileUp,
     MoveProfileDown,
     MoveMarkedToTop,
+    #[cfg(feature = "js")]
     ImportProfiles,
     /// Add a profile to the vault with its own password (opens the
     /// shared New profile form).
@@ -68,10 +69,14 @@ pub enum Command {
     ScriptStart,
     ScriptPause,
     ScriptStop,
+    #[cfg(feature = "js")]
     ScriptLoad,
     ScriptParams,
+    #[cfg(feature = "js")]
     ScriptReload,
+    #[cfg(feature = "js")]
     ScriptReloadCancel,
+    #[cfg(feature = "js")]
     ImportCatalog,
     ToggleGameChat,
     MapSearch,
@@ -153,9 +158,12 @@ pub fn script_command(name: &str) -> Option<Command> {
         "Start" => Command::ScriptStart,
         "Pause" | "Resume" => Command::ScriptPause,
         "Stop" => Command::ScriptStop,
+        #[cfg(feature = "js")]
         "Load" => Command::ScriptLoad,
         "Params" => Command::ScriptParams,
+        #[cfg(feature = "js")]
         "Reload" | "Confirm" => Command::ScriptReload,
+        #[cfg(feature = "js")]
         "Cancel" => Command::ScriptReloadCancel,
         "Start fleet" => Command::Fleet(FleetAction::Start),
         "Stop fleet" => Command::Fleet(FleetAction::Stop),
@@ -227,6 +235,7 @@ impl Command {
         Command::Fleet(FleetAction::Logout),
         Command::PickWorld,
         Command::PickWorldMarked,
+        #[cfg(feature = "js")]
         Command::ImportProfiles,
         Command::Login,
         Command::Logout,
@@ -240,15 +249,19 @@ impl Command {
         Command::ScriptStart,
         Command::ScriptPause,
         Command::ScriptStop,
+        #[cfg(feature = "js")]
         Command::ScriptLoad,
         Command::ScriptParams,
+        #[cfg(feature = "js")]
         Command::ScriptReload,
+        #[cfg(feature = "js")]
         Command::ScriptReloadCancel,
         Command::Fleet(FleetAction::Start),
         Command::Fleet(FleetAction::Stop),
         Command::Fleet(FleetAction::Assign),
         Command::Fleet(FleetAction::AssignRestart),
         Command::Fleet(FleetAction::CopySettings),
+        #[cfg(feature = "js")]
         Command::ImportCatalog,
         Command::ToggleGameChat,
         Command::MapSearch,
@@ -293,8 +306,9 @@ impl Command {
             | Command::Fleet(
                 FleetAction::Login | FleetAction::Logout | FleetAction::SwitchWorld(_),
             )
-            | Command::ImportProfiles
             | Command::NewProfile => Group::Fleet,
+            #[cfg(feature = "js")]
+            Command::ImportProfiles => Group::Fleet,
             Command::Login
             | Command::Logout
             | Command::Remove
@@ -306,17 +320,18 @@ impl Command {
             | Command::ScriptStart
             | Command::ScriptPause
             | Command::ScriptStop
-            | Command::ScriptLoad
             | Command::ScriptParams
-            | Command::ScriptReload
-            | Command::ScriptReloadCancel
             | Command::Fleet(
                 FleetAction::Start
                 | FleetAction::Stop
                 | FleetAction::Assign
                 | FleetAction::AssignRestart
                 | FleetAction::CopySettings,
-            )
+            ) => Group::Script,
+            #[cfg(feature = "js")]
+            Command::ScriptLoad
+            | Command::ScriptReload
+            | Command::ScriptReloadCancel
             | Command::ImportCatalog => Group::Script,
             Command::ToggleGameChat => Group::Chat,
             Command::MapSearch
@@ -364,6 +379,7 @@ impl Command {
             Command::Fleet(FleetAction::Logout) => "Log out fleet",
             Command::Fleet(FleetAction::CopySettings) => "Copy settings",
             Command::Fleet(FleetAction::SwitchWorld(_)) => "Switch world",
+            #[cfg(feature = "js")]
             Command::ImportProfiles => "Import rs2b0t profiles…",
             Command::Login => "Log in",
             Command::Logout => "Log out",
@@ -378,11 +394,16 @@ impl Command {
             Command::ScriptPause if app.script_state == ScriptRunState::Paused => "Resume script",
             Command::ScriptPause => "Pause script",
             Command::ScriptStop => "Stop script",
+            #[cfg(feature = "js")]
             Command::ScriptLoad => "Load script file",
             Command::ScriptParams => "Script parameters",
+            #[cfg(feature = "js")]
             Command::ScriptReload if app.reload_confirm => "Confirm reload",
+            #[cfg(feature = "js")]
             Command::ScriptReload => "Reload script",
+            #[cfg(feature = "js")]
             Command::ScriptReloadCancel => "Cancel reload",
+            #[cfg(feature = "js")]
             Command::ImportCatalog => "Import rs2b0t catalog",
             Command::ToggleGameChat => "Toggle game chat / script paint",
             Command::MapSearch => "Map: search",
@@ -463,19 +484,16 @@ impl Command {
             | Command::UnmarkShown
             | Command::InvertShown
             | Command::MarkWhere(_) => "shown rows".into(),
+            Command::NewProfile => "vault".into(),
+            #[cfg(feature = "js")]
+            Command::ImportProfiles => "vault".into(),
+            Command::ScriptBrowse => "script library".into(),
+            #[cfg(feature = "js")]
+            Command::ScriptLoad | Command::ImportCatalog => "script library".into(),
             _ => match self.group() {
                 Group::App => "app".into(),
                 Group::Logs => "log".into(),
-                Group::Fleet => match self {
-                    Command::ImportProfiles | Command::NewProfile => "vault".into(),
-                    _ => "fleet table".into(),
-                },
-                Group::Script
-                    if matches!(self, Command::ScriptBrowse | Command::ScriptLoad)
-                        || self == Command::ImportCatalog =>
-                {
-                    "script library".into()
-                }
+                Group::Fleet => "fleet table".into(),
                 Group::Map
                     if matches!(self, Command::MapWalk)
                         && app.walk_send.mode == WalkSendMode::Group =>
@@ -489,7 +507,7 @@ impl Command {
                     "map".into()
                 }
                 Group::Bot if self == Command::Loadouts => "loadout store".into(),
-                _ => bot(),
+                Group::Script | Group::Bot | Group::Chat | Group::Map => bot(),
             },
         }
     }
@@ -516,9 +534,10 @@ impl Command {
             Command::ScriptPause => &[NoFocusedBot, NoScriptToPause],
             Command::ScriptStop => &[NoFocusedBot, NoScriptToStop],
             Command::ScriptParams => &[NoParamsCard, ParamsUnavailable, NoParams],
+            #[cfg(feature = "js")]
             Command::ScriptReload => &[NoReloadCard],
+            #[cfg(feature = "js")]
             Command::ScriptReloadCancel => &[NoReloadWaiting],
-            Command::ToggleGameChat => &[NoScriptPaint],
             Command::MapSearch
             | Command::MapRecenter
             | Command::MapGroup
@@ -561,8 +580,11 @@ impl Command {
             }
             Command::ScriptPause => OperatorCommand::PauseScript,
             Command::ScriptStop => OperatorCommand::StopScript,
+            #[cfg(feature = "js")]
             Command::ScriptReload if app.reload_confirm => OperatorCommand::ConfirmReload,
+            #[cfg(feature = "js")]
             Command::ScriptReload => OperatorCommand::ReloadScripts,
+            #[cfg(feature = "js")]
             Command::ScriptReloadCancel => OperatorCommand::CancelReload,
             Command::MapWalk if app.walk_send.mode == WalkSendMode::Group => {
                 OperatorCommand::GroupWalk
@@ -585,21 +607,20 @@ impl Command {
             | Command::PickFleetCard
             | Command::PickWorld
             | Command::PickWorldMarked
-            | Command::ImportProfiles
             | Command::NewProfile
             | Command::Settings
             | Command::Loadouts
             | Command::ManualWalk
             | Command::ScriptBrowse
-            | Command::ScriptLoad
             | Command::ScriptParams
-            | Command::ImportCatalog
             | Command::ToggleGameChat
             | Command::MapSearch
             | Command::MapRecenter
             | Command::MapGroup
             | Command::MapWilderness
             | Command::LogSessionFile => return None,
+            #[cfg(feature = "js")]
+            Command::ImportProfiles | Command::ScriptLoad | Command::ImportCatalog => return None,
         })
     }
 
@@ -614,9 +635,9 @@ impl Command {
             | Command::ScriptStart
             | Command::ScriptPause
             | Command::ScriptStop
-            | Command::ScriptReload
-            | Command::ScriptReloadCancel
             | Command::MapTeleport => app.focused_name(),
+            #[cfg(feature = "js")]
+            Command::ScriptReload | Command::ScriptReloadCancel => app.focused_name(),
             Command::MapWalk if app.walk_send.mode != WalkSendMode::Group => app.focused_name(),
             _ => None,
         }
@@ -666,7 +687,9 @@ pub enum Unavailable {
     NoParamsCard,
     ParamsUnavailable,
     NoParams,
+    #[cfg(feature = "js")]
     NoReloadCard,
+    #[cfg(feature = "js")]
     NoReloadWaiting,
     NoScriptPaint,
     MapClosed,
@@ -696,9 +719,12 @@ impl Unavailable {
             Unavailable::NoScriptPicked => "browse to pick a script first",
             Unavailable::NoScriptToPause => "no running script",
             Unavailable::NoScriptToStop => "no script running",
-            Unavailable::NoParamsCard | Unavailable::NoReloadCard => "pick a script first",
+            Unavailable::NoParamsCard => "pick a script first",
+            #[cfg(feature = "js")]
+            Unavailable::NoReloadCard => "pick a script first",
             Unavailable::ParamsUnavailable => "the selected script parameters are unavailable",
             Unavailable::NoParams => "the selected script has no parameters",
+            #[cfg(feature = "js")]
             Unavailable::NoReloadWaiting => "no reload awaiting confirmation",
             Unavailable::NoScriptPaint => "no script paint to toggle",
             Unavailable::MapClosed => "open the Map first (F4)",
@@ -739,7 +765,9 @@ impl Unavailable {
             }
             Unavailable::ParamsUnavailable => app.params_unavailable.is_some(),
             Unavailable::NoParams => app.params_schema.as_ref().is_empty(),
+            #[cfg(feature = "js")]
             Unavailable::NoReloadCard => !app.reload_confirm && app.script_sel.is_none(),
+            #[cfg(feature = "js")]
             Unavailable::NoReloadWaiting => !app.reload_confirm,
             Unavailable::NoScriptPaint => app.chat_data.script_paint.is_none(),
             Unavailable::MapClosed => !app.map_active,
