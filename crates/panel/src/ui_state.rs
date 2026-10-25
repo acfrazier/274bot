@@ -226,6 +226,25 @@ pub fn save(_preferences: &Preferences, state: &PanelUiState) {
     TEST_STATE.with(|s| *s.borrow_mut() = state.clone());
 }
 
+/// Mirror one committed panel preference in the test-only snapshot.
+#[cfg(test)]
+pub(crate) fn commit_test_member(path: &[String], value: &Option<Value>) {
+    TEST_STATE.with(|state| {
+        let Ok(mut stored) = serde_json::to_value(state.borrow().clone()) else {
+            return;
+        };
+        let Some(root) = stored.as_object_mut() else {
+            return;
+        };
+        apply_json_member(root, path, value);
+        let Ok(mut updated) = serde_json::from_value::<PanelUiState>(stored) else {
+            return;
+        };
+        updated.debug_panel.normalize();
+        *state.borrow_mut() = updated;
+    });
+}
+
 /// The panel preferences `preferences` holds: defaults when the file is
 /// absent, when the service refused it (unreadable), or when it does not
 /// read as panel preferences.

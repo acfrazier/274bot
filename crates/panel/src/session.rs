@@ -1900,6 +1900,8 @@ impl Session {
         for member in members {
             if self.pending_panel_members.get(&member.path) == Some(&member.value) {
                 self.pending_panel_members.remove(&member.path);
+                #[cfg(test)]
+                crate::ui_state::commit_test_member(&member.path, &member.value);
             }
             if self
                 .preference_write_error
@@ -1924,8 +1926,14 @@ impl Session {
         &mut self,
         document: &serde_json::Map<String, serde_json::Value>,
     ) {
-        self.pending_panel_members
-            .retain(|path, value| !json_member_matches(document, path, value));
+        self.pending_panel_members.retain(|path, value| {
+            let stored = json_member_matches(document, path, value);
+            #[cfg(test)]
+            if stored {
+                crate::ui_state::commit_test_member(path, value);
+            }
+            !stored
+        });
     }
 
     fn clear_cached_nav_members(&mut self, document: &serde_json::Map<String, serde_json::Value>) {
