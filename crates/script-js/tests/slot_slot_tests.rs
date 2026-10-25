@@ -240,13 +240,12 @@ fn drain_run_policy_update(slot: &mut SlotScript) -> Option<RunPolicyOverride> {
 
 fn finish_until_idle(slot: &mut SlotScript) -> Vec<String> {
     let deadline = Instant::now() + Duration::from_secs(5);
-    let mut logs = Vec::new();
     while slot.state() != RunState::Idle && Instant::now() < deadline {
-        logs.extend(slot.drain_logs());
+        let _ = slot.drain_logs();
         std::thread::yield_now();
     }
-    logs.extend(slot.drain_logs());
-    logs
+    let _ = slot.drain_logs();
+    slot.take_pending_logs()
 }
 
 #[test]
@@ -535,11 +534,10 @@ export default class T extends LoopingBot {
     let mut slot = js_slot(0);
     start_js_running(&mut slot, source, LoadShape::CompatClass, None);
     surface_tick(&mut slot, 1);
-    let _ = slot.drain_logs();
+    let receipt = wait_for_receipt(&mut slot).expect("script Stop receipt");
     assert!(slot
         .last_error()
         .is_some_and(|error| error.contains("script requested stop")));
-    let receipt = wait_for_receipt(&mut slot).expect("script Stop receipt");
     assert_eq!(receipt.runtime_generation, 1);
     assert_eq!(receipt.state, script::slot::ScriptTerminalState::Stopped);
     assert_eq!(receipt.tick, 1);
@@ -692,8 +690,7 @@ export default class T extends LoopingBot {
     start_js_running(&mut slot, source, LoadShape::CompatClass, None);
     allow_onstop_completion(&mut slot);
     surface_tick(&mut slot, 1);
-    let mut logs = finish_until_idle(&mut slot);
-    logs.extend(slot.take_pending_logs());
+    let logs = finish_until_idle(&mut slot);
     let hits = logs
         .iter()
         .filter(|line| line.contains("stopped-ok"))
@@ -1036,6 +1033,7 @@ fn run_surface_walk_tick(slot: &mut SlotScript, tick: u64, session_epoch: u64) {
     });
     let _ = slot.post_snapshot_delta(&input, NativeFactsInput::default(), false);
     surface_tick(slot, tick);
+    let _ = probe(slot, "true");
 }
 
 fn walk_near_rows(
