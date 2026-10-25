@@ -705,6 +705,7 @@ fn multibox_before_unlock_then_picks_keep_both_on_the_rail_without_a_start() {
         .take_requested_unlock()
         .expect("unlock requested");
     assert!(state.session.unlock_at(&path, pass.as_str()));
+    state.session.poll_panel_preferences();
     step(&mut ctx, &mut state, FrameInput::default());
     let s = &state.session;
     assert_eq!(s.focused_name().as_deref(), Some("alice"));

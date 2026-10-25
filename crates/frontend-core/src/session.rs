@@ -853,6 +853,8 @@ impl<Io> OperatorSession<Io> {
         self.vault = Some(vault);
         self.profiles_generation = self.profiles_generation.wrapping_add(1);
         self.writer = None;
+        // Publish the UID/name projection before any startup or explicit Load.
+        self.reconcile_profile_order();
     }
 
     /// Start the play session `launch` describes, with `hook` as the front
@@ -1040,6 +1042,18 @@ impl<Io> OperatorSession<Io> {
                 }
             }
         }
+    }
+
+    /// Prepare automatic startup without loading or selecting a profile.
+    /// Both front ends use this gate before consuming a deferred request.
+    /// A cold or failed preference store is not an empty saved order.
+    pub fn prepare_startup(&mut self) -> bool {
+        self.poll_initial_preferences();
+        if self.vault.is_none() || (self.local_state.is_some() && !self.preferences_adopted) {
+            return false;
+        }
+        self.reconcile_profile_order();
+        true
     }
 
     /// The process local-state service bound at startup, if any.
@@ -1404,7 +1418,6 @@ impl<Io> OperatorSession<Io> {
         if self.order_reconciled_at == Some(self.profiles_generation) {
             return;
         }
-        let before = self.profile_order.names().len();
         let changed = match self.vault.as_ref() {
             Some(vault) => {
                 let rows = || {
@@ -1423,12 +1436,12 @@ impl<Io> OperatorSession<Io> {
                 self.durable_order.reconcile(rows(), pending);
                 self.profile_order.reconcile(rows(), pending)
             }
-            None => false,
+            None => crate::profile_order::Reconciled::default(),
         };
-        if changed || self.profile_order.names().len() != before {
+        if changed.stored_changed || changed.sequence_changed {
             self.profiles_generation = self.profiles_generation.wrapping_add(1);
         }
-        if changed && self.order_saved {
+        if changed.stored_changed && self.order_saved {
             self.persist_profile_order_quietly();
         }
         self.order_reconciled_at = Some(self.profiles_generation);

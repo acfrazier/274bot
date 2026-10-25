@@ -1774,8 +1774,10 @@ impl Session {
             // Startup selection is a between-command effect. Lazy policy
             // reads may adopt preferences, but must not replace a command's
             // captured profile or map context.
-            if let Some(focus) = self.startup_focus_pending.take() {
-                self.apply_startup_focus(focus);
+            if self.startup_focus_pending.is_some() && self.core.prepare_startup() {
+                if let Some(focus) = self.startup_focus_pending.take() {
+                    self.apply_startup_focus(focus);
+                }
             }
         }
     }
@@ -2241,7 +2243,7 @@ impl Session {
     /// parked until selected (select keeps a slot once it has run).
     pub fn unlock_at(&mut self, path: &Path, pass: &str) -> bool {
         if self.start_vault(path, pass) {
-            self.focus_when_ready(StartupFocus::Restore);
+            self.startup_focus_pending = Some(StartupFocus::Restore);
             true
         } else {
             false
@@ -2847,9 +2849,9 @@ impl Session {
         Ok(())
     }
 
-    /// Automatic profile loads share the initial preference-readiness gate.
+    /// A durable profile save can select immediately once shared startup is ready.
     fn focus_when_ready(&mut self, focus: StartupFocus) {
-        if self.preferences_ready {
+        if self.preferences_ready && self.core.prepare_startup() {
             self.apply_startup_focus(focus);
         } else {
             self.startup_focus_pending = Some(focus);
@@ -4858,23 +4860,19 @@ impl Session {
         self.core.fleet_view().row(name).and_then(|row| row.queue())
     }
 
-    /// Whether the focused slot has an authenticated client session. Control
-    /// actions such as Logout use this rather than the game-action gate.
-    pub fn focused_connected(&self) -> bool {
-        let Some(name) = self.focused_name() else {
-            return false;
-        };
-        self.statuses.get(&name).is_some_and(|s| s.connected())
-    }
-
-    /// Whether the repeat guard parked the focused slot after repeated
-    /// unexpected exits. It is offline and unqueued but may still hold a
-    /// script's work, which a Logout ends.
-    pub fn focused_guard_parked(&self) -> bool {
-        let Some(name) = self.focused_name() else {
-            return false;
-        };
-        self.statuses.get(&name).is_some_and(|s| s.guard_parked())
+    /// Whether Log out acts on the focused slot: the shared projection's
+    /// answer, the same one Fleet Log out and the TUI use. `None` without a
+    /// focused slot.
+    pub fn focused_logout_eligibility(&self) -> Option<frontend_core::LogoutEligibility> {
+        let name = self.focused_name()?;
+        Some(
+            self.core
+                .fleet_view()
+                .row(&name)
+                .map_or(frontend_core::LogoutEligibility::NotLoggedIn, |row| {
+                    row.logout_eligibility()
+                }),
+        )
     }
 
     /// Whether the focused slot has a scene/player observation safe for game
