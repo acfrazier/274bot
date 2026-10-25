@@ -149,7 +149,7 @@ function checkUnconditionalRefusalOverlays() {
         const sourcePath = path.join(crate, 'src/shim', entry.shim);
         const source = fs.readFileSync(sourcePath, 'utf8');
         const sf = parse(source, entry.shim);
-        const relativeSource = path.posix.join('crates/script/src/shim', entry.shim.replaceAll(path.sep, '/'));
+        const relativeSource = path.posix.join('crates/script-js/src/shim', entry.shim.replaceAll(path.sep, '/'));
         const visit = (node, owner) => {
             let nextOwner = owner;
             if (ts.isClassDeclaration(node) || ts.isClassExpression(node)) nextOwner = node.name ? node.name.text : owner;
@@ -268,7 +268,7 @@ function apply(module, text) {
     let statements = [...sf.statements];
     for (const e of entries) {
         if (e.preserveMembers && (e.selector.includes('.') || !e.declaration)) throw new Error(`preserveMembers requires a full declaration selector: ${e.id}`);
-        if (!e.reason || !/^crates\/script\/[^:]+:\d+/.test(e.runtime)) throw new Error(`Missing reason/runtime citation: ${e.id}`);
+        if (!e.reason || !/^crates\/(?:script|script-js)\/[^:]+:\d+/.test(e.runtime)) throw new Error(`Missing reason/runtime citation: ${e.id}`);
         if (used.has(e.id)) throw new Error(`Duplicate overlay id: ${e.id}`);
         if (e.selector === '$module') {
             statements = overlayDeclarations(e.declaration);
@@ -723,7 +723,7 @@ async function main() {
         const barrelPolicy = overlay.find(e => e.module === '@rs2b0t/api' && e.selector === '$barrel' && e.operation === 'runtime-values');
         if (!barrelPolicy) throw new Error('Missing named barrel runtime-value overlay');
         for (const entry of [define, barrelPolicy].filter(Boolean)) {
-            if (!entry.reason || !/^crates\/script\/[^:]+:\d+/.test(entry.runtime)) throw new Error(`Missing reason/runtime citation: ${entry.id}`);
+            if (!entry.reason || !/^crates\/(?:script|script-js)\/[^:]+:\d+/.test(entry.runtime)) throw new Error(`Missing reason/runtime citation: ${entry.id}`);
             used.add(entry.id);
         }
         const unused = overlay.filter(e => !used.has(e.id));
@@ -756,11 +756,11 @@ async function main() {
             entry.shim,
             fs.readFileSync(path.join(crate, 'src/shim', entry.shim), 'utf8'),
         ]));
-        const callbackSnapshot = JSON.parse(fs.readFileSync(path.join(here, 'abi-callbacks.json'), 'utf8'));
+        const callbackSnapshot = JSON.parse(fs.readFileSync(path.join(crate, '../script/tests/fixtures/abi-callbacks.json'), 'utf8'));
         const nativeFamilyFamilies = deriveNativeFamilyFamilies(callbackSnapshot, registry, shimSources);
         const navFamilies = deriveNavFamilies({
             frozenSourceRoot: path.join(frozen, 'src'),
-            nativeSourceRoot: path.join(crate, 'src'),
+            nativeSourceRoots: [path.join(crate, '../script/src'), path.join(crate, 'src')],
             nativeFamilyFamilies,
             registry,
         });

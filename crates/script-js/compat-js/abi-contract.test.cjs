@@ -31,12 +31,12 @@ const shimSources = Object.fromEntries(registry.map(entry => [
     entry.shim,
     fs.readFileSync(path.join(crate, 'src/shim', entry.shim), 'utf8'),
 ]));
-const callbackSnapshot = JSON.parse(fs.readFileSync(path.join(here, 'abi-callbacks.json'), 'utf8'));
+const callbackSnapshot = JSON.parse(fs.readFileSync(path.join(crate, '../script/tests/fixtures/abi-callbacks.json'), 'utf8'));
 assert.equal(callbackSnapshot.schema_version, 2);
 const nativeFamilyFamilies = deriveNativeFamilyFamilies(callbackSnapshot, registry, shimSources);
 const navFamilies = frozenRoot ? deriveNavFamilies({
     frozenSourceRoot: path.join(frozenRoot, 'src'),
-    nativeSourceRoot: path.join(crate, 'src'),
+    nativeSourceRoots: [path.join(crate, '../script/src'), path.join(crate, 'src')],
     nativeFamilyFamilies,
     registry,
 }) : null;
@@ -385,11 +385,34 @@ test('a declared-only runtime member roots its implementation for nav scanning',
 
         const derived = deriveNavFamilies({
             frozenSourceRoot: sourceRoot,
-            nativeSourceRoot: nativeRoot,
+            nativeSourceRoots: [],
             nativeFamilyFamilies: new Map(),
             registry: [],
         });
         assert.deepEqual([...derived].sort(), ['acquisition']);
+        assert.throws(
+            () => deriveNavFamilies({
+                frozenSourceRoot: sourceRoot,
+                nativeSourceRoots: [nativeRoot],
+                nativeFamilyFamilies: new Map(),
+                registry: [],
+            }),
+            /Rust source scan selected zero files/,
+        );
+        const duplicateRoot = path.join(scratch, 'duplicate-native');
+        fs.mkdirSync(duplicateRoot);
+        const duplicateFamily = 'const NAME: &str = "duplicate-family";\n';
+        fs.writeFileSync(path.join(nativeRoot, 'family.rs'), duplicateFamily);
+        fs.writeFileSync(path.join(duplicateRoot, 'family.rs'), duplicateFamily);
+        assert.throws(
+            () => deriveNavFamilies({
+                frozenSourceRoot: sourceRoot,
+                nativeSourceRoots: [nativeRoot, duplicateRoot],
+                nativeFamilyFamilies: new Map([['duplicate-family', 'acquisition']]),
+                registry: [],
+            }),
+            /Native family source appears under both roots: duplicate-family/,
+        );
     } finally {
         fs.rmSync(scratch, { recursive: true, force: true });
     }
@@ -510,7 +533,7 @@ test('refusal debt is unique and names each missing notImplValue export', () => 
         for (const member of members) {
             const row = contract.not_impl_debt.find(debt => debt.module === module && debt.member === member);
             assert.ok(row, `${module} must record ${member}`);
-            assert.ok(row.source.includes('crates/script/src/shim/'), `${member} names its source file`);
+            assert.ok(row.source.includes('crates/script-js/src/shim/'), `${member} names its source file`);
         }
     }
     assert.equal(newRefusals.reduce((count, [, members]) => count + members.length, 0), 26);
@@ -623,7 +646,7 @@ test('the real generator follows same-family #/ imports when classifying navigat
 
 test('the real generator rejects a walking backend without callback rows', { skip: !frozenRoot }, () => {
     const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 't2-abi-no-callback-nav-seed-'));
-    const crateCopy = path.join(scratch, 'script');
+    const crateCopy = path.join(scratch, 'script-js');
     try {
         fs.cpSync(crate, crateCopy, {
             recursive: true,
@@ -633,8 +656,15 @@ test('the real generator rejects a walking backend without callback rows', { ski
                     !relative.split(path.sep).some(part => part === 'node_modules' || part === 'target');
             },
         });
+        const coreCopy = path.join(scratch, 'script');
+        fs.cpSync(path.join(crate, '../script/src'), path.join(coreCopy, 'src'), { recursive: true });
+        fs.mkdirSync(path.join(coreCopy, 'tests/fixtures'), { recursive: true });
+        fs.copyFileSync(
+            path.join(crate, '../script/tests/fixtures/abi-callbacks.json'),
+            path.join(coreCopy, 'tests/fixtures/abi-callbacks.json'),
+        );
         fs.symlinkSync(path.join(here, 'node_modules'), path.join(crateCopy, 'compat-js/node_modules'), 'dir');
-        const fire = path.join(crateCopy, 'src/fire.rs');
+        const fire = path.join(crateCopy, 'src/compat/fire.rs');
         const source = fs.readFileSync(fire, 'utf8');
         assert.doesNotMatch(source, /use crate::walk::Resilient;/);
         const seeded = source.replace(

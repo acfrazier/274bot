@@ -64,8 +64,13 @@ fn start_js_running(
 
 fn wait_state(slot: &mut SlotScript, want: RunState) {
     let deadline = Instant::now() + Duration::from_secs(5);
-    while slot.state() != want && Instant::now() < deadline {
+    while slot.state() != want {
         let _ = slot.drain_logs();
+        assert!(
+            Instant::now() < deadline,
+            "load isolate did not become ready: {:?}",
+            slot.last_error()
+        );
         std::thread::yield_now();
     }
 }
@@ -713,6 +718,11 @@ fn watchdog_restart_starts_new_js_isolate() {
     slot.restart_from_identity(Instant::now())
         .expect("restart from identity");
     wait_state(&mut slot, RunState::Running);
+    let logs = slot.take_pending_logs();
+    assert!(
+        logs.iter().any(|l| l.contains("stopped-ok")),
+        "dying isolate onStop must land in pending_logs: {logs:?}"
+    );
     surface_tick(&mut slot, 1);
     assert_eq!(
         probe(&mut slot, "__gen"),
@@ -726,12 +736,19 @@ fn watchdog_restart_starts_new_js_isolate() {
 #[test]
 fn js_surface_start_runs_after_v8_setup() {
     let mut slot = js_slot(0);
+    let t0 = Instant::now();
     start_js(
         &mut slot,
         "export function tick(api) { globalThis.__n = (globalThis.__n || 0) + 1; }",
         LoadShape::NativeTick,
         None,
     );
+    assert!(
+        t0.elapsed() < Duration::from_millis(500),
+        "Start must not wait on V8: {:?}",
+        t0.elapsed()
+    );
+    assert_eq!(slot.state(), RunState::Starting);
     wait_state(&mut slot, RunState::Running);
     surface_tick(&mut slot, 1);
     assert_eq!(probe(&mut slot, "globalThis.__n"), serde_json::json!(1));
@@ -763,7 +780,14 @@ fn js_onstop_completes_before_queued_start() {
     let mut slot = js_slot(0);
     start_js_running(&mut slot, src, LoadShape::CompatClass, None);
     allow_onstop_completion(&mut slot);
+    let t0 = Instant::now();
     slot.stop();
+    assert!(
+        t0.elapsed() < Duration::from_millis(200),
+        "Stop blocked: {:?}",
+        t0.elapsed()
+    );
+    assert_eq!(slot.state(), RunState::Stopping);
     start_js(&mut slot, src, LoadShape::CompatClass, None);
     wait_state(&mut slot, RunState::Running);
     let logs = slot.take_pending_logs();
@@ -779,9 +803,16 @@ fn js_onstop_completes_before_queued_start() {
 fn js_surface_start_all_over_n_members_does_not_block() {
     let src = "export function tick(api) { globalThis.__n = (globalThis.__n || 0) + 1; }";
     let mut slots: Vec<SlotScript> = (0..4).map(|_| js_slot(0)).collect();
+    let t0 = Instant::now();
     for slot in &mut slots {
         start_js(slot, src, LoadShape::NativeTick, None);
+        assert_eq!(slot.state(), RunState::Starting);
     }
+    assert!(
+        t0.elapsed() < Duration::from_millis(500),
+        "Start all blocked per member: {:?}",
+        t0.elapsed()
+    );
     for slot in &mut slots {
         wait_state(slot, RunState::Running);
         surface_tick(slot, 1);

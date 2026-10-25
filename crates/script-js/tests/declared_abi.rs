@@ -289,7 +289,7 @@ export default class T extends LoopingBot {
 }
 
 fn compat_overlay_entries(workspace: &std::path::Path) -> Vec<serde_json::Value> {
-    let root = workspace.join("crates/script/compat-js");
+    let root = workspace.join("crates/script-js/compat-js");
     [
         "overlay.json",
         "overlay-native.json",
@@ -428,7 +428,8 @@ fn unconditional_refusals_have_never_overlays() {
     let workspace = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let entries = compat_overlay_entries(&workspace);
     let mut files = Vec::new();
-    collect_javascript_files(&workspace.join("crates/script/src/shim"), &mut files);
+    collect_javascript_files(&workspace.join("crates/script-js/src/shim"), &mut files);
+    assert!(!files.is_empty(), "runtime shim scan selected zero files");
     files.sort();
 
     for file in files {
