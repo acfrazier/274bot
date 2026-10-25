@@ -220,6 +220,7 @@ impl Rig {
             None,
             Some(&self.snapshot),
             None,
+            #[cfg(feature = "js")]
             None,
             Some(&self.names),
             &self.scripts,
@@ -233,7 +234,9 @@ impl Rig {
             Some(&self.input),
             Some(cache),
             Some(Arc::clone(&self.names)),
+            #[cfg(feature = "js")]
             None,
+            #[cfg(feature = "js")]
             crate::script_channels::BrokerWorld::Local,
             None,
             None,

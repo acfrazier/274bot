@@ -109,6 +109,7 @@ impl PaintRig {
             None,
             Some(&self.snapshot),
             None,
+            #[cfg(feature = "js")]
             None,
             None,
             &self.scripts,
@@ -122,7 +123,9 @@ impl PaintRig {
             None,
             None,
             None,
+            #[cfg(feature = "js")]
             None,
+            #[cfg(feature = "js")]
             super::super::script_channels::BrokerWorld::Unavailable,
             None,
             None,

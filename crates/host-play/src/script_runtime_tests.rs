@@ -7,6 +7,7 @@ use script_js::wire::decode_snapshot;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::script_snapshot_fb;
+#[cfg(feature = "js")]
 use super::SettledStart;
 use crate::PostedWalkOutcome;
 
@@ -322,6 +323,7 @@ impl script::native::Script for QueueMove {
     }
 }
 
+#[cfg(feature = "js")]
 /// A v2 script that queues the exact board click beside four stale or
 /// forged shapes in the same frame, and reports the posted board.
 const PUZZLE_MOVE_V2: &str = r#"
@@ -352,6 +354,7 @@ export function tick(api) {
 }
 "#;
 
+#[cfg(feature = "js")]
 /// A v2 script that deposits on its first tick and then queues the same
 /// deposit beside a board click on its second, so the later frame runs
 /// with the bank gate already closed by the armed op.
@@ -644,6 +647,7 @@ fn observe_puzzle_frame(
 /// component — never `INV_BUTTON5` — while a stale generation, an empty
 /// slot, a missing piece and a wrong component queued in the same frame
 /// send nothing.
+#[cfg(feature = "js")]
 #[test]
 fn puzzle_move_drains_as_opheld_on_the_posted_board() {
     let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
@@ -1189,6 +1193,7 @@ fn puzzle_move_refuses_closed_stale_and_forged_shapes() {
 /// refuses the neighbouring deposit because a bank op is already pending,
 /// it never arms a bank op of its own, and the two families stay distinct
 /// (`OPHELD5` for the board, `INV_BUTTON1` for the deposit).
+#[cfg(feature = "js")]
 #[test]
 fn puzzle_move_rides_a_frame_with_an_active_bank_op() {
     let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));

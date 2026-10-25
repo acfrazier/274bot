@@ -77,9 +77,13 @@ const CELL_BOUND: Duration = Duration::from_secs(60);
 pub(super) const LOGIN_DEADLINE: Duration = Duration::from_secs(90);
 pub(super) const PREPARATION_DEADLINE: Duration = Duration::from_secs(180);
 pub(super) const CAPTURE_GRACE: Duration = Duration::from_secs(10);
+#[cfg(feature = "js")]
 const FEATHER: i32 = 314;
+#[cfg(feature = "js")]
 const LOGS: i32 = 1511;
+#[cfg(feature = "js")]
 const BONES: i32 = 526;
+#[cfg(feature = "js")]
 const TINDERBOX: i32 = 590;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -981,8 +985,10 @@ fn live_bank_core_exact_withdraw_at_draynor() {
     }
 }
 
+#[cfg(feature = "js")]
 const WITHDRAW_SEED: &str = "givebank coins 50";
 
+#[cfg(feature = "js")]
 /// One compat cell: its bound, seed, frozen script and posted verdict.
 struct CompatSpec {
     label: &'static str,
@@ -998,6 +1004,7 @@ struct CompatSpec {
     verdict: fn(&serde_json::Value, &Facts) -> Result<(), String>,
 }
 
+#[cfg(feature = "js")]
 /// The frozen-API Load script around a cell body: open the booth the
 /// player stands at, wait for its stock, run the body once, and publish
 /// `globalThis.__cell`.
@@ -1028,10 +1035,12 @@ export default class BankCoreCell extends LoopingBot {{
     )
 }
 
+#[cfg(feature = "js")]
 fn has(snapshot: &GameSnapshot, id: i32, held: i32) -> bool {
     count(snapshot.inventory(), id) == held
 }
 
+#[cfg(feature = "js")]
 fn run_compat_cell(spec: &CompatSpec) {
     assert_eq!(std::env::var("LIVE").as_deref(), Ok("1"), "requires LIVE=1");
     let root = PathBuf::from(
@@ -1215,6 +1224,7 @@ fn run_compat_cell(spec: &CompatSpec) {
     }
 }
 
+#[cfg(feature = "js")]
 fn answered_true(answer: &serde_json::Value, key: &str) -> Result<(), String> {
     if answer[key] == serde_json::json!(true) {
         Ok(())
@@ -1224,13 +1234,16 @@ fn answered_true(answer: &serde_json::Value, key: &str) -> Result<(), String> {
 }
 
 /// Eight bones take eight slots: 20 of 28 stay free.
+#[cfg(feature = "js")]
 const PACK_OF_EIGHT: &str = "give bones 8";
 
+#[cfg(feature = "js")]
 fn eight_bones(snapshot: &GameSnapshot) -> bool {
     has(snapshot, BONES, 8)
 }
 
 /// The load cells' body for one bank row name.
+#[cfg(feature = "js")]
 macro_rules! load_body {
     ($name:literal) => {
         concat!(
@@ -1246,6 +1259,7 @@ macro_rules! load_body {
     };
 }
 
+#[cfg(feature = "js")]
 #[test]
 #[ignore = "requires LIVE=1, GATHERER_NAV_PACK/GATHERER_ENGINE_DIR/GATHERER_CATALOG_ROOT/BOT_CACHE_DIR/CLIENT_UNPACK_DIR/LIVE_EVIDENCE_DIR and a local 289 engine"]
 fn live_bank_core_compat_withdraw_load_stackable_at_draynor() {
@@ -1273,6 +1287,7 @@ fn live_bank_core_compat_withdraw_load_stackable_at_draynor() {
     });
 }
 
+#[cfg(feature = "js")]
 #[test]
 #[ignore = "requires LIVE=1, GATHERER_NAV_PACK/GATHERER_ENGINE_DIR/GATHERER_CATALOG_ROOT/BOT_CACHE_DIR/CLIENT_UNPACK_DIR/LIVE_EVIDENCE_DIR and a local 289 engine"]
 fn live_bank_core_compat_withdraw_load_unstackable_at_draynor() {
@@ -1300,6 +1315,7 @@ fn live_bank_core_compat_withdraw_load_unstackable_at_draynor() {
     });
 }
 
+#[cfg(feature = "js")]
 #[test]
 #[ignore = "requires LIVE=1, GATHERER_NAV_PACK/GATHERER_ENGINE_DIR/GATHERER_CATALOG_ROOT/BOT_CACHE_DIR/CLIENT_UNPACK_DIR/LIVE_EVIDENCE_DIR and a local 289 engine"]
 fn live_bank_core_compat_close_at_draynor() {
@@ -1344,6 +1360,7 @@ fn live_bank_core_compat_close_at_draynor() {
     });
 }
 
+#[cfg(feature = "js")]
 #[test]
 #[ignore = "requires LIVE=1, GATHERER_NAV_PACK/GATHERER_ENGINE_DIR/GATHERER_CATALOG_ROOT/BOT_CACHE_DIR/CLIENT_UNPACK_DIR/LIVE_EVIDENCE_DIR and a local 289 engine"]
 fn live_bank_core_compat_deposit_all_except_at_draynor() {
@@ -1382,6 +1399,7 @@ fn live_bank_core_compat_deposit_all_except_at_draynor() {
     });
 }
 
+#[cfg(feature = "js")]
 #[test]
 #[ignore = "requires LIVE=1, GATHERER_NAV_PACK/GATHERER_ENGINE_DIR/GATHERER_CATALOG_ROOT/BOT_CACHE_DIR/CLIENT_UNPACK_DIR/LIVE_EVIDENCE_DIR and a local 289 engine"]
 fn live_bank_core_compat_bank_pick_at_draynor() {
@@ -1414,6 +1432,7 @@ fn live_bank_core_compat_bank_pick_at_draynor() {
     });
 }
 
+#[cfg(feature = "js")]
 #[test]
 #[ignore = "requires LIVE=1, GATHERER_NAV_PACK/GATHERER_ENGINE_DIR/GATHERER_CATALOG_ROOT/BOT_CACHE_DIR/CLIENT_UNPACK_DIR/LIVE_EVIDENCE_DIR and a local 289 engine"]
 fn live_bank_core_compat_gathering_bank_loop_at_draynor() {

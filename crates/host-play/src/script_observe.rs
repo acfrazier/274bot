@@ -283,7 +283,7 @@ pub(crate) fn script_observe_with_npc_boxes(
     inv: Option<&[(i32, i32)]>,
     state: Option<WorldState>,
     snapshot: Option<&GameSnapshot>,
-    npc_boxes: Option<&[script_js::wire::NpcBoxInput]>,
+    npc_boxes: Option<&[script::native::snapshot_source::NpcBoxInput]>,
     obj_names: Option<&api::obj_names::ObjNames>,
     scripts: &ScriptWall,
     cheats: &Arc<Mutex<HashMap<String, VecDeque<String>>>>,
@@ -312,7 +312,7 @@ pub(crate) fn script_observe_cached(
     inv: Option<&[(i32, i32)]>,
     state: Option<WorldState>,
     snapshot: Option<&GameSnapshot>,
-    npc_boxes: Option<&[script_js::wire::NpcBoxInput]>,
+    npc_boxes: Option<&[script::native::snapshot_source::NpcBoxInput]>,
     obj_names: Option<&api::obj_names::ObjNames>,
     scripts: &ScriptWall,
     cheats: &Arc<Mutex<HashMap<String, VecDeque<String>>>>,
@@ -338,6 +338,7 @@ pub(crate) fn script_observe_cached(
         state,
         snapshot,
         None,
+        #[cfg(feature = "js")]
         npc_boxes,
         obj_names,
         scripts,
@@ -352,7 +353,9 @@ pub(crate) fn script_observe_cached(
         slot_input,
         cache,
         obj_names_arc,
+        #[cfg(feature = "js")]
         None,
+        #[cfg(feature = "js")]
         super::script_channels::BrokerWorld::Unavailable,
         run_policy,
         None,
@@ -378,7 +381,7 @@ pub(crate) fn drain_observed_host_interacts(
     slot: &mut SlotScript,
 ) -> (
     Option<DrainedRunPolicyUpdate>,
-    Vec<script_js::QueuedInteract>,
+    Vec<script::interact::QueuedInteract>,
     bool,
 ) {
     let producer_generation = slot.runtime_generation();
@@ -426,7 +429,8 @@ pub(crate) fn script_observe_cached_with_channels(
     state: Option<WorldState>,
     snapshot: Option<&GameSnapshot>,
     bank_memory: Option<&parking_lot::RwLock<api::bank_memory::BankMemory>>,
-    npc_boxes: Option<&[script_js::wire::NpcBoxInput]>,
+    #[cfg(feature = "js")]
+    npc_boxes: Option<&[script::native::snapshot_source::NpcBoxInput]>,
     obj_names: Option<&api::obj_names::ObjNames>,
     scripts: &ScriptWall,
     cheats: &Arc<Mutex<HashMap<String, VecDeque<String>>>>,
@@ -439,7 +443,9 @@ pub(crate) fn script_observe_cached_with_channels(
     slot_input: Option<&SlotInput>,
     cache: Option<Arc<Cache>>,
     obj_names_arc: Option<Arc<api::obj_names::ObjNames>>,
+    #[cfg(feature = "js")]
     channels: Option<&super::script_channels::SlotChannels>,
+    #[cfg(feature = "js")]
     channel_world: super::script_channels::BrokerWorld,
     run_policy: Option<&mut ScriptRunPolicy>,
     mut debug_replies: Option<&mut super::debug_replies::DebugReplies>,
@@ -482,7 +488,9 @@ pub(crate) fn script_observe_cached_with_channels(
     let mut slot_work_epoch = None;
     let mut has_native_actions = false;
     let mut walk_permissions = None;
+    #[cfg(feature = "js")]
     let mut channel_generation = 0;
+    #[cfg(feature = "js")]
     let mut channel_active = false;
     let mut policy_runtime_generation = None;
     let mut run_policy_update = None;
@@ -616,10 +624,12 @@ pub(crate) fn script_observe_cached_with_channels(
             );
         }
         slot_work_epoch = Some(slot.work_epoch());
+        #[cfg(feature = "js")]
         channel_generation = slot.runtime_generation();
         // Region loads briefly clear `up`; the isolate and its browser-style
         // channel survive them. Session boundaries suspend the broker in the
         // slot loop before this observation runs.
+        #[cfg(feature = "js")]
         channel_active = slot.surface_active()
             && matches!(
                 slot.state(),
@@ -781,6 +791,7 @@ pub(crate) fn script_observe_cached_with_channels(
         walk_permissions = slot
             .api_gather_walk_permissions()
             .or_else(|| slot.native_walk_permissions());
+        #[cfg(feature = "js")]
         if (tick_edge || wake_waits) && slot.state() == script::RunState::Running {
             // Task 9b: post the FlatBuffer snapshot blob on every tick
             // edge — held or not — so the isolate's
@@ -862,7 +873,7 @@ pub(crate) fn script_observe_cached_with_channels(
                             0,
                             Vec::new(),
                             route_inspect::PostedInspect::default(),
-                            script_js::wire::BankSelectionInput::default(),
+                            script::native::snapshot_source::BankSelectionInput::default(),
                         ),
                     }
                 };
@@ -873,9 +884,9 @@ pub(crate) fn script_observe_cached_with_channels(
                 // table's display name beside them when it has one. Always
                 // supplied — an empty list is the observed "no named short",
                 // so a clear is never omitted.
-                let carry_rows: Vec<script_js::wire::CarryInput<'_>> = walk_missing_carry
+                let carry_rows: Vec<script::native::snapshot_source::CarryInput<'_>> = walk_missing_carry
                     .iter()
-                    .map(|row| script_js::wire::CarryInput {
+                    .map(|row| script::native::snapshot_source::CarryInput {
                         id: row.id,
                         count: row.count,
                         name: obj_names.and_then(|names| names.name(row.id)),
@@ -952,6 +963,7 @@ pub(crate) fn script_observe_cached_with_channels(
                 // hold: nav follow of the owned recovery route continues,
                 // but script walk arms are not provided. Compiled: skip on
                 // guardian hold.
+                #[cfg(feature = "js")]
                 if slot.surface_active() {
                     slot.on_game_tick(&mut ScriptCtx {
                         driver,
@@ -1239,7 +1251,7 @@ pub(crate) fn script_observe_cached_with_channels(
                             )
                         });
                     interact.extend(resumed.map(|req| {
-                        script_js::QueuedInteract {
+                        script::interact::QueuedInteract {
                             req,
                             observed_walk_outcome_seq: navs
                                 .lock()
@@ -1280,10 +1292,11 @@ pub(crate) fn script_observe_cached_with_channels(
             update.apply(run_policy);
         }
     }
+    #[cfg(feature = "js")]
     if let Some(channels) = channels {
         // Channel requests are the broker's, never the game's. A frame with
         // none allocates nothing, and an untracked slot takes no lock.
-        let is_channel = |queued: &script_js::QueuedInteract| {
+        let is_channel = |queued: &script::interact::QueuedInteract| {
             matches!(
                 queued.req,
                 script::shim::InteractReq::ChannelOpen { .. }
@@ -2102,7 +2115,7 @@ fn deliver_native_advice(slot: &mut script::SlotScript, bot: &mut NavBot) -> boo
 fn host_completion_changed(
     slot: &script::SlotScript,
     bot: &NavBot,
-    bank_selection: script_js::wire::BankSelectionInput,
+    bank_selection: script::native::snapshot_source::BankSelectionInput,
 ) -> bool {
     slot.posted_snapshot_facts().is_some_and(|last| {
         let inspect = &bot.inspect;
@@ -2125,6 +2138,7 @@ fn host_completion_changed(
     })
 }
 
+#[cfg(feature = "js")]
 pub(crate) fn deliver_channel_events(
     scripts: &ScriptWall,
     deliveries: Vec<super::script_channels::Delivery>,
@@ -2239,7 +2253,9 @@ pub(crate) fn observe_script_inv(
 /// Project only the client's bounded active-NPC list. A ready scene with no
 /// projectable NPCs is an available empty update; a non-ready scene is
 /// unavailable so isolates clear any prior geometry.
-pub(crate) fn projected_npc_boxes(client: &Client) -> Option<Vec<script_js::wire::NpcBoxInput>> {
+pub(crate) fn projected_npc_boxes(
+    client: &Client,
+) -> Option<Vec<script::native::snapshot_source::NpcBoxInput>> {
     if !client.ingame || client.scene_state != 2 {
         return None;
     }
@@ -2251,7 +2267,7 @@ pub(crate) fn projected_npc_boxes(client: &Client) -> Option<Vec<script_js::wire
             .filter_map(|&index| {
                 let slot = usize::try_from(index).ok()?;
                 client::render::npc_overlay_box(client, slot)
-                    .map(|points| script_js::wire::NpcBoxInput { index, points })
+                    .map(|points| script::native::snapshot_source::NpcBoxInput { index, points })
             })
             .collect(),
     )
@@ -2261,14 +2277,15 @@ pub(crate) fn projected_npc_boxes(client: &Client) -> Option<Vec<script_js::wire
 /// snapshot. Held running isolates still satisfy this gate because they post
 /// the snapshot before dispatching their paint-only tick; idle, paused,
 /// compiled-only, and non-tick frames do not consume one.
+#[cfg(feature = "js")]
 pub(crate) fn project_npc_boxes_for_isolate_snapshot<F>(
     scripts: &ScriptWall,
     name: &str,
     tick_edge: bool,
     project: F,
-) -> Option<Vec<script_js::wire::NpcBoxInput>>
+    ) -> Option<Vec<script::native::snapshot_source::NpcBoxInput>>
 where
-    F: FnOnce() -> Option<Vec<script_js::wire::NpcBoxInput>>,
+    F: FnOnce() -> Option<Vec<script::native::snapshot_source::NpcBoxInput>>,
 {
     if !tick_edge {
         return None;

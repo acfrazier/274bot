@@ -75,9 +75,11 @@ use script_walk::{recovery_walk_idle, resumed_walk};
 #[path = "script_snapshot.rs"]
 mod script_snapshot;
 use script_snapshot::pack_cached_reach;
-#[cfg(test)]
+#[cfg(all(test, feature = "js"))]
 pub(super) use script_snapshot::{script_snapshot_fb, with_script_snapshot_input};
-pub(super) use script_snapshot::{slot_arrival_reach, with_script_snapshot_input_shorts};
+pub(super) use script_snapshot::slot_arrival_reach;
+#[cfg(feature = "js")]
+pub(super) use script_snapshot::with_script_snapshot_input_shorts;
 #[path = "script_interact.rs"]
 mod script_interact;
 pub(super) use script_interact::{
@@ -113,9 +115,10 @@ pub(super) use script_observe::{
     install_ordered_dispatch_hook, post_script_snapshot, script_observe, script_observe_cached,
     script_observe_with_npc_boxes, take_script_interacts, DispatchBarrier,
 };
+#[cfg(feature = "js")]
+pub(super) use script_observe::{deliver_channel_events, project_npc_boxes_for_isolate_snapshot};
 pub(super) use script_observe::{
-    deliver_channel_events, nav_world_state_for_observe, observe_script_inv,
-    project_npc_boxes_for_isolate_snapshot, projected_npc_boxes,
+    nav_world_state_for_observe, observe_script_inv, projected_npc_boxes,
     script_observe_cached_with_channels, ScriptObservation,
 };
 /// Per-uid script cell on the wall. Encode/post/drain take the slot lock
@@ -144,22 +147,26 @@ pub(super) fn script_slot_or_insert(wall: &ScriptWall, name: &str) -> ScriptSlot
                 .expect("slot incarnation exhausted");
             let mut slot = SlotScript::new();
             slot.bind_incarnation(incarnation);
+            #[cfg(feature = "js")]
             bind_js_surface_factory(&mut slot);
             Arc::new(Mutex::new(slot))
         })
         .clone()
 }
 
+#[cfg(feature = "js")]
 fn shared_js_surface_factory() -> Arc<script_js::surface::JsSurfaceFactory> {
     static FACTORY: std::sync::LazyLock<Arc<script_js::surface::JsSurfaceFactory>> =
         std::sync::LazyLock::new(|| Arc::new(script_js::surface::JsSurfaceFactory::default()));
     Arc::clone(&FACTORY)
 }
 
+#[cfg(feature = "js")]
 fn bind_js_surface_factory(slot: &mut SlotScript) {
     slot.bind_surface_factory(shared_js_surface_factory());
 }
 
+#[cfg(feature = "js")]
 pub(super) fn js_start_card(
     source: String,
     shape: script_js::LoadShape,
@@ -177,6 +184,7 @@ pub(super) fn js_start_card(
     })
 }
 
+#[cfg(feature = "js")]
 pub(super) fn js_surface_start(
     card: Arc<script_js::surface::JsStartCard>,
     settings_bag: Option<Arc<script::native::SettingsBag>>,
@@ -243,7 +251,7 @@ fn log_start_outcome(name: &str, outcome: &script::StartOutcome, state: script::
 /// the public observe path. Start returns before V8 setup; fixtures that
 /// drive observes against a live script start from Ready, and a setup
 /// failure comes back as the `Err` Start used to return.
-#[cfg(test)]
+#[cfg(all(test, feature = "js"))]
 pub(super) trait SettledStart {
     fn start_load_settled(
         &mut self,
@@ -260,7 +268,7 @@ pub(super) trait SettledStart {
     ) -> Result<(), String>;
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "js"))]
 fn settle_start(slot: &mut SlotScript) -> Result<(), String> {
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
@@ -282,7 +290,7 @@ fn settle_start(slot: &mut SlotScript) -> Result<(), String> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "js"))]
 impl SettledStart for SlotScript {
     fn start_load_settled(
         &mut self,
@@ -379,6 +387,6 @@ pub(super) fn script_active(scripts: &ScriptWall, name: &str) -> bool {
 /// ([`with_script_snapshot_input`] via [`script_snapshot_fb`]) over a
 /// client whose main modal holds both a hint panel (a TYPE_INV without
 /// `obj_ops`) and the piece container.
-#[cfg(test)]
+#[cfg(all(test, feature = "js"))]
 #[path = "script_runtime_tests.rs"]
 mod tests;

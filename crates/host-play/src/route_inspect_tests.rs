@@ -2154,6 +2154,7 @@ fn publish_overflow_panics_when_held_full() {
     nav.publish(InspectTerminal::refusal(4, 0, "NoPath"));
 }
 
+#[cfg(feature = "js")]
 fn encode_inspect_bytes(nav: &InspectNav, tick: u64, hold: bool) -> Vec<u8> {
     use {
         script_js::wire::encode_snapshot_with_native, script_js::wire::NativeFactsInput,
@@ -2274,10 +2275,12 @@ fn encode_inspect_bytes(nav: &InspectNav, tick: u64, hold: bool) -> Vec<u8> {
     )
 }
 
+#[cfg(feature = "js")]
 fn inspect_begin(iso: &script_js::LoadIsolate) -> u64 {
     inspect_begin_at(iso, tile(0, 0, 0), tile(1, 1, 0))
 }
 
+#[cfg(feature = "js")]
 fn inspect_begin_at(iso: &script_js::LoadIsolate, from: WorldTile, to: WorldTile) -> u64 {
     iso.probe(&format!(
             "globalThis.rustyscript.functions.__rs2b0t_inspect({{op:'begin',from:{{x:{},z:{},level:{}}},to:{{x:{},z:{},level:{}}},allow_wilderness:true}})",
@@ -2288,6 +2291,7 @@ fn inspect_begin_at(iso: &script_js::LoadIsolate, from: WorldTile, to: WorldTile
         .expect("token")
 }
 
+#[cfg(feature = "js")]
 fn inspect_settled(iso: &script_js::LoadIsolate, token: u64) -> bool {
     iso.probe(&format!(
         "globalThis.rustyscript.functions.__rs2b0t_inspect({{op:'settled',token:{token}}})"
@@ -2297,6 +2301,7 @@ fn inspect_settled(iso: &script_js::LoadIsolate, token: u64) -> bool {
     .unwrap_or(false)
 }
 
+#[cfg(feature = "js")]
 fn inspect_value(iso: &script_js::LoadIsolate, token: u64) -> serde_json::Value {
     iso.probe(&format!(
         "globalThis.rustyscript.functions.__rs2b0t_inspect({{op:'value',token:{token}}})"
@@ -2304,6 +2309,7 @@ fn inspect_value(iso: &script_js::LoadIsolate, token: u64) -> serde_json::Value 
     .unwrap()
 }
 
+#[cfg(feature = "js")]
 fn drain_inspect_acks(iso: &script_js::LoadIsolate) -> Vec<(u64, u64)> {
     iso.drain_interacts()
         .into_iter()
@@ -2314,6 +2320,7 @@ fn drain_inspect_acks(iso: &script_js::LoadIsolate) -> Vec<(u64, u64)> {
         .collect()
 }
 
+#[cfg(feature = "js")]
 fn isolate_begin_and_authorize(
     iso: &script_js::LoadIsolate,
     from: WorldTile,
@@ -2340,6 +2347,7 @@ fn isolate_begin_and_authorize(
     forwarded.then_some(token)
 }
 
+#[cfg(feature = "js")]
 fn inspect_force_timeout(iso: &script_js::LoadIsolate, token: u64) {
     iso.probe(&format!(
             "globalThis.rustyscript.functions.__rs2b0t_inspect({{op:'value',token:{token},timed_out:true}})"
@@ -2347,6 +2355,7 @@ fn inspect_force_timeout(iso: &script_js::LoadIsolate, token: u64) {
         .unwrap();
 }
 
+#[cfg(feature = "js")]
 fn apply_isolate_acks(navs: &Arc<Mutex<HashMap<String, NavBot>>>, iso: &script_js::LoadIsolate) {
     let acks = drain_inspect_acks(iso);
     let mut all = navs.lock().unwrap();
@@ -2356,6 +2365,7 @@ fn apply_isolate_acks(navs: &Arc<Mutex<HashMap<String, NavBot>>>, iso: &script_j
     }
 }
 
+#[cfg(feature = "js")]
 fn post_and_apply(
     iso: &script_js::LoadIsolate,
     navs: &Arc<Mutex<HashMap<String, NavBot>>>,
@@ -2370,6 +2380,7 @@ fn post_and_apply(
     apply_isolate_acks(navs, iso);
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn integrated_host_publish_bytes_isolate_ack_without_new_request() {
     let src = r#"
@@ -2660,6 +2671,7 @@ export function tick() {}
     iso.join();
 }
 
+#[cfg(feature = "js")]
 fn spawn_native_iso() -> script_js::LoadIsolate {
     script_js::LoadIsolate::spawn(
         r#"
@@ -2673,6 +2685,7 @@ export function tick() {}
     .unwrap()
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn integrated_id0_full_then_authorized_registered_refuses_not_timeout() {
     let iso = spawn_native_iso();
@@ -2724,6 +2737,7 @@ fn integrated_id0_full_then_authorized_registered_refuses_not_timeout() {
     iso.join();
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn integrated_timeout_orphans_then_authorized_registered_refuses_not_timeout() {
     let iso = spawn_native_iso();
@@ -2792,6 +2806,7 @@ fn integrated_timeout_orphans_then_authorized_registered_refuses_not_timeout() {
     iso.join();
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn integrated_mixed_id0_registered_ack_progress_does_not_starve() {
     let iso = spawn_native_iso();
@@ -3062,6 +3077,7 @@ fn real_content_inspection_world() -> Option<(Arc<NavWorld>, Arc<Cache>, Arc<Obj
 /// Deterministic old/new inspection handoff over the pinned real revision-289
 /// content. Reads `T5W_INSPECT_CAPTURE_BASELINE`; optionally writes the exact
 /// new snapshot when `T5W_INSPECT_CAPTURE_OUT=<path>` is set.
+#[cfg(feature = "js")]
 #[test]
 fn real_content_inspection_capture_bytes() {
     use crate::script_runtime::SettledStart as _;
