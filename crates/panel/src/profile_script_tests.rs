@@ -1,3 +1,4 @@
+#![cfg(feature = "js")]
 use super::*;
 use crate::test_support::TestDir;
 use frontend_core::scripts::{
