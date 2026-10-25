@@ -259,7 +259,7 @@ impl HookCharacterization {
     pub const fn frozen_path(&self) -> FrozenPathStatus {
         self.frozen_path
     }
-    /// Current and frozen source locations, using §25's $S/$TS aliases.
+    /// Current and frozen citations use `$S` (`crates/script/src`), `$JS` (`crates/script-js/src`), and `$TS` (frozen export `src/bot`).
     pub const fn evidence(&self) -> &'static str {
         self.evidence
     }
@@ -378,7 +378,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::Awaited,
         HookValue::Used,
         NO_DISCREPANCY,
-        "$TS/api/combat/hunting/combat.ts:325; $S/hunt.rs:623",
+        "$TS/api/combat/hunting/combat.ts:325; $JS/compat/hunt.rs:626",
     ),
     hook(
         HUNT_FAMILIES,
@@ -387,7 +387,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::Awaited,
         HookValue::Used,
         NO_DISCREPANCY,
-        "$TS/api/combat/hunting/supply.ts:549; $S/hunt.rs:700-702",
+        "$TS/api/combat/hunting/supply.ts:549; $JS/compat/hunt.rs:703-705",
     ),
     hook(
         &["reach-entity-op"],
@@ -396,7 +396,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::Awaited,
         HookValue::Used,
         NO_DISCREPANCY,
-        "$TS/api/walking/Reach.ts:224; $S/reach_entity.rs:603-607",
+        "$TS/api/walking/Reach.ts:224; $JS/compat/reach_entity.rs:602-606",
     ),
     // Awaited / ignored. §28.1 applies V5-07: armSpecial, sustain and afterDeposit are ignored.
     hook(
@@ -406,7 +406,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::Awaited,
         HookValue::Ignored,
         NO_DISCREPANCY,
-        "$TS/api/combat/hunting/combat.ts:425,677; $S/hunt.rs:624-629",
+        "$TS/api/combat/hunting/combat.ts:425,677; $JS/compat/hunt.rs:627-632",
     ),
     hook(
         SUSTAIN_FAMILIES,
@@ -415,7 +415,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::Awaited,
         HookValue::Ignored,
         NO_DISCREPANCY,
-        "$TS/api/combat/hunting/combat.ts:717; $S/hunt.rs:627-629; $S/walk.rs:1612-1619; $S/boat_fare.rs:1441-1448; $S/anchor_return.rs:175-180; $S/reach.rs:287-293; $S/reach_entity.rs:861-868,1513-1519",
+        "$TS/api/combat/hunting/combat.ts:717; $JS/compat/hunt.rs:630-632; $JS/compat/walk.rs:1612-1619; $JS/compat/boat_fare.rs:1441-1448; $JS/compat/anchor_return.rs:175-180; $JS/compat/reach.rs:287-293; $JS/compat/reach_entity.rs:860-867,1512-1518",
     ),
     hook(
         &["bank_nearest", "periodic_bank"],
@@ -433,7 +433,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::Awaited,
         HookValue::Ignored,
         NO_DISCREPANCY,
-        "$S/death_recovery.rs:200-205,244-256 (frozen result ignored at :255)",
+        "$JS/compat/death_recovery.rs:200-205,244-256 (frozen result ignored at :255)",
     ),
     // Call-sync / used.
     hook(
@@ -461,7 +461,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::CallSync,
         HookValue::Used,
         NO_DISCREPANCY,
-        "$TS/api/thieving/stealRules.ts:37-43; $S/bank_withdraw.rs:190-198,353-357",
+        "$TS/api/thieving/stealRules.ts:37-43; $JS/compat/bank_withdraw.rs:190-198,353-357",
     ),
     hook(
         &["shop"],
@@ -470,7 +470,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::CallSync,
         HookValue::Used,
         NO_DISCREPANCY,
-        "$TS/api/shop/Shop.ts:124; $S/shop.rs:550-554; crates/script/tests/shop.rs:468",
+        "$TS/api/shop/Shop.ts:124; $JS/compat/shop.rs:550-554; crates/script-js/tests/shop.rs:468",
     ),
     hook(
         &["trade"],
@@ -479,7 +479,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::CallSync,
         HookValue::Used,
         NO_DISCREPANCY,
-        "$TS/api/trade/Trade.ts:99,114; $S/trade.rs:407-411; crates/script/tests/trade.rs:777",
+        "$TS/api/trade/Trade.ts:99,114; $JS/compat/trade.rs:407-411; crates/script-js/tests/trade.rs:777",
     ),
     hook(
         &["periodic_bank"],
@@ -488,7 +488,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::CallSync,
         HookValue::Used,
         NO_DISCREPANCY,
-        "$TS/api/tasks/PeriodicBank.ts:16,49; $S/periodic_bank.rs",
+        "$TS/api/tasks/PeriodicBank.ts:16,49; $JS/compat/periodic_bank.rs",
     ),
     hook(
         &["periodic_bank"],
@@ -497,7 +497,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::CallSync,
         HookValue::Used,
         NO_DISCREPANCY,
-        "$TS/api/tasks/PeriodicBank.ts:17,50; $S/periodic_bank.rs",
+        "$TS/api/tasks/PeriodicBank.ts:17,50; $JS/compat/periodic_bank.rs",
     ),
     hook(
         &["periodic_bank"],
@@ -506,7 +506,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::CallSync,
         HookValue::Used,
         NO_DISCREPANCY,
-        "$TS/api/tasks/PeriodicBank.ts:18,51; $S/periodic_bank.rs",
+        "$TS/api/tasks/PeriodicBank.ts:18,51; $JS/compat/periodic_bank.rs",
     ),
     hook(
         &["reach-entity-op"],
@@ -515,7 +515,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::CallSync,
         HookValue::Used,
         NO_DISCREPANCY,
-        "$S/reach_entity.rs:570-579,599-603,613-617,661",
+        "$JS/compat/reach_entity.rs:569-578,598-602,612-616,660",
     ),
     hook(
         &["reach-entity-op"],
@@ -524,7 +524,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::CallSync,
         HookValue::Used,
         NO_DISCREPANCY,
-        "$S/reach_entity.rs:578,626",
+        "$JS/compat/reach_entity.rs:577,626",
     ),
     hook(
         &["reach-loc-op"],
@@ -533,7 +533,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::CallSync,
         HookValue::Used,
         NO_DISCREPANCY,
-        "$TS/api/walking/Reach.ts:182-187,252-265; $S/reach_entity.rs:1029-1046",
+        "$TS/api/walking/Reach.ts:182-187,252-265; $JS/compat/reach_entity.rs:1028-1045",
     ),
     hook(
         &["reach-loc-op"],
@@ -542,7 +542,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::CallSync,
         HookValue::Used,
         NO_DISCREPANCY,
-        "$TS/api/walking/Reach.ts:183-192,264; $S/reach_entity.rs:1034-1075",
+        "$TS/api/walking/Reach.ts:183-192,264; $JS/compat/reach_entity.rs:1033-1074",
     ),
     hook(
         &["partner-trade"],
@@ -551,7 +551,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::CallSync,
         HookValue::Used,
         NO_DISCREPANCY,
-        "$TS/api/trade/drivePartnerTrade.ts; $S/drive_partner_trade.rs:214-240",
+        "$TS/api/trade/drivePartnerTrade.ts; $JS/compat/drive_partner_trade.rs:214-240",
     ),
     hook(
         &["partner-trade"],
@@ -560,7 +560,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::CallSync,
         HookValue::Used,
         NO_DISCREPANCY,
-        "$TS/api/trade/drivePartnerTrade.ts; $S/drive_partner_trade.rs:214-240",
+        "$TS/api/trade/drivePartnerTrade.ts; $JS/compat/drive_partner_trade.rs:214-240",
     ),
     hook(
         &["partner-trade"],
@@ -569,7 +569,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::CallSync,
         HookValue::Used,
         NO_DISCREPANCY,
-        "$TS/api/trade/drivePartnerTrade.ts; $S/drive_partner_trade.rs:214-240",
+        "$TS/api/trade/drivePartnerTrade.ts; $JS/compat/drive_partner_trade.rs:214-240",
     ),
     hook(
         &["partner-trade"],
@@ -578,7 +578,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::CallSync,
         HookValue::Used,
         NO_DISCREPANCY,
-        "$TS/api/trade/drivePartnerTrade.ts; $S/drive_partner_trade.rs:214-240",
+        "$TS/api/trade/drivePartnerTrade.ts; $JS/compat/drive_partner_trade.rs:214-240",
     ),
     hook(
         &["partner-trade"],
@@ -587,7 +587,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::CallSync,
         HookValue::Used,
         NO_DISCREPANCY,
-        "$TS/api/trade/drivePartnerTrade.ts; $S/drive_partner_trade.rs:214-240",
+        "$TS/api/trade/drivePartnerTrade.ts; $JS/compat/drive_partner_trade.rs:214-240",
     ),
     hook(
         &["partner-trade"],
@@ -596,7 +596,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::CallSync,
         HookValue::Used,
         NO_DISCREPANCY,
-        "$TS/api/trade/drivePartnerTrade.ts; $S/drive_partner_trade.rs:214-240",
+        "$TS/api/trade/drivePartnerTrade.ts; $JS/compat/drive_partner_trade.rs:214-240",
     ),
     hook(
         &["cake_stall"],
@@ -605,7 +605,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::CallSync,
         HookValue::Used,
         NO_DISCREPANCY,
-        "$TS/api/thieving/CakeStall.ts:72,83; $S/cake_stall/runtime.rs:727-749",
+        "$TS/api/thieving/CakeStall.ts:72,83; $JS/compat/cake_stall/runtime.rs:727-749",
     ),
     hook(
         &["cake_stall"],
@@ -614,7 +614,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::CallSync,
         HookValue::Used,
         NO_DISCREPANCY,
-        "$TS/api/thieving/CakeStall.ts:72,83; $S/cake_stall/runtime.rs:727-749",
+        "$TS/api/thieving/CakeStall.ts:72,83; $JS/compat/cake_stall/runtime.rs:727-749",
     ),
     hook(
         &["cake_stall"],
@@ -623,7 +623,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::CallSync,
         HookValue::Used,
         NO_DISCREPANCY,
-        "$TS/api/thieving/CakeStall.ts:72,83; $S/cake_stall/runtime.rs:727-749",
+        "$TS/api/thieving/CakeStall.ts:72,83; $JS/compat/cake_stall/runtime.rs:727-749",
     ),
     // Call-sync / ignored.
     hook(
@@ -633,7 +633,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::CallSync,
         HookValue::Ignored,
         NO_DISCREPANCY,
-        "$TS/api/tasks/PeriodicBank.ts:19,45; $S/periodic_bank.rs",
+        "$TS/api/tasks/PeriodicBank.ts:19,45; $JS/compat/periodic_bank.rs",
     ),
     hook(
         SYNC_LOG_FAMILIES,
@@ -642,7 +642,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::CallSync,
         HookValue::Ignored,
         NO_DISCREPANCY,
-        "$TS/api/bank/Bank.ts:86-94,322-327,395-406,428-445; $TS/api/bank/Banking.ts:53-59,209-235; $TS/api/tasks/PeriodicBank.ts:45-60; $S/bank/seat_open.rs; $S/bank/seat_transfer.rs; $S/dialog.rs:160-163,323-327,355-358; $S/reach.rs:202-205,260-268; $S/reach_entity.rs:484-490,527-545,850-859,1497-1505; $S/walk.rs:1533-1536,1810-1812; $S/boat_fare.rs:1352-1357; $S/anchor_return.rs:101-104",
+        "$TS/api/bank/Bank.ts:86-94,322-327,395-406,428-445; $TS/api/bank/Banking.ts:53-59,209-235; $TS/api/tasks/PeriodicBank.ts:45-60; $S/bank/seat_open.rs; $S/bank/seat_transfer.rs; $JS/compat/dialog.rs:160-163,323-327,355-358; $JS/compat/reach.rs:202-205,260-268; $JS/compat/reach_entity.rs:483-489,526-544,849-858,1496-1504; $JS/compat/walk.rs:1533-1536,1810-1812; $JS/compat/boat_fare.rs:1352-1357; $JS/compat/anchor_return.rs:101-104",
     ),
     hook(
         &["bank_nearest"],
@@ -660,7 +660,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::CallSync,
         HookValue::Ignored,
         NO_DISCREPANCY,
-        "$TS/api/bank/Bank.ts:86-94; $S/shim/bank.js; $S/bank/seat_transfer.rs",
+        "$TS/api/bank/Bank.ts:86-94; $JS/shim/bank.js; $S/bank/seat_transfer.rs",
     ),
     hook(
         &["partner-trade"],
@@ -669,7 +669,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::CallSync,
         HookValue::Ignored,
         NO_DISCREPANCY,
-        "$S/drive_partner_trade.rs:201-203,214-240",
+        "$JS/compat/drive_partner_trade.rs:201-203,214-240",
     ),
     hook(
         &["partner-trade"],
@@ -678,7 +678,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::CallSync,
         HookValue::Ignored,
         NO_DISCREPANCY,
-        "$S/drive_partner_trade.rs:201-203,214-240",
+        "$JS/compat/drive_partner_trade.rs:201-203,214-240",
     ),
     hook(
         &["partner-trade"],
@@ -687,7 +687,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::CallSync,
         HookValue::Ignored,
         NO_DISCREPANCY,
-        "$S/drive_partner_trade.rs:201-203,214-240",
+        "$JS/compat/drive_partner_trade.rs:201-203,214-240",
     ),
     hook(
         &["partner-trade"],
@@ -696,7 +696,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::CallSync,
         HookValue::Ignored,
         NO_DISCREPANCY,
-        "$S/drive_partner_trade.rs:201-203,214-240",
+        "$JS/compat/drive_partner_trade.rs:201-203,214-240",
     ),
     hook(
         &["partner-trade"],
@@ -705,7 +705,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::CallSync,
         HookValue::Ignored,
         NO_DISCREPANCY,
-        "$S/drive_partner_trade.rs:201-203,214-240",
+        "$JS/compat/drive_partner_trade.rs:201-203,214-240",
     ),
     hook(
         &["cake_stall"],
@@ -714,7 +714,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::CallSync,
         HookValue::Ignored,
         NO_DISCREPANCY,
-        "$S/cake_stall/runtime.rs:727-749",
+        "$JS/compat/cake_stall/runtime.rs:727-749",
     ),
     hook(
         &["cake_stall"],
@@ -723,7 +723,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::CallSync,
         HookValue::Ignored,
         NO_DISCREPANCY,
-        "$S/cake_stall/runtime.rs:727-749",
+        "$JS/compat/cake_stall/runtime.rs:727-749",
     ),
     hook(
         &["cake_stall"],
@@ -732,7 +732,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::CallSync,
         HookValue::Ignored,
         NO_DISCREPANCY,
-        "$S/cake_stall/runtime.rs:727-749",
+        "$JS/compat/cake_stall/runtime.rs:727-749",
     ),
     hook(
         &["cake_stall"],
@@ -741,7 +741,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::CallSync,
         HookValue::Ignored,
         NO_DISCREPANCY,
-        "$S/cake_stall/runtime.rs:727-749",
+        "$JS/compat/cake_stall/runtime.rs:727-749",
     ),
     // Ask / used. HOOKS is shared by every named Hunt family; invocation varies by stepper.
     hook(
@@ -751,7 +751,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::Ask,
         HookValue::Used,
         NO_DISCREPANCY,
-        "$S/hunt.rs:50-88,152-222; $S/hunt_fight.rs:2229-2243",
+        "$JS/compat/hunt.rs:53-91,155-225; $JS/compat/hunt_fight.rs:2232-2246",
     ),
     hook(
         HUNT_FAMILIES,
@@ -760,7 +760,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::Ask,
         HookValue::Used,
         NO_DISCREPANCY,
-        "$S/hunt.rs:50-88,203-212; $S/hunt_fight.rs:2229-2243",
+        "$JS/compat/hunt.rs:53-91,206-215; $JS/compat/hunt_fight.rs:2232-2246",
     ),
     hook(
         HUNT_FAMILIES,
@@ -769,7 +769,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::Ask,
         HookValue::Used,
         NO_DISCREPANCY,
-        "$S/hunt.rs:50-88,184-190; $S/hunt_fight.rs:2229-2243",
+        "$JS/compat/hunt.rs:53-91,187-193; $JS/compat/hunt_fight.rs:2232-2246",
     ),
     hook(
         HUNT_FAMILIES,
@@ -778,7 +778,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::Ask,
         HookValue::Used,
         NO_DISCREPANCY,
-        "$S/hunt.rs:50-88,184-190; $S/hunt_fight.rs:2229-2243",
+        "$JS/compat/hunt.rs:53-91,187-193; $JS/compat/hunt_fight.rs:2232-2246",
     ),
     hook(
         HUNT_FAMILIES,
@@ -787,7 +787,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::Ask,
         HookValue::Used,
         NO_DISCREPANCY,
-        "$S/hunt.rs:50-88,184-190; $S/hunt_fight.rs:2229-2243",
+        "$JS/compat/hunt.rs:53-91,187-193; $JS/compat/hunt_fight.rs:2232-2246",
     ),
     hook(
         HUNT_FAMILIES,
@@ -796,7 +796,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::Ask,
         HookValue::Used,
         NO_DISCREPANCY,
-        "$S/hunt.rs:50-88,168-181; $S/hunt_fight.rs:2229-2243",
+        "$JS/compat/hunt.rs:53-91,171-184; $JS/compat/hunt_fight.rs:2232-2246",
     ),
     hook(
         HUNT_FAMILIES,
@@ -805,7 +805,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::Ask,
         HookValue::Used,
         NO_DISCREPANCY,
-        "$S/hunt.rs:50-88,168-181; $S/hunt_fight.rs:2229-2243",
+        "$JS/compat/hunt.rs:53-91,171-184; $JS/compat/hunt_fight.rs:2232-2246",
     ),
     hook(
         HUNT_FAMILIES,
@@ -814,7 +814,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::Ask,
         HookValue::Used,
         NO_DISCREPANCY,
-        "$S/hunt.rs:50-88,192-200; $S/hunt_fight.rs:2229-2243",
+        "$JS/compat/hunt.rs:53-91,195-203; $JS/compat/hunt_fight.rs:2232-2246",
     ),
     hook(
         HUNT_FAMILIES,
@@ -823,7 +823,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::Ask,
         HookValue::Used,
         NO_DISCREPANCY,
-        "$S/hunt.rs:50-88,203-212; $S/hunt_fight.rs:2229-2243",
+        "$JS/compat/hunt.rs:53-91,206-215; $JS/compat/hunt_fight.rs:2232-2246",
     ),
     hook(
         HUNT_FAMILIES,
@@ -832,7 +832,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::Ask,
         HookValue::Used,
         NO_DISCREPANCY,
-        "$S/hunt.rs:50-88,168-181; $S/hunt_fight.rs:2229-2243",
+        "$JS/compat/hunt.rs:53-91,171-184; $JS/compat/hunt_fight.rs:2232-2246",
     ),
     hook(
         HUNT_FAMILIES,
@@ -841,7 +841,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::Ask,
         HookValue::Used,
         NO_DISCREPANCY,
-        "$S/hunt.rs:50-88,192-200; $S/hunt_fight.rs:2229-2243",
+        "$JS/compat/hunt.rs:53-91,195-203; $JS/compat/hunt_fight.rs:2232-2246",
     ),
     hook(
         HUNT_FAMILIES,
@@ -850,7 +850,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::Ask,
         HookValue::Used,
         NO_DISCREPANCY,
-        "$S/hunt.rs:50-88,176-182; $S/hunt_fight.rs:2229-2243",
+        "$JS/compat/hunt.rs:53-91,179-185; $JS/compat/hunt_fight.rs:2232-2246",
     ),
     hook(
         HUNT_FAMILIES,
@@ -859,7 +859,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::Ask,
         HookValue::Used,
         NO_DISCREPANCY,
-        "$S/hunt.rs:50-88,152-222",
+        "$JS/compat/hunt.rs:53-91,155-225",
     ),
     hook(
         HUNT_FAMILIES,
@@ -868,7 +868,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::Ask,
         HookValue::Used,
         NO_DISCREPANCY,
-        "$S/hunt.rs:50-88,152-222; $S/hunt_leave.rs:972-977",
+        "$JS/compat/hunt.rs:53-91,155-225; $JS/compat/hunt_leave.rs:972-977",
     ),
     hook(
         HUNT_FAMILIES,
@@ -877,7 +877,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::Ask,
         HookValue::Used,
         NO_DISCREPANCY,
-        "$S/hunt.rs:50-88,192-200; $S/hunt_bank.rs:2163-2167",
+        "$JS/compat/hunt.rs:53-91,195-203; $JS/compat/hunt_bank.rs:2164-2168",
     ),
     hook(
         HUNT_FAMILIES,
@@ -886,7 +886,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::Ask,
         HookValue::Used,
         NO_DISCREPANCY,
-        "$S/hunt.rs:50-88,184-190; $S/hunt_bank.rs:2165-2166",
+        "$JS/compat/hunt.rs:53-91,187-193; $JS/compat/hunt_bank.rs:2166-2167",
     ),
     hook(
         HUNT_FAMILIES,
@@ -895,7 +895,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::Ask,
         HookValue::Used,
         NO_DISCREPANCY,
-        "$S/hunt.rs:50-88,192-200; $S/hunt_bank.rs:2168",
+        "$JS/compat/hunt.rs:53-91,195-203; $JS/compat/hunt_bank.rs:2169",
     ),
     hook(
         HUNT_FAMILIES,
@@ -904,7 +904,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::Ask,
         HookValue::Used,
         NO_DISCREPANCY,
-        "$S/hunt.rs:50-88,192-200",
+        "$JS/compat/hunt.rs:53-91,195-203",
     ),
     hook(
         HUNT_FAMILIES,
@@ -913,7 +913,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::Ask,
         HookValue::Used,
         NO_DISCREPANCY,
-        "$S/hunt.rs:50-88,192-200",
+        "$JS/compat/hunt.rs:53-91,195-203",
     ),
     hook(
         HUNT_FAMILIES,
@@ -922,7 +922,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::Ask,
         HookValue::Used,
         NO_DISCREPANCY,
-        "$S/hunt.rs:50-88,152-222",
+        "$JS/compat/hunt.rs:53-91,155-225",
     ),
     hook(
         HUNT_FAMILIES,
@@ -931,7 +931,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::Ask,
         HookValue::Used,
         NO_DISCREPANCY,
-        "$S/hunt.rs:323-356; $S/hunt/acquire.rs:107; $S/hunt/teleport_out.rs:137",
+        "$JS/compat/hunt.rs:326-359; $JS/compat/hunt/acquire.rs:107; $JS/compat/hunt/teleport_out.rs:137",
     ),
     hook(
         HUNT_FAMILIES,
@@ -940,7 +940,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::Ask,
         HookValue::Used,
         NO_DISCREPANCY,
-        "$S/hunt/wait.rs:40-44",
+        "$JS/compat/hunt/wait.rs:40-44",
     ),
     // Ask / ignored. These are the current Q5 row-21 discrepancy, not an approved path change.
     hook(
@@ -950,7 +950,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::Ask,
         HookValue::Ignored,
         HUNT_NOTIFICATION_PATH_NOT_APPROVED,
-        "$TS/api/combat/hunting/combat.ts:554; $S/hunt.rs:798-821",
+        "$TS/api/combat/hunting/combat.ts:554; $JS/compat/hunt.rs:801-824",
     ),
     hook(
         HUNT_FAMILIES,
@@ -959,7 +959,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::Ask,
         HookValue::Ignored,
         HUNT_NOTIFICATION_PATH_NOT_APPROVED,
-        "$S/hunt.rs:50-88,610-621,798-821",
+        "$JS/compat/hunt.rs:53-91,613-624,801-824",
     ),
     hook(
         HUNT_FAMILIES,
@@ -968,7 +968,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::Ask,
         HookValue::Ignored,
         HUNT_NOTIFICATION_PATH_NOT_APPROVED,
-        "$S/hunt.rs:50-88,610-621,798-821",
+        "$JS/compat/hunt.rs:53-91,613-624,801-824",
     ),
     hook(
         HUNT_FAMILIES,
@@ -977,7 +977,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::Ask,
         HookValue::Ignored,
         HUNT_NOTIFICATION_PATH_NOT_APPROVED,
-        "$S/hunt.rs:50-88,610-621,798-821",
+        "$JS/compat/hunt.rs:53-91,613-624,801-824",
     ),
     hook(
         HUNT_FAMILIES,
@@ -986,7 +986,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::Ask,
         HookValue::Ignored,
         HUNT_NOTIFICATION_PATH_NOT_APPROVED,
-        "$S/hunt.rs:50-88,610-621,798-821",
+        "$JS/compat/hunt.rs:53-91,613-624,801-824",
     ),
     hook(
         HUNT_FAMILIES,
@@ -995,7 +995,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::Ask,
         HookValue::Ignored,
         HUNT_NOTIFICATION_PATH_NOT_APPROVED,
-        "$S/hunt.rs:50-88,610-621,798-821",
+        "$JS/compat/hunt.rs:53-91,613-624,801-824",
     ),
     hook(
         HUNT_FAMILIES,
@@ -1004,7 +1004,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::Ask,
         HookValue::Ignored,
         HUNT_NOTIFICATION_PATH_NOT_APPROVED,
-        "$S/hunt.rs:50-88,618-621,798-821",
+        "$JS/compat/hunt.rs:53-91,621-624,801-824",
     ),
     hook(
         HUNT_FAMILIES,
@@ -1013,7 +1013,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::Ask,
         HookValue::Ignored,
         HUNT_NOTIFICATION_PATH_NOT_APPROVED,
-        "$S/hunt.rs:50-88,610-612,798-821",
+        "$JS/compat/hunt.rs:53-91,613-615,801-824",
     ),
     hook(
         HUNT_FAMILIES,
@@ -1022,7 +1022,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::Ask,
         HookValue::Ignored,
         HUNT_NOTIFICATION_PATH_NOT_APPROVED,
-        "$S/hunt.rs:50-88,610-612,798-821",
+        "$JS/compat/hunt.rs:53-91,613-615,801-824",
     ),
     hook(
         HUNT_FAMILIES,
@@ -1031,7 +1031,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::Ask,
         HookValue::Ignored,
         HUNT_NOTIFICATION_PATH_NOT_APPROVED,
-        "$S/hunt.rs:50-88,610-612,798-821",
+        "$JS/compat/hunt.rs:53-91,613-615,801-824",
     ),
     hook(
         &["clue_duel_travel"],
@@ -1040,7 +1040,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::Ask,
         HookValue::Ignored,
         NO_DISCREPANCY,
-        "$S/duel.rs:174-178,1023",
+        "$JS/compat/duel.rs:174-178,1023",
     ),
     hook(
         &["clue_duel_handshake"],
@@ -1049,7 +1049,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::Ask,
         HookValue::Ignored,
         NO_DISCREPANCY,
-        "$S/duel.rs:174-178,559",
+        "$JS/compat/duel.rs:174-178,559",
     ),
     hook(
         &["clue_duel_helper"],
@@ -1058,7 +1058,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::Ask,
         HookValue::Ignored,
         NO_DISCREPANCY,
-        "$S/duel.rs:174-178,694",
+        "$JS/compat/duel.rs:174-178,694",
     ),
     hook(
         &["clue"],
@@ -1067,7 +1067,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::Ask,
         HookValue::Ignored,
         CLUE_PATH_NOT_APPROVED,
-        "$S/clue/family.rs:26-33; $TS/api/ai/clues/SolveClue.ts:126-130,345-346",
+        "$JS/compat/clue/family.rs:26-33; $TS/api/ai/clues/SolveClue.ts:126-130,345-346",
     ),
     // Clue's ordinary callbacks use Step::Call and are a separate Q5 row-14 discrepancy.
     hook(
@@ -1077,7 +1077,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::Awaited,
         HookValue::Used,
         CLUE_PATH_NOT_APPROVED,
-        "$S/clue/family.rs:43-49,100-113; $TS/api/ai/clues/SolveClue.ts:211-213",
+        "$JS/compat/clue/family.rs:43-49,100-113; $TS/api/ai/clues/SolveClue.ts:211-213",
     ),
     hook(
         &["clue"],
@@ -1086,7 +1086,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::Awaited,
         HookValue::Ignored,
         CLUE_PATH_NOT_APPROVED,
-        "$S/clue/family.rs:43-49,73-85,114-123; $TS/api/ai/clues/SolveClue.ts:232-233,343-346,433-434",
+        "$JS/compat/clue/family.rs:43-49,73-85,114-123; $TS/api/ai/clues/SolveClue.ts:232-233,343-346,433-434",
     ),
     hook(
         &["clue"],
@@ -1095,7 +1095,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::Awaited,
         HookValue::Ignored,
         CLUE_PATH_NOT_APPROVED,
-        "$S/clue/family.rs:43-49,73-85,124-133; $TS/api/ai/clues/SolveClue.ts:278-280,343-345,433-434",
+        "$JS/compat/clue/family.rs:43-49,73-85,124-133; $TS/api/ai/clues/SolveClue.ts:278-280,343-345,433-434",
     ),
 ];
 
