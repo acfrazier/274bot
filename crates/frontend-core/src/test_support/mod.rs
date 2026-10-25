@@ -10,7 +10,9 @@ pub mod scripts;
 pub mod session;
 pub mod tui;
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(feature = "js")]
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 /// Wait for an existing completion predicate after WorkAdmission publications.
@@ -85,11 +87,13 @@ impl IsolatedStores {
     }
 
     /// Select `root` as this thread's script catalogue (`$RS2B0T`).
+    #[cfg(feature = "js")]
     pub fn set_catalog_root(&self, root: &Path) {
         self.env.set_rs2b0t(root);
     }
 
     /// Clear this thread's script catalogue selection.
+    #[cfg(feature = "js")]
     pub fn clear_catalog_root(&self) {
         self.env.clear_rs2b0t();
     }
@@ -104,6 +108,7 @@ pub fn empty_play(options: &host_play::PlayOptions) -> host_play::Play {
 
 /// The thread's script catalogue selection (`$RS2B0T`, or the isolated
 /// pin), read before [`IsolatedStores::enter`] clears it.
+#[cfg(feature = "js")]
 pub fn catalog_root() -> Option<PathBuf> {
     script::rs2b0t_env()
 }
