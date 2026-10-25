@@ -36,6 +36,13 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.6` 
 
 - The session log warning for a long background work step (`background work slice overrun`) now names the kind of work that ran long, for example profile preparation. The warning only names the work. The step still takes the same time.
 
+### Random events
+
+- The Guardian now handles a held random event when a running Load script
+  stops ignoring it. A later change can return the same event to the script.
+  Before, a Strange box could remain unhandled and interrupt every walk.
+  This also affected 0.2.6.
+
 ### Survival
 
 - Combat and protected walks use a held antipoison dose or Strange fruit

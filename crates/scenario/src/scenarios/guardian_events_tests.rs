@@ -138,6 +138,7 @@ fn the_fixtures_seed_only_the_accounts_own_state() {
         ("lobster", Activity::Thieving.seeded_item()),
         ("kebab", KEBAB_ID),
         ("beer", BEER_ID),
+        ("macro_cube", STRANGE_BOX_ID),
     ] {
         assert_eq!(
             data.item_by_alias(alias).map(|item| item.id),
@@ -145,6 +146,74 @@ fn the_fixtures_seed_only_the_accounts_own_state() {
             "{alias}"
         );
     }
+}
+
+#[test]
+fn strange_box_load_claim_seeds_inventory_and_bounds_the_handoff() {
+    let scenario = guardian_event_strange_box_load_claim_scenario();
+    assert_eq!(scenario.name, "guardian_event_strange_box_load_claim");
+    assert_eq!(
+        scenario.settings.start_file,
+        Some("guardian_claim_toggle.js")
+    );
+    assert!(scenario.settings.start_script.is_none());
+    assert!(scenario
+        .steps
+        .iter()
+        .all(|step| { !step.name.contains("npcadd") && !step.name.contains("locadd") }));
+
+    let start = scenario
+        .steps
+        .iter()
+        .position(|step| matches!(step.kind, StepKind::StartScript))
+        .expect("the Load Start step");
+    let armed = scenario
+        .steps
+        .iter()
+        .position(|step| {
+            step.wait.arm
+                == Proof::ScriptReceipt {
+                    prefix: STRANGE_BOX_ARMED_RECEIPT,
+                }
+        })
+        .expect("the observed initial Load policy");
+    let seed_index = scenario
+        .steps
+        .iter()
+        .position(|step| step.name == "seed one account-owned Strange box while Load ignores it")
+        .expect("the real inventory seed step");
+    assert!(
+        start < armed && armed < seed_index,
+        "Load must own the box before it arrives"
+    );
+    let seed = &scenario.steps[seed_index];
+    assert_eq!(
+        seed.wait.arm,
+        Proof::ItemId {
+            id: STRANGE_BOX_ID,
+            count: 1
+        }
+    );
+
+    let observations: Vec<_> = scenario
+        .steps
+        .iter()
+        .filter_map(|step| match step.kind {
+            StepKind::ObserveRandomEvent { cell } => Some((step, cell)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(observations.len(), 1);
+    let (observe, cell) = observations[0];
+    assert_eq!(cell.trigger, Trigger::Seeded);
+    assert_eq!(cell.oracle, Oracle::StrangeBoxHandoff);
+    assert_eq!(observe.wait.budget_ticks, 120);
+    assert!(matches!(
+        scenario.proof,
+        Proof::ScriptReceipt {
+            prefix: "guardian-box:resumed"
+        }
+    ));
 }
 
 #[test]

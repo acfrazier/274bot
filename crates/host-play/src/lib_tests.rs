@@ -17599,7 +17599,7 @@ export default class T extends LoopingBot {
             );
             true
         },
-        |_| RandomClaim::Host,
+        |_: &api::DetectedRandom| RandomClaim::Host,
     );
 
     // The isolate and runtime generation survive a reconnect. The second host
@@ -17703,7 +17703,7 @@ export default class T extends LoopingBot {
                 _ => false,
             }
         },
-        |_| RandomClaim::Host,
+        |_: &api::DetectedRandom| RandomClaim::Host,
     );
 
     assert_eq!(slot.lock().unwrap().state(), script::RunState::Idle);
@@ -17853,7 +17853,7 @@ export default class T extends LoopingBot {
             );
             true
         },
-        |_| RandomClaim::Host,
+        |_: &api::DetectedRandom| RandomClaim::Host,
     );
 
     slot.lock().unwrap().stop();
@@ -25729,6 +25729,87 @@ fn load_ignored_randoms_decline_only_listed_events() {
     assert!(
         !drv.walks.is_empty(),
         "the guardian acts for an inactive bot"
+    );
+}
+
+#[test]
+fn load_changed_ignore_list_reclaims_the_same_box_without_restarting_it() {
+    let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
+    let slot = script_slot_or_insert(&scripts, "alice");
+    let mut client = guardian_client();
+    plant_inv_item(&mut client, 3062);
+    let item = &mut Arc::get_mut(&mut client.cache).unwrap().objs[3062];
+    item.name = "Strange box".into();
+    item.iop = [Some("Open".into()), None, None, None, None];
+    {
+        let mut slot = slot.lock().unwrap();
+        slot.start_load_settled(
+            "export default class T extends LoopingBot {
+                ignoredRandoms() { return globalThis.ignoreBox === false ? [] : ['Strange box']; }
+                loop() {}
+            }"
+            .into(),
+            script::LoadShape::CompatClass,
+            vec![],
+        )
+        .unwrap();
+    }
+    let publish = |ignore: bool, tick| {
+        let mut slot = slot.lock().unwrap();
+        slot.probe(&format!("globalThis.ignoreBox = {ignore}"))
+            .unwrap();
+        slot.on_game_tick(&mut script::ScriptCtx {
+            driver: &mut NavRec::default(),
+            tick,
+            here: None,
+            walk: None,
+            walk_with: None,
+            inv: None,
+            snapshot: None,
+            obj_names: None,
+            compiled: script::CompiledTick::default(),
+        });
+        slot.probe("1").unwrap();
+        assert_eq!(slot.ignored_randoms().is_empty(), !ignore);
+    };
+    let mut source =
+        crate::play_slots::ScriptRandomClaims::new(Arc::clone(&scripts), "alice".into());
+    let mut guardian = Guardian::new();
+    let mut driver = GuardRec::default();
+    let settings = ProfileSettings::default();
+    let mut snap = GameSnapshot::new();
+
+    publish(true, 1);
+    tick_at(&mut client, &mut snap);
+    let status = guardian.tick(&mut driver, &snap, &settings, 0, Some(&mut source));
+    assert_eq!(status.claim, RandomClaim::Handle);
+    assert!(status.ours && !status.hold);
+    assert!(driver.menus.is_empty());
+
+    publish(false, 2);
+    tick_at(&mut client, &mut snap);
+    let status = guardian.tick(&mut driver, &snap, &settings, 0, Some(&mut source));
+    assert_eq!(status.claim, RandomClaim::Host);
+    assert!(status.hold);
+    assert_eq!(driver.menus.len(), 1, "the same held box now opens");
+    driver.menus.clear();
+
+    // The reverse handoff must suppress actions without resetting the
+    // in-flight Open. Returning it to Host must not send Open a second time.
+    publish(true, 3);
+    tick_at(&mut client, &mut snap);
+    let status = guardian.tick(&mut driver, &snap, &settings, 0, Some(&mut source));
+    assert_eq!(status.claim, RandomClaim::Handle);
+    assert!(!status.hold);
+    assert!(driver.menus.is_empty());
+    publish(false, 4);
+    tick_at(&mut client, &mut snap);
+    let status = guardian.tick(&mut driver, &snap, &settings, 0, Some(&mut source));
+    assert_eq!(status.claim, RandomClaim::Host);
+    assert!(status.hold);
+    assert!(
+        driver.menus.is_empty(),
+        "claim refresh preserves the solver"
     );
 }
 
