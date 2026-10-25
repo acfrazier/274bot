@@ -73,12 +73,14 @@ impl CardPicker {
                     ) else {
                         continue;
                     };
-                    let mut label = format!(
+                    let label = format!(
                         "{}  [{}] [{}]",
                         card.name,
                         kind_badge(card.kind),
                         source_badge(card.source)
                     );
+                    #[cfg(feature = "js")]
+                    let mut label = label;
                     #[cfg(feature = "js")]
                     if card.unloadable.is_some() {
                         label.push_str(" (unloadable)");
