@@ -900,10 +900,11 @@ pub(crate) fn green_dragon_tele_scenario() -> Scenario {
 const GREEN_DRAGON_BANK_PREPARED_FOOD: i32 = 26;
 const GREEN_DRAGON_BANK_PREPARED_RESTOCK: i32 = 27;
 /// Whole-cell cap for `green_dragon_bank_prepared`. Completed passes 539.5 and
-/// 539.7 s (`NIGHTLY-QUAL-1025/report.md`, cell 2): slowest completed pass plus
-/// 20 %, rounded up (539.7 x 1.2 = 647.64 -> 648 s). A failed run is censored
-/// and does not size it; the 1500-tick watches are unchanged.
-const GREEN_DRAGON_BANK_QUALIFICATION_DEADLINE: Duration = Duration::from_secs(648);
+/// 539.7 s (`NIGHTLY-QUAL-1025/report.md`, cell 2) and 556.543, 542.680 and
+/// 546.270 s (`NIGHTLY-QUAL-1025/deadlines/report.md`): slowest completed pass
+/// plus 20 %, rounded up (556.543 x 1.2 = 667.85 -> 668 s). A failed run is
+/// censored and does not size it; the 1500-tick watches are unchanged.
+const GREEN_DRAGON_BANK_QUALIFICATION_DEADLINE: Duration = Duration::from_secs(668);
 /// Whole-cell wall deadline for the default-loot bank cell. Measured live on
 /// Engine A at the 289 engine's 600 ms game tick: six passes (three lifted
 /// measurement runs, then three at the interim 1641 s deadline) at 1093.660 s
