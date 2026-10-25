@@ -15,19 +15,20 @@ impl Scripts {
     pub(crate) fn assignment_for(
         &mut self,
         sel: &script::ScriptSel,
-        catalog_root: Option<&Path>,
+        _catalog_root: Option<&Path>,
     ) -> Result<Option<ScriptAssignment>, String> {
         match sel {
             script::ScriptSel::Compiled(id) => script::compiled_card(*id)
                 .map(|_| Some(script::compiled_assignment(*id)))
                 .ok_or_else(|| "unavailable card".to_string()),
+            #[cfg(feature = "js")]
             script::ScriptSel::Loaded(source, lookup) => {
                 if *source == script::ScriptSource::Catalog {
                     if self.catalog_work_pending() {
                         return Ok(None);
                     }
                     if !self.catalog_filled() || self.catalog_scan_root().is_none() {
-                        let root = catalog_root
+                        let root = _catalog_root
                             .ok_or_else(|| "catalog root is not available".to_string())?;
                         self.request_catalog_fill(root, &script_js::default_rs2b0t_path_file())
                             .map_err(|error| error.to_string())?;
@@ -42,6 +43,11 @@ impl Scripts {
                     None => Ok(Some(card.assignment())),
                 }
             }
+            #[cfg(not(feature = "js"))]
+            script::ScriptSel::Loaded(..) => Err(
+                script::surface::SurfaceError::NoFactory(script::surface::SurfaceKind::Js)
+                    .to_string(),
+            ),
         }
     }
 

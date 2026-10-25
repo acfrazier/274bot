@@ -9,7 +9,7 @@ use std::path::Path;
 #[cfg(feature = "js")]
 use std::path::PathBuf;
 
-#[cfg(test)]
+#[cfg(all(test, feature = "js"))]
 use frontend_core::scripts::ReloadOutcome;
 #[cfg(test)]
 use frontend_core::test_support::scripts::Assignment;

@@ -1288,6 +1288,8 @@ impl<Io> OperatorSession<Io> {
                 };
                 if admitted {
                     let mut models = surface.models();
+                    #[cfg(feature = "js")]
+                    {
                     let imported = match models.import.as_deref_mut() {
                         Some(import) => match import.take_staged_account(command) {
                             Ok(imported) => imported,
@@ -1396,6 +1398,7 @@ impl<Io> OperatorSession<Io> {
                             self.settle_member(request, command, &username, applied, submitted);
                         }
                         return;
+                    }
                     }
 
                     let editor_submission = if models.editor.is_some() {

@@ -11,12 +11,15 @@ pub fn debug_enabled() -> bool {
 #[error("{0}")]
 pub struct StartError(String);
 
-/// Start the protected V8 platform. Call first, on the process main thread,
-/// before any script or slot work. With the memory benchmark it also marks
-/// the process start.
+/// Initialize the enabled script runtime before any script or slot work.
+/// With JS, start the protected V8 platform on the process main thread.
+/// With the memory benchmark, also mark the process start.
 pub fn bootstrap() -> Result<(), StartError> {
-    script_js::install_cards().map_err(|error| StartError(error.to_string()))?;
-    script_js::bootstrap_v8_platform().map_err(|error| StartError(error.to_string()))?;
+    #[cfg(feature = "js")]
+    {
+        script_js::install_cards().map_err(|error| StartError(error.to_string()))?;
+        script_js::bootstrap_v8_platform().map_err(|error| StartError(error.to_string()))?;
+    }
     #[cfg(feature = "memory-profile")]
     host_play::memory::mark_process_start();
     Ok(())

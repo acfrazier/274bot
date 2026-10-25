@@ -27,6 +27,7 @@ use crate::launch::{InstancePermit, PlayConfig, PlayLaunch};
 use crate::models::Models;
 use crate::profile_editor::ProfileEditor;
 use crate::quester_paths::QuesterPathsController;
+#[cfg(feature = "js")]
 use crate::rs2b0t_import::ProfileImport;
 use crate::scripts::{LoadoutForm, Scripts};
 use crate::session::prefs::DrawPolicy;
@@ -39,6 +40,7 @@ pub struct DriverModels {
     scripts: Scripts,
     fleet: FleetModel,
     editor: ProfileEditor,
+    #[cfg(feature = "js")]
     import: ProfileImport,
     loadouts: LoadoutForm,
     quester: QuesterPathsController,
@@ -74,6 +76,7 @@ impl DriverModels {
         &self.editor
     }
 
+    #[cfg(feature = "js")]
     /// The rs2b0t profile import.
     pub fn import(&self) -> &ProfileImport {
         &self.import
@@ -111,16 +114,18 @@ impl DriverModels {
     }
 
     fn lend(&mut self) -> Models<'_> {
-        Models::none()
+        let models = Models::none()
             .with_scripts(&mut self.scripts)
             .with_fleet(&mut self.fleet)
             .with_editor(&mut self.editor)
-            .with_import(&mut self.import)
             .with_loadouts(&mut self.loadouts)
             .with_quester(&mut self.quester)
             .with_walk_globals(&mut self.walk_globals)
             .with_draw(&mut self.draw)
-            .with_map(&mut self.map)
+            .with_map(&mut self.map);
+        #[cfg(feature = "js")]
+        let models = models.with_import(&mut self.import);
+        models
     }
 }
 
@@ -184,6 +189,7 @@ impl HeadlessDriver {
             scripts,
             fleet: FleetModel::new(),
             editor: ProfileEditor::new(),
+            #[cfg(feature = "js")]
             import: ProfileImport::new(),
             loadouts: LoadoutForm::operator_of(&session),
             quester,

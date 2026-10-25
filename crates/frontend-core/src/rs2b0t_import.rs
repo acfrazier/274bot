@@ -50,17 +50,23 @@ use std::fmt::Write as _;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
+#[cfg(feature = "js")]
 use api::host_log;
+#[cfg(feature = "js")]
 use api::hostlog::{Category, Level};
 use script::bank_hints::MAX_ACCOUNT_CHARS;
 use serde_json::{Number, Value};
 use vault::{Profile, ProfileSettings, RasterMode, ScriptAssignment, Secret, Vault};
 use zeroize::{Zeroize, Zeroizing};
 
+#[cfg(feature = "js")]
 use crate::command::OperatorCommand;
 use crate::operations::OperationId;
+#[cfg(feature = "js")]
 use crate::scripts::Scripts;
-use crate::session::{ArmMirror, OperatorSession, StagedProfileWrite};
+#[cfg(feature = "js")]
+use crate::session::{ArmMirror, StagedProfileWrite};
+use crate::session::OperatorSession;
 
 /// rs2b0t's `PROFILE_FILE_KIND`.
 pub const PROFILE_FILE_KIND: &str = "rs2b0t-multibox-profiles";
@@ -161,9 +167,9 @@ impl std::fmt::Display for ImportError {
 impl std::error::Error for ImportError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match &self.0 {
-            ImportFailure::Read { source, .. } | ImportFailure::Delete { source, .. } => {
-                Some(source.as_ref())
-            }
+            ImportFailure::Read { source, .. } => Some(source.as_ref()),
+            #[cfg(feature = "js")]
+            ImportFailure::Delete { source, .. } => Some(source.as_ref()),
             _ => None,
         }
     }
@@ -216,28 +222,38 @@ enum ImportFailure {
     StorageBox { owner: StorageOwner },
     #[error("the profile file storage for {owner} has a value that is not a string")]
     StorageValue { owner: StorageOwner },
+    #[cfg(feature = "js")]
     #[error("the vault is locked: unlock it before importing")]
     VaultLocked,
+    #[cfg(feature = "js")]
     #[error("type the path of the {PROFILE_FILE_NAME} file rs2b0t exported")]
     EmptyPath,
+    #[cfg(feature = "js")]
     #[error("the export file was not confirmed for deletion")]
     DeleteNotConfirmed,
+    #[cfg(feature = "js")]
     #[error("the export file is no longer available for deletion")]
     DeleteUnavailable,
+    #[cfg(feature = "js")]
     #[error("there is no parsed profile preview to confirm")]
     NoPreview,
+    #[cfg(feature = "js")]
     #[error("an imported profile account is already staged")]
     AccountAlreadyStaged,
+    #[cfg(feature = "js")]
     #[error("profile import account {index} is not a pending write")]
     AccountNotPending { index: usize },
+    #[cfg(feature = "js")]
     #[error("profile import account {index} was not submitted")]
     AccountNotSubmitted { index: usize },
+    #[cfg(feature = "js")]
     #[error("profile import account {index} requires {expected:?}, not {actual:?}")]
     WrongWriter {
         index: usize,
         expected: OperatorCommand,
         actual: OperatorCommand,
     },
+    #[cfg(feature = "js")]
     #[error("cannot delete {}: {source}", path.display())]
     Delete {
         path: PathBuf,
@@ -699,6 +715,7 @@ pub trait ImportCatalog {
     fn card(&self, name: &str) -> Option<CatalogCard<'_>>;
 }
 
+#[cfg(feature = "js")]
 impl ImportCatalog for script_js::JsLibrary {
     fn loaded(&self) -> bool {
         self.cards()
@@ -1741,6 +1758,7 @@ fn convert_setting(def: &script::SettingDef, raw: &str) -> Result<Converted, Str
     }
 }
 
+#[cfg(feature = "js")]
 /// A prepared account write; the profile is consumed by its writer row.
 pub(crate) struct StagedImportAccount {
     pub(crate) index: usize,
@@ -1748,6 +1766,7 @@ pub(crate) struct StagedImportAccount {
     pub(crate) write: StagedProfileWrite,
 }
 
+#[cfg(feature = "js")]
 struct ImportWrite {
     index: usize,
     username: String,
@@ -1833,6 +1852,7 @@ impl StoredAccountResult {
 
 // ---- apply and report ------------------------------------------------------
 
+#[cfg(feature = "js")]
 /// `old -> new` for every field the import writes; the password only as
 /// set/changed/unchanged.
 fn change_summary(old: Option<&Profile>, new: &Profile) -> String {
@@ -1989,6 +2009,7 @@ impl ImportRun {
     }
 }
 
+#[cfg(feature = "js")]
 /// Delete the export file once the import succeeded (explicit confirmation
 /// in the front end). Logs one line.
 fn delete_export_file(path: &Path) -> Result<(), ImportError> {
@@ -2007,6 +2028,7 @@ fn delete_export_file(path: &Path) -> Result<(), ImportError> {
 
 // ---- the shared front-end flow ---------------------------------------------
 
+#[cfg(feature = "js")]
 /// Where the import flow is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Stage {
@@ -2018,6 +2040,7 @@ pub enum Stage {
     Report,
 }
 
+#[cfg(feature = "js")]
 /// The import flow the panel window and the TUI overlay render: a file path,
 /// then a preview with the existing-profile choice, then Confirm, then the
 /// report with the offer to delete the export file.
@@ -2034,12 +2057,14 @@ pub struct ProfileImport {
     deleted: Option<PathBuf>,
 }
 
+#[cfg(feature = "js")]
 impl Default for ProfileImport {
     fn default() -> Self {
         Self::new()
     }
 }
 
+#[cfg(feature = "js")]
 impl ProfileImport {
     pub fn new() -> Self {
         Self {
