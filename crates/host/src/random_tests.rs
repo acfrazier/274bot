@@ -4920,6 +4920,79 @@ fn strange_box_replication_rearms_only_one_new_bounded_budget() {
 }
 
 #[test]
+fn strange_box_claim_handoffs_pause_open_and_answer_outcome_ticks() {
+    struct Claims(RandomClaim);
+    impl RandomClaimSource for Claims {
+        fn on_random(&mut self, _event: &DetectedRandom) -> RandomClaim {
+            self.0
+        }
+        fn current_claim(&mut self, _event: &DetectedRandom) -> Option<RandomClaim> {
+            Some(self.0)
+        }
+    }
+    for answering in [false, true] {
+        let mut c = new_client();
+        ingame_scene(&mut c);
+        plant_player(&mut c, "Test", 3314, 3234);
+        plant_inv_box(&mut c, 1);
+        let mut g = Guardian::new();
+        let mut drv = FakeDriver::default();
+        let settings = ProfileSettings::default();
+        let mut snap = GameSnapshot::new();
+        let mut claims = Claims(RandomClaim::Host);
+        tick_at(&mut c, &mut snap);
+        g.tick(&mut drv, &snap, &settings, 0, Some(&mut claims));
+        if answering {
+            open_cube(&mut c, "What colour is the Square?", [3069, 3065, 3075]);
+            tick_at(&mut c, &mut snap);
+            g.tick(&mut drv, &snap, &settings, 0, Some(&mut claims));
+            c.main_modal_id = -1;
+            c.gens.iface += 1;
+        }
+        let sends = drv.menus.len();
+        for _ in 0..2 {
+            claims.0 = RandomClaim::Handle;
+            for _ in 0..6 {
+                tick_at(&mut c, &mut snap);
+                let status = g.tick(&mut drv, &snap, &settings, 0, Some(&mut claims));
+                assert!(!status.hold);
+                assert_eq!(drv.menus.len(), sends);
+            }
+            claims.0 = RandomClaim::Host;
+            tick_at(&mut c, &mut snap);
+            let status = g.tick(&mut drv, &snap, &settings, 0, Some(&mut claims));
+            assert!(status.hold);
+            assert_eq!(
+                drv.menus.len(),
+                sends,
+                "script-owned ticks cannot cause a retry, answering={answering}"
+            );
+        }
+        if answering {
+            clear_inv(&mut c);
+        } else {
+            open_cube(&mut c, "What colour is the Square?", [3069, 3065, 3075]);
+        }
+        tick_at(&mut c, &mut snap);
+        let status = g.tick(&mut drv, &snap, &settings, 0, Some(&mut claims));
+        if answering {
+            assert!(!status.ours && !status.hold);
+        } else {
+            assert_eq!(drv.menus.last().unwrap().1, MiniMenuAction::IF_BUTTON);
+            assert_eq!(
+                drv.menus.len(),
+                sends + 1,
+                "the original Open still settles"
+            );
+            clear_inv(&mut c);
+            tick_at(&mut c, &mut snap);
+            let status = g.tick(&mut drv, &snap, &settings, 0, Some(&mut claims));
+            assert!(!status.ours && !status.hold);
+        }
+    }
+}
+
+#[test]
 fn strange_box_dismissed_answers_retry_then_release_within_sixteen_ticks() {
     let mut c = new_client();
     ingame_scene(&mut c);
