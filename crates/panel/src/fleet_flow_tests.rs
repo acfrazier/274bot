@@ -5,7 +5,6 @@
 use dear_imgui_rs::{Condition, FramePrepareOptions, MouseButton};
 use frontend_core::command::Subject;
 use frontend_core::scripts::{CompiledCardId, ScriptChoice};
-#[cfg(feature = "js")]
 use frontend_core::scripts::ScriptRunState;
 use frontend_core::test_support::scripts::Assignment;
 use frontend_core::test_support::session::install_vault;
@@ -277,8 +276,22 @@ impl Rig {
             self.wait_state(name, ScriptRunState::Running);
         }
     }
+    #[cfg(not(feature = "js"))]
+    fn start_scripts(&mut self, names: &[&str]) {
+        let card = CompiledCardId::lookup("Gatherer").expect("compiled Gatherer card");
+        for name in names {
+            self.session
+                .persist_successful_assignment(name, Assignment::compiled(card));
+        }
+        self.session.core.flush_writes();
+        for name in names {
+            self.session
+                .script_start_profile(name)
+                .expect("compiled script starts");
+            self.wait_state(name, ScriptRunState::Running);
+        }
+    }
 
-    #[cfg(feature = "js")]
     fn wait_state(&mut self, name: &str, want: ScriptRunState) {
         let deadline = Instant::now() + Duration::from_secs(60);
         while self.session.core.script_state(name) != want && Instant::now() < deadline {
@@ -548,7 +561,6 @@ fn the_card_drop_down_lists_own_focused_then_cards_by_category_order() {
 /// shows the plan's prompt first and runs nothing until Confirm; Cancel
 /// writes nothing; Confirm settles one result line. The old Stop acted on
 /// the marks only, at once.
-#[cfg(feature = "js")]
 #[test]
 fn stop_all_asks_first_and_runs_only_after_confirm() {
     let mut rig = Rig::with_play("fleet-stop-all", &["alice", "bob"], &["alice", "bob"]);
@@ -613,7 +625,6 @@ fn stop_all_asks_first_and_runs_only_after_confirm() {
 }
 
 /// The nine bots of PANEL-STATE-GAP-1023, in game on world 3.
-#[cfg(feature = "js")]
 const NINE: [&str; 9] = [
     "alice", "bob", "carol", "dave", "erin", "frank", "grace", "heidi", "ivan",
 ];
@@ -623,7 +634,6 @@ impl Rig {
     /// last script-walk destination published for the first three: the
     /// operator's session before Stop. The status fixture is what a nav step
     /// published, not a live route.
-    #[cfg(feature = "js")]
     fn nine_marked_running_with_three_script_walks(label: &str) -> Self {
         let worlds: Vec<_> = NINE.iter().map(|name| (*name, 3)).collect();
         let mut rig = Self::with_worlds(label, &NINE, &worlds);
@@ -634,7 +644,6 @@ impl Rig {
         rig
     }
 
-    #[cfg(feature = "js")]
     /// Publish (or with `None` retire) the script-walk destination of `names`.
     fn publish_script_walks(&mut self, names: &[&str], walk: Option<(i32, i32, i32)>) {
         let (x, z, level) = walk.unwrap_or((-1, -1, -1));
@@ -648,7 +657,6 @@ impl Rig {
         }
     }
 
-    #[cfg(feature = "js")]
     /// The label of every fleet row, as `name: label`: what the sidecar and
     /// the Fleet window's state column draw.
     fn labels(&self) -> Vec<String> {
@@ -660,7 +668,6 @@ impl Rig {
             .collect()
     }
 
-    #[cfg(feature = "js")]
     /// Click Stop over the marked bots, confirm, and wait until every one of
     /// `names` reports an Idle script.
     fn stop_marked(&mut self, names: &[&str]) {
@@ -681,7 +688,6 @@ impl Rig {
     }
 }
 
-#[cfg(feature = "js")]
 fn labels_of(names: &[&str], label: &str) -> Vec<String> {
     names
         .iter()
@@ -695,7 +701,6 @@ fn labels_of(names: &[&str], label: &str) -> Vec<String> {
 /// `idle` like the six others, not `running`. The resource line counts
 /// clients in game, not scripts.
 #[test]
-#[cfg(feature = "js")]
 fn stopped_marked_bots_must_not_keep_running_fleet_labels() {
     let mut rig = Rig::nine_marked_running_with_three_script_walks("panel-state-gap-1023");
     assert_eq!(rig.labels(), labels_of(&NINE, "running"));
@@ -744,7 +749,6 @@ fn stopped_marked_bots_must_not_keep_running_fleet_labels() {
 /// return after a window change, a focus change, a mark change, a filter
 /// change or a new script choice.
 #[test]
-#[cfg(feature = "js")]
 fn old_script_walk_labels_do_not_return_after_panel_state_changes() {
     let mut rig = Rig::nine_marked_running_with_three_script_walks("panel-state-gap-views");
     rig.stop_marked(&NINE);
@@ -825,7 +829,6 @@ fn old_script_walk_labels_do_not_return_after_panel_state_changes() {
 /// `idle` and ivan still reads `running`, from his own manual-walk fact. A
 /// Stop aimed at him alone is refused for want of a script.
 #[test]
-#[cfg(feature = "js")]
 fn a_manual_walk_stays_visible_after_a_script_stop_and_stop_does_not_target_it() {
     let mut rig = Rig::nine_marked_running_with_three_script_walks("panel-state-gap-manual");
     let arm = std::sync::Arc::new(std::sync::Mutex::new(host_play::WalkArm::default()));
