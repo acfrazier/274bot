@@ -42,6 +42,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.6` 
   stops ignoring it. A later change can return the same event to the script.
   Before, a Strange box could remain unhandled and interrupt every walk.
   This also affected 0.2.6.
+- Strange box handling now retries a missing Open response or answer result.
+  It uses game ticks and the game's messages and inventory changes.
+  After bounded retries, it reports the last failure and releases the script
+  instead of waiting forever. This also affected 0.2.6.
 
 ### Survival
 
