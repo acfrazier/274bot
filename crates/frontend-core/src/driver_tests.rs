@@ -2246,28 +2246,22 @@ fn explicit_cancel_relog_and_removal_settle_the_queued_start_command() {
     no_later_start(&mut d, &queued);
 }
 
+#[cfg(feature = "js")]
 const SETTINGS_CARD: &str = "export const SETTINGS = { target: { type: 'string', default: 'Guard' } };\nexport default class T extends LoopingBot { override loop() {} }\n";
 
-/// Load alice, bob and carol, give all a loaded JS card (its copy is a
-/// profile write, so it lands without a game data set), focus alice and
+/// Load alice, bob and carol, give all a compiled Gatherer card (its copy is
+/// a profile write, so it lands without a game data set), focus alice and
 /// plan a copy of her settings to bob and carol (marked).
 fn copy_plan(test: &str) -> TestDriver {
     let dir = scratch(test);
     let mut d = driver_in(&dir, &["alice", "bob", "carol"]);
-    let path = dir.join("thiever.ts");
-    std::fs::write(&path, SETTINGS_CARD).expect("card file");
-    let card = d.models_mut().scripts.js_mut().load(&path).expect("card");
-    let card = crate::scripts::ScriptChoice::from_script(script::ScriptSel::Loaded(
-        card.source,
-        card.identity_id(),
-    ));
     load(&mut d, &["alice", "bob", "carol"]);
     let select = d
         .submit(OperatorCommand::Select, Targets::Profile("alice"))
         .expect("select");
     settle(&mut d, select.request());
     mark(&mut d, &["alice", "bob", "carol"]);
-    set_card(&mut d, crate::FleetCard::pinned(card));
+    set_card(&mut d, crate::FleetCard::pinned(gatherer()));
     assert_eq!(plan(&mut d, crate::FleetAction::Assign), Some(done()));
     run_plan(&mut d);
     assert!(assignment(&d, "bob").is_some());
@@ -2384,6 +2378,7 @@ fn a_copy_skips_a_target_whose_save_started_after_the_plan() {
 /// Load alice, give her a loaded JS card through a plan, then submit her
 /// own single Start with no frame after it: the card's preparation is
 /// pending (an untallied preparation). Returns the Start command.
+#[cfg(feature = "js")]
 fn preparing_start(test: &str) -> (TestDriver, RequestId) {
     let dir = scratch(test);
     let mut d = driver_in(&dir, &["alice", "bob"]);
@@ -2908,33 +2903,42 @@ fn wait_state(d: &mut HeadlessDriver, name: &str, want: ScriptRunState) {
     }
 }
 
-/// Start a real Load script on `name` and publish the helper's frame on its
-/// status row, as the slot's observe does after a tick.
+/// Start the assigned native script on `name` and publish the helper's
+/// frame on its status row, as the slot's observe does after a tick.
 fn run_helper(d: &mut HeadlessDriver, name: &str, generation: u64) {
-    d.session()
-        .play()
-        .expect("play")
-        .script_start_load(
-            name,
-            "export function tick(api) { api._n = (api._n || 0) + 1 }".into(),
-            script_js::LoadShape::NativeTick,
-            None,
-            vec![],
-        )
+    let start = d
+        .submit(OperatorCommand::StartScript, Targets::Profile(name))
         .expect("start");
+    settle(d, start.request());
     wait_state(d, name, ScriptRunState::Running);
     helper_paint(generation).publish(d.session().play().expect("play"), name);
     d.poll();
 }
 
-fn paint_driver(test: &str, names: &[&str]) -> TestDriver {
+fn paint_driver_with_card(
+    test: &str,
+    names: &[&str],
+    card: crate::scripts::ScriptChoice,
+) -> TestDriver {
     let mut d = driver(test, names);
+    let data = api::game_data::for_revision(api::selected::ClientRevision::R289).expect("data");
+    d.session_mut()
+        .play_mut()
+        .expect("play")
+        .bind_script_test_data(data);
     d.submit(OperatorCommand::Load, Targets::Everyone)
         .expect("load");
+    mark(&mut d, names);
+    set_card(&mut d, crate::FleetCard::pinned(card));
+    assert_eq!(plan(&mut d, crate::FleetAction::Assign), Some(done()));
+    run_plan(&mut d);
     for (i, name) in names.iter().enumerate() {
         run_helper(&mut d, name, 40 + i as u64);
     }
     d
+}
+fn paint_driver(test: &str, names: &[&str]) -> TestDriver {
+    paint_driver_with_card(test, names, gatherer())
 }
 
 /// `name`'s displayed frame, as a front end reads it each frame.
@@ -3182,9 +3186,12 @@ fn publish_native_paint(
 /// Press Pause, Resume and Stop on one native paint frame (its two
 /// host controls are buttons 0 and 1) and check each press through
 /// the lifecycle rows, as the front ends submit them.
-fn native_paint_controls_case(test: &str, paint: std::sync::Arc<script::shim::ScriptPaint>) {
-    let mut d = paint_driver(test, &["alice"]);
-    publish_native_paint(&d, "alice", paint);
+fn native_paint_controls_case(
+    test: &str,
+    card: crate::scripts::ScriptChoice,
+    paint: std::sync::Arc<script::shim::ScriptPaint>,
+) {
+    let mut d = paint_driver_with_card(test, &["alice"], card);
     d.poll();
     let running = shown(&d, "alice");
     assert_eq!(
@@ -3256,6 +3263,9 @@ fn native_gatherer_paint_controls_pause_resume_and_stop() {
     };
     native_paint_controls_case(
         "native-gatherer-paint",
+        crate::scripts::ScriptChoice::compiled(
+            crate::scripts::CompiledCardId::lookup("Gatherer").expect("Gatherer is compiled"),
+        ),
         script::gatherer::status::paint(&data),
     );
 }
@@ -3273,22 +3283,34 @@ fn native_sherlock_paint_controls_pause_resume_and_stop() {
         generation: 7,
         ..Default::default()
     });
-    native_paint_controls_case("native-sherlock-paint", paint);
+    native_paint_controls_case(
+        "native-sherlock-paint",
+        crate::scripts::ScriptChoice::compiled(
+            crate::scripts::CompiledCardId::lookup("Sherlock").expect("Sherlock is compiled"),
+        ),
+        paint,
+    );
 }
 
-/// Every place a Start can wait before its slot runs it.
+/// Every place a Start can wait before its slot runs.
 #[derive(Clone, Copy, Debug)]
 enum Waiting {
     /// A paced place behind another bot's Start (fleet Start).
     Paced,
+    /// A fleet Assign & restart waiting for its compiled assignment write.
+    CompiledRestartAfterWrite,
     /// A loaded card's preparation for a single Start (untallied).
+    #[cfg(feature = "js")]
     Preparation,
     /// A loaded card's preparation for a fleet Start (tallied).
+    #[cfg(feature = "js")]
     FleetPreparation,
     /// A fleet Assign & restart of a catalog card waiting for the catalog
     /// scan (nothing written yet).
+    #[cfg(feature = "js")]
     CatalogRestart,
-    /// A fleet Assign & restart waiting for its assignment write.
+    /// A fleet Assign & restart waiting for its loaded assignment write.
+    #[cfg(feature = "js")]
     RestartAfterWrite,
 }
 
@@ -3300,16 +3322,27 @@ enum Withdraw {
     Cancel,
 }
 
-/// Review F3 r3 (shadow High and sol61 1): planned Stop, Stop Everyone and
-/// an explicit Cancel each reach every place a Start waits. The original
-/// command's member settles cancelled, the Stop or Cancel member is done,
-/// and nothing starts later. A catalog Assign & restart withdrawn before
-/// the scan writes nothing; one withdrawn behind its write keeps the
-/// assignment and drops only the Start.
+/// Planned Stop, Stop Everyone and explicit Cancel each reach the native
+/// paced Start and the native Assign & restart waiting behind its write.
 #[test]
-fn every_waiting_start_is_withdrawn_by_stop_stop_everyone_and_cancel() {
+fn every_native_waiting_start_is_withdrawn_by_stop_stop_everyone_and_cancel() {
+    for waiting in [Waiting::Paced, Waiting::CompiledRestartAfterWrite] {
+        for withdraw in [
+            Withdraw::PlannedStop,
+            Withdraw::StopEveryone,
+            Withdraw::Cancel,
+        ] {
+            withdraw_case(waiting, withdraw);
+        }
+    }
+}
+
+/// Preserve the loader, catalogue and loaded-assignment Start withdrawal
+/// cases for the full JS product.
+#[cfg(feature = "js")]
+#[test]
+fn every_js_waiting_start_is_withdrawn_by_stop_stop_everyone_and_cancel() {
     for waiting in [
-        Waiting::Paced,
         Waiting::Preparation,
         Waiting::FleetPreparation,
         Waiting::CatalogRestart,
@@ -3329,13 +3362,17 @@ fn withdraw_case(waiting: Waiting, withdraw: Withdraw) {
     let case = format!("{waiting:?}/{withdraw:?}");
     let dir = scratch(&format!("f3-withdraw-{waiting:?}-{withdraw:?}").to_lowercase());
     let mut d = driver_in(&dir, &["alice", "bob"]);
-    let path = dir.join("looping.ts");
-    std::fs::write(&path, SETTINGS_CARD).expect("card file");
-    let js = d.models_mut().scripts.js_mut().load(&path).expect("card");
-    let js = crate::scripts::ScriptChoice::from_script(script::ScriptSel::Loaded(
-        js.source,
-        js.identity_id(),
-    ));
+    #[cfg(feature = "js")]
+    let js = {
+        let path = dir.join("looping.ts");
+        std::fs::write(&path, SETTINGS_CARD).expect("card file");
+        let js = d.models_mut().scripts.js_mut().load(&path).expect("card");
+        crate::scripts::ScriptChoice::from_script(script::ScriptSel::Loaded(
+            js.source,
+            js.identity_id(),
+        ))
+    };
+    #[cfg(feature = "js")]
     let assign = |d: &mut HeadlessDriver, card: crate::scripts::ScriptChoice| {
         set_card(d, crate::FleetCard::pinned(card));
         assert_eq!(plan(d, crate::FleetAction::Assign), Some(done()));
@@ -3348,6 +3385,20 @@ fn withdraw_case(waiting: Waiting, withdraw: Withdraw) {
             let (start, queued) = queued_start(&mut d, &["alice", "bob"]);
             (queued[0].clone(), start)
         }
+        Waiting::CompiledRestartAfterWrite => {
+            load(&mut d, &["alice"]);
+            mark(&mut d, &["alice"]);
+            set_card(&mut d, crate::FleetCard::pinned(gatherer()));
+            held = Some(gate.lock().expect("gate"));
+            assert_eq!(
+                plan(&mut d, crate::FleetAction::AssignRestart),
+                Some(done())
+            );
+            let command = d.session().fleet_plan().expect("plan").command();
+            let restart = d.submit(command, Targets::Plan).expect("restart").request();
+            ("alice".to_owned(), restart)
+        }
+        #[cfg(feature = "js")]
         Waiting::Preparation => {
             load(&mut d, &["alice"]);
             mark(&mut d, &["alice"]);
@@ -3358,6 +3409,7 @@ fn withdraw_case(waiting: Waiting, withdraw: Withdraw) {
                 .request();
             ("alice".to_owned(), start)
         }
+        #[cfg(feature = "js")]
         Waiting::FleetPreparation => {
             load(&mut d, &["alice"]);
             mark(&mut d, &["alice"]);
@@ -3368,6 +3420,7 @@ fn withdraw_case(waiting: Waiting, withdraw: Withdraw) {
             let start = d.submit(command, Targets::Plan).expect("start").request();
             ("alice".to_owned(), start)
         }
+        #[cfg(feature = "js")]
         Waiting::CatalogRestart => {
             let root = dir.join("catalog-root");
             let scripts = root.join("src/bot/scripts");
@@ -3397,6 +3450,7 @@ fn withdraw_case(waiting: Waiting, withdraw: Withdraw) {
             let restart = d.submit(command, Targets::Plan).expect("restart").request();
             ("alice".to_owned(), restart)
         }
+        #[cfg(feature = "js")]
         Waiting::RestartAfterWrite => {
             load(&mut d, &["alice"]);
             mark(&mut d, &["alice"]);
@@ -3468,14 +3522,17 @@ fn withdraw_case(waiting: Waiting, withdraw: Withdraw) {
         "{case}: the original command settles cancelled"
     );
     d.session_mut().flush_writes();
-    let deadline = std::time::Instant::now() + SETTLE_HANG_GUARD;
-    while d.models().scripts().catalog_work_pending() {
-        assert!(
-            std::time::Instant::now() < deadline,
-            "{case}: catalog scan hung"
-        );
-        d.poll();
-        std::thread::sleep(std::time::Duration::from_millis(5));
+    #[cfg(feature = "js")]
+    {
+        let deadline = std::time::Instant::now() + SETTLE_HANG_GUARD;
+        while d.models().scripts().catalog_work_pending() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "{case}: catalog scan hung"
+            );
+            d.poll();
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
     }
     no_later_start(&mut d, std::slice::from_ref(&target));
     assert_eq!(
@@ -3484,18 +3541,21 @@ fn withdraw_case(waiting: Waiting, withdraw: Withdraw) {
         "{case}"
     );
     match waiting {
+        #[cfg(feature = "js")]
         Waiting::CatalogRestart => {
             assert_eq!(assignment(&d, &target), None, "{case}: nothing written")
         }
+        Waiting::CompiledRestartAfterWrite => {
+            assert!(assignment(&d, &target).is_some(), "{case}: the write is kept")
+        }
+        #[cfg(feature = "js")]
         Waiting::RestartAfterWrite => {
-            assert!(
-                assignment(&d, &target).is_some(),
-                "{case}: the write is kept"
-            )
+            assert!(assignment(&d, &target).is_some(), "{case}: the write is kept")
         }
         _ => {}
     }
 }
+
 
 // ---- F4: Switch world through the fleet plan ----
 
@@ -4190,21 +4250,31 @@ fn publish_walks(d: &HeadlessDriver, names: &[&str], walk: Option<(i32, i32, i32
     }
 }
 
-fn start_loop_scripts(d: &mut HeadlessDriver, names: &[&str]) {
+fn start_compiled_scripts(d: &mut HeadlessDriver, names: &[&str]) {
+    let data = api::game_data::for_revision(api::selected::ClientRevision::R289).expect("data");
+    d.session_mut()
+        .play_mut()
+        .expect("play")
+        .bind_script_test_data(data);
+    mark(d, names);
+    set_card(
+        d,
+        crate::FleetCard::pinned(crate::scripts::ScriptChoice::compiled(
+            crate::scripts::CompiledCardId::lookup("Sherlock")
+                .expect("Sherlock is compiled"),
+        )),
+    );
+    assert_eq!(plan(d, crate::FleetAction::Assign), Some(done()));
+    run_plan(d);
     for name in names {
-        d.session()
-            .play()
-            .expect("play")
-            .script_start_load(
-                name,
-                "export function tick(api) {}".into(),
-                script_js::LoadShape::NativeTick,
-                None,
-                vec![],
-            )
-            .expect("start");
+        d.submit(OperatorCommand::SetMark(false), Targets::Profile(name))
+            .expect("unmark");
     }
     for name in names {
+        let start = d
+            .submit(OperatorCommand::StartScript, Targets::Profile(name))
+            .expect("start");
+        settle(d, start.request());
         wait_state(d, name, ScriptRunState::Running);
     }
 }
@@ -4231,7 +4301,7 @@ fn nine_running_with_three_walks(test: &str) -> TestDriver {
     let mut d = driver(test, &NINE);
     load(&mut d, &NINE);
     publish_in_game(&d, &NINE);
-    start_loop_scripts(&mut d, &NINE);
+    start_compiled_scripts(&mut d, &NINE);
     publish_walks(&d, &NINE[..3], Some((2550, 3348, 0)));
     d.poll();
     mark(&mut d, &NINE);
@@ -4521,7 +4591,7 @@ fn a_repeated_stop_logs_one_refusal_line() {
     let mut d = driver("psg-refusal", &BOTS);
     load(&mut d, &BOTS);
     publish_in_game(&d, &BOTS);
-    start_loop_scripts(&mut d, &BOTS);
+    start_compiled_scripts(&mut d, &BOTS);
     mark(&mut d, &BOTS);
     d.poll();
     let refusal_lines = |d: &HeadlessDriver| -> Vec<String> {
