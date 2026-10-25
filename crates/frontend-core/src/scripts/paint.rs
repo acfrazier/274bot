@@ -12,7 +12,6 @@
 //! Stop row (`session::commands`), so a late click never controls another
 //! profile or a replacement run, and never turns a Pause into a Resume.
 
-#[cfg(feature = "canvas-raster")]
 use script::canvas;
 use script::canvas::CanvasOp;
 use script::shim::{
