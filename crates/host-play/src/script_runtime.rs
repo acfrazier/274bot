@@ -116,10 +116,12 @@ pub(super) use script_observe::{
     script_observe_with_npc_boxes, take_script_interacts, DispatchBarrier,
 };
 #[cfg(feature = "js")]
-pub(super) use script_observe::{deliver_channel_events, project_npc_boxes_for_isolate_snapshot};
+pub(super) use script_observe::deliver_channel_events;
+#[cfg(any(feature = "js", test))]
+pub(super) use script_observe::{project_npc_boxes_for_isolate_snapshot, projected_npc_boxes};
 pub(super) use script_observe::{
-    nav_world_state_for_observe, observe_script_inv, projected_npc_boxes,
-    script_observe_cached_with_channels, ScriptObservation,
+    nav_world_state_for_observe, observe_script_inv, script_observe_cached_with_channels,
+    ScriptObservation,
 };
 /// Per-uid script cell on the wall. Encode/post/drain take the slot lock
 /// only — the wall map lock is held briefly for lookup/insert.

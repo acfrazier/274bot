@@ -8,6 +8,7 @@ use api::host_log;
 use api::hostlog::{Category, Level};
 use api::interact::Driver;
 use api::snapshot::GameSnapshot;
+#[cfg(any(feature = "js", test))]
 use client::client::Client;
 use client::config::Cache;
 use host::{ScriptRunPolicy, SlotInput};
@@ -20,9 +21,10 @@ use super::{
     abort_script_walk, apply_watchdog_nav_action, dispatch_native_bank_deposit,
     dispatch_observed_bank_op, dispatch_script_interact_cached_scoped, pack_cached_reach,
     recovery_walk_idle, reset_script_nav, resumed_walk, route_inspect, script_slot,
-    take_carried_walk, with_script_snapshot_input_shorts, BankDepositDispatch, InteractContext,
-    NavBot, PostedWalkOutcome, ScriptWall,
+    take_carried_walk, BankDepositDispatch, InteractContext, NavBot, PostedWalkOutcome, ScriptWall,
 };
+#[cfg(feature = "js")]
+use super::with_script_snapshot_input_shorts;
 use crate::debug_enabled;
 #[cfg(feature = "memory-profile")]
 use crate::memory_diagnostics;
@@ -326,6 +328,8 @@ pub(crate) fn script_observe_cached(
     obj_names_arc: Option<Arc<api::obj_names::ObjNames>>,
     run_policy: Option<&mut ScriptRunPolicy>,
 ) -> bool {
+    #[cfg(not(feature = "js"))]
+    let _ = npc_boxes;
     script_observe_cached_with_channels(
         driver,
         name,
@@ -791,7 +795,6 @@ pub(crate) fn script_observe_cached_with_channels(
         walk_permissions = slot
             .api_gather_walk_permissions()
             .or_else(|| slot.native_walk_permissions());
-        #[cfg(feature = "js")]
         if (tick_edge || wake_waits) && slot.state() == script::RunState::Running {
             // Task 9b: post the FlatBuffer snapshot blob on every tick
             // edge — held or not — so the isolate's
@@ -805,13 +808,16 @@ pub(crate) fn script_observe_cached_with_channels(
             // packed banks are re-posted when the NavWorld identity
             // changed (identity = the shared Arc's pointer), not when
             // the stand list merely rebuilds identical.
+            #[cfg(feature = "js")]
             let world_id = world.as_ref().map(|w| Arc::as_ptr(w) as usize);
+            #[cfg(feature = "js")]
             let force_banks = world_id.is_some_and(|id| slot.last_world_id() != Some(id));
-            // Guardian `hold` freezes clocks/nav and cancels owned recovery.
-            // Recovery hold is host-owned and must still reach the isolate so
-            // loop/pump freeze, without being treated as that external freeze.
+            // Guardian hold freezes clocks/nav and cancels owned recovery.
+            // Recovery is host-owned and participates in the same hold
+            // semantics without being treated as a guardian hold.
             let recovery_hold = slot.watchdog().holds_script_actions();
             let isolate_hold = hold || recovery_hold || prayer_cleanup_hold;
+            #[cfg(feature = "js")]
             if slot.surface_active() {
                 let (
                     teleports_enabled,
@@ -2250,6 +2256,7 @@ pub(crate) fn observe_script_inv(
     (running && tick_edge).then(|| snapshot.inv())
 }
 
+#[cfg(any(feature = "js", test))]
 /// Project only the client's bounded active-NPC list. A ready scene with no
 /// projectable NPCs is an available empty update; a non-ready scene is
 /// unavailable so isolates clear any prior geometry.
@@ -2277,7 +2284,7 @@ pub(crate) fn projected_npc_boxes(
 /// snapshot. Held running isolates still satisfy this gate because they post
 /// the snapshot before dispatching their paint-only tick; idle, paused,
 /// compiled-only, and non-tick frames do not consume one.
-#[cfg(feature = "js")]
+#[cfg(any(feature = "js", test))]
 pub(crate) fn project_npc_boxes_for_isolate_snapshot<F>(
     scripts: &ScriptWall,
     name: &str,
