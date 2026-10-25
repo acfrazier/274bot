@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use api::interact::{self, Interactions};
-use api::snapshot::{GameSnapshot, QuestListStatus, WorldTile};
+use api::snapshot::{ChatLineView, GameSnapshot, QuestListStatus, WorldTile};
 use client::client::Client;
 use host_play::{mint_live_entries, mint_live_names, run_with_template, Play, ProfileOptions};
 use script::native::{ScriptStatus, StatusValue};
@@ -117,6 +117,11 @@ struct Fixture {
     hidden_journals: usize,
     normal_closed: bool,
     initial: Option<Value>,
+    /// Chat sequence captured before the pre-relog `getvar tutorial`.
+    tutorial_baseline: i32,
+    /// Chat sequence captured before the `getvar` that follows the one
+    /// pre-relog reseed.
+    tutorial_reseed_baseline: i32,
     tutorial_reseed: Option<scenario::tutorial::PostRelogTutorial>,
 }
 
@@ -137,6 +142,82 @@ fn chat_has(snapshot: &GameSnapshot, needle: &str) -> bool {
             .iter()
             .any(|line| line.contains(needle))
 }
+
+/// Which pre-relog `getvar tutorial` reply the gate is waiting for.
+///
+/// The kit-close queue assigns `tutorial=1` after the fixture's own hop seed
+/// (`content/scripts/tutorial/scripts/tutorial.rs2:133-141`), so the first
+/// reply can legitimately be `1`. The fixture then reseeds completion exactly
+/// once and requires the reseed's own fresh reply.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PreRelogTutorialPhase {
+    /// The first fresh reply after the mainland hop (fixture phase 2).
+    Initial,
+    /// The fresh reply after the one reseed (fixture phase 10).
+    AfterReseed,
+}
+
+impl PreRelogTutorialPhase {
+    /// Phase name used in refusal messages and logs.
+    fn label(self) -> &'static str {
+        match self {
+            Self::Initial => "initial getvar reply (fixture phase 2)",
+            Self::AfterReseed => "post-reseed getvar reply (fixture phase 10)",
+        }
+    }
+}
+
+/// What the pre-relog tutorial gate must do with the chat it can see.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PreRelogTutorialAction {
+    /// Log out: the fresh reply is `get tutorial: 1000`.
+    Logout,
+    /// Run the one allowed reseed: the initial fresh reply is the
+    /// kit-close `get tutorial: 1`.
+    Reseed,
+}
+
+/// Newest fresh `tutorial` value in `chat`, or `None`.
+///
+/// Only lines with `sequence > baseline` count, so a reply latched before
+/// the baseline is ignored; among fresh replies the newest wins.
+fn fresh_tutorial_reply(chat: &[ChatLineView], baseline: i32) -> Option<i32> {
+    chat.iter()
+        .filter(|line| line.sequence > baseline)
+        .filter_map(|line| {
+            scenario::tutorial::parse_tutorial_reply(&line.text).map(|value| (line.sequence, value))
+        })
+        .max_by_key(|&(sequence, _)| sequence)
+        .map(|(_, value)| value)
+}
+
+/// Pure pre-relog gate: the next action, `Ok(None)` while still waiting, or
+/// the refusal message when this phase must not accept the observed value.
+///
+/// A stale reply (sequence not after `baseline`) is ignored, never accepted.
+/// After the one reseed a second `1` is a refusal, not another reseed.
+fn pre_relog_tutorial_step(
+    phase: PreRelogTutorialPhase,
+    baseline: i32,
+    chat: &[ChatLineView],
+) -> Result<Option<PreRelogTutorialAction>, String> {
+    let Some(value) = fresh_tutorial_reply(chat, baseline) else {
+        return Ok(None);
+    };
+    if value == scenario::tutorial::TUTORIAL_COMPLETE {
+        return Ok(Some(PreRelogTutorialAction::Logout));
+    }
+    if value == 1 && phase == PreRelogTutorialPhase::Initial {
+        return Ok(Some(PreRelogTutorialAction::Reseed));
+    }
+    Err(format!(
+        "fixture tutorial gate: fresh get tutorial: {value} in the {}; expected \
+         get tutorial: {} (directly or after the one reseed)",
+        phase.label(),
+        scenario::tutorial::TUTORIAL_COMPLETE,
+    ))
+}
+
 fn logout(client: &mut Client) -> Result<(), String> {
     let ifaces = Arc::clone(&client.ifaces);
     if interact::logout(client, &ifaces) {
@@ -222,13 +303,63 @@ fn fixture_frame(client: &mut Client, held: bool, journal: bool, shared: &Mutex<
                 state.phase = 1;
             }
             1 => {
-                cheat(client, "getvar tutorial")?;
+                // Only replies newer than this sequence prove this getvar's
+                // value; a line latched before it must not satisfy the gate.
+                state.tutorial_baseline = scenario::tutorial::chat_baseline(&snapshot);
+                cheat(client, scenario::tutorial::TUTORIAL_GETVAR)?;
                 state.phase = 2;
             }
-            2 if chat_has(&snapshot, "get tutorial: 1000") => {
-                logout(client)?;
-                state.phase = 3;
-            }
+            2 => match pre_relog_tutorial_step(
+                PreRelogTutorialPhase::Initial,
+                state.tutorial_baseline,
+                snapshot.chat_lines(),
+            )? {
+                None => {}
+                Some(PreRelogTutorialAction::Logout) => {
+                    println!(
+                        "fixture tutorial gate: fresh get tutorial: 1000 in the {}; no reseed needed",
+                        PreRelogTutorialPhase::Initial.label()
+                    );
+                    logout(client)?;
+                    state.phase = 3;
+                }
+                Some(PreRelogTutorialAction::Reseed) => {
+                    // The kit-close queue set tutorial=1 after the hop seed.
+                    // Seed completion exactly once, then require the reseed's
+                    // own fresh reply in phase 10; that phase refuses a
+                    // second `1`, so the reseed cannot loop.
+                    state.tutorial_reseed_baseline = scenario::tutorial::chat_baseline(&snapshot);
+                    cheat(client, scenario::tutorial::TUTORIAL_SETVAR)?;
+                    cheat(client, scenario::tutorial::TUTORIAL_GETVAR)?;
+                    println!(
+                        "fixture tutorial gate: kit-close get tutorial: 1 in the {}; reseeded once with setvar tutorial 1000 + getvar tutorial, waiting in phase 10",
+                        PreRelogTutorialPhase::Initial.label()
+                    );
+                    state.phase = 10;
+                }
+            },
+            10 => match pre_relog_tutorial_step(
+                PreRelogTutorialPhase::AfterReseed,
+                state.tutorial_reseed_baseline,
+                snapshot.chat_lines(),
+            )? {
+                None => {}
+                Some(PreRelogTutorialAction::Logout) => {
+                    println!(
+                        "fixture tutorial gate: fresh get tutorial: 1000 in the {}",
+                        PreRelogTutorialPhase::AfterReseed.label()
+                    );
+                    logout(client)?;
+                    state.phase = 3;
+                }
+                Some(PreRelogTutorialAction::Reseed) => {
+                    // The step reseeds only in the initial phase; fail closed
+                    // rather than ever reseeding a second time.
+                    return Err(
+                        "fixture tutorial gate: a second pre-relog reseed is refused".into(),
+                    );
+                }
+            },
             4 if client.ingame
                 && client.scene_state == 2
                 && snapshot
@@ -1268,4 +1399,94 @@ fn script_api_gather_walk_options() {
         "script-api-gather-walk-options-receipt.json",
         gather_walk_options_cell,
     );
+}
+
+/// Offline tests for the pre-relog tutorial gate: the fixture phases only
+/// touch the engine through chat, so the decision is a pure function.
+#[cfg(test)]
+mod pre_relog_tutorial_tests {
+    use super::*;
+
+    fn line(sequence: i32, text: &str) -> ChatLineView {
+        ChatLineView {
+            type_: 0,
+            username: None,
+            text: text.to_owned(),
+            sequence,
+        }
+    }
+
+    const COMPLETE_REPLY: &str = "get tutorial: 1000";
+    const KIT_CLOSE_REPLY: &str = "get tutorial: 1";
+
+    #[test]
+    fn fresh_complete_reply_logs_out_without_a_reseed() {
+        let chat = [line(7, COMPLETE_REPLY)];
+        assert_eq!(
+            pre_relog_tutorial_step(PreRelogTutorialPhase::Initial, 6, &chat),
+            Ok(Some(PreRelogTutorialAction::Logout)),
+        );
+    }
+
+    #[test]
+    fn kit_close_reply_reseeds_then_the_fresh_complete_reply_logs_out() {
+        let first = [line(7, KIT_CLOSE_REPLY)];
+        assert_eq!(
+            pre_relog_tutorial_step(PreRelogTutorialPhase::Initial, 6, &first),
+            Ok(Some(PreRelogTutorialAction::Reseed)),
+        );
+        // After the reseed, the pre-reseed `1` (sequence 7) is at the new
+        // baseline and the reply after it proves the seeded value.
+        let after = [line(9, COMPLETE_REPLY), line(7, KIT_CLOSE_REPLY)];
+        assert_eq!(
+            pre_relog_tutorial_step(PreRelogTutorialPhase::AfterReseed, 8, &after),
+            Ok(Some(PreRelogTutorialAction::Logout)),
+        );
+    }
+
+    #[test]
+    fn a_second_kit_close_reply_after_the_one_reseed_is_refused_by_phase() {
+        let chat = [line(9, KIT_CLOSE_REPLY)];
+        let error = pre_relog_tutorial_step(PreRelogTutorialPhase::AfterReseed, 8, &chat)
+            .expect_err("a second tutorial-1 reply must refuse");
+        assert!(error.contains("get tutorial: 1"), "{error}");
+        assert!(error.contains("fixture phase 10"), "{error}");
+    }
+
+    #[test]
+    fn a_stale_reply_from_before_the_baseline_is_ignored() {
+        let chat = [line(7, COMPLETE_REPLY), line(5, KIT_CLOSE_REPLY)];
+        assert_eq!(
+            pre_relog_tutorial_step(PreRelogTutorialPhase::Initial, 7, &chat),
+            Ok(None),
+        );
+        assert_eq!(
+            pre_relog_tutorial_step(PreRelogTutorialPhase::AfterReseed, 7, &chat),
+            Ok(None),
+        );
+    }
+
+    #[test]
+    fn the_setvar_confirmation_line_is_not_a_get_reply() {
+        let chat = [line(8, "set tutorial: to 1000")];
+        assert_eq!(
+            pre_relog_tutorial_step(PreRelogTutorialPhase::AfterReseed, 7, &chat),
+            Ok(None),
+        );
+    }
+
+    #[test]
+    fn any_other_value_is_refused_with_its_value_and_phase() {
+        let chat = [line(7, "get tutorial: 250")];
+        let error = pre_relog_tutorial_step(PreRelogTutorialPhase::Initial, 6, &chat)
+            .expect_err("tutorial 250 must refuse");
+        assert!(error.contains("get tutorial: 250"), "{error}");
+        assert!(error.contains("fixture phase 2"), "{error}");
+
+        let chat = [line(9, "get tutorial: 2")];
+        let error = pre_relog_tutorial_step(PreRelogTutorialPhase::AfterReseed, 8, &chat)
+            .expect_err("tutorial 2 after the reseed must refuse");
+        assert!(error.contains("get tutorial: 2"), "{error}");
+        assert!(error.contains("fixture phase 10"), "{error}");
+    }
 }
