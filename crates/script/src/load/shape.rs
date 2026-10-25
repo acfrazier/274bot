@@ -324,6 +324,7 @@ pub fn live_example_path(file_name: &str) -> Option<PathBuf> {
     match file_name {
         "bone_burier_v2.ts"
         | "bone_burier_v2.js"
+        | "guardian_claim_toggle.js"
         | "route_inspect_brimhaven_v2.ts"
         | "prayer_v2.ts"
         | "prayer_v1.ts"

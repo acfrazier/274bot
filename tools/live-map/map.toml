@@ -16,6 +16,7 @@ globs = [
   "crates/nav-planner/src/**",
   "crates/nav-executor/src/**",
   "crates/script/src/**",
+  "crates/script/examples/guardian_claim_toggle.js",
   "crates/script/fonts/**",
   "crates/script/compat-js/*.json",
   "crates/script/compat-js/*.d.ts",
@@ -449,4 +450,21 @@ cells = [
 globs = ["crates/host-play/src/script_api_live_probe.rs", "crates/script/src/slot/progress.rs"]
 cells = [
   "host.script-progress-journal|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} BOT_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test script_api_live -- --ignored --exact script_api_progress_journal --nocapture --test-threads=1",
+]
+
+# Held-box claim refresh crosses the real Load cache and native Guardian.
+# The fixture seeds only this account's Strange box inventory state.
+[[cover]]
+globs = [
+  "crates/host/src/lib.rs",
+  "crates/host/src/random.rs",
+  "crates/host/src/random/guardian.rs",
+  "crates/scenario/src/catalog.rs",
+  "crates/scenario/src/random_episode.rs",
+  "crates/scenario/src/scenarios/mod.rs",
+  "crates/scenario/src/scenarios/guardian_events.rs",
+  "crates/script/examples/guardian_claim_toggle.js",
+]
+cells = [
+  "scenario.guardian-box-load-claim|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} RS2B0T=${CATALOG_ROOT:?} CATALOG_ROOT=${CATALOG_ROOT:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo run --release -p tui --bin tui-play -- --profile local-289 --revision 289 --host 127.0.0.1 --port 44594 --asset-host 127.0.0.1 --http-port 1080 --engine ${ENGINE_A_DIR:?} --nav-pack ${NAV_PACK_289:?} --nav-flags ${NAV_FLAGS_289:?} --catalog ${CATALOG_ROOT:?} --live script_guardian_event_strange_box_load_claim|--locked -p scenario --lib scenarios::guardian_events::tests::",
 ]

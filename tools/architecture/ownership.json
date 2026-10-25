@@ -3091,6 +3091,10 @@
       "owner": "T2"
     },
     {
+      "path": "crates/script/examples/guardian_claim_toggle.js",
+      "owner": "T2"
+    },
+    {
       "path": "crates/script/examples/hold_spot_v2.ts",
       "owner": "T2"
     },
