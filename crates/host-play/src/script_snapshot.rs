@@ -120,6 +120,7 @@ fn positional_ops(item: &api::snapshot::ItemView) -> Vec<String> {
 pub(super) struct PackedReach {
     pub(super) view: Arc<api::query::ReachQueryView>,
     pub(super) flood: Option<Arc<api::query::ReachFlood>>,
+    #[cfg(feature = "js")]
     pub(super) stamp: u64,
 }
 
@@ -134,6 +135,7 @@ pub(super) fn pack_cached_reach(
         return PackedReach {
             view: Arc::new(api::query::ReachQueryView::unavailable()),
             flood: None,
+            #[cfg(feature = "js")]
             stamp: 0,
         };
     };
@@ -155,11 +157,13 @@ pub(super) fn pack_cached_reach(
         here_tile,
         canlight_plane,
     );
+    #[cfg(feature = "js")]
     let stamp = key.stamp();
     if cache.contains(&key) {
         return PackedReach {
             view: cache.view_arc(),
             flood: cache.flood_arc(),
+            #[cfg(feature = "js")]
             stamp,
         };
     }
@@ -174,6 +178,7 @@ pub(super) fn pack_cached_reach(
     PackedReach {
         view: cache.pack(key, s.scene(), flood.clone(), canlight_plane),
         flood,
+        #[cfg(feature = "js")]
         stamp,
     }
 }

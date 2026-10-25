@@ -2852,7 +2852,10 @@ impl Scripts {
         self.open_tally("Start all");
         let mut accepted = Vec::new();
         for name in members {
-            if self.admit.contains(&name) || self.has_start_preparation(&name) {
+            let waiting = self.admit.contains(&name);
+            #[cfg(feature = "js")]
+            let waiting = waiting || self.has_start_preparation(&name);
+            if waiting {
                 accepted.push(name);
                 continue;
             }
@@ -2894,6 +2897,7 @@ impl Scripts {
         if self.admit.contains(profile) {
             return Ok(());
         }
+        #[cfg(feature = "js")]
         if self.has_start_preparation(profile) {
             self.tally_skip(profile, "already starting");
             return Ok(());
@@ -3666,10 +3670,13 @@ impl Scripts {
         tallied: bool,
         diagnostic: String,
     ) {
-        #[cfg(feature = "js")]
-        if kind == StartKind::Reload {
-            self.show(format!("reload: {name}: {diagnostic}"));
-            return;
+        match kind {
+            #[cfg(feature = "js")]
+            StartKind::Reload => {
+                self.show(format!("reload: {name}: {diagnostic}"));
+                return;
+            }
+            StartKind::Start | StartKind::RestartSettings => {}
         }
         let message = format!("script: {diagnostic}");
         if tallied

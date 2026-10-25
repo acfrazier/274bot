@@ -4888,6 +4888,7 @@ fn bot_clone_generation_guard(bot: &NavBot) {
     );
 }
 
+#[cfg(feature = "js")]
 fn posted_from_bot(bot: &NavBot) -> PostedWalkOutcome {
     PostedWalkOutcome {
         seq: bot.walk_outcome_seq,

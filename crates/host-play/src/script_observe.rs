@@ -17,14 +17,14 @@ use nav_planner::WorldState;
 use script::slot::SeatWalkTerminal;
 use script::{ScriptCtx, SlotScript};
 
-#[cfg(feature = "js")]
-use super::{with_script_snapshot_input_shorts, PostedWalkOutcome};
 use super::{
     abort_script_walk, apply_watchdog_nav_action, dispatch_native_bank_deposit,
     dispatch_observed_bank_op, dispatch_script_interact_cached_scoped, pack_cached_reach,
     recovery_walk_idle, reset_script_nav, resumed_walk, route_inspect, script_slot,
     take_carried_walk, BankDepositDispatch, InteractContext, NavBot, ScriptWall,
 };
+#[cfg(feature = "js")]
+use super::{with_script_snapshot_input_shorts, PostedWalkOutcome};
 use crate::debug_enabled;
 #[cfg(feature = "memory-profile")]
 use crate::memory_diagnostics;
@@ -150,6 +150,7 @@ pub(crate) fn delay_ordered_drain_for_test() {
     DELAY_ORDERED_DRAIN.with(|delay| assert!(!delay.replace(true)));
 }
 
+#[cfg(feature = "js")]
 /// Post the slot's snapshot. Only a post the isolate accepted counts as the
 /// isolate having seen the walk outcome it carries (`walk_seq`), so only
 /// then is the live refusal guard released. A refused post leaves the guard
