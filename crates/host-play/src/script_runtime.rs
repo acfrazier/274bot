@@ -9,7 +9,7 @@ pub use bank::harness::measures_captured_native_bank_pick_cpu;
 pub(crate) use bank::open_bank_at_here;
 #[cfg(any(test, all(feature = "live-harness", feature = "test-support")))]
 pub(crate) use bank::BankPickWorkObservation;
-#[cfg(test)]
+#[cfg(all(test, feature = "js"))]
 pub(super) fn poll_bank_pick_for_test(navs: &Arc<Mutex<HashMap<String, NavBot>>>, name: &str) {
     bank::poll_bank_pick(navs, name, Instant::now());
 }

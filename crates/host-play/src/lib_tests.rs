@@ -139,6 +139,7 @@ fn no_reach() -> Arc<api::query::ReachQueryView> {
     Arc::new(api::query::ReachQueryView::unavailable())
 }
 
+#[cfg(feature = "js")]
 fn wait_script_state(play: &Play, name: &str, want: script::RunState) {
     let deadline = Instant::now() + Duration::from_secs(60);
     while play.script_state(name) != want && Instant::now() < deadline {
@@ -9390,6 +9391,7 @@ fn t23_bank_start_compat_slot(scripts: &ScriptWall, name: &str, source: &str) {
     assert_eq!(slot.state(), script::slot::RunState::Running);
 }
 
+#[cfg(feature = "js")]
 /// Drive the regular host observer. No-edge calls carry fresh family evidence
 /// without advancing the game's tick or its interaction budget.
 #[expect(
@@ -20772,6 +20774,7 @@ fn plant_typed_npc_with_face(
     c.npc_count += 1;
 }
 
+#[cfg(feature = "js")]
 /// Active positive type-1 combat hit on the local player (value 5, type 1).
 fn plant_positive_hit(c: &mut Client) {
     let until = c.loop_cycle + 70;
@@ -31290,7 +31293,9 @@ mod quest_route_evidence_tests {
     #[derive(Clone, Copy)]
     enum QuestListFrame {
         Complete,
+        #[cfg(feature = "js")]
         Unsupported,
+        #[cfg(feature = "js")]
         Unavailable,
     }
 
@@ -31411,11 +31416,12 @@ mod quest_route_evidence_tests {
     ) -> GameSnapshot {
         let (_, name) = selected_quest(selected);
         let mut snapshot = nav_frame_at(0, 0);
-        let colour = match frame {
-            QuestListFrame::Complete | QuestListFrame::Unavailable => {
-                nav_planner::world_state::QUEST_COMPLETE_COLOUR
-            }
-            QuestListFrame::Unsupported => 0x123456,
+        let (colour, available) = match frame {
+            QuestListFrame::Complete => (nav_planner::world_state::QUEST_COMPLETE_COLOUR, true),
+            #[cfg(feature = "js")]
+            QuestListFrame::Unavailable => (nav_planner::world_state::QUEST_COMPLETE_COLOUR, false),
+            #[cfg(feature = "js")]
+            QuestListFrame::Unsupported => (0x123456, true),
         };
         snapshot.seed_quest_statuses(
             vec![QuestStatusView {
@@ -31423,7 +31429,7 @@ mod quest_route_evidence_tests {
                 name,
                 colour,
             }],
-            !matches!(frame, QuestListFrame::Unavailable),
+            available,
         );
         snapshot
     }

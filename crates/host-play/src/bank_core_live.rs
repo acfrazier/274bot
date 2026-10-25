@@ -140,6 +140,7 @@ struct Facts {
     open_generation: Option<u64>,
 }
 
+#[cfg(feature = "js")]
 impl Facts {
     fn held(&self, id: i32) -> i32 {
         self.held

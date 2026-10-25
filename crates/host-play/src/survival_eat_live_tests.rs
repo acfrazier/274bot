@@ -47,6 +47,7 @@ const LOBSTER_ID: i32 = 379;
 const PROTECT_FROM_MELEE_VARP: i32 = 97;
 const PREPARATION_DEADLINE: Duration = Duration::from_secs(180);
 const WALK_CELL_WALL_LIMIT: Duration = Duration::from_secs(360);
+#[cfg(feature = "js")]
 const COMBAT_CELL_WALL_LIMIT: Duration = Duration::from_secs(300);
 const CELL_TICK_LIMIT: u32 = 100;
 const POISON_PREFIX_TICKS: u32 = 31;
@@ -62,6 +63,7 @@ const WALK_TARGET: WorldTile = WorldTile {
     z: 3170,
     level: 0,
 };
+#[cfg(feature = "js")]
 const COW_FIELD: WorldTile = WorldTile {
     x: 3255,
     z: 3278,
