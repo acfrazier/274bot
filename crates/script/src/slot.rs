@@ -980,6 +980,12 @@ impl SlotScript {
         self.arm_seat(run);
     }
 
+    /// Read the real gameplay seat's session identity for conformance tests only.
+    #[cfg(feature = "test-hooks")]
+    pub fn seat_session_for_test(&self) -> Option<api::identity::SessionKey> {
+        self.seat.as_ref().and_then(|seat| seat.run().session_key())
+    }
+
     /// Return the number of interactions waiting for host delivery.
     #[cfg(feature = "test-hooks")]
     pub fn seat_interact_delivery_len(&self) -> usize {

@@ -194,6 +194,12 @@ fn empty_snapshot(tick: u64) -> SnapshotInput<'static> {
 }
 
 fn run_policy_tick(slot: &mut SlotScript, tick: u64, session_epoch: u64) {
+    let ready = slot.seat_session_for_test();
+    assert_eq!(
+        ready.map(SessionKey::epoch),
+        Some(slot.work_epoch()),
+        "the test's ready session matches its new connection"
+    );
     let key = slot.slot_key_for_test().expect("bound test slot");
     slot.align_seat_session(Some(SessionKey::new(key, session_epoch)));
     let input = empty_snapshot(tick);
