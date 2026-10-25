@@ -104,7 +104,7 @@ const USAGE: &str = "usage: tui-play [--profile NAME|--rs2b2t] [--revision 274|2
          [--engine DIR] [--cache DIR] [--unpack DIR] [--nav-pack PATH] [--nav-flags PATH] \
          [--content DIR] [--vault PATH] [--catalog DIR] [--cache-manifest PATH] [--vault-pass-stdin] \
          [--world N] [--live script_<name> [--catalog-core | --pair-core]] [--user USER]... \
-         (default user: first vault profile)\n\
+         (default user: first profile in saved order)\n\
          release packaging: tui-play --map-bundle OUT --revision 274|289 --cache JAG_DIR \
          --unpack SNAPSHOT_ROOT (bakes the shipped WalkTo map bundle into OUT/map/<revision>)";
 
