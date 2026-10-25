@@ -651,9 +651,9 @@ fn permission_config(revision: u64, allow: bool) -> Arc<PreparedConfig> {
             revision,
             Arc::new(
                 serde_json::from_value(serde_json::json!({
-                    "allow_teleports": allow,
-                    "allow_wilderness": allow,
-                    "allow_danger_zones": allow,
+                    "allowTeleports": allow,
+                    "allowWilderness": allow,
+                    "allowDangerZones": allow,
                 }))
                 .unwrap(),
             ),
