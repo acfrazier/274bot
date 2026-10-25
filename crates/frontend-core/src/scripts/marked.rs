@@ -44,10 +44,10 @@ impl Scripts {
                 }
             }
             #[cfg(not(feature = "js"))]
-            script::ScriptSel::Loaded(..) => Err(
-                script::surface::SurfaceError::NoFactory(script::surface::SurfaceKind::Js)
-                    .to_string(),
-            ),
+            script::ScriptSel::Loaded(..) => Err(script::surface::SurfaceError::NoFactory(
+                script::surface::SurfaceKind::Js,
+            )
+            .to_string()),
         }
     }
 

@@ -298,7 +298,11 @@ fn apply_import(core: &mut OperatorSession<u32>, plan: ImportPlan) -> ImportRun 
         }
         entries.push(entry);
     }
-    skipped.extend(file_skipped.into_iter().map(|item| ("file".to_owned(), item)));
+    skipped.extend(
+        file_skipped
+            .into_iter()
+            .map(|item| ("file".to_owned(), item)),
+    );
     let seen = (0..entries.len())
         .map(|_| std::cell::OnceCell::new())
         .collect();

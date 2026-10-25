@@ -41,6 +41,20 @@ gathering, fishing and banking data helpers. The generated
 helper that refuses one request at run time (for example `Traversal.walkTo`
 given `pathFollow`) raises the same `not impl` error with the reason.
 
+## Build modes
+
+The operator apps enable `js` by default. A product built with
+`--no-default-features` keeps the native Gatherer, Grinch and Quester, but
+does not include the JS runtime or offer Load, Reload, catalog or rs2b0t
+profile-import controls. Native settings, lifecycle and paint controls remain.
+See [building without JavaScript](../dev/build-from-source.md#builds-with-and-without-javascript)
+for the separate application build commands.
+
+Saved File and catalog selections use the same Core vocabulary in both
+builds. In a build without JS, Start returns the typed
+`SurfaceError::NoFactory(SurfaceKind::Js)` refusal. The saved identity is
+not rejected as malformed or replaced with another card.
+
 ## Native contract boundary
 
 Compiled cards and the slot use `script::native::Script` exclusively. Each

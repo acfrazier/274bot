@@ -572,7 +572,6 @@ impl<'a> ScriptPane<'a> {
     }
 }
 
-
 impl Widget for ScriptPane<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         #[cfg(feature = "js")]
@@ -716,8 +715,14 @@ mod tests {
         _load_path: &str,
         params_available: bool,
     ) -> ScriptPane<'a> {
-        let pane =
-            ScriptPane::new(state, sel, cards, category_order, browse_open, params_available);
+        let pane = ScriptPane::new(
+            state,
+            sel,
+            cards,
+            category_order,
+            browse_open,
+            params_available,
+        );
         #[cfg(feature = "js")]
         {
             pane.with_js_controls(catalog_deferred, load_open, false)

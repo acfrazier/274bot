@@ -42,9 +42,9 @@ use crate::loadouts::{LoadoutsPane, LoadoutsState};
 use crate::map::{Map, MapAction, MapView, ObservedMark, ZOOMS};
 use crate::overlay::Modal;
 use crate::script_params::{ParamsCommit, ParamsKey, ParamsPane, ParamsState};
-use crate::script_shape::{card_selection, BrowseCard, ScriptClick, ScriptPane};
 #[cfg(feature = "js")]
 use crate::script_shape::rs2b0t_root_has_index;
+use crate::script_shape::{card_selection, BrowseCard, ScriptClick, ScriptPane};
 use crate::settings::{SettingsEdit, SettingsState};
 use crate::status::StatusPane;
 
@@ -73,7 +73,6 @@ enum LoadEntry {
     File(String),
     Cancel,
 }
-
 
 /// Catalogue demand state. Drawing an inactive map never changes this state;
 /// only the explicit Map pane transition may request the catalogue-only stage.
@@ -1708,10 +1707,7 @@ impl TuiApp {
             }
             #[cfg(not(feature = "js"))]
             {
-                crate::script_shape::browse_lines(
-                    &self.script_cards,
-                    &self.script_category_order,
-                )
+                crate::script_shape::browse_lines(&self.script_cards, &self.script_category_order)
             }
         };
         let card_indices: Vec<usize> = lines
@@ -1903,7 +1899,6 @@ impl TuiApp {
             _ => AppAction::None,
         }
     }
-
 
     #[cfg(feature = "js")]
     fn load_click(&mut self, col: u16, row: u16) -> AppAction {

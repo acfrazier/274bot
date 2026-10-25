@@ -9,9 +9,9 @@ use std::time::{Duration, Instant};
 use serde_json::{Map, Value};
 
 use crate::catalog_core::CoreWatch;
-use crate::paired_core::{PairWatch, StartBarrier};
 #[cfg(feature = "js")]
 use crate::paired_core::{pair_settings, PairCase};
+use crate::paired_core::{PairWatch, StartBarrier};
 use crate::ScriptStartHandle;
 
 /// One stashed script Start for the live prepare/StartScript pump.
@@ -233,11 +233,11 @@ fn start_stashed_catalog_card(
         }
     };
     #[cfg(not(feature = "js"))]
-    let Some(id) = card.compiled else {
-        return Err(script::surface::SurfaceError::NoFactory(
-            script::surface::SurfaceKind::Js,
-        )
-        .into());
+    let Some(id) = card.compiled
+    else {
+        return Err(
+            script::surface::SurfaceError::NoFactory(script::surface::SurfaceKind::Js).into(),
+        );
     };
     #[cfg(not(feature = "js"))]
     let request = || StartRequest::Compiled {

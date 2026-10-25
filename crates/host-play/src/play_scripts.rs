@@ -286,7 +286,7 @@ impl ScriptStartHandle {
             },
             || Ok(()),
         )
-            .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string())
     }
 
     /// The single admission point for operator, coordinator and scenario Starts.

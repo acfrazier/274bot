@@ -64,9 +64,9 @@ use crate::command::OperatorCommand;
 use crate::operations::OperationId;
 #[cfg(feature = "js")]
 use crate::scripts::Scripts;
+use crate::session::OperatorSession;
 #[cfg(feature = "js")]
 use crate::session::{ArmMirror, StagedProfileWrite};
-use crate::session::OperatorSession;
 
 /// rs2b0t's `PROFILE_FILE_KIND`.
 pub const PROFILE_FILE_KIND: &str = "rs2b0t-multibox-profiles";

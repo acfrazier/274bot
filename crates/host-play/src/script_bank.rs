@@ -19,6 +19,7 @@ use nav_planner::router::{
 use nav_planner::world::NavWorld;
 use nav_planner::WorldState;
 use script::bank::ops;
+use script::native::snapshot_source::BankSelectionInput;
 use script::native::HostAuthority;
 use script::native_bank::{
     AccessKind as NativeAccessKind, BankPickReceipt as NativeBankPickReceipt,
@@ -27,7 +28,6 @@ use script::native_bank::{
 };
 use script::work_admission::cancellation::WorkCancellation;
 use script::work_admission::WorkService;
-use script::native::snapshot_source::BankSelectionInput;
 use std::collections::HashMap;
 use std::sync::{
     atomic::{AtomicBool, Ordering},

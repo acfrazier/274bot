@@ -99,11 +99,7 @@ fn no_slot_scenario_start_holds_and_retries_the_armed_core() {
         catalog: Some(watch.clone()),
         ..Default::default()
     };
-    let mut pending = vec![PendingCatalogStart::compiled(
-        "catalogtest",
-        id,
-        Map::new(),
-    )];
+    let mut pending = vec![PendingCatalogStart::compiled("catalogtest", id, Map::new())];
     for _ in 0..2 {
         assert_eq!(
             fire_pending_catalog_start(&mut pending, true, false, arming),

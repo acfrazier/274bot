@@ -97,7 +97,10 @@ fn wait_script_state(
             return;
         }
         assert_ne!(state, script::RunState::Error, "{name} ended in {state:?}");
-        assert!(Instant::now() < deadline, "{name} never reached {expected:?}");
+        assert!(
+            Instant::now() < deadline,
+            "{name} never reached {expected:?}"
+        );
         std::thread::sleep(Duration::from_millis(5));
     }
 }

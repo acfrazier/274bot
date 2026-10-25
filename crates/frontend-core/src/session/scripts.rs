@@ -8,9 +8,7 @@ use api::identity::RequestId;
 use super::commands::{Applied, Submitted, Targets};
 #[cfg(feature = "js")]
 use crate::command::FailureKind;
-use crate::command::{
-    CardKind, OperatorCommand, Rejection, SkipReason, Subject, SubjectKind,
-};
+use crate::command::{CardKind, OperatorCommand, Rejection, SkipReason, Subject, SubjectKind};
 #[cfg(feature = "js")]
 use crate::scripts::CatalogActionKind;
 use crate::scripts::{

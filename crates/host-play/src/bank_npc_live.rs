@@ -3637,12 +3637,8 @@ pub fn live_ten_guest_shared_bank_pick_full_retry_burst() {
                 let bag = Arc::new(script::native::SettingsBag::new());
                 for revision in 1..=BANK_PICK_BURST_HOLDERS as u64 {
                     saturation_holders.push(
-                        play.script_prepare_config(
-                            holder_card,
-                            revision,
-                            Arc::clone(&bag),
-                        )
-                        .expect("admit an actual native configuration preparation"),
+                        play.script_prepare_config(holder_card, revision, Arc::clone(&bag))
+                            .expect("admit an actual native configuration preparation"),
                     );
                 }
             }

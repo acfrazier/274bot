@@ -295,9 +295,8 @@ pub fn assign_marked<Io>(
         }
         #[cfg(not(feature = "js"))]
         Ok(None) => {
-            let reason =
-                script::surface::SurfaceError::NoFactory(script::surface::SurfaceKind::Js)
-                    .to_string();
+            let reason = script::surface::SurfaceError::NoFactory(script::surface::SurfaceKind::Js)
+                .to_string();
             let mut rows = unavailable_rows(gone);
             rows.extend(
                 names
@@ -517,9 +516,8 @@ fn assign_and_restart_names<Io>(
         }
         #[cfg(not(feature = "js"))]
         Ok(None) => {
-            let reason =
-                script::surface::SurfaceError::NoFactory(script::surface::SurfaceKind::Js)
-                    .to_string();
+            let reason = script::surface::SurfaceError::NoFactory(script::surface::SurfaceKind::Js)
+                .to_string();
             for name in names {
                 scripts.tally_fail(name, &reason);
             }

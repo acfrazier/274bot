@@ -745,8 +745,7 @@ pub(super) fn end_slot_session(
     cheats: &Arc<Mutex<HashMap<String, VecDeque<String>>>>,
     wires: &Arc<Mutex<HashMap<String, VecDeque<WireCmd>>>>,
     navs: &Arc<Mutex<HashMap<String, NavBot>>>,
-    #[cfg(feature = "js")]
-    channels: &super::script_channels::SlotChannels,
+    #[cfg(feature = "js")] channels: &super::script_channels::SlotChannels,
 ) {
     // Reduce a fallback exit exactly once if the pump left without a client
     // exit reason; otherwise consume the decision recorded before that fact.
@@ -778,8 +777,7 @@ pub(super) fn apply_offline_logout_reset(
     cheats: &Arc<Mutex<HashMap<String, VecDeque<String>>>>,
     wires: &Arc<Mutex<HashMap<String, VecDeque<WireCmd>>>>,
     navs: &Arc<Mutex<HashMap<String, NavBot>>>,
-    #[cfg(feature = "js")]
-    channels: &super::script_channels::SlotChannels,
+    #[cfg(feature = "js")] channels: &super::script_channels::SlotChannels,
 ) {
     if !arm.take_logout_work_reset() {
         return;

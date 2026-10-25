@@ -17,14 +17,14 @@ use nav_planner::WorldState;
 use script::slot::SeatWalkTerminal;
 use script::{ScriptCtx, SlotScript};
 
+#[cfg(feature = "js")]
+use super::with_script_snapshot_input_shorts;
 use super::{
     abort_script_walk, apply_watchdog_nav_action, dispatch_native_bank_deposit,
     dispatch_observed_bank_op, dispatch_script_interact_cached_scoped, pack_cached_reach,
     recovery_walk_idle, reset_script_nav, resumed_walk, route_inspect, script_slot,
     take_carried_walk, BankDepositDispatch, InteractContext, NavBot, PostedWalkOutcome, ScriptWall,
 };
-#[cfg(feature = "js")]
-use super::with_script_snapshot_input_shorts;
 use crate::debug_enabled;
 #[cfg(feature = "memory-profile")]
 use crate::memory_diagnostics;
@@ -433,8 +433,7 @@ pub(crate) fn script_observe_cached_with_channels(
     state: Option<WorldState>,
     snapshot: Option<&GameSnapshot>,
     bank_memory: Option<&parking_lot::RwLock<api::bank_memory::BankMemory>>,
-    #[cfg(feature = "js")]
-    npc_boxes: Option<&[script::native::snapshot_source::NpcBoxInput]>,
+    #[cfg(feature = "js")] npc_boxes: Option<&[script::native::snapshot_source::NpcBoxInput]>,
     obj_names: Option<&api::obj_names::ObjNames>,
     scripts: &ScriptWall,
     cheats: &Arc<Mutex<HashMap<String, VecDeque<String>>>>,
@@ -447,10 +446,8 @@ pub(crate) fn script_observe_cached_with_channels(
     slot_input: Option<&SlotInput>,
     cache: Option<Arc<Cache>>,
     obj_names_arc: Option<Arc<api::obj_names::ObjNames>>,
-    #[cfg(feature = "js")]
-    channels: Option<&super::script_channels::SlotChannels>,
-    #[cfg(feature = "js")]
-    channel_world: super::script_channels::BrokerWorld,
+    #[cfg(feature = "js")] channels: Option<&super::script_channels::SlotChannels>,
+    #[cfg(feature = "js")] channel_world: super::script_channels::BrokerWorld,
     run_policy: Option<&mut ScriptRunPolicy>,
     mut debug_replies: Option<&mut super::debug_replies::DebugReplies>,
     service_arm: Option<&SlotArm>,
@@ -890,14 +887,15 @@ pub(crate) fn script_observe_cached_with_channels(
                 // table's display name beside them when it has one. Always
                 // supplied — an empty list is the observed "no named short",
                 // so a clear is never omitted.
-                let carry_rows: Vec<script::native::snapshot_source::CarryInput<'_>> = walk_missing_carry
-                    .iter()
-                    .map(|row| script::native::snapshot_source::CarryInput {
-                        id: row.id,
-                        count: row.count,
-                        name: obj_names.and_then(|names| names.name(row.id)),
-                    })
-                    .collect();
+                let carry_rows: Vec<script::native::snapshot_source::CarryInput<'_>> =
+                    walk_missing_carry
+                        .iter()
+                        .map(|row| script::native::snapshot_source::CarryInput {
+                            id: row.id,
+                            count: row.count,
+                            name: obj_names.and_then(|names| names.name(row.id)),
+                        })
+                        .collect();
                 let packed = pack_cached_reach(
                     slot.reach_pack_cache(),
                     snapshot,
@@ -2290,7 +2288,7 @@ pub(crate) fn project_npc_boxes_for_isolate_snapshot<F>(
     name: &str,
     tick_edge: bool,
     project: F,
-    ) -> Option<Vec<script::native::snapshot_source::NpcBoxInput>>
+) -> Option<Vec<script::native::snapshot_source::NpcBoxInput>>
 where
     F: FnOnce() -> Option<Vec<script::native::snapshot_source::NpcBoxInput>>,
 {

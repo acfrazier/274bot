@@ -3548,16 +3548,21 @@ fn withdraw_case(waiting: Waiting, withdraw: Withdraw) {
             assert_eq!(assignment(&d, &target), None, "{case}: nothing written")
         }
         Waiting::CompiledRestartAfterWrite => {
-            assert!(assignment(&d, &target).is_some(), "{case}: the write is kept")
+            assert!(
+                assignment(&d, &target).is_some(),
+                "{case}: the write is kept"
+            )
         }
         #[cfg(feature = "js")]
         Waiting::RestartAfterWrite => {
-            assert!(assignment(&d, &target).is_some(), "{case}: the write is kept")
+            assert!(
+                assignment(&d, &target).is_some(),
+                "{case}: the write is kept"
+            )
         }
         _ => {}
     }
 }
-
 
 // ---- F4: Switch world through the fleet plan ----
 
@@ -4262,8 +4267,7 @@ fn start_compiled_scripts(d: &mut HeadlessDriver, names: &[&str]) {
     set_card(
         d,
         crate::FleetCard::pinned(crate::scripts::ScriptChoice::compiled(
-            crate::scripts::CompiledCardId::lookup("Gatherer")
-                .expect("Gatherer is compiled"),
+            crate::scripts::CompiledCardId::lookup("Gatherer").expect("Gatherer is compiled"),
         )),
     );
     assert_eq!(plan(d, crate::FleetAction::Assign), Some(done()));

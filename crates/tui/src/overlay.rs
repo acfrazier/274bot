@@ -353,9 +353,7 @@ impl TuiApp {
             Modal::Manual => self.manual_key(key),
             #[cfg(feature = "js")]
             Modal::ProfileImport(mut view) => match view.on_key(key) {
-                Some(ImportAction::Close) => {
-                    (None, AppAction::ProfileImport(ImportAction::Close))
-                }
+                Some(ImportAction::Close) => (None, AppAction::ProfileImport(ImportAction::Close)),
                 Some(action) => (
                     Some(Modal::ProfileImport(view)),
                     AppAction::ProfileImport(action),

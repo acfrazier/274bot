@@ -739,9 +739,7 @@ mod tests {
         let choice = frontend_core::scripts::ScriptChoice::compiled(
             frontend_core::scripts::CompiledCardId::lookup("Gatherer").unwrap(),
         );
-        session
-            .fleet_model
-            .stage_card(FleetCard::pinned(choice));
+        session.fleet_model.stage_card(FleetCard::pinned(choice));
         session.submit(OperatorCommand::SetFleetCard, Targets::Application);
         session.plan_fleet_action(FleetAction::Assign);
         session.core.flush_writes();

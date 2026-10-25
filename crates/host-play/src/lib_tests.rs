@@ -9325,13 +9325,13 @@ fn bank_side_native_view_tracks_side_root_lifecycle() {
 
     let before = snapshot.bank_session_generation();
     dispatch_289(&mut client, ServerProt289::IF_CLOSE, Vec::new());
-    dispatch_289(
-        &mut client,
-        ServerProt289::IF_OPENMAIN,
-        vec![2, 88],
-    );
+    dispatch_289(&mut client, ServerProt289::IF_OPENMAIN, vec![2, 88]);
     snapshot.rebuild(&client);
-    assert_eq!(observe(&snapshot), None, "main-only reopen has no side root");
+    assert_eq!(
+        observe(&snapshot),
+        None,
+        "main-only reopen has no side root"
+    );
     assert!(snapshot.bank_session_generation() > before);
     assert!(snapshot.bank_component_id() >= 0);
     assert!(snapshot.bank_side().is_empty());

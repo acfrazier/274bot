@@ -19,7 +19,9 @@ use serde_json::{Map, Value};
 
 #[cfg(feature = "js")]
 use super::{CardSource, LiveSettings};
-use super::{CompiledCardId, LiveDeliveryKind, ScriptChoice, Scripts, SettingsWrite, SyncCommandInput};
+use super::{
+    CompiledCardId, LiveDeliveryKind, ScriptChoice, Scripts, SettingsWrite, SyncCommandInput,
+};
 use crate::command::CardKind;
 use crate::operations::{ActionKind, OperationId, Outcome};
 #[cfg(feature = "js")]
@@ -1529,10 +1531,10 @@ impl Scripts {
                 result
             }
             #[cfg(not(feature = "js"))]
-            script::ScriptSel::Loaded(..) => Err(
-                script::surface::SurfaceError::NoFactory(script::surface::SurfaceKind::Js)
-                    .to_string(),
-            ),
+            script::ScriptSel::Loaded(..) => Err(script::surface::SurfaceError::NoFactory(
+                script::surface::SurfaceKind::Js,
+            )
+            .to_string()),
         };
         match result {
             Ok(write) => {

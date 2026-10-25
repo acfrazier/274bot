@@ -75,11 +75,11 @@ use script_walk::{recovery_walk_idle, resumed_walk};
 #[path = "script_snapshot.rs"]
 mod script_snapshot;
 use script_snapshot::pack_cached_reach;
-#[cfg(all(test, feature = "js"))]
-pub(super) use script_snapshot::{script_snapshot_fb, with_script_snapshot_input};
 pub(super) use script_snapshot::slot_arrival_reach;
 #[cfg(feature = "js")]
 pub(super) use script_snapshot::with_script_snapshot_input_shorts;
+#[cfg(all(test, feature = "js"))]
+pub(super) use script_snapshot::{script_snapshot_fb, with_script_snapshot_input};
 #[path = "script_interact.rs"]
 mod script_interact;
 pub(super) use script_interact::{
@@ -109,20 +109,20 @@ pub(super) fn poll_inspection_for_test(navs: &Arc<Mutex<HashMap<String, NavBot>>
 
 #[path = "script_observe.rs"]
 mod script_observe;
+#[cfg(feature = "js")]
+pub(super) use script_observe::deliver_channel_events;
 #[cfg(test)]
 pub(super) use script_observe::{
     delay_ordered_drain_for_test, drain_observed_host_interacts, install_dispatch_barrier,
     install_ordered_dispatch_hook, post_script_snapshot, script_observe, script_observe_cached,
     script_observe_with_npc_boxes, take_script_interacts, DispatchBarrier,
 };
-#[cfg(feature = "js")]
-pub(super) use script_observe::deliver_channel_events;
-#[cfg(any(feature = "js", test))]
-pub(super) use script_observe::{project_npc_boxes_for_isolate_snapshot, projected_npc_boxes};
 pub(super) use script_observe::{
     nav_world_state_for_observe, observe_script_inv, script_observe_cached_with_channels,
     ScriptObservation,
 };
+#[cfg(any(feature = "js", test))]
+pub(super) use script_observe::{project_npc_boxes_for_isolate_snapshot, projected_npc_boxes};
 /// Per-uid script cell on the wall. Encode/post/drain take the slot lock
 /// only — the wall map lock is held briefly for lookup/insert.
 pub(super) type ScriptSlot = Arc<Mutex<SlotScript>>;

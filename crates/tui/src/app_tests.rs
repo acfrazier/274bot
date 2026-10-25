@@ -1839,7 +1839,10 @@ fn script_commands_are_reachable_at_80x24() {
         all.contains("[Params v] [Start fleet T] [Stop fleet E]"),
         "compiled settings and fleet controls paint: {all}"
     );
-    assert!(!all.contains("[Load f]"), "file loading is not exposed: {all}");
+    assert!(
+        !all.contains("[Load f]"),
+        "file loading is not exposed: {all}"
+    );
     assert!(!all.contains("[Reload R]"), "reload is not exposed: {all}");
 
     assert_eq!(

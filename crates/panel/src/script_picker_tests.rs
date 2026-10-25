@@ -1,13 +1,13 @@
-use super::{
-    card_columns, card_rect_activated, card_width, chip_frame_padding, chip_text_color,
-    display_category, move_category, resolve_category_order, CARD_GAP, CARD_MIN_W, CHIP_PAD_Y,
-    UNCATEGORIZED,
-};
 #[cfg(feature = "js")]
 use super::{
     apply_load_browse_select, breadcrumb_prefixes, dialog_date_color, dialog_rows, format_mtime,
     name_matches_search, needs_rs2b0t_catalog_prompt, rs2b0t_root_has_index, sidebar_places,
     sort_dialog_rows, DialogMode, DialogRow, DialogSort, LoadBrowseEntry,
+};
+use super::{
+    card_columns, card_rect_activated, card_width, chip_frame_padding, chip_text_color,
+    display_category, move_category, resolve_category_order, CARD_GAP, CARD_MIN_W, CHIP_PAD_Y,
+    UNCATEGORIZED,
 };
 #[cfg(feature = "js")]
 use crate::test_support::TestDir;

@@ -3483,7 +3483,7 @@ fn op_at_obj(ops: &[Option<String>; 5], option: i32) -> String {
 pub(super) fn terminal_to_input<'a>(
     term: &'a InspectTerminal,
     hops: &'a [script::native::snapshot_source::InspectHopInput<'a>],
-)-> script::native::snapshot_source::RouteInspectTerminalInput<'a> {
+) -> script::native::snapshot_source::RouteInspectTerminalInput<'a> {
     script::native::snapshot_source::RouteInspectTerminalInput {
         seq: term.seq,
         generation: term.generation,
