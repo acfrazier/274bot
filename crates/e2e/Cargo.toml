@@ -22,7 +22,7 @@ path = "src/bin/e2e-suite-fixture.rs"
 
 [dependencies]
 host = { path = "../host" }
-host-play = { path = "../host-play" }
+host-play = { path = "../host-play", default-features = false }
 vault = { path = "../vault" }
 api = { path = "../api" }
 nav-planner = { path = "../nav-planner" }
@@ -34,10 +34,14 @@ serde_json = "=1.0.140"
 sha2 = "=0.10.9"
 image = { version = "0.25", default-features = false, features = ["png"] }
 
+[features]
+default = ["js"]
+js = ["host-play/js"]
+
 [dev-dependencies]
-# e2e tests that drive Play inherit script's unprotected V8 test platform
+# JS-enabled e2e tests inherit script-js's unprotected V8 test platform
 # through host-play test-support. Production e2e-suite binaries do not.
-host-play = { path = "../host-play", features = ["test-support"] }
+host-play = { path = "../host-play", default-features = false, features = ["test-support"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

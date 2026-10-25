@@ -5,16 +5,14 @@
 //! below the operator seam. Everything here panics on failure: a fixture is
 //! a test's given, not its fallible production path.
 
-use std::path::Path;
-#[cfg(feature = "js")]
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde_json::{Map, Value};
 
 use super::VaultFixture;
-use crate::scripts::{CompiledCardId, SchemaRef, Scripts, StatusView};
+use crate::scripts::{CardSource, CompiledCardId, SchemaRef, Scripts, StatusView};
 #[cfg(feature = "js")]
-use crate::scripts::{CardSource, LoadShape, ScriptChoice};
+use crate::scripts::{LoadShape, ScriptChoice};
 use crate::session::OperatorSession;
 use crate::views::SlotDetail;
 
@@ -536,7 +534,6 @@ pub fn unavailable_quest(id: &str) -> Option<&'static str> {
     script::quester::card::unavailable_quest(id)
 }
 
-#[cfg(feature = "js")]
 /// A legacy per-card settings store: the schema defaults merged over the
 /// persisted overrides a params pane edits. Tests never name the script
 /// crate.
@@ -544,7 +541,6 @@ pub struct TestStore {
     store: script::ScriptSettingsStore,
 }
 
-#[cfg(feature = "js")]
 impl TestStore {
     /// The store at `path` (tests).
     pub fn at(path: PathBuf) -> Self {

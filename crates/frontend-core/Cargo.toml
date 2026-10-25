@@ -9,10 +9,10 @@ publish = false
 [dependencies]
 api = { path = "../api" }
 host = { path = "../host" }
-host-play = { path = "../host-play" }
+host-play = { path = "../host-play", default-features = false }
 nav-planner = { path = "../nav-planner" }
 script = { path = "../script" }
-script-js = { path = "../script-js" }
+script-js = { path = "../script-js", optional = true }
 # The live harness's scenario runner (ruling D2(a)); only with `live-harness`.
 scenario = { path = "../scenario", optional = true }
 parking_lot = "0.12"
@@ -28,16 +28,17 @@ libc = "0.2"
 [dev-dependencies]
 client = { workspace = true }
 # Integration tests use the fixture seams behind this crate's test-support.
-frontend-core = { path = ".", features = ["test-support"] }
+frontend-core = { path = ".", default-features = false, features = ["test-support"] }
 # The capacity smoke forces the macOS/Windows measure and reads receipts.
-host-play = { path = "../host-play", features = ["test-support"] }
+host-play = { path = "../host-play", default-features = false, features = ["test-support"] }
 nav-bake = { path = "../nav-bake" }
 png = "=0.18.1"
 scenario = { path = "../scenario" }
 
 [features]
 canvas-raster = ["script/canvas-raster"]
-default = ["canvas-raster"]
+default = ["js"]
+js = ["host-play/js", "dep:script-js", "canvas-raster"]
 # Test-only lifecycle and capacity fixture seams; enabled from dev-dependencies,
 # never production builds.
 test-support = ["host-play/test-support", "host/test-support"]

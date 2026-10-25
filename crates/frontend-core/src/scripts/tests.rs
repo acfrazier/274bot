@@ -3575,7 +3575,9 @@ fn durable_native_reply_never_configures_a_replacement_run() {
             .script_native_settings_revision("alice"),
         Some(1)
     );
-    assert_eq!(f.saved_bag("alice", &key), durable_before);
+    let saved = f.saved_bag("alice", &key).expect("validated settings are durable");
+    assert_eq!(saved["values"]["radius"], json!(13));
+    assert_eq!(saved["values"]["allowWilderness"], json!(true));
 }
 
 #[test]

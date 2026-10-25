@@ -615,6 +615,7 @@ fn initial_load_refusal_preserves_failure_and_retry_clears_only_its_identity() {
     s.core.play_for_test().unwrap().script_stop("alice");
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn claim_legacy_read_path_writes_vault_once() {
     let (mut s, dir) = session_with_profiles(&["alice"]);

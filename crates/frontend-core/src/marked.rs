@@ -5,7 +5,9 @@
 //! skipped with its reason.
 
 use std::fmt::Write as _;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(feature = "js")]
+use std::path::PathBuf;
 
 use crate::bulk::{BulkOutcome, BulkReport, BulkRow};
 use crate::command::OperatorCommand;
@@ -118,6 +120,7 @@ struct Resolved {
     gone: Vec<String>,
 }
 
+#[cfg(feature = "js")]
 /// A marked Assign/Restart command held until its catalog prerequisite settles.
 #[derive(Debug, Clone)]
 pub(crate) struct PendingCatalogAssignment {
@@ -262,6 +265,7 @@ pub fn assign_marked<Io>(
     let Resolved { names, gone } = resolve(selection, core);
     match scripts.assignment_for(card, catalog_root) {
         Ok(Some(assignment)) => assign_ready_names(&names, &gone, core, scripts, assignment),
+        #[cfg(feature = "js")]
         Ok(None) => {
             let mut rows = unavailable_rows(gone.clone());
             let action = PendingCatalogAssignment {
@@ -288,6 +292,19 @@ pub fn assign_marked<Io>(
                     BulkReport::new(LABEL, DONE, rows, Some(reason))
                 }
             }
+        }
+        #[cfg(not(feature = "js"))]
+        Ok(None) => {
+            let reason =
+                script::surface::SurfaceError::NoFactory(script::surface::SurfaceKind::Js)
+                    .to_string();
+            let mut rows = unavailable_rows(gone);
+            rows.extend(
+                names
+                    .iter()
+                    .map(|name| BulkRow::new(name, BulkOutcome::failed(&reason))),
+            );
+            BulkReport::new(LABEL, DONE, rows, Some(reason))
         }
         Err(reason) => {
             let mut rows = unavailable_rows(gone);
@@ -477,6 +494,7 @@ fn assign_and_restart_names<Io>(
         Ok(Some(assignment)) => {
             enqueue_assigned_restarts(names, core, scripts, card, catalog_root, assignment);
         }
+        #[cfg(feature = "js")]
         Ok(None) => {
             let action = PendingCatalogAssignment {
                 profiles: names.to_vec(),
@@ -494,6 +512,16 @@ fn assign_and_restart_names<Io>(
                 for name in names {
                     scripts.tally_queued_pending(name);
                 }
+            }
+            scripts.publish_bulk();
+        }
+        #[cfg(not(feature = "js"))]
+        Ok(None) => {
+            let reason =
+                script::surface::SurfaceError::NoFactory(script::surface::SurfaceKind::Js)
+                    .to_string();
+            for name in names {
+                scripts.tally_fail(name, &reason);
             }
             scripts.publish_bulk();
         }
@@ -548,6 +576,7 @@ fn enqueue_assigned_restarts<Io>(
     scripts.publish_bulk();
 }
 
+#[cfg(feature = "js")]
 /// Complete a marked Assign/Restart receipt once the catalog worker settles.
 pub(crate) fn poll_pending_catalog_assignment<Io>(
     core: &mut OperatorSession<Io>,
@@ -609,6 +638,7 @@ pub(crate) fn poll_pending_catalog_assignment<Io>(
     }
 }
 
+#[cfg(feature = "js")]
 fn fail_pending_catalog_assignment<Io>(
     action: &PendingCatalogAssignment,
     core: &mut OperatorSession<Io>,
@@ -668,6 +698,7 @@ pub fn prepare_apply_settings_marked<'a, Io>(
                 None,
             )?;
         }
+        #[cfg(feature = "js")]
         script::ScriptSel::Loaded(card_source, lookup) => {
             let (name, path) = scripts
                 .library()
@@ -680,6 +711,13 @@ pub fn prepare_apply_settings_marked<'a, Io>(
                 crate::scripts::CardSource::from_script(*card_source),
                 &name,
                 &path,
+            );
+        }
+        #[cfg(not(feature = "js"))]
+        script::ScriptSel::Loaded(..) => {
+            return Err(
+                script::surface::SurfaceError::NoFactory(script::surface::SurfaceKind::Js)
+                    .to_string(),
             );
         }
     }
@@ -738,6 +776,7 @@ pub fn prepare_apply_settings_shown<'a, Io>(
                 None,
             )?;
         }
+        #[cfg(feature = "js")]
         script::ScriptSel::Loaded(card_source, lookup) => {
             let (name, path) = scripts
                 .library()
@@ -750,6 +789,13 @@ pub fn prepare_apply_settings_shown<'a, Io>(
                 crate::scripts::CardSource::from_script(*card_source),
                 &name,
                 &path,
+            );
+        }
+        #[cfg(not(feature = "js"))]
+        script::ScriptSel::Loaded(..) => {
+            return Err(
+                script::surface::SurfaceError::NoFactory(script::surface::SurfaceKind::Js)
+                    .to_string(),
             );
         }
     }
