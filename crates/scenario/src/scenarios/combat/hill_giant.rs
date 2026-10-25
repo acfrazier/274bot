@@ -50,6 +50,35 @@ const HILL_GIANT_BANK_INJECT: &[ScriptSettingInject] = &[
         value: ScriptInjectValue::Num(1.0),
     },
 ];
+/// Deposit-only trip end with the one loot slot already narrowed: only Big
+/// bones may fill it and shared junk is off, so the deposit watch cannot land
+/// on a chance Limpwurt root (`HillGiant.ts:35,43-44,85`) or gem (`giant.rs2:51-52`).
+const HILL_GIANT_LOOT_DEPOSIT_INJECT: &[ScriptSettingInject] = &[
+    ScriptSettingInject {
+        id: "loadout",
+        value: ScriptInjectValue::Str("Scenario Hill Giant food"),
+    },
+    ScriptSettingInject {
+        id: "meleeStyle",
+        value: ScriptInjectValue::Str("strength"),
+    },
+    ScriptSettingInject {
+        id: "buryBones",
+        value: ScriptInjectValue::Bool(false),
+    },
+    ScriptSettingInject {
+        id: "lootSlots",
+        value: ScriptInjectValue::Num(1.0),
+    },
+    ScriptSettingInject {
+        id: "loot",
+        value: ScriptInjectValue::StrList(&["Big bones"]),
+    },
+    ScriptSettingInject {
+        id: "bankCommonJunk",
+        value: ScriptInjectValue::Bool(false),
+    },
+];
 /// HillGiant default melee in the pit. Target display is Giant. The Brass key
 /// is prepared because this inside-pit cell does not qualify the key-fetch or
 /// entrance branch. Blank weapon. DeathRecovery and banking stay idle.
@@ -213,9 +242,10 @@ pub(crate) fn hill_giant_bank_prepared_scenario() -> Scenario {
     scenario
 }
 
-/// Deposit-only HillGiant qualification: same pit prep, inject and combat-first
-/// Strength XP as `hill_giant_bank`, then a script-looted Big bones in pack,
-/// then a fresh Varrock West deposit under the ordinary 150-dirty bank watch.
+/// Deposit-only HillGiant qualification: same pit prep, food/melee/burial rows
+/// and combat-first Strength XP as `hill_giant_bank`, with the loot list cut to
+/// Big bones, then a script-looted Big bones in pack, then a fresh Varrock West
+/// deposit under the ordinary 150-dirty bank watch.
 /// Restock, close, return and second-fight watches remain on the frozen full-cycle cell.
 pub(crate) fn hill_giant_loot_deposit_scenario() -> Scenario {
     let mut scenario = combat_bank_scenario(
@@ -230,7 +260,7 @@ pub(crate) fn hill_giant_loot_deposit_scenario() -> Scenario {
         COMBAT_SCIMITAR_ID,
         &[("edgevilledungeonkey", BRASS_KEY_ID, 1)],
         HILL_GIANT_LOOT_EMPTY,
-        HILL_GIANT_BANK_INJECT,
+        HILL_GIANT_LOOT_DEPOSIT_INJECT,
         0,
         "trout",
         12,
