@@ -537,6 +537,7 @@ fn qualify_gatherer_fleet(scenario: &mut scenario::Scenario, n: usize) -> Result
             let start = *first.get_or_insert(tick);
             tick >= start && tick - start >= GATHERER_FLEET_BUDGET_TICKS.saturating_sub(1)
         }),
+        summary: None,
     };
     step.wait = scenario::Wait {
         arm: scenario::Proof::ScriptRunning,
@@ -1104,6 +1105,7 @@ fn qualify_duel_arena_fleet(
                     hold_gate.mark_holding(slot);
                     hold_gate.admitted(slot)
                 }),
+                summary: None,
             },
             wait: scenario::Wait {
                 arm: scenario::Proof::Stat { id: 16, min: 0 },
