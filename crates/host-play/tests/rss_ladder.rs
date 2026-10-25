@@ -210,6 +210,7 @@ fn live_rss_ladder_headless() {
     .expect("start checked Play");
     wait_all_scene2(&play, n);
     let load = std::env::var("RSS_LOAD").as_deref() == Ok("1");
+    #[cfg(feature = "js")]
     if load {
         let names = play
             .statuses()
@@ -238,6 +239,10 @@ fn live_rss_ladder_headless() {
             }
             thread::sleep(Duration::from_millis(50));
         }
+    }
+    #[cfg(not(feature = "js"))]
+    if load {
+        fail("RSS_LOAD requires host-play's `js` feature");
     }
     // Give the wall a beat to settle before sampling peak RSS.
     thread::sleep(Duration::from_secs(10));
