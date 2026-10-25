@@ -511,6 +511,18 @@ impl Guardian {
                 }
                 self.acting = false;
             }
+            // The content adds one box and sends this line every 150 ticks,
+            // but stops at 28 boxes (macro_event_strange_box.rs2:25-36,319).
+            // Only that fresh server signal re-arms an exhausted budget.
+            // Keep the last failure until an answer succeeds or the event ends.
+            if self.box_solve.phase == BoxPhase::Stalled
+                && Self::server_chat_has_after(snap, self.chat_seen, |text| {
+                    text == "Oh dear, you have taken so long that the cube has replicated."
+                })
+            {
+                self.box_solve.failures = 0;
+                self.box_solve.phase = BoxPhase::Retry;
+            }
             self.chat_seen = head;
             // The dialog ended: the chat is closed and the NPC is gone.
             if self.in_flight && self.dialog_done(snap) {

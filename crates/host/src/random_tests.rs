@@ -4861,6 +4861,65 @@ fn strange_box_lost_open_retries_then_releases_within_twelve_ticks() {
 }
 
 #[test]
+fn strange_box_replication_rearms_only_one_new_bounded_budget() {
+    let mut c = new_client();
+    ingame_scene(&mut c);
+    plant_player(&mut c, "Test", 3314, 3234);
+    plant_inv_box(&mut c, 1);
+    let mut g = Guardian::new();
+    let mut drv = FakeDriver::default();
+    let settings = ProfileSettings::default();
+    let mut snap = GameSnapshot::new();
+    for _ in 0..12 {
+        tick_at(&mut c, &mut snap);
+        g.tick(&mut drv, &snap, &settings, 0, None);
+    }
+    assert_eq!(drv.menus.len(), 3);
+
+    // Time alone, unrelated server chat and copied player text are not
+    // content's timer signal (macro_event_strange_box.rs2:25-36,319).
+    for (type_, text, sender) in [
+        (0, "Unrelated server message", ""),
+        (
+            2,
+            "Oh dear, you have taken so long that the cube has replicated.",
+            "Other",
+        ),
+    ] {
+        c.add_chat(type_, text, sender);
+        for _ in 0..151 {
+            tick_at(&mut c, &mut snap);
+            let status = g.tick(&mut drv, &snap, &settings, 0, None);
+            assert!(!status.hold && !status.ours);
+        }
+        assert_eq!(drv.menus.len(), 3);
+    }
+
+    c.add_chat(
+        0,
+        "Oh dear, you have taken so long that the cube has replicated.",
+        "",
+    );
+    tick_at(&mut c, &mut snap);
+    let status = g.tick(&mut drv, &snap, &settings, 0, None);
+    assert!(status.hold && status.ours);
+    assert_eq!(drv.menus.len(), 4, "fresh replication starts another Open");
+    for _ in 0..11 {
+        tick_at(&mut c, &mut snap);
+        g.tick(&mut drv, &snap, &settings, 0, None);
+    }
+    let status = g.tick(&mut drv, &snap, &settings, 0, None);
+    assert!(!status.hold && !status.ours);
+    assert_eq!(drv.menus.len(), 6, "the new budget has only three attempts");
+    for _ in 0..151 {
+        tick_at(&mut c, &mut snap);
+        let status = g.tick(&mut drv, &snap, &settings, 0, None);
+        assert!(!status.hold && !status.ours, "the old signal cannot re-arm");
+    }
+    assert_eq!(drv.menus.len(), 6);
+}
+
+#[test]
 fn strange_box_dismissed_answers_retry_then_release_within_sixteen_ticks() {
     let mut c = new_client();
     ingame_scene(&mut c);
