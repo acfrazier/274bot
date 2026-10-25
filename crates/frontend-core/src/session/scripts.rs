@@ -591,20 +591,26 @@ fn start_profile<Io>(
     profile: &str,
     catalog_root: Option<&std::path::Path>,
 ) -> Applied {
-    if scripts.start_queue_place(profile).is_some() || scripts.has_start_preparation(profile) {
+    let waiting = scripts.start_queue_place(profile).is_some();
+    #[cfg(feature = "js")]
+    let waiting = waiting || scripts.has_start_preparation(profile);
+    if waiting {
         register_start_command(core, scripts, request, profile);
         return Applied::Later;
     }
     match scripts.start_selected(core, profile, None, catalog_root) {
         Ok(Some(operation)) => Applied::Operation(operation),
-        Ok(None)
-            if scripts.start_queue_place(profile).is_some()
-                || scripts.has_start_preparation(profile) =>
-        {
-            register_start_command(core, scripts, request, profile);
-            Applied::Later
+        Ok(None) => {
+            let waiting = scripts.start_queue_place(profile).is_some();
+            #[cfg(feature = "js")]
+            let waiting = waiting || scripts.has_start_preparation(profile);
+            if waiting {
+                register_start_command(core, scripts, request, profile);
+                Applied::Later
+            } else {
+                Applied::Done
+            }
         }
-        Ok(None) => Applied::Done,
         Err(error) => Applied::Rejected(Rejection::StartRefused, Some(error.to_string())),
     }
 }

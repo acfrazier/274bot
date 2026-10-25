@@ -2197,6 +2197,7 @@ impl InspectNav {
         Some(revision)
     }
 }
+#[cfg(feature = "js")]
 #[derive(Clone, Default)]
 pub(crate) struct PostedInspect {
     pub(super) latest: Option<InspectTerminal>,
@@ -2364,6 +2365,7 @@ impl InspectNav {
         }
     }
 
+    #[cfg(feature = "js")]
     pub(super) fn posted(&self) -> PostedInspect {
         PostedInspect {
             latest: self.latest.clone(),
