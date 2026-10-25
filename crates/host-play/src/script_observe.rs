@@ -18,12 +18,12 @@ use script::slot::SeatWalkTerminal;
 use script::{ScriptCtx, SlotScript};
 
 #[cfg(feature = "js")]
-use super::with_script_snapshot_input_shorts;
+use super::{with_script_snapshot_input_shorts, PostedWalkOutcome};
 use super::{
     abort_script_walk, apply_watchdog_nav_action, dispatch_native_bank_deposit,
     dispatch_observed_bank_op, dispatch_script_interact_cached_scoped, pack_cached_reach,
     recovery_walk_idle, reset_script_nav, resumed_walk, route_inspect, script_slot,
-    take_carried_walk, BankDepositDispatch, InteractContext, NavBot, PostedWalkOutcome, ScriptWall,
+    take_carried_walk, BankDepositDispatch, InteractContext, NavBot, ScriptWall,
 };
 use crate::debug_enabled;
 #[cfg(feature = "memory-profile")]
@@ -626,16 +626,17 @@ pub(crate) fn script_observe_cached_with_channels(
         }
         slot_work_epoch = Some(slot.work_epoch());
         #[cfg(feature = "js")]
-        channel_generation = slot.runtime_generation();
-        // Region loads briefly clear `up`; the isolate and its browser-style
-        // channel survive them. Session boundaries suspend the broker in the
-        // slot loop before this observation runs.
-        #[cfg(feature = "js")]
-        channel_active = slot.surface_active()
-            && matches!(
-                slot.state(),
-                script::RunState::Running | script::RunState::Paused
-            );
+        {
+            channel_generation = slot.runtime_generation();
+            // Region loads briefly clear `up`; the isolate and its browser-style
+            // channel survive them. Session boundaries suspend the broker in the
+            // slot loop before this observation runs.
+            channel_active = slot.surface_active()
+                && matches!(
+                    slot.state(),
+                    script::RunState::Running | script::RunState::Paused
+                );
+        }
         if let Some(pending) = slot.pending_bank_op() {
             if hold || slot.state() == script::RunState::Paused {
                 slot.freeze_pending_bank_op();
