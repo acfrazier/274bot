@@ -1854,6 +1854,7 @@ fn spawn_slot_thread(
                                 state,
                                 Some(&nav_snapshot),
                                 Some(slot_bank.memory()),
+                                #[cfg(feature = "js")]
                                 npc_boxes.as_deref(),
                                 Some(slot_obj_names.as_ref()),
                                 &slot_scripts,
