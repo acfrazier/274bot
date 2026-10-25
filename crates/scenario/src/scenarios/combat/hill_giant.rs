@@ -122,8 +122,14 @@ const HILL_GIANT_TRIP_LOOT: [i32; 2] = [BIG_BONES_ID, LIMPWURT_ROOT_ID];
 /// deposit, 231 in total. Both watches accept the card's whole loot class:
 /// `r3a-hill_giant_bank` took the Limpwurt root first and carried it to the
 /// Varrock West booth, which a Big-bones-only watch failed.
+/// Whole-cell cap for this cell only; other cells keep the shared 180 s cap.
+/// Completed passes 147.9, 160.3 and 177.3 s (`NIGHTLY-QUAL-1025/report.md`,
+/// cell 3): slowest completed pass plus 20 %, rounded up (212.76 -> 213 s).
+/// A failed run is censored and does not size it; the watches are unchanged.
+const HILL_GIANT_BANK_DEADLINE: Duration = Duration::from_secs(213);
+
 pub(crate) fn hill_giant_bank_scenario() -> Scenario {
-    combat_bank_scenario(
+    let mut scenario = combat_bank_scenario(
         "hill_giant_bank",
         "HillGiant",
         HILL_GIANT_PIT,
@@ -179,7 +185,9 @@ pub(crate) fn hill_giant_bank_scenario() -> Scenario {
                 },
             ),
         ],
-    )
+    );
+    scenario.settings.deadline = HILL_GIANT_BANK_DEADLINE;
+    scenario
 }
 
 /// Prepared HillGiant earned-kill full bank. Same source strength/`lootSlots=1`
