@@ -49,7 +49,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 #[cfg(all(test, feature = "js"))]
 use std::time::Duration;
-#[cfg(test)]
+#[cfg(all(test, feature = "js"))]
 use std::time::Instant;
 
 #[cfg(test)]

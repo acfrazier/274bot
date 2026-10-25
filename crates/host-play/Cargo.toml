@@ -79,6 +79,10 @@ name = "loadout_provision_live"
 required-features = ["js"]
 
 [[test]]
+name = "paired_catalog_live"
+required-features = ["js"]
+
+[[test]]
 name = "nav_gated_entrances_live"
 required-features = ["test-support"]
 
