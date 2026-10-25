@@ -1328,8 +1328,10 @@ fn login_notice_clears_on_a_successful_login() {
 }
 
 /// Size tripwire: a bot with no login notice pays one pointer on its row and
-/// one in its derivation state (168 + 16 bytes before the notice; an inline
+/// one in its derivation state (176 + 16 bytes before the notice; an inline
 /// `Option<String>` and clock made it 192 + 120), so keep the notice boxed.
+/// The row is 176 because `retrying` and `guard_parked` (two bools) joined
+/// the 168-byte row and its alignment padding grew by one word.
 #[cfg(target_pointer_width = "64")]
 #[test]
 fn a_bot_without_a_login_notice_costs_two_pointers() {
@@ -1415,4 +1417,126 @@ fn logout_retry_poll_projects_a_retrying_login_as_eligible_until_log_out_parks_i
     let parked = row(&s, "lr-bob");
     assert_eq!(parked.phase, Phase::LoggedOut);
     assert!(!parked.logout_eligibility().eligible());
+}
+
+/// Put `name`'s row as the worker publishes it after the repeat guard trips:
+/// disconnected, the latch and its reason on the row.
+fn publish_guard_park(s: &OperatorSession<()>, name: &str, reason: host_play::LoginLatchReason) {
+    publish(s, name, |r| {
+        r.connected = false;
+        r.ingame = false;
+        r.login_latched = true;
+        r.login_latch_reason = Some(reason);
+        phase_to(r, StartupPhase::Queueing);
+    });
+}
+
+/// A bot with a live session whose repeat guard then trips on the arm.
+fn guard_tripped(test: &str, name: &str) -> (OperatorSession<()>, std::sync::Arc<SlotArm>) {
+    let s = fleet(test, &[name], false);
+    let arm = s.play().unwrap().arm(name).expect("arm");
+    arm.arm_explicit_login();
+    arm.complete_login_for_test();
+    arm.exit_and_trip_repeat_guard_for_test();
+    assert!(matches!(
+        arm.login_latch_reason(),
+        Some(host_play::LoginLatchReason::RepeatedUnexpectedLogouts { .. })
+    ));
+    (s, arm)
+}
+
+/// LOGOUT-RETRY-1025 r2 (Sol F2): the repeat guard's park makes Log out
+/// eligible while the arm holds that latch, and the fact comes from the arm,
+/// not from a reason the worker published: the row below is the disconnected
+/// row the worker published before it republished the latch.
+#[test]
+fn logout_retry_guard_trip_is_eligible_while_the_arm_holds_the_latch() {
+    use crate::LogoutEligibility::GuardParked;
+    let (mut s, _arm) = guard_tripped("lr-guard-trip", "lr-gus");
+    publish(&s, "lr-gus", |r| phase_to(r, StartupPhase::Queueing));
+    s.poll();
+    let gus = row(&s, "lr-gus");
+    assert_eq!(gus.phase, Phase::LoggedOut);
+    assert!(gus.guard_parked(), "the arm holds the repeat guard's latch");
+    assert_eq!(gus.logout_eligibility(), GuardParked);
+}
+
+/// An operator Log out replaces the guard's latch, and a later Log in lifts
+/// it: a reason the status published before either must not keep the bot
+/// eligible as guard-parked.
+#[test]
+fn logout_retry_operator_logout_then_login_ends_the_guard_fact() {
+    use crate::LogoutEligibility::{LoggingIn, NotLoggedIn};
+    let (mut s, arm) = guard_tripped("lr-guard-logout", "lr-hal");
+    publish_guard_park(&s, "lr-hal", arm.login_latch_reason().unwrap());
+    s.poll();
+    assert!(row(&s, "lr-hal").guard_parked());
+
+    arm.request_logout();
+    s.poll();
+    let logged_out = row(&s, "lr-hal");
+    assert_eq!(logged_out.phase, Phase::LoggedOut);
+    assert!(
+        !logged_out.guard_parked(),
+        "the status still names the guard, the arm no longer does"
+    );
+    assert_eq!(logged_out.logout_eligibility(), NotLoggedIn);
+
+    arm.arm_explicit_login();
+    s.poll();
+    let login = row(&s, "lr-hal");
+    assert!(!login.guard_parked());
+    assert_eq!(
+        login.logout_eligibility(),
+        LoggingIn,
+        "eligible because a login is pending, not because of the old park"
+    );
+}
+
+/// A worker that ends while the guard holds the bot leaves a terminal row
+/// that still carries the reason; the row is Failed and not eligible.
+#[test]
+fn logout_retry_a_worker_that_terminates_while_guard_parked_is_not_eligible() {
+    let (mut s, arm) = guard_tripped("lr-guard-terminal", "lr-ivy");
+    publish_guard_park(&s, "lr-ivy", arm.login_latch_reason().unwrap());
+    s.poll();
+    assert!(row(&s, "lr-ivy").guard_parked());
+    publish(&s, "lr-ivy", |r| {
+        phase_to(r, StartupPhase::Error);
+        r.worker_terminal = Some(host_play::WorkerTerminal::Panicked);
+        r.error = Some("slot worker panicked: synthetic".into());
+    });
+    s.poll();
+    let ivy = row(&s, "lr-ivy");
+    assert_eq!(ivy.phase, Phase::Failed);
+    assert!(!ivy.guard_parked());
+    assert!(!ivy.logout_eligibility().eligible());
+}
+
+/// Once the finished worker is reaped its arm is gone, and the terminal row
+/// that is left (with the guard's reason on it) is not eligible either.
+#[test]
+fn logout_retry_a_reaped_guard_parked_worker_is_not_eligible() {
+    let (mut s, arm) = guard_tripped("lr-guard-reaped", "lr-jon");
+    publish_guard_park(&s, "lr-jon", arm.login_latch_reason().unwrap());
+    publish(&s, "lr-jon", |r| {
+        phase_to(r, StartupPhase::Error);
+        r.worker_terminal = Some(host_play::WorkerTerminal::Failed);
+        r.error = Some("slot worker exited unexpectedly".into());
+    });
+    s.play_mut()
+        .unwrap()
+        .attach_finished_worker_for_test("lr-jon", arm);
+    s.poll();
+    assert!(s.play().unwrap().arm("lr-jon").is_none(), "poll reaps it");
+    let jon = row(&s, "lr-jon");
+    assert!(!jon.guard_parked());
+    assert!(!jon.logout_eligibility().eligible());
+    // The same row without the terminal marker: no worker arm, no ownership.
+    publish(&s, "lr-jon", |r| r.worker_terminal = None);
+    s.poll();
+    let jon = row(&s, "lr-jon");
+    assert_eq!(jon.phase, Phase::Offline);
+    assert!(!jon.guard_parked());
+    assert!(!jon.logout_eligibility().eligible());
 }
