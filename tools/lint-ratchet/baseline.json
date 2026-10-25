@@ -34,6 +34,10 @@
       }
     },
     "frontend-core": {
+      "clippy::box_collection": {
+        "non_test": 2,
+        "test": 0
+      },
       "clippy::too_many_arguments": {
         "non_test": 3,
         "test": 0
@@ -141,7 +145,7 @@
         "test": 1
       },
       "clippy::too_many_arguments": {
-        "non_test": 10,
+        "non_test": 9,
         "test": 0
       },
       "dead_code": {
