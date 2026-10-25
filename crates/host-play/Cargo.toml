@@ -13,7 +13,8 @@ nav-executor = { path = "../nav-executor" }
 scenario = { path = "../scenario", optional = true }
 script = { path = "../script" }
 script-js = { path = "../script-js", optional = true }
-serde_json = "=1.0.140"
+# Local-state preference edits preserve member order without the JS runtime too.
+serde_json = { version = "=1.0.140", features = ["preserve_order"] }
 serde = { version = "=1.0.219", features = ["derive"] }
 sha2 = "=0.10.9"
 thiserror = "=2.0.20"
