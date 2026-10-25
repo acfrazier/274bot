@@ -3,7 +3,9 @@ use crate::play_login::observe_client_session_exit;
 use api::bank_memory::Origin;
 use client::config::if_type::ComponentType;
 use client::{ClientSessionConfig, ClientSessionProfile};
-use host::{Guardian, GuardianLiveContext, InputEv};
+#[cfg(feature = "js")]
+use host::GuardianLiveContext;
+use host::{Guardian, InputEv};
 use nav_planner::bank_fetch::BankRows;
 use std::io::{Read, Write};
 use std::net::TcpListener;
@@ -10878,6 +10880,7 @@ fn withdraw_load_selects_exact_then_all_then_x() {
     assert_eq!(script::bank::ops::fill_click_in(&[None], 7, 20), None);
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn deposit_snapshot_wait_and_ordinary_withdraw_complete_in_the_same_bank_session() {
     let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
@@ -22436,6 +22439,8 @@ fn dirty_snapshot_pumps_compiled_without_replenishing_events() {
             None,
             Some(snapshot),
             None,
+            #[cfg(feature = "js")]
+            None,
             None,
             &scripts,
             &cheats,
@@ -22448,7 +22453,10 @@ fn dirty_snapshot_pumps_compiled_without_replenishing_events() {
             None,
             None,
             None,
+            #[cfg(feature = "js")]
             None,
+            #[cfg(feature = "js")]
+            crate::script_channels::BrokerWorld::Unavailable,
             None,
             None,
             None,
@@ -22873,7 +22881,6 @@ impl ReconnectRig {
     }
 }
 
-#[cfg(feature = "js")]
 /// An open `w`×`h` world whose south-west tile is `(x, z, 0)`.
 fn open_world_at(x: i32, z: i32, w: usize, h: usize) -> NavWorld {
     let mut world = open_world(w, h);
@@ -31271,9 +31278,12 @@ mod quest_route_evidence_tests {
     use super::*;
     use api::identity::Scope;
     use api::quest_progress::EvidenceStamp;
-    use api::selected::{QuestGate, RunKey, Truth};
+    #[cfg(feature = "js")]
+    use api::selected::RunKey;
+    use api::selected::{QuestGate, Truth};
     use api::snapshot::{ItemActionFamily, ItemContainer, ItemView, QuestStatusView, StatView};
     use script::native::{NativeTick, Script, ScriptFailure, ScriptFlow};
+    #[cfg(feature = "js")]
     use std::num::NonZeroU16;
     use std::sync::LazyLock;
 

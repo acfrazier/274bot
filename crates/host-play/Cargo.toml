@@ -67,6 +67,14 @@ name = "script_api_live"
 required-features = ["test-support", "js"]
 
 [[test]]
+name = "t2_family_live"
+required-features = ["js"]
+
+[[test]]
+name = "two_slot_isolation_live"
+required-features = ["js"]
+
+[[test]]
 name = "nav_gated_entrances_live"
 required-features = ["test-support"]
 

@@ -6024,6 +6024,7 @@ mod s2b_admission_contract {
         );
     }
 
+    #[cfg(feature = "js")]
     #[test]
     fn real_v1_metadata_routes_across_derived_zones_with_boolean_only_and_no_host_guard() {
         for hp in [14, 45] {
@@ -6092,6 +6093,7 @@ mod s2b_admission_contract {
         }
     }
 
+    #[cfg(feature = "js")]
     /// FlourCollector (v1) walked out of Sinclair Mansion past the
     /// Highwayman and Wolf zones on its compiled Reach.locOp walk, then its
     /// Banking.open stand walk, a machine-owned native walk, was refused by

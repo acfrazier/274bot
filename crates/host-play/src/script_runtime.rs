@@ -25,12 +25,14 @@ pub(super) fn dispatch_observed_bank_op_for_test(
 #[path = "script_nav.rs"]
 mod script_nav;
 pub(crate) use script_nav::pump_route_work;
+#[cfg(all(test, feature = "js"))]
+pub(super) use script_nav::CarriedWalk;
 #[cfg(feature = "js")]
 pub(super) use script_nav::PostedWalkOutcome;
 #[cfg(test)]
 pub(super) use script_nav::{
     approach_tiles, publish_route_owner_refusal, resolve_route_exclusions, route_world_state,
-    CarriedWalk, RouteDemandKind, ScriptRouteRequest,
+    RouteDemandKind, ScriptRouteRequest,
 };
 pub(super) use script_nav::{
     blocked_zone_detail, hold_script_nav, reset_script_nav, NavBot, ScriptRouteExclusions,
@@ -117,9 +119,13 @@ pub(super) use script_observe::deliver_channel_events;
 pub(super) use script_observe::post_script_snapshot;
 #[cfg(test)]
 pub(super) use script_observe::{
-    delay_ordered_drain_for_test, drain_observed_host_interacts, install_dispatch_barrier,
-    install_ordered_dispatch_hook, script_observe, script_observe_cached,
-    script_observe_with_npc_boxes, take_script_interacts, DispatchBarrier,
+    delay_ordered_drain_for_test, install_dispatch_barrier, install_ordered_dispatch_hook,
+    script_observe, DispatchBarrier,
+};
+#[cfg(all(test, feature = "js"))]
+pub(super) use script_observe::{
+    drain_observed_host_interacts, script_observe_cached, script_observe_with_npc_boxes,
+    take_script_interacts,
 };
 pub(super) use script_observe::{
     nav_world_state_for_observe, observe_script_inv, script_observe_cached_with_channels,
