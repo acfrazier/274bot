@@ -171,11 +171,13 @@ fn session(vault: Vault) -> OperatorSession<u32> {
     session.start(vault, empty_play());
     session
 }
+#[cfg(feature = "js")]
 struct ImportSurface<'a> {
     scripts: &'a mut crate::scripts::Scripts,
     import: &'a mut ProfileImport,
 }
 
+#[cfg(feature = "js")]
 impl crate::SlotSurface for ImportSurface<'_> {
     type Io = u32;
 
@@ -202,6 +204,7 @@ impl crate::SlotSurface for ImportSurface<'_> {
     fn draw_changed(&mut self, _switch: crate::command::DrawSwitch, _on: bool) {}
 }
 
+#[cfg(feature = "js")]
 fn submit_import_row(
     core: &mut OperatorSession<u32>,
     scripts: &mut crate::scripts::Scripts,
@@ -213,6 +216,7 @@ fn submit_import_row(
     core.submit(command, targets, &mut surface).unwrap();
 }
 
+#[cfg(feature = "js")]
 fn submit_planned_import_rows(
     core: &mut OperatorSession<u32>,
     scripts: &mut crate::scripts::Scripts,
@@ -245,6 +249,7 @@ fn submit_planned_import_rows(
     Ok(())
 }
 
+#[cfg(feature = "js")]
 fn confirm_import(
     core: &mut OperatorSession<u32>,
     scripts: &mut crate::scripts::Scripts,
@@ -254,25 +259,54 @@ fn confirm_import(
     submit_planned_import_rows(core, scripts, import).unwrap();
 }
 
-fn apply_import(
-    core: &mut OperatorSession<u32>,
-    plan: ImportPlan,
-) -> Result<ImportRun, ImportError> {
-    static NEXT_SCRIPTS_DIR: std::sync::atomic::AtomicUsize =
-        std::sync::atomic::AtomicUsize::new(0);
-    let id = NEXT_SCRIPTS_DIR.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let dir = temp_dir(&format!("apply-import-{id}"));
-    let mut scripts = crate::scripts::Scripts::new(
-        script_js::JsLibrary::with_cache(dir.join("js-scripts.json"), dir.join("js-cache")),
-        script::ScriptSettingsStore::at(dir.join("script-settings.json")),
-    );
-    let mut import = ProfileImport::new();
-    import.start_run(PathBuf::new(), plan);
-    submit_planned_import_rows(core, &mut scripts, &mut import)?;
-    let Some((_, run)) = import.run.take() else {
-        return Err(ImportFailure::NoPreview.into());
-    };
-    Ok(run)
+fn apply_import(core: &mut OperatorSession<u32>, plan: ImportPlan) -> ImportRun {
+    let ImportPlan {
+        accounts,
+        file_skipped,
+        ..
+    } = plan;
+    let mut entries = Vec::with_capacity(accounts.len());
+    let mut skipped = Vec::new();
+    for account in accounts {
+        let details = account.detail_lines();
+        let username = account.username.clone();
+        let status = account.status;
+        let mut entry = RunEntry {
+            username: username.clone(),
+            status,
+            op: None,
+            refused: None,
+            details,
+        };
+        for item in account.skipped {
+            skipped.push((username.clone(), item));
+        }
+        if let Some(profile) = account.row {
+            let result = match status {
+                AccountStatus::New => {
+                    core.create_profile(profile, crate::ArmMirror::remember(None), LABEL)
+                }
+                AccountStatus::Overwrite => {
+                    core.save_profile(profile, crate::ArmMirror::remember(None), LABEL)
+                }
+                _ => unreachable!("only new and overwritten accounts have writer rows"),
+            };
+            match result {
+                Ok(operation) => entry.op = Some(operation),
+                Err(reason) => entry.refused = Some(shown(reason)),
+            }
+        }
+        entries.push(entry);
+    }
+    skipped.extend(file_skipped.into_iter().map(|item| ("file".to_owned(), item)));
+    let seen = (0..entries.len())
+        .map(|_| std::cell::OnceCell::new())
+        .collect();
+    ImportRun {
+        entries,
+        skipped,
+        seen,
+    }
 }
 
 fn account<'a>(plan: &'a ImportPlan, name: &str) -> &'a AccountPlan {
@@ -587,7 +621,7 @@ fn review_h1_an_evicted_failure_is_never_reported_saved() {
         &catalog,
         ConflictPolicy::Skip,
     );
-    let run = apply_import(&mut core, plan).unwrap();
+    let run = apply_import(&mut core, plan);
     let file = probe_file_for("rvimunseen", json!({}));
     let plan = plan_import(
         &file,
@@ -596,7 +630,7 @@ fn review_h1_an_evicted_failure_is_never_reported_saved() {
         &catalog,
         ConflictPolicy::Skip,
     );
-    let unseen = apply_import(&mut core, plan).unwrap();
+    let unseen = apply_import(&mut core, plan);
     core.flush_writes();
     let AccountResult::Failed(first_error) = run.results(&core)[0].1 else {
         panic!("the write must fail");
@@ -635,7 +669,7 @@ fn review_h1_a_superseded_failed_import_is_not_reported_saved() {
         &ThieverCatalog::new(),
         ConflictPolicy::Skip,
     );
-    let run = apply_import(&mut core, plan).unwrap();
+    let run = apply_import(&mut core, plan);
     let row = core.vault().unwrap().get("rvimprobe").unwrap().clone();
     let later = core
         .save_profile(row, ArmMirror::none(), "review later write")
@@ -1191,7 +1225,7 @@ fn import_writes_through_the_session_and_reruns_are_idempotent() {
         &catalog,
         ConflictPolicy::Skip,
     );
-    let run = apply_import(&mut core, plan).unwrap();
+    let run = apply_import(&mut core, plan);
     core.flush_writes();
     assert!(run.settled(&core));
     assert!(run.succeeded(&core));
@@ -1237,7 +1271,7 @@ fn import_writes_through_the_session_and_reruns_are_idempotent() {
     assert_eq!(plan.count(AccountStatus::Unchanged), 2);
     assert!(!plan.writes());
     let before: Vec<Profile> = core.vault().unwrap().profiles().cloned().collect();
-    let run = apply_import(&mut core, plan).unwrap();
+    let run = apply_import(&mut core, plan);
     core.flush_writes();
     assert_eq!(
         run.results(&core),
@@ -1261,7 +1295,7 @@ fn overwrite_replaces_the_password_and_keeps_the_uid() {
         &FakeCatalog::new(),
         ConflictPolicy::Overwrite,
     );
-    let run = apply_import(&mut core, plan).unwrap();
+    let run = apply_import(&mut core, plan);
     core.flush_writes();
     assert_eq!(run.results(&core)[0], ("alice", AccountResult::Overwritten));
     let alice = core.vault().unwrap().get("alice").unwrap();
@@ -1293,7 +1327,7 @@ fn a_profile_created_after_the_preview_is_never_replaced() {
             "credentials",
         )
         .unwrap();
-    let run = apply_import(&mut core, plan).unwrap();
+    let run = apply_import(&mut core, plan);
     core.flush_writes();
     assert_eq!(
         core.operation(id).unwrap().outcome("alice"),
@@ -1310,6 +1344,7 @@ fn a_profile_created_after_the_preview_is_never_replaced() {
     );
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn the_shared_flow_previews_confirms_and_deletes_only_on_request() {
     let dir = temp_dir("flow");
@@ -1403,6 +1438,7 @@ fn the_shared_flow_previews_confirms_and_deletes_only_on_request() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn a_locked_vault_refuses_the_preview() {
     let core = OperatorSession::<u32>::new(InstancePermit::SkipLock);
@@ -1588,7 +1624,7 @@ fn overwrite_says_per_parameter_what_happens_and_what_stays() {
         &ThieverCatalog::new(),
         ConflictPolicy::Overwrite,
     );
-    let run = apply_import(&mut core, plan).unwrap();
+    let run = apply_import(&mut core, plan);
     core.flush_writes();
     assert_eq!(run.results(&core)[0].1, AccountResult::Overwritten);
     let report = run.lines(&core);
@@ -1716,7 +1752,7 @@ fn results_are_durable_only_from_the_imports_own_settled_write() {
         &catalog,
         ConflictPolicy::Skip,
     );
-    let run = apply_import(&mut core, plan).unwrap();
+    let run = apply_import(&mut core, plan);
     core.flush_writes();
     for _ in 0..65 {
         core.stop_scripts(&["not-loaded".into()]);
@@ -1733,7 +1769,7 @@ fn results_are_durable_only_from_the_imports_own_settled_write() {
         &catalog,
         ConflictPolicy::Skip,
     );
-    let run = apply_import(&mut core, plan).unwrap();
+    let run = apply_import(&mut core, plan);
     core.flush_writes();
     assert_eq!(run.results(&core)[0].1, AccountResult::Created);
     for _ in 0..65 {
@@ -1754,7 +1790,7 @@ fn results_are_durable_only_from_the_imports_own_settled_write() {
         &catalog,
         ConflictPolicy::Skip,
     );
-    let run = apply_import(&mut core, plan).unwrap();
+    let run = apply_import(&mut core, plan);
     let row = core.vault().unwrap().get("rvimlater").unwrap().clone();
     core.save_profile(row, ArmMirror::remember(None), "later edit")
         .unwrap();
@@ -1764,6 +1800,7 @@ fn results_are_durable_only_from_the_imports_own_settled_write() {
     assert!(!run.succeeded(&core));
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn the_shared_flow_offers_deletion_only_when_every_write_is_durable() {
     let dir = temp_dir("flow-failed");
@@ -1875,7 +1912,7 @@ fn r3_h3_a_password_repeated_in_a_tab_reaches_no_preview_report_or_debug() {
         account(&plan, "rvr4probe").skipped()
     );
     leaks.check(SECRET, "Skipped Debug", &skipped);
-    let run = apply_import(&mut core, plan).unwrap();
+    let run = apply_import(&mut core, plan);
     core.flush_writes();
     assert!(run.succeeded(&core));
     let report = run.lines(&core).join("\n");
@@ -1890,6 +1927,7 @@ fn r3_h3_a_password_repeated_in_a_tab_reaches_no_preview_report_or_debug() {
 /// Review input B: a skipped account's password as another account's clue
 /// duel partner, through the real shared flow. No line of the process log
 /// shows it, and the vault holds the partner as the file gives it.
+#[cfg(feature = "js")]
 #[test]
 fn r3_h3_b_a_skipped_accounts_password_reaches_no_log_line() {
     const SECRET: &str = "r4b-skip-pw-60232";
@@ -2085,7 +2123,7 @@ fn r3_h3_a_password_repeated_in_any_other_field_reaches_no_text() {
             probe.imported()
         );
         leaks.check(&secret, &what("Skipped Debug"), &kept);
-        let run = apply_import(&mut core, plan).unwrap();
+        let run = apply_import(&mut core, plan);
         core.flush_writes();
         assert!(run.succeeded(&core), "{label}");
         leaks.check(&secret, &what("report"), &run.lines(&core).join("\n"));

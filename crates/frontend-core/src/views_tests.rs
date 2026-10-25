@@ -64,6 +64,44 @@ fn fleet(test: &str, members: &[&str], auto_login: bool) -> OperatorSession<()> 
     session
 }
 
+#[cfg(feature = "js")]
+fn test_scripts(test: &str) -> crate::scripts::Scripts {
+    let dir = std::env::temp_dir().join(format!(
+        "274bot-frontend-core-views-{}-{test}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    crate::scripts::Scripts::new(
+        script_js::JsLibrary::with_cache(dir.join("js-scripts.json"), dir.join("js-cache")),
+        script::ScriptSettingsStore::at(dir.join("script-settings.json")),
+    )
+}
+
+#[cfg(not(feature = "js"))]
+fn test_scripts(_test: &str) -> crate::scripts::Scripts {
+    crate::scripts::Scripts::new()
+}
+
+fn wait_script_state(
+    session: &mut OperatorSession<()>,
+    scripts: &mut crate::scripts::Scripts,
+    name: &str,
+    expected: script::RunState,
+) {
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        session.poll();
+        scripts.poll(session);
+        let state = session.play().unwrap().script_state(name);
+        if state == expected {
+            return;
+        }
+        assert_ne!(state, script::RunState::Error, "{name} ended in {state:?}");
+        assert!(Instant::now() < deadline, "{name} never reached {expected:?}");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
 /// Publish (or edit) `name`'s host row, as its slot worker would.
 fn publish(s: &OperatorSession<()>, name: &str, edit: impl FnOnce(&mut SlotStatus)) {
     let play = s.play().unwrap();
@@ -1099,32 +1137,26 @@ fn a_script_walk_ends_with_its_run_and_a_manual_walk_survives_the_stop() {
         Arc::clone(&arm),
     )])));
     let mut s = fleet("separate-facts", &["vs-alice", "vs-bob"], false);
+    let mut scripts = test_scripts("separate-facts");
     s.set_walk_arms(walks);
+    let data = api::game_data::for_revision(api::selected::ClientRevision::R289)
+        .expect("the selected script revision has game data");
+    s.play_mut().unwrap().bind_script_test_data(data);
     for name in ["vs-alice", "vs-bob"] {
         publish(&s, name, |r| {
             phase_to(r, StartupPhase::Ready);
             (r.connected, r.ingame, r.scene_state) = (true, true, 2);
         });
+        assert!(scripts.persist_assignment(
+            &mut s,
+            name,
+            script::compiled_assignment(script::CompiledId("Sherlock")),
+        ));
     }
+    s.flush_writes();
     for name in ["vs-alice", "vs-bob"] {
-        s.play()
-            .unwrap()
-            .script_start_load(
-                name,
-                "export function tick(api) {}".into(),
-                script_js::LoadShape::NativeTick,
-                None,
-                vec![],
-            )
-            .unwrap();
-    }
-    let deadline = Instant::now() + Duration::from_secs(60);
-    for name in ["vs-alice", "vs-bob"] {
-        while s.play().unwrap().script_state(name) != script::RunState::Running {
-            assert!(Instant::now() < deadline, "{name} never ran");
-            s.play().unwrap().pump_script_lifecycle(name);
-            std::thread::sleep(Duration::from_millis(5));
-        }
+        scripts.start_profile(&mut s, name, None).unwrap();
+        wait_script_state(&mut s, &mut scripts, name, script::RunState::Running);
     }
     publish(&s, "vs-alice", |r| {
         (r.walk_x, r.walk_z, r.walk_level) = (3210, 3200, 0)
@@ -1154,11 +1186,7 @@ fn a_script_walk_ends_with_its_run_and_a_manual_walk_survives_the_stop() {
         s.play().unwrap().script_stop(name);
     }
     for name in ["vs-alice", "vs-bob"] {
-        while s.play().unwrap().script_state(name) != script::RunState::Idle {
-            assert!(Instant::now() < deadline, "{name} never stopped");
-            s.play().unwrap().pump_script_lifecycle(name);
-            std::thread::sleep(Duration::from_millis(5));
-        }
+        wait_script_state(&mut s, &mut scripts, name, script::RunState::Idle);
     }
     s.poll();
     let alice = row(&s, "vs-alice");
