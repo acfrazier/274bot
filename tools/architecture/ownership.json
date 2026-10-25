@@ -7539,10 +7539,6 @@
       "owner": "T3"
     },
     {
-      "path": "crates/script-js/Cargo.toml",
-      "owner": "T2"
-    },
-    {
       "path": "crates/script-js/src/compat/cake_stall.rs",
       "owner": "T2"
     },

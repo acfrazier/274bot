@@ -67,10 +67,17 @@ pub enum MakeXStep {
 
 /// Shared Make-X selection, count-dialog latch and make-menu close sequence.
 /// Runtime adapters supply their row view, count semantics and clock.
+/// `Default` uses the same unselected state as [`Self::new`].
 #[derive(Clone, Copy)]
 pub struct MakeXCore {
     phase: MakeXPhase,
     count: i32,
+}
+
+impl Default for MakeXCore {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl MakeXCore {
