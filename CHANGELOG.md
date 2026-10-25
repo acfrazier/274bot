@@ -7,6 +7,18 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.6` 
 
 ### Panel and terminal app
 
+- **Log out** now stops a bot whose login keeps failing. A bot that cannot
+  log in (the server is down or refuses it) retries with a growing wait of up
+  to 60 seconds. In 0.2.6 the panel's **Log out** button was greyed out for
+  such a bot and Fleet **Log out all** said "not logged in", so only quitting
+  stopped it. Log out is now offered for a bot that is logging in, waiting to
+  retry or queued, in the panel and the terminal app, for one bot and for
+  Fleet. It parks the bot logged out: no new login attempt starts after you
+  press it. A bot that never logged in still has nothing to log out of, and
+  the terminal app's `u` now says so instead of marking it logged out. The
+  login error line still fades after 15 seconds. **Log out marked** now
+  skips a bot whose login error is waiting for you to act; in 0.2.6 it logged
+  that bot out.
 - Saving shared preferences no longer waits for disk on the panel, TUI or bot
   thread. Accepted saves continue when you close a settings window. A slow
   save no longer erases an unsaved checkbox or folder entry during refresh.

@@ -248,6 +248,10 @@ pub struct FleetRow {
     /// error that holds the login until the operator acts, and in every
     /// other phase.
     retrying: bool,
+    /// The repeat guard parked the slot after repeated unexpected logouts:
+    /// offline and unqueued, it may still hold a script's work, which a
+    /// Log out ends.
+    guard_parked: bool,
     /// Authenticated client session, independent of game readiness.
     connected: bool,
     script: RunState,
@@ -289,6 +293,7 @@ impl Default for FleetRow {
             phase: Phase::Offline,
             queue: None,
             retrying: false,
+            guard_parked: false,
             connected: false,
             script: RunState::Idle,
             script_walk: false,
@@ -312,6 +317,7 @@ impl FleetRow {
         self.phase = source.phase;
         self.queue = source.queue;
         self.retrying = source.retrying;
+        self.guard_parked = source.guard_parked;
         self.connected = source.connected;
         self.script = source.script;
         self.script_walk = source.script_walk;
@@ -335,6 +341,7 @@ impl FleetRow {
             phase: Phase::Offline,
             queue: None,
             retrying: false,
+            guard_parked: false,
             connected: false,
             script: RunState::Idle,
             script_walk: false,
@@ -378,6 +385,7 @@ impl FleetRow {
         self.phase = Phase::Offline;
         self.queue = None;
         self.retrying = false;
+        self.guard_parked = false;
         self.connected = false;
         self.script = RunState::Idle;
         self.script_walk = false;
@@ -418,6 +426,11 @@ impl FleetRow {
     /// the login.
     pub fn retrying(&self) -> bool {
         self.retrying
+    }
+
+    /// The repeat guard parked the slot (see [`crate::LogoutEligibility`]).
+    pub fn guard_parked(&self) -> bool {
+        self.guard_parked
     }
 
     /// Authenticated client session, independent of game readiness.
@@ -1196,7 +1209,7 @@ fn update_row(row: &mut FleetRow, state: &mut RowState, input: &Inputs<'_>) -> b
     let arm = input.play.and_then(|play| play.arm(&row.name));
     let lifetime = arm.as_ref().map_or(0, |arm| arm.lifetime_id());
     let new_lifetime = std::mem::replace(&mut state.lifetime, lifetime) != lifetime;
-    let (phase, retrying) = phase_of(status, arm.as_deref());
+    let (phase, retrying, guard_parked) = phase_of(status, arm.as_deref());
     let queue = match phase {
         Phase::Queued | Phase::LoginError => status.and_then(QueuePlace::of),
         _ => input.start_places.get(row.name.as_str()).copied(),
@@ -1227,6 +1240,7 @@ fn update_row(row: &mut FleetRow, state: &mut RowState, input: &Inputs<'_>) -> b
         row.phase,
         row.queue,
         row.retrying,
+        row.guard_parked,
         row.connected,
         row.script,
         row.script_walk,
@@ -1236,6 +1250,7 @@ fn update_row(row: &mut FleetRow, state: &mut RowState, input: &Inputs<'_>) -> b
         phase,
         queue,
         retrying,
+        guard_parked,
         connected,
         script,
         script_walk,
@@ -1245,6 +1260,7 @@ fn update_row(row: &mut FleetRow, state: &mut RowState, input: &Inputs<'_>) -> b
         row.phase = phase;
         row.queue = queue;
         row.retrying = retrying;
+        row.guard_parked = guard_parked;
         row.connected = connected;
         row.script = script;
         row.script_walk = script_walk;
@@ -1293,28 +1309,36 @@ fn update_row(row: &mut FleetRow, state: &mut RowState, input: &Inputs<'_>) -> b
 }
 
 /// The single phase derivation, with whether a login error is a retry
-/// wait ([`FleetRow::retrying`]). `arm` is the slot's live worker lifetime:
+/// wait ([`FleetRow::retrying`]) and whether the repeat guard holds the slot
+/// ([`FleetRow::guard_parked`]). `arm` is the slot's live worker lifetime:
 /// its intent (not the row's last published latch) decides whether a
 /// disconnected worker is parked, and whether a failed login is retried or
-/// held for the operator; both answers come from the same intent read.
-fn phase_of(status: Option<&SlotStatus>, arm: Option<&SlotArm>) -> (Phase, bool) {
+/// held for the operator. The guard fact is read from that same latch and
+/// only on the parked branch, so a terminal worker or a row with no arm
+/// never carries it: it means current guard ownership, not the last
+/// published reason.
+fn phase_of(status: Option<&SlotStatus>, arm: Option<&SlotArm>) -> (Phase, bool, bool) {
     let Some(s) = status else {
-        return (Phase::Offline, false);
+        return (Phase::Offline, false, false);
     };
     if s.worker_terminal.is_some() || s.terminal_startup_error().is_some() {
-        return (Phase::Failed, false);
+        return (Phase::Failed, false, false);
     }
     let Some(arm) = arm else {
-        return (Phase::Offline, false);
+        return (Phase::Offline, false, false);
     };
     if s.ingame {
-        return (Phase::Ready, false);
+        return (Phase::Ready, false, false);
     }
     if s.connected {
-        return (Phase::Loading, false);
+        return (Phase::Loading, false, false);
     }
-    if arm.login_latched() {
-        return (Phase::LoggedOut, false);
+    if let Some(reason) = arm.login_latch_reason() {
+        let guard = matches!(
+            reason,
+            host_play::LoginLatchReason::RepeatedUnexpectedLogouts { .. }
+        );
+        return (Phase::LoggedOut, false, guard);
     }
     let phase = match s.startup_phase {
         StartupPhase::Preparing => Phase::Preparing,
@@ -1333,7 +1357,7 @@ fn phase_of(status: Option<&SlotStatus>, arm: Option<&SlotArm>) -> (Phase, bool)
                 }
             } else if failed {
                 // Still wanted: the host retries it after its backoff.
-                return (Phase::LoginError, true);
+                return (Phase::LoginError, true, false);
             } else if QueuePlace::of(s).is_some() {
                 Phase::Queued
             } else {
@@ -1341,7 +1365,7 @@ fn phase_of(status: Option<&SlotStatus>, arm: Option<&SlotArm>) -> (Phase, bool)
             }
         }
     };
-    (phase, false)
+    (phase, false, false)
 }
 
 /// Refresh the selected slot's detail fields. Text is built into `scratch`

@@ -9,12 +9,13 @@ use super::{
     apply_only_render_selected, apply_ui_scale, boot_failure_is_fatal, boot_for,
     clamp_hop_label_px, debug_caption, drive_startup, edit_parameters_enabled, finish_panel_run,
     game_window_flags, hold_script_terminal_shot, live_exit_code, live_null_tick, live_script_tick,
-    live_smoke_tick, live_stress_tick, loading_text, logout_enabled, manual_shot_label, parse_args,
-    parse_live_args, request_clean_stop_capture, request_native_failure_capture, runner_config,
-    script_failure_scenario, smoke_settled, smoke_should_fire, startup_progress,
-    status_value_visible, Boot, LiveBoot, LiveHarness, LiveNull, LiveScript, LiveSmoke, LiveStress,
-    PanelState, ProgressPhase, RunMode, ShotStatus, SoakCapture, StartupPreparation, BASE_WINDOW_H,
-    BASE_WINDOW_W, LIVE_USAGE, NAV_FULL_SHOT_DRAIN, SMOKE_DEADLINE, SMOKE_SETTLE,
+    live_smoke_tick, live_stress_tick, loading_text, login_logout_row, logout_enabled,
+    manual_shot_label, parse_args, parse_live_args, request_clean_stop_capture,
+    request_native_failure_capture, runner_config, script_failure_scenario, smoke_settled,
+    smoke_should_fire, startup_progress, status_value_visible, Boot, LiveBoot, LiveHarness,
+    LiveNull, LiveScript, LiveSmoke, LiveStress, PanelState, ProgressPhase, RunMode, ShotStatus,
+    SoakCapture, StartupPreparation, BASE_WINDOW_H, BASE_WINDOW_W, LIVE_USAGE, NAV_FULL_SHOT_DRAIN,
+    SMOKE_DEADLINE, SMOKE_SETTLE,
 };
 use crate::log_pane::log_follow_bottom;
 use crate::test_support::{patiently, TestDir};
@@ -334,13 +335,150 @@ fn parameters_rail_does_not_call_an_unloaded_catalog_card_parameterless() {
 }
 
 #[test]
-fn logout_is_enabled_only_for_a_connected_queued_or_guard_parked_focus() {
-    assert!(!logout_enabled(false, true, true, false, false));
-    assert!(!logout_enabled(true, false, true, false, false));
-    assert!(!logout_enabled(true, true, false, false, false));
-    assert!(logout_enabled(true, true, true, false, false));
-    assert!(logout_enabled(true, true, false, true, false));
-    assert!(logout_enabled(true, true, false, false, true));
+fn logout_retry_button_is_enabled_only_for_a_focus_with_a_login_or_session_to_end() {
+    use frontend_core::LogoutEligibility as E;
+    for eligible in [
+        E::LoggedIn,
+        E::LoggingIn,
+        E::RetryingLogin,
+        E::Queued,
+        E::GuardParked,
+    ] {
+        assert!(logout_enabled(true, Some(eligible)), "{eligible:?}");
+        assert!(!logout_enabled(false, Some(eligible)), "vault locked");
+    }
+    assert!(!logout_enabled(true, Some(E::NotLoggedIn)));
+    assert!(!logout_enabled(true, None), "no focused profile");
+}
+
+/// One frame of the side panel's Log in / Log out row in its own window,
+/// the pointer at `point` with the left button `pressed`. Returns the Log
+/// out button's rectangle (the last item the row draws).
+fn logout_row_frame(
+    ctx: &mut dear_imgui_rs::Context,
+    session: &mut crate::session::Session,
+    point: [f32; 2],
+    pressed: bool,
+) -> [[f32; 2]; 2] {
+    let io = ctx.io_mut();
+    io.add_mouse_pos_event(point);
+    io.add_mouse_button_event(dear_imgui_rs::MouseButton::Left, pressed);
+    ctx.prepare_frame(
+        dear_imgui_rs::FramePrepareOptions::new([1280.0, 720.0], 1.0 / 60.0)
+            .renderer_has_textures(),
+    );
+    let mut rect = [[0.0; 2]; 2];
+    {
+        let ui = ctx.frame();
+        ui.window("Log out row")
+            .position([0.0, 0.0], dear_imgui_rs::Condition::Always)
+            .size([420.0, 140.0], dear_imgui_rs::Condition::Always)
+            .build(|| {
+                login_logout_row(ui, session);
+                rect = [ui.item_rect_min(), ui.item_rect_max()];
+            });
+    }
+    ctx.render();
+    rect
+}
+
+/// Click the drawn Log out button of `session`'s focused bot with real
+/// frames: lay the row out, hover, press, release.
+fn click_drawn_logout(ctx: &mut dear_imgui_rs::Context, session: &mut crate::session::Session) {
+    let mut rect = [[0.0; 2]; 2];
+    for _ in 0..3 {
+        rect = logout_row_frame(ctx, session, [900.0, 600.0], false);
+    }
+    let centre = [
+        (rect[0][0] + rect[1][0]) * 0.5,
+        (rect[0][1] + rect[1][1]) * 0.5,
+    ];
+    assert!(rect[1][0] > rect[0][0], "the Log out button is drawn");
+    for pressed in [false, true, false, false] {
+        logout_row_frame(ctx, session, centre, pressed);
+    }
+}
+
+/// LOGOUT-RETRY-1025 r2 (Grok): the drawn side-panel button, not its helper.
+/// A bot whose login is refused and retried gets a Log out button that
+/// works: the click parks it, so the slot makes no further attempt. A bot
+/// that never logged in gets one that does nothing. Wiring the button back to
+/// the connected / queued / guard-parked rule fails the first half.
+#[test]
+fn logout_retry_the_drawn_side_panel_button_reaches_a_retrying_login() {
+    use frontend_core::LogoutEligibility as E;
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut ctx = dock_host_context();
+    super::amber_style(&mut ctx);
+    let dir = TestDir::new("logout-retry-button");
+    let mut session = crate::session::Session::new();
+    let mut vault =
+        frontend_core::test_support::VaultFixture::create(&dir.join("vault"), "test-passphrase-01");
+    for (i, name) in ["alice", "bob"].iter().enumerate() {
+        vault.put(frontend_core::test_support::FixtureProfile::new(name, "pw").uid(1 + i as i32));
+    }
+    session.core.set_spawn_workers(false);
+    frontend_core::test_support::session::install_vault(&mut session.core, vault);
+    session.persist_ui = false;
+    let mut play = frontend_core::test_support::empty_play(&host_play::PlayOptions {
+        host: "127.0.0.1".into(),
+        transport: client::Transport::Tcp,
+        port: 1,
+        cache_dir: "/tmp".into(),
+        lowmem: true,
+        mainland: false,
+    });
+    for (i, name) in ["alice", "bob"].iter().enumerate() {
+        play.attach_arm(name, host_play::SlotArm::new(1 + i as i32, false));
+        session.core.fleet_mut().add(name);
+        session.core.insert_slot_io(
+            name,
+            crate::session::SlotIo {
+                input: frontend_core::surface::SlotInput::new(),
+                pixels: frontend_core::surface::FrameBuf::new(),
+            },
+        );
+    }
+    session.core.set_play(Some(play));
+    let arm = |session: &crate::session::Session, name: &str| {
+        session.core.play_for_test().unwrap().arm(name).unwrap()
+    };
+    // bob's login is refused and the slot still wants it: the host retries.
+    arm(&session, "bob").arm_explicit_login();
+    session
+        .core
+        .play_for_test()
+        .unwrap()
+        .statuses
+        .lock()
+        .unwrap()
+        .push(host_play::SlotStatus {
+            username: "bob".into(),
+            startup_phase: host_play::StartupPhase::Error,
+            startup_phase_started: Instant::now(),
+            error: Some("Error connecting to server.".into()),
+            ..host_play::SlotStatus::default()
+        });
+    session.core.poll_host();
+
+    session.set_focus_for_test("alice");
+    session.core.poll_host();
+    assert_eq!(session.focused_logout_eligibility(), Some(E::NotLoggedIn));
+    click_drawn_logout(&mut ctx, &mut session);
+    assert!(
+        !arm(&session, "alice").login_latched(),
+        "a bot that never logged in has a Log out button that does nothing"
+    );
+
+    session.set_focus_for_test("bob");
+    session.core.poll_host();
+    assert_eq!(session.focused_logout_eligibility(), Some(E::RetryingLogin));
+    assert!(arm(&session, "bob").wants_login(), "the slot would retry");
+    click_drawn_logout(&mut ctx, &mut session);
+    assert!(
+        arm(&session, "bob").login_latched() && !arm(&session, "bob").wants_login(),
+        "the drawn Log out button parks a retrying bot"
+    );
 }
 
 fn checked_fixture(revision: u16) -> (TestDir, PathBuf, PathBuf) {

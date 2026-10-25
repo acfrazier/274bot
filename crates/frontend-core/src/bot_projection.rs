@@ -13,7 +13,8 @@
 //! - client login and connection ([`BotProjection::phase`],
 //!   [`BotProjection::connected`]);
 //! - the displayed script choice ([`BotProjection::displayed_script`]) and
-//!   command eligibility ([`BotProjection::stop_eligibility`]).
+//!   command eligibility ([`BotProjection::stop_eligibility`],
+//!   [`BotProjection::logout_eligibility`]).
 //!
 //! Marks are a separate set of profile identities and never enter this view.
 
@@ -39,6 +40,69 @@ impl StopEligibility {
     /// Whether Stop acts on the bot at all.
     pub fn eligible(self) -> bool {
         self != Self::NoScript
+    }
+}
+
+/// Whether Log out acts on a bot, and why. One answer for the panel's Log
+/// out button, the TUI's Log out command, Fleet Log out and Log out marked,
+/// all from the bot's projected row: a bot whose login is still pending or
+/// is retrying after a refusal has something to cancel, so it is eligible
+/// like one that is in game.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LogoutEligibility {
+    /// A login failed and the host retries it after its backoff. Log out
+    /// cancels the retry loop and parks the bot.
+    RetryingLogin,
+    /// Holds a place in the login queue (or a Start waits for one). Log out
+    /// cancels it.
+    Queued,
+    /// Preparing, waiting to retry, handshaking or loading the scene: a
+    /// login is pending. Log out cancels it.
+    LoggingIn,
+    /// The repeat guard parked the bot; Log out ends its held script work.
+    GuardParked,
+    /// Authenticated: Log out ends the session.
+    LoggedIn,
+    /// Offline, logged out, failed, or held by an error until the operator
+    /// acts: nothing to cancel.
+    NotLoggedIn,
+}
+
+impl LogoutEligibility {
+    /// The refusal text of a bot Log out cannot act on.
+    pub const REFUSAL: &'static str = "not logged in";
+
+    /// Whether Log out acts on the bot at all.
+    pub fn eligible(self) -> bool {
+        self != Self::NotLoggedIn
+    }
+}
+
+impl FleetRow {
+    /// Whether Log out acts on this bot, from its projected facts alone.
+    pub fn logout_eligibility(&self) -> LogoutEligibility {
+        let pending = self.loaded()
+            && matches!(
+                self.phase(),
+                Phase::Preparing
+                    | Phase::Waiting
+                    | Phase::Queued
+                    | Phase::Connecting
+                    | Phase::Loading
+            );
+        if self.phase() == Phase::LoginError && self.retrying() {
+            LogoutEligibility::RetryingLogin
+        } else if self.queue().is_some() {
+            LogoutEligibility::Queued
+        } else if self.guard_parked() {
+            LogoutEligibility::GuardParked
+        } else if pending {
+            LogoutEligibility::LoggingIn
+        } else if self.connected() || (self.loaded() && self.phase() == Phase::Ready) {
+            LogoutEligibility::LoggedIn
+        } else {
+            LogoutEligibility::NotLoggedIn
+        }
     }
 }
 
@@ -110,6 +174,11 @@ impl<'a> BotProjection<'a> {
     /// The Fleet row label both front ends draw.
     pub fn label(&self) -> &'a str {
         self.row.brief()
+    }
+
+    /// Whether Log out acts on this bot ([`LogoutEligibility`]).
+    pub fn logout_eligibility(&self) -> LogoutEligibility {
+        self.row.logout_eligibility()
     }
 
     /// Whether Fleet Stop acts on this bot, from the lifecycle fact alone:

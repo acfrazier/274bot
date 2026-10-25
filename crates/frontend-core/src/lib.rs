@@ -64,7 +64,7 @@ pub mod views;
 pub mod walk_map;
 pub mod walk_permissions;
 
-pub use bot_projection::{BotProjection, StopEligibility};
+pub use bot_projection::{BotProjection, LogoutEligibility, StopEligibility};
 pub use bulk::{BulkOutcome, BulkReport, BulkRow};
 pub use capacity::{CapacityNotice, CapacityWarning, RenderPolicyLabel};
 pub use command::{CommandBook, CommandReport, FleetOrder, OperatorCommand};

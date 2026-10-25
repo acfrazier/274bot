@@ -107,6 +107,21 @@ cells = [
   "panel.login-notice-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p panel --lib login_notice",
 ]
 
+# Log out of a bot whose login keeps retrying: one projection of who Log out
+# acts on (`LogoutEligibility`) feeds the panel button, the TUI command and
+# Fleet. The cell runs a real slot worker against a local listener that
+# closes every connection, counts the attempts on the wire, and checks that
+# none arrives after Log out (single command and Fleet plan). See README.md
+# "Log out of a retrying login".
+[[cover]]
+globs = ["crates/frontend-core/src/bot_projection.rs", "crates/frontend-core/src/slot_view.rs", "crates/panel/src/app.rs", "crates/tui/src/app.rs"]
+cells = [
+  "frontend-core.logout-retry-refused|${ISOHOME:?} nice -n 10 cargo test --locked -p frontend-core --test logout_retry_refused -- --ignored --nocapture",
+  "frontend-core.logout-retry-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p frontend-core --lib logout_retry",
+  "tui.logout-retry-headless|TUI_CAPTURE_DIR=${LIVE_EVIDENCE_DIR:?}/tui ${ISOHOME:?} nice -n 10 cargo test --locked -p tui --lib logout_retry",
+  "panel.logout-retry-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p panel --lib logout_retry",
+]
+
 [[cover]]
 globs = ["crates/frontend-core/src/resources.rs"]
 cells = [
