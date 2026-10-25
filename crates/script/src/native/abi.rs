@@ -524,7 +524,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::CallSync,
         HookValue::Used,
         NO_DISCREPANCY,
-        "$JS/compat/reach_entity.rs:577,626",
+        "$JS/compat/reach_entity.rs:579-587,622-635",
     ),
     hook(
         &["reach-loc-op"],
@@ -1040,7 +1040,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::Ask,
         HookValue::Ignored,
         NO_DISCREPANCY,
-        "$JS/compat/duel.rs:174-178,1023",
+        "$JS/compat/duel.rs:963-989,136-141",
     ),
     hook(
         &["clue_duel_handshake"],
@@ -1049,7 +1049,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::Ask,
         HookValue::Ignored,
         NO_DISCREPANCY,
-        "$JS/compat/duel.rs:174-178,559",
+        "$JS/compat/duel.rs:506-527,316-331",
     ),
     hook(
         &["clue_duel_helper"],
@@ -1058,7 +1058,7 @@ pub const HOOK_CHARACTERIZATIONS: &[HookCharacterization] = &[
         HookPath::Ask,
         HookValue::Ignored,
         NO_DISCREPANCY,
-        "$JS/compat/duel.rs:174-178,694",
+        "$JS/compat/duel.rs:631-662,697-700",
     ),
     hook(
         &["clue"],

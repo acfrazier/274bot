@@ -762,7 +762,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$JS/compat/reach_entity.rs:577,626"
+      "evidence": "$JS/compat/reach_entity.rs:579-587,622-635"
     },
     {
       "families": [
@@ -4665,7 +4665,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$JS/compat/duel.rs:174-178,1023"
+      "evidence": "$JS/compat/duel.rs:963-989,136-141"
     },
     {
       "families": [
@@ -4688,7 +4688,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$JS/compat/duel.rs:174-178,559"
+      "evidence": "$JS/compat/duel.rs:506-527,316-331"
     },
     {
       "families": [
@@ -4711,7 +4711,7 @@
       "frozen_path": {
         "status": "matches-frozen-call-form"
       },
-      "evidence": "$JS/compat/duel.rs:174-178,694"
+      "evidence": "$JS/compat/duel.rs:631-662,697-700"
     },
     {
       "families": [
