@@ -797,6 +797,7 @@ fn stop_slot_aborts_an_unreachable_asset_retry_promptly() {
     stop.join().unwrap();
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn qualified_revision_289_accepts_an_unarmed_slot_and_script_loading() {
     let _clients = CLIENTS.lock().unwrap();

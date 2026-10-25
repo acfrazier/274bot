@@ -418,11 +418,14 @@ fn a_compat_inspect_with_a_closed_bank_and_a_known_memory_is_bank_planned() {
             "request_id": request_id,
         }))
         .expect("inspect request decodes");
+        #[cfg(feature = "js")]
         let reqs =
             script_js::wire::decode_interact_batch(&script_js::wire::encode_interact_batch(&[
                 request,
             ]))
             .expect("inspect wire decodes");
+        #[cfg(not(feature = "js"))]
+        let reqs = [request];
         dispatch_script_interact_cached(
             client,
             &closed,
@@ -471,6 +474,7 @@ fn a_compat_inspect_with_a_closed_bank_and_a_known_memory_is_bank_planned() {
     );
 }
 
+#[cfg(feature = "js")]
 /// D6 pin: compat `Bank.*` and `Inventory.count` read the posted open bank
 /// and pack only. With the fixture bank open they see the knives; with it
 /// closed they answer empty/0 although the slot's memory (passed to the

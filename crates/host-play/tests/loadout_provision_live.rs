@@ -367,22 +367,32 @@ impl LiveState {
     }
 
     fn start_script(&mut self) -> Result<(), String> {
-        let Some(handle) = self.start_handle.as_ref() else {
+        let Some(_handle) = self.start_handle.as_ref() else {
             return Err("Start reached before ScriptStartHandle install".into());
         };
-        let rows = vec![api::loadout::Loadout::new(PRESET_NAME)
-            .with_slot("righthand", WEAPON_NAME)
-            .with_carry(SUPPLY_NAME, SUPPLY_QTY as u32)];
-        let mut bag = Map::new();
-        bag.insert("loadout".into(), json!(PRESET_NAME));
-        handle.start_load_with_loadouts(
-            &self.account,
-            PROVISION_JS.to_string(),
-            script_js::LoadShape::CompatClass,
-            Some(bag),
-            vec![],
-            &rows,
-        )?;
+        let started = {
+            #[cfg(feature = "js")]
+            {
+                let rows = vec![api::loadout::Loadout::new(PRESET_NAME)
+                    .with_slot("righthand", WEAPON_NAME)
+                    .with_carry(SUPPLY_NAME, SUPPLY_QTY as u32)];
+                let mut bag = Map::new();
+                bag.insert("loadout".into(), json!(PRESET_NAME));
+                _handle.start_load_with_loadouts(
+                    &self.account,
+                    PROVISION_JS.to_string(),
+                    script_js::LoadShape::CompatClass,
+                    Some(bag),
+                    vec![],
+                    &rows,
+                )
+            }
+            #[cfg(not(feature = "js"))]
+            {
+                Err("loadout provision live starts require host-play's `js` feature".into())
+            }
+        };
+        started?;
         self.started = true;
         println!(
             "{}",

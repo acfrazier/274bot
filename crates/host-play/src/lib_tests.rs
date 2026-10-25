@@ -486,36 +486,39 @@ fn projected_npc_boxes_follow_the_live_clients_bounded_npc_list() {
     assert_eq!(boxes.len(), 1);
     assert_eq!(boxes[0].index, 7);
     assert_eq!(boxes[0].points[0], (225, 171));
-    let bytes = with_script_snapshot_input(
-        1,
-        None,
-        true,
-        None,
-        None,
-        None,
-        None,
-        Some(&boxes),
-        false,
-        false,
-        false,
-        0,
-        false,
-        0,
-        false,
-        None,
-        PostedWalkOutcome::default(),
-        PostedInspect::default(),
-        script_js::wire::encode_snapshot_with_native,
-    );
-    let posted = script_js::wire::decode_snapshot(&bytes).expect("snapshot decodes");
-    assert!(posted.npc_boxes_available());
-    let points = posted
-        .npc_boxes()
-        .expect("npc box rows")
-        .get(0)
-        .points()
-        .expect("npc box points");
-    assert_eq!((points.get(0), points.get(1)), (225, 171));
+    #[cfg(feature = "js")]
+    {
+        let bytes = with_script_snapshot_input(
+            1,
+            None,
+            true,
+            None,
+            None,
+            None,
+            None,
+            Some(&boxes),
+            false,
+            false,
+            false,
+            0,
+            false,
+            0,
+            false,
+            None,
+            PostedWalkOutcome::default(),
+            PostedInspect::default(),
+            script_js::wire::encode_snapshot_with_native,
+        );
+        let posted = script_js::wire::decode_snapshot(&bytes).expect("snapshot decodes");
+        assert!(posted.npc_boxes_available());
+        let points = posted
+            .npc_boxes()
+            .expect("npc box rows")
+            .get(0)
+            .points()
+            .expect("npc box points");
+        assert_eq!((points.get(0), points.get(1)), (225, 171));
+    }
 
     client.npc_count = 0;
     assert_eq!(projected_npc_boxes(&client), Some(Vec::new()));
@@ -4902,6 +4905,7 @@ fn posted_from_bot(bot: &NavBot) -> PostedWalkOutcome {
     }
 }
 
+#[cfg(feature = "js")]
 fn encode_walk_snapshot(tick: u64, here: (i32, i32, i32), outcome: PostedWalkOutcome) -> Vec<u8> {
     with_script_snapshot_input(
         tick,
@@ -4926,6 +4930,7 @@ fn encode_walk_snapshot(tick: u64, here: (i32, i32, i32), outcome: PostedWalkOut
     )
 }
 
+#[cfg(feature = "js")]
 fn walk_resilient_src(x: i32, z: i32, radius: i32) -> String {
     format!(
         r#"
@@ -4944,6 +4949,7 @@ export default class T extends LoopingBot {{
     )
 }
 
+#[cfg(feature = "js")]
 fn overlapping_walk_src(x: i32, z: i32, radius: i32) -> String {
     format!(
         r#"
@@ -4969,6 +4975,7 @@ export default class T extends LoopingBot {{
     )
 }
 
+#[cfg(feature = "js")]
 fn park_walk_isolate(
     iso: &script_js::LoadIsolate,
     x: i32,
@@ -5000,6 +5007,7 @@ fn park_walk_isolate(
     request_id
 }
 
+#[cfg(feature = "js")]
 fn park_two_walks(iso: &script_js::LoadIsolate, x: i32, z: i32, radius: i32) -> (u64, u64) {
     iso.post_snapshot(encode_walk_snapshot(
         1,
@@ -5221,6 +5229,7 @@ fn mid_follow_terminals_publish_the_armed_request_id() {
     );
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn missing_nav_world_refusal_settles_the_matching_isolate_wait() {
     let navs = Arc::new(Mutex::new(HashMap::new()));
@@ -5250,6 +5259,7 @@ fn missing_nav_world_refusal_settles_the_matching_isolate_wait() {
     iso.join();
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn two_same_target_requests_delayed_old_outcome_does_not_settle() {
     let navs = Arc::new(Mutex::new(HashMap::new()));
@@ -5506,6 +5516,7 @@ fn same_key_pending_route_refuses_distinct_id() {
     assert_eq!(bot.walk_outcome_request_id, 9);
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn two_same_key_walk_near_refuses_later_wait_and_old_nopath_does_not_settle_it() {
     let dest = WorldTile {
@@ -5597,7 +5608,7 @@ fn two_same_key_walk_near_refuses_later_wait_and_old_nopath_does_not_settle_it()
     assert_eq!(iso.probe("__rs_a").unwrap(), serde_json::Value::Null);
     iso.join();
 }
-
+#[cfg(feature = "js")]
 #[test]
 fn two_same_key_old_nopath_before_snapshot_keeps_later_refusal() {
     let dest = WorldTile {
@@ -5684,6 +5695,7 @@ fn two_same_key_old_nopath_before_snapshot_keeps_later_refusal() {
     iso.join();
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn two_same_key_old_mid_follow_terminal_before_snapshot_keeps_later_refusal() {
     let dest = WorldTile {
@@ -5772,6 +5784,7 @@ fn two_same_key_old_mid_follow_terminal_before_snapshot_keeps_later_refusal() {
     iso.join();
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn new_isolate_does_not_consume_prior_host_outcome() {
     let iso1 = script_js::LoadIsolate::spawn(
@@ -5825,6 +5838,7 @@ fn new_isolate_does_not_consume_prior_host_outcome() {
     iso2.join();
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn bank_fetch_refusal_echoes_isolate_request_id() {
     let dest = WorldTile {
@@ -7216,6 +7230,7 @@ fn script_stop_clears_offline_published_paint() {
 /// published walk destination with it, through the one terminal path, while
 /// another bot's published walk is untouched. The pump's nav step never runs
 /// again once the route is gone, so nothing else would clear the row.
+#[cfg(feature = "js")]
 #[test]
 fn every_script_stop_retires_the_run_walk_and_only_that_runs_walk() {
     let mut play = run_with_io(
@@ -7527,6 +7542,7 @@ fn an_unload_retires_the_run_once_before_it_removes_the_row() {
     assert_eq!(play.script_state("kept"), kept_state);
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn fenced_script_stop_requires_same_identity_and_generation() {
     let mut play = run_with_io(
@@ -7613,6 +7629,7 @@ fn script_start_unknown_compiled_id_errors_without_v8() {
     assert!(err.contains("not ported"), "err was {err}");
 }
 
+#[cfg(feature = "js")]
 fn compiled_start_play() -> Play {
     script_js::install_cards().expect("install canonical Sherlock card for compiled start tests");
     let mut play = run_with_io(
@@ -7636,6 +7653,7 @@ fn compiled_start_play() -> Play {
     play
 }
 
+#[cfg(feature = "js")]
 fn compiled_arming(handle: &ScriptStartHandle) -> live_start::StartArming {
     live_start::StartArming {
         handle: Some(handle.clone()),
@@ -7644,6 +7662,7 @@ fn compiled_arming(handle: &ScriptStartHandle) -> live_start::StartArming {
     }
 }
 
+#[cfg(feature = "js")]
 fn fire_compiled_until_settled(
     pending: &mut [live_start::PendingCatalogStart],
     handle: &ScriptStartHandle,
@@ -7667,6 +7686,7 @@ fn fire_compiled_until_settled(
     }
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn compiled_catalog_start_pump_reaches_running() {
     let play = compiled_start_play();
@@ -7697,6 +7717,7 @@ fn compiled_catalog_start_pump_reaches_running() {
     assert_eq!(handle.run_state("alice"), script::RunState::Running);
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn start_handle_reads_native_runtime_pair_atomically() {
     use std::sync::atomic::{AtomicBool, Ordering};
@@ -7748,6 +7769,7 @@ fn start_handle_reads_native_runtime_pair_atomically() {
     assert_eq!(mismatch, None, "a read mixed two real slot runtimes");
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn compiled_catalog_start_pump_fails_with_the_rejection_reason() {
     let play = compiled_start_play();
@@ -7776,6 +7798,7 @@ fn compiled_catalog_start_pump_fails_with_the_rejection_reason() {
     assert!(handle.last_error("alice").is_some());
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn script_start_load_spawns_isolate_only_on_start_and_refuses_when_active() {
     let mut play = run_with_io(
@@ -7828,6 +7851,7 @@ fn script_start_load_spawns_isolate_only_on_start_and_refuses_when_active() {
     );
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn script_start_returns_before_setup_and_stop_before_reap() {
     let mut play = run_with_io(
@@ -7876,6 +7900,7 @@ fn script_start_returns_before_setup_and_stop_before_reap() {
 /// poll that read the outcome and the in-flight state under two locks lost
 /// the outcome whenever the slot thread settled it in between; every Start
 /// here must be reported exactly once, Ready or Failed, never "not owed".
+#[cfg(feature = "js")]
 #[test]
 fn script_poll_start_never_loses_an_outcome_to_the_slot_threads_observe() {
     use std::sync::atomic::{AtomicBool, Ordering};
@@ -7945,6 +7970,7 @@ fn script_poll_start_never_loses_an_outcome_to_the_slot_threads_observe() {
     assert_eq!((ready, failed), (50, 50));
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn script_start_handle_explicit_loadouts_starts() {
     let mut play = run_with_io(
@@ -7980,6 +8006,7 @@ fn script_start_handle_explicit_loadouts_starts() {
     wait_script_state(&play, "alice", script::RunState::Idle);
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn saved_loadout_setting_is_validated_for_compat_and_native_starts() {
     script_js::install_cards().expect("install canonical Sherlock card for saved loadout test");
@@ -8079,6 +8106,7 @@ fn saved_loadout_setting_is_validated_for_compat_and_native_starts() {
 /// loadouts file again, so a run whose bag names no loadout (a Quester
 /// compiling Paths through its lease) sees a row the frontend's form saved
 /// after the service hydrated.
+#[cfg(feature = "js")]
 #[test]
 fn a_compiled_start_without_a_loadout_setting_refreshes_the_operator_loadouts() {
     script_js::install_cards().expect("install canonical Sherlock card for compiled start test");
@@ -8152,6 +8180,7 @@ fn a_compiled_start_without_a_loadout_setting_refreshes_the_operator_loadouts() 
     );
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn live_start_retains_the_card_for_a_second_start() {
     let _env = script::IsolatedEnv::enter("quester-stop-restart");
@@ -8210,6 +8239,7 @@ fn live_start_retains_the_card_for_a_second_start() {
     play.script_stop("alice");
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn script_paint_click_is_noop_when_idle_paused_or_unadvertised() {
     let mut play = run_with_io(
@@ -8240,6 +8270,7 @@ fn script_paint_click_is_noop_when_idle_paused_or_unadvertised() {
     wait_script_state(&play, "alice", script::RunState::Idle);
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn script_paint_select_is_noop_when_idle_paused_or_unadvertised() {
     let mut play = run_with_io(
@@ -8271,6 +8302,7 @@ fn script_paint_select_is_noop_when_idle_paused_or_unadvertised() {
     wait_script_state(&play, "alice", script::RunState::Idle);
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn script_paint_select_adverts_fixture_chrome() {
     use script::shim::{PaintChromeBand, ScriptPaint};
@@ -8346,6 +8378,7 @@ fn script_control_is_noop_for_unknown_slot_and_state_defaults_idle() {
     play.script_pause("ghost");
     play.script_resume("ghost");
     play.script_stop("ghost");
+    #[cfg(feature = "js")]
     play.script_paint_click("ghost", "gobank", 0);
     assert_eq!(play.script_state("ghost"), script::RunState::Idle);
     assert_eq!(
@@ -8373,6 +8406,7 @@ fn script_control_is_noop_for_unknown_slot_and_state_defaults_idle() {
 
 #[test]
 fn poisoned_script_slot_reads_as_retiring_until_reaped() {
+    #[cfg(feature = "js")]
     script_js::install_cards().expect("install canonical Sherlock card for poisoned slot test");
     let mut play = run_with_io(
         &PlayOptions {
@@ -8419,44 +8453,48 @@ fn poisoned_script_slot_reads_as_retiring_until_reaped() {
             serde_json::Map::new()
         )
         .is_err());
-    assert!(play
-        .script_start_load(
-            "alice",
-            "export function tick() {}".into(),
-            script_js::LoadShape::NativeTick,
-            None,
-            Vec::new(),
-        )
-        .is_err());
-    assert!(play
-        .script_start_load_typed(
-            "alice",
-            "export function tick() {}".into(),
-            script_js::LoadShape::NativeTick,
-            None,
-            Vec::new(),
-        )
-        .is_err());
+    #[cfg(feature = "js")]
+    {
+        assert!(play
+            .script_start_load(
+                "alice",
+                "export function tick() {}".into(),
+                script_js::LoadShape::NativeTick,
+                None,
+                Vec::new(),
+            )
+            .is_err());
+        assert!(play
+            .script_start_load_typed(
+                "alice",
+                "export function tick() {}".into(),
+                script_js::LoadShape::NativeTick,
+                None,
+                Vec::new(),
+            )
+            .is_err());
+        let start = play.script_start_handle();
+        assert!(start
+            .start_load(
+                "alice",
+                "export function tick() {}".into(),
+                script_js::LoadShape::NativeTick,
+                None,
+                Vec::new(),
+            )
+            .is_err());
+        assert!(start
+            .start_load_with_loadouts(
+                "alice",
+                "export function tick() {}".into(),
+                script_js::LoadShape::NativeTick,
+                None,
+                Vec::new(),
+                &[],
+            )
+            .is_err());
+    }
     let start = play.script_start_handle();
-    assert!(start
-        .start_load(
-            "alice",
-            "export function tick() {}".into(),
-            script_js::LoadShape::NativeTick,
-            None,
-            Vec::new(),
-        )
-        .is_err());
-    assert!(start
-        .start_load_with_loadouts(
-            "alice",
-            "export function tick() {}".into(),
-            script_js::LoadShape::NativeTick,
-            None,
-            Vec::new(),
-            &[],
-        )
-        .is_err());
     assert!(start
         .start_compiled(
             "alice",
@@ -8471,8 +8509,11 @@ fn poisoned_script_slot_reads_as_retiring_until_reaped() {
     assert!(!play.script_stop_if_identity_generation("alice", "file:any", 0));
     play.script_attach_identity("alice", "file:any");
     assert!(!play.script_post_settings_fenced("alice", &settings, "file:any", 0));
-    play.script_paint_click("alice", "button", 1);
-    play.script_paint_select("alice", "tabs", "tab", 1);
+    #[cfg(feature = "js")]
+    {
+        play.script_paint_click("alice", "button", 1);
+        play.script_paint_select("alice", "tabs", "tab", 1);
+    }
     assert!(
         slot.is_poisoned(),
         "refused readers and mutators leave poison repair to the reaper"
@@ -8631,6 +8672,7 @@ fn host_internal_tutorial_probe_is_not_tracked_as_debug_reply() {
         None,
         Some(&snapshot),
         None,
+        #[cfg(feature = "js")]
         None,
         None,
         &scripts,
@@ -8644,7 +8686,9 @@ fn host_internal_tutorial_probe_is_not_tracked_as_debug_reply() {
         None,
         None,
         None,
+        #[cfg(feature = "js")]
         None,
+        #[cfg(feature = "js")]
         super::script_channels::BrokerWorld::Unavailable,
         None,
         Some(&mut replies),
@@ -9089,6 +9133,7 @@ fn bank_client_289() -> Client {
 /// main-only reopen is `None` even though the leftover list is empty. The
 /// native accessor and the decoded isolate rows agree, with op positions
 /// (the hole before Deposit-All) preserved.
+#[cfg(feature = "js")]
 #[test]
 fn bank_side_is_posted_by_the_side_root_through_packets_and_ipc() {
     use client::io::ServerProt289;
@@ -9204,6 +9249,102 @@ fn bank_side_is_posted_by_the_side_root_through_packets_and_ipc() {
     script_js::observed::on_reset();
 }
 
+#[test]
+fn bank_side_native_view_tracks_side_root_lifecycle() {
+    use client::io::ServerProt289;
+    use script::bank::ops;
+
+    let stamp = api::quest_progress::EvidenceStamp {
+        run: api::selected::RunKey {
+            slot: 1,
+            run: 1,
+            session: 1,
+        },
+        tick: 1,
+        sequence: 1,
+    };
+    let mut client = bank_client_289();
+    let mut snapshot = GameSnapshot::new();
+    let observe = |snapshot: &GameSnapshot| {
+        api::snapshot::SnapshotView::new(Some(snapshot), stamp)
+            .bank_side()
+            .map(|side| {
+                (
+                    side.value.len(),
+                    side.value.first().and_then(ops::sweep_op),
+                    side.value
+                        .first()
+                        .and_then(|row| ops::deposit_click(row, ops::DepositRequest::Sweep)),
+                )
+            })
+    };
+
+    dispatch_289(
+        &mut client,
+        ServerProt289::UPDATE_INV_FULL,
+        vec![2, 189, 0, 1, 0, 2, 3],
+    );
+    snapshot.rebuild(&client);
+    assert_eq!(observe(&snapshot), None, "no root, no side");
+
+    dispatch_289(
+        &mut client,
+        ServerProt289::IF_OPENMAIN_SIDE,
+        vec![2, 88, 2, 188],
+    );
+    snapshot.rebuild(&client);
+    let click = ops::DepositClick {
+        id: 1,
+        slot: 0,
+        component: 701,
+        operation: 3,
+    };
+    let posted = Some((1, Some(3), Some(click)));
+    assert_eq!(observe(&snapshot), posted);
+    assert_eq!(observe(&snapshot), posted, "unchanged side remains visible");
+
+    dispatch_289(&mut client, ServerProt289::IF_CLOSE, Vec::new());
+    snapshot.rebuild(&client);
+    assert_eq!(observe(&snapshot), None, "close removes the side root");
+
+    dispatch_289(
+        &mut client,
+        ServerProt289::UPDATE_INV_FULL,
+        vec![2, 189, 0, 0],
+    );
+    snapshot.rebuild(&client);
+    assert_eq!(observe(&snapshot), None);
+    dispatch_289(
+        &mut client,
+        ServerProt289::IF_OPENMAIN_SIDE,
+        vec![2, 88, 2, 188],
+    );
+    snapshot.rebuild(&client);
+    let empty = Some((0, None, None));
+    assert_eq!(observe(&snapshot), empty, "empty side remains observable");
+
+    let before = snapshot.bank_session_generation();
+    dispatch_289(&mut client, ServerProt289::IF_CLOSE, Vec::new());
+    dispatch_289(
+        &mut client,
+        ServerProt289::IF_OPENMAIN,
+        vec![2, 88],
+    );
+    snapshot.rebuild(&client);
+    assert_eq!(observe(&snapshot), None, "main-only reopen has no side root");
+    assert!(snapshot.bank_session_generation() > before);
+    assert!(snapshot.bank_component_id() >= 0);
+    assert!(snapshot.bank_side().is_empty());
+    dispatch_289(
+        &mut client,
+        ServerProt289::IF_OPENMAIN_SIDE,
+        vec![2, 88, 2, 188],
+    );
+    snapshot.rebuild(&client);
+    assert_eq!(observe(&snapshot), empty);
+}
+
+#[cfg(feature = "js")]
 fn t23_bank_start_compat_slot(scripts: &ScriptWall, name: &str, source: &str) {
     let slot = script_slot_or_insert(scripts, name);
     let mut slot = slot.lock().unwrap();
@@ -9285,6 +9426,7 @@ fn t23_bank_observe(
             state.clone(),
             snapshot,
             None,
+            #[cfg(feature = "js")]
             None,
             names,
             scripts,
@@ -9298,7 +9440,9 @@ fn t23_bank_observe(
             None,
             None,
             None,
+            #[cfg(feature = "js")]
             None,
+            #[cfg(feature = "js")]
             super::script_channels::BrokerWorld::Local,
             None,
             None,
@@ -9347,6 +9491,7 @@ fn t23_bank_assert_button_packet(
     );
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn compat_labelled_deposit_dispatches_the_selected_same_name_side_row() {
     use client::config::ObjType;
@@ -9894,8 +10039,15 @@ fn inspect_route_cross_zone_exemption_routes_through_the_named_barrier() {
         }
         let request: script::shim::InteractReq =
             serde_json::from_value(value).expect("inspect request decodes");
-        let bytes = script_js::wire::encode_interact_batch(&[request]);
-        script_js::wire::decode_interact_batch(&bytes).expect("inspect wire decodes")
+        #[cfg(feature = "js")]
+        {
+            let bytes = script_js::wire::encode_interact_batch(&[request]);
+            script_js::wire::decode_interact_batch(&bytes).expect("inspect wire decodes")
+        }
+        #[cfg(not(feature = "js"))]
+        {
+            vec![request]
+        }
     };
     let mut inspect = |request_id, cross| {
         let reqs = inspect_wire(request_id, cross);
@@ -10144,6 +10296,7 @@ fn dispatch_open_stand_booth_honors_name_and_operation_slot() {
     );
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn withdraw_x_composes_script_host_dialog_and_posted_inventory_result() {
     let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
@@ -11000,6 +11153,7 @@ export default class T extends LoopingBot {
 /// the amount + Enter itself, so the acknowledgment must arrive with
 /// the inventory still unchanged (the pre-repair path waited for a
 /// delta that cannot exist and posted false after the 4s bound).
+#[cfg(feature = "js")]
 #[test]
 fn raw_withdraw_x_acknowledges_the_sent_action_with_unchanged_inventory() {
     let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
@@ -11112,6 +11266,7 @@ export default class T extends LoopingBot {
 
 /// The open-only acknowledgment is bound to the accepted bank session:
 /// closing the bank before the acknowledgment pass posts false instead.
+#[cfg(feature = "js")]
 #[test]
 fn raw_withdraw_x_does_not_acknowledge_a_stale_bank_session() {
     let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
@@ -11281,6 +11436,7 @@ fn count_packet(client: &Client) -> Option<i32> {
 /// Real JS document/KeyboardEvent producer through FB dispatch into a
 /// real Client amount prompt. Digits are visible before Enter; keyup
 /// does not duplicate; inventory is not fabricated by the key path.
+#[cfg(feature = "js")]
 #[test]
 fn canvas_keyboard_types_visible_200_then_enter_on_real_client() {
     let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
@@ -11612,6 +11768,7 @@ fn canvas_keyboard_keyup_does_not_duplicate_and_second_slot_is_untouched() {
 }
 
 #[test]
+#[cfg(feature = "js")]
 fn canvas_keyboard_pause_and_hold_use_existing_interact_freeze() {
     let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
     let cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>> =
@@ -11831,6 +11988,7 @@ export default class T extends LoopingBot {
     assert_eq!(held.shell.key_held[b'2' as usize], 0);
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn canvas_keyboard_producer_leaves_pending_user_enter_untouched() {
     let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
@@ -11959,6 +12117,7 @@ fn canvas_keyboard_script_digits_do_not_advance_revision289_cyclelogic4() {
     );
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn canvas_mouse_producer_to_native_frame_center_click() {
     let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
@@ -12080,6 +12239,7 @@ fn canvas_mouse_289_down_does_not_move_pointer() {
     assert_eq!(c.shell.mouse_button, 1);
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn canvas_mouse_pause_before_consume_does_not_latch() {
     let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
@@ -12168,6 +12328,7 @@ export default class T extends LoopingBot {
     assert_eq!(c.shell.mouse_button, 0);
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn canvas_mouse_slot_pause_resume_before_frame_releases_held() {
     let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
@@ -12259,6 +12420,7 @@ export default class T extends LoopingBot {
     assert_eq!(c.shell.mouse_click_button, 0);
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn canvas_mouse_slot_stop_start_before_frame_releases_held() {
     let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
@@ -12356,6 +12518,7 @@ export default class T extends LoopingBot {
     assert_eq!(c.shell.mouse_click_button, 0);
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn canvas_mouse_delayed_old_up_does_not_release_new_hold() {
     let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
@@ -12477,6 +12640,7 @@ export default class T extends LoopingBot {
     assert_eq!(c.shell.mouse_click_x, 50);
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn canvas_mouse_parked_old_up_preserves_fresh_producer_hold() {
     let inp = SlotInput::new();
@@ -12638,6 +12802,7 @@ fn canvas_mouse_289_sample_after_down_does_not_publish_click_coords() {
     assert_eq!(c.shell.mouse_button, 1);
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn ordinary_withdraw_refusal_posts_false_to_the_isolate() {
     let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
@@ -12745,6 +12910,7 @@ export default class T extends LoopingBot {
     );
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn withdraw_x_expired_dialog_posts_failure_without_answer() {
     let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
@@ -12831,6 +12997,7 @@ fn withdraw_x_expired_dialog_posts_failure_without_answer() {
     assert_eq!(c.out.pos, before, "a changed bank session sends no count");
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn withdraw_x_same_generation_rejection_posts_false_to_the_isolate() {
     let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
@@ -13827,6 +13994,7 @@ fn dispatch_loc_legacy_without_id_keeps_first_row_behavior() {
     );
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn dispatch_loc_selected_id_survives_flatbuffer_round_trip() {
     let (_c, snap) = colocated_wall_flax(true);
@@ -14065,6 +14233,7 @@ fn dispatch_inv_button_refuses_stale_closed_missing_forged_and_invalid_op() {
     assert!(shut.menus.is_empty(), "closed bank sends nothing");
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn dispatch_inv_button_survives_flatbuffer_round_trip() {
     let mut c = same_name_bank_client();
@@ -14246,31 +14415,33 @@ fn post_snapshot_bank_side_carries_real_component_id() {
         .find(|item| item.def.id == 1)
         .expect("bank-side id 1");
     assert_eq!(side.component_id, 701);
-    let (bytes, _) = script_snapshot_fb(
-        None,
-        false,
-        1,
-        None,
-        true,
-        None,
-        Some(&snap),
-        None,
-        None,
-        false,
-        false,
-        false,
-    );
-    let view = script_js::wire::decode_snapshot(&bytes).expect("posted snap");
-    let posted = view.bank_side().expect("bank side rows");
-    assert_eq!(posted.len(), 1);
-    let row = posted.get(0);
-    assert_eq!(row.id(), 1);
-    assert_eq!(
-        row.component_id(),
-        701,
-        "posted bank_side must keep deposit component for Input.invButton"
-    );
-    let _ = &mut c;
+    #[cfg(feature = "js")]
+    {
+        let (bytes, _) = script_snapshot_fb(
+            None,
+            false,
+            1,
+            None,
+            true,
+            None,
+            Some(&snap),
+            None,
+            None,
+            false,
+            false,
+            false,
+        );
+        let view = script_js::wire::decode_snapshot(&bytes).expect("posted snap");
+        let posted = view.bank_side().expect("bank side rows");
+        assert_eq!(posted.len(), 1);
+        let row = posted.get(0);
+        assert_eq!(row.id(), 1);
+        assert_eq!(
+            row.component_id(),
+            701,
+            "posted bank_side must keep deposit component for Input.invButton"
+        );
+    }
 }
 
 fn trade_offer_client() -> Client {
@@ -17289,6 +17460,7 @@ fn bank_holds_for_test(snapshot: &GameSnapshot, id: i32) -> bool {
 
 /// Teller rows stay on the shared pack: the per-bot snapshot fingerprint
 /// does not grow when the world gains NPC stands.
+#[cfg(feature = "js")]
 #[test]
 fn packed_teller_rows_do_not_grow_script_snapshot_fingerprint() {
     fn fp_bank_bytes(fp: &script_js::wire::SnapshotFingerprint) -> usize {
@@ -17507,6 +17679,7 @@ fn script_observe_ticks_only_on_player_edge_while_up() {
     assert_eq!(*count.lock().unwrap(), 2);
 }
 
+#[cfg(feature = "js")]
 fn run_policy_test_run_button_sent(client: &Client) -> bool {
     client.out.data()[..client.out.pos]
         .windows(3)
@@ -17516,6 +17689,7 @@ fn run_policy_test_run_button_sent(client: &Client) -> bool {
         })
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn script_run_policy_override_reaches_host_auto_run_and_stop_clears_it() {
     let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
@@ -17753,6 +17927,7 @@ export default class T extends LoopingBot {
     assert_eq!(slot.lock().unwrap().state(), script::RunState::Idle);
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn script_run_policy_update_is_fenced_to_its_producer_runtime() {
     let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
@@ -18155,48 +18330,52 @@ fn projected_npc_boxes_are_lazy_for_the_isolate_snapshot_gate() {
     );
     assert_eq!(projections, 0, "compiled scripts consume no snapshots");
 
-    let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
-    let slot = script_slot_or_insert(&scripts, "alice");
-    slot.lock()
-        .unwrap()
-        .start_load_settled(
-            "export default class T extends LoopingBot { loop() {} }".to_string(),
-            script_js::LoadShape::CompatClass,
-            vec![],
-        )
-        .expect("load isolate starts");
+    #[cfg(feature = "js")]
+    {
+        let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
+        let slot = script_slot_or_insert(&scripts, "alice");
+        slot.lock()
+            .unwrap()
+            .start_load_settled(
+                "export default class T extends LoopingBot { loop() {} }".to_string(),
+                script_js::LoadShape::CompatClass,
+                vec![],
+            )
+            .expect("load isolate starts");
 
-    assert!(
-        project_npc_boxes_for_isolate_snapshot(&scripts, "alice", false, || {
-            projections += 1;
-            Some(Vec::new())
-        })
-        .is_none()
-    );
-    assert_eq!(projections, 0, "non-tick frames consume no snapshots");
+        assert!(
+            project_npc_boxes_for_isolate_snapshot(&scripts, "alice", false, || {
+                projections += 1;
+                Some(Vec::new())
+            })
+            .is_none()
+        );
+        assert_eq!(projections, 0, "non-tick frames consume no snapshots");
 
-    assert_eq!(
-        project_npc_boxes_for_isolate_snapshot(&scripts, "alice", true, || {
-            projections += 1;
-            Some(Vec::new())
-        }),
-        Some(Vec::new()),
-        "a running isolate consumes the tick-edge snapshot"
-    );
-    assert_eq!(projections, 1);
+        assert_eq!(
+            project_npc_boxes_for_isolate_snapshot(&scripts, "alice", true, || {
+                projections += 1;
+                Some(Vec::new())
+            }),
+            Some(Vec::new()),
+            "a running isolate consumes the tick-edge snapshot"
+        );
+        assert_eq!(projections, 1);
 
-    slot.lock().unwrap().pause();
-    assert!(
-        project_npc_boxes_for_isolate_snapshot(&scripts, "alice", true, || {
-            projections += 1;
-            Some(Vec::new())
-        })
-        .is_none()
-    );
-    assert_eq!(projections, 1, "paused isolates consume no snapshots");
-    slot.lock().unwrap().stop();
+        slot.lock().unwrap().pause();
+        assert!(
+            project_npc_boxes_for_isolate_snapshot(&scripts, "alice", true, || {
+                projections += 1;
+                Some(Vec::new())
+            })
+            .is_none()
+        );
+        assert_eq!(projections, 1, "paused isolates consume no snapshots");
+        slot.lock().unwrap().stop();
+    }
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn script_observe_load_isolate_still_encodes_snapshot_on_tick_edge() {
     let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
@@ -18318,6 +18497,7 @@ fn script_observe_drains_queued_cheat_onto_driver() {
 // inv rows carry resolved obj names, stats rows index/name/xp/base/effective,
 // and bank flags plus hold/ours pass through. No World clone — round-trip
 // through the script crate's decoder.
+#[cfg(feature = "js")]
 #[test]
 fn script_snapshot_fb_carries_observed_fields_and_native_combat_facts() {
     let mut c = prepare_client(
@@ -18447,6 +18627,7 @@ fn script_snapshot_fb_carries_observed_fields_and_native_combat_facts() {
     assert!(bare.ours(), "ours rides the blob for EventSignal");
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn script_snapshot_fb_projects_authoritative_bank_approach() {
     let mut c = prepare_client(
@@ -18513,7 +18694,7 @@ fn script_snapshot_fb_projects_authoritative_bank_approach() {
         "dest is not the signum stay-put tile"
     );
 }
-
+#[cfg(feature = "js")]
 #[test]
 fn native_trade_controls_reach_script_accept_through_snapshot() {
     for (root, button, hidden) in [(3323, 3420, false), (3443, 3546, false), (3323, 3420, true)] {
@@ -18784,6 +18965,7 @@ fn duel_accept_requires_empty_exact_partner_session_and_obstacle_rules() {
     assert_eq!(fresh, None, "no refused offer validates a partner");
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn script_snapshot_player_actions_preserve_native_slots() {
     fn emitted_actions(player_op: [Option<&str>; 5]) -> Vec<String> {
@@ -18854,6 +19036,7 @@ fn script_snapshot_player_actions_preserve_native_slots() {
     );
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn script_snapshot_crops_shared_canlight_from_profile_plane() {
     let mut c = prepare_client(
@@ -18979,7 +19162,7 @@ fn script_snapshot_crops_shared_canlight_from_profile_plane() {
         "missing profile plane posts empty canlight, not all-allowed"
     );
 }
-
+#[cfg(feature = "js")]
 #[test]
 fn script_snapshot_fb_posts_collision_and_los_identity() {
     use client::dash3d::CollisionFlag;
@@ -19156,7 +19339,7 @@ export function tick(api) {
     assert!(!gone.available());
     assert!(gone.flags().expect("collision flags").is_empty());
 }
-
+#[cfg(feature = "js")]
 #[test]
 fn native_chat_producer_reaches_isolate_with_request_identity() {
     let mut c = prepare_client(
@@ -19240,6 +19423,7 @@ fn native_chat_producer_reaches_isolate_with_request_identity() {
     iso.join();
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn script_snapshot_posts_current_local_overhead_and_coordinate_hint() {
     let mut c = prepare_client(
@@ -19320,6 +19504,7 @@ fn script_snapshot_posts_current_local_overhead_and_coordinate_hint() {
     assert_eq!(second.hint_tile(), None);
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn script_snapshot_posts_attacked_by_player_from_local_face() {
     let mut c = prepare_client(
@@ -19386,6 +19571,7 @@ fn script_snapshot_posts_attacked_by_player_from_local_face() {
 
 /// Tab 0 combat IF (274 unarmed layout) round-trips through the isolate
 /// blob as Aggressive, not Punch/Kick — the shim matches the style name.
+#[cfg(feature = "js")]
 #[test]
 fn script_snapshot_fb_posts_tab0_aggressive_combat_style() {
     use api::snapshot::Family;
@@ -19521,6 +19707,7 @@ fn script_snapshot_fb_posts_tab0_aggressive_combat_style() {
 }
 
 /// Hop 2 — an npc behind a wall posts `reachable: false` from SceneQuery.
+#[cfg(feature = "js")]
 #[test]
 fn script_snapshot_npc_behind_wall_posts_reachable_false() {
     use client::dash3d::{ClientNpc, ClientPlayer, CollisionFlag};
@@ -19599,6 +19786,7 @@ fn script_snapshot_npc_behind_wall_posts_reachable_false() {
 
 /// A loc on a blocked tile uses the same SceneQuery reach as npcs —
 /// never a hardcoded `reachable: false`.
+#[cfg(feature = "js")]
 #[test]
 fn script_snapshot_loc_behind_wall_posts_reachable_false() {
     use client::config::LocType;
@@ -19676,6 +19864,7 @@ fn script_snapshot_loc_behind_wall_posts_reachable_false() {
 
 /// Classic varp 172: 0 is auto-retaliate on. The posted field must
 /// match that polarity (not invert it).
+#[cfg(feature = "js")]
 #[test]
 fn script_snapshot_retaliate_enabled_is_varp_172_zero() {
     let cache = Cache {
@@ -19745,6 +19934,7 @@ fn script_snapshot_retaliate_enabled_is_varp_172_zero() {
     );
 }
 
+#[cfg(feature = "js")]
 fn prayer_overlay_game_snapshot(melee: i32, extra_nonzero: usize) -> GameSnapshot {
     const VARP_LEN: usize = 360;
     let cache = Cache {
@@ -19798,6 +19988,7 @@ fn prayer_overlay_game_snapshot(melee: i32, extra_nonzero: usize) -> GameSnapsho
     snapshot.rebuild(&c);
     snapshot
 }
+#[cfg(feature = "js")]
 
 fn publish_script_snapshot(
     last: Option<&script_js::wire::SnapshotFingerprint>,
@@ -19819,6 +20010,7 @@ fn publish_script_snapshot(
         false,
     )
 }
+#[cfg(feature = "js")]
 #[test]
 fn script_snapshot_fingerprints_modal_pages_not_chat_ring_lines() {
     let mut client = prepare_client(
@@ -19926,6 +20118,7 @@ fn script_snapshot_fingerprints_modal_pages_not_chat_ring_lines() {
     assert_eq!(view.chat_page_fingerprint(), 0);
 }
 
+#[cfg(feature = "js")]
 fn posted_varp(view: &script_js::wire::Snapshot<'_>, index: i32) -> Option<i32> {
     view.varps()?
         .iter()
@@ -19936,6 +20129,7 @@ fn posted_varp(view: &script_js::wire::Snapshot<'_>, index: i32) -> Option<i32> 
 /// Production `script_snapshot_fb` → FlatBuffer → helper must carry the
 /// selected prayer overlays including 0, and every other nonzero varp,
 /// however many there are.
+#[cfg(feature = "js")]
 #[test]
 fn script_snapshot_posts_prayer_overlay_zeros_through_isolate_under_extra_pressure() {
     let extras = 40;
@@ -20031,6 +20225,7 @@ export function tick(api) {
     iso.join();
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn script_snapshot_posts_native_quest_rows_and_clears_them_without_a_snapshot() {
     let mut c = prepare_client(
@@ -20149,6 +20344,7 @@ fn script_snapshot_posts_native_quest_rows_and_clears_them_without_a_snapshot() 
     assert!(clear.quest_statuses().is_none());
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn script_snapshot_posts_native_retaliate_control_identity() {
     let mut c = prepare_client(
@@ -20220,6 +20416,7 @@ fn script_snapshot_posts_native_retaliate_control_identity() {
 // banks. The returned fingerprint is the per-slot last-post state the
 // observe stores; banks are re-included on `force_banks` even when the
 // stand list did not change (NavWorld identity change).
+#[cfg(feature = "js")]
 #[test]
 fn script_snapshot_fb_posts_only_changed_tables() {
     let mut c = prepare_client(
@@ -20697,6 +20894,7 @@ fn welcome_hold_skips_compiled_tick_until_observed_close() {
     );
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn script_observe_posts_blob_while_held_and_skips_dispatch() {
     // Fix-round: the snapshot blob must post on the held tick edge, and
@@ -20786,6 +20984,7 @@ fn script_observe_posts_blob_while_held_and_skips_dispatch() {
         .unwrap()
         .stop();
 }
+#[cfg(feature = "js")]
 
 fn force_watchdog_sampling(slot: &mut script::SlotScript, here: (i32, i32, i32)) {
     let t = Instant::now() - script::watchdog::WEDGE;
@@ -20815,6 +21014,7 @@ fn force_watchdog_sampling(slot: &mut script::SlotScript, here: (i32, i32, i32))
     assert!(slot.watchdog().holds_script_actions());
 }
 
+#[cfg(feature = "js")]
 fn force_watchdog_recovering(slot: &mut script::SlotScript, here: (i32, i32, i32)) {
     force_watchdog_sampling(slot, here);
     assert!(matches!(
@@ -20835,6 +21035,7 @@ fn force_watchdog_recovering(slot: &mut script::SlotScript, here: (i32, i32, i32
     assert!(slot.watchdog().recovering_anchor().is_some());
 }
 
+#[cfg(feature = "js")]
 fn finish_watchdog_recovery(slot: &mut script::SlotScript, anchor: (i32, i32, i32)) {
     slot.feed_watchdog(Instant::now(), Some(anchor), &[], false, true, &[]);
     assert!(
@@ -20844,6 +21045,7 @@ fn finish_watchdog_recovery(slot: &mut script::SlotScript, anchor: (i32, i32, i3
     assert!(!slot.watchdog().holds_script_actions());
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn recovery_hold_drops_script_actions_and_keeps_paint() {
     let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
@@ -21039,6 +21241,7 @@ export default class T extends LoopingBot {
         .stop();
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn recovery_hold_freezes_parked_wait_and_resumes_once() {
     let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
@@ -21248,6 +21451,7 @@ export default class T extends LoopingBot {
         .stop();
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn sampling_anchor_hold_still_returns_async_anchor() {
     let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
@@ -21377,7 +21581,7 @@ export default class T extends LoopingBot {
         .unwrap()
         .stop();
 }
-
+#[cfg(feature = "js")]
 #[test]
 fn guardian_hold_aborts_recovery_unlike_internal_hold() {
     let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
@@ -21526,6 +21730,7 @@ fn guardian_hold_aborts_recovery_unlike_internal_hold() {
         .stop();
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn pause_clears_live_recovery_walk() {
     let mut play = run_with_io(
@@ -21628,6 +21833,7 @@ fn an_aborted_walk_ends_its_bank_fetch_session() {
     assert!(!navs["alice"].script_walk_armed());
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn operator_stop_stops_the_script_walk() {
     let mut play = run_with_io(
@@ -21665,6 +21871,7 @@ fn operator_stop_stops_the_script_walk() {
     );
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn operator_pause_stops_an_ordinary_script_walk() {
     // Frozen stops clicking at the paused await; the watchdog is Armed,
@@ -21710,6 +21917,7 @@ fn operator_pause_stops_an_ordinary_script_walk() {
     play.script_stop("alice");
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn a_script_that_stops_itself_stops_its_walk() {
     let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
@@ -21772,6 +21980,7 @@ export default class T extends LoopingBot {
     );
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn session_reset_clears_live_recovery_walk() {
     let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
@@ -21832,6 +22041,7 @@ fn session_reset_clears_live_recovery_walk() {
         .stop();
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn dirty_bank_snapshot_wakes_wait_before_watchdog_facts_are_folded() {
     let mut rig = ReconnectRig::with_source(
@@ -21910,6 +22120,7 @@ fn tick_fix_stat_and_chat_are_evidence_wake_families() {
     );
 }
 
+#[cfg(feature = "js")]
 #[derive(Clone, Copy, Debug)]
 enum TickFixEvidence {
     RouteInspect,
@@ -21918,6 +22129,7 @@ enum TickFixEvidence {
     Chat,
 }
 
+#[cfg(feature = "js")]
 fn assert_tick_fix_evidence_wake(evidence: TickFixEvidence) {
     let condition = match evidence {
         TickFixEvidence::RouteInspect => {
@@ -22058,6 +22270,7 @@ export default class T extends LoopingBot {{
     rig.slot().lock().unwrap().stop();
 }
 
+#[cfg(feature = "js")]
 fn t23_bank_wake_wait_for_bank_selection(rig: &mut ReconnectRig, tick: u64) {
     let expected_index = i32::try_from(
         rig.world
@@ -22102,21 +22315,25 @@ fn t23_bank_wake_wait_for_bank_selection(rig: &mut ReconnectRig, tick: u64) {
     );
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn tick_fix_route_inspect_completion_wakes_without_player_info() {
     assert_tick_fix_evidence_wake(TickFixEvidence::RouteInspect);
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn tick_fix_bank_selection_completion_wakes_without_player_info() {
     assert_tick_fix_evidence_wake(TickFixEvidence::BankSelection);
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn tick_fix_stat_snapshot_wakes_without_player_info() {
     assert_tick_fix_evidence_wake(TickFixEvidence::Stat);
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn tick_fix_chat_snapshot_wakes_without_player_info() {
     assert_tick_fix_evidence_wake(TickFixEvidence::Chat);
@@ -22182,15 +22399,14 @@ impl script::native::Script for SnapshotPumpScript {
 
 #[test]
 fn dirty_snapshot_pumps_compiled_without_replenishing_events() {
-    let mut rig = ReconnectRig::with_source(
-        "export default class T extends LoopingBot { loop() {} }".into(),
-        open_world(64, 64),
-        (3, 3, 0),
-    );
+    let scripts = Arc::new(Mutex::new(HashMap::new()));
+    let cheats = Arc::new(Mutex::new(HashMap::new()));
+    let (navs, world) = empty_nav();
+    let mut client = bank_client();
+    let mut snapshot = GameSnapshot::new();
+    snapshot.rebuild(&client);
     let frames = Arc::new(Mutex::new(Vec::new()));
-    rig.slot().lock().unwrap().stop();
-    rig.scripts.lock().unwrap().clear();
-    script_slot_or_insert(&rig.scripts, "alice")
+    script_slot_or_insert(&scripts, "alice")
         .lock()
         .unwrap()
         .start_test_script(
@@ -22201,29 +22417,29 @@ fn dirty_snapshot_pumps_compiled_without_replenishing_events() {
             None,
         )
         .unwrap();
-    rig.client.main_modal_id = -1;
-    rig.client.gens.iface = rig.client.gens.iface.wrapping_add(1);
-    rig.snap.rebuild(&rig.client);
+    client.main_modal_id = -1;
+    client.gens.iface = client.gens.iface.wrapping_add(1);
+    snapshot.rebuild(&client);
+
     // Compiled runs have no isolate to probe; drive the real observer directly.
-    let observe = |rig: &mut ReconnectRig, tick_edge, dirty, tick| {
+    let observe = |client: &mut Client, snapshot: &GameSnapshot, tick_edge, dirty, tick| {
         script_observe_cached_with_channels(
-            &mut rig.client,
+            client,
             "alice",
             true,
             tick_edge,
             dirty,
             tick,
-            Some(rig.here),
+            Some((3, 3, 0)),
             None,
             None,
-            Some(&rig.snap),
+            Some(snapshot),
             None,
             None,
-            None,
-            &rig.scripts,
-            &rig.cheats,
-            &rig.navs,
-            &rig.world,
+            &scripts,
+            &cheats,
+            &navs,
+            &world,
             false,
             false,
             false,
@@ -22232,20 +22448,19 @@ fn dirty_snapshot_pumps_compiled_without_replenishing_events() {
             None,
             None,
             None,
-            script_channels::BrokerWorld::Local,
             None,
             None,
             None,
             None,
         );
     };
-    observe(&mut rig, true, false, 1);
-    rig.client.main_modal_id = 600;
-    rig.client.gens.iface = rig.client.gens.iface.wrapping_add(1);
-    rig.snap.rebuild(&rig.client);
-    observe(&mut rig, false, true, 1);
-    observe(&mut rig, false, true, 1);
-    observe(&mut rig, true, false, 2);
+    observe(&mut client, &snapshot, true, false, 1);
+    client.main_modal_id = 600;
+    client.gens.iface = client.gens.iface.wrapping_add(1);
+    snapshot.rebuild(&client);
+    observe(&mut client, &snapshot, false, true, 1);
+    observe(&mut client, &snapshot, false, true, 1);
+    observe(&mut client, &snapshot, true, false, 2);
     let frames = frames.lock().unwrap();
     assert_eq!(
         frames.len(),
@@ -22271,6 +22486,7 @@ fn dirty_snapshot_pumps_compiled_without_replenishing_events() {
     );
 }
 
+#[cfg(feature = "js")]
 /// A Load script walking on a 64×64 open world, driven through
 /// `script_observe` frame by frame, for the reconnect lifecycle.
 struct ReconnectRig {
@@ -22288,6 +22504,7 @@ struct ReconnectRig {
     ready_session: std::cell::Cell<api::identity::SessionKey>,
 }
 
+#[cfg(feature = "js")]
 type ArmedWalk = (
     u64,
     Option<(
@@ -22300,6 +22517,7 @@ type ArmedWalk = (
     )>,
 );
 
+#[cfg(feature = "js")]
 impl ReconnectRig {
     fn new(x: i32, z: i32) -> Self {
         Self::with_source(walk_resilient_src(x, z, 1), open_world(64, 64), (3, 3, 0))
@@ -22654,6 +22872,7 @@ impl ReconnectRig {
     }
 }
 
+#[cfg(feature = "js")]
 /// An open `w`×`h` world whose south-west tile is `(x, z, 0)`.
 fn open_world_at(x: i32, z: i32, w: usize, h: usize) -> NavWorld {
     let mut world = open_world(w, h);
@@ -22662,6 +22881,7 @@ fn open_world_at(x: i32, z: i32, w: usize, h: usize) -> NavWorld {
 }
 
 /// A compat script that runs `body` once (in an async `loop`), recording
+#[cfg(feature = "js")]
 /// what it resolves to in `__rs_ok`.
 fn once_src(imports: &str, body: &str) -> String {
     format!(
@@ -22684,6 +22904,7 @@ export default class T extends LoopingBot {{
 }
 
 /// Pause with the rig's script walk armed, Resume, and the same walk goes
+#[cfg(feature = "js")]
 /// out once more; nothing else is walked.
 fn pause_resume_resends(rig: &mut ReconnectRig, first_tick: u64) {
     rig.frames(first_tick);
@@ -22705,6 +22926,7 @@ fn pause_resume_resends(rig: &mut ReconnectRig, first_tick: u64) {
     );
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn operator_pause_carries_the_script_walk_and_resume_sends_it_once() {
     let mut rig = ReconnectRig::new(40, 40);
@@ -22712,6 +22934,7 @@ fn operator_pause_carries_the_script_walk_and_resume_sends_it_once() {
     rig.slot().lock().unwrap().stop();
 }
 
+#[cfg(feature = "js")]
 fn manual_resume_rig() -> ReconnectRig {
     ReconnectRig::with_source(
         once_src(
@@ -22723,6 +22946,7 @@ fn manual_resume_rig() -> ReconnectRig {
     )
 }
 
+#[cfg(feature = "js")]
 fn manual_resume_click(rig: &ReconnectRig, tick: u64) -> bool {
     take_manual_walk_ownership(
         &rig.scripts,
@@ -22738,6 +22962,7 @@ fn manual_resume_click(rig: &ReconnectRig, tick: u64) -> bool {
     )
 }
 
+#[cfg(feature = "js")]
 fn arm_manual_config_recovery(rig: &mut ReconnectRig) {
     force_watchdog_sampling(&mut rig.slot().lock().unwrap(), rig.here);
     let action = rig.slot().lock().unwrap().feed_watchdog(
@@ -22771,6 +22996,7 @@ fn arm_manual_config_recovery(rig: &mut ReconnectRig) {
     );
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn manual_config_on_recovery_click_resume_never_replays_cancelled_work() {
     let mut rig = manual_resume_rig();
@@ -22844,6 +23070,7 @@ fn manual_config_on_recovery_click_resume_never_replays_cancelled_work() {
     rig.slot().lock().unwrap().stop();
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn manual_config_off_recovery_takeover_restamps_without_wedge_restart() {
     let mut rig = manual_resume_rig();
@@ -22891,6 +23118,7 @@ fn manual_config_off_recovery_takeover_restamps_without_wedge_restart() {
     rig.slot().lock().unwrap().stop();
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn manual_resume_pause_click_resume_preserves_carried_compat_walk() {
     let mut rig = manual_resume_rig();
@@ -22920,6 +23148,7 @@ fn manual_resume_pause_click_resume_preserves_carried_compat_walk() {
     rig.slot().lock().unwrap().stop();
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn manual_round3_reconnect_click_keeps_the_carried_walk_after_relog() {
     let mut rig = manual_resume_rig();
@@ -23078,6 +23307,7 @@ fn manual_round3_reconnect_click_keeps_the_carried_walk_after_relog() {
     rig.slot().lock().unwrap().stop();
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn manual_resume_click_after_resume_receipts_carried_request_once() {
     let mut rig = manual_resume_rig();
@@ -23130,6 +23360,7 @@ fn manual_resume_click_after_resume_receipts_carried_request_once() {
 
 /// Pause, Resume, Pause again before any observation, observe while
 /// paused, Resume: the walk goes out once more in all, not once per Resume.
+#[cfg(feature = "js")]
 #[test]
 fn a_rapid_pause_resume_pause_sends_the_walk_once_more() {
     let mut rig = ReconnectRig::new(40, 40);
@@ -23174,6 +23405,7 @@ fn a_rapid_pause_resume_pause_sends_the_walk_once_more() {
 /// A live watchdog recovery paused and resumed far from its anchor:
 /// Resume re-arms the recovery walk once (the idle route is not a failed
 /// walk) and the script keeps running.
+#[cfg(feature = "js")]
 #[test]
 fn a_paused_recovery_resumes_its_walk_instead_of_restarting() {
     let mut rig = ReconnectRig::with_source(
@@ -23215,6 +23447,7 @@ fn a_paused_recovery_resumes_its_walk_instead_of_restarting() {
 }
 
 /// A typed I-seat walk is cancelled on Pause and re-walked once on Resume.
+#[cfg(feature = "js")]
 #[test]
 fn a_paused_bank_access_booth_walk_resumes() {
     let mut rig = ReconnectRig::t23_bank_wake_with_source(
@@ -23393,6 +23626,7 @@ fn a_paused_bank_access_booth_walk_resumes() {
 }
 
 /// The hunt steppers' world walk (WalkToSpot).
+#[cfg(feature = "js")]
 #[test]
 fn a_paused_hunt_walk_resumes() {
     let mut rig = ReconnectRig::with_source(
@@ -23427,6 +23661,7 @@ fn a_paused_hunt_walk_resumes() {
 }
 
 /// The reach close-in walk (Reach.npcDialog with no NPC in the scene).
+#[cfg(feature = "js")]
 #[test]
 fn a_paused_reach_walk_resumes() {
     let mut rig = ReconnectRig::with_source(
@@ -23443,6 +23678,7 @@ fn a_paused_reach_walk_resumes() {
 
 /// A walk whose machine failed (its Sustain threw) was stopped for good:
 /// a later Pause and Resume do not bring it back.
+#[cfg(feature = "js")]
 #[test]
 fn a_failed_walk_is_not_resurrected_by_pause_and_resume() {
     let mut rig = ReconnectRig::with_source(
@@ -23476,6 +23712,7 @@ fn a_failed_walk_is_not_resurrected_by_pause_and_resume() {
 
 /// The player reached the walk's radius while paused: Resume sends nothing
 /// and the walk settles arrived.
+#[cfg(feature = "js")]
 #[test]
 fn arrival_while_paused_is_not_walked_again() {
     let mut rig = ReconnectRig::new(40, 40);
@@ -23498,6 +23735,7 @@ fn arrival_while_paused_is_not_walked_again() {
 /// Pause lands while the script's tick has queued its walk but before the
 /// host dispatched it: the host never started that route, so Resume sends
 /// the queued walk once and nothing more.
+#[cfg(feature = "js")]
 #[test]
 fn a_walk_queued_before_the_pause_goes_out_once_after_resume() {
     let mut rig = ReconnectRig::new(40, 40);
@@ -23514,6 +23752,7 @@ fn a_walk_queued_before_the_pause_goes_out_once_after_resume() {
     rig.slot().lock().unwrap().stop();
 }
 
+#[cfg(feature = "js")]
 fn walk_dest(
     x: i32,
     z: i32,
@@ -23538,6 +23777,7 @@ fn walk_dest(
 /// A reconnect mid-walk: the relogged session's first dispatch re-arms the
 /// walk the held script is still waiting on, under its own request id (so
 /// the wait settles on it). An operator logout carries nothing.
+#[cfg(feature = "js")]
 #[test]
 fn a_reconnect_re_arms_the_held_script_walk_on_the_relogged_session() {
     let mut rig = ReconnectRig::new(40, 40);
@@ -23568,6 +23808,7 @@ fn a_reconnect_re_arms_the_held_script_walk_on_the_relogged_session() {
 
 /// A stale queued walk cannot cross a kept reconnect. The original wait
 /// requests a new seat walk and settles after the host observes arrival.
+#[cfg(feature = "js")]
 #[test]
 fn an_undispatched_walk_before_drop_is_discarded_at_relog() {
     let mut rig = ReconnectRig::new(40, 40);
@@ -23606,6 +23847,7 @@ fn an_undispatched_walk_before_drop_is_discarded_at_relog() {
 
 /// A prior route generation can publish a terminal after a new route reused
 /// the same request id. Only a terminal from the current arm frees its slot.
+#[cfg(feature = "js")]
 #[test]
 fn stale_route_generation_does_not_free_rearmed_walk_release() {
     let mut rig = ReconnectRig::new(40, 40);
@@ -23664,6 +23906,7 @@ fn stale_route_generation_does_not_free_rearmed_walk_release() {
 /// because the scene is not ready or the welcome modal is up is a held
 /// tick, not the guardian's `SessionHeld`, so the seat is not frozen.
 /// Synthetic sequence: the rig sets the frame hold directly.
+#[cfg(feature = "js")]
 #[test]
 fn a_scene_load_hold_does_not_freeze_the_seat() {
     let mut rig = ReconnectRig::new(40, 40);
@@ -23676,6 +23919,7 @@ fn a_scene_load_hold_does_not_freeze_the_seat() {
 
 /// Round 9: the guardian hold still freezes the seat, and the freeze lifts
 /// with the hold. Synthetic sequence: the rig sets the frame hold directly.
+#[cfg(feature = "js")]
 #[test]
 fn a_guardian_hold_still_freezes_the_seat() {
     let mut rig = ReconnectRig::new(40, 40);
@@ -23694,6 +23938,7 @@ fn a_guardian_hold_still_freezes_the_seat() {
 /// after the hold dispatches it. Gameplay from the same tick stays dropped.
 /// Synthetic sequence: the two rows enter the slot's interact queue
 /// directly, as the held tick's output.
+#[cfg(feature = "js")]
 #[test]
 fn a_scene_load_hold_keeps_the_script_walk_abort_and_drops_its_gameplay() {
     let mut rig = ReconnectRig::new(40, 40);
@@ -23738,6 +23983,7 @@ fn a_scene_load_hold_keeps_the_script_walk_abort_and_drops_its_gameplay() {
 /// Frozen relogs a running or paused script whatever the auto-login
 /// checkbox says (`AutoRelogin.ts:175-190`): under the default profile
 /// (auto-login off) a drop still relogs and the script's work is held.
+#[cfg(feature = "js")]
 #[test]
 fn an_active_script_relogs_a_dropped_connection_with_auto_login_off() {
     let mut rig = ReconnectRig::new(40, 40);
@@ -23761,6 +24007,7 @@ fn an_active_script_relogs_a_dropped_connection_with_auto_login_off() {
 /// Client::login can return a dropped-session fact before the title loop
 /// mirrors a script started in-world. The exit policy is captured before
 /// SessionExited, while the actual script is sampled before work is reset.
+#[cfg(feature = "js")]
 #[test]
 fn observed_drop_keeps_a_script_started_after_the_last_title_sync() {
     let mut rig = ReconnectRig::new(40, 40);
@@ -23783,6 +24030,7 @@ fn observed_drop_keeps_a_script_started_after_the_last_title_sync() {
 
 /// The repeat guard stops reconnect attempts, not the active script. An
 /// explicit Log in clears the guard and resumes the work held at the exit.
+#[cfg(feature = "js")]
 #[test]
 fn repeat_guard_parks_without_discarding_active_script_work() {
     let mut rig = ReconnectRig::new(40, 40);
@@ -23813,6 +24061,7 @@ fn repeat_guard_parks_without_discarding_active_script_work() {
 
 /// A Logout issued after a repeat-guard park is still a deliberate session
 /// end: explicit Log in starts without the held walk from the old session.
+#[cfg(feature = "js")]
 #[test]
 fn operator_logout_while_guard_parked_discards_held_script_work() {
     let mut rig = ReconnectRig::new(40, 40);
@@ -23854,6 +24103,7 @@ fn operator_logout_while_guard_parked_discards_held_script_work() {
 
 /// Cancelling a connected Logout before it takes effect must not poison the
 /// next unrelated drop: the active run still owns and resumes its held walk.
+#[cfg(feature = "js")]
 #[test]
 fn cancelled_ingame_logout_preserves_work_on_later_unexpected_drop() {
     let mut rig = ReconnectRig::new(40, 40);
@@ -23879,6 +24129,7 @@ fn cancelled_ingame_logout_preserves_work_on_later_unexpected_drop() {
 }
 
 /// A JiveKQ-style member: the frozen card opens its party channel once, in
+#[cfg(feature = "js")]
 /// onStart (`JiveKQ.ts:99`), and never again.
 const CHANNEL_PARTY_SRC: &str = r#"
 export default class T extends LoopingBot {
@@ -23896,6 +24147,7 @@ export default class T extends LoopingBot {
 /// instead of revoking it, nothing reaches her while she is away, and her
 /// relogged session resumes it under the same run: the others' posts reach
 /// her script again.
+#[cfg(feature = "js")]
 #[test]
 fn a_reconnect_keeps_the_surviving_isolate_in_its_channel_party() {
     use script::shim::InteractReq;
@@ -23976,6 +24228,7 @@ fn a_reconnect_keeps_the_surviving_isolate_in_its_channel_party() {
 
 /// A relog only the script wanted lapses when the script stops before it
 /// happens (frozen `clearReconnect`, `AutoRelogin.ts:196-198`).
+#[cfg(feature = "js")]
 #[test]
 fn a_script_relog_lapses_when_the_script_stops_first() {
     let mut rig = ReconnectRig::new(40, 40);
@@ -23998,6 +24251,7 @@ fn a_script_relog_lapses_when_the_script_stops_first() {
 /// An operator Logout latches the slot: the drop that follows neither
 /// relogs nor holds the script's work, so a later Log in starts no
 /// carried walk.
+#[cfg(feature = "js")]
 #[test]
 fn an_operator_logout_ends_the_script_work_and_does_not_relog() {
     let mut rig = ReconnectRig::new(40, 40);
@@ -24024,6 +24278,7 @@ fn an_operator_logout_ends_the_script_work_and_does_not_relog() {
 /// Operator Pause before the drop: Pause ended the host route, so the
 /// reconnect carries nothing, and Resume sends the paused walk once from the
 /// walk wait.
+#[cfg(feature = "js")]
 #[test]
 fn pause_before_a_reconnect_resends_the_paused_walk_once_on_resume() {
     let mut rig = ReconnectRig::new(40, 40);
@@ -24047,6 +24302,7 @@ fn pause_before_a_reconnect_resends_the_paused_walk_once_on_resume() {
 
 /// Operator Pause while the reconnect holds the script: the relog does not
 /// resume it, and Resume sends the carried walk once, no other.
+#[cfg(feature = "js")]
 #[test]
 fn pause_during_a_reconnect_hold_defers_the_carried_walk_to_resume() {
     let mut rig = ReconnectRig::new(40, 40);
@@ -24069,6 +24325,7 @@ fn pause_during_a_reconnect_hold_defers_the_carried_walk_to_resume() {
     rig.slot().lock().unwrap().stop();
 }
 
+#[cfg(feature = "js")]
 const SWITCH_WORLD_COUNTER_SRC: &str = r#"
 export default class T extends LoopingBot {
     onStart() { globalThis.__starts = (globalThis.__starts || 0) + 1; }
@@ -24078,6 +24335,7 @@ export default class T extends LoopingBot {
 
 /// A clean SwitchWorld turnover keeps the same isolate and re-gates its
 /// running script when the new session becomes ready.
+#[cfg(feature = "js")]
 #[test]
 fn a_world_switch_keeps_a_running_scripts_run() {
     let mut rig = ReconnectRig::with_source(
@@ -24149,6 +24407,7 @@ fn a_world_switch_keeps_a_running_scripts_run() {
 }
 
 /// SwitchWorld must not override an operator Pause while it re-gates a run.
+#[cfg(feature = "js")]
 #[test]
 fn a_world_switch_keeps_an_operator_paused_script_paused() {
     let mut rig = ReconnectRig::with_source(
@@ -24199,6 +24458,7 @@ fn a_world_switch_keeps_an_operator_paused_script_paused() {
 
 /// Stop during the offline half of SwitchWorld ends the run before the new
 /// session can dispatch any of its actions.
+#[cfg(feature = "js")]
 #[test]
 fn a_stop_during_world_switch_does_not_resume_the_script() {
     let mut rig = ReconnectRig::new(40, 40);
@@ -24233,6 +24493,7 @@ fn a_stop_during_world_switch_does_not_resume_the_script() {
 
 /// Logout during SwitchWorld withdraws the owed fresh login and leaves the
 /// offline script paused.
+#[cfg(feature = "js")]
 #[test]
 fn a_logout_during_world_switch_withdraws_the_new_session() {
     let mut rig = ReconnectRig::with_source(
@@ -24278,6 +24539,7 @@ fn a_logout_during_world_switch_withdraws_the_new_session() {
 
 /// Removing a slot during SwitchWorld closes it before any replacement
 /// session or script run can start.
+#[cfg(feature = "js")]
 #[test]
 fn removing_a_slot_during_world_switch_stops_the_slot() {
     let mut rig = ReconnectRig::with_source(
@@ -24306,6 +24568,7 @@ fn removing_a_slot_during_world_switch_stops_the_slot() {
 
 /// Stop then Start of another script before the relog: the old run's
 /// carried walk never arms for the new run, whose own walk is the only one.
+#[cfg(feature = "js")]
 #[test]
 fn stop_and_start_before_the_relog_drop_the_old_runs_carried_walk() {
     let mut rig = ReconnectRig::new(40, 40);
@@ -24327,6 +24590,7 @@ fn stop_and_start_before_the_relog_drop_the_old_runs_carried_walk() {
 /// A runtime recreated during the hold (the watchdog restart; a runaway
 /// cut takes the same path): the old run's carried walk never arms, and
 /// the new run starts its own walk as the only chain.
+#[cfg(feature = "js")]
 #[test]
 fn a_restart_during_a_reconnect_hold_drops_the_old_runs_carried_walk() {
     let mut rig = ReconnectRig::new(40, 40);
@@ -25024,6 +25288,7 @@ fn spawned_worker_stale_code5_does_not_publish_error_or_install_backoff() {
     server.join().unwrap();
 }
 
+#[cfg(feature = "js")]
 fn start_offline_script(play: &Play) {
     script_slot_or_insert(&play.scripts, "alice")
         .lock()
@@ -25040,6 +25305,7 @@ fn start_offline_script(play: &Play) {
 /// (`AutoRelogin.ts:175-198`). A slot sitting offline with auto-login off
 /// and nothing to log in for stays on the title; a script started there
 /// (Stop→Start during an outage) logs it in on the title loop.
+#[cfg(feature = "js")]
 #[test]
 fn a_script_started_on_an_offline_slot_logs_it_in() {
     let (endpoint, attempts) = counting_login_server();
@@ -25062,6 +25328,7 @@ fn a_script_started_on_an_offline_slot_logs_it_in() {
 
 /// Turning auto-login off while a script is active keeps the login the
 /// script wants (frozen `autoLogin || scriptActive()`).
+#[cfg(feature = "js")]
 #[test]
 fn turning_auto_login_off_keeps_the_login_an_active_script_wants() {
     let (endpoint, attempts) = counting_login_server();
@@ -25121,6 +25388,7 @@ fn a_corrected_world_lets_an_auto_login_slot_log_in_after_a_world_error() {
     );
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn watchdog_restart_does_not_override_not_ready_freeze() {
     let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
@@ -25271,6 +25539,7 @@ fn identical_script_paint_skips_status_clone() {
     );
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn isolate_identical_paint_skips_status_clone_on_two_ticks() {
     let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
@@ -25569,6 +25838,7 @@ fn knock_reaches_peer_slot_while_other_slot_lock_held() {
     assert_eq!(claim, RandomClaim::Handle);
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn load_ignored_randoms_decline_only_listed_events() {
     fn production_knock(
@@ -25780,6 +26050,7 @@ fn load_ignored_randoms_decline_only_listed_events() {
     );
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn event_signal_pending_reads_true_during_dialog_hold() {
     // Task 12: the guardian's dialog hold is posted into the isolate
@@ -26221,6 +26492,7 @@ fn nav_frame_at(x: i32, z: i32) -> GameSnapshot {
     snapshot
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn raw_bank_walk_reaches_resolved_stand_before_native_v2_opens_booth() {
     let mut c = bank_client();
@@ -26461,6 +26733,7 @@ fn raw_bank_walk_reaches_resolved_stand_before_native_v2_opens_booth() {
     iso.join();
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn native_v2_open_stand_aborts_armed_walk_after_operable_neighbor() {
     let mut c = bank_client();
@@ -27203,6 +27476,7 @@ fn walk_near_follow_ends_when_here_is_within_the_requested_radius() {
     );
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn compat_walk_resilient_routes_opposite_actors_to_the_requested_center() {
     let target = WorldTile {
@@ -30100,6 +30374,7 @@ mod native_walk;
 #[path = "script_server_ordered_tests.rs"]
 mod server_ordered;
 
+#[cfg(feature = "js")]
 #[path = "script_progress_tests.rs"]
 mod script_progress;
 
@@ -30614,6 +30889,7 @@ mod host_batch_tests {
                 None,
                 Some(&self.snapshot),
                 None,
+                #[cfg(feature = "js")]
                 None,
                 None,
                 &self.scripts,
@@ -30627,7 +30903,9 @@ mod host_batch_tests {
                 None,
                 None,
                 None,
+                #[cfg(feature = "js")]
                 None,
+                #[cfg(feature = "js")]
                 super::super::script_channels::BrokerWorld::Unavailable,
                 None,
                 None,
@@ -31139,6 +31417,7 @@ mod quest_route_evidence_tests {
         snapshot
     }
 
+    #[cfg(feature = "js")]
     fn start_compat_route(
         world: Arc<NavWorld>,
         selected: Arc<api::game_data::SelectedGameData>,
@@ -31251,7 +31530,7 @@ export default class T extends LoopingBot {
             false,
         );
     }
-
+    #[cfg(feature = "js")]
     fn route_run(slot: &script::SlotScript) -> RunKey {
         slot.native_run().unwrap_or_else(|| {
             let Scope::Slot(key) = slot.work_scope().expect("slot work scope") else {
@@ -31265,6 +31544,7 @@ export default class T extends LoopingBot {
         })
     }
 
+    #[cfg(feature = "js")]
     fn start_walk(slot: &Arc<Mutex<script::SlotScript>>) {
         slot.lock()
             .unwrap()
@@ -31272,6 +31552,7 @@ export default class T extends LoopingBot {
             .expect("enable compatibility walk");
     }
 
+    #[cfg(feature = "js")]
     fn await_walk(rig: &NavRig) {
         assert!(
             wait_for_route_work(&rig.navs, "alice", |bot| {
@@ -31281,6 +31562,7 @@ export default class T extends LoopingBot {
         );
     }
 
+    #[cfg(feature = "js")]
     #[test]
     fn compatibility_queue_route_uses_only_matching_observed_complete_rows() {
         let selected = selected_r289();
@@ -31331,6 +31613,7 @@ export default class T extends LoopingBot {
         );
     }
 
+    #[cfg(feature = "js")]
     #[test]
     fn compatibility_queue_route_fails_closed_for_wrong_family_and_bad_rows() {
         let selected = selected_r289();
@@ -31932,6 +32215,7 @@ export default class T extends LoopingBot {
         );
     }
 }
+#[cfg(feature = "js")]
 mod ground_selected_identity_tests {
     use super::*;
     use script::shim::InteractReq;
