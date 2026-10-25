@@ -643,17 +643,44 @@ fn gatherer_config(revision: u64) -> Arc<PreparedConfig> {
     .unwrap()
 }
 
+const PERMISSION_TEST_ID: crate::CompiledId = crate::CompiledId("SlotPermissionsTest");
+
+struct PermissionReceiver;
+
+impl Script for PermissionReceiver {
+    fn tick(&mut self, _: &mut NativeTick<'_>) -> Result<ScriptFlow, ScriptFailure> {
+        Ok(ScriptFlow::Continue)
+    }
+
+    fn configure(&mut self, next: Arc<PreparedConfig>) -> Result<SettingsApply, ConfigError> {
+        next.get::<()>()
+            .ok_or_else(|| ConfigError::new("", "config-identity", "not permission fixture"))?;
+        Ok(SettingsApply::Applied)
+    }
+}
+
+fn start_permission_slot(slot: &mut SlotScript, bag: SettingsBag) {
+    slot.start_compiled(
+        "account",
+        PERMISSION_TEST_ID,
+        Arc::new(bag),
+        selected(),
+        Arc::default(),
+    )
+    .unwrap();
+}
+
 fn permission_config(revision: u64, allow: bool) -> Arc<PreparedConfig> {
     FamilyPreparation::run(move |worker| {
         prepare_config(
             worker,
-            crate::CompiledId("Gatherer"),
+            PERMISSION_TEST_ID,
             revision,
             Arc::new(
                 serde_json::from_value(serde_json::json!({
-                    "allowTeleports": allow,
-                    "allowWilderness": allow,
-                    "allowDangerZones": allow,
+                    "allow_teleports": allow,
+                    "allow_wilderness": allow,
+                    "allow_danger_zones": allow,
                 }))
                 .unwrap(),
             ),
@@ -670,13 +697,50 @@ fn permission_config(revision: u64, allow: bool) -> Arc<PreparedConfig> {
 
 #[test]
 fn walk_permissions_capture_start_apply_restart_and_account_isolation() {
+    const TEST_NAME: &str =
+        "slot::compiled::tests::walk_permissions_capture_start_apply_restart_and_account_isolation";
+    const CHILD_ENV: &str = "SCRIPT_SLOT_PERMISSION_TEST_CHILD";
+    if std::env::var_os(CHILD_ENV).is_none() {
+        let output =
+            std::process::Command::new(std::env::current_exe().expect("unit-test executable path"))
+                .args(["--exact", TEST_NAME, "--nocapture"])
+                .env(CHILD_ENV, "1")
+                .output()
+                .expect("run isolated registered-card permission test");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success(),
+            "isolated permission test failed\nstdout: {stdout}\nstderr: {stderr}"
+        );
+        assert!(
+            stdout.contains(&format!("test {TEST_NAME} ... ok")) && stdout.contains("1 passed"),
+            "isolated permission test did not run exactly once\nstdout: {stdout}\nstderr: {stderr}"
+        );
+        return;
+    }
+    static CARDS: [crate::native::CompiledCard; 1] = [crate::native::CompiledCard {
+        id: PERMISSION_TEST_ID,
+        prepare: |_, revision, bag| {
+            Ok(PreparedConfig::new(
+                PERMISSION_TEST_ID,
+                1,
+                revision,
+                bag,
+                (),
+            ))
+        },
+        create: |_, _, _| Ok(Box::new(PermissionReceiver)),
+        ..crate::gatherer::CARD
+    }];
+    crate::registry::install_cards(&CARDS).unwrap();
     let mut alice = SlotScript::new();
     let mut bob = SlotScript::new();
     alice.bind_incarnation(81);
     bob.bind_incarnation(82);
     let initial = permission_config(1, true);
-    start(&mut alice, initial.bag().clone());
-    start(&mut bob, SettingsBag::new());
+    start_permission_slot(&mut alice, initial.bag().clone());
+    start_permission_slot(&mut bob, SettingsBag::new());
     assert_eq!(settle(&mut alice), StartOutcome::Ready);
     assert_eq!(settle(&mut bob), StartOutcome::Ready);
     assert_eq!(
