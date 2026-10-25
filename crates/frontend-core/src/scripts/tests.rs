@@ -2629,6 +2629,67 @@ fn save_native_partner(f: &mut Fixture, name: &str, partner: &str) {
         .unwrap();
 }
 
+#[cfg(not(feature = "js"))]
+fn gatherer_native_values(
+    radius: u64,
+    allow_teleports: bool,
+    allow_wilderness: bool,
+    allow_danger_zones: bool,
+) -> Map<String, Value> {
+    bag(&[
+        ("radius", json!(radius)),
+        ("allowTeleports", json!(allow_teleports)),
+        ("allowWilderness", json!(allow_wilderness)),
+        ("allowDangerZones", json!(allow_danger_zones)),
+    ])
+}
+
+#[cfg(not(feature = "js"))]
+fn set_gatherer_config(
+    f: &mut Fixture,
+    name: &str,
+    radius: u64,
+    allow_teleports: bool,
+    allow_wilderness: bool,
+    allow_danger_zones: bool,
+) {
+    let _ = f
+        .scripts
+        .set_compiled_overrides(
+            &mut f.core,
+            name,
+            CompiledCardId::from_script(script::CompiledId("Gatherer")),
+            gatherer_native_values(
+                radius,
+                allow_teleports,
+                allow_wilderness,
+                allow_danger_zones,
+            ),
+        )
+        .unwrap();
+}
+
+#[cfg(not(feature = "js"))]
+fn gatherer_settings_record(
+    radius: u64,
+    allow_teleports: bool,
+    allow_wilderness: bool,
+    allow_danger_zones: bool,
+) -> Map<String, Value> {
+    let card = script::compiled_card(script::CompiledId("Gatherer"))
+        .expect("Gatherer is core-registered");
+    vault::CompiledSettingsRecord {
+        schema_version: card.schema_version,
+        values: gatherer_native_values(
+            radius,
+            allow_teleports,
+            allow_wilderness,
+            allow_danger_zones,
+        ),
+    }
+    .into_entry()
+}
+
 #[cfg(feature = "js")]
 #[test]
 fn compiled_restore_keeps_legacy_sherlock_permissions_and_refuses_malformed_schema() {
@@ -2920,6 +2981,99 @@ fn native_settings_wait_for_durability_and_remain_per_account() {
     assert_eq!(revision(&f, "bob"), bob_revision);
 }
 
+#[cfg(not(feature = "js"))]
+#[test]
+fn native_settings_wait_for_durability_and_remain_per_account() {
+    let mut f = native_fixture("native-durable", &["alice", "bob"]);
+    start_gatherer(&mut f, "alice");
+    start_gatherer(&mut f, "bob");
+    let revision = |f: &Fixture, name| {
+        f.core
+            .play()
+            .unwrap()
+            .script_native_settings_revision(name)
+            .unwrap()
+    };
+    let alice_original = revision(&f, "alice");
+    let bob_original = revision(&f, "bob");
+    let key = script::compiled_identity_key(script::CompiledId("Gatherer"));
+    let durable_before = f
+        .core
+        .durable_profile("alice")
+        .unwrap()
+        .settings
+        .script_settings
+        .get(&key)
+        .cloned();
+    let vault_path = f.dir.join("vault");
+    let aside = vault_path.with_extension("aside");
+    std::fs::rename(&vault_path, &aside).unwrap();
+    std::fs::create_dir(&vault_path).unwrap();
+    set_gatherer_config(&mut f, "alice", 13, true, false, false);
+    assert_eq!(
+        f.core
+            .durable_profile("alice")
+            .unwrap()
+            .settings
+            .script_settings
+            .get(&key)
+            .cloned(),
+        durable_before
+    );
+    f.core.flush_writes();
+    std::fs::remove_dir(&vault_path).unwrap();
+    std::fs::rename(&aside, &vault_path).unwrap();
+    assert_eq!(revision(&f, "alice"), alice_original);
+    assert_eq!(revision(&f, "bob"), bob_original);
+    assert_eq!(
+        f.core
+            .durable_profile("alice")
+            .unwrap()
+            .settings
+            .script_settings
+            .get(&key)
+            .cloned(),
+        durable_before
+    );
+    assert!(!f.core.take_write_failures().is_empty());
+
+    set_gatherer_config(&mut f, "alice", 14, true, false, false);
+    set_gatherer_config(&mut f, "bob", 15, false, true, true);
+    f.core.flush_writes();
+    let alice_revision = revision(&f, "alice");
+    let bob_revision = revision(&f, "bob");
+    assert!(alice_revision > alice_original);
+    assert!(bob_revision > bob_original);
+    let alice = f
+        .scripts
+        .compiled_bag(
+            &f.core,
+            "alice",
+            CompiledCardId::from_script(script::CompiledId("Gatherer")),
+        )
+        .unwrap();
+    assert_eq!(alice["radius"], json!(14));
+    assert_eq!(alice["allowTeleports"], json!(true));
+    assert_eq!(alice["allowWilderness"], json!(false));
+    assert_eq!(alice["allowDangerZones"], json!(false));
+    let bob = f
+        .scripts
+        .compiled_bag(
+            &f.core,
+            "bob",
+            CompiledCardId::from_script(script::CompiledId("Gatherer")),
+        )
+        .unwrap();
+    assert_eq!(bob["radius"], json!(15));
+    assert_eq!(bob["allowTeleports"], json!(false));
+    assert_eq!(bob["allowWilderness"], json!(true));
+    assert_eq!(bob["allowDangerZones"], json!(true));
+    set_gatherer_config(&mut f, "alice", 16, false, false, false);
+    f.core.flush_writes();
+    assert!(revision(&f, "alice") > alice_revision);
+    assert_eq!(revision(&f, "bob"), bob_revision);
+}
+
 #[cfg(feature = "js")]
 #[test]
 fn native_settings_reply_loses_to_profile_recreation() {
@@ -2935,6 +3089,39 @@ fn native_settings_reply_loses_to_profile_recreation() {
             Map::new(),
         )
         .unwrap();
+    f.core
+        .submit_detached(
+            OperatorCommand::DeleteProfile,
+            crate::Targets::Profile("alice"),
+        )
+        .unwrap()
+        .operation()
+        .expect("the delete opened an operation");
+    f.core
+        .create_profile(replacement, crate::ArmMirror::none(), "recreate")
+        .unwrap();
+    f.core.flush_writes();
+    assert!(matches!(
+        f.core.take_settings_writes().as_slice(),
+        [super::SettingsWrite {
+            result: super::SettingsResult::Superseded,
+            ..
+        }]
+    ));
+    assert_eq!(
+        f.core.durable_profile("alice").unwrap().settings,
+        ProfileSettings::default()
+    );
+}
+
+#[cfg(not(feature = "js"))]
+#[test]
+fn native_settings_reply_loses_to_profile_recreation() {
+    let mut f = native_fixture("native-stale-preparation", &["alice"]);
+    start_gatherer(&mut f, "alice");
+    let mut replacement = f.core.vault().unwrap().get("alice").unwrap().clone();
+    replacement.settings = ProfileSettings::default();
+    set_gatherer_config(&mut f, "alice", 13, true, false, false);
     f.core
         .submit_detached(
             OperatorCommand::DeleteProfile,
@@ -2994,6 +3181,60 @@ fn profile_form_save_survives_stop_and_restart_with_stale_live_delivery() {
         let saved = f.core.durable_profile("alice").unwrap();
         assert_eq!(saved.password, "updated-password");
         assert_eq!(saved.settings.clue_duel_partner, "Bob");
+        assert!(
+            matches!(f.core.take_settings_writes().as_slice(), [super::SettingsWrite {
+            op: saved_op, result, ..
+        }] if *saved_op == op && result.delivery() == Some(&super::LiveDelivery::Stale))
+        );
+    }
+}
+
+#[cfg(not(feature = "js"))]
+#[test]
+fn profile_form_save_survives_stop_and_restart_with_stale_live_delivery() {
+    let id = script::CompiledId("Gatherer");
+    let key = script::compiled_identity_key(id);
+    for restart in [false, true] {
+        let mut f = native_fixture("native-form-control-race", &["alice"]);
+        start_gatherer(&mut f, "alice");
+        let mut row = f.core.vault().unwrap().get("alice").unwrap().clone();
+        row.password = "updated-password".into();
+        row.settings
+            .script_settings
+            .insert(key.clone(), gatherer_settings_record(13, true, false, true));
+        let live = f
+            .scripts
+            .profile_save_live(&f.core, "alice", &row.settings)
+            .unwrap();
+        let op = f
+            .core
+            .save_profile(row, crate::ArmMirror::remember(Some(live)), "form")
+            .unwrap();
+        f.core.stop_script("alice");
+        if restart {
+            f.core
+                .start_script(
+                    "alice",
+                    crate::ScriptStart::compiled(CompiledCardId::from_script(id), Map::new()),
+                    None,
+                )
+                .unwrap();
+        }
+        f.core.flush_writes();
+        let saved = f.core.durable_profile("alice").unwrap();
+        assert_eq!(saved.password, "updated-password");
+        assert_eq!(
+            saved.settings.script_settings[&key]["values"]["radius"],
+            json!(13)
+        );
+        assert_eq!(
+            saved.settings.script_settings[&key]["values"]["allowTeleports"],
+            json!(true)
+        );
+        assert_eq!(
+            saved.settings.script_settings[&key]["values"]["allowDangerZones"],
+            json!(true)
+        );
         assert!(
             matches!(f.core.take_settings_writes().as_slice(), [super::SettingsWrite {
             op: saved_op, result, ..
@@ -3203,6 +3444,44 @@ fn rejected_native_live_preparation_does_not_reject_profile_form_durability() {
     ));
 }
 
+#[cfg(not(feature = "js"))]
+#[test]
+fn rejected_native_live_preparation_does_not_reject_profile_form_durability() {
+    let mut f = native_fixture("native-form-preparation-failure", &["alice"]);
+    start_gatherer(&mut f, "alice");
+    let mut row = f.core.vault().unwrap().get("alice").unwrap().clone();
+    row.password = "new-password".into();
+    let key = script::compiled_identity_key(script::CompiledId("Gatherer"));
+    row.settings
+        .script_settings
+        .insert(key.clone(), gatherer_settings_record(13, false, true, false));
+    let mut live = f
+        .scripts
+        .profile_save_live(&f.core, "alice", &row.settings)
+        .unwrap();
+    live.bag = std::sync::Arc::new(bag(&[("unknown", json!(1))]));
+    f.core
+        .save_profile(row, crate::ArmMirror::remember(Some(live)), "form")
+        .unwrap();
+    f.core.flush_writes();
+    let disk = Vault::unlock(&f.dir.join("vault"), "test-passphrase-01").unwrap();
+    let saved = disk.get("alice").unwrap();
+    assert_eq!(saved.password, "new-password");
+    assert_eq!(
+        saved.settings.script_settings[&key]["values"]["radius"],
+        json!(13)
+    );
+    assert_eq!(
+        saved.settings.script_settings[&key]["values"]["allowWilderness"],
+        json!(true)
+    );
+    assert!(matches!(
+        f.core.take_settings_writes().as_slice(),
+        [super::SettingsWrite { result, .. }]
+            if result.delivery().and_then(|live| live.rejection()).is_some()
+    ));
+}
+
 #[cfg(feature = "js")]
 #[test]
 fn durable_native_reply_never_configures_a_replacement_run() {
@@ -3249,6 +3528,54 @@ fn durable_native_reply_never_configures_a_replacement_run() {
             .script_native_settings_revision("alice"),
         Some(1)
     );
+}
+
+#[cfg(not(feature = "js"))]
+#[test]
+fn durable_native_reply_never_configures_a_replacement_run() {
+    let mut f = native_fixture("native-stale-durable", &["alice"]);
+    start_gatherer(&mut f, "alice");
+    let old = f.core.play().unwrap().script_native_run("alice").unwrap();
+    let gate = f.core.write_gate();
+    let held = gate.lock().unwrap();
+    let id = script::CompiledId("Gatherer");
+    let key = script::compiled_identity_key(id);
+    let durable_before = f.saved_bag("alice", &key);
+    set_gatherer_config(&mut f, "alice", 13, true, true, false);
+    pump_core_until(&mut f.core, "validated edit was never staged", |core| {
+        core.vault()
+            .unwrap()
+            .get("alice")
+            .unwrap()
+            .settings
+            .script_settings
+            .get(&key)
+            .and_then(|entry| vault::CompiledSettingsRecord::view(entry).ok())
+            .is_some_and(|(_, values)| {
+                values.get("radius").and_then(Value::as_u64) == Some(13)
+                    && values.get("allowWilderness").and_then(Value::as_bool) == Some(true)
+            })
+    });
+    assert_eq!(f.saved_bag("alice", &key), durable_before);
+    f.core.stop_script("alice");
+    f.scripts.start_profile(&mut f.core, "alice", None).unwrap();
+    f.settle();
+    assert_ne!(f.core.play().unwrap().script_native_run("alice"), Some(old));
+    drop(held);
+    f.core.flush_writes();
+    assert!(matches!(
+        f.core.take_settings_writes().as_slice(),
+        [super::SettingsWrite { result, .. }]
+            if result.delivery() == Some(&super::LiveDelivery::Stale)
+    ));
+    assert_eq!(
+        f.core
+            .play()
+            .unwrap()
+            .script_native_settings_revision("alice"),
+        Some(1)
+    );
+    assert_eq!(f.saved_bag("alice", &key), durable_before);
 }
 
 #[test]
