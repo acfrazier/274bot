@@ -38,14 +38,18 @@ const KQ_LAIR: WorldTile = WorldTile {
 /// `restock_overlap`, a chance interleaving that is now an
 /// observation, not a gate (see [`KqFleetWitness::complete`]).
 /// A run that meets every gated term no longer waits for it.
-/// Only completed runs of the observation-only witness size this value:
-/// round 2 (`319e12b74`, `JIVE-KQ-1024/fix-r2/watchdog-r2.json`) passed in
-/// 1,483.755, 1,601.719, 1,744.640 and 1,576.639 s. 2,094 s is the slowest
-/// of those plus 20 %, rounded up (1,744.640 × 1.2 = 2,093.568); 1,800 s
-/// left 3 % headroom (Grok review round 2).
+/// Only completed runs of the observation-only witness size this value.
+/// Round 2 (`319e12b74`, `JIVE-KQ-1024/fix-r2/watchdog-r2.json`) passed in
+/// 1,483.755, 1,601.719, 1,744.640 and 1,576.639 s; a measurement series
+/// with the watchdog raised to 3,600 s (`ca840ae7e`,
+/// `JIVE-KQ-1024/measure/watchdog-measure.json`) passed in 1,585.567,
+/// 1,554.588, 2,163.141 and 1,334.132 s. Elapsed time follows kills per
+/// slot inside the two trips (three kills at 1,334 s, five or six at
+/// 2,163 s). 2,596 s is the slowest completed run plus 20 %, rounded up
+/// (2,163.141 × 1.2 = 2,595.769); 2,094 s would have cut off that run.
 /// The content gives no hard upper bound: fight length and the
 /// local-visibility witness terms can require a third trip.
-const KQ_WATCHDOG: Duration = Duration::from_secs(2_094);
+const KQ_WATCHDOG: Duration = Duration::from_secs(2_596);
 /// Selected-revision Kalphite Queen drops which cannot be confused with the
 /// seeded loadout. Ammunition is deliberately excluded: recovered arrows
 /// are not boss-loot evidence. Banking a listed drop is an observation,
@@ -3130,11 +3134,6 @@ mod kq_finish_tests {
             "the driven close is the last step before the proof"
         );
         assert_eq!(scenario.proof, Proof::BankClosed);
-        assert_eq!(
-            scenario.settings.deadline,
-            std::time::Duration::from_secs(2_094),
-            "watchdog is the slowest round-2 completed pass plus 20 % (KQ_WATCHDOG)"
-        );
     }
 
     /// The terminal summary names the unmet fleet phases and per-slot
