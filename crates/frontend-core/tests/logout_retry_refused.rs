@@ -11,8 +11,12 @@
 //! TUI key submit, then the Fleet Log out plan):
 //! 1. bob's login is refused and retried: at least two attempts arrive, and
 //!    Log out is eligible in every state the retry loop passes through.
-//! 2. Log out parks bob logged out; no further attempt reaches the listener
-//!    for longer than the next backoff step.
+//! 2. Log out parks bob logged out. Accepts are counted from the moment Log
+//!    out is sent, with no settling period: at most one is allowed (an
+//!    attempt that had already passed the host's pre-connect check may still
+//!    open one socket inside the client connect, and the client closes it
+//!    at once: `vendor/fr-client-rust/crates/client/src/io/client_stream.rs:760-768,810-811`),
+//!    and none for the rest of a window longer than the next backoff step.
 //!
 //! alice never logs in and is never eligible.
 
@@ -28,9 +32,13 @@ use frontend_core::{
 use vault::{Profile, ProfileSettings, Vault};
 
 const FRAME: Duration = Duration::from_millis(20);
-/// Longer than the host's second retry backoff (about 9 s), so a worker
-/// that was still retrying would attempt again inside it.
+/// The window after Log out is sent. It is longer than the host's second
+/// retry backoff (about 9 s), so a worker that was still retrying would
+/// attempt again inside it.
 const QUIET: Duration = Duration::from_secs(20);
+/// Accepts allowed inside that window: the one attempt that was already in
+/// flight when Log out was sent.
+const IN_FLIGHT: usize = 1;
 
 fn endpoint() -> (SocketAddr, Arc<AtomicUsize>) {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
@@ -81,8 +89,8 @@ fn poll_until(
 }
 
 /// Log bob in against the endpoint, let two attempts arrive, check Log out
-/// is eligible in every state on the way, then `log_out`; afterwards no
-/// attempt arrives for [`QUIET`].
+/// is eligible in every state on the way, then `log_out`; for [`QUIET`]
+/// after it is sent at most [`IN_FLIGHT`] attempt arrives.
 fn one_path(
     driver: &mut HeadlessDriver,
     attempts: &AtomicUsize,
@@ -104,7 +112,7 @@ fn one_path(
                 states.push(phase);
             }
             assert!(
-                eligibility.eligible() || matches!(phase, Phase::Offline | Phase::LoggedOut),
+                eligibility.eligible(),
                 "{path}: a bot whose login is retrying must be eligible in {phase:?}"
             );
         },
@@ -128,40 +136,42 @@ fn one_path(
         "{path}: alice never logged in"
     );
 
+    // Count accepts from the moment Log out is sent: the window opens before
+    // the command, nothing is discarded.
+    let at_logout = attempts.load(Ordering::SeqCst);
+    let sent = Instant::now();
     log_out(driver);
-    poll_until(
-        driver,
-        Duration::from_secs(10),
-        "bob is parked logged out",
-        |_| {},
-        |driver| row(driver, "bob").0 == Phase::LoggedOut,
-    );
-    assert_eq!(row(driver, "bob").1, LogoutEligibility::NotLoggedIn);
-    // An attempt already in flight may still arrive; none starts after.
-    let settle = Instant::now();
-    while settle.elapsed() < Duration::from_secs(1) {
+    let mut parked = false;
+    let mut accepted_at = vec![];
+    while sent.elapsed() < QUIET {
         driver.poll();
-        std::thread::park_timeout(FRAME);
-    }
-    let settled = attempts.load(Ordering::SeqCst);
-    let quiet = Instant::now();
-    while quiet.elapsed() < QUIET {
-        driver.poll();
-        assert_eq!(
-            row(driver, "bob").0,
-            Phase::LoggedOut,
-            "{path}: bob stays parked"
+        let (phase, _) = row(driver, "bob");
+        parked |= phase == Phase::LoggedOut;
+        if parked {
+            assert_eq!(phase, Phase::LoggedOut, "{path}: bob stays parked");
+        } else {
+            assert!(
+                sent.elapsed() < Duration::from_secs(10),
+                "{path}: bob is parked logged out ({phase:?})"
+            );
+        }
+        let since = attempts.load(Ordering::SeqCst) - at_logout;
+        if since > accepted_at.len() {
+            accepted_at.push(sent.elapsed());
+        }
+        assert!(
+            since <= IN_FLIGHT,
+            "{path}: {since} accepts after Log out was sent (at {accepted_at:?}); \
+             at most {IN_FLIGHT} may be the attempt already in flight"
         );
         std::thread::park_timeout(FRAME);
     }
-    let after = attempts.load(Ordering::SeqCst);
+    assert!(parked, "{path}: bob was never parked");
+    assert_eq!(row(driver, "bob").1, LogoutEligibility::NotLoggedIn);
     println!(
-        "{path}: settled={settled} after_{}s={after}",
+        "{path}: accepts_after_logout={} at={accepted_at:?} window={}s",
+        attempts.load(Ordering::SeqCst) - at_logout,
         QUIET.as_secs()
-    );
-    assert_eq!(
-        after, settled,
-        "{path}: a login attempt arrived after Log out parked bob"
     );
 }
 
