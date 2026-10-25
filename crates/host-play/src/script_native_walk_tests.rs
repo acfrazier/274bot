@@ -4232,7 +4232,7 @@ fn takeover_is_taken_for_a_live_native_owner_without_a_walk() {
     {
         let slot = slot.lock().unwrap();
         assert!(!slot.live_walking_operation());
-        assert!(!slot.load_active());
+        assert!(!slot.surface_active());
     }
     assert!(!rig.navs.lock().unwrap()["alice"].walk_work_live());
     let before = rig.navs.lock().unwrap()["alice"].walk_outcome_seq;
@@ -4302,16 +4302,24 @@ fn takeover_is_refused_for_an_absent_revoked_or_completed_owner() {
 fn in_place_load_rig() -> Rig {
     let mut rig = open_rig(false);
     rig.slot().lock().unwrap().stop();
-    rig.slot()
-        .lock()
-        .unwrap()
-        .start_load(
+    let start = crate::script_runtime::js_surface_start(
+        crate::script_runtime::js_start_card(
             "export function tick(api) { globalThis.s2Ticks = (globalThis.s2Ticks || 0) + 1; }"
                 .into(),
             script::LoadShape::NativeTick,
             Vec::new(),
-        )
-        .unwrap();
+        ),
+        None,
+        None,
+        Arc::new(api::named_banks::NamedBankFacts::empty()),
+        Arc::from(Vec::<api::loadout::Loadout>::new()),
+    );
+    {
+        let slot = rig.slot();
+        let mut slot = slot.lock().unwrap();
+        slot.bind_surface_factory(Arc::new(script::load::surface::JsSurfaceFactory::default()));
+        slot.start_surface(start).unwrap();
+    }
     rig.slot().lock().unwrap().probe("true").unwrap();
     rig.observe(1);
     rig.slot().lock().unwrap().probe("true").unwrap();
@@ -5788,8 +5796,8 @@ fn s2b_admission_per_bot_layouts() {
     // SURVIVAL-1.4 adds one byte of cure_poison, padded to 8 by alignment: NavBot is 3784 B.
     // Rust 1.98.1 is pinned for the workspace and CI. These are lib-test
     // layouts: test-only inspection budgets and bank fixtures are included.
-    // Linux's std::sync::Mutex is 8 B smaller than macOS's for each of the
-    // fifteen inline LoadIsolate mutexes, so SlotScript is 120 B smaller.
+    // S0c moves the platform-specific isolate mutexes into the surface run.
+    // The shared 64-bit slot layout no longer contains those mutexes.
     #[cfg(all(
         target_os = "macos",
         target_arch = "aarch64",
@@ -5802,7 +5810,7 @@ fn s2b_admission_per_bot_layouts() {
             std::mem::size_of::<script::combat::Combat>(),
             std::mem::size_of::<script::combat::WalkGuard>()
         ),
-        (3784, 4616, 512, 264)
+        (3784, 1608, 512, 264)
     );
     #[cfg(all(
         target_os = "linux",
@@ -5817,7 +5825,7 @@ fn s2b_admission_per_bot_layouts() {
             std::mem::size_of::<script::combat::Combat>(),
             std::mem::size_of::<script::combat::WalkGuard>()
         ),
-        (3784, 4496, 512, 264)
+        (3784, 1608, 512, 264)
     );
     assert!(std::mem::size_of::<script::combat::Combat>() <= 512);
     assert!(std::mem::size_of::<script::combat::WalkGuard>() <= 264);
@@ -6038,8 +6046,8 @@ mod s2b_admission_contract {
                 },
             ]);
             assert_eq!(
-                rig.slot().lock().unwrap().api_family(),
-                Some(script::ApiFamily::V1)
+                rig.slot().lock().unwrap().surface_family(),
+                Some(script::surface::SurfaceFamily::JsV1)
             );
             rig.frames(1);
             assert!(rig.wait_for_route_work(5_000, || rig
@@ -6096,8 +6104,8 @@ mod s2b_admission_contract {
         nav_snapshot_at(&mut rig.client, &mut rig.snap, 0, 0);
         observed_loadout(&mut rig.snap);
         assert_eq!(
-            rig.slot().lock().unwrap().api_family(),
-            Some(script::ApiFamily::V1)
+            rig.slot().lock().unwrap().surface_family(),
+            Some(script::surface::SurfaceFamily::JsV1)
         );
         rig.t23_bank_frame(1, true);
         assert!(rig.wait_for_route_work(5_000, || rig
@@ -6418,15 +6426,18 @@ mod s2b_admission_contract {
             ));
         };
 
-        slot.lock()
-            .unwrap()
-            .start_load_with_loadouts(
+        let start = crate::script_runtime::js_surface_start(
+            crate::script_runtime::js_start_card(
                 "export function tick(api) {}".into(),
                 script::LoadShape::NativeTick,
                 Vec::new(),
-                &[],
-            )
-            .unwrap();
+            ),
+            None,
+            None,
+            Arc::new(api::named_banks::NamedBankFacts::empty()),
+            Arc::from(Vec::<api::loadout::Loadout>::new()),
+        );
+        slot.lock().unwrap().start_surface(start).unwrap();
         assert_frozen(script::RunState::Starting);
         assert!(wait_until(5_000, || {
             let mut slot = slot.lock().unwrap();

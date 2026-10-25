@@ -4,16 +4,16 @@ use rustyscript::Module;
 /// relative rs2b0t imports (`../../api/...`) resolve to the same shim
 /// URLs no matter which script loaded; it is a synthetic specifier only
 /// (nothing is read from `/rs2b0t` on this machine).
-pub(crate) const BOT_MODULE: &str = "/rs2b0t/bot/scripts/bot/bot.js";
+pub const BOT_MODULE: &str = "/rs2b0t/bot/scripts/bot/bot.js";
 /// Canonical path of the shape wrapper that imports `./bot.js`.
-pub(crate) const MAIN_MODULE: &str = "/rs2b0t/bot/scripts/bot/main.js";
+pub const MAIN_MODULE: &str = "/rs2b0t/bot/scripts/bot/main.js";
 
 /// The prelude eval'd into every isolate before any module loads: the host
 /// handle, the bot base classes, `defineBot`, and a recording canvas ctx for
 /// `onPaint`. The compat shapes and the shim modules rely on these
 /// globals. The classes live here (not in a module) so `extends` and
 /// `instanceof` agree with the tick wrapper; `Bot.js` re-exports them.
-pub(crate) const PRELUDE: &str = r#"
+pub const PRELUDE: &str = r#"
 globalThis.__rs2b0t_host = {};
 globalThis.__rs2b0t_channel_next = 1;
 globalThis.__rs2b0t_channels = new Map();
@@ -509,7 +509,7 @@ globalThis.document = {
 /// real rs2b0t tree under `src/bot/` (scripts live at
 /// `src/bot/scripts/<N>/`, so `../../api/...` from a script resolves to
 /// `src/bot/api/...`, and the adapter lives at `src/bot/adapter/`).
-pub(crate) fn shim_modules() -> Vec<Module> {
+pub fn shim_modules() -> Vec<Module> {
     vec![
         // `_kernel.js` imports the Execution park for `runMachine`.
         Module::new(
@@ -966,6 +966,6 @@ pub(crate) fn remap_hash_bot(source: &str) -> String {
 
 /// Catalog import rewrites that must happen before rustyscript resolves
 /// the bot (and any scripts-folder siblings).
-pub(crate) fn remap_catalog_imports(source: &str) -> String {
+pub fn remap_catalog_imports(source: &str) -> String {
     remap_hash_bot(&remap_rs2b0t_api(source))
 }

@@ -1,4 +1,30 @@
+use std::sync::Arc;
+
 use script::load::{LoadIsolate, LoadShape};
+
+fn start_js_surface(
+    slot: &mut script::SlotScript,
+    source: &str,
+    shape: LoadShape,
+) -> Result<(), script::slot::StartLoadError> {
+    let source = Arc::<str>::from(source);
+    let family = script::resolve_api_family(&source)
+        .ok()
+        .map(|(_, family)| family);
+    slot.bind_surface_factory(Arc::new(script::load::surface::JsSurfaceFactory::default()));
+    slot.start_surface(script::surface::SurfaceStart {
+        card: Arc::new(script::load::surface::JsStartCard {
+            source,
+            shape,
+            siblings: Arc::<[(String, String)]>::from([]),
+            family,
+        }),
+        settings_bag: None,
+        game_data: None,
+        named_banks: Arc::new(api::named_banks::NamedBankFacts::empty()),
+        loadouts: Arc::<[api::loadout::Loadout]>::from([]),
+    })
+}
 
 fn spawn_task_bot(source: &str) -> LoadIsolate {
     LoadIsolate::spawn(source.to_string(), LoadShape::CompatClass, vec![])
@@ -179,8 +205,7 @@ export default class T extends TaskBot {
 }
 "#;
     let mut slot = script::SlotScript::new();
-    slot.start_load(source.to_string(), LoadShape::CompatClass, vec![])
-        .expect("start TaskBot slot");
+    start_js_surface(&mut slot, source, LoadShape::CompatClass).expect("start TaskBot slot");
     // Start returns before V8 setup; ticks dispatch once the slot is Running.
     wait_slot_state(&mut slot, script::RunState::Running);
     let mut driver = NullDriver { out: NullOut };

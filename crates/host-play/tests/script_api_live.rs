@@ -725,7 +725,11 @@ const RUNTIME_SOURCE: &str = r#"
 export const apiVersion = 2;
 let ticks = 0;
 export function tick(api) {
-  if (++ticks === 1) api.log('runtime-started');
+  if (++ticks === 1) {
+    const keep = api.combatKeepNames({ food: 'Trout', style: 'melee', extra: ['Coins'] });
+    api.log('runtime-keep: ' + JSON.stringify(keep));
+    api.log('runtime-started');
+  }
 }
 "#;
 
@@ -749,6 +753,12 @@ fn runtime_cell(restart: bool) {
             play.script_state(&account) == script::RunState::Running
                 && logs.iter().any(|line| line.contains("runtime-started"))
         });
+        let keep = logged(&logs, "runtime-keep: ");
+        assert_eq!(keep["ok"], true, "{keep}");
+        let names = keep["value"].as_array().expect("native keep-list result");
+        // `keep_list::food_forms` lowercases food names; extras retain their spelling.
+        assert!(names.iter().any(|name| name == "trout"), "{keep}");
+        assert!(names.iter().any(|name| name == "Coins"), "{keep}");
         observed_logs.push(logs);
         play.script_stop(&account);
         wait_for(&play, &account, &fixture, Duration::from_secs(30), |play| {

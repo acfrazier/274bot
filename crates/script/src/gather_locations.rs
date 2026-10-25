@@ -8,10 +8,10 @@ use std::borrow::Cow;
 use std::convert::Infallible;
 use std::ops::ControlFlow;
 
-pub(crate) const DEFAULT_BOOTH_NAME: &str = "Bank booth";
-pub(crate) const DEFAULT_BOOTH_OP: &str = "Use-quickly";
-pub(crate) const MAP_SQUARE: f64 = 64.0;
-pub(crate) const OPTION_PREFIX: [&str; 5] = [
+pub const DEFAULT_BOOTH_NAME: &str = "Bank booth";
+pub const DEFAULT_BOOTH_OP: &str = "Use-quickly";
+pub const MAP_SQUARE: f64 = 64.0;
+pub const OPTION_PREFIX: [&str; 5] = [
     "Auto",
     "Use Closest",
     "Use Start Position",
@@ -19,7 +19,7 @@ pub(crate) const OPTION_PREFIX: [&str; 5] = [
     "None",
 ];
 const CUSTOM_POSITION: &str = "use custom position";
-pub(crate) const MAX_ALIAS_LEN: usize = CUSTOM_POSITION.len();
+pub const MAX_ALIAS_LEN: usize = CUSTOM_POSITION.len();
 
 /// The immutable facts required from a native preset row.
 pub trait Location {
@@ -28,7 +28,7 @@ pub trait Location {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Resolution {
+pub enum Resolution {
     Freeform,
     Closest,
     Auto,
@@ -37,7 +37,7 @@ pub(crate) enum Resolution {
 
 /// The caller supplies equality so V8 can keep its original normalized value,
 /// including non-string results from a caller's `toLowerCase` method.
-pub(crate) fn resolution(mut equals: impl FnMut(&str) -> bool) -> Resolution {
+pub fn resolution(mut equals: impl FnMut(&str) -> bool) -> Resolution {
     if equals(CUSTOM_POSITION) || equals("use start position") {
         Resolution::Freeform
     } else if equals("use closest") {
@@ -50,13 +50,13 @@ pub(crate) fn resolution(mut equals: impl FnMut(&str) -> bool) -> Resolution {
 }
 
 #[derive(Clone, Copy)]
-pub(crate) enum Axis {
+pub enum Axis {
     X,
     Z,
 }
 
 /// Keep the same level/x/z short circuit for native tiles and foreign getters.
-pub(crate) fn same_square_with<E>(
+pub fn same_square_with<E>(
     same_level: bool,
     mut same_chunk: impl FnMut(Axis) -> Result<bool, E>,
 ) -> Result<bool, E> {
@@ -82,11 +82,11 @@ pub fn location_options<'a, T: Location + 'a>(rows: &'a [T]) -> impl Iterator<It
         .chain(rows.iter().map(|row| row.name()))
 }
 
-pub(crate) fn booth_name<T>(value: Option<T>, default: impl FnOnce(&'static str) -> T) -> T {
+pub fn booth_name<T>(value: Option<T>, default: impl FnOnce(&'static str) -> T) -> T {
     value.unwrap_or_else(|| default(DEFAULT_BOOTH_NAME))
 }
 
-pub(crate) fn booth_op<T>(value: Option<T>, default: impl FnOnce(&'static str) -> T) -> T {
+pub fn booth_op<T>(value: Option<T>, default: impl FnOnce(&'static str) -> T) -> T {
     value.unwrap_or_else(|| default(DEFAULT_BOOTH_OP))
 }
 
@@ -96,7 +96,7 @@ pub fn booth_fields<'a>(name: Option<&'a str>, op: Option<&'a str>) -> (&'a str,
 }
 
 /// The planar bank-distance calculation also used by the Load bank adapter.
-pub(crate) fn distance_delta(dx: f64, dz: f64) -> f64 {
+pub fn distance_delta(dx: f64, dz: f64) -> f64 {
     dx.hypot(dz)
 }
 
@@ -124,7 +124,7 @@ impl Nearest {
 
 /// Pool access stays with its owner: borrowed native rows or observable V8
 /// methods/getters. The driver below alone selects the pool and ranks rows.
-pub(crate) trait Resolver {
+pub trait Resolver {
     type Pool;
     type Row;
     type Error;
@@ -141,7 +141,7 @@ pub(crate) trait Resolver {
     fn find_named(&mut self) -> Result<Option<Self::Row>, Self::Error>;
 }
 
-pub(crate) fn resolve_with<R: Resolver>(
+pub fn resolve_with<R: Resolver>(
     mode: Resolution,
     resolver: &mut R,
 ) -> Result<Option<R::Row>, R::Error> {

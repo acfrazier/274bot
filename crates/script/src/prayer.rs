@@ -170,7 +170,7 @@ impl Clear {
         }
         if let Some(click) = data.and_then(|data| self.sweep.candidates(data, obs).next()) {
             cx.emit(InteractReq::IfButton {
-                component_id: click.button_com,
+                component_id: click.button_com(),
             });
             cx.clock().arm(TOGGLE_MS);
             debug_assert!(self.sweep.accepted(click));

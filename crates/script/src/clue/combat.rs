@@ -44,15 +44,23 @@ pub(crate) enum Encounter {
 /// One combat hand-off. The only reader of the verb's fields, and the only
 /// place the guardian/keeper radii live.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct Delegation {
-    pub id: u32,
-    pub npc_type: i32,
+pub struct Delegation {
+    pub(crate) id: u32,
+    pub(crate) npc_type: i32,
     stand: Tile,
-    pub encounter: Encounter,
+    encounter: Encounter,
 }
 
 impl Delegation {
-    pub(crate) fn parse(verb: &Value) -> Option<Self> {
+    pub const fn id(&self) -> u32 {
+        self.id
+    }
+
+    pub const fn npc_type(&self) -> i32 {
+        self.npc_type
+    }
+
+    pub fn parse(verb: &Value) -> Option<Self> {
         if verb.get("kind").and_then(Value::as_str) != Some("combat") {
             return None;
         }
@@ -83,7 +91,7 @@ impl Delegation {
         })
     }
 
-    pub(crate) fn request(&self) -> CombatRequest {
+    pub fn request(&self) -> CombatRequest {
         let (engage_radius, lost_radius) = match self.encounter {
             Encounter::Guardian => (GUARDIAN_RADIUS as u8, GUARDIAN_RADIUS as u8),
             Encounter::Keeper => (ARRIVE_RADIUS as u8, GUARDIAN_RADIUS as u8),
@@ -152,7 +160,7 @@ const REASON_PREP_STYLE_ECHO_MISSING: u8 = 13;
 /// Compact combat report for the `combat` page field. Built by the driver
 /// from `Poll::Ready`; the machine only reads the JSON.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct Outcome {
+pub struct Outcome {
     id: u32,
     engaged_type: i32,
     ticks: u16,
@@ -163,7 +171,7 @@ pub(crate) struct Outcome {
 const _: () = assert!(std::mem::size_of::<Outcome>() <= 24);
 
 impl Outcome {
-    pub(crate) fn from_poll(id: u32, result: Result<CombatReport, ActionError>) -> Self {
+    pub fn from_poll(id: u32, result: Result<CombatReport, ActionError>) -> Self {
         match result {
             Ok(report) => Self::from_report(id, report),
             Err(ActionError::Cancelled | ActionError::Stale) => Self::cancelled(id),
@@ -190,7 +198,7 @@ impl Outcome {
         }
     }
 
-    pub(crate) fn cancelled(id: u32) -> Self {
+    pub fn cancelled(id: u32) -> Self {
         Self {
             id,
             engaged_type: -1,
@@ -210,7 +218,7 @@ impl Outcome {
         }
     }
 
-    pub(crate) fn failed(id: u32) -> Self {
+    pub fn failed(id: u32) -> Self {
         Self {
             id,
             engaged_type: -1,
@@ -220,7 +228,7 @@ impl Outcome {
         }
     }
 
-    pub(crate) fn page(self) -> Value {
+    pub fn page(self) -> Value {
         let mut page = json!({
             "id": self.id,
             "end": self.end_str(),

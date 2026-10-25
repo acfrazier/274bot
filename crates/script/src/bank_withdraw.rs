@@ -136,8 +136,8 @@ impl WithdrawTo {
     /// Send the labelled withdraw and wait for it; its result is not read.
     fn withdraw_op(&mut self, label: &'static str, before: f64, cx: &mut Cx<'_>) {
         let mut args = BankSeatArgs::new(BankSeatOperation::WithdrawLabel);
-        args.item_name = Some(self.name.clone());
-        args.menu_op = Some(label.into());
+        args.set_item_name(Some(self.name.clone()));
+        args.set_menu_op(Some(label.into()));
         match NativeBankChild::start(args, &[], cx) {
             Ok(waiting) => {
                 self.waiting = Some(waiting);
@@ -245,9 +245,9 @@ impl Family for WithdrawTo {
                         }
                         Some(Chunk::X(n)) => {
                             let mut args = BankSeatArgs::new(BankSeatOperation::WithdrawDelta);
-                            args.item_name = Some(self.name.clone());
+                            args.set_item_name(Some(self.name.clone()));
                             // The same integral i32 bound as the Bank withdraw-X primitive.
-                            args.quantity = Some(n as i64);
+                            args.set_quantity(Some(n as i64));
                             match NativeBankChild::start(args, &[], cx) {
                                 Ok(waiting) => {
                                     self.waiting = Some(waiting);

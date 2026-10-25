@@ -226,7 +226,42 @@ fn extremes_do_not_panic_and_negative_dims_clip() {
     assert!(taken.ops.is_empty());
     reset();
     let err = measure_text(&"x".repeat(MAX_PAINT_TEXT + 1)).unwrap_err();
-    assert!(err.contains("measureText"));
+    assert!(err.to_string().contains("measureText"));
+    for (error, expected) in [
+        (
+            CanvasError::NegativeRadius,
+            "IndexSizeError: radius must be non-negative",
+        ),
+        (
+            CanvasError::LinearGradientNotFinite,
+            "canvas: createLinearGradient not finite",
+        ),
+        (CanvasError::ExceededGradients, "canvas: exceeded gradients"),
+        (
+            CanvasError::RadialGradientNotFinite,
+            "canvas: createRadialGradient not finite",
+        ),
+        (
+            CanvasError::NegativeRadii,
+            "IndexSizeError: radii must be non-negative",
+        ),
+        (
+            CanvasError::OffsetOutOfRange,
+            "IndexSizeError: offset must be in [0, 1]",
+        ),
+        (CanvasError::InvalidColor, "SyntaxError: invalid color"),
+        (CanvasError::UnknownGradient, "canvas: unknown gradient"),
+        (
+            CanvasError::ExceededGradientStops,
+            "canvas: exceeded gradient stops",
+        ),
+        (
+            CanvasError::MeasureTextTooLong,
+            "canvas: measureText exceeds 512 byte cap",
+        ),
+    ] {
+        assert_eq!(error.to_string(), expected);
+    }
     #[cfg(feature = "load")]
     {
         onpaint_done(0, None);

@@ -1,4 +1,4 @@
-//! Load-slot lifecycle of the `api.combat` seat: admission, busy, install,
+//! Surface-slot lifecycle of the `api.combat` seat: admission, busy, install,
 //! Stop, reset, teardown, the Stop prayer handoff to the host, and
 //! cancellation by Pause, reconnect and manual movement at every
 //! lifecycle point.
@@ -17,16 +17,20 @@ fn selected() -> Arc<api::game_data::SelectedGameData> {
 fn load_slot(incarnation: u64, data: bool) -> SlotScript {
     let mut slot = SlotScript::new();
     slot.bind_incarnation(incarnation);
-    slot.start_load_with_settings_and_game_data(
-        "export function tick() {}".into(),
-        crate::load::LoadShape::NativeTick,
-        None,
-        vec![],
-        &[],
-        data.then(selected),
-        Arc::default(),
-    )
+    let factory = Arc::new(crate::surface::test_support::StubSurfaceFactory::new());
+    slot.bind_surface_factory(factory.clone());
+    slot.start_surface(crate::surface::SurfaceStart {
+        card: Arc::new(crate::surface::test_support::StubSurfaceCard),
+        settings_bag: None,
+        game_data: data.then(selected),
+        named_banks: Arc::default(),
+        loadouts: Arc::default(),
+    })
     .unwrap();
+    factory
+        .last_run()
+        .expect("stub surface run")
+        .set_readiness(crate::surface::SurfaceReady::Ready);
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         match slot.poll_start() {

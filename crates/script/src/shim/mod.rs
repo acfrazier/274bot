@@ -17,21 +17,21 @@ pub use crate::paint::{
     HOST_STOP_CONTROL_ID,
 };
 #[cfg(feature = "load")]
-pub(crate) use content::content_json;
+pub use content::content_json;
 #[cfg(feature = "load")]
-pub(crate) use modules::{remap_catalog_imports, shim_modules, BOT_MODULE, MAIN_MODULE, PRELUDE};
+pub use modules::{remap_catalog_imports, shim_modules, BOT_MODULE, MAIN_MODULE, PRELUDE};
 #[cfg(feature = "load")]
 #[allow(unused_imports)]
 pub(crate) use modules::{remap_hash_bot, remap_rs2b0t_api};
 #[cfg(all(test, feature = "load"))]
-pub(crate) use rows::RejectedRow;
+pub use rows::RejectedRow;
 #[cfg(feature = "load")]
-pub(crate) use rows::{MaybeInteractReq, QueuedRow};
+pub use rows::{MaybeInteractReq, QueuedRow};
 
 #[cfg(feature = "load")]
 /// Field writes performed by the native `InvItem` constructor, in order.
 #[derive(Clone, Copy)]
-pub(crate) enum InvItemFieldInit {
+pub enum InvItemFieldInit {
     Copy,
     NullishZero,
     StrictTrue,
@@ -39,7 +39,7 @@ pub(crate) enum InvItemFieldInit {
 }
 
 #[cfg(feature = "load")]
-pub(crate) static INV_ITEM_FIELDS: [(&str, InvItemFieldInit); 6] = [
+pub static INV_ITEM_FIELDS: [(&str, InvItemFieldInit); 6] = [
     ("name", InvItemFieldInit::Copy),
     ("count", InvItemFieldInit::Copy),
     ("id", InvItemFieldInit::NullishZero),

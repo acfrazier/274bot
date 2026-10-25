@@ -139,7 +139,7 @@ impl Family for Autocast {
             return Begin::Done(ArmOutcome::of(Reason::UnknownSpell, &args.spell));
         }
         let obs = observed::with(|scene| ArmObservation::from_scene(scene, controls.magic_varp));
-        if !obs.ingame {
+        if !obs.ingame() {
             return Begin::Done(ArmOutcome::of(Reason::MissingFacts, &args.spell));
         }
 
