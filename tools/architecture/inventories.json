@@ -10,6 +10,14 @@
       "reason": "PANEL-STATE-GAP-1023: per-bot projection seam; register in the introducing commit, no allowance."
     },
     {
+      "id": "seam_type|crates/frontend-core/src/bot_projection.rs|LogoutEligibility",
+      "path": "crates/frontend-core/src/bot_projection.rs",
+      "symbol": "LogoutEligibility",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "LOGOUT-RETRY-1025: per-bot projection seam; register in the introducing commit, no allowance."
+    },
+    {
       "id": "seam_type|crates/frontend-core/src/bot_projection.rs|StopEligibility",
       "path": "crates/frontend-core/src/bot_projection.rs",
       "symbol": "StopEligibility",
