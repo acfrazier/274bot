@@ -214,7 +214,10 @@ impl ProfileEnvironment {
             unpack_dir: value("CLIENT_UNPACK_DIR").map(PathBuf::from),
             nav_pack: value("NAV_PACK").map(PathBuf::from),
             nav_flags: value("NAV_FLAGS").map(PathBuf::from),
+            #[cfg(feature = "js")]
             catalog_root: script_js::rs2b0t_root(),
+            #[cfg(not(feature = "js"))]
+            catalog_root: None,
             cache_manifest: value("BOT_CACHE_MANIFEST").map(PathBuf::from),
             rsa_modulus: value("LOGIN_RSAN"),
             rsa_exponent: value("LOGIN_RSAE"),

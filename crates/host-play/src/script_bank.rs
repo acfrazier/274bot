@@ -27,7 +27,7 @@ use script::native_bank::{
 };
 use script::work_admission::cancellation::WorkCancellation;
 use script::work_admission::WorkService;
-use script_js::wire::BankSelectionInput;
+use script::native::snapshot_source::BankSelectionInput;
 use std::collections::HashMap;
 use std::sync::{
     atomic::{AtomicBool, Ordering},

@@ -374,14 +374,23 @@ fn local_family_reads_real_content() {
             std::thread::sleep(Duration::from_millis(50));
         }
     }
-    play.script_start_load(
-        account,
-        source,
-        script_js::LoadShape::CompatClass,
-        None,
-        vec![],
-    )
-    .expect("start real family Load probe");
+    let started = {
+        #[cfg(feature = "js")]
+        {
+            play.script_start_load(
+                account,
+                source,
+                script_js::LoadShape::CompatClass,
+                None,
+                vec![],
+            )
+        }
+        #[cfg(not(feature = "js"))]
+        {
+            Err("T2 family Load scenario requires host-play's `js` feature".into())
+        }
+    };
+    started.expect("start real family Load probe");
     let deadline = Instant::now() + Duration::from_secs(90);
     let mut logs = Vec::new();
     let observed = loop {

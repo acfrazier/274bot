@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 use serde_json::Value;
 
 use crate::catalog_core::{CoreCase, CoreWatch, CoreWatchStatus};
+#[cfg(feature = "js")]
 use crate::external_loader::{ExternalWatch, ExternalWatchStatus};
 use crate::paired_core::{PairCase, PairWatch, PairWatchStatus, DUEL_WEAPON_ALIAS};
 use crate::Play;
@@ -24,6 +25,7 @@ pub const SCRIPT_STOP_WAIT: Duration = Duration::from_secs(45);
 /// `<TAG>: <live name> <compact witness JSON>`.
 pub const CATALOG_CORE_TAG: &str = "CATALOG_CORE";
 pub const PAIRED_CORE_TAG: &str = "PAIRED_CORE";
+#[cfg(feature = "js")]
 pub const EXTERNAL_LOADER_TAG: &str = "EXTERNAL_LOADER";
 /// Maximum pre-Start wait for the Flax pair fixture to reach successful relog
 /// and staged readiness. The host paces a same-world clean relog from its exit,
@@ -247,6 +249,7 @@ pub fn pair_core_gate(
     }
 }
 
+#[cfg(feature = "js")]
 pub fn external_core_gate(watch: Option<&ExternalWatch>) -> CoreGate {
     let Some(watch) = watch else {
         return CoreGate::Disabled;
@@ -342,7 +345,9 @@ macro_rules! proof_watch {
     )*};
 }
 
-proof_watch!(CoreWatch, PairWatch, ExternalWatch);
+proof_watch!(CoreWatch, PairWatch);
+#[cfg(feature = "js")]
+proof_watch!(ExternalWatch);
 
 /// Compact witness for a terminal decision, built off the gameplay
 /// observation thread: the receipt this poll qualified, else a fresh
@@ -367,6 +372,7 @@ pub fn pair_core_record(watch: Option<&PairWatch>, gate: &CoreGate) -> Option<St
     record(watch, gate)
 }
 
+#[cfg(feature = "js")]
 pub fn external_core_record(watch: Option<&ExternalWatch>, gate: &CoreGate) -> Option<String> {
     record(watch, gate)
 }

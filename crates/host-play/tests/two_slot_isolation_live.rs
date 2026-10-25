@@ -146,16 +146,27 @@ impl SlotLive {
     }
 
     fn start_script(&mut self) -> Result<(), String> {
-        let Some(handle) = self.start_handle.as_ref() else {
+        let Some(_handle) = self.start_handle.as_ref() else {
             return Err("Start reached before ScriptStartHandle install".into());
         };
-        handle.start_load(
-            &self.account,
-            self.js.clone(),
-            self.shape,
-            Some(self.settings.clone()),
-            self.siblings.clone(),
-        )?;
+        let started = {
+            #[cfg(feature = "js")]
+            {
+                _handle.start_load(
+                    &self.account,
+                    self.js.clone(),
+                    self.shape,
+                    Some(self.settings.clone()),
+                    self.siblings.clone(),
+                )
+            }
+            #[cfg(not(feature = "js"))]
+            {
+                let _ = (&self.js, &self.shape, &self.siblings);
+                Err("two-slot isolation live starts require host-play's `js` feature".into())
+            }
+        };
+        started?;
         self.started = true;
         println!(
             "{}",

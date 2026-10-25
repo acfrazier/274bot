@@ -944,14 +944,25 @@ fn real_compat_v1_crossing_and_own_sustain_at_45_and_14_hp() {
             }
             std::thread::sleep(Duration::from_millis(20));
         };
-        play.script_start_load(
-            &name,
-            compat_source(destination),
-            script_js::LoadShape::CompatClass,
-            None,
-            vec![],
-        )
-        .expect("start real v1 class");
+        let source = compat_source(destination);
+        let started = {
+            #[cfg(feature = "js")]
+            {
+                play.script_start_load(
+                    &name,
+                    source,
+                    script_js::LoadShape::CompatClass,
+                    None,
+                    vec![],
+                )
+            }
+            #[cfg(not(feature = "js"))]
+            {
+                let _ = source;
+                Err("compat admission live scenario requires host-play's `js` feature".into())
+            }
+        };
+        started.expect("start real v1 class");
         let deadline = Instant::now() + Duration::from_secs(60);
         let mut seen_risk = None;
         let terminal = loop {

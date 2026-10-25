@@ -498,6 +498,7 @@ fn observe_first_combat(watch: &PairWatch) {
     watch.observe_duel("bob", b, false);
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn duel_trainer_schema_defaults_prepare_with_native_counterpart_identity() {
     let schema = script_js::settings_schema_from_source(
