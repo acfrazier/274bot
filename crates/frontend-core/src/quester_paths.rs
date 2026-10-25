@@ -701,8 +701,7 @@ mod tests {
         let _release_on_panic = ReleaseHeldWork(Arc::clone(&released));
         // Keep retrying when unrelated work causes Full. Stop only when our
         // own held jobs leave too little room for the folder reload.
-        let service = script::work_admission::WorkService::shared()
-            .expect("WorkAdmission service");
+        let service = script::work_admission::WorkService::shared().expect("WorkAdmission service");
         let deadline = Instant::now() + Duration::from_secs(60);
         let mut held = Vec::new();
         let mut index = 0_u64;
@@ -717,13 +716,8 @@ mod tests {
             let request = script::preparation::submit_cooperative(
                 script::preparation::PreparationKind::Catalogue,
                 api::identity::Scope::Process,
-                script::preparation::PreparationInput::new(
-                    777_001 + index,
-                    48 * 1024 * 1024,
-                    0,
-                    0,
-                )
-                .expect("bounded temporary admission load"),
+                script::preparation::PreparationInput::new(777_001 + index, 48 * 1024 * 1024, 0, 0)
+                    .expect("bounded temporary admission load"),
                 move |_| {
                     worker_started.store(true, Ordering::Release);
                     if worker_released.load(Ordering::Acquire) {
@@ -746,9 +740,10 @@ mod tests {
                 Err(script::preparation::PreparationError::Refused(
                     api::work::SubmissionRefusal::Full,
                 )) => {
-                    let (epoch, jobs) = {
+                    let (jobs, epoch) = {
                         let service = service.lock();
-                        (service.publication_epoch(), service.capacity().jobs())
+                        let jobs = service.capacity().jobs();
+                        (jobs, service.publication_epoch())
                     };
                     if epoch == observed && jobs == held.len() {
                         break;
