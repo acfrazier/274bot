@@ -75,6 +75,10 @@ name = "two_slot_isolation_live"
 required-features = ["js"]
 
 [[test]]
+name = "loadout_provision_live"
+required-features = ["js"]
+
+[[test]]
 name = "nav_gated_entrances_live"
 required-features = ["test-support"]
 
