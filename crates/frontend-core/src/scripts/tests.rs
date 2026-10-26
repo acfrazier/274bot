@@ -2418,8 +2418,74 @@ fn a_start_carries_its_operation_to_the_row_and_the_log() {
     f.core.play().unwrap().script_stop("opid-alice");
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn marked_start_skips_active_rows_and_duplicate_start_is_idempotent() {
+    let mut f = fixture("bulk-selection", &["alice", "bob", "carol"]);
+    let card = f.card("bulk.ts", LOOPING);
+    f.assign("alice", &card);
+    f.start_running("alice");
+
+    let mut selected = MarkedSelection::default();
+    selected.mark_all([
+        ProfileIdentity::uid(1),
+        ProfileIdentity::uid(2),
+        ProfileIdentity::uid(3),
+    ]);
+    let card_sel =
+        ScriptChoice::from_script(script::ScriptSel::Loaded(card.source, card.identity_id()));
+    start_marked(
+        &selected,
+        &mut f.core,
+        &mut f.scripts,
+        Some(&card_sel),
+        None,
+    );
+    assert_eq!(
+        shown_bulk(&f),
+        "Start selected: started 1, queued 1, skipped 1: alice: already active"
+    );
+
+    f.settle();
+    f.wait_state("bob", ScriptRunState::Running);
+    f.wait_state("carol", ScriptRunState::Running);
+    assert_eq!(
+        shown_bulk(&f),
+        "Start selected: started 2, skipped 1: alice: already active"
+    );
+
+    // The first report finished, so the repeat is a fresh report.
+    start_marked(
+        &selected,
+        &mut f.core,
+        &mut f.scripts,
+        Some(&card_sel),
+        None,
+    );
+    assert_eq!(
+        shown_bulk(&f),
+        "Start selected: started 0, skipped 3: alice: already active, \
+         bob: already active, carol: already active"
+    );
+    for name in ["alice", "bob", "carol"] {
+        assert_eq!(start_accepted(&f, name), 1, "{name}");
+    }
+
+    let stop = stop_marked(&selected, &mut f.core, &mut f.scripts);
+    assert_eq!((stop.stopped(), stop.cancelled()), (3, 0));
+    let duplicate_stop = stop_marked(&selected, &mut f.core, &mut f.scripts);
+    assert_eq!(duplicate_stop.stopped(), 0);
+    assert!(
+        duplicate_stop
+            .skipped()
+            .iter()
+            .any(|skip| skip.reason().contains("stopping"))
+    );
+}
+
+#[cfg(not(feature = "js"))]
+#[test]
+fn native_marked_start_skips_active_rows_and_duplicate_start_is_idempotent() {
     let mut f = native_fixture("bulk-selection", &["alice", "bob", "carol"]);
     let id = script::CompiledId("Gatherer");
     f.assign_compiled("alice", id);
@@ -4466,11 +4532,69 @@ fn reassign_while_queued_does_not_start_stale_work() {
     );
 }
 
-/// A queued native Start checks assignment, membership and logout again at
-/// dispatch. Native preparation enters `Starting` before its run commits, so
-/// these stale changes target the second member while it still waits.
+/// Once the permit has admitted a worker but before it publishes the Start,
+/// a changed assignment or departing member must still fence the old card.
+#[cfg(feature = "js")]
 #[test]
 fn prepared_start_rechecks_assignment_removal_and_logout_before_dispatch() {
+    for (scenario, reason) in [
+        ("reassigned", "reassigned"),
+        ("removed", "removed"),
+        ("logged-out", "logged out"),
+    ] {
+        let mut f = fixture(
+            &format!("pace-inflight-{scenario}"),
+            &["inflight-alice", "inflight-bob"],
+        );
+        let first = f.card("first.ts", LOOPING);
+        let replacement = f.card("replacement.ts", LOOPING);
+        for name in ["inflight-alice", "inflight-bob"] {
+            f.assign(name, &first);
+        }
+        f.scripts.start_all(&mut f.core, None);
+        assert!(
+            f.scripts.start_queue_place("inflight-alice").is_none(),
+            "first member already has the worker permit"
+        );
+        assert_eq!(f.state("inflight-alice"), ScriptRunState::Idle);
+        match scenario {
+            "reassigned" => f.assign("inflight-alice", &replacement),
+            "removed" => {
+                let mut surface = HeadlessSurface::new();
+                f.core
+                    .remove("inflight-alice", Instant::now(), &mut surface);
+            }
+            "logged-out" => f
+                .core
+                .play()
+                .unwrap()
+                .arm("inflight-alice")
+                .unwrap()
+                .request_logout(),
+            _ => unreachable!(),
+        }
+        f.settle();
+        let report = shown_bulk(&f);
+        assert!(
+            report.contains(&format!("inflight-alice: {reason}")),
+            "{scenario}: {report}"
+        );
+        assert_eq!(start_accepted(&f, "inflight-alice"), 0, "{scenario}");
+        assert_ne!(
+            f.state("inflight-alice"),
+            ScriptRunState::Running,
+            "{scenario}: stale card was dispatched"
+        );
+        f.wait_state("inflight-bob", ScriptRunState::Running);
+        f.core.play().unwrap().script_stop("inflight-bob");
+    }
+}
+
+/// A native permit dispatch starts preparation at once. Stale changes to a
+/// queued member must fence it before its Start reaches the compiled slot.
+#[cfg(not(feature = "js"))]
+#[test]
+fn native_queued_start_rechecks_assignment_removal_and_logout_before_dispatch() {
     for (scenario, reason) in [
         ("reassigned", "reassigned"),
         ("removed", "removed"),
@@ -4627,8 +4751,51 @@ fn logout_while_queued_does_not_start_stale_work() {
 }
 
 /// Single Start of a queued member bypasses the remaining permit wait.
+#[cfg(feature = "js")]
 #[test]
 fn single_start_of_a_queued_member_is_immediate() {
+    let names = bulk_names(5);
+    let name_refs: Vec<&str> = names.iter().map(String::as_str).collect();
+    let mut f = fixture("pace-single", &name_refs);
+    let card = f.card("loop.ts", LOOPING);
+    for name in &names {
+        f.assign(name, &card);
+    }
+
+    f.scripts.start_all(&mut f.core, None);
+    let queued = names
+        .iter()
+        .find(|name| f.scripts.start_queue_place(name).is_some())
+        .expect("need a member still waiting for a permit")
+        .clone();
+    f.scripts.start_profile(&mut f.core, &queued, None).unwrap();
+    assert_eq!(
+        f.state(&queued),
+        ScriptRunState::Idle,
+        "the single Start is accepted without waiting for another permit frame"
+    );
+    assert!(f.scripts.starts_pending());
+    f.settle();
+    f.wait_state(&queued, ScriptRunState::Running);
+    assert_eq!(
+        start_accepted(&f, &queued),
+        1,
+        "{queued} must receive exactly one Start"
+    );
+    let report = f
+        .scripts
+        .last_bulk_report()
+        .expect("Start all report after a single-start handoff");
+    assert!(
+        report.starts_with("Start all: started 5, skipped 0"),
+        "the handoff credits the member once: {report}"
+    );
+    f.core.play().unwrap().script_stop(&queued);
+}
+
+#[cfg(not(feature = "js"))]
+#[test]
+fn native_single_start_of_a_queued_member_dispatches_before_preparation() {
     let names = bulk_names(5);
     let name_refs: Vec<&str> = names.iter().map(String::as_str).collect();
     let mut f = native_fixture("pace-single", &name_refs);
@@ -4643,6 +4810,7 @@ fn single_start_of_a_queued_member_is_immediate() {
         .find(|name| f.scripts.start_queue_place(name).is_some())
         .expect("need a member still waiting for a permit")
         .clone();
+    f.scripts.start_profile(&mut f.core, &queued, None).unwrap();
     assert_eq!(
         f.state(&queued),
         ScriptRunState::Starting,
@@ -5379,10 +5547,44 @@ fn logout_while_waiting_after_a_second_start_all_is_reported() {
     }
 }
 
-/// Stop on marked rows reports queued Starts as cancelled. The one Start
-/// already dispatched into native preparation receives Stop instead.
+/// Stop on marked rows cancels the rows still waiting for their Start and
+/// says so, instead of counting them as stopped.
+#[cfg(feature = "js")]
 #[test]
 fn stop_on_marked_rows_reports_waiting_rows_as_cancelled() {
+    let mut f = fixture("pace-stop-marked", &["alice", "bob", "carol"]);
+    let card = f.card("loop.ts", LOOPING);
+    for name in ["alice", "bob", "carol"] {
+        f.assign(name, &card);
+    }
+    let sel = ScriptChoice::from_script(script::ScriptSel::Loaded(card.source, card.identity_id()));
+    let selected = mark_uids(&[1, 2, 3]);
+    start_marked(&selected, &mut f.core, &mut f.scripts, Some(&sel), None);
+    let stop = stop_marked(&selected, &mut f.core, &mut f.scripts);
+    assert_eq!(
+        stop.summary(),
+        "Stop selected: stopped 0, cancelled 3, skipped 0"
+    );
+    let report = shown_bulk(&f);
+    assert!(
+        report.starts_with("Start selected: started 0, skipped 3"),
+        "{report}"
+    );
+    for name in ["alice", "bob", "carol"] {
+        assert!(report.contains(&format!("{name}: cancelled")), "{report}");
+    }
+    f.settle();
+    for name in ["alice", "bob", "carol"] {
+        assert_eq!(start_accepted(&f, name), 0, "{name}");
+        assert_eq!(f.state(name), ScriptRunState::Idle, "{name}");
+    }
+}
+
+/// A native permit dispatch starts preparation immediately. Stop reports
+/// that Start as stopped and counts only rows still in the queue as cancelled.
+#[cfg(not(feature = "js"))]
+#[test]
+fn native_stop_on_marked_rows_stops_preparation_and_cancels_queued_starts() {
     let mut f = native_fixture("pace-stop-marked", &["alice", "bob", "carol"]);
     let id = script::CompiledId("Gatherer");
     for name in ["alice", "bob", "carol"] {
