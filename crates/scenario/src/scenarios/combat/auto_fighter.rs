@@ -511,10 +511,11 @@ pub(crate) fn auto_fighter_bank_scenario() -> Scenario {
     // The wider last watch replaces the 150-tick ordinary watch the shared
     // 180 s deadline was sized with, so the whole-cell cap grows by exactly
     // the added 170 ticks (102 s), from 301.2 s to 403.2 s. The 320-tick
-    // watch alone runs 192 s, longer than the 180 s shared cap, and the
-    // slowest measured run (report cell 4, run 3) holds its return witness
-    // before the second Bones take at host tick 183: 183 + 320 = 503
-    // observed ticks would pass the old 502-tick cap.
+    // watch alone runs 192 s, longer than the 180 s shared cap. In the
+    // slowest measured run (report cell 4, run 3) the return witness holds
+    // before the second Bones take at host tick 183, so the watch starts at
+    // tick 183 at the latest: 183 + 320 = 503 observed ticks would pass the
+    // old 502-tick cap.
     scenario.settings.deadline += Duration::from_millis(
         u64::from(AUTO_FIGHTER_BANK_FRESH_XP_WATCH_TICKS - SCRIPT_GOLD_WATCH_TICKS) * 600,
     );
@@ -875,17 +876,18 @@ mod tests {
         assert_eq!(food_last.wait.budget_ticks, 150);
     }
 
-    /// The whole-cell cap must hold the wider watch in full. Report cell 4,
-    /// run 3 holds its return witness before the second Bones take at host
-    /// tick 183; the widened watch begins there. 183 + 320 = 503 ticks is
-    /// 301.8 s, past the old 301.2 s cap.
+    /// The whole-cell cap must hold the wider watch in full. In report cell 4,
+    /// run 3, the return witness holds before the second Bones take at host
+    /// tick 183, so 183 is an upper bound on the widened watch's start.
+    /// 183 + 320 = 503 ticks is 301.8 s, past the old 301.2 s cap.
     #[test]
     fn bank_cell_deadline_holds_a_full_last_watch() {
-        const SLOWEST_MEASURED_WATCH_START_TICK: u32 = 183;
+        const SLOWEST_MEASURED_WATCH_START_BOUND_TICK: u32 = 183;
         let bank = auto_fighter_bank_scenario();
         let needed = Duration::from_millis(
-            u64::from(SLOWEST_MEASURED_WATCH_START_TICK + AUTO_FIGHTER_BANK_FRESH_XP_WATCH_TICKS)
-                * 600,
+            u64::from(
+                SLOWEST_MEASURED_WATCH_START_BOUND_TICK + AUTO_FIGHTER_BANK_FRESH_XP_WATCH_TICKS,
+            ) * 600,
         );
         assert!(
             bank.settings.deadline >= needed,
