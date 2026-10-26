@@ -2473,10 +2473,15 @@ fn marked_start_skips_active_rows_and_duplicate_start_is_idempotent() {
     assert_eq!((stop.stopped(), stop.cancelled()), (3, 0));
     let duplicate_stop = stop_marked(&selected, &mut f.core, &mut f.scripts);
     assert_eq!(duplicate_stop.stopped(), 0);
-    assert!(duplicate_stop
-        .skipped()
-        .iter()
-        .any(|skip| skip.reason().contains("stopping")));
+    assert_eq!(duplicate_stop.cancelled(), 0);
+    assert!(duplicate_stop.operation().is_none());
+    assert_eq!(duplicate_stop.skipped().len(), 3);
+    assert!(
+        duplicate_stop
+            .skipped()
+            .iter()
+            .all(|skip| skip.reason() == "no script")
+    );
 }
 
 fn native_fixture(test: &str, members: &[&str]) -> Fixture {
@@ -4461,8 +4466,9 @@ fn reassign_while_queued_does_not_start_stale_work() {
     );
 }
 
-/// Once the permit has admitted a worker but before it publishes the Start,
-/// a changed assignment or departing member must still fence the old card.
+/// A queued native Start checks assignment, membership and logout again at
+/// dispatch. Native preparation enters `Starting` before its run commits, so
+/// these stale changes target the second member while it still waits.
 #[test]
 fn prepared_start_rechecks_assignment_removal_and_logout_before_dispatch() {
     for (scenario, reason) in [
@@ -4480,23 +4486,35 @@ fn prepared_start_rechecks_assignment_removal_and_logout_before_dispatch() {
             f.assign_compiled(name, first);
         }
         f.scripts.start_all(&mut f.core, None);
-        assert!(
-            f.scripts.start_queue_place("inflight-alice").is_none(),
-            "first member already has the worker permit"
+        assert_eq!(
+            f.state("inflight-alice"),
+            ScriptRunState::Starting,
+            "native preparation owns the first slot before run commit"
         );
-        assert_eq!(f.state("inflight-alice"), ScriptRunState::Idle);
+        assert!(
+            f.core
+                .play()
+                .unwrap()
+                .script_native_run("inflight-alice")
+                .is_none(),
+            "Starting does not publish an unprepared native run"
+        );
+        let queued = "inflight-bob";
+        assert!(
+            f.scripts.start_queue_place(queued).is_some(),
+            "the second member still waits for a permit"
+        );
         match scenario {
-            "reassigned" => f.assign_compiled("inflight-alice", replacement),
+            "reassigned" => f.assign_compiled(queued, replacement),
             "removed" => {
                 let mut surface = HeadlessSurface::new();
-                f.core
-                    .remove("inflight-alice", Instant::now(), &mut surface);
+                f.core.remove(queued, Instant::now(), &mut surface);
             }
             "logged-out" => f
                 .core
                 .play()
                 .unwrap()
-                .arm("inflight-alice")
+                .arm(queued)
                 .unwrap()
                 .request_logout(),
             _ => unreachable!(),
@@ -4504,17 +4522,29 @@ fn prepared_start_rechecks_assignment_removal_and_logout_before_dispatch() {
         f.settle();
         let report = shown_bulk(&f);
         assert!(
-            report.contains(&format!("inflight-alice: {reason}")),
+            report.contains(&format!("{queued}: {reason}")),
             "{scenario}: {report}"
         );
-        assert_eq!(start_accepted(&f, "inflight-alice"), 0, "{scenario}");
-        assert_ne!(
-            f.state("inflight-alice"),
-            ScriptRunState::Running,
-            "{scenario}: stale card was dispatched"
+        assert_eq!(start_accepted(&f, queued), 0, "{scenario}");
+        assert_eq!(f.state(queued), ScriptRunState::Idle, "{scenario}");
+        assert!(
+            f.core
+                .play()
+                .unwrap()
+                .script_native_run(queued)
+                .is_none(),
+            "{scenario}: stale native run was committed"
         );
-        f.wait_state("inflight-bob", ScriptRunState::Running);
-        f.core.play().unwrap().script_stop("inflight-bob");
+        f.wait_state("inflight-alice", ScriptRunState::Running);
+        assert!(
+            f.core
+                .play()
+                .unwrap()
+                .script_native_run("inflight-alice")
+                .is_some(),
+            "the unaffected compiled Start commits"
+        );
+        f.core.play().unwrap().script_stop("inflight-alice");
     }
 }
 
@@ -4613,12 +4643,20 @@ fn single_start_of_a_queued_member_is_immediate() {
         .find(|name| f.scripts.start_queue_place(name).is_some())
         .expect("need a member still waiting for a permit")
         .clone();
-    f.scripts.start_profile(&mut f.core, &queued, None).unwrap();
     assert_eq!(
         f.state(&queued),
-        ScriptRunState::Idle,
-        "the single Start is accepted without waiting for another permit frame"
+        ScriptRunState::Starting,
+        "single Start dispatches before native preparation commits"
     );
+    assert!(
+        f.core
+            .play()
+            .unwrap()
+            .script_native_run(&queued)
+            .is_none(),
+        "the accepted Start has not published a native run yet"
+    );
+    assert!(f.scripts.start_queue_place(&queued).is_none());
     assert!(f.scripts.starts_pending());
     f.settle();
     f.wait_state(&queued, ScriptRunState::Running);
@@ -5341,8 +5379,8 @@ fn logout_while_waiting_after_a_second_start_all_is_reported() {
     }
 }
 
-/// Stop on marked rows cancels the rows still waiting for their Start and
-/// says so, instead of counting them as stopped.
+/// Stop on marked rows reports queued Starts as cancelled. The one Start
+/// already dispatched into native preparation receives Stop instead.
 #[test]
 fn stop_on_marked_rows_reports_waiting_rows_as_cancelled() {
     let mut f = native_fixture("pace-stop-marked", &["alice", "bob", "carol"]);
@@ -5353,23 +5391,34 @@ fn stop_on_marked_rows_reports_waiting_rows_as_cancelled() {
     let sel = ScriptChoice::from_script(script::ScriptSel::Compiled(id));
     let selected = mark_uids(&[1, 2, 3]);
     start_marked(&selected, &mut f.core, &mut f.scripts, Some(&sel), None);
+    assert_eq!(f.state("alice"), ScriptRunState::Starting);
+    assert!(f.core.play().unwrap().script_native_run("alice").is_none());
+    for name in ["bob", "carol"] {
+        assert!(f.scripts.start_queue_place(name).is_some(), "{name}");
+    }
     let stop = stop_marked(&selected, &mut f.core, &mut f.scripts);
     assert_eq!(
         stop.summary(),
-        "Stop selected: stopped 0, cancelled 3, skipped 0"
+        "Stop selected: stopped 1, cancelled 2, skipped 0"
     );
-    let report = shown_bulk(&f);
-    assert!(
-        report.starts_with("Start selected: started 0, skipped 3"),
-        "{report}"
+    assert_eq!(
+        shown_bulk(&f),
+        "Start selected: started 1, skipped 2: bob: cancelled, carol: cancelled"
     );
-    for name in ["alice", "bob", "carol"] {
-        assert!(report.contains(&format!("{name}: cancelled")), "{report}");
-    }
     f.settle();
     for name in ["alice", "bob", "carol"] {
-        assert_eq!(start_accepted(&f, name), 0, "{name}");
         assert_eq!(f.state(name), ScriptRunState::Idle, "{name}");
+        assert!(
+            f.core
+                .play()
+                .unwrap()
+                .script_native_run(name)
+                .is_none(),
+            "{name}: Stop allowed an unprepared native run to commit"
+        );
+        if name != "alice" {
+            assert_eq!(start_accepted(&f, name), 0, "{name}");
+        }
     }
 }
 
