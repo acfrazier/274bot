@@ -939,7 +939,10 @@ impl LaunchPreviews {
         if self.lowmem.is_some_and(|(shown, _)| shown == request) {
             self.lowmem = None;
         }
-        if self.server_revision.is_some_and(|(shown, _)| shown == request) {
+        if self
+            .server_revision
+            .is_some_and(|(shown, _)| shown == request)
+        {
             self.server_revision = None;
         }
     }
@@ -2084,8 +2087,7 @@ impl Session {
     /// and not yet settled: the setting's control says "Saving…".
     pub(crate) fn panel_member_pending(&self, prefix: &[&str]) -> bool {
         self.pending_panel_members.iter().any(|member| {
-            member.path.len() >= prefix.len()
-                && member.path.iter().zip(prefix).all(|(a, b)| a == b)
+            member.path.len() >= prefix.len() && member.path.iter().zip(prefix).all(|(a, b)| a == b)
         })
     }
 

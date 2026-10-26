@@ -871,10 +871,10 @@ fn dismiss_parts<'a>(
 /// Borrow character-wrapped rows of the text `parts` make up in order,
 /// without copying any of it. Each row holds, per part, the slice of it
 /// that row shows (empty when none).
-pub(crate) fn wrapped_parts<'a, const N: usize>(
-    parts: [&'a str; N],
+pub(crate) fn wrapped_parts<const N: usize>(
+    parts: [&str; N],
     width: usize,
-) -> impl Iterator<Item = [&'a str; N]> {
+) -> impl Iterator<Item = [&str; N]> {
     let mut rest = parts;
     let width = width.max(1);
     std::iter::from_fn(move || {

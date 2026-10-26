@@ -4802,7 +4802,8 @@ fn expire_session_file_failure(session: &mut TuiSession, app: &mut TuiApp) {
 /// leaves with the shared error timeout instead of being replaced by a
 /// permanent line.
 #[test]
-fn session_file_failure_from_a_choice_made_before_this_session_shows_and_expires() {
+fn settings_feedback_tui_session_file_failure_from_a_choice_made_before_this_session_shows_and_expires(
+) {
     let _lock = session_file_lock();
     frontend_core::log_file::apply_session_log_for_test(false);
     let iso = IsolatedStores::enter("tui-s3-sink-startup");
@@ -4837,7 +4838,7 @@ fn session_file_failure_from_a_choice_made_before_this_session_shows_and_expires
 /// follows the sink past its earlier success, and the failure leaves with
 /// the shared error timeout.
 #[test]
-fn session_file_failure_after_the_file_was_writing_shows_and_expires() {
+fn settings_feedback_tui_session_file_failure_after_the_file_was_writing_shows_and_expires() {
     let _lock = session_file_lock();
     frontend_core::log_file::apply_session_log_for_test(false);
     let iso = IsolatedStores::enter("tui-s3-sink-after-writing");
@@ -4859,7 +4860,10 @@ fn session_file_failure_after_the_file_was_writing_shows_and_expires() {
     for _ in 0..200 {
         session.pump(&mut app);
     }
-    assert_eq!(app.log.status.as_ref().map(|status| status.as_ptr()), steady);
+    assert_eq!(
+        app.log.status.as_ref().map(|status| status.as_ptr()),
+        steady
+    );
     frontend_core::log_file::fail_session_sink_for_test("no space left on device");
     pump_until_status(&mut session, &mut app, |status| {
         status.contains("no space left on device")

@@ -6777,7 +6777,9 @@ fn settings_feedback_pending_failed_and_writing_states_add_no_allocation_to_a_wa
         session.poll_panel_preferences();
         match frontend_core::log_file::session_file_phase() {
             frontend_core::log_file::SessionFilePhase::Writing => Ok(()),
-            other => Err(format!("not durable within the wait: the file is {other:?}")),
+            other => Err(format!(
+                "not durable within the wait: the file is {other:?}"
+            )),
         }
     })
     .unwrap();
