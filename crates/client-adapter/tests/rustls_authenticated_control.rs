@@ -41,13 +41,14 @@ use tungstenite::handshake::derive_accept_key;
 
 const SOCKET_TOKEN: Token = Token(1);
 const WAKER_TOKEN: Token = Token(0);
-const PROBE_TOKEN: Token = Token(2);
 const IO_TIMEOUT: Duration = Duration::from_secs(4);
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(8);
 const POLL_SLICE: Duration = Duration::from_millis(25);
 const MAX_TLS_RECORD: usize = 18_432;
 const BACKPRESSURE_GAME_RECORD: [u8; 512] = [0x5a; 512];
 const MAX_BACKPRESSURE_RECORDS: usize = 8_192;
+const SETTLE_RECORD: &[u8] = b"settle-the-backpressured-socket";
+const MAX_SETTLE_ROUNDS: usize = 1_024;
 const TLS12_SUITE: CipherSuite = CipherSuite::TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256;
 const TLS13_SUITE: CipherSuite = CipherSuite::TLS13_AES_128_GCM_SHA256;
 const HELLO_REQUEST: [u8; 4] = [0x00, 0x00, 0x00, 0x00];
@@ -186,6 +187,14 @@ impl ControlServer {
     fn spawn_with_receive_buffer(config: Arc<ServerConfig>, receive_buffer: Option<usize>) -> Self {
         let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind local TLS server");
         let address = listener.local_addr().expect("read local TLS address");
+        if let Some(size) = receive_buffer {
+            // Reserve the receive buffer before any connection exists, so the
+            // size is in force for the whole connection (window scale and
+            // advertised window), not only after the accept.
+            socket2::SockRef::from(&listener)
+                .set_recv_buffer_size(size)
+                .expect("bound the backpressure test server receive buffer");
+        }
         let (command_tx, command_rx) = mpsc::channel();
         let (handshake_tx, handshake_rx) = mpsc::sync_channel(1);
         let server = thread::spawn(move || {
@@ -536,9 +545,6 @@ fn read_http_head(reader: &mut impl Read) -> io::Result<Vec<u8>> {
 struct LaneAttempt {
     poll: Poll,
     events: Events,
-    probe_poll: Poll,
-    probe_events: Events,
-    probe_socket: mio::net::TcpStream,
     lane: Arc<GameTlsLane>,
     key: HandoffKey,
     token: client_adapter::cancel::CancelToken,
@@ -598,12 +604,6 @@ impl LaneAttempt {
         socket
             .set_nonblocking(true)
             .expect("make handshake socket nonblocking");
-        let probe_poll = Poll::new().expect("create socket readiness probe poller");
-        let probe_socket = mio::net::TcpStream::from_std(
-            socket
-                .try_clone()
-                .expect("clone local socket for independent readiness probing"),
-        );
         let mut socket = mio::net::TcpStream::from_std(socket);
         poll.registry()
             .register(&mut socket, SOCKET_TOKEN, Interest::READABLE)
@@ -623,9 +623,6 @@ impl LaneAttempt {
         Self {
             poll,
             events: Events::with_capacity(16),
-            probe_poll,
-            probe_events: Events::with_capacity(4),
-            probe_socket,
             lane,
             key,
             token,
@@ -633,22 +630,6 @@ impl LaneAttempt {
             shared,
             retirement,
         }
-    }
-
-    fn register_write_probe(&mut self) {
-        self.probe_poll
-            .registry()
-            .register(&mut self.probe_socket, PROBE_TOKEN, Interest::WRITABLE)
-            .expect("register the real socket's duplicate for writable probing");
-    }
-
-    fn socket_is_writable(&mut self) -> io::Result<bool> {
-        self.probe_poll
-            .poll(&mut self.probe_events, Some(Duration::ZERO))?;
-        Ok(self
-            .probe_events
-            .iter()
-            .any(|event| event.token() == PROBE_TOKEN && event.is_writable()))
     }
 
     fn wait_for_return(&mut self) -> Accepted<GameTlsResource> {
@@ -1046,6 +1027,45 @@ fn g2_m2_authenticated_tls_close_notify_is_distinct_from_excessive_request() {
     server.stop();
 }
 
+/// Publish complete authenticated WSS game records, one at a time, until a
+/// real socket write returns WouldBlock and the TLS writer retains encrypted
+/// output. Returns how many records it took; 0 when the writer was already
+/// blocked by such an outcome.
+fn fill_until_tls_blocked(attempt: &mut LaneAttempt, endpoint: &mut WssEndpoint) -> usize {
+    let mut published = 0usize;
+    while !endpoint.tls_output_blocked_for_test() {
+        assert!(
+            published < MAX_BACKPRESSURE_RECORDS,
+            "the socket never refused a real encrypted game write"
+        );
+        attempt
+            .shared
+            .publish_record(attempt.binding, &BACKPRESSURE_GAME_RECORD)
+            .expect("publish one bounded game record while the peer is not draining");
+        endpoint.kick_output();
+        let mut turn = endpoint.drive().expect("drive one real WSS game write");
+        endpoint
+            .apply_interest(attempt.poll.registry())
+            .expect("apply WSS interest after a game write");
+        for _ in 0..8 {
+            if turn.stop != TcpStop::LocalWork {
+                break;
+            }
+            turn = endpoint
+                .drive()
+                .expect("drain local work after one game write");
+            endpoint
+                .apply_interest(attempt.poll.registry())
+                .expect("apply WSS interest after local game work");
+        }
+        assert_eq!(turn.stop, TcpStop::Quiescent);
+        assert_eq!(turn.read_bytes, 0);
+        assert!(attempt.shared.outbound.is_empty());
+        published += 1;
+    }
+    published
+}
+
 #[test]
 fn g2_m3_authenticated_requested_key_update_waits_for_real_writable_recovery() {
     let pki = TestPki::new();
@@ -1068,91 +1088,38 @@ fn g2_m3_authenticated_requested_key_update_waits_for_real_writable_recovery() {
         &server_binary_frame(initial_game),
     );
     take_game_payload(&mut attempt, &mut endpoint, initial_game);
+    // Fill the real loopback TCP path with complete authenticated WSS game
+    // writes while the peer's application does not read, until a real socket
+    // write returns WouldBlock with encrypted output still queued in the TLS
+    // writer. Readiness events do not establish this: BSD kqueue raises its
+    // writable edge at a low-water mark before send(2) refuses a write, and
+    // either stack frees send-buffer space whenever it processes the peer's
+    // ACKs, so a poll of a duplicate descriptor can flip after the fact.
+    let filled = fill_until_tls_blocked(&mut attempt, &mut endpoint);
+    assert!(filled > 0, "the real socket never refused a game write");
+    // Settle the stack. TCP delivers the server's bytes in order, so once the
+    // server's next record is readable here, every ACK and window update its
+    // stack produced for the client's earlier writes has been processed. Any
+    // space those freed is refilled; the stack has nothing more to free when
+    // a turn that reads such a record finds the TLS writer still blocked.
+    let mut settle_rounds = 0usize;
+    loop {
+        assert!(
+            settle_rounds < MAX_SETTLE_ROUNDS,
+            "the client socket never settled into stable backpressure"
+        );
+        settle_rounds += 1;
+        server.send_record(
+            ContentType::ApplicationData,
+            &server_binary_frame(SETTLE_RECORD),
+        );
+        take_game_payload(&mut attempt, &mut endpoint, SETTLE_RECORD);
+        if fill_until_tls_blocked(&mut attempt, &mut endpoint) == 0 {
+            break;
+        }
+    }
+    assert!(endpoint.tls_output_blocked_for_test());
     let bytes_in_before = attempt.shared.bytes_in();
-
-    // Fill the real loopback TCP send queue with complete WSS game writes
-    // while the peer's application does not read. Stop at the first point
-    // where a duplicate descriptor reports that no socket write can proceed.
-    attempt.register_write_probe();
-    let mut buffered_game_records = 0usize;
-    while attempt
-        .socket_is_writable()
-        .expect("probe the real client socket's writable readiness")
-    {
-        assert!(
-            buffered_game_records < MAX_BACKPRESSURE_RECORDS,
-            "loopback send queue did not reach socket backpressure"
-        );
-        attempt
-            .shared
-            .publish_record(attempt.binding, &BACKPRESSURE_GAME_RECORD)
-            .expect("publish one bounded game record before the socket fills");
-        endpoint.kick_output();
-        let mut turn = endpoint.drive().expect("drive one real WSS game write");
-        endpoint
-            .apply_interest(attempt.poll.registry())
-            .expect("apply WSS interest after game write");
-        for _ in 0..8 {
-            if turn.stop != TcpStop::LocalWork {
-                break;
-            }
-            turn = endpoint
-                .drive()
-                .expect("drain local work after one game write");
-            endpoint
-                .apply_interest(attempt.poll.registry())
-                .expect("apply WSS interest after local game work");
-        }
-        assert_eq!(turn.stop, TcpStop::Quiescent);
-        assert_eq!(turn.read_bytes, 0);
-        assert!(attempt.shared.outbound.is_empty());
-        buffered_game_records += 1;
-    }
-    assert!(buffered_game_records > 0);
-    assert!(!attempt
-        .socket_is_writable()
-        .expect("confirm the client socket remains backpressured"));
-    // EPOLLOUT can turn false before send(2) actually returns EAGAIN. Keep
-    // sending complete authenticated WSS game records until the TLS writer
-    // retains encrypted output after a real socket WouldBlock; a tiny
-    // KeyUpdate response must not fit into the misleading EPOLLOUT gap.
-    let mut after_probe_records = 0usize;
-    while !endpoint.tls_output_blocked_for_test() {
-        assert!(
-            after_probe_records < MAX_BACKPRESSURE_RECORDS,
-            "the socket never refused a real encrypted game write"
-        );
-        attempt
-            .shared
-            .publish_record(attempt.binding, &BACKPRESSURE_GAME_RECORD)
-            .expect("publish a game record while the peer is not draining");
-        endpoint.kick_output();
-        let mut blocked_turn = endpoint
-            .drive()
-            .expect("attempt a real encrypted game write at backpressure");
-        endpoint
-            .apply_interest(attempt.poll.registry())
-            .expect("apply WSS interest after a game write");
-        for _ in 0..8 {
-            if blocked_turn.stop != TcpStop::LocalWork {
-                break;
-            }
-            blocked_turn = endpoint.drive().expect("drain local game work");
-            endpoint
-                .apply_interest(attempt.poll.registry())
-                .expect("apply WSS interest after local game work");
-        }
-        assert_eq!(blocked_turn.stop, TcpStop::Quiescent);
-        assert_eq!(blocked_turn.read_bytes, 0);
-        assert_eq!(blocked_turn.written_bytes, BACKPRESSURE_GAME_RECORD.len());
-        assert!(!blocked_turn.write_ready);
-        assert!(attempt.shared.outbound.is_empty());
-        after_probe_records += 1;
-    }
-    assert!(after_probe_records > 0);
-    assert!(!attempt
-        .socket_is_writable()
-        .expect("confirm the game write did not restore socket writability"));
     let bytes_out_before = attempt.shared.bytes_out();
 
     // Rustls processes the authenticated request while the socket cannot
@@ -1193,7 +1160,7 @@ fn g2_m3_authenticated_requested_key_update_waits_for_real_writable_recovery() {
         let pending_read = server.begin_read_client_record(remaining.min(IO_TIMEOUT));
         let mut read_one_record = false;
         while !read_one_record && response.is_none() {
-            match pending_read.try_recv() {
+            match pending_read.recv_timeout(POLL_SLICE) {
                 Ok(Ok(Some(record))) => {
                     if record.content_type == ContentType::Handshake {
                         response = Some(record);
@@ -1213,13 +1180,16 @@ fn g2_m3_authenticated_requested_key_update_waits_for_real_writable_recovery() {
                 Ok(Err(error)) => panic!(
                     "server could not decrypt client output: {error}; observed game records {observed_game_records}, writable events {writable_events}"
                 ),
-                Err(mpsc::TryRecvError::Disconnected) => {
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
                     panic!("server read task ended before the KeyUpdate reply")
                 }
-                Err(mpsc::TryRecvError::Empty) => {
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    // The server is waiting for client output that only the
+                    // writable event can release; service the socket without
+                    // blocking, then wait on the server again.
                     attempt
                         .poll
-                        .poll(&mut attempt.events, Some(POLL_SLICE))
+                        .poll(&mut attempt.events, Some(Duration::ZERO))
                         .expect("poll for the real client writable event");
                     for event in &attempt.events {
                         if event.token() == WAKER_TOKEN {
