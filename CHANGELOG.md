@@ -35,6 +35,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
 - Transport stall detection distinguishes a checker pause from a reactor
   stall: a checker sample gap beyond the stall limit restarts observation,
   while a reactor with no progress during continuous checks remains lost.
+- A hosted game connection that the server resets now reports the reset, with
+  its error kind and operating-system error number, to the login status and
+  the session exit reason on Linux, macOS and Windows. Before, the reactor
+  discarded the error and the bot saw a plain end of stream.
 
 ## [0.2.7] — 2026-10-26 — Beta 2
 
