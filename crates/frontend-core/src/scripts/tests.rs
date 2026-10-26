@@ -23,7 +23,9 @@ use crate::marked::prepare_apply_settings_marked;
 use crate::operations::{ActionKind, Outcome};
 use crate::selection::{start_marked, stop_marked, MarkedSelection, ProfileIdentity};
 use crate::session::OperatorSession;
-use crate::surface::{HeadlessSurface, SlotAttach, SlotSurface, SpawnProfile};
+use crate::surface::HeadlessSurface;
+#[cfg(feature = "js")]
+use crate::surface::{SlotAttach, SlotSurface, SpawnProfile};
 use api::identity::{ProcessIncarnation, ProcessTime, RequestIdMinter, Scope, Settlement};
 use api::process_condition::{
     ConditionCause, ConditionId, ProcessCapability, ProcessConditions, ProcessServiceCode,
@@ -189,8 +191,10 @@ fn fixture(test: &str, members: &[&str]) -> Fixture {
     }
 }
 
+#[cfg(feature = "js")]
 struct ScriptSurface<'a>(&'a mut Scripts);
 
+#[cfg(feature = "js")]
 impl SlotSurface for ScriptSurface<'_> {
     type Io = ();
 
@@ -213,6 +217,7 @@ impl SlotSurface for ScriptSurface<'_> {
 }
 
 impl Fixture {
+    #[cfg(feature = "js")]
     fn submit(&mut self, command: OperatorCommand, targets: crate::session::Targets<'_>) {
         self.core
             .submit(command, targets, &mut ScriptSurface(&mut self.scripts))

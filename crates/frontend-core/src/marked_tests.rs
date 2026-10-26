@@ -210,6 +210,7 @@ impl Fixture {
     }
 }
 
+#[cfg(feature = "js")]
 fn marks(uids: &[i32]) -> MarkedSelection {
     let mut selection = MarkedSelection::default();
     selection.mark_all(uids.iter().copied().map(ProfileIdentity::uid));
