@@ -1573,6 +1573,93 @@ fn prep_abort_without_engaged_actor_uses_heaviest_live_threat_and_eats_as_hp_fal
     assert!(matches!(falling_hp, Some(GuardOp::Eat { .. })));
 }
 
+/// First listed attacker wins a weight tie. The old unknown max hit was that tie.
+fn first_strictly_heavier(weights: &[i32]) -> usize {
+    weights.iter().enumerate().skip(1).fold(
+        0,
+        |best, (index, weight)| {
+            if *weight > weights[best] {
+                index
+            } else {
+                best
+            }
+        },
+    )
+}
+
+#[test]
+fn retreat_fallback_picks_a_cow_over_a_first_listed_chicken() {
+    use crate::combat::facts;
+
+    let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let chicken = data.npc_by_config("chicken").unwrap();
+    let cow = data.npc_by_config("cow").unwrap();
+    assert_eq!(facts::npc_max_hit(chicken), Some(0));
+    assert_eq!(facts::npc_max_hit(cow), Some(1));
+    let chicken_weight = i32::from(facts::npc_max_hit(chicken).unwrap()) * 10;
+    let cow_weight = i32::from(facts::npc_max_hit(cow).unwrap()) * 10;
+    assert_eq!((chicken_weight, cow_weight), (0, 10));
+    // The chicken is listed first. Old unknown weights were 0 and 0, so the
+    // chicken stayed the reference and the retreat went the other way.
+    assert_eq!(first_strictly_heavier(&[0, 0]), 0);
+    assert_eq!(first_strictly_heavier(&[chicken_weight, cow_weight]), 1);
+
+    let here = api::WorldTile {
+        x: 3000,
+        z: 3000,
+        level: 0,
+    };
+    let mut run = combat_test_run(
+        imp_target(&data),
+        None,
+        Some(Arc::new(NeverStop)),
+        Vec::new(),
+    );
+    let attack_animation = run
+        .tables
+        .selected()
+        .style_seqs()
+        .first()
+        .expect("selected combat data includes attack animations")
+        .seq_id;
+    let mut attackers = vec![
+        aborting_npc(
+            7,
+            chicken.id,
+            api::WorldTile {
+                x: here.x - 1,
+                ..here
+            },
+        ),
+        aborting_npc(
+            8,
+            cow.id,
+            api::WorldTile {
+                x: here.x + 1,
+                ..here
+            },
+        ),
+    ];
+    for attacker in &mut attackers {
+        attacker.animation = attack_animation;
+    }
+    let mut snapshot = GameSnapshot::new();
+    seed_abort_scene(&mut snapshot, here, 40, attackers, None, None);
+    let aborted = report(CombatEnd::Aborted(AbortReason::PrepFailed(
+        crate::combat::PrepItem::Ammo,
+    )));
+    let mut ledger = None;
+    assert!(with_step_context(&snapshot, &mut ledger, 12, |cx| {
+        run.on_combat_report(aborted, cx)
+    })
+    .is_pending());
+    let request = guard_request_from_outbox(&ledger);
+    assert!(
+        request.target.x < here.x,
+        "retreat must run from the cow. The old unknown weight keeps the first-listed chicken and walks the other way"
+    );
+}
+
 #[test]
 fn aborted_walk_to_authored_stand_arms_walk_guard() {
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
