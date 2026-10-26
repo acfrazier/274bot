@@ -18,6 +18,8 @@ fn prepared_thiever() -> Observation {
 }
 
 fn empty_play() -> crate::Play {
+    script::registry::install_cards(&script::sherlock::CARDS)
+        .expect("install canonical Sherlock card for live start tests");
     crate::run_with_io(
         &crate::PlayOptions {
             host: "127.0.0.1".into(),

@@ -1914,6 +1914,7 @@ fn an_unheld_native_run_on_a_random_trap_square_blocks() {
 #[cfg(feature = "load")]
 #[test]
 fn the_pump_freezes_and_aborts_the_compiled_clue_machine() {
+    crate::registry::install_cards(&crate::sherlock::CARDS).unwrap();
     let data =
         api::game_data::for_revision(client::io::ClientRevision::R274).expect("selected data");
     // The machine's own identify decides what is held: a selected
@@ -1998,6 +1999,7 @@ fn the_pump_freezes_and_aborts_the_compiled_clue_machine() {
 #[cfg(feature = "load")]
 #[test]
 fn a_session_reset_keeps_the_clue_strip_list_and_a_stop_clears_it() {
+    crate::registry::install_cards(&crate::sherlock::CARDS).unwrap();
     let data =
         api::game_data::for_revision(client::io::ClientRevision::R274).expect("selected data");
     // The Entrana-box proof row, and a worn helm in the restricted `armour_helmet` category (monk rule, pack and worn).

@@ -1,21 +1,30 @@
 use super::MAX_FONT_PX;
+#[cfg(feature = "canvas-raster")]
 use ab_glyph::{Font, FontRef, PxScale, ScaleFont};
+#[cfg(feature = "canvas-raster")]
 use std::sync::OnceLock;
 
+#[cfg(feature = "canvas-raster")]
 const SANS_BYTES: &[u8] = include_bytes!("../../fonts/LiberationSans-Regular.ttf");
+#[cfg(feature = "canvas-raster")]
 const MONO_BYTES: &[u8] = include_bytes!("../../fonts/LiberationMono-Regular.ttf");
 
+#[cfg(feature = "canvas-raster")]
 static SANS: OnceLock<FontRef<'static>> = OnceLock::new();
+#[cfg(feature = "canvas-raster")]
 static MONO: OnceLock<FontRef<'static>> = OnceLock::new();
 
+#[cfg(feature = "canvas-raster")]
 fn sans_font() -> &'static FontRef<'static> {
     SANS.get_or_init(|| FontRef::try_from_slice(SANS_BYTES).expect("Liberation Sans Regular"))
 }
 
+#[cfg(feature = "canvas-raster")]
 fn mono_font() -> &'static FontRef<'static> {
     MONO.get_or_init(|| FontRef::try_from_slice(MONO_BYTES).expect("Liberation Mono Regular"))
 }
 
+#[cfg(feature = "canvas-raster")]
 pub fn font_for(mono: bool) -> &'static FontRef<'static> {
     if mono {
         mono_font()
@@ -23,6 +32,7 @@ pub fn font_for(mono: bool) -> &'static FontRef<'static> {
         sans_font()
     }
 }
+#[cfg(feature = "canvas-raster")]
 /// Same metrics as [`measure_text`] for a concrete face/size (tests / panel).
 pub fn measure_with(font_px: u16, mono: bool, text: &str) -> f64 {
     let font_px = font_px.clamp(1, MAX_FONT_PX);

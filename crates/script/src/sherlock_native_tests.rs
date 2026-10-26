@@ -1235,6 +1235,8 @@ fn native_death_latch_survives_inactive_reconnect_and_replaced_chat_ring() {
 }
 
 fn start_sherlock_slot(world: &World) -> crate::slot::SlotScript {
+    crate::registry::install_cards(&crate::sherlock::CARDS)
+        .expect("install canonical Sherlock card for native slot tests");
     let mut slot = crate::slot::SlotScript::new();
     slot.bind_incarnation(1);
     slot.start_compiled(

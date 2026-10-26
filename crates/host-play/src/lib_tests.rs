@@ -7614,6 +7614,8 @@ fn script_start_unknown_compiled_id_errors_without_v8() {
 }
 
 fn compiled_start_play() -> Play {
+    script::registry::install_cards(&script::sherlock::CARDS)
+        .expect("install canonical Sherlock card for compiled start tests");
     let mut play = run_with_io(
         &PlayOptions {
             host: "127.0.0.1".into(),
@@ -7981,6 +7983,8 @@ fn script_start_handle_explicit_loadouts_starts() {
 
 #[test]
 fn saved_loadout_setting_is_validated_for_compat_and_native_starts() {
+    script::registry::install_cards(&script::sherlock::CARDS)
+        .expect("install canonical Sherlock card for saved loadout test");
     let mut play = run_with_io(
         &PlayOptions {
             host: "127.0.0.1".into(),
@@ -8079,6 +8083,8 @@ fn saved_loadout_setting_is_validated_for_compat_and_native_starts() {
 /// after the service hydrated.
 #[test]
 fn a_compiled_start_without_a_loadout_setting_refreshes_the_operator_loadouts() {
+    script::registry::install_cards(&script::sherlock::CARDS)
+        .expect("install canonical Sherlock card for compiled start test");
     let scratch = script::IsolatedEnv::enter("compiled-start-refresh");
     let mut play = run_with_io(
         &PlayOptions {
@@ -8370,6 +8376,8 @@ fn script_control_is_noop_for_unknown_slot_and_state_defaults_idle() {
 
 #[test]
 fn poisoned_script_slot_reads_as_retiring_until_reaped() {
+    script::registry::install_cards(&script::sherlock::CARDS)
+        .expect("install canonical Sherlock card for poisoned slot test");
     let mut play = run_with_io(
         &PlayOptions {
             host: "127.0.0.1".into(),

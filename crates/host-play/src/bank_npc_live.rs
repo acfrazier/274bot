@@ -3432,6 +3432,8 @@ fn bank_pick_burst_percentile(values: &[u128], percentile: usize) -> Option<u128
     ignore = "requires LIVE=1, BOT_LIVE_NAME_PREFIX, LIVE_EVIDENCE_DIR, local 289 assets and Engine A on 127.0.0.1:44594/1080"
 )]
 pub fn live_ten_guest_shared_bank_pick_full_retry_burst() {
+    script::registry::install_cards(&script::sherlock::CARDS)
+        .expect("install canonical Sherlock card for native preparation burst");
     assert!(
         live(),
         "live_ten_guest_shared_bank_pick_full_retry_burst requires LIVE=1"
