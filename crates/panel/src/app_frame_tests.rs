@@ -582,6 +582,7 @@ fn frame_advances_a_pending_removal(drive: Drive) {
 
 scenario!(pending_removal, frame_advances_a_pending_removal);
 
+#[cfg(feature = "js")]
 const BOT_TS: &str = "export default class T extends LoopingBot { override loop() {} }\n";
 
 /// Property 2: script preparation, Start, reload validation and Stop settle
