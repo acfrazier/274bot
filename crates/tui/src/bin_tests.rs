@@ -4665,6 +4665,7 @@ fn save_log_runs_through_the_command_and_the_pane_follows_the_write() {
 /// log pane preserves its prior status while storage is pending.
 #[test]
 fn session_file_toggle_is_saved_and_applied_through_the_command() {
+    let _lock = session_file_lock();
     let _iso = IsolatedStores::enter("tui-session-log-command");
     frontend_core::log_file::apply_session_log_for_test(false);
     let mut session = TuiSession::new(dummy_options());
@@ -4751,6 +4752,112 @@ fn session_file_toggle_is_saved_and_applied_through_the_command() {
         let settled_status = current_sink_status();
         assert_eq!(app.log.status.as_deref(), Some(settled_status.as_str()));
     }
+}
+
+/// The process has one session file: the tests that open, fail or close it
+/// run one at a time.
+fn session_file_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    LOCK.lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// Pump `session` until the Logs status line says `wanted`.
+fn pump_until_status(session: &mut TuiSession, app: &mut TuiApp, wanted: impl Fn(&str) -> bool) {
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while !app.log.status.as_deref().is_some_and(&wanted) {
+        assert!(
+            Instant::now() < deadline,
+            "the Logs status never said it: {:?}",
+            app.log.status
+        );
+        session.pump(app);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+/// The failure leaves with the shared error timeout, from the setting and
+/// from the Logs status line alike, and nothing replaces it.
+fn expire_session_file_failure(session: &mut TuiSession, app: &mut TuiApp) {
+    let after = Instant::now() + frontend_core::ERROR_MESSAGE_TIMEOUT;
+    {
+        let (core, mut surface) = session.core_and_surface_for_preferences(app);
+        core.poll_preferences_at(&mut surface, after);
+    }
+    session.project_setting_feedback(app);
+    session.refresh_session_log_status(app);
+    assert_eq!(
+        app.log.status, None,
+        "the failure left; nothing replaced it"
+    );
+    for _ in 0..3 {
+        session.pump(app);
+    }
+    assert_eq!(app.log.status, None, "a later frame shows nothing either");
+}
+
+/// A session file that was on at startup (saved before this session read
+/// its preferences, no toggle of this terminal behind it) and could not be
+/// opened: the Logs status line shows the core's failure, and the failure
+/// leaves with the shared error timeout instead of being replaced by a
+/// permanent line.
+#[test]
+fn session_file_failure_from_a_choice_made_before_this_session_shows_and_expires() {
+    let _lock = session_file_lock();
+    frontend_core::log_file::apply_session_log_for_test(false);
+    let iso = IsolatedStores::enter("tui-s3-sink-startup");
+    // A file stands where the logs folder must go: the open cannot succeed.
+    std::fs::create_dir_all(iso.home().join(".274bot")).unwrap();
+    std::fs::write(iso.home().join(".274bot").join("logs"), b"not a folder").unwrap();
+    let (mut session, mut app) = tui_with_profiles(&iso, &["alice"]);
+    session.preferences.reload().unwrap();
+    session
+        .preferences
+        .set(
+            frontend_core::log_file::SESSION_LOG_KEY,
+            serde_json::Value::Bool(true),
+        )
+        .unwrap();
+    pump_until_status(&mut session, &mut app, |status| {
+        status.contains("could not be opened or written")
+    });
+    assert!(
+        matches!(
+            app.setting_feedback(Setting::SessionLog),
+            Some(SettingFeedback::Failed(text)) if Some(text.as_str()) == app.log.status.as_deref()
+        ),
+        "the Logs line shows the core's failure: {:?}",
+        app.log.status
+    );
+    expire_session_file_failure(&mut session, &mut app);
+    frontend_core::log_file::apply_session_log_for_test(false);
+}
+
+/// A session file that opened and wrote, then failed: the Logs status line
+/// follows the sink past its earlier success, and the failure leaves with
+/// the shared error timeout.
+#[test]
+fn session_file_failure_after_the_file_was_writing_shows_and_expires() {
+    let _lock = session_file_lock();
+    frontend_core::log_file::apply_session_log_for_test(false);
+    let iso = IsolatedStores::enter("tui-s3-sink-after-writing");
+    let (mut session, mut app) = tui_with_profiles(&iso, &["alice"]);
+    session.preferences.reload().unwrap();
+    dispatch(&mut session, &mut app, AppAction::SetSessionLog(true));
+    settle_preferences(&mut session, &mut app);
+    pump_until_status(&mut session, &mut app, |status| {
+        status.starts_with("session file ") && !status.contains("opening")
+    });
+    assert_eq!(
+        frontend_core::log_file::session_file_phase(),
+        frontend_core::log_file::SessionFilePhase::Writing
+    );
+    frontend_core::log_file::fail_session_sink_for_test("no space left on device");
+    pump_until_status(&mut session, &mut app, |status| {
+        status.contains("no space left on device")
+    });
+    expire_session_file_failure(&mut session, &mut app);
+    frontend_core::log_file::apply_session_log_for_test(false);
 }
 
 /// A disk for one TUI session's service: every file write waits at its

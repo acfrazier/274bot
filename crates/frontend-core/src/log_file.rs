@@ -132,6 +132,26 @@ impl SessionLogFile {
             .clone()
     }
 
+    /// Where the writer stands now, without the failure's text (nothing is
+    /// copied: a front end asks this every frame).
+    pub(crate) fn phase(&self) -> SessionFilePhase {
+        match &*self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+        {
+            SinkState::Opening => SessionFilePhase::Opening,
+            SinkState::Open => SessionFilePhase::Writing,
+            SinkState::Failed(_) => SessionFilePhase::Failed,
+        }
+    }
+
+    /// Fixture seam: the writer failed with `cause`.
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn fail_for_test(&self, cause: &str) {
+        SinkState::set(&self.state, SinkState::Failed(cause.to_owned()));
+    }
+
     pub fn path(&self) -> &Path {
         &self.path
     }
@@ -375,6 +395,20 @@ pub fn session_file_status() -> SessionFileStatus {
         }
     };
     SessionFileStatus { phase, path, cause }
+}
+
+/// Which stage the session file is at, without its path or failure text:
+/// nothing is copied, so a front end may ask every frame. Ask
+/// [`session_file_status`] when the phase changed.
+pub fn session_file_phase() -> SessionFilePhase {
+    global().file_phase().unwrap_or(SessionFilePhase::Off)
+}
+
+/// Fixture seam: the open session file's writer fails with `cause`, as a
+/// write that stopped after the file opened does.
+#[cfg(any(test, feature = "test-support"))]
+pub fn fail_session_sink_for_test(cause: &str) {
+    global().fail_file_for_test(cause);
 }
 
 /// Fixture seam: [`apply_session_log`] for integration tests.
