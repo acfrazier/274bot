@@ -1,6 +1,6 @@
 use api::identity::SessionKey;
 use api::run_policy::{RunEnergyMin, RunPolicyOverride};
-use api::selected::{ClientRevision, RunKey};
+use api::selected::ClientRevision;
 use script::ctx::test_support::NullDriver;
 use script::ctx::{CompiledTick, ScriptCtx};
 use script::native::snapshot_source::{NativeFactsInput, SnapshotInput, TileInput};
@@ -108,7 +108,6 @@ fn slot_tick(slot: &mut SlotScript, tick: u64, here: Option<(i32, i32, i32)>) {
         compiled: CompiledTick::default(),
     };
     slot.on_game_tick(&mut ctx);
-    let _ = probe(slot, "true");
 }
 
 fn allow_onstop_completion(slot: &mut SlotScript) {
@@ -197,28 +196,26 @@ fn empty_snapshot(tick: u64) -> SnapshotInput<'static> {
     }
 }
 
-fn run_policy_tick(slot: &mut SlotScript, tick: u64, session_epoch: u64) {
-    let ready = slot.seat_session_for_test();
+fn align_ready_test_seat(slot: &mut SlotScript) {
+    let ready = slot.seat_for_test().expect("load seat").run().session_key();
     assert_eq!(
         ready.map(SessionKey::epoch),
         Some(slot.work_epoch()),
         "the test's ready session matches its new connection"
     );
-    let key = slot.slot_key_for_test().expect("bound test slot");
-    slot.align_seat_session(Some(SessionKey::new(key, session_epoch)));
-    let input = empty_snapshot(tick);
-    let _ = slot.post_snapshot_delta(&input, NativeFactsInput::default(), false);
-    slot_tick(slot, tick, None);
+    slot.align_seat_session(ready);
 }
 
-fn arm_test_seat(slot: &mut SlotScript, session_epoch: u64) {
-    let key = slot.slot_key_for_test().expect("bound test slot");
-    slot.arm_seat_for_test(RunKey {
-        slot: key.incarnation().get(),
-        run: slot.runtime_generation(),
-        session: session_epoch,
-    });
-    slot.align_seat_session(Some(SessionKey::new(key, session_epoch)));
+fn run_policy_tick(slot: &mut SlotScript, tick: u64) {
+    align_ready_test_seat(slot);
+    let input = empty_snapshot(tick);
+    assert!(
+        slot.post_snapshot_delta(&input, NativeFactsInput::default(), false),
+        "posted run-policy tick {tick}"
+    );
+    slot_tick(slot, tick, None);
+    slot.probe("true")
+        .expect("run-policy tick settles before probe");
 }
 
 fn drain_run_policy_update(slot: &mut SlotScript) -> Option<RunPolicyOverride> {
@@ -307,12 +304,23 @@ export function tick() {
     surface_tick(&mut slot, 1);
     let _ = probe(&mut slot, "true");
     let _ = slot.drain_logs();
+    assert!(
+        slot.last_error()
+            .is_some_and(|error| error.contains("session-one failure")),
+        "{:?}",
+        slot.last_error()
+    );
 
     slot.reset_session_work();
     slot.on_is_up(true);
     surface_tick(&mut slot, 2);
     assert_eq!(probe(&mut slot, "globalThis.__ticks"), serde_json::json!(2));
     let _ = slot.drain_logs();
+    assert_eq!(
+        slot.last_error(),
+        None,
+        "the first completed clean loop in the new session recovers the active diagnostic"
+    );
     slot.stop();
     wait_state(&mut slot, RunState::Idle);
 }
@@ -386,8 +394,7 @@ export default class T extends LoopingBot {
 "#;
     let mut slot = js_slot(1201);
     start_js_running(&mut slot, source, LoadShape::CompatClass, None);
-    arm_test_seat(&mut slot, 0);
-    run_policy_tick(&mut slot, 1, 0);
+    run_policy_tick(&mut slot, 1);
     assert_eq!(
         drain_run_policy_update(&mut slot),
         Some(RunPolicyOverride {
@@ -439,7 +446,6 @@ export default class T extends LoopingBot {
 "#;
     let mut slot = js_slot(1202);
     start_js_running(&mut slot, source, LoadShape::CompatClass, None);
-    arm_test_seat(&mut slot, 0);
 
     let expected = [
         Some(RunPolicyOverride {
@@ -473,7 +479,7 @@ export default class T extends LoopingBot {
         None,
     ];
     for (index, expected) in expected.into_iter().enumerate() {
-        run_policy_tick(&mut slot, index as u64 + 1, 0);
+        run_policy_tick(&mut slot, index as u64 + 1);
         assert_eq!(drain_run_policy_update(&mut slot), expected, "case {index}");
         if index == 0 {
             assert_eq!(
@@ -501,13 +507,12 @@ export default class T extends LoopingBot {
 "#;
     let mut slot = js_slot(1203);
     start_js_running(&mut slot, source, LoadShape::CompatClass, None);
-    arm_test_seat(&mut slot, 0);
-    run_policy_tick(&mut slot, 1, 0);
+    run_policy_tick(&mut slot, 1);
 
     slot.reset_session_work();
     let _ = slot.drain_host_interacts();
     slot.on_is_up(true);
-    run_policy_tick(&mut slot, 2, 1);
+    run_policy_tick(&mut slot, 2);
     assert_eq!(
         drain_run_policy_update(&mut slot),
         Some(RunPolicyOverride {
@@ -675,6 +680,12 @@ fn javascript_onstop_emits_final_log_once() {
         .filter(|line| line.contains("stopped-ok"))
         .count();
     assert_eq!(hits, 1, "exactly one onStop log after take: {logs:?}");
+    slot.stop();
+    let again = slot.take_pending_logs();
+    assert!(
+        again.iter().all(|l| !l.contains("stopped-ok")),
+        "second stop must not rerun the hook: {again:?}"
+    );
 }
 
 #[test]
@@ -691,12 +702,19 @@ export default class T extends LoopingBot {
     allow_onstop_completion(&mut slot);
     surface_tick(&mut slot, 1);
     let logs = finish_until_idle(&mut slot);
+    assert_eq!(slot.state(), RunState::Idle);
     let hits = logs
         .iter()
         .filter(|line| line.contains("stopped-ok"))
         .count();
     assert_eq!(hits, 1, "self-stop onStop once: {logs:?}");
+    assert!(logs.iter().any(|l| l.contains("script requested stop")));
     slot.stop();
+    let again = slot.take_pending_logs();
+    assert!(
+        again.iter().all(|l| !l.contains("stopped-ok")),
+        "join after self-stop then Drop must not rerun: {again:?}"
+    );
 }
 
 #[test]
@@ -981,19 +999,36 @@ export default class T extends LoopingBot {
 }
 "#;
 
-fn held_walk_tick(slot: &mut SlotScript, tick: u64, session_epoch: u64) {
-    let key = slot.slot_key_for_test().expect("bound traversal slot");
-    slot.align_seat_session(Some(SessionKey::new(key, session_epoch)));
+fn held_walk_tick(slot: &mut SlotScript, n: u64, now: Instant) {
+    align_ready_test_seat(slot);
     let here = (2823, 3555, 0);
-    let mut input = empty_snapshot(tick);
+    let mut input = empty_snapshot(n);
     input.here = Some(TileInput {
         x: here.0,
         z: here.1,
         level: here.2,
     });
-    let _ = slot.post_snapshot_delta(&input, NativeFactsInput::default(), false);
-    slot_tick(slot, tick, Some(here));
-    let _ = slot.drain_host_interacts();
+    assert!(slot.post_snapshot_delta(&input, NativeFactsInput::default(), false));
+    slot_tick(slot, n, Some(here));
+    slot.probe("true").unwrap();
+    let (_, game_rows, _) = slot.drain_host_interacts();
+    assert!(
+        game_rows.iter().all(|row| !matches!(
+            &row.req,
+            script::interact::InteractReq::WaitEnqueued
+                | script::interact::InteractReq::WaitSettled
+        )),
+        "seat wait facts stay on the watchdog lane: {game_rows:?}"
+    );
+    let facts = slot.drain_lifecycle();
+    slot.note_game_packet_tick(now);
+    slot.feed_watchdog(now, Some(here), &[], false, true, &facts);
+    assert!(
+        slot.watchdog().wait_active(),
+        "held walk tick {n} has no parked wait; lifecycle={facts:?}, ran={:?}, logs={:?}",
+        probe(slot, "globalThis.__ran"),
+        slot.drain_logs()
+    );
 }
 
 #[test]
@@ -1006,12 +1041,32 @@ fn js_traversal_walk_remains_parked_across_reconnect() {
         LoadShape::CompatClass,
         Some(Arc::clone(&data)),
     );
-    arm_test_seat(&mut slot, 0);
-    held_walk_tick(&mut slot, 1, 0);
+    allow_onstop_completion(&mut slot);
+    let now = Instant::now();
+    held_walk_tick(&mut slot, 1, now);
+    assert!(slot.watchdog().wait_active(), "the walk is parked");
 
-    let _ = slot.reconnect_session_work();
+    assert!(slot.reconnect_session_work(), "the script walk is carried");
     slot.on_is_up(true);
-    held_walk_tick(&mut slot, 2, 1);
+    let reconnected_at = Instant::now();
+    held_walk_tick(&mut slot, 2, reconnected_at);
+    assert!(
+        slot.watchdog().wait_active(),
+        "the held walk is still the parked wait"
+    );
+    slot.note_game_packet_tick(reconnected_at + Duration::from_secs(5));
+    assert_eq!(
+        slot.feed_watchdog(
+            reconnected_at + script::watchdog::SCHEDULER_WARN + Duration::from_secs(1),
+            Some((2823, 3555, 0)),
+            &[],
+            false,
+            true,
+            &[],
+        ),
+        script::watchdog::WatchdogAction::None,
+        "no hung-loop warning while the held walk runs"
+    );
     assert_eq!(
         probe(&mut slot, "globalThis.__ok"),
         serde_json::Value::Null,
@@ -1021,9 +1076,8 @@ fn js_traversal_walk_remains_parked_across_reconnect() {
     wait_state(&mut slot, RunState::Idle);
 }
 
-fn run_surface_walk_tick(slot: &mut SlotScript, tick: u64, session_epoch: u64) {
-    let key = slot.slot_key_for_test().expect("bound traversal slot");
-    slot.align_seat_session(Some(SessionKey::new(key, session_epoch)));
+fn run_surface_walk_tick(slot: &mut SlotScript, tick: u64) {
+    align_ready_test_seat(slot);
     let here = (2823, 3555, 0);
     let mut input = empty_snapshot(tick);
     input.here = Some(TileInput {
@@ -1031,7 +1085,7 @@ fn run_surface_walk_tick(slot: &mut SlotScript, tick: u64, session_epoch: u64) {
         z: here.1,
         level: here.2,
     });
-    let _ = slot.post_snapshot_delta(&input, NativeFactsInput::default(), false);
+    assert!(slot.post_snapshot_delta(&input, NativeFactsInput::default(), false));
     surface_tick(slot, tick);
     let _ = probe(slot, "true");
 }
@@ -1086,9 +1140,8 @@ fn js_traversal_emits_walk_batch_for_slot_custody() {
         LoadShape::CompatClass,
         Some(Arc::clone(&data)),
     );
-    arm_test_seat(&mut slot, 0);
 
-    run_surface_walk_tick(&mut slot, 1, 0);
+    run_surface_walk_tick(&mut slot, 1);
     let batches = drain_surface_seat_batches(&mut slot);
     assert!(
         !walk_near_rows(&batches).is_empty(),
@@ -1100,7 +1153,7 @@ fn js_traversal_emits_walk_batch_for_slot_custody() {
     slot.on_is_up(true);
     let mut fresh = Vec::new();
     for tick in 2..=4 {
-        run_surface_walk_tick(&mut slot, tick, 1);
+        run_surface_walk_tick(&mut slot, tick);
         let batches = drain_surface_seat_batches(&mut slot);
         fresh.extend(walk_near_rows(&batches));
         consume_surface_batches(&mut slot, batches);
@@ -1124,20 +1177,23 @@ fn js_stop_ends_traversal_held_script_after_reconnect() {
         LoadShape::CompatClass,
         Some(Arc::clone(&data)),
     );
-    arm_test_seat(&mut slot, 0);
-    held_walk_tick(&mut slot, 1, 0);
+    allow_onstop_completion(&mut slot);
+    let now = Instant::now();
+    held_walk_tick(&mut slot, 1, now);
     slot.reconnect_session_work();
     slot.on_is_up(true);
-    held_walk_tick(&mut slot, 2, 1);
+    held_walk_tick(&mut slot, 2, now);
     assert_eq!(
         probe(&mut slot, "globalThis.__ok"),
         serde_json::Value::Null,
-        "the Traversal walk remains pending after relog"
+        "the walk carried on across the relog"
     );
 
     slot.reconnect_session_work();
+    assert_eq!(slot.state(), RunState::Paused);
     slot.stop();
     wait_state(&mut slot, RunState::Idle);
+    assert!(!slot.surface_active(), "the held isolate is gone");
 }
 
 #[test]
@@ -1164,6 +1220,7 @@ export default class T extends LoopingBot {
         && Instant::now() < deadline
     {
         slot_tick(&mut slot, tick, None);
+        let _ = probe(&mut slot, "true");
         tick += 1;
         let _ = slot.drain_host_interacts();
         std::thread::yield_now();
