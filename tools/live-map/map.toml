@@ -17,6 +17,7 @@ globs = [
   "crates/nav-executor/src/**",
   "crates/script/src/**",
   "crates/script/examples/guardian_claim_toggle.js",
+  "crates/script/examples/combat_showcase_v2.ts",
   "crates/script/fonts/**",
   "crates/script/compat-js/*.json",
   "crates/script/compat-js/*.d.ts",
@@ -384,7 +385,7 @@ cells = [
 ]
 
 [[cover]]
-globs = ["crates/script/src/combat_session.rs", "crates/script/src/api_combat.rs", "crates/script/src/api_session.rs", "crates/script/src/prayer.rs", "crates/script/src/slot/combat.rs"]
+globs = ["crates/script/src/combat_session.rs", "crates/script/src/api_combat.rs", "crates/script/src/api_session.rs", "crates/script/src/prayer.rs", "crates/script/src/slot/combat.rs", "crates/script/examples/combat_showcase_v2.ts"]
 cells = [
   "host.api-combat-showcase|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 BOT_NAV_PACK=${NAV_PACK_289:?} BOT_ENGINE_DIR=${ENGINE_A_DIR:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} CLIENT_UNPACK_DIR=${CLIENT_UNPACK_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored --exact api_combat_live_tests::live_api_combat_showcase_script_runs_every_phase --nocapture --test-threads=1",
   "host.api-combat-melee|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 BOT_NAV_PACK=${NAV_PACK_289:?} BOT_ENGINE_DIR=${ENGINE_A_DIR:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} CLIENT_UNPACK_DIR=${CLIENT_UNPACK_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored --exact api_combat_live_tests::live_api_combat_melee_kills_a_lumbridge_cow_for_xp --nocapture --test-threads=1",
