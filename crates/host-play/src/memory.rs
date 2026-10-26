@@ -1922,6 +1922,25 @@ impl Run {
         Ok(true)
     }
 
+    fn observe_readiness(&mut self, ready: usize, now: Instant) {
+        if self.config.workload == Workload::Idle
+            && self.qualification_complete.is_none()
+            && self.all_ready_since.is_none()
+            && ready == self.config.n
+        {
+            // Idle warmup already includes the readiness settle hold. Its game
+            // clock must begin at that same boundary, not after the hold.
+            self.gameplay_phases.lock().unwrap().arm();
+        }
+        update_stable_all_ingame(
+            &mut self.all_ready_since,
+            &mut self.all_ingame,
+            ready,
+            self.config.n,
+            now,
+        );
+    }
+
     /// Drive warmup/observe/lifecycle. `Ok(true)` when teardown finished. A
     /// failure is recorded per slot before it is returned, because both
     /// frontends exit on it.
@@ -1942,13 +1961,7 @@ impl Run {
             .filter(|s| s.ingame && s.scene_state == 2)
             .count();
 
-        update_stable_all_ingame(
-            &mut self.all_ready_since,
-            &mut self.all_ingame,
-            ready,
-            self.config.n,
-            now,
-        );
+        self.observe_readiness(ready, now);
 
         let gatherer_fleet = self.is_gatherer_fleet();
         let gatherer_active = gatherer_fleet && self.teardown.is_none();
@@ -2101,7 +2114,9 @@ impl Run {
                     all_ingame,
                     now,
                 ));
-                self.gameplay_phases.lock().unwrap().arm();
+                if self.config.workload != Workload::Idle {
+                    self.gameplay_phases.lock().unwrap().arm();
+                }
             }
         }
         let phase_gated = self.gameplay_phases.lock().unwrap().rule != PhaseRule::Ungated;
@@ -3009,6 +3024,49 @@ mod tests {
         }
         phases.arm();
         phases
+    }
+
+    #[test]
+    fn idle_game_tick_warmup_includes_the_existing_readiness_settle_hold() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _env = EnvGuard::clear(&["RS2B0T", "BOT_MEMORY_OUTPUT"]);
+        let mut run = Run::prepare_unseeded(unit_config(1, Workload::Idle), "unit").unwrap();
+        let now = Instant::now();
+        let name = run.names[0].clone();
+        let observe = |run: &Run, tick| {
+            let mut phases = run.gameplay_phases.lock().unwrap();
+            phases.slots.get_mut(&name).unwrap().observe(
+                PhaseRule::Idle,
+                tick,
+                true,
+                false,
+                None,
+                false,
+            );
+        };
+        observe(&run, 100);
+        run.observe_readiness(1, now);
+        observe(&run, 104);
+        run.observe_readiness(1, now + READY_SETTLE);
+        assert_eq!(run.all_ingame, Some(now));
+        assert!(run
+            .gameplay_phases
+            .lock()
+            .unwrap()
+            .ready(warmup_game_ticks(run.config.warmup))
+            .unwrap());
+        assert_eq!(
+            run.gameplay_phases.lock().unwrap().slots[&name].warmup_start_tick,
+            Some(100)
+        );
+
+        run.observe_readiness(0, now + READY_SETTLE);
+        observe(&run, 106);
+        run.observe_readiness(1, now + READY_SETTLE);
+        assert_eq!(
+            run.gameplay_phases.lock().unwrap().slots[&name].warmup_start_tick,
+            Some(106)
+        );
     }
 
     #[test]
