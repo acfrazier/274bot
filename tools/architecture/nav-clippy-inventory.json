@@ -440,6 +440,7 @@
       "api::prot::Send::resume_pausebutton",
       "api::prot::Send::tut_clickside",
       "api::prot::Send::validate_for_revision",
+      "api::prot::Send::write_for_client",
       "api::prot::Send::write_for_revision",
       "api::prot::effects::effects",
       "api::prot::legal_sends_for",
@@ -463,6 +464,7 @@
       "api::settle::xp_gained",
       "client::CheatSend::is_sent",
       "client::client::CheatSend::is_sent",
+      "client::client::Client::abort_host_login",
       "client::client::Client::add_chat",
       "client::client::Client::add_friend",
       "client::client::Client::add_ignore",
@@ -505,16 +507,21 @@
       "client::client::Client::cheat_packets_sent",
       "client::client::Client::check_scene",
       "client::client::Client::cinema_camera",
+      "client::client::Client::clear_output_for_test",
       "client::client::Client::client_button",
       "client::client::Client::client_component",
       "client::client::Client::client_var",
+      "client::client::Client::close_failed_host_commit_as_session",
+      "client::client::Client::commit_host_login",
       "client::client::Client::configure_login_memory",
       "client::client::Client::consume_chat_key",
       "client::client::Client::del_friend",
       "client::client::Client::del_ignore",
       "client::client::Client::doAction",
       "client::client::Client::do_scrollbar",
+      "client::client::Client::encode_output",
       "client::client::Client::fetch_login_modulus_for",
+      "client::client::Client::fetch_login_modulus_for_cancellable",
       "client::client::Client::from_shared",
       "client::client::Client::from_shared_with_profile",
       "client::client::Client::from_shared_with_revision",
@@ -531,6 +538,8 @@
       "client::client::Client::handle_packet",
       "client::client::Client::handle_side_if_clicks",
       "client::client::Client::handle_tab_clicks",
+      "client::client::Client::has_stream",
+      "client::client::Client::hosted_stream_binding",
       "client::client::Client::hosted_title_label",
       "client::client::Client::if_",
       "client::client::Client::if_anim_reset",
@@ -574,6 +583,7 @@
       "client::client::Client::run_enabled",
       "client::client::Client::save_midi",
       "client::client::Client::scene_model_ids",
+      "client::client::Client::seal_host_login",
       "client::client::Client::send_cheat",
       "client::client::Client::session_profile",
       "client::client::Client::session_resumable",
@@ -665,6 +675,7 @@
       "client::client::WindowTarget::headless",
       "client::client::client::AssetFetchError::message",
       "client::client::client::CheatSend::is_sent",
+      "client::client::client::Client::abort_host_login",
       "client::client::client::Client::add_chat",
       "client::client::client::Client::add_friend",
       "client::client::client::Client::add_ignore",
@@ -707,16 +718,21 @@
       "client::client::client::Client::cheat_packets_sent",
       "client::client::client::Client::check_scene",
       "client::client::client::Client::cinema_camera",
+      "client::client::client::Client::clear_output_for_test",
       "client::client::client::Client::client_button",
       "client::client::client::Client::client_component",
       "client::client::client::Client::client_var",
+      "client::client::client::Client::close_failed_host_commit_as_session",
+      "client::client::client::Client::commit_host_login",
       "client::client::client::Client::configure_login_memory",
       "client::client::client::Client::consume_chat_key",
       "client::client::client::Client::del_friend",
       "client::client::client::Client::del_ignore",
       "client::client::client::Client::doAction",
       "client::client::client::Client::do_scrollbar",
+      "client::client::client::Client::encode_output",
       "client::client::client::Client::fetch_login_modulus_for",
+      "client::client::client::Client::fetch_login_modulus_for_cancellable",
       "client::client::client::Client::from_shared",
       "client::client::client::Client::from_shared_with_profile",
       "client::client::client::Client::from_shared_with_revision",
@@ -733,6 +749,8 @@
       "client::client::client::Client::handle_packet",
       "client::client::client::Client::handle_side_if_clicks",
       "client::client::client::Client::handle_tab_clicks",
+      "client::client::client::Client::has_stream",
+      "client::client::client::Client::hosted_stream_binding",
       "client::client::client::Client::hosted_title_label",
       "client::client::client::Client::if_",
       "client::client::client::Client::if_anim_reset",
@@ -776,6 +794,7 @@
       "client::client::client::Client::run_enabled",
       "client::client::client::Client::save_midi",
       "client::client::client::Client::scene_model_ids",
+      "client::client::client::Client::seal_host_login",
       "client::client::client::Client::send_cheat",
       "client::client::client::Client::session_profile",
       "client::client::client::Client::session_resumable",
@@ -914,13 +933,22 @@
       "client::io::ClientStream::bytes_in",
       "client::io::ClientStream::bytes_out",
       "client::io::ClientStream::close",
+      "client::io::ClientStream::close_as_session",
+      "client::io::ClientStream::commit_host_login",
       "client::io::ClientStream::connect",
       "client::io::ClientStream::connect_cancellable",
       "client::io::ClientStream::connect_for",
+      "client::io::ClientStream::connect_for_cancellable",
+      "client::io::ClientStream::connect_tcp_for_test",
       "client::io::ClientStream::connect_until",
       "client::io::ClientStream::fd",
+      "client::io::ClientStream::from_host",
+      "client::io::ClientStream::hosted_binding_identity",
+      "client::io::ClientStream::is_hosted",
       "client::io::ClientStream::read",
       "client::io::ClientStream::read_bytes",
+      "client::io::ClientStream::rebind_hosted",
+      "client::io::ClientStream::seal_host_login",
       "client::io::ClientStream::set_deadline",
       "client::io::ClientStream::write",
       "client::io::client_prot_289::map_client_prot",
@@ -929,18 +957,30 @@
       "client::io::client_stream::ClientStream::bytes_in",
       "client::io::client_stream::ClientStream::bytes_out",
       "client::io::client_stream::ClientStream::close",
+      "client::io::client_stream::ClientStream::close_as_session",
+      "client::io::client_stream::ClientStream::commit_host_login",
       "client::io::client_stream::ClientStream::connect",
       "client::io::client_stream::ClientStream::connect_cancellable",
       "client::io::client_stream::ClientStream::connect_for",
+      "client::io::client_stream::ClientStream::connect_for_cancellable",
+      "client::io::client_stream::ClientStream::connect_tcp_for_test",
       "client::io::client_stream::ClientStream::connect_until",
       "client::io::client_stream::ClientStream::fd",
+      "client::io::client_stream::ClientStream::from_host",
+      "client::io::client_stream::ClientStream::hosted_binding_identity",
+      "client::io::client_stream::ClientStream::is_hosted",
       "client::io::client_stream::ClientStream::read",
       "client::io::client_stream::ClientStream::read_bytes",
+      "client::io::client_stream::ClientStream::rebind_hosted",
+      "client::io::client_stream::ClientStream::seal_host_login",
       "client::io::client_stream::ClientStream::set_deadline",
       "client::io::client_stream::ClientStream::write",
       "client::io::client_stream::LoginCancel::cancel",
+      "client::io::client_stream::LoginCancel::host_attempt_identity",
       "client::io::client_stream::LoginCancel::is_cancelled",
       "client::io::client_stream::LoginCancel::new",
+      "client::io::client_stream::LoginCancel::register_cancel_callback",
+      "client::io::client_stream::LoginCancel::set_host_attempt_identity",
       "client::io::client_stream::connect_ws_plain",
       "client::io::client_stream::set_transport_wait_hook",
       "client::io::map_client_prot",
@@ -6479,6 +6519,12 @@
     {
       "kind": "variant",
       "lint": "inventory_only",
+      "path": "api::prot::PacketError::OutputRefused",
+      "rustdoc_kind": "variant"
+    },
+    {
+      "kind": "variant",
+      "lint": "inventory_only",
       "path": "api::prot::PacketError::RevisionMismatch",
       "rustdoc_kind": "variant"
     },
@@ -7062,6 +7108,12 @@
       "kind": "method",
       "lint": "method",
       "path": "api::prot::Send::validate_for_revision",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "api::prot::Send::write_for_client",
       "rustdoc_kind": "function"
     },
     {
@@ -7743,6 +7795,12 @@
       "rustdoc_kind": "assoc_const"
     },
     {
+      "kind": "method",
+      "lint": "method",
+      "path": "client::client::Client::abort_host_login",
+      "rustdoc_kind": "function"
+    },
+    {
       "kind": "field",
       "lint": "inventory_only",
       "path": "client::client::Client::active_icon",
@@ -8261,6 +8319,12 @@
     {
       "kind": "method",
       "lint": "method",
+      "path": "client::client::Client::clear_output_for_test",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
       "path": "client::client::Client::client_button",
       "rustdoc_kind": "function"
     },
@@ -8277,10 +8341,22 @@
       "rustdoc_kind": "function"
     },
     {
+      "kind": "method",
+      "lint": "method",
+      "path": "client::client::Client::close_failed_host_commit_as_session",
+      "rustdoc_kind": "function"
+    },
+    {
       "kind": "field",
       "lint": "inventory_only",
       "path": "client::client::Client::collision",
       "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "client::client::Client::commit_host_login",
+      "rustdoc_kind": "function"
     },
     {
       "kind": "field",
@@ -8403,6 +8479,12 @@
       "rustdoc_kind": "struct_field"
     },
     {
+      "kind": "method",
+      "lint": "method",
+      "path": "client::client::Client::encode_output",
+      "rustdoc_kind": "function"
+    },
+    {
       "kind": "field",
       "lint": "inventory_only",
       "path": "client::client::Client::entity_removal_count",
@@ -8442,6 +8524,12 @@
       "kind": "method",
       "lint": "method",
       "path": "client::client::Client::fetch_login_modulus_for",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "client::client::Client::fetch_login_modulus_for_cancellable",
       "rustdoc_kind": "function"
     },
     {
@@ -8595,6 +8683,12 @@
       "rustdoc_kind": "function"
     },
     {
+      "kind": "method",
+      "lint": "method",
+      "path": "client::client::Client::has_stream",
+      "rustdoc_kind": "function"
+    },
+    {
       "kind": "field",
       "lint": "inventory_only",
       "path": "client::client::Client::hint_height",
@@ -8641,6 +8735,12 @@
       "lint": "inventory_only",
       "path": "client::client::Client::hint_type",
       "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "client::client::Client::hosted_stream_binding",
+      "rustdoc_kind": "function"
     },
     {
       "kind": "method",
@@ -9877,6 +9977,12 @@
       "lint": "inventory_only",
       "path": "client::client::Client::scroll_input_padding",
       "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "client::client::Client::seal_host_login",
+      "rustdoc_kind": "function"
     },
     {
       "kind": "field",
@@ -12702,6 +12808,12 @@
       "rustdoc_kind": "assoc_const"
     },
     {
+      "kind": "method",
+      "lint": "method",
+      "path": "client::client::client::Client::abort_host_login",
+      "rustdoc_kind": "function"
+    },
+    {
       "kind": "field",
       "lint": "inventory_only",
       "path": "client::client::client::Client::active_icon",
@@ -13220,6 +13332,12 @@
     {
       "kind": "method",
       "lint": "method",
+      "path": "client::client::client::Client::clear_output_for_test",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
       "path": "client::client::client::Client::client_button",
       "rustdoc_kind": "function"
     },
@@ -13236,10 +13354,22 @@
       "rustdoc_kind": "function"
     },
     {
+      "kind": "method",
+      "lint": "method",
+      "path": "client::client::client::Client::close_failed_host_commit_as_session",
+      "rustdoc_kind": "function"
+    },
+    {
       "kind": "field",
       "lint": "inventory_only",
       "path": "client::client::client::Client::collision",
       "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "client::client::client::Client::commit_host_login",
+      "rustdoc_kind": "function"
     },
     {
       "kind": "field",
@@ -13362,6 +13492,12 @@
       "rustdoc_kind": "struct_field"
     },
     {
+      "kind": "method",
+      "lint": "method",
+      "path": "client::client::client::Client::encode_output",
+      "rustdoc_kind": "function"
+    },
+    {
       "kind": "field",
       "lint": "inventory_only",
       "path": "client::client::client::Client::entity_removal_count",
@@ -13401,6 +13537,12 @@
       "kind": "method",
       "lint": "method",
       "path": "client::client::client::Client::fetch_login_modulus_for",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "client::client::client::Client::fetch_login_modulus_for_cancellable",
       "rustdoc_kind": "function"
     },
     {
@@ -13554,6 +13696,12 @@
       "rustdoc_kind": "function"
     },
     {
+      "kind": "method",
+      "lint": "method",
+      "path": "client::client::client::Client::has_stream",
+      "rustdoc_kind": "function"
+    },
+    {
       "kind": "field",
       "lint": "inventory_only",
       "path": "client::client::client::Client::hint_height",
@@ -13600,6 +13748,12 @@
       "lint": "inventory_only",
       "path": "client::client::client::Client::hint_type",
       "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "client::client::client::Client::hosted_stream_binding",
+      "rustdoc_kind": "function"
     },
     {
       "kind": "method",
@@ -14836,6 +14990,12 @@
       "lint": "inventory_only",
       "path": "client::client::client::Client::scroll_input_padding",
       "rustdoc_kind": "struct_field"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "client::client::client::Client::seal_host_login",
+      "rustdoc_kind": "function"
     },
     {
       "kind": "field",
@@ -20010,6 +20170,18 @@
     {
       "kind": "method",
       "lint": "method",
+      "path": "client::io::ClientStream::close_as_session",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "client::io::ClientStream::commit_host_login",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
       "path": "client::io::ClientStream::connect",
       "rustdoc_kind": "function"
     },
@@ -20028,6 +20200,18 @@
     {
       "kind": "method",
       "lint": "method",
+      "path": "client::io::ClientStream::connect_for_cancellable",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "client::io::ClientStream::connect_tcp_for_test",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
       "path": "client::io::ClientStream::connect_until",
       "rustdoc_kind": "function"
     },
@@ -20040,6 +20224,24 @@
     {
       "kind": "method",
       "lint": "method",
+      "path": "client::io::ClientStream::from_host",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "client::io::ClientStream::hosted_binding_identity",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "client::io::ClientStream::is_hosted",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
       "path": "client::io::ClientStream::read",
       "rustdoc_kind": "function"
     },
@@ -20047,6 +20249,18 @@
       "kind": "method",
       "lint": "method",
       "path": "client::io::ClientStream::read_bytes",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "client::io::ClientStream::rebind_hosted",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "client::io::ClientStream::seal_host_login",
       "rustdoc_kind": "function"
     },
     {
@@ -22667,6 +22881,18 @@
     {
       "kind": "method",
       "lint": "method",
+      "path": "client::io::client_stream::ClientStream::close_as_session",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "client::io::client_stream::ClientStream::commit_host_login",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
       "path": "client::io::client_stream::ClientStream::connect",
       "rustdoc_kind": "function"
     },
@@ -22685,6 +22911,18 @@
     {
       "kind": "method",
       "lint": "method",
+      "path": "client::io::client_stream::ClientStream::connect_for_cancellable",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "client::io::client_stream::ClientStream::connect_tcp_for_test",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
       "path": "client::io::client_stream::ClientStream::connect_until",
       "rustdoc_kind": "function"
     },
@@ -22697,6 +22935,24 @@
     {
       "kind": "method",
       "lint": "method",
+      "path": "client::io::client_stream::ClientStream::from_host",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "client::io::client_stream::ClientStream::hosted_binding_identity",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "client::io::client_stream::ClientStream::is_hosted",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
       "path": "client::io::client_stream::ClientStream::read",
       "rustdoc_kind": "function"
     },
@@ -22704,6 +22960,18 @@
       "kind": "method",
       "lint": "method",
       "path": "client::io::client_stream::ClientStream::read_bytes",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "client::io::client_stream::ClientStream::rebind_hosted",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "client::io::client_stream::ClientStream::seal_host_login",
       "rustdoc_kind": "function"
     },
     {
@@ -22733,6 +23001,12 @@
     {
       "kind": "method",
       "lint": "method",
+      "path": "client::io::client_stream::LoginCancel::host_attempt_identity",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
       "path": "client::io::client_stream::LoginCancel::is_cancelled",
       "rustdoc_kind": "function"
     },
@@ -22740,6 +23014,18 @@
       "kind": "method",
       "lint": "method",
       "path": "client::io::client_stream::LoginCancel::new",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "client::io::client_stream::LoginCancel::register_cancel_callback",
+      "rustdoc_kind": "function"
+    },
+    {
+      "kind": "method",
+      "lint": "method",
+      "path": "client::io::client_stream::LoginCancel::set_host_attempt_identity",
       "rustdoc_kind": "function"
     },
     {
@@ -23416,7 +23702,7 @@
     },
     {
       "path": "crates/api/src/interact/driver.rs",
-      "sha256": "499b4b54971aab82478aa23d0b2cf34eaea53374c82de4e1df1907c047a2392d"
+      "sha256": "23ca3d4299b293a2db32895c6f2d3bfb8a02cb6b0b9dee0355a58461c007605d"
     },
     {
       "path": "crates/api/src/interact/server_ordered.rs",
@@ -23432,7 +23718,7 @@
     },
     {
       "path": "crates/api/src/interact/server_ordered/request.rs",
-      "sha256": "35a1381f169e794ee40884974bafe935509b996112022f16cf2d8a66270f7e01"
+      "sha256": "c7c3881d23325b69e45d8be589d4a575c2065929e12ed133362805343252479a"
     },
     {
       "path": "crates/api/src/lib.rs",
@@ -23440,7 +23726,7 @@
     },
     {
       "path": "crates/api/src/prot.rs",
-      "sha256": "bb2598aaeea9cd07cb3182fb50c76947637901730a0d546e8527132bcbd7200d"
+      "sha256": "80d8a7cc56c4a66a95b674f25d839fbf3fd48ee50c377e445d00c3cb4a495e4d"
     },
     {
       "path": "crates/api/src/prot/effects.rs",
@@ -23452,7 +23738,7 @@
     },
     {
       "path": "vendor/fr-client-rust/crates/client/src/client/client.rs",
-      "sha256": "8427ed90e378772472059856f76dfed65109d236f43c9e3e9129eecad9e87c44"
+      "sha256": "a40e01b51556d0e919856cb27fb7371d62087285765b9f58360a4586e2594f9c"
     },
     {
       "path": "vendor/fr-client-rust/crates/client/src/client/mod.rs",
@@ -23468,15 +23754,15 @@
     },
     {
       "path": "vendor/fr-client-rust/crates/client/src/io/client_stream.rs",
-      "sha256": "85081f9c11b7ca4ee2b1c97db55b3357e4c1b72066ee43bde60450010b87e0aa"
+      "sha256": "623dcde70ddd9c75c02dfca45424b12ace68f587c59d38e7567914df56817955"
     },
     {
       "path": "vendor/fr-client-rust/crates/client/src/io/mod.rs",
-      "sha256": "2058a62c0cdac9ce54b9472c1a9a6cfa652d2fb64d02bf52fba0816fb04a92f1"
+      "sha256": "8f03107e56f58b31f939f03ac02ed92bd1107859765a4cd9a3611a764fdb4260"
     },
     {
       "path": "vendor/fr-client-rust/crates/client/src/lib.rs",
-      "sha256": "a2f840498551359c605ee7abb699e4648f153337dce594a2b082786fe96b1a9b"
+      "sha256": "e2ffd74694d6ce02fdfd73ade094abc9bd5c2e983a183edbd0cd0f78d49244e6"
     }
   ],
   "source_subtrees": [
@@ -23489,7 +23775,7 @@
         "crates/api/src/interact/server_ordered.rs"
       ],
       "path": "crates/api/src/interact",
-      "sha256": "f2877f0f9f3d369305e1b9efd1107677c860dbfcaa1d43e9176f7648eff642a0"
+      "sha256": "18e8684781742a9c1eceef3089bd999872640be1ce13ac75238605a67ba0fbee"
     },
     {
       "files": [
