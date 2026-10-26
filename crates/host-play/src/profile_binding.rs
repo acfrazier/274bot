@@ -1513,6 +1513,8 @@ mod tests {
         use std::time::{Duration, Instant};
 
         let root = scratch_dir("template-preparation-worker");
+        // Cache admission needs the process network composition, as in a product.
+        let _network = crate::PlayComposition::start().expect("test network composition");
         let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/profile");
         let selection = super::ProfileOptions {
             revision: Some("289".into()),

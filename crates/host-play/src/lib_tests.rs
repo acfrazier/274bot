@@ -2694,6 +2694,9 @@ fn accept_test_socket(listener: TcpListener) -> TcpStream {
     loop {
         match listener.accept() {
             Ok((stream, _)) => {
+                // BSD and macOS accepted sockets inherit the listener's
+                // non-blocking mode; the fixtures read them blocking.
+                stream.set_nonblocking(false).unwrap();
                 let timeout = Duration::from_secs(8);
                 stream.set_read_timeout(Some(timeout)).unwrap();
                 stream.set_write_timeout(Some(timeout)).unwrap();

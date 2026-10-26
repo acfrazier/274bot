@@ -1947,8 +1947,10 @@ fn remote_animation_at_focus(period_ms: u64) -> Vec<i32> {
 
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
-    c.stream =
-        Some(client::io::ClientStream::connect(&addr.ip().to_string(), addr.port()).unwrap());
+    c.stream = Some(
+        client::io::ClientStream::connect_tcp_for_test(&addr.ip().to_string(), addr.port())
+            .unwrap(),
+    );
     let (mut server, _) = listener.accept().unwrap();
     c.ptype = -1;
     let t0 = Instant::now();
@@ -2274,8 +2276,10 @@ fn entity_catchup_does_not_read_packets_write_wire_or_replay_nonentity_timers() 
     assert!(c.encode_output(|out| out.p1(42)));
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
-    c.stream =
-        Some(client::io::ClientStream::connect(&addr.ip().to_string(), addr.port()).unwrap());
+    c.stream = Some(
+        client::io::ClientStream::connect_tcp_for_test(&addr.ip().to_string(), addr.port())
+            .unwrap(),
+    );
     let (mut server, _) = listener.accept().unwrap();
     server.write_all(&[89, 0, 10]).unwrap();
     let deadline = Instant::now() + Duration::from_secs(2);

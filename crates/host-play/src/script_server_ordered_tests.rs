@@ -146,8 +146,10 @@ impl Rig {
             },
             revision,
         );
-        client.stream =
-            Some(client::io::ClientStream::connect(&addr.ip().to_string(), addr.port()).unwrap());
+        client.stream = Some(
+            client::io::ClientStream::connect_tcp_for_test(&addr.ip().to_string(), addr.port())
+                .unwrap(),
+        );
         client.ingame = true;
         client.scene_state = 2;
         client.local_player = Some(client::dash3d::ClientPlayer::at(5, 5));

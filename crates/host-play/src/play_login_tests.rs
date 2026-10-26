@@ -175,6 +175,12 @@ fn accept_local_with_timeout(
             {
                 thread::park_timeout(Duration::from_millis(10));
             }
+            Ok((stream, address)) => {
+                // BSD and macOS accepted sockets inherit the listener's
+                // non-blocking mode; the fixtures read them blocking.
+                stream.set_nonblocking(false)?;
+                return Ok((stream, address));
+            }
             result => return result,
         }
     }

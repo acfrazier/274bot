@@ -89,6 +89,8 @@ fn profile_preparation_with_embedded_289_game_data_completes_on_shared_worker() 
     use std::time::{Duration, Instant};
 
     let stores = crate::test_support::IsolatedStores::enter("profile-preparation-worker");
+    // Cache admission needs the process network composition, as in a product.
+    let _network = host_play::PlayComposition::start().expect("test network composition");
     let cache = stores.dir().join("cache");
     std::fs::create_dir_all(&cache).unwrap();
     // Embed the tiny repository fixture. Hosted CI needs no engine, downloaded
