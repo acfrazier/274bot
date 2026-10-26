@@ -142,6 +142,13 @@ fn driver(label: &str) -> FleetDriver {
     }
     drop(vault);
     let mut d = HeadlessDriver::open(&dir.join("state"), InstancePermit::skip());
+    // Driver startup hydrates preferences asynchronously. Adopt the initial
+    // snapshot before measuring a frame window so a late first read cannot
+    // be charged to a quiet or waiting fleet-plan frame.
+    let preferences = d.session().preferences().expect("driver preferences");
+    preferences.reload().expect("read initial preferences");
+    d.poll();
+    assert!(preferences.ready(), "initial preferences are hydrated");
     d.session_mut().set_spawn_workers(false);
     d.unlock(
         vault_path,

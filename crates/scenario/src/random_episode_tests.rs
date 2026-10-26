@@ -36,6 +36,12 @@ const BIG_FISH: RandomEventCell = RandomEventCell {
     oracle: Oracle::LostGear { gear_id: HARPOON },
     skill: FISHING,
 };
+const STRANGE_BOX: RandomEventCell = RandomEventCell {
+    event: "strange box",
+    trigger: Trigger::Seeded,
+    oracle: Oracle::StrangeBoxHandoff,
+    skill: FISHING,
+};
 
 /// A maze square tile (`api::random::trapped_area`).
 fn maze_tile() -> (i32, i32, i32) {
@@ -67,6 +73,15 @@ fn frame(tick: u32, x: i32, z: i32, hold: bool) -> Frame {
     }
 }
 
+fn box_frame(tick: u32, hold: bool, count: i32) -> Frame {
+    let mut f = frame(tick, 100, 100, hold);
+    f.held.clear();
+    if count > 0 {
+        f.held.push((STRANGE_BOX_ID, count));
+    }
+    f
+}
+
 fn npc(x: i32, z: i32, targets_local: bool) -> FrameNpc {
     FrameNpc {
         index: 7,
@@ -94,6 +109,7 @@ fn armed(cell: RandomEventCell) -> RandomEventEpisode {
 fn acked(cell: RandomEventCell, tick: u32) -> Frame {
     let id = match cell.trigger {
         Trigger::Skill(id) | Trigger::General(id) => id,
+        Trigger::Seeded => unreachable!("seeded events have no cheat acknowledgement"),
     };
     chat(
         frame(tick, 100, 100, false),
@@ -140,6 +156,93 @@ fn run(ep: &mut RandomEventEpisode, frames: Vec<Frame>) -> Verdict {
         }
     }
     last
+}
+
+fn seeded_box_episode() -> RandomEventEpisode {
+    let mut ep = RandomEventEpisode::new(STRANGE_BOX);
+    let baseline = box_frame(1, false, 1);
+    assert_eq!(ep.next_send(&baseline), None);
+    assert_eq!(ep.observe(baseline), Verdict::Pending);
+    assert_eq!(ep.next_send(&box_frame(2, false, 1)), None);
+    ep
+}
+
+#[test]
+fn seeded_strange_box_stays_script_owned_then_native_guardian_solves_it() {
+    let mut ep = seeded_box_episode();
+    for tick in 2..=6 {
+        assert_eq!(ep.observe(box_frame(tick, false, 1)), Verdict::Pending);
+    }
+    assert_eq!(ep.script_owned, Some(6));
+    assert_eq!(ep.observe(box_frame(7, true, 1)), Verdict::Pending);
+    assert_eq!(ep.box_at_hold, Some(true));
+    assert_eq!(ep.observe(box_frame(8, true, 0)), Verdict::Pending);
+    assert_eq!(ep.item_cleared, Some(8));
+    assert_eq!(ep.observe(box_frame(9, false, 0)), Verdict::Pass);
+}
+
+#[test]
+fn seeded_strange_box_rejects_an_early_guardian_claim() {
+    let mut ep = seeded_box_episode();
+    assert!(matches!(
+        ep.observe(box_frame(2, true, 1)),
+        Verdict::Fail(message) if message.contains("retained the Strange box")
+    ));
+}
+
+#[test]
+fn seeded_strange_box_rejects_disappearance_before_guardian_claim() {
+    let mut ep = seeded_box_episode();
+    assert!(matches!(
+        ep.observe(box_frame(2, false, 0)),
+        Verdict::Fail(message) if message.contains("disappeared before native Guardian claimed")
+    ));
+}
+
+#[test]
+fn seeded_strange_box_rejects_release_before_consumption() {
+    let mut ep = seeded_box_episode();
+    for tick in 2..=6 {
+        assert_eq!(ep.observe(box_frame(tick, false, 1)), Verdict::Pending);
+    }
+    assert_eq!(ep.observe(box_frame(7, true, 1)), Verdict::Pending);
+    assert!(matches!(
+        ep.observe(box_frame(8, false, 1)),
+        Verdict::Fail(message) if message.contains("released the seeded Strange box")
+    ));
+}
+
+#[test]
+fn seeded_strange_box_rejects_a_claim_after_the_box_is_gone() {
+    let mut ep = seeded_box_episode();
+    for tick in 2..=6 {
+        assert_eq!(ep.observe(box_frame(tick, false, 1)), Verdict::Pending);
+    }
+    assert!(matches!(
+        ep.observe(box_frame(7, true, 0)),
+        Verdict::Fail(message) if message.contains("not present when native Guardian claimed")
+    ));
+}
+
+#[test]
+fn seeded_strange_box_requires_the_item_at_baseline() {
+    let mut ep = RandomEventEpisode::new(STRANGE_BOX);
+    assert!(matches!(
+        ep.observe(box_frame(1, false, 0)),
+        Verdict::Fail(message) if message.contains("absent at the observation baseline")
+    ));
+}
+
+#[test]
+fn seeded_strange_box_claim_deadline_is_bounded_by_game_ticks() {
+    let mut ep = seeded_box_episode();
+    for tick in 2..=81 {
+        assert_eq!(ep.observe(box_frame(tick, false, 1)), Verdict::Pending);
+    }
+    assert!(matches!(
+        ep.observe(box_frame(82, false, 1)),
+        Verdict::Fail(message) if message.contains("within 80 game ticks")
+    ));
 }
 
 #[test]

@@ -173,7 +173,9 @@ impl Clear {
                 component_id: click.button_com(),
             });
             cx.clock().arm(TOGGLE_MS);
-            debug_assert!(self.sweep.accepted(click));
+            // Admission changes the sweep and must also run in release.
+            let accepted = self.sweep.accepted(click);
+            debug_assert!(accepted, "clear candidate came from this sweep");
             Step::Wait
         } else {
             let report = self.sweep.report();
@@ -615,5 +617,55 @@ mod tests {
         tick();
         assert!(drain().is_empty(), "an aborted row never clicks again");
         assert!(!machine::live("prayer"));
+    }
+
+    #[test]
+    fn clear_clicks_each_active_prayer_once_and_counts_them() {
+        prepare(ClientRevision::R289);
+        let data = crate::supply_v2::selected_data().expect("selected data configured");
+        let first = data.prayers().first().expect("selected prayers").clone();
+        let second = data.prayers().get(1).expect("two selected prayers").clone();
+        assert_ne!(first.varp, second.varp);
+        // Two overlays active: the sweep must click each exactly once.
+        set_obs(1, 1, first.varp, 1);
+        set_obs(1, 1, second.varp, 1);
+        let handle = running(start(json!({ "op": "clear" })));
+        assert_eq!(
+            drain(),
+            vec![InteractReq::IfButton {
+                component_id: first.button_com
+            }],
+            "the sweep clicks in selected order"
+        );
+        // No acknowledgement yet: the pending click must not repeat. When
+        // the sweep commit was elided (release `debug_assert!`), the same
+        // candidate clicked again here instead of waiting.
+        tick();
+        assert_eq!(machine::take(handle), Take::Pending);
+        assert!(drain().is_empty(), "no repeat click before acknowledgement");
+        // Acknowledging the first overlay advances the sweep to the second.
+        set_obs(1, 1, first.varp, 0);
+        tick();
+        assert_eq!(machine::take(handle), Take::Pending);
+        assert_eq!(
+            drain(),
+            vec![InteractReq::IfButton {
+                component_id: second.button_com
+            }],
+            "the sweep advances only after the first click settles"
+        );
+        // The second click is pending too: still no repeat.
+        tick();
+        assert_eq!(machine::take(handle), Take::Pending);
+        assert!(drain().is_empty(), "no repeat click before acknowledgement");
+        // Acknowledging the second overlay settles the sweep with its report.
+        set_obs(1, 1, second.varp, 0);
+        tick();
+        assert_eq!(
+            done(handle),
+            json!({ "ok": true, "reason": "cleared", "value": { "clicked": 2, "timed_out": 0 } })
+        );
+        assert!(drain().is_empty());
+        assert!(!machine::live("prayer"), "a settled row is not live");
     }
 }
