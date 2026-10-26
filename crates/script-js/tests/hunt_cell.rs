@@ -11,11 +11,12 @@ use script_js::compat::hunt_cell::{
     CellInv, CellLoc, CellNpc, CellObservation, DOOR_MS, VELRAK_WALK_MS, WALK_LEG_MS,
 };
 use script_js::compat::hunt_fight::Tile;
-use script_js::wire::{
-    encode_snapshot, ItemRowInput, SceneEntityInput, Snapshot, SnapshotInput, TileInput,
-};
 use script_js::{LoadIsolate, LoadShape};
 use serde_json::{json, Value};
+use {
+    script::native::snapshot_source::{ItemRowInput, SceneEntityInput, SnapshotInput, TileInput},
+    script_js::wire::{encode_snapshot, Snapshot},
+};
 
 fn reset() {
     hunt_cell::on_reset();
@@ -1296,7 +1297,7 @@ fn empty_snapshot(tick: u64, here: TileInput) -> SnapshotInput<'static> {
         trade_decline_id: -1,
         shop_open: false,
         shop_stock: &[],
-        reach: script_js::wire::ReachViewInput::UNAVAILABLE,
+        reach: script::native::snapshot_source::ReachViewInput::UNAVAILABLE,
         attacked_by_player: false,
         self_target_kind: 0,
         self_target_index: -1,

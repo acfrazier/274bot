@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use script::interact::InteractReq;
-use script_js::wire::{ReachViewInput, SnapshotInput, TileInput};
+use script::native::snapshot_source::{ReachViewInput, SnapshotInput, TileInput};
 use {
     script::SlotScript, script::WatchdogAction, script::WatchdogState, script_js::LoadIsolate,
     script_js::LoadShape,

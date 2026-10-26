@@ -3,11 +3,11 @@
 // answer-count command. Queue admission is not a completed withdrawal.
 
 use script::interact::InteractReq;
-use script_js::wire::{
-    decode_interact_batch, encode_interact_batch, ItemRowInput, ReachViewInput, SnapshotInput,
-    TileInput,
-};
 use script_js::{LoadIsolate, LoadShape};
+use {
+    script::native::snapshot_source::{ItemRowInput, ReachViewInput, SnapshotInput, TileInput},
+    script_js::wire::{decode_interact_batch, encode_interact_batch},
+};
 
 mod common;
 use common::post_snapshot_input;

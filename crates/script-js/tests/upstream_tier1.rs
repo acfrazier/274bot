@@ -6,9 +6,12 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use script_js::wire::{encode_snapshot_with_native, ItemRowInput, NativeFactsInput};
 use script_js::{transpile_ts, LoadIsolate, LoadShape, Ready};
 use serde_json::json;
+use {
+    script::native::snapshot_source::{ItemRowInput, NativeFactsInput},
+    script_js::wire::encode_snapshot_with_native,
+};
 
 mod common;
 

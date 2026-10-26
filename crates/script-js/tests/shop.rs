@@ -4,12 +4,15 @@
 // posted row the queued op names. A queued click is never a transfer.
 
 use script::interact::InteractReq;
-use script_js::wire::{
-    encode_snapshot_with_native, ChatLineInput, ItemRowInput, NativeFactsInput, ReachViewInput,
-    SceneEntityInput, SnapshotInput, TileInput,
-};
 use script_js::{LoadIsolate, LoadShape};
 use serde_json::Value;
+use {
+    script::native::snapshot_source::{
+        ChatLineInput, ItemRowInput, NativeFactsInput, ReachViewInput, SceneEntityInput,
+        SnapshotInput, TileInput,
+    },
+    script_js::wire::encode_snapshot_with_native,
+};
 
 fn data() -> std::sync::Arc<api::game_data::SelectedGameData> {
     api::game_data::for_revision(client::io::ClientRevision::R274).unwrap()

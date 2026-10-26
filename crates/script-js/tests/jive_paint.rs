@@ -1,8 +1,11 @@
 //! G1-jive: Rust-owned XpTracker, levelRow, paintLevels, and frame defaults.
 //! Selection/capacity stay on accepted chrome; this hop marshals only.
 
-use script_js::wire::{encode_snapshot, ReachViewInput, SnapshotInput, StatInput, TileInput};
 use script_js::{LoadIsolate, LoadShape};
+use {
+    script::native::snapshot_source::{ReachViewInput, SnapshotInput, StatInput, TileInput},
+    script_js::wire::encode_snapshot,
+};
 
 mod common;
 

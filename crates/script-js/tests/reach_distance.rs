@@ -1,6 +1,9 @@
 //! F11: typed reach/distance helpers over the isolate reach cache.
 
-use script_js::wire::{encode_snapshot_delta, ReachViewInput, SnapshotInput, TileInput};
+use {
+    script::native::snapshot_source::{ReachViewInput, SnapshotInput, TileInput},
+    script_js::wire::encode_snapshot_delta,
+};
 
 use script_js::{LoadIsolate, LoadShape};
 

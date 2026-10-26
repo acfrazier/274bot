@@ -1,4 +1,6 @@
-use script_js::wire::{CombatStyleInput, ItemRowInput, SnapshotInput, StatInput, TileInput};
+use script::native::snapshot_source::{
+    CombatStyleInput, ItemRowInput, SnapshotInput, StatInput, TileInput,
+};
 use script_js::{LoadIsolate, LoadShape};
 
 fn post_snapshot_input(iso: &LoadIsolate, input: &SnapshotInput<'_>) {
@@ -75,7 +77,7 @@ fn base_snapshot<'a>() -> SnapshotInput<'a> {
         trade_decline_id: -1,
         shop_open: false,
         shop_stock: &[],
-        reach: script_js::wire::ReachViewInput::UNAVAILABLE,
+        reach: script::native::snapshot_source::ReachViewInput::UNAVAILABLE,
         attacked_by_player: false,
         self_target_kind: 0,
         self_target_index: -1,

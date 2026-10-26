@@ -1,5 +1,5 @@
 use script::interact::InteractReq;
-use script_js::wire::{
+use script::native::snapshot_source::{
     ItemRowInput, ReachViewInput, SideTabIfaceInput, SnapshotInput, TileInput, VarpInput,
 };
 use script_js::{LoadIsolate, LoadShape};

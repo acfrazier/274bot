@@ -1,4 +1,4 @@
-use script_js::wire::{
+use script::native::snapshot_source::{
     ChatOptionInput, ReachViewInput, SceneEntityInput, SnapshotInput, TileInput, VarpInput,
     WidgetTextInput,
 };

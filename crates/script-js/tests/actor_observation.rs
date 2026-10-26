@@ -1,10 +1,13 @@
 //! v1/v2 actor observation: packed size/network SW and local self target.
 
-use script_js::wire::{
-    encode_snapshot, encode_snapshot_delta, encode_snapshot_with_native, CollisionViewInput,
-    NativeFactsInput, ReachViewInput, SceneEntityInput, SnapshotInput, TileInput,
-};
 use script_js::{LoadIsolate, LoadShape};
+use {
+    script::native::snapshot_source::{
+        CollisionViewInput, NativeFactsInput, ReachViewInput, SceneEntityInput, SnapshotInput,
+        TileInput,
+    },
+    script_js::wire::{encode_snapshot, encode_snapshot_delta, encode_snapshot_with_native},
+};
 
 fn empty_input(tick: u64) -> SnapshotInput<'static> {
     SnapshotInput {

@@ -15,9 +15,9 @@ use api::interact::Driver;
 use api::named_banks::NamedBankFacts;
 use api::prot::Out;
 use api::snapshot::GameSnapshot;
+use script::native::snapshot_source::{NativeFactsInput, SnapshotInput};
 use script::native::HostAction;
 use script::slot::{RunState, SlotScript, StartOutcome, StartPoll};
-use script_js::wire::{NativeFactsInput, SnapshotInput};
 use {script::CompiledTick, script::ScriptCtx, script_js::LoadShape};
 #[derive(Default)]
 struct NullOut;

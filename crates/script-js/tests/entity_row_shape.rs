@@ -5,10 +5,11 @@
 //! snapshot encoder and reads them back without running a JavaScript entity
 //! query, i.e. without the old spread's accidental transition warming.
 
-use script_js::wire::{
-    encode_snapshot, encode_snapshot_delta, SceneEntityInput, SnapshotInput, TileInput,
-};
 use script_js::{LoadIsolate, LoadShape};
+use {
+    script::native::snapshot_source::{SceneEntityInput, SnapshotInput, TileInput},
+    script_js::wire::{encode_snapshot, encode_snapshot_delta},
+};
 
 mod common;
 

@@ -4,7 +4,7 @@
 // a different host op.
 
 use script::interact::InteractReq;
-use script_js::wire::{ReachViewInput, SnapshotInput, TileInput};
+use script::native::snapshot_source::{ReachViewInput, SnapshotInput, TileInput};
 use script_js::{LoadIsolate, LoadShape};
 
 mod common;

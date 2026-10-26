@@ -437,7 +437,7 @@ export default class SkillsFixture extends LoopingBot {
         serde_json::json!({"index": 3, "xp": 1154, "level": 10, "effective": 10})
     );
 
-    let replacement_stats = [script_js::wire::StatInput {
+    let replacement_stats = [script::native::snapshot_source::StatInput {
         index: 77,
         name: "hitpoints",
         xp: 9876,

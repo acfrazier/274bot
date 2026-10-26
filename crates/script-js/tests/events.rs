@@ -3,11 +3,13 @@
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use script_js::wire::{
-    encode_snapshot, encode_snapshot_delta, ChatLineInput, ItemRowInput, ReachViewInput,
-    SnapshotInput, StatInput,
-};
 use script_js::{LoadIsolate, LoadShape};
+use {
+    script::native::snapshot_source::{
+        ChatLineInput, ItemRowInput, ReachViewInput, SnapshotInput, StatInput,
+    },
+    script_js::wire::{encode_snapshot, encode_snapshot_delta},
+};
 
 fn spawn_ready(source: String, shape: LoadShape, siblings: Vec<(String, String)>) -> LoadIsolate {
     let iso = LoadIsolate::spawn(source, shape, siblings).unwrap();

@@ -1,6 +1,6 @@
 //! Ent quartet: native IDs/lifetime and supplied-array tile match.
 
-use script_js::wire::{ReachViewInput, SceneEntityInput, SnapshotInput, TileInput};
+use script::native::snapshot_source::{ReachViewInput, SceneEntityInput, SnapshotInput, TileInput};
 use script_js::{LoadIsolate, LoadShape};
 
 mod common;

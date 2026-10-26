@@ -1,6 +1,6 @@
 //! Native tool callbacks, exclusive ordering, and void Traversal.preload.
 
-use script_js::wire::{ItemRowInput, ReachViewInput, SnapshotInput, TileInput};
+use script::native::snapshot_source::{ItemRowInput, ReachViewInput, SnapshotInput, TileInput};
 use script_js::{LoadIsolate, LoadShape};
 
 fn post_snapshot_input(iso: &LoadIsolate, input: &SnapshotInput<'_>) {

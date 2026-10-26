@@ -4,7 +4,7 @@
 //! (`WalkExecutor.ts:113–139, 165–177, 226–245`).
 
 use script::interact::InteractReq;
-use script_js::wire::TileInput;
+use script::native::snapshot_source::TileInput;
 use script_js::{LoadIsolate, LoadShape};
 
 mod common;

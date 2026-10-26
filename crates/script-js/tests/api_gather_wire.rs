@@ -3,11 +3,13 @@ use api::snapshot::WorldTile;
 use script::api_gather::{GatherCounts, GatherEnd, GatherFailure, GatherPage, GatherPhase};
 use script::interact::InteractReq;
 use script::native::{NativePhase, ScriptStatus, StatusField, StatusValue};
-use script_js::wire::{
-    decode_interact_batch, encode_interact_batch, encode_snapshot_delta_with_native,
-    NativeFactsInput, ReachViewInput, Snapshot, SnapshotInput,
-};
 use std::sync::Arc;
+use {
+    script::native::snapshot_source::{NativeFactsInput, ReachViewInput, SnapshotInput},
+    script_js::wire::{
+        decode_interact_batch, encode_interact_batch, encode_snapshot_delta_with_native, Snapshot,
+    },
+};
 use {script::CompiledId, script_js::scene::observed};
 
 fn empty_input(tick: u64) -> SnapshotInput<'static> {

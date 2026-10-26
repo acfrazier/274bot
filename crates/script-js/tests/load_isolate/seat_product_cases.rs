@@ -4,12 +4,14 @@ use script::api_progress::ProgressPage;
 use script::interact::InteractReq;
 use script::native::request::NativeKind;
 use script::native::seat::{SeatEntry, SeatResult, SeatTerminal};
-use script_js::wire::{
-    NativeFactsInput, SeatLiveDetails, SeatPageInput, SeatResultValue, SeatStartArgs,
-    SeatStartInput, TileInput,
-};
-use script_js::QueuedSeatBatch;
+use script::native::seat_rows::QueuedSeatBatch;
 use std::sync::Arc;
+use {
+    script::native::seat_rows::{
+        SeatLiveDetails, SeatPageInput, SeatResultValue, SeatStartArgs, SeatStartInput,
+    },
+    script::native::snapshot_source::{NativeFactsInput, TileInput},
+};
 fn seat_execution() -> api::identity::ExecutionId {
     api::identity::ExecutionId::first(api::selected::RunKey {
         slot: 94,
@@ -94,7 +96,7 @@ fn post_test_snapshot_with_native(
 
 fn seat_reqs(
     batches: &[QueuedSeatBatch],
-) -> impl Iterator<Item = &script_js::wire::SeatInteractDecoded> {
+) -> impl Iterator<Item = &script::native::seat_rows::SeatInteractDecoded> {
     batches.iter().flat_map(|batch| batch.batch.reqs.iter())
 }
 

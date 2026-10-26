@@ -7,7 +7,7 @@
 //! `api_gather_runtime.rs`.
 
 use script::interact::InteractReq;
-use script_js::wire::{ChatLineInput, SnapshotInput, TileInput};
+use script::native::snapshot_source::{ChatLineInput, SnapshotInput, TileInput};
 use script_js::{LoadIsolate, LoadShape};
 
 mod common;

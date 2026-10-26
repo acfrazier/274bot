@@ -4,11 +4,13 @@
 //! no longer validates (`southOfRidge` is false in the pit).
 
 use script::interact::InteractReq;
-use script_js::wire::{
-    encode_snapshot, encode_snapshot_with_native, ChatLineInput, NativeFactsInput, ReachViewInput,
-    SceneEntityInput, SnapshotInput, TileInput,
-};
 use script_js::{LoadIsolate, LoadShape};
+use {
+    script::native::snapshot_source::{
+        ChatLineInput, NativeFactsInput, ReachViewInput, SceneEntityInput, SnapshotInput, TileInput,
+    },
+    script_js::wire::{encode_snapshot, encode_snapshot_with_native},
+};
 
 mod common;
 use common::FRESH_STATS;

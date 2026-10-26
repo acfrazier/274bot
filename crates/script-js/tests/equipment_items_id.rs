@@ -1,6 +1,6 @@
 //! `Equipment.items()` must project posted row `id` (RangingGuild bronzeWorn).
 
-use script_js::wire::{ItemRowInput, ReachViewInput, SnapshotInput};
+use script::native::snapshot_source::{ItemRowInput, ReachViewInput, SnapshotInput};
 use script_js::{LoadIsolate, LoadShape};
 
 const HARNESS: &str = r#"

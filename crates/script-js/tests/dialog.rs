@@ -3,12 +3,15 @@
 // verbs are the existing FlatBuffer actions, not a completed dialogue.
 
 use script::interact::InteractReq;
-use script_js::wire::{
-    encode_snapshot, encode_snapshot_with_native, ChatOptionInput, NativeFactsInput,
-    ReachViewInput, SceneEntityInput, SnapshotInput, TileInput,
-};
 use script_js::{LoadIsolate, LoadShape};
 use serde_json::Value;
+use {
+    script::native::snapshot_source::{
+        ChatOptionInput, NativeFactsInput, ReachViewInput, SceneEntityInput, SnapshotInput,
+        TileInput,
+    },
+    script_js::wire::{encode_snapshot, encode_snapshot_with_native},
+};
 
 fn spawn(src: &str) -> LoadIsolate {
     LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap()

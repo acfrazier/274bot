@@ -1,5 +1,5 @@
 use script::interact::InteractReq;
-use script_js::wire::{ChatLineInput, ReachViewInput, SnapshotInput, TileInput};
+use script::native::snapshot_source::{ChatLineInput, ReachViewInput, SnapshotInput, TileInput};
 use script_js::{LoadIsolate, LoadShape};
 
 mod common;

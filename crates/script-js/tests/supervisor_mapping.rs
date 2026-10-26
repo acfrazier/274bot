@@ -2,7 +2,7 @@
 //! `note-progress` lifecycle op. RangingGuild import graph after the shim.
 
 use script::interact::InteractReq;
-use script_js::wire::{ReachViewInput, SnapshotInput, TileInput};
+use script::native::snapshot_source::{ReachViewInput, SnapshotInput, TileInput};
 use script_js::LoadIsolate;
 use script_js::LoadShape;
 

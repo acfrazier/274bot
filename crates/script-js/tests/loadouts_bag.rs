@@ -1,6 +1,6 @@
 // Task 6: settings.str('loadout') reads the posted operator bag.
 
-use script_js::wire::ItemRowInput;
+use script::native::snapshot_source::ItemRowInput;
 use {script::SettingDef, script_js::LoadIsolate, script_js::LoadShape};
 
 #[path = "common/bank_slot.rs"]
@@ -253,7 +253,7 @@ export default class T extends LoopingBot {
     snap.bank_generation = 4;
     snap.inv = &inv;
     snap.bank = &bank_rows;
-    let native = script_js::wire::NativeFactsInput {
+    let native = script::native::snapshot_source::NativeFactsInput {
         bank_snapshot_generation: Some(4),
         ..Default::default()
     };

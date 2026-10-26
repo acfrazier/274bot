@@ -3,7 +3,7 @@
 // AABB selection, and a queued use-on is not a lit fire.
 
 use script::interact::InteractReq;
-use script_js::wire::{
+use script::native::snapshot_source::{
     ChatLineInput, ItemRowInput, ReachViewInput, SceneEntityInput, SnapshotInput, StatInput,
     TileInput,
 };

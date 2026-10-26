@@ -1,7 +1,7 @@
 // Numeric Input.interact* ops use native 1-based slot indices; sparse holes stay empty.
 
 use script::interact::InteractReq;
-use script_js::wire::{ReachViewInput, SceneEntityInput, SnapshotInput, TileInput};
+use script::native::snapshot_source::{ReachViewInput, SceneEntityInput, SnapshotInput, TileInput};
 use script_js::{LoadIsolate, LoadShape};
 
 fn post_snapshot_input(iso: &LoadIsolate, input: &SnapshotInput<'_>) {

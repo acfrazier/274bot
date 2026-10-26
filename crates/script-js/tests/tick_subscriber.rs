@@ -3,7 +3,7 @@
 //! Fire after posted snapshot+tick and before onStart/loop, or before parked
 //! settle. Pause/hold/generation skip do not fire.
 
-use script_js::wire::{ReachViewInput, SnapshotInput, TileInput};
+use script::native::snapshot_source::{ReachViewInput, SnapshotInput, TileInput};
 use script_js::{LoadIsolate, LoadShape};
 
 mod common;

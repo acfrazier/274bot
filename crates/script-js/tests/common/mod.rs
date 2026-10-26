@@ -3,7 +3,7 @@
 //! Intentional fixture variants (`base_snapshot`, seeds, `scene_state`, …) stay
 //! in each test file; only byte-identical scaffolding is centralized here.
 
-use script_js::wire::{ReachViewInput, SnapshotInput, StatInput, TileInput};
+use script::native::snapshot_source::{ReachViewInput, SnapshotInput, StatInput, TileInput};
 use script_js::LoadIsolate;
 
 #[allow(

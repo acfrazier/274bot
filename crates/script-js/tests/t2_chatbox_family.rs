@@ -1,8 +1,10 @@
 //! Served-runtime coverage for the native GameMessages implementation.
 use serde_json::{json, Value};
 use {
-    script_js::wire::decode_snapshot, script_js::wire::ChatLineInput, script_js::wire::IsolateBuf,
-    script_js::wire::SnapshotFingerprint, script_js::wire::SnapshotInput,
+    script::native::snapshot_source::{ChatLineInput, SnapshotInput},
+    script_js::wire::decode_snapshot,
+    script_js::wire::IsolateBuf,
+    script_js::wire::SnapshotFingerprint,
 };
 use {script_js::LoadIsolate, script_js::LoadShape};
 

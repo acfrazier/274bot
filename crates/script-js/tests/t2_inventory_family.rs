@@ -3,8 +3,8 @@
 use script::interact::InteractReq;
 use serde_json::{json, Value};
 use {
-    script_js::wire::encode_snapshot_with_native, script_js::wire::ItemRowInput,
-    script_js::wire::NativeFactsInput, script_js::wire::SnapshotInput,
+    script::native::snapshot_source::{ItemRowInput, NativeFactsInput, SnapshotInput},
+    script_js::wire::encode_snapshot_with_native,
 };
 use {script_js::LoadIsolate, script_js::LoadShape};
 

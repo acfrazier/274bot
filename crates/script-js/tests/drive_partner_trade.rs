@@ -3,7 +3,7 @@
 // labels and log lines; Rust reads the screens and sends the trade ops.
 
 use script::interact::InteractReq;
-use script_js::wire::{ItemRowInput, ReachViewInput, SnapshotInput, TileInput};
+use script::native::snapshot_source::{ItemRowInput, ReachViewInput, SnapshotInput, TileInput};
 use script_js::{LoadIsolate, LoadShape};
 use std::thread::sleep;
 use std::time::Duration;

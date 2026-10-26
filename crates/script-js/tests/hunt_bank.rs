@@ -10,9 +10,12 @@ use script_js::compat::hunt_bank::{
     BankObservation, BankRow, APPROACH_RADIUS, CLOSE_MS, OPEN_MS, WALK_LEG_MS, WITHDRAW_MS,
 };
 use script_js::compat::hunt_fight::Tile;
-use script_js::wire::{encode_snapshot, ItemRowInput, Snapshot, SnapshotInput, TileInput};
 use script_js::LoadShape;
 use serde_json::{json, Value};
+use {
+    script::native::snapshot_source::{ItemRowInput, SnapshotInput, TileInput},
+    script_js::wire::{encode_snapshot, Snapshot},
+};
 
 #[path = "common/bank_slot.rs"]
 mod bank_slot;
@@ -619,7 +622,7 @@ export async function tick(api) {
                     level: 0,
                 },
             ),
-            script_js::wire::NativeFactsInput::default(),
+            script::native::snapshot_source::NativeFactsInput::default(),
         );
     }
     // Inside the lair, the caller's own leave runs; a failed leave ends
@@ -646,8 +649,8 @@ export async function tick(api) {
 #[test]
 fn v2_bank_run_uses_the_native_bank_open_child_and_bounds_a_rejected_dispatch() {
     use api::quest_progress::EvidenceStamp;
+    use script::native::snapshot_source::{NativeFactsInput, ReachViewInput, SceneEntityInput};
     use script::native::{HostEffect, InteractionReceipt};
-    use script_js::wire::{NativeFactsInput, ReachViewInput, SceneEntityInput};
 
     let source = r#"
 export const apiVersion = 2;
@@ -846,7 +849,7 @@ fn empty_snapshot<'a>(tick: u64, here: TileInput) -> SnapshotInput<'a> {
         trade_decline_id: -1,
         shop_open: false,
         shop_stock: &[],
-        reach: script_js::wire::ReachViewInput::UNAVAILABLE,
+        reach: script::native::snapshot_source::ReachViewInput::UNAVAILABLE,
         attacked_by_player: false,
         self_target_kind: 0,
         self_target_index: -1,

@@ -1,9 +1,13 @@
-use script_js::wire::{
-    encode_snapshot, encode_snapshot_delta, encode_snapshot_with_native, IsolateBuf,
-    MainModalTextsInput, NativeFactsInput, QuestStatusInput, ReachViewInput, SnapshotInput,
-    TileInput,
-};
 use script_js::{LoadIsolate, LoadShape};
+use {
+    script::native::snapshot_source::{
+        MainModalTextsInput, NativeFactsInput, QuestStatusInput, ReachViewInput, SnapshotInput,
+        TileInput,
+    },
+    script_js::wire::{
+        encode_snapshot, encode_snapshot_delta, encode_snapshot_with_native, IsolateBuf,
+    },
+};
 
 fn base_snapshot<'a>() -> SnapshotInput<'a> {
     SnapshotInput {

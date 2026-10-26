@@ -10,9 +10,12 @@ use script_js::compat::hunt_key::{
     self, key_deadline_remaining_ms, key_force_bound_reached, key_token_alive, set_observation,
     KeyGround, KeyInv, KeyNpc, KeyObservation,
 };
-use script_js::wire::{encode_snapshot, ItemRowInput, Snapshot, SnapshotInput, TileInput};
 use script_js::{LoadIsolate, LoadShape};
 use serde_json::{json, Value};
+use {
+    script::native::snapshot_source::{ItemRowInput, SnapshotInput, TileInput},
+    script_js::wire::{encode_snapshot, Snapshot},
+};
 
 fn reset() {
     hunt_key::on_reset();
@@ -1032,7 +1035,7 @@ fn empty_snapshot(tick: u64, here: TileInput) -> SnapshotInput<'static> {
         trade_decline_id: -1,
         shop_open: false,
         shop_stock: &[],
-        reach: script_js::wire::ReachViewInput::UNAVAILABLE,
+        reach: script::native::snapshot_source::ReachViewInput::UNAVAILABLE,
         attacked_by_player: false,
         self_target_kind: 0,
         self_target_index: -1,

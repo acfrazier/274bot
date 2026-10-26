@@ -2,12 +2,14 @@
 //! the existing FlatBuffer walk-near / npc actions.
 
 use script::interact::InteractReq;
-use script_js::wire::{
-    encode_snapshot, encode_snapshot_with_native, ChatLineInput, NativeFactsInput, ReachViewInput,
-    SceneEntityInput, SnapshotInput, TileInput,
-};
 use script_js::{LoadIsolate, LoadShape};
 use serde_json::Value;
+use {
+    script::native::snapshot_source::{
+        ChatLineInput, NativeFactsInput, ReachViewInput, SceneEntityInput, SnapshotInput, TileInput,
+    },
+    script_js::wire::{encode_snapshot, encode_snapshot_with_native},
+};
 
 fn spawn(src: &str) -> LoadIsolate {
     LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap()

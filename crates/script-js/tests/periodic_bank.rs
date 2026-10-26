@@ -4,8 +4,10 @@ use std::sync::Arc;
 mod bank_slot;
 use bank_slot::BankSlot;
 use script::interact::InteractReq;
+use script::native::snapshot_source::{
+    ItemRowInput, NativeFactsInput, ReachViewInput, SnapshotInput, TileInput,
+};
 use script::native::{HostAction, HostEffect};
-use script_js::wire::{ItemRowInput, NativeFactsInput, ReachViewInput, SnapshotInput, TileInput};
 use script_js::LoadShape;
 
 fn spawn(source: impl Into<String>) -> BankSlot {
@@ -300,7 +302,7 @@ fn seers_booth() -> &'static script_js::wire::SceneEntityInput<'static> {
         std::sync::LazyLock::new(|| {
             static OPS: std::sync::LazyLock<Vec<String>> =
                 std::sync::LazyLock::new(|| vec!["Use-quickly".to_owned()]);
-            script_js::wire::SceneEntityInput {
+            script::native::snapshot_source::SceneEntityInput {
                 index: 0,
                 id: 2213,
                 name: Some("Bank booth"),
@@ -1075,7 +1077,7 @@ export default class T extends LoopingBot {
 "#;
     let mut iso = spawn(src);
     let actions = ["Open".to_string()];
-    let chest = script_js::wire::SceneEntityInput {
+    let chest = script::native::snapshot_source::SceneEntityInput {
         index: 0,
         id: 2693,
         name: Some("Shantay chest"),

@@ -1,7 +1,7 @@
 //! Native one-shot `Paint.buttons` seam. No packet opcode, no fabricated click.
 
+use script::native::snapshot_source::{ReachViewInput, SnapshotInput, TileInput};
 use script::paint::{ScriptPaint, ScriptPaintButton};
-use script_js::wire::{ReachViewInput, SnapshotInput, TileInput};
 use script_js::{LoadIsolate, LoadShape};
 
 mod common;

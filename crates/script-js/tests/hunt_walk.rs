@@ -1,11 +1,11 @@
 //! Offline WalkToSpot isolate policy tests. No LIVE.
 
 use script::interact::InteractReq;
+use script::native::snapshot_source::{SnapshotInput, TileInput};
 use script_js::compat::hunt_fight::{
     self, last_hp, walk_deadline_remaining_ms, walk_force_bound_reached, walk_token_alive,
     FightObservation, Tile,
 };
-use script_js::wire::{SnapshotInput, TileInput};
 use script_js::{LoadIsolate, LoadShape};
 use serde_json::{json, Value};
 use std::thread;
@@ -777,7 +777,7 @@ fn empty_snapshot(tick: u64, here: TileInput) -> SnapshotInput<'static> {
         trade_decline_id: -1,
         shop_open: false,
         shop_stock: &[],
-        reach: script_js::wire::ReachViewInput::UNAVAILABLE,
+        reach: script::native::snapshot_source::ReachViewInput::UNAVAILABLE,
         attacked_by_player: false,
         self_target_kind: 0,
         self_target_index: -1,

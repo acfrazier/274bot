@@ -222,7 +222,7 @@ struct PostedPuzzle<'a> {
 /// encounter adds the posted npc page, the local-player slot and target pair,
 /// the posted overlay varps and the posted stat rows.
 struct Scene<'a> {
-    here: Option<script_js::wire::TileInput>,
+    here: Option<script::native::snapshot_source::TileInput>,
     locs: &'a [script_js::wire::SceneEntityInput<'a>],
     hold: bool,
     ours: bool,
@@ -237,7 +237,7 @@ struct Scene<'a> {
     npcs: &'a [script_js::wire::SceneEntityInput<'a>],
     /// The posted varps: the encounter reads the selected Protect from Magic
     /// overlay — index 95 — out of this page.
-    varps: &'a [script_js::wire::VarpInput],
+    varps: &'a [script::native::snapshot_source::VarpInput],
     /// The posted stat rows: the encounter reads the `hitpoints` effective out
     /// of this page for its mid-fight wait.
     stats: &'a [script_js::wire::StatInput<'a>],
@@ -327,7 +327,7 @@ fn scene_loc<'a>(
     level: i32,
     actions: &'a [String],
 ) -> script_js::wire::SceneEntityInput<'a> {
-    script_js::wire::SceneEntityInput {
+    script::native::snapshot_source::SceneEntityInput {
         index: 7,
         id,
         name: None,
@@ -379,28 +379,30 @@ fn post_scene(iso: &LoadIsolate, tick: u64, page: &[(i32, i32)], scene: &Scene<'
     }
     let rows: Vec<script_js::wire::ItemRowInput<'_>> = held
         .iter()
-        .map(|(id, count)| script_js::wire::ItemRowInput {
-            name: scene
-                .names
-                .iter()
-                .find(|(row_id, _)| row_id == id)
-                .map(|(_, name)| *name)
-                .or_else(|| {
-                    TRIO_ITEMS
-                        .iter()
-                        .find(|(row_id, _)| row_id == id)
-                        .map(|(_, name)| *name)
-                }),
-            count: *count,
-            id: *id,
-            ops: &[],
-            noted: false,
-            cert: -1,
-            component_id: -1,
-            slot: -1,
-        })
+        .map(
+            |(id, count)| script::native::snapshot_source::ItemRowInput {
+                name: scene
+                    .names
+                    .iter()
+                    .find(|(row_id, _)| row_id == id)
+                    .map(|(_, name)| *name)
+                    .or_else(|| {
+                        TRIO_ITEMS
+                            .iter()
+                            .find(|(row_id, _)| row_id == id)
+                            .map(|(_, name)| *name)
+                    }),
+                count: *count,
+                id: *id,
+                ops: &[],
+                noted: false,
+                cert: -1,
+                component_id: -1,
+                slot: -1,
+            },
+        )
         .collect();
-    let input = script_js::wire::SnapshotInput {
+    let input = script::native::snapshot_source::SnapshotInput {
         tick,
         here: scene.here,
         ingame: true,
@@ -445,16 +447,16 @@ fn post_scene(iso: &LoadIsolate, tick: u64, page: &[(i32, i32)], scene: &Scene<'
         side_tab_ifaces: &[],
         spell_buttons: &[],
         chat_lines: &[],
-        nearest_booth: scene
-            .nearest_booth
-            .map(|booth| script_js::wire::NearestBoothInput {
+        nearest_booth: scene.nearest_booth.map(|booth| {
+            script::native::snapshot_source::NearestBoothInput {
                 x: booth.x,
                 z: booth.z,
                 level: booth.level,
                 id: booth.id,
                 name: booth.name,
                 op: booth.op,
-            }),
+            }
+        }),
         bank_note_on: -1,
         bank_note_off: -1,
         scene_state: 0,
@@ -474,7 +476,7 @@ fn post_scene(iso: &LoadIsolate, tick: u64, page: &[(i32, i32)], scene: &Scene<'
         trade_decline_id: -1,
         shop_open: scene.shop_open,
         shop_stock: scene.shop_stock,
-        reach: script_js::wire::ReachViewInput::UNAVAILABLE,
+        reach: script::native::snapshot_source::ReachViewInput::UNAVAILABLE,
         attacked_by_player: false,
         self_target_kind: scene.self_target_kind,
         self_target_index: scene.self_target_index,
@@ -482,22 +484,21 @@ fn post_scene(iso: &LoadIsolate, tick: u64, page: &[(i32, i32)], scene: &Scene<'
         user_move_intent_seq: 0,
         walk_outcome_cancel_reason: Default::default(),
     };
-    let native = script_js::wire::NativeFactsInput {
-        puzzle_board: scene
-            .puzzle
-            .as_ref()
-            .map(|puzzle| script_js::wire::PuzzleBoardInput {
+    let native = script::native::snapshot_source::NativeFactsInput {
+        puzzle_board: scene.puzzle.as_ref().map(|puzzle| {
+            script::native::snapshot_source::PuzzleBoardInput {
                 component_id: puzzle.component_id,
                 size: puzzle.size,
                 items: puzzle.items,
                 generation: puzzle.generation,
-            }),
+            }
+        }),
         // The family's own seq: it is what makes the posted carry vector above
         // a family post at all, and every keyframe here carries it so a page
         // that names a short is observed as one.
         walk_outcome_seq: POSTED_WALK_OUTCOME_SEQ,
         walk_missing_carry: scene.missing_carry,
-        ..script_js::wire::NativeFactsInput::default()
+        ..script::native::snapshot_source::NativeFactsInput::default()
     };
     iso.post_snapshot(script_js::wire::encode_snapshot_with_native(&input, native));
 }
@@ -974,7 +975,7 @@ export async function tick(api) {
         2,
         &[(2677, 1)],
         &Scene {
-            here: Some(script_js::wire::TileInput {
+            here: Some(script::native::snapshot_source::TileInput {
                 x: 3200,
                 z: 3218,
                 level: 1,
@@ -1092,7 +1093,7 @@ export async function tick(api) {
         2,
         &page,
         &Scene {
-            here: Some(script_js::wire::TileInput {
+            here: Some(script::native::snapshot_source::TileInput {
                 x: 3200,
                 z: 3218,
                 level: 1,
@@ -1128,7 +1129,7 @@ export async function tick(api) {
         3,
         &page,
         &Scene {
-            here: Some(script_js::wire::TileInput {
+            here: Some(script::native::snapshot_source::TileInput {
                 x: 3209,
                 z: 3218,
                 level: 1,
@@ -1158,7 +1159,7 @@ export async function tick(api) {
         4,
         &page,
         &Scene {
-            here: Some(script_js::wire::TileInput {
+            here: Some(script::native::snapshot_source::TileInput {
                 x: 3209,
                 z: 3218,
                 level: 1,
@@ -1254,11 +1255,11 @@ fn clue_npc<'a>(
     index: i32,
     id: i32,
     name: &'a str,
-    tile: script_js::wire::TileInput,
+    tile: script::native::snapshot_source::TileInput,
     distance: i32,
     actions: &'a [String],
 ) -> script_js::wire::SceneEntityInput<'a> {
-    script_js::wire::SceneEntityInput {
+    script::native::snapshot_source::SceneEntityInput {
         index,
         id,
         name: Some(name),
@@ -1285,7 +1286,7 @@ fn clue_npc<'a>(
 }
 
 fn clue_stock(id: i32, name: &str, slot: i32, component: i32) -> script_js::wire::ItemRowInput<'_> {
-    script_js::wire::ItemRowInput {
+    script::native::snapshot_source::ItemRowInput {
         name: Some(name),
         count: 500,
         id,
@@ -1306,7 +1307,7 @@ fn v2_clue_run_reads_gate_toll_scene_and_shops_once() {
     let iso = spawn_live_clue_run();
     let page = [(2677, 1)];
     let packed = [(2677, 1), (PASS, 1)];
-    let named = [script_js::wire::CarryInput {
+    let named = [script::native::snapshot_source::CarryInput {
         id: PASS,
         count: 1,
         name: Some("Shantay pass"),
@@ -1318,7 +1319,7 @@ fn v2_clue_run_reads_gate_toll_scene_and_shops_once() {
         12,
         SHANTAY,
         "Shantay",
-        script_js::wire::TileInput {
+        script::native::snapshot_source::TileInput {
             x: SPAWN.0,
             z: SPAWN.1,
             level: SPAWN.2,
@@ -1326,12 +1327,12 @@ fn v2_clue_run_reads_gate_toll_scene_and_shops_once() {
         1,
         &trade,
     )];
-    let away = script_js::wire::TileInput {
+    let away = script::native::snapshot_source::TileInput {
         x: 3200,
         z: 3218,
         level: 1,
     };
-    let spawn = script_js::wire::TileInput {
+    let spawn = script::native::snapshot_source::TileInput {
         x: SPAWN.0,
         z: SPAWN.1,
         level: SPAWN.2,
@@ -1482,14 +1483,14 @@ fn v2_clue_run_reads_guarded_combat_scene_and_redigs_owned_death() {
     let iso = spawn_live_clue_run();
     let page = [(2723, 1), (952, 1)];
     let names = [(952, "Spade")];
-    let stats = [script_js::wire::StatInput {
+    let stats = [script::native::snapshot_source::StatInput {
         index: 3,
         name: "hitpoints",
         xp: 0,
         base: 40,
         effective: 40,
     }];
-    let arrived = script_js::wire::TileInput {
+    let arrived = script::native::snapshot_source::TileInput {
         x: 3058,
         z: 3884,
         level: 0,
@@ -1545,7 +1546,7 @@ export async function tick(api) {
     let iso =
         LoadIsolate::spawn_with_game_data(src.into(), LoadShape::NativeTick, vec![], data).unwrap();
     let page = [(2831, 1)];
-    let spawn = script_js::wire::TileInput {
+    let spawn = script::native::snapshot_source::TileInput {
         x: 3039,
         z: 3700,
         level: 0,
@@ -1589,7 +1590,7 @@ fn puzzle_rows(solved: bool) -> Vec<script_js::wire::ItemRowInput<'static>> {
             Some(slot)
         };
         if let Some(target) = target {
-            rows.push(script_js::wire::ItemRowInput {
+            rows.push(script::native::snapshot_source::ItemRowInput {
                 name: Some("Sliding piece"),
                 count: 1,
                 id: PUZZLE_PIECE_B + target,

@@ -3,7 +3,7 @@
 //! not a retyped facsimile (LIVE failed because `scene_state` is raw-only).
 
 use script::interact::InteractReq;
-use script_js::wire::{
+use script::native::snapshot_source::{
     InspectHopInput, NativeFactsInput, ReachViewInput, RouteInspectFactsInput,
     RouteInspectTerminalInput, SnapshotInput, TileInput,
 };
