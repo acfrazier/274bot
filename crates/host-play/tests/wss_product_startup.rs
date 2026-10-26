@@ -349,7 +349,12 @@ struct StartupFixture {
 }
 
 impl StartupFixture {
-    fn new(tls12_port: u16, tls13_port: u16, name_only_port: u16, wrong_host_port: u16) -> Self {
+    fn new(
+        tls12_port: u16,
+        tls13_port: u16,
+        name_only_port: Option<u16>,
+        wrong_host: (&str, u16),
+    ) -> Self {
         let root = std::env::temp_dir().join(format!(
             "host-play-wss-product-startup-{}-{}",
             std::process::id(),
@@ -377,24 +382,27 @@ impl StartupFixture {
                 .unwrap_or_else(|error| panic!("copy fixture {name}: {error}"));
         }
 
+        let mut profiles = vec![
+            launch_profile("wss-startup-tls12", "localhost", tls12_port, "vault-tls12"),
+            launch_profile("wss-startup-tls13", "localhost", tls13_port, "vault-tls13"),
+        ];
+        if let Some(port) = name_only_port {
+            profiles.push(launch_profile(
+                "wss-startup-name-only",
+                "localhost",
+                port,
+                "vault-name-only",
+            ));
+        }
+        profiles.push(launch_profile(
+            "wss-startup-wrong-host",
+            wrong_host.0,
+            wrong_host.1,
+            "vault-wrong-host",
+        ));
         let servers = Servers {
             schema_version: 1,
-            servers: vec![
-                launch_profile("wss-startup-tls12", "localhost", tls12_port, "vault-tls12"),
-                launch_profile("wss-startup-tls13", "localhost", tls13_port, "vault-tls13"),
-                launch_profile(
-                    "wss-startup-name-only",
-                    "localhost",
-                    name_only_port,
-                    "vault-name-only",
-                ),
-                launch_profile(
-                    "wss-startup-wrong-host",
-                    "127.0.0.1",
-                    wrong_host_port,
-                    "vault-wrong-host",
-                ),
-            ],
+            servers: profiles,
         };
         servers
             .validate()
@@ -602,10 +610,21 @@ fn product_play_wss_startup_negotiates_tls_versions_sends_hello_and_rejects_wron
         "../../../vendor/fr-client-rust/crates/client/tests/fixtures/tls/ca.pem"
     ))
     .expect("parse checked-in test CA");
-    let (name_only_root, name_only) = name_only_identity();
-    let client_config =
-        client_adapter::tls_handshake::build_test_client_config_with_roots(&[root, name_only_root])
-            .expect("build platform-verifying test client with the fixture CAs");
+    // The wrong-host peer. Linux and Windows route all of 127.0.0.0/8 to the
+    // loopback interface, so it listens on 127.0.0.2 with the checked-in
+    // certificate, which names localhost and 127.0.0.1 but not that address.
+    // macOS routes only 127.0.0.1 unless an interface alias exists, and a test
+    // must not create one: there the peer listens on 127.0.0.1 with a
+    // throwaway-CA certificate that names only the DNS name localhost (the
+    // checked-in one also names 127.0.0.1), so the IP address is the only
+    // defect, and a control attempt reaches the same identity by its name.
+    let name_only = cfg!(target_os = "macos").then(name_only_identity);
+    let mut roots = vec![root];
+    if let Some((name_only_root, _)) = &name_only {
+        roots.push(name_only_root.clone());
+    }
+    let client_config = client_adapter::tls_handshake::build_test_client_config_with_roots(&roots)
+        .expect("build platform-verifying test client with the fixture CAs");
     client_adapter::service::NetworkService::install_test_tls_config(client_config)
         .expect("install test TLS config before starting the process service");
     let _fixture_driver = client_adapter::service::NetworkService::start_composition()
@@ -629,46 +648,58 @@ fn product_play_wss_startup_negotiates_tls_versions_sends_hello_and_rejects_wron
         "localhost",
         false,
     );
-    // The same server identity answers twice: reached by its DNS name it is
-    // the control (the chain, validity and key usage are accepted), reached by
-    // the IP address 127.0.0.1 it names nothing, so the only defect is the
-    // wrong host.
-    let name_only_server = LocalWssServer::spawn(
-        pinned_server_config(
-            ProtocolVersion::TLSv1_3,
-            CipherSuite::TLS13_AES_128_GCM_SHA256,
-            ServerIdentity {
-                certificate: name_only.certificate.clone(),
-                key: name_only.key.clone_key(),
-            },
+    let (control_identity, wrong_host_identity, wrong_host_address) = match name_only {
+        Some((_, identity)) => (
+            Some(ServerIdentity {
+                certificate: identity.certificate.clone(),
+                key: identity.key.clone_key(),
+            }),
+            identity,
+            "127.0.0.1",
         ),
-        "localhost",
-        false,
-    );
+        None => (None, checked_in_identity(), "127.0.0.2"),
+    };
+    let name_only_server = control_identity.map(|identity| {
+        LocalWssServer::spawn(
+            pinned_server_config(
+                ProtocolVersion::TLSv1_3,
+                CipherSuite::TLS13_AES_128_GCM_SHA256,
+                identity,
+            ),
+            "localhost",
+            false,
+        )
+    });
     let wrong_host_server = LocalWssServer::spawn(
         pinned_server_config(
             ProtocolVersion::TLSv1_3,
             CipherSuite::TLS13_AES_128_GCM_SHA256,
-            name_only,
+            wrong_host_identity,
         ),
-        "127.0.0.1",
+        wrong_host_address,
         true,
     );
 
     let tls12_port = tls12_server.port();
     let tls13_port = tls13_server.port();
-    let name_only_port = name_only_server.port();
+    let name_only_port = name_only_server.as_ref().map(LocalWssServer::port);
     let wrong_host_port = wrong_host_server.port();
-    let fixture = StartupFixture::new(tls12_port, tls13_port, name_only_port, wrong_host_port);
+    let fixture = StartupFixture::new(
+        tls12_port,
+        tls13_port,
+        name_only_port,
+        (wrong_host_address, wrong_host_port),
+    );
     let tls12_account = fixture.account("vault-tls12", "t1m7tls12", 274_000_112);
     let tls13_account = fixture.account("vault-tls13", "t1m7tls13", 274_000_113);
-    let name_only_account = fixture.account("vault-name-only", "t1m7nameo", 274_000_115);
     let wrong_host_account = fixture.account("vault-wrong-host", "t1m7wrong", 274_000_114);
     let tls12_template = fixture.template("wss-startup-tls12", "localhost", tls12_port);
     let tls13_template = fixture.template("wss-startup-tls13", "localhost", tls13_port);
-    let name_only_template = fixture.template("wss-startup-name-only", "localhost", name_only_port);
-    let wrong_host_template =
-        fixture.template("wss-startup-wrong-host", "127.0.0.1", wrong_host_port);
+    let wrong_host_template = fixture.template(
+        "wss-startup-wrong-host",
+        wrong_host_address,
+        wrong_host_port,
+    );
 
     let (tls12, _) =
         run_product_attempt(tls12_template, tls12_account.clone(), tls12_server, false);
@@ -743,29 +774,32 @@ fn product_play_wss_startup_negotiates_tls_versions_sends_hello_and_rejects_wron
         "exact initial game hello follows TLS 1.3 startup"
     );
 
-    // Control for the wrong-host case below: the identical server identity,
-    // reached by the DNS name it carries, starts a WSS session.
-    let (name_only_control, _) = run_product_attempt(
-        name_only_template,
-        name_only_account.clone(),
-        name_only_server,
-        false,
-    );
-    assert!(
-        name_only_control.tls_error.is_none(),
-        "the name-only identity is accepted by its DNS name"
-    );
-    assert_eq!(name_only_control.server_name.as_deref(), Some("localhost"));
-    assert!(
-        name_only_control.websocket_upgrade_complete,
-        "the name-only identity reaches WSS by its DNS name"
-    );
-    let name_only_hello = expected_game_hello(&name_only_account.username);
-    assert_eq!(
-        name_only_control.hello.as_deref(),
-        Some(name_only_hello.as_slice()),
-        "exact initial game hello follows the name-only control startup"
-    );
+    // macOS only: the control for the wrong-host case below. The identical
+    // server identity, reached by the DNS name it carries, starts a WSS session.
+    if let Some(server) = name_only_server {
+        let account = fixture.account("vault-name-only", "t1m7nameo", 274_000_115);
+        let template = fixture.template(
+            "wss-startup-name-only",
+            "localhost",
+            name_only_port.expect("name-only control port"),
+        );
+        let (control, _) = run_product_attempt(template, account.clone(), server, false);
+        assert!(
+            control.tls_error.is_none(),
+            "the name-only identity is accepted by its DNS name"
+        );
+        assert_eq!(control.server_name.as_deref(), Some("localhost"));
+        assert!(
+            control.websocket_upgrade_complete,
+            "the name-only identity reaches WSS by its DNS name"
+        );
+        let control_hello = expected_game_hello(&account.username);
+        assert_eq!(
+            control.hello.as_deref(),
+            Some(control_hello.as_slice()),
+            "exact initial game hello follows the name-only control startup"
+        );
+    }
 
     let (wrong_host, typed_refusal) = run_product_attempt(
         wrong_host_template,
