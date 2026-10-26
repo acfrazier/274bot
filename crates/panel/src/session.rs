@@ -866,7 +866,12 @@ impl WalkSendState {
         }
     }
 }
+/// One accepted panel-owned write: the request that carries it (its
+/// identity, unique in this session), the member it changes and the value it
+/// asks for (`None` removes the member).
+#[derive(Clone)]
 struct PanelPreferenceMember {
+    request: u64,
     path: Vec<String>,
     value: Option<serde_json::Value>,
 }
@@ -971,8 +976,11 @@ pub struct Session {
     /// Service-owned writes remain watched by the panel even when the
     /// settings surface that submitted them is closed.
     panel_preference_writes: Vec<PanelPreferenceWrite>,
-    /// Latest panel edits kept over a cold-to-ready cache adoption.
-    pending_panel_members: HashMap<Vec<String>, Option<serde_json::Value>>,
+    /// The panel-owned writes accepted and not yet settled, oldest first:
+    /// each previews its value until its own result arrives.
+    pending_panel_members: Vec<PanelPreferenceMember>,
+    /// The last request identity handed out.
+    panel_request_seq: u64,
     /// Shared Nav values changed by an accepted command but not yet durable.
     pending_nav_members: HashMap<&'static str, bool>,
     /// Failed panel-owned writes, one per member path, each kept at its
@@ -1537,29 +1545,6 @@ fn apply_pending_nav_members(nav: &mut NavSettings, pending: &HashMap<&'static s
     }
 }
 
-fn json_member_matches(
-    document: &serde_json::Map<String, serde_json::Value>,
-    path: &[String],
-    expected: &Option<serde_json::Value>,
-) -> bool {
-    let mut object = document;
-    let mut value = None;
-    for (index, key) in path.iter().enumerate() {
-        value = object.get(key);
-        if index + 1 < path.len() {
-            let Some(next) = value.and_then(serde_json::Value::as_object) else {
-                return expected.is_none();
-            };
-            object = next;
-        }
-    }
-    match (value, expected) {
-        (None, None) => true,
-        (Some(value), Some(expected)) => value == expected,
-        _ => false,
-    }
-}
-
 #[cfg(test)]
 std::thread_local! {
     /// `ReorderProfiles` submits made on this test thread.
@@ -1671,7 +1656,8 @@ impl Session {
             preferences_ready,
             startup_focus_pending: None,
             panel_preference_writes: Vec::new(),
-            pending_panel_members: HashMap::new(),
+            pending_panel_members: Vec::new(),
+            panel_request_seq: 0,
             pending_nav_members,
             preference_write_errors: Vec::new(),
             feedback_scratch: String::new(),
@@ -1950,7 +1936,6 @@ impl Session {
         }
 
         if let Ok(document) = self.preferences.document() {
-            self.clear_cached_panel_members(&document);
             self.clear_cached_nav_members(&document);
             self.adopt_panel_preferences(&document);
             // Startup selection is a between-command effect. Lazy policy
@@ -2007,12 +1992,13 @@ impl Session {
         if !self.persist_ui {
             return Ok(());
         }
+        self.panel_request_seq += 1;
         let member = PanelPreferenceMember {
+            request: self.panel_request_seq,
             path: path.iter().map(|part| (*part).to_owned()).collect(),
             value: value.clone(),
         };
-        self.pending_panel_members
-            .insert(member.path.clone(), value.clone());
+        self.pending_panel_members.push(member.clone());
         let patch = match PreferencePatch::member(path, value) {
             Ok(patch) => patch,
             Err(error) => {
@@ -2022,7 +2008,8 @@ impl Session {
             }
         };
         if patch.is_empty() {
-            self.pending_panel_members.remove(&member.path);
+            self.pending_panel_members
+                .retain(|pending| pending.request != member.request);
             return Ok(());
         }
         match self.preferences.begin_patch(patch) {
@@ -2053,6 +2040,7 @@ impl Session {
             Ok(value) => self.persist_panel_member(path, Some(value)),
             Err(error) => {
                 let member = PanelPreferenceMember {
+                    request: 0,
                     path: path.iter().map(|part| (*part).to_owned()).collect(),
                     value: None,
                 };
@@ -2139,7 +2127,9 @@ impl Session {
         }
         self.ui = crate::ui_state::apply_pending_members(
             crate::ui_state::load_snapshot(document),
-            &self.pending_panel_members,
+            self.pending_panel_members
+                .iter()
+                .map(|member| (member.path.as_slice(), &member.value)),
         );
         apply_pending_nav_members(&mut self.ui.nav, &self.pending_nav_members);
         self.preferences_ready = true;
@@ -2163,49 +2153,58 @@ impl Session {
             self.ui.script_catalog_last_dir.as_deref(),
         );
 
-        self.clear_cached_panel_members(document);
         self.clear_cached_nav_members(document);
     }
 
+    /// A panel-owned write became durable: its request ends (the document
+    /// holds its value, and a newer request of the same member keeps
+    /// previewing its own) and the failure shown at the setting is resolved.
+    /// Requests are matched by identity, never by the value they carry.
     fn clear_succeeded_panel_members(&mut self, members: &[PanelPreferenceMember]) {
         for member in members {
-            if self.pending_panel_members.get(&member.path) == Some(&member.value) {
-                self.pending_panel_members.remove(&member.path);
-                #[cfg(test)]
-                crate::ui_state::commit_test_member(&member.path, &member.value);
-            }
+            self.pending_panel_members
+                .retain(|pending| pending.request != member.request);
+            #[cfg(test)]
+            crate::ui_state::commit_test_member(&member.path, &member.value);
             self.preference_write_errors
                 .retain(|error| error.path != member.path);
         }
+        self.rebase_panel_members();
     }
 
-    /// A panel-owned write was refused or failed: its preview is dropped
-    /// (the control shows the latest durable value again) and the failure
-    /// stays at the setting until a later write of it lands or the error
-    /// timeout passes. A write a newer one superseded has nothing to
-    /// report: the newer write decides.
+    /// A panel-owned write was refused or failed: its request ends, the
+    /// control shows the latest durable value (and the preview of any other
+    /// request still pending) again, and the failure stays at the setting
+    /// until a later write of it lands or the error timeout passes. Every
+    /// request has its own outcome, whatever the others carried.
     fn fail_panel_members(&mut self, members: &[PanelPreferenceMember], error: &str) {
         let now = Instant::now();
         for member in members {
-            if self.pending_panel_members.get(&member.path) != Some(&member.value) {
-                continue;
-            }
-            self.pending_panel_members.remove(&member.path);
-            self.revert_panel_member(&member.path);
+            self.pending_panel_members
+                .retain(|pending| pending.request != member.request);
             self.set_preference_write_error(Some(member), error, now);
         }
+        self.rebase_panel_members();
     }
 
-    /// Put the durable value of the member at `path` back over its failed
-    /// preview.
-    fn revert_panel_member(&mut self, path: &[String]) {
+    /// The panel view after a request settled: the latest durable document
+    /// with the previews of the requests still pending laid over it
+    /// ([`crate::ui_state::rebased`]). A run that saves nothing, and a
+    /// panel whose first snapshot has not arrived, have nothing to rebase.
+    fn rebase_panel_members(&mut self) {
+        if !self.persist_ui || !self.preferences_ready {
+            return;
+        }
         let Ok(document) = self.preferences.document() else {
             return;
         };
-        if let Some(restored) = crate::ui_state::restore_member(&self.ui, &document, path) {
-            self.ui = restored;
-            apply_pending_nav_members(&mut self.ui.nav, &self.pending_nav_members);
-        }
+        self.ui = crate::ui_state::rebased(
+            &self.ui,
+            &document,
+            self.pending_panel_members
+                .iter()
+                .map(|member| (member.path.as_slice(), &member.value)),
+        );
     }
 
     fn set_preference_write_error(
@@ -2237,20 +2236,6 @@ impl Session {
     fn expire_panel_write_errors(&mut self, now: Instant) {
         self.preference_write_errors.retain(|error| {
             now.saturating_duration_since(error.since) < frontend_core::ERROR_MESSAGE_TIMEOUT
-        });
-    }
-
-    fn clear_cached_panel_members(
-        &mut self,
-        document: &serde_json::Map<String, serde_json::Value>,
-    ) {
-        self.pending_panel_members.retain(|path, value| {
-            let stored = json_member_matches(document, path, value);
-            #[cfg(test)]
-            if stored {
-                crate::ui_state::commit_test_member(path, value);
-            }
-            !stored
         });
     }
 
