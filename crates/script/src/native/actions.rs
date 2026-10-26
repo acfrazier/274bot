@@ -634,7 +634,8 @@ impl<M: NativeMachine> ActionHandle<M> {
 }
 
 impl ActionHandle<crate::combat::Combat> {
-    pub(crate) fn prayer_cleanup(&self) -> crate::combat::RaisedPrayers {
+    /// Read accepted combat prayer-cleanup debt without polling the machine.
+    pub fn prayer_cleanup(&self) -> crate::combat::RaisedPrayers {
         let machine = self.machine.borrow();
         let Some(combat) = machine.as_ref() else {
             return crate::combat::RaisedPrayers::empty();

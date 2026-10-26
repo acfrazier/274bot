@@ -2,7 +2,7 @@ use super::*;
 use crate::native::{HostEffect, InteractionReceipt};
 use crate::quester::families::tests::{def, with_tick};
 use api::selected::{Knowledge, RunKey};
-#[cfg(feature = "load")]
+
 use api::snapshot::SnapshotView;
 use api::snapshot::{GameSnapshot, ItemActionFamily, ItemContainer};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -604,7 +604,7 @@ fn transfer_requires_both_screens_then_closed_ui_and_fresh_inventory_delta() {
         "closed screens and accepts are not a transfer receipt"
     );
     snapshot.seed_inventory(vec![item(2, 1, ItemContainer::Inventory)], 28);
-    #[cfg(feature = "load")]
+
     with_tick(&snapshot, &mut ledger, 13, |frame| {
         let stale = EvidenceStamp {
             run: frame.cx.run(),

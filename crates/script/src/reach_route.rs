@@ -41,10 +41,7 @@ impl Footprint {
 
 /// The posted reach view when its flood starts on the live player tile.
 /// A missing or stale flood leaves reachability unknown.
-pub(crate) fn live(
-    view: Option<&ReachQueryView>,
-    here: Option<WorldTile>,
-) -> Option<&ReachQueryView> {
+pub fn live(view: Option<&ReachQueryView>, here: Option<WorldTile>) -> Option<&ReachQueryView> {
     let view = view?;
     (exact_rank_at(view, here?) == Some(0)).then_some(view)
 }

@@ -284,7 +284,7 @@ fn local_family_reads_real_content() {
     let source_path = required("BOT_T2_LIVE_SOURCE");
     let expected_path = required("BOT_T2_LIVE_EXPECT");
     let source = std::fs::read_to_string(&source_path).expect("family probe source");
-    let source_sha = script::JsCache::origin_sha(source.as_bytes());
+    let source_sha = script_js::JsCache::origin_sha(source.as_bytes());
     let expected: Value = serde_json::from_slice(
         &std::fs::read(&expected_path).expect("exact expected family result"),
     )
@@ -377,7 +377,7 @@ fn local_family_reads_real_content() {
     play.script_start_load(
         account,
         source,
-        script::LoadShape::CompatClass,
+        script_js::LoadShape::CompatClass,
         None,
         vec![],
     )

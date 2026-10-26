@@ -188,6 +188,22 @@ impl StubSurfaceHandle {
         *lock(&self.state.stop_receipt) = receipt;
     }
 
+    /// Hold the real retirement receipt until [`Self::finish_stop`].
+    /// Call this before the slot transfers the run to retirement.
+    pub fn defer_stop_receipt(&self) {
+        lock(&self.state.retirement).deferred = true;
+    }
+
+    /// Release a held retirement receipt once, preserving its captured logs.
+    pub fn finish_stop(&self) -> bool {
+        let pending = {
+            let mut retirement = lock(&self.state.retirement);
+            retirement.deferred = false;
+            retirement.pending.take()
+        };
+        pending.is_some_and(|(done, logs)| done.send(logs).is_ok())
+    }
+
     /// Set whether [`SurfaceRun::take_script_cut`] will report a pending cut.
     pub fn set_script_cut(&self, pending: bool) {
         self.state.script_cut.store(pending, Ordering::Release);
@@ -409,7 +425,13 @@ impl SurfaceRun for StubSurfaceRun {
         self.state.stop_called.store(true, Ordering::Release);
         self.state.stopped.store(true, Ordering::Release);
         let retirement_logs = std::mem::take(&mut *lock(&self.state.retirement_logs));
-        let _ = done.send(retirement_logs);
+        let mut retirement = lock(&self.state.retirement);
+        if retirement.deferred {
+            retirement.pending = Some((done, retirement_logs));
+        } else {
+            drop(retirement);
+            let _ = done.send(retirement_logs);
+        }
     }
 
     fn stopped(&self) -> bool {
@@ -765,6 +787,12 @@ impl SurfaceFactory for StubSurfaceFactory {
     }
 }
 
+#[derive(Default)]
+struct StubRetirement {
+    deferred: bool,
+    pending: Option<(Sender<Vec<String>>, Vec<String>)>,
+}
+
 struct StubSurfaceState {
     start: SurfaceStart,
     execution: Mutex<ExecutionId>,
@@ -791,6 +819,7 @@ struct StubSurfaceState {
     tick_outcomes: Mutex<Vec<TickOutcome>>,
     logs: Mutex<Vec<String>>,
     retirement_logs: Mutex<Vec<String>>,
+    retirement: Mutex<StubRetirement>,
     live_walking_operation: AtomicBool,
     manual_walk_intent_sequence: AtomicU64,
     paint: Mutex<Option<Arc<ScriptPaint>>>,
@@ -834,6 +863,7 @@ impl StubSurfaceState {
             tick_outcomes: Mutex::new(Vec::new()),
             logs: Mutex::new(Vec::new()),
             retirement_logs: Mutex::new(Vec::new()),
+            retirement: Mutex::new(StubRetirement::default()),
             live_walking_operation: AtomicBool::new(false),
             manual_walk_intent_sequence: AtomicU64::new(0),
             paint: Mutex::new(None),

@@ -1,17 +1,8 @@
-//! Baker stall selection and restock helpers, usable without the `load` feature.
-//! Shared target facts stay in `api::cake_stall`; the snapshot-driven sequence
-//! is compiled only with the isolate feature.
+//! Baker stall selection and restock helpers shared by runtime adapters.
+//! Shared target facts stay in `api::cake_stall`.
 
 use api::cake_stall::{BakerStall, StallLoc, CAKE_ITEM_NAMES};
 use api::snapshot::WorldTile;
-
-#[cfg(feature = "load")]
-mod runtime;
-#[cfg(feature = "load")]
-pub use runtime::{
-    carried_cakes, needs_cake_restock_from_snapshot, on_hold, on_pause, on_reset, on_resume,
-    CakeStall,
-};
 
 /// Neighborhood around the selected stall tile used to reject the other stall.
 pub const TARGET_RADIUS: i32 = 3;

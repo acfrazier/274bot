@@ -1445,7 +1445,7 @@ fn seed_runner(
 
 struct ScriptCard {
     /// Native Gatherer does not need a foreign catalog card.
-    catalog: Option<Arc<script::load::surface::JsStartCard>>,
+    catalog: Option<Arc<script_js::surface::JsStartCard>>,
     bag: Arc<script::native::SettingsBag>,
     loadouts: Arc<[api::loadout::Loadout]>,
 }
@@ -1668,7 +1668,7 @@ impl Run {
                 let root = std::env::var_os("RS2B0T")
                     .map(PathBuf::from)
                     .ok_or("RS2B0T is required for the active memory benchmark")?;
-                let mut library = script::JsLibrary::new(dir.join("scripts.json"));
+                let mut library = script_js::JsLibrary::new(dir.join("scripts.json"));
                 library.register_rs2b0t(&root, &dir.join("rs2b0t-path"))?;
                 library.ensure_js(script::ScriptSource::Catalog, card_name)?;
                 let card = library
@@ -1680,11 +1680,11 @@ impl Run {
                     &serde_json::Map::new(),
                     inject.as_ref(),
                 );
-                let siblings = script::resolve_sibling_modules(
+                let siblings = script_js::resolve_sibling_modules(
                     &card.path,
                     &card.origin,
                     library.cache(),
-                    script::CacheMeta {
+                    script_js::CacheMeta {
                         kind: card.kind,
                         source: card.source,
                         shape: None,
@@ -2230,7 +2230,7 @@ impl Run {
             .is_none_or(|t| t.elapsed() >= Duration::from_secs(1))
         {
             let (allocs, alloc_bytes, live_bytes) = rust_allocator_counts();
-            let metrics = script::memory_profile::snapshots();
+            let metrics = script_js::memory_profile::snapshots();
             let sum = |key: &str| metrics.iter().filter_map(|m| m[key].as_u64()).sum::<u64>();
             let live = sum("v8_live");
             let sampled = metrics
@@ -3511,8 +3511,10 @@ mod tests {
         ]);
         let mut run = Run::prepare_unseeded(unit_config(1, Workload::Idle), "unit").unwrap();
         let source = crate::external_loader::default_frozen_source();
-        let mut library =
-            script::JsLibrary::with_cache(_iso.dir.join("scripts.json"), _iso.dir.join("js-cache"));
+        let mut library = script_js::JsLibrary::with_cache(
+            _iso.dir.join("scripts.json"),
+            _iso.dir.join("js-cache"),
+        );
         library.load(&source).unwrap();
         let lookup = source.display().to_string();
         library

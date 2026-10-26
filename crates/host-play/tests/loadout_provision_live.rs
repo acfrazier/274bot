@@ -378,7 +378,7 @@ impl LiveState {
         handle.start_load_with_loadouts(
             &self.account,
             PROVISION_JS.to_string(),
-            script::LoadShape::CompatClass,
+            script_js::LoadShape::CompatClass,
             Some(bag),
             vec![],
             &rows,
@@ -704,7 +704,7 @@ fn required(name: &str) -> Result<String, String> {
 
 fn hash_file(path: &Path) -> Result<String, String> {
     let bytes = std::fs::read(path).map_err(|error| format!("read {}: {error}", path.display()))?;
-    Ok(script::JsCache::origin_sha(&bytes))
+    Ok(script_js::JsCache::origin_sha(&bytes))
 }
 
 fn selected_profile(
@@ -813,7 +813,7 @@ fn run_cell() -> Result<(), String> {
             "weapon_id": RUNE_SCIMITAR_ID,
             "supply_id": LOBSTER_ID,
             "qty": SUPPLY_QTY,
-            "script_sha256": script::JsCache::origin_sha(PROVISION_JS.as_bytes()),
+            "script_sha256": script_js::JsCache::origin_sha(PROVISION_JS.as_bytes()),
         })
     );
 

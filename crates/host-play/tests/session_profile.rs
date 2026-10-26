@@ -845,7 +845,7 @@ fn qualified_revision_289_accepts_an_unarmed_slot_and_script_loading() {
         .start_load(
             "fixture",
             "export function tick(api) {}".into(),
-            script::LoadShape::NativeTick,
+            script_js::LoadShape::NativeTick,
             None,
             vec![],
         )

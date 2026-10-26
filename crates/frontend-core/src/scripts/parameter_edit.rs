@@ -645,7 +645,7 @@ impl ParameterEdit {
     }
 }
 
-fn card_label_for_key(js: &script::JsLibrary, key: &ParameterEditKey) -> Option<String> {
+fn card_label_for_key(js: &script_js::JsLibrary, key: &ParameterEditKey) -> Option<String> {
     if let Some(name) = key.card.strip_prefix("compiled:") {
         return script::compiled_id(name)
             .and_then(script::compiled_card)
@@ -657,7 +657,7 @@ fn card_label_for_key(js: &script::JsLibrary, key: &ParameterEditKey) -> Option<
 }
 
 fn setting_labels_for_selection(
-    js: &script::JsLibrary,
+    js: &script_js::JsLibrary,
     selection: &script::ScriptSel,
     field: &str,
 ) -> Option<(String, String)> {
@@ -2064,7 +2064,7 @@ export const SETTINGS: SettingsSchema = {
     foodWithdraw: { type: 'number', default: 20, min: 1, max: 27, group: 'Food & healing' },
 };
 "#;
-        let schema = script::try_settings_schema_from_source(src).expect("spread schema parses");
+        let schema = script_js::try_settings_schema_from_source(src).expect("spread schema parses");
         let loadout_def = schema
             .iter()
             .find(|def| def.id == "loadout")
@@ -2149,7 +2149,8 @@ export const SETTINGS: SettingsSchema = {
         std::fs::write(scripts.join("index.ts"), index).unwrap();
 
         let root = dir.join("rs2b0t");
-        let mut library = script::JsLibrary::with_cache(dir.join("store.json"), dir.join("cache"));
+        let mut library =
+            script_js::JsLibrary::with_cache(dir.join("store.json"), dir.join("cache"));
         assert_eq!(
             library
                 .register_rs2b0t(&root, &dir.join("catalog-path"))
@@ -2187,12 +2188,12 @@ export const SETTINGS: SettingsSchema = {
                 .prepare()
                 .unwrap_or_else(|error| panic!("{name}: prepare failed: {error}"))
             {
-                script::load::CardPreparationOutcome::Prepared(prepared) => prepared,
-                script::load::CardPreparationOutcome::Failed { error, .. } => {
+                script_js::CardPreparationOutcome::Prepared(prepared) => prepared,
+                script_js::CardPreparationOutcome::Failed { error, .. } => {
                     panic!("{name}: prepare failed: {error}")
                 }
-                script::load::CardPreparationOutcome::Unchanged
-                | script::load::CardPreparationOutcome::Confirmed => {
+                script_js::CardPreparationOutcome::Unchanged
+                | script_js::CardPreparationOutcome::Confirmed => {
                     panic!("{name}: changed catalog card was not prepared")
                 }
             };

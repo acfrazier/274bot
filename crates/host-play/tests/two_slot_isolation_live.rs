@@ -55,7 +55,7 @@ struct SlotLive {
     pump: Pump,
     start_handle: Option<ScriptStartHandle>,
     js: String,
-    shape: script::LoadShape,
+    shape: script_js::LoadShape,
     siblings: Vec<(String, String)>,
     prep: Prep,
     started: bool,

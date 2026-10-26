@@ -5,14 +5,17 @@
 //! example must fail its cell.
 
 use host_play::catalog_core::{parse_hunt_receipt_line, LineOfSightTile, ScriptAct};
-use script::isolate_fb::{encode_snapshot, ReachViewInput, SnapshotInput, TileInput};
 use script::shim::InteractReq;
-use script::{LoadIsolate, LoadShape};
+use {
+    script_js::wire::encode_snapshot, script_js::wire::ReachViewInput,
+    script_js::wire::SnapshotInput, script_js::wire::TileInput,
+};
+use {script_js::LoadIsolate, script_js::LoadShape};
 
 use super::{ht, HuntRun};
 
-const LEAVE_EXAMPLE: &str = include_str!("../../../script/examples/leave_lair_v2.ts");
-const ENTER_EXAMPLE: &str = include_str!("../../../script/examples/enter_lair_v2.ts");
+const LEAVE_EXAMPLE: &str = include_str!("../../../script-js/examples/leave_lair_v2.ts");
+const ENTER_EXAMPLE: &str = include_str!("../../../script-js/examples/enter_lair_v2.ts");
 
 fn snapshot(tick: u64, here: LineOfSightTile) -> SnapshotInput<'static> {
     SnapshotInput {
@@ -158,7 +161,7 @@ fn recorded_walk(req: &InteractReq) -> Option<ScriptAct> {
 /// ticks, and report whether `case` qualifies.
 fn example_through_the_gate(case: &str, source: &str, from: LineOfSightTile) -> bool {
     let mut run = HuntRun::start(case, from);
-    let js = script::transpile_ts(source).expect("the example transpiles");
+    let js = script_js::transpile_ts(source).expect("the example transpiles");
     let iso = LoadIsolate::spawn(js, LoadShape::NativeTick, vec![]).unwrap();
     let mut here = from;
     let mut walk: Option<(LineOfSightTile, i32)> = None;

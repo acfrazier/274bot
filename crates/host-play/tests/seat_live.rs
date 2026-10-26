@@ -520,7 +520,7 @@ fn start_load(live: &LiveCell, source: &str) {
         .script_start_load(
             &live.account,
             source.into(),
-            script::LoadShape::NativeTick,
+            script_js::LoadShape::NativeTick,
             None,
             vec![],
         )

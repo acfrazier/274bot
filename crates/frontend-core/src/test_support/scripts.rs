@@ -16,6 +16,11 @@ use crate::scripts::{
 use crate::session::OperatorSession;
 use crate::views::SlotDetail;
 
+/// Install the catalog-backed compiled cards without starting the V8 platform.
+pub fn install_catalog_cards() {
+    script_js::install_cards().expect("install canonical Sherlock card for front-end fixtures");
+}
+
 /// A script assignment a test saves with
 /// [`Scripts::persist_assignment`]: the catalog card, file, compiled card or
 /// missing file a profile last ran. Panel and TUI tests never name the vault
@@ -120,7 +125,7 @@ pub struct LoadedCardSnapshot {
 }
 
 impl LoadedCardSnapshot {
-    fn snapshot(card: &script::JsCard) -> Self {
+    fn snapshot(card: &script_js::JsCard) -> Self {
         Self {
             name: card.name.clone(),
             description: card.description.clone(),
@@ -291,7 +296,7 @@ impl Scripts {
 /// files in different directories stay distinct and content changes are
 /// observable per file.
 pub struct TestLibrary {
-    library: script::JsLibrary,
+    library: script_js::JsLibrary,
 }
 
 impl TestLibrary {
@@ -299,7 +304,7 @@ impl TestLibrary {
     /// `cache_root` (tests).
     pub fn with_cache(store: PathBuf, cache_root: PathBuf) -> Self {
         Self {
-            library: script::JsLibrary::with_cache(store, cache_root),
+            library: script_js::JsLibrary::with_cache(store, cache_root),
         }
     }
 
@@ -734,12 +739,12 @@ pub fn file_identity(path: &Path) -> String {
 
 /// The in-tree live example `file_name`, if one is built in (tests).
 pub fn live_example_path(file_name: &str) -> Option<PathBuf> {
-    script::live_example_path(file_name)
+    script_js::live_example_path(file_name)
 }
 
 /// The SHA-256 of raw origin bytes, as load failures record it (tests).
 pub fn raw_content_fingerprint(card_path: &Path, origin: &str) -> String {
-    script::raw_content_fingerprint(card_path, origin)
+    script_js::raw_content_fingerprint(card_path, origin)
 }
 
 /// The banner a reload shows when nothing changed (tests).

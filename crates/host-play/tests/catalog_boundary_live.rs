@@ -161,7 +161,7 @@ fn safe_catalog_path(root: &Path, relative: &str) -> Result<PathBuf, String> {
 
 fn hash_file(path: &Path) -> Result<String, String> {
     let bytes = std::fs::read(path).map_err(|error| format!("read {}: {error}", path.display()))?;
-    Ok(script::JsCache::origin_sha(&bytes))
+    Ok(script_js::JsCache::origin_sha(&bytes))
 }
 
 fn verify_source_identity(root: &Path, row: &CardLedger) -> Result<PathBuf, String> {
@@ -219,7 +219,7 @@ fn witness<'a>(
 #[derive(Clone)]
 struct PendingStart {
     js: String,
-    shape: script::LoadShape,
+    shape: script_js::LoadShape,
     settings: Option<Map<String, Value>>,
     siblings: Vec<(String, String)>,
 }
@@ -491,7 +491,7 @@ fn prepare_catalog_card(
 ) -> Result<(PendingStart, Value), String> {
     let source_path = verify_source_identity(root, row)?;
     let mut library =
-        script::JsLibrary::with_cache(temp.join("js-scripts.json"), temp.join("js-cache"));
+        script_js::JsLibrary::with_cache(temp.join("js-scripts.json"), temp.join("js-cache"));
     let registered = library.register_rs2b0t(root, &temp.join("rs2b0t-path"))?;
     if registered == 0 {
         return Err("frozen catalog registered no script cards".into());
@@ -533,11 +533,11 @@ fn prepare_catalog_card(
     // Required order for this controlled proof: schema defaults, scenario
     // injections, then explicit one-cell settings. Nothing is persisted.
     let settings = script::merge_bag(&card.settings_schema, &scenario_settings, Some(&explicit));
-    let siblings = script::resolve_sibling_modules(
+    let siblings = script_js::resolve_sibling_modules(
         &card.path,
         &card.origin,
         library.cache(),
-        script::CacheMeta {
+        script_js::CacheMeta {
             kind: card.kind,
             source: card.source,
             shape: None,
@@ -549,7 +549,7 @@ fn prepare_catalog_card(
         .map(|(url, js)| {
             json!({
                 "module": url,
-                "compiled_sha256": script::JsCache::origin_sha(js.as_bytes()),
+                "compiled_sha256": script_js::JsCache::origin_sha(js.as_bytes()),
             })
         })
         .collect::<Vec<_>>();
@@ -557,7 +557,7 @@ fn prepare_catalog_card(
         "card": case.card_name(),
         "source_path": card.path,
         "source_sha256": card.sha256,
-        "compiled_sha256": script::JsCache::origin_sha(card.js.as_bytes()),
+        "compiled_sha256": script_js::JsCache::origin_sha(card.js.as_bytes()),
         "siblings": sibling_hashes,
         "settings": printable_settings(&settings),
     });
@@ -2871,14 +2871,14 @@ export default class NativeStop extends LoopingBot {{
 "#
         );
         let mut slot = script::SlotScript::new();
-        slot.bind_surface_factory(Arc::new(script::load::surface::JsSurfaceFactory::default()));
-        let family = script::resolve_api_family(&source)
+        slot.bind_surface_factory(Arc::new(script_js::surface::JsSurfaceFactory::default()));
+        let family = script_js::resolve_api_family(&source)
             .ok()
             .map(|(_, family)| family);
         slot.start_surface(script::surface::SurfaceStart {
-            card: Arc::new(script::load::surface::JsStartCard {
+            card: Arc::new(script_js::surface::JsStartCard {
                 source: source.into(),
-                shape: script::LoadShape::CompatClass,
+                shape: script_js::LoadShape::CompatClass,
                 siblings: Arc::from([]),
                 family,
             }),
@@ -12811,7 +12811,7 @@ export default class NativeStop extends LoopingBot {{
                 // back to AutoFighter's DEFAULT_LOOT (gems+clue), which Guards
                 // cannot feed. merge_bag must keep the injected Bones list.
                 if name == "auto_fighter_bank" {
-                    let schema = script::settings_schema_from_source(&source);
+                    let schema = script_js::settings_schema_from_source(&source);
                     let loot = schema
                         .iter()
                         .find(|setting| setting.id == "loot")

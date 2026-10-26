@@ -33,7 +33,7 @@ impl RaisedPrayers {
     }
 
     /// Mark an accepted raise as owned. Ownership rules live in the callers.
-    pub(crate) fn accepted(&mut self, varp: i32, on: bool, displaced: u16) {
+    pub fn accepted(&mut self, varp: i32, on: bool, displaced: u16) {
         let Some(bit) = Self::bit(varp) else {
             return;
         };

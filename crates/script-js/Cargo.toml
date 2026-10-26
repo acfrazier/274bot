@@ -1,0 +1,313 @@
+[package]
+name = "script-js"
+version.workspace = true
+edition = "2021"
+publish = false
+
+[features]
+# Integration-only test seams, enabled through dev-dependencies rather than
+# normal consumers. Preserve checked-in JSON ordering for test snapshots.
+test-hooks = ["script/test-hooks", "serde_json/preserve_order"]
+# Opt-in counters for the host-play memory-profile harness (V8 heap /
+# snapshot inflight).
+memory-profile = []
+
+[dependencies]
+api = { path = "../api" }
+# TS parse for import scans and the TS -> JS strip used by the catalog shape.
+deno_ast = { version = "=0.49.0", features = ["transpiling"] }
+deno_core = { version = "=0.355.0" }
+# Isolate IPC wire format (schema: `crates/script-js/schema/isolate.fbs`);
+# Rust bindings are checked-in pinned `flatc` output, so builds need no generator.
+flatbuffers = { version = "=25.12.19" }
+parking_lot = "=0.12.5"
+rand = "=0.8.5"
+rustyscript = { version = "=0.12.3", default-features = false, features = ["worker", "web_stub", "console"] }
+script = { path = "../script", features = ["canvas-raster"] }
+serde = { version = "=1.0.219", features = ["derive"] }
+serde_json = "=1.0.140"
+sha2 = "=0.10.9"
+thiserror = "=2.0.20"
+tokio = { version = "=1.53.1", features = ["rt-multi-thread", "time"] }
+vault = { path = "../vault" }
+v8 = { version = "=137.2.1", default-features = false }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+api = { path = "../api", features = ["test-support"] }
+allocation-counter = "=0.8.1"
+client = { workspace = true }
+nav-planner = { path = "../nav-planner" }
+script = { path = "../script", default-features = false, features = ["test-hooks"] }
+script-js = { path = ".", default-features = false, features = ["test-hooks"] }
+
+[[test]]
+name = "v8_platform"
+harness = false
+
+[[test]]
+name = "entity_row_shape"
+required-features = ["test-hooks"]
+harness = false
+
+[[test]]
+name = "paint_controls_shape"
+required-features = ["test-hooks"]
+harness = false
+
+[[test]]
+name = "load_isolate"
+[[test]]
+name = "declared_abi"
+[[test]]
+name = "catalog_bright_fixture"
+[[test]]
+name = "shop_buyout"
+[[test]]
+name = "gold_stubs"
+[[test]]
+name = "compat_paint_settings"
+[[test]]
+name = "tool_tiers"
+[[test]]
+name = "supervisor_mapping"
+[[test]]
+name = "load_siblings"
+[[test]]
+name = "catalog_run"
+[[test]]
+name = "herb_data"
+[[test]]
+name = "unloadable"
+[[test]]
+name = "on_stop"
+[[test]]
+name = "events"
+[[test]]
+name = "watchdog"
+[[test]]
+name = "load_diagnostics"
+[[test]]
+name = "paint_frame_share"
+[[test]]
+name = "quest_facts"
+[[test]]
+name = "supply_helpers"
+[[test]]
+name = "clue_facts"
+[[test]]
+name = "gather_methods"
+[[test]]
+name = "loadout_potion_helpers"
+[[test]]
+name = "autocast"
+[[test]]
+name = "cake_stall_native_mapping"
+[[test]]
+name = "periodic_bank"
+[[test]]
+name = "cook_location_shape"
+[[test]]
+name = "named_bank_approach"
+[[test]]
+name = "named_bank_locations"
+[[test]]
+name = "tool_native_mapping"
+[[test]]
+name = "direct_walkto"
+[[test]]
+name = "return_to_anchor"
+[[test]]
+name = "walk_options"
+[[test]]
+name = "quest_journal"
+[[test]]
+name = "shop"
+[[test]]
+name = "ent"
+[[test]]
+name = "dialog"
+[[test]]
+name = "compat_dts"
+[[test]]
+name = "host_js"
+[[test]]
+name = "native_api_v2"
+[[test]]
+name = "clue_pack"
+[[test]]
+name = "hunt_cell"
+[[test]]
+name = "hunt_key"
+[[test]]
+name = "combat_start_helpers"
+[[test]]
+name = "actor_observation"
+[[test]]
+name = "paint_formats"
+[[test]]
+name = "trade"
+[[test]]
+name = "walk_outcome"
+[[test]]
+name = "wildy_pit_recovery"
+[[test]]
+name = "solve_clue_adapter"
+[[test]]
+name = "special"
+[[test]]
+name = "spell_facts"
+[[test]]
+name = "task_validation"
+[[test]]
+name = "teleport"
+[[test]]
+name = "thieving_targets_native_mapping"
+[[test]]
+name = "tick_subscriber"
+[[test]]
+name = "reach"
+[[test]]
+name = "reach_distance"
+[[test]]
+name = "resource_tool_facts"
+[[test]]
+name = "route_inspect_brimhaven_v2"
+[[test]]
+name = "rs2b0t_registry"
+[[test]]
+name = "settings_bag"
+[[test]]
+name = "paint_buttons"
+[[test]]
+name = "paint_chrome"
+[[test]]
+name = "paint_crossings"
+[[test]]
+name = "paint_pipeline"
+[[test]]
+name = "prayer"
+[[test]]
+name = "production"
+[[test]]
+name = "loadouts_bag"
+[[test]]
+name = "loc_selected_identity"
+[[test]]
+name = "modals"
+[[test]]
+name = "native_hint_overhead"
+[[test]]
+name = "native_npc_box"
+[[test]]
+name = "native_quest_status"
+[[test]]
+name = "native_retaliate_controls"
+[[test]]
+name = "jive_paint"
+[[test]]
+name = "js_cache"
+[[test]]
+name = "line_of_sight"
+[[test]]
+name = "load_shape"
+[[test]]
+name = "hunt_enter"
+[[test]]
+name = "hunt_fight"
+[[test]]
+name = "hunt_hold"
+[[test]]
+name = "hunt_leave"
+[[test]]
+name = "hunt_retreat"
+[[test]]
+name = "hunt_walk"
+[[test]]
+name = "input_action_at"
+[[test]]
+name = "input_inv_button"
+[[test]]
+name = "hostile_duel"
+[[test]]
+name = "hunt_bank"
+[[test]]
+name = "equipment_items_id"
+[[test]]
+name = "fire"
+[[test]]
+name = "combat_keep_names"
+[[test]]
+name = "combat_style_contract"
+[[test]]
+name = "death_recovery"
+[[test]]
+name = "drive_partner_trade"
+[[test]]
+name = "client_adapter_combat_level"
+[[test]]
+name = "client_adapter_count_dialog"
+[[test]]
+name = "client_adapter_inventory"
+[[test]]
+name = "client_adapter_local_walk"
+[[test]]
+name = "bone_burier_v2"
+[[test]]
+name = "boost_potions_native_mapping"
+[[test]]
+name = "canvas"
+[[test]]
+name = "blocked_cards"
+[[test]]
+name = "bank_withdraw_op"
+[[test]]
+name = "chat_dialog_continue"
+[[test]]
+name = "client_adapter_self_anim"
+[[test]]
+name = "fight_upkeep"
+[[test]]
+name = "reconnect_hold"
+
+[[test]]
+name = "api_combat_runtime"
+[[test]]
+name = "api_gather_runtime"
+[[test]]
+name = "api_gather_wire"
+[[test]]
+name = "api_progress_runtime"
+[[test]]
+name = "api_progress_wire"
+[[test]]
+name = "broadcast_channel"
+[[test]]
+name = "gather_gas_alloc"
+[[test]]
+name = "gather_gas_set"
+[[test]]
+name = "gather_lazy_ownership"
+[[test]]
+name = "paired_catalog"
+[[test]]
+name = "script_seam_engine"
+[[test]]
+name = "upstream_tier1"
+
+[[test]]
+name = "crypto_stub"
+
+[[test]]
+name = "ground_selected_identity"
+harness = false
+[[test]]
+name = "input_ground_identity"
+
+[[test]]
+name = "load_picker"
+
+[[example]]
+name = "catalog_inventory"

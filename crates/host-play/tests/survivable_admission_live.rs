@@ -947,7 +947,7 @@ fn real_compat_v1_crossing_and_own_sustain_at_45_and_14_hp() {
         play.script_start_load(
             &name,
             compat_source(destination),
-            script::LoadShape::CompatClass,
+            script_js::LoadShape::CompatClass,
             None,
             vec![],
         )

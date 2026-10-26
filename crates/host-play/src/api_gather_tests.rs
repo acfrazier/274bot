@@ -255,7 +255,7 @@ fn start_source(
         let start = crate::script_runtime::js_surface_start(
             crate::script_runtime::js_start_card(
                 source.into(),
-                script::LoadShape::NativeTick,
+                script_js::LoadShape::NativeTick,
                 vec![],
             ),
             None,
@@ -940,7 +940,7 @@ impl GatherReconnectRig {
                 .get();
             let mut slot = script::SlotScript::new();
             slot.bind_incarnation(incarnation);
-            slot.bind_surface_factory(Arc::new(script::load::surface::JsSurfaceFactory::default()));
+            slot.bind_surface_factory(Arc::new(script_js::surface::JsSurfaceFactory::default()));
             scripts
                 .lock()
                 .unwrap()
@@ -1012,7 +1012,7 @@ impl GatherReconnectRig {
             PostedWalkOutcome::default(),
             PostedInspect::default(),
             |input, native| {
-                script::load::surface::post_snapshot_delta_pages_for_test(
+                script_js::surface::post_snapshot_delta_pages_for_test(
                     &mut slot, input, native, false,
                 )
             },
