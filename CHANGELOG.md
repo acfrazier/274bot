@@ -138,6 +138,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
 
 ### Scripts
 
+- The FlaxRunner, GnomeMagicChopper and HerbloreSecondaries problems listed in
+  0.2.5 and 0.2.6 are fixed in rs2b0t itself. Update your rs2b0t folder to get
+  the fixes.
+
 - `Prayer.clear()` no longer repeats a prayer click before the game confirms it.
   Its result now counts the clicks it sends.
 
@@ -271,26 +275,6 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   Quester fights. With the setting on, any running rs2b0t script pauses. A
   built-in script pauses while it walks or acts, but not between actions. 0.2.6
   has the same problem.
-- **Scripts:** In the FlaxRunner script, the Spinner banking step does not check
-  whether the walk to the Seers' Village bank or the bank opening succeeded
-  before it tries to deposit. If either step fails once, the deposit does
-  nothing for that trip and the trip counter still increases. The script retries
-  on the next loop, so work continues, but a trip can be wasted. The fix belongs
-  to the upstream script. 0.2.5 to 0.2.6 have the same problem.
-- **Scripts:** The rs2b0t HerbloreSecondaries script does not eat while it
-  walks, and its eat rule refuses a lobster above 5 hitpoints because the
-  12-point heal does not fit a low-Hitpoints account. On a low-level account the
-  red spiders' eggs trip through Edgeville dungeon can kill the bot with food
-  still in its pack. Run this script on an account with mid-level combat stats
-  (the script's own tests use level 40) until the script is fixed upstream.
-  0.2.5 to 0.2.6 have the same problem.
-- **Scripts:** The rs2b0t GnomeMagicChopper script looks for the Gnome
-  Stronghold bank's north staircase in the wrong place, a few tiles from the
-  real stairs. If its first walk to the bank fails and it switches to the north
-  staircase, that bank trip can fail. The south staircase works, and the script
-  usually recovers on a later trip. If a fletching bank trip gets stuck, move
-  the bot beside the south staircase and restart the script. The fix belongs to
-  the upstream script. 0.2.5 to 0.2.6 have the same problem.
 - **Panel:** If WalkTo is open while you change Fleet marks, WalkTo keeps the
   earlier selection until you click **Walk N bots**. **Workaround:** after
   changing Fleet marks, click **Walk N bots**, or close and reopen WalkTo. 0.2.6
