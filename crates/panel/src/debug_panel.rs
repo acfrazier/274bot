@@ -240,6 +240,7 @@ impl DebugPanelState {
 /// `app.rs`; the link below only sets `Session::debug_open_teleports`.
 pub fn draw(ui: &Ui, session: &mut Session) {
     draw_target_header(ui, session);
+    crate::app::panel_member_feedback_line(ui, session, &["debug_panel"]);
     if !session.debug_ui() {
         ui.text_colored(ERROR, "Debug commands require a Local profile.");
         return;

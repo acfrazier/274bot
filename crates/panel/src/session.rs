@@ -2080,6 +2080,15 @@ impl Session {
             .map(|error| error.text.as_str())
     }
 
+    /// Whether a panel-owned write of a member under `prefix` is accepted
+    /// and not yet settled: the setting's control says "Saving…".
+    pub(crate) fn panel_member_pending(&self, prefix: &[&str]) -> bool {
+        self.pending_panel_members.iter().any(|member| {
+            member.path.len() >= prefix.len()
+                && member.path.iter().zip(prefix).all(|(a, b)| a == b)
+        })
+    }
+
     /// Submit one exact panel-owned preference member without waiting.
     pub(crate) fn persist_panel_member(
         &mut self,
@@ -2147,6 +2156,9 @@ impl Session {
             path: path.iter().map(|part| (*part).to_owned()).collect(),
             value: value.clone(),
         };
+        // A new write of the member is the action that resolves its failure.
+        self.preference_write_errors
+            .retain(|error| error.path != member.path);
         self.pending_panel_members.push(member.clone());
         let patch = match PreferencePatch::member(path, value) {
             Ok(patch) => patch,
