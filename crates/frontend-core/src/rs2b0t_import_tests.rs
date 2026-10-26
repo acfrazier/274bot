@@ -10,6 +10,7 @@ use vault::{Profile, ProfileSettings, RasterMode, ScriptAssignment, Vault};
 
 use super::*;
 use crate::operations::Outcome;
+use crate::ArmMirror;
 
 const FIXTURE: &str = include_str!("../tests/fixtures/rs2b0t-profiles.json");
 const PASSWORDS: [&str; 2] = ["fake-pass-alice", "fake-pass-bob"];
