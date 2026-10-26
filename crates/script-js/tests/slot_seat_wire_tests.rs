@@ -1,11 +1,10 @@
 use api::identity::{ExecutionId, RequestId};
 use api::script_contract::{CallbackCancelReason, DecisionSequence, Refusal, RequestStamp};
-use api::selected::RunKey;
-use script::bank::request::{BankSeatArgs, BankSeatOperation};
 use script::native::request::NativeKind;
 use script::native::seat::SeatTerminal;
 use script::native::seat_rows::{
-    DecodedSeatBatch, SeatMachineEvent, SeatMachineEventKind, SeatStartArgs, SeatStartInput,
+    DecodedSeatBatch, SeatMachineEvent as MachineEvent, SeatMachineEventKind as MachineEventKind,
+    SeatStartArgs, SeatStartInput,
 };
 use script::slot::{SlotMetrics, SlotScript};
 use script_js::wire::{
@@ -17,18 +16,14 @@ fn id(raw: u64) -> RequestId {
     RequestId::isolate(raw).unwrap()
 }
 
-fn run_key() -> RunKey {
-    RunKey {
-        slot: 1,
-        run: 7,
-        session: 2,
-    }
-}
-
 fn slot() -> SlotScript {
     let mut slot = SlotScript::new();
     slot.bind_incarnation(1);
-    slot.arm_seat_for_test(run_key());
+    slot.arm_seat_for_test(api::selected::RunKey {
+        slot: 1,
+        run: 7,
+        session: 2,
+    });
     slot
 }
 
@@ -66,17 +61,18 @@ fn fifty_late_control_copies_retire_in_slot_metrics_without_logs() {
         slot.consume_seat_batch_for_test(
             batch(),
             0,
-            &[SeatMachineEvent {
+            &[MachineEvent {
                 id: id(1),
-                kind: SeatMachineEventKind::Done,
+                kind: MachineEventKind::Done,
                 admitted: true,
             }],
         );
-        let seq = 1; // The fresh seat has published exactly one terminal.
+        // The fresh seat has published exactly one terminal.
+        let seq = slot.seat_for_test().unwrap().results()[0].seq;
         let mut acknowledged = batch();
         acknowledged.consumed_terminal_seq = seq;
         slot.consume_seat_batch_for_test(acknowledged, 0, &[]);
-        assert_eq!(slot.seat_probe().unwrap().results, 0);
+        assert!(slot.seat_for_test().unwrap().results().is_empty());
         let logs_before = slot.pending_log_len_for_test();
         let decisions = [SeatDecisionRef {
             of: id(1),
@@ -101,19 +97,20 @@ fn fifty_late_control_copies_retire_in_slot_metrics_without_logs() {
             let duplicate = decode_seat_interact_batch(&wire).expect("decode duplicate control");
             slot.consume_seat_batch_for_test(duplicate, 0, &[]);
         }
-        let probe = slot.seat_probe().unwrap();
-        assert_eq!(probe.late_controls, 50);
-        assert_eq!(probe.live, 0);
-        assert_eq!(probe.results, 0);
+        let seat = slot.seat_for_test().unwrap();
+        assert_eq!(seat.late_controls(), 50);
+        assert!(seat.live().is_empty());
+        assert!(seat.results().is_empty());
         assert_eq!(slot.pending_log_len_for_test(), logs_before);
         assert_eq!(
             slot.slot_metrics(),
             SlotMetrics {
-                dropped: probe.dropped,
+                dropped: seat.dropped(),
                 late_controls: 50,
             },
             "50 encoded late copies must be visible without the test-support probe"
         );
+        #[cfg(feature = "test-hooks")]
         assert_eq!(slot.seat_probe().unwrap().late_controls, 50);
     }
 }
@@ -123,8 +120,10 @@ fn fifty_late_control_copies_retire_in_slot_metrics_without_logs() {
 #[test]
 fn nested_four_root_wire_starts_publish_the_fifth_root_refusal() {
     let mut slot = slot();
-    let execution = ExecutionId::first(run_key());
-    let bank = BankSeatArgs::new(BankSeatOperation::BankNearest);
+    let execution = ExecutionId::first(slot.seat_for_test().unwrap().run());
+    let bank = script::bank::request::BankSeatArgs::new(
+        script::bank::request::BankSeatOperation::BankNearest,
+    );
     let starts = [
         (1, None, NativeKind::Prayer),
         (2, None, NativeKind::Autocast),
@@ -156,13 +155,35 @@ fn nested_four_root_wire_starts_publish_the_fifth_root_refusal() {
     let decoded = decode_seat_interact_batch(&wire).expect("decode seven ordered starts");
     slot.consume_seat_batch_for_test(decoded, 0, &[]);
 
-    assert_eq!(slot.seat_probe().unwrap().live, 6);
-    assert_eq!(slot.seat_root_count_for_test(), 4);
-    assert_eq!(slot.seat_parent_for_test(id(5)), Some(Some(id(1))));
-    assert_eq!(slot.seat_parent_for_test(id(6)), Some(Some(id(5))));
-    assert_eq!(slot.seat_probe().unwrap().results, 1);
+    let seat = slot.seat_for_test().unwrap();
+    assert_eq!(seat.live().len(), 6);
     assert_eq!(
-        slot.seat_result_outcome_for_test(id(7)),
-        Some(SeatTerminal::Refused(Refusal::Busy))
+        seat.live()
+            .iter()
+            .filter(|entry| entry.parent.is_none())
+            .count(),
+        4
+    );
+    assert_eq!(
+        seat.live()
+            .iter()
+            .find(|entry| entry.id == id(5))
+            .unwrap()
+            .parent,
+        Some(id(1))
+    );
+    assert_eq!(
+        seat.live()
+            .iter()
+            .find(|entry| entry.id == id(6))
+            .unwrap()
+            .parent,
+        Some(id(5))
+    );
+    assert_eq!(seat.results().len(), 1);
+    assert_eq!(seat.results()[0].id, id(7));
+    assert_eq!(
+        seat.results()[0].outcome,
+        SeatTerminal::Refused(Refusal::Busy)
     );
 }
