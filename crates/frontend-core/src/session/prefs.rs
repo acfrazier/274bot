@@ -684,7 +684,7 @@ impl<Io> OperatorSession<Io> {
         };
         match crate::nav_prefs::write_nav_preference(&preferences, preference, on) {
             Ok(write) => self.after_write(request, setting, write, "navigation preference"),
-            Err(error) => self.refused(setting, write_failed("navigation preference", &error)),
+            Err(error) => self.refused(setting, not_accepted("navigation preference", &error)),
         }
     }
 
@@ -695,7 +695,7 @@ impl<Io> OperatorSession<Io> {
         };
         match WalkGlobalsView::persist_danger(&preferences, level) {
             Ok(write) => self.after_write(request, setting, write, "danger routing"),
-            Err(error) => self.refused(setting, write_failed("danger routing", &error)),
+            Err(error) => self.refused(setting, not_accepted("danger routing", &error)),
         }
     }
 
@@ -706,7 +706,7 @@ impl<Io> OperatorSession<Io> {
         };
         match crate::log_file::persist_session_log_setting(&preferences, on) {
             Ok(write) => self.after_write(request, setting, write, "session file setting"),
-            Err(error) => self.refused(setting, write_failed("session file setting", &error)),
+            Err(error) => self.refused(setting, not_accepted("session file setting", &error)),
         }
     }
 
@@ -719,7 +719,7 @@ impl<Io> OperatorSession<Io> {
         };
         match crate::map_bake::persist_map_bake_choice(&preferences, choice) {
             Ok(write) => self.after_write(request, setting, write, "map bake choice"),
-            Err(error) => self.refused(setting, write_failed("map bake choice", &error)),
+            Err(error) => self.refused(setting, not_accepted("map bake choice", &error)),
         }
     }
 
@@ -783,10 +783,7 @@ impl<Io> OperatorSession<Io> {
             }
             Err(error) => self.refused(
                 setting,
-                Applied::Failed(
-                    FailureKind::WriteFailed,
-                    Some(format!("Quest Paths settings: {error}")),
-                ),
+                write_refused(format!("Quest Paths settings: {error}")),
             ),
         }
     }
@@ -834,10 +831,7 @@ impl<Io> OperatorSession<Io> {
                     Ok(write) => self.after_write(request, setting, write, "background bots"),
                     Err(error) => self.refused(
                         setting,
-                        Applied::Failed(
-                            FailureKind::WriteFailed,
-                            Some(host_play::background_bots_ack_error(&error)),
-                        ),
+                        write_refused(host_play::background_bots_ack_error(&error)),
                     ),
                 }
             }
@@ -874,7 +868,7 @@ impl<Io> OperatorSession<Io> {
         let preferences = self.preferences().ok_or_else(no_store)?;
         preferences
             .begin_set(key, value)
-            .map_err(|error| write_failed(key, &error))
+            .map_err(|error| not_accepted(key, &error))
     }
 
     /// Write the saved Load order. `Done` when nothing waits; a queued
@@ -938,6 +932,13 @@ pub(super) struct PrefWriteWatch {
     pub(super) what: &'static str,
 }
 
-fn write_failed(what: &str, error: &crate::prefs::PreferenceError) -> Applied {
-    Applied::Failed(FailureKind::WriteFailed, Some(format!("{what}: {error}")))
+/// A saved-setting write the preference queue refused before accepting it:
+/// the command is refused (one `info` line at the command boundary), not
+/// failed.
+fn write_refused(text: String) -> Applied {
+    Applied::Rejected(Rejection::WriteRefused, Some(text))
+}
+
+fn not_accepted(what: &str, error: &crate::prefs::PreferenceError) -> Applied {
+    write_refused(format!("{what}: {error}"))
 }

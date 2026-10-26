@@ -5211,3 +5211,69 @@ fn a_second_process_version_reaches_the_models_and_calls_the_surface_back() {
         "an unchanged version calls nothing back"
     );
 }
+
+/// A saved-setting command the preference queue refuses before accepting it
+/// (the writer's queue is full) is a refused command, not a failed write:
+/// one `info` line at the shared command boundary names it, the refusal is
+/// counted, and the setting shows the reason. An accepted write that fails
+/// later is a different result and logs no refusal.
+#[test]
+fn a_preference_refused_at_queue_admission_logs_one_refusal_at_the_command_boundary() {
+    use crate::nav_prefs::NavPreference as N;
+    let mut d = driver("s3-queue-refusal", &["alice"]);
+    d.poll();
+    let disk = Disk::install(&d, 1);
+    let refusals = d.session().refusals();
+    let setting = crate::Setting::Nav(N::AllowTeleports);
+    let mut refused = Vec::new();
+    let mut accepted = Vec::new();
+    for index in 0..24 {
+        let on = index % 2 == 0;
+        let request = d
+            .submit(
+                OperatorCommand::SetNavPreference(N::AllowTeleports, on),
+                Targets::Application,
+            )
+            .expect("the command is admitted")
+            .request();
+        match terminal_app(&d, request) {
+            Some(Settlement::Failed(CommandFailure::Rejected(
+                crate::command::Rejection::WriteRefused,
+            ))) => refused.push(request),
+            None => accepted.push(request),
+            other => panic!("neither accepted nor refused by the queue: {other:?}"),
+        }
+    }
+    assert!(
+        !refused.is_empty() && !accepted.is_empty(),
+        "the queue accepted some and refused the rest ({} / {})",
+        accepted.len(),
+        refused.len()
+    );
+    assert_eq!(
+        d.session().refusals(),
+        refusals + refused.len() as u64,
+        "one refusal counted per refused command, none for the accepted ones"
+    );
+    let mut view = crate::log::LogView::new(crate::log::LogScope::Process);
+    view.edit_filter(|filter| filter.set_text("command refused: SetNavPreference"));
+    crate::log::global().refresh(&mut view);
+    let lines = view
+        .rows()
+        .iter()
+        .filter(|row| row.message().contains("WriteRefused"))
+        .count();
+    assert_eq!(lines, refused.len(), "one info line per refused command");
+    assert!(
+        d.session()
+            .setting_failure(setting)
+            .is_some_and(|text| text.starts_with("Not saved: ")),
+        "the setting shows the reason"
+    );
+    // The accepted writes settle on their own: no further refusal line.
+    drop(disk);
+    for request in accepted {
+        assert_eq!(settled_app(&mut d, request), Some(done()));
+    }
+    assert_eq!(d.session().refusals(), refusals + refused.len() as u64);
+}

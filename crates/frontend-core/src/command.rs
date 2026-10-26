@@ -1230,6 +1230,12 @@ pub enum Rejection {
     /// The row's target state already holds or does not apply to this
     /// member (a mark on an unknown row, a walk with no map bound).
     NotApplicable,
+    /// A saved-setting write was refused before the preference queue
+    /// accepted it (the queue is full, hydration has not finished, or the
+    /// value is invalid). Nothing was saved and nothing is pending: a write
+    /// the queue accepted and that failed later is
+    /// [`FailureKind::WriteFailed`].
+    WriteRefused,
 }
 
 /// An owner-reported failure (today's `Outcome::Failed` strings produced
