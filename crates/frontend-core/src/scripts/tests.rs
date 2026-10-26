@@ -2475,12 +2475,10 @@ fn marked_start_skips_active_rows_and_duplicate_start_is_idempotent() {
     assert_eq!((stop.stopped(), stop.cancelled()), (3, 0));
     let duplicate_stop = stop_marked(&selected, &mut f.core, &mut f.scripts);
     assert_eq!(duplicate_stop.stopped(), 0);
-    assert!(
-        duplicate_stop
-            .skipped()
-            .iter()
-            .any(|skip| skip.reason().contains("stopping"))
-    );
+    assert!(duplicate_stop
+        .skipped()
+        .iter()
+        .any(|skip| skip.reason().contains("stopping")));
 }
 
 #[cfg(not(feature = "js"))]
@@ -2542,12 +2540,10 @@ fn native_marked_start_skips_active_rows_and_duplicate_start_is_idempotent() {
     assert_eq!(duplicate_stop.cancelled(), 0);
     assert!(duplicate_stop.operation().is_none());
     assert_eq!(duplicate_stop.skipped().len(), 3);
-    assert!(
-        duplicate_stop
-            .skipped()
-            .iter()
-            .all(|skip| skip.reason() == "no script")
-    );
+    assert!(duplicate_stop
+        .skipped()
+        .iter()
+        .all(|skip| skip.reason() == "no script"));
 }
 
 fn native_fixture(test: &str, members: &[&str]) -> Fixture {
@@ -4634,13 +4630,7 @@ fn native_queued_start_rechecks_assignment_removal_and_logout_before_dispatch() 
                 let mut surface = HeadlessSurface::new();
                 f.core.remove(queued, Instant::now(), &mut surface);
             }
-            "logged-out" => f
-                .core
-                .play()
-                .unwrap()
-                .arm(queued)
-                .unwrap()
-                .request_logout(),
+            "logged-out" => f.core.play().unwrap().arm(queued).unwrap().request_logout(),
             _ => unreachable!(),
         }
         f.settle();
@@ -4652,11 +4642,7 @@ fn native_queued_start_rechecks_assignment_removal_and_logout_before_dispatch() 
         assert_eq!(start_accepted(&f, queued), 0, "{scenario}");
         assert_eq!(f.state(queued), ScriptRunState::Idle, "{scenario}");
         assert!(
-            f.core
-                .play()
-                .unwrap()
-                .script_native_run(queued)
-                .is_none(),
+            f.core.play().unwrap().script_native_run(queued).is_none(),
             "{scenario}: stale native run was committed"
         );
         f.wait_state("inflight-alice", ScriptRunState::Running);
@@ -4817,11 +4803,7 @@ fn native_single_start_of_a_queued_member_dispatches_before_preparation() {
         "single Start dispatches before native preparation commits"
     );
     assert!(
-        f.core
-            .play()
-            .unwrap()
-            .script_native_run(&queued)
-            .is_none(),
+        f.core.play().unwrap().script_native_run(&queued).is_none(),
         "the accepted Start has not published a native run yet"
     );
     assert!(f.scripts.start_queue_place(&queued).is_none());
@@ -5611,11 +5593,7 @@ fn native_stop_on_marked_rows_stops_preparation_and_cancels_queued_starts() {
     for name in ["alice", "bob", "carol"] {
         assert_eq!(f.state(name), ScriptRunState::Idle, "{name}");
         assert!(
-            f.core
-                .play()
-                .unwrap()
-                .script_native_run(name)
-                .is_none(),
+            f.core.play().unwrap().script_native_run(name).is_none(),
             "{name}: Stop allowed an unprepared native run to commit"
         );
         if name != "alice" {

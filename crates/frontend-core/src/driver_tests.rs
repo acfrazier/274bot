@@ -4698,7 +4698,8 @@ fn a_refusal_line_names_the_command_the_bots_and_the_reason() {
     let bare = lines_with("on application: NotStaged");
     assert!(!bare.is_empty(), "the typed reason is in the line");
     assert!(
-        bare.iter().all(|line| line.ends_with("on application: NotStaged")),
+        bare.iter()
+            .all(|line| line.ends_with("on application: NotStaged")),
         "the bare typed reason survives without detailed text: {bare:?}"
     );
 }

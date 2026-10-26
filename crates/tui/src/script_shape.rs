@@ -496,8 +496,7 @@ impl<'a> ScriptPane<'a> {
     fn card_selected(&self, card: &BrowseCard) -> bool {
         self.sel.is_some_and(|selection| {
             if let Some(id) = selection.compiled_id() {
-                card.kind == CardRuntime::Compiled
-                    && CompiledCardId::lookup(&card.name) == Some(id)
+                card.kind == CardRuntime::Compiled && CompiledCardId::lookup(&card.name) == Some(id)
             } else {
                 selection
                     .loaded_card()
