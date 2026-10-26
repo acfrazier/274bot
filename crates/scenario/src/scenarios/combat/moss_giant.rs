@@ -352,6 +352,16 @@ pub(crate) fn moss_giant_dart_scenario() -> Scenario {
     );
     scenario
 }
+/// Whole-cell cap for this cell only; its step watches are unchanged.
+/// `UPSTREAM-MOSSGIANT-1026/report.md` measured the same fixture on Engine A
+/// and timed completed watched cycles at 253 and 280 game ticks from script
+/// start to fresh Strength XP after the bank return; four nightly runs ended
+/// inside that spread at the shared 180 s [`SCRIPT_GOLD_DEADLINE`]. 240 s is
+/// 400 ticks at the 600 ms tick, which holds a slow 280-tick cycle plus one
+/// extra kill of up to 115 ticks as headroom (280 + 115 = 395). The other
+/// cells in this file keep their own deadlines.
+const MOSS_GIANT_BANK_DEADLINE: Duration = Duration::from_secs(240);
+
 /// MossGiant's own trip end (no food left) reached after a looted Big bones,
 /// so the Ardougne West booth deposit and lobster restock are the source's
 /// transitions, not a seeded stock move.
@@ -412,6 +422,7 @@ pub(crate) fn moss_giant_bank_scenario() -> Scenario {
         .find(|step| step.name == "watch the trip's Big bones enter a fresh Ardougne West bank")
         .expect("moss bank has an earned Big bones watch");
     bank_loot.wait.budget_ticks = MOSS_GIANT_BANK_LOOT_WATCH_TICKS;
+    scenario.settings.deadline = MOSS_GIANT_BANK_DEADLINE;
     scenario
 }
 

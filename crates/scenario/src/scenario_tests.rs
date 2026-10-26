@@ -4349,6 +4349,43 @@ fn moss_giant_bank_start_orders_startup_banking_before_fresh_combat_xp() {
     );
 }
 
+/// `moss_giant_bank` carries its own whole-cell deadline after the shared
+/// builder returns, the way `hill_giant_bank` does. The same fixture measured
+/// 253 and 280 game ticks on upstream (`UPSTREAM-MOSSGIANT-1026/report.md`),
+/// so the shared 180 s cap ended four nightly runs inside the content's own
+/// spread. Every other cell this file defines keeps the deadline it had: the
+/// fight-only and startup-bank siblings the shared gold cap, and the two
+/// qualification cells their existing 300 s.
+#[test]
+fn moss_giant_bank_deadline_is_scoped_to_the_cell() {
+    let bank = get("moss_giant_bank").expect("moss_giant_bank registered");
+    assert_eq!(
+        bank.settings.deadline,
+        Duration::from_secs(240),
+        "moss_giant_bank uses its own 240 s whole-cell cap"
+    );
+    let headroom_ticks = 280 + 115;
+    assert!(
+        bank.settings.deadline >= Duration::from_millis(headroom_ticks * 600),
+        "240 s holds a 280-tick cycle plus one 115-tick kill at 600 ms per tick"
+    );
+    for name in ["moss_giant", "moss_giant_bank_start"] {
+        let scenario = get(name).unwrap_or_else(|| panic!("{name} registered"));
+        assert_eq!(
+            scenario.settings.deadline, SCRIPT_GOLD_DEADLINE,
+            "{name} keeps the shared 180 s gold deadline"
+        );
+    }
+    for name in ["moss_giant_prepared", "moss_giant_dart"] {
+        let scenario = get(name).unwrap_or_else(|| panic!("{name} registered"));
+        assert_eq!(
+            scenario.settings.deadline,
+            Duration::from_secs(300),
+            "{name} keeps its existing qualification deadline"
+        );
+    }
+}
+
 #[test]
 fn hill_giant_loot_deposit_arms_deposit_only_after_combat_loot() {
     let scenario = get("hill_giant_loot_deposit").expect("hill_giant_loot_deposit registered");
