@@ -41,15 +41,15 @@ use crate::play_status::{
     WorkerTerminal,
 };
 use crate::play_wires::{dispatch_wires, WireCmd};
+#[cfg(feature = "js")]
+use crate::script_runtime::{
+    deliver_channel_events, project_npc_boxes_for_isolate_snapshot, projected_npc_boxes,
+};
 use crate::script_runtime::{
     hold_script_nav, nav_world_state_for_observe, observe_script_inv, publish_script_paint,
     reset_script_nav, script_active, script_frame, script_observe_cached_with_channels,
     script_paint_of, script_slot, script_slot_or_insert, slot_arrival_reach, step_nav_bot,
     take_manual_walk_ownership, NavBot, ScriptSlot, ScriptWall,
-};
-#[cfg(feature = "js")]
-use crate::script_runtime::{
-    deliver_channel_events, project_npc_boxes_for_isolate_snapshot, projected_npc_boxes,
 };
 use crate::{
     catalog_core, login_readiness, paired_core, public_worlds, Play, RandomClaim, RandomStatus,
