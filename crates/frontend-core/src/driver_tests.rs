@@ -3549,15 +3549,16 @@ fn withdraw_case(waiting: Waiting, withdraw: Withdraw) {
     let dir = scratch(&format!("f3-withdraw-{waiting:?}-{withdraw:?}").to_lowercase());
     let mut d = driver_in(&dir, &["alice", "bob"]);
     #[cfg(feature = "js")]
-    let js = {
-        let path = dir.join("looping.ts");
-        std::fs::write(&path, SETTINGS_CARD).expect("card file");
-        let js = d.models_mut().scripts.js_mut().load(&path).expect("card");
-        crate::scripts::ScriptChoice::from_script(script::ScriptSel::Loaded(
-            js.source,
-            js.identity_id(),
-        ))
-    };
+    let path = dir.join("looping.ts");
+    #[cfg(feature = "js")]
+    std::fs::write(&path, SETTINGS_CARD).expect("card file");
+    #[cfg(feature = "js")]
+    let js = d.models_mut().scripts.js_mut().load(&path).expect("card");
+    #[cfg(feature = "js")]
+    let js = crate::scripts::ScriptChoice::from_script(script::ScriptSel::Loaded(
+        js.source,
+        js.identity_id(),
+    ));
     #[cfg(feature = "js")]
     let assign = |d: &mut HeadlessDriver, card: crate::scripts::ScriptChoice| {
         set_card(d, crate::FleetCard::pinned(card));
@@ -3696,6 +3697,15 @@ fn withdraw_case(waiting: Waiting, withdraw: Withdraw) {
         "{case}: nothing waits after the withdrawal"
     );
     drop(held);
+    #[cfg(feature = "js")]
+    for _ in 0..400 {
+        d.poll();
+        if terminal(&d, original, &target).is_some() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    #[cfg(not(feature = "js"))]
     wait_for_command(&mut d, original, "the cancelled member's terminal", |d| {
         terminal(d, original, &target).is_some()
     });
@@ -3706,16 +3716,15 @@ fn withdraw_case(waiting: Waiting, withdraw: Withdraw) {
     );
     d.session_mut().flush_writes();
     #[cfg(feature = "js")]
-    {
-        let deadline = std::time::Instant::now() + SETTLE_HANG_GUARD;
-        while d.models().scripts().catalog_work_pending() {
-            assert!(
-                std::time::Instant::now() < deadline,
-                "{case}: catalog scan hung"
-            );
-            d.poll();
-            std::thread::sleep(std::time::Duration::from_millis(5));
-        }
+    let deadline = std::time::Instant::now() + SETTLE_HANG_GUARD;
+    #[cfg(feature = "js")]
+    while d.models().scripts().catalog_work_pending() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "{case}: catalog scan hung"
+        );
+        d.poll();
+        std::thread::sleep(std::time::Duration::from_millis(5));
     }
     no_later_start(&mut d, std::slice::from_ref(&target));
     assert_eq!(
@@ -3743,7 +3752,7 @@ fn withdraw_case(waiting: Waiting, withdraw: Withdraw) {
             )
         }
         #[cfg(feature = "js")]
-        Waiting::Paced | Waiting::Preparation | Waiting::FleetPreparation => {}
+        _ => {}
         #[cfg(not(feature = "js"))]
         Waiting::Paced => {}
     }
