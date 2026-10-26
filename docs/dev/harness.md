@@ -1193,6 +1193,13 @@ The MossGiant `observe-start` row records its Lobster count in `food`. A
 workload without food records `null`. `moss_giant_bank_start`, `duel_arena`
 and `gatherer` report `phase_gated: false`.
 
+`memory.rs` is compiled into each measured binary. A commit without this code
+does not apply the phase gate. A gated record contains the phase fields above.
+An older FLOOR baseline lacks them. The candidate is the only gated side when
+it contains this code and the baseline does not. If one record has the phase
+fields and the other does not, the binary with fields used this code. Compare
+results only when both commits contain the change.
+
 With optional diagnostics, `samples.diagnostics.jsonl` adds bounded per-slot
 evidence.
 
