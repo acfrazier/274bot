@@ -341,40 +341,31 @@ impl LiveState {
         }
 
         if at_start && self.pending.is_some() {
-            #[cfg(feature = "js")]
-            {
-                let Some(handle) = self.start_handle.as_ref() else {
-                    self.start_error =
-                        Some("StartScript reached before ScriptStartHandle install".into());
-                    return;
-                };
-                let pending = self.pending.as_ref().expect("pending checked");
-                match handle.start_load(
-                    &self.account,
-                    pending.js.clone(),
-                    pending.shape,
-                    pending.settings.clone(),
-                    pending.siblings.clone(),
-                ) {
-                    Ok(()) => {
-                        self.pending = None;
-                        self.start_count += 1;
-                        println!(
-                            "{}",
-                            json!({"phase": "start", "account": self.account, "count": self.start_count})
-                        );
-                    }
-                    Err(error) => {
-                        self.start_error = Some(format!("catalog Start refused: {error}"));
-                        return;
-                    }
-                }
-            }
-            #[cfg(not(feature = "js"))]
-            {
+            let Some(handle) = self.start_handle.as_ref() else {
                 self.start_error =
-                    Some("catalog-boundary Load requires host-play's `js` feature".into());
+                    Some("StartScript reached before ScriptStartHandle install".into());
                 return;
+            };
+            let pending = self.pending.as_ref().expect("pending checked");
+            match handle.start_load(
+                &self.account,
+                pending.js.clone(),
+                pending.shape,
+                pending.settings.clone(),
+                pending.siblings.clone(),
+            ) {
+                Ok(()) => {
+                    self.pending = None;
+                    self.start_count += 1;
+                    println!(
+                        "{}",
+                        json!({"phase": "start", "account": self.account, "count": self.start_count})
+                    );
+                }
+                Err(error) => {
+                    self.start_error = Some(format!("catalog Start refused: {error}"));
+                    return;
+                }
             }
         }
 
