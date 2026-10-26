@@ -307,7 +307,9 @@ Before switching, it extracts the candidate `tools/nightly/` to a temporary
 directory and runs a self-check: `python3 -m py_compile` of the runner files
 (`run_nightly.py`, `nightly-mac-guest.py`, `latency_proxy.py`) plus the
 runner's own unit tests (`test_run_nightly.py` on Linux and Windows,
-`test_nightly_mac_guest.py` on the Mac controller), about a minute at most.
+`test_nightly_mac_guest.py` on the Mac controller), about a minute at most
+on Linux and macOS and five minutes on Windows (same suite, slower process
+and git spawn).
 When the self-check fails, or the fetch fails, the runner keeps running the
 old code and says so in the summary. Only the runner checkout is ever touched
 (`git -C <runner> ...` plus the temporary candidate); trees, engines,
