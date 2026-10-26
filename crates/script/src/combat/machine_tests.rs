@@ -3787,7 +3787,10 @@ fn policy_s2_sweep_preserves_user_prayers_and_never_restores_displaced_protect()
 
 #[test]
 fn policy_s2_incomplete_baseline_emits_no_toggle_before_delayed_user_row() {
-    let mut scene = Scene::new("imp");
+    // Imp's engine melee max hit is 0 (no `strength=` line, default 1,
+    // `strengthbonus=-37`: `npc_combat_melee.rs2:1-7`, `combat.rs2:4-12`,
+    // `DIVIDE` then `toInt32`). Cow is still 1 (`strengthbonus=-15`).
+    let mut scene = Scene::new("cow");
     scene.stat(5, 43, 43);
     let skin = scene.data.prayer_by_name("Thick Skin").unwrap().clone();
     let protect = scene
@@ -3930,7 +3933,8 @@ fn policy_s2_prayer_disallowed_preserves_user_overlays() {
 
 #[test]
 fn policy_s2_missing_raise_observation_does_not_relinquish_accepted_ownership() {
-    let mut scene = Scene::new("imp");
+    // Same as the incomplete-baseline fixture: imp max hit is 0, cow is 1.
+    let mut scene = Scene::new("cow");
     scene.stat(5, 43, 43);
     scene.face_us();
     scene.refresh();

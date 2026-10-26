@@ -18,6 +18,7 @@ import { extractNpcNamesFacts } from './extractors/npc-names.ts';
 import './dialogue-ui.test.ts';
 import './server-ordered.test.ts';
 import './npc-transforms.test.ts';
+import './npc-stat-default.test.ts';
 import { extractKaramjaFacts } from './extractors/karamja.ts';
 import type { NpcTransformClosureEvidence } from './extractors/npc-transforms.ts';
 
