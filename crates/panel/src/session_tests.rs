@@ -10118,7 +10118,7 @@ fn settle_panel_writes(s: &mut Session) {
 /// when the write fails the control shows the saved value again with the
 /// failure at that setting.
 #[test]
-fn held_then_failed_operational_choices_show_the_saved_value_with_the_failure_at_the_setting() {
+fn settings_feedback_held_then_failed_operational_choices_show_the_saved_value_and_the_failure() {
     use frontend_core::command::DrawSwitch;
     use frontend_core::{OperatorNotice, Setting, SettingStatus};
     let _iso = IsolatedStores::enter("panel-s3-held-failed");
@@ -10204,7 +10204,7 @@ fn held_then_failed_operational_choices_show_the_saved_value_with_the_failure_at
 /// failure survives the panel pumping on; the resolving action (a new
 /// attempt) clears it, and the durable acknowledgement closes the window.
 #[test]
-fn a_failed_dont_show_again_stays_at_the_notice_until_retried() {
+fn settings_feedback_a_failed_dont_show_again_stays_at_the_notice_until_retried() {
     use frontend_core::{OperatorNotice, Setting, SettingStatus};
     let (mut s, _iso) = two_live_session("panel-s3-notice");
     hydrate_panel_preferences(&mut s);
@@ -10246,7 +10246,8 @@ fn a_failed_dont_show_again_stays_at_the_notice_until_retried() {
 /// choices): the preview shows at once, and a failed write drops only that
 /// preview, shows the durable value again, and reports at the setting.
 #[test]
-fn held_then_failed_presentation_and_launch_choices_revert_to_the_durable_value() {
+fn settings_feedback_held_then_failed_presentation_and_launch_choices_revert_to_the_durable_value()
+{
     let _iso = IsolatedStores::enter("panel-s3-presentation");
     let saved = crate::ui_state::PanelUiState {
         lowmem: false,
@@ -10321,7 +10322,7 @@ fn held_then_failed_presentation_and_launch_choices_revert_to_the_durable_value(
 /// or not another process saved in between, and a held operational choice
 /// keeps showing the operator's choice across them.
 #[test]
-fn a_typed_pending_draft_survives_refresh_frames_and_a_second_process_version() {
+fn settings_feedback_a_typed_pending_draft_survives_refresh_frames_and_a_second_process_version() {
     use frontend_core::command::DrawSwitch;
     let _iso = IsolatedStores::enter("panel-s3-draft");
     let mut s = Session::new();
@@ -10350,7 +10351,7 @@ fn a_typed_pending_draft_survives_refresh_frames_and_a_second_process_version() 
 /// A cold panel (preferences not yet read) adopts every saved choice when
 /// the read is released and writes no default over the file meanwhile.
 #[test]
-fn a_cold_panel_adopts_every_saved_choice_when_released_and_writes_no_default() {
+fn settings_feedback_a_cold_panel_adopts_every_saved_choice_when_released_and_writes_no_default() {
     let iso = IsolatedStores::enter("panel-s3-cold");
     let state = iso.dir().join("cold-state");
     let saved: &[u8] = br##"{"capture":false,"sidecar_50":true,"focused_50":true,"map_bake":"always","quester_paths":{"enabled":false,"folder":"saved-source"}}"##;

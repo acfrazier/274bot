@@ -4208,23 +4208,28 @@ impl TuiSession {
         if !self.session_log_status_active {
             return;
         }
-        use frontend_core::log_file::SessionFileStatus;
+        use frontend_core::log_file::SessionFilePhase;
         let (text, settled) = match app.setting_feedback(Setting::SessionLog) {
             Some(SettingFeedback::Pending) => ("session file: saving…".to_owned(), false),
             Some(SettingFeedback::Failed(failure)) => (failure.clone(), false),
-            None => match frontend_core::log_file::session_file_status() {
-                SessionFileStatus::Off => ("session file off".to_owned(), true),
-                SessionFileStatus::Opening(path) => {
-                    (format!("session file opening {}", path.display()), false)
+            None => {
+                let status = frontend_core::log_file::session_file_status();
+                let path = status
+                    .path()
+                    .map_or_else(String::new, |path| path.display().to_string());
+                match status.phase() {
+                    SessionFilePhase::Off => ("session file off".to_owned(), true),
+                    SessionFilePhase::Opening => (format!("session file opening {path}"), false),
+                    SessionFilePhase::Writing => (format!("session file {path}"), true),
+                    SessionFilePhase::Failed => (
+                        format!(
+                            "session file could not be opened or written: {}",
+                            status.cause().unwrap_or_default()
+                        ),
+                        true,
+                    ),
                 }
-                SessionFileStatus::Writing(path) => {
-                    (format!("session file {}", path.display()), true)
-                }
-                SessionFileStatus::Failed(cause) => (
-                    format!("session file could not be opened or written: {cause}"),
-                    true,
-                ),
-            },
+            }
         };
         if app.log.status.as_deref() != Some(text.as_str()) {
             app.log.status = Some(text);
