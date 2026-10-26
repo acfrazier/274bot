@@ -4135,24 +4135,30 @@ impl SlotScript {
         self.state
     }
 
-    /// The random-event knock. A running Load isolate's cached
-    /// `ignoredRandoms()` names return `Handle` when case-insensitively
-    /// listed; this suppresses guardian action/hold without hiding the
-    /// detected event. Unlisted Load events return `Host`; compiled scripts
-    /// use their `on_random` hook. Rising edge only (the guardian owns the
-    /// per-event signature). Idle / Paused / not-want-run slots answer
-    /// `Host` without touching the script.
+    /// Inactive slots return the event to Host. Running Load scripts publish
+    /// current ignore membership; running compiled scripts retain their edge claim.
+    pub fn current_random_claim(&self, ev: &DetectedRandom) -> Option<RandomClaim> {
+        if self.state != RunState::Running || !self.want_run {
+            return Some(RandomClaim::Host);
+        }
+        let isolate = self.surface.as_ref()?;
+        Some(if isolate.ignores_random(&ev.name) {
+            RandomClaim::Handle
+        } else {
+            RandomClaim::Host
+        })
+    }
+
+    /// The random-event rising-edge knock. Load reads its current cached
+    /// ignore membership. Compiled scripts invoke `on_random` once per event.
+    /// Idle / Paused / not-want-run slots answer `Host`.
     pub fn on_random(&mut self, ev: &DetectedRandom) -> RandomClaim {
         if self.state != RunState::Running || !self.want_run {
             return RandomClaim::Host;
         }
 
-        if self
-            .surface
-            .as_ref()
-            .is_some_and(|isolate| isolate.ignores_random(&ev.name))
-        {
-            return RandomClaim::Handle;
+        if let Some(claim) = self.current_random_claim(ev) {
+            return claim;
         }
         let Some(run) = &mut self.compiled else {
             return RandomClaim::Host;

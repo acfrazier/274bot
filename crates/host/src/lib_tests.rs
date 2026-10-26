@@ -1847,7 +1847,7 @@ fn observe_sees_packets_applied_in_the_same_frame() {
             false
         },
         |_| observed.load(Ordering::Relaxed),
-        |_| RandomClaim::Host,
+        |_: &DetectedRandom| RandomClaim::Host,
     );
     assert!(
         reboot > 0,
@@ -2963,7 +2963,7 @@ fn idle_slot_parks_between_packets_and_wakes_on_one() {
                 false
             },
             |_| stop2.load(Ordering::Relaxed),
-            |_| RandomClaim::Host,
+            |_: &DetectedRandom| RandomClaim::Host,
         );
         done_tx.send(()).unwrap();
     });
@@ -3035,7 +3035,7 @@ fn focused_slot_keeps_the_twenty_ms_cadence() {
                 false
             },
             |_| stop2.load(Ordering::Relaxed),
-            |_| RandomClaim::Host,
+            |_: &DetectedRandom| RandomClaim::Host,
         );
     });
     // Gate on the count, not a fixed sleep: a parked slot (600 ms
@@ -3096,7 +3096,7 @@ fn busy_observe_keeps_the_slot_on_the_frame_loop() {
                 true // script/cheat/nav work due: never park
             },
             |_| stop2.load(Ordering::Relaxed),
-            |_| RandomClaim::Host,
+            |_: &DetectedRandom| RandomClaim::Host,
         );
     });
     // Same gate as the focused test: ≥12 ticks in 5 s is unreachable
@@ -3153,7 +3153,7 @@ fn watch_only_sidecar_parks_wakes_once_per_second_and_paints() {
                 false
             },
             |_| stop2.load(Ordering::Relaxed),
-            |_| RandomClaim::Host,
+            |_: &DetectedRandom| RandomClaim::Host,
         );
     });
     // The rising edge paints the first frame, then the slot parks.
@@ -3235,7 +3235,7 @@ fn stop_control_wakes_a_parked_slot_and_returns() {
             ScriptRunPolicy::default(),
             |_, _, _, _, _| false,
             |_| stop2.load(Ordering::Relaxed),
-            |_| RandomClaim::Host,
+            |_: &DetectedRandom| RandomClaim::Host,
         );
         done_tx.send(()).unwrap();
     });
@@ -3290,7 +3290,7 @@ fn draw_kick_wakes_a_parked_slot_into_the_frame_loop() {
                 false
             },
             |_| stop2.load(Ordering::Relaxed),
-            |_| RandomClaim::Host,
+            |_: &DetectedRandom| RandomClaim::Host,
         );
     });
     // Opening tick, then parked (draw off): a quiet window must not
@@ -3361,7 +3361,7 @@ fn spurious_kick_does_not_busy_loop_a_parked_slot() {
                 false // stays idle after the kick
             },
             |_| stop2.load(Ordering::Relaxed),
-            |_| RandomClaim::Host,
+            |_: &DetectedRandom| RandomClaim::Host,
         );
         done_tx.send(()).unwrap();
     });
@@ -3794,7 +3794,7 @@ fn measured_loop_with(
             }
             done
         },
-        |_| RandomClaim::Host,
+        |_: &DetectedRandom| RandomClaim::Host,
     );
     assert_eq!(
         monitor.recorded_delays(),
