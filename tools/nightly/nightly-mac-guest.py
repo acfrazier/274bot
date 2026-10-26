@@ -90,10 +90,12 @@ def git(args: Sequence[str], *, check: bool = True,
 # The controller also updates its own checkout (tools/nightly/ under the
 # runner directory) to origin/dev before a night and re-executes itself, after
 # the candidate passes a self-check (py_compile of the runner files plus its
-# own unit tests, about a minute at most). NIGHTLY_SELF_UPDATE=0 opts out.
-# Only the runner checkout is ever touched: every git command below runs with
-# -C at `repo`, the candidate is extracted under a temporary directory, and
-# the re-exec runs the same script path again.
+# own unit tests, about a minute at most). The update is opt-in: only
+# NIGHTLY_SELF_UPDATE=1 (set on the runner machines) updates. Anything else,
+# including unset, keeps the old code. Only the runner checkout is ever
+# touched: every git command below runs with -C at `repo`, the candidate is
+# extracted under a temporary directory, and the re-exec runs the same script
+# path again.
 BRANCHES_REF = "origin/dev"
 BRANCHES_REL = "tools/nightly/branches.conf"
 SELF_UPDATE_ENV = "NIGHTLY_SELF_UPDATE"
@@ -111,8 +113,10 @@ SELF_TEST_FILE = "test_nightly_mac_guest.py"
 
 
 def self_update_enabled() -> bool:
-    """NIGHTLY_SELF_UPDATE=0 opts out; anything else (or unset) updates."""
-    return os.environ.get(SELF_UPDATE_ENV, "1") not in ("", "0", "false", "no")
+    """NIGHTLY_SELF_UPDATE=1 opts in. Off by default: the update force-checks
+    out origin/dev in the runner checkout, so a hand run from a developer
+    checkout must never update unless the runner machines opted in."""
+    return os.environ.get(SELF_UPDATE_ENV, "0") in ("1", "true", "yes")
 
 
 def runner_head(repo: Path) -> str:
@@ -224,7 +228,7 @@ def maybe_self_update(repo: Path, script: Path, argv: Optional[Sequence[str]] = 
     head = runner_head(repo)
     if not self_update_enabled():
         return {"status": "disabled", "from": head, "to": head,
-                "detail": f"{SELF_UPDATE_ENV}=0; running {head}"}
+                "detail": f"{SELF_UPDATE_ENV} is not 1; running {head}"}
     if os.environ.get(SELF_UPDATE_DONE_ENV):
         previous = os.environ.get(SELF_UPDATE_FROM_ENV, "")
         detail = f"re-executed after self-update to {head}"
