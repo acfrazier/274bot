@@ -980,10 +980,10 @@ impl SlotScript {
         self.arm_seat(run);
     }
 
-    /// Read the real gameplay seat's session identity for conformance tests only.
-    #[cfg(feature = "test-hooks")]
-    pub fn seat_session_for_test(&self) -> Option<api::identity::SessionKey> {
-        self.seat.as_ref().and_then(|seat| seat.run().session_key())
+    /// Borrow the real gameplay seat for conformance tests only.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn seat_for_test(&self) -> Option<&GameplaySeat> {
+        self.seat.as_deref()
     }
 
     /// Return the number of interactions waiting for host delivery.
@@ -992,46 +992,10 @@ impl SlotScript {
         self.seat_interact_delivery.len()
     }
 
-    /// Return the number of logs waiting for the host to take them.
-    #[cfg(feature = "test-hooks")]
+    /// Read the real pending-log count for conformance tests only.
+    #[cfg(any(test, feature = "test-hooks"))]
     pub fn pending_log_len_for_test(&self) -> usize {
         self.pending_logs.len()
-    }
-
-    /// Count the real seat's currently admitted root requests.
-    #[cfg(feature = "test-hooks")]
-    pub fn seat_root_count_for_test(&self) -> usize {
-        self.seat.as_ref().map_or(0, |seat| {
-            seat.live()
-                .iter()
-                .filter(|entry| entry.parent.is_none())
-                .count()
-        })
-    }
-
-    /// Distinguish a missing request from an admitted root or child.
-    #[cfg(feature = "test-hooks")]
-    pub fn seat_parent_for_test(&self, id: RequestId) -> Option<Option<RequestId>> {
-        self.seat
-            .as_ref()?
-            .live()
-            .iter()
-            .find(|entry| entry.id == id)
-            .map(|entry| entry.parent)
-    }
-
-    /// Read the actual terminal outcome retained by the real seat.
-    #[cfg(feature = "test-hooks")]
-    pub fn seat_result_outcome_for_test(
-        &self,
-        id: RequestId,
-    ) -> Option<crate::native::seat::SeatTerminal> {
-        self.seat
-            .as_ref()?
-            .results()
-            .iter()
-            .find(|result| result.id == id)
-            .map(|result| result.outcome)
     }
 
     fn arm_compiled_seat(&mut self, run: api::selected::RunKey, card: crate::CompiledId) {

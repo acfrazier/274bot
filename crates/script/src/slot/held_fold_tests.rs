@@ -1626,7 +1626,7 @@ fn held_stubbed_yaw_fold_keeps_last_yaw() {
     let mut slot = with_seat(900);
     slot.seat_guardian_hold(true);
     let before = dropped(&slot);
-    for yaw in 0..142 {
+    for yaw in 1..=142 {
         held_frame(&mut slot, vec![InteractReq::SetCameraYaw { yaw }]);
     }
     let rows = held_rows(&slot);
@@ -1634,7 +1634,7 @@ fn held_stubbed_yaw_fold_keeps_last_yaw() {
     slot.stop();
     assert_eq!(
         (rows, after - before),
-        (vec![InteractReq::SetCameraYaw { yaw: 141 }], 0)
+        (vec![InteractReq::SetCameraYaw { yaw: 142 }], 0)
     );
 }
 

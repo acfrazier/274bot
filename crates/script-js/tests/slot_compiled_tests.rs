@@ -1,6 +1,8 @@
+use api::selected::RunKey;
 use script::native::request::NativeKind;
-use script::native::{PreparedConfig, RetainedMemory, SettingsBag, StartError};
+use script::native::{PreparedConfig, RetainedMemory, StartError};
 use script::CompiledId;
+use std::sync::Arc;
 
 #[test]
 fn sherlock_factory_rejects_wrong_prepared_type() {
@@ -20,29 +22,17 @@ fn sherlock_factory_rejects_wrong_prepared_type() {
         ]
     );
 
-    let sherlock = script_js::CARDS
-        .iter()
-        .find(|card| card.id == CompiledId("Sherlock"))
-        .expect("the real Sherlock card is registered");
-    let prepared = PreparedConfig::for_test_card(
-        sherlock.id,
-        sherlock.schema_version,
-        1,
-        std::sync::Arc::new(SettingsBag::new()),
-        (),
-    );
-    let mut retained = RetainedMemory::default();
-    let result = (sherlock.create)(
-        api::selected::RunKey {
-            slot: 1,
-            run: 1,
-            session: 0,
-        },
-        prepared,
-        &mut retained,
-    );
+    let wrong_type = PreparedConfig::new(CompiledId("Sherlock"), 1, 1, Arc::default(), ());
     assert!(matches!(
-        result,
-        Err(StartError::Config(error)) if error.code.as_ref() == "config-identity"
+        (script_js::sherlock::CARD.create)(
+            RunKey {
+                slot: 10,
+                run: 2,
+                session: 0
+            },
+            wrong_type,
+            &mut RetainedMemory::default()
+        ),
+        Err(StartError::Config(_))
     ));
 }

@@ -4252,6 +4252,19 @@ fn bank_cells_seed_the_weapon_they_acknowledge_and_only_real_bank_windows() {
             && !hill_prepared.contains("givebank limpwurt"),
         "prepared Hill must not seed earned-kill cargo: {hill_prepared}"
     );
+    let moss_bank = seed("moss_giant_bank");
+    assert!(
+        moss_bank.contains("give lobster 5"),
+        "moss_giant_bank carries five Lobster so the first giant dies before the food does: {moss_bank}"
+    );
+    assert!(
+        moss_bank.contains("givebank lobster 24"),
+        "moss_giant_bank keeps the MossGiant withdraw window: {moss_bank}"
+    );
+    assert!(
+        !moss_bank.contains("give big_bones") && !moss_bank.contains("givebank big_bones"),
+        "moss_giant_bank earns its Big bones, never seeds them: {moss_bank}"
+    );
     let moss_start = seed("moss_giant_bank_start");
     assert!(
         moss_start.contains("give big_bones 1"),
@@ -4347,6 +4360,53 @@ fn moss_giant_bank_start_orders_startup_banking_before_fresh_combat_xp() {
         bones_bank < lobster_restock && lobster_restock < closed && closed < fresh_xp,
         "startup banking watches must stay ordered before fresh combat XP"
     );
+}
+
+/// `moss_giant_bank` carries its own whole-cell deadline after the shared
+/// builder returns, the way `hill_giant_bank` does, sized for the five-Lobster
+/// seed (`MOSS-GIANT-DEADLINE-1026/r2/report.md`): the trip trigger moves to a
+/// modelled median of 206 ticks (p99 279), the trigger-to-fresh-XP leg is
+/// 125-136 ticks (`UPSTREAM-MOSSGIANT-1026/report.md`), and about 18 s of
+/// seeding precedes Start. Every other cell this file defines keeps the
+/// deadline it had: the fight-only and startup-bank siblings the shared gold
+/// cap, and the two qualification cells their existing 300 s.
+#[test]
+fn moss_giant_bank_deadline_is_scoped_to_the_cell() {
+    let bank = get("moss_giant_bank").expect("moss_giant_bank registered");
+    assert_eq!(
+        bank.settings.deadline,
+        Duration::from_secs(300),
+        "moss_giant_bank uses its own 300 s whole-cell cap"
+    );
+    let slow_cycle_ticks = 279 + 136;
+    assert!(
+        bank.settings.deadline >= Duration::from_millis(slow_cycle_ticks * 600 + 18_000),
+        "300 s holds the p99 trip tick plus the slowest return leg and the seeding time"
+    );
+    let bones_step = bank
+        .steps
+        .iter()
+        .find(|step| matches!(step.wait.arm, Proof::BankItemId { id: 532, .. }))
+        .expect("moss_giant_bank watches the earned Big bones reach the bank");
+    assert_eq!(
+        bones_step.wait.budget_ticks, 400,
+        "the Big-bones watch holds the p99.9 trip tick (307) plus the 59-tick booth leg"
+    );
+    for name in ["moss_giant", "moss_giant_bank_start"] {
+        let scenario = get(name).unwrap_or_else(|| panic!("{name} registered"));
+        assert_eq!(
+            scenario.settings.deadline, SCRIPT_GOLD_DEADLINE,
+            "{name} keeps the shared 180 s gold deadline"
+        );
+    }
+    for name in ["moss_giant_prepared", "moss_giant_dart"] {
+        let scenario = get(name).unwrap_or_else(|| panic!("{name} registered"));
+        assert_eq!(
+            scenario.settings.deadline,
+            Duration::from_secs(300),
+            "{name} keeps its existing qualification deadline"
+        );
+    }
 }
 
 #[test]
