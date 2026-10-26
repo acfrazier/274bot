@@ -4785,7 +4785,7 @@ impl TuiDisk {
 /// then shows the failure on its own row with the saved value again; the
 /// retry is the action that resolves it and the saved value then shows.
 #[test]
-fn tui_settings_row_shows_saving_then_the_failure_then_clears_on_retry() {
+fn settings_feedback_tui_row_shows_saving_then_the_failure_then_clears_on_retry() {
     use crossterm::event::KeyCode;
     let iso = IsolatedStores::enter("tui-s3-row-feedback");
     let (mut session, mut app) = tui_with_profiles(&iso, &["alice"]);
@@ -4856,7 +4856,7 @@ fn tui_settings_row_shows_saving_then_the_failure_then_clears_on_retry() {
 
 /// A failed row feedback leaves by itself after the error timeout.
 #[test]
-fn tui_settings_row_failure_expires_by_itself() {
+fn settings_feedback_tui_row_failure_expires_by_itself() {
     use crossterm::event::KeyCode;
     let iso = IsolatedStores::enter("tui-s3-row-expiry");
     let (mut session, mut app) = tui_with_profiles(&iso, &["alice"]);
@@ -4893,7 +4893,7 @@ fn tui_settings_row_failure_expires_by_itself() {
 /// A cold TUI (preferences not yet read) adopts every saved choice when the
 /// read is released, and writes no default over the file meanwhile.
 #[test]
-fn tui_cold_start_adopts_saved_choices_without_writing_defaults() {
+fn settings_feedback_tui_cold_start_adopts_saved_choices_without_writing_defaults() {
     let iso = IsolatedStores::enter("tui-s3-cold");
     let _quester_paths_guard = crate::bin::seam::lock_quester_paths_test_state();
     let state = iso.dir().join("cold-state");

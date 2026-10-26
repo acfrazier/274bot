@@ -315,15 +315,18 @@ pub fn session_log_row(ui: &Ui, session: &mut Session) {
             .is_none()
     {
         // The file is the sink's own state, not the saved choice.
-        match frontend_core::log_file::session_file_status() {
-            frontend_core::log_file::SessionFileStatus::Writing(path) => {
-                ui.text_wrapped(format!("writing {}", path.display()));
+        let status = frontend_core::log_file::session_file_status();
+        if let Some(path) = status.path() {
+            match status.phase() {
+                frontend_core::log_file::SessionFilePhase::Writing => {
+                    ui.text_wrapped(format!("writing {}", path.display()));
+                }
+                frontend_core::log_file::SessionFilePhase::Opening => {
+                    ui.text_wrapped(format!("opening {}", path.display()));
+                }
+                frontend_core::log_file::SessionFilePhase::Off
+                | frontend_core::log_file::SessionFilePhase::Failed => {}
             }
-            frontend_core::log_file::SessionFileStatus::Opening(path) => {
-                ui.text_wrapped(format!("opening {}", path.display()));
-            }
-            frontend_core::log_file::SessionFileStatus::Off
-            | frontend_core::log_file::SessionFileStatus::Failed(_) => {}
         }
     }
 }

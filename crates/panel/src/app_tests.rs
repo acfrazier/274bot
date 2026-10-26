@@ -6475,7 +6475,7 @@ fn render_all_dont_show_again_needs_understood_then_saves_the_ack() {
 /// failure under the buttons. Clicking it again is the action that resolves
 /// the failure; once the save is durable the dialog closes.
 #[test]
-fn render_all_dont_show_again_failure_shows_in_the_dialog_until_retried() {
+fn settings_feedback_render_all_dont_show_again_failure_shows_in_the_dialog_until_retried() {
     use std::sync::atomic::{AtomicBool, Ordering};
     let _guard = crate::test_support::imgui_context_guard();
     let mut ctx = dock_host_context();

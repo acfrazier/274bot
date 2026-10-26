@@ -699,7 +699,7 @@ impl LogStore {
 
     /// The open session file's path and where its writer stands, if a file
     /// is open.
-    pub fn file_state(&self) -> Option<(PathBuf, crate::log_file::SinkState)> {
+    pub(crate) fn file_state(&self) -> Option<(PathBuf, crate::log_file::SinkState)> {
         self.inner
             .lock()
             .file

@@ -57,7 +57,7 @@ pub struct SessionLogFile {
 /// writing": a front end reads this to tell a saved choice from a sink that
 /// could not start.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SinkState {
+pub(crate) enum SinkState {
     /// The writer thread has not opened the file yet.
     Opening,
     /// The file is open and lines are written to it.
@@ -125,7 +125,7 @@ impl SessionLogFile {
     }
 
     /// Where the writer stands now.
-    pub fn state(&self) -> SinkState {
+    pub(crate) fn state(&self) -> SinkState {
         self.state
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -324,29 +324,57 @@ pub(crate) fn global_file_failure() -> Option<String> {
     global().file_failure()
 }
 
-/// What the session file actually does now, for a front end's status line.
-/// The saved preference being on says what the operator chose; this says
-/// whether the sink opened.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SessionFileStatus {
+/// Which stage the session file is at.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionFilePhase {
     /// No file is open.
     Off,
     /// The writer has not opened the file yet.
-    Opening(PathBuf),
-    /// Lines are written to this file.
-    Writing(PathBuf),
-    /// The file could not be opened or written; the cause.
-    Failed(String),
+    Opening,
+    /// Lines are written to the file.
+    Writing,
+    /// The file could not be opened or written.
+    Failed,
+}
+
+/// What the session file actually does now, for a front end's status line.
+/// The saved preference being on says what the operator chose; this says
+/// whether the sink opened.
+#[derive(Debug, PartialEq, Eq)]
+pub struct SessionFileStatus {
+    phase: SessionFilePhase,
+    path: Option<PathBuf>,
+    cause: Option<String>,
+}
+
+impl SessionFileStatus {
+    /// Which stage the file is at.
+    pub fn phase(&self) -> SessionFilePhase {
+        self.phase
+    }
+
+    /// The file's path, while one is open or failed.
+    pub fn path(&self) -> Option<&Path> {
+        self.path.as_deref()
+    }
+
+    /// Why the file could not be opened or written.
+    pub fn cause(&self) -> Option<&str> {
+        self.cause.as_deref()
+    }
 }
 
 /// The session file's current status.
 pub fn session_file_status() -> SessionFileStatus {
-    match global().file_state() {
-        None => SessionFileStatus::Off,
-        Some((path, SinkState::Opening)) => SessionFileStatus::Opening(path),
-        Some((path, SinkState::Open)) => SessionFileStatus::Writing(path),
-        Some((_, SinkState::Failed(cause))) => SessionFileStatus::Failed(cause),
-    }
+    let (phase, path, cause) = match global().file_state() {
+        None => (SessionFilePhase::Off, None, None),
+        Some((path, SinkState::Opening)) => (SessionFilePhase::Opening, Some(path), None),
+        Some((path, SinkState::Open)) => (SessionFilePhase::Writing, Some(path), None),
+        Some((path, SinkState::Failed(cause))) => {
+            (SessionFilePhase::Failed, Some(path), Some(cause))
+        }
+    };
+    SessionFileStatus { phase, path, cause }
 }
 
 /// Fixture seam: [`apply_session_log`] for integration tests.

@@ -657,6 +657,7 @@ const CORE: &[(&str, Decision)] = &[
     ),
     ("driver.rs::HeadlessDriver::submit", Rows(&OperatorCommand::ALL, SEAM_ROWS)),
     ("driver.rs::HeadlessDriver::poll", Excluded(PUMP)),
+    ("driver.rs::HeadlessDriver::poll_at", Excluded(PUMP)),
     ("session.rs::OperatorSession::poll", Excluded(PUMP)),
     ("session.rs::OperatorSession::prepare_startup", Excluded(PUMP)),
     ("session.rs::OperatorSession::poll_at", Excluded(PUMP)),
