@@ -9434,9 +9434,12 @@ fn failed_ack_persist_then_success_clears_only_that_error() {
     s.select("bob");
     assert!(s.background_ack_open);
     await_preference(&mut s, "last_focus", serde_json::json!("bob"));
-    let parent = s.preferences.path().parent().unwrap().to_path_buf();
-    let _ = std::fs::remove_dir_all(&parent);
-    std::fs::write(&parent, b"not-a-dir").unwrap();
+    // An unreadable preferences file refuses the store on every platform. (A
+    // folder replaced by a file does not: a read through it fails as
+    // `NotADirectory` on Unix but as `NotFound` on Windows, which the store
+    // reads as "no file yet", and the write then fails later, not at once.)
+    let path = s.preferences.path();
+    crate::test_support::write_private_fixture(&path, b"{malformed").unwrap();
     assert!(s.preferences.reload().is_err());
     s.error = None;
     s.ack_background_bots();
@@ -9454,7 +9457,7 @@ fn failed_ack_persist_then_success_clears_only_that_error() {
     assert!(!frontend_core::resources::background_bots_acked(
         &s.preferences
     ));
-    std::fs::remove_file(&parent).unwrap();
+    std::fs::remove_file(&path).unwrap();
     s.preferences.reload().unwrap();
     s.ack_background_bots();
     await_preference(&mut s, "background_bots_ack", serde_json::json!(true));
@@ -9933,15 +9936,20 @@ fn a_refusal_before_submission_logs_once_and_the_resolving_action_clears_it() {
     }
 }
 
-/// Whether the process log holds a refusal line containing `line`.
+/// Whether the process log holds a refusal line containing `line`. The log
+/// redacts every registered password (the short ones other tests register
+/// too, such as "test"), wherever it appears: so a line that holds a path is
+/// compared after the same redaction, whatever the temporary folder is called.
 fn refusal_logged(line: &str) -> bool {
     use frontend_core::log::{global, LogScope, LogView};
     let mut view = LogView::new(LogScope::Process);
-    view.edit_filter(|filter| filter.set_text(line));
+    view.edit_filter(|filter| filter.set_text("command refused: "));
     global().refresh(&mut view);
-    view.rows()
-        .iter()
-        .any(|row| row.message().starts_with("command refused: "))
+    let wanted = api::hostlog::redact(line);
+    view.rows().iter().any(|row| {
+        row.message().starts_with("command refused: ")
+            && api::hostlog::redact(row.message()).contains(&*wanted)
+    })
 }
 
 /// PANEL-STATE-GAP-1023 (F2): a command the panel refuses before it can
