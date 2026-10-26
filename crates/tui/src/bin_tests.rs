@@ -7390,6 +7390,55 @@ fn drawn_fleet_names(app: &mut TuiApp, names: &[&str]) -> Vec<String> {
         .collect()
 }
 
+/// The Load order has no row in the settings popup: its saved state shows on
+/// the message line, at both sizes. A reorder whose write is held says
+/// "Load order: saving…" there (the table already shows the new order), and
+/// when the write fails the line holds the failure and the table the stored
+/// order.
+#[test]
+fn settings_feedback_tui_load_order_says_saving_then_the_failure_on_the_message_line() {
+    use crossterm::event::KeyCode;
+    let iso = IsolatedStores::enter("tui-s3-load-order");
+    let names = ["alice", "bob", "carol"];
+    let (mut session, mut app) = tui_with_profiles(&iso, &names);
+    drawn_fleet_names(&mut app, &names);
+    let disk = TuiDisk::install(&session);
+    let action = app.on_key(alt_key(KeyCode::Down));
+    dispatch(&mut session, &mut app, action);
+    session.pump(&mut app);
+    assert!(session.core.preferences_pending());
+    for (width, height) in SIZES {
+        let words = screen_words(&mut app, width, height);
+        assert!(
+            words.contains("msg: Load order: saving…"),
+            "{width}x{height}: the message line says the order is saving: {words}"
+        );
+    }
+
+    // The disk fails the held write: the stored order shows again, with the
+    // failure on the line.
+    drop(disk.release);
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while session.core.preferences_pending() {
+        session.pump(&mut app);
+        assert!(Instant::now() < deadline, "the held write never ended");
+        std::thread::yield_now();
+    }
+    session.pump(&mut app);
+    for (width, height) in SIZES {
+        let words = screen_words(&mut app, width, height);
+        assert!(
+            words.contains("msg: Not saved:"),
+            "{width}x{height}: the failure shows: {words}"
+        );
+        assert!(
+            !words.contains("Load order: saving…"),
+            "{width}x{height}: nothing is saving any more: {words}"
+        );
+    }
+    assert_eq!(saved_order(&session), ["alice", "bob", "carol"]);
+}
+
 /// Alt+Down and Alt+Up through the real key path change the saved Load
 /// order and the drawn fleet table; the cursor stays on the moved profile;
 /// Alt+Up on the top row does nothing.

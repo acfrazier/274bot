@@ -489,6 +489,8 @@ pub(crate) struct PendingSettings {
     pub(crate) special_areas: bool,
     pub(crate) map_bake: bool,
     pub(crate) quester: bool,
+    /// The saved Load order (it has no popup row: the message line says so).
+    pub(crate) load_order: bool,
 }
 
 /// Headless panel view model.
@@ -811,6 +813,12 @@ impl TuiApp {
     /// the operator's change, not yet the durable value.
     pub(crate) fn set_pending_settings(&mut self, pending: PendingSettings) {
         self.pending = pending;
+    }
+
+    /// Whether the saved Load order is being written: the message line
+    /// says so while it is the only thing to say.
+    pub(crate) fn load_order_saving(&self) -> bool {
+        self.pending.load_order
     }
 
     /// Whether the draft of `preference` is held: unsubmitted, or its write

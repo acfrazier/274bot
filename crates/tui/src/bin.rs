@@ -3429,6 +3429,7 @@ impl TuiSession {
             special_areas: pending(S::Nav(N::ShowSpecialAreas)),
             map_bake: pending(S::MapBake),
             quester: pending(S::QuesterPaths),
+            load_order: pending(S::ProfileOrder),
         });
     }
 

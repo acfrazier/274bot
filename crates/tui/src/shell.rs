@@ -557,6 +557,10 @@ impl TuiApp {
                 put(buf, &mut x, area.y, right, message, Style::default());
                 self.regions.message = Rect::new(area.x, area.y, area.width, 1);
             }
+            None if self.load_order_saving() => {
+                put(buf, &mut x, area.y, right, "msg: ", dim());
+                put(buf, &mut x, area.y, right, "Load order: saving…", dim());
+            }
             None => put(buf, &mut x, area.y, right, "msg: —", dim()),
         }
     }
