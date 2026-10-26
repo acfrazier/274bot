@@ -416,11 +416,12 @@ impl PhaseRule {
 }
 
 /// One tick is one observed PLAYER_INFO, not one client frame or script poll.
-/// Revision 289's normal engine tick is 600 ms. Round up so the requested
-/// warmup is never shortened (10 s needs 17 observed ticks).
+/// Revision 289's normal engine tick is 600 ms. Round down so the configured
+/// wall-clock warmup controls the window when bots meet the tick floor. A bot
+/// that observes too few ticks still blocks the window.
 /// Engine authority: engine/src/engine/World.ts, `tickRate` defaults to 600.
 fn warmup_game_ticks(warmup: Duration) -> u64 {
-    u64::try_from(warmup.as_nanos().div_ceil(600_000_000)).unwrap_or(u64::MAX)
+    u64::try_from(warmup.as_nanos() / 600_000_000).unwrap_or(u64::MAX)
 }
 
 #[derive(Default)]
@@ -3026,6 +3027,120 @@ mod tests {
         phases
     }
 
+    fn clear_phase_env() -> EnvGuard {
+        EnvGuard::clear(&[
+            "RS2B0T",
+            "BOT_MEMORY_OUTPUT",
+            "BOT_MEMORY_SCENARIO",
+            "BOT_MEMORY_SUSTAIN",
+            "BOT_MEMORY_DIAGNOSTICS",
+            "BOT_MEMORY_SINGLE_RENDERER",
+            "BOT_MEMORY_RENDER_POLICY",
+        ])
+    }
+
+    fn empty_play() -> Play {
+        crate::run_with_io(
+            &crate::PlayOptions {
+                host: "127.0.0.1".into(),
+                transport: crate::Transport::Tcp,
+                port: 43594,
+                cache_dir: "/tmp".into(),
+                lowmem: true,
+                mainland: false,
+            },
+            vec![],
+            |_| (None, None),
+            |_, _, _| {},
+        )
+    }
+
+    fn phase_poll_run(warmup: Duration) -> (Run, Play, String) {
+        let mut run = Run::prepare_unseeded(unit_config(1, Workload::Idle), "unit").unwrap();
+        let name = run.names[0].clone();
+        let play = empty_play();
+        run.names.clear();
+        run.config.n = 0;
+        run.config.workload = Workload::Active;
+        run.config.warmup = warmup;
+        run.all_ready_since =
+            Some(Instant::now() - READY_SETTLE - Duration::from_secs(1));
+        {
+            let mut phases = run.gameplay_phases.lock().unwrap();
+            let rule = PhaseRule::Thiever { initial_food: 10 };
+            phases.rule = rule;
+            phases.slots.get_mut(&name).unwrap().observe(
+                rule,
+                100,
+                true,
+                true,
+                Some(10),
+                false,
+            );
+        }
+        (run, play, name)
+    }
+
+    #[test]
+    fn wall_clock_warmup_controls_window_after_every_bot_reaches_floor_ticks() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _env = clear_phase_env();
+        for (warmup, ticks) in [
+            (Duration::from_secs(10), 16),
+            (Duration::from_secs(5), 8),
+        ] {
+            assert_eq!(warmup_game_ticks(warmup), ticks);
+            let (mut run, play, name) = phase_poll_run(warmup);
+            {
+                let mut phases = run.gameplay_phases.lock().unwrap();
+                let rule = phases.rule;
+                let alice = phases.slots.get_mut(&name).unwrap();
+                alice.warmup_start_tick = Some(100);
+                alice.observe(rule, 100 + ticks, true, true, Some(10), false);
+                let bob = phases.slots.entry("bob".into()).or_default();
+                bob.observe(rule, 100, true, true, Some(10), false);
+                bob.warmup_start_tick = Some(100);
+                bob.observe(rule, 100 + ticks - 1, true, true, Some(10), false);
+            }
+            run.qualification_complete =
+                Some(Instant::now() - warmup - Duration::from_millis(1));
+            run.poll(&play).unwrap();
+            assert!(
+                run.observing.is_none(),
+                "one bot below the tick floor must block the window"
+            );
+
+            run.gameplay_phases
+                .lock()
+                .unwrap()
+                .slots
+                .get_mut("bob")
+                .unwrap()
+                .observe(
+                    PhaseRule::Thiever { initial_food: 10 },
+                    100 + ticks,
+                    true,
+                    true,
+                    Some(10),
+                    false,
+                );
+            run.qualification_complete = Some(Instant::now() - Duration::from_secs(1));
+            run.poll(&play).unwrap();
+            assert!(
+                run.observing.is_none(),
+                "the wall-clock warmup must still control the start"
+            );
+
+            run.qualification_complete =
+                Some(Instant::now() - warmup - Duration::from_millis(1));
+            run.poll(&play).unwrap();
+            assert!(
+                run.observing.is_some(),
+                "all bots at the floor and the wall-clock warmup must start observation"
+            );
+        }
+    }
+
     #[test]
     fn idle_game_tick_warmup_includes_the_existing_readiness_settle_hold() {
         let _lock = ENV_LOCK.lock().unwrap();
@@ -3074,9 +3189,9 @@ mod tests {
         let rule = PhaseRule::Thiever { initial_food: 4 };
         let mut phases = phase_fleet(rule, Some(4));
         let ticks = warmup_game_ticks(Duration::from_secs(10));
-        assert_eq!(ticks, 17);
+        assert_eq!(ticks, 16);
         assert!(!phases.ready(ticks).unwrap());
-        for tick in 101..=117 {
+        for tick in 101..=116 {
             phases
                 .slots
                 .get_mut("alice")
@@ -3096,7 +3211,7 @@ mod tests {
             .slots
             .get_mut("bob")
             .unwrap()
-            .observe(rule, 117, true, true, Some(4), false);
+            .observe(rule, 116, true, true, Some(4), false);
         assert!(phases.ready(ticks).unwrap());
         let mut record = serde_json::json!({"slots": [{"name": "alice"}, {"name": "bob"}]});
         phases.record(&mut record, ticks);
@@ -3105,8 +3220,8 @@ mod tests {
             assert_eq!(slot["gameplay_phase"]["phase"], rule.name());
             assert_eq!(slot["gameplay_phase"]["food"], 4);
             assert_eq!(slot["gameplay_phase"]["bank_open"], false);
-            assert_eq!(slot["gameplay_phase"]["observed_game_tick"], 117);
-            assert_eq!(slot["gameplay_phase"]["warmup_game_ticks"], 17);
+            assert_eq!(slot["gameplay_phase"]["observed_game_tick"], 116);
+            assert_eq!(slot["gameplay_phase"]["warmup_game_ticks"], 16);
         }
     }
 
@@ -3114,11 +3229,11 @@ mod tests {
     fn thiever_first_bank_before_or_at_window_start_fails_by_name() {
         let rule = PhaseRule::Thiever { initial_food: 4 };
         for (food, bank_open) in [(Some(3), false), (Some(22), false), (Some(4), true)] {
-            for tick in [105, 117] {
+            for tick in [105, 116] {
                 let mut phases = phase_fleet(rule, Some(4));
                 phases.slots.get_mut("alice").unwrap().observe(
                     rule,
-                    117,
+                    116,
                     true,
                     true,
                     Some(4),
@@ -3129,7 +3244,7 @@ mod tests {
                 // A completed bank or a later matching pack never clears history.
                 bob.observe(rule, 118, true, true, Some(4), false);
                 assert_eq!(
-                    phases.ready(17).unwrap_err(),
+                    phases.ready(16).unwrap_err(),
                     format!("phase_missed:thiever_first_bank:bob:tick={tick}")
                 );
             }
@@ -3145,10 +3260,10 @@ mod tests {
             .slots
             .get_mut("bob")
             .unwrap()
-            .observe(rule, 117, true, true, Some(9), false);
+            .observe(rule, 116, true, true, Some(9), false);
         assert_eq!(
-            phases.ready(17).unwrap_err(),
-            "phase_missed:thiever_initial_food_changed:bob:tick=117"
+            phases.ready(16).unwrap_err(),
+            "phase_missed:thiever_initial_food_changed:bob:tick=116"
         );
     }
 
@@ -3176,9 +3291,9 @@ mod tests {
         let rule = PhaseRule::Thiever { initial_food: 4 };
         let mut phases = phase_fleet(rule, None);
         for slot in phases.slots.values_mut() {
-            slot.observe(rule, 117, true, true, None, false);
+            slot.observe(rule, 116, true, true, None, false);
         }
-        assert!(!phases.ready(17).unwrap());
+        assert!(!phases.ready(16).unwrap());
         for scenario in ["moss_giant_bank_start", "duel_arena", "gatherer"] {
             assert_eq!(
                 PhaseRule::select(Workload::Active, Some(scenario), false),
