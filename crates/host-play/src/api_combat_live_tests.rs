@@ -84,6 +84,12 @@ struct Observed {
     shrimps: i32,
     /// An NPC is in combat and targets this account.
     npc_on_us: bool,
+    /// Varp 172. Zero is auto-retaliate on.
+    retaliate: i32,
+    /// The frame hook presses the retaliate-off toggle until varp 172 is 1.
+    want_retaliate_off: bool,
+    /// The local player's current animation, or -1 when unknown.
+    local_animation: i32,
     /// Varp values of the watched prayer varps, latest frame.
     prayers: Vec<(i32, i32)>,
     /// Every watched prayer varp seen on at least once after `ready`.
@@ -136,6 +142,10 @@ fn frame(
                 })
         })
     });
+    state.retaliate = varp(&snapshot, AUTO_RETALIATE_VARP);
+    state.local_animation = snapshot
+        .local_player()
+        .map_or(-1, |local| local.player.actor.animation);
     state.shrimps = snapshot
         .inventory()
         .iter()
@@ -161,6 +171,9 @@ fn frame(
             if value != 0 && !state.seen_on.contains(&index) {
                 state.seen_on.push(index);
             }
+        }
+        if state.want_retaliate_off && state.retaliate != 1 {
+            let _ = api::interact::Interactions::new(&snapshot, client).set_retaliate(false);
         }
         return;
     }
@@ -487,28 +500,35 @@ impl Cell {
         wait_until(label, deadline, || ready(&self.snapshot()));
     }
 
-    /// `setstat` restores both numbers, then one drain sets effective HP.
-    /// A cow hit in that window is retried. `also` is the extra ready check.
+    /// `setstat` restores both numbers. One drain then sets effective HP.
+    /// The next cheat waits until that pair has landed, so a stale reading
+    /// cannot queue a second drain on top of the first. `also` is the extra
+    /// ready check. A hit in the window retries the whole pair.
     fn seed_hitpoints(&self, effective: i32, also: impl Fn(&Observed) -> bool) {
-        for _ in 0..5 {
+        for _ in 0..3 {
             self.play
                 .cheat(&self.account, "setstat hitpoints 40")
                 .expect("restore hitpoints");
             let restored = Instant::now() + Duration::from_secs(8);
-            while Instant::now() < restored && self.snapshot().hitpoints_base != 40 {
+            while Instant::now() < restored {
+                let state = self.snapshot();
+                if state.hitpoints_base == 40 && state.hitpoints == 40 {
+                    break;
+                }
                 thread::sleep(Duration::from_millis(50));
             }
-            let now = self.snapshot().hitpoints;
-            if now < effective {
+            if self.snapshot().hitpoints != 40 || self.snapshot().hitpoints_base != 40 {
                 continue;
             }
-            if now != effective {
-                let drain = now - effective;
+            if effective != 40 {
                 self.play
-                    .cheat(&self.account, &format!("~stat_drain hitpoints {drain} 0"))
+                    .cheat(
+                        &self.account,
+                        &format!("~stat_drain hitpoints {} 0", 40 - effective),
+                    )
                     .expect("drain hitpoints");
             }
-            let landed = Instant::now() + Duration::from_secs(4);
+            let landed = Instant::now() + Duration::from_secs(8);
             while Instant::now() < landed {
                 let state = self.snapshot();
                 if state.hitpoints_base == 40 && state.hitpoints == effective && also(&state) {
@@ -1371,6 +1391,8 @@ fn showcase_eat_oracle_rejects_an_eat_above_the_line_and_a_missing_count() {
 
 /// Cow emergency line: danger 1 + 1. The old unknown-danger line for 40 HP is 20.
 const COW_EMERGENCY: i32 = 2;
+/// Classic varp 172: 0 is auto-retaliate on, 1 is off.
+const AUTO_RETALIATE_VARP: i32 = 172;
 /// The old half-max line `lines(None, 40)` used before these stats were known.
 const OLD_UNKNOWN_LINE: i32 = 20;
 
@@ -1613,11 +1635,46 @@ fn live_api_combat_native_lines_skip_zero_danger_and_hold_the_cow_food_line() {
     wait_until("aggro fight stopped", stop_deadline, || {
         !probe(&cell.play, &cell.account, "globalThis.__outcome || null").is_null()
     });
-    cell.seed_hitpoints(2, |state| state.npc_on_us);
+    // A new machine counts a playing attack animation as its own swing, and
+    // auto-retaliate starts another in the gap. Turn retaliate off while the
+    // cow is still on us, wait for that swing to end, then drain and arm.
+    cell.observed
+        .lock()
+        .expect("observed lock")
+        .want_retaliate_off = true;
+    let attack_anims: Vec<i32> = api::game_data::for_revision(api::selected::ClientRevision::R289)
+        .unwrap()
+        .style_seqs()
+        .iter()
+        .map(|row| row.seq_id)
+        .collect();
+    let quiet = Instant::now() + Duration::from_secs(12);
+    wait_until("retaliate off and the setup swing ended", quiet, || {
+        let state = cell.snapshot();
+        state.npc_on_us && state.retaliate == 1 && !attack_anims.contains(&state.local_animation)
+    });
+    let hp = cell.snapshot().hitpoints;
+    assert!(hp >= 2, "hitpoints {hp} are already below the stop line");
+    if hp != 2 {
+        cell.cheat_until(
+            "drain to the cow emergency line",
+            &format!("~stat_drain hitpoints {} 0", hp - 2),
+            |state| state.hitpoints_base == 40 && state.hitpoints == 2 && state.npc_on_us,
+        );
+    }
+    let quiet_again = Instant::now() + Duration::from_secs(8);
+    wait_until("stop seed is quiet at 2 hitpoints", quiet_again, || {
+        let state = cell.snapshot();
+        state.hitpoints == 2
+            && state.hitpoints_base == 40
+            && state.npc_on_us
+            && state.retaliate == 1
+            && !attack_anims.contains(&state.local_animation)
+    });
     let stop = cell.phase(
         "no-food-stop",
         &format!(
-            "{{ target: {{ npc: 'Cow' }}, area: {COW_AREA}, prayer: true, food: true, budgetTicks: 40 }}"
+            "{{ target: {{ npc: 'Cow' }}, area: {COW_AREA}, prayer: true, food: true, retaliate: false, budgetTicks: 40 }}"
         ),
         protect,
     );
