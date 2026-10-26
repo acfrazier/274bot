@@ -130,6 +130,7 @@ impl Fixture {
         self.core.flush_writes();
     }
 
+    #[cfg(not(feature = "js"))]
     fn assign_compiled(&mut self, name: &str, id: script::CompiledId) {
         assert!(self.scripts.persist_assignment(
             &mut self.core,
@@ -1071,8 +1072,36 @@ fn restart_scope_prompt_bounds_each_list_and_counts_the_rest() {
     );
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn marked_startable_follows_card_then_saved_assignment() {
+    let mut f = fixture("startable", &["alice", "bob"], 2);
+    let (card, sel) = f.card("looper.ts");
+    let mut marks = MarkedSelection::default();
+    marks.set(ProfileIdentity::uid(1), true);
+    marks.set(ProfileIdentity::uid(2), true);
+    assert!(
+        marked_startable(&marks, &f.core, Some(&sel)),
+        "a card starts any mark"
+    );
+    assert!(
+        !marked_startable(&marks, &f.core, None),
+        "no card and no saved assignment starts nothing"
+    );
+    f.assign("bob", &card);
+    assert!(
+        marked_startable(&marks, &f.core, None),
+        "one marked saved assignment is enough"
+    );
+    assert!(
+        !marked_startable(&MarkedSelection::default(), &f.core, Some(&sel)),
+        "nothing marked starts nothing"
+    );
+}
+
+#[cfg(not(feature = "js"))]
+#[test]
+fn marked_native_startable_follows_loaded_choice_then_compiled_assignment() {
     let mut f = fixture("startable", &["alice", "bob"], 2);
     let loaded = ScriptChoice::loaded(CardSource::File, "looper.ts");
     let mut marks = MarkedSelection::default();

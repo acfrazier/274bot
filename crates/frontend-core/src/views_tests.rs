@@ -64,24 +64,13 @@ fn fleet(test: &str, members: &[&str], auto_login: bool) -> OperatorSession<()> 
     session
 }
 
-#[cfg(feature = "js")]
-fn test_scripts(test: &str) -> crate::scripts::Scripts {
-    let dir = std::env::temp_dir().join(format!(
-        "274bot-frontend-core-views-{}-{test}",
-        std::process::id()
-    ));
-    std::fs::create_dir_all(&dir).unwrap();
-    crate::scripts::Scripts::new(
-        script_js::JsLibrary::with_cache(dir.join("js-scripts.json"), dir.join("js-cache")),
-        script::ScriptSettingsStore::at(dir.join("script-settings.json")),
-    )
-}
 
 #[cfg(not(feature = "js"))]
 fn test_scripts(_test: &str) -> crate::scripts::Scripts {
     crate::scripts::Scripts::new()
 }
 
+#[cfg(not(feature = "js"))]
 fn wait_script_state(
     session: &mut OperatorSession<()>,
     scripts: &mut crate::scripts::Scripts,
@@ -1132,8 +1121,117 @@ fn focused_manual_refusal_without_a_route_retains_its_shared_reason() {
 /// published destination, and a destination left on the row by anything else
 /// never reads as a walk once the run is gone. A WalkTo walk belongs to no
 /// run, so a script Stop leaves it visible.
+#[cfg(feature = "js")]
 #[test]
 fn a_script_walk_ends_with_its_run_and_a_manual_walk_survives_the_stop() {
+    let arm = Arc::new(Mutex::new(host_play::WalkArm::default()));
+    let walks = Arc::new(Mutex::new(HashMap::from([(
+        "vs-bob".into(),
+        Arc::clone(&arm),
+    )])));
+    let mut s = fleet("separate-facts", &["vs-alice", "vs-bob"], false);
+    s.set_walk_arms(walks);
+    for name in ["vs-alice", "vs-bob"] {
+        publish(&s, name, |r| {
+            phase_to(r, StartupPhase::Ready);
+            (r.connected, r.ingame, r.scene_state) = (true, true, 2);
+        });
+    }
+    for name in ["vs-alice", "vs-bob"] {
+        s.play()
+            .unwrap()
+            .script_start_load(
+                name,
+                "export function tick(api) {}".into(),
+                script_js::LoadShape::NativeTick,
+                None,
+                vec![],
+            )
+            .unwrap();
+    }
+    let deadline = Instant::now() + Duration::from_secs(60);
+    for name in ["vs-alice", "vs-bob"] {
+        while s.play().unwrap().script_state(name) != script::RunState::Running {
+            assert!(Instant::now() < deadline, "{name} never ran");
+            s.play().unwrap().pump_script_lifecycle(name);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+    publish(&s, "vs-alice", |r| {
+        (r.walk_x, r.walk_z, r.walk_level) = (3210, 3200, 0)
+    });
+    arm.lock().unwrap().route = Some(Arc::new(nav_planner::router::Route {
+        legs: Vec::new(),
+        dest: api::snapshot::WorldTile {
+            x: 3220,
+            z: 3200,
+            level: 0,
+        },
+        ticks: 1.0,
+    }));
+    s.poll();
+    let alice = row(&s, "vs-alice");
+    assert_eq!(
+        (alice.script_walk(), alice.manual_walk(), alice.brief()),
+        (true, false, "running")
+    );
+    let bob = row(&s, "vs-bob");
+    assert_eq!(
+        (bob.script_walk(), bob.manual_walk(), bob.brief()),
+        (false, true, "running")
+    );
+
+    for name in ["vs-alice", "vs-bob"] {
+        s.play().unwrap().script_stop(name);
+    }
+    for name in ["vs-alice", "vs-bob"] {
+        while s.play().unwrap().script_state(name) != script::RunState::Idle {
+            assert!(Instant::now() < deadline, "{name} never stopped");
+            s.play().unwrap().pump_script_lifecycle(name);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+    s.poll();
+    let alice = row(&s, "vs-alice");
+    assert_eq!(
+        (alice.script(), alice.script_walk(), alice.brief()),
+        (RunState::Idle, false, "idle"),
+        "Stop retired the run's walk"
+    );
+    let bob = row(&s, "vs-bob");
+    assert_eq!(
+        (
+            bob.script(),
+            bob.script_walk(),
+            bob.manual_walk(),
+            bob.brief()
+        ),
+        (RunState::Idle, false, true, "running"),
+        "a WalkTo walk is not a script run: Stop leaves it visible"
+    );
+
+    // A destination left on the row after the run is gone is not a walk,
+    // whoever left it.
+    publish(&s, "vs-alice", |r| {
+        (r.walk_x, r.walk_z, r.walk_level) = (3210, 3200, 0)
+    });
+    s.poll();
+    let alice = row(&s, "vs-alice");
+    assert_eq!((alice.script_walk(), alice.brief()), (false, "idle"));
+
+    arm.lock().unwrap().route = None;
+    s.poll();
+    assert_eq!(row(&s, "vs-bob").brief(), "idle");
+}
+
+/// PANEL-STATE-GAP-1023: a script walk and a WalkTo walk are separate facts.
+/// The script walk belongs to its run and ends with it: Stop retires the
+/// published destination, and a destination left on the row by anything else
+/// never reads as a walk once the run is gone. A WalkTo walk belongs to no
+/// run, so a script Stop leaves it visible.
+#[cfg(not(feature = "js"))]
+#[test]
+fn native_gatherer_walk_ends_with_its_run_and_a_manual_walk_survives_the_stop() {
     let arm = Arc::new(Mutex::new(host_play::WalkArm::default()));
     let walks = Arc::new(Mutex::new(HashMap::from([(
         "vs-bob".into(),
