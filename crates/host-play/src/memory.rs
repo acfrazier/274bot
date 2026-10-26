@@ -3072,6 +3072,7 @@ mod tests {
             |_| (None, None),
             |_, _, _| {},
         )
+        .expect("Play construction succeeds")
     }
 
     fn phase_poll_run(warmup: Duration) -> (Run, Play, String) {
@@ -3447,7 +3448,8 @@ mod tests {
             vec![],
             |_| (None, None),
             |_, _, _| {},
-        );
+        )
+        .expect("Play construction succeeds");
         {
             let mut phases = run.gameplay_phases.lock().unwrap();
             let rule = PhaseRule::Thiever { initial_food: 4 };

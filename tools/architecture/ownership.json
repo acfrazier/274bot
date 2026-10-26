@@ -311,10 +311,6 @@
       "owner": "T2"
     },
     {
-      "path": "crates/client-adapter/Cargo.toml",
-      "owner": "T1"
-    },
-    {
       "path": "crates/client-adapter/src/budget.rs",
       "owner": "T1"
     },
