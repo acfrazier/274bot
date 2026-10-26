@@ -7654,9 +7654,11 @@ fn music_sfx_persists_lowmem_false() {
     s.select("alice");
     assert!(s.focused_lowmem(), "fresh profile defaults to lowmem");
     assert!(s.set_focused_lowmem(false));
+    settle_panel_writes(&mut s);
     assert!(!s.core.profile("alice").unwrap().lowmem());
     assert!(!s.focused_lowmem(), "focused profile reflects the setting");
     assert!(s.set_focused_lowmem(true));
+    settle_panel_writes(&mut s);
     assert!(s.core.profile("alice").unwrap().lowmem());
 }
 
@@ -7716,12 +7718,14 @@ fn raster_persists_and_off_keeps_prefer_cpu_until_cpu() {
     assert_eq!(s.focused_raster(), frontend_core::command::RasterMode::Gpu);
     assert!(!s.core.slot_io("alice").unwrap().input.prefer_cpu());
     assert!(s.set_focused_lowmem(false));
+    settle_panel_writes(&mut s);
     s.core.flush_writes();
     assert!(
         !s.core.profile("alice").unwrap().lowmem(),
         "the memory switch is persisted before an unrelated raster write"
     );
     assert!(s.set_focused_raster(frontend_core::command::RasterMode::Off));
+    settle_panel_writes(&mut s);
     assert_eq!(s.focused_raster(), frontend_core::command::RasterMode::Off);
     assert_eq!(
         s.focus.lock().unwrap().renderer_by.get("alice").copied(),
@@ -7732,6 +7736,7 @@ fn raster_persists_and_off_keeps_prefer_cpu_until_cpu() {
         "Off must not flip the GPU/CPU latch"
     );
     assert!(s.set_focused_raster(frontend_core::command::RasterMode::Cpu));
+    settle_panel_writes(&mut s);
     assert_eq!(s.focused_raster(), frontend_core::command::RasterMode::Cpu);
     assert!(s.core.slot_io("alice").unwrap().input.prefer_cpu());
     assert_eq!(
@@ -7769,12 +7774,14 @@ fn request_raster_cpu_on_spawned_slot_applies_immediately() {
     vault_upsert(&mut s.core, profile("alice", "pw", 42));
     s.select("alice");
     s.request_focused_raster(frontend_core::command::RasterMode::Cpu);
+    settle_panel_writes(&mut s);
     assert_eq!(
         s.focused_raster(),
         frontend_core::command::RasterMode::Cpu,
         "GPU→CPU applies at once: drop+reattach, never a logout"
     );
     s.request_focused_raster(frontend_core::command::RasterMode::Off);
+    settle_panel_writes(&mut s);
     assert_eq!(s.focused_raster(), frontend_core::command::RasterMode::Off);
     assert!(
         s.core.slots().contains_key("alice"),
@@ -7796,8 +7803,10 @@ fn raster_switch_keeps_slot_frame_buf_and_input() {
     let buf = Arc::clone(&slot.pixels);
     let inp = Arc::clone(&slot.input);
     assert!(s.set_focused_raster(frontend_core::command::RasterMode::Cpu));
+    settle_panel_writes(&mut s);
     assert!(inp.prefer_cpu(), "GPU→CPU sets the slot's prefer_cpu latch");
     assert!(s.set_focused_raster(frontend_core::command::RasterMode::Gpu));
+    settle_panel_writes(&mut s);
     assert!(!inp.prefer_cpu(), "CPU→GPU clears the prefer_cpu latch");
     let slot = s.core.slot_io("alice").expect("GPU↔CPU must keep the slot");
     assert!(
@@ -9683,6 +9692,7 @@ fn memory_toggle_reports_login_divergence_through_the_shared_command() {
     assert!(!clean.differs());
 
     assert!(s.set_focused_lowmem(false));
+    settle_panel_writes(&mut s);
     assert_eq!(
         s.audio.owner(),
         None,
@@ -10657,4 +10667,145 @@ fn settings_feedback_the_quester_folder_field_follows_a_second_process_unless_ty
         "what the operator is typing stays"
     );
     frontend_core::test_support::scripts::reset_quester_registry();
+}
+
+// --- T5.3-S3 round 2: remembered launch choices take effect only when durable ---
+
+/// The remembered Game-pane raster and memory mode are saved choices: while
+/// their write is held the control shows the choice, but the profile's saved
+/// raster and memory mode, the slot's GPU/CPU latch and the panel's applied
+/// values stay what they were; when the write fails nothing was applied and
+/// the control shows the applied value again with the failure at the setting;
+/// when it is durable the effects follow.
+#[test]
+fn settings_feedback_launch_choices_take_effect_only_from_the_durable_value() {
+    use frontend_core::command::RasterMode;
+    let _iso = IsolatedStores::enter("panel-s3-launch-choices");
+    let path = tmp_vault("launch-choices.vault");
+    let mut s = Session::new();
+    install_vault(
+        &mut s.core,
+        VaultFixture::create(&path, "test-passphrase-01"),
+    );
+    vault_upsert(&mut s.core, profile("alice", "pw", 42));
+    hydrate_panel_preferences(&mut s);
+    s.select("alice");
+    assert_eq!(s.focused_raster(), RasterMode::Gpu);
+    assert!(s.focused_lowmem());
+    let applied = |s: &mut Session| {
+        s.core.flush_writes();
+        let profile = s.core.profile("alice").unwrap();
+        (
+            profile.lowmem(),
+            profile.raster(),
+            s.core.slot_io("alice").unwrap().input.prefer_cpu(),
+            s.ui.lowmem,
+            s.ui.raster,
+        )
+    };
+    let before = applied(&mut s);
+    assert_eq!(before, (true, RasterMode::Gpu, false, true, RasterMode::Gpu));
+    let disk = PanelDisk::install(&s);
+
+    assert!(s.set_focused_lowmem(false));
+    assert!(s.set_focused_raster(RasterMode::Cpu));
+    for _ in 0..3 {
+        s.pump_status();
+        s.poll_panel_preferences();
+        assert!(!s.focused_lowmem(), "the control shows the choice");
+        assert_eq!(s.focused_raster(), RasterMode::Cpu);
+        assert_eq!(
+            applied(&mut s),
+            before,
+            "nothing is applied while the write is held"
+        );
+    }
+
+    // The write fails: nothing was applied, the control shows the applied
+    // value, and the failure is at the setting.
+    let failing = disk.release();
+    settle_panel_writes(&mut s);
+    assert_eq!(applied(&mut s), before, "a failed write applied nothing");
+    assert!(s.focused_lowmem());
+    assert_eq!(s.focused_raster(), RasterMode::Gpu);
+    for member in [&["lowmem"][..], &["raster"]] {
+        assert!(
+            s.panel_member_error(member)
+                .is_some_and(|text| text.starts_with("Preferences not saved: ")),
+            "{member:?}: the failure shows at its setting"
+        );
+    }
+
+    // The retry lands: the effects follow the durable value.
+    failing.store(false, Ordering::SeqCst);
+    assert!(s.set_focused_lowmem(false));
+    assert!(s.set_focused_raster(RasterMode::Cpu));
+    settle_panel_writes(&mut s);
+    assert_eq!(
+        applied(&mut s),
+        (false, RasterMode::Cpu, true, false, RasterMode::Cpu)
+    );
+    assert!(!s.focused_lowmem());
+    assert_eq!(s.focused_raster(), RasterMode::Cpu);
+    assert_eq!(s.panel_member_error(&["lowmem"]), None);
+    assert_eq!(s.panel_member_error(&["raster"]), None);
+}
+
+/// The server revision is a saved choice too: while its write is held the
+/// revision control shows the choice, but the preparation and the binding
+/// read the durable revision, so a profile bound meanwhile binds with it
+/// (whatever the write does later), and a failed write leaves the failure
+/// at the setting.
+#[test]
+fn settings_feedback_a_held_server_revision_binds_the_durable_revision_and_shows_the_choice() {
+    let (root, cache, manifest, unpack, server) = runtime_profile_fixture(274);
+    let mut s = Session::new();
+    configure_isolated_profile(
+        &mut s,
+        ProfileOptions {
+            revision: None,
+            cache_dir: Some(cache),
+            cache_manifest: Some(manifest),
+            unpack_dir: Some(unpack),
+            http_port: Some(server.port()),
+            ..ProfileOptions::default()
+        },
+        &root,
+    )
+    .unwrap();
+    hydrate_panel_preferences(&mut s);
+    assert_eq!(s.effective_revision_label().unwrap(), "274");
+    let disk = PanelDisk::install(&s);
+
+    s.set_server_revision(289).unwrap();
+    for _ in 0..3 {
+        s.pump_status();
+        s.poll_panel_preferences();
+        assert_eq!(
+            s.revision_choice_label().unwrap(),
+            "289",
+            "the control shows the choice"
+        );
+        assert_eq!(
+            s.effective_revision_label().unwrap(),
+            "274",
+            "the revision the launch reads is the durable one"
+        );
+        assert_eq!(s.ui.server_revision, 274);
+    }
+    s.bind_profile().unwrap();
+    assert_eq!(
+        s.effective_revision_label().unwrap(),
+        "274",
+        "the profile bound with the durable revision"
+    );
+
+    disk.release();
+    settle_panel_writes(&mut s);
+    assert!(s
+        .panel_member_error(&["server_revision"])
+        .is_some_and(|text| text.starts_with("Preferences not saved: ")));
+    assert_eq!(s.effective_revision_label().unwrap(), "274");
+    assert_eq!(s.revision_choice_label().unwrap(), "274");
+    assert!(s.set_server_revision(289).is_err(), "a bound session refuses");
 }

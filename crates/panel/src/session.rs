@@ -879,6 +879,70 @@ struct PanelPreferenceMember {
 struct PanelPreferenceWrite {
     update: Update,
     members: Vec<PanelPreferenceMember>,
+    /// What a remembered launch choice does once this write is durable.
+    effect: Option<LaunchEffect>,
+}
+
+/// What a panel-owned write became on submit.
+enum PanelSubmit {
+    /// Durable already: there was nothing to wait for.
+    Done,
+    /// Queued under this request identity.
+    Pending(u64),
+}
+
+/// A remembered launch choice and what it does once its write is durable.
+/// `profile` is the bot that was focused when the choice was made.
+#[derive(Clone)]
+enum LaunchEffect {
+    /// The Game-pane raster: the profile's saved raster, the focused
+    /// client's renderer and the slot's GPU/CPU latch.
+    Raster {
+        raster: RasterMode,
+        profile: Option<String>,
+    },
+    /// The memory mode of the profile's next login.
+    Lowmem {
+        lowmem: bool,
+        profile: Option<String>,
+    },
+    /// The server revision the next session binds with.
+    ServerRevision(u16),
+}
+
+/// What the launch controls show while their save is pending: the latest
+/// request's choice (its identity, so a result ends only its own preview).
+#[derive(Debug, Default, Clone, Copy)]
+struct LaunchPreviews {
+    raster: Option<(u64, RasterMode)>,
+    lowmem: Option<(u64, bool)>,
+    server_revision: Option<(u64, u16)>,
+}
+
+impl LaunchPreviews {
+    fn show(&mut self, request: u64, effect: &LaunchEffect) {
+        match effect {
+            LaunchEffect::Raster { raster, .. } => self.raster = Some((request, *raster)),
+            LaunchEffect::Lowmem { lowmem, .. } => self.lowmem = Some((request, *lowmem)),
+            LaunchEffect::ServerRevision(revision) => {
+                self.server_revision = Some((request, *revision));
+            }
+        }
+    }
+
+    /// The request ended (durable or failed): its preview goes, unless a
+    /// newer request of the same choice replaced it.
+    fn settle(&mut self, request: u64) {
+        if self.raster.is_some_and(|(shown, _)| shown == request) {
+            self.raster = None;
+        }
+        if self.lowmem.is_some_and(|(shown, _)| shown == request) {
+            self.lowmem = None;
+        }
+        if self.server_revision.is_some_and(|(shown, _)| shown == request) {
+            self.server_revision = None;
+        }
+    }
 }
 
 /// A failed panel-owned write kept at its setting.
@@ -983,6 +1047,8 @@ pub struct Session {
     panel_request_seq: u64,
     /// The durable version the panel-owned members last followed.
     panel_rebased: Option<api::local_state::StoreVersion>,
+    /// What the launch controls show while their save is pending.
+    launch_previews: LaunchPreviews,
     /// Shared Nav values changed by an accepted command but not yet durable.
     pending_nav_members: HashMap<&'static str, bool>,
     /// Failed panel-owned writes, one per member path, each kept at its
@@ -1670,6 +1736,7 @@ impl Session {
             quester_paths_folder_dirty: false,
             quester_folder_submitted: None,
             panel_rebased: None,
+            launch_previews: LaunchPreviews::default(),
             special_areas_dropped: false,
             nav_rebased: None,
             map_desk,
@@ -1941,7 +2008,12 @@ impl Session {
             };
             let write = self.panel_preference_writes.swap_remove(index);
             match outcome {
-                Ok(()) => self.clear_succeeded_panel_members(&write.members),
+                Ok(()) => {
+                    self.clear_succeeded_panel_members(&write.members);
+                    if let Some(effect) = write.effect {
+                        self.apply_launch_effect(effect);
+                    }
+                }
                 Err(error) => self.fail_panel_members(&write.members, &error.to_string()),
             }
         }
@@ -2017,6 +2089,58 @@ impl Session {
         if !self.persist_ui {
             return Ok(());
         }
+        self.submit_panel_member(path, value, None).map(|_| ())
+    }
+
+    /// Submit one remembered launch choice: it takes effect (`effect`) only
+    /// when its write is durable, and the control shows it meanwhile. A run
+    /// that saves nothing has no write to wait for: the effect is applied
+    /// at once. `false` when the write was refused before it was accepted
+    /// (the failure shows at the setting).
+    fn choose_launch(
+        &mut self,
+        path: &[&str],
+        value: Option<serde_json::Value>,
+        effect: LaunchEffect,
+    ) -> bool {
+        if !self.persist_ui {
+            self.apply_launch_effect(effect);
+            return true;
+        }
+        match self.submit_panel_member(path, value, Some(effect.clone())) {
+            Ok(PanelSubmit::Done) => true,
+            Ok(PanelSubmit::Pending(request)) => {
+                self.launch_previews.show(request, &effect);
+                true
+            }
+            Err(_) => false,
+        }
+    }
+
+    /// Apply what a remembered launch choice does now that it is durable.
+    fn apply_launch_effect(&mut self, effect: LaunchEffect) {
+        match effect {
+            LaunchEffect::ServerRevision(revision) => {
+                // A profile bound while the save was pending keeps what it
+                // bound with: the revision changes only for the next session.
+                if self.launcher.bound().is_none() {
+                    self.ui.server_revision = revision;
+                    self.launcher.bump_generation();
+                }
+            }
+            LaunchEffect::Raster { raster, profile } => self.apply_raster_choice(raster, profile),
+            LaunchEffect::Lowmem { lowmem, profile } => self.apply_lowmem_choice(lowmem, profile),
+        }
+    }
+
+    /// The request a panel-owned write became: durable already (nothing was
+    /// left to wait for), or queued under its identity.
+    fn submit_panel_member(
+        &mut self,
+        path: &[&str],
+        value: Option<serde_json::Value>,
+        effect: Option<LaunchEffect>,
+    ) -> Result<PanelSubmit, String> {
         self.panel_request_seq += 1;
         let member = PanelPreferenceMember {
             request: self.panel_request_seq,
@@ -2033,21 +2157,30 @@ impl Session {
             }
         };
         if patch.is_empty() {
+            // The document already holds the value: there is nothing to wait for.
             self.pending_panel_members
                 .retain(|pending| pending.request != member.request);
-            return Ok(());
+            if let Some(effect) = effect {
+                self.apply_launch_effect(effect);
+            }
+            return Ok(PanelSubmit::Done);
         }
         match self.preferences.begin_patch(patch) {
             Ok(Update::Durable) => {
                 self.clear_succeeded_panel_members(&[member]);
-                Ok(())
+                if let Some(effect) = effect {
+                    self.apply_launch_effect(effect);
+                }
+                Ok(PanelSubmit::Done)
             }
             Ok(update @ Update::Queued(_)) => {
+                let request = member.request;
                 self.panel_preference_writes.push(PanelPreferenceWrite {
                     update,
                     members: vec![member],
+                    effect,
                 });
-                Ok(())
+                Ok(PanelSubmit::Pending(request))
             }
             Err(error) => {
                 let message = error.to_string();
@@ -2154,6 +2287,7 @@ impl Session {
             crate::ui_state::load_snapshot(document),
             self.pending_panel_members
                 .iter()
+                .filter(|member| !crate::ui_state::is_launch_choice(&member.path))
                 .map(|member| (member.path.as_slice(), &member.value)),
         );
         apply_pending_nav_members(&mut self.ui.nav, &self.pending_nav_members);
@@ -2187,6 +2321,7 @@ impl Session {
     /// Requests are matched by identity, never by the value they carry.
     fn clear_succeeded_panel_members(&mut self, members: &[PanelPreferenceMember]) {
         for member in members {
+            self.launch_previews.settle(member.request);
             self.pending_panel_members
                 .retain(|pending| pending.request != member.request);
             #[cfg(test)]
@@ -2205,6 +2340,7 @@ impl Session {
     fn fail_panel_members(&mut self, members: &[PanelPreferenceMember], error: &str) {
         let now = Instant::now();
         for member in members {
+            self.launch_previews.settle(member.request);
             self.pending_panel_members
                 .retain(|pending| pending.request != member.request);
             self.set_preference_write_error(Some(member), error, now);
@@ -2230,6 +2366,23 @@ impl Session {
                 .iter()
                 .map(|member| (member.path.as_slice(), &member.value)),
         );
+        // The server revision the next session binds with follows a durable
+        // value another process saved (while this panel has no choice of its
+        // own pending and no profile is bound).
+        let durable = document
+            .get("server_revision")
+            .and_then(serde_json::Value::as_u64)
+            .and_then(|revision| u16::try_from(revision).ok())
+            .filter(|revision| matches!(revision, 274 | 289));
+        if let Some(durable) = durable {
+            if self.launch_previews.server_revision.is_none()
+                && self.launcher.bound().is_none()
+                && durable != self.ui.server_revision
+            {
+                self.ui.server_revision = durable;
+                self.launcher.bump_generation();
+            }
+        }
     }
 
     fn set_preference_write_error(
@@ -2471,6 +2624,11 @@ impl Session {
             .map_or(Ok(()), BoundProfile::require_bot_operation)
     }
 
+    /// Choose the server revision for the next session. It is a remembered
+    /// launch choice, so it takes effect only when its write is durable: the
+    /// preparation and the binding read the durable value
+    /// ([`Self::apply_launch_effect`]), and the revision control shows the
+    /// choice meanwhile ([`Self::revision_choice_label`]).
     pub fn set_server_revision(&mut self, revision: u16) -> Result<(), String> {
         if self.launcher.bound().is_some() {
             return Err("server profile is already bound; restart to change revision".into());
@@ -2478,9 +2636,11 @@ impl Session {
         if !matches!(revision, 274 | 289) {
             return Err(format!("unsupported revision {revision}; use 274 or 289"));
         }
-        self.ui.server_revision = revision;
-        self.launcher.bump_generation();
-        let _ = self.persist_panel_serializable(&["server_revision"], &revision);
+        self.choose_launch(
+            &["server_revision"],
+            Some(serde_json::Value::from(revision)),
+            LaunchEffect::ServerRevision(revision),
+        );
         Ok(())
     }
 
@@ -2499,6 +2659,16 @@ impl Session {
 
     pub fn effective_revision_label(&self) -> Result<String, ProfileError> {
         self.launcher.revision_label(self.ui.server_revision)
+    }
+
+    /// The revision the revision control shows: the operator's choice while
+    /// its save is pending, else the effective one.
+    pub fn revision_choice_label(&self) -> Result<String, ProfileError> {
+        let shown = self
+            .launch_previews
+            .server_revision
+            .map_or(self.ui.server_revision, |(_, revision)| revision);
+        self.launcher.revision_label(shown)
     }
 
     pub(crate) fn profile_class(&self) -> ProfileClass {
@@ -4151,73 +4321,104 @@ impl Session {
         self.apply_result(result)
     }
 
-    /// Queued mode for the focused bot's next login, including a session override.
+    /// What the Game pane's memory control shows: the operator's choice while
+    /// its save is pending, else the queued mode for the focused bot's next
+    /// login (including a session override). The mode itself changes only when
+    /// the choice is durable ([`Self::apply_lowmem_choice`]).
     pub fn focused_lowmem(&self) -> bool {
-        self.focused_name()
-            .and_then(|name| self.core.memory_mode(&name))
+        self.launch_previews
+            .lowmem
+            .map(|(_, lowmem)| lowmem)
+            .or_else(|| {
+                self.focused_name()
+                    .and_then(|name| self.core.memory_mode(&name))
+            })
             .unwrap_or(self.ui.lowmem)
     }
 
-    /// Game-pane none/GPU/CPU (General config). Rail members stay GPU
-    /// (CPU/none only as fallback via `set_draw` / `prefer_cpu`).
+    /// What the Game-pane none/GPU/CPU control shows (General config): the
+    /// operator's choice while its save is pending, else the applied mode.
+    /// Rail members stay GPU (CPU/none only as fallback via `set_draw` /
+    /// `prefer_cpu`).
     pub fn focused_raster(&self) -> RasterMode {
-        self.ui.raster
+        self.launch_previews
+            .raster
+            .map_or(self.ui.raster, |(_, raster)| raster)
     }
 
-    fn persist_game_render_prefs(&mut self) {
-        let raster = self.ui.raster;
-        if self.persist_ui {
-            let _ = self.persist_panel_serializable(&["raster"], &raster);
+    /// Choose the Game-pane raster. A remembered launch choice takes effect
+    /// only when its write is durable ([`Self::apply_raster_choice`]); until
+    /// then the control shows the choice and nothing else changes, and a
+    /// failed write changes nothing. Returns whether the choice was accepted.
+    pub fn set_focused_raster(&mut self, raster: RasterMode) -> bool {
+        let effect = LaunchEffect::Raster {
+            raster,
+            profile: self.focused_name(),
+        };
+        self.choose_launch(&["raster"], serde_json::to_value(raster).ok(), effect)
+    }
+
+    /// Apply a durable Game-pane raster. Off is `set_draw` on the focused
+    /// client only. Gpu↔Cpu flips the slot's `prefer_cpu` latch; the host drops
+    /// the `Renderer` and reattaches the right backend on the **same**
+    /// client — never a restart. Rail members are not touched. `profile` is
+    /// the bot that was focused when the choice was made: its saved raster
+    /// and latch change, and the focused client follows only while it is
+    /// still the focused one.
+    fn apply_raster_choice(&mut self, raster: RasterMode, profile: Option<String>) {
+        let focused = self.focused_name() == profile;
+        if focused {
+            self.ui.raster = raster;
         }
-        let Some(name) = self.focused_name() else {
+        if let Some(name) = &profile {
+            if let Err(error) = self.submit_profile_write(OperatorCommand::SetRaster(raster), name)
+            {
+                self.error = Some(error);
+            }
+        }
+        if focused {
+            self.set_renderer(raster != RasterMode::Off);
+        }
+        let Some(name) = profile else {
             return;
         };
-        if let Err(e) = self.submit_profile_write(OperatorCommand::SetRaster(raster), &name) {
-            self.error = Some(e);
-        }
-    }
-
-    /// Apply Game-pane raster. Off is `set_draw` on the focused client
-    /// only. Gpu↔Cpu flips the slot's `prefer_cpu` latch; the host drops
-    /// the `Renderer` and reattaches the right backend on the **same**
-    /// client — never a restart. Rail members are not touched.
-    pub fn set_focused_raster(&mut self, raster: RasterMode) -> bool {
-        self.ui.raster = raster;
-        self.persist_game_render_prefs();
-        self.set_renderer(raster != RasterMode::Off);
-        let Some(name) = self.focused_name() else {
-            return true;
-        };
         if raster == RasterMode::Off {
-            return true;
+            return;
         }
-        let want_cpu = raster == RasterMode::Cpu;
         if let Some(slot) = self.core.slot_io(&name) {
-            slot.input.set_prefer_cpu(want_cpu);
+            slot.input.set_prefer_cpu(raster == RasterMode::Cpu);
         }
-        true
     }
 
+    /// Choose the Game pane's memory mode for its next login. Durable-only
+    /// like [`Self::set_focused_raster`] ([`Self::apply_lowmem_choice`]).
     pub fn set_focused_lowmem(&mut self, lowmem: bool) -> bool {
-        self.ui.lowmem = lowmem;
-        let _ = self.persist_panel_member(&["lowmem"], Some(serde_json::Value::Bool(lowmem)));
         self.error = None;
-        let Some(name) = self.focused_name() else {
-            return true;
+        let effect = LaunchEffect::Lowmem {
+            lowmem,
+            profile: self.focused_name(),
         };
-        // The shared command only queues the next login mode. Neither the
-        // client nor its speaker changes while this setting is saved.
+        self.choose_launch(&["lowmem"], Some(serde_json::Value::Bool(lowmem)), effect)
+    }
+
+    /// Apply a durable memory choice: the shared command queues the next
+    /// login mode of `profile`, the bot that was focused when it was made.
+    /// Neither the client nor its speaker changes while this setting is
+    /// saved.
+    fn apply_lowmem_choice(&mut self, lowmem: bool, profile: Option<String>) {
+        if self.focused_name() == profile {
+            self.ui.lowmem = lowmem;
+        }
+        let Some(name) = profile else {
+            return;
+        };
         let mode = if lowmem {
             api::lifecycle::MemoryMode::Low
         } else {
             api::lifecycle::MemoryMode::High
         };
-        match self.submit_profile_write(OperatorCommand::SetMemoryMode(mode), &name) {
-            Ok(()) => true,
-            Err(error) => {
-                self.error = Some(error);
-                false
-            }
+        if let Err(error) = self.submit_profile_write(OperatorCommand::SetMemoryMode(mode), &name) {
+            self.error = Some(error);
         }
     }
 
