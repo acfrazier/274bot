@@ -4,6 +4,14 @@
 //! only by frontend binaries — no logging or allocation inside allocator
 //! callbacks. Sample fields are separate domains; never sum them and never
 //! equate allocation counts with RSS.
+//!
+//! Idle windows require a script-free fleet. Thiever windows require the
+//! fixture's complete initial Lobster pack and no first bank trip. Qualification
+//! arms each bot's PLAYER_INFO counter. Both the configured warmup and its
+//! 600 ms game-tick equivalent must finish before observation starts. A missed
+//! phase is terminal, even if a bot later returns to its initial state.
+//! Qualification rows save the rule and every bot's tick, food, bank and tile
+//! facts. Other catalog scenarios explicitly report `phase not gated`.
 
 use crate::Play;
 use std::alloc::{GlobalAlloc, Layout, System};
@@ -376,6 +384,224 @@ struct DuelSlot {
 /// seeded-idle, active, and lifecycle runs. Unseeded idle leaves this empty.
 static SEEDS: Mutex<Option<HashMap<String, Arc<Mutex<Seed>>>>> = Mutex::new(None);
 
+/// The routine FLOOR cells use idle accounts or Thiever's initial food pack.
+/// Other selectable scenarios retain their own proof, but do not claim a
+/// comparable gameplay phase. Every qualification row states this limit.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PhaseRule {
+    Idle,
+    Thiever { initial_food: i32 },
+    Ungated,
+}
+
+impl PhaseRule {
+    fn select(workload: Workload, scenario: Option<&str>, sustain: bool) -> Self {
+        match (workload, scenario) {
+            (Workload::Idle, _) => Self::Idle,
+            (Workload::SeededIdle, _) => Self::Thiever { initial_food: 4 },
+            (_, Some("thiever")) => Self::Thiever {
+                initial_food: if sustain { 4 } else { 10 },
+            },
+            _ => Self::Ungated,
+        }
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            Self::Idle => "idle-before-script",
+            Self::Thiever { .. } => "thiever-initial-food-before-first-bank",
+            Self::Ungated => "phase not gated",
+        }
+    }
+}
+
+/// One tick is one observed PLAYER_INFO, not one client frame or script poll.
+/// Revision 289's normal engine tick is 600 ms. Round up so the requested
+/// warmup is never shortened (10 s needs 17 observed ticks).
+/// Engine authority: engine/src/engine/World.ts, `tickRate` defaults to 600.
+fn warmup_game_ticks(warmup: Duration) -> u64 {
+    u64::try_from(warmup.as_nanos().div_ceil(600_000_000)).unwrap_or(u64::MAX)
+}
+
+#[derive(Default)]
+struct PhaseObservation {
+    tick: Option<u64>,
+    ready: bool,
+    script_started: bool,
+    inventory_component: Option<i32>,
+    food: Option<i32>,
+    bank_open: bool,
+    tile: Option<(i32, i32, i32)>,
+    warmup_start_tick: Option<u64>,
+    /// Sticky: returning from the bank cannot restore an earlier phase.
+    missed: Option<(&'static str, u64)>,
+}
+
+impl PhaseObservation {
+    fn observe(
+        &mut self,
+        rule: PhaseRule,
+        tick: u64,
+        ready: bool,
+        running: bool,
+        food: Option<i32>,
+        bank_open: bool,
+    ) {
+        self.tick = Some(tick);
+        self.ready = ready;
+        self.script_started |= running;
+        self.food = food;
+        self.bank_open = bank_open;
+        if !ready || !(self.script_started || self.warmup_start_tick.is_some()) {
+            return;
+        }
+        if rule == PhaseRule::Idle && self.script_started {
+            self.missed
+                .get_or_insert(("phase_missed:idle_script_started", tick));
+        }
+        if let PhaseRule::Thiever { initial_food } = rule {
+            // The fixture supplies 4 (sustained) or 10 Lobsters. Banking at
+            // 3 and restocking to 22 are configured in start_script. Refuse
+            // even the first consumed food, before the bank trip can begin.
+            let reason = if bank_open || food.is_some_and(|n| n <= 3 || n > initial_food) {
+                Some("phase_missed:thiever_first_bank")
+            } else if food.is_some_and(|n| n != initial_food) {
+                Some("phase_missed:thiever_initial_food_changed")
+            } else {
+                None
+            };
+            if let Some(reason) = reason {
+                self.missed.get_or_insert((reason, tick));
+            }
+        }
+    }
+
+    fn check(&self, rule: PhaseRule, name: &str, ticks: u64) -> Result<bool, String> {
+        if let Some((reason, tick)) = self.missed {
+            return Err(format!("{reason}:{name}:tick={tick}"));
+        }
+        if !self.ready {
+            return Ok(false);
+        }
+        if let PhaseRule::Thiever { initial_food } = rule {
+            if self.food != Some(initial_food) || self.bank_open {
+                return Ok(false);
+            }
+        }
+        Ok(self
+            .tick
+            .zip(self.warmup_start_tick)
+            .is_some_and(|(now, start)| now.saturating_sub(start) >= ticks))
+    }
+
+    fn to_json(&self, rule: PhaseRule) -> serde_json::Value {
+        serde_json::json!({
+            "gated": rule != PhaseRule::Ungated,
+            "rule": rule.name(),
+            "phase": if self.missed.is_some() {
+                "later-phase"
+            } else if self.ready {
+                rule.name()
+            } else {
+                "not-ready"
+            },
+            "observed_game_tick": self.tick,
+            "warmup_start_game_tick": self.warmup_start_tick,
+            "warmup_game_ticks": self.tick.zip(self.warmup_start_tick)
+                .map(|(now, start)| now.saturating_sub(start)),
+            "food": self.food,
+            "bank_open": self.bank_open,
+            "tile": self.tile,
+            "first_phase_miss": self.missed.map(|(reason, tick)|
+                serde_json::json!({"reason": reason, "game_tick": tick})),
+        })
+    }
+}
+
+struct GameplayPhases {
+    rule: PhaseRule,
+    slots: HashMap<String, PhaseObservation>,
+}
+
+impl GameplayPhases {
+    fn arm(&mut self) {
+        for slot in self.slots.values_mut() {
+            slot.warmup_start_tick = slot.tick;
+        }
+    }
+
+    fn ready(&self, ticks: u64) -> Result<bool, String> {
+        let mut ready = true;
+        for (name, slot) in &self.slots {
+            // Check every slot, even when an earlier slot is still warming.
+            ready &= slot.check(self.rule, name, ticks)?;
+        }
+        Ok(ready)
+    }
+
+    fn record(&self, value: &mut serde_json::Value, ticks: u64) {
+        value["gameplay_phase_rule"] = self.rule.name().into();
+        value["phase_gated"] = (self.rule != PhaseRule::Ungated).into();
+        value["required_warmup_game_ticks"] = ticks.into();
+        if let Some(slots) = value["slots"].as_array_mut() {
+            for slot in slots {
+                if let Some(observation) =
+                    slot["name"].as_str().and_then(|name| self.slots.get(name))
+                {
+                    slot["gameplay_phase"] = observation.to_json(self.rule);
+                }
+            }
+        }
+    }
+}
+
+static GAMEPLAY_PHASES: Mutex<Option<Arc<Mutex<GameplayPhases>>>> = Mutex::new(None);
+
+fn observe_gameplay_phase(c: &client::client::Client, name: &str, running: bool) {
+    let phases = GAMEPLAY_PHASES.lock().unwrap().clone();
+    let Some(phases) = phases else { return };
+    let mut phases = phases.lock().unwrap();
+    let rule = phases.rule;
+    let Some(slot) = phases.slots.get_mut(name) else {
+        return;
+    };
+    let ready = c.ingame && c.scene_state == 2;
+    let food = if matches!(rule, PhaseRule::Thiever { .. }) && ready {
+        // Resolve once, then borrow the posted inventory. Do not allocate a
+        // second GameSnapshot (or materialize script JSON) on each frame.
+        let component = slot.inventory_component.or_else(|| {
+            let id = api::snapshot::tab_inv_component(c, 3)?;
+            slot.inventory_component = Some(id);
+            Some(id)
+        });
+        component.and_then(|id| {
+            let inv = c.if_(id as usize)?;
+            let ids = inv.link_obj_type.as_ref()?;
+            let counts = inv.link_obj_number.as_ref()?;
+            (ids.len() == counts.len()).then(|| {
+                ids.iter()
+                    .zip(counts)
+                    .filter(|(id, _)| **id == 380)
+                    .map(|(_, count)| *count)
+                    .sum()
+            })
+        })
+    } else {
+        None
+    };
+    // r289 content/pack/obj.pack:380: Lobster id 379 (stored as id + 1).
+    // content/pack/interface.pack:5293: bank_main root 5292.
+    slot.tile = duel_scene_tile(c);
+    slot.observe(
+        rule,
+        c.gens.player_info,
+        ready,
+        running,
+        food,
+        c.main_modal_id == 5292,
+    );
+}
+
 /// Called from the existing frontend slot observe hook. Drives the selected
 /// benchmark's seed/proof; unseeded idle installs no seeds.
 pub(crate) fn client_frame(
@@ -387,6 +613,7 @@ pub(crate) fn client_frame(
     mark_startup(StartupMark::FirstClientFrame);
     crate::memory_diagnostics::gatherer_frame(c, name, run_state);
     crate::memory_diagnostics::frame(c, name, hold);
+    observe_gameplay_phase(c, name, run_state == Some(script::RunState::Running));
     let seed = {
         let seeds = SEEDS.lock().unwrap();
         seeds.as_ref().and_then(|m| m.get(name).cloned())
@@ -1252,6 +1479,7 @@ pub struct Run {
     ready_latch: crate::memory_slots::ReadyLatch,
     /// The profile's game-data trust decision, serialized once on first poll.
     game_data: Option<serde_json::Value>,
+    gameplay_phases: Arc<Mutex<GameplayPhases>>,
 }
 
 /// Where non-idle seed runners get their [`nav_planner::world::NavWorld`].
@@ -1493,6 +1721,14 @@ impl Run {
             output_path.display()
         );
         let ready_latch = crate::memory_slots::ReadyLatch::new(&names);
+        let gameplay_phases = Arc::new(Mutex::new(GameplayPhases {
+            rule: PhaseRule::select(config.workload, scenario_name.as_deref(), sustain),
+            slots: names
+                .iter()
+                .map(|name| (name.clone(), PhaseObservation::default()))
+                .collect(),
+        }));
+        *GAMEPLAY_PHASES.lock().unwrap() = Some(Arc::clone(&gameplay_phases));
         Ok(Self {
             config,
             names,
@@ -1518,6 +1754,7 @@ impl Run {
             render_policy,
             ready_latch,
             game_data: None,
+            gameplay_phases,
         })
     }
 
@@ -1864,13 +2101,26 @@ impl Run {
                     all_ingame,
                     now,
                 ));
+                self.gameplay_phases.lock().unwrap().arm();
             }
         }
+        let phase_gated = self.gameplay_phases.lock().unwrap().rule != PhaseRule::Ungated;
+        let phase_ready = if self.observing.is_none() && phase_gated {
+            self.gameplay_phases
+                .lock()
+                .unwrap()
+                .ready(warmup_game_ticks(self.config.warmup))?
+        } else {
+            true
+        };
         let qualify_bound = if self.scenario_name.as_deref() == Some("duel_arena") {
             DUEL_FLEET_DEADLINE
         } else {
             Duration::from_secs(1800)
         };
+        if phase_gated && self.observing.is_none() && self.started.elapsed() > qualify_bound {
+            return Err("phase_not_reached:qualification_timeout".into());
+        }
         if self.qualification_complete.is_none() && self.started.elapsed() > qualify_bound {
             if gatherer_fleet {
                 return Err("gatherer_missing_evidence:qualification_timeout".into());
@@ -1882,6 +2132,7 @@ impl Run {
             ));
         }
         if self.observing.is_none()
+            && phase_ready
             && self
                 .qualification_complete
                 .is_some_and(|t| t.elapsed() >= self.config.warmup)
@@ -2170,12 +2421,21 @@ impl Run {
     // diagnostic collection is disabled. Never drains logs or sends actions.
     fn write_qualification(&mut self, play: &Play, phase: &str) -> Result<(), String> {
         let slots = self.slot_outcomes(play);
+        let phases = self.gameplay_phases.lock().unwrap();
+        if phase == "observe-start"
+            && phases.rule != PhaseRule::Ungated
+            && !phases.ready(warmup_game_ticks(self.config.warmup))?
+        {
+            return Err("phase_not_reached:observe_start".into());
+        }
         let mut value = serde_json::json!({
             "phase": phase,
             "elapsed_s": self.started.elapsed().as_secs_f64(),
             "ready_ever": self.ready_latch.ever(),
             "slots": slots,
         });
+        phases.record(&mut value, warmup_game_ticks(self.config.warmup));
+        drop(phases);
         if let Some(gate) = duel_gate_summary() {
             value["duel_gate"] = gate;
         }
@@ -2221,6 +2481,10 @@ impl Run {
             "ready_ever": self.ready_latch.ever(),
             "slots": slots,
         });
+        self.gameplay_phases
+            .lock()
+            .unwrap()
+            .record(&mut value, warmup_game_ticks(self.config.warmup));
         if let Some(gate) = duel_gate_summary() {
             value["duel_gate"] = gate;
         }
@@ -2730,6 +2994,215 @@ mod tests {
             observe: Duration::from_secs(1),
             teardown: Duration::from_secs(1),
         }
+    }
+
+    fn phase_fleet(rule: PhaseRule, food: Option<i32>) -> GameplayPhases {
+        let mut phases = GameplayPhases {
+            rule,
+            slots: ["alice", "bob"]
+                .into_iter()
+                .map(|name| (name.to_string(), PhaseObservation::default()))
+                .collect(),
+        };
+        for slot in phases.slots.values_mut() {
+            slot.observe(rule, 100, true, rule != PhaseRule::Idle, food, false);
+        }
+        phases.arm();
+        phases
+    }
+
+    #[test]
+    fn initial_thiever_phase_requires_every_bots_observed_game_ticks() {
+        let rule = PhaseRule::Thiever { initial_food: 4 };
+        let mut phases = phase_fleet(rule, Some(4));
+        let ticks = warmup_game_ticks(Duration::from_secs(10));
+        assert_eq!(ticks, 17);
+        assert!(!phases.ready(ticks).unwrap());
+        for tick in 101..=117 {
+            phases
+                .slots
+                .get_mut("alice")
+                .unwrap()
+                .observe(rule, tick, true, true, Some(4), false);
+            // Arbitrarily many client frames do not advance bob's game clock.
+            for _ in 0..20 {
+                phases
+                    .slots
+                    .get_mut("bob")
+                    .unwrap()
+                    .observe(rule, 100, true, true, Some(4), false);
+            }
+            assert!(!phases.ready(ticks).unwrap());
+        }
+        phases
+            .slots
+            .get_mut("bob")
+            .unwrap()
+            .observe(rule, 117, true, true, Some(4), false);
+        assert!(phases.ready(ticks).unwrap());
+        let mut record = serde_json::json!({"slots": [{"name": "alice"}, {"name": "bob"}]});
+        phases.record(&mut record, ticks);
+        assert_eq!(record["phase_gated"], true);
+        for slot in record["slots"].as_array().unwrap() {
+            assert_eq!(slot["gameplay_phase"]["phase"], rule.name());
+            assert_eq!(slot["gameplay_phase"]["food"], 4);
+            assert_eq!(slot["gameplay_phase"]["bank_open"], false);
+            assert_eq!(slot["gameplay_phase"]["observed_game_tick"], 117);
+            assert_eq!(slot["gameplay_phase"]["warmup_game_ticks"], 17);
+        }
+    }
+
+    #[test]
+    fn thiever_first_bank_before_or_at_window_start_fails_by_name() {
+        let rule = PhaseRule::Thiever { initial_food: 4 };
+        for (food, bank_open) in [(Some(3), false), (Some(22), false), (Some(4), true)] {
+            for tick in [105, 117] {
+                let mut phases = phase_fleet(rule, Some(4));
+                phases.slots.get_mut("alice").unwrap().observe(
+                    rule,
+                    117,
+                    true,
+                    true,
+                    Some(4),
+                    false,
+                );
+                let bob = phases.slots.get_mut("bob").unwrap();
+                bob.observe(rule, tick, true, true, food, bank_open);
+                // A completed bank or a later matching pack never clears history.
+                bob.observe(rule, 118, true, true, Some(4), false);
+                assert_eq!(
+                    phases.ready(17).unwrap_err(),
+                    format!("phase_missed:thiever_first_bank:bob:tick={tick}")
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn ordinary_thiever_also_refuses_consumed_initial_food() {
+        let rule = PhaseRule::select(Workload::Active, Some("thiever"), false);
+        assert_eq!(rule, PhaseRule::Thiever { initial_food: 10 });
+        let mut phases = phase_fleet(rule, Some(10));
+        phases
+            .slots
+            .get_mut("bob")
+            .unwrap()
+            .observe(rule, 117, true, true, Some(9), false);
+        assert_eq!(
+            phases.ready(17).unwrap_err(),
+            "phase_missed:thiever_initial_food_changed:bob:tick=117"
+        );
+    }
+
+    #[test]
+    fn idle_phase_needs_game_ticks_and_never_admits_a_script() {
+        let mut phases = phase_fleet(PhaseRule::Idle, None);
+        assert!(!phases.ready(2).unwrap());
+        for slot in phases.slots.values_mut() {
+            slot.observe(PhaseRule::Idle, 102, true, false, None, false);
+        }
+        assert!(phases.ready(2).unwrap());
+        phases
+            .slots
+            .get_mut("bob")
+            .unwrap()
+            .observe(PhaseRule::Idle, 102, true, true, None, false);
+        assert_eq!(
+            phases.ready(2).unwrap_err(),
+            "phase_missed:idle_script_started:bob:tick=102"
+        );
+    }
+
+    #[test]
+    fn missing_phase_facts_do_not_qualify_and_manual_scenarios_are_explicitly_ungated() {
+        let rule = PhaseRule::Thiever { initial_food: 4 };
+        let mut phases = phase_fleet(rule, None);
+        for slot in phases.slots.values_mut() {
+            slot.observe(rule, 117, true, true, None, false);
+        }
+        assert!(!phases.ready(17).unwrap());
+        for scenario in ["moss_giant_bank_start", "duel_arena", "gatherer"] {
+            assert_eq!(
+                PhaseRule::select(Workload::Active, Some(scenario), false),
+                PhaseRule::Ungated
+            );
+            let mut record = serde_json::json!({"slots": [{"name": "alice"}]});
+            let phases = phase_fleet(PhaseRule::Ungated, None);
+            phases.record(&mut record, 17);
+            assert_eq!(record["phase_gated"], false);
+            assert_eq!(
+                record["slots"][0]["gameplay_phase"]["phase"],
+                "phase not gated"
+            );
+        }
+    }
+
+    #[test]
+    fn observe_start_record_and_phase_timeout_use_the_run_seam() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _env = EnvGuard::clear(&["RS2B0T", "BOT_MEMORY_OUTPUT"]);
+        let mut run = Run::prepare_unseeded(unit_config(1, Workload::Idle), "unit").unwrap();
+        let play = crate::run_with_io(
+            &crate::PlayOptions {
+                host: "127.0.0.1".into(),
+                transport: crate::Transport::Tcp,
+                port: 43594,
+                cache_dir: "/tmp".into(),
+                lowmem: true,
+                mainland: false,
+            },
+            vec![],
+            |_| (None, None),
+            |_, _, _| {},
+        );
+        {
+            let mut phases = run.gameplay_phases.lock().unwrap();
+            let rule = PhaseRule::Thiever { initial_food: 4 };
+            phases.rule = rule;
+            let slot = phases.slots.get_mut(&run.names[0]).unwrap();
+            slot.observe(rule, 100, true, true, Some(4), false);
+            slot.warmup_start_tick = Some(100);
+            slot.observe(rule, 102, true, true, Some(4), false);
+        }
+        run.write_qualification(&play, "observe-start").unwrap();
+        let path = run
+            .vault
+            .parent()
+            .unwrap()
+            .join("samples.qualification.jsonl");
+        let record: serde_json::Value =
+            serde_json::from_str(std::fs::read_to_string(path).unwrap().trim()).unwrap();
+        assert_eq!(record["phase_gated"], true);
+        assert_eq!(record["slots"][0]["gameplay_phase"]["food"], 4);
+        {
+            let mut phases = run.gameplay_phases.lock().unwrap();
+            let rule = phases.rule;
+            phases.slots.get_mut(&run.names[0]).unwrap().observe(
+                rule,
+                102,
+                true,
+                true,
+                Some(22),
+                true,
+            );
+        }
+        let error = run.write_qualification(&play, "observe-start").unwrap_err();
+        assert!(
+            error.starts_with("phase_missed:thiever_first_bank:"),
+            "{error}"
+        );
+        run.gameplay_phases.lock().unwrap().rule = PhaseRule::Idle;
+        run.gameplay_phases
+            .lock()
+            .unwrap()
+            .slots
+            .values_mut()
+            .for_each(|slot| *slot = PhaseObservation::default());
+        run.started = Instant::now() - Duration::from_secs(1801);
+        assert_eq!(
+            run.poll(&play).unwrap_err(),
+            "phase_not_reached:qualification_timeout"
+        );
     }
 
     #[test]
