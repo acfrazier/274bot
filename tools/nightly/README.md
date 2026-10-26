@@ -311,8 +311,20 @@ runner's own unit tests (`test_run_nightly.py` on Linux and Windows,
 When the self-check fails, or the fetch fails, the runner keeps running the
 old code and says so in the summary. Only the runner checkout is ever touched
 (`git -C <runner> ...` plus the temporary candidate); trees, engines,
-catalogs and fixtures are never written. `NIGHTLY_SELF_UPDATE=0` opts out
-(set it in `/etc/274bot-nightly.env`, `nightly.env`, or `mac-nightly.env`).
+catalogs and fixtures are never written.
+
+The update is opt-in: only `NIGHTLY_SELF_UPDATE=1` updates, and anything else
+(including unset) keeps the old code and records `disabled`. Set it to `1`
+where the night reads its environment: `/etc/274bot-nightly.env` on the
+Linux VM (read by the unit), `C:\274bot-nightly\nightly.env` on Windows
+(deployed copy [`windows/nightly.env`](windows/nightly.env), read by
+`nightly-task.ps1`), and `~/.config/274bot-nightly/mac-nightly.env` on the
+Mac controller. Hand runs from a developer checkout stay put by default, so
+uncommitted work is never checked out from under you.
+
+On Windows the re-exec waits for the re-executed child and exits with the
+child's exit code (`os.execvpe` there would end the parent with 0 at once,
+so Task Scheduler would record success whatever the night did).
 
 Each run's `summary.json` records `self_update` (`status` one of
 `updated`/`current`/`check-failed`/`fetch-failed`/`extract-failed`/`disabled`,
@@ -324,7 +336,7 @@ The self-check runs the candidate's full unit-test file with the updater's own
 tests skipped (guard `NIGHTLY_SELF_CHECK_ACTIVE`), so a check never re-tests
 the updater recursively.
 
-Manual refresh is only a fallback for a checkout with the update opted out:
+Manual refresh is only a fallback for a checkout without the opt-in:
 `git -C <runner> fetch origin && git -C <runner> checkout --force origin/dev`
 (the checkout is detached after a self-update, so the old
 `git -C <runner> pull --ff-only` no longer applies).
