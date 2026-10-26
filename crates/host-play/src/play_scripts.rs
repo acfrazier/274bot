@@ -179,7 +179,7 @@ pub struct ScriptStartHandle {
 pub(crate) enum StartRequest<'a> {
     Load {
         source: String,
-        shape: script::LoadShape,
+        shape: script_js::LoadShape,
         bag: Option<serde_json::Map<String, serde_json::Value>>,
         siblings: Vec<(String, String)>,
         loadouts: Option<&'a [api::loadout::Loadout]>,
@@ -220,7 +220,7 @@ impl ScriptStartHandle {
         &self,
         name: &str,
         source: String,
-        shape: script::LoadShape,
+        shape: script_js::LoadShape,
         settings_bag: Option<serde_json::Map<String, serde_json::Value>>,
         siblings: Vec<(String, String)>,
     ) -> Result<(), String> {
@@ -245,7 +245,7 @@ impl ScriptStartHandle {
         &self,
         name: &str,
         source: String,
-        shape: script::LoadShape,
+        shape: script_js::LoadShape,
         settings_bag: Option<serde_json::Map<String, serde_json::Value>>,
         siblings: Vec<(String, String)>,
         loadouts: &[api::loadout::Loadout],
@@ -939,7 +939,7 @@ impl Play {
         &self,
         name: &str,
         source: String,
-        shape: script::LoadShape,
+        shape: script_js::LoadShape,
         settings_bag: Option<serde_json::Map<String, serde_json::Value>>,
         siblings: Vec<(String, String)>,
     ) -> Result<(), String> {
@@ -952,7 +952,7 @@ impl Play {
         &self,
         name: &str,
         source: String,
-        shape: script::LoadShape,
+        shape: script_js::LoadShape,
         settings_bag: Option<serde_json::Map<String, serde_json::Value>>,
         siblings: Vec<(String, String)>,
     ) -> Result<(), script::StartLoadError> {

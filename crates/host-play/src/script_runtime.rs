@@ -150,9 +150,9 @@ pub(super) fn script_slot_or_insert(wall: &ScriptWall, name: &str) -> ScriptSlot
         .clone()
 }
 
-fn shared_js_surface_factory() -> Arc<script::load::surface::JsSurfaceFactory> {
-    static FACTORY: std::sync::LazyLock<Arc<script::load::surface::JsSurfaceFactory>> =
-        std::sync::LazyLock::new(|| Arc::new(script::load::surface::JsSurfaceFactory::default()));
+fn shared_js_surface_factory() -> Arc<script_js::surface::JsSurfaceFactory> {
+    static FACTORY: std::sync::LazyLock<Arc<script_js::surface::JsSurfaceFactory>> =
+        std::sync::LazyLock::new(|| Arc::new(script_js::surface::JsSurfaceFactory::default()));
     Arc::clone(&FACTORY)
 }
 
@@ -162,14 +162,14 @@ fn bind_js_surface_factory(slot: &mut SlotScript) {
 
 pub(super) fn js_start_card(
     source: String,
-    shape: script::LoadShape,
+    shape: script_js::LoadShape,
     siblings: Vec<(String, String)>,
-) -> Arc<script::load::surface::JsStartCard> {
+) -> Arc<script_js::surface::JsStartCard> {
     let source = Arc::<str>::from(source);
-    let family = script::resolve_api_family(&source)
+    let family = script_js::resolve_api_family(&source)
         .ok()
         .map(|(_, family)| family);
-    Arc::new(script::load::surface::JsStartCard {
+    Arc::new(script_js::surface::JsStartCard {
         source,
         shape,
         siblings: Arc::from(siblings),
@@ -178,7 +178,7 @@ pub(super) fn js_start_card(
 }
 
 pub(super) fn js_surface_start(
-    card: Arc<script::load::surface::JsStartCard>,
+    card: Arc<script_js::surface::JsStartCard>,
     settings_bag: Option<Arc<script::native::SettingsBag>>,
     game_data: Option<Arc<api::game_data::SelectedGameData>>,
     named_banks: Arc<api::named_banks::NamedBankFacts>,
@@ -248,13 +248,13 @@ pub(super) trait SettledStart {
     fn start_load_settled(
         &mut self,
         source: String,
-        shape: script::LoadShape,
+        shape: script_js::LoadShape,
         siblings: Vec<(String, String)>,
     ) -> Result<(), String>;
     fn start_load_with_loadouts_settled(
         &mut self,
         source: String,
-        shape: script::LoadShape,
+        shape: script_js::LoadShape,
         siblings: Vec<(String, String)>,
         loadouts: &[api::loadout::Loadout],
     ) -> Result<(), String>;
@@ -287,7 +287,7 @@ impl SettledStart for SlotScript {
     fn start_load_settled(
         &mut self,
         source: String,
-        shape: script::LoadShape,
+        shape: script_js::LoadShape,
         siblings: Vec<(String, String)>,
     ) -> Result<(), String> {
         bind_js_surface_factory(self);
@@ -306,7 +306,7 @@ impl SettledStart for SlotScript {
     fn start_load_with_loadouts_settled(
         &mut self,
         source: String,
-        shape: script::LoadShape,
+        shape: script_js::LoadShape,
         siblings: Vec<(String, String)>,
         loadouts: &[api::loadout::Loadout],
     ) -> Result<(), String> {

@@ -65,7 +65,7 @@ DEFAULT_BASELINE = SCRIPT_DIR / "baseline.json"
 # Listed explicitly (not by glob) so a new generated file is a conscious edit.
 EXEMPT_FILES = frozenset(
     {
-        "crates/script/schema/generated/isolate_generated.rs",
+        "crates/script-js/schema/generated/isolate_generated.rs",
     }
 )
 

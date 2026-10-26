@@ -1111,7 +1111,7 @@ fn terminal_blocked_resets_all_navigation_once_per_generation() {
         let bot = navs.get_mut("alice").unwrap();
         bot.inspect.generation = 9;
         bot.inspect.pending_id = 17;
-        bot.bank_pick.posted = script::isolate_fb::BankSelectionInput {
+        bot.bank_pick.posted = script_js::wire::BankSelectionInput {
             request_id: 23,
             generation: 4,
             bank_index: 2,
@@ -1133,7 +1133,7 @@ fn terminal_blocked_resets_all_navigation_once_per_generation() {
         assert_eq!(bot.inspect.pending_id, 0);
         assert_eq!(
             bot.bank_pick.posted,
-            script::isolate_fb::BankSelectionInput::default()
+            script_js::wire::BankSelectionInput::default()
         );
         assert_eq!(bot.duel_offer_partner, None);
         assert!(!bot.walk_outcome_failed);
@@ -1143,7 +1143,7 @@ fn terminal_blocked_resets_all_navigation_once_per_generation() {
         assert!(bot.walk_guard_off.is_some());
         assert_eq!(bot.terminal_nav_reset_generation, Some(generation));
 
-        let sentinel = script::isolate_fb::BankSelectionInput {
+        let sentinel = script_js::wire::BankSelectionInput {
             request_id: 29,
             generation: 5,
             bank_index: 3,
@@ -1166,7 +1166,7 @@ fn terminal_blocked_resets_all_navigation_once_per_generation() {
     assert_eq!(bot.inspect.pending_id, 99);
     assert_eq!(
         bot.bank_pick.posted,
-        script::isolate_fb::BankSelectionInput {
+        script_js::wire::BankSelectionInput {
             request_id: 29,
             generation: 5,
             bank_index: 3,
@@ -3440,6 +3440,7 @@ fn native_protect_alone_does_not_grant_danger_and_invalid_cross_still_refuses() 
 
 #[test]
 fn sherlock_bool_walk_inherits_committed_bits_while_isolate_wiring_stays_frozen() {
+    script_js::install_cards().expect("install canonical Sherlock card for native walk test");
     let mut slot = script::SlotScript::new();
     slot.bind_incarnation(84);
     slot.start_compiled(
@@ -4026,7 +4027,7 @@ fn manual_click_terminal_resets_on_stop_before_the_next_load_snapshot() {
     play.script_start_load(
         "alice",
         source.into(),
-        script::LoadShape::NativeTick,
+        script_js::LoadShape::NativeTick,
         None,
         vec![],
     )
@@ -4066,7 +4067,7 @@ fn manual_click_terminal_resets_on_stop_before_the_next_load_snapshot() {
     play.script_start_load(
         "alice",
         source.into(),
-        script::LoadShape::NativeTick,
+        script_js::LoadShape::NativeTick,
         None,
         vec![],
     )
@@ -4306,7 +4307,7 @@ fn in_place_load_rig() -> Rig {
         crate::script_runtime::js_start_card(
             "export function tick(api) { globalThis.s2Ticks = (globalThis.s2Ticks || 0) + 1; }"
                 .into(),
-            script::LoadShape::NativeTick,
+            script_js::LoadShape::NativeTick,
             Vec::new(),
         ),
         None,
@@ -4317,7 +4318,7 @@ fn in_place_load_rig() -> Rig {
     {
         let slot = rig.slot();
         let mut slot = slot.lock().unwrap();
-        slot.bind_surface_factory(Arc::new(script::load::surface::JsSurfaceFactory::default()));
+        slot.bind_surface_factory(Arc::new(script_js::surface::JsSurfaceFactory::default()));
         slot.start_surface(start).unwrap();
     }
     rig.slot().lock().unwrap().probe("true").unwrap();
@@ -4970,7 +4971,7 @@ fn queued_walking_decisions_are_fenced_but_observed_fresh_walk_is_allowed() {
     rig.slot().lock().unwrap().restore_host_interacts(
         stale
             .into_iter()
-            .map(|req| script::load::QueuedInteract {
+            .map(|req| script::interact::QueuedInteract {
                 req,
                 observed_walk_outcome_seq: 0,
             })
@@ -5002,7 +5003,7 @@ fn queued_walking_decisions_are_fenced_but_observed_fresh_walk_is_allowed() {
     rig.slot()
         .lock()
         .unwrap()
-        .restore_host_interacts(vec![script::load::QueuedInteract {
+        .restore_host_interacts(vec![script::interact::QueuedInteract {
             req: InteractReq::WalkTo {
                 x: 14,
                 z: 0,
@@ -5798,6 +5799,7 @@ fn s2b_admission_per_bot_layouts() {
     // layouts: test-only inspection budgets and bank fixtures are included.
     // S0c moves the platform-specific isolate mutexes into the surface run.
     // The shared 64-bit slot layout no longer contains those mutexes.
+    // S0d adds a 16 B per-slot generation cache for lock-free compiled-card reads.
     #[cfg(all(
         target_os = "macos",
         target_arch = "aarch64",
@@ -5810,7 +5812,7 @@ fn s2b_admission_per_bot_layouts() {
             std::mem::size_of::<script::combat::Combat>(),
             std::mem::size_of::<script::combat::WalkGuard>()
         ),
-        (3784, 1608, 512, 264)
+        (3784, 1624, 512, 264)
     );
     #[cfg(all(
         target_os = "linux",
@@ -5825,7 +5827,7 @@ fn s2b_admission_per_bot_layouts() {
             std::mem::size_of::<script::combat::Combat>(),
             std::mem::size_of::<script::combat::WalkGuard>()
         ),
-        (3784, 1608, 512, 264)
+        (3784, 1624, 512, 264)
     );
     assert!(std::mem::size_of::<script::combat::Combat>() <= 512);
     assert!(std::mem::size_of::<script::combat::WalkGuard>() <= 264);
@@ -6429,7 +6431,7 @@ mod s2b_admission_contract {
         let start = crate::script_runtime::js_surface_start(
             crate::script_runtime::js_start_card(
                 "export function tick(api) {}".into(),
-                script::LoadShape::NativeTick,
+                script_js::LoadShape::NativeTick,
                 Vec::new(),
             ),
             None,

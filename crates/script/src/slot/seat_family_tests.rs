@@ -1,15 +1,16 @@
-#![cfg(feature = "load")]
-
 use super::*;
 use crate::api_combat::{CombatEnd, CombatSessionRequest, TargetSpec};
 use crate::api_gather::{GatherEnd, GatherPhase};
 use crate::api_progress::ProgressPage;
 use crate::ctx::test_support::NullDriver;
-use crate::isolate_fb::{DecodedSeatBatch, SeatInteractDecoded, SeatStartArgs, SeatStartInput};
+use crate::interact::InteractReq;
 use crate::native::request::NativeKind;
 use crate::native::seat::SeatTerminal;
+use crate::native::seat_rows::{
+    DecodedSeatBatch, HeldWaitFacts, QueuedSeatBatch, SeatCancelDecoded, SeatInteractDecoded,
+    SeatMachineEvent, SeatMachineEventKind, SeatStartArgs, SeatStartInput,
+};
 use crate::native::{HostEffect, InteractionReceipt, SettingsBag};
-use crate::shim::InteractReq;
 use api::identity::RequestId;
 use api::quest_progress::EvidenceStamp;
 use api::selected::{ClientRevision, RunKey};
@@ -737,12 +738,10 @@ fn fixture_27_hybrid_hunt_walk_bank_releases_and_rebases_at_host_drain() {
     assert_eq!(dispatched.len(), 1);
     assert_eq!(dispatched[0].req, rebased);
     let mut cancellation = decoded(Vec::new(), Vec::new());
-    cancellation
-        .cancels
-        .push(crate::isolate_fb::SeatCancelDecoded {
-            of: bank_id,
-            reason: api::script_contract::CallbackCancelReason::ParentAborted,
-        });
+    cancellation.cancels.push(SeatCancelDecoded {
+        of: bank_id,
+        reason: api::script_contract::CallbackCancelReason::ParentAborted,
+    });
     slot.consume_seat_batch(cancellation, 0, &[]);
     assert!(matches!(
         slot.seat
@@ -866,9 +865,9 @@ fn guardian_hold_discards_undrained_seat_delivery() {
 fn sequential_native_walk_terminals_leave_room_for_gameplay() {
     let mut slot = with_seat(820);
     for raw in 1..=(api::script_contract::MAX_WALK_RELEASES as u64 + 1) {
-        let terminal = [crate::machine::MachineEvent {
+        let terminal = [SeatMachineEvent {
             id: id(raw),
-            kind: crate::machine::MachineEventKind::Done,
+            kind: SeatMachineEventKind::Done,
             admitted: true,
         }];
         slot.consume_seat_batch(
@@ -922,7 +921,7 @@ fn sequential_native_walk_terminals_leave_room_for_gameplay() {
 fn physical_walk_terminals_resolve_the_producer_namespace() {
     let mut slot = with_seat(821);
     let effect = || {
-        SeatEffect::Interact(crate::load::QueuedInteract {
+        SeatEffect::Interact(crate::interact::QueuedInteract {
             req: InteractReq::Held {
                 name: "Logs".into(),
                 action: "Drop".into(),
@@ -966,12 +965,12 @@ fn held_batch_compaction_retains_earlier_release_and_newest_controls() {
         mirror_owner: None,
         request,
     };
-    let older = crate::load::QueuedSeatBatch {
+    let older = QueuedSeatBatch {
         generation: 1,
         observed_walk_outcome_seq: 7,
         batch: decoded(Vec::new(), vec![row(release.clone())]),
         machine_events: Vec::new(),
-        held_waits: crate::load::HeldWaitFacts::default(),
+        held_waits: HeldWaitFacts::default(),
         held_fold: false,
     };
     let mut newer_batch = decoded(
@@ -979,12 +978,12 @@ fn held_batch_compaction_retains_earlier_release_and_newest_controls() {
         vec![row(stop.clone())],
     );
     newer_batch.consumed_terminal_seq = 9;
-    let newer = crate::load::QueuedSeatBatch {
+    let newer = QueuedSeatBatch {
         generation: 1,
         observed_walk_outcome_seq: 8,
         batch: newer_batch,
         machine_events: Vec::new(),
-        held_waits: crate::load::HeldWaitFacts::default(),
+        held_waits: HeldWaitFacts::default(),
         held_fold: false,
     };
     let mut compacted = slot.compact_held_seat_batches(vec![older, newer]);
@@ -1005,13 +1004,13 @@ fn held_batch_compaction_retains_earlier_release_and_newest_controls() {
     slot.stop();
 }
 
-fn review_lifecycle_batch(slot: &SlotScript) -> crate::load::QueuedSeatBatch {
+fn review_lifecycle_batch(slot: &SlotScript) -> QueuedSeatBatch {
     let row = |request| SeatInteractDecoded {
         lineage: None,
         mirror_owner: None,
         request,
     };
-    crate::load::QueuedSeatBatch {
+    QueuedSeatBatch {
         generation: slot.surface.as_ref().unwrap().generation(),
         observed_walk_outcome_seq: 0,
         batch: decoded(
@@ -1022,7 +1021,7 @@ fn review_lifecycle_batch(slot: &SlotScript) -> crate::load::QueuedSeatBatch {
             ],
         ),
         machine_events: Vec::new(),
-        held_waits: crate::load::HeldWaitFacts::default(),
+        held_waits: HeldWaitFacts::default(),
         held_fold: false,
     }
 }
@@ -1052,7 +1051,7 @@ fn repeated_held_lifecycle_pages_fold_without_losing_distinct_controls() {
     let kept = compacted.pop().unwrap();
     assert_eq!(
         kept.held_waits,
-        crate::load::HeldWaitFacts {
+        HeldWaitFacts {
             settles: 0,
             enqueues: 0,
             stamped: true,
@@ -1083,12 +1082,12 @@ fn held_lifecycle_pages_stay_row_bounded_and_counted_frame_by_frame() {
         mirror_owner: None,
         request,
     };
-    let page = |slot: &SlotScript, reqs: Vec<InteractReq>| crate::load::QueuedSeatBatch {
+    let page = |slot: &SlotScript, reqs: Vec<InteractReq>| QueuedSeatBatch {
         generation: slot.surface.as_ref().unwrap().generation(),
         observed_walk_outcome_seq: 0,
         batch: decoded(Vec::new(), reqs.into_iter().map(row).collect()),
         machine_events: Vec::new(),
-        held_waits: crate::load::HeldWaitFacts::default(),
+        held_waits: HeldWaitFacts::default(),
         held_fold: false,
     };
     slot.seat_guardian_hold(true);
@@ -1144,7 +1143,7 @@ fn held_lifecycle_pages_stay_row_bounded_and_counted_frame_by_frame() {
     );
     assert_eq!(
         batch.held_waits,
-        crate::load::HeldWaitFacts {
+        HeldWaitFacts {
             settles: 0,
             enqueues: 200,
             stamped: true,
@@ -1223,7 +1222,7 @@ fn guardian_hold_keeps_lifecycle_rows_until_resume() {
 fn three_walk_terminals_during_guardian_hold_free_all_slots() {
     let mut slot = with_seat(832);
     let effect = || {
-        SeatEffect::Interact(crate::load::QueuedInteract {
+        SeatEffect::Interact(crate::interact::QueuedInteract {
             req: InteractReq::Held {
                 name: "Logs".into(),
                 action: "Drop".into(),

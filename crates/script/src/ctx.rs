@@ -202,24 +202,16 @@ impl ScriptCtx<'_> {
     }
 }
 
-/// Accept-everything driver used by in-crate unit tests. Integration
-/// tests (`tests/slot.rs`) copy the `Recorder` stub from `crates/api`
-/// instead, so they exercise the same trait the kernel sees. The module
-/// also carries `local_asset_path`, the one resolver for local-only test
-/// assets. Dependent crates' tests use that function through the dev-only
-/// `test-hooks` feature. The driver types stay in-crate.
+/// Test-only drivers and local asset resolution for this crate and dependent fixtures.
 #[cfg(any(test, feature = "test-hooks"))]
 pub mod test_support {
-    #[cfg(test)]
     use api::interact::Driver;
-    #[cfg(test)]
     use api::prot::Out;
 
-    #[cfg(test)]
+    /// Test-only packet sink for the accept-everything driver.
     #[derive(Default)]
     pub struct OutSink;
 
-    #[cfg(test)]
     impl Out for OutSink {
         fn p1_enc(&mut self, _opcode: i32) {}
         fn p1(&mut self, _value: i32) {}
@@ -228,13 +220,12 @@ pub mod test_support {
         fn pjstr(&mut self, _s: &str) {}
     }
 
-    #[cfg(test)]
+    /// Test-only accept-everything driver for moved script fixtures.
     #[derive(Default)]
     pub struct NullDriver {
         pub out: OutSink,
     }
 
-    #[cfg(test)]
     impl Driver for NullDriver {
         fn set_menu(&mut self, _slot: i32, _action: i32, _a: i32, _b: i32, _c: i32) {}
         fn do_action(&mut self, _slot: i32) -> bool {

@@ -16,6 +16,9 @@ mod native;
 mod paint;
 mod paint_layout;
 pub mod paint_style;
+#[cfg(test)]
+#[path = "paint_tests.rs"]
+mod paint_tests;
 pub mod paths;
 mod vocab;
 pub(crate) use loadouts::Refused;
@@ -474,7 +477,7 @@ impl From<script::StartLoadError> for ScriptStartError {
 #[derive(Debug, Clone)]
 enum PendingCard {
     Compiled(script::CompiledId),
-    Loaded(Box<script::JsCard>),
+    Loaded(Box<script_js::JsCard>),
 }
 
 #[derive(Debug, Clone)]
@@ -512,7 +515,7 @@ pub struct BrowseCard<'a>(BrowseCardKind<'a>);
 #[derive(Debug, Clone, Copy)]
 enum BrowseCardKind<'a> {
     Compiled(&'static script::native::CompiledCard),
-    Loaded(&'a script::JsCard),
+    Loaded(&'a script_js::JsCard),
 }
 
 impl<'a> BrowseCard<'a> {
@@ -789,7 +792,7 @@ pub struct Scripts {
     /// started, with the reason: they settle on the next poll.
     withdrawn_restart_commands: Vec<(PendingStartCommand, String)>,
     /// The card library: catalog, loaded files, transpile cache.
-    js: script::JsLibrary,
+    js: script_js::JsLibrary,
     /// Legacy global per-card overrides (`script-settings.json`), claimed
     /// into a profile's bag on its first use of a card.
     legacy: script::ScriptSettingsStore,
@@ -834,7 +837,7 @@ pub struct Scripts {
 }
 
 impl Scripts {
-    pub fn new(js: script::JsLibrary, legacy: script::ScriptSettingsStore) -> Self {
+    pub fn new(js: script_js::JsLibrary, legacy: script::ScriptSettingsStore) -> Self {
         Self {
             browse_selection: None,
             staged_browse_pick: None,
@@ -1333,7 +1336,7 @@ impl Scripts {
     /// corrupt one is returned as text for the front end to say out loud
     /// (nothing is saved over a refused store).
     pub fn open_default() -> (Self, Option<String>) {
-        let mut js = script::JsLibrary::new(script::default_js_store());
+        let mut js = script_js::JsLibrary::new(script_js::default_js_store());
         let restore_error = js.restore().err();
         (
             Self::new(js, script::ScriptSettingsStore::with_default_path()),
@@ -1342,25 +1345,25 @@ impl Scripts {
     }
 
     /// The card library, inside this crate.
-    pub(crate) fn library(&self) -> &script::JsLibrary {
+    pub(crate) fn library(&self) -> &script_js::JsLibrary {
         &self.js
     }
 
     /// The card library.
     #[cfg(any(test, feature = "test-support"))]
-    pub(crate) fn js(&self) -> &script::JsLibrary {
+    pub(crate) fn js(&self) -> &script_js::JsLibrary {
         &self.js
     }
 
     /// The card library, for load/transpile.
     #[cfg(any(test, feature = "test-support"))]
-    pub(crate) fn js_mut(&mut self) -> &mut script::JsLibrary {
+    pub(crate) fn js_mut(&mut self) -> &mut script_js::JsLibrary {
         &mut self.js
     }
 
     /// Replace the card library (tests).
     #[cfg(any(test, feature = "test-support"))]
-    pub fn set_js(&mut self, js: script::JsLibrary) {
+    pub fn set_js(&mut self, js: script_js::JsLibrary) {
         self.js = js;
     }
 
@@ -1368,7 +1371,7 @@ impl Scripts {
     /// under `cache_root` (tests).
     #[cfg(any(test, feature = "test-support"))]
     pub fn use_library_at(&mut self, store: PathBuf, cache_root: PathBuf) {
-        self.js = script::JsLibrary::with_cache(store, cache_root);
+        self.js = script_js::JsLibrary::with_cache(store, cache_root);
     }
 
     /// Replace the legacy global per-card store (tests).
@@ -1443,7 +1446,7 @@ impl Scripts {
 
     /// Load one exact in-tree example and return its canonical File-card identity.
     pub fn load_live_example_identity(&mut self, file_name: &str) -> Result<String, String> {
-        let path = script::live_example_path(file_name)
+        let path = script_js::live_example_path(file_name)
             .ok_or_else(|| format!("no in-tree example {file_name}"))?;
         let loaded = self
             .js
@@ -1496,7 +1499,7 @@ impl Scripts {
     pub(crate) fn live_start_parts(
         &mut self,
     ) -> (
-        &mut script::JsLibrary,
+        &mut script_js::JsLibrary,
         &script::ScriptSettingsStore,
         Option<&Map<String, Value>>,
     ) {
@@ -1737,7 +1740,8 @@ impl Scripts {
         if self.catalog_filled && self.catalog_root.as_deref() == Some(root) {
             return;
         }
-        if let Err(error) = self.request_catalog_fill(root, &script::default_rs2b0t_path_file()) {
+        if let Err(error) = self.request_catalog_fill(root, &script_js::default_rs2b0t_path_file())
+        {
             self.show(format!("$RS2B0T registry: {error}"));
         }
     }
@@ -2549,7 +2553,7 @@ impl Scripts {
         &self,
         source: script::ScriptSource,
         lookup: &str,
-    ) -> Result<&script::JsCard, String> {
+    ) -> Result<&script_js::JsCard, String> {
         self.js
             .get(source, lookup)
             .filter(|card| source != script::ScriptSource::File || card.path.is_file())

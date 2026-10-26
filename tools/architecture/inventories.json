@@ -3153,9 +3153,9 @@
       "classification": "exact_test_fixture_oracle_import"
     },
     {
-      "id": "test_import_exception|crates/script/tests/cook_location_shape.rs|integration-test|nav_planner::named_banks::resolve|exact_test_fixture_oracle_import",
+      "id": "test_import_exception|crates/script-js/tests/cook_location_shape.rs|integration-test|nav_planner::named_banks::resolve|exact_test_fixture_oracle_import",
       "category": "test_import_exception",
-      "path": "crates/script/tests/cook_location_shape.rs",
+      "path": "crates/script-js/tests/cook_location_shape.rs",
       "symbol": "nav_planner::named_banks::resolve",
       "cfg_or_target": "integration-test",
       "owner": "T5",
@@ -3263,9 +3263,9 @@
       "classification": "exact_test_fixture_oracle_import"
     },
     {
-      "id": "test_import_exception|crates/script/tests/named_bank_locations.rs|integration-test|nav_planner::named_banks::resolve|exact_test_fixture_oracle_import",
+      "id": "test_import_exception|crates/script-js/tests/named_bank_locations.rs|integration-test|nav_planner::named_banks::resolve|exact_test_fixture_oracle_import",
       "category": "test_import_exception",
-      "path": "crates/script/tests/named_bank_locations.rs",
+      "path": "crates/script-js/tests/named_bank_locations.rs",
       "symbol": "nav_planner::named_banks::resolve",
       "cfg_or_target": "integration-test",
       "owner": "T5",

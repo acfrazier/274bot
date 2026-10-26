@@ -26,9 +26,9 @@ use crate::session::{OperatorSession, ScriptStart};
 /// existing `ImportError` newtype in `rs2b0t_import`: state crossing the
 /// frontend-core seam goes through accessors, not public fields. The
 /// bounded library snapshot and the catalog worker's own failures are
-/// modeled in `script` ([`script::load::CatalogSnapshotError`],
-/// [`script::load::CatalogWorkerError`]) and wrapped here through `From`:
-/// they cross from `script` into `frontend-core`, so the crate-boundary
+/// modeled in `script-js` ([`script_js::CatalogSnapshotError`],
+/// [`script_js::CatalogWorkerError`]) and wrapped here through `From`:
+/// they cross from `script-js` into `frontend-core`, so the crate-boundary
 /// rule needs a `thiserror` kind on each side. WorkAdmission admission and
 /// join failures stay on this side as their `Display` text, so no `script`
 /// preparation type crosses the seam, even in a private field. A
@@ -61,8 +61,8 @@ impl CatalogError {
     }
 }
 
-impl From<script::load::CatalogSnapshotError> for CatalogError {
-    fn from(error: script::load::CatalogSnapshotError) -> Self {
+impl From<script_js::CatalogSnapshotError> for CatalogError {
+    fn from(error: script_js::CatalogSnapshotError) -> Self {
         Self(CatalogFailure::Snapshot(error))
     }
 }
@@ -79,8 +79,8 @@ impl From<script::preparation::PreparationError> for CatalogError {
     }
 }
 
-impl From<script::load::CatalogWorkerError> for CatalogError {
-    fn from(error: script::load::CatalogWorkerError) -> Self {
+impl From<script_js::CatalogWorkerError> for CatalogError {
+    fn from(error: script_js::CatalogWorkerError) -> Self {
         Self(CatalogFailure::Worker(error))
     }
 }
@@ -101,7 +101,7 @@ enum CatalogFailure {
     UncollectedImportResult,
     /// The bounded pre-submission snapshot of the library did not fit.
     #[error(transparent)]
-    Snapshot(script::load::CatalogSnapshotError),
+    Snapshot(script_js::CatalogSnapshotError),
     /// The admission charge for the catalog job was refused.
     #[error(transparent)]
     Charge(api::work::SubmissionRefusal),
@@ -113,7 +113,7 @@ enum CatalogFailure {
     Preparation(String),
     /// The catalog worker reported a failure (registry, source graph, diff).
     #[error(transparent)]
-    Worker(script::load::CatalogWorkerError),
+    Worker(script_js::CatalogWorkerError),
     /// A prepared catalog card could not be committed. Catalog cards never
     /// persist (`commit_prepared` only persists `ScriptSource::File`), so a
     /// commit failure here is an internal invariant violation, not a
@@ -186,7 +186,7 @@ pub(crate) struct CatalogPending {
     pub root: PathBuf,
     pub added: Vec<String>,
     pub removed: Vec<String>,
-    pub failed: Vec<script::LoadFailure>,
+    pub failed: Vec<script_js::LoadFailure>,
     pub set_fingerprint: String,
 }
 
@@ -248,8 +248,8 @@ impl PendingReloadKind {
 #[derive(Debug)]
 pub struct PendingReload {
     pub(crate) warning: ReloadWarning,
-    pub(crate) prepared: Vec<script::PreparedCard>,
-    warmed: Vec<script::PreparedCard>,
+    pub(crate) prepared: Vec<script_js::PreparedCard>,
+    warmed: Vec<script_js::PreparedCard>,
     pub(crate) kind: PendingReloadKind,
 }
 
@@ -261,7 +261,7 @@ impl PendingReload {
 
     /// Prepared cards waiting to apply.
     #[cfg(any(test, feature = "test-support"))]
-    pub fn prepared(&self) -> &[script::PreparedCard] {
+    pub fn prepared(&self) -> &[script_js::PreparedCard] {
         &self.prepared
     }
 
@@ -270,7 +270,7 @@ impl PendingReload {
         &self.kind
     }
 
-    fn take_warmed(&mut self) -> Vec<script::PreparedCard> {
+    fn take_warmed(&mut self) -> Vec<script_js::PreparedCard> {
         std::mem::take(&mut self.warmed)
     }
 }
@@ -354,11 +354,11 @@ impl ReloadOutcome {
     }
 }
 
-type ValidationBatch = Vec<(script::PreparedCard, Result<(), String>)>;
+type ValidationBatch = Vec<(script_js::PreparedCard, Result<(), String>)>;
 
 struct ValidationJob {
     epoch: u64,
-    receiver: script::ValidationBatch,
+    receiver: script_js::ValidationBatch,
     kind: ValidationKind,
 }
 
@@ -375,24 +375,24 @@ enum ValidationKind {
     Manual(ManualValidation),
     Catalog {
         root: PathBuf,
-        diff: script::CatalogDiff,
-        warmed: Vec<script::PreparedCard>,
-        prepare_failed: Vec<script::LoadFailure>,
+        diff: script_js::CatalogDiff,
+        warmed: Vec<script_js::PreparedCard>,
+        prepare_failed: Vec<script_js::LoadFailure>,
     },
 }
 
 enum PreparationRequest {
     Manual {
-        snapshot: Arc<script::load::CardPreparationSnapshot>,
+        snapshot: Arc<script_js::CardPreparationSnapshot>,
         manual: ManualValidation,
         confirming: bool,
     },
     Catalog {
-        snapshot: Arc<script::load::CatalogPreparationSnapshot>,
+        snapshot: Arc<script_js::CatalogPreparationSnapshot>,
         root: PathBuf,
     },
     CatalogConfirmation {
-        snapshot: Arc<script::load::CatalogPreparationSnapshot>,
+        snapshot: Arc<script_js::CatalogPreparationSnapshot>,
         root: PathBuf,
     },
 }
@@ -401,22 +401,21 @@ enum PreparationJob {
     Pending(PreparationRequest),
     Manual {
         epoch: u64,
-        task:
-            script::preparation::PreparedTask<Result<script::load::CardPreparationOutcome, String>>,
+        task: script::preparation::PreparedTask<Result<script_js::CardPreparationOutcome, String>>,
         manual: ManualValidation,
         confirming: bool,
     },
     Catalog {
         epoch: u64,
         task: script::preparation::PreparedTask<
-            Result<script::load::CatalogPreparationResult, script::load::CatalogWorkerError>,
+            Result<script_js::CatalogPreparationResult, script_js::CatalogWorkerError>,
         >,
         root: PathBuf,
     },
     CatalogConfirmation {
         epoch: u64,
         task: script::preparation::PreparedTask<
-            Result<script::CatalogDiff, script::load::CatalogWorkerError>,
+            Result<script_js::CatalogDiff, script_js::CatalogWorkerError>,
         >,
         root: PathBuf,
     },
@@ -445,28 +444,28 @@ enum CatalogJob {
         generation: u64,
         root: PathBuf,
         path_file: PathBuf,
-        snapshot: Arc<script::load::CatalogPreparationSnapshot>,
+        snapshot: Arc<script_js::CatalogPreparationSnapshot>,
     },
     FillRunning {
         generation: u64,
         root: PathBuf,
         path_file: PathBuf,
         task: script::preparation::PreparedTask<
-            Result<script::CatalogDiff, script::load::CatalogWorkerError>,
+            Result<script_js::CatalogDiff, script_js::CatalogWorkerError>,
         >,
     },
     ImportPending {
         generation: u64,
         root: PathBuf,
         path_file: PathBuf,
-        snapshot: Arc<script::load::CatalogPreparationSnapshot>,
+        snapshot: Arc<script_js::CatalogPreparationSnapshot>,
     },
     ImportRunning {
         generation: u64,
         root: PathBuf,
         path_file: PathBuf,
         task: script::preparation::PreparedTask<
-            Result<script::load::CatalogPreparationResult, script::load::CatalogWorkerError>,
+            Result<script_js::CatalogPreparationResult, script_js::CatalogWorkerError>,
         >,
     },
 }
@@ -490,15 +489,14 @@ struct StartPreparation {
 enum StartStage {
     WaitingCatalog,
     Pending {
-        snapshot: Arc<script::load::CardPreparationSnapshot>,
+        snapshot: Arc<script_js::CardPreparationSnapshot>,
     },
     Running {
-        snapshot: Arc<script::load::CardPreparationSnapshot>,
-        task:
-            script::preparation::PreparedTask<Result<script::load::CardPreparationOutcome, String>>,
+        snapshot: Arc<script_js::CardPreparationSnapshot>,
+        task: script::preparation::PreparedTask<Result<script_js::CardPreparationOutcome, String>>,
     },
     Ready {
-        card: Box<script::JsCard>,
+        card: Box<script_js::JsCard>,
         siblings: Vec<(String, String)>,
         bag: Option<serde_json::Map<String, serde_json::Value>>,
         fingerprint: Option<String>,
@@ -518,16 +516,15 @@ enum TranspileJob {
         client: TranspileClient,
         source: script::ScriptSource,
         lookup: String,
-        snapshot: Arc<script::load::CardPreparationSnapshot>,
+        snapshot: Arc<script_js::CardPreparationSnapshot>,
     },
     Running {
         generation: u64,
         client: TranspileClient,
         source: script::ScriptSource,
         lookup: String,
-        snapshot: Arc<script::load::CardPreparationSnapshot>,
-        task:
-            script::preparation::PreparedTask<Result<script::load::CardPreparationOutcome, String>>,
+        snapshot: Arc<script_js::CardPreparationSnapshot>,
+        task: script::preparation::PreparedTask<Result<script_js::CardPreparationOutcome, String>>,
     },
 }
 
@@ -1085,7 +1082,7 @@ impl Scripts {
                     self.js.set_catalog_root(&root);
                     self.catalog_root = Some(root.clone());
                     self.catalog_filled = true;
-                    let _ = script::persist_rs2b0t_root_at(&root, &path_file);
+                    let _ = script_js::persist_rs2b0t_root_at(&root, &path_file);
                     self.async_work.catalog_fill_result = Some(Ok(()));
                 }
                 Ok(Err(error)) => self.fail_catalog_fill(CatalogError::from(error)),
@@ -1136,9 +1133,9 @@ impl Scripts {
         &mut self,
         root: PathBuf,
         path_file: PathBuf,
-        result: script::load::CatalogPreparationResult,
+        result: script_js::CatalogPreparationResult,
     ) -> Result<usize, CatalogError> {
-        let script::load::CatalogPreparationResult {
+        let script_js::CatalogPreparationResult {
             diff,
             prepared,
             warmed,
@@ -1158,7 +1155,7 @@ impl Scripts {
         self.js.set_catalog_root(&root);
         self.catalog_root = Some(root.clone());
         self.catalog_filled = true;
-        let _ = script::persist_rs2b0t_root_at(&root, &path_file);
+        let _ = script_js::persist_rs2b0t_root_at(&root, &path_file);
         Ok(self
             .js
             .cards()
@@ -1282,7 +1279,7 @@ impl Scripts {
             return;
         }
         let result = match task.join() {
-            Ok(Ok(script::load::CardPreparationOutcome::Prepared(prepared))) => {
+            Ok(Ok(script_js::CardPreparationOutcome::Prepared(prepared))) => {
                 if !self.card_snapshot_current(source, &lookup, &snapshot) {
                     Err(TranspileError(TranspileFault::CardChanged))
                 } else {
@@ -1292,7 +1289,7 @@ impl Scripts {
                         .map_err(|error| TranspileError(TranspileFault::Preparation(error)))
                 }
             }
-            Ok(Ok(script::load::CardPreparationOutcome::Unchanged)) => {
+            Ok(Ok(script_js::CardPreparationOutcome::Unchanged)) => {
                 if self.card_snapshot_current(source, &lookup, &snapshot)
                     && self.js.js_is_ready(source, &lookup)
                 {
@@ -1301,11 +1298,11 @@ impl Scripts {
                     Err(TranspileError(TranspileFault::NoJavaScript))
                 }
             }
-            Ok(Ok(script::load::CardPreparationOutcome::Failed { error, failure })) => {
+            Ok(Ok(script_js::CardPreparationOutcome::Failed { error, failure })) => {
                 self.js.record_failure(failure);
                 Err(TranspileError(TranspileFault::Preparation(error)))
             }
-            Ok(Ok(script::load::CardPreparationOutcome::Confirmed)) => {
+            Ok(Ok(script_js::CardPreparationOutcome::Confirmed)) => {
                 Err(TranspileError(TranspileFault::UnexpectedConfirmation))
             }
             Ok(Err(error)) => Err(TranspileError(TranspileFault::Preparation(error))),
@@ -1366,7 +1363,7 @@ impl Scripts {
             let root = catalog_root.ok_or_else(|| {
                 script::StartLoadError::Refused("catalog root is not available".into())
             })?;
-            self.request_catalog_fill(root, &script::default_rs2b0t_path_file())
+            self.request_catalog_fill(root, &script_js::default_rs2b0t_path_file())
                 .map_err(|error| script::StartLoadError::Refused(error.to_string()))?;
         }
         let stage = if wait_for_catalog {
@@ -1410,7 +1407,7 @@ impl Scripts {
         &self,
         source: script::ScriptSource,
         lookup: &str,
-    ) -> Result<Arc<script::load::CardPreparationSnapshot>, String> {
+    ) -> Result<Arc<script_js::CardPreparationSnapshot>, String> {
         let card = self.startable_card(source, lookup)?;
         if let Some(reason) = &card.unloadable {
             return Err(format!("unloadable import: {reason}"));
@@ -1426,7 +1423,7 @@ impl Scripts {
         &self,
         source: script::ScriptSource,
         lookup: &str,
-        snapshot: &script::load::CardPreparationSnapshot,
+        snapshot: &script_js::CardPreparationSnapshot,
     ) -> bool {
         self.js.get(source, lookup).is_some_and(|card| {
             snapshot.matches_card(card)
@@ -1520,7 +1517,7 @@ impl Scripts {
                         return;
                     };
                     if let Err(error) =
-                        self.request_catalog_fill(root, &script::default_rs2b0t_path_file())
+                        self.request_catalog_fill(root, &script_js::default_rs2b0t_path_file())
                     {
                         self.report_start_failure(
                             &profile,
@@ -1573,7 +1570,7 @@ impl Scripts {
                     unreachable!("only loaded Starts use preparation work")
                 };
                 let result = match task.join() {
-                    Ok(Ok(script::load::CardPreparationOutcome::Prepared(mut prepared))) => {
+                    Ok(Ok(script_js::CardPreparationOutcome::Prepared(mut prepared))) => {
                         if !self.card_snapshot_current(source, &lookup, &snapshot) {
                             Err("card changed while it was being prepared".into())
                         } else {
@@ -1583,14 +1580,14 @@ impl Scripts {
                                 .map(|card| (card, siblings))
                         }
                     }
-                    Ok(Ok(script::load::CardPreparationOutcome::Unchanged)) => {
+                    Ok(Ok(script_js::CardPreparationOutcome::Unchanged)) => {
                         Err("forced Start preparation returned unchanged".into())
                     }
-                    Ok(Ok(script::load::CardPreparationOutcome::Failed { error, failure })) => {
+                    Ok(Ok(script_js::CardPreparationOutcome::Failed { error, failure })) => {
                         self.js.record_failure(failure);
                         Err(error)
                     }
-                    Ok(Ok(script::load::CardPreparationOutcome::Confirmed)) => {
+                    Ok(Ok(script_js::CardPreparationOutcome::Confirmed)) => {
                         Err("unexpected confirmation result".into())
                     }
                     Ok(Err(error)) => Err(error),
@@ -2128,31 +2125,31 @@ impl Scripts {
         core: &mut OperatorSession<Io>,
         mut manual: ManualValidation,
         confirming: bool,
-        outcome: script::load::CardPreparationOutcome,
+        outcome: script_js::CardPreparationOutcome,
     ) {
         match outcome {
-            script::load::CardPreparationOutcome::Confirmed if confirming => {
+            script_js::CardPreparationOutcome::Confirmed if confirming => {
                 let outcome = self.commit_manual_pending(core);
                 self.finish_reload(outcome);
             }
-            script::load::CardPreparationOutcome::Confirmed => {
+            script_js::CardPreparationOutcome::Confirmed => {
                 self.fail_reload("reload", "unexpected confirmation result".into());
             }
-            script::load::CardPreparationOutcome::Unchanged => {
+            script_js::CardPreparationOutcome::Unchanged => {
                 if confirming {
                     self.reload.clear_pending();
                 }
                 self.show(script::NOTHING_CHANGED_RELOAD);
                 self.finish_reload(ReloadOutcome::NothingChanged);
             }
-            script::load::CardPreparationOutcome::Prepared(prepared) => {
+            script_js::CardPreparationOutcome::Prepared(prepared) => {
                 manual.fingerprint = prepared.fingerprint.clone();
                 match self.spawn_validation(vec![prepared], ValidationKind::Manual(manual)) {
                     Ok(()) => self.clear_notice(),
                     Err(error) => self.fail_reload("reload", error),
                 }
             }
-            script::load::CardPreparationOutcome::Failed { error, failure } => {
+            script_js::CardPreparationOutcome::Failed { error, failure } => {
                 self.js.record_failure(failure);
                 if confirming {
                     self.reload.clear_pending();
@@ -2166,9 +2163,9 @@ impl Scripts {
         &mut self,
         core: &mut OperatorSession<Io>,
         root: PathBuf,
-        result: script::load::CatalogPreparationResult,
+        result: script_js::CatalogPreparationResult,
     ) {
-        let script::load::CatalogPreparationResult {
+        let script_js::CatalogPreparationResult {
             diff,
             prepared,
             warmed,
@@ -2205,7 +2202,7 @@ impl Scripts {
         &mut self,
         core: &mut OperatorSession<Io>,
         root: PathBuf,
-        diff: script::CatalogDiff,
+        diff: script_js::CatalogDiff,
     ) {
         let confirmed = self.reload.pending.as_ref().is_some_and(|pending| {
             if pending.warning.epoch != self.reload.generation {
@@ -2230,14 +2227,14 @@ impl Scripts {
 
     fn spawn_validation(
         &mut self,
-        prepared: Vec<script::PreparedCard>,
+        prepared: Vec<script_js::PreparedCard>,
         kind: ValidationKind,
     ) -> Result<(), String> {
         if self.reload.validation.is_some() {
             return Err("script validation already running".into());
         }
         let epoch = self.reload.generation;
-        let receiver = script::LoadIsolate::validate_prepared_batch(prepared)
+        let receiver = script_js::LoadIsolate::validate_prepared_batch(prepared)
             .map_err(|error| error.to_string())?;
         self.reload.validation = Some(ValidationJob {
             epoch,
@@ -2349,9 +2346,9 @@ impl Scripts {
         &mut self,
         core: &mut OperatorSession<Io>,
         root: PathBuf,
-        diff: script::CatalogDiff,
-        warmed: Vec<script::PreparedCard>,
-        mut prepare_failed: Vec<script::LoadFailure>,
+        diff: script_js::CatalogDiff,
+        warmed: Vec<script_js::PreparedCard>,
+        mut prepare_failed: Vec<script_js::LoadFailure>,
         batch: ValidationBatch,
     ) {
         let mut prepared = Vec::new();
@@ -2518,7 +2515,7 @@ impl Scripts {
     fn apply_prepared_reload<Io>(
         &mut self,
         core: &mut OperatorSession<Io>,
-        prepared: Vec<script::PreparedCard>,
+        prepared: Vec<script_js::PreparedCard>,
         warning: ReloadWarning,
     ) -> ReloadOutcome {
         for item in &prepared {
@@ -2552,7 +2549,7 @@ impl Scripts {
         &mut self,
         core: &mut OperatorSession<Io>,
         profile: &str,
-        prepared: &script::PreparedCard,
+        prepared: &script_js::PreparedCard,
     ) -> Result<(), String> {
         if core.play().is_none() {
             return Err("no play".into());
@@ -2598,14 +2595,14 @@ impl Scripts {
     fn replace_prepared_slots<Io>(
         &mut self,
         core: &mut OperatorSession<Io>,
-        prepared: &[script::PreparedCard],
+        prepared: &[script_js::PreparedCard],
         warning: &ReloadWarning,
     ) -> (usize, usize, usize, Vec<String>) {
         let mut restarted = 0usize;
         let mut stopped_paused = 0usize;
         let mut failed = 0usize;
         let mut errors = Vec::new();
-        let prepared_by_key: Vec<(String, &script::PreparedCard)> = prepared
+        let prepared_by_key: Vec<(String, &script_js::PreparedCard)> = prepared
             .iter()
             .map(|p| (p.card.identity_key(), p))
             .collect();
@@ -2746,7 +2743,7 @@ impl Scripts {
     fn commit_catalog_pending<Io>(
         &mut self,
         core: &mut OperatorSession<Io>,
-        diff: script::CatalogDiff,
+        diff: script_js::CatalogDiff,
     ) -> ReloadOutcome {
         let Some(mut pending) = self.reload.pending.take() else {
             return ReloadOutcome::failed("no pending catalog refresh");
@@ -2793,10 +2790,10 @@ impl Scripts {
     fn apply_catalog_prepared<Io>(
         &mut self,
         core: &mut OperatorSession<Io>,
-        mut diff: script::CatalogDiff,
-        prepared: Vec<script::PreparedCard>,
-        warmed: Vec<script::PreparedCard>,
-        prepare_failed: Vec<script::LoadFailure>,
+        mut diff: script_js::CatalogDiff,
+        prepared: Vec<script_js::PreparedCard>,
+        warmed: Vec<script_js::PreparedCard>,
+        prepare_failed: Vec<script_js::LoadFailure>,
         warning: ReloadWarning,
     ) -> ReloadOutcome {
         let removed = diff.removed.clone();
@@ -2926,7 +2923,7 @@ fn lookups_match(source: script::ScriptSource, a: &str, b: &str) -> bool {
         && (script::paths_match(a, Path::new(b)) || script::paths_match(b, Path::new(a)))
 }
 
-fn catalog_set_fingerprint(diff: &script::CatalogDiff) -> String {
+fn catalog_set_fingerprint(diff: &script_js::CatalogDiff) -> String {
     let fps: Vec<(String, String)> = diff
         .added
         .iter()

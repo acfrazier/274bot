@@ -18,6 +18,7 @@ fn prepared_thiever() -> Observation {
 }
 
 fn empty_play() -> crate::Play {
+    script_js::install_cards().expect("install canonical Sherlock card for live start tests");
     crate::run_with_io(
         &crate::PlayOptions {
             host: "127.0.0.1".into(),
@@ -50,7 +51,7 @@ fn catalog_start_waits_without_arming_or_failing_current_session_witness() {
     let mut pending = vec![PendingCatalogStart::load(
         "catalogtest",
         "export function tick() {}".into(),
-        script::LoadShape::NativeTick,
+        script_js::LoadShape::NativeTick,
         None,
         vec![],
         vec![],
@@ -135,7 +136,7 @@ fn unknown_loadout_refusal_holds_and_retries() {
     let mut pending = vec![PendingCatalogStart::load(
         "catalogtest",
         "export function tick() {}".into(),
-        script::LoadShape::NativeTick,
+        script_js::LoadShape::NativeTick,
         Some(bag),
         vec![],
         vec![api::loadout::Loadout::new("First")],
@@ -169,7 +170,7 @@ fn empty_loadout_store_fails_the_start_fast() {
     let mut pending = vec![PendingCatalogStart::load(
         "catalogtest",
         "export function tick() {}".into(),
-        script::LoadShape::NativeTick,
+        script_js::LoadShape::NativeTick,
         Some(bag),
         vec![],
         vec![],
@@ -208,7 +209,7 @@ fn js_setup_failure_settles_as_a_failed_pump() {
     let mut pending = vec![PendingCatalogStart::load(
         "catalogtest",
         "throw new Error('zz-setup-proof');\nexport function tick() {}".into(),
-        script::LoadShape::NativeTick,
+        script_js::LoadShape::NativeTick,
         None,
         vec![],
         vec![],

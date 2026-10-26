@@ -21,7 +21,7 @@ impl DialogueOutcome {
     /// before the damage roll lands (`npc_combat_melee.rs2`,
     /// `npc_combat_ranged.rs2`, `npc_combat_magic.rs2`), so the close and
     /// the hit that raises `in_combat` arrive together.
-    pub(crate) fn combat_interrupted(chat_open: bool, in_combat: bool) -> bool {
+    pub fn combat_interrupted(chat_open: bool, in_combat: bool) -> bool {
         !chat_open && in_combat
     }
 }

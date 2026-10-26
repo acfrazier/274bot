@@ -1,0 +1,482 @@
+//! Native Gatherer and combat session families for JS API v2.
+//!
+//! The `GatherSession` row owns the isolate-local admission record. Its Drop
+//! clears Busy on every terminal and abort path, including ordinary Done.
+use crate::machine::{Begin, Cx, Family, Step};
+use crate::observed;
+use script::api_gather::GatherEnd;
+use script::api_progress::ProgressPage;
+use script::gatherer::GathererSettings;
+use script::native::SettingsBag;
+use script::shim::InteractReq;
+use serde::Deserialize;
+use serde_json::Value;
+use std::cell::RefCell;
+use std::num::NonZeroU64;
+use std::sync::Arc;
+
+thread_local! {
+    /// Stop intent must outlive the sync `gather.stop()` call and follow the
+    /// live GatherSession row across reconnect scene epochs.
+    static GATHER: RefCell<Option<GatherRecord>> = const { RefCell::new(None) };
+    /// The live combat session's admission and Stop intent, as for gather.
+    static COMBAT: RefCell<Option<GatherRecord>> = const { RefCell::new(None) };
+}
+
+/// Whether a combat session is admitted on this isolate. Gather and Hunt
+/// starts are `busy` while it is.
+pub(crate) fn combat_live() -> bool {
+    COMBAT.with(|state| state.borrow().is_some())
+}
+/// Seat release custody is level-triggered until the matching product
+/// terminal drops its session row. A lost batch can contain a pending Start
+/// and Stop together; the row's normal step does not run before admission.
+pub(crate) fn pending_stop_intents() -> [Option<InteractReq>; 2] {
+    [
+        GATHER.with(|state| {
+            state
+                .borrow()
+                .as_ref()
+                .filter(|record| record.stop_requested)
+                .map(|record| InteractReq::GatherStop {
+                    request_id: record.token.get(),
+                })
+        }),
+        COMBAT.with(|state| {
+            state
+                .borrow()
+                .as_ref()
+                .filter(|record| record.stop_requested)
+                .map(|record| InteractReq::CombatStop {
+                    request_id: record.token.get(),
+                })
+        }),
+    ]
+}
+
+/// Whether any Hunt run row is live; a combat start is `busy` while one is.
+fn hunt_live() -> bool {
+    use crate::hunt::Hunt;
+    use crate::machine::live;
+    live(<Hunt<crate::hunt_fight::FightKind> as Family>::NAME)
+        || live(<Hunt<crate::hunt_fight::HoldKind> as Family>::NAME)
+        || live(<Hunt<crate::hunt_fight::RetreatKind> as Family>::NAME)
+        || live(<Hunt<crate::hunt_fight::WalkSpotKind> as Family>::NAME)
+        || live(<Hunt<crate::hunt_lair::Enter> as Family>::NAME)
+        || live(<Hunt<crate::hunt_leave::Leave> as Family>::NAME)
+        || live(<Hunt<crate::hunt_key::Key> as Family>::NAME)
+        || live(<Hunt<crate::hunt_cell::Cell> as Family>::NAME)
+        || live(<Hunt<crate::hunt_bank::Bank> as Family>::NAME)
+}
+
+struct GatherRecord {
+    token: NonZeroU64,
+    stop_requested: bool,
+    stop_epoch: u64,
+}
+
+fn settings_error(settings: &SettingsBag) -> Option<String> {
+    GathererSettings::from_bag(settings)
+        .err()
+        .map(script::api_gather::settings_refusal)
+}
+
+/// One awaited Gatherer-card session, correlated with host pages by a public
+/// safe-integer token. Acknowledged sessions are not re-started on reconnect;
+/// unacknowledged start and Stop rows are carried into each new scene epoch.
+pub(crate) struct GatherSession {
+    token: u64,
+    settings: Arc<SettingsBag>,
+    emitted_epoch: u64,
+    acknowledged: bool,
+}
+
+impl Family for GatherSession {
+    const NAME: &'static str = "gather";
+    type Args = SettingsBag;
+    type Output = GatherEnd;
+
+    fn begin(settings: Self::Args, cx: &mut Cx<'_>) -> Begin<Self> {
+        if GATHER.with(|state| state.borrow().is_some()) || combat_live() {
+            return Begin::Refuse("busy".into());
+        }
+        if let Some(reason) = settings_error(&settings) {
+            return Begin::Refuse(reason);
+        }
+        if !crate::wire::gather_settings_within_limit(&settings) {
+            return Begin::Refuse("invalid-settings".into());
+        }
+        let Some(token) = cx.seat_token() else {
+            return Begin::Refuse("token-exhausted".into());
+        };
+        let settings = Arc::new(settings);
+        let epoch = observed::with(observed::Scene::epoch);
+        cx.emit(InteractReq::GatherRun {
+            request_id: token,
+            settings: Arc::clone(&settings),
+        });
+        GATHER.with(|state| {
+            *state.borrow_mut() = Some(GatherRecord {
+                token: NonZeroU64::new(token).expect("nonzero session token"),
+                stop_requested: false,
+                stop_epoch: epoch,
+            });
+        });
+        Begin::Run(Self {
+            token,
+            settings,
+            emitted_epoch: epoch,
+            acknowledged: false,
+        })
+    }
+
+    fn step(&mut self, cx: &mut Cx<'_>) -> Step<Self::Output> {
+        let (epoch, outcome, acknowledged) = observed::with(|scene| {
+            let since_login = scene.since_login();
+            let outcome = since_login
+                .api_gather_outcome()
+                .filter(|page| page.request_id == self.token)
+                .map(|page| page.end.clone());
+            let acknowledged = since_login
+                .api_gather()
+                .is_some_and(|page| page.request_id == self.token);
+            (scene.epoch(), outcome, acknowledged)
+        });
+
+        // A retained terminal in the reconnect keyframe wins over any
+        // unacknowledged-start or lost-Stop carry.
+        if let Some(outcome) = outcome {
+            return Step::Done(outcome);
+        }
+        self.acknowledged |= acknowledged;
+
+        if !self.acknowledged && epoch != self.emitted_epoch {
+            cx.emit(InteractReq::GatherRun {
+                request_id: self.token,
+                settings: Arc::clone(&self.settings),
+            });
+            self.emitted_epoch = epoch;
+        }
+
+        let carry_stop = GATHER.with(|state| {
+            let mut state = state.borrow_mut();
+            let Some(record) = state
+                .as_mut()
+                .filter(|record| record.token.get() == self.token)
+            else {
+                return false;
+            };
+            if record.stop_requested && record.stop_epoch != epoch {
+                record.stop_epoch = epoch;
+                true
+            } else {
+                false
+            }
+        });
+        if carry_stop {
+            cx.emit(InteractReq::GatherStop {
+                request_id: self.token,
+            });
+        }
+        Step::Wait
+    }
+
+    /// Supersede/terminate releases the host seat. Reset deliberately emits
+    /// no release because the host destroys that session at the boundary.
+    fn release(&self) -> Option<InteractReq> {
+        Some(InteractReq::GatherStop {
+            request_id: self.token,
+        })
+    }
+}
+
+impl Drop for GatherSession {
+    fn drop(&mut self) {
+        GATHER.with(|state| {
+            let mut state = state.borrow_mut();
+            if state
+                .as_ref()
+                .is_some_and(|record| record.token.get() == self.token)
+            {
+                *state = None;
+            }
+        });
+    }
+}
+
+#[derive(Deserialize)]
+pub(crate) struct StopArgs {}
+
+/// Synchronous Stop request. Stop intent is retained on the live row so it
+/// can be re-emitted after the reconnect drops its original queued row.
+pub(crate) struct GatherStop;
+
+impl Family for GatherStop {
+    const NAME: &'static str = "gather-stop";
+    type Args = StopArgs;
+    type Output = Value;
+
+    fn begin(_: Self::Args, cx: &mut Cx<'_>) -> Begin<Self> {
+        let epoch = observed::with(observed::Scene::epoch);
+        let stopped = GATHER.with(|state| {
+            let mut state = state.borrow_mut();
+            let Some(record) = state.as_mut() else {
+                return Err("no-session");
+            };
+            if record.stop_requested {
+                return Ok(None);
+            }
+            record.stop_requested = true;
+            record.stop_epoch = epoch;
+            Ok(Some(record.token.get()))
+        });
+        match stopped {
+            Err(reason) => Begin::Refuse(reason.into()),
+            Ok(None) => Begin::Done(Value::Null),
+            Ok(Some(token)) => {
+                cx.emit(InteractReq::GatherStop { request_id: token });
+                Begin::Done(Value::Null)
+            }
+        }
+    }
+
+    fn step(&mut self, _: &mut Cx<'_>) -> Step<Self::Output> {
+        Step::Wait
+    }
+}
+
+/// One awaited combat session, correlated with host pages by a public
+/// safe-integer token. Mirrors [`GatherSession`]: an unacknowledged start and
+/// a lost Stop are carried into each new scene epoch.
+pub(crate) struct CombatSession {
+    token: u64,
+    request: Arc<script::api_combat::CombatSessionRequest>,
+    emitted_epoch: u64,
+    acknowledged: bool,
+}
+
+impl Family for CombatSession {
+    const NAME: &'static str = "combat";
+    type Args = Value;
+    type Output = script::api_combat::CombatEnd;
+
+    fn begin(args: Self::Args, cx: &mut Cx<'_>) -> Begin<Self> {
+        if combat_live() || GATHER.with(|state| state.borrow().is_some()) || hunt_live() {
+            return Begin::Refuse("busy".into());
+        }
+        let request = match script::api_combat::CombatSessionRequest::from_value(&args) {
+            Ok(request) => Arc::new(request),
+            Err(reason) => return Begin::Refuse(reason.to_string()),
+        };
+        let Some(token) = cx.seat_token() else {
+            return Begin::Refuse("token-exhausted".into());
+        };
+        let epoch = observed::with(observed::Scene::epoch);
+        cx.emit(InteractReq::CombatFight {
+            request_id: token,
+            request: Arc::clone(&request),
+        });
+        COMBAT.with(|state| {
+            *state.borrow_mut() = Some(GatherRecord {
+                token: NonZeroU64::new(token).expect("nonzero session token"),
+                stop_requested: false,
+                stop_epoch: epoch,
+            });
+        });
+        Begin::Run(Self {
+            token,
+            request,
+            emitted_epoch: epoch,
+            acknowledged: false,
+        })
+    }
+
+    fn step(&mut self, cx: &mut Cx<'_>) -> Step<Self::Output> {
+        let (epoch, outcome, acknowledged) = observed::with(|scene| {
+            let since_login = scene.since_login();
+            let outcome = since_login
+                .api_combat_outcome()
+                .filter(|page| page.request_id == self.token)
+                .map(|page| page.end.clone());
+            let acknowledged = since_login
+                .api_combat()
+                .is_some_and(|page| page.request_id == self.token);
+            (scene.epoch(), outcome, acknowledged)
+        });
+        if let Some(outcome) = outcome {
+            return Step::Done(outcome);
+        }
+        self.acknowledged |= acknowledged;
+        if !self.acknowledged && epoch != self.emitted_epoch {
+            cx.emit(InteractReq::CombatFight {
+                request_id: self.token,
+                request: Arc::clone(&self.request),
+            });
+            self.emitted_epoch = epoch;
+        }
+        let carry_stop = COMBAT.with(|state| {
+            let mut state = state.borrow_mut();
+            let Some(record) = state
+                .as_mut()
+                .filter(|record| record.token.get() == self.token)
+            else {
+                return false;
+            };
+            if record.stop_requested && record.stop_epoch != epoch {
+                record.stop_epoch = epoch;
+                true
+            } else {
+                false
+            }
+        });
+        if carry_stop {
+            cx.emit(InteractReq::CombatStop {
+                request_id: self.token,
+            });
+        }
+        Step::Wait
+    }
+
+    /// Supersede/terminate releases the host seat. Reset emits nothing: the
+    /// host destroys that session at the boundary.
+    fn release(&self) -> Option<InteractReq> {
+        Some(InteractReq::CombatStop {
+            request_id: self.token,
+        })
+    }
+}
+
+impl Drop for CombatSession {
+    fn drop(&mut self) {
+        COMBAT.with(|state| {
+            let mut state = state.borrow_mut();
+            if state
+                .as_ref()
+                .is_some_and(|record| record.token.get() == self.token)
+            {
+                *state = None;
+            }
+        });
+    }
+}
+
+/// Synchronous combat Stop; the intent rides the live row across reconnects.
+pub(crate) struct CombatStop;
+
+impl Family for CombatStop {
+    const NAME: &'static str = "combat-stop";
+    type Args = StopArgs;
+    type Output = Value;
+
+    fn begin(_: Self::Args, cx: &mut Cx<'_>) -> Begin<Self> {
+        let epoch = observed::with(observed::Scene::epoch);
+        let stopped = COMBAT.with(|state| {
+            let mut state = state.borrow_mut();
+            let Some(record) = state.as_mut() else {
+                return Err("no-session");
+            };
+            if record.stop_requested {
+                return Ok(None);
+            }
+            record.stop_requested = true;
+            record.stop_epoch = epoch;
+            Ok(Some(record.token.get()))
+        });
+        match stopped {
+            Err(reason) => Begin::Refuse(reason.into()),
+            Ok(None) => Begin::Done(Value::Null),
+            Ok(Some(token)) => {
+                cx.emit(InteractReq::CombatStop { request_id: token });
+                Begin::Done(Value::Null)
+            }
+        }
+    }
+
+    fn step(&mut self, _: &mut Cx<'_>) -> Step<Self::Output> {
+        Step::Wait
+    }
+}
+
+/// One awaited read of a released quest Path's resolved progress.
+#[derive(Deserialize)]
+pub(crate) struct ProgressQueryArgs {
+    #[serde(default)]
+    quest: String,
+}
+
+/// Requests one fresh host-side progress read. The query is exclusive so a
+/// newer read supersedes it; the host owns any open journal lifecycle.
+pub(crate) struct ProgressQuery {
+    token: u64,
+    quest: String,
+    emitted_epoch: u64,
+    acknowledged: bool,
+}
+
+impl Family for ProgressQuery {
+    const NAME: &'static str = "quest-progress";
+    const EXCLUSIVE: bool = true;
+    type Args = ProgressQueryArgs;
+    type Output = ProgressPage;
+
+    fn begin(args: Self::Args, cx: &mut Cx<'_>) -> Begin<Self> {
+        if args.quest.trim().is_empty() {
+            return Begin::Refuse("invalid-args".into());
+        }
+        let Some(token) = cx.seat_token() else {
+            return Begin::Refuse("token-exhausted".into());
+        };
+        let emitted_epoch = observed::with(observed::Scene::epoch);
+        cx.emit(InteractReq::ProgressRead {
+            request_id: token,
+            name: args.quest.clone(),
+        });
+        Begin::Run(Self {
+            token,
+            quest: args.quest,
+            emitted_epoch,
+            acknowledged: false,
+        })
+    }
+
+    fn step(&mut self, cx: &mut Cx<'_>) -> Step<Self::Output> {
+        let (epoch, page) = observed::with(|scene| {
+            let page = scene
+                .since_login()
+                .api_progress()
+                .filter(|page| page.token() == self.token)
+                .cloned();
+            (scene.epoch(), page)
+        });
+
+        match page {
+            Some(ProgressPage::Reading { .. }) => self.acknowledged = true,
+            Some(page @ (ProgressPage::Done { .. } | ProgressPage::Refused { .. })) => {
+                return Step::Done(page);
+            }
+            None => {}
+        }
+
+        if !self.acknowledged && epoch != self.emitted_epoch {
+            cx.emit(InteractReq::ProgressRead {
+                request_id: self.token,
+                name: self.quest.clone(),
+            });
+            self.emitted_epoch = epoch;
+        }
+        Step::Wait
+    }
+}
+
+#[cfg(test)]
+mod tests {
+
+    #[test]
+    fn gather_isolate_rust_records_stay_inside_estimated_inline_bounds() {
+        let record = std::mem::size_of::<Option<super::GatherRecord>>();
+        let row = std::mem::size_of::<super::GatherSession>();
+        println!("API gather isolate Rust idle record={record}B, live family row={row}B (settings heap/wire pages measured separately)");
+        assert!(record <= 24);
+        assert!(row <= 64);
+    }
+}

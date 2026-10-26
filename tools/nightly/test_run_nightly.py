@@ -2147,7 +2147,7 @@ class Rs2b0tApiDriftTests(unittest.TestCase):
 
     def make_tree(self, root: Path, repository: str, revision: str) -> Path:
         tree = root / "tree"
-        contract = tree / "crates" / "script" / "compat-js"
+        contract = tree / "crates" / "script-js" / "compat-js"
         contract.mkdir(parents=True)
         (contract / "abi-contract.json").write_text(json.dumps({
             "frozen_source": {
@@ -2272,7 +2272,7 @@ class Rs2b0tApiDriftTests(unittest.TestCase):
             old_info = rn.check_rs2b0t_api_drift(self.make_tree(root, str(upstream), old), catalog)
             rn._api_upstream.clear()
             new_tree = root / "tree"
-            contract = new_tree / "crates" / "script" / "compat-js" / "abi-contract.json"
+            contract = new_tree / "crates" / "script-js" / "compat-js" / "abi-contract.json"
             contract.write_text(json.dumps({"frozen_source": {"repository": str(upstream),
                                                               "revision": tip}}), encoding="utf-8")
             new_info = rn.check_rs2b0t_api_drift(new_tree, catalog)

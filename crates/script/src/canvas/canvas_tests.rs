@@ -54,6 +54,7 @@ fn parse_template_fonts_and_unknown_keeps_previous() {
     }
 }
 
+#[cfg(feature = "canvas-raster")]
 #[test]
 fn measure_text_is_not_width_seven() {
     reset();
@@ -71,7 +72,7 @@ fn measure_text_is_not_width_seven() {
     );
 }
 
-#[cfg(feature = "load")]
+#[cfg(feature = "canvas-raster")]
 #[test]
 fn raster_dirty_covers_measured_fillrect_and_glyphs() {
     reset();
@@ -103,7 +104,7 @@ fn raster_dirty_covers_measured_fillrect_and_glyphs() {
     );
 }
 
-#[cfg(feature = "load")]
+#[cfg(feature = "canvas-raster")]
 #[test]
 fn fill_rect_clips_to_applet() {
     let ops = vec![CanvasOp::fill_rect(
@@ -180,7 +181,7 @@ fn applet_map_matches_chatbox_scale() {
 
 #[test]
 fn extremes_do_not_panic_and_negative_dims_clip() {
-    #[cfg(feature = "load")]
+    #[cfg(feature = "canvas-raster")]
     {
         let max = vec![CanvasOp::fill_rect(
             i32::MAX,
@@ -225,8 +226,11 @@ fn extremes_do_not_panic_and_negative_dims_clip() {
     let taken = take();
     assert!(taken.ops.is_empty());
     reset();
-    let err = measure_text(&"x".repeat(MAX_PAINT_TEXT + 1)).unwrap_err();
-    assert!(err.to_string().contains("measureText"));
+    #[cfg(feature = "canvas-raster")]
+    {
+        let err = measure_text(&"x".repeat(MAX_PAINT_TEXT + 1)).unwrap_err();
+        assert!(err.to_string().contains("measureText"));
+    }
     for (error, expected) in [
         (
             CanvasError::NegativeRadius,
@@ -262,7 +266,7 @@ fn extremes_do_not_panic_and_negative_dims_clip() {
     ] {
         assert_eq!(error.to_string(), expected);
     }
-    #[cfg(feature = "load")]
+    #[cfg(feature = "canvas-raster")]
     {
         onpaint_done(0, None);
         let composed = compose_paint(None);
@@ -275,7 +279,7 @@ fn extremes_do_not_panic_and_negative_dims_clip() {
         assert_eq!(recovered.canvas.len(), 1);
     }
 }
-#[cfg(feature = "load")]
+#[cfg(feature = "canvas-raster")]
 #[test]
 fn compose_keeps_user_onpaint_title() {
     reset();
@@ -428,7 +432,7 @@ fn restore_restores_clip() {
     }
 }
 
-#[cfg(feature = "load")]
+#[cfg(feature = "canvas-raster")]
 #[test]
 fn shadow_darkens_pixels_below_the_shape() {
     reset();
@@ -542,7 +546,7 @@ fn clipped_fill_rects_charge_emitted_clip_segs() {
     assert_eq!(taken.ops.len(), ok);
 }
 
-#[cfg(feature = "load")]
+#[cfg(feature = "canvas-raster")]
 #[test]
 fn huge_finite_path_extent_does_not_panic() {
     let segs = vec![

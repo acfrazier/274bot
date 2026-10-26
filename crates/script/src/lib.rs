@@ -1,15 +1,14 @@
-//! Compiled script runner: the `Script` trait, per-tick context, and the
-//! per-uid `SlotScript` state machine. Load (out-of-tree JS) lives behind
-//! the `load` feature: a picker library of JS cards plus a rustyscript/V8
-//! isolate spawned only on Start.
+//! Native script runner and shared gameplay state.
+//!
+//! The slot owns compiled scripts and drives external runtimes through
+//! the `surface` contract.
 
 /// Inventory-first acquisition shared by native consumers.
 pub mod acquire;
 pub mod api_combat;
 pub mod api_gather;
 pub mod api_progress;
-#[cfg(feature = "load")]
-mod api_session;
+
 /// Shared native bank selector and transfer machines.
 pub mod bank;
 /// The persisted per-account bank hint file (design-bank-snapshot §1.4).
@@ -24,17 +23,12 @@ mod combat_session;
 /// Curated script site configuration and the hostile-attacker predicate.
 pub mod content;
 pub mod ctx;
-pub mod declared_abi;
-#[cfg(feature = "load")]
-mod duel;
+
 pub mod duel_arena;
 /// Script-side Ent tile lookup over caller-supplied rows.
 pub mod ent;
 pub mod escape_runes;
-#[cfg(feature = "load")]
-mod event_signal;
-#[cfg(feature = "load")]
-mod events;
+
 pub mod food_policy;
 /// Borrowed preset-location helpers for compiled and compatibility callers.
 pub mod gather_locations;
@@ -45,21 +39,18 @@ pub mod gatherer;
 /// Native anchored holiday-item collector.
 pub mod grinch;
 pub mod ground_take;
-pub mod host_js;
+
 pub mod identity;
 pub mod interact;
-#[cfg(feature = "load")]
-pub mod isolate_fb;
+
 pub mod isolated_env;
-#[cfg(feature = "load")]
-pub mod js_cache;
+
 pub mod keep_list;
-#[cfg(feature = "load")]
-pub mod load;
+
 pub mod loadout_plan;
 pub mod loadouts_store;
 pub mod local_state;
-pub mod module_imports;
+
 pub mod native;
 pub mod native_bank;
 pub mod native_equipment;
@@ -70,9 +61,10 @@ pub mod preparation;
 pub mod quester;
 /// Pure ranged supply predicate (`rangeSupplyEmpty`).
 pub mod ranged;
-mod reach_route;
+/// Walking-depth helpers over the posted reach view.
+pub mod reach_route;
 pub mod registry;
-pub mod rs2b0t_registry;
+
 pub mod settings_store;
 pub mod shim;
 pub mod shop_open;
@@ -85,7 +77,10 @@ pub mod trade_screen;
 pub mod watchdog;
 pub mod work_admission;
 
-pub use card::ScriptSel;
+pub use card::{
+    ItemOptionCandidate, ItemOptionSpec, RegistryCard, ScriptKind, ScriptSel, ScriptSource,
+    SettingDef,
+};
 pub use ctx::{CompiledTick, DetectedRandom, FindOptions, RandomClaim, ScriptCtx};
 pub use duel_arena::{duel_name, duel_partner_name};
 pub use identity::{
@@ -95,33 +90,14 @@ pub use identity::{
     paths_match, raw_sha, source_kind, NOTHING_CHANGED_CATALOG, NOTHING_CHANGED_RELOAD,
 };
 pub use isolated_env::{bot_file, bot_home, rs2b0t_env, IsolatedEnv};
-#[cfg(feature = "load")]
-pub use js_cache::{default_js_cache_root, CacheMeta, CachedJs, JsCache};
-#[cfg(feature = "load")]
-pub use load::{
-    default_js_store, detect_shape, first_unloadable_specifier, is_catalog_dim, is_reserved,
-    live_example_path, live_file_fixture_path, live_file_fixture_stem, parse_declared_api_version,
-    raw_content_fingerprint, resolve_api_family, scan_import_specifiers,
-    scan_same_folder_js_imports, sibling_module_url, ApiFamily, CatalogApplyReport, CatalogDiff,
-    JsCard, LoadFailure, LoadShape, LoadStage, PreparedCard, VersionDiag,
-};
-/// Cache/transpile-backed library and sibling resolution (isolate feature).
-#[cfg(feature = "load")]
-pub use load::{resolve_sibling_modules, JsLibrary};
+
 pub use loadouts_store::{
     copy_equipment_preserving_supplies, resolve_setting_options,
     resolve_setting_options_with_labels, unique_loadout_name, worn_slot_label, LoadoutsBacking,
     LoadoutsBaseline, LoadoutsSaveError, LoadoutsStore, ResolvedSettingOptions, WORN_SLOT_LAYOUT,
 };
 pub use registry::{compiled_card, compiled_cards, compiled_id, is_whale, CompiledId};
-pub use rs2b0t_registry::{
-    clear_rs2b0t_import_at, default_rs2b0t_import_file, default_rs2b0t_path_file, parse_registry,
-    parse_registry_with_sources, persist_rs2b0t_root, persist_rs2b0t_root_at, registry_index_path,
-    rs2b0t_import_deferred, rs2b0t_import_deferred_at, rs2b0t_root, rs2b0t_root_at,
-    rs2b0t_root_checked, rs2b0t_root_checked_at, script_file_path, set_rs2b0t_import_deferred_at,
-    settings_schema_from_source, try_settings_schema_from_source, ItemOptionCandidate,
-    ItemOptionSpec, RegistryCard, ScriptKind, ScriptSource, SettingDef,
-};
+
 pub use settings_store::{
     card_key, coerce_setting_value, default_script_settings_path, format_setting_value, merge_bag,
     parameter_rows, setting_visible, ScriptSettingsStore, CLUE_DUEL_PARTNER,
@@ -136,106 +112,13 @@ pub use watchdog::{
     WatchdogState, SKILL_SLOTS,
 };
 
-#[cfg(feature = "load")]
-pub use load::{
-    bootstrap_v8_platform, transpile_ts, LoadIsolate, LoadIsolateError, Ready, ValidationBatch,
-    ValidationError,
-};
-
-#[cfg(feature = "load")]
-mod anchor_return;
-#[cfg(feature = "load")]
-mod attack_clock;
-#[cfg(feature = "load")]
-mod autocast;
-#[cfg(feature = "load")]
-mod bank_select;
-#[cfg(feature = "load")]
-mod bank_withdraw;
-#[cfg(feature = "load")]
-mod boat_fare;
 pub mod cake_stall;
 pub mod clue;
-#[cfg(feature = "load")]
-pub mod compat_dts;
-#[cfg(feature = "load")]
-mod cook_locations;
-#[cfg(feature = "load")]
-mod death_recovery;
-#[cfg(feature = "load")]
-mod dialog;
-pub mod dialogue_outcome;
-#[cfg(feature = "load")]
-mod drive_partner_trade;
-#[cfg(feature = "load")]
-mod fight_upkeep;
-#[cfg(feature = "load")]
-mod fire;
-/// The hunt step machines on the machine host (fence F09).
-#[cfg(feature = "load")]
-mod hunt;
-#[cfg(feature = "load")]
-pub mod hunt_bank;
-#[cfg(feature = "load")]
-mod hunt_catalog;
-#[cfg(feature = "load")]
-pub mod hunt_cell;
-#[cfg(feature = "load")]
-pub mod hunt_fight;
-#[cfg(feature = "load")]
-pub mod hunt_key;
-#[cfg(feature = "load")]
-pub mod hunt_lair;
-#[cfg(feature = "load")]
-pub mod hunt_leave;
-#[cfg(feature = "load")]
-mod inspect_wait;
-#[cfg(feature = "load")]
-pub mod line_of_sight;
-/// Per-isolate step-machine host: families Rust begins, steps and aborts.
-#[cfg(feature = "load")]
-mod machine;
-/// Frozen market catalog facts over the selected revision's items.
-#[cfg(feature = "load")]
-mod market_catalog;
-pub mod melee_weapons;
-#[cfg(feature = "load")]
-mod modals;
-/// One decoded snapshot scene per isolate thread, read by the step machines.
-#[cfg(feature = "load")]
-pub mod observed;
-#[cfg(feature = "load")]
-mod partner_trade;
-#[cfg(feature = "load")]
-mod periodic_bank;
-#[cfg(feature = "load")]
-mod prayer;
-mod production;
-pub mod quest_journal;
-#[cfg(feature = "load")]
-mod reach;
-#[cfg(feature = "load")]
-mod reach_entity;
-#[cfg(feature = "load")]
-mod scene_query;
-#[cfg(feature = "load")]
-mod sherlock;
-#[cfg(feature = "load")]
-mod shop;
-#[cfg(feature = "load")]
-mod special;
-#[cfg(feature = "load")]
-mod supply_v2;
-#[cfg(feature = "load")]
-mod task_clock;
-#[cfg(feature = "load")]
-mod teleport;
-#[cfg(feature = "load")]
-mod trade;
-#[cfg(feature = "load")]
-mod walk;
-#[cfg(feature = "load")]
-mod walk_wait;
 
-#[cfg(feature = "memory-profile")]
-pub mod memory_profile;
+pub mod dialogue_outcome;
+
+pub mod melee_weapons;
+
+/// Shared Make-X selection and count sequencing for runtime adapters.
+pub mod production;
+pub mod quest_journal;

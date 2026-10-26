@@ -16,6 +16,7 @@ use std::sync::{Arc, LazyLock};
 
 pub const CARD: CompiledCard = CompiledCard {
     id: CompiledId("Quester"),
+    native_kind: crate::native::request::NativeKind::Quester,
     name: "Quester",
     description: "Runs authored quest Paths from live observation.",
     category: "Quests",
