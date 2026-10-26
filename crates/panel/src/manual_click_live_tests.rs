@@ -5,18 +5,27 @@
 //! both M5's paused carry and the post-Resume takeover window with production
 //! script APIs.
 
+#[cfg(feature = "js")]
 use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
+#[cfg(feature = "js")]
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
+#[cfg(feature = "js")]
+use std::time::{SystemTime, UNIX_EPOCH};
 
+#[cfg(feature = "js")]
 use frontend_core::surface::InputEv;
+#[cfg(feature = "js")]
 use nav_planner::bank_fetch::BankRows;
+#[cfg(feature = "js")]
 use nav_planner::router::FindOptions;
 use nav_planner::tile::Tile;
+#[cfg(feature = "js")]
 use nav_planner::world::NavWorld;
+#[cfg(feature = "js")]
 use nav_planner::WorldState;
 
 use crate::session::Session;
@@ -25,9 +34,13 @@ use frontend_core::scripts::{CompiledCardId, ScriptChoice};
 const LOCAL_GAME_PORT: u16 = 44_594;
 const LOCAL_ASSET_PORT: u16 = 1_080;
 const SCENE_WAIT: Duration = Duration::from_secs(150);
+#[cfg(feature = "js")]
 const WALK_WAIT: Duration = Duration::from_secs(90);
+#[cfg(feature = "js")]
 const TERMINAL_WAIT: Duration = Duration::from_secs(30);
+#[cfg(feature = "js")]
 const SETTLE_WAIT: Duration = Duration::from_secs(5);
+#[cfg(feature = "js")]
 const MINIMAP_CLICK: (i32, i32) = (628, 83);
 
 struct LiveInputs {
@@ -134,6 +147,7 @@ fn prime_local_cache(cache: &Path) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(feature = "js")]
 fn stamp() -> String {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -159,6 +173,7 @@ fn player_tile(session: &Session, name: &str) -> Result<Tile, String> {
     })
 }
 
+#[cfg(feature = "js")]
 fn reachable_destination(world: &NavWorld, here: Tile) -> Result<Tile, String> {
     let scratch = Arc::new(Mutex::new(HashMap::new()));
     for distance in [40, 32, 24, 16] {
@@ -206,10 +221,12 @@ fn reachable_destination(world: &NavWorld, here: Tile) -> Result<Tile, String> {
     Err("no reachable live long-walk destination near the seeded mainland tile".into())
 }
 
+#[cfg(feature = "js")]
 fn walk_source(destination: Tile) -> String {
     traversal_source(destination, "walkTo")
 }
 
+#[cfg(feature = "js")]
 fn traversal_source(destination: Tile, method: &str) -> String {
     format!(
         r#"import {{ Traversal }} from '../../api/walking/Traversal.js';
@@ -235,6 +252,7 @@ fn traversal_source(destination: Tile, method: &str) -> String {
     )
 }
 
+#[cfg(feature = "js")]
 fn v2_walk_source(destination: Tile) -> String {
     format!(
         r#"export const apiVersion = 2;
@@ -256,6 +274,7 @@ fn v2_walk_source(destination: Tile) -> String {
     )
 }
 
+#[cfg(feature = "js")]
 fn prepare_session(inputs: &LiveInputs, pause_owner: bool) -> Result<(Session, String), String> {
     prepare_session_n(inputs, pause_owner, 1)
 }
@@ -344,6 +363,7 @@ fn prepare_session_n(
     Ok((session, name))
 }
 
+#[cfg(feature = "js")]
 fn current_probe(session: &Session, name: &str) -> Result<serde_json::Value, String> {
     let mut proof = session
         .core
@@ -374,6 +394,7 @@ fn current_probe(session: &Session, name: &str) -> Result<serde_json::Value, Str
     Ok(proof)
 }
 
+#[cfg(feature = "js")]
 fn wait_for_armed(
     session: &mut Session,
     name: &str,
@@ -398,6 +419,7 @@ fn wait_for_armed(
     }
 }
 
+#[cfg(feature = "js")]
 fn start_walk(session: &Session, name: &str) -> Result<(), String> {
     let here = player_tile(session, name)?;
     let world = session
@@ -417,6 +439,7 @@ fn start_walk(session: &Session, name: &str) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(feature = "js")]
 fn capture(
     session: &Session,
     dir: &Path,
@@ -448,6 +471,7 @@ fn capture(
     .map_err(|error| error.to_string())
 }
 
+#[cfg(feature = "js")]
 fn stage_capture_event(session: &mut Session, event: InputEv) -> Result<(), String> {
     if session
         .map_desk
@@ -459,6 +483,7 @@ fn stage_capture_event(session: &mut Session, event: InputEv) -> Result<(), Stri
     }
 }
 
+#[cfg(feature = "js")]
 fn submit_capture_frame(session: &mut Session) -> Result<(), String> {
     let submitted = session
         .submit(
@@ -477,6 +502,7 @@ fn submit_capture_frame(session: &mut Session) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(feature = "js")]
 /// Pause `name`'s script, or resume it when paused, through the command
 /// seam: the row the panel's Pause/Resume button submits for that member.
 fn toggle_pause(session: &mut Session, name: &str) {
@@ -488,6 +514,7 @@ fn toggle_pause(session: &mut Session, name: &str) {
     session.submit(row, frontend_core::Targets::Profile(name));
 }
 
+#[cfg(feature = "js")]
 /// Stop `name`'s script through the command seam.
 fn stop_script(session: &mut Session, name: &str) {
     session.submit(
@@ -496,6 +523,7 @@ fn stop_script(session: &mut Session, name: &str) {
     );
 }
 
+#[cfg(feature = "js")]
 fn send_click(session: &mut Session, button: i32, x: i32, y: i32) -> Result<(), String> {
     session.map_desk.begin_game_input_frame();
     stage_capture_event(session, InputEv::Move { x, y })?;
@@ -504,10 +532,12 @@ fn send_click(session: &mut Session, button: i32, x: i32, y: i32) -> Result<(), 
     submit_capture_frame(session)
 }
 
+#[cfg(feature = "js")]
 fn send_minimap_click(session: &mut Session) -> Result<(), String> {
     send_click(session, 1, MINIMAP_CLICK.0, MINIMAP_CLICK.1)
 }
 
+#[cfg(feature = "js")]
 fn wait_for_user_input(session: &mut Session, name: &str) -> Result<serde_json::Value, String> {
     let deadline = Instant::now() + TERMINAL_WAIT;
     loop {
@@ -526,6 +556,7 @@ fn wait_for_user_input(session: &mut Session, name: &str) -> Result<serde_json::
     }
 }
 
+#[cfg(feature = "js")]
 fn wait_for_walk_success(session: &mut Session, name: &str) -> Result<serde_json::Value, String> {
     let deadline = Instant::now() + WALK_WAIT;
     loop {
@@ -541,6 +572,7 @@ fn wait_for_walk_success(session: &mut Session, name: &str) -> Result<serde_json
     }
 }
 
+#[cfg(feature = "js")]
 fn wait_for_pause_carry(session: &Session, name: &str) -> Result<serde_json::Value, String> {
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
@@ -555,6 +587,7 @@ fn wait_for_pause_carry(session: &Session, name: &str) -> Result<serde_json::Val
     }
 }
 
+#[cfg(feature = "js")]
 fn assert_correlated_user_input(before: &serde_json::Value, after: &serde_json::Value) {
     assert_eq!(after["nav"]["reason"], "UserInput");
     assert_eq!(
@@ -589,6 +622,7 @@ fn assert_correlated_user_input(before: &serde_json::Value, after: &serde_json::
     }
 }
 
+#[cfg(feature = "js")]
 fn prepare_evidence(
     inputs: &LiveInputs,
     label: &str,
@@ -602,6 +636,7 @@ fn prepare_evidence(
     Ok((stamp, dir))
 }
 
+#[cfg(feature = "js")]
 fn run_manual_click(pause_owner: bool, recovery: bool, v2: bool) -> Result<(), String> {
     let inputs = live_inputs()?;
     let (mut session, name) = prepare_session(&inputs, pause_owner)?;
@@ -769,6 +804,7 @@ fn run_manual_click(pause_owner: bool, recovery: bool, v2: bool) -> Result<(), S
     Ok(())
 }
 
+#[cfg(feature = "js")]
 fn hover_frame(session: &mut Session, x: i32, y: i32) -> Result<(), String> {
     let frame = session
         .focused_pixels()
@@ -792,6 +828,7 @@ fn hover_frame(session: &mut Session, x: i32, y: i32) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(feature = "js")]
 fn target_menu_matches(proof: &serde_json::Value, target: &str) -> bool {
     let Some(entries) = proof["menu_entries"].as_array() else {
         return false;
@@ -812,6 +849,7 @@ fn target_menu_matches(proof: &serde_json::Value, target: &str) -> bool {
     }
 }
 
+#[cfg(feature = "js")]
 fn scene_candidate_points(proof: &serde_json::Value, target: &str) -> Vec<(i32, i32)> {
     if target != "npc" {
         return [180, 220, 140, 260, 100, 300, 60]
@@ -861,6 +899,7 @@ fn scene_candidate_points(proof: &serde_json::Value, target: &str) -> Vec<(i32, 
     points
 }
 
+#[cfg(feature = "js")]
 fn run_scene_target_capture(target: &str) -> Result<(), String> {
     let inputs = live_inputs()?;
     let (mut session, name) = prepare_session(&inputs, false)?;
@@ -958,6 +997,7 @@ fn run_scene_target_capture(target: &str) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(feature = "js")]
 #[test]
 #[ignore = "requires LIVE=1, local R289 engine/nav pack and a throwaway HOME"]
 fn live_manual_click_panel_npc_loc_and_cancel() {
@@ -966,6 +1006,7 @@ fn live_manual_click_panel_npc_loc_and_cancel() {
     }
 }
 
+#[cfg(feature = "js")]
 fn run_pause_click_resume() -> Result<(), String> {
     let inputs = live_inputs()?;
     let (mut session, name) = prepare_session(&inputs, false)?;
@@ -1121,42 +1162,49 @@ fn run_pause_click_resume() -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(feature = "js")]
 #[test]
 #[ignore = "requires LIVE=1, local R289 engine/nav pack and a throwaway HOME"]
 fn live_manual_click_panel_cpu() {
     run_manual_click(false, false, false).unwrap();
 }
 
+#[cfg(feature = "js")]
 #[test]
 #[ignore = "requires LIVE=1, local R289 engine/nav pack and a throwaway HOME"]
 fn live_pause_manual_click_resume_carry() {
     run_pause_click_resume().unwrap();
 }
 
+#[cfg(feature = "js")]
 #[test]
 #[ignore = "requires LIVE=1, local R289 engine/nav pack and a throwaway HOME"]
 fn live_manual_click_panel_pause_on() {
     run_manual_click(true, false, false).unwrap();
 }
 
+#[cfg(feature = "js")]
 #[test]
 #[ignore = "requires LIVE=1, local R289 engine/nav pack and a throwaway HOME"]
 fn live_manual_click_panel_recovery_pause_resume() {
     run_manual_click(true, true, false).unwrap();
 }
 
+#[cfg(feature = "js")]
 #[test]
 #[ignore = "requires LIVE=1, local R289 engine/nav pack and a throwaway HOME"]
 fn live_manual_click_panel_recovery_pause_off() {
     run_manual_click(false, true, false).unwrap();
 }
 
+#[cfg(feature = "js")]
 #[test]
 #[ignore = "requires LIVE=1, local R289 engine/nav pack and a throwaway HOME"]
 fn live_manual_click_panel_v2_pause_off() {
     run_manual_click(false, false, true).unwrap();
 }
 
+#[cfg(feature = "js")]
 fn run_group_capture() -> Result<(), String> {
     let inputs = live_inputs()?;
     let (mut session, name) = prepare_session_n(&inputs, true, 2)?;
@@ -1343,12 +1391,14 @@ fn run_group_capture() -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(feature = "js")]
 #[test]
 #[ignore = "requires LIVE=1, two local R289 accounts/nav pack and a throwaway HOME"]
 fn live_manual_click_panel_group_capture() {
     run_group_capture().unwrap();
 }
 
+#[cfg(feature = "js")]
 fn run_route_less_resilient(pause_owner: bool) {
     let inputs = live_inputs().unwrap();
     let (mut session, name) = prepare_session(&inputs, pause_owner).unwrap();
@@ -1505,12 +1555,14 @@ fn run_route_less_resilient(pause_owner: bool) {
     session.core.set_play(None);
 }
 
+#[cfg(feature = "js")]
 #[test]
 #[ignore = "requires LIVE=1, local R289 engine/nav pack and a throwaway HOME"]
 fn live_manual_click_panel_route_less_resilient() {
     run_route_less_resilient(false);
 }
 
+#[cfg(feature = "js")]
 #[test]
 #[ignore = "requires LIVE=1, local R289 engine/nav pack and a throwaway HOME"]
 fn live_manual_click_panel_route_less_resilient_pause_resume() {
@@ -1746,6 +1798,7 @@ fn live_gatherer_skill_sync_restart_through_panel_fleet_action() {
 
 // ---- PANEL-STATE-GAP-1023: Stop retires script walks, a WalkTo walk stays ----
 
+#[cfg(feature = "js")]
 /// `name`'s row facts as the panel reads them, with the host's published
 /// walk destination and the player tile beside them.
 fn state_gap_receipt(session: &Session, name: &str) -> Result<serde_json::Value, String> {
@@ -1779,6 +1832,7 @@ fn state_gap_receipt(session: &Session, name: &str) -> Result<serde_json::Value,
     }))
 }
 
+#[cfg(feature = "js")]
 fn state_gap_receipts(session: &Session, names: &[String]) -> Result<serde_json::Value, String> {
     names
         .iter()
@@ -1787,6 +1841,7 @@ fn state_gap_receipts(session: &Session, names: &[String]) -> Result<serde_json:
         .map(serde_json::Value::from)
 }
 
+#[cfg(feature = "js")]
 fn pump_for(session: &mut Session, wait: Duration) {
     let until = Instant::now() + wait;
     while Instant::now() < until {
@@ -1795,6 +1850,7 @@ fn pump_for(session: &mut Session, wait: Duration) {
     }
 }
 
+#[cfg(feature = "js")]
 fn pump_until(
     session: &mut Session,
     what: &str,
@@ -1814,6 +1870,7 @@ fn pump_until(
     }
 }
 
+#[cfg(feature = "js")]
 /// Three bots walk for their scripts and one walks for WalkTo. Stop on the
 /// three marked bots completes; their rows then read `idle`, show no script
 /// walk and keep their clients in game, and nothing the operator changes
@@ -2050,6 +2107,7 @@ fn run_stop_retires_script_walks_and_keeps_the_manual_walk() -> Result<(), Strin
     Ok(())
 }
 
+#[cfg(feature = "js")]
 #[test]
 #[ignore = "requires LIVE=1, four local R289 accounts/nav pack and a throwaway HOME"]
 fn live_stop_retires_script_walks_and_keeps_the_manual_walk() {
