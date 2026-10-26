@@ -21,6 +21,9 @@ use host_play::{
     run_with_template, LaunchProfile, LaunchTransport, LaunchWorld, LoginKey, Play, ProfileClass,
     ProfileOptions, Servers, SharedClientTemplate, SlotArm,
 };
+use rcgen::{
+    BasicConstraints, CertificateParams, ExtendedKeyUsagePurpose, IsCa, KeyPair, KeyUsagePurpose,
+};
 use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use rustls::{CipherSuite, ProtocolVersion, ServerConfig, ServerConnection};
@@ -257,7 +260,12 @@ fn read_client_binary_frame(reader: &mut impl Read) -> io::Result<Vec<u8>> {
     Ok(payload)
 }
 
-fn pinned_server_config(protocol: ProtocolVersion, suite: CipherSuite) -> Arc<ServerConfig> {
+struct ServerIdentity {
+    certificate: CertificateDer<'static>,
+    key: PrivateKeyDer<'static>,
+}
+
+fn checked_in_identity() -> ServerIdentity {
     let certificate = CertificateDer::from_pem_slice(include_bytes!(
         "../../../vendor/fr-client-rust/crates/client/tests/fixtures/tls/localhost.pem"
     ))
@@ -266,7 +274,47 @@ fn pinned_server_config(protocol: ProtocolVersion, suite: CipherSuite) -> Arc<Se
         "../../../vendor/fr-client-rust/crates/client/tests/fixtures/tls/localhost.key"
     ))
     .expect("parse checked-in RSA localhost private key");
+    ServerIdentity { certificate, key }
+}
 
+/// A throwaway CA and a server certificate it signs for the DNS name
+/// `localhost` only. The checked-in certificate also names the IP address
+/// 127.0.0.1, so it cannot serve as a wrong-host peer on that address; this one
+/// can. It lets the wrong-host case use 127.0.0.1, which every system routes
+/// to the loopback interface (127.0.0.2 only exists on Linux and Windows, and
+/// macOS would need an interface alias that a test must not create).
+/// Returns the CA root the client must trust and the server identity.
+fn name_only_identity() -> (CertificateDer<'static>, ServerIdentity) {
+    let ca_key = KeyPair::generate().expect("generate fixture CA key");
+    let mut ca_params = CertificateParams::new(vec!["wss-startup-name-only-ca".to_owned()])
+        .expect("create fixture CA parameters");
+    ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+    ca_params.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign];
+    let ca = ca_params
+        .self_signed(&ca_key)
+        .expect("self-sign fixture CA");
+    let key = KeyPair::generate().expect("generate name-only server key");
+    let mut params = CertificateParams::new(vec!["localhost".to_owned()])
+        .expect("create name-only server certificate parameters");
+    params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth];
+    params.key_usages = vec![KeyUsagePurpose::DigitalSignature];
+    let certificate = params
+        .signed_by(&key, &ca, &ca_key)
+        .expect("sign name-only server certificate");
+    (
+        ca.der().clone(),
+        ServerIdentity {
+            certificate: certificate.der().clone(),
+            key: PrivateKeyDer::Pkcs8(key.serialize_der().into()),
+        },
+    )
+}
+
+fn pinned_server_config(
+    protocol: ProtocolVersion,
+    suite: CipherSuite,
+    identity: ServerIdentity,
+) -> Arc<ServerConfig> {
     let mut provider = rustls::crypto::ring::default_provider();
     provider
         .cipher_suites
@@ -289,8 +337,8 @@ fn pinned_server_config(protocol: ProtocolVersion, suite: CipherSuite) -> Arc<Se
     Arc::new(
         builder
             .with_no_client_auth()
-            .with_single_cert(vec![certificate], key)
-            .expect("configure checked-in RSA server identity"),
+            .with_single_cert(vec![identity.certificate], identity.key)
+            .expect("configure fixture server identity"),
     )
 }
 
@@ -301,7 +349,7 @@ struct StartupFixture {
 }
 
 impl StartupFixture {
-    fn new(tls12_port: u16, tls13_port: u16, wrong_host_port: u16) -> Self {
+    fn new(tls12_port: u16, tls13_port: u16, name_only_port: u16, wrong_host_port: u16) -> Self {
         let root = std::env::temp_dir().join(format!(
             "host-play-wss-product-startup-{}-{}",
             std::process::id(),
@@ -335,8 +383,14 @@ impl StartupFixture {
                 launch_profile("wss-startup-tls12", "localhost", tls12_port, "vault-tls12"),
                 launch_profile("wss-startup-tls13", "localhost", tls13_port, "vault-tls13"),
                 launch_profile(
+                    "wss-startup-name-only",
+                    "localhost",
+                    name_only_port,
+                    "vault-name-only",
+                ),
+                launch_profile(
                     "wss-startup-wrong-host",
-                    "127.0.0.2",
+                    "127.0.0.1",
                     wrong_host_port,
                     "vault-wrong-host",
                 ),
@@ -548,8 +602,10 @@ fn product_play_wss_startup_negotiates_tls_versions_sends_hello_and_rejects_wron
         "../../../vendor/fr-client-rust/crates/client/tests/fixtures/tls/ca.pem"
     ))
     .expect("parse checked-in test CA");
-    let client_config = client_adapter::tls_handshake::build_test_client_config_with_roots(&[root])
-        .expect("build platform-verifying test client with the fixture CA");
+    let (name_only_root, name_only) = name_only_identity();
+    let client_config =
+        client_adapter::tls_handshake::build_test_client_config_with_roots(&[root, name_only_root])
+            .expect("build platform-verifying test client with the fixture CAs");
     client_adapter::service::NetworkService::install_test_tls_config(client_config)
         .expect("install test TLS config before starting the process service");
     let _fixture_driver = client_adapter::service::NetworkService::start_composition()
@@ -559,6 +615,7 @@ fn product_play_wss_startup_negotiates_tls_versions_sends_hello_and_rejects_wron
         pinned_server_config(
             ProtocolVersion::TLSv1_2,
             CipherSuite::TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+            checked_in_identity(),
         ),
         "localhost",
         false,
@@ -567,6 +624,23 @@ fn product_play_wss_startup_negotiates_tls_versions_sends_hello_and_rejects_wron
         pinned_server_config(
             ProtocolVersion::TLSv1_3,
             CipherSuite::TLS13_AES_128_GCM_SHA256,
+            checked_in_identity(),
+        ),
+        "localhost",
+        false,
+    );
+    // The same server identity answers twice: reached by its DNS name it is
+    // the control (the chain, validity and key usage are accepted), reached by
+    // the IP address 127.0.0.1 it names nothing, so the only defect is the
+    // wrong host.
+    let name_only_server = LocalWssServer::spawn(
+        pinned_server_config(
+            ProtocolVersion::TLSv1_3,
+            CipherSuite::TLS13_AES_128_GCM_SHA256,
+            ServerIdentity {
+                certificate: name_only.certificate.clone(),
+                key: name_only.key.clone_key(),
+            },
         ),
         "localhost",
         false,
@@ -575,22 +649,26 @@ fn product_play_wss_startup_negotiates_tls_versions_sends_hello_and_rejects_wron
         pinned_server_config(
             ProtocolVersion::TLSv1_3,
             CipherSuite::TLS13_AES_128_GCM_SHA256,
+            name_only,
         ),
-        "127.0.0.2",
+        "127.0.0.1",
         true,
     );
 
     let tls12_port = tls12_server.port();
     let tls13_port = tls13_server.port();
+    let name_only_port = name_only_server.port();
     let wrong_host_port = wrong_host_server.port();
-    let fixture = StartupFixture::new(tls12_port, tls13_port, wrong_host_port);
+    let fixture = StartupFixture::new(tls12_port, tls13_port, name_only_port, wrong_host_port);
     let tls12_account = fixture.account("vault-tls12", "t1m7tls12", 274_000_112);
     let tls13_account = fixture.account("vault-tls13", "t1m7tls13", 274_000_113);
+    let name_only_account = fixture.account("vault-name-only", "t1m7nameo", 274_000_115);
     let wrong_host_account = fixture.account("vault-wrong-host", "t1m7wrong", 274_000_114);
     let tls12_template = fixture.template("wss-startup-tls12", "localhost", tls12_port);
     let tls13_template = fixture.template("wss-startup-tls13", "localhost", tls13_port);
+    let name_only_template = fixture.template("wss-startup-name-only", "localhost", name_only_port);
     let wrong_host_template =
-        fixture.template("wss-startup-wrong-host", "127.0.0.2", wrong_host_port);
+        fixture.template("wss-startup-wrong-host", "127.0.0.1", wrong_host_port);
 
     let (tls12, _) =
         run_product_attempt(tls12_template, tls12_account.clone(), tls12_server, false);
@@ -663,6 +741,30 @@ fn product_play_wss_startup_negotiates_tls_versions_sends_hello_and_rejects_wron
         tls13.hello.as_deref(),
         Some(tls13_hello.as_slice()),
         "exact initial game hello follows TLS 1.3 startup"
+    );
+
+    // Control for the wrong-host case below: the identical server identity,
+    // reached by the DNS name it carries, starts a WSS session.
+    let (name_only_control, _) = run_product_attempt(
+        name_only_template,
+        name_only_account.clone(),
+        name_only_server,
+        false,
+    );
+    assert!(
+        name_only_control.tls_error.is_none(),
+        "the name-only identity is accepted by its DNS name"
+    );
+    assert_eq!(name_only_control.server_name.as_deref(), Some("localhost"));
+    assert!(
+        name_only_control.websocket_upgrade_complete,
+        "the name-only identity reaches WSS by its DNS name"
+    );
+    let name_only_hello = expected_game_hello(&name_only_account.username);
+    assert_eq!(
+        name_only_control.hello.as_deref(),
+        Some(name_only_hello.as_slice()),
+        "exact initial game hello follows the name-only control startup"
     );
 
     let (wrong_host, typed_refusal) = run_product_attempt(
