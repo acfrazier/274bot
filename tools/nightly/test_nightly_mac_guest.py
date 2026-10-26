@@ -112,7 +112,7 @@ class SourcePinTests(unittest.TestCase):
         self.assertIsNone(nightly.parse_args([]).branch)
         self.assertEqual(
             nightly.read_branches(HERE / "branches.conf", None),
-            ["release/0.2.6", "dev"],
+            ["release/0.2.7", "dev"],
         )
 
     def test_pins_each_branch_to_the_fetched_commit(self):
