@@ -932,13 +932,37 @@ def self_check_candidate(candidate: Path, test_file: str = SELF_TEST_FILE,
         return False, f"candidate has no {test_file}"
     env = dict(os.environ, NIGHTLY_ROOT=str(candidate / "self-check-root"),
                NIGHTLY_SELF_CHECK_ACTIVE="1")
+    proc = popen_group([sys.executable, "-B", str(test_path)], cwd=str(candidate),
+                       env=env, stdin=subprocess.DEVNULL,
+                       stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    track(proc.pid, lambda: kill_tree(proc.pid, proc))
     try:
-        tested = subprocess.run([sys.executable, "-B", str(test_path)], cwd=str(candidate),
-                                env=env, capture_output=True, text=True, timeout=timeout)
-    except subprocess.TimeoutExpired:
-        return False, f"{test_file} did not finish within {timeout} s"
-    if tested.returncode:
-        tail = (tested.stderr or tested.stdout).strip().splitlines()
+        try:
+            stdout, stderr = proc.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            kill_tree(proc.pid, proc)
+            try:
+                stdout, stderr = proc.communicate(timeout=15)
+            except subprocess.TimeoutExpired:
+                try:
+                    kill_tree(proc.pid, proc)
+                finally:
+                    try:
+                        if proc.stdout is not None:
+                            proc.stdout.close()
+                        if proc.stderr is not None:
+                            proc.stderr.close()
+                    finally:
+                        try:
+                            proc.wait(timeout=5)
+                        except Exception:
+                            pass
+                return False, f"{test_file} did not finish within {timeout} s"
+            return False, f"{test_file} did not finish within {timeout} s"
+    finally:
+        untrack(proc.pid)
+    if proc.returncode:
+        tail = (stderr or stdout).strip().splitlines()
         return False, f"{test_file} failed: {tail[-1][:300] if tail else 'unknown error'}"
     return True, f"py_compile ok; {test_file} passed"
 
