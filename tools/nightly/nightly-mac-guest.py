@@ -119,6 +119,18 @@ def self_update_enabled() -> bool:
     return os.environ.get(SELF_UPDATE_ENV, "0") in ("1", "true", "yes")
 
 
+def reexec(executable: str, args: Sequence[str], env: Dict[str, str]) -> None:
+    """Replace this process with the updated runner.
+
+    On Windows os.execvpe starts a child and the waiting parent exits 0 at
+    once; there the child runs to the end and its exit code becomes ours.
+    (The Mac controller never runs on Windows; shared behavior stays here.)
+    """
+    if os.name == "nt":
+        sys.exit(subprocess.run(args, env=env).returncode)
+    os.execvpe(executable, args, env)
+
+
 def runner_head(repo: Path) -> str:
     """The runner checkout's HEAD, or "unknown" when it cannot be read."""
     try:
@@ -220,7 +232,7 @@ def self_check_candidate(candidate: Path, test_file: str = SELF_TEST_FILE,
 
 
 def maybe_self_update(repo: Path, script: Path, argv: Optional[Sequence[str]] = None,
-                      _exec: Any = os.execvpe) -> Optional[Dict[str, str]]:
+                      _exec: Any = reexec) -> Optional[Dict[str, str]]:
     """Update the runner checkout to origin/dev and re-execute, after the
     candidate passes its self-check. Return the status info, or None when this
     process re-executes (the new process reports status "updated"). Only the
