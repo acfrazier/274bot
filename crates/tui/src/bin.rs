@@ -3269,7 +3269,7 @@ impl TuiSession {
 
     /// Set the global pause policy before binding or arming a TUI live run
     /// (`SetNavPreference`).
-    #[cfg(test)]
+    #[cfg(all(test, feature = "js"))]
     fn set_pause_script_on_manual_walk_abort(&mut self, enabled: bool) -> Result<(), String> {
         let command = OperatorCommand::SetNavPreference(
             frontend_core::NavPreference::PauseScriptOnManualWalkAbort,
