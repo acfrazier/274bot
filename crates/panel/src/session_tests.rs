@@ -10437,9 +10437,8 @@ impl SeqDisk {
         }));
         let counted = Arc::clone(&writes);
         let limit = Arc::clone(&fail_after);
-        service.set_write_fault_for_test(Arc::new(move || {
-            counted.load(SeqCst) > limit.load(SeqCst)
-        }));
+        service
+            .set_write_fault_for_test(Arc::new(move || counted.load(SeqCst) > limit.load(SeqCst)));
         Self {
             release,
             fail_after,
@@ -10571,13 +10570,16 @@ fn settings_feedback_a_second_process_version_reaches_every_panel_control_after_
         crate::test_support::set_patiently(&peer, key, value);
     };
 
-    peer_set(
-        "fleet_columns",
-        serde_json::json!({ column.id(): flipped }),
-    );
+    peer_set("fleet_columns", serde_json::json!({ column.id(): flipped }));
     peer_set("section_order", serde_json::json!(["log", "status"]));
-    peer_set("script_category_order", serde_json::json!(["Zeta", "Alpha"]));
-    peer_set("collapsed", serde_json::json!({ "alice": { "status": true } }));
+    peer_set(
+        "script_category_order",
+        serde_json::json!(["Zeta", "Alpha"]),
+    );
+    peer_set(
+        "collapsed",
+        serde_json::json!({ "alice": { "status": true } }),
+    );
     peer_set("script_load_last_dir", serde_json::json!("/peer/load"));
     peer_set("show_parameters_rail", serde_json::Value::Bool(true));
     peer_set(
@@ -10592,7 +10594,7 @@ fn settings_feedback_a_second_process_version_reaches_every_panel_control_after_
     );
     assert_eq!(s.ui.section_order, ["log", "status"]);
     assert_eq!(s.ui.script_category_order, ["Zeta", "Alpha"]);
-    assert_eq!(s.ui.collapsed["alice"]["status"], true);
+    assert!(s.ui.collapsed["alice"]["status"]);
     assert_eq!(
         s.ui.script_load_last_dir.as_deref(),
         Some(std::path::Path::new("/peer/load"))
@@ -10620,7 +10622,10 @@ fn settings_feedback_a_second_process_version_reaches_every_panel_control_after_
     for _ in 0..3 {
         s.pump_status();
         s.poll_panel_preferences();
-        assert_eq!(s.ui.chrome.accent, "#112233", "the pending request previews");
+        assert_eq!(
+            s.ui.chrome.accent, "#112233",
+            "the pending request previews"
+        );
     }
     disk.release().store(false, Ordering::SeqCst);
     settle_panel_writes(&mut s);
@@ -10704,7 +10709,10 @@ fn settings_feedback_launch_choices_take_effect_only_from_the_durable_value() {
         )
     };
     let before = applied(&mut s);
-    assert_eq!(before, (true, RasterMode::Gpu, false, true, RasterMode::Gpu));
+    assert_eq!(
+        before,
+        (true, RasterMode::Gpu, false, true, RasterMode::Gpu)
+    );
     let disk = PanelDisk::install(&s);
 
     assert!(s.set_focused_lowmem(false));
@@ -10807,5 +10815,8 @@ fn settings_feedback_a_held_server_revision_binds_the_durable_revision_and_shows
         .is_some_and(|text| text.starts_with("Preferences not saved: ")));
     assert_eq!(s.effective_revision_label().unwrap(), "274");
     assert_eq!(s.revision_choice_label().unwrap(), "274");
-    assert!(s.set_server_revision(289).is_err(), "a bound session refuses");
+    assert!(
+        s.set_server_revision(289).is_err(),
+        "a bound session refuses"
+    );
 }
