@@ -2627,6 +2627,31 @@ class SelfUpdateTests(unittest.TestCase):
             self.assertEqual(git("rev-parse", "HEAD", cwd=runner), tip)
 
 
+class ReexecTests(unittest.TestCase):
+    def test_windows_reexec_waits_for_the_child_exit_code(self):
+        seen: list = []
+
+        def fake_run(args, env):
+            seen.append((list(args), dict(env)))
+            return subprocess.CompletedProcess(args, 42)
+
+        with mock.patch.object(os, "name", "nt"):
+            with mock.patch.object(subprocess, "run", side_effect=fake_run):
+                with self.assertRaises(SystemExit) as exited:
+                    rn.reexec(sys.executable, [sys.executable, "run_nightly.py"], {"K": "V"})
+        self.assertEqual(exited.exception.code, 42)
+        self.assertEqual(seen, [([sys.executable, "run_nightly.py"], {"K": "V"})])
+
+    def test_posix_reexec_replaces_the_process(self):
+        with mock.patch.object(os, "name", "posix"):
+            with mock.patch.object(os, "execvpe", create=True) as execvpe:
+                with mock.patch.object(subprocess, "run",
+                                       side_effect=AssertionError("must not spawn")):
+                    rn.reexec(sys.executable, [sys.executable, "run_nightly.py"], {"K": "V"})
+        execvpe.assert_called_once_with(sys.executable, [sys.executable, "run_nightly.py"],
+                                        {"K": "V"})
+
+
 class BranchListSummaryTests(unittest.TestCase):
     def test_run_branch_summary_records_branch_list_and_self_update(self):
         with tempfile.TemporaryDirectory() as tmp:

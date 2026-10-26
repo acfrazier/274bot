@@ -822,6 +822,18 @@ def self_update_enabled() -> bool:
     return os.environ.get(SELF_UPDATE_ENV, "0") in ("1", "true", "yes")
 
 
+def reexec(executable: str, args: list[str], env: dict) -> None:
+    """Replace this process with the updated runner.
+
+    On Windows os.execvpe starts a child and the waiting parent exits 0 at
+    once, so Task Scheduler would record success whatever the night did;
+    there the child runs to the end and its exit code becomes ours.
+    """
+    if os.name == "nt":
+        sys.exit(subprocess.run(args, env=env).returncode)
+    os.execvpe(executable, args, env)
+
+
 def runner_head(repo: Path) -> str:
     """The runner checkout's HEAD, or "unknown" when it cannot be read."""
     try:
@@ -930,7 +942,7 @@ def self_check_candidate(candidate: Path, test_file: str = SELF_TEST_FILE,
 
 
 def maybe_self_update(repo: Path, script: Path, argv: list[str] | None = None,
-                      _exec: Callable = os.execvpe) -> dict | None:
+                      _exec: Callable = reexec) -> dict | None:
     """Update the runner checkout to origin/dev and re-execute, after the
     candidate passes its self-check. Return the summary info, or None when
     this process re-executes (the new process reports status "updated"). Only
