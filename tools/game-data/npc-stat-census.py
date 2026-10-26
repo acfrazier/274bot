@@ -147,6 +147,189 @@ def scan_configs(content: Path) -> dict[str, dict]:
     return found
 
 
+# facts.rs from_npc order. PROJ_LAG is combat/risk.rs.
+PROJ_LAG = 3
+# Review filter that does not apply the range-overflow test (review F3).
+FILTER_COUNTS = {
+    "rows": 975,
+    "attackable": 75,
+    "not_attackable": 900,
+    "not_attackable_hunt": 8,
+}
+# Rows whose old class is MissingStat and whose new class is not.
+LEAVE_COUNTS = {
+    "rows": 956,
+    "attackable": 75,
+    "not_attackable": 881,
+    "not_attackable_hunt": 8,
+    "overflow_stay": 19,
+}
+
+
+def facts_stat_max(stat: int | None, bonus: int | None) -> int | None:
+    """`select.rs` `stat_max`: a missing stat or bonus stays unknown."""
+    if stat is None or bonus is None or stat < 0:
+        return None
+    hit = ((stat + 9) * (bonus + 64) + 320) // 640
+    if hit > 2_147_483_647:
+        return None
+    return max(hit, 0)
+
+
+def facts_to_hit(value: int) -> int | None:
+    if value < 0 or value > 255:
+        return None
+    return value
+
+
+def facts_max_hit(row: dict, strength: int | None, ranged: int | None) -> int | None:
+    forced = row.get("forced_max_hit")
+    if forced is not None:
+        return facts_to_hit(forced)
+    if row.get("bespoke"):
+        return None
+    kind = row.get("attack_kind")
+    if kind == "ranged":
+        main = facts_stat_max(ranged, row.get("rangebonus"))
+    elif kind == "magic":
+        return None
+    else:
+        main = facts_stat_max(strength, row.get("strengthbonus"))
+    if main is None:
+        return None
+    return facts_to_hit(main)
+
+
+def facts_ranges(row: dict) -> tuple[int, int] | None:
+    """`facts.rs` `compact_ranges`."""
+    maxrange = row.get("maxrange")
+    attackrange = row.get("attackrange")
+    size = row.get("size")
+    if (
+        not isinstance(maxrange, int)
+        or not isinstance(attackrange, int)
+        or not isinstance(size, int)
+        or maxrange < 0
+        or attackrange < 0
+        or size <= 0
+    ):
+        return None
+    radius = maxrange + max(attackrange, 1)
+    if radius > 255:
+        return None
+    reach = (attackrange if row.get("ap_attack") else 1) + size - 1
+    if reach < 0 or reach > 255:
+        return None
+    return radius, reach
+
+
+def facts_poison(severity: int | None) -> int | None:
+    """`facts.rs` `poison_pulse`."""
+    if severity is None or severity < 0:
+        return None
+    pulse = (severity + 4) // 5
+    if pulse > 255:
+        return None
+    return pulse
+
+
+def facts_flight(attackrange: int) -> int | None:
+    if attackrange < 0:
+        return None
+    ticks = (attackrange * 5 + 32 + 29) // 30
+    if ticks > 255:
+        return None
+    return ticks
+
+
+def facts_class(row: dict, strength: int | None, ranged: int | None) -> str:
+    """`facts.rs` `from_npc` class, in that function's order."""
+    maximum = facts_max_hit(row, strength, ranged)
+    if row.get("poison_severity") is None:
+        return "MissingFacts"
+    poison = facts_poison(row.get("poison_severity"))
+    if (
+        facts_ranges(row) is None
+        or poison is None
+        or (maximum is None and row.get("forced_max_hit") is not None)
+    ):
+        return "Overflow"
+    if row.get("dragonfire") is not None:
+        return "Dragonfire"
+    if row.get("counter_protect"):
+        return "CounterProtect"
+    kind = row.get("attack_kind")
+    if kind == "magic":
+        return "Magic"
+    if kind == "mixed":
+        return "Mixed"
+    if maximum is None and row.get("bespoke"):
+        return "Bespoke"
+    if kind == "ranged":
+        missing = ranged is None
+    elif kind in ("magic", "mixed"):
+        missing = False
+    else:
+        missing = strength is None
+    if maximum is None and missing:
+        return "MissingStat"
+    if maximum is None:
+        return "Overflow"
+    rate = row.get("attackrate") or 0
+    if rate == 0:
+        return "ZeroRate"
+    if kind == "ranged":
+        flight = facts_flight(row.get("attackrange") or 0)
+        if flight is None or flight > PROJ_LAG or rate <= flight:
+            return "FlightRate"
+    if poison > 0:
+        return "Poison"
+    return "Known"
+
+
+def absent_stat(row: dict, configs: dict[str, dict], key: str) -> int | None:
+    """Published value, or None when the `.npc` block has no line for `key`."""
+    config = configs.get(row["config"])
+    if config is None or config[f"{key}_line"] is None:
+        return None
+    return row.get(key)
+
+
+def review_filter(row: dict, configs: dict[str, dict]) -> bool:
+    """Rows the review counted without the range-overflow test."""
+    if row.get("poison_severity") is None or row.get("dragonfire") is not None:
+        return False
+    if row.get("forced_max_hit") is not None or row.get("counter_protect"):
+        return False
+    if row.get("bespoke") or row.get("attack_kind") in ("magic", "mixed"):
+        return False
+    if row["config"] not in configs:
+        return False
+    if row.get("attack_kind") == "ranged":
+        return configs[row["config"]]["ranged_line"] is None
+    return configs[row["config"]]["strength_line"] is None
+
+
+def stat_departure(rows: list[dict], configs: dict[str, dict]) -> dict:
+    filtered = [row for row in rows if review_filter(row, configs)]
+    detailed = []
+    for row in filtered:
+        old = facts_class(
+            row,
+            absent_stat(row, configs, "strength"),
+            absent_stat(row, configs, "ranged"),
+        )
+        new = facts_class(row, row.get("strength"), row.get("ranged"))
+        detailed.append((row, old, new))
+    leaves = [item for item in detailed if item[1] == "MissingStat" and item[2] != "MissingStat"]
+    stays = [item for item in detailed if not (item[1] == "MissingStat" and item[2] != "MissingStat")]
+    return {
+        "filtered": detailed,
+        "leaves": leaves,
+        "stays": stays,
+    }
+
+
 def load_rows(json_path: Path) -> list[dict]:
     payload = json.loads(json_path.read_text(encoding="utf-8"))
     rows = payload.get("npc_names", {}).get("rows")
@@ -193,6 +376,7 @@ def census(rows: list[dict], configs: dict[str, dict]) -> dict:
         "published_strength_null": published_null,
         "published_engine_default": published_default,
         "json_null_matches_no_line": published_null == len(no_line),
+        "departure": stat_departure(rows, configs),
     }
 
 
@@ -251,7 +435,50 @@ def format_report(result: dict, configs: dict[str, dict]) -> str:
         "(no strength= line; the plan's 28, of which "
         f"{sum(1 for row in result['hunt_all'] if row.get('bespoke'))} bespoke)"
     )
+    lines.extend(format_departure(result["departure"], configs))
     return "\n".join(lines) + "\n"
+
+
+def format_departure(departure: dict, configs: dict[str, dict]) -> list[str]:
+    """List every review-filter row, and which of them leave MissingStat."""
+    filtered = departure["filtered"]
+    leaves = departure["leaves"]
+    stays = departure["stays"]
+    attackable_filter = [item for item in filtered if attackable(item[0])]
+    quiet = [item for item in filtered if not attackable(item[0])]
+    quiet_hunt = [item for item in quiet if (item[0].get("huntrange") or 0) > 0]
+    leave_attackable = [item for item in leaves if attackable(item[0])]
+    leave_quiet = [item for item in leaves if not attackable(item[0])]
+    leave_hunt = [item for item in leave_quiet if (item[0].get("huntrange") or 0) > 0]
+    lines = [
+        "review filter, no range-overflow test: "
+        f"{len(filtered)} "
+        f"({len(attackable_filter)} attackable, {len(quiet)} not attackable, "
+        f"{len(quiet_hunt)} of those hunt)",
+        "leave MissingStat: "
+        f"{len(leaves)} "
+        f"({len(leave_attackable)} attackable, {len(leave_quiet)} not attackable, "
+        f"{len(leave_hunt)} of those hunt)",
+        f"review filter rows that do not leave MissingStat: {len(stays)}",
+        "review filter rows, by id:",
+    ]
+    for row, old, new in sorted(filtered, key=lambda item: item[0]["id"]):
+        config = configs[row["config"]]
+        hunt = (row.get("huntrange") or 0) > 0
+        lines.append(
+            f"{row['id']}\t{row['config']}\t"
+            f"attackable={str(attackable(row)).lower()}\t"
+            f"hunt={str(hunt).lower()}\t"
+            f"{old}\t{new}\t"
+            f"leaves={str(old == 'MissingStat' and new != 'MissingStat').lower()}\t"
+            f"{config['file']}"
+        )
+    lines.append("not attackable, huntrange > 0, in the review filter:")
+    for row, old, new in sorted(quiet_hunt, key=lambda item: item[0]["id"]):
+        lines.append(
+            f"{row['id']}\t{row['config']}\thuntrange={row.get('huntrange')}\t{old}\t{new}"
+        )
+    return lines
 
 
 def counts_match(result: dict) -> bool:
@@ -273,6 +500,29 @@ def counts_match(result: dict) -> bool:
         and not any(bucket(row).startswith("other") for row in result["plain"] + result["stay"])
         and all(old_class(row) == "MissingStat" and new_class(row) == "Known" for row in result["plain"])
         and all(old_class(row) == new_class(row) and new_class(row) != "Known" for row in result["stay"])
+        and departure_matches(result["departure"])
+    )
+
+
+def departure_matches(departure: dict) -> bool:
+    filtered = departure["filtered"]
+    leaves = departure["leaves"]
+    quiet = [item for item in filtered if not attackable(item[0])]
+    leave_quiet = [item for item in leaves if not attackable(item[0])]
+    return (
+        len(filtered) == FILTER_COUNTS["rows"]
+        and sum(attackable(item[0]) for item in filtered) == FILTER_COUNTS["attackable"]
+        and len(quiet) == FILTER_COUNTS["not_attackable"]
+        and sum((item[0].get("huntrange") or 0) > 0 for item in quiet)
+        == FILTER_COUNTS["not_attackable_hunt"]
+        and len(leaves) == LEAVE_COUNTS["rows"]
+        and sum(attackable(item[0]) for item in leaves) == LEAVE_COUNTS["attackable"]
+        and len(leave_quiet) == LEAVE_COUNTS["not_attackable"]
+        and sum((item[0].get("huntrange") or 0) > 0 for item in leave_quiet)
+        == LEAVE_COUNTS["not_attackable_hunt"]
+        and len(departure["stays"]) == LEAVE_COUNTS["overflow_stay"]
+        and all(item[1] == "Overflow" and item[2] == "Overflow" for item in departure["stays"])
+        and all(item[2] == "Known" for item in leaves)
     )
 
 
