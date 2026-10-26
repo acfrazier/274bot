@@ -41,7 +41,7 @@ pub use capacity::{
 pub use capacity::{force_off_cpu_measure, ServiceDelays};
 pub use random::{
     detect, is_lamp_skill, CooldownMap, DetectedRandom, Guardian, GuardianLiveContext, RandomClaim,
-    RandomKind, RandomStatus,
+    RandomClaimSource, RandomKind, RandomStatus,
 };
 pub use render_head::SlotRender;
 pub use slot::{dirty_families, should_emit_tick, DirtyFamilies, DrainResult, Pump};
@@ -229,7 +229,7 @@ impl Host {
                 ScriptRunPolicy::default(),
                 |_, _, _, _, _| false,
                 |_| false,
-                |_| RandomClaim::Host,
+                |_: &DetectedRandom| RandomClaim::Host,
             );
         })
     }
@@ -290,7 +290,7 @@ impl Host {
     where
         F: FnMut(&mut Client, &str, u32, &RandomStatus, &mut ScriptRunPolicy) -> bool,
         P: FnMut(&mut Client) -> bool,
-        K: FnMut(&DetectedRandom) -> RandomClaim,
+        K: RandomClaimSource,
     {
         let random_event_policies = Arc::new(Mutex::new(settings.random_event_policies.clone()));
         Self::run_client_with_event_policies(
@@ -335,7 +335,7 @@ impl Host {
     where
         F: FnMut(&mut Client, &str, u32, &RandomStatus, &mut ScriptRunPolicy) -> bool,
         P: FnMut(&mut Client) -> bool,
-        K: FnMut(&DetectedRandom) -> RandomClaim,
+        K: RandomClaimSource,
     {
         let mut slot = SlotLoop::with_settings(
             settings,
@@ -383,7 +383,7 @@ impl Host {
                     render.as_ref(),
                     &mut run_sends,
                     &mut observe,
-                    Some(&mut knock as &mut dyn FnMut(&DetectedRandom) -> RandomClaim),
+                    Some(&mut knock as &mut dyn RandomClaimSource),
                 );
                 let end = Instant::now();
                 capacity::record_service(capacity::Service {
@@ -432,7 +432,7 @@ impl Host {
                 render.as_ref(),
                 &mut run_sends,
                 &mut observe,
-                Some(&mut knock as &mut dyn FnMut(&DetectedRandom) -> RandomClaim),
+                Some(&mut knock as &mut dyn RandomClaimSource),
             );
             capacity::record_service(capacity::Service {
                 at: now,
@@ -463,7 +463,7 @@ impl Host {
         render: Option<&SlotRender>,
         run_sends: &mut u32,
         observe: &mut F,
-        knock: Option<&mut dyn FnMut(&DetectedRandom) -> RandomClaim>,
+        knock: Option<&mut dyn RandomClaimSource>,
     ) -> (bool, RandomStatus)
     where
         F: FnMut(&mut Client, &str, u32, &RandomStatus, &mut ScriptRunPolicy) -> bool,
@@ -500,7 +500,7 @@ impl Host {
         input: Option<&SlotInput>,
         render: Option<&SlotRender>,
         run_sends: &mut u32,
-        knock: Option<&mut dyn FnMut(&DetectedRandom) -> RandomClaim>,
+        knock: Option<&mut dyn RandomClaimSource>,
     ) -> RandomStatus {
         Self::client_frame_observed(
             client,
@@ -523,7 +523,7 @@ impl Host {
         input: Option<&SlotInput>,
         render: Option<&SlotRender>,
         run_sends: &mut u32,
-        knock: Option<&mut dyn FnMut(&DetectedRandom) -> RandomClaim>,
+        knock: Option<&mut dyn RandomClaimSource>,
         observe: &mut F,
     ) -> (bool, RandomStatus)
     where

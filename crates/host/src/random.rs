@@ -28,6 +28,24 @@ use vault::{ProfileSettings, RandomEventPolicy};
 // `host::RandomClaim` / `host::DetectedRandom` / `host::RandomKind` here).
 pub use api::random::{DetectedRandom, RandomClaim, RandomKind};
 
+/// Script claims have a rising-edge callback and optional live membership.
+/// Refreshing membership must not invoke a compiled script's callback.
+pub trait RandomClaimSource {
+    fn on_random(&mut self, event: &DetectedRandom) -> RandomClaim;
+
+    /// `None` preserves the rising-edge claim. Load supplies its cached
+    /// `ignoredRandoms()` membership without executing script code.
+    fn current_claim(&mut self, _event: &DetectedRandom) -> Option<RandomClaim> {
+        None
+    }
+}
+
+impl<F: FnMut(&DetectedRandom) -> RandomClaim> RandomClaimSource for F {
+    fn on_random(&mut self, event: &DetectedRandom) -> RandomClaim {
+        self(event)
+    }
+}
+
 /// NPC slot index → cooldown expiry `now_ms`: the slot is skipped while
 /// `now_ms < value`. Task 4 stores `now_ms + 45_000` on a wrong-talk.
 pub type CooldownMap = HashMap<usize, u64>;
