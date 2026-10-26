@@ -64,7 +64,6 @@ fn fleet(test: &str, members: &[&str], auto_login: bool) -> OperatorSession<()> 
     session
 }
 
-
 #[cfg(not(feature = "js"))]
 fn test_scripts(_test: &str) -> crate::scripts::Scripts {
     crate::scripts::Scripts::new()
