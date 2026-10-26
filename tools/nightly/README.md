@@ -313,8 +313,8 @@ old code and says so in the summary. Only the runner checkout is ever touched
 (`git -C <runner> ...` plus the temporary candidate); trees, engines,
 catalogs and fixtures are never written.
 
-The update is opt-in: only `NIGHTLY_SELF_UPDATE=1` updates, and anything else
-(including unset) keeps the old code and records `disabled`. Set it to `1`
+The update is opt-in: `NIGHTLY_SELF_UPDATE=1` (or `true` or `yes`) updates, and
+anything else (including unset) keeps the old code and records `disabled`. Set it to `1`
 where the night reads its environment: `/etc/274bot-nightly.env` on the
 Linux VM (read by the unit), `C:\274bot-nightly\nightly.env` on Windows
 (deployed copy [`windows/nightly.env`](windows/nightly.env), read by
