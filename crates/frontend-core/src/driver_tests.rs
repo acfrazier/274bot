@@ -3044,6 +3044,7 @@ fn wait_state(d: &mut HeadlessDriver, name: &str, want: ScriptRunState) {
 
 /// Start the assigned native script on `name` and publish the helper's
 /// frame on its status row, as the slot's observe does after a tick.
+#[cfg(not(feature = "js"))]
 fn run_compiled_helper(d: &mut HeadlessDriver, name: &str, generation: u64) {
     let start = d
         .submit(OperatorCommand::StartScript, Targets::Profile(name))
@@ -3079,6 +3080,7 @@ fn run_helper(d: &mut HeadlessDriver, name: &str, generation: u64) {
     run_compiled_helper(d, name, generation);
 }
 
+#[cfg(not(feature = "js"))]
 fn paint_driver_with_card(
     test: &str,
     names: &[&str],
@@ -3363,7 +3365,49 @@ fn publish_native_paint(
 /// Press Pause, Resume and Stop on one native paint frame (its two
 /// host controls are buttons 0 and 1) and check each press through
 /// the lifecycle rows, as the front ends submit them.
-fn native_paint_controls_case(
+#[cfg(feature = "js")]
+fn native_paint_controls_case(test: &str, paint: std::sync::Arc<script::shim::ScriptPaint>) {
+    let mut d = paint_driver(test, &["alice"]);
+    publish_native_paint(&d, "alice", paint);
+    d.poll();
+    let running = shown(&d, "alice");
+    assert_eq!(
+        labels(&running),
+        vec![("Pause".to_string(), true), ("Stop".to_string(), true)],
+        "the native paint shows Pause and Stop"
+    );
+    let pause = activate(&mut d, &running, 0, "alice").expect("pause applies");
+    assert_eq!(command_of(&d, &pause), OperatorCommand::PauseScript);
+    settle(&mut d, pause.request());
+    assert_eq!(terminal(&d, pause.request(), "alice"), Some(done()));
+    assert_eq!(d.session().script_state("alice"), ScriptRunState::Paused);
+
+    let paused = shown(&d, "alice");
+    assert_eq!(
+        labels(&paused),
+        vec![("Resume".to_string(), true), ("Stop".to_string(), true)],
+        "the retained native paint shows Resume while paused"
+    );
+    let resume = activate(&mut d, &paused, 0, "alice").expect("resume applies");
+    assert_eq!(command_of(&d, &resume), OperatorCommand::ResumeScript);
+    settle(&mut d, resume.request());
+    assert_eq!(terminal(&d, resume.request(), "alice"), Some(done()));
+    assert_eq!(d.session().script_state("alice"), ScriptRunState::Running);
+
+    let again = shown(&d, "alice");
+    let stop = activate(&mut d, &again, 1, "alice").expect("stop applies");
+    assert_eq!(command_of(&d, &stop), OperatorCommand::StopScript);
+    settle(&mut d, stop.request());
+    assert_eq!(terminal(&d, stop.request(), "alice"), Some(done()));
+    wait_state(&mut d, "alice", ScriptRunState::Idle);
+    assert!(
+        d.session().script_paint("alice").is_none(),
+        "Stop clears the published native paint"
+    );
+}
+
+#[cfg(not(feature = "js"))]
+fn compiled_paint_controls_case(
     test: &str,
     card: crate::scripts::ScriptChoice,
     paint: std::sync::Arc<script::shim::ScriptPaint>,
@@ -3411,6 +3455,47 @@ fn native_paint_controls_case(
 /// L5: the real native Gatherer paint frame, published on a running
 /// slot, pauses, resumes and stops that run through the lifecycle
 /// rows.
+#[cfg(not(feature = "js"))]
+#[test]
+fn compiled_gatherer_paint_controls_pause_resume_and_stop() {
+    use std::sync::Arc;
+    let data = script::gatherer::status::StatusData {
+        skill: "Woodcutting",
+        method: Arc::from("normal"),
+        phase: "gathering",
+        area: Arc::from("Start"),
+        target: Arc::from("Tree"),
+        tool: Arc::from("Bronze axe"),
+        bait: 0,
+        food: 0,
+        coins: 0,
+        yielded: 0,
+        dropped: 0,
+        deposited: 0,
+        trips: 0,
+        xp: 0,
+        xp_per_hour: None,
+        bank: Arc::from(""),
+        last_progress: 0,
+        deaths: 0,
+        recoveries: 0,
+        recovery_step: 0,
+        absent: 0,
+        zone_gated: 0,
+        excluded_targets: Arc::from(""),
+        last_event: Arc::from(""),
+    };
+    compiled_paint_controls_case(
+        "native-gatherer-paint",
+        crate::scripts::ScriptChoice::compiled(
+            crate::scripts::CompiledCardId::lookup("Gatherer").expect("Gatherer is compiled"),
+        ),
+        script::gatherer::status::paint(&data),
+    );
+}
+
+/// The native Gatherer frame retains its original JS-backed lifecycle fixture.
+#[cfg(feature = "js")]
 #[test]
 fn native_gatherer_paint_controls_pause_resume_and_stop() {
     use std::sync::Arc;
@@ -3442,9 +3527,6 @@ fn native_gatherer_paint_controls_pause_resume_and_stop() {
     };
     native_paint_controls_case(
         "native-gatherer-paint",
-        crate::scripts::ScriptChoice::compiled(
-            crate::scripts::CompiledCardId::lookup("Gatherer").expect("Gatherer is compiled"),
-        ),
         script::gatherer::status::paint(&data),
     );
 }
@@ -3463,13 +3545,7 @@ fn native_sherlock_paint_controls_pause_resume_and_stop() {
         generation: 7,
         ..Default::default()
     });
-    native_paint_controls_case(
-        "native-sherlock-paint",
-        crate::scripts::ScriptChoice::compiled(
-            crate::scripts::CompiledCardId::lookup("Sherlock").expect("Sherlock is compiled"),
-        ),
-        paint,
-    );
+    native_paint_controls_case("native-sherlock-paint", paint);
 }
 
 /// Every place a Start can wait before its slot runs.
