@@ -1,10 +1,17 @@
 use super::*;
 pub(crate) const MOSS_GIANT_FOOD: i32 = 10;
 /// Bank-cell preparation: MossGiant only banks once the pack's food is gone, so
-/// the bank cell carries a shortfall instead of a full pack; ChaosDruidKiller's
-/// own `tripPrepared` needs `foodWithdraw` (12) in the field, so 8 forces its
-/// declared `prepare-trip` end.
-const MOSS_GIANT_BANK_FOOD: i32 = 2;
+/// the bank cell carries a shortfall instead of a full pack (restock line 20).
+/// The count is sized so the first giant dies before the food does. With no
+/// food the script keeps fighting until HP is under its 25 % panic line (40 HP
+/// account: below 10), then banks. If the first giant is still alive then, the
+/// trip carries no bones and withdraws most of the bank stock. A giant hits
+/// 0..=6 on a 3783 attack roll (about 92 % at Defence 1) every 6 ticks and a
+/// Lobster heals 12, so two Lobster absorb about 54 HP (30 + 24) and the first
+/// kill (median 94 ticks) lost that race in 21 % of modelled draws. Five absorb
+/// about 90 HP and lose it in 0.13 %. The arithmetic and content file:lines are
+/// in `MOSS-GIANT-DEADLINE-1026/r2/report.md`.
+const MOSS_GIANT_BANK_FOOD: i32 = 5;
 /// Restock lines the cards themselves withdraw to (MossGiant's declared
 /// `foodWithdraw` default 20, AutoFighter's 10, HillGiant's 12).
 const MOSS_GIANT_BANK_RESTOCK: i32 = 20;
@@ -13,8 +20,10 @@ const MOSS_GIANT_BANK_RESTOCK: i32 = 20;
 /// converted 200 game ticks at 1.25 runner dirty snapshots per game tick
 /// (`gnome_fletch_short` note) to 250 old dirty increments, then added a
 /// 100-dirty path/interaction allowance for the 74-tile field-to-bank route.
-/// The retained 350 cap now means 350 game ticks (210s).
-const MOSS_GIANT_BANK_LOOT_WATCH_TICKS: u32 = 350;
+/// The retained cap was 350 game ticks (210s). The five-Lobster seed runs the
+/// fight leg longer (modelled trip tick median 206, p99.9 307, plus 52-59
+/// ticks of walking to the booth), so the cap is 400 game ticks (240s).
+const MOSS_GIANT_BANK_LOOT_WATCH_TICKS: u32 = 400;
 const RUNE_ARROW_ID: i32 = 892;
 const MOSS_GIANT_DART_SUPPLY: i32 = 80;
 const MOSS_GIANT_DART_BANK_FOOD: i32 = 15;
@@ -352,6 +361,18 @@ pub(crate) fn moss_giant_dart_scenario() -> Scenario {
     );
     scenario
 }
+/// Whole-cell cap for this cell only; its step watches keep their own budgets.
+/// `UPSTREAM-MOSSGIANT-1026/report.md` timed the old two-Lobster cycle at 253
+/// and 280 game ticks from script start to fresh Strength XP, of which 125-136
+/// ticks follow the trip trigger (booth leg 52-59, restock, walk back, first
+/// swing). The five-Lobster seed moves the trip trigger to a modelled median of
+/// 206 ticks, p99 279, p99.9 307 (`MOSS-GIANT-DEADLINE-1026/r2/report.md`).
+/// With the 600 ms tick and about 18 s of seeding before Start, the slow end
+/// is (279 + 136) * 0.6 + 18 = 267 s and 99.996 % of modelled cycles end inside
+/// 300 s. 240 s would cut 16.5 % of them. The other cells in this file keep
+/// their own deadlines.
+const MOSS_GIANT_BANK_DEADLINE: Duration = Duration::from_secs(300);
+
 /// MossGiant's own trip end (no food left) reached after a looted Big bones,
 /// so the Ardougne West booth deposit and lobster restock are the source's
 /// transitions, not a seeded stock move.
@@ -412,6 +433,7 @@ pub(crate) fn moss_giant_bank_scenario() -> Scenario {
         .find(|step| step.name == "watch the trip's Big bones enter a fresh Ardougne West bank")
         .expect("moss bank has an earned Big bones watch");
     bank_loot.wait.budget_ticks = MOSS_GIANT_BANK_LOOT_WATCH_TICKS;
+    scenario.settings.deadline = MOSS_GIANT_BANK_DEADLINE;
     scenario
 }
 

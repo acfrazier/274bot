@@ -46,6 +46,67 @@ os.environ.setdefault("NIGHTLY_ROOT", str(Path(tempfile.gettempdir()) / "run-nig
 import run_nightly as rn
 
 
+_THROWAWAY_ROOT = Path(tempfile.gettempdir()).resolve()
+_real_maybe_self_update = rn.maybe_self_update
+
+
+def _throwaway_only_maybe_self_update(repo, *args, **kwargs):
+    """The test-only self-update gate: only throwaway repos may be updated.
+
+    Every `repo` below is a directory the test itself created under the
+    system temp dir. The real checkout (`rn.RUNNER_REPO`) is never updated:
+    `maybe_self_update` force-checks out `origin/dev`, which would discard
+    uncommitted work. Any other caller fails loudly before git runs.
+    """
+    if not Path(repo).resolve().is_relative_to(_THROWAWAY_ROOT):
+        raise AssertionError(
+            f"refusing to self-update {repo}: tests only update throwaway repos "
+            f"they create under {_THROWAWAY_ROOT}")
+    return _real_maybe_self_update(repo, *args, **kwargs)
+
+
+rn.maybe_self_update = _throwaway_only_maybe_self_update
+
+
+def _record_real_checkout_state():
+    """HEAD, branch and worktree state of the real checkout, if any.
+
+    `None` when this file does not run from a git checkout (the self-check
+    runs the candidate copy from a bare temporary directory).
+    """
+    repo = HERE.parent.parent
+    try:
+        head = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"],
+                              capture_output=True, text=True, check=True).stdout.strip()
+        branch = subprocess.run(["git", "-C", str(repo), "branch", "--show-current"],
+                                capture_output=True, text=True, check=True).stdout.strip()
+        porcelain = subprocess.run(["git", "-C", str(repo), "status", "--porcelain"],
+                                   capture_output=True, text=True, check=True).stdout
+    except (subprocess.SubprocessError, OSError):
+        return None
+    return (head, branch, porcelain)
+
+
+_REAL_CHECKOUT_STATE = _record_real_checkout_state()
+
+
+def tearDownModule():
+    """No test may touch the real checkout this file runs from.
+
+    A test that reaches `maybe_self_update` (or `main()`) with the real
+    `HERE`/runner path force-checks out `origin/dev` and discards uncommitted
+    edits (NIGHTLY-FROM-GITHUB-1026 finding 1). The gate above makes that
+    impossible; this teardown fails the suite if it ever happens anyway.
+    """
+    if _REAL_CHECKOUT_STATE is None:
+        return
+    after = _record_real_checkout_state()
+    if after != _REAL_CHECKOUT_STATE:
+        raise AssertionError(
+            f"a test touched the real checkout {HERE.parent.parent}: "
+            f"before={_REAL_CHECKOUT_STATE!r} after={after!r}")
+
+
 def make_target(root: Path, name: str, size: int) -> Path:
     target = root / name
     target.mkdir(parents=True)
@@ -686,6 +747,14 @@ class CatchUpTests(unittest.TestCase):
                 mock.patch.object(rn, "update_tree", fake_update_tree),
                 mock.patch.object(rn, "guard_disk", guard),
                 mock.patch.object(rn, "log", lambda _message: None),
+                # main() self-updates the runner checkout before anything else.
+                # The catch-up path under test never reaches the network: run
+                # the test with the update disabled, whatever the ambient
+                # environment opts into, so the real checkout is untouched.
+                mock.patch.object(rn, "maybe_self_update",
+                                  lambda *args, **kwargs: {"status": "disabled", "from": "test",
+                                                           "to": "test",
+                                                           "detail": "self-update disabled in tests"}),
                 mock.patch.object(sys, "argv", ["run_nightly.py", "--catch-up", "--branch", "dev"]),
             ]
             for patch in patches:
@@ -2324,22 +2393,27 @@ class Rs2b0tApiDriftTests(unittest.TestCase):
             tree = self.make_tree(root, str(upstream), frozen)
             real_git = shutil.which("git")
             self.assertTrue(real_git)
-            fake_bin = root / "fakebin"
-            fake_bin.mkdir()
-            fake_git = fake_bin / "git"
-            fake_git.write_text(
-                "#!/bin/sh\n"
-                'for a in "$@"; do if [ "$a" = "log" ]; then\n'
-                '  echo "fake log failure: boom" >&2\n  exit 9\nfi; done\n'
-                f'exec "{real_git}" "$@"\n',
+            # A Python fake routed through `git_cmd`, not a PATH shell
+            # script: Windows never runs an extensionless `git` file
+            # (process creation appends .exe only), so the old shell fake
+            # never intercepted there and the real `log` succeeded. The
+            # fake still fails a real subprocess with the real exit code
+            # and stderr, and delegates every other git call to real git.
+            fake_py = root / "fake_git.py"
+            fake_py.write_text(
+                "import subprocess, sys\n"
+                "real, args = sys.argv[1], sys.argv[2:]\n"
+                "if 'log' in args:\n"
+                "    sys.stderr.write('fake log failure: boom\\n')\n"
+                "    sys.exit(9)\n"
+                "sys.exit(subprocess.run([real, *args]).returncode)\n",
                 encoding="utf-8")
-            fake_git.chmod(0o755)
-            old_path = os.environ.get("PATH", "")
-            os.environ["PATH"] = f"{fake_bin}{os.pathsep}{old_path}"
-            try:
+
+            def fake_git_cmd(*args: str) -> list[str]:
+                return [sys.executable, str(fake_py), real_git, *args]
+
+            with mock.patch.object(rn, "git_cmd", side_effect=fake_git_cmd):
                 info = rn.check_rs2b0t_api_drift(tree, catalog)
-            finally:
-                os.environ["PATH"] = old_path
             self.assertEqual(info["status"], "unavailable")
             self.assertIn("9", info.get("reason") or "")
             self.assertIn("boom", info.get("reason") or "")
@@ -2378,6 +2452,253 @@ class Rs2b0tApiDriftTests(unittest.TestCase):
             md = (run_dir / "summary.md").read_text(encoding="utf-8")
             self.assertIn("- rs2b0t API: UNAVAILABLE (", md)
 
+
+def make_branch_repo(root: Path, name: str, *, branch: str = "dev",
+                     files: dict | None = None) -> Path:
+    """A git repo with `files` committed on `branch` (branch-list test helper)."""
+    repo = root / name
+    repo.mkdir(parents=True)
+    git("init", "-q", cwd=repo)
+    git("symbolic-ref", "HEAD", f"refs/heads/{branch}", cwd=repo)
+    for relative, text in (files or {"seed.txt": "seed\n"}).items():
+        path = repo / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+    git("add", ".", cwd=repo)
+    git("-c", "user.name=test", "-c", "user.email=test@example.invalid",
+        "commit", "-qm", "init", cwd=repo)
+    return repo
+
+
+@unittest.skipUnless(shutil.which("git"), "git is not installed")
+class BranchListTests(unittest.TestCase):
+    def test_github_list_is_used_when_the_fetch_works(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            origin = make_branch_repo(root, "origin", branch="dev", files={
+                "tools/nightly/branches.conf": "scratch-fix\ndev\n"})
+            tip = git("rev-parse", "HEAD", cwd=origin)
+            runner = root / "runner"
+            subprocess.run(["git", "clone", "-q", str(origin), str(runner)], check=True)
+            local = root / "branches.conf"
+            local.write_text("stale-branch\n", encoding="utf-8")
+            with mock.patch.dict(os.environ):
+                os.environ.pop("NIGHTLY_BRANCHES", None)
+                branches, info = rn.resolve_branch_list(None, runner, local)
+            self.assertEqual(branches, ["scratch-fix", "dev"])
+            self.assertEqual(info["source"], "github")
+            self.assertEqual(info["commit"], tip)
+
+    def test_local_list_and_a_summary_note_when_the_fetch_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            # No origin remote: the fetch must fail.
+            runner = make_branch_repo(root, "runner", branch="dev")
+            local = root / "branches.conf"
+            local.write_text("# local list\nfix-line\ndev\n", encoding="utf-8")
+            with mock.patch.dict(os.environ):
+                os.environ.pop("NIGHTLY_BRANCHES", None)
+                branches, info = rn.resolve_branch_list(None, runner, local)
+            self.assertEqual(branches, ["fix-line", "dev"])
+            self.assertEqual(info["source"], "local")
+            self.assertIn("fetch", info["note"])
+
+    def test_explicit_branch_wins_without_a_fetch(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            runner = make_branch_repo(Path(tmp), "runner", branch="dev")
+            with mock.patch.dict(os.environ):
+                os.environ.pop("NIGHTLY_BRANCHES", None)
+                with mock.patch.object(rn, "read_remote_branches",
+                                       side_effect=AssertionError("must not fetch")):
+                    branches, info = rn.resolve_branch_list(["dev"], runner)
+            self.assertEqual(branches, ["dev"])
+            self.assertEqual(info["source"], "cli")
+
+    def test_env_branches_win_without_a_fetch(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            runner = make_branch_repo(Path(tmp), "runner", branch="dev")
+            with mock.patch.dict(os.environ, {"NIGHTLY_BRANCHES": "release/0.2.6 dev"}):
+                with mock.patch.object(rn, "read_remote_branches",
+                                       side_effect=AssertionError("must not fetch")):
+                    branches, info = rn.resolve_branch_list(None, runner)
+            self.assertEqual(branches, ["release/0.2.6", "dev"])
+            self.assertEqual(info["source"], "env")
+
+
+@unittest.skipUnless(shutil.which("git"), "git is not installed")
+class SelfUpdateTests(unittest.TestCase):
+    def setUp(self):
+        if os.environ.get("NIGHTLY_SELF_CHECK_ACTIVE"):
+            self.skipTest("the self-check does not re-test the updater")
+
+    def enable_update_env(self):
+        """Opt into the update path: NIGHTLY_SELF_UPDATE=1, no re-exec state."""
+        patcher = mock.patch.dict(os.environ)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        for key in ("NIGHTLY_SELF_UPDATE_DONE", "NIGHTLY_SELF_UPDATE_FROM"):
+            os.environ.pop(key, None)
+        os.environ["NIGHTLY_SELF_UPDATE"] = "1"
+
+    def test_update_is_off_unless_opted_in(self):
+        off_values = [None, "0", "", "false", "no", "off"]
+        for off in off_values:
+            with self.subTest(opt_in=off):
+                with tempfile.TemporaryDirectory() as tmp:
+                    root = Path(tmp)
+                    origin = make_branch_repo(root, "origin", branch="dev", files={
+                        "tools/nightly/run_nightly.py": "# new\n"})
+                    runner = root / "runner"
+                    subprocess.run(["git", "clone", "-q", str(origin), str(runner)], check=True)
+                    script = runner / "tools/nightly/run_nightly.py"
+                    before = script.read_text(encoding="utf-8")
+                    # A broken remote proves no fetch is attempted while off.
+                    subprocess.run(["git", "remote", "set-url", "origin", str(root / "missing.git")],
+                                   cwd=runner, check=True)
+                    calls: list = []
+                    with mock.patch.dict(os.environ):
+                        os.environ.pop("NIGHTLY_SELF_UPDATE_DONE", None)
+                        os.environ.pop("NIGHTLY_SELF_UPDATE_FROM", None)
+                        if off is None:
+                            os.environ.pop("NIGHTLY_SELF_UPDATE", None)
+                        else:
+                            os.environ["NIGHTLY_SELF_UPDATE"] = off
+                        info = rn.maybe_self_update(runner, script, ["--branch", "dev"],
+                                                    _exec=lambda *args: calls.append(args))
+                    self.assertEqual(info["status"], "disabled")
+                    self.assertEqual(script.read_text(encoding="utf-8"), before)
+                    self.assertEqual(calls, [])
+
+    def test_a_failed_self_check_keeps_the_old_code(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            origin = make_branch_repo(root, "origin", branch="dev", files={
+                "tools/nightly/run_nightly.py": "# old runner\n"})
+            runner = root / "runner"
+            subprocess.run(["git", "clone", "-q", str(origin), str(runner)], check=True)
+            old_head = git("rev-parse", "HEAD", cwd=runner)
+            (origin / "tools/nightly/run_nightly.py").write_text("def broken(:\n", encoding="utf-8")
+            git("add", ".", cwd=origin)
+            git("-c", "user.name=test", "-c", "user.email=test@example.invalid",
+                "commit", "-qm", "broken", cwd=origin)
+            tip = git("rev-parse", "HEAD", cwd=origin)
+            self.assertNotEqual(tip, old_head)
+            script = runner / "tools/nightly/run_nightly.py"
+            calls: list = []
+            self.enable_update_env()
+            info = rn.maybe_self_update(runner, script, ["--branch", "dev"],
+                                        _exec=lambda *args: calls.append(args))
+            self.assertEqual(info["status"], "check-failed")
+            self.assertEqual(info["to"], tip)
+            self.assertEqual(script.read_text(encoding="utf-8"), "# old runner\n")
+            self.assertEqual(git("rev-parse", "HEAD", cwd=runner), old_head)
+            self.assertEqual(calls, [])
+
+    def test_a_passing_self_check_updates_and_reexecs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            staged = root / "staged"
+            shutil.copytree(HERE, staged / "tools/nightly",
+                            ignore=shutil.ignore_patterns("__pycache__"))
+            origin = root / "origin"
+            origin.mkdir()
+            git("init", "-q", cwd=origin)
+            git("symbolic-ref", "HEAD", "refs/heads/dev", cwd=origin)
+            shutil.copytree(staged / "tools", origin / "tools")
+            git("add", ".", cwd=origin)
+            git("-c", "user.name=test", "-c", "user.email=test@example.invalid",
+                "commit", "-qm", "runner", cwd=origin)
+            runner = root / "runner"
+            subprocess.run(["git", "clone", "-q", str(origin), str(runner)], check=True)
+            probe = "# nightly self-update probe\n"
+            with (origin / "tools/nightly/run_nightly.py").open("a", encoding="utf-8") as handle:
+                handle.write(probe)
+            git("add", ".", cwd=origin)
+            git("-c", "user.name=test", "-c", "user.email=test@example.invalid",
+                "commit", "-qm", "probe", cwd=origin)
+            tip = git("rev-parse", "HEAD", cwd=origin)
+            script = runner / "tools/nightly/run_nightly.py"
+            calls: list = []
+            self.enable_update_env()
+            info = rn.maybe_self_update(runner, script, ["--branch", "dev"],
+                                        _exec=lambda *args: calls.append(args))
+            self.assertIsNone(info)
+            self.assertEqual(len(calls), 1)
+            executable, argv, _env = calls[0]
+            self.assertEqual(executable, sys.executable)
+            self.assertEqual(argv[:2], [sys.executable, str(script)])
+            self.assertEqual(argv[2:], ["--branch", "dev"])
+            self.assertIn(probe, script.read_text(encoding="utf-8"))
+            self.assertEqual(git("rev-parse", "HEAD", cwd=runner), tip)
+
+
+class ReexecTests(unittest.TestCase):
+    def test_windows_reexec_waits_for_the_child_exit_code(self):
+        seen: list = []
+
+        def fake_run(args, env):
+            seen.append((list(args), dict(env)))
+            return subprocess.CompletedProcess(args, 42)
+
+        with mock.patch.object(os, "name", "nt"):
+            with mock.patch.object(subprocess, "run", side_effect=fake_run):
+                with self.assertRaises(SystemExit) as exited:
+                    rn.reexec(sys.executable, [sys.executable, "run_nightly.py"], {"K": "V"})
+        self.assertEqual(exited.exception.code, 42)
+        self.assertEqual(seen, [([sys.executable, "run_nightly.py"], {"K": "V"})])
+
+    def test_posix_reexec_replaces_the_process(self):
+        with mock.patch.object(os, "name", "posix"):
+            with mock.patch.object(os, "execvpe", create=True) as execvpe:
+                with mock.patch.object(subprocess, "run",
+                                       side_effect=AssertionError("must not spawn")):
+                    rn.reexec(sys.executable, [sys.executable, "run_nightly.py"], {"K": "V"})
+        execvpe.assert_called_once_with(sys.executable, [sys.executable, "run_nightly.py"],
+                                        {"K": "V"})
+
+
+class BranchListSummaryTests(unittest.TestCase):
+    def test_run_branch_summary_records_branch_list_and_self_update(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+
+            def fake_update_tree(_branch, tree, _build_log):
+                catalog = tree / rn.CATALOG_RS
+                catalog.parent.mkdir(parents=True)
+                catalog.write_text(
+                    'const REGISTRY: &[Entry] = &[\n    Entry::new("walk"),\n];\n',
+                    encoding="utf-8")
+                return "c" * 40, "c" * 9
+
+            branch_list = {"source": "github", "commit": "a" * 40,
+                           "note": "from origin/dev at " + "a" * 40}
+            self_update = {"status": "check-failed", "from": "o" * 40, "to": "n" * 40,
+                           "detail": "candidate origin/dev failed the self-check; running old code"}
+            patches = [
+                mock.patch.object(rn, "ROOT", root),
+                mock.patch.object(rn, "STEPS", ["tui"]),
+                mock.patch.object(rn, "FRESH_TREES", False),
+                mock.patch.object(rn, "REQUIRE_CONSOLE", False),
+                mock.patch.object(rn, "ENGINE_MODE", "remote"),
+                mock.patch.object(rn, "update_tree", fake_update_tree),
+                mock.patch.object(rn, "log", lambda _message: None),
+            ]
+            for patch in patches:
+                patch.start()
+            try:
+                run_dir = rn.run_branch("dev", 1, None, None, unavailable="probe reason",
+                                        summary_only=True, branch_list=branch_list,
+                                        self_update=self_update)
+            finally:
+                for patch in patches:
+                    patch.stop()
+            summary = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
+            self.assertEqual(summary["branch_list"], branch_list)
+            self.assertEqual(summary["self_update"], self_update)
+            md = (run_dir / "summary.md").read_text(encoding="utf-8")
+            self.assertIn("origin/dev", md)
+            self.assertIn("Runner self-update", md)
+            self.assertTrue((run_dir / "DONE").is_file())
 
 if __name__ == "__main__":
     unittest.main()

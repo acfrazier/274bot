@@ -4964,9 +4964,13 @@ fn tui_failed_ack_persist_then_success_clears_only_that_error() {
     let mut session = TuiSession::new(dummy_options());
     let mut app = pump_two_slots(&mut session);
     assert!(app.background_notice.is_some());
-    let parent = session.preferences.path().parent().unwrap().to_path_buf();
-    let _ = std::fs::remove_dir_all(&parent);
-    std::fs::write(&parent, b"not-a-dir").unwrap();
+    settle_preferences(&mut session, &mut app);
+    // An unreadable preferences file refuses the store on every platform. (A
+    // folder replaced by a file does not: a read through it fails as
+    // `NotADirectory` on Unix but as `NotFound` on Windows, which the store
+    // reads as "no file yet", and the write then fails later, not at once.)
+    let path = session.preferences.path();
+    crate::test_support::write_private_fixture(&path, b"{malformed").unwrap();
     assert!(session.preferences.reload().is_err());
     app.error = None;
     session.ack_background_bots(&mut app);
@@ -4984,7 +4988,7 @@ fn tui_failed_ack_persist_then_success_clears_only_that_error() {
     assert!(!frontend_core::resources::background_bots_acked(
         &session.preferences
     ));
-    std::fs::remove_file(&parent).unwrap();
+    std::fs::remove_file(&path).unwrap();
     session.preferences.reload().unwrap();
     session.ack_background_bots(&mut app);
     settle_preferences(&mut session, &mut app);
@@ -8423,15 +8427,20 @@ fn the_message_line_shows_and_expires_refusals_at_both_sizes() {
     let _iso = iso;
 }
 
-/// Whether the process log holds a refusal line containing `line`.
+/// Whether the process log holds a refusal line containing `line`. The log
+/// redacts every registered password (the short ones other tests register
+/// too, such as "test"), wherever it appears: so a line that holds a path is
+/// compared after the same redaction, whatever the temporary folder is called.
 fn refusal_logged(line: &str) -> bool {
     use frontend_core::log::{global, LogScope, LogView};
     let mut view = LogView::new(LogScope::Process);
-    view.edit_filter(|filter| filter.set_text(line));
+    view.edit_filter(|filter| filter.set_text("command refused: "));
     global().refresh(&mut view);
-    view.rows()
-        .iter()
-        .any(|row| row.message().starts_with("command refused: "))
+    let wanted = api::hostlog::redact(line);
+    view.rows().iter().any(|row| {
+        row.message().starts_with("command refused: ")
+            && api::hostlog::redact(row.message()).contains(&*wanted)
+    })
 }
 
 /// PANEL-STATE-GAP-1023 (F2): a command the terminal app refuses before it
