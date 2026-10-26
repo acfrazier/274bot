@@ -84,8 +84,8 @@ fn validate_non_yielding_module_is_bounded() {
         let baseline = live_runtime_count();
         for attempt in 1..=3 {
             let started = Instant::now();
-            let card = crate::library::library::PreparedCard {
-                card: crate::library::library::JsCard {
+            let card = crate::library::store::PreparedCard {
+                card: crate::library::store::JsCard {
                     name: "runaway".into(),
                     path: "runaway.ts".into(),
                     shape: LoadShape::NativeTick,

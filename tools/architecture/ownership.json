@@ -3839,7 +3839,7 @@
       "owner": "T1"
     },
     {
-      "path": "crates/script-js/src/library/library.rs",
+      "path": "crates/script-js/src/library/store.rs",
       "owner": "T1"
     },
     {

@@ -29,13 +29,13 @@ pub use library::shape::{
 
 pub use library::shape::{resolve_sibling_modules, transpile_ts};
 
-pub use library::library::JsLibrary;
-pub use library::library::{
+pub use library::store::JsLibrary;
+pub use library::store::{
     default_js_store, format_load_failures, CatalogApplyReport, CatalogDiff, JsCard, LoadFailure,
     LoadStage, PreparedCard,
 };
 
-pub use library::library::{
+pub use library::store::{
     CardPreparationOutcome, CardPreparationSnapshot, CatalogPreparationResult,
     CatalogPreparationSnapshot, CatalogSnapshotError, CatalogWorkerError,
 };

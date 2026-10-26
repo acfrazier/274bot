@@ -21,10 +21,12 @@ use super::bindings::wire_runtime;
 use super::snapshot::{
     dispatch_native_events, key_string, materialize_settings_bag, materialize_snapshot,
 };
-use crate::library::shape::{self, LoadShape};
-use crate::materialize::{
-    loadout_v8, machine_v8, paint_chrome, paint_jive, reach_query, run_policy_v8,
-};
+#[cfg(test)]
+use crate::library::shape;
+use crate::library::shape::LoadShape;
+use crate::materialize::reach_query;
+#[cfg(test)]
+use crate::materialize::{loadout_v8, machine_v8, paint_chrome, paint_jive, run_policy_v8};
 use rustyscript::{json_args, Runtime, RuntimeOptions};
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize};
@@ -495,7 +497,7 @@ impl LoadIsolate {
     /// Queue a whole refresh on the single process ValidationSeat. The
     /// receiver owns the original cards, so the UI can fence the result.
     pub fn validate_prepared_batch(
-        cards: Vec<crate::library::library::PreparedCard>,
+        cards: Vec<crate::library::store::PreparedCard>,
     ) -> Result<ValidationBatch, ValidationError> {
         validation::validate_batch(cards)
     }
