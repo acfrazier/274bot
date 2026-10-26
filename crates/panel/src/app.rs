@@ -4457,7 +4457,7 @@ fn apply_to_all_section(ui: &Ui, session: &mut Session) {
 }
 
 /// Draw the Scripts window's Apply to same-card members section for a test.
-#[cfg(test)]
+#[cfg(all(test, feature = "js"))]
 pub(crate) fn draw_test_apply_section(ui: &Ui, session: &mut Session) {
     apply_to_all_section(ui, session);
 }

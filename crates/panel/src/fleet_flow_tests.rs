@@ -126,6 +126,7 @@ impl Rig {
         self.layout = layout;
     }
 
+    #[cfg(feature = "js")]
     /// One frame that draws the Fleet window and the Scripts window's Apply
     /// to same-card members section; how many plan rows it drew.
     fn frame_with_scripts_section(&mut self) -> usize {

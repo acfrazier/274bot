@@ -4594,8 +4594,10 @@ enum At {
     List,
     /// The Discard / Keep editing prompt.
     SwitchPrompt,
+    #[cfg(feature = "js")]
     /// The editor pane's scrolling body (the import's path field).
     Editor,
+    #[cfg(feature = "js")]
     /// A popup the window opened in its own scope.
     Popup(&'static str),
 }
@@ -4647,6 +4649,7 @@ fn profiles_item(
                 ));
                 (prompt, (*prompt).ID)
             }
+            #[cfg(feature = "js")]
             At::Editor => {
                 let editor = window(&format!(
                     "Profiles/##profiles-editor_{:08X}",
@@ -4654,6 +4657,7 @@ fn profiles_item(
                 ));
                 (editor, (*editor).ID)
             }
+            #[cfg(feature = "js")]
             At::Popup(popup) => {
                 let popup = window(&format!("##Popup_{:08x}", id(popup, profiles_id)));
                 (popup, (*popup).ID)
@@ -4981,6 +4985,7 @@ impl ProfilesUi {
         self.frame()
     }
 
+    #[cfg(feature = "js")]
     /// Type `text` into the text field `label` (its id lives `at`): a mouse
     /// click on the field, then the characters as the keyboard sends them.
     fn type_into(&mut self, at: At, label: &str, text: &str) -> Shown {
