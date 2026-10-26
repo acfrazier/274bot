@@ -966,12 +966,37 @@ observation seconds. After observation, scripts Stop and the harness remains
 open for `BOT_MEMORY_TEARDOWN_S`.
 
 Ingame readiness requires every slot to remain `ingame && scene_state == 2`
-continuously for two seconds. A transient ready pulse before the mainland-hop
-reload does not latch. Samples report that settled `all_bots_ingame_scene2_s`
-milestone separately from `qualification_complete_s`. Qualification additionally
-requires seed/proof completion and running scripts for active workloads.
+for two seconds. A ready pulse before the mainland-hop reload does not latch.
+Samples report `all_bots_ingame_scene2_s` separately from
+`qualification_complete_s`. Active workloads also require seed or proof
+completion and running scripts.
+
+The phase gate applies to idle and Thiever workloads. Idle requires every slot
+to remain in scene 2 without a started script. Its tick baseline starts with the
+existing two-second readiness hold. Seeded-idle and Thiever require the initial
+Lobster pack and a closed bank. Seeded-idle and sustained Thiever start with
+four Lobsters. Ordinary Thiever starts with ten.
+
+Each bot must observe the configured warmup divided by 600 ms, rounded down, in
+`PLAYER_INFO` ticks. For example, 10 seconds requires 16 ticks. Five seconds
+requires 8 ticks. The configured wall-clock warmup still controls the window
+start after every bot reaches the tick floor.
+
+An idle script start fails with
+`phase_missed:idle_script_started:<name>:tick=N`. A Thiever bank opening, food
+count at or below three, or food count above its initial value fails with
+`phase_missed:thiever_first_bank:<name>:tick=N`. Another initial-food change
+fails with `phase_missed:thiever_initial_food_changed:<name>:tick=N`.
+A gated run that does not reach its phase fails with
+`phase_not_reached:qualification_timeout`. The observe-start check reports
+`phase_not_reached:observe_start`.
+
+`moss_giant_bank_start`, `duel_arena` and `gatherer` report `phase not gated`.
+Their `phase_gated` field is false. MossGiant records its Lobster count without
+a gate. A workload with no food records `null`.
+
 Multi-slot `moss_giant_bank_start` replaces only its contended post-return
-fresh-XP checkpoint with fail-closed local-player named-NPC engagement; the
+fresh-XP checkpoint with fail-closed local-player named-NPC engagement. The
 scenario's final Strength-XP-since-Start proof remains mandatory.
 
 Multi-slot `gatherer` uses a fleet qualification for the contended Draynor
@@ -1159,9 +1184,25 @@ not apply (a headless `tui-play` has no adapter or panel frames):
   to load) and `proved` (runners that passed their final proof), so a fleet that
   stalls shows when `proved` stopped rising; both are `null` for idle workloads.
 
-`samples.qualification.jsonl` contains observation start/end progress and, for a
-failed fleet, the per-slot failure record above. With optional diagnostics,
-`samples.diagnostics.jsonl` adds bounded per-slot evidence.
+`samples.qualification.jsonl` records observation start, observation end and
+failed-fleet rows. Each row has `gameplay_phase_rule`, `phase_gated` and
+`required_warmup_game_ticks`. Each slot has a `gameplay_phase` object with
+`gated`, `rule`, `phase`, `observed_game_tick`, `warmup_start_game_tick`,
+`warmup_game_ticks`, `food`, `bank_open`, `tile` and `first_phase_miss`.
+The MossGiant `observe-start` row records its Lobster count in `food`. A
+workload without food records `null`. `moss_giant_bank_start`, `duel_arena`
+and `gatherer` report `phase_gated: false`.
+
+`memory.rs` is compiled into each measured binary. A commit without this code
+does not apply the phase gate. A gated record contains the phase fields above.
+An older FLOOR baseline lacks them. The candidate is the only gated side when
+it contains this code and the baseline does not. If one record has the phase
+fields and the other does not, the binary with fields used this code. Compare
+results only when both commits contain the change.
+
+With optional diagnostics, `samples.diagnostics.jsonl` adds bounded per-slot
+evidence.
+
 The diagnostics sidecar's `recent_navigation` is always null: detailed
 navigation history, direct-owner census, scheduling/latency journals, managed
 process controllers and campaign replay/provisioning tools are not part of

@@ -50,6 +50,7 @@ import stat
 import statistics
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import urllib.request
@@ -782,6 +783,232 @@ def catalog_cells(tree: Path) -> list[str]:
             "the registry format changed, update catalog_cells()")
     return names
 
+
+# ------------------------------------------------- branch list and self-update
+#
+# At the start of a night the runner takes its branch list from GitHub: it
+# fetches origin and reads tools/nightly/branches.conf from origin/dev. The
+# precedence stays: --branch, then NIGHTLY_BRANCHES, then the GitHub list. A
+# failed fetch falls back to the local file and says so in every summary.
+#
+# The runner also updates its own checkout (tools/nightly/ under RUNNER_REPO)
+# to origin/dev before a night and re-executes itself, after the candidate
+# passes a self-check (py_compile of the runner files plus its own unit tests,
+# about a minute at most). The update is opt-in: only NIGHTLY_SELF_UPDATE=1
+# (set on the runner machines) updates. Anything else, including unset, keeps
+# the old code. Only the runner checkout is ever touched: every git command
+# below runs with -C at `repo`, the candidate is extracted under a temporary
+# directory, and the re-exec runs the same script path again.
+BRANCHES_REF = "origin/dev"
+BRANCHES_REL = "tools/nightly/branches.conf"
+SELF_UPDATE_ENV = "NIGHTLY_SELF_UPDATE"
+SELF_UPDATE_DONE_ENV = "NIGHTLY_SELF_UPDATE_DONE"
+SELF_UPDATE_FROM_ENV = "NIGHTLY_SELF_UPDATE_FROM"
+# Set in the self-check subprocess: the updater's own tests skip when it is
+# present, so a check never re-tests the updater recursively.
+SELF_CHECK_ACTIVE_ENV = "NIGHTLY_SELF_CHECK_ACTIVE"
+# The whole guard (py_compile plus the runner's own unit tests) fits in about
+# a minute on Linux and macOS. On Windows the same suite takes over two
+# minutes (process and git spawn cost), so the Windows night allows five.
+# A slower or hung check keeps the old code instead of the night.
+SELF_UPDATE_TIMEOUT_S = 300 if IS_WINDOWS else 55
+FETCH_TIMEOUT_S = 120
+RUNNER_PY_FILES = ("run_nightly.py", "nightly-mac-guest.py", "latency_proxy.py")
+SELF_TEST_FILE = "test_run_nightly.py"
+
+
+def self_update_enabled() -> bool:
+    """NIGHTLY_SELF_UPDATE=1 opts in. Off by default: the update force-checks
+    out origin/dev in the runner checkout, so a hand run from a developer
+    checkout must never update unless the runner machines opted in."""
+    return os.environ.get(SELF_UPDATE_ENV, "0") in ("1", "true", "yes")
+
+
+def reexec(executable: str, args: list[str], env: dict) -> None:
+    """Replace this process with the updated runner.
+
+    On Windows os.execvpe starts a child and the waiting parent exits 0 at
+    once, so Task Scheduler would record success whatever the night did;
+    there the child runs to the end and its exit code becomes ours.
+    """
+    if os.name == "nt":
+        sys.exit(subprocess.run(args, env=env).returncode)
+    os.execvpe(executable, args, env)
+
+
+def runner_head(repo: Path) -> str:
+    """The runner checkout's HEAD, or "unknown" when it cannot be read."""
+    try:
+        return run(git_cmd("-C", str(repo), "rev-parse", "HEAD"), env=git_env()).stdout.strip()
+    except (subprocess.SubprocessError, OSError):
+        return "unknown"
+
+
+def fetch_branch_tip(repo: Path, timeout: float | None = FETCH_TIMEOUT_S) -> str:
+    """Fetch origin's dev into the runner checkout; return the tip SHA."""
+    run(git_cmd("-C", str(repo), "fetch", "--prune", "origin",
+                f"+refs/heads/dev:refs/remotes/{BRANCHES_REF}"),
+        env=git_env(), timeout=timeout)
+    return run(git_cmd("-C", str(repo), "rev-parse", BRANCHES_REF), env=git_env()).stdout.strip()
+
+
+def parse_branch_lines(text: str) -> list[str]:
+    """One branch per line; `#` starts a comment, like read_list."""
+    return [row for line in text.splitlines()
+            if (row := line.split("#", 1)[0].strip())]
+
+
+def read_remote_branches(repo: Path) -> tuple[list[str], str]:
+    """The branch list from origin/dev: fetch, then show the file. Return the
+    list and the tip SHA. Raise on a fetch failure or an empty list."""
+    tip = fetch_branch_tip(repo)
+    text = run(git_cmd("-C", str(repo), "show", f"{BRANCHES_REF}:{BRANCHES_REL}"),
+               env=git_env()).stdout
+    branches = parse_branch_lines(text)
+    if not branches:
+        raise RuntimeError(f"{BRANCHES_REL} on {BRANCHES_REF} names no branches")
+    return branches, tip
+
+
+def resolve_branch_list(requested: list[str] | None, repo: Path,
+                        local_path: Path | None = None) -> tuple[list[str], dict]:
+    """The night's branches and where they came from.
+
+    Precedence: --branch, then NIGHTLY_BRANCHES, then the GitHub list on
+    origin/dev. When the fetch fails, the local file is used and the note
+    says so, so a night is never lost to a fetch failure.
+    """
+    if requested:
+        return list(requested), {"source": "cli", "commit": "",
+                                 "note": "from --branch"}
+    env_branches = os.environ.get("NIGHTLY_BRANCHES", "").split()
+    if env_branches:
+        return env_branches, {"source": "env", "commit": "",
+                              "note": "from NIGHTLY_BRANCHES"}
+    local_path = local_path or HERE / "branches.conf"
+    try:
+        branches, tip = read_remote_branches(repo)
+    except (subprocess.SubprocessError, OSError, RuntimeError) as error:
+        branches = parse_branch_lines(rtext(local_path))
+        head = runner_head(repo)
+        return branches, {"source": "local", "commit": head,
+                          "note": (f"fetch of {BRANCHES_REF} failed "
+                                   f"({_short_line(error)}); using local {local_path.name}")}
+    return branches, {"source": "github", "commit": tip,
+                      "note": f"from {BRANCHES_REF} at {tip}"}
+
+
+def extract_runner_candidate(repo: Path, dest: Path, ref: str = BRANCHES_REF) -> None:
+    """Materialize origin/dev's tools/nightly/ under `dest` for the self-check.
+    The runner checkout itself is never touched here."""
+    names = run(git_cmd("-C", str(repo), "ls-tree", "-r", "--name-only", ref, "tools/nightly"),
+                env=git_env()).stdout.split()
+    for name in names:
+        parts = Path(name).parts
+        if not name.startswith("tools/nightly/") or ".." in parts or Path(name).is_absolute():
+            raise RuntimeError(f"refusing to extract unsafe path from {ref}: {name!r}")
+        target = dest / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        data = subprocess.run(git_cmd("-C", str(repo), "show", f"{ref}:{name}"),
+                              env=git_env(), check=True, stdout=subprocess.PIPE).stdout
+        target.write_bytes(data)
+
+
+def self_check_candidate(candidate: Path, test_file: str = SELF_TEST_FILE,
+                         timeout: float = SELF_UPDATE_TIMEOUT_S) -> tuple[bool, str]:
+    """py_compile the candidate runner files, then run its own unit tests.
+    Return (True, detail) or (False, reason)."""
+    nightly_dir = candidate / "tools" / "nightly"
+    sources = sorted(str(path) for name in RUNNER_PY_FILES if (path := nightly_dir / name).is_file())
+    if not sources:
+        return False, "candidate has no runner files"
+    compiled = subprocess.run([sys.executable, "-m", "py_compile", *sources],
+                              capture_output=True, text=True)
+    if compiled.returncode:
+        reason = (compiled.stderr or compiled.stdout).strip().splitlines()
+        return False, f"py_compile failed: {reason[-1][:300] if reason else 'unknown error'}"
+    test_path = nightly_dir / test_file
+    if not test_path.is_file():
+        return False, f"candidate has no {test_file}"
+    env = dict(os.environ, NIGHTLY_ROOT=str(candidate / "self-check-root"),
+               NIGHTLY_SELF_CHECK_ACTIVE="1")
+    try:
+        tested = subprocess.run([sys.executable, "-B", str(test_path)], cwd=str(candidate),
+                                env=env, capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return False, f"{test_file} did not finish within {timeout} s"
+    if tested.returncode:
+        tail = (tested.stderr or tested.stdout).strip().splitlines()
+        return False, f"{test_file} failed: {tail[-1][:300] if tail else 'unknown error'}"
+    return True, f"py_compile ok; {test_file} passed"
+
+
+def maybe_self_update(repo: Path, script: Path, argv: list[str] | None = None,
+                      _exec: Callable = reexec) -> dict | None:
+    """Update the runner checkout to origin/dev and re-execute, after the
+    candidate passes its self-check. Return the summary info, or None when
+    this process re-executes (the new process reports status "updated"). Only
+    the runner checkout (`git -C repo`) is ever touched."""
+    head = runner_head(repo)
+    if not self_update_enabled():
+        return {"status": "disabled", "from": head, "to": head,
+                "detail": f"{SELF_UPDATE_ENV} is not 1; running {head}"}
+    if os.environ.get(SELF_UPDATE_DONE_ENV):
+        previous = os.environ.get(SELF_UPDATE_FROM_ENV, "")
+        detail = f"re-executed after self-update to {head}"
+        if previous:
+            detail += f" (was {previous})"
+        return {"status": "updated", "from": previous or head, "to": head, "detail": detail}
+    try:
+        tip = fetch_branch_tip(repo)
+    except (subprocess.SubprocessError, OSError) as error:
+        return {"status": "fetch-failed", "from": head, "to": head,
+                "detail": f"fetch of {BRANCHES_REF} failed ({_short_line(error)}); running {head}"}
+    if tip == head:
+        return {"status": "current", "from": head, "to": tip,
+                "detail": f"already at {BRANCHES_REF} {tip}"}
+    with tempfile.TemporaryDirectory(prefix="nightly-self-update-") as tmp:
+        candidate = Path(tmp) / "candidate"
+        try:
+            extract_runner_candidate(repo, candidate)
+        except (subprocess.SubprocessError, OSError, RuntimeError) as error:
+            return {"status": "extract-failed", "from": head, "to": tip,
+                    "detail": (f"could not extract {BRANCHES_REF} {tip} "
+                               f"({_short_line(error)}); running {head}")}
+        ok, check_detail = self_check_candidate(candidate)
+    if not ok:
+        return {"status": "check-failed", "from": head, "to": tip,
+                "detail": f"candidate {BRANCHES_REF} {tip} failed the self-check "
+                          f"({check_detail}); running {head}"}
+    run(git_cmd("-C", str(repo), "checkout", "--force", "--detach", BRANCHES_REF),
+        env=git_env())
+    env = dict(os.environ, **{SELF_UPDATE_DONE_ENV: "1", SELF_UPDATE_FROM_ENV: head})
+    _exec(sys.executable, [sys.executable, str(script),
+                           *(argv if argv is not None else sys.argv[1:])], env)
+    return None
+
+
+def branch_list_text(info: dict) -> str:
+    """The one `summary.md` line for a resolve_branch_list info dict."""
+    source = info.get("source") or "unknown"
+    if source == "github":
+        return f"github {BRANCHES_REF} at {info.get('commit')}"
+    if source == "local":
+        return f"local branches.conf ({info.get('note')})"
+    if source == "cli":
+        return "command line (--branch)"
+    if source == "env":
+        return "NIGHTLY_BRANCHES"
+    return str(source)
+
+
+def self_update_text(info: dict) -> str:
+    """The one `summary.md` line for a maybe_self_update info dict."""
+    status = info.get("status") or "unknown"
+    detail = info.get("detail") or ""
+    if detail:
+        return f"{status}: {detail}"
+    return str(status)
 
 # ---------------------------------------------------------------- disk guard
 
@@ -2164,15 +2391,22 @@ def _cell_window(result: CellResult) -> tuple[float, float] | None:
 def probe_latency_proxy(port: int, timeout: float = 5.0) -> tuple[bool, str]:
     """One probe connection through the proxy, before any cell starts.
 
-    The probe sends the game first byte (14). The proxy then connects to
-    the engine. A dead engine makes the proxy close the probe at once. A
-    live engine holds the connection while it waits for the rest of the
-    login, or answers bytes. Both prove the path works.
+    The probe sends the game first byte (14). The proxy then dials the
+    engine, which takes as long as its own upstream dial allows (10 s):
+    a refused loopback connect alone takes about 2 s on the Windows
+    host. A dead engine makes the proxy close the probe once that dial
+    fails. A live engine holds the connection while it waits for the
+    rest of the login, or answers bytes. Both prove the path works.
     """
     try:
         with socket.create_connection(("127.0.0.1", port), timeout=timeout) as sock:
             sock.sendall(bytes([14]))
-            sock.settimeout(1.0)
+            # Wait out the proxy's whole upstream dial. A short wait
+            # mistakes a dead upstream for a live engine that holds the
+            # connection: on Windows the refusal arrives after ~2 s,
+            # past a 1 s wait, so the dead band looked healthy and its
+            # cells started pointlessly before the health rule caught it.
+            sock.settimeout(10.0)
             try:
                 data = sock.recv(1)
             except socket.timeout:
@@ -2722,6 +2956,8 @@ def write_summary(run_dir: Path, meta: dict, lanes: list[LaneResult], panel: lis
         f"- Engine: {meta['engine']['status']}; catalog `{meta['catalog_commit']}`; "
         f"{meta['parallel']} cells in parallel; outer cap {meta['cell_cap_s']} s",
     ]
+    md.append(f"- Branch list: {branch_list_text(meta.get('branch_list') or {})}")
+    md.append(f"- Runner self-update: {self_update_text(meta.get('self_update') or {})}")
     md.append("- " + api_drift_md_line(
         meta.get("rs2b0t_api") or {"status": "unavailable", "reason": "not checked"}))
     if meta.get("quiet_lock"):
@@ -2795,7 +3031,8 @@ def run_branch(branch: str, parallel: int, only: list[str] | None, only_lanes: l
                unavailable: str | None = None, date: dt.date | None = None,
                summary_only: bool = False, only_exact: bool = False,
                cells_file: str | None = None, latency_bands: list[int] | None = None,
-               latency_cells: list[str] | None = None) -> Path:
+               latency_cells: list[str] | None = None,
+               branch_list: dict | None = None, self_update: dict | None = None) -> Path:
     """One branch: sources, the steps in order, summary, DONE.
 
     `unavailable` writes a complete run where every lane and cell is
@@ -3037,6 +3274,8 @@ def run_branch(branch: str, parallel: int, only: list[str] | None, only_lanes: l
     meta = dict(
         job=JOB, run=run_dir.name, branch=branch, commit=commit, commit_full=commit_full, revision=int(REVISION),
         cells_file=cells_file,
+        branch_list=(branch_list or {"source": "unknown", "commit": "", "note": ""}),
+        self_update=(self_update or {"status": "unknown", "from": "", "to": "", "detail": ""}),
         **ident, started=started, finished=now_iso(),
         wall_s=round(time.monotonic() - started_wall, 1), parallel=parallel,
         cell_cap_s=CELL_CAP_S, cell_caps_s=CELL_CAPS_S, run_deadline_s=RUN_DEADLINE_S, profile=PROFILE,
@@ -3172,7 +3411,13 @@ def main() -> int:
                 for band in bands:
                     print(f"# latency\t{cell}\t{band_name(band)}")
         return 0
-    branches = args.branch or os.environ.get("NIGHTLY_BRANCHES", "").split() or read_list(HERE / "branches.conf")
+    # The self-update re-executes this same script path, so it runs before the
+    # branch list is read: the new code decides the night's branches. --list
+    # stays a read-only query of a checked-out tree and never updates.
+    self_update_info = maybe_self_update(RUNNER_REPO, HERE / "run_nightly.py")
+    branches, branch_info = resolve_branch_list(args.branch, RUNNER_REPO)
+    log(f"branch list: {branch_list_text(branch_info)}")
+    log(f"self-update: {self_update_text(self_update_info)}")
     only = [c.strip() for c in args.cells.split(",") if c.strip()] if args.cells else None
     only_exact, cells_file = False, None
     if only is None:
@@ -3207,7 +3452,8 @@ def main() -> int:
         for branch in branches:
             run_branch(branch, args.parallel, only, only_lanes, unavailable=reason, date=night,
                        summary_only=True, only_exact=only_exact, cells_file=cells_file,
-                       latency_bands=latency_bands)
+                       latency_bands=latency_bands,
+                       branch_list=branch_info, self_update=self_update_info)
         return 0
     wtext(started_marker(night_of(moment)), moment.isoformat(timespec="seconds") + "\n")
     global _run_deadline
@@ -3220,7 +3466,8 @@ def main() -> int:
         if _stop.is_set() or note_quiet_lock():
             break
         run_branch(branch, args.parallel, only, only_lanes, only_exact=only_exact, cells_file=cells_file,
-                   latency_bands=latency_bands)
+                   latency_bands=latency_bands,
+                   branch_list=branch_info, self_update=self_update_info)
     if FRESH_TREES:
         prune_trees(branches)
     prune_local()

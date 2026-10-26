@@ -137,7 +137,9 @@ pub const HILL_GIANT_FOOD: i32 = 8;
 pub const AUTO_FIGHTER_FOOD: i32 = 8;
 /// Bank cells prepare the pack below the card's own restock line so the bank
 /// trip itself has to withdraw: MossGiant only banks once its food is gone.
-pub const MOSS_GIANT_BANK_FOOD: i32 = 2;
+/// Five Lobster matches the `moss_giant_bank` seed
+/// (`crates/scenario/src/scenarios/combat/moss_giant.rs`).
+pub const MOSS_GIANT_BANK_FOOD: i32 = 5;
 /// ChaosDruidKiller's `tripPrepared` needs `foodWithdraw` (12) carried in the
 /// field; below that its own first trip end is `prepare-trip`, so the bank cell
 /// prepares the shortfall instead of a full pack.
