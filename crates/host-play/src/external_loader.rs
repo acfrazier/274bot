@@ -1002,6 +1002,7 @@ mod tests {
     use super::*;
     use serde_json::Value;
 
+    #[cfg(feature = "js")]
     #[test]
     fn materialized_source_loads_with_the_native_fixture_identity() {
         let source = default_frozen_source();
