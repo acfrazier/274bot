@@ -394,6 +394,16 @@ enum PhaseRule {
     Ungated,
 }
 
+const LOBSTER_OBJ_ID: i32 = 379;
+
+fn phase_food_item_id(rule: PhaseRule, scenario: Option<&str>) -> Option<i32> {
+    match rule {
+        PhaseRule::Thiever { .. } => Some(LOBSTER_OBJ_ID),
+        PhaseRule::Ungated if scenario == Some("moss_giant_bank_start") => Some(LOBSTER_OBJ_ID),
+        PhaseRule::Idle | PhaseRule::Ungated => None,
+    }
+}
+
 impl PhaseRule {
     fn select(workload: Workload, scenario: Option<&str>, sustain: bool) -> Self {
         match (workload, scenario) {
@@ -521,6 +531,7 @@ impl PhaseObservation {
 
 struct GameplayPhases {
     rule: PhaseRule,
+    food_item_id: Option<i32>,
     slots: HashMap<String, PhaseObservation>,
 }
 
@@ -563,28 +574,31 @@ fn observe_gameplay_phase(c: &client::client::Client, name: &str, running: bool)
     let Some(phases) = phases else { return };
     let mut phases = phases.lock().unwrap();
     let rule = phases.rule;
+    let food_item_id = phases.food_item_id;
     let Some(slot) = phases.slots.get_mut(name) else {
         return;
     };
     let ready = c.ingame && c.scene_state == 2;
-    let food = if matches!(rule, PhaseRule::Thiever { .. }) && ready {
-        // Resolve once, then borrow the posted inventory. Do not allocate a
-        // second GameSnapshot (or materialize script JSON) on each frame.
-        let component = slot.inventory_component.or_else(|| {
-            let id = api::snapshot::tab_inv_component(c, 3)?;
-            slot.inventory_component = Some(id);
-            Some(id)
-        });
-        component.and_then(|id| {
-            let inv = c.if_(id as usize)?;
-            let ids = inv.link_obj_type.as_ref()?;
-            let counts = inv.link_obj_number.as_ref()?;
-            (ids.len() == counts.len()).then(|| {
-                ids.iter()
-                    .zip(counts)
-                    .filter(|(id, _)| **id == 380)
-                    .map(|(_, count)| *count)
-                    .sum()
+    let food = if ready {
+        food_item_id.and_then(|food_item_id| {
+            // Resolve once, then borrow the posted inventory. Do not allocate a
+            // second GameSnapshot (or materialize script JSON) on each frame.
+            let component = slot.inventory_component.or_else(|| {
+                let id = api::snapshot::tab_inv_component(c, 3)?;
+                slot.inventory_component = Some(id);
+                Some(id)
+            });
+            component.and_then(|id| {
+                let inv = c.if_(id as usize)?;
+                let ids = inv.link_obj_type.as_ref()?;
+                let counts = inv.link_obj_number.as_ref()?;
+                (ids.len() == counts.len()).then(|| {
+                    ids.iter()
+                        .zip(counts)
+                        .filter(|(id, _)| **id == food_item_id + 1)
+                        .map(|(_, count)| *count)
+                        .sum()
+                })
             })
         })
     } else {
@@ -1722,8 +1736,10 @@ impl Run {
             output_path.display()
         );
         let ready_latch = crate::memory_slots::ReadyLatch::new(&names);
+        let phase_rule = PhaseRule::select(config.workload, scenario_name.as_deref(), sustain);
         let gameplay_phases = Arc::new(Mutex::new(GameplayPhases {
-            rule: PhaseRule::select(config.workload, scenario_name.as_deref(), sustain),
+            rule: phase_rule,
+            food_item_id: phase_food_item_id(phase_rule, scenario_name.as_deref()),
             slots: names
                 .iter()
                 .map(|name| (name.clone(), PhaseObservation::default()))
@@ -2558,6 +2574,7 @@ fn write_row(file: &mut std::fs::File, value: &serde_json::Value) -> std::io::Re
 mod tests {
     use super::*;
     use client::client::{Client, ClientPlayer};
+    use client::config::if_type::{ComponentType, IfType, IfTypeMut};
     use client::io::ServerProt;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Mutex;
@@ -3015,6 +3032,7 @@ mod tests {
     fn phase_fleet(rule: PhaseRule, food: Option<i32>) -> GameplayPhases {
         let mut phases = GameplayPhases {
             rule,
+            food_item_id: phase_food_item_id(rule, None),
             slots: ["alice", "bob"]
                 .into_iter()
                 .map(|name| (name.to_string(), PhaseObservation::default()))
@@ -3063,20 +3081,17 @@ mod tests {
         run.config.n = 0;
         run.config.workload = Workload::Active;
         run.config.warmup = warmup;
-        run.all_ready_since =
-            Some(Instant::now() - READY_SETTLE - Duration::from_secs(1));
+        run.all_ready_since = Some(Instant::now() - READY_SETTLE - Duration::from_secs(1));
         {
             let mut phases = run.gameplay_phases.lock().unwrap();
             let rule = PhaseRule::Thiever { initial_food: 10 };
             phases.rule = rule;
-            phases.slots.get_mut(&name).unwrap().observe(
-                rule,
-                100,
-                true,
-                true,
-                Some(10),
-                false,
-            );
+            phases.food_item_id = phase_food_item_id(rule, None);
+            phases
+                .slots
+                .get_mut(&name)
+                .unwrap()
+                .observe(rule, 100, true, true, Some(10), false);
         }
         (run, play, name)
     }
@@ -3085,10 +3100,7 @@ mod tests {
     fn wall_clock_warmup_controls_window_after_every_bot_reaches_floor_ticks() {
         let _lock = ENV_LOCK.lock().unwrap();
         let _env = clear_phase_env();
-        for (warmup, ticks) in [
-            (Duration::from_secs(10), 16),
-            (Duration::from_secs(5), 8),
-        ] {
+        for (warmup, ticks) in [(Duration::from_secs(10), 16), (Duration::from_secs(5), 8)] {
             assert_eq!(warmup_game_ticks(warmup), ticks);
             let (mut run, play, name) = phase_poll_run(warmup);
             {
@@ -3102,8 +3114,7 @@ mod tests {
                 bob.warmup_start_tick = Some(100);
                 bob.observe(rule, 100 + ticks - 1, true, true, Some(10), false);
             }
-            run.qualification_complete =
-                Some(Instant::now() - warmup - Duration::from_millis(1));
+            run.qualification_complete = Some(Instant::now() - warmup - Duration::from_millis(1));
             run.poll(&play).unwrap();
             assert!(
                 run.observing.is_none(),
@@ -3131,8 +3142,7 @@ mod tests {
                 "the wall-clock warmup must still control the start"
             );
 
-            run.qualification_complete =
-                Some(Instant::now() - warmup - Duration::from_millis(1));
+            run.qualification_complete = Some(Instant::now() - warmup - Duration::from_millis(1));
             run.poll(&play).unwrap();
             assert!(
                 run.observing.is_some(),
@@ -3173,18 +3183,81 @@ mod tests {
         let (mut run, play, _) = phase_poll_run(Duration::from_secs(1));
         run.poll(&play).unwrap();
         assert!(run.qualification_complete.is_some());
-        assert!(
-            !run.gameplay_phases
-                .lock()
-                .unwrap()
-                .ready(warmup_game_ticks(run.config.warmup))
-                .unwrap()
-        );
+        assert!(!run
+            .gameplay_phases
+            .lock()
+            .unwrap()
+            .ready(warmup_game_ticks(run.config.warmup))
+            .unwrap());
         run.started = Instant::now() - Duration::from_secs(1801);
         assert_eq!(
             run.poll(&play).unwrap_err(),
             "phase_not_reached:qualification_timeout"
         );
+    }
+
+    #[test]
+    fn ungated_moss_giant_records_food_and_other_scenarios_remain_null() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let mut client = Client::new(client::client::ClientConfig {
+            host: "127.0.0.1".into(),
+            port: 43594,
+            cache_dir: "/tmp".into(),
+            members: true,
+            lowmem: false,
+        });
+        client.ingame = true;
+        client.scene_state = 2;
+        client.bump_gens(ServerProt::PLAYER_INFO);
+        client.set_iface(
+            500,
+            IfType {
+                id: 500,
+                r#type: ComponentType::TYPE_INV,
+                ..IfType::default()
+            },
+        );
+        client.set_iface_mut(
+            500,
+            IfTypeMut {
+                link_obj_type: Some(vec![LOBSTER_OBJ_ID + 1]),
+                link_obj_number: Some(vec![10]),
+                ..IfTypeMut::default()
+            },
+        );
+
+        let previous = GAMEPLAY_PHASES.lock().unwrap().take();
+        for (scenario, expected_food) in [("moss_giant_bank_start", Some(10)), ("duel_arena", None)]
+        {
+            let rule = PhaseRule::select(Workload::Active, Some(scenario), false);
+            assert_eq!(rule, PhaseRule::Ungated);
+            let phases = Arc::new(Mutex::new(GameplayPhases {
+                rule,
+                food_item_id: phase_food_item_id(rule, Some(scenario)),
+                slots: HashMap::from([(
+                    scenario.to_string(),
+                    PhaseObservation {
+                        inventory_component: Some(500),
+                        ..PhaseObservation::default()
+                    },
+                )]),
+            }));
+            *GAMEPLAY_PHASES.lock().unwrap() = Some(Arc::clone(&phases));
+            observe_gameplay_phase(&client, scenario, false);
+
+            let mut row = serde_json::json!({"slots": [{"name": scenario}]});
+            phases.lock().unwrap().record(&mut row, 0);
+            assert_eq!(row["phase_gated"], false);
+            assert_eq!(row["gameplay_phase_rule"], "phase not gated");
+            assert_eq!(row["slots"][0]["gameplay_phase"]["gated"], false);
+            let food = &row["slots"][0]["gameplay_phase"]["food"];
+            if let Some(expected_food) = expected_food {
+                assert_eq!(food.as_i64(), Some(i64::from(expected_food)));
+            } else {
+                assert!(food.is_null());
+            }
+        }
+        *GAMEPLAY_PHASES.lock().unwrap() = previous;
     }
 
     #[test]
