@@ -1,8 +1,4 @@
 use super::*;
-#[cfg(unix)]
-use client::client::client::AssetFetchError;
-#[cfg(unix)]
-use client::io::HostGameStream;
 
 const HOST: &str = "world.example";
 const PORT: u16 = 43594;
@@ -1217,324 +1213,244 @@ fn os_partial_seed_eof_maps_to_closed_transport_event() {
     );
 }
 
-#[cfg(unix)]
-struct ResetWriteNetwork {
-    write_errno: Arc<std::sync::Mutex<Option<i32>>>,
+/// End the server's side of an accepted connection with a TCP reset (RST),
+/// not a FIN: an abortive close, `SO_LINGER` on with a zero timeout. `socket2`
+/// sets it the same way on Linux, macOS and Windows.
+fn reset_peer(socket: std::net::TcpStream) {
+    socket2::SockRef::from(&socket)
+        .set_linger(Some(Duration::ZERO))
+        .expect("set SO_LINGER to zero before the abortive close");
+    drop(socket);
 }
 
-#[cfg(unix)]
-struct ResetWriteStream {
-    socket: std::net::TcpStream,
-    binding: client::io::HostStreamIdentity,
-    write_errno: Arc<std::sync::Mutex<Option<i32>>>,
-}
-
-#[cfg(unix)]
-impl client::io::host_network::HostGameStream for ResetWriteStream {
-    fn read(&mut self, dst: &mut [u8]) -> std::io::Result<usize> {
-        use std::io::Read;
-        self.socket.read(dst)
-    }
-
-    fn available(&mut self) -> std::io::Result<usize> {
-        let mut byte = [0; 1];
-        self.socket.peek(&mut byte)
-    }
-
-    fn wait_available(&mut self, need: usize, until: Instant) {
-        while Instant::now() < until {
-            match self.available() {
-                Ok(available) if available >= need => return,
-                Err(_) => return,
-                _ => thread::park_timeout(Duration::from_millis(1)),
-            }
-        }
-    }
-
-    fn write_record(&mut self, record: &[u8]) -> std::io::Result<()> {
-        use std::io::Write;
-        match self.socket.write_all(record) {
-            Ok(()) => Ok(()),
-            Err(error) => {
-                *self
-                    .write_errno
-                    .lock()
-                    .expect("reset-write capture mutex is not poisoned") = error.raw_os_error();
-                Err(error)
-            }
-        }
-    }
-
-    fn set_deadline(&mut self, deadline: Option<Instant>) -> std::io::Result<()> {
-        let timeout = deadline.map(|deadline| {
-            deadline
-                .saturating_duration_since(Instant::now())
-                .max(Duration::from_nanos(1))
-        });
-        self.socket.set_read_timeout(timeout)?;
-        self.socket.set_write_timeout(timeout)
-    }
-
-    fn binding_identity(&self) -> client::io::HostStreamIdentity {
-        self.binding.clone()
-    }
-
-    fn attach_cancel(
-        &mut self,
-        cancel: &client::io::client_stream::LoginCancel,
-        attempt: &client::io::HostAttemptIdentity,
-    ) -> std::io::Result<()> {
-        if cancel.is_cancelled() {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::Interrupted,
-                "test login attempt was cancelled",
-            ));
-        }
-        if attempt.downcast_ref::<u64>().is_none() {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "reset-write fixture requires its attempt identity",
-            ));
-        }
-        Ok(())
-    }
-
-    fn rebind(
-        &mut self,
-        attempt: &client::io::HostAttemptIdentity,
-        deadline: Option<Instant>,
-    ) -> std::io::Result<()> {
-        if attempt.downcast_ref::<u64>().is_none() {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "reset-write fixture requires its attempt identity",
-            ));
-        }
-        self.set_deadline(deadline)
-    }
-
-    fn close(&mut self, _disposition: client::io::HostCloseDisposition) {
-        let _ = self.socket.shutdown(std::net::Shutdown::Both);
-    }
-
-    fn take_exit_reason(&mut self) -> Option<client::io::HostStreamExit> {
-        None
-    }
-
-    fn seal_login(&mut self) -> std::io::Result<client::io::SealReceipt> {
-        Ok(Box::new(self.binding.clone()))
-    }
-
-    fn commit_login(&mut self, receipt: client::io::SealReceipt) -> std::io::Result<()> {
-        receipt
-            .downcast::<client::io::HostStreamIdentity>()
-            .map(|_| ())
-            .map_err(|_| std::io::Error::other("invalid test stream seal receipt"))
+/// What each system reports for an established socket whose peer reset it.
+/// Linux and macOS report `ECONNRESET`, or `EPIPE` for a write that finds the
+/// connection already reset. Windows reports `WSAECONNRESET`, or
+/// `WSAECONNABORTED` for a write after the reset. `InvalidInput` (the macOS
+/// `set_write_timeout` failure of the standalone transport) is never one.
+fn is_peer_reset_kind(kind: std::io::ErrorKind) -> bool {
+    match kind {
+        std::io::ErrorKind::ConnectionReset | std::io::ErrorKind::BrokenPipe => true,
+        std::io::ErrorKind::ConnectionAborted => cfg!(windows),
+        _ => false,
     }
 }
 
-#[cfg(unix)]
-impl client::io::host_network::HostNetwork for ResetWriteNetwork {
-    fn connect_game(
-        &self,
-        mode: client::Transport,
-        host: &str,
-        port: u16,
-        deadline: Option<Instant>,
-        cancel: Option<&client::io::client_stream::LoginCancel>,
-        attempt: &client::io::HostAttemptIdentity,
-    ) -> std::io::Result<Box<dyn client::io::HostGameStream>> {
-        if mode != client::Transport::Tcp {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::Unsupported,
-                "reset-write fixture supports TCP only",
-            ));
-        }
-        if cancel.is_some_and(client::io::client_stream::LoginCancel::is_cancelled) {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::Interrupted,
-                "test login attempt was cancelled",
-            ));
-        }
-        if attempt.downcast_ref::<u64>().is_none() {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "reset-write fixture requires its attempt identity",
-            ));
-        }
-        let mut stream = ResetWriteStream {
-            socket: std::net::TcpStream::connect((host, port))?,
-            binding: client::io::HostStreamIdentity::new(1_u8),
-            write_errno: Arc::clone(&self.write_errno),
-        };
-        stream.set_deadline(deadline)?;
-        Ok(Box::new(stream))
-    }
-
-    fn connect_ondemand(
-        &self,
-        _mode: client::Transport,
-        _host: &str,
-        _port: u16,
-        _resolved: Option<&[std::net::SocketAddr]>,
-        _cancel: Option<&client::io::client_stream::LoginCancel>,
-    ) -> std::io::Result<Box<dyn client::io::HostGameStream>> {
-        Err(std::io::Error::new(
-            std::io::ErrorKind::Unsupported,
-            "reset-write fixture does not provide OnDemand",
-        ))
-    }
-
-    fn start_cold_fill_lookup(
-        &self,
-        _host: &str,
-        _port: u16,
-    ) -> Result<
-        Box<dyn client::io::host_network::HostLookupTicket>,
-        client::io::host_network::HostLookupFailure,
-    > {
-        Err(client::io::host_network::HostLookupFailure::Unavailable)
-    }
-
-    fn start_http(
-        &self,
-        _mode: client::Transport,
-        _host: &str,
-        _port: u16,
-        _path: &str,
-    ) -> Result<Box<dyn client::io::HostHttpFetch>, AssetFetchError> {
-        Err(AssetFetchError::Connection)
-    }
-
-    fn start_http_resolved(
-        &self,
-        _mode: client::Transport,
-        _host: &str,
-        _addrs: &[std::net::SocketAddr],
-        _path: &str,
-    ) -> Result<Box<dyn client::io::HostHttpFetch>, AssetFetchError> {
-        Err(AssetFetchError::Connection)
-    }
-
-    fn fetch_http_blocking(
-        &self,
-        _mode: client::Transport,
-        _host: &str,
-        _port: u16,
-        _path: &str,
-        _deadline: Option<Instant>,
-        _cancel: Option<&client::io::client_stream::LoginCancel>,
-    ) -> Result<Vec<u8>, AssetFetchError> {
-        Err(AssetFetchError::Connection)
-    }
-
-    fn fetch_http_blocking_resolved(
-        &self,
-        _mode: client::Transport,
-        _host: &str,
-        _addrs: &[std::net::SocketAddr],
-        _path: &str,
-        _deadline: Option<Instant>,
-        _cancel: Option<&client::io::client_stream::LoginCancel>,
-    ) -> Result<Vec<u8>, AssetFetchError> {
-        Err(AssetFetchError::Connection)
-    }
+/// The OS error number must be the real one: std derives the same kind from it.
+fn assert_errno_matches_kind(errno: Option<i32>, kind: std::io::ErrorKind) {
+    let errno = errno.expect("the OS error number of the reset must survive the adapter");
+    assert_eq!(std::io::Error::from_raw_os_error(errno).kind(), kind);
 }
 
-#[cfg(unix)]
 #[test]
-fn os_reset_write_maps_to_write_transport_event() {
+fn os_reset_after_hello_maps_to_read_transport_event() {
     if run_hosted_test_in_child(
-        "release_tests::os_reset_write_maps_to_write_transport_event",
+        "release_tests::os_reset_after_hello_maps_to_read_transport_event",
+        "HOST_PLAY_HOSTED_LOGIN_CHILD",
+    ) {
+        return;
+    }
+    use std::io::Read;
+    let network = HostedNetworkFixture::start();
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let server = thread::spawn(move || {
+        let (mut socket, _) = accept_local_with_timeout(&listener).unwrap();
+        let mut hello = [0; 2];
+        socket.read_exact(&mut hello).unwrap();
+        reset_peer(socket);
+    });
+    let arm = SlotArm::new(7, true);
+    let mut client = tcp_client(port);
+    let error = run_hosted_client_login(&network, &arm, &mut client, port, false).unwrap_err();
+    server.join().unwrap();
+    // The server read the hello before it reset, so the write is complete and
+    // the reset can only be found by the read that waits for the reply.
+    let transport = error.transport.as_ref().expect("login transport error");
+    assert_eq!(transport.kind, std::io::ErrorKind::ConnectionReset);
+    assert_errno_matches_kind(transport.errno, transport.kind);
+    assert_transport_event(
+        error,
+        client::client::LoginStage::ReadHello,
+        std::io::ErrorKind::ConnectionReset,
+        TransportFailure::Read,
+    );
+}
+
+#[test]
+fn os_reset_before_the_hello_maps_to_a_reset_transport_event() {
+    if run_hosted_test_in_child(
+        "release_tests::os_reset_before_the_hello_maps_to_a_reset_transport_event",
+        "HOST_PLAY_HOSTED_LOGIN_CHILD",
+    ) {
+        return;
+    }
+    let network = HostedNetworkFixture::start();
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let server = thread::spawn(move || {
+        let (socket, _) = accept_local_with_timeout(&listener).unwrap();
+        reset_peer(socket);
+    });
+    let arm = SlotArm::new(7, true);
+    let mut client = tcp_client(port);
+    let error = run_hosted_client_login(&network, &arm, &mut client, port, false).unwrap_err();
+    server.join().unwrap();
+    // The reactor and the login thread race: the reactor either has latched
+    // the reset when the hello is queued (send_hello) or finds it after the
+    // hello was queued (read_hello). Both keep the stage, kind and errno.
+    let transport = error.transport.as_ref().expect("login transport error");
+    let (stage, kind) = (transport.stage, transport.kind);
+    assert!(
+        is_peer_reset_kind(kind),
+        "reset error kind on {}: {kind:?}",
+        std::env::consts::OS
+    );
+    assert_errno_matches_kind(transport.errno, kind);
+    let expected = match stage {
+        client::client::LoginStage::SendHello => TransportFailure::Write,
+        client::client::LoginStage::ReadHello => TransportFailure::Read,
+        other => {
+            panic!("a reset before the hello is a send_hello or read_hello failure: {other:?}")
+        }
+    };
+    assert_transport_event(error, stage, kind, expected);
+}
+
+/// The write itself: the adapter has observed the peer's reset, and the next
+/// handshake write through the hosted stream reports that reset with the
+/// OS error number the reactor saw, not a bare "closed" or `InvalidInput`.
+#[test]
+fn os_reset_stream_write_reports_the_reset_with_its_errno() {
+    if run_hosted_test_in_child(
+        "release_tests::os_reset_stream_write_reports_the_reset_with_its_errno",
         "HOST_PLAY_HOSTED_LOGIN_CHILD",
     ) {
         return;
     }
     use client::io::client_stream::{ClientStream, LoginCancel};
-    use std::os::fd::AsRawFd;
-
-    let write_errno = Arc::new(std::sync::Mutex::new(None));
-    client::io::install_host_network(Arc::new(ResetWriteNetwork {
-        write_errno: Arc::clone(&write_errno),
-    }))
-    .expect("install reset-write test network");
+    let network = HostedNetworkFixture::start();
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
-    let mut client = tcp_client(port);
-    let initial_cancel = LoginCancel::new();
-    initial_cancel.set_host_attempt_identity(client::io::HostAttemptIdentity::new(1_u64));
-    let mut stream = ClientStream::connect_for_cancellable(
-        client::Transport::Tcp,
-        "127.0.0.1",
-        port,
-        &initial_cancel,
-    )
-    .unwrap();
-    let (accepted, _) = accept_local_with_timeout(&listener).unwrap();
-    let linger = libc::linger {
-        l_onoff: 1,
-        l_linger: 0,
-    };
-    // SAFETY: `accepted` owns a live socket for the duration of this call,
-    // and `linger` is initialized with the exact SO_LINGER layout and size.
-    // The result and the peer's observed reset below verify the invariant.
-    let set = unsafe {
-        libc::setsockopt(
-            accepted.as_raw_fd(),
-            libc::SOL_SOCKET,
-            libc::SO_LINGER,
-            (&linger as *const libc::linger).cast(),
-            std::mem::size_of::<libc::linger>() as libc::socklen_t,
-        )
-    };
-    assert_eq!(set, 0, "SO_LINGER: {}", std::io::Error::last_os_error());
-    drop(accepted);
-    let until = Instant::now() + Duration::from_secs(2);
-    loop {
-        match stream.available() {
-            Err(error) if error.kind() == std::io::ErrorKind::ConnectionReset => break,
-            Ok(0) if Instant::now() < until => {
-                thread::park_timeout(Duration::from_millis(5));
-            }
-            Err(error)
-                if error.kind() == std::io::ErrorKind::WouldBlock && Instant::now() < until =>
-            {
-                thread::park_timeout(Duration::from_millis(5));
-            }
-            result => panic!("expected local server reset before the login write: {result:?}"),
-        }
-    }
-    client.stream = Some(stream);
-    client.baton = true;
+    let server = thread::spawn(move || {
+        let (socket, _) = accept_local_with_timeout(&listener).unwrap();
+        reset_peer(socket);
+    });
+    let arm = SlotArm::new(7, true);
+    let prepared = network.prepared_attempt(&arm, port);
     let cancel = LoginCancel::new();
-    cancel.set_host_attempt_identity(client::io::HostAttemptIdentity::new(2_u64));
-    client.set_login_cancel(cancel);
-    client.set_login_deadline(Instant::now() + Duration::from_secs(1));
-    let error = client.login("alice", "secret", true).unwrap_err();
-    let transport = error.transport.as_ref().expect("login transport error");
-    let write_errno = write_errno
-        .lock()
-        .expect("reset-write capture mutex is not poisoned")
-        .expect("the OS socket write failed");
-    assert_eq!(
-        transport.errno,
-        Some(write_errno),
-        "Client::login must retain the errno returned by the adopted OS socket write"
-    );
-    let kind = transport.kind;
+    cancel.set_host_attempt_identity(prepared.hook_identity(arm.queue_owner, None));
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut stream = client_adapter::host_network::with_prepared_game_attempt(prepared, || {
+        ClientStream::connect_until(
+            client::Transport::Tcp,
+            "127.0.0.1",
+            port,
+            deadline,
+            Some(&cancel),
+        )
+    })
+    .expect("connect through the adapter");
+    server.join().unwrap();
+    // The adapter's reactor owns the socket; wait until it reports the reset.
+    let seen = loop {
+        match stream.available() {
+            Err(error) => break error,
+            Ok(0) if Instant::now() < deadline => thread::park_timeout(Duration::from_millis(2)),
+            other => panic!("expected the adapter to observe the peer reset: {other:?}"),
+        }
+    };
     assert!(
-        matches!(
-            kind,
-            std::io::ErrorKind::BrokenPipe | std::io::ErrorKind::ConnectionReset
-        ),
-        "reset write error kind on {}: {kind:?}",
-        std::env::consts::OS
+        is_peer_reset_kind(seen.kind()),
+        "observed reset kind on {}: {:?}",
+        std::env::consts::OS,
+        seen.kind()
     );
-    assert_transport_event(
-        error,
-        client::client::LoginStage::SendHello,
-        kind,
-        TransportFailure::Write,
+    let write = stream
+        .write(&[14, 0], 2)
+        .expect_err("a write after the reset must fail");
+    assert!(
+        is_peer_reset_kind(write.kind()),
+        "reset write kind on {}: {:?}",
+        std::env::consts::OS,
+        write.kind()
+    );
+    assert_errno_matches_kind(write.raw_os_error(), write.kind());
+    assert_eq!(write.raw_os_error(), seen.raw_os_error());
+}
+
+/// A handshake write to a peer that accepts and never reads: the adapter's
+/// outbound ring and both kernel buffers fill, the write that blocks returns
+/// at the login deadline, and its outcome is the typed handshake-deadline
+/// error rather than a raw OS timeout (`os error 10060` on Windows).
+#[test]
+fn handshake_write_to_a_peer_that_never_reads_ends_at_the_typed_login_deadline() {
+    if run_hosted_test_in_child(
+        "release_tests::handshake_write_to_a_peer_that_never_reads_ends_at_the_typed_login_deadline",
+        "HOST_PLAY_HOSTED_LOGIN_CHILD",
+    ) {
+        return;
+    }
+    use client::io::client_stream::{ClientStream, LoginCancel};
+    let network = HostedNetworkFixture::start();
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let (release, held) = std::sync::mpsc::channel::<()>();
+    let server = thread::spawn(move || {
+        let (socket, _) = accept_local_with_timeout(&listener).unwrap();
+        held.recv_timeout(Duration::from_secs(15)).unwrap();
+        drop(socket);
+    });
+    let arm = SlotArm::new(7, true);
+    let prepared = network.prepared_attempt(&arm, port);
+    let cancel = LoginCancel::new();
+    cancel.set_host_attempt_identity(prepared.hook_identity(arm.queue_owner, None));
+    let window = Duration::from_millis(1500);
+    let started = Instant::now();
+    let deadline = started + window;
+    let mut stream = client_adapter::host_network::with_prepared_game_attempt(prepared, || {
+        ClientStream::connect_until(
+            client::Transport::Tcp,
+            "127.0.0.1",
+            port,
+            deadline,
+            Some(&cancel),
+        )
+    })
+    .expect("connect through the adapter");
+    // One record must fit the adapter's outbound ring; several fill it.
+    let chunk = vec![0_u8; client_adapter::ring::OUT_RING_BYTES / 2];
+    let (error, blocked_for) = loop {
+        let call = Instant::now();
+        if let Err(error) = stream.write(&chunk, chunk.len()) {
+            break (error, call.elapsed());
+        }
+        assert!(
+            started.elapsed() < window + Duration::from_secs(4),
+            "the writes neither blocked nor reached the login deadline"
+        );
+    };
+    let took = started.elapsed();
+    release.send(()).unwrap();
+    server.join().unwrap();
+    assert_eq!(error.kind(), std::io::ErrorKind::TimedOut, "{error:?}");
+    assert_eq!(
+        error.raw_os_error(),
+        None,
+        "not a raw OS timeout: {error:?}"
+    );
+    assert_eq!(error.to_string(), "login handshake deadline passed");
+    assert!(
+        took >= window && took < window + Duration::from_millis(1000),
+        "the blocked write returned {took:?} after the start, not at its {window:?} deadline"
+    );
+    assert!(
+        blocked_for >= Duration::from_millis(100),
+        "the failing write returned after {blocked_for:?}; it never waited on a full queue"
+    );
+    assert!(
+        stream.bytes_out() > 0,
+        "the handshake wrote before it blocked"
     );
 }
 

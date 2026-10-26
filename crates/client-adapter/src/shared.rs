@@ -2,7 +2,7 @@
 //! socket or native TLS object is shared with the slot.
 
 use std::io;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use super::control::{BindingId, CommandBus, ControlCells};
@@ -52,6 +52,12 @@ pub struct SharedConnection {
     bytes_in: AtomicU64,
     bytes_out: AtomicU64,
     exit_reason: Mutex<Option<StreamExitReason>>,
+    /// The first OS error number of an established socket's failed read or
+    /// write (0 = none). Published before `publish_closed` so the slot's read,
+    /// availability and write report the peer reset with its kind and errno
+    /// rather than a bare end-of-stream. Never cleared: a closed connection
+    /// is not rebound.
+    os_failure: AtomicI32,
 }
 
 impl SharedConnection {
@@ -67,6 +73,7 @@ impl SharedConnection {
             bytes_in: AtomicU64::new(0),
             bytes_out: AtomicU64::new(0),
             exit_reason: Mutex::new(None),
+            os_failure: AtomicI32::new(0),
         })
     }
 
@@ -112,6 +119,23 @@ impl SharedConnection {
             .expect("stream exit reason mutex is not poisoned");
         if pending.is_none() {
             *pending = Some(reason);
+        }
+    }
+
+    /// Retain the OS error number of the failed socket call that is about to
+    /// close this connection. The first one wins; call before `publish_closed`.
+    pub(crate) fn publish_os_failure(&self, errno: i32) {
+        let _ = self
+            .os_failure
+            .compare_exchange(0, errno, Ordering::AcqRel, Ordering::Acquire);
+    }
+
+    /// The retained OS failure as an `io::Error` that carries its raw errno
+    /// and the kind std derives from it on this platform.
+    pub(crate) fn os_failure(&self) -> Option<io::Error> {
+        match self.os_failure.load(Ordering::Acquire) {
+            0 => None,
+            errno => Some(io::Error::from_raw_os_error(errno)),
         }
     }
 

@@ -45,6 +45,9 @@ bzip2 = "0.4"
 # the adapter; test roots are injected only through adapter test-support.
 rustls = { version = "=0.23.45", default-features = false, features = ["std", "ring", "tls12"] }
 rcgen = "0.13"
+# The reset tests close a server socket abortively (SO_LINGER 0 sends a TCP
+# RST) the same way on Linux, macOS and Windows; same pin as the adapter.
+socket2 = "=0.6.5"
 tungstenite = { version = "=0.24.0", default-features = false, features = ["handshake"] }
 client-adapter = { path = "../client-adapter", features = ["test-support"] }
 client = { workspace = true, features = ["test-support"] }

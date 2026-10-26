@@ -1533,7 +1533,16 @@ impl Reactor {
                     Ok(turn) if turn.stop == TcpStop::PeerClosed => TurnOutcome::Close,
                     Ok(turn) if turn.stop == TcpStop::LocalWork => TurnOutcome::Local,
                     Ok(_) => TurnOutcome::Wait,
-                    Err(_) => TurnOutcome::Close,
+                    Err(error) => {
+                        // A real socket failure (a peer reset, a broken pipe)
+                        // keeps its errno for the slot: published before the
+                        // close wakes it, so login and session report the
+                        // reset, not a bare end-of-stream.
+                        if let Some(errno) = error.raw_os_error() {
+                            live.registration.shared.publish_os_failure(errno);
+                        }
+                        TurnOutcome::Close
+                    }
                 }
             };
             let outcome = if let Endpoint::Wss(endpoint) = &mut live.endpoint {

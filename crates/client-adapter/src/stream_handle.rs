@@ -170,6 +170,21 @@ impl ConnectionHandle {
         self.shared.take_exit_reason()
     }
 
+    /// A refused append on a closed connection reports the socket failure
+    /// that closed it (a peer reset keeps its kind and errno); any other
+    /// refusal stays a not-connected error naming the reason.
+    fn refusal_error(&self, reason: AppendRefusal) -> io::Error {
+        if reason == AppendRefusal::Closed {
+            if let Some(failure) = self.shared.os_failure() {
+                return failure;
+            }
+        }
+        io::Error::new(
+            io::ErrorKind::NotConnected,
+            format!("record refused: {reason:?}"),
+        )
+    }
+
     /// Only atomics/ring occupancy are inspected; safe under K2 and never
     /// borrows the reactor-owned native socket or a WebSocket parser.
     pub fn available(&self) -> io::Result<i32> {
@@ -187,7 +202,10 @@ impl ConnectionHandle {
             return Ok(len.min(8192) as i32);
         }
         if self.shared.is_closed() {
-            return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "EOF"));
+            return Err(self
+                .shared
+                .os_failure()
+                .unwrap_or_else(|| io::Error::new(io::ErrorKind::UnexpectedEof, "EOF")));
         }
         Ok(0)
     }
@@ -275,7 +293,10 @@ impl ConnectionHandle {
                 let _ = shared.control.resume_read(self.binding.binding, &self.bus);
                 Ok(read)
             }
-            ParkOutcome::Ready(ReadResult::End) => Ok(0),
+            ParkOutcome::Ready(ReadResult::End) => match shared.os_failure() {
+                Some(failure) => Err(failure),
+                None => Ok(0),
+            },
             ParkOutcome::Unavailable => Err(io::Error::new(
                 io::ErrorKind::ConnectionAborted,
                 "game transport unavailable",
@@ -321,10 +342,12 @@ impl ConnectionHandle {
                     "game transport unavailable",
                 ));
             }
-            return session_append_result(
-                self.shared.append_record(self.binding, record, &self.bus),
-                &self.health,
-            );
+            return match self.shared.append_record(self.binding, record, &self.bus) {
+                AppendResult::Refused(reason @ AppendRefusal::Closed) => {
+                    Err(self.refusal_error(reason))
+                }
+                result => session_append_result(result, &self.health),
+            };
         }
         let deadline = self.deadline.expect("uncommitted session cannot write");
         let token = self.token.as_ref();
@@ -354,10 +377,7 @@ impl ConnectionHandle {
         match outcome {
             ParkOutcome::Ready(()) => {
                 if let Some(reason) = refusal {
-                    return Err(io::Error::new(
-                        io::ErrorKind::NotConnected,
-                        format!("record refused: {reason:?}"),
-                    ));
+                    return Err(self.refusal_error(reason));
                 }
                 self.shared.kick_record(self.binding, &self.bus)
             }
@@ -431,5 +451,82 @@ mod tests {
             io::ErrorKind::WouldBlock
         );
         assert_eq!(health.wake_failure().unwrap().total, 1);
+    }
+
+    /// The platform's own number for a peer reset on a socket call.
+    #[cfg(target_os = "linux")]
+    const RESET_ERRNO: i32 = 104;
+    #[cfg(target_os = "macos")]
+    const RESET_ERRNO: i32 = 54;
+    #[cfg(windows)]
+    const RESET_ERRNO: i32 = 10054;
+
+    fn closed_handle(login: bool) -> (ConnectionHandle, Arc<SharedConnection>) {
+        let binding = BindingId {
+            incarnation: 1,
+            connection: 7,
+            binding: 1,
+            attempt: 1,
+        };
+        let shared = SharedConnection::new(binding.connection, Arc::new(Park::new()));
+        shared.accept_binding(binding);
+        let poll = mio::Poll::new().expect("create poll");
+        let waker = mio::Waker::new(poll.registry(), mio::Token(0)).expect("create waker");
+        let mut handle = ConnectionHandle::new(
+            Arc::clone(&shared),
+            Arc::new(CommandBus::new(Arc::new(waker))),
+            Arc::new(ReactorHealth::new(Instant::now())),
+            binding,
+            login.then(|| Instant::now() + Duration::from_secs(5)),
+            None,
+            None,
+        );
+        handle.confirm_binding(binding).expect("confirm binding");
+        if !login {
+            handle.commit_session(binding).expect("commit session");
+        }
+        (handle, shared)
+    }
+
+    #[test]
+    fn peer_reset_reaches_login_and_session_io_with_kind_and_errno() {
+        for login in [true, false] {
+            let (mut handle, shared) = closed_handle(login);
+            shared.publish_os_failure(RESET_ERRNO);
+            // A later failure never replaces the first.
+            shared.publish_os_failure(RESET_ERRNO + 1);
+            shared.publish_closed();
+            let mut byte = [0_u8; 1];
+            let errors = [
+                handle.available().unwrap_err(),
+                handle.read_some(&mut byte).unwrap_err(),
+                handle.write(&[14, 0], 2).unwrap_err(),
+            ];
+            for error in errors {
+                assert_eq!(error.raw_os_error(), Some(RESET_ERRNO), "login={login}");
+                assert_eq!(
+                    error.kind(),
+                    io::ErrorKind::ConnectionReset,
+                    "login={login}: {error:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn clean_close_without_an_os_failure_stays_end_of_stream() {
+        for login in [true, false] {
+            let (mut handle, shared) = closed_handle(login);
+            shared.publish_closed();
+            let mut byte = [0_u8; 1];
+            assert_eq!(
+                handle.available().unwrap_err().kind(),
+                io::ErrorKind::UnexpectedEof
+            );
+            assert_eq!(handle.read_some(&mut byte).unwrap(), 0);
+            let write = handle.write(&[14, 0], 2).unwrap_err();
+            assert_eq!(write.kind(), io::ErrorKind::NotConnected);
+            assert_eq!(write.raw_os_error(), None);
+        }
     }
 }
