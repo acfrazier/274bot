@@ -12,7 +12,8 @@
 //! Stop row (`session::commands`), so a late click never controls another
 //! profile or a replacement run, and never turns a Pause into a Resume.
 
-use script::canvas::{self, CanvasOp};
+use script::canvas;
+use script::canvas::CanvasOp;
 use script::shim::{
     PaintChromeBand, ScriptPaint, ScriptPaintButton, HOST_PAUSE_CONTROL_ID, HOST_STOP_CONTROL_ID,
 };
@@ -397,19 +398,33 @@ impl<'a> CanvasOps<'a> {
 
     /// The applet-space rectangle `[x, y, w, h]` the operations touch.
     pub fn dirty_bounds(&self) -> Option<[i32; 4]> {
-        canvas::dirty_bounds(self.0).map(|d| [d.x, d.y, d.w, d.h])
+        #[cfg(feature = "canvas-raster")]
+        {
+            canvas::dirty_bounds(self.0).map(|d| [d.x, d.y, d.w, d.h])
+        }
+        #[cfg(not(feature = "canvas-raster"))]
+        {
+            None
+        }
     }
 
     /// Rasterize the operations (bounded; `None` past the operation limit
     /// or with nothing to draw).
     pub fn rasterize(&self) -> Option<CanvasRaster> {
-        canvas::rasterize(self.0).map(|raster| CanvasRaster {
-            x: raster.x,
-            y: raster.y,
-            width: raster.w,
-            height: raster.h,
-            rgba: raster.rgba,
-        })
+        #[cfg(feature = "canvas-raster")]
+        {
+            canvas::rasterize(self.0).map(|raster| CanvasRaster {
+                x: raster.x,
+                y: raster.y,
+                width: raster.w,
+                height: raster.h,
+                rgba: raster.rgba,
+            })
+        }
+        #[cfg(not(feature = "canvas-raster"))]
+        {
+            None
+        }
     }
 }
 

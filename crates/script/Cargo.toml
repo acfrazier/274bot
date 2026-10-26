@@ -19,11 +19,12 @@ test-hooks = ["api/test-hooks", "serde_json/preserve_order"]
 # (they exercise Load) and for panel/host-play; nothing else depends on
 # this crate.
 default = ["load"]
-load = ["dep:rustyscript", "dep:v8", "dep:deno_core", "dep:tokio", "deno_ast/transpiling", "dep:flatbuffers", "dep:tiny-skia"]
+canvas-raster = ["dep:tiny-skia", "dep:ab_glyph"]
+load = ["dep:rustyscript", "dep:v8", "dep:deno_core", "dep:tokio", "deno_ast/transpiling", "dep:flatbuffers", "canvas-raster"]
 path-schema = ["dep:schemars", "api/path-schema"]
 
 [dependencies]
-ab_glyph = "=0.2.32"
+ab_glyph = { version = "=0.2.32", optional = true }
 api = { path = "../api" }
 nav-planner = { path = "../nav-planner" }
 schemars = { version = "=1.2.2", optional = true }

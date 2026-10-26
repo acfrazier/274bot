@@ -96,6 +96,8 @@ fn empty_play() -> Play {
 
 /// Members loaded (arms attached, no worker threads) from a fresh vault.
 fn fixture(test: &str, members: &[&str]) -> Fixture {
+    script::registry::install_cards(&script::sherlock::CARDS)
+        .expect("install canonical Sherlock card for script tests");
     let iso = script::IsolatedEnv::enter(&format!("frontend-core-scripts-{test}"));
     let dir = iso.dir.clone();
     let mut vault = Vault::create(&dir.join("vault"), "test-passphrase-01").unwrap();
@@ -1092,24 +1094,21 @@ fn bag(pairs: &[(&str, Value)]) -> Map<String, Value> {
 #[test]
 fn browse_card_list_includes_compiled_cards() {
     let f = fixture("compiled-card-list", &["alice"]);
+    assert!(
+        script::compiled_id("Sherlock").is_some(),
+        "canonical Sherlock card is installed for Browse"
+    );
     let cards: Vec<_> = f.scripts.browse_cards().collect();
-    if script::compiled_id("Sherlock").is_some() {
-        let sherlock = cards
-            .iter()
-            .find(|card| card.name() == "Sherlock")
-            .expect("compiled Sherlock is available to Browse when registered");
-        assert_eq!(sherlock.kind(), CardRuntime::Compiled);
-        assert_eq!(sherlock.category(), "Treasure Trails");
-        assert_eq!(
-            sherlock.selection(),
-            ScriptChoice::from_script(script::ScriptSel::Compiled(script::CompiledId("Sherlock")))
-        );
-    } else {
-        assert!(
-            cards.iter().all(|card| card.name() != "Sherlock"),
-            "Browse omits Sherlock when the load feature omits its registration"
-        );
-    }
+    let sherlock = cards
+        .iter()
+        .find(|card| card.name() == "Sherlock")
+        .expect("compiled Sherlock is available to Browse when registered");
+    assert_eq!(sherlock.kind(), CardRuntime::Compiled);
+    assert_eq!(sherlock.category(), "Treasure Trails");
+    assert_eq!(
+        sherlock.selection(),
+        ScriptChoice::from_script(script::ScriptSel::Compiled(script::CompiledId("Sherlock")))
+    );
     let grinch = cards
         .iter()
         .find(|card| card.name() == "Grinch")

@@ -86,6 +86,7 @@ static CLUE_LIFECYCLE: crate::native::CardLifecycle = crate::native::CardLifecyc
 
 pub(crate) const CARD: CompiledCard = CompiledCard {
     id: CompiledId("Sherlock"),
+    native_kind: crate::native::request::NativeKind::Clue,
     name: "Sherlock",
     description: "Rust-native clue trail solver — waits for a clue and solves it.",
     category: "Treasure Trails",
@@ -96,6 +97,9 @@ pub(crate) const CARD: CompiledCard = CompiledCard {
     create,
     lifecycle: Some(&CLUE_LIFECYCLE),
 };
+
+/// The canonical slice installed by hosts that include the clue adapter.
+pub static CARDS: [CompiledCard; 1] = [CARD];
 
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]

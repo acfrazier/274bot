@@ -15,6 +15,8 @@ pub struct StartError(String);
 /// before any script or slot work. With the memory benchmark it also marks
 /// the process start.
 pub fn bootstrap() -> Result<(), StartError> {
+    script::registry::install_cards(&script::sherlock::CARDS)
+        .map_err(|error| StartError(error.to_string()))?;
     script::bootstrap_v8_platform().map_err(|error| StartError(error.to_string()))?;
     #[cfg(feature = "memory-profile")]
     host_play::memory::mark_process_start();
