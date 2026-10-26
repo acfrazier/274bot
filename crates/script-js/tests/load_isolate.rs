@@ -184,7 +184,10 @@ fn test_library(dir: &std::path::Path) -> JsLibrary {
 // a JSON string — a test posting JSON would smuggle the forbidden parse
 // path back in. These helpers build the blob through the same encoder the
 // host uses (`script_js::wire::encode_snapshot`).
-fn post_snapshot_input(iso: &LoadIsolate, input: &script_js::wire::SnapshotInput<'_>) {
+fn post_snapshot_input(
+    iso: &LoadIsolate,
+    input: &script::native::snapshot_source::SnapshotInput<'_>,
+) {
     iso.post_snapshot(script_js::wire::encode_snapshot(input));
 }
 
@@ -197,7 +200,7 @@ fn is_throw_shaped_log(line: &str) -> bool {
         || (line.starts_with("tick ") && line.contains(':'))
 }
 
-fn nc<'a>(name: Option<&'a str>, count: i32) -> script_js::wire::ItemRowInput<'a> {
+fn nc<'a>(name: Option<&'a str>, count: i32) -> script::native::snapshot_source::ItemRowInput<'a> {
     script::native::snapshot_source::ItemRowInput::nc(name, count)
 }
 
@@ -209,7 +212,7 @@ fn item_row<'a>(
     noted: bool,
     cert: i32,
     component_id: i32,
-) -> script_js::wire::ItemRowInput<'a> {
+) -> script::native::snapshot_source::ItemRowInput<'a> {
     script::native::snapshot_source::ItemRowInput {
         name,
         count,
@@ -233,7 +236,7 @@ fn side_row<'a>(
     count: i32,
     ops: &'a [String],
     slot: i32,
-) -> script_js::wire::ItemRowInput<'a> {
+) -> script::native::snapshot_source::ItemRowInput<'a> {
     script::native::snapshot_source::ItemRowInput {
         slot,
         ..item_row(id, name, count, ops, false, -1, SIDE_GRID)
@@ -244,7 +247,7 @@ fn pack_row<'a>(
     name: Option<&'a str>,
     count: i32,
     slot: i32,
-) -> script_js::wire::ItemRowInput<'a> {
+) -> script::native::snapshot_source::ItemRowInput<'a> {
     script::native::snapshot_source::ItemRowInput {
         slot,
         ..item_row(id, name, count, &[], false, -1, 0)
@@ -265,7 +268,7 @@ fn deposit_ops() -> Vec<String> {
 }
 
 /// The empty fail-closed snapshot; tests override the fields they post.
-fn base_snapshot<'a>() -> script_js::wire::SnapshotInput<'a> {
+fn base_snapshot<'a>() -> script::native::snapshot_source::SnapshotInput<'a> {
     script::native::snapshot_source::SnapshotInput {
         tick: 1,
         here: None,
@@ -355,7 +358,9 @@ fn empty_named_banks() -> std::sync::Arc<api::named_banks::NamedBankFacts> {
     std::sync::Arc::new(api::named_banks::NamedBankFacts::empty())
 }
 
-fn native_loc_view(row: &script_js::wire::SceneEntityInput<'_>) -> api::snapshot::LocView {
+fn native_loc_view(
+    row: &script::native::snapshot_source::SceneEntityInput<'_>,
+) -> api::snapshot::LocView {
     api::snapshot::LocView {
         typecode: 0,
         info: 0,
@@ -388,7 +393,7 @@ fn native_loc_view(row: &script_js::wire::SceneEntityInput<'_>) -> api::snapshot
 
 fn update_native_bank_snapshot(
     snapshot: &mut api::snapshot::GameSnapshot,
-    input: &script_js::wire::SnapshotInput<'_>,
+    input: &script::native::snapshot_source::SnapshotInput<'_>,
     tick: u64,
     snapshot_generation: i64,
     side_root: i32,
@@ -470,7 +475,7 @@ fn update_native_bank_snapshot(
 
 fn tick_bank_slot_with_component(
     slot: &mut bank_slot::BankSlot,
-    input: &mut script_js::wire::SnapshotInput<'_>,
+    input: &mut script::native::snapshot_source::SnapshotInput<'_>,
     tick: u64,
     snapshot_generation: i64,
     side_root: i32,
@@ -500,7 +505,7 @@ fn tick_bank_slot_with_component(
 
 fn tick_bank_slot(
     slot: &mut bank_slot::BankSlot,
-    input: &mut script_js::wire::SnapshotInput<'_>,
+    input: &mut script::native::snapshot_source::SnapshotInput<'_>,
     tick: u64,
     snapshot_generation: i64,
     side_root: i32,
@@ -580,7 +585,7 @@ fn accept_bank_walk(
 /// An in-game, loaded scene: a tile, scene state 2 and every used stat
 /// posted — the state in which a compat card may paint (rs2b0t
 /// `ScriptRunner.paintBot`).
-fn ready_snapshot<'a>() -> script_js::wire::SnapshotInput<'a> {
+fn ready_snapshot<'a>() -> script::native::snapshot_source::SnapshotInput<'a> {
     script::native::snapshot_source::SnapshotInput {
         here: Some(script::native::snapshot_source::TileInput {
             x: 3222,
@@ -598,7 +603,7 @@ fn nearest_booth_input<'a>(
     z: i32,
     level: i32,
     name: &'a str,
-) -> script_js::wire::NearestBoothInput<'a> {
+) -> script::native::snapshot_source::NearestBoothInput<'a> {
     script::native::snapshot_source::NearestBoothInput {
         x,
         z,
@@ -7688,7 +7693,7 @@ fn posted_reach<'a>(
     exact_rank: &'a [u16],
     adjacent_rank: &'a [u16],
     step: &'a [u8],
-) -> script_js::wire::ReachViewInput<'a> {
+) -> script::native::snapshot_source::ReachViewInput<'a> {
     script::native::snapshot_source::ReachViewInput {
         available: true,
         base_x: 3200,
@@ -11055,7 +11060,10 @@ export default class T extends LoopingBot {
     iso.join();
 }
 
-fn case23_chicken<'a>(actions: &'a [String], index: i32) -> script_js::wire::SceneEntityInput<'a> {
+fn case23_chicken<'a>(
+    actions: &'a [String],
+    index: i32,
+) -> script::native::snapshot_source::SceneEntityInput<'a> {
     script::native::snapshot_source::SceneEntityInput {
         index,
         id: 41,
@@ -11135,7 +11143,7 @@ export default class T extends LoopingBot {
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     let actions = ["Attack".to_string()];
     let chickens = [case23_chicken(&actions, 7)];
-    let no_npcs: [script_js::wire::SceneEntityInput<'_>; 0] = [];
+    let no_npcs: [script::native::snapshot_source::SceneEntityInput<'_>; 0] = [];
     let mut interactions = Vec::new();
 
     for tick in 1..=12 {
@@ -11247,7 +11255,7 @@ export default class T extends LoopingBot {
     let iso = LoadIsolate::spawn(src.to_string(), LoadShape::CompatClass, vec![]).unwrap();
     let actions = ["Attack".to_string()];
     let chickens = [case23_chicken(&actions, 7)];
-    let no_npcs: [script_js::wire::SceneEntityInput<'_>; 0] = [];
+    let no_npcs: [script::native::snapshot_source::SceneEntityInput<'_>; 0] = [];
     for tick in 1..=12 {
         let mut snap = ready_snapshot();
         snap.tick = tick;

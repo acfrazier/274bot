@@ -211,7 +211,7 @@ fn non_members_and_challenge_rows_are_unknown_id() {
 struct PostedPuzzle<'a> {
     component_id: i32,
     size: i32,
-    items: &'a [script_js::wire::ItemRowInput<'a>],
+    items: &'a [script::native::snapshot_source::ItemRowInput<'a>],
     generation: u64,
 }
 
@@ -223,24 +223,24 @@ struct PostedPuzzle<'a> {
 /// the posted overlay varps and the posted stat rows.
 struct Scene<'a> {
     here: Option<script::native::snapshot_source::TileInput>,
-    locs: &'a [script_js::wire::SceneEntityInput<'a>],
+    locs: &'a [script::native::snapshot_source::SceneEntityInput<'a>],
     hold: bool,
     ours: bool,
     /// The posted ground page: the same `SceneEntity` shape as `locs`.
-    ground: &'a [script_js::wire::SceneEntityInput<'a>],
+    ground: &'a [script::native::snapshot_source::SceneEntityInput<'a>],
     /// The posted main modal id on this keyframe.
     main_modal_id: i32,
     /// Display names for the page rows, by obj id. The identify page stays the
     /// `(id, count)` pair; this is the `snapshot.inv` name the Drop resolves.
     names: &'a [(i32, &'a str)],
     /// The posted npc page the guarded encounter observes after its Dig.
-    npcs: &'a [script_js::wire::SceneEntityInput<'a>],
+    npcs: &'a [script::native::snapshot_source::SceneEntityInput<'a>],
     /// The posted varps: the encounter reads the selected Protect from Magic
     /// overlay — index 95 — out of this page.
     varps: &'a [script::native::snapshot_source::VarpInput],
     /// The posted stat rows: the encounter reads the `hitpoints` effective out
     /// of this page for its mid-fight wait.
-    stats: &'a [script_js::wire::StatInput<'a>],
+    stats: &'a [script::native::snapshot_source::StatInput<'a>],
     /// The posted local-player table slot the `targetsMe` read compares with.
     self_slot: i32,
     /// The posted local-player target pair. A page with no target posts
@@ -258,7 +258,7 @@ struct Scene<'a> {
     chat_continue: bool,
     /// The posted chat choices the trio acquire chain reads, in posted order:
     /// the row's own 1-based slot is its position here.
-    chat_options: &'a [script_js::wire::ChatOptionInput<'a>],
+    chat_options: &'a [script::native::snapshot_source::ChatOptionInput<'a>],
     /// Whether the posted pack carries the held coordinate trio: a sextant
     /// row's own acquire chain owns the row until it does, so every dig scene
     /// in this file posts it.
@@ -271,17 +271,17 @@ struct Scene<'a> {
     /// names no short" — the vector rides the walk outcome family, whose posted
     /// seq every keyframe here carries — and a page that names no short is
     /// never a shopping list.
-    missing_carry: &'a [script_js::wire::CarryInput<'a>],
+    missing_carry: &'a [script::native::snapshot_source::CarryInput<'a>],
     /// The posted shop interface the gate-toll trip reads: the interface flag
     /// and the stock rows the buy click's own identity rides.
     shop_open: bool,
-    shop_stock: &'a [script_js::wire::ItemRowInput<'a>],
+    shop_stock: &'a [script::native::snapshot_source::ItemRowInput<'a>],
     /// The posted worn page the Entrana strip reads: the raw
     /// `host().snapshot.equipment` rows with their own slot.
-    equipment: &'a [script_js::wire::ItemRowInput<'a>],
+    equipment: &'a [script::native::snapshot_source::ItemRowInput<'a>],
     /// The posted nearest Use-quickly booth the strip's and the restore's bank
     /// trip opens.
-    nearest_booth: Option<&'a script_js::wire::NearestBoothInput<'a>>,
+    nearest_booth: Option<&'a script::native::snapshot_source::NearestBoothInput<'a>>,
     /// The posted bank interface: the strip's deposit and the restore's claim
     /// go out only behind a posted open one.
     bank_open: bool,
@@ -326,7 +326,7 @@ fn scene_loc<'a>(
     z: i32,
     level: i32,
     actions: &'a [String],
-) -> script_js::wire::SceneEntityInput<'a> {
+) -> script::native::snapshot_source::SceneEntityInput<'a> {
     script::native::snapshot_source::SceneEntityInput {
         index: 7,
         id,
@@ -377,7 +377,7 @@ fn post_scene(iso: &LoadIsolate, tick: u64, page: &[(i32, i32)], scene: &Scene<'
     if scene.trio {
         held.extend(TRIO_ITEMS.iter().map(|(id, _)| (*id, 1)));
     }
-    let rows: Vec<script_js::wire::ItemRowInput<'_>> = held
+    let rows: Vec<script::native::snapshot_source::ItemRowInput<'_>> = held
         .iter()
         .map(
             |(id, count)| script::native::snapshot_source::ItemRowInput {
@@ -1258,7 +1258,7 @@ fn clue_npc<'a>(
     tile: script::native::snapshot_source::TileInput,
     distance: i32,
     actions: &'a [String],
-) -> script_js::wire::SceneEntityInput<'a> {
+) -> script::native::snapshot_source::SceneEntityInput<'a> {
     script::native::snapshot_source::SceneEntityInput {
         index,
         id,
@@ -1285,7 +1285,12 @@ fn clue_npc<'a>(
     }
 }
 
-fn clue_stock(id: i32, name: &str, slot: i32, component: i32) -> script_js::wire::ItemRowInput<'_> {
+fn clue_stock(
+    id: i32,
+    name: &str,
+    slot: i32,
+    component: i32,
+) -> script::native::snapshot_source::ItemRowInput<'_> {
     script::native::snapshot_source::ItemRowInput {
         name: Some(name),
         count: 500,
@@ -1577,7 +1582,7 @@ export async function tick(api) {
 const PUZZLE_PIECE_B: i32 = 2749;
 const PUZZLE_COMPONENT: i32 = 6600;
 
-fn puzzle_rows(solved: bool) -> Vec<script_js::wire::ItemRowInput<'static>> {
+fn puzzle_rows(solved: bool) -> Vec<script::native::snapshot_source::ItemRowInput<'static>> {
     let mut rows = Vec::with_capacity(24);
     for slot in 0..25 {
         let target = if solved {

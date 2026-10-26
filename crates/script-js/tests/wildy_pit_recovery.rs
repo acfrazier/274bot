@@ -165,7 +165,7 @@ fn snap<'a>(
     here: TileInput,
     locs: &'a [SceneEntityInput<'a>],
     chat: &'a [ChatLineInput<'a>],
-    stats: &'a [script_js::wire::StatInput<'a>],
+    stats: &'a [script::native::snapshot_source::StatInput<'a>],
 ) -> SnapshotInput<'a> {
     SnapshotInput {
         tick,

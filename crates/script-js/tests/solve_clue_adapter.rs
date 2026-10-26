@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 /// `trail_coord` decodes to `(3209, 3218, 1)`.
 const SEARCH_ID: i32 = 2677;
 
-const DEATH_CHAT: [script_js::wire::ChatLineInput<'static>; 1] =
+const DEATH_CHAT: [script::native::snapshot_source::ChatLineInput<'static>; 1] =
     [script::native::snapshot_source::ChatLineInput {
         seq: 1,
         text: "Oh dear, you are dead!",
@@ -73,9 +73,9 @@ struct Scene<'a> {
     /// Dig and the Open all resolve identity by posted name.
     names: &'a [(i32, &'a str)],
     /// The posted stat page can require waiting, but does not prove death.
-    stats: &'a [script_js::wire::StatInput<'a>],
+    stats: &'a [script::native::snapshot_source::StatInput<'a>],
     /// Rust-decoded game chat supplies the shared native death latch.
-    chat_lines: &'a [script_js::wire::ChatLineInput<'a>],
+    chat_lines: &'a [script::native::snapshot_source::ChatLineInput<'a>],
     main_modal_id: i32,
     hold: bool,
     ours: bool,
@@ -91,7 +91,7 @@ struct Scene<'a> {
     count_dialog_open: bool,
     /// The posted chat choices the trio acquire chain reads, in posted order:
     /// each row's own 1-based slot is its position here.
-    options: &'a [script_js::wire::ChatOptionInput<'a>],
+    options: &'a [script::native::snapshot_source::ChatOptionInput<'a>],
     /// Whether the posted pack carries the held coordinate trio: a dig-row
     /// scene needs it, because the acquire chain owns the row until it does.
     trio: bool,
@@ -100,7 +100,7 @@ struct Scene<'a> {
     equipment: &'a [ItemRowInput<'a>],
     /// The posted nearest Use-quickly booth the strip's and the restore's bank
     /// trip opens.
-    nearest_booth: Option<&'a script_js::wire::NearestBoothInput<'a>>,
+    nearest_booth: Option<&'a script::native::snapshot_source::NearestBoothInput<'a>>,
     /// The posted bank interface: the strip's deposit and the restore's claim
     /// go out only behind a posted open one.
     bank_open: bool,
@@ -148,7 +148,7 @@ fn worn_row(id: i32, name: &str, slot: i32) -> ItemRowInput<'_> {
 /// The posted nearest Use-quickly booth the Entrana bank trip opens: the tile
 /// beside the player, the loc's own id and the two labels the landed bank
 /// helpers queue on `open-booth`.
-const POSTED_BOOTH: script_js::wire::NearestBoothInput<'static> =
+const POSTED_BOOTH: script::native::snapshot_source::NearestBoothInput<'static> =
     script::native::snapshot_source::NearestBoothInput {
         x: 2810,
         z: 3350,

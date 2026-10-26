@@ -297,8 +297,8 @@ fn deposit_all(id: i32, slot: i32, generation: u64) -> InteractReq {
     }
 }
 
-fn seers_booth() -> &'static script_js::wire::SceneEntityInput<'static> {
-    static BOOTH: std::sync::LazyLock<script_js::wire::SceneEntityInput<'static>> =
+fn seers_booth() -> &'static script::native::snapshot_source::SceneEntityInput<'static> {
+    static BOOTH: std::sync::LazyLock<script::native::snapshot_source::SceneEntityInput<'static>> =
         std::sync::LazyLock::new(|| {
             static OPS: std::sync::LazyLock<Vec<String>> =
                 std::sync::LazyLock::new(|| vec!["Use-quickly".to_owned()]);
@@ -397,7 +397,7 @@ fn stand_ready_reach() -> ReachViewInput<'static> {
     }
 }
 
-fn booth_at(x: i32, z: i32) -> script_js::wire::SceneEntityInput<'static> {
+fn booth_at(x: i32, z: i32) -> script::native::snapshot_source::SceneEntityInput<'static> {
     let mut booth = *seers_booth();
     booth.x = x;
     booth.z = z;

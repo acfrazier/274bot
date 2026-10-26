@@ -56,7 +56,7 @@ fn root_seat_details(id: api::identity::RequestId) -> SeatLiveDetails<'static> {
 
 fn post_test_tick_with_native(
     iso: &LoadIsolate,
-    snapshot: &mut script_js::wire::SnapshotInput<'_>,
+    snapshot: &mut script::native::snapshot_source::SnapshotInput<'_>,
     tick: u64,
     native: NativeFactsInput<'_>,
 ) {
@@ -70,7 +70,11 @@ fn post_test_tick_with_native(
         .expect("posted owner-bound product tick completes");
 }
 
-fn post_test_tick(iso: &LoadIsolate, snapshot: &mut script_js::wire::SnapshotInput<'_>, tick: u64) {
+fn post_test_tick(
+    iso: &LoadIsolate,
+    snapshot: &mut script::native::snapshot_source::SnapshotInput<'_>,
+    tick: u64,
+) {
     snapshot.tick = tick;
     post_snapshot_input(iso, snapshot);
     iso.on_game_tick(tick);
@@ -79,7 +83,7 @@ fn post_test_tick(iso: &LoadIsolate, snapshot: &mut script_js::wire::SnapshotInp
 
 fn post_test_snapshot_with_native(
     iso: &LoadIsolate,
-    snapshot: &mut script_js::wire::SnapshotInput<'_>,
+    snapshot: &mut script::native::snapshot_source::SnapshotInput<'_>,
     tick: u64,
     evidence_sequence: u64,
     native: NativeFactsInput<'_>,
