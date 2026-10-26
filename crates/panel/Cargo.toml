@@ -45,6 +45,14 @@ windows-sys = { version = "0.52", features = [
 name = "panel-play"
 path = "src/main.rs"
 
+[[example]]
+name = "catalog_watch"
+required-features = ["js"]
+
+[[example]]
+name = "pair_watch"
+required-features = ["js"]
+
 # Winit requires the OS main thread on macOS, unlike libtest's worker threads.
 [[test]]
 name = "ime_frame"
