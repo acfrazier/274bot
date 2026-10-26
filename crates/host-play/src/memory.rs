@@ -3142,6 +3142,52 @@ mod tests {
     }
 
     #[test]
+    fn poll_arms_thiever_phase_at_qualification() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _env = clear_phase_env();
+        let (mut run, play, name) = phase_poll_run(Duration::from_secs(1));
+        run.poll(&play).unwrap();
+        assert!(run.qualification_complete.is_some());
+        assert_eq!(
+            run.gameplay_phases.lock().unwrap().slots[&name].warmup_start_tick,
+            Some(100)
+        );
+    }
+
+    #[test]
+    fn poll_waits_for_thiever_phase_before_observing() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _env = clear_phase_env();
+        let (mut run, play, _) = phase_poll_run(Duration::from_secs(1));
+        run.poll(&play).unwrap();
+        assert!(run.qualification_complete.is_some());
+        run.qualification_complete = Some(Instant::now() - Duration::from_secs(2));
+        run.poll(&play).unwrap();
+        assert!(run.observing.is_none());
+    }
+
+    #[test]
+    fn qualified_fleet_that_never_reaches_phase_times_out_by_name() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _env = clear_phase_env();
+        let (mut run, play, _) = phase_poll_run(Duration::from_secs(1));
+        run.poll(&play).unwrap();
+        assert!(run.qualification_complete.is_some());
+        assert!(
+            !run.gameplay_phases
+                .lock()
+                .unwrap()
+                .ready(warmup_game_ticks(run.config.warmup))
+                .unwrap()
+        );
+        run.started = Instant::now() - Duration::from_secs(1801);
+        assert_eq!(
+            run.poll(&play).unwrap_err(),
+            "phase_not_reached:qualification_timeout"
+        );
+    }
+
+    #[test]
     fn idle_game_tick_warmup_includes_the_existing_readiness_settle_hold() {
         let _lock = ENV_LOCK.lock().unwrap();
         let _env = EnvGuard::clear(&["RS2B0T", "BOT_MEMORY_OUTPUT"]);
