@@ -111,6 +111,17 @@ pending. The process writer keeps the accepted save after you close the popup.
 Refresh does not replace an unsaved checkbox or folder draft with an unchanged
 saved value.
 
+A saved row (permissions, danger routing, the manual-walk pause, map bake, the
+Quest Paths gate and folder, the session log file, and the background-bots
+notice) takes effect only after its save has reached the disk. While it is
+pending the row shows your choice followed by `— saving…`. If the save fails the
+row shows the saved value again followed by the reason, for example
+`— Not saved: …`. The reason leaves when you act on that row again, or after 15
+seconds. A failed **Got it** keeps the background-bots notice on screen with the
+reason after it. A failed automatic save of the Load order shows on the message
+line. The Logs status line says `session file: saving…` while the choice is
+pending, then whether the file opened.
+
 ## Keys
 
 One routing model: an open popup or overlay takes every key (the Script

@@ -343,10 +343,6 @@ pub(super) struct CommandDesk {
     /// Preference commands whose write is still queued on the
     /// local-state writer thread.
     pref_writes: Vec<super::prefs::PrefWriteWatch>,
-    /// The walk view a queued Nav or danger write adopted when it
-    /// settled, for a front end that does not re-read it each frame (the
-    /// headless driver) to take into its lent model.
-    settled_walk_globals: Option<crate::walk_permissions::WalkGlobalsView>,
     /// The Quester Paths settings (and whether to write them) the next
     /// SetQuesterPaths applies.
     quester_paths: Option<(crate::quester_paths::QuesterPathsView, bool)>,
@@ -443,16 +439,6 @@ impl CommandDesk {
 
     pub(super) fn preferences_pending(&self) -> bool {
         !self.pref_writes.is_empty()
-    }
-
-    pub(super) fn settle_walk_globals(&mut self, view: crate::walk_permissions::WalkGlobalsView) {
-        self.settled_walk_globals = Some(view);
-    }
-
-    pub(super) fn take_settled_walk_globals(
-        &mut self,
-    ) -> Option<crate::walk_permissions::WalkGlobalsView> {
-        self.settled_walk_globals.take()
     }
 
     pub(super) fn stage_quester_paths(

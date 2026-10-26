@@ -50,13 +50,13 @@ use frontend_core::walk_map::{
 };
 use frontend_core::UiPreferences;
 use frontend_core::{
-    load_map_bake_choice, GuardianEdit, MapDesk, OperatorCommand, OperatorSession, SubmitError,
-    SurvivalEdit, Targets,
+    load_map_bake_choice, GuardianEdit, MapDesk, OperatorCommand, OperatorSession, Setting,
+    SubmitError, SurvivalEdit, Targets,
 };
 #[cfg(test)]
 use host_play::{PlayOptions, SharedClientTemplate};
 
-use crate::app::{AppAction, ChatData, ErrorNeed, MapCatalogueStatus, TuiApp};
+use crate::app::{AppAction, ChatData, ErrorNeed, MapCatalogueStatus, SettingFeedback, TuiApp};
 use crate::chat::ChatAction;
 use crate::commands::Unavailable;
 use crate::loadouts::LoadoutsIntent;
@@ -442,11 +442,13 @@ pub struct TuiSession {
     /// text, so a result is copied there only when it changed.
     shown_result: Option<(Option<api::identity::RequestId>, String)>,
     persist_ui: bool,
-    preferences_adopted: bool,
     /// The retained core error last projected, so expiry does not show it again.
     shown_preference_error: Option<String>,
-    /// The latest log toggle whose existing status still needs its settled sink.
-    session_log_status_request: Option<api::identity::RequestId>,
+    /// The Load-order failure last put on the message line.
+    shown_order_failure: Option<String>,
+    /// Whether the log pane's status line follows the session file (set when
+    /// the operator toggles it, until the choice is saved and the file settles).
+    session_log_status_active: bool,
     /// Unique profiles queued for startup Load + Login, keyed by vault UID.
     startup_profiles: Vec<ProfileIdentity>,
     /// The last queued profile that should receive automatic startup focus.
@@ -459,6 +461,8 @@ pub struct TuiSession {
     ack_checked_at: Option<Instant>,
     /// Background count and resource generation the notice was built for.
     notice_sig: Option<(usize, u64)>,
+    /// The acknowledgement state the notice text was built with.
+    notice_feedback: Option<SettingFeedback>,
 }
 
 #[cfg(test)]
@@ -648,7 +652,6 @@ impl TuiSession {
         let preferences = core
             .preferences()
             .expect("the session's local state was bound just now");
-        let preferences_adopted = preferences.ready();
         // The bound operator preferences (the durable walk globals and
         // their store, the manual-movement pause) become the session's;
         // the app reads its walk-permission view itself when it binds them.
@@ -695,9 +698,9 @@ impl TuiSession {
             shown_result: None,
             copied_capacity: None,
             persist_ui: true,
-            preferences_adopted,
             shown_preference_error: None,
-            session_log_status_request: None,
+            shown_order_failure: None,
+            session_log_status_active: false,
             startup_profiles: Vec::new(),
             startup_focus: None,
             startup_default_pending: false,
@@ -705,6 +708,7 @@ impl TuiSession {
             background_bots_acked: background_ack,
             ack_checked_at: Some(Instant::now()),
             notice_sig: None,
+            notice_feedback: None,
         }
     }
 
@@ -3068,6 +3072,7 @@ impl TuiSession {
         if !dirty.is_empty() && self.persist_ui {
             self.persist_walk_globals(app, &dirty);
         }
+        self.project_setting_feedback(app);
         app.refresh_walk_permissions();
         self.core.refresh_walk_globals();
     }
@@ -3167,6 +3172,7 @@ impl TuiSession {
                     .unwrap_or(true);
             }
         }
+        self.project_setting_feedback(app);
     }
 
     /// Set the global pause policy before binding or arming a TUI live run
@@ -3194,6 +3200,7 @@ impl TuiSession {
         ) {
             app.error = Some(format!("settings: {error}"));
         }
+        self.project_setting_feedback(app);
     }
 
     /// Persist changed source settings and service the shared Path controller.
@@ -3229,6 +3236,7 @@ impl TuiSession {
                 app.quester_paths.set_enabled(enabled);
                 app.quester_paths.set_folder(folder);
             }
+            self.project_setting_feedback(app);
         }
         self.core
             .advance_quester_paths(&mut app.quester_paths_controller, selected);
@@ -3309,17 +3317,97 @@ impl TuiSession {
         }
     }
 
+    /// The one preference reconciliation of a pump: every accepted write
+    /// settles by its request, and every model (the bake gate, the Quester
+    /// source, the walk grants, the session file) follows the latest durable
+    /// snapshot, the first readable one included ([`OperatorSession::poll_preferences`]).
+    /// The popup and the notices then show each setting's pending and
+    /// failed state beside it.
+    fn poll_preferences(&mut self, app: &mut TuiApp) {
+        {
+            let (core, mut surface) = self.core_and_surface_for_preferences(app);
+            core.poll_preferences(&mut surface);
+        }
+        self.project_setting_feedback(app);
+    }
+
+    /// The surface [`Self::poll_preferences`] lends: the map desk and the
+    /// Quester controller, the models the durable snapshot changes here.
+    /// The walk grants reach the app through its own refresh, which keeps
+    /// the operator's unsettled drafts.
+    fn core_and_surface_for_preferences<'a>(
+        &'a mut self,
+        app: &'a mut TuiApp,
+    ) -> (&'a mut OperatorSession<()>, TuiSurface<'a>) {
+        (
+            &mut self.core,
+            TuiSurface {
+                walk_cleared: &mut self.walk_reset,
+                map_desk: &mut self.map_desk,
+                models: frontend_core::Models::none()
+                    .with_quester(&mut app.quester_paths_controller),
+                frame_hook: None,
+            },
+        )
+    }
+
+    /// Copy the core's state of every saved setting the TUI shows into the
+    /// app: what to show beside it (pending, or the retained failure) and
+    /// which drafts are still the operator's own change.
+    fn project_setting_feedback(&mut self, app: &mut TuiApp) {
+        use frontend_core::{NavPreference as N, Setting as S, SettingStatus};
+        const SHOWN: [frontend_core::Setting; 12] = [
+            S::Nav(N::AllowTeleports),
+            S::Nav(N::AllowWilderness),
+            S::Nav(N::AllowBankFetch),
+            S::DangerRouting,
+            S::Nav(N::PauseScriptOnManualWalkAbort),
+            S::Nav(N::ScriptScopeNoticeAck),
+            S::Nav(N::SurvivableRoutingNoticeAck),
+            S::Nav(N::ShowSpecialAreas),
+            S::MapBake,
+            S::QuesterPaths,
+            S::Notice(frontend_core::OperatorNotice::BackgroundBots),
+            S::SessionLog,
+        ];
+        for setting in SHOWN {
+            app.show_setting_status(setting, self.core.setting_status(setting));
+        }
+        // The Load order has no row of its own in the popup: its failure
+        // shows once on the message line (which clears it by the shared
+        // rule), and again when a later write fails.
+        let order_failure = match self.core.setting_status(S::ProfileOrder) {
+            SettingStatus::Failed(text) => Some(text),
+            SettingStatus::Saved | SettingStatus::Pending => None,
+        };
+        if order_failure != self.shown_order_failure.as_deref() {
+            self.shown_order_failure = order_failure.map(str::to_owned);
+            if let Some(text) = order_failure {
+                app.error = Some(text.to_owned());
+            }
+        }
+        let pending = |setting| matches!(self.core.setting_status(setting), SettingStatus::Pending);
+        app.set_pending_settings(crate::app::PendingSettings {
+            all: !self.persist_ui,
+            teleports: pending(S::Nav(N::AllowTeleports)),
+            wilderness: pending(S::Nav(N::AllowWilderness)),
+            bank_fetch: pending(S::Nav(N::AllowBankFetch)),
+            danger: pending(S::DangerRouting),
+            scope_ack: pending(S::Nav(N::ScriptScopeNoticeAck)),
+            survivable_ack: pending(S::Nav(N::SurvivableRoutingNoticeAck)),
+            pause: pending(S::Nav(N::PauseScriptOnManualWalkAbort)),
+            special_areas: pending(S::Nav(N::ShowSpecialAreas)),
+            map_bake: pending(S::MapBake),
+            quester: pending(S::QuesterPaths),
+        });
+    }
+
     /// Copy the focused slot's views into the app and poll the runner.
     fn pump(&mut self, app: &mut TuiApp) {
         self.expire_error(app, Instant::now());
         self.clear_resolved_error(app);
         self.prune_startup_targets();
-        if !self.preferences_adopted && self.preferences.ready() {
-            self.preferences_adopted = true;
-            self.map_desk
-                .adopt_bake_choice(load_map_bake_choice(&self.preferences));
-            frontend_core::log_file::restore_session_log(&self.preferences);
-        }
+        self.poll_preferences(app);
         let startup_pending = self.startup_default_pending || !self.startup_profiles.is_empty();
         if startup_pending && self.core.prepare_startup() {
             self.names = self.core.profile_names();
@@ -3837,27 +3925,24 @@ impl TuiSession {
         self.core.live_terminal_startup_failure()
     }
 
+    /// "Got it": the acknowledgement is durable-only. It hides the notice
+    /// when the saved value holds it ([`Self::refresh_background_notice`]);
+    /// a pending or failed write leaves the notice up with its state beside
+    /// it.
     fn ack_background_bots(&mut self, app: &mut TuiApp) {
         if self.persist_ui {
             self.core
                 .stage_notice(frontend_core::OperatorNotice::BackgroundBots);
-            let failure = self
-                .submit_raw(OperatorCommand::AcknowledgeNotice, Targets::Application)
-                .map(|submitted| {
-                    self.core
-                        .command_failure(submitted.request())
-                        .map(str::to_string)
-                })
-                .unwrap_or_else(|error| Some(error.to_string()));
-            match failure {
-                None => {
-                    self.background_bots_acked = true;
-                    self.notice_sig = None;
-                    app.background_notice = None;
-                    frontend_core::resources::clear_background_bots_ack_error(&mut app.error);
-                }
-                Some(error) => app.error = Some(error),
+            if let Err(error) =
+                self.submit_raw(OperatorCommand::AcknowledgeNotice, Targets::Application)
+            {
+                app.error = Some(error.to_string());
             }
+            frontend_core::resources::clear_background_bots_ack_error(&mut app.error);
+            self.ack_checked_at = None;
+            self.project_setting_feedback(app);
+            self.notice_sig = None;
+            self.refresh_background_notice(app, Instant::now());
         } else {
             self.notice_sig = None;
             app.background_notice = None;
@@ -3881,17 +3966,43 @@ impl TuiSession {
             app.background_notice = None;
             return;
         }
+        if self.notice_feedback.as_ref()
+            != app.setting_feedback(Setting::Notice(
+                frontend_core::OperatorNotice::BackgroundBots,
+            ))
+        {
+            // The write settled: read the durable acknowledgement now.
+            self.ack_checked_at = None;
+        }
         self.refresh_ack_cache(now);
         let background = self.core.background_bot_count();
         if self.background_bots_acked || background == 0 {
             self.notice_sig = None;
+            self.notice_feedback = None;
             app.background_notice = None;
             return;
         }
+        // The notice leaves only when the durable acknowledgement is held:
+        // while the write is pending, and after it failed, the notice stays
+        // and says so beside "Got it".
         let generation = self.core.resource_generation();
-        if self.notice_sig != Some((background, generation)) {
-            app.background_notice = Some(background_ack_text(background, self.core.resources()));
+        let setting = Setting::Notice(frontend_core::OperatorNotice::BackgroundBots);
+        if self.notice_sig != Some((background, generation))
+            || self.notice_feedback.as_ref() != app.setting_feedback(setting)
+        {
+            let feedback = app.setting_feedback(setting).cloned();
+            let mut text = background_ack_text(background, self.core.resources());
+            match &feedback {
+                Some(SettingFeedback::Pending) => text.push_str(" — saving…"),
+                Some(SettingFeedback::Failed(failure)) => {
+                    text.push_str(" — ");
+                    text.push_str(failure);
+                }
+                None => {}
+            }
+            app.background_notice = Some(text);
             self.notice_sig = Some((background, generation));
+            self.notice_feedback = feedback;
         }
     }
 
@@ -4070,39 +4181,57 @@ impl TuiSession {
         }
     }
 
-    /// Turn the session log file on or off (`SetSessionLog`); the log
-    /// pane's status line names the file the process holds open now.
+    /// Turn the session log file on or off (`SetSessionLog`). The saved
+    /// choice and the file are two states: the log pane's status line
+    /// says "saving…" while the write is pending, the failure when it was
+    /// not saved, and the file the process holds open (or that it could not
+    /// open one) only from the sink's own state.
     fn set_session_log(&mut self, app: &mut TuiApp, on: bool) {
         match self.submit_with(
             app,
             OperatorCommand::SetSessionLog(on),
             Targets::Application,
         ) {
-            Ok(submitted) => {
-                self.session_log_status_request = Some(submitted.request());
+            Ok(_) => {
+                self.session_log_status_active = true;
+                self.project_setting_feedback(app);
                 self.refresh_session_log_status(app);
             }
             Err(error) => app.log.status = Some(error),
         }
     }
 
+    /// The log pane's status line while it follows the session file. It
+    /// stops following once the choice is saved and the file has settled
+    /// (open, off, or failed and the failure shown for its timeout).
     fn refresh_session_log_status(&mut self, app: &mut TuiApp) {
-        let Some(request) = self.session_log_status_request else {
-            return;
-        };
-        if self
-            .core
-            .commands()
-            .report(request)
-            .is_some_and(|report| !report.is_settled())
-        {
+        if !self.session_log_status_active {
             return;
         }
-        self.session_log_status_request = None;
-        app.log.status = Some(match frontend_core::log_file::session_log_path() {
-            Some(path) => format!("session file {}", path.display()),
-            None => "session file off".into(),
-        });
+        use frontend_core::log_file::SessionFileStatus;
+        let (text, settled) = match app.setting_feedback(Setting::SessionLog) {
+            Some(SettingFeedback::Pending) => ("session file: saving…".to_owned(), false),
+            Some(SettingFeedback::Failed(failure)) => (failure.clone(), false),
+            None => match frontend_core::log_file::session_file_status() {
+                SessionFileStatus::Off => ("session file off".to_owned(), true),
+                SessionFileStatus::Opening(path) => {
+                    (format!("session file opening {}", path.display()), false)
+                }
+                SessionFileStatus::Writing(path) => {
+                    (format!("session file {}", path.display()), true)
+                }
+                SessionFileStatus::Failed(cause) => (
+                    format!("session file could not be opened or written: {cause}"),
+                    true,
+                ),
+            },
+        };
+        if app.log.status.as_deref() != Some(text.as_str()) {
+            app.log.status = Some(text);
+        }
+        if settled {
+            self.session_log_status_active = false;
+        }
     }
 
     /// Save the map's special-areas overlay choice (`SetNavPreference`),
@@ -4122,6 +4251,7 @@ impl TuiSession {
             }
             Err(error) => app.error = Some(format!("map wilderness: {error}")),
         }
+        self.project_setting_feedback(app);
     }
 
     /// Dismiss the Quester Paths status line (`AcknowledgeNotice`).
@@ -4358,8 +4488,6 @@ fn run(args: &Args, mode: RunMode) -> Result<i32, String> {
         }
     }
     let mut session = TuiSession::with_launcher(launcher, permit);
-    // The saved session-file preference: open this process's file at start.
-    frontend_core::log_file::restore_session_log(&session.preferences);
     session.auto_world = args.world;
     session
         .bound()

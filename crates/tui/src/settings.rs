@@ -15,12 +15,14 @@ use ratatui::text::Span;
 use ratatui::widgets::{Block, Borders, Clear, Widget};
 
 use frontend_core::quester_paths::{QuesterPathsView, LOAD_PATHS_LABEL, RELOAD_PATHS_LABEL};
-use frontend_core::{CurePoison, GuardianPolicy, SettingsDraft, GUARDIAN_EVENTS};
+use frontend_core::{CurePoison, GuardianPolicy, Setting, SettingsDraft, GUARDIAN_EVENTS};
 use frontend_core::{
     FormNotice, MapBakeChoice, MemoryNotice, NavPreference, BANK_FETCH_PERMISSION_SCOPE,
     GLOBAL_DANGER_WARNING, GLOBAL_PERMISSION_LABELS, NOTHING_SAVED, QUESTER_HEADING,
     QUEST_PATHS_HEADING, ROUTING_SCOPE_NOTE, SCRIPT_SCOPE_NOTICE,
 };
+
+use crate::app::SettingFeedback;
 
 /// The popup's title while no profile is bound to it.
 pub const TITLE: &str = "settings";
@@ -137,6 +139,9 @@ pub struct SettingsPane<'a> {
     pub title: &'a str,
     pub notice: Option<&'a FormNotice>,
     pub memory: Option<MemoryNotice>,
+    /// What the core shows beside each saved setting: pending, or the
+    /// retained failure (copied from the core each pump).
+    pub feedback: &'a [(Setting, SettingFeedback)],
 }
 
 impl<'a> SettingsPane<'a> {
@@ -154,6 +159,7 @@ impl<'a> SettingsPane<'a> {
             title: TITLE,
             notice: None,
             memory: None,
+            feedback: &[],
             pause_script_on_manual_walk_abort: None,
             script_scope_notice_ack: None,
             survivable_routing_notice_ack: None,
@@ -453,7 +459,7 @@ impl Widget for SettingsPane<'_> {
         };
         let marker = |row| if selected_row == row { "> " } else { "  " };
 
-        let rows = [
+        let mut rows = [
             format!(
                 "{}random events: {}",
                 marker(0),
@@ -521,6 +527,14 @@ impl Widget for SettingsPane<'_> {
                 self.settings.survival().cure_poison().label()
             ),
         ];
+        for (index, row) in rows.iter_mut().enumerate() {
+            for setting in row_settings(index) {
+                if let Some(suffix) = feedback_suffix(self.feedback, *setting) {
+                    row.push_str(&suffix);
+                    break;
+                }
+            }
+        }
         let quester_heading = format!("{QUESTER_HEADING}: {QUEST_PATHS_HEADING}");
         let note_style = Style::default().fg(Color::DarkGray);
         let heading_style = Style::default().add_modifier(Modifier::BOLD);
@@ -556,17 +570,28 @@ impl Widget for SettingsPane<'_> {
             std::array::from_fn(|index| header_heights[index] + row_heights[index]);
         let selected = self.state.row.min(rows.len() - 1);
         let memory_height = wrapped_rows(memory_note, columns);
+        let scope_dismiss = dismiss_line(
+            "[d] dismiss this notice",
+            self.feedback,
+            Setting::Nav(frontend_core::NavPreference::ScriptScopeNoticeAck),
+        );
+        let migration_dismiss = dismiss_line(
+            "[n] dismiss this notice",
+            self.feedback,
+            Setting::Nav(frontend_core::NavPreference::SurvivableRoutingNoticeAck),
+        );
         let scope_height = if show_scope_notice {
-            wrapped_rows(SCRIPT_SCOPE_NOTICE, columns) + 1
+            wrapped_rows(SCRIPT_SCOPE_NOTICE, columns) + wrapped_rows(&scope_dismiss, columns)
         } else {
             0
         };
-        // One extra row for "[n] dismiss this notice", as for the scope notice.
+        // The dismiss line sits under its notice and carries the notice's
+        // saving state or failure.
         let migration_notice_height = if show_survivable_routing_notice {
             wrapped_rows(
                 frontend_core::walk_permissions::survivable_routing_notice(),
                 columns,
-            ) + 1
+            ) + wrapped_rows(&migration_dismiss, columns)
         } else {
             0
         };
@@ -661,7 +686,8 @@ impl Widget for SettingsPane<'_> {
         }
         let migration_bottom = help_bottom + migration_notice_height;
         if show_survivable_routing_notice && migration_notice_height > 0 {
-            let dismiss_y = migration_bottom.saturating_sub(1);
+            let dismiss_y =
+                migration_bottom.saturating_sub(wrapped_rows(&migration_dismiss, columns));
             draw_wrapped(
                 buf,
                 inner,
@@ -675,13 +701,13 @@ impl Widget for SettingsPane<'_> {
                 inner,
                 dismiss_y,
                 migration_bottom,
-                "[n] dismiss this notice",
+                &migration_dismiss,
                 yellow,
             );
         }
         let scope_bottom = migration_bottom + scope_height;
         if show_scope_notice && scope_height > 0 {
-            let dismiss_y = scope_bottom.saturating_sub(1);
+            let dismiss_y = scope_bottom.saturating_sub(wrapped_rows(&scope_dismiss, columns));
             draw_wrapped(
                 buf,
                 inner,
@@ -690,14 +716,7 @@ impl Widget for SettingsPane<'_> {
                 SCRIPT_SCOPE_NOTICE,
                 yellow,
             );
-            draw_wrapped(
-                buf,
-                inner,
-                dismiss_y,
-                scope_bottom,
-                "[d] dismiss this notice",
-                yellow,
-            );
+            draw_wrapped(buf, inner, dismiss_y, scope_bottom, &scope_dismiss, yellow);
         }
         let profile_notice_bottom = inner.bottom().saturating_sub(path_notice_height);
         if let Some(notice) = self.notice {
@@ -778,6 +797,42 @@ pub(crate) fn wrapped_lines(text: &str, width: usize) -> impl Iterator<Item = &s
 /// How many character-wrapped rows `text` takes. Empty text takes none.
 pub(crate) fn wrapped_rows(text: &str, width: usize) -> u16 {
     u16::try_from(wrapped_lines(text, width).count()).unwrap_or(u16::MAX)
+}
+
+/// The saved settings a popup row changes (the core shows their pending
+/// and failed state beside the row).
+fn row_settings(row: usize) -> &'static [Setting] {
+    use NavPreference as N;
+    match row {
+        5 => &[Setting::Nav(N::AllowTeleports)],
+        6 => &[Setting::Nav(N::AllowWilderness)],
+        7 => &[Setting::Nav(N::AllowBankFetch)],
+        8 => &[Setting::DangerRouting],
+        9 => &[Setting::Nav(N::PauseScriptOnManualWalkAbort)],
+        10 => &[Setting::MapBake],
+        12 | 13 => &[Setting::QuesterPaths],
+        _ => &[],
+    }
+}
+
+/// What follows a row's text when its setting is pending or failed.
+fn feedback_suffix(feedback: &[(Setting, SettingFeedback)], setting: Setting) -> Option<String> {
+    feedback
+        .iter()
+        .find(|(shown, _)| *shown == setting)
+        .map(|(_, state)| match state {
+            SettingFeedback::Pending => " — saving…".to_owned(),
+            SettingFeedback::Failed(text) => format!(" — {text}"),
+        })
+}
+
+/// A notice's dismiss line with its setting's pending or failed state.
+fn dismiss_line(text: &str, feedback: &[(Setting, SettingFeedback)], setting: Setting) -> String {
+    let mut line = text.to_owned();
+    if let Some(suffix) = feedback_suffix(feedback, setting) {
+        line.push_str(&suffix);
+    }
+    line
 }
 
 /// Draw `text` into `buf` inside `inner` from row `y`, wrapped at the

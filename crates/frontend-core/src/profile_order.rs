@@ -103,7 +103,8 @@ pub(crate) struct Reconciled {
 }
 
 impl ProfileOrder {
-    /// A copy, taken before a reorder or for a queued write.
+    /// A copy for a test to mutate beside the original.
+    #[cfg(test)]
     pub(crate) fn snapshot(&self) -> Self {
         Self {
             names: self.names.clone(),

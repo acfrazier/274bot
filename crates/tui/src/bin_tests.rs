@@ -1060,7 +1060,6 @@ fn operator_focus_before_preference_adoption_keeps_walk_target_and_boot_load() {
         entered_rx.recv_timeout(Duration::from_secs(10)).unwrap();
         session.core.bind_local_state(service);
         session.preferences = session.core.preferences().unwrap();
-        session.preferences_adopted = false;
         let mut vault = VaultFixture::create(&iso.dir().join("vault"), "test-passphrase-01");
         vault.put(FixtureProfile::new("alice", "pw").uid(7));
         vault.put(FixtureProfile::new("bob", "pw").uid(8));
@@ -1180,7 +1179,6 @@ fn fleet_login_selection_keeps_startup_load_without_overriding_focus() {
     entered_rx.recv_timeout(Duration::from_secs(10)).unwrap();
     session.core.bind_local_state(service);
     session.preferences = session.core.preferences().unwrap();
-    session.preferences_adopted = false;
     let mut vault = VaultFixture::create(&iso.dir().join("vault"), "test-passphrase-01");
     vault.put(FixtureProfile::new("alice", "pw").uid(7));
     vault.put(FixtureProfile::new("bob", "pw").uid(8));
@@ -1246,7 +1244,6 @@ fn removing_a_nonfocused_startup_target_cancels_its_deferred_load() {
     entered_rx.recv_timeout(Duration::from_secs(10)).unwrap();
     session.core.bind_local_state(service);
     session.preferences = session.core.preferences().unwrap();
-    session.preferences_adopted = false;
     let mut vault = VaultFixture::create(&iso.dir().join("vault"), "test-passphrase-01");
     vault.put(FixtureProfile::new("alice", "pw").uid(7));
     vault.put(FixtureProfile::new("bob", "pw").uid(8));
@@ -1465,7 +1462,6 @@ fn first_profile_save_waits_for_preferences_before_loading_and_logging_in_once()
     entered_rx.recv_timeout(Duration::from_secs(10)).unwrap();
     session.core.bind_local_state(service);
     session.preferences = session.core.preferences().unwrap();
-    session.preferences_adopted = false;
     session
         .start_play(VaultFixture::create(
             &iso.dir().join("vault"),
@@ -1570,7 +1566,6 @@ fn o1_new_profile_saved_during_boot_wait_uses_late_saved_order() {
     entered_rx.recv_timeout(Duration::from_secs(10)).unwrap();
     session.core.bind_local_state(service);
     session.preferences = session.core.preferences().unwrap();
-    session.preferences_adopted = false;
 
     let mut vault = VaultFixture::create(&iso.dir().join("vault"), "test-passphrase-01");
     vault.put(FixtureProfile::new("alice", "pw").uid(7));
@@ -1679,7 +1674,6 @@ fn o1_renamed_explicit_boot_profile_keeps_its_uid_during_preference_wait() {
     entered_rx.recv_timeout(Duration::from_secs(10)).unwrap();
     session.core.bind_local_state(service);
     session.preferences = session.core.preferences().unwrap();
-    session.preferences_adopted = false;
 
     let mut vault = VaultFixture::create(&iso.dir().join("vault"), "test-passphrase-01");
     vault.put(FixtureProfile::new("alice", "pw").uid(7));
@@ -1899,7 +1893,6 @@ fn deleting_pending_startup_profile_cancels_load_and_focus() {
     entered_rx.recv_timeout(Duration::from_secs(10)).unwrap();
     session.core.bind_local_state(service);
     session.preferences = session.core.preferences().unwrap();
-    session.preferences_adopted = false;
     let mut vault = VaultFixture::create(&iso.dir().join("vault"), "test-passphrase-01");
     vault.put(FixtureProfile::new("alice", "pw").uid(7));
     session.start_play(vault).unwrap();
@@ -4721,14 +4714,17 @@ fn session_file_toggle_is_saved_and_applied_through_the_command() {
             was_on
         );
 
-        let prior_status = format!("prior status before setting session file {on}");
-        app.log.status = Some(prior_status.clone());
+        app.log.status = Some(format!("prior status before setting session file {on}"));
         dispatch(&mut session, &mut app, AppAction::SetSessionLog(on));
         write_entered_rx
             .recv_timeout(Duration::from_secs(10))
             .expect("the preference write reached the held storage seam");
         assert!(session.core.preferences_pending());
-        assert_eq!(app.log.status.as_deref(), Some(prior_status.as_str()));
+        assert_eq!(
+            app.log.status.as_deref(),
+            Some("session file: saving…"),
+            "the status line says the choice is saving while its write is pending"
+        );
         assert_eq!(current_sink_status(), sink_status_before_settlement);
         assert_eq!(
             frontend_core::log_file::session_log_setting(&session.preferences),
@@ -4744,9 +4740,211 @@ fn session_file_toggle_is_saved_and_applied_through_the_command() {
             on
         );
         assert_eq!(frontend_core::log_file::session_log_path().is_some(), on);
+        let settled_deadline = Instant::now() + Duration::from_secs(10);
+        while app.log.status.as_deref().is_some_and(|status| {
+            status.starts_with("session file opening") || status.ends_with("saving…")
+        }) {
+            assert!(Instant::now() < settled_deadline, "the sink never settled");
+            session.pump(&mut app);
+            std::thread::yield_now();
+        }
         let settled_status = current_sink_status();
         assert_eq!(app.log.status.as_deref(), Some(settled_status.as_str()));
     }
+}
+
+/// A disk for one TUI session's service: every file write waits at its
+/// start until released and fails while `failing` is set.
+struct TuiDisk {
+    release: std::sync::mpsc::Sender<()>,
+    failing: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl TuiDisk {
+    fn install(session: &TuiSession) -> Self {
+        let service = session
+            .core
+            .local_state_for_test()
+            .expect("the TUI binds the process state service");
+        let (release, gate) = std::sync::mpsc::channel::<()>();
+        let gate = std::sync::Mutex::new(gate);
+        service.set_write_stall_for_test(Arc::new(move || {
+            let _ = gate.lock().unwrap().recv();
+        }));
+        let failing = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let refusing = Arc::clone(&failing);
+        service.set_write_fault_for_test(Arc::new(move || {
+            refusing.load(std::sync::atomic::Ordering::SeqCst)
+        }));
+        Self { release, failing }
+    }
+}
+
+/// The settings popup's "map bake" row (a remembered choice) at both sizes:
+/// it keeps the saved value and says "saving…" while its write is held,
+/// then shows the failure on its own row with the saved value again; the
+/// retry is the action that resolves it and the saved value then shows.
+#[test]
+fn tui_settings_row_shows_saving_then_the_failure_then_clears_on_retry() {
+    use crossterm::event::KeyCode;
+    let iso = IsolatedStores::enter("tui-s3-row-feedback");
+    let (mut session, mut app) = tui_with_profiles(&iso, &["alice"]);
+    session.preferences.reload().unwrap();
+    app.restore_preferences(session.preferences.share());
+    open_settings(&mut session, &mut app);
+    app.settings_state.row = 10;
+    let disk = TuiDisk::install(&session);
+    settings_press(&mut session, &mut app, KeyCode::Enter);
+    session.pump(&mut app);
+    assert!(session.core.preferences_pending());
+    for (width, height) in SIZES {
+        let words = screen_words(&mut app, width, height);
+        assert!(
+            words.contains("map bake: always — saving…"),
+            "{width}x{height}: the row shows the choice and says it is saving: {words}"
+        );
+        assert_eq!(
+            session.map_desk.bake_gate().choice(),
+            frontend_core::MapBakeChoice::Ask,
+            "{width}x{height}: the applied choice is still the saved one"
+        );
+    }
+
+    // The disk fails the held write.
+    drop(disk.release);
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while session.core.preferences_pending() {
+        session.pump(&mut app);
+        assert!(Instant::now() < deadline, "the held write never ended");
+        std::thread::yield_now();
+    }
+    session.pump(&mut app);
+    for (width, height) in SIZES {
+        let words = screen_words(&mut app, width, height);
+        assert!(
+            words.contains("map bake: ask") && words.contains("Not saved:"),
+            "{width}x{height}: the failure shows on the row: {words}"
+        );
+        assert!(
+            !words.contains("saving…"),
+            "{width}x{height}: nothing is saving any more: {words}"
+        );
+    }
+    assert_eq!(app.map_bake, frontend_core::MapBakeChoice::Ask);
+
+    // The retry resolves the failure; the durable value then shows.
+    disk.failing
+        .store(false, std::sync::atomic::Ordering::SeqCst);
+    settings_press(&mut session, &mut app, KeyCode::Enter);
+    session.pump(&mut app);
+    for (width, height) in SIZES {
+        let words = screen_words(&mut app, width, height);
+        assert!(
+            !words.contains("Not saved:"),
+            "{width}x{height}: the retry cleared the failure: {words}"
+        );
+    }
+    settle_preferences(&mut session, &mut app);
+    for (width, height) in SIZES {
+        let words = screen_words(&mut app, width, height);
+        assert!(
+            words.contains("map bake: always") && !words.contains("saving…"),
+            "{width}x{height}: the saved choice shows: {words}"
+        );
+    }
+}
+
+/// A failed row feedback leaves by itself after the error timeout.
+#[test]
+fn tui_settings_row_failure_expires_by_itself() {
+    use crossterm::event::KeyCode;
+    let iso = IsolatedStores::enter("tui-s3-row-expiry");
+    let (mut session, mut app) = tui_with_profiles(&iso, &["alice"]);
+    session.preferences.reload().unwrap();
+    app.restore_preferences(session.preferences.share());
+    open_settings(&mut session, &mut app);
+    app.settings_state.row = 10;
+    let disk = TuiDisk::install(&session);
+    drop(disk.release);
+    settings_press(&mut session, &mut app, KeyCode::Enter);
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while session
+        .core
+        .setting_failure(frontend_core::Setting::MapBake)
+        .is_none()
+    {
+        session.pump(&mut app);
+        assert!(Instant::now() < deadline, "the failure never came");
+        std::thread::yield_now();
+    }
+    session.pump(&mut app);
+    assert!(screen_words(&mut app, 120, 40).contains("Not saved:"));
+    let after = Instant::now() + frontend_core::ERROR_MESSAGE_TIMEOUT;
+    {
+        let (core, mut surface) = session.core_and_surface_for_preferences(&mut app);
+        core.poll_preferences_at(&mut surface, after);
+    }
+    session.project_setting_feedback(&mut app);
+    let words = screen_words(&mut app, 120, 40);
+    assert!(!words.contains("Not saved:"), "{words}");
+    assert!(words.contains("map bake: ask"), "{words}");
+}
+
+/// A cold TUI (preferences not yet read) adopts every saved choice when the
+/// read is released, and writes no default over the file meanwhile.
+#[test]
+fn tui_cold_start_adopts_saved_choices_without_writing_defaults() {
+    let iso = IsolatedStores::enter("tui-s3-cold");
+    let _quester_paths_guard = crate::bin::seam::lock_quester_paths_test_state();
+    let state = iso.dir().join("cold-state");
+    let saved: &[u8] = br#"{"map_bake":"always","nav":{"allow_teleports":true}}"#;
+    let path = host_play::local_state::StateRoot::new(state.clone()).preferences_file();
+    crate::test_support::write_private_fixture(&path, saved).unwrap();
+    let mut session = TuiSession::new(dummy_options());
+    session.core.set_spawn_workers(false);
+    let (entered, entered_rx) = std::sync::mpsc::sync_channel(1);
+    let (release, release_rx) = std::sync::mpsc::channel();
+    let release_rx = std::sync::Mutex::new(release_rx);
+    let first = std::sync::atomic::AtomicBool::new(true);
+    let service = host_play::local_state::LocalStateService::open_process_with_read_stall_for_test(
+        host_play::local_state::StateRoot::new(state),
+        Arc::new(move || {
+            if first.swap(false, std::sync::atomic::Ordering::SeqCst) {
+                let _ = entered.send(());
+                let _ = release_rx.lock().unwrap().recv();
+            }
+        }),
+    );
+    entered_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+    session.core.bind_local_state(service);
+    session.preferences = session.core.preferences().unwrap();
+    let mut app = new_app("tui", &session.preferences);
+    for _ in 0..4 {
+        session.pump(&mut app);
+        assert!(!session.preferences.ready());
+        assert_eq!(app.map_bake, frontend_core::MapBakeChoice::Ask);
+        assert!(!app.nav.allow_teleports());
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            saved,
+            "no default is written"
+        );
+    }
+    release.send(()).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !(app.nav.allow_teleports() && app.map_bake == frontend_core::MapBakeChoice::Always)
+        && Instant::now() < deadline
+    {
+        session.pump(&mut app);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(app.nav.allow_teleports());
+    assert_eq!(app.map_bake, frontend_core::MapBakeChoice::Always);
+    assert_eq!(
+        std::fs::read(&path).unwrap(),
+        saved,
+        "no default is written"
+    );
 }
 
 /// Dismissing the Quester Paths status line is the `AcknowledgeNotice`
@@ -4799,12 +4997,14 @@ fn tui_quester_paths_failed_save_keeps_source_and_error_without_reloading() {
     assert_eq!(app.quester_paths.enabled(), before_enabled);
     assert_eq!(app.quester_paths.folder(), before_folder);
     assert!(!app.quester_paths_controller.is_running());
-    assert!(app.quester_paths_controller.notice_is_error());
-    assert!(app
-        .quester_paths_controller
-        .notice_text()
-        .unwrap()
-        .starts_with("Quest Paths settings were not saved:"));
+    assert!(
+        matches!(
+            app.setting_feedback(frontend_core::Setting::QuesterPaths),
+            Some(SettingFeedback::Failed(text)) if text.starts_with("Not saved:")
+        ),
+        "the failure shows at the Quest Paths setting: {:?}",
+        app.setting_feedback(frontend_core::Setting::QuesterPaths)
+    );
     let _iso = iso;
 }
 
@@ -4952,12 +5152,21 @@ fn tui_failed_ack_persist_then_success_clears_only_that_error() {
         app.background_notice.is_some(),
         "persist failure must keep the notice"
     );
+    let notice = frontend_core::Setting::Notice(frontend_core::OperatorNotice::BackgroundBots);
     assert!(
-        app.error
+        matches!(
+            app.setting_feedback(notice),
+            Some(SettingFeedback::Failed(text)) if text.starts_with("Not saved:")
+        ),
+        "the failure shows at the notice's setting: {:?}",
+        app.setting_feedback(notice)
+    );
+    assert!(
+        app.background_notice
             .as_deref()
-            .is_some_and(|e| e.starts_with("background bots:")),
-        "got {:?}",
-        app.error
+            .is_some_and(|text| text.contains("Not saved:")),
+        "the notice itself carries the failure: {:?}",
+        app.background_notice
     );
     assert!(!frontend_core::resources::background_bots_acked(
         &session.preferences
@@ -8046,7 +8255,6 @@ fn retained_preference_failure_expires_without_reappearing_and_clears_on_recover
         let mut session = TuiSession::new(dummy_options());
         session.core.bind_local_state(service);
         session.preferences = session.core.preferences().unwrap();
-        session.preferences_adopted = false;
         let mut app = TuiApp::new("274bot headless");
         let deadline = Instant::now() + Duration::from_secs(10);
         while app.error.is_none() && Instant::now() < deadline {

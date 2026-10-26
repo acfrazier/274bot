@@ -13,7 +13,7 @@ use std::io::{self, BufWriter, ErrorKind, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, SyncSender, TryRecvError, TrySendError};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use crate::log::{global, logs_dir, LocalTime};
 use api::hostlog::{Level, Source};
@@ -49,6 +49,29 @@ pub struct SessionLogFile {
     tx: SyncSender<Box<str>>,
     path: PathBuf,
     dropped: Arc<AtomicU64>,
+    state: Arc<Mutex<SinkState>>,
+}
+
+/// Where the session file's writer stands. The open happens on the writer
+/// thread, so "the preference is on" does not yet say "the file is
+/// writing": a front end reads this to tell a saved choice from a sink that
+/// could not start.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SinkState {
+    /// The writer thread has not opened the file yet.
+    Opening,
+    /// The file is open and lines are written to it.
+    Open,
+    /// The directory, the file or a later write failed; the cause.
+    Failed(String),
+}
+
+impl SinkState {
+    fn set(state: &Mutex<Self>, next: Self) {
+        *state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = next;
+    }
 }
 
 impl SessionLogFile {
@@ -65,16 +88,19 @@ impl SessionLogFile {
         let path = dir.join(name);
         let (tx, rx) = mpsc::sync_channel(QUEUE_LINES);
         let dropped = Arc::new(AtomicU64::new(0));
+        let state = Arc::new(Mutex::new(SinkState::Opening));
         let writer = Writer {
             dir,
             path: path.clone(),
             rotation,
             dropped: Arc::clone(&dropped),
+            state: Arc::clone(&state),
         };
         let spawned = std::thread::Builder::new()
             .name("session-log".into())
             .spawn(move || {
                 if let Err(e) = writer.run(rx) {
+                    SinkState::set(&writer.state, SinkState::Failed(e.to_string()));
                     global().process_line(
                         Source::Host,
                         Level::Error,
@@ -83,13 +109,27 @@ impl SessionLogFile {
                 }
             });
         if let Err(e) = spawned {
+            SinkState::set(&state, SinkState::Failed(format!("writer thread: {e}")));
             global().process_line(
                 Source::Host,
                 Level::Error,
                 &format!("session log: writer thread: {e}"),
             );
         }
-        Self { tx, path, dropped }
+        Self {
+            tx,
+            path,
+            dropped,
+            state,
+        }
+    }
+
+    /// Where the writer stands now.
+    pub fn state(&self) -> SinkState {
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
     }
 
     pub fn path(&self) -> &Path {
@@ -112,6 +152,7 @@ struct Writer {
     path: PathBuf,
     rotation: Rotation,
     dropped: Arc<AtomicU64>,
+    state: Arc<Mutex<SinkState>>,
 }
 
 impl Writer {
@@ -119,6 +160,7 @@ impl Writer {
         create_private_dir(&self.dir)?;
         prune_sessions(&self.dir, self.rotation.sessions.saturating_sub(1))?;
         let mut out = BufWriter::new(open_private(&self.path)?);
+        SinkState::set(&self.state, SinkState::Open);
         let mut size = 0u64;
         loop {
             let line = match rx.try_recv() {
@@ -276,6 +318,37 @@ pub fn session_log_path() -> Option<PathBuf> {
     global().file_path()
 }
 
+/// The cause the open session file's writer failed with, if it failed
+/// (allocates only then).
+pub(crate) fn global_file_failure() -> Option<String> {
+    global().file_failure()
+}
+
+/// What the session file actually does now, for a front end's status line.
+/// The saved preference being on says what the operator chose; this says
+/// whether the sink opened.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SessionFileStatus {
+    /// No file is open.
+    Off,
+    /// The writer has not opened the file yet.
+    Opening(PathBuf),
+    /// Lines are written to this file.
+    Writing(PathBuf),
+    /// The file could not be opened or written; the cause.
+    Failed(String),
+}
+
+/// The session file's current status.
+pub fn session_file_status() -> SessionFileStatus {
+    match global().file_state() {
+        None => SessionFileStatus::Off,
+        Some((path, SinkState::Opening)) => SessionFileStatus::Opening(path),
+        Some((path, SinkState::Open)) => SessionFileStatus::Writing(path),
+        Some((_, SinkState::Failed(cause))) => SessionFileStatus::Failed(cause),
+    }
+}
+
 /// Fixture seam: [`apply_session_log`] for integration tests.
 #[cfg(any(test, feature = "test-support"))]
 pub fn apply_session_log_for_test(on: bool) -> Option<PathBuf> {
@@ -304,6 +377,14 @@ pub(crate) fn apply_session_log(on: bool) -> Option<PathBuf> {
             None
         }
     }
+}
+
+/// Serializes the tests that open or close the process-wide session file.
+#[cfg(test)]
+pub(crate) fn sink_test_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: Mutex<()> = Mutex::new(());
+    LOCK.lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 #[cfg(test)]

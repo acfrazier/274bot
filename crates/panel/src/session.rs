@@ -876,6 +876,28 @@ struct PanelPreferenceWrite {
     members: Vec<PanelPreferenceMember>,
 }
 
+/// A failed panel-owned write kept at its setting.
+struct PanelWriteError {
+    path: Vec<String>,
+    text: String,
+    since: Instant,
+}
+
+/// The operator's unsettled change of each saved operational setting
+/// (`None`: the control shows the saved value). Set when the command is
+/// submitted; dropped once the core no longer holds a write for the setting
+/// pending, whichever way it ended, so the control then shows the saved
+/// value ([`Session::settle_setting_drafts`]).
+#[derive(Debug, Default, Clone, Copy)]
+pub(crate) struct SettingDrafts {
+    pub(crate) capture: Option<bool>,
+    pub(crate) sidecar_50: Option<bool>,
+    pub(crate) focused_50: Option<bool>,
+    pub(crate) quester_enabled: Option<bool>,
+    pub(crate) map_bake: Option<MapBakeChoice>,
+    pub(crate) session_log: Option<bool>,
+}
+
 enum StartupFocus {
     Restore,
     SavedProfile(String),
@@ -953,14 +975,29 @@ pub struct Session {
     pending_panel_members: HashMap<Vec<String>, Option<serde_json::Value>>,
     /// Shared Nav values changed by an accepted command but not yet durable.
     pending_nav_members: HashMap<&'static str, bool>,
-    /// A failed write remains visible until a later write to that member
-    /// succeeds.
-    preference_write_error: Option<(Vec<String>, String)>,
+    /// Failed panel-owned writes, one per member path, each kept at its
+    /// setting until a later write of it lands or the error timeout passes.
+    preference_write_errors: Vec<PanelWriteError>,
+    /// The operator's unsettled change of a saved operational setting: what
+    /// its control shows while the write is pending. The saved value (the
+    /// draw mirror, the Quester controller, the bake gate) follows the
+    /// durable snapshot only, so a failed write shows the saved value again.
+    pub(crate) setting_drafts: SettingDrafts,
+    /// What the capture-input devices were last set up for; they follow the
+    /// saved capture preference ([`Self::sync_capture_devices`]).
+    capture_devices: Option<bool>,
     /// Shared Quester Paths settings and reload lifecycle.
     pub(crate) quester_paths: frontend_core::QuesterPathsController,
     pub(crate) quester_paths_folder_edit: String,
     /// Preserve uncommitted text while the durable controller is adopted.
     pub(crate) quester_paths_folder_dirty: bool,
+    /// The folder text the last committed write carries while it is pending;
+    /// the field keeps it until the write ends.
+    quester_folder_submitted: Option<String>,
+    /// A pending special-areas preview was dropped (its write ended).
+    special_areas_dropped: bool,
+    /// The durable version the shared Nav members last followed.
+    nav_rebased: Option<api::local_state::StoreVersion>,
     /// Separate Fleet window open.
     pub fleet_open: bool,
     /// The one fleet model (rows, marks, filter, order) the Fleet window,
@@ -1397,6 +1434,22 @@ impl frontend_core::frames::FrameHook for PanelFrameHook {
     }
 }
 
+/// The saved setting a shared Nav member belongs to.
+fn nav_member_setting(key: &str) -> frontend_core::Setting {
+    use frontend_core::{NavPreference as N, Setting};
+    match key {
+        "allow_teleports" => Setting::Nav(N::AllowTeleports),
+        "allow_wilderness" => Setting::Nav(N::AllowWilderness),
+        "allow_bank_fetch" => Setting::Nav(N::AllowBankFetch),
+        "allow_danger_zones" | "survivable_routing" => Setting::DangerRouting,
+        "script_scope_notice_ack" => Setting::Nav(N::ScriptScopeNoticeAck),
+        "survivable_routing_notice_ack" => Setting::Nav(N::SurvivableRoutingNoticeAck),
+        "show_special_areas" => Setting::Nav(N::ShowSpecialAreas),
+        "pause_script_on_manual_walk_abort" => Setting::Nav(N::PauseScriptOnManualWalkAbort),
+        _ => unreachable!("only shared Nav members are retained"),
+    }
+}
+
 fn apply_walk_permissions_to_nav(
     nav: &mut NavSettings,
     view: frontend_core::WalkGlobalsView,
@@ -1617,10 +1670,15 @@ impl Session {
             panel_preference_writes: Vec::new(),
             pending_panel_members: HashMap::new(),
             pending_nav_members,
-            preference_write_error: None,
+            preference_write_errors: Vec::new(),
+            setting_drafts: SettingDrafts::default(),
+            capture_devices: Some(capture_pref),
             quester_paths,
             quester_paths_folder_edit,
             quester_paths_folder_dirty: false,
+            quester_folder_submitted: None,
+            special_areas_dropped: false,
+            nav_rebased: None,
             map_desk,
             map_model: frontend_core::walk_map::WalkMap::new(),
             map_catalogue: None,
@@ -1703,6 +1761,7 @@ impl Session {
     /// Refresh the durable policy before rendering or admitting a manual walk.
     pub(crate) fn refresh_walk_permissions(&mut self) {
         self.adopt_panel_preferences_if_ready();
+        self.prune_pending_nav_members();
         self.walk_permissions = self.core.refresh_walk_globals();
         apply_walk_permissions_to_nav(
             &mut self.ui.nav,
@@ -1714,8 +1773,161 @@ impl Session {
             .danger_this_walk(self.route_through_zones);
     }
 
+    /// One reconciliation of the saved operator settings: the core settles
+    /// every accepted write by its request and lets every lent model follow
+    /// the latest durable snapshot ([`OperatorSession::poll_preferences`]),
+    /// calling back through the surface when a saved draw switch changes;
+    /// the panel's own mirrors, drafts and capture devices then follow.
+    fn follow_core_preferences(&mut self) {
+        {
+            let (core, mut surface) = self.core_and_surface();
+            core.poll_preferences(&mut surface);
+        }
+        self.settle_setting_drafts();
+        self.sync_capture_devices();
+    }
+
+    /// Drop each unsettled draft whose write is no longer pending (it landed
+    /// or failed: the control then shows the saved value), and mirror the
+    /// saved values the panel keeps in its own view model.
+    pub(crate) fn settle_setting_drafts(&mut self) {
+        use frontend_core::{Setting, SettingStatus};
+        let pending = |core: &OperatorSession<SlotIo>, setting| {
+            matches!(core.setting_status(setting), SettingStatus::Pending)
+        };
+        let core = &self.core;
+        let drafts = &mut self.setting_drafts;
+        if !pending(core, Setting::Draw(DrawSwitch::CaptureInput)) {
+            drafts.capture = None;
+        }
+        if !pending(core, Setting::Draw(DrawSwitch::SidecarFullRate)) {
+            drafts.sidecar_50 = None;
+        }
+        if !pending(core, Setting::Draw(DrawSwitch::FocusedFullRate)) {
+            drafts.focused_50 = None;
+        }
+        if !pending(core, Setting::QuesterPaths) {
+            drafts.quester_enabled = None;
+        }
+        if !pending(core, Setting::MapBake) {
+            drafts.map_bake = None;
+        }
+        if !pending(core, Setting::SessionLog) {
+            drafts.session_log = None;
+        }
+        self.prune_pending_nav_members();
+        if !matches!(
+            self.core.setting_status(Setting::QuesterPaths),
+            SettingStatus::Pending
+        ) {
+            // The folder write ended: the field shows the saved folder
+            // (what landed, or the prior one when it failed) unless the
+            // operator has typed something newer.
+            if let Some(submitted) = self.quester_folder_submitted.take() {
+                if self.quester_paths_folder_edit == submitted {
+                    self.quester_paths_folder_dirty = false;
+                    self.quester_paths_folder_edit = self
+                        .quester_paths
+                        .settings()
+                        .folder()
+                        .to_string_lossy()
+                        .into_owned();
+                }
+            }
+        }
+        self.ui.capture = self.draw.capture();
+        self.ui.sidecar_50 = self.draw.sidecar_50();
+        self.ui.focused_50 = self.draw.focused_50();
+        self.ui.map_bake = self.map_desk.bake_gate().choice();
+        if let Ok(document) = self.preferences.document() {
+            self.ui.session_log_file = document
+                .get(frontend_core::log_file::SESSION_LOG_KEY)
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false);
+            self.ui.background_bots_ack = document
+                .get("background_bots_ack")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false);
+            self.ui.render_all_warning_ack = document
+                .get(frontend_core::session::RENDER_ALL_WARNING_ACK_KEY)
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false);
+            // The two shared Nav members the panel holds beside the walk
+            // grants follow the saved value (when a new version arrived)
+            // unless the operator's own change of them is still pending.
+            let version = self
+                .preferences
+                .snapshot()
+                .ok()
+                .map(|snapshot| snapshot.version());
+            if version != self.nav_rebased {
+                self.nav_rebased = version;
+                self.rebase_shared_nav_members();
+            }
+        }
+        self.settle_notice_windows();
+    }
+
+    /// A notice window that waits for its durable acknowledgement closes
+    /// when the saved value holds it; a failed write leaves it open with
+    /// the failure beside "Don't show again" / "Got it".
+    fn settle_notice_windows(&mut self) {
+        use frontend_core::{OperatorNotice, Setting, SettingStatus};
+        if self.background_ack_open
+            && self.ui.background_bots_ack
+            && !matches!(
+                self.core
+                    .setting_status(Setting::Notice(OperatorNotice::BackgroundBots)),
+                SettingStatus::Pending
+            )
+        {
+            self.background_ack_open = false;
+        }
+        if self.wall.render_all_confirming
+            && !matches!(
+                self.core
+                    .setting_status(Setting::Notice(OperatorNotice::RenderAllWarning)),
+                SettingStatus::Pending
+            )
+        {
+            self.wall.render_all_confirming = false;
+            if self.ui.render_all_warning_ack {
+                self.wall.render_all_warn_open = false;
+            }
+        }
+    }
+
+    /// The capture-input devices follow the saved capture preference: on
+    /// attaches the focused slot's drain, off detaches user input. They
+    /// change when the draw mirror changes, never at a submit.
+    fn sync_capture_devices(&mut self) {
+        let capture = self.focus.lock().unwrap().capture;
+        if self.capture_devices == Some(capture) {
+            return;
+        }
+        self.capture_devices = Some(capture);
+        let name = self.focused_name();
+        if capture {
+            match name.as_deref() {
+                Some(name) => self.capture_on(name),
+                None => {
+                    self.map_desk.set_input_sender(None);
+                }
+            }
+        } else {
+            self.capture_off();
+        }
+        // The channel is attached after the core woke the slot; kick it
+        // again so the drain change lands within a frame.
+        if let Some(name) = name {
+            self.core.wake_slot(&name);
+        }
+    }
+
     /// Poll accepted panel writes and adopt the first cached snapshot.
     pub(crate) fn poll_panel_preferences(&mut self) {
+        self.follow_core_preferences();
+        self.expire_panel_write_errors(Instant::now());
         let mut index = 0;
         while index < self.panel_preference_writes.len() {
             let outcome = match &mut self.panel_preference_writes[index].update {
@@ -1729,9 +1941,7 @@ impl Session {
             let write = self.panel_preference_writes.swap_remove(index);
             match outcome {
                 Ok(()) => self.clear_succeeded_panel_members(&write.members),
-                Err(error) => {
-                    self.set_preference_write_error(write.members.first(), error.to_string())
-                }
+                Err(error) => self.fail_panel_members(&write.members, &error.to_string()),
             }
         }
 
@@ -1764,10 +1974,24 @@ impl Session {
         self.core.preferences_pending() || !self.panel_preference_writes.is_empty()
     }
 
+    /// The newest panel-write failure (the global config shows it).
     pub(crate) fn panel_preference_write_error(&self) -> Option<&str> {
-        self.preference_write_error
-            .as_ref()
-            .map(|(_, message)| message.as_str())
+        self.preference_write_errors
+            .last()
+            .map(|error| error.text.as_str())
+    }
+
+    /// The retained failure of the panel-owned setting whose members lie
+    /// under `prefix`, shown at that setting.
+    pub(crate) fn panel_member_error(&self, prefix: &[&str]) -> Option<&str> {
+        self.preference_write_errors
+            .iter()
+            .rev()
+            .find(|error| {
+                error.path.len() >= prefix.len()
+                    && error.path.iter().zip(prefix).all(|(a, b)| a == b)
+            })
+            .map(|error| error.text.as_str())
     }
 
     /// Submit one exact panel-owned preference member without waiting.
@@ -1789,7 +2013,7 @@ impl Session {
             Ok(patch) => patch,
             Err(error) => {
                 let message = error.to_string();
-                self.set_preference_write_error(Some(&member), message.clone());
+                self.fail_panel_members(std::slice::from_ref(&member), &message);
                 return Err(message);
             }
         };
@@ -1811,7 +2035,7 @@ impl Session {
             }
             Err(error) => {
                 let message = error.to_string();
-                self.set_preference_write_error(Some(&member), message.clone());
+                self.fail_panel_members(std::slice::from_ref(&member), &message);
                 Err(message)
             }
         }
@@ -1829,7 +2053,7 @@ impl Session {
                     value: None,
                 };
                 let message = error.to_string();
-                self.set_preference_write_error(Some(&member), message.clone());
+                self.set_preference_write_error(Some(&member), &message, Instant::now());
                 Err(message)
             }
         }
@@ -1841,10 +2065,64 @@ impl Session {
         self.pending_nav_members.insert(key, value);
     }
 
+    /// A shared Nav value the operator changed stays over refreshes only
+    /// while its command's write is pending; a write that failed or never
+    /// started leaves the durable value showing again.
+    fn prune_pending_nav_members(&mut self) {
+        let core = &self.core;
+        let special_areas = &mut self.special_areas_dropped;
+        let mut dropped_any = false;
+        self.pending_nav_members.retain(|key, _| {
+            let pending = matches!(
+                core.setting_status(nav_member_setting(key)),
+                frontend_core::SettingStatus::Pending
+            );
+            if !pending {
+                dropped_any = true;
+                if *key == "show_special_areas" {
+                    *special_areas = true;
+                }
+            }
+            pending
+        });
+        if dropped_any {
+            self.rebase_shared_nav_members();
+        }
+    }
+
+    /// The two shared Nav members the panel holds beside the walk grants (the
+    /// special-areas overlay and the manual-walk pause) take the saved value,
+    /// except where the operator's own change is still pending.
+    fn rebase_shared_nav_members(&mut self) {
+        let Ok(document) = self.preferences.document() else {
+            return;
+        };
+        let saved = crate::ui_state::load_snapshot(&document).nav;
+        if !self.pending_nav_members.contains_key("show_special_areas") {
+            self.ui.nav.show_special_areas = saved.show_special_areas;
+        }
+        if !self
+            .pending_nav_members
+            .contains_key("pause_script_on_manual_walk_abort")
+        {
+            self.ui.nav.pause_script_on_manual_walk_abort = saved.pause_script_on_manual_walk_abort;
+        }
+    }
+
+    /// Whether a pending special-areas preview was dropped since the last
+    /// call (its write ended): the map's own toggle then follows the saved
+    /// value instead of submitting its stale choice again.
+    pub(crate) fn take_special_areas_dropped(&mut self) -> bool {
+        std::mem::take(&mut self.special_areas_dropped)
+    }
+
     fn adopt_panel_preferences_if_ready(&mut self) {
         if self.preferences_ready {
             return;
         }
+        // The core adopts the durable snapshot into the draw policy, the
+        // bake gate and the Quester source before the panel's own view does.
+        self.follow_core_preferences();
         let Ok(document) = self.preferences.document() else {
             return;
         };
@@ -1863,7 +2141,6 @@ impl Session {
         self.preferences_ready = true;
 
         let preserve_folder_draft = self.quester_paths_folder_dirty;
-        self.quester_paths.restore(&self.preferences);
         if !preserve_folder_draft {
             self.quester_paths_folder_edit = self
                 .quester_paths
@@ -1872,27 +2149,15 @@ impl Session {
                 .to_string_lossy()
                 .into_owned();
         }
-        self.draw = frontend_core::DrawPolicy::restore(&self.preferences, self.persist_ui);
-        {
-            let mut focus = self
-                .focus
-                .lock()
-                .expect("panel focus mutex is not poisoned");
-            focus.capture = self.draw.capture();
-            focus.sidecar_50 = self.draw.sidecar_50();
-            focus.focused_50 = self.draw.focused_50();
-        }
         self.ui.capture = self.draw.capture();
         self.ui.sidecar_50 = self.draw.sidecar_50();
         self.ui.focused_50 = self.draw.focused_50();
-        self.map_desk
-            .adopt_bake_choice(frontend_core::load_map_bake_choice(&self.preferences));
+        self.ui.map_bake = self.map_desk.bake_gate().choice();
         self.script_load_dir =
             crate::script_picker::default_load_browse_dir(self.ui.script_load_last_dir.as_deref());
         self.rs2b0t_catalog_dir = crate::script_picker::default_load_browse_dir(
             self.ui.script_catalog_last_dir.as_deref(),
         );
-        crate::log_pane::apply_session_log_pref(self);
 
         self.clear_cached_panel_members(document);
         self.clear_cached_nav_members(document);
@@ -1905,23 +2170,70 @@ impl Session {
                 #[cfg(test)]
                 crate::ui_state::commit_test_member(&member.path, &member.value);
             }
-            if self
-                .preference_write_error
-                .as_ref()
-                .is_some_and(|(path, _)| path == &member.path)
-            {
-                self.preference_write_error = None;
+            self.preference_write_errors
+                .retain(|error| error.path != member.path);
+        }
+    }
+
+    /// A panel-owned write was refused or failed: its preview is dropped
+    /// (the control shows the latest durable value again) and the failure
+    /// stays at the setting until a later write of it lands or the error
+    /// timeout passes. A write a newer one superseded has nothing to
+    /// report: the newer write decides.
+    fn fail_panel_members(&mut self, members: &[PanelPreferenceMember], error: &str) {
+        let now = Instant::now();
+        for member in members {
+            if self.pending_panel_members.get(&member.path) != Some(&member.value) {
+                continue;
             }
+            self.pending_panel_members.remove(&member.path);
+            self.revert_panel_member(&member.path);
+            self.set_preference_write_error(Some(member), error, now);
+        }
+    }
+
+    /// Put the durable value of the member at `path` back over its failed
+    /// preview.
+    fn revert_panel_member(&mut self, path: &[String]) {
+        let Ok(document) = self.preferences.document() else {
+            return;
+        };
+        if let Some(restored) = crate::ui_state::restore_member(&self.ui, &document, path) {
+            self.ui = restored;
+            apply_pending_nav_members(&mut self.ui.nav, &self.pending_nav_members);
         }
     }
 
     fn set_preference_write_error(
         &mut self,
         member: Option<&PanelPreferenceMember>,
-        error: String,
+        error: &str,
+        now: Instant,
     ) {
         let path = member.map_or_else(Vec::new, |member| member.path.clone());
-        self.preference_write_error = Some((path, format!("Preferences not saved: {error}")));
+        let text = format!("Preferences not saved: {error}");
+        match self
+            .preference_write_errors
+            .iter_mut()
+            .find(|shown| shown.path == path)
+        {
+            Some(shown) => {
+                shown.text = text;
+                shown.since = now;
+            }
+            None => self.preference_write_errors.push(PanelWriteError {
+                path,
+                text,
+                since: now,
+            }),
+        }
+    }
+
+    /// Drop every panel-write failure that has stood for the error timeout.
+    fn expire_panel_write_errors(&mut self, now: Instant) {
+        self.preference_write_errors.retain(|error| {
+            now.saturating_duration_since(error.since) < frontend_core::ERROR_MESSAGE_TIMEOUT
+        });
     }
 
     fn clear_cached_panel_members(
@@ -3344,35 +3656,29 @@ impl Session {
         self.background_ack_open = true;
     }
 
-    /// Persist "Got it, don't show again" for the background-bots notice.
+    /// Submit "Got it, don't show again" for the background-bots notice.
+    /// The acknowledgement is durable-only: the dialog stays, saying
+    /// "Saving…" or the failure beside the button, and closes when the saved
+    /// value holds it ([`Self::settle_notice_windows`]).
     pub fn ack_background_bots(&mut self) {
         if self.persist_ui {
             self.core
                 .stage_notice(frontend_core::OperatorNotice::BackgroundBots);
-            let failure = self
-                .submit(OperatorCommand::AcknowledgeNotice, Targets::Application)
-                .map(|submitted| {
-                    self.core
-                        .command_failure(submitted.request())
-                        .map(str::to_string)
-                });
-            match failure {
-                Some(None) => {
-                    self.background_ack_open = false;
-                    self.ui.background_bots_ack = true;
-                    frontend_core::resources::clear_background_bots_ack_error(&mut self.error);
-                }
-                Some(Some(error)) => self.error = Some(error),
-                None => {}
-            }
+            self.submit(OperatorCommand::AcknowledgeNotice, Targets::Application);
+            frontend_core::resources::clear_background_bots_ack_error(&mut self.error);
         } else {
             self.background_ack_open = false;
         }
     }
 
     /// Dismiss the notice this time; it can appear again on the next trigger.
+    /// Closing it resolves a failed save the dialog showed.
     pub fn dismiss_background_ack(&mut self) {
         self.background_ack_open = false;
+        self.core
+            .dismiss_setting_failure(frontend_core::Setting::Notice(
+                frontend_core::OperatorNotice::BackgroundBots,
+            ));
     }
 
     fn cancel_startup_focus(&mut self) {
@@ -3469,41 +3775,61 @@ impl Session {
         self.submit_draw(DrawSwitch::FocusedFullRate, on);
     }
 
-    /// Submit a saved draw switch and mirror the policy onto the panel's
-    /// preference view.
+    /// Submit a saved draw switch. The control shows the operator's choice
+    /// while the write is pending ([`Self::setting_drafts`]); the policy and
+    /// the render mirror change only when the saved value does.
     fn submit_draw(&mut self, switch: DrawSwitch, on: bool) {
-        if let Some(submitted) =
-            self.submit(OperatorCommand::SetDraw(switch, on), Targets::Application)
-        {
-            if let Some(error) = self.core.command_failure(submitted.request()) {
-                self.error = Some(error.to_string());
-            }
+        match switch {
+            DrawSwitch::CaptureInput => self.setting_drafts.capture = Some(on),
+            DrawSwitch::SidecarFullRate => self.setting_drafts.sidecar_50 = Some(on),
+            DrawSwitch::FocusedFullRate => self.setting_drafts.focused_50 = Some(on),
+            DrawSwitch::GameRenderer | DrawSwitch::LiveFullRate => {}
         }
-        self.ui.capture = self.draw.capture();
-        self.ui.sidecar_50 = self.draw.sidecar_50();
-        self.ui.focused_50 = self.draw.focused_50();
+        self.submit(OperatorCommand::SetDraw(switch, on), Targets::Application);
+        self.settle_setting_drafts();
     }
 
-    /// Confirm the render-all warning: wall members draw from now on. With
-    /// `remember`, also save "Don't show again", after which unchecking
-    /// "only render focused" applies at once. Without it the choice lasts
-    /// this launch only.
+    /// What a saved draw switch's checkbox shows: the operator's choice
+    /// while its write is pending, else the saved value.
+    pub(crate) fn draw_shown(&self, switch: DrawSwitch) -> bool {
+        let focus = self.focus.lock().unwrap();
+        match switch {
+            DrawSwitch::CaptureInput => self.setting_drafts.capture.unwrap_or(focus.capture),
+            DrawSwitch::SidecarFullRate => {
+                self.setting_drafts.sidecar_50.unwrap_or(focus.sidecar_50)
+            }
+            DrawSwitch::FocusedFullRate => {
+                self.setting_drafts.focused_50.unwrap_or(focus.focused_50)
+            }
+            DrawSwitch::GameRenderer => focus.renderer,
+            DrawSwitch::LiveFullRate => focus.live_full_rate,
+        }
+    }
+
+    /// Confirm the render-all warning: wall members draw from now on (this
+    /// launch). With `remember`, also submit "Don't show again", after
+    /// which unchecking "only render focused" applies at once. That is
+    /// durable-only: the confirm stays open saying "Saving…" or the failure
+    /// beside the button, and closes when the saved acknowledgement holds
+    /// it ([`Self::settle_notice_windows`]). Without `remember` the choice
+    /// lasts this launch only and the confirm closes.
     pub fn confirm_render_all(&mut self, remember: bool) {
         self.set_render_all(true);
-        self.wall.render_all_warn_open = false;
         if remember && self.persist_ui {
             self.core
                 .stage_notice(frontend_core::OperatorNotice::RenderAllWarning);
-            if let Some(submitted) =
-                self.submit(OperatorCommand::AcknowledgeNotice, Targets::Application)
-            {
-                match self.core.command_failure(submitted.request()) {
-                    Some(error) => self.error = Some(error.to_string()),
-                    None => self.ui.render_all_warning_ack = true,
-                }
+            self.submit(OperatorCommand::AcknowledgeNotice, Targets::Application);
+            self.wall.render_all_confirming = true;
+            self.settle_notice_windows();
+        } else {
+            self.wall.render_all_warn_open = false;
+            self.core
+                .dismiss_setting_failure(frontend_core::Setting::Notice(
+                    frontend_core::OperatorNotice::RenderAllWarning,
+                ));
+            if remember {
+                self.ui.render_all_warning_ack = true;
             }
-        } else if remember {
-            self.ui.render_all_warning_ack = true;
         }
     }
 
@@ -3587,28 +3913,14 @@ impl Session {
         }
     }
 
-    /// Capture checkbox ([`DrawSwitch::CaptureInput`]). On: attach a fresh
-    /// channel and enable the focused slot's drain. Off: detach user input;
-    /// the consumer releases its own held keys/buttons even without queued
-    /// ups or before reattachment.
+    /// Capture checkbox ([`DrawSwitch::CaptureInput`]): submits the saved
+    /// choice. The input devices follow the saved value
+    /// ([`Self::sync_capture_devices`]): on attaches a fresh channel and
+    /// enables the focused slot's drain, off detaches user input (the
+    /// consumer releases its own held keys/buttons even without queued ups
+    /// or before reattachment).
     pub fn set_capture(&mut self, on: bool) {
         self.submit_draw(DrawSwitch::CaptureInput, on);
-        let name = self.focused_name();
-        if on {
-            match name.as_deref() {
-                Some(name) => self.capture_on(name),
-                None => {
-                    self.map_desk.set_input_sender(None);
-                }
-            }
-        } else {
-            self.capture_off();
-        }
-        // The channel is attached after the core woke the slot; kick it
-        // again so the drain change lands within a frame.
-        if let Some(name) = name {
-            self.core.wake_slot(&name);
-        }
     }
 
     fn capture_on(&mut self, name: &str) {
@@ -4350,17 +4662,25 @@ impl Session {
         self.submit(OperatorCommand::DeclineMapBake, Targets::Application);
     }
 
-    /// Remembered bake choice, persisted with the other panel prefs.
+    /// Remembered bake choice. Durable-only: the bake gate takes it from the
+    /// saved value, the control shows the choice while its write is pending
+    /// ([`Self::map_bake_shown`]), and a failed write shows the saved choice
+    /// again with the failure beside the control.
     pub fn set_map_bake_choice(&mut self, choice: MapBakeChoice) {
-        if let Some(submitted) = self.submit(
+        self.setting_drafts.map_bake = Some(choice);
+        self.submit(
             OperatorCommand::SetMapBakeChoice(choice),
             Targets::Application,
-        ) {
-            match self.core.command_failure(submitted.request()) {
-                Some(error) => self.error = Some(error.to_string()),
-                None => self.ui.map_bake = choice,
-            }
-        }
+        );
+        self.settle_setting_drafts();
+    }
+
+    /// The remembered bake choice a control shows: the operator's choice
+    /// while its write is pending, else the saved choice.
+    pub fn map_bake_shown(&self) -> MapBakeChoice {
+        self.setting_drafts
+            .map_bake
+            .unwrap_or_else(|| self.map_desk.bake_gate().choice())
     }
 
     pub fn release_walk_map(&mut self) {
@@ -4808,9 +5128,12 @@ impl Session {
         profile.game_data()
     }
 
-    /// Persist a Quest Paths form change. The folder field is used only in
-    /// the frame the operator commits it; a checkbox toggle keeps the saved
-    /// folder.
+    /// Submit a Quest Paths form change. The folder field is used only in
+    /// the frame the operator commits it; a checkbox toggle keeps the folder
+    /// last submitted (or saved). Durable-only: the controller applies and
+    /// reloads the source when the saved value holds it, the checkbox shows
+    /// the choice and the field keeps its text while the write is pending,
+    /// and a failed write shows the saved source again with the failure.
     pub(crate) fn persist_quester_paths_change(
         &mut self,
         enabled: bool,
@@ -4818,20 +5141,18 @@ impl Session {
     ) -> Result<(), String> {
         let folder = if folder_committed {
             PathBuf::from(self.quester_paths_folder_edit.as_str())
+        } else if let Some(submitted) = &self.quester_folder_submitted {
+            PathBuf::from(submitted.as_str())
         } else {
             self.quester_paths.settings().folder().to_path_buf()
         };
+        if folder_committed {
+            self.quester_folder_submitted = Some(self.quester_paths_folder_edit.clone());
+        }
+        self.setting_drafts.quester_enabled = Some(enabled);
         let result =
             self.persist_quester_paths(frontend_core::QuesterPathsView::new(enabled, folder));
-        if result.is_ok() && folder_committed {
-            self.quester_paths_folder_dirty = false;
-            self.quester_paths_folder_edit = self
-                .quester_paths
-                .settings()
-                .folder()
-                .to_string_lossy()
-                .into_owned();
-        }
+        self.settle_setting_drafts();
         result
     }
 
@@ -4841,22 +5162,21 @@ impl Session {
     ) -> Result<(), String> {
         let selected = self.selected_game_data();
         self.core.stage_quester_paths(after, true, selected);
-        let result = match self.submit(OperatorCommand::SetQuesterPaths, Targets::Application) {
+        match self.submit(OperatorCommand::SetQuesterPaths, Targets::Application) {
             Some(submitted) => match self.core.command_failure(submitted.request()) {
                 Some(error) => Err(error.to_string()),
                 None => Ok(()),
             },
             None => Err(self.error.clone().unwrap_or_default()),
-        };
-        if result.is_ok() && !self.quester_paths_folder_dirty {
-            self.quester_paths_folder_edit = self
-                .quester_paths
-                .settings()
-                .folder()
-                .to_string_lossy()
-                .into_owned();
         }
-        result
+    }
+
+    /// What the Quest Paths checkbox shows: the operator's choice while its
+    /// write is pending, else the saved source's switch.
+    pub(crate) fn quester_enabled_shown(&self) -> bool {
+        self.setting_drafts
+            .quester_enabled
+            .unwrap_or_else(|| self.quester_paths.settings().enabled())
     }
 
     pub(crate) fn start_quester_paths_reload(&mut self) {

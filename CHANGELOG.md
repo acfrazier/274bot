@@ -5,6 +5,25 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
 
 ## Unreleased
 
+### Panel and terminal app
+
+- A saved setting now takes effect only after its save has reached the disk.
+  Before, the panel and the terminal app applied a checkbox at once and kept it
+  even when the save then failed. This covers capture input and the 50 fps
+  switches, the walk and danger permissions, the manual-walk pause, the map-bake
+  choice, the Quest Paths folder and switch, the session log file, and
+  "Don't show again" on the notices. While a save is pending the control shows
+  your choice and "Saving…". A save that fails puts the control back to the
+  saved value and shows the reason beside it, for example "Not saved: …". The
+  reason stays until you try again, or for 15 seconds. A failed "Don't show
+  again" no longer disappears silently: the dialog stays open and shows why.
+  Closing and reopening a settings window, or the dialog, shows the same state.
+  A change saved by another running copy of the program reaches every control
+  once. Layout and colour changes still show at once and go back if the save
+  fails. The session log file reports whether the file could open, not only
+  that you turned it on. A failed automatic save of the Load order shows in the
+  Fleet window (panel) and on the message line (terminal app).
+
 ## [0.2.7] — 2026-10-26 — Beta 2
 
 ### Panel and terminal app

@@ -690,6 +690,12 @@ const CORE: &[(&str, Decision)] = &[
     ("session/prefs.rs::OperatorSession::advance_quester_paths", Excluded(PUMP)),
     ("session/prefs.rs::OperatorSession::adopt_operator_preferences", Excluded(STARTUP)),
     ("session/prefs.rs::OperatorSession::refresh_walk_globals", Excluded(PUMP)),
+    ("session/prefs.rs::OperatorSession::poll_preferences", Excluded(PUMP)),
+    ("session/prefs.rs::OperatorSession::poll_preferences_at", Excluded(PUMP)),
+    (
+        "session/prefs.rs::OperatorSession::dismiss_setting_failure",
+        Excluded("presentation: clears a front end's own setting message once the action that resolves it happened"),
+    ),
     ("session/prefs.rs::OperatorSession::declare_headless_render", Excluded(STARTUP)),
     (
         "session/prefs.rs::DrawPolicy::set_persist",
@@ -704,6 +710,7 @@ const CORE: &[(&str, Decision)] = &[
     ),
     ("log_file.rs::restore_session_log", Excluded(STARTUP)),
     ("log_file.rs::session_log_path", Excluded(ACCESSOR)),
+    ("log_file.rs::session_file_status", Excluded(ACCESSOR)),
     ("fleet.rs::FleetFilter::staged_mut", Staged(C::SetFleetFilter)),
     ("fleet.rs::FleetModel::staged_filter_mut", Staged(C::SetFleetFilter)),
     ("fleet.rs::FleetModel::stage_card", Staged(C::SetFleetCard)),

@@ -172,6 +172,7 @@ impl TuiApp {
             pane.title = &self.settings_title;
             pane.notice = self.settings_save.notice();
             pane.memory = self.settings_memory;
+            pane.feedback = &self.setting_feedback;
             pane.quester_paths_notice = self
                 .quester_paths_controller
                 .notice_text()
