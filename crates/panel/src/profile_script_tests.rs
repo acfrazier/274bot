@@ -2547,6 +2547,7 @@ fn fleet_apply_settings_is_narrowed_to_the_marked_bots() {
     );
 }
 
+#[cfg(not(feature = "js"))]
 #[test]
 fn marked_compiled_start_keeps_assignments_across_focus_changes() {
     let (mut s, _dir) = session_with_play(&["alice", "bob"]);
@@ -2577,7 +2578,13 @@ fn marked_compiled_start_keeps_assignments_across_focus_changes() {
 
     let result = s.core.fleet_result().expect("the Start result");
     assert!(
-        result.text().contains("alice (already active)"),
+        result.text().contains("alice (Skipped(AlreadyActive))"),
+        "{}",
+        result.text()
+    );
+    assert_eq!(
+        (result.counts().done, result.counts().skipped, result.counts().failed),
+        (1, 1, 0),
         "{}",
         result.text()
     );

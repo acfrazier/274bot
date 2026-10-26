@@ -2250,10 +2250,43 @@ fn explicit_cancel_relog_and_removal_settle_the_queued_start_command() {
 #[cfg(feature = "js")]
 const SETTINGS_CARD: &str = "export const SETTINGS = { target: { type: 'string', default: 'Guard' } };\nexport default class T extends LoopingBot { override loop() {} }\n";
 
+#[cfg(feature = "js")]
+/// Load the real JS settings card used by the original copy-identity cases.
+fn copy_plan(test: &str) -> TestDriver {
+    let dir = scratch(test);
+    let mut d = driver_in(&dir, &["alice", "bob", "carol"]);
+    let path = dir.join("thiever.ts");
+    std::fs::write(&path, SETTINGS_CARD).expect("card file");
+    let card = d.models_mut().scripts.js_mut().load(&path).expect("card");
+    let card = crate::scripts::ScriptChoice::from_script(script::ScriptSel::Loaded(
+        card.source,
+        card.identity_id(),
+    ));
+    load(&mut d, &["alice", "bob", "carol"]);
+    let select = d
+        .submit(OperatorCommand::Select, Targets::Profile("alice"))
+        .expect("select");
+    settle(&mut d, select.request());
+    mark(&mut d, &["alice", "bob", "carol"]);
+    set_card(&mut d, crate::FleetCard::pinned(card));
+    assert_eq!(plan(&mut d, crate::FleetAction::Assign), Some(done()));
+    run_plan(&mut d);
+    assert!(assignment(&d, "bob").is_some());
+    d.submit(OperatorCommand::SetMark(false), Targets::Profile("alice"))
+        .expect("unmark");
+    assert_eq!(plan(&mut d, crate::FleetAction::CopySettings), Some(done()));
+    assert_eq!(plan_names(&d), ["bob", "carol"]);
+    TestDriver {
+        driver: d,
+        _scratch: dir,
+    }
+}
+
+#[cfg(not(feature = "js"))]
 /// Load alice, bob and carol, give all a compiled Gatherer card, focus alice
 /// and plan a copy of her settings to bob and carol (marked). Binding the
 /// selected game data before loading lets native Gatherer settings persist.
-fn copy_plan(test: &str) -> TestDriver {
+fn native_copy_plan(test: &str) -> TestDriver {
     let dir = scratch(test);
     let mut d = driver_in(&dir, &["alice", "bob", "carol"]);
     let data = api::game_data::for_revision(api::selected::ClientRevision::R289).expect("data");
@@ -2281,6 +2314,7 @@ fn copy_plan(test: &str) -> TestDriver {
     }
 }
 
+#[cfg(feature = "js")]
 /// Review F3-1: a profile deleted and recreated under the same name
 /// between Plan and Confirm is not written by the copy; the old one is a
 /// named skip.
@@ -2315,6 +2349,7 @@ fn a_copy_never_writes_a_recreated_profile_with_the_same_name() {
     );
 }
 
+#[cfg(feature = "js")]
 /// Review F3-1: a target renamed between Plan and Confirm keeps its frozen
 /// identity: the copy writes it under its new name and its member is done.
 #[test]
@@ -2341,12 +2376,83 @@ fn a_copy_follows_a_renamed_target_by_identity() {
     assert_eq!(result.counts().done, 2, "{}", result.text());
 }
 
+#[cfg(feature = "js")]
 /// Review F3-1: a save of a target that starts between Plan and Confirm
 /// (here a rename the writer still holds) makes it a named skip at the
 /// copy's write; it is never a competing write.
 #[test]
 fn a_copy_skips_a_target_whose_save_started_after_the_plan() {
     let mut d = copy_plan("f3-copy-saving");
+    let gate = d.session().write_gate();
+    let held = gate.lock().expect("gate");
+    let mut bob = d
+        .session()
+        .vault()
+        .and_then(|vault| vault.get("bob"))
+        .cloned()
+        .expect("bob");
+    bob.username = "bobby".into();
+    d.session_mut()
+        .rename_profile("bob", bob, crate::ArmMirror::none(), "profile")
+        .expect("rename staged");
+    let command = d.session().fleet_plan().expect("plan").command();
+    let run = d.submit(command, Targets::Plan).expect("copy").request();
+    assert_eq!(
+        terminal(&d, run, "bobby"),
+        Some(Settlement::Completed(Completion::Skipped(
+            SkipReason::ProfileSaving
+        )))
+    );
+    drop(held);
+    settle(&mut d, run);
+    d.session_mut().flush_writes();
+    d.poll();
+    assert_eq!(terminal(&d, run, "carol"), Some(done()));
+    let result = d.session().fleet_result().expect("result");
+    assert!(result.settled(), "{}", result.text());
+    assert!(
+        result.text().contains("bobby (profile is still saving)"),
+        "{}",
+        result.text()
+    );
+}
+
+#[cfg(not(feature = "js"))]
+#[test]
+fn native_copy_never_writes_a_recreated_profile_with_the_same_name() {
+    let mut d = native_copy_plan("native-copy-recreate");
+    let vault = d.session_mut().vault_mut().expect("vault");
+    assert!(vault.remove("bob").expect("remove"));
+    vault
+        .upsert(Profile {
+            username: "bob".into(),
+            password: "pw".into(),
+            uid: 99,
+            settings: ProfileSettings::default(),
+        })
+        .expect("new bob");
+    d.poll();
+    let before = d.session().vault().and_then(|v| v.get("bob")).cloned();
+    let run = run_plan(&mut d);
+    assert_eq!(terminal(&d, run, "carol"), Some(done()));
+    assert_eq!(
+        d.session().vault().and_then(|v| v.get("bob")).cloned(),
+        before,
+        "the new bob is untouched"
+    );
+    assert_eq!(assignment(&d, "bob"), None);
+    let result = d.session().fleet_result().expect("result");
+    assert!(
+        result.text().contains("bob (profile no longer exists)"),
+        "{}",
+        result.text()
+    );
+}
+
+#[cfg(not(feature = "js"))]
+#[test]
+fn native_copy_skips_a_target_whose_save_started_after_the_plan() {
+    let mut d = native_copy_plan("native-copy-saving");
     let gate = d.session().write_gate();
     let held = gate.lock().expect("gate");
     let mut bob = d
