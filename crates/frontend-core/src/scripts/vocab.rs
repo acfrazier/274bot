@@ -4,7 +4,10 @@
 //! The `script` crate's types stay behind these; conversions are
 //! crate-private.
 
-use script::{LoadShape as ScriptLoadShape, LoadStage as ScriptLoadStage, ScriptSel};
+use {
+    script::ScriptSel, script_js::LoadShape as ScriptLoadShape,
+    script_js::LoadStage as ScriptLoadStage,
+};
 
 /// The script slot's lifecycle.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -459,10 +462,10 @@ impl OwnedSchema {
 
 /// A loaded JS card.
 #[derive(Debug, Clone, Copy)]
-pub struct LoadedCard<'a>(&'a script::JsCard);
+pub struct LoadedCard<'a>(&'a script_js::JsCard);
 
 impl<'a> LoadedCard<'a> {
-    pub(crate) fn new(card: &'a script::JsCard) -> Self {
+    pub(crate) fn new(card: &'a script_js::JsCard) -> Self {
         Self(card)
     }
 
@@ -539,10 +542,10 @@ impl<'a> LoadedCard<'a> {
 
 /// A retained per-source load failure.
 #[derive(Debug, Clone, Copy)]
-pub struct LoadFailureView<'a>(&'a script::LoadFailure);
+pub struct LoadFailureView<'a>(&'a script_js::LoadFailure);
 
 impl<'a> LoadFailureView<'a> {
-    pub(crate) fn new(failure: &'a script::LoadFailure) -> Self {
+    pub(crate) fn new(failure: &'a script_js::LoadFailure) -> Self {
         Self(failure)
     }
 

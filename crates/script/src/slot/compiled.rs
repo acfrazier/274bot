@@ -1576,7 +1576,8 @@ impl SlotScript {
     }
 }
 
-#[cfg(all(test, feature = "load"))]
+/// Test-only Native output recorder for moved fixture assertions.
+#[cfg(any(test, feature = "test-hooks"))]
 #[derive(Default)]
 pub struct TestOutput {
     pub(crate) statuses: Vec<ScriptStatus>,
@@ -1584,14 +1585,15 @@ pub struct TestOutput {
     pub(crate) logs: Vec<String>,
 }
 
-#[cfg(all(test, feature = "load"))]
+#[cfg(any(test, feature = "test-hooks"))]
 impl TestOutput {
+    /// Test-only view of the paint frames recorded by this output.
     pub fn paints(&self) -> &[Arc<crate::paint::ScriptPaint>] {
         &self.paints
     }
 }
 
-#[cfg(all(test, feature = "load"))]
+#[cfg(any(test, feature = "test-hooks"))]
 impl NativeOutput for TestOutput {
     fn status(&mut self, status: ScriptStatus) {
         self.statuses.push(status);

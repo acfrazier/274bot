@@ -47,6 +47,7 @@ const ITEMS: &[(i32, &str)] = &[
 
 pub const CARD: CompiledCard = CompiledCard {
     id: CompiledId("Grinch"),
+    native_kind: crate::native::request::NativeKind::Gather,
     name: "Grinch",
     description:
         "Collect selected visible holiday items around the Start tile, bank them and return.",

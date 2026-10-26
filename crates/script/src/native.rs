@@ -41,6 +41,8 @@ pub use server_ordered::ServerOrderedCompletion;
 pub mod walk;
 pub mod walk_wait;
 pub use ledger::{BankDepositTrace, HostAction, HostAuthority, HostEffect, QuietReadOwner};
+/// Static avoid-catalog identities shared with external runtime adapters.
+pub use nav_planner::contract::AVOID_CATALOG_IDS;
 
 pub type SettingsBag = serde_json::Map<String, serde_json::Value>;
 
@@ -223,7 +225,8 @@ pub struct PreparedConfig {
 }
 
 impl PreparedConfig {
-    pub(crate) fn new<T: Send + Sync + 'static>(
+    /// Create the typed value returned by a compiled card's registered preparer.
+    pub fn new<T: Send + Sync + 'static>(
         card: CompiledId,
         schema: u16,
         revision: u64,
@@ -245,6 +248,18 @@ impl PreparedConfig {
     #[cfg(any(test, feature = "test-hooks"))]
     pub fn for_test_script(revision: u64, bag: Arc<SettingsBag>) -> Arc<Self> {
         Self::new(CompiledId("test"), 1, revision, bag, ())
+    }
+
+    /// Preserve card metadata while testing a factory's prepared-value type check.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn for_test_card<T: Send + Sync + 'static>(
+        card: CompiledId,
+        schema: u16,
+        revision: u64,
+        bag: Arc<SettingsBag>,
+        value: T,
+    ) -> Arc<Self> {
+        Self::new(card, schema, revision, bag, value)
     }
 
     pub fn card(&self) -> CompiledId {
@@ -320,6 +335,7 @@ pub struct CardLifecycle {
 #[derive(Debug, Clone, Copy)]
 pub struct CompiledCard {
     pub id: CompiledId,
+    pub native_kind: request::NativeKind,
     pub name: &'static str,
     pub description: &'static str,
     pub category: &'static str,
@@ -579,7 +595,7 @@ impl<'frame> NativeTick<'frame> {
     }
 }
 
-#[cfg(all(feature = "load", feature = "test-hooks"))]
+#[cfg(feature = "test-hooks")]
 impl NativeTick<'_> {
     /// Admission-race fixtures use Sherlock's existing queue, never a second
     /// test dispatch path. Not present in production builds.
@@ -604,6 +620,28 @@ pub struct HostFrame<'a> {
 }
 
 impl<'a> HostFrame<'a> {
+    /// Test-only constructor that borrows the fixture's existing host frame.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn for_test(
+        here: Option<(i32, i32, i32)>,
+        snapshot: Option<&'a api::snapshot::GameSnapshot>,
+        obj_names: Option<&'a api::obj_names::ObjNames>,
+        compiled: crate::CompiledTick<'a>,
+    ) -> Self {
+        Self {
+            here,
+            snapshot,
+            obj_names,
+            compiled,
+        }
+    }
+
+    /// Test-only replacement of the fixture's optional observed snapshot.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn set_test_snapshot(&mut self, snapshot: Option<&'a api::snapshot::GameSnapshot>) {
+        self.snapshot = snapshot;
+    }
+
     pub fn here(&self) -> Option<(i32, i32, i32)> {
         self.here
     }
@@ -623,6 +661,54 @@ impl<'a> HostFrame<'a> {
     pub fn compiled_mut(&mut self) -> &mut crate::CompiledTick<'a> {
         &mut self.compiled
     }
+}
+
+/// Test-only native tick over the fixture's existing frame, ledger and output.
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn with_test_tick<R>(
+    frame: HostFrame<'_>,
+    evidence: EvidenceStamp,
+    pin: &SelectedPin,
+    clock: (Duration, Instant),
+    ledger: &mut Option<Box<ledger::Ledger>>,
+    output: &mut dyn NativeOutput,
+    f: impl FnOnce(&mut NativeTick<'_>) -> R,
+) -> R {
+    let mut retained = RetainedMemory::default();
+    let mut budget = ledger::TickBudget::default();
+    budget.observe(evidence.tick);
+    let mut actions = NativeActions { _private: () };
+    let snapshot = SnapshotView::new(frame.snapshot(), evidence);
+    let eligible = !frame.compiled().hold;
+    let mut tick = NativeTick {
+        walk_danger: None,
+        state: None,
+        service_authority: None,
+        prompt_port: None,
+        actions: &mut actions,
+        cx: ActionContext {
+            condition: None,
+            poison_unknown_pulse: u8::MAX,
+            cure_poison: crate::survival::CurePoison::WhenNeeded,
+            evidence,
+            observed_walk_outcome_seq: 0,
+            observed_walk_cancel_reason: WalkCancelReason::None,
+            pin,
+            snapshot,
+            retained: &mut retained,
+            action_id: 0,
+            active_now: clock.0,
+            wall_now: clock.1,
+            ledger,
+            pending_note_progress: None,
+            budget: &mut budget,
+            eligible,
+        },
+        output,
+        pairs: None,
+        frame,
+    };
+    f(&mut tick)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

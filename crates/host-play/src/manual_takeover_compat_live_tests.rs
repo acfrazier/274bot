@@ -172,7 +172,7 @@ struct DecisionFacts {
 #[derive(Debug, Clone)]
 struct CatalogStart {
     source: String,
-    shape: script::LoadShape,
+    shape: script_js::LoadShape,
     settings_bag: Option<Map<String, Value>>,
     siblings: Vec<(String, String)>,
     loadouts: Vec<api::loadout::Loadout>,
@@ -550,14 +550,15 @@ fn frozen_catalog() -> Result<FrozenCatalog, String> {
         return Err("frozen catalog paths escape the selected read-only root".to_owned());
     }
     let actual_source_sha256 =
-        script::JsCache::origin_sha(&std::fs::read(&source).map_err(|error| error.to_string())?);
+        script_js::JsCache::origin_sha(&std::fs::read(&source).map_err(|error| error.to_string())?);
     if actual_source_sha256 != source_sha256 {
         return Err(format!(
             "frozen Thiever source identity changed: expected {source_sha256}, got {actual_source_sha256}"
         ));
     }
-    let actual_registry_sha256 =
-        script::JsCache::origin_sha(&std::fs::read(&registry).map_err(|error| error.to_string())?);
+    let actual_registry_sha256 = script_js::JsCache::origin_sha(
+        &std::fs::read(&registry).map_err(|error| error.to_string())?,
+    );
     if actual_registry_sha256 != registry_sha256 {
         return Err(format!(
             "frozen catalog registry identity changed: expected {registry_sha256}, got {actual_registry_sha256}"
@@ -586,7 +587,7 @@ fn catalog_start(
             "original thiever scenario selected unexpected script {card_name:?}"
         ));
     }
-    let mut library = script::JsLibrary::with_cache(
+    let mut library = script_js::JsLibrary::with_cache(
         scratch.join("scripts.json"),
         scratch.join("javascript-cache"),
     );
@@ -596,7 +597,7 @@ fn catalog_start(
         .get(script::ScriptSource::Catalog, card_name)
         .cloned()
         .ok_or_else(|| format!("registered frozen catalog has no {card_name} card"))?;
-    let loaded_sha256 = script::JsCache::origin_sha(card.origin.as_bytes());
+    let loaded_sha256 = script_js::JsCache::origin_sha(card.origin.as_bytes());
     if loaded_sha256 != frozen.source_sha256 {
         return Err(format!(
             "registered {card_name} source differs from support-matrix identity: expected {}, got {loaded_sha256}",
@@ -609,11 +610,11 @@ fn catalog_start(
         &Map::new(),
         settings_inject.as_ref(),
     );
-    let siblings = script::resolve_sibling_modules(
+    let siblings = script_js::resolve_sibling_modules(
         &card.path,
         &card.origin,
         library.cache(),
-        script::CacheMeta {
+        script_js::CacheMeta {
             kind: card.kind,
             source: card.source,
             shape: None,

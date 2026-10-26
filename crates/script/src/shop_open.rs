@@ -111,6 +111,24 @@ pub struct Keeper {
 }
 
 impl Keeper {
+    /// Test-only constructor for the existing keeper fixture fields.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn for_test(
+        name: String,
+        action: String,
+        index: i32,
+        tile: WorldTile,
+        route: KeeperRoute,
+    ) -> Self {
+        Self {
+            name,
+            action,
+            index,
+            tile,
+            route,
+        }
+    }
+
     pub fn name(&self) -> &str {
         &self.name
     }

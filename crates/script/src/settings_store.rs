@@ -7,7 +7,7 @@ use std::path::PathBuf;
 
 use serde_json::{Map, Value};
 
-use crate::rs2b0t_registry::{ScriptSource, SettingDef};
+use crate::card::{ScriptSource, SettingDef};
 use vault::write_private_file;
 
 /// Default operator settings path (`~/.274bot/script-settings.json`).

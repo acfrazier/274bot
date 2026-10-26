@@ -96,6 +96,7 @@ fn empty_play() -> Play {
 
 /// Members loaded (arms attached, no worker threads) from a fresh vault.
 fn fixture(test: &str, members: &[&str]) -> Fixture {
+    crate::test_support::scripts::install_catalog_cards();
     let iso = script::IsolatedEnv::enter(&format!("frontend-core-scripts-{test}"));
     let dir = iso.dir.clone();
     let mut vault = Vault::create(&dir.join("vault"), "test-passphrase-01").unwrap();
@@ -117,7 +118,7 @@ fn fixture(test: &str, members: &[&str]) -> Fixture {
         core.load(name, &mut surface);
     }
     let scripts = Scripts::new(
-        script::JsLibrary::with_cache(dir.join("js-scripts.json"), dir.join("js-cache")),
+        script_js::JsLibrary::with_cache(dir.join("js-scripts.json"), dir.join("js-cache")),
         script::ScriptSettingsStore::at(dir.join("script-settings.json")),
     );
     Fixture {
@@ -158,13 +159,13 @@ impl Fixture {
             .unwrap();
     }
 
-    fn card(&mut self, file: &str, src: &str) -> script::JsCard {
+    fn card(&mut self, file: &str, src: &str) -> script_js::JsCard {
         let path = self.dir.join(file);
         std::fs::write(&path, src).unwrap();
         self.scripts.js_mut().load(&path).unwrap()
     }
 
-    fn assign(&mut self, name: &str, card: &script::JsCard) {
+    fn assign(&mut self, name: &str, card: &script_js::JsCard) {
         assert!(self
             .scripts
             .persist_assignment(&mut self.core, name, card.assignment()));
@@ -240,7 +241,7 @@ impl Fixture {
             .cloned()
     }
 
-    fn set(&mut self, name: &str, card: &script::JsCard, id: &str, value: Value) {
+    fn set(&mut self, name: &str, card: &script_js::JsCard, id: &str, value: Value) {
         self.scripts
             .set_profile_setting(
                 &mut self.core,
@@ -254,7 +255,7 @@ impl Fixture {
             .unwrap();
     }
 
-    fn prepare(&mut self, source: &str, card: &script::JsCard) {
+    fn prepare(&mut self, source: &str, card: &script_js::JsCard) {
         self.scripts.prepare_settings_sync(
             &self.core,
             source,
@@ -1092,24 +1093,21 @@ fn bag(pairs: &[(&str, Value)]) -> Map<String, Value> {
 #[test]
 fn browse_card_list_includes_compiled_cards() {
     let f = fixture("compiled-card-list", &["alice"]);
+    assert!(
+        script::compiled_id("Sherlock").is_some(),
+        "canonical Sherlock card is installed for Browse"
+    );
     let cards: Vec<_> = f.scripts.browse_cards().collect();
-    if script::compiled_id("Sherlock").is_some() {
-        let sherlock = cards
-            .iter()
-            .find(|card| card.name() == "Sherlock")
-            .expect("compiled Sherlock is available to Browse when registered");
-        assert_eq!(sherlock.kind(), CardRuntime::Compiled);
-        assert_eq!(sherlock.category(), "Treasure Trails");
-        assert_eq!(
-            sherlock.selection(),
-            ScriptChoice::from_script(script::ScriptSel::Compiled(script::CompiledId("Sherlock")))
-        );
-    } else {
-        assert!(
-            cards.iter().all(|card| card.name() != "Sherlock"),
-            "Browse omits Sherlock when the load feature omits its registration"
-        );
-    }
+    let sherlock = cards
+        .iter()
+        .find(|card| card.name() == "Sherlock")
+        .expect("compiled Sherlock is available to Browse when registered");
+    assert_eq!(sherlock.kind(), CardRuntime::Compiled);
+    assert_eq!(sherlock.category(), "Treasure Trails");
+    assert_eq!(
+        sherlock.selection(),
+        ScriptChoice::from_script(script::ScriptSel::Compiled(script::CompiledId("Sherlock")))
+    );
     let grinch = cards
         .iter()
         .find(|card| card.name() == "Grinch")
@@ -1949,7 +1947,7 @@ fn an_assignment_is_saved_only_once_its_start_is_ready() {
         "bad.ts",
         "export const apiVersion = 2;\nthrow new Error('setup-fails');\nexport function tick(api) {}\n",
     );
-    let sel = |card: &script::JsCard| {
+    let sel = |card: &script_js::JsCard| {
         ScriptChoice::from_script(script::ScriptSel::Loaded(card.source, card.identity_id()))
     };
     f.scripts.set_pending_browse("alice", sel(&good));
@@ -2231,7 +2229,7 @@ fn a_start_carries_its_operation_to_the_row_and_the_log() {
         "bad.ts",
         "export const apiVersion = 2;\nthrow new Error('setup-fails');\nexport function tick(api) {}\n",
     );
-    let sel = |card: &script::JsCard| {
+    let sel = |card: &script_js::JsCard| {
         ScriptChoice::from_script(script::ScriptSel::Loaded(card.source, card.identity_id()))
     };
     f.scripts.set_pending_browse("opid-alice", sel(&good));
@@ -4295,7 +4293,7 @@ fn catalog_request_refusals_name_their_failure_kind() {
     let mut f = fixture("catalog-typed-errors", &["alice"]);
     let root = f.dir.join("catalog-root");
     let other = f.dir.join("other-catalog-root");
-    let path_file = script::default_rs2b0t_path_file();
+    let path_file = script_js::default_rs2b0t_path_file();
     f.scripts
         .request_catalog_import(&root, &path_file)
         .expect("first import queues");
@@ -4332,7 +4330,7 @@ fn catalog_request_refusals_name_their_failure_kind() {
 
 #[test]
 fn catalog_typed_failures_keep_their_byte_identical_display() {
-    use script::load::{CatalogSnapshotError, CatalogWorkerError};
+    use {script_js::CatalogSnapshotError, script_js::CatalogWorkerError};
 
     let snapshots = [
         (

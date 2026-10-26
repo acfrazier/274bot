@@ -505,9 +505,9 @@ fn projected_npc_boxes_follow_the_live_clients_bounded_npc_list() {
         None,
         PostedWalkOutcome::default(),
         PostedInspect::default(),
-        script::isolate_fb::encode_snapshot_with_native,
+        script_js::wire::encode_snapshot_with_native,
     );
-    let posted = script::isolate_fb::decode_snapshot(&bytes).expect("snapshot decodes");
+    let posted = script_js::wire::decode_snapshot(&bytes).expect("snapshot decodes");
     assert!(posted.npc_boxes_available());
     let points = posted
         .npc_boxes()
@@ -4922,7 +4922,7 @@ fn encode_walk_snapshot(tick: u64, here: (i32, i32, i32), outcome: PostedWalkOut
         None,
         outcome,
         PostedInspect::default(),
-        script::isolate_fb::encode_snapshot_with_native,
+        script_js::wire::encode_snapshot_with_native,
     )
 }
 
@@ -4970,7 +4970,7 @@ export default class T extends LoopingBot {{
 }
 
 fn park_walk_isolate(
-    iso: &script::LoadIsolate,
+    iso: &script_js::LoadIsolate,
     x: i32,
     z: i32,
     radius: i32,
@@ -5000,7 +5000,7 @@ fn park_walk_isolate(
     request_id
 }
 
-fn park_two_walks(iso: &script::LoadIsolate, x: i32, z: i32, radius: i32) -> (u64, u64) {
+fn park_two_walks(iso: &script_js::LoadIsolate, x: i32, z: i32, radius: i32) -> (u64, u64) {
     iso.post_snapshot(encode_walk_snapshot(
         1,
         (0, 0, 0),
@@ -5232,9 +5232,9 @@ fn missing_nav_world_refusal_settles_the_matching_isolate_wait() {
         state: None,
         bank: BankRows::default(),
     };
-    let iso = script::LoadIsolate::spawn(
+    let iso = script_js::LoadIsolate::spawn(
         walk_resilient_src(2820, 3556, 1),
-        script::LoadShape::CompatClass,
+        script_js::LoadShape::CompatClass,
         vec![],
     )
     .unwrap();
@@ -5261,9 +5261,9 @@ fn two_same_target_requests_delayed_old_outcome_does_not_settle() {
         state: None,
         bank: BankRows::default(),
     };
-    let iso = script::LoadIsolate::spawn(
+    let iso = script_js::LoadIsolate::spawn(
         walk_resilient_src(2820, 3556, 1),
-        script::LoadShape::CompatClass,
+        script_js::LoadShape::CompatClass,
         vec![],
     )
     .unwrap();
@@ -5518,9 +5518,9 @@ fn two_same_key_walk_near_refuses_later_wait_and_old_nopath_does_not_settle_it()
         dest,
         ticks: 0.0,
     });
-    let iso = script::LoadIsolate::spawn(
+    let iso = script_js::LoadIsolate::spawn(
         overlapping_walk_src(dest.x, dest.z, 1),
-        script::LoadShape::CompatClass,
+        script_js::LoadShape::CompatClass,
         vec![],
     )
     .unwrap();
@@ -5610,9 +5610,9 @@ fn two_same_key_old_nopath_before_snapshot_keeps_later_refusal() {
         dest,
         ticks: 0.0,
     });
-    let iso = script::LoadIsolate::spawn(
+    let iso = script_js::LoadIsolate::spawn(
         overlapping_walk_src(dest.x, dest.z, 1),
-        script::LoadShape::CompatClass,
+        script_js::LoadShape::CompatClass,
         vec![],
     )
     .unwrap();
@@ -5696,9 +5696,9 @@ fn two_same_key_old_mid_follow_terminal_before_snapshot_keeps_later_refusal() {
         dest,
         ticks: 0.0,
     });
-    let iso = script::LoadIsolate::spawn(
+    let iso = script_js::LoadIsolate::spawn(
         overlapping_walk_src(dest.x, dest.z, 1),
-        script::LoadShape::CompatClass,
+        script_js::LoadShape::CompatClass,
         vec![],
     )
     .unwrap();
@@ -5774,9 +5774,9 @@ fn two_same_key_old_mid_follow_terminal_before_snapshot_keeps_later_refusal() {
 
 #[test]
 fn new_isolate_does_not_consume_prior_host_outcome() {
-    let iso1 = script::LoadIsolate::spawn(
+    let iso1 = script_js::LoadIsolate::spawn(
         walk_resilient_src(2820, 3556, 1),
-        script::LoadShape::CompatClass,
+        script_js::LoadShape::CompatClass,
         vec![],
     )
     .unwrap();
@@ -5795,9 +5795,9 @@ fn new_isolate_does_not_consume_prior_host_outcome() {
         blocked: false,
         ..PostedWalkOutcome::default()
     };
-    let iso2 = script::LoadIsolate::spawn(
+    let iso2 = script_js::LoadIsolate::spawn(
         walk_resilient_src(2820, 3556, 1),
-        script::LoadShape::CompatClass,
+        script_js::LoadShape::CompatClass,
         vec![],
     )
     .unwrap();
@@ -5881,9 +5881,9 @@ fn bank_fetch_refusal_echoes_isolate_request_id() {
         state: None,
         bank: BankRows::default(),
     };
-    let iso = script::LoadIsolate::spawn(
+    let iso = script_js::LoadIsolate::spawn(
         walk_resilient_src(2820, 3556, 1),
-        script::LoadShape::CompatClass,
+        script_js::LoadShape::CompatClass,
         vec![],
     )
     .unwrap();
@@ -7261,7 +7261,7 @@ fn every_script_stop_retires_the_run_walk_and_only_that_runs_walk() {
         play.script_start_load(
             "alice",
             "export function tick(api) {}".into(),
-            script::LoadShape::NativeTick,
+            script_js::LoadShape::NativeTick,
             None,
             vec![],
         )
@@ -7546,7 +7546,7 @@ fn fenced_script_stop_requires_same_identity_and_generation() {
     play.script_start_load(
         "alice",
         "export function tick(api) {}".into(),
-        script::LoadShape::NativeTick,
+        script_js::LoadShape::NativeTick,
         None,
         vec![],
     )
@@ -7614,6 +7614,7 @@ fn script_start_unknown_compiled_id_errors_without_v8() {
 }
 
 fn compiled_start_play() -> Play {
+    script_js::install_cards().expect("install canonical Sherlock card for compiled start tests");
     let mut play = run_with_io(
         &PlayOptions {
             host: "127.0.0.1".into(),
@@ -7795,7 +7796,7 @@ fn script_start_load_spawns_isolate_only_on_start_and_refuses_when_active() {
     play.script_start_load(
         "alice",
         src.clone(),
-        script::LoadShape::NativeTick,
+        script_js::LoadShape::NativeTick,
         None,
         vec![],
     )
@@ -7806,7 +7807,7 @@ fn script_start_load_spawns_isolate_only_on_start_and_refuses_when_active() {
         .script_start_load(
             "alice",
             src.clone(),
-            script::LoadShape::NativeTick,
+            script_js::LoadShape::NativeTick,
             None,
             vec![],
         )
@@ -7818,7 +7819,7 @@ fn script_start_load_spawns_isolate_only_on_start_and_refuses_when_active() {
 
     // Unknown slot: never creates an entry, and never a V8 runtime.
     let err = play
-        .script_start_load("ghost", src, script::LoadShape::NativeTick, None, vec![])
+        .script_start_load("ghost", src, script_js::LoadShape::NativeTick, None, vec![])
         .unwrap_err();
     assert!(err.contains("no slot"), "err was {err}");
     assert!(
@@ -7848,7 +7849,7 @@ fn script_start_returns_before_setup_and_stop_before_reap() {
     play.script_start_load(
         "alice",
         src.clone(),
-        script::LoadShape::NativeTick,
+        script_js::LoadShape::NativeTick,
         None,
         vec![],
     )
@@ -7912,7 +7913,7 @@ fn script_poll_start_never_loses_an_outcome_to_the_slot_threads_observe() {
         play.script_start_load(
             "alice",
             src.into(),
-            script::LoadShape::NativeTick,
+            script_js::LoadShape::NativeTick,
             None,
             vec![],
         )
@@ -7968,7 +7969,7 @@ fn script_start_handle_explicit_loadouts_starts() {
         .start_load_with_loadouts(
             "alice",
             src,
-            script::LoadShape::NativeTick,
+            script_js::LoadShape::NativeTick,
             Some(bag),
             vec![],
             &[api::loadout::Loadout::new("Memory food").with_carry("Lobster", 1)],
@@ -7981,6 +7982,7 @@ fn script_start_handle_explicit_loadouts_starts() {
 
 #[test]
 fn saved_loadout_setting_is_validated_for_compat_and_native_starts() {
+    script_js::install_cards().expect("install canonical Sherlock card for saved loadout test");
     let mut play = run_with_io(
         &PlayOptions {
             host: "127.0.0.1".into(),
@@ -8007,7 +8009,7 @@ fn saved_loadout_setting_is_validated_for_compat_and_native_starts() {
             .start_load_with_loadouts(
                 "alice",
                 "export function tick() {}".into(),
-                script::LoadShape::NativeTick,
+                script_js::LoadShape::NativeTick,
                 Some(bag),
                 vec![],
                 &rows,
@@ -8029,7 +8031,7 @@ fn saved_loadout_setting_is_validated_for_compat_and_native_starts() {
         .start_load_with_loadouts(
             "alice",
             "export function tick() {}".into(),
-            script::LoadShape::NativeTick,
+            script_js::LoadShape::NativeTick,
             Some(bag.clone()),
             vec![],
             &ambiguous_rows,
@@ -8046,7 +8048,7 @@ fn saved_loadout_setting_is_validated_for_compat_and_native_starts() {
         .start_load_with_loadouts(
             "alice",
             "export function tick() {}".into(),
-            script::LoadShape::NativeTick,
+            script_js::LoadShape::NativeTick,
             Some(bag),
             vec![],
             &ambiguous_rows,
@@ -8079,6 +8081,7 @@ fn saved_loadout_setting_is_validated_for_compat_and_native_starts() {
 /// after the service hydrated.
 #[test]
 fn a_compiled_start_without_a_loadout_setting_refreshes_the_operator_loadouts() {
+    script_js::install_cards().expect("install canonical Sherlock card for compiled start test");
     let scratch = script::IsolatedEnv::enter("compiled-start-refresh");
     let mut play = run_with_io(
         &PlayOptions {
@@ -8175,7 +8178,7 @@ fn live_start_retains_the_card_for_a_second_start() {
     let mut pending = vec![crate::live_start::PendingCatalogStart::load(
         "alice",
         "export function tick() {}".into(),
-        script::LoadShape::NativeTick,
+        script_js::LoadShape::NativeTick,
         None,
         vec![],
         vec![],
@@ -8225,7 +8228,7 @@ fn script_paint_click_is_noop_when_idle_paused_or_unadvertised() {
     play.attach_arm("alice", SlotArm::new(7, false));
     play.script_paint_click("alice", "gobank", 0);
     let src = "export function tick(api) { api._n = (api._n||0)+1 }".to_string();
-    play.script_start_load("alice", src, script::LoadShape::NativeTick, None, vec![])
+    play.script_start_load("alice", src, script_js::LoadShape::NativeTick, None, vec![])
         .unwrap();
     play.script_paint_click("alice", "", 0);
     play.script_paint_click("alice", "gobank", 0);
@@ -8255,7 +8258,7 @@ fn script_paint_select_is_noop_when_idle_paused_or_unadvertised() {
     play.attach_arm("alice", SlotArm::new(7, false));
     play.script_paint_select("alice", "strip:k", "Options", 0);
     let src = "export function tick(api) { api._n = (api._n||0)+1 }".to_string();
-    play.script_start_load("alice", src, script::LoadShape::NativeTick, None, vec![])
+    play.script_start_load("alice", src, script_js::LoadShape::NativeTick, None, vec![])
         .unwrap();
     play.script_paint_select("alice", "strip:k", "", 0);
     play.script_paint_select("alice", "strip:k", "Options", 0);
@@ -8370,6 +8373,7 @@ fn script_control_is_noop_for_unknown_slot_and_state_defaults_idle() {
 
 #[test]
 fn poisoned_script_slot_reads_as_retiring_until_reaped() {
+    script_js::install_cards().expect("install canonical Sherlock card for poisoned slot test");
     let mut play = run_with_io(
         &PlayOptions {
             host: "127.0.0.1".into(),
@@ -8419,7 +8423,7 @@ fn poisoned_script_slot_reads_as_retiring_until_reaped() {
         .script_start_load(
             "alice",
             "export function tick() {}".into(),
-            script::LoadShape::NativeTick,
+            script_js::LoadShape::NativeTick,
             None,
             Vec::new(),
         )
@@ -8428,7 +8432,7 @@ fn poisoned_script_slot_reads_as_retiring_until_reaped() {
         .script_start_load_typed(
             "alice",
             "export function tick() {}".into(),
-            script::LoadShape::NativeTick,
+            script_js::LoadShape::NativeTick,
             None,
             Vec::new(),
         )
@@ -8438,7 +8442,7 @@ fn poisoned_script_slot_reads_as_retiring_until_reaped() {
         .start_load(
             "alice",
             "export function tick() {}".into(),
-            script::LoadShape::NativeTick,
+            script_js::LoadShape::NativeTick,
             None,
             Vec::new(),
         )
@@ -8447,7 +8451,7 @@ fn poisoned_script_slot_reads_as_retiring_until_reaped() {
         .start_load_with_loadouts(
             "alice",
             "export function tick() {}".into(),
-            script::LoadShape::NativeTick,
+            script_js::LoadShape::NativeTick,
             None,
             Vec::new(),
             &[],
@@ -9102,7 +9106,7 @@ fn bank_side_is_posted_by_the_side_root_through_packets_and_ipc() {
     let mut snap = GameSnapshot::new();
     let mut last = None;
     let mut tick = 0;
-    script::observed::on_reset();
+    script_js::observed::on_reset();
     // One host frame: rebuild, post the IPC delta, apply it in the isolate.
     // Returns (native side, isolate side) as `None` / row count, plus the
     // sweep op each representation chooses for the first side row.
@@ -9124,8 +9128,8 @@ fn bank_side_is_posted_by_the_side_root_through_packets_and_ipc() {
             false,
         );
         last = Some(fp);
-        let view = script::isolate_fb::decode_snapshot(&bytes).expect("snapshot decodes");
-        script::observed::apply(&view);
+        let view = script_js::wire::decode_snapshot(&bytes).expect("snapshot decodes");
+        script_js::observed::apply(&view);
         let native = api::snapshot::SnapshotView::new(Some(snap), stamp)
             .bank_side()
             .map(|side| {
@@ -9137,7 +9141,7 @@ fn bank_side_is_posted_by_the_side_root_through_packets_and_ipc() {
                         .and_then(|row| ops::deposit_click(row, ops::DepositRequest::Sweep)),
                 )
             });
-        let isolate = script::observed::with(|scene| {
+        let isolate = script_js::observed::with(|scene| {
             let session = scene.since_login();
             ops::side_observation(
                 session.bank_open().unwrap_or(false),
@@ -9197,7 +9201,7 @@ fn bank_side_is_posted_by_the_side_root_through_packets_and_ipc() {
     assert!(snap.bank_side().is_empty(), "the leftover list is empty");
     dispatch_289(&mut c, ServerProt289::IF_OPENMAIN_SIDE, vec![2, 88, 2, 188]);
     assert_eq!(frame(&c, &mut snap), (empty, empty));
-    script::observed::on_reset();
+    script_js::observed::on_reset();
 }
 
 fn t23_bank_start_compat_slot(scripts: &ScriptWall, name: &str, source: &str) {
@@ -9208,7 +9212,7 @@ fn t23_bank_start_compat_slot(scripts: &ScriptWall, name: &str, source: &str) {
     let start = crate::script_runtime::js_surface_start(
         crate::script_runtime::js_start_card(
             source.to_string(),
-            script::LoadShape::CompatClass,
+            script_js::LoadShape::CompatClass,
             vec![],
         ),
         None,
@@ -9890,8 +9894,8 @@ fn inspect_route_cross_zone_exemption_routes_through_the_named_barrier() {
         }
         let request: script::shim::InteractReq =
             serde_json::from_value(value).expect("inspect request decodes");
-        let bytes = script::isolate_fb::encode_interact_batch(&[request]);
-        script::isolate_fb::decode_interact_batch(&bytes).expect("inspect wire decodes")
+        let bytes = script_js::wire::encode_interact_batch(&[request]);
+        script_js::wire::decode_interact_batch(&bytes).expect("inspect wire decodes")
     };
     let mut inspect = |request_id, cross| {
         let reqs = inspect_wire(request_id, cross);
@@ -11303,7 +11307,11 @@ export default class T extends LoopingBot {
     script_slot_or_insert(&scripts, "alice")
         .lock()
         .unwrap()
-        .start_load_settled(source.to_string(), script::LoadShape::CompatClass, vec![])
+        .start_load_settled(
+            source.to_string(),
+            script_js::LoadShape::CompatClass,
+            vec![],
+        )
         .expect("canvas keyboard isolate starts");
     let mut c = bank_client();
     let names = api::obj_names::ObjNames::from_objs(&c.cache.objs);
@@ -11627,7 +11635,11 @@ export default class T extends LoopingBot {
     script_slot_or_insert(&scripts, "alice")
         .lock()
         .unwrap()
-        .start_load_settled(source.to_string(), script::LoadShape::CompatClass, vec![])
+        .start_load_settled(
+            source.to_string(),
+            script_js::LoadShape::CompatClass,
+            vec![],
+        )
         .expect("pause isolate starts");
     let mut c = bank_client();
     let names = api::obj_names::ObjNames::from_objs(&c.cache.objs);
@@ -11762,7 +11774,11 @@ export default class T extends LoopingBot {
     script_slot_or_insert(&scripts_hold, "bob")
         .lock()
         .unwrap()
-        .start_load_settled(source.to_string(), script::LoadShape::CompatClass, vec![])
+        .start_load_settled(
+            source.to_string(),
+            script_js::LoadShape::CompatClass,
+            vec![],
+        )
         .expect("hold isolate starts");
     script_observe(
         &mut held,
@@ -11833,7 +11849,11 @@ export default class T extends LoopingBot {
     script_slot_or_insert(&scripts, "alice")
         .lock()
         .unwrap()
-        .start_load_settled(source.to_string(), script::LoadShape::CompatClass, vec![])
+        .start_load_settled(
+            source.to_string(),
+            script_js::LoadShape::CompatClass,
+            vec![],
+        )
         .expect("pending-enter isolate starts");
     let mut c = bank_client();
     let names = api::obj_names::ObjNames::from_objs(&c.cache.objs);
@@ -11962,8 +11982,12 @@ export default class T extends LoopingBot {
         let slot = script_slot_or_insert(&scripts, "alice");
         let mut slot = slot.lock().unwrap();
         slot.bind_native_input(inp.authority());
-        slot.start_load_settled(source.to_string(), script::LoadShape::CompatClass, vec![])
-            .expect("canvas mouse isolate starts");
+        slot.start_load_settled(
+            source.to_string(),
+            script_js::LoadShape::CompatClass,
+            vec![],
+        )
+        .expect("canvas mouse isolate starts");
     }
     let mut c = bank_client();
     let names = api::obj_names::ObjNames::from_objs(&c.cache.objs);
@@ -12075,8 +12099,12 @@ export default class T extends LoopingBot {
         let slot = script_slot_or_insert(&scripts, "alice");
         let mut slot = slot.lock().unwrap();
         slot.bind_native_input(inp.authority());
-        slot.start_load_settled(source.to_string(), script::LoadShape::CompatClass, vec![])
-            .expect("pause mouse isolate starts");
+        slot.start_load_settled(
+            source.to_string(),
+            script_js::LoadShape::CompatClass,
+            vec![],
+        )
+        .expect("pause mouse isolate starts");
     }
     let mut c = bank_client();
     let names = api::obj_names::ObjNames::from_objs(&c.cache.objs);
@@ -12159,8 +12187,12 @@ export default class T extends LoopingBot {
         let slot = script_slot_or_insert(&scripts, "alice");
         let mut slot = slot.lock().unwrap();
         slot.bind_native_input(inp.authority());
-        slot.start_load_settled(source.to_string(), script::LoadShape::CompatClass, vec![])
-            .expect("pause/resume mouse isolate starts");
+        slot.start_load_settled(
+            source.to_string(),
+            script_js::LoadShape::CompatClass,
+            vec![],
+        )
+        .expect("pause/resume mouse isolate starts");
     }
     let mut c = bank_client();
     let names = api::obj_names::ObjNames::from_objs(&c.cache.objs);
@@ -12246,8 +12278,12 @@ export default class T extends LoopingBot {
         let slot = script_slot_or_insert(&scripts, "alice");
         let mut slot = slot.lock().unwrap();
         slot.bind_native_input(inp.authority());
-        slot.start_load_settled(source.to_string(), script::LoadShape::CompatClass, vec![])
-            .expect("stop/start mouse isolate starts");
+        slot.start_load_settled(
+            source.to_string(),
+            script_js::LoadShape::CompatClass,
+            vec![],
+        )
+        .expect("stop/start mouse isolate starts");
     }
     let mut c = bank_client();
     let names = api::obj_names::ObjNames::from_objs(&c.cache.objs);
@@ -12308,8 +12344,12 @@ export default class T extends LoopingBot {
         let mut slot = slot.lock().unwrap();
         slot.stop();
         slot.bind_native_input(inp.authority());
-        slot.start_load_settled(source.to_string(), script::LoadShape::CompatClass, vec![])
-            .expect("replacement start");
+        slot.start_load_settled(
+            source.to_string(),
+            script_js::LoadShape::CompatClass,
+            vec![],
+        )
+        .expect("replacement start");
     }
     inp.consume_native_frame(&mut c.shell);
     assert_eq!(c.shell.mouse_button, 0);
@@ -12336,8 +12376,12 @@ export default class T extends LoopingBot {
         let slot = script_slot_or_insert(&scripts, "alice");
         let mut slot = slot.lock().unwrap();
         slot.bind_native_input(inp.authority());
-        slot.start_load_settled(source.to_string(), script::LoadShape::CompatClass, vec![])
-            .expect("delayed up isolate starts");
+        slot.start_load_settled(
+            source.to_string(),
+            script_js::LoadShape::CompatClass,
+            vec![],
+        )
+        .expect("delayed up isolate starts");
     }
     let mut c = bank_client();
     let names = api::obj_names::ObjNames::from_objs(&c.cache.objs);
@@ -12379,8 +12423,8 @@ export default class T extends LoopingBot {
         .into_iter()
         .map(|queued| queued.req)
         .collect::<Vec<_>>();
-    let bytes = script::isolate_fb::encode_interact_batch(&reqs);
-    let decoded = script::isolate_fb::decode_interact_batch(&bytes).expect("fb mouse batch");
+    let bytes = script_js::wire::encode_interact_batch(&reqs);
+    let decoded = script_js::wire::decode_interact_batch(&bytes).expect("fb mouse batch");
     let old_down = decoded
         .iter()
         .find(|req| matches!(req, script::shim::InteractReq::Mouse { down: true, .. }))
@@ -12438,7 +12482,7 @@ fn canvas_mouse_parked_old_up_preserves_fresh_producer_hold() {
     let inp = SlotInput::new();
     let authority = inp.authority();
     let old_identity = authority.publish_live();
-    let iso = script::LoadIsolate::spawn(
+    let iso = script_js::LoadIsolate::spawn(
         r#"
 export default class T extends LoopingBot {
     async loop() {
@@ -12454,7 +12498,7 @@ export default class T extends LoopingBot {
 }
 "#
         .into(),
-        script::LoadShape::CompatClass,
+        script_js::LoadShape::CompatClass,
         vec![],
     )
     .expect("parked mouse isolate starts");
@@ -13787,8 +13831,8 @@ fn dispatch_loc_legacy_without_id_keeps_first_row_behavior() {
 fn dispatch_loc_selected_id_survives_flatbuffer_round_trip() {
     let (_c, snap) = colocated_wall_flax(true);
     let reqs = vec![loc_req(Some(2646), "Pick")];
-    let bytes = script::isolate_fb::encode_interact_batch(&reqs);
-    let decoded = script::isolate_fb::decode_interact_batch(&bytes).expect("loc batch");
+    let bytes = script_js::wire::encode_interact_batch(&reqs);
+    let decoded = script_js::wire::decode_interact_batch(&bytes).expect("loc batch");
     assert_eq!(decoded, reqs);
     let rec = dispatch_loc(&snap, decoded.into_iter().next().unwrap());
     assert_eq!(
@@ -14038,8 +14082,8 @@ fn dispatch_inv_button_survives_flatbuffer_round_trip() {
         5,
         snap.bank_session_generation(),
     )];
-    let bytes = script::isolate_fb::encode_interact_batch(&reqs);
-    let decoded = script::isolate_fb::decode_interact_batch(&bytes).expect("inv-button batch");
+    let bytes = script_js::wire::encode_interact_batch(&reqs);
+    let decoded = script_js::wire::decode_interact_batch(&bytes).expect("inv-button batch");
     assert_eq!(decoded, reqs);
     let rec = dispatch_inv_button(&snap, decoded.into_iter().next().unwrap());
     assert_eq!(
@@ -14216,7 +14260,7 @@ fn post_snapshot_bank_side_carries_real_component_id() {
         false,
         false,
     );
-    let view = script::isolate_fb::decode_snapshot(&bytes).expect("posted snap");
+    let view = script_js::wire::decode_snapshot(&bytes).expect("posted snap");
     let posted = view.bank_side().expect("bank side rows");
     assert_eq!(posted.len(), 1);
     let row = posted.get(0);
@@ -17247,7 +17291,7 @@ fn bank_holds_for_test(snapshot: &GameSnapshot, id: i32) -> bool {
 /// does not grow when the world gains NPC stands.
 #[test]
 fn packed_teller_rows_do_not_grow_script_snapshot_fingerprint() {
-    fn fp_bank_bytes(fp: &script::isolate_fb::SnapshotFingerprint) -> usize {
+    fn fp_bank_bytes(fp: &script_js::wire::SnapshotFingerprint) -> usize {
         fp.banks
             .iter()
             .map(|b| {
@@ -17501,7 +17545,7 @@ export default class T extends LoopingBot {
 }
 "#
             .into(),
-            script::LoadShape::CompatClass,
+            script_js::LoadShape::CompatClass,
             vec![],
         )
         .expect("run-policy script starts");
@@ -17732,7 +17776,7 @@ export default class T extends LoopingBot {
 }
 "#
             .into(),
-            script::LoadShape::CompatClass,
+            script_js::LoadShape::CompatClass,
             vec![],
         )
         .unwrap();
@@ -18117,7 +18161,7 @@ fn projected_npc_boxes_are_lazy_for_the_isolate_snapshot_gate() {
         .unwrap()
         .start_load_settled(
             "export default class T extends LoopingBot { loop() {} }".to_string(),
-            script::LoadShape::CompatClass,
+            script_js::LoadShape::CompatClass,
             vec![],
         )
         .expect("load isolate starts");
@@ -18180,7 +18224,7 @@ fn script_observe_load_isolate_still_encodes_snapshot_on_tick_edge() {
     script_slot_or_insert(&scripts, "alice")
         .lock()
         .unwrap()
-        .start_load_settled(src.to_string(), script::LoadShape::CompatClass, vec![])
+        .start_load_settled(src.to_string(), script_js::LoadShape::CompatClass, vec![])
         .expect("load isolate starts");
     assert!(script_slot(&scripts, "alice")
         .unwrap()
@@ -18332,7 +18376,7 @@ fn script_snapshot_fb_carries_observed_fields_and_native_combat_facts() {
         false,
         false,
     );
-    let view = script::isolate_fb::decode_snapshot(&bytes).expect("blob decodes");
+    let view = script_js::wire::decode_snapshot(&bytes).expect("blob decodes");
     assert_eq!(view.tick(), 7);
     assert!(view.has_here(), "keyframe carries here");
     let here = view.here().expect("here posted");
@@ -18395,7 +18439,7 @@ fn script_snapshot_fb_carries_observed_fields_and_native_combat_facts() {
     let (bare_bytes, _) = script_snapshot_fb(
         None, false, 1, None, false, None, None, None, None, false, true, false,
     );
-    let bare = script::isolate_fb::decode_snapshot(&bare_bytes).expect("bare blob decodes");
+    let bare = script_js::wire::decode_snapshot(&bare_bytes).expect("bare blob decodes");
     assert!(bare.here().is_none());
     assert!(bare.inv().expect("inventory rows").is_empty());
     assert!(bare.stats().expect("stat rows").is_empty());
@@ -18453,7 +18497,7 @@ fn script_snapshot_fb_projects_authoritative_bank_approach() {
         false,
         false,
     );
-    let view = script::isolate_fb::decode_snapshot(&bytes).expect("blob decodes");
+    let view = script_js::wire::decode_snapshot(&bytes).expect("blob decodes");
     assert!(view.has_bank_approaches());
     let rows = view.bank_approaches().expect("bank approaches");
     assert_eq!(rows.len(), 1);
@@ -18536,7 +18580,7 @@ fn native_trade_controls_reach_script_accept_through_snapshot() {
             false,
             false,
         );
-        let iso = script::LoadIsolate::spawn(
+        let iso = script_js::LoadIsolate::spawn(
             r#"import { Trade } from '../../api/trade/Trade.js';
                 export default class T extends LoopingBot {
                     async loop() {
@@ -18546,7 +18590,7 @@ fn native_trade_controls_reach_script_accept_through_snapshot() {
                     }
                 }"#
             .into(),
-            script::LoadShape::CompatClass,
+            script_js::LoadShape::CompatClass,
             vec![],
         )
         .unwrap();
@@ -18781,7 +18825,7 @@ fn script_snapshot_player_actions_preserve_native_slots() {
             false,
             false,
         );
-        let view = script::isolate_fb::decode_snapshot(&bytes).expect("blob decodes");
+        let view = script_js::wire::decode_snapshot(&bytes).expect("blob decodes");
         view.players()
             .expect("player rows")
             .get(0)
@@ -18883,9 +18927,9 @@ fn script_snapshot_crops_shared_canlight_from_profile_plane() {
         Some(bits.as_slice()),
         PostedWalkOutcome::default(),
         PostedInspect::default(),
-        script::isolate_fb::encode_snapshot_with_native,
+        script_js::wire::encode_snapshot_with_native,
     );
-    let view = script::isolate_fb::decode_snapshot(&bytes).expect("snapshot decodes");
+    let view = script_js::wire::decode_snapshot(&bytes).expect("snapshot decodes");
     let reach = view.reach().expect("reach posted");
     assert!(reach.available());
     assert_eq!(reach.level(), 1);
@@ -18922,9 +18966,9 @@ fn script_snapshot_crops_shared_canlight_from_profile_plane() {
         None,
         PostedWalkOutcome::default(),
         PostedInspect::default(),
-        script::isolate_fb::encode_snapshot_with_native,
+        script_js::wire::encode_snapshot_with_native,
     );
-    let missing = script::isolate_fb::decode_snapshot(&missing).expect("snapshot decodes");
+    let missing = script_js::wire::decode_snapshot(&missing).expect("snapshot decodes");
     assert!(
         missing
             .reach()
@@ -18983,7 +19027,7 @@ fn script_snapshot_fb_posts_collision_and_los_identity() {
         false,
         false,
     );
-    let view = script::isolate_fb::decode_snapshot(&bytes).expect("snapshot decodes");
+    let view = script_js::wire::decode_snapshot(&bytes).expect("snapshot decodes");
     let packed = view.collision().expect("production packer posts collision");
     assert!(packed.available());
     assert_eq!(
@@ -18996,8 +19040,8 @@ fn script_snapshot_fb_posts_collision_and_los_identity() {
     assert_ne!(flags.get(5 * 104 + 1) & CollisionFlag::V_W, 0);
     assert_eq!(flags.get(104 + 1), CollisionFlag::_OPEN);
 
-    script::observed::on_reset();
-    script::observed::apply(&view);
+    script_js::observed::on_reset();
+    script_js::observed::apply(&view);
     let here = api::snapshot::WorldTile {
         x: 3201,
         z: 3201,
@@ -19014,22 +19058,22 @@ fn script_snapshot_fb_posts_collision_and_los_identity() {
         level: 0,
     };
     assert_eq!(
-        script::line_of_sight::query_v2(here, open_to, Some(1)),
+        script_js::line_of_sight::query_v2(here, open_to, Some(1)),
         Ok(true)
     );
     assert_eq!(
-        script::line_of_sight::query_v2(here, blocked_to, Some(1)),
+        script_js::line_of_sight::query_v2(here, blocked_to, Some(1)),
         Ok(false)
     );
-    assert!(script::line_of_sight::query_v1(here, open_to, None));
-    assert!(!script::line_of_sight::query_v1(here, blocked_to, None));
+    assert!(script_js::line_of_sight::query_v1(here, open_to, None));
+    assert!(!script_js::line_of_sight::query_v1(here, blocked_to, None));
     assert_eq!(
-        script::line_of_sight::raw_flag_at(104 + 1),
+        script_js::line_of_sight::raw_flag_at(104 + 1),
         Some(CollisionFlag::_OPEN)
     );
-    assert_eq!(script::line_of_sight::raw_flag_at(-1), None);
+    assert_eq!(script_js::line_of_sight::raw_flag_at(-1), None);
 
-    let iso = script::LoadIsolate::spawn(
+    let iso = script_js::LoadIsolate::spawn(
         r#"
 export const apiVersion = 2;
 export function tick(api) {
@@ -19046,7 +19090,7 @@ export function tick(api) {
 }
 "#
         .into(),
-        script::LoadShape::NativeTick,
+        script_js::LoadShape::NativeTick,
         vec![],
     )
     .unwrap();
@@ -19080,7 +19124,7 @@ export function tick(api) {
         false,
         false,
     );
-    let delta = script::isolate_fb::decode_snapshot(&delta).expect("delta");
+    let delta = script_js::wire::decode_snapshot(&delta).expect("delta");
     assert!(
         !delta.has_collision(),
         "unchanged production collision must be omitted"
@@ -19107,7 +19151,7 @@ export function tick(api) {
         false,
         false,
     );
-    let cleared = script::isolate_fb::decode_snapshot(&cleared).expect("cleared");
+    let cleared = script_js::wire::decode_snapshot(&cleared).expect("cleared");
     let gone = cleared.collision().expect("unpublish posts a clear");
     assert!(!gone.available());
     assert!(gone.flags().expect("collision flags").is_empty());
@@ -19130,7 +19174,7 @@ fn native_chat_producer_reaches_isolate_with_request_identity() {
     );
     c.ingame = true;
     c.local_player = Some(client::dash3d::ClientPlayer::at(0, 0));
-    let iso = script::LoadIsolate::spawn(
+    let iso = script_js::LoadIsolate::spawn(
         r#"export default class T extends LoopingBot {
                 onStart() {
                     globalThis.__events = [];
@@ -19148,7 +19192,7 @@ fn native_chat_producer_reaches_isolate_with_request_identity() {
                 loop() {}
             }"#
         .into(),
-        script::LoadShape::CompatClass,
+        script_js::LoadShape::CompatClass,
         vec![],
     )
     .unwrap();
@@ -19242,7 +19286,7 @@ fn script_snapshot_posts_current_local_overhead_and_coordinate_hint() {
         false,
         false,
     );
-    let first = script::isolate_fb::decode_snapshot(&first_bytes).expect("first snapshot");
+    let first = script_js::wire::decode_snapshot(&first_bytes).expect("first snapshot");
     assert_eq!(first.self_chat(), Some("FIGHT!"));
     assert_eq!(first.hint_tile(), Some((2761, 9546)));
     assert_eq!(first.chat_text(), Some("latest ring line"));
@@ -19269,7 +19313,7 @@ fn script_snapshot_posts_current_local_overhead_and_coordinate_hint() {
         false,
         false,
     );
-    let second = script::isolate_fb::decode_snapshot(&second_bytes).expect("second snapshot");
+    let second = script_js::wire::decode_snapshot(&second_bytes).expect("second snapshot");
     assert!(second.has_self_chat(), "clear must be present in the delta");
     assert_eq!(second.self_chat(), Some(""));
     assert!(second.has_hint_tile(), "clear must be present in the delta");
@@ -19313,7 +19357,7 @@ fn script_snapshot_posts_attacked_by_player_from_local_face() {
         false,
         false,
     );
-    let view = script::isolate_fb::decode_snapshot(&bytes).expect("blob decodes");
+    let view = script_js::wire::decode_snapshot(&bytes).expect("blob decodes");
     assert!(view.attacked_by_player(), "player face >= 32768");
 
     c.local_player.as_mut().unwrap().entity.face_entity = 3;
@@ -19333,7 +19377,7 @@ fn script_snapshot_posts_attacked_by_player_from_local_face() {
         false,
         false,
     );
-    let view = script::isolate_fb::decode_snapshot(&bytes).expect("npc face decodes");
+    let view = script_js::wire::decode_snapshot(&bytes).expect("npc face decodes");
     assert!(
         !view.attacked_by_player(),
         "NPC face is not attackedByPlayer"
@@ -19451,7 +19495,7 @@ fn script_snapshot_fb_posts_tab0_aggressive_combat_style() {
         false,
         false,
     );
-    let view = script::isolate_fb::decode_snapshot(&bytes).expect("blob decodes");
+    let view = script_js::wire::decode_snapshot(&bytes).expect("blob decodes");
     let styles = view.combat_styles().expect("combat style rows");
     let labels: Vec<String> = styles
         .iter()
@@ -19528,7 +19572,7 @@ fn script_snapshot_npc_behind_wall_posts_reachable_false() {
         false,
         false,
     );
-    let view = script::isolate_fb::decode_snapshot(&bytes).expect("blob decodes");
+    let view = script_js::wire::decode_snapshot(&bytes).expect("blob decodes");
     let npcs = view.npcs().expect("npc rows");
     assert_eq!(npcs.len(), 1);
     assert!(
@@ -19609,7 +19653,7 @@ fn script_snapshot_loc_behind_wall_posts_reachable_false() {
         false,
         false,
     );
-    let view = script::isolate_fb::decode_snapshot(&bytes).expect("blob decodes");
+    let view = script_js::wire::decode_snapshot(&bytes).expect("blob decodes");
     let locs = view.locs().expect("loc rows");
     assert_eq!(locs.len(), 2);
     let blocked = locs
@@ -19673,7 +19717,7 @@ fn script_snapshot_retaliate_enabled_is_varp_172_zero() {
         false,
     )
     .0;
-    let on = script::isolate_fb::decode_snapshot(&on_bytes).expect("on blob");
+    let on = script_js::wire::decode_snapshot(&on_bytes).expect("on blob");
     assert!(on.retaliate_enabled(), "varp(172)==0 is auto-retaliate on");
 
     c.var[172] = 1;
@@ -19694,7 +19738,7 @@ fn script_snapshot_retaliate_enabled_is_varp_172_zero() {
         false,
     )
     .0;
-    let off = script::isolate_fb::decode_snapshot(&off_bytes).expect("off blob");
+    let off = script_js::wire::decode_snapshot(&off_bytes).expect("off blob");
     assert!(
         !off.retaliate_enabled(),
         "varp(172)!=0 is auto-retaliate off"
@@ -19756,10 +19800,10 @@ fn prayer_overlay_game_snapshot(melee: i32, extra_nonzero: usize) -> GameSnapsho
 }
 
 fn publish_script_snapshot(
-    last: Option<&script::isolate_fb::SnapshotFingerprint>,
+    last: Option<&script_js::wire::SnapshotFingerprint>,
     tick: u64,
     snapshot: &GameSnapshot,
-) -> (Vec<u8>, script::isolate_fb::SnapshotFingerprint) {
+) -> (Vec<u8>, script_js::wire::SnapshotFingerprint) {
     script_snapshot_fb(
         last,
         false,
@@ -19811,7 +19855,7 @@ fn script_snapshot_fingerprints_modal_pages_not_chat_ring_lines() {
             .map(|option| (option.component_id, option.text.as_str())),
     );
     let (keyframe, first) = publish_script_snapshot(None, 1, &snapshot);
-    let view = script::isolate_fb::decode_snapshot(&keyframe).unwrap();
+    let view = script_js::wire::decode_snapshot(&keyframe).unwrap();
     assert!(view.has_chat_page_fingerprint());
     assert_eq!(view.chat_page_fingerprint(), expected);
     assert_eq!(view.chat_text(), Some("Unrelated ring message"));
@@ -19823,7 +19867,7 @@ fn script_snapshot_fingerprints_modal_pages_not_chat_ring_lines() {
     // empty tree, so repost the fixture's unchanged native modal observation.
     snapshot.seed_chat_modal(968, vec!["First line".into(), "Second line".into()]);
     let (ring_delta, second) = publish_script_snapshot(Some(&first), 2, &snapshot);
-    let view = script::isolate_fb::decode_snapshot(&ring_delta).unwrap();
+    let view = script_js::wire::decode_snapshot(&ring_delta).unwrap();
     assert_eq!(view.chat_text(), Some("Another ring message"));
     assert!(!view.has_chat_page_fingerprint());
     assert_eq!(second.chat_page_fingerprint, first.chat_page_fingerprint);
@@ -19831,7 +19875,7 @@ fn script_snapshot_fingerprints_modal_pages_not_chat_ring_lines() {
     // A non-head modal line changes while the ring, root and Continue stay put.
     snapshot.seed_chat_modal(968, vec!["First line".into(), "Changed second line".into()]);
     let (page_delta, third) = publish_script_snapshot(Some(&second), 3, &snapshot);
-    let view = script::isolate_fb::decode_snapshot(&page_delta).unwrap();
+    let view = script_js::wire::decode_snapshot(&page_delta).unwrap();
     assert!(view.has_chat_page_fingerprint());
     assert_ne!(view.chat_page_fingerprint(), expected);
     assert!(!view.has_chat_text());
@@ -19847,7 +19891,7 @@ fn script_snapshot_fingerprints_modal_pages_not_chat_ring_lines() {
         969,
     );
     let (id_delta, fourth) = publish_script_snapshot(Some(&third), 4, &snapshot);
-    let view = script::isolate_fb::decode_snapshot(&id_delta).unwrap();
+    let view = script_js::wire::decode_snapshot(&id_delta).unwrap();
     assert!(view.has_chat_page_fingerprint());
     assert_ne!(fourth.chat_page_fingerprint, third.chat_page_fingerprint);
 
@@ -19859,7 +19903,7 @@ fn script_snapshot_fingerprints_modal_pages_not_chat_ring_lines() {
         969,
     );
     let (text_delta, fifth) = publish_script_snapshot(Some(&fourth), 5, &snapshot);
-    let view = script::isolate_fb::decode_snapshot(&text_delta).unwrap();
+    let view = script_js::wire::decode_snapshot(&text_delta).unwrap();
     assert!(view.has_chat_page_fingerprint());
     assert_ne!(fifth.chat_page_fingerprint, fourth.chat_page_fingerprint);
 
@@ -19877,12 +19921,12 @@ fn script_snapshot_fingerprints_modal_pages_not_chat_ring_lines() {
         false,
         false,
     );
-    let view = script::isolate_fb::decode_snapshot(&clear).unwrap();
+    let view = script_js::wire::decode_snapshot(&clear).unwrap();
     assert!(view.has_chat_page_fingerprint());
     assert_eq!(view.chat_page_fingerprint(), 0);
 }
 
-fn posted_varp(view: &script::isolate_fb::Snapshot<'_>, index: i32) -> Option<i32> {
+fn posted_varp(view: &script_js::wire::Snapshot<'_>, index: i32) -> Option<i32> {
     view.varps()?
         .iter()
         .find(|row| row.index() == index)
@@ -19898,7 +19942,7 @@ fn script_snapshot_posts_prayer_overlay_zeros_through_isolate_under_extra_pressu
     let off_snap = prayer_overlay_game_snapshot(0, extras);
     let on_snap = prayer_overlay_game_snapshot(1, extras);
     let (off_bytes, off_fp) = publish_script_snapshot(None, 1, &off_snap);
-    let off_view = script::isolate_fb::decode_snapshot(&off_bytes).expect("off keyframe");
+    let off_view = script_js::wire::decode_snapshot(&off_bytes).expect("off keyframe");
     for index in catalog_core::prayer_varp_indexes() {
         assert_eq!(
             posted_varp(&off_view, index),
@@ -19932,7 +19976,7 @@ fn script_snapshot_posts_prayer_overlay_zeros_through_isolate_under_extra_pressu
         .prayer_by_name("Protect from Melee")
         .expect("Protect from Melee row")
         .varp;
-    let iso = script::LoadIsolate::spawn_with_game_data(
+    let iso = script_js::LoadIsolate::spawn_with_game_data(
         r#"
 export const apiVersion = 2;
 export function tick(api) {
@@ -19940,7 +19984,7 @@ export function tick(api) {
 }
 "#
         .into(),
-        script::LoadShape::NativeTick,
+        script_js::LoadShape::NativeTick,
         vec![],
         game_data,
     )
@@ -19950,7 +19994,7 @@ export function tick(api) {
     assert_eq!(iso.probe("globalThis.__active").unwrap(), false);
 
     let (on_bytes, on_fp) = publish_script_snapshot(Some(&off_fp), 2, &on_snap);
-    let on_view = script::isolate_fb::decode_snapshot(&on_bytes).expect("on delta");
+    let on_view = script_js::wire::decode_snapshot(&on_bytes).expect("on delta");
     assert_eq!(
         posted_varp(&on_view, protect_varp),
         Some(1),
@@ -19961,7 +20005,7 @@ export function tick(api) {
     assert_eq!(iso.probe("globalThis.__active").unwrap(), true);
 
     let (held_bytes, held_fp) = publish_script_snapshot(Some(&on_fp), 3, &on_snap);
-    let held = script::isolate_fb::decode_snapshot(&held_bytes).expect("unchanged delta");
+    let held = script_js::wire::decode_snapshot(&held_bytes).expect("unchanged delta");
     assert!(
         !held.has_varps(),
         "unchanged varps stay omitted; helper must retain the last overlay"
@@ -19971,7 +20015,7 @@ export function tick(api) {
     assert_eq!(iso.probe("globalThis.__active").unwrap(), true);
 
     let (back_bytes, _) = publish_script_snapshot(Some(&held_fp), 4, &off_snap);
-    let back = script::isolate_fb::decode_snapshot(&back_bytes).expect("off delta");
+    let back = script_js::wire::decode_snapshot(&back_bytes).expect("off delta");
     assert_eq!(
         posted_varp(&back, protect_varp),
         Some(0),
@@ -20058,7 +20102,7 @@ fn script_snapshot_posts_native_quest_rows_and_clears_them_without_a_snapshot() 
         false,
         false,
     );
-    let posted = script::isolate_fb::decode_snapshot(&bytes).expect("snapshot decodes");
+    let posted = script_js::wire::decode_snapshot(&bytes).expect("snapshot decodes");
     assert!(posted.has_quest_statuses_available());
     assert!(posted.quest_statuses_available());
     let rows = posted.quest_statuses().expect("quest rows");
@@ -20095,7 +20139,7 @@ fn script_snapshot_posts_native_quest_rows_and_clears_them_without_a_snapshot() 
         false,
         false,
     );
-    let clear = script::isolate_fb::decode_snapshot(&clear_bytes).expect("clear decodes");
+    let clear = script_js::wire::decode_snapshot(&clear_bytes).expect("clear decodes");
     assert!(
         clear.has_quest_statuses_available(),
         "clear update must be present"
@@ -20166,7 +20210,7 @@ fn script_snapshot_posts_native_retaliate_control_identity() {
         false,
     )
     .0;
-    let posted = script::isolate_fb::decode_snapshot(&bytes).expect("snapshot decodes");
+    let posted = script_js::wire::decode_snapshot(&bytes).expect("snapshot decodes");
     assert_eq!(posted.retaliate_controls(), Some((103, 104)));
 }
 
@@ -20241,7 +20285,7 @@ fn script_snapshot_fb_posts_only_changed_tables() {
         false,
         false,
     );
-    let kf = script::isolate_fb::decode_snapshot(&keyframe).expect("keyframe decodes");
+    let kf = script_js::wire::decode_snapshot(&keyframe).expect("keyframe decodes");
     assert!(kf.has_here());
     assert!(kf.has_ingame());
     assert!(kf.has_inv());
@@ -20263,7 +20307,7 @@ fn script_snapshot_fb_posts_only_changed_tables() {
         false,
         false,
     );
-    let view = script::isolate_fb::decode_snapshot(&delta).expect("delta decodes");
+    let view = script_js::wire::decode_snapshot(&delta).expect("delta decodes");
     assert_eq!(view.tick(), 8, "tick is always present");
     assert!(!view.has_here(), "unchanged here omitted");
     assert!(!view.has_ingame(), "unchanged ingame omitted");
@@ -20292,7 +20336,7 @@ fn script_snapshot_fb_posts_only_changed_tables() {
         false,
         false,
     );
-    let view = script::isolate_fb::decode_snapshot(&delta).expect("delta decodes");
+    let view = script_js::wire::decode_snapshot(&delta).expect("delta decodes");
     assert!(view.has_inv(), "changed inv is carried");
     assert_eq!(view.inv().expect("inventory rows").len(), 2);
     assert!(!view.has_banks(), "unchanged banks still omitted");
@@ -20313,7 +20357,7 @@ fn script_snapshot_fb_posts_only_changed_tables() {
         false,
         false,
     );
-    let view = script::isolate_fb::decode_snapshot(&delta).expect("delta decodes");
+    let view = script_js::wire::decode_snapshot(&delta).expect("delta decodes");
     assert!(view.has_banks(), "force_banks re-posts the packed banks");
     assert!(!view.has_inv(), "unchanged inv stays omitted");
 }
@@ -20681,7 +20725,7 @@ fn script_observe_posts_blob_while_held_and_skips_dispatch() {
     script_slot_or_insert(&scripts, "alice")
         .lock()
         .unwrap()
-        .start_load_settled(src.to_string(), script::LoadShape::CompatClass, vec![])
+        .start_load_settled(src.to_string(), script_js::LoadShape::CompatClass, vec![])
         .expect("load isolate starts");
     // Held edge: blob posts + isolate tick (paint-only); loop must not
     // advance.
@@ -20833,7 +20877,7 @@ export default class T extends LoopingBot {
     script_slot_or_insert(&scripts, "alice")
         .lock()
         .unwrap()
-        .start_load_settled(src.to_string(), script::LoadShape::CompatClass, vec![])
+        .start_load_settled(src.to_string(), script_js::LoadShape::CompatClass, vec![])
         .expect("load isolate starts");
     c.ingame = true;
     c.scene_state = 2;
@@ -21032,7 +21076,7 @@ export default class T extends LoopingBot {
     script_slot_or_insert(&scripts, "alice")
         .lock()
         .unwrap()
-        .start_load_settled(src.to_string(), script::LoadShape::CompatClass, vec![])
+        .start_load_settled(src.to_string(), script_js::LoadShape::CompatClass, vec![])
         .expect("load isolate starts");
     c.ingame = true;
     c.scene_state = 2;
@@ -21236,7 +21280,7 @@ export default class T extends LoopingBot {
     script_slot_or_insert(&scripts, "alice")
         .lock()
         .unwrap()
-        .start_load_settled(src.to_string(), script::LoadShape::CompatClass, vec![])
+        .start_load_settled(src.to_string(), script_js::LoadShape::CompatClass, vec![])
         .expect("load isolate starts");
     c.ingame = true;
     c.scene_state = 2;
@@ -21357,7 +21401,7 @@ fn guardian_hold_aborts_recovery_unlike_internal_hold() {
     script_slot_or_insert(&scripts, "alice")
         .lock()
         .unwrap()
-        .start_load_settled(src.to_string(), script::LoadShape::CompatClass, vec![])
+        .start_load_settled(src.to_string(), script_js::LoadShape::CompatClass, vec![])
         .expect("load isolate starts");
     c.ingame = true;
     c.scene_state = 2;
@@ -21501,7 +21545,7 @@ fn pause_clears_live_recovery_walk() {
     play.script_start_load(
         "alice",
         "export default class T extends LoopingBot { loop() {} }".into(),
-        script::LoadShape::CompatClass,
+        script_js::LoadShape::CompatClass,
         None,
         vec![],
     )
@@ -21603,7 +21647,7 @@ fn operator_stop_stops_the_script_walk() {
     play.script_start_load(
         "alice",
         "export default class T extends LoopingBot { loop() {} }".into(),
-        script::LoadShape::CompatClass,
+        script_js::LoadShape::CompatClass,
         None,
         vec![],
     )
@@ -21642,7 +21686,7 @@ fn operator_pause_stops_an_ordinary_script_walk() {
     play.script_start_load(
         "alice",
         "export default class T extends LoopingBot { loop() {} }".into(),
-        script::LoadShape::CompatClass,
+        script_js::LoadShape::CompatClass,
         None,
         vec![],
     )
@@ -21683,7 +21727,7 @@ export default class T extends LoopingBot {
 }
 "#
             .into(),
-            script::LoadShape::CompatClass,
+            script_js::LoadShape::CompatClass,
             vec![],
         )
         .unwrap();
@@ -21741,7 +21785,7 @@ fn session_reset_clears_live_recovery_walk() {
         .unwrap()
         .start_load_settled(
             "export default class T extends LoopingBot { loop() {} }".into(),
-            script::LoadShape::CompatClass,
+            script_js::LoadShape::CompatClass,
             vec![],
         )
         .unwrap();
@@ -22267,7 +22311,7 @@ impl ReconnectRig {
         let slot = script_slot_or_insert(&scripts, "alice");
         {
             let mut slot = slot.lock().unwrap();
-            slot.start_load_settled(source, script::LoadShape::CompatClass, vec![])
+            slot.start_load_settled(source, script_js::LoadShape::CompatClass, vec![])
                 .unwrap();
         }
         let client = bank_client();
@@ -22309,7 +22353,7 @@ impl ReconnectRig {
             let start = crate::script_runtime::js_surface_start(
                 crate::script_runtime::js_start_card(
                     source,
-                    script::LoadShape::CompatClass,
+                    script_js::LoadShape::CompatClass,
                     vec![],
                 ),
                 None,
@@ -22371,7 +22415,7 @@ impl ReconnectRig {
             .unwrap()
             .start_load_settled(
                 walk_resilient_src(x, z, 1),
-                script::LoadShape::CompatClass,
+                script_js::LoadShape::CompatClass,
                 vec![],
             )
             .unwrap();
@@ -24986,7 +25030,7 @@ fn start_offline_script(play: &Play) {
         .unwrap()
         .start_load_settled(
             walk_resilient_src(40, 40, 1),
-            script::LoadShape::CompatClass,
+            script_js::LoadShape::CompatClass,
             vec![],
         )
         .unwrap();
@@ -25105,7 +25149,7 @@ export default class T extends LoopingBot {
     script_slot_or_insert(&scripts, "alice")
         .lock()
         .unwrap()
-        .start_load_settled(src.to_string(), script::LoadShape::CompatClass, vec![])
+        .start_load_settled(src.to_string(), script_js::LoadShape::CompatClass, vec![])
         .unwrap();
     script_observe(
         &mut c,
@@ -25264,7 +25308,7 @@ export default class T extends LoopingBot {
     script_slot_or_insert(&scripts, "alice")
         .lock()
         .unwrap()
-        .start_load_settled(src.to_string(), script::LoadShape::CompatClass, vec![])
+        .start_load_settled(src.to_string(), script_js::LoadShape::CompatClass, vec![])
         .expect("load isolate starts");
     let mut status = SlotStatus {
         username: "alice".into(),
@@ -25550,7 +25594,7 @@ fn load_ignored_randoms_decline_only_listed_events() {
     {
         let slot = script_slot_or_insert(&scripts, "alice");
         let mut slot = slot.lock().unwrap();
-        slot.start_load_settled(src.to_string(), script::LoadShape::CompatClass, vec![])
+        slot.start_load_settled(src.to_string(), script_js::LoadShape::CompatClass, vec![])
             .expect("load isolate starts");
         slot.on_game_tick(&mut script::ScriptCtx {
             driver: &mut NavRec::default(),
@@ -25656,8 +25700,12 @@ fn load_ignored_randoms_decline_only_listed_events() {
     {
         let slot = script_slot_or_insert(&scripts, "bob");
         let mut slot = slot.lock().unwrap();
-        slot.start_load_settled(maze_src.to_string(), script::LoadShape::CompatClass, vec![])
-            .expect("maze-ignoring isolate starts");
+        slot.start_load_settled(
+            maze_src.to_string(),
+            script_js::LoadShape::CompatClass,
+            vec![],
+        )
+        .expect("maze-ignoring isolate starts");
         slot.on_game_tick(&mut script::ScriptCtx {
             driver: &mut NavRec::default(),
             tick: 1,
@@ -25749,7 +25797,7 @@ fn load_changed_ignore_list_reclaims_the_same_box_without_restarting_it() {
                 loop() {}
             }"
             .into(),
-            script::LoadShape::CompatClass,
+            script_js::LoadShape::CompatClass,
             vec![],
         )
         .unwrap();
@@ -25857,7 +25905,7 @@ fn load_stop_or_slot_reset_returns_the_box_before_a_compiled_script_starts() {
                     loop() {}
                 }"
                 .into(),
-                script::LoadShape::CompatClass,
+                script_js::LoadShape::CompatClass,
                 vec![],
             )
             .unwrap();
@@ -25938,8 +25986,8 @@ fn seeded_box_claim_fixture_loads_its_real_imports_and_arms() {
     let slot = script_slot_or_insert(&scripts, "alice");
     let mut slot = slot.lock().unwrap();
     slot.start_load_settled(
-        include_str!("../../script/examples/guardian_claim_toggle.js").into(),
-        script::LoadShape::CompatClass,
+        include_str!("../../script-js/examples/guardian_claim_toggle.js").into(),
+        script_js::LoadShape::CompatClass,
         vec![],
     )
     .expect("the live fixture imports its supported modules");
@@ -25975,7 +26023,7 @@ fn event_signal_pending_reads_true_during_dialog_hold() {
     script_slot_or_insert(&scripts, "alice")
         .lock()
         .unwrap()
-        .start_load_settled(src.to_string(), script::LoadShape::CompatClass, vec![])
+        .start_load_settled(src.to_string(), script_js::LoadShape::CompatClass, vec![])
         .expect("load isolate starts");
 
     // The guardian talks to the old man and holds the slot.
@@ -26473,10 +26521,11 @@ fn raw_bank_walk_reaches_resolved_stand_before_native_v2_opens_booth() {
 
     let source = std::fs::read_to_string(
         std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../script/examples/bone_burier_v2.js"),
+            .join("../script-js/examples/bone_burier_v2.js"),
     )
     .unwrap();
-    let iso = script::LoadIsolate::spawn(source, script::LoadShape::NativeTick, vec![]).unwrap();
+    let iso =
+        script_js::LoadIsolate::spawn(source, script_js::LoadShape::NativeTick, vec![]).unwrap();
     let filler = [(999, 1)];
     let post = |tick: u64, here: (i32, i32, i32), snapshot: &GameSnapshot| {
         with_script_snapshot_input(
@@ -26499,9 +26548,7 @@ fn raw_bank_walk_reaches_resolved_stand_before_native_v2_opens_booth() {
             Default::default(),
             Default::default(),
             |input, native| {
-                iso.post_snapshot(script::isolate_fb::encode_snapshot_with_native(
-                    input, native,
-                ));
+                iso.post_snapshot(script_js::wire::encode_snapshot_with_native(input, native));
             },
         );
         iso.on_game_tick(tick);
@@ -26693,7 +26740,7 @@ fn native_v2_open_stand_aborts_armed_walk_after_operable_neighbor() {
     let navs = test_navs("native-v2");
     bind_test_route_scope(&navs, "native-v2");
     let statuses = Arc::new(Mutex::new(Vec::new()));
-    let iso = script::LoadIsolate::spawn(
+    let iso = script_js::LoadIsolate::spawn(
         r#"
 export const apiVersion = 2;
 let phase = 0;
@@ -26726,7 +26773,7 @@ export function tick(api) {
 }
 "#
         .into(),
-        script::LoadShape::NativeTick,
+        script_js::LoadShape::NativeTick,
         vec![],
     )
     .unwrap();
@@ -26751,9 +26798,7 @@ export function tick(api) {
             Default::default(),
             Default::default(),
             |input, native| {
-                iso.post_snapshot(script::isolate_fb::encode_snapshot_with_native(
-                    input, native,
-                ));
+                iso.post_snapshot(script_js::wire::encode_snapshot_with_native(input, native));
             },
         );
         iso.on_game_tick(tick);
@@ -27421,8 +27466,8 @@ export default class T extends LoopingBot {{
 "#,
             target.x, target.z, target.level
         );
-        let iso =
-            script::LoadIsolate::spawn(source, script::LoadShape::CompatClass, vec![]).unwrap();
+        let iso = script_js::LoadIsolate::spawn(source, script_js::LoadShape::CompatClass, vec![])
+            .unwrap();
         let here_tuple = (here.x, here.z, here.level);
         iso.post_snapshot(encode_walk_snapshot(
             1,
@@ -27432,8 +27477,8 @@ export default class T extends LoopingBot {{
         iso.on_game_tick(1);
         assert!(iso.probe("__started").unwrap().as_bool().unwrap());
         let emitted = iso.drain_interacts();
-        let batch = script::isolate_fb::encode_interact_batch(&emitted);
-        let requests = script::isolate_fb::decode_interact_batch(&batch).expect("walk batch");
+        let batch = script_js::wire::encode_interact_batch(&emitted);
+        let requests = script_js::wire::decode_interact_batch(&batch).expect("walk batch");
         assert!(
             matches!(
                 requests.as_slice(),
@@ -31349,7 +31394,7 @@ export default class T extends LoopingBot {
         let start = crate::script_runtime::js_surface_start(
             crate::script_runtime::js_start_card(
                 source.to_owned(),
-                script::LoadShape::CompatClass,
+                script_js::LoadShape::CompatClass,
                 vec![],
             ),
             None,
@@ -32119,8 +32164,8 @@ export default class T extends LoopingBot {
 }
 mod ground_selected_identity_tests {
     use super::*;
-    use script::isolate_fb::{decode_interact_batch, encode_interact_batch};
     use script::shim::InteractReq;
+    use {script_js::wire::decode_interact_batch, script_js::wire::encode_interact_batch};
 
     fn fixture(ids: &[i32]) -> (GameSnapshot, api::obj_names::ObjNames) {
         let client = guardian_client();

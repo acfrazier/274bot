@@ -1,0 +1,708 @@
+//! Names-only parse of the published rs2b0t-api `index.d.ts`.
+//! This is the **JS catalog ABI**, not the Rust host API.
+
+use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
+
+/// One runtime export from `packages/rs2b0t-api/index.d.ts`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeclaredExport {
+    pub name: String,
+    pub kind: DeclaredKind,
+    pub members: Vec<String>,
+}
+
+/// Runtime shape of a declared export (not a TypeScript `type`/`interface`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DeclaredKind {
+    Object,
+    Class,
+    Function,
+    Value,
+}
+
+/// `crates/script-js/tests/fixtures/js_declared_abi.json`
+pub fn fixture_path() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/js_declared_abi.json")
+}
+
+pub fn load_fixture() -> Result<Vec<DeclaredExport>, String> {
+    load_fixture_from(&fixture_path())
+}
+
+pub fn load_fixture_from(path: &Path) -> Result<Vec<DeclaredExport>, String> {
+    let bytes = std::fs::read(path).map_err(|e| format!("read {}: {e}", path.display()))?;
+    serde_json::from_slice(&bytes).map_err(|e| format!("parse {}: {e}", path.display()))
+}
+
+pub fn write_fixture(exports: &[DeclaredExport]) -> Result<(), String> {
+    write_fixture_to(&fixture_path(), exports)
+}
+
+pub fn write_fixture_to(path: &Path, exports: &[DeclaredExport]) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
+    }
+    let mut ordered = exports.to_vec();
+    normalize_exports(&mut ordered);
+    let mut bytes = serde_json::to_vec_pretty(&ordered).map_err(|e| e.to_string())?;
+    bytes.push(b'\n');
+    std::fs::write(path, bytes).map_err(|e| format!("write {}: {e}", path.display()))?;
+    Ok(())
+}
+
+fn normalize_exports(exports: &mut [DeclaredExport]) {
+    for e in exports.iter_mut() {
+        e.members.sort();
+        e.members.dedup();
+    }
+    exports.sort_by(|a, b| a.name.cmp(&b.name));
+}
+
+/// Parse published `.d.ts` for runtime export names. Skips `export type` /
+/// `export interface` and `@internal` members.
+pub fn parse_index_dts(src: &str) -> Vec<DeclaredExport> {
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < src.len() {
+        i = skip_trivia(src, i);
+        if i >= src.len() {
+            break;
+        }
+        if !src[i..].starts_with("export ") {
+            i += 1;
+            continue;
+        }
+        if let Some((exp, next)) = parse_export(src, i) {
+            out.push(exp);
+            i = next;
+        } else {
+            i += "export ".len();
+        }
+    }
+    normalize_exports(&mut out);
+    out
+}
+
+fn parse_export(src: &str, start: usize) -> Option<(DeclaredExport, usize)> {
+    let rest = &src[start..];
+    if !rest.starts_with("export ") {
+        return None;
+    }
+    let mut i = start + "export ".len();
+    i = skip_trivia(src, i);
+    if src[i..].starts_with("type ") || src[i..].starts_with("interface ") {
+        return None;
+    }
+    if src[i..].starts_with("abstract ") {
+        i = skip_trivia(src, i + "abstract ".len());
+    }
+    if src[i..].starts_with("class ") {
+        i = skip_trivia(src, i + "class ".len());
+        let (name, after_name) = ident_at(src, i)?;
+        let brace = find_char(src, after_name, '{')?;
+        let end = match_brace(src, brace)?;
+        let members = parse_members(src, brace + 1, end);
+        return Some((
+            DeclaredExport {
+                name,
+                kind: DeclaredKind::Class,
+                members,
+            },
+            end + 1,
+        ));
+    }
+    if src[i..].starts_with("function ") {
+        i = skip_trivia(src, i + "function ".len());
+        let (name, after_name) = ident_at(src, i)?;
+        let semi = skip_decl_end(src, after_name);
+        return Some((
+            DeclaredExport {
+                name,
+                kind: DeclaredKind::Function,
+                members: Vec::new(),
+            },
+            semi,
+        ));
+    }
+    if src[i..].starts_with("const ") {
+        i = skip_trivia(src, i + "const ".len());
+        let (name, after_name) = ident_at(src, i)?;
+        let mut j = skip_trivia(src, after_name);
+        if j < src.len() && src.as_bytes()[j] == b':' {
+            j = skip_trivia(src, j + 1);
+        }
+        if j < src.len() && src.as_bytes()[j] == b'{' {
+            let end = match_brace(src, j)?;
+            let members = parse_members(src, j + 1, end);
+            return Some((
+                DeclaredExport {
+                    name,
+                    kind: DeclaredKind::Object,
+                    members,
+                },
+                end + 1,
+            ));
+        }
+        let semi = skip_decl_end(src, after_name);
+        return Some((
+            DeclaredExport {
+                name,
+                kind: DeclaredKind::Value,
+                members: Vec::new(),
+            },
+            semi,
+        ));
+    }
+    None
+}
+
+fn parse_members(src: &str, start: usize, end: usize) -> Vec<String> {
+    let mut members = Vec::new();
+    let mut i = start;
+    while i < end {
+        i = skip_trivia(src, i);
+        if i >= end {
+            break;
+        }
+        let member_start = i;
+        // Skip modifiers.
+        loop {
+            i = skip_trivia(src, i);
+            if src[i..].starts_with("abstract ") {
+                i += "abstract ".len();
+                continue;
+            }
+            if src[i..].starts_with("static ") {
+                i += "static ".len();
+                continue;
+            }
+            if src[i..].starts_with("readonly ") {
+                i += "readonly ".len();
+                continue;
+            }
+            if src[i..].starts_with("async ") {
+                i += "async ".len();
+                continue;
+            }
+            if src[i..].starts_with("public ") {
+                i += "public ".len();
+                continue;
+            }
+            if src[i..].starts_with("private ") {
+                i += "private ".len();
+                continue;
+            }
+            if src[i..].starts_with("protected ") {
+                i += "protected ".len();
+                continue;
+            }
+            if src[i..].starts_with("override ") {
+                i += "override ".len();
+                continue;
+            }
+            if src[i..].starts_with("get ") || src[i..].starts_with("set ") {
+                i += 4;
+                continue;
+            }
+            break;
+        }
+        i = skip_trivia(src, i);
+        if i >= end {
+            break;
+        }
+        if src.as_bytes()[i] == b'}' {
+            break;
+        }
+        let Some((name, after_name)) = ident_at(src, i) else {
+            i += 1;
+            continue;
+        };
+        if jsdoc_internal_before(src, start, member_start) {
+            i = skip_member_tail(src, after_name, end);
+            continue;
+        }
+        members.push(name);
+        i = skip_member_tail(src, after_name, end);
+    }
+    members
+}
+
+fn jsdoc_internal_before(src: &str, block_start: usize, member_start: usize) -> bool {
+    let mut i = member_start;
+    while i > block_start {
+        i -= 1;
+        let b = src.as_bytes()[i];
+        if b.is_ascii_whitespace() {
+            continue;
+        }
+        if i >= 1 && src.as_bytes()[i] == b'/' && src.as_bytes()[i - 1] == b'*' {
+            // Walk back to /*
+            let mut j = i - 1;
+            while j > block_start {
+                if src.as_bytes()[j] == b'*' && j > 0 && src.as_bytes()[j - 1] == b'/' {
+                    let comment = &src[j - 1..=i];
+                    return comment.contains("@internal");
+                }
+                j -= 1;
+            }
+            return false;
+        }
+        break;
+    }
+    false
+}
+
+fn skip_member_tail(src: &str, mut i: usize, end: usize) -> usize {
+    i = skip_trivia(src, i);
+    if i < end && src.as_bytes()[i] == b'?' {
+        i += 1;
+        i = skip_trivia(src, i);
+    }
+    if i < end && src.as_bytes()[i] == b'<' {
+        if let Some(gt) = match_angle(src, i) {
+            i = gt + 1;
+        }
+        i = skip_trivia(src, i);
+    }
+    if i < end && src.as_bytes()[i] == b'(' {
+        if let Some(close) = match_paren(src, i) {
+            i = close + 1;
+        }
+        i = skip_trivia(src, i);
+        // Return type may contain `{` / `(` — skip until `;` or next member at depth 0 of this object…
+        // Members are separated by `;` or newline-then-ident. Consume until `;` at paren/brace depth 0.
+        return skip_until_semi_or_member(src, i, end);
+    }
+    if i < end && src.as_bytes()[i] == b':' {
+        return skip_until_semi_or_member(src, i + 1, end);
+    }
+    skip_until_semi_or_member(src, i, end)
+}
+
+fn skip_until_semi_or_member(src: &str, mut i: usize, end: usize) -> usize {
+    let mut depth_brace = 0i32;
+    let mut depth_paren = 0i32;
+    let mut depth_angle = 0i32;
+    while i < end {
+        match src.as_bytes()[i] {
+            b'{' => depth_brace += 1,
+            b'}' => {
+                if depth_brace == 0 {
+                    return i;
+                }
+                depth_brace -= 1;
+            }
+            b'(' => depth_paren += 1,
+            b')' => depth_paren -= 1,
+            b'<' => depth_angle += 1,
+            b'>' => depth_angle -= 1,
+            b';' if depth_brace == 0 && depth_paren == 0 && depth_angle <= 0 => {
+                return i + 1;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    end
+}
+
+fn skip_decl_end(src: &str, mut i: usize) -> usize {
+    let mut depth_brace = 0i32;
+    let mut depth_paren = 0i32;
+    while i < src.len() {
+        match src.as_bytes()[i] {
+            b'{' => depth_brace += 1,
+            b'}' => depth_brace -= 1,
+            b'(' => depth_paren += 1,
+            b')' => depth_paren -= 1,
+            b';' if depth_brace == 0 && depth_paren == 0 => return i + 1,
+            _ => {}
+        }
+        i += 1;
+    }
+    src.len()
+}
+
+fn ident_at(src: &str, i: usize) -> Option<(String, usize)> {
+    let bytes = src.as_bytes();
+    if i >= bytes.len() {
+        return None;
+    }
+    let c = bytes[i];
+    if !c.is_ascii_alphabetic() && c != b'_' {
+        return None;
+    }
+    let mut j = i + 1;
+    while j < bytes.len() && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'_') {
+        j += 1;
+    }
+    Some((src[i..j].to_string(), j))
+}
+
+fn skip_trivia(src: &str, mut i: usize) -> usize {
+    let bytes = src.as_bytes();
+    loop {
+        while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+            i += 1;
+        }
+        if i + 1 < bytes.len() && bytes[i] == b'/' && bytes[i + 1] == b'/' {
+            while i < bytes.len() && bytes[i] != b'\n' {
+                i += 1;
+            }
+            continue;
+        }
+        if i + 1 < bytes.len() && bytes[i] == b'/' && bytes[i + 1] == b'*' {
+            i += 2;
+            while i + 1 < bytes.len() && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
+                i += 1;
+            }
+            if i + 1 < bytes.len() {
+                i += 2;
+            }
+            continue;
+        }
+        break;
+    }
+    i
+}
+
+fn find_char(src: &str, mut i: usize, needle: char) -> Option<usize> {
+    while i < src.len() {
+        i = skip_trivia(src, i);
+        if i >= src.len() {
+            return None;
+        }
+        if src[i..].starts_with(needle) {
+            return Some(i);
+        }
+        i += 1;
+    }
+    None
+}
+
+fn match_brace(src: &str, open: usize) -> Option<usize> {
+    match_pair(src, open, b'{', b'}')
+}
+
+fn match_paren(src: &str, open: usize) -> Option<usize> {
+    match_pair(src, open, b'(', b')')
+}
+
+fn match_angle(src: &str, open: usize) -> Option<usize> {
+    match_pair(src, open, b'<', b'>')
+}
+
+fn match_pair(src: &str, open: usize, open_ch: u8, close_ch: u8) -> Option<usize> {
+    let bytes = src.as_bytes();
+    if open >= bytes.len() || bytes[open] != open_ch {
+        return None;
+    }
+    let mut depth = 0i32;
+    let mut i = open;
+    while i < bytes.len() {
+        if bytes[i] == open_ch {
+            depth += 1;
+        } else if bytes[i] == close_ch {
+            depth -= 1;
+            if depth == 0 {
+                return Some(i);
+            }
+        }
+        i += 1;
+    }
+    None
+}
+
+/// `crates/script-js/src/shim/declared_surface.js` — generated from the fixture.
+/// Regen: `cargo test -p script-js --test declared_abi regen_declared_surface_from_fixture -- --ignored`
+pub fn declared_surface_path() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/shim/declared_surface.js")
+}
+
+struct Reexport {
+    names: &'static [&'static str],
+    line: &'static str,
+}
+
+const REEXPORTS: &[Reexport] = &[
+    Reexport {
+        names: &["Game"],
+        line: "export { Game } from '../../api/game/Game.js';",
+    },
+    Reexport {
+        names: &["Inventory", "InvItem"],
+        line: "export { Inventory, InvItem } from '../../api/inventory/Inventory.js';",
+    },
+    Reexport {
+        names: &["Skills"],
+        line: "export { Skills } from '../../api/skills/Skills.js';",
+    },
+    Reexport {
+        names: &["Bank", "withdrawOp"],
+        line: "export { Bank, withdrawOp } from '../../api/bank/Bank.js';",
+    },
+    Reexport {
+        names: &[
+            "Banking",
+            "COMMON_BANK_LOOT",
+            "depositAllExcept",
+            "depositMatcher",
+            "matchesCommonBankLoot",
+            "PERIODIC_BANK_SETTINGS",
+            "RANDOM_EVENT_CASKET_ID",
+            "NEARBY_BANK_RADIUS",
+            "resolveBankOpenRoute",
+            "parseBankStrategy",
+            "shouldBankNow",
+        ],
+        line: "export { Banking, COMMON_BANK_LOOT, depositAllExcept, depositMatcher, matchesCommonBankLoot, PERIODIC_BANK_SETTINGS, RANDOM_EVENT_CASKET_ID, NEARBY_BANK_RADIUS, resolveBankOpenRoute, parseBankStrategy, shouldBankNow } from '../../api/bank/Banking.js';",
+    },
+    Reexport {
+        names: &["bankDistance", "nearestUsableBank"],
+        line: "export { bankDistance, nearestUsableBank } from '../../api/bank/BankLocations.js';",
+    },
+    Reexport {
+        names: &["reader"],
+        line: "export { reader } from '../../adapter/ClientAdapter.js';",
+    },
+    Reexport {
+        names: &[
+            "DEFAULT_BOOTH_NAME",
+            "DEFAULT_BOOTH_OP",
+            "MAP_SQUARE",
+            "sameMapSquare",
+            "locationOptions",
+            "boothFields",
+            "resolveGatheringLocation",
+        ],
+        line: "export { DEFAULT_BOOTH_NAME, DEFAULT_BOOTH_OP, MAP_SQUARE, sameMapSquare, locationOptions, boothFields, resolveGatheringLocation } from '../../shim/gathering_locations.js';",
+    },
+    Reexport {
+        names: &["AXES", "PICKAXES", "TINDERBOX", "HAMMER", "KNIFE", "CHISEL", "NEEDLE", "exactTool", "tinderboxReq", "axeReq", "pickaxeReq", "toolKeepNames", "hasToolReq", "hasAllTools", "bestAxe", "bestPickaxe", "bestFromTiers", "canWieldTool", "toolAttackLevel", "toolsNeedingEquip", "toolRestockPlan", "missingToolLabels", "toolKitLabel", "bankHasBetterGatherTool", "bestHeldToolNames", "surplusHeldToolNames"],
+        line: "export { AXES, PICKAXES, TINDERBOX, HAMMER, KNIFE, CHISEL, NEEDLE, exactTool, tinderboxReq, axeReq, pickaxeReq, toolKeepNames, hasToolReq, hasAllTools, bestAxe, bestPickaxe, bestFromTiers, canWieldTool, toolAttackLevel, toolsNeedingEquip, toolRestockPlan, missingToolLabels, toolKitLabel, bankHasBetterGatherTool, bestHeldToolNames, surplusHeldToolNames } from '../../api/acquisition/Tools.js';",
+    },
+    Reexport {
+        names: &["EventSignal"],
+        line: "export { EventSignal } from '../../api/execution/EventSignal.js';",
+    },
+    Reexport {
+        names: &["Execution"],
+        line: "export { Execution } from '../../api/execution/Execution.js';",
+    },
+    Reexport {
+        names: &["LoopingBot", "TaskBot", "TreeBot", "AbstractBot"],
+        line: "export { LoopingBot, TaskBot, TreeBot, AbstractBot } from '../../api/bot/Bot.js';",
+    },
+    Reexport {
+        names: &["Paint"],
+        line: "export { Paint } from '../../paint/Paint.js';",
+    },
+    Reexport {
+        names: &["ScriptRunner"],
+        line: "export { ScriptRunner } from '../../runtime/ScriptRunner.js';",
+    },
+    Reexport {
+        names: &["Special"],
+        line: "export { Special } from '../../api/combat/Special.js';",
+    },
+    Reexport {
+        names: &["ChatDialog"],
+        line: "export { ChatDialog } from '../../api/ui/dialogue/ChatDialog.js';",
+    },
+    Reexport {
+        names: &["Quests"],
+        line: "export { Quests } from '../../api/ui/questlog/Quests.js';",
+    },
+    Reexport {
+        names: &["Traversal"],
+        line: "export { Traversal } from '../../api/walking/Traversal.js';",
+    },
+    Reexport {
+        names: &["DirectNavigator"],
+        line: "export { DirectNavigator } from '../../api/walking/DirectNavigator.js';",
+    },
+    Reexport {
+        names: &["Tile"],
+        line: "export { default as Tile } from '../../geometry/Tile.js';",
+    },
+    Reexport {
+        names: &["Area"],
+        line: "export { Area } from '../../geometry/Area.js';",
+    },
+    Reexport {
+        names: &["Npc", "Npcs"],
+        line: "export { Npc, Npcs } from '../../api/npcs/Npcs.js';",
+    },
+    Reexport {
+        names: &["Player", "Players"],
+        line: "export { Player, Players } from '../../api/players/Players.js';",
+    },
+    Reexport {
+        names: &["Loc", "Locs"],
+        line: "export { Loc, Locs } from '../../api/locs/Locs.js';",
+    },
+    Reexport {
+        names: &["GroundItem", "GroundItems"],
+        line: "export { GroundItem, GroundItems } from '../../api/grounditems/GroundItems.js';",
+    },
+    Reexport {
+        names: &["Equipment"],
+        line: "export { Equipment } from '../../api/equipment/Equipment.js';",
+    },
+    Reexport {
+        names: &["Trade"],
+        line: "export { Trade } from '../../api/trade/Trade.js';",
+    },
+    Reexport {
+        names: &["Shop"],
+        line: "export { Shop } from '../../api/shop/Shop.js';",
+    },
+    Reexport {
+        names: &["EntityQuery"],
+        line: "export { default as EntityQuery } from '../../api/query/Query.js';",
+    },
+    Reexport {
+        names: &["BANK_LOCATIONS", "bankUnlocked", "nearestBank"],
+        line: "export { BANK_LOCATIONS, bankUnlocked, nearestBank } from '../../api/bank/BankLocations.js';",
+    },
+    Reexport {
+        names: &["NAV_PURE_WALK", "NAV_WITH_TELES"],
+        line: "export { NAV_PURE_WALK, NAV_WITH_TELES } from '../../api/walking/Traversal.js';",
+    },
+
+    Reexport {
+        names: &[
+            "PICKPOCKET_TARGETS",
+            "PICKPOCKET_TARGET_NAMES",
+            "ARDOUGNE_PICKPOCKET_TARGETS",
+        ],
+        line: "export { PICKPOCKET_TARGETS, PICKPOCKET_TARGET_NAMES, ARDOUGNE_PICKPOCKET_TARGETS } from '../../data/pickpocketTargets.js';",
+    },
+    Reexport {
+        names: &["ENT_NPC_IDS", "ENT_LIFE_TICKS", "isEntNpcId", "entNpcOnTile"],
+        line: "export { ENT_NPC_IDS, ENT_LIFE_TICKS, isEntNpcId, entNpcOnTile } from '../../data/woodcuttingLocations.js';",
+    },
+    Reexport {
+        names: &["ROCK_OPTIONS", "ROCK_TYPES", "GAS_ROCK_IDS", "GAS_ROCK_TICKS", "BROKEN_PICKAXE", "resolveRockIds"],
+        line: "export { ROCK_OPTIONS, ROCK_TYPES, GAS_ROCK_IDS, GAS_ROCK_TICKS, BROKEN_PICKAXE, resolveRockIds } from '../../data/miningRocks.js';",
+    },
+    Reexport {
+        names: &[
+            "COW_LOCATIONS",
+            "COW_LOCATION_OPTIONS",
+            "AL_KHARID_BANK",
+            "TOLL_COIN_TARGET",
+            "isCowFieldLootTile",
+            "resolveCowLocation",
+            "nearestCowLocation",
+            "needsTollCoins",
+            "shouldBootstrapTollCoins",
+        ],
+        line: "export { COW_LOCATIONS, COW_LOCATION_OPTIONS, AL_KHARID_BANK, TOLL_COIN_TARGET, isCowFieldLootTile, resolveCowLocation, nearestCowLocation, needsTollCoins, shouldBootstrapTollCoins } from '../../data/cowKillerLocations.js';",
+    },
+    Reexport {
+        names: &["RUNES", "RUNE_OPTIONS", "DEFAULT_RUNE"],
+        line: "export { RUNES, RUNE_OPTIONS, DEFAULT_RUNE } from '../../data/runeCraftLocations.js';",
+    },
+];
+
+/// Generate the `@rs2b0t/api` surface: re-export the names a shim module
+/// owns, throw `not impl` for the rest. Never a fake value.
+pub fn render_declared_surface(exports: &[DeclaredExport]) -> String {
+    use std::collections::HashSet;
+    let wanted: HashSet<&str> = exports.iter().map(|e| e.name.as_str()).collect();
+    let mut covered: HashSet<&str> = HashSet::new();
+    let mut out = String::from(
+        "// Generated from tests/fixtures/js_declared_abi.json — do not edit by hand.\n\
+         // Regen: cargo test -p script --test declared_abi regen_js_declared_abi -- --ignored\n\
+         import { notImpl, notImplValue, proxy } from '../../shim/_kernel.js';\n\n",
+    );
+    out.push_str("export const defineBot = globalThis.defineBot;\n\n");
+    covered.insert("defineBot");
+
+    for re in REEXPORTS {
+        if re.names.iter().any(|n| wanted.contains(n)) {
+            out.push_str(re.line);
+            out.push('\n');
+            for n in re.names {
+                covered.insert(*n);
+            }
+        }
+    }
+    out.push('\n');
+    for exp in exports {
+        if covered.contains(exp.name.as_str()) {
+            continue;
+        }
+        match exp.kind {
+            DeclaredKind::Value => {
+                // No fake value: a declared name no shim module owns throws
+                // `not impl` on any read, the same as an unimplemented member.
+                if exp.name == "apiVersion" {
+                    out.push_str("export const apiVersion = 1;\n");
+                } else {
+                    out.push_str(&format!(
+                        "export const {} = notImplValue('{}');\n",
+                        exp.name, exp.name
+                    ));
+                }
+            }
+            DeclaredKind::Function => {
+                out.push_str(&format!(
+                    "export function {}() {{ throw notImpl('{}'); }}\n",
+                    exp.name, exp.name
+                ));
+            }
+            DeclaredKind::Object => {
+                out.push_str(&format!(
+                    "export const {} = proxy('{}', {{\n",
+                    exp.name, exp.name
+                ));
+                for m in &exp.members {
+                    out.push_str(&format!(
+                        "    {}() {{ throw notImpl('{}.{}'); }},\n",
+                        m, exp.name, m
+                    ));
+                }
+                out.push_str("});\n");
+            }
+            DeclaredKind::Class => {
+                out.push_str(&format!("export class {} {{\n", exp.name));
+                let mut has_ctor = false;
+                for m in &exp.members {
+                    if m == "constructor" {
+                        has_ctor = true;
+                        out.push_str("    constructor() {}\n");
+                        continue;
+                    }
+                    if matches!(exp.name.as_str(), "Area")
+                        && matches!(m.as_str(), "rectangular" | "circular")
+                    {
+                        out.push_str(&format!(
+                            "    static {}() {{ throw notImpl('{}.{}'); }}\n",
+                            m, exp.name, m
+                        ));
+                        continue;
+                    }
+                    out.push_str(&format!(
+                        "    {}() {{ throw notImpl('{}.{}'); }}\n",
+                        m, exp.name, m
+                    ));
+                }
+                if !has_ctor {
+                    out.push_str("    constructor() {}\n");
+                }
+                out.push_str("}\n");
+            }
+        }
+    }
+    out
+}
+
+pub fn write_declared_surface(exports: &[DeclaredExport]) -> Result<(), String> {
+    let path = declared_surface_path();
+    let src = render_declared_surface(exports);
+    std::fs::write(&path, src).map_err(|e| format!("write {}: {e}", path.display()))
+}

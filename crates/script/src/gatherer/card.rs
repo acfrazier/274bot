@@ -12,6 +12,7 @@ use std::sync::Arc;
 
 pub const CARD: CompiledCard = CompiledCard {
     id: CompiledId("Gatherer"),
+    native_kind: crate::native::request::NativeKind::Gather,
     name: "Gatherer",
     description: "Gather selected woodcutting, mining and fishing resources from live observation.",
     category: "Gathering",

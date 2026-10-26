@@ -220,7 +220,7 @@ fn live_rss_ladder_headless() {
             play.script_start_load(
                 name,
                 "export function tick(api) {}".into(),
-                script::LoadShape::NativeTick,
+                script_js::LoadShape::NativeTick,
                 None,
                 vec![],
             )

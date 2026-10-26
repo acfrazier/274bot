@@ -18,11 +18,10 @@ fn work_scope_requires_the_bound_slot_lifetime() {
         )),
     );
 }
-#[cfg(feature = "load")]
 fn start(slot: &mut SlotScript, bag: SettingsBag) {
     slot.start_compiled(
         "account",
-        crate::CompiledId("Sherlock"),
+        crate::CompiledId("Gatherer"),
         Arc::new(bag),
         selected(),
         Arc::default(),
@@ -222,7 +221,6 @@ fn grinch_inventory_blocked_error_retains_its_native_stop_reason() {
     assert!(slot.native_status().is_none());
 }
 
-#[cfg(feature = "load")]
 #[test]
 fn large_catalogue_job_and_operator_start_both_complete() {
     use crate::preparation::{self, PreparationInput, PreparationKind};
@@ -256,7 +254,6 @@ fn large_catalogue_job_and_operator_start_both_complete() {
     assert_eq!(slot.state(), RunState::Running);
 }
 
-#[cfg(feature = "load")]
 #[test]
 fn oversized_native_settings_have_a_typed_visible_refusal() {
     let mut slot = SlotScript::new();
@@ -268,7 +265,7 @@ fn oversized_native_settings_have_a_typed_visible_refusal() {
     let error = slot
         .start_compiled(
             "account",
-            crate::CompiledId("Sherlock"),
+            crate::CompiledId("Gatherer"),
             Arc::new(bag),
             selected(),
             Arc::default(),
@@ -282,7 +279,6 @@ fn oversized_native_settings_have_a_typed_visible_refusal() {
     assert_eq!(slot.state(), RunState::Idle);
 }
 
-#[cfg(feature = "load")]
 #[test]
 fn native_card_policy_timing() {
     let _selected = selected();
@@ -306,9 +302,8 @@ fn settings_apply_only_publishes_a_nonzero_prepared_revision() {
     assert_eq!(output.applied.map(std::num::NonZeroU64::get), Some(7));
 }
 
-#[cfg(feature = "load")]
 #[test]
-fn invalid_settings_and_factory_type_leave_no_runnable_instance() {
+fn invalid_gatherer_settings_leave_no_runnable_instance() {
     let mut slot = SlotScript::new();
     slot.bind_incarnation(10);
     slot.attach_source_identity("file:previous.ts");
@@ -323,19 +318,6 @@ fn invalid_settings_and_factory_type_leave_no_runnable_instance() {
     assert_eq!(slot.state(), RunState::Idle);
     assert_eq!(slot.source_identity(), Some("file:previous.ts"));
     assert!(slot.native_run().is_none());
-    let wrong_type = PreparedConfig::new(crate::CompiledId("Sherlock"), 1, 1, Arc::default(), ());
-    assert!(matches!(
-        (crate::sherlock::CARD.create)(
-            RunKey {
-                slot: 10,
-                run: 2,
-                session: 0
-            },
-            wrong_type,
-            &mut RetainedMemory::default()
-        ),
-        Err(StartError::Config(_))
-    ));
     // A valid retry installs only its own fresh generation and uses no isolate.
     start(&mut slot, SettingsBag::new());
     assert_eq!(settle(&mut slot), StartOutcome::Ready);
@@ -352,7 +334,6 @@ fn invalid_settings_and_factory_type_leave_no_runnable_instance() {
         .is_err());
 }
 
-#[cfg(feature = "load")]
 #[test]
 fn a_late_factory_reply_cannot_replace_a_new_run_after_stop() {
     let mut slot = SlotScript::new();
@@ -377,7 +358,6 @@ fn a_late_factory_reply_cannot_replace_a_new_run_after_stop() {
     assert!(slot.preparing.is_none());
 }
 
-#[cfg(feature = "load")]
 #[test]
 fn retained_memory_contention_refuses_without_blocking_shared_preparation() {
     let mut slot = SlotScript::new();
@@ -534,11 +514,14 @@ fn configuration_fences_account_incarnation_revision_and_type_without_load_succe
         alice.configure_compiled(config(2, 99), alice_run),
         CompiledDelivery::Stale
     );
-    let invalid = PreparedConfig::new(
-        crate::CompiledId("test"),
-        1,
-        3,
-        Arc::new(SettingsBag::from_iter([("value".into(), 99.into())])),
+    let bag = Arc::new(SettingsBag::from_iter([("value".into(), 99.into())]));
+    let typed =
+        PreparedConfig::for_test_card(crate::CompiledId("test"), 1, 3, Arc::clone(&bag), 99_u64);
+    let invalid = PreparedConfig::for_test_card(
+        typed.card(),
+        typed.schema_version(),
+        typed.revision(),
+        bag,
         (),
     );
     assert!(matches!(
@@ -549,14 +532,7 @@ fn configuration_fences_account_incarnation_revision_and_type_without_load_succe
         alice.compiled.as_ref().unwrap().config.get::<u64>(),
         Some(&10)
     );
-    #[cfg(feature = "load")]
-    {
-        assert!(!alice.post_settings_bag_fenced(
-            &SettingsBag::new(),
-            "compiled:test",
-            alice_run.run
-        ));
-    }
+    assert!(!alice.post_settings_bag_fenced(&SettingsBag::new(), "compiled:test", alice_run.run));
 }
 
 #[test]
@@ -648,13 +624,12 @@ fn removal_notifies_the_native_script_once_with_removed_reason() {
     assert!(receive.try_recv().is_err());
 }
 
-/// A Sherlock revision prepared exactly as a settings edit prepares it.
-#[cfg(feature = "load")]
-fn sherlock_config(revision: u64) -> Arc<PreparedConfig> {
+/// A Gatherer revision prepared exactly as a settings edit prepares it.
+fn gatherer_config(revision: u64) -> Arc<PreparedConfig> {
     FamilyPreparation::run(move |worker| {
         prepare_config(
             worker,
-            crate::CompiledId("Sherlock"),
+            crate::CompiledId("Gatherer"),
             revision,
             Arc::new(SettingsBag::new()),
             selected(),
@@ -668,12 +643,38 @@ fn sherlock_config(revision: u64) -> Arc<PreparedConfig> {
     .unwrap()
 }
 
-#[cfg(feature = "load")]
+const PERMISSION_TEST_ID: crate::CompiledId = crate::CompiledId("SlotPermissionsTest");
+
+struct PermissionReceiver;
+
+impl Script for PermissionReceiver {
+    fn tick(&mut self, _: &mut NativeTick<'_>) -> Result<ScriptFlow, ScriptFailure> {
+        Ok(ScriptFlow::Continue)
+    }
+
+    fn configure(&mut self, next: Arc<PreparedConfig>) -> Result<SettingsApply, ConfigError> {
+        next.get::<()>()
+            .ok_or_else(|| ConfigError::new("", "config-identity", "not permission fixture"))?;
+        Ok(SettingsApply::Applied)
+    }
+}
+
+fn start_permission_slot(slot: &mut SlotScript, bag: SettingsBag) {
+    slot.start_compiled(
+        "account",
+        PERMISSION_TEST_ID,
+        Arc::new(bag),
+        selected(),
+        Arc::default(),
+    )
+    .unwrap();
+}
+
 fn permission_config(revision: u64, allow: bool) -> Arc<PreparedConfig> {
     FamilyPreparation::run(move |worker| {
         prepare_config(
             worker,
-            crate::CompiledId("Sherlock"),
+            PERMISSION_TEST_ID,
             revision,
             Arc::new(
                 serde_json::from_value(serde_json::json!({
@@ -694,16 +695,53 @@ fn permission_config(revision: u64, allow: bool) -> Arc<PreparedConfig> {
     .unwrap()
 }
 
-#[cfg(feature = "load")]
 #[test]
 fn walk_permissions_capture_start_apply_restart_and_account_isolation() {
+    const TEST_NAME: &str =
+        "slot::compiled::tests::walk_permissions_capture_start_apply_restart_and_account_isolation";
+    const CHILD_ENV: &str = "SCRIPT_SLOT_PERMISSION_TEST_CHILD";
+    if std::env::var_os(CHILD_ENV).is_none() {
+        let output =
+            std::process::Command::new(std::env::current_exe().expect("unit-test executable path"))
+                .args(["--exact", TEST_NAME, "--nocapture"])
+                .env(CHILD_ENV, "1")
+                .output()
+                .expect("run isolated registered-card permission test");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success(),
+            "isolated permission test failed\nstdout: {stdout}\nstderr: {stderr}"
+        );
+        assert!(
+            stdout.contains(&format!("test {TEST_NAME} ... ok")) && stdout.contains("1 passed"),
+            "isolated permission test did not run exactly once\nstdout: {stdout}\nstderr: {stderr}"
+        );
+        return;
+    }
+    static CARDS: [crate::native::CompiledCard; 1] = [crate::native::CompiledCard {
+        id: PERMISSION_TEST_ID,
+        schema_version: 1,
+        prepare: |_, revision, bag| {
+            Ok(PreparedConfig::new(
+                PERMISSION_TEST_ID,
+                1,
+                revision,
+                bag,
+                (),
+            ))
+        },
+        create: |_, _, _| Ok(Box::new(PermissionReceiver)),
+        ..crate::gatherer::CARD
+    }];
+    crate::registry::install_cards(&CARDS).unwrap();
     let mut alice = SlotScript::new();
     let mut bob = SlotScript::new();
     alice.bind_incarnation(81);
     bob.bind_incarnation(82);
     let initial = permission_config(1, true);
-    start(&mut alice, initial.bag().clone());
-    start(&mut bob, SettingsBag::new());
+    start_permission_slot(&mut alice, initial.bag().clone());
+    start_permission_slot(&mut bob, SettingsBag::new());
     assert_eq!(settle(&mut alice), StartOutcome::Ready);
     assert_eq!(settle(&mut bob), StartOutcome::Ready);
     assert_eq!(
@@ -786,7 +824,6 @@ fn restart_and_settle(slot: &mut SlotScript, now: Instant) {
     assert_eq!(slot.state(), RunState::Running);
 }
 
-#[cfg(feature = "load")]
 #[test]
 fn watchdog_restarts_compiled_with_effective_not_pending_configuration() {
     let mut slot = SlotScript::new();
@@ -795,7 +832,7 @@ fn watchdog_restarts_compiled_with_effective_not_pending_configuration() {
     assert_eq!(settle(&mut slot), StartOutcome::Ready);
     let old_run = slot.native_run().unwrap();
     let effective = Arc::clone(&slot.compiled.as_ref().unwrap().config);
-    let restart_required = sherlock_config(2);
+    let restart_required = gatherer_config(2);
     slot.compiled.as_mut().unwrap().pending = Some(PendingConfig {
         config: Arc::clone(&restart_required),
         boundary: false,
@@ -812,21 +849,20 @@ fn watchdog_restarts_compiled_with_effective_not_pending_configuration() {
     assert_eq!(slot.watchdog.last_recovery(), Some(now));
 }
 
-#[cfg(feature = "load")]
 #[test]
 fn watchdog_restart_reoffers_an_accepted_boundary_revision_to_the_new_instance() {
     let mut slot = SlotScript::new();
     slot.bind_incarnation(43);
     start(&mut slot, SettingsBag::new());
     assert_eq!(settle(&mut slot), StartOutcome::Ready);
-    let accepted = sherlock_config(2);
+    let accepted = gatherer_config(2);
     slot.compiled.as_mut().unwrap().pending = Some(PendingConfig {
         config: Arc::clone(&accepted),
         boundary: true,
     });
     restart_and_settle(&mut slot, Instant::now());
     // The replacement is created from the effective revision; the accepted
-    // boundary revision goes through its configure receiver, which Sherlock
+    // boundary revision goes through its configure receiver, which Gatherer
     // applies immediately. It is not silently discarded.
     let current = slot.compiled.as_ref().unwrap();
     assert!(Arc::ptr_eq(&current.config, &accepted));
@@ -1763,7 +1799,7 @@ mod api_gather_seat {
     use crate::shim::InteractReq;
     use api::identity::RequestId;
 
-    fn load_slot(incarnation: u64, data: bool) -> SlotScript {
+    fn stub_surface_slot(incarnation: u64, data: bool) -> SlotScript {
         let mut slot = SlotScript::new();
         slot.bind_incarnation(incarnation);
         let factory = Arc::new(crate::surface::test_support::StubSurfaceFactory::new());
@@ -1790,7 +1826,7 @@ mod api_gather_seat {
     }
 
     fn run_in_seat_with_settings(slot: &mut SlotScript, token: u64, settings: SettingsBag) {
-        let run = slot.seat.as_ref().expect("Load slot seat").run();
+        let run = slot.seat.as_ref().expect("native stub seat").run();
         slot.consume_seat_batch(
             DecodedSeatBatch {
                 consumed_terminal_seq: 0,
@@ -1878,7 +1914,7 @@ mod api_gather_seat {
         });
     }
     // Match the native seat portion of SlotScript::on_game_tick while
-    // excluding the independent Load-isolate JS tick command queue.
+    // excluding the independent surface tick command queue.
     fn poll_native_api_seat(
         slot: &mut SlotScript,
         snapshot: &api::snapshot::GameSnapshot,
@@ -1945,7 +1981,7 @@ mod api_gather_seat {
     #[test]
     fn load_api_gather_walk_permissions_follow_its_live_card_settings() {
         let snapshot = gatherer_snapshot();
-        let mut slot = load_slot(206, true);
+        let mut slot = stub_surface_slot(206, true);
         assert_eq!(slot.native_walk_permissions(), None);
         assert_eq!(slot.api_gather_walk_permissions(), None);
 
@@ -1980,7 +2016,7 @@ mod api_gather_seat {
     #[test]
     fn load_api_gather_defaults_keep_walk_permissions_refused() {
         let snapshot = gatherer_snapshot();
-        let mut slot = load_slot(207, true);
+        let mut slot = stub_surface_slot(207, true);
         run(&mut slot, 207);
         installed(&mut slot, &snapshot);
 
@@ -1999,7 +2035,7 @@ mod api_gather_seat {
     #[test]
     fn stop_during_preparation_is_prompt_clears_retention_and_never_installs() {
         let snapshot = gatherer_snapshot();
-        let mut slot = load_slot(201, true);
+        let mut slot = stub_surface_slot(201, true);
         run(&mut slot, 201);
         let retention = Arc::clone(slot.retained.as_ref().unwrap());
         retention.lock().unwrap().gather().yielded = 9;
@@ -2029,7 +2065,7 @@ mod api_gather_seat {
     #[test]
     fn api_stop_revokes_five_undrained_native_drops_and_preserves_last_published_counts() {
         let snapshot = gatherer_snapshot();
-        let mut slot = load_slot(202, true);
+        let mut slot = stub_surface_slot(202, true);
         run_in_seat(&mut slot, 202);
         installed(&mut slot, &snapshot);
         let mut actions = Vec::new();
@@ -2106,7 +2142,7 @@ mod api_gather_seat {
     #[test]
     fn reconnect_rekeys_actual_card_revokes_old_action_and_reposts_terminal() {
         let snapshot = gatherer_snapshot();
-        let mut slot = load_slot(203, true);
+        let mut slot = stub_surface_slot(203, true);
         run_in_seat(&mut slot, 203);
         installed(&mut slot, &snapshot);
         for tick in 2..18 {
@@ -2152,7 +2188,7 @@ mod api_gather_seat {
     #[test]
     fn hold_pause_reset_and_watchdog_keep_only_the_authorized_retention() {
         let snapshot = gatherer_snapshot();
-        let mut slot = load_slot(204, true);
+        let mut slot = stub_surface_slot(204, true);
         run(&mut slot, 204);
         installed(&mut slot, &snapshot);
         for tick in 2..10 {
@@ -2196,7 +2232,7 @@ mod api_gather_seat {
 
     #[test]
     fn missing_facts_refuses_and_duplicate_run_cannot_resurrect_the_terminal() {
-        let mut slot = load_slot(207, false);
+        let mut slot = stub_surface_slot(207, false);
         run(&mut slot, 207);
         assert!(
             matches!(&slot.api.as_ref().unwrap().terminal, Some(GatherEnd::Refused { token: 207, reason }) if reason.as_ref() == "unavailable:selected game data unavailable")
@@ -2219,7 +2255,7 @@ mod api_gather_seat {
     #[test]
     fn actual_blocked_terminal_wins_stop_race_and_next_run_keeps_retention() {
         let mut snapshot = gatherer_snapshot();
-        let mut slot = load_slot(212, true);
+        let mut slot = stub_surface_slot(212, true);
         run(&mut slot, 212);
         installed(&mut slot, &snapshot);
         poll(&mut slot, &snapshot, 2, false);
@@ -2261,10 +2297,10 @@ mod api_gather_seat {
     fn warmed_load_seat_exclusive_heap_and_unchanged_polls_are_bounded() {
         let mut snapshot = gatherer_snapshot();
         let mut warm = gatherer_slot(208);
-        let mut slot = load_slot(209, true);
+        let mut slot = stub_surface_slot(209, true);
         assert!(
             slot.api.is_none(),
-            "established Load baseline has no seat allocation"
+            "established native baseline has no seat allocation"
         );
         // The first park can grow parking_lot's process-global table.
         // Warm this thread before charging only this seat.
@@ -2333,7 +2369,7 @@ mod api_gather_seat {
             std::mem::size_of::<SlotScript>()
         );
         println!(
-            "API gather warmed Load baseline: idle option={}B; worker prepared+instance={worker:?}; dispatch={dispatched:?}; install={installed_heap:?}; polls={polled:?}; exclusive={exclusive}B",
+            "API gather warmed native baseline: idle option={}B; worker prepared+instance={worker:?}; dispatch={dispatched:?}; install={installed_heap:?}; polls={polled:?}; exclusive={exclusive}B",
             std::mem::size_of::<Option<Box<crate::slot::api_seat::ApiSeat>>>()
         );
         assert_eq!(
@@ -2406,7 +2442,7 @@ mod api_gather_seat {
     }
 }
 
-#[cfg(all(feature = "load", feature = "test-hooks"))]
+#[cfg(feature = "test-hooks")]
 #[test]
 fn compiled_walk_decisions_keep_their_observed_epoch_across_later_ticks_and_restore() {
     use crate::shim::InteractReq;
@@ -3197,7 +3233,7 @@ fn compiled_evidence_wait_requires_a_ready_live_observation() {
     assert_eq!(slot.evidence_wait_run, None);
 }
 
-#[cfg(all(feature = "load", feature = "test-hooks"))]
+#[cfg(feature = "test-hooks")]
 #[test]
 fn native_interact_note_progress_remains_rejected() {
     use crate::shim::InteractReq;
@@ -3454,7 +3490,6 @@ fn compiled_pending_progress_and_wait_clear_at_each_ineligible_boundary() {
     }
 }
 
-#[cfg(feature = "load")]
 #[test]
 fn compiled_queued_seat_row_alone_blocks_evidence_wait() {
     use crate::shim::InteractReq;
@@ -3495,7 +3530,7 @@ fn compiled_queued_seat_row_alone_blocks_evidence_wait() {
         .as_mut()
         .expect("compiled execution seat")
         .push(
-            super::SeatEffect::Interact(crate::load::QueuedInteract {
+            super::SeatEffect::Interact(crate::interact::QueuedInteract {
                 req: InteractReq::WalkTo {
                     x: 20,
                     z: 1,

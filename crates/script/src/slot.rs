@@ -519,6 +519,8 @@ pub struct SlotScript {
     /// and retained session state. [`SlotScript::sync_compiled_clue`] applies
     /// the reset, which subsumes [`Self::card_abort_owed`].
     card_stop_owed: bool,
+    /// The installed card view last observed by this slot's frame pump.
+    card_registry: crate::registry::CardRegistrySnapshot,
     /// The active surface run, created only on Start.
     surface: Option<Box<dyn SurfaceRun>>,
     /// True after the surface reports that setup completed.
@@ -629,6 +631,7 @@ impl SlotScript {
             card_abort_owed: false,
 
             card_stop_owed: false,
+            card_registry: crate::registry::CardRegistrySnapshot::default(),
 
             surface: None,
 
@@ -977,10 +980,22 @@ impl SlotScript {
         self.arm_seat(run);
     }
 
+    /// Borrow the real gameplay seat for conformance tests only.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn seat_for_test(&self) -> Option<&GameplaySeat<impl Sized>> {
+        self.seat.as_deref()
+    }
+
     /// Return the number of interactions waiting for host delivery.
     #[cfg(feature = "test-hooks")]
     pub fn seat_interact_delivery_len(&self) -> usize {
         self.seat_interact_delivery.len()
+    }
+
+    /// Read the real pending-log count for conformance tests only.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn pending_log_len_for_test(&self) -> usize {
+        self.pending_logs.len()
     }
 
     fn arm_compiled_seat(&mut self, run: api::selected::RunKey, card: crate::CompiledId) {
@@ -995,15 +1010,12 @@ impl SlotScript {
         if run.slot_key().is_none() {
             return;
         }
-        let kind = match card.0 {
-            "Gatherer" | "Grinch" => crate::native::request::NativeKind::Gather,
-            "Quester" => crate::native::request::NativeKind::Quester,
-
-            "Sherlock" => crate::native::request::NativeKind::Clue,
-            #[cfg(any(test, feature = "test-hooks"))]
-            "test" => crate::native::request::NativeKind::BankNearest,
-            _ => panic!("unregistered compiled seat family: {}", card.0),
-        };
+        let kind = crate::registry::compiled_card(card).map(|card| card.native_kind);
+        #[cfg(any(test, feature = "test-hooks"))]
+        let kind = kind.or_else(|| {
+            (card.0 == "test").then_some(crate::native::request::NativeKind::BankNearest)
+        });
+        let kind = kind.unwrap_or_else(|| panic!("unregistered compiled seat family: {}", card.0));
         let id = SEAT_REQUEST_IDS.mint().expect("host request id exhausted");
         let stamp = RequestStamp::new(id, None, None, ExecutionId::first(run))
             .expect("compiled run is bound");
@@ -1520,14 +1532,12 @@ impl SlotScript {
         // and its abandon latch all start over — which is the marker
         // `reset_session_work` must not make: that one is a connection
         // boundary and drops the step alone.
-
         if !self.surface_active() && self.state != RunState::Stopping {
             self.card_stop_owed = true;
             self.card_abort_owed = false;
         }
         // A failed setup already ends Idle with its diagnostic; a Stop
         // during its reap must not turn that into a silent cancel.
-
         if self.state == RunState::Stopping && matches!(self.after_stop, AfterStop::Fail(_)) {
             return;
         }
@@ -1677,36 +1687,34 @@ impl SlotScript {
             self.card_abort_owed = true;
         }
 
-        {
-            let execution = ExecutionId::first(api::selected::RunKey {
-                slot: self.incarnation,
-                run: self.runtime_generation,
-                session: self.work_epoch,
-            });
-            let carried_error = self.active_tick_error_generation.is_some();
-            let held = reconnect && self.surface.is_some();
-            if let Some(isolate) = &mut self.surface {
-                let generation = if held {
-                    isolate.reconnect_session_work(Some(execution))
-                } else {
-                    isolate.reset_session_work(Some(execution))
-                };
-                if held {
-                    for token in &discarded_walks {
-                        isolate.rearm_host_discarded_walk(*token);
-                    }
-                }
-                self.active_tick_error_generation = carried_error.then_some(generation);
+        let execution = ExecutionId::first(api::selected::RunKey {
+            slot: self.incarnation,
+            run: self.runtime_generation,
+            session: self.work_epoch,
+        });
+        let carried_error = self.active_tick_error_generation.is_some();
+        let held = reconnect && self.surface.is_some();
+        if let Some(isolate) = &mut self.surface {
+            let generation = if held {
+                isolate.reconnect_session_work(Some(execution))
             } else {
-                self.active_tick_error_generation = None;
+                isolate.reset_session_work(Some(execution))
+            };
+            if held {
+                for token in &discarded_walks {
+                    isolate.rearm_host_discarded_walk(*token);
+                }
             }
-            self.last_world_id = None;
-            self.reach_cache.clear();
-
-            let abort = self.watchdog.abort_owned_recovery();
-            let _ = self.watchdog.on_session_reset(Instant::now());
-            held && abort != WatchdogAction::AbortWalk
+            self.active_tick_error_generation = carried_error.then_some(generation);
+        } else {
+            self.active_tick_error_generation = None;
         }
+        self.last_world_id = None;
+        self.reach_cache.clear();
+
+        let abort = self.watchdog.abort_owned_recovery();
+        let _ = self.watchdog.on_session_reset(Instant::now());
+        held && abort != WatchdogAction::AbortWalk
     }
 
     /// Deliver one broker event batch to the current surface.
@@ -1820,7 +1828,7 @@ impl SlotScript {
         }
         let stop_owed = std::mem::take(&mut self.card_stop_owed);
         let abort_owed = std::mem::take(&mut self.card_abort_owed);
-        for card in crate::compiled_cards() {
+        for card in crate::registry::frame_cards(&mut self.card_registry) {
             let Some(hooks) = card.lifecycle else {
                 continue;
             };
