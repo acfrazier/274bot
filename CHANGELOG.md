@@ -5,6 +5,14 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
 
 ## Unreleased
 
+### Combat
+
+- Bots now know how hard common monsters such as cows, chickens, rats and
+  imps hit. They eat, and they stop for lack of food, at lines that match
+  those monsters. For example, a bot without food fighting cows now keeps
+  going until 2 hitpoints instead of 5. Bots no longer raise Protect from
+  Melee against imps, which cannot hit through it.
+
 ## [0.2.7] — 2026-10-26 — Beta 2
 
 ### Panel and terminal app
