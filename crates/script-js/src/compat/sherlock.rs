@@ -84,7 +84,8 @@ static CLUE_LIFECYCLE: script::native::CardLifecycle = script::native::CardLifec
     on_hold: crate::clue::on_hold,
 };
 
-pub(crate) const CARD: CompiledCard = CompiledCard {
+/// The canonical compiled card for the JS-backed clue adapter.
+pub const CARD: CompiledCard = CompiledCard {
     id: CompiledId("Sherlock"),
     native_kind: script::native::request::NativeKind::Clue,
     name: "Sherlock",
