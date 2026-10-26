@@ -707,6 +707,20 @@ impl LogStore {
             .map(|f| (f.path().to_path_buf(), f.state()))
     }
 
+    /// Where the open session file's writer stands (`None` while no file is
+    /// open). Copies nothing: a front end asks this every frame.
+    pub(crate) fn file_phase(&self) -> Option<crate::log_file::SessionFilePhase> {
+        self.inner.lock().file.as_ref().map(|f| f.phase())
+    }
+
+    /// Fixture seam: the open session file's writer failed with `cause`.
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn fail_file_for_test(&self, cause: &str) {
+        if let Some(file) = self.inner.lock().file.as_ref() {
+            file.fail_for_test(cause);
+        }
+    }
+
     /// The cause the open session file's writer failed with, if it failed
     /// (allocates only then).
     pub fn file_failure(&self) -> Option<String> {

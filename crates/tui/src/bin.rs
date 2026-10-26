@@ -356,6 +356,36 @@ impl frontend_core::SlotSurface for TuiSurface<'_> {
     }
 }
 
+/// The stage of the session file the log pane's status line follows.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+enum SessionFileKey {
+    /// Nothing to say: no file was ever on, or a failure has left.
+    #[default]
+    Quiet,
+    /// The saved choice is being written.
+    Saving,
+    /// The core holds a failure at the setting (the choice did not save, or
+    /// it saved and the file could not be opened or written).
+    Failure,
+    /// The file is being opened.
+    Opening,
+    /// Lines are written to the file.
+    Writing,
+    /// The file is closed.
+    Off,
+}
+
+/// What the log pane's status line last said about the session file: the
+/// stage, the text put on the line for it, and whether a file was open since
+/// the line last said it was off. A frame compares the stage and the
+/// core's failure text with these and builds new text only when one moved.
+#[derive(Debug, Default)]
+struct SessionFileShown {
+    key: SessionFileKey,
+    text: Option<String>,
+    was_open: bool,
+}
+
 /// The TUI session: the running play, the vault and the per-username walk
 /// arms (the core owns the per-slot snapshot publication).
 pub struct TuiSession {
@@ -446,9 +476,9 @@ pub struct TuiSession {
     shown_preference_error: Option<String>,
     /// The Load-order failure last put on the message line.
     shown_order_failure: Option<String>,
-    /// Whether the log pane's status line follows the session file (set when
-    /// the operator toggles it, until the choice is saved and the file settles).
-    session_log_status_active: bool,
+    /// What the log pane's status line last said about the session file
+    /// ([`TuiSession::refresh_session_log_status`]).
+    session_file_shown: SessionFileShown,
     /// Unique profiles queued for startup Load + Login, keyed by vault UID.
     startup_profiles: Vec<ProfileIdentity>,
     /// The last queued profile that should receive automatic startup focus.
@@ -700,7 +730,7 @@ impl TuiSession {
             persist_ui: true,
             shown_preference_error: None,
             shown_order_failure: None,
-            session_log_status_active: false,
+            session_file_shown: SessionFileShown::default(),
             startup_profiles: Vec::new(),
             startup_focus: None,
             startup_default_pending: false,
@@ -4182,10 +4212,8 @@ impl TuiSession {
     }
 
     /// Turn the session log file on or off (`SetSessionLog`). The saved
-    /// choice and the file are two states: the log pane's status line
-    /// says "saving…" while the write is pending, the failure when it was
-    /// not saved, and the file the process holds open (or that it could not
-    /// open one) only from the sink's own state.
+    /// choice and the file are two states, and the log pane's status line
+    /// follows both whoever changed them ([`Self::refresh_session_log_status`]).
     fn set_session_log(&mut self, app: &mut TuiApp, on: bool) {
         match self.submit_with(
             app,
@@ -4193,7 +4221,6 @@ impl TuiSession {
             Targets::Application,
         ) {
             Ok(_) => {
-                self.session_log_status_active = true;
                 self.project_setting_feedback(app);
                 self.refresh_session_log_status(app);
             }
@@ -4201,42 +4228,73 @@ impl TuiSession {
         }
     }
 
-    /// The log pane's status line while it follows the session file. It
-    /// stops following once the choice is saved and the file has settled
-    /// (open, off, or failed and the failure shown for its timeout).
+    /// The log pane's status line follows the session file every frame,
+    /// whether the operator toggled it, it was on at startup, or another
+    /// process changed it: "saving…" while the choice is written, the
+    /// core's retained failure at the setting (a choice that did not save,
+    /// or one that saved but whose file could not be opened or written,
+    /// also after it had opened) for the shared error timeout, then
+    /// nothing, and the file the process holds open from the sink's own
+    /// state. A frame compares the stage and the failure text with what it
+    /// showed and builds text only when they moved. The line is cleared
+    /// only when it still holds the text this put there, so a save-log
+    /// status is never taken away.
     fn refresh_session_log_status(&mut self, app: &mut TuiApp) {
-        if !self.session_log_status_active {
+        use frontend_core::log_file::SessionFilePhase;
+        let (key, failure) = match app.setting_feedback(Setting::SessionLog) {
+            Some(SettingFeedback::Pending) => (SessionFileKey::Saving, None),
+            Some(SettingFeedback::Failed(failure)) => {
+                (SessionFileKey::Failure, Some(failure.as_str()))
+            }
+            None => match frontend_core::log_file::session_file_phase() {
+                SessionFilePhase::Off => (SessionFileKey::Off, None),
+                SessionFilePhase::Opening => (SessionFileKey::Opening, None),
+                SessionFilePhase::Writing => (SessionFileKey::Writing, None),
+                // The failure left with its timeout: nothing more to say.
+                SessionFilePhase::Failed => (SessionFileKey::Quiet, None),
+            },
+        };
+        let shown = &self.session_file_shown;
+        let unchanged = key == shown.key
+            && failure.is_none_or(|failure| shown.text.as_deref() == Some(failure));
+        if unchanged {
             return;
         }
-        use frontend_core::log_file::SessionFilePhase;
-        let (text, settled) = match app.setting_feedback(Setting::SessionLog) {
-            Some(SettingFeedback::Pending) => ("session file: saving…".to_owned(), false),
-            Some(SettingFeedback::Failed(failure)) => (failure.clone(), false),
-            None => {
+        let was_open = match key {
+            SessionFileKey::Opening | SessionFileKey::Writing => true,
+            SessionFileKey::Off => false,
+            _ => shown.was_open,
+        };
+        let text = match key {
+            SessionFileKey::Saving => Some("session file: saving…".to_owned()),
+            SessionFileKey::Failure => failure.map(str::to_owned),
+            SessionFileKey::Opening | SessionFileKey::Writing => {
                 let status = frontend_core::log_file::session_file_status();
                 let path = status
                     .path()
                     .map_or_else(String::new, |path| path.display().to_string());
-                match status.phase() {
-                    SessionFilePhase::Off => ("session file off".to_owned(), true),
-                    SessionFilePhase::Opening => (format!("session file opening {path}"), false),
-                    SessionFilePhase::Writing => (format!("session file {path}"), true),
-                    SessionFilePhase::Failed => (
-                        format!(
-                            "session file could not be opened or written: {}",
-                            status.cause().unwrap_or_default()
-                        ),
-                        true,
-                    ),
+                Some(if key == SessionFileKey::Opening {
+                    format!("session file opening {path}")
+                } else {
+                    format!("session file {path}")
+                })
+            }
+            SessionFileKey::Off => shown.was_open.then(|| "session file off".to_owned()),
+            SessionFileKey::Quiet => None,
+        };
+        match &text {
+            Some(text) => app.log.status = Some(text.clone()),
+            None => {
+                if app.log.status.is_some() && app.log.status == self.session_file_shown.text {
+                    app.log.status = None;
                 }
             }
+        }
+        self.session_file_shown = SessionFileShown {
+            key,
+            text,
+            was_open,
         };
-        if app.log.status.as_deref() != Some(text.as_str()) {
-            app.log.status = Some(text);
-        }
-        if settled {
-            self.session_log_status_active = false;
-        }
     }
 
     /// Save the map's special-areas overlay choice (`SetNavPreference`),
