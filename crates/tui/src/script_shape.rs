@@ -672,9 +672,11 @@ mod tests {
     };
     use frontend_core::test_support::scripts::NativeStatus;
 
+    #[cfg(feature = "js")]
+    use super::card_detail_lines;
     use super::{
-        browse_lines, card_category, card_detail_lines, categories_present, resolve_category_order,
-        BrowseCard, BrowseLine, ScriptClick, ScriptPane, SCRIPT_BUTTONS,
+        browse_lines, card_category, categories_present, resolve_category_order, BrowseCard,
+        BrowseLine, ScriptClick, ScriptPane, SCRIPT_BUTTONS,
     };
 
     fn sample_file_card() -> BrowseCard {
@@ -704,36 +706,6 @@ mod tests {
             .collect()
     }
 
-    fn test_pane<'a>(
-        state: ScriptRunState,
-        sel: Option<&'a ScriptChoice>,
-        cards: &'a [BrowseCard],
-        category_order: &'a [String],
-        catalog_deferred: bool,
-        browse_open: bool,
-        load_open: bool,
-        _load_path: &str,
-        params_available: bool,
-    ) -> ScriptPane<'a> {
-        let pane = ScriptPane::new(
-            state,
-            sel,
-            cards,
-            category_order,
-            browse_open,
-            params_available,
-        );
-        #[cfg(feature = "js")]
-        {
-            pane.with_js_controls(catalog_deferred, load_open, false)
-        }
-        #[cfg(not(feature = "js"))]
-        {
-            let _ = (catalog_deferred, load_open);
-            pane
-        }
-    }
-
     fn browse_lines_for_test(
         cards: &[BrowseCard],
         category_order: &[String],
@@ -753,17 +725,7 @@ mod tests {
     #[test]
     fn the_script_widgets_render() {
         let text = render(
-            test_pane(
-                ScriptRunState::Idle,
-                None,
-                &[],
-                &[],
-                false,
-                false,
-                false,
-                "",
-                false,
-            ),
+            ScriptPane::new(ScriptRunState::Idle, None, &[], &[], false, false),
             60,
             4,
         );
@@ -779,17 +741,7 @@ mod tests {
     #[test]
     fn clicking_start_maps_to_the_start_button() {
         let area = Rect::new(0, 0, 60, 4);
-        let pane = test_pane(
-            ScriptRunState::Idle,
-            None,
-            &[],
-            &[],
-            false,
-            false,
-            false,
-            "",
-            false,
-        );
+        let pane = ScriptPane::new(ScriptRunState::Idle, None, &[], &[], false, false);
         let start = pane.on_click(area, 14, 2);
         assert_eq!(
             start,
@@ -805,18 +757,8 @@ mod tests {
     #[test]
     fn bulk_row_clicks_follow_the_painted_labels() {
         let pane = |confirm: bool| {
-            test_pane(
-                ScriptRunState::Running,
-                None,
-                &[],
-                &[],
-                false,
-                false,
-                false,
-                "",
-                true,
-            )
-            .with_js_controls(false, false, confirm)
+            ScriptPane::new(ScriptRunState::Running, None, &[], &[], false, true)
+                .with_js_controls(false, false, confirm)
         };
         let area = Rect::new(0, 0, 80, 6);
         let row = 3;
@@ -860,17 +802,7 @@ mod tests {
 
     #[test]
     fn click_between_buttons_misses() {
-        let pane = test_pane(
-            ScriptRunState::Idle,
-            None,
-            &[],
-            &[],
-            false,
-            false,
-            false,
-            "",
-            false,
-        );
+        let pane = ScriptPane::new(ScriptRunState::Idle, None, &[], &[], false, false);
         let area = Rect::new(0, 0, 60, 4);
         assert_eq!(pane.on_click(area, 9, 3), ScriptClick::None);
     }
@@ -879,17 +811,7 @@ mod tests {
     fn browse_card_paints_description_kind_and_source() {
         let cards = vec![sample_file_card()];
         let text = render(
-            test_pane(
-                ScriptRunState::Idle,
-                None,
-                &cards,
-                &[],
-                false,
-                true,
-                false,
-                "",
-                false,
-            ),
+            ScriptPane::new(ScriptRunState::Idle, None, &cards, &[], true, false),
             80,
             12,
         );
@@ -960,17 +882,7 @@ mod tests {
         let cards = vec![ghost];
         let sel = ScriptChoice::loaded(CardSource::File, "K0DiscScriptGhost");
         for (w, h) in [(120, 40), (80, 24), (40, 24)] {
-            let pane = test_pane(
-                ScriptRunState::Idle,
-                Some(&sel),
-                &cards,
-                &[],
-                false,
-                true,
-                false,
-                "",
-                false,
-            );
+            let pane = ScriptPane::new(ScriptRunState::Idle, Some(&sel), &cards, &[], true, false);
             let text = render(pane, w, h);
             assert!(
                 text.contains("failed import"),
@@ -1074,17 +986,7 @@ mod tests {
             },
             sample_file_card(),
         ];
-        let pane = test_pane(
-            ScriptRunState::Idle,
-            None,
-            &cards,
-            &[],
-            false,
-            true,
-            false,
-            "",
-            false,
-        );
+        let pane = ScriptPane::new(ScriptRunState::Idle, None, &cards, &[], true, false);
         let area = Rect::new(0, 0, 80, 16);
         // Category header occupies the first browse row; card name is next.
         assert_eq!(
@@ -1093,15 +995,12 @@ mod tests {
             "first card row picks card 0"
         );
         let text = render(
-            test_pane(
+            ScriptPane::new(
                 ScriptRunState::Idle,
                 Some(&ScriptChoice::loaded(CardSource::Catalog, "BoneBurier")),
                 &cards,
                 &[],
-                false,
                 true,
-                false,
-                "",
                 false,
             ),
             80,
@@ -1114,17 +1013,8 @@ mod tests {
     #[test]
     fn deferred_browse_shows_import_catalog() {
         let text = render(
-            test_pane(
-                ScriptRunState::Idle,
-                None,
-                &[],
-                &[],
-                true,
-                true,
-                false,
-                "",
-                false,
-            ),
+            ScriptPane::new(ScriptRunState::Idle, None, &[], &[], true, false)
+                .with_js_controls(true, false, false),
             80,
             8,
         );
@@ -1137,17 +1027,7 @@ mod tests {
     #[test]
     fn paused_state_shows_resume_not_pause() {
         let text = render(
-            test_pane(
-                ScriptRunState::Paused,
-                None,
-                &[],
-                &[],
-                false,
-                false,
-                false,
-                "",
-                false,
-            ),
+            ScriptPane::new(ScriptRunState::Paused, None, &[], &[], false, false),
             60,
             4,
         );
@@ -1164,17 +1044,7 @@ mod tests {
     #[test]
     fn running_state_shows_pause_not_resume() {
         let text = render(
-            test_pane(
-                ScriptRunState::Running,
-                None,
-                &[],
-                &[],
-                false,
-                false,
-                false,
-                "",
-                false,
-            ),
+            ScriptPane::new(ScriptRunState::Running, None, &[], &[], false, false),
             60,
             4,
         );
@@ -1188,17 +1058,7 @@ mod tests {
     #[test]
     fn clicking_resume_when_paused_returns_resume_button() {
         let area = Rect::new(0, 0, 60, 4);
-        let pane = test_pane(
-            ScriptRunState::Paused,
-            None,
-            &[],
-            &[],
-            false,
-            false,
-            false,
-            "",
-            false,
-        );
+        let pane = ScriptPane::new(ScriptRunState::Paused, None, &[], &[], false, false);
         assert_eq!(
             pane.on_click(area, 23, 2),
             ScriptClick::Button("Resume"),
@@ -1213,18 +1073,8 @@ mod tests {
             "quest list unavailable; log in normally, then Stop/Start Quester",
         );
         let text = render(
-            test_pane(
-                ScriptRunState::Running,
-                None,
-                &[],
-                &[],
-                false,
-                false,
-                false,
-                "",
-                false,
-            )
-            .with_native_status(Some(status.view())),
+            ScriptPane::new(ScriptRunState::Running, None, &[], &[], false, false)
+                .with_native_status(Some(status.view())),
             90,
             10,
         );
@@ -1237,18 +1087,8 @@ mod tests {
     #[test]
     fn retained_walk_assessment_has_a_walk_risk_row_without_native_status() {
         let text = render(
-            test_pane(
-                ScriptRunState::Idle,
-                None,
-                &[],
-                &[],
-                false,
-                false,
-                false,
-                "",
-                false,
-            )
-            .with_walk_risk(Some("Route assessment unknown: Poison")),
+            ScriptPane::new(ScriptRunState::Idle, None, &[], &[], false, false)
+                .with_walk_risk(Some("Route assessment unknown: Poison")),
             90,
             10,
         );
@@ -1277,18 +1117,8 @@ mod tests {
             .with_text_field("step_comment", "Step comment", comment);
         for (width, height) in [(80, 24), (120, 40)] {
             let text = render(
-                test_pane(
-                    ScriptRunState::Running,
-                    None,
-                    &[],
-                    &[],
-                    false,
-                    false,
-                    false,
-                    "",
-                    false,
-                )
-                .with_native_status(Some(status.view())),
+                ScriptPane::new(ScriptRunState::Running, None, &[], &[], false, false)
+                    .with_native_status(Some(status.view())),
                 width,
                 height,
             );

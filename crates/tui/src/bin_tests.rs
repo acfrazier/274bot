@@ -2470,6 +2470,7 @@ fn settle_starts(session: &mut TuiSession, app: &mut TuiApp) {
     );
 }
 
+#[cfg(feature = "js")]
 /// Flush writes and pump until the latest fleet result has settled.
 fn settle_fleet_result(session: &mut TuiSession, app: &mut TuiApp) {
     let deadline = Instant::now() + Duration::from_secs(10);
