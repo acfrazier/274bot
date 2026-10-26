@@ -275,7 +275,9 @@ def facts_class(row: dict, strength: int | None, ranged: int | None) -> str:
         return "MissingStat"
     if maximum is None:
         return "Overflow"
-    rate = row.get("attackrate") or 0
+    # `npc_rate` defaults an absent rate to 4 and keeps an explicit 0.
+    rate = row.get("attackrate")
+    rate = 4 if rate is None else rate
     if rate == 0:
         return "ZeroRate"
     if kind == "ranged":
