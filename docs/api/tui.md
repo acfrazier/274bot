@@ -118,9 +118,13 @@ pending the row shows your choice followed by `— saving…`. If the save fails
 row shows the saved value again followed by the reason, for example
 `— Not saved: …`. The reason leaves when you act on that row again, or after 15
 seconds. A failed **Got it** keeps the background-bots notice on screen with the
-reason after it. A failed automatic save of the Load order shows on the message
-line. The Logs status line says `session file: saving…` while the choice is
-pending, then whether the file opened.
+reason after it. The saved Load order has no row: its message line says
+`Load order: saving…` while a reorder is written, and a failed save shows its
+reason there. The Logs status line follows the session file whoever changed
+it (you, an earlier run that left it on, or another program copy): it says
+`session file: saving…` while the choice is pending, then whether the file
+opened or could not be opened or written, also after it had been writing. The
+failure leaves with the same 15 seconds, and nothing replaces it.
 
 ## Keys
 

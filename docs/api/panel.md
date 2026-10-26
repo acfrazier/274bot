@@ -636,16 +636,25 @@ did not change.
 A saved operational choice (capture input, the sidecar and focused 50 fps
 switches, the walk and danger permissions, the manual-walk pause, the map-bake
 choice, the Quest Paths source, the session log file, and "Don't show again" on
-the notices) takes effect only from the saved state. While its save is pending
-the control shows your choice with **Saving…**. If the save fails, the control
+the notices) takes effect only from the saved state. So do the remembered
+launch choices: the server revision, the Game pane's none/GPU/CPU raster and
+its highmem/lowmem mode. Until the save lands, the profile's saved raster and
+memory mode, the slot's GPU/CPU latch and the revision a session binds with
+stay as they were, and the control shows your choice. While its save is pending
+a control shows your choice with **Saving…**. If the save fails, the control
 shows the saved value again and the reason (for example "Not saved: …") appears
 beside it. The reason leaves when you act on the setting again, or after 15
 seconds. A failed "Don't show again" keeps its dialog open with the reason
 under the buttons. The state belongs to the session, so closing and reopening a
 window shows it again. A change another program copy saved reaches every
-control once. Layout, colour and other presentation choices show at once and go
-back to the saved value if their save fails. With the session log file on, the
-Log window also says if the file could not be opened.
+control each time it saves (a control you are typing in, or one whose own save
+is still pending, keeps what you typed or chose until its save ends). Layout,
+colour, order, fold and remembered-folder choices show at once and go back to
+the saved value if their save fails; each shows **Saving…** and the reason at
+its own control (the section order, the category chips, the folds, the file
+dialogs, the Debug tab and the Fleet toolbar fold included). With the session
+log file on, the Log window also says if the file could not be opened or
+written, also after it had opened.
 
 The table's columns share the
 window's width, so it never scrolls sideways, and the toolbar and column

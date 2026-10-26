@@ -12,17 +12,30 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   even when the save then failed. This covers capture input and the 50 fps
   switches, the walk and danger permissions, the manual-walk pause, the map-bake
   choice, the Quest Paths folder and switch, the session log file, and
-  "Don't show again" on the notices. While a save is pending the control shows
-  your choice and "Saving…". A save that fails puts the control back to the
-  saved value and shows the reason beside it, for example "Not saved: …". The
-  reason stays until you try again, or for 15 seconds. A failed "Don't show
-  again" no longer disappears silently: the dialog stays open and shows why.
-  Closing and reopening a settings window, or the dialog, shows the same state.
-  A change saved by another running copy of the program reaches every control
-  once. Layout and colour changes still show at once and go back if the save
-  fails. The session log file reports whether the file could open, not only
-  that you turned it on. A failed automatic save of the Load order shows in the
-  Fleet window (panel) and on the message line (terminal app).
+  "Don't show again" on the notices. In the panel it also covers the remembered
+  server revision, the Game pane's none/GPU/CPU raster and its highmem/lowmem
+  mode: the revision a session binds with, the saved raster and memory mode and
+  the slot's GPU/CPU latch change only when the save lands, and the control
+  shows your choice meanwhile. While a save is pending the control shows your
+  choice and "Saving…". A save that fails puts the control back to the saved
+  value and shows the reason beside it, for example "Not saved: …". The reason
+  stays until you try again, or for 15 seconds. A failed "Don't show again" no
+  longer disappears silently: the dialog stays open and shows why. Closing and
+  reopening a settings window, or the dialog, shows the same state. A change
+  saved by another running copy of the program reaches every control, each time
+  it saves; a control you are typing in, or whose own save is still pending,
+  keeps your entry until its save ends. Layout, colour, order, fold and
+  remembered-folder changes still show at once and go back if the save fails;
+  in the panel each shows "Saving…" and the reason at its own control (the
+  palette, Fleet columns and toolbar fold, section and category order, folds,
+  file dialogs and the Debug tab), and two saves of one setting never mix up
+  which one failed. The session log file reports whether the file could open or
+  keep writing, not only that you turned it on; the terminal app's Logs line
+  follows it whoever turned it on, and a failure there leaves after 15 seconds.
+  A setting the save queue refuses outright (it is full) is logged as a refused
+  command. A failed automatic save of the Load order shows in the Fleet window
+  (panel) and on the message line (terminal app), which also says "Load order:
+  saving…" while it is written.
 
 ## [0.2.7] — 2026-10-26 — Beta 2
 
