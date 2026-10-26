@@ -118,9 +118,9 @@ verifies the rust-analyzer binary (SHA-256
 "$checker_root/check.py" --self-test` and `python3 -B
 "$checker_root/check.py" --root "$GITHUB_WORKSPACE"`. CI never executes a
 candidate-tree script (including `tools/architecture/run.sh`) and has no
-`ARCH_REPO` override. It also installs the pinned `flatc` and diffs
-`crates/script/schema/generated` against a fresh `flatc --rust` of
-`crates/script/schema/isolate.fbs`. That job does **not** replace `fmt`,
+ `ARCH_REPO` override. It also installs the pinned `flatc` and diffs
+ `crates/script-js/schema/generated` against a fresh `flatc --rust` of
+ `crates/script-js/schema/isolate.fbs`. That job does **not** replace `fmt`,
 `clippy`, or `test`. Those gates stay as they are.
 
 The explicit allowlist is [`policy.toml` in `274bot-arch`](https://github.com/acfrazier/274bot-arch/blob/main/policy.toml):
@@ -148,7 +148,8 @@ workspace member; it is listed as an architecture external.
 | `host` | Native slot/tick APIs, login FIFO, guardian | A dependant of nav, script, host-play, or UI |
 | `nav` | Packed world, router, map data | Script isolate or operator UI |
 | `nav-executor` | Pollable `Traveller` follow run, walk and transport hops | Planner search, script isolate, or operator UI |
-| `script` | Native card machines (Quester, Gatherer, Combat, Sherlock), Load isolate, thin JS shim | A production dependant of `client` |
+ | `script` | Native card machines (Quester, Gatherer, Combat), slot lifecycle and typed native facades over the packed world | A production dependant of `client`; a JS runtime owner |
+ | `script-js` | JS runtime: V8 isolate, compat machines (including Sherlock and the clue machine), catalog and library, isolate wire schema and JS assets | A native card owner; a production dependant of `client` except through dev fixtures |
 | `host-play` | Shared `Play` lifecycle over host/script/nav/vault | A second panel or client renderer |
 | `frontend-core` | Operator lifecycle shared by panel and TUI: vault, fleet membership and logout latch, selected bot, Load/Log in/Log out/Remove, non-blocking removal, script Start/Stop settlement, operation results, the structured operator log; script coordination (catalog, per-profile assignment and parameters, Start all/Stop all, reload, Apply to all); fleet marks and the commands on marked bots (Assign, log in/out, group walk); the fleet/detail projections (phase, queue place, retained errors, newest operation) and the one process resource sampler both front ends render | A second `Play`, login queue, world or script runtime; a dependant of panel/tui or of window/terminal libraries; a per-row or per-bot sampler |
 | `scenario` | Shared headed/headless live scenario runner and Quester fixtures | Panel/TUI chrome |
@@ -165,17 +166,22 @@ graph, derived from the manifests:
 - `nav` → `api`, `client`
 - `nav-bake` → `api`, `client`, `nav`
 - `nav-executor` → `api`, `nav`, `client`; `nav` also **dev** for planner test-support fixtures
-- `script` → `api`, `nav`, `vault` (runtime); `client` **dev-only**
-- `host-play` → `api`, `client`, `host`, `script`, `vault`; `nav` runtime and **build**; `nav-bake` **build and dev**; `nav-executor` runtime; `scenario` **optional** (and **dev**); `script` also **dev**
-- `scenario` → `api`, `client`, `nav`, `nav-executor`, `script`
-- `frontend-core` → `api`, `host`, `host-play`, `nav`, `script`, `vault`; `client`, `host-play`, `nav-bake`, `scenario` **dev-only**
-- `panel` → `api`, `client`, `frontend-core`, `host`, `host-play`, `nav`, `scenario`, `script`, `vault`; `nav-bake` **dev-only**; `frontend-core` and `host-play` also **dev**
-- `tui` → `api`, `client`, `frontend-core`, `host-play`, `nav`, `scenario`, `script`, `vault`; `host`, `nav-bake` **dev-only**; `frontend-core` and `host-play` also **dev**
-- `e2e` → `api`, `client`, `host`, `host-play`, `nav`, `nav-bake`, `scenario`, `vault`; `host-play` also **dev**
+ - `script` → `api`, `nav`, `vault` (runtime); `client` **dev-only**
+ - `script-js` → `script`, `api`, `vault` (runtime); `client` **dev-only**; `nav-planner` **dev-only** (test fixtures only; production JS code uses the Core `script` nav facade)
+ - `host-play` → `api`, `client`, `host`, `script`, `script-js`, `vault`; `nav` runtime and **build**; `nav-bake` **build and dev**; `nav-executor` runtime; `scenario` **optional** (and **dev**); `script` also **dev**; `script-js` also **dev**
+ - `scenario` → `api`, `client`, `nav`, `nav-executor`, `script`
+ - `frontend-core` → `api`, `host`, `host-play`, `nav`, `script`, `script-js`, `vault`; `client`, `host-play`, `nav-bake`, `scenario` **dev-only**
+ - `panel` → `api`, `client`, `frontend-core`, `host`, `host-play`, `nav`, `scenario`, `script`, `vault`; `nav-bake` **dev-only**; `frontend-core` and `host-play` also **dev**
+ - `tui` → `api`, `client`, `frontend-core`, `host-play`, `nav`, `scenario`, `script`, `vault`; `host`, `nav-bake` **dev-only**; `frontend-core` and `host-play` also **dev**
+ - `e2e` → `api`, `client`, `host`, `host-play`, `nav`, `nav-bake`, `scenario`, `vault`; `host-play` also **dev**
 
-`e2e` does **not** Cargo-depend on `script`, `panel`, or `tui`. The suite
-launches product binaries as child processes. That is orchestration, not a
-claim that `e2e` owns those crates' production behavior.
+ `e2e` does **not** Cargo-depend on `script`, `script-js`, `panel`, or `tui`. The suite
+ launches product binaries as child processes. That is orchestration, not a
+ claim that `e2e` owns those crates' production behavior. Sherlock is available
+ only in builds with the JS runtime. Sherlock was meant to be native. In practice
+ it became a port of the compatibility clue machine, so it needs the JS runtime
+ build until the native clue rewrite replaces that machine. Sherlock itself never
+ creates a V8 isolate.
 
 ### Truthful exceptions
 
@@ -208,8 +214,10 @@ claim that `e2e` owns those crates' production behavior.
   from the **member** table. `[workspace.dependencies]` cannot set
   `optional` (Cargo: "workspace dependencies cannot be optional"); that
   form is rejected rather than inherited.
-- **`host-play` → `nav`** is both a runtime dependency and a build-dependency
-  (bake/stage nav identity). Both kinds are listed.
+ - **`host-play` → `nav`** is both a runtime dependency and a build-dependency
+   (bake/stage nav identity). Both kinds are listed.
+ - **`script-js` → `client` and `script-js` → `nav-planner` are `[dev-dependencies]` only.** Production JS code uses the Core `script` nav facade. Promoting either to a normal dependency fails the checker.
+ - **`host-play` → `script-js` and `frontend-core` → `script-js` are normal edges.** `host-play` also declares a dev edge for test hooks. The slot binds the JS surface factory from `script-js`; hosts install its cards with `script_js::install_cards()`.
 
 For a new edge, kind, migration, optional-dependency activation, vendored path
 package, or checker change, follow [Changing a boundary](#changing-a-boundary).
@@ -222,7 +230,8 @@ ordinary product diffs. Do not add a second hidden graph.
 
 | Crate | Features |
 | --- | --- |
-| `script` | `load` (default): the V8 isolate, the JS library, the clue step machine and the isolate journal machine. The native journal click machine is always compiled; `path-schema`: Path JSON Schema generation; `memory-profile`; `test-hooks`: integration-only isolate seams, and (with `debug_assertions`) V8's unprotected test platform. `cfg(test)` selects that platform for script unit tests. Release product builds cannot compile it. |
+ | `script` | `canvas-raster`: raster, fonts and composition; `path-schema`: Path JSON Schema generation; `test-hooks`: integration-only seams. No `load` feature and no JS dependencies. |
+ | `script-js` | JS runtime crate: V8 isolate, compat machines, catalog and library, isolate wire schema. `test-hooks`: integration-only isolate seams; `memory-profile`: V8 heap and snapshot counters for the host-play harness. |
 | `api` | `path-schema`, `debug-catalog`, `test-hooks` |
 | `host` | `render-diagnostics`, `performance-profile`, `journal-paint-proof` |
 | `host-play` | `live-harness` (pulls in `scenario`), `memory-profile` and `memory-profile-no-alloc` (the fleet memory harness), `test-support`, `live-probe`, `debug-catalog`, `journal-paint-proof` |
@@ -593,16 +602,16 @@ the operator's consent and adopts the tiles already verified).
 
 | module | owns (one reason to change) | notes |
 | --- | --- | --- |
-| `lib.rs` | crate facade: `ScriptCtx`, `SlotScript`, registry descriptors | `load` feature gates the isolate |
-| `ctx.rs` | host-owned per-tick input and shared walk options | compiled cards receive `native::NativeTick`, not this driver |
-| `native.rs`, `registry.rs` | typed card/configuration/output contract and one descriptor registry | metadata, native request kind, preparer and factory. Hosts install Sherlock. Slots refresh their static card view when the publication generation changes |
+ | `lib.rs` | crate facade: `ScriptCtx`, `SlotScript`, registry descriptors | no `load` feature and no JS dependencies |
+ | `ctx.rs` | host-owned per-tick input and shared walk options | compiled cards receive `native::NativeTick`, not this driver |
+ | `native.rs`, `registry.rs` | typed card/configuration/output contract and one descriptor registry | metadata, native request kind, preparer and factory. Hosts install the JS cards with `script_js::install_cards()`. Slots refresh their static card view when the publication generation changes |
 | `native/actions.rs`, `native/ledger.rs`, `native/owner.rs`, `native/walk.rs`, `native/walk_wait.rs` | host action ledger and native walk correlation | receipts, revocation identities, route terminal versus arrival |
 | `native/death.rs`, `native/thieve.rs`, `native/thieving_core.rs` | shared death latch; native thieving machine and its core | content-derived respawn square |
 | `native_bank.rs`, `native_equipment.rs`, `native_production.rs`, `native_shop.rs`, `trade_screen.rs`, `bank.rs`, `bank/ops.rs`, `bank/npc.rs` | snapshot-driven cores shared by compiled cards and compat families | one bank transfer kernel, wear/remove, production, shop purchase and player-trade screen |
 | `slot.rs` | per-uid runner lifecycle | intent and presence gates, tick edge |
 | `surface.rs`, `surface/test_support.rs` | runtime-neutral surface cards, run contract and core test factory | slot lifecycle owns trait objects and typed facts, not JS or wire state |
 | `native/recovery_hints.rs` | shared recovery-anchor cell | slot-owned hints survive surface retirement and restart |
-| `slot/compiled.rs` | off-pump compiled preparation, fenced install/configure and shared output | lazy per-active-card state; compiled XOR Load |
+ | `slot/compiled.rs` | off-pump compiled preparation, fenced install/configure and shared output | lazy per-active-card state; compiled XOR JS surface run |
 | `slot/api.rs`, `slot/progress.rs` | API-owned Gatherer seat; one-attempt progress policy | registration and authority stay native |
 | `slot/combat.rs` | API-owned combat seat; one `api.combat.fight` session per slot | mirrors the gather seat; Pause, reconnect and manual movement cancel at any point |
 | `slot/bank.rs`, `bank/seat_open.rs`, `bank/seat_transfer.rs` | native bank seat, opening and transfer continuations | shared `bank/ops.rs` and `bank/npc.rs` kernels; hooks use seat prompts, not a second isolate behavior |
@@ -615,85 +624,82 @@ the operator's consent and adopts the tiles already verified).
 | `combat/risk.rs`, `combat/risk/{facts,geometry,input,replay}.rs` | pure conservative route assessment | shared combat facts and food picker; complete route geometry; persistent poison input; no admission, route-worker or runtime escape wiring |
 | `api_gather.rs`, `api_progress.rs`, `api_session.rs` | JS API v2 session wire and output types | Gatherer sessions and quest progress for Load scripts |
 | `api_combat.rs`, `combat_session.rs` | JS API v2 combat session wire and its native card | typed request decode and resolve; drives the shared combat machine once per session |
-| `observed.rs` | per-isolate decoded scene | delta-merge, owned rows |
-| `isolate_fb.rs` | isolate wire codec | flatc-generated bindings (`schema/generated`) plus delta/`IsolateBuf` domain layer; one verified root per message |
-| `host_js.rs` | generated Host JS types | from verb tables, not rs2b0t names |
-| `compat_dts.rs` | generated compat declarations | JS API v1 `.d.ts` from the frozen typed source |
-| `channel.rs` | bounded structured-clone subset for the BroadcastChannel broker | bytes over the FlatBuffer wire |
+ | `observed.rs` | per-isolate decoded scene (JS runtime) | lives in `script-js` as `src/scene/` materialization; delta-merge, owned rows |
+ | `wire/isolate_fb.rs` | isolate wire codec (JS runtime) | lives in `script-js` as `src/wire/isolate_fb.rs`; flatc-generated bindings (`crates/script-js/schema/generated`) plus delta/`IsolateBuf` domain layer; one verified root per message |
+ | `tooling/host_js.rs` | generated Host JS types (JS runtime) | lives in `script-js`; from verb tables, not rs2b0t names |
+ | `tooling/compat_dts.rs` | generated compat declarations (JS runtime) | lives in `script-js`; JS API v1 `.d.ts` from the frozen typed source |
+ | `channel.rs` | bounded structured-clone subset for the BroadcastChannel broker | bytes over the FlatBuffer wire |
 | `content.rs` | curated sites and hostile predicate | bank aliases posted via the shim payload |
 | `ent.rs` | Ent lookup over caller rows | no scene scan |
 | `bank/request.rs`, `bank/compat.rs`, `bank_select.rs`, `bank_withdraw.rs` | typed bank arguments, local calculations, catalog materialization and thieving bank sequencing | bank actions use the native seat; no isolate-owned bank transfer, access or selection loop |
 | `bank_hints.rs` | persisted last-seen bank hint | one schema-1 file per account; planning before any bank opens in a new process |
-| `clue.rs`, `clue/isolate.rs` | native recovery declaration; load-only clue session machine | isolate token, clock, identify, verbs stay private to the crate |
-| `clue/scene.rs`, `clue/puzzle.rs`, `clue/entrana.rs`, `clue/acquire.rs`, `clue/shop.rs`, `clue/talk.rs`, `clue/combat.rs`, `clue/verbs.rs`, `clue/family.rs` | clue phase helpers | one phase slice each |
-| `sherlock.rs` | Sherlock card wiring | marshals the frame, maps verbs, no second solver |
-| `duel.rs` | clue Duel Arena protocol | partner matching, rules, timing, travel legs |
-| `hunt.rs` | hunt framework on the machine host | sessions and runs, child nesting |
-| `hunt/wait.rs`, `hunt/teleport_out.rs`, `hunt/acquire.rs` | hunt family slices | three distinct families |
-| `hunt_bank.rs`, `hunt_bank/plan.rs` | hunt bank runtime and planning | stages in root, plan projection in child |
-| `hunt_fight.rs` | fight aggregate and shared projection | policy, clocks, field pick |
-| `hunt_fight/hold.rs`, `hunt_fight/retreat.rs`, `hunt_fight/walk_spot.rs` | fight auxiliary machines | one machine plus its Kind each |
-| `hunt_cell.rs`, `hunt_key.rs`, `hunt_lair.rs`, `hunt_leave.rs` | single-phase hunt machines | one phase chain each |
-| `hunt_catalog.rs` | hunt tables and small rules | coordinates and pure helpers, no sends |
-| `cake_stall.rs`, `cake_stall/runtime.rs`, `cook_locations.rs` | stall selection and steal loop; cook-location resolution | facts in `api`, sequence here |
-| `production.rs` | chat-make sequencing | Make-X and panel family |
-| `fire.rs` | fire lighting and lane ranking | frozen light loop |
-| `food_policy.rs`, `supply_v2.rs`, `boost_potions.rs`, `prayer.rs`, `autocast.rs`, `ranged.rs`, `special.rs`, `melee_weapons.rs`, `escape_runes.rs`, `attack_clock.rs`, `fight_upkeep.rs` | combat and supply policy | descriptors, predicates, arm sequencing |
-| `gather_tools.rs` | gather-tool selection | policy over the posted rows |
-| `dialog.rs`, `dialogue_outcome.rs`, `teleport.rs`, `trade.rs`, `partner_trade.rs`, `drive_partner_trade.rs` | dialog, teleport, and trade sequences | machine families |
-| `death_recovery.rs` | death latch and recovery run | chat latch plus walk-back |
-| `periodic_bank.rs` | periodic bank run | validate and execute |
-| `walk.rs`, `walk_wait.rs`, `reach.rs`, `reach_entity.rs`, `scene_query.rs`, `inspect_wait.rs`, `task_clock.rs`, `watchdog.rs`, `anchor_return.rs`, `boat_fare.rs`, `event_signal.rs` | walk, wait, and reach helpers | tick waits, arrival, boat-fare recovery, return-to-anchor |
-| `line_of_sight.rs` | line-of-sight over the posted table | isolate-scene reads |
-| `keep_list.rs` | combat keep-list composition | compatibility list |
-| `modals.rs` | modal helpers | dialog page helpers |
-| `quest_journal.rs`, `quest_journal/native.rs`, `quest_journal/isolate.rs` | no-load native journal contract and native journal click machine; load-only journal machine | one click, validate, capture, one close |
-| `shop.rs`, `market_catalog.rs` | shop and market descriptors | preset and catalog tables |
-| `loadout_plan.rs`, `loadouts_store.rs`, `settings_store.rs` | loadout and settings stores | operator-facing descriptors |
-| `rs2b0t_registry.rs`, `rs2b0t_registry/paths.rs`, `rs2b0t_registry/settings.rs`, `declared_abi.rs`, `module_imports.rs`, `identity.rs` | catalog card registration and identity | import scan, paths, ABI names |
-| `isolated_env.rs`, `js_cache.rs`, `load/memory_profile.rs`, `events.rs` | isolate env, cache, and diagnostics | support, no game actions. The profiling module keeps its root public path |
-| `load/mod.rs` | Load facade: shapes, cards, isolate | feature-gated library and isolate |
-| `load/library.rs`, `load/library/catalog.rs` | JS card library and catalog apply | file store in root |
-| `load/isolate.rs`, `load/isolate/thread.rs`, `load/isolate/teardown.rs` | V8 isolate thread and teardown | caller handle in root |
-| `load/surface.rs` | JS cards, gameplay factory and per-run wire state | builder and fingerprint retire before isolate join; snapshot facts borrow retained state without allocation |
-| `load/platform.rs` | process-wide V8 platform bootstrap | protected on embedder main; unprotected only in tests |
-| `load/bindings.rs` | isolate bootstrap registration | register order and wrappers |
-| `load/callback_v8.rs` | caller-callback invocation | one mechanism for typed helpers |
-| `load/*_v8.rs` | typed local V8 marshalling | one native call each, no machines |
-| `load/area.rs`, `load/buyout_plan.rs`, `load/distance.rs`, `load/reach_query.rs`, `load/shape.rs`, `load/line_of_sight.rs`, `load/wait_clock.rs` | small typed V8 helpers | Area rect/circle compat constructor, planning, geometry marshalling, paused-time wait clock |
-| `load/canvas_tape.rs` | canvas op tape | typed flush onto the recorder |
-| `load/snapshot.rs` | snapshot-to-V8 materializer | typed settings and event rows |
-| `load/paint_chrome.rs`, `load/paint_jive.rs` | paint payload builders | chrome and jive paints |
-| `canvas/mod.rs` | canvas recorder | state and recording API |
-| `canvas/geom.rs`, `canvas/raster.rs`, `canvas/style.rs`, `canvas/compose.rs` | canvas geometry, raster, style, composition | geometry and parsers are always available. Raster, fonts and composition require `canvas-raster`, which `frontend-core` enables by default |
-| `shim/mod.rs` | import-remap facade | re-exports, JS bytes untouched |
-| `interact.rs`, `paint.rs` | runtime-neutral interaction and paint vocabulary | shared by native and loaded scripts |
-| `shim/content.rs`, `shim/rows.rs`, `shim/modules.rs` | shim Rust producers | content, V8 rows, and module remapping |
-| `shim/*.js` | embedded JS sources | name maps, coercion, await plumbing only |
+ | `clue.rs`, `compat/clue/isolate.rs` | native recovery declaration; JS-run clue session machine (JS runtime) | lives in `script-js`; isolate token, clock, identify, verbs stay private to that crate. Sherlock is available only in builds with the JS runtime. Sherlock was meant to be native. In practice it became a port of the compatibility clue machine, so it needs the JS runtime build until the native clue rewrite replaces that machine. Sherlock itself never creates a V8 isolate |
+ | `compat/clue/scene.rs`, `compat/clue/puzzle.rs`, `compat/clue/entrana.rs`, `compat/clue/acquire.rs`, `compat/clue/shop.rs`, `compat/clue/talk.rs`, `compat/clue/combat.rs`, `compat/clue/verbs.rs`, `compat/clue/family.rs` | clue phase helpers (JS runtime) | live in `script-js`; one phase slice each |
+ | `compat/sherlock.rs` | Sherlock card wiring (JS runtime) | lives in `script-js`; marshals the frame, maps verbs, no second solver. Sherlock is available only in builds with the JS runtime (see above) |
+ | `compat/duel.rs` | clue Duel Arena protocol (JS runtime) | lives in `script-js`; partner matching, rules, timing, travel legs |
+ | `compat/hunt.rs` | hunt framework on the machine host (JS runtime) | lives in `script-js`; sessions and runs, child nesting |
+ | `compat/hunt/wait.rs`, `compat/hunt/teleport_out.rs`, `compat/hunt/acquire.rs` | hunt family slices (JS runtime) | live in `script-js`; three distinct families |
+ | `compat/hunt_bank.rs`, `compat/hunt_bank/plan.rs` | hunt bank runtime and planning (JS runtime) | live in `script-js`; stages in root, plan projection in child |
+ | `compat/hunt_fight.rs` | fight aggregate and shared projection (JS runtime) | lives in `script-js`; policy, clocks, field pick |
+ | `compat/hunt_fight/hold.rs`, `compat/hunt_fight/retreat.rs`, `compat/hunt_fight/walk_spot.rs` | fight auxiliary machines (JS runtime) | live in `script-js`; one machine plus its Kind each |
+ | `compat/hunt_cell.rs`, `compat/hunt_key.rs`, `compat/hunt_lair.rs`, `compat/hunt_leave.rs` | single-phase hunt machines (JS runtime) | live in `script-js`; one phase chain each |
+ | `compat/hunt_catalog.rs` | hunt tables and small rules (JS runtime) | lives in `script-js`; coordinates and pure helpers, no sends |
+ | `compat/cake_stall/runtime.rs`, `compat/cook_locations.rs` | stall selection and steal loop; cook-location resolution (JS runtime) | live in `script-js`; facts in `api`, sequence there |
+ | `compat/production.rs` | chat-make sequencing (JS runtime) | lives in `script-js`; Make-X and panel family |
+ | `compat/fire.rs` | fire lighting and lane ranking (JS runtime) | lives in `script-js`; frozen light loop |
+ | `compat/food_policy.rs`, `compat/supply_v2.rs`, `compat/boost_potions.rs`, `compat/prayer.rs`, `compat/autocast.rs`, `compat/ranged.rs`, `compat/special.rs`, `compat/melee_weapons.rs`, `compat/escape_runes.rs`, `compat/attack_clock.rs`, `compat/fight_upkeep.rs` | combat and supply policy (JS runtime) | live in `script-js`; descriptors, predicates, arm sequencing |
+ | `compat/gather_tools.rs` | gather-tool selection (JS runtime) | lives in `script-js`; policy over the posted rows |
+ | `compat/dialog.rs`, `compat/dialogue_outcome.rs`, `compat/teleport.rs`, `compat/trade.rs`, `compat/partner_trade.rs`, `compat/drive_partner_trade.rs` | dialog, teleport, and trade sequences (JS runtime) | live in `script-js`; machine families |
+ | `compat/death_recovery.rs` | death latch and recovery run (JS runtime) | lives in `script-js`; chat latch plus walk-back |
+ | `compat/periodic_bank.rs` | periodic bank run (JS runtime) | lives in `script-js`; validate and execute |
+ | `compat/walk.rs`, `compat/walk_wait.rs`, `scene/reach.rs`, `scene/reach_entity.rs`, `scene/scene_query.rs`, `scene/inspect_wait.rs`, `scene/task_clock.rs`, `scene/watchdog.rs`, `compat/anchor_return.rs`, `compat/boat_fare.rs`, `scene/event_signal.rs` | walk, wait, and reach helpers (JS runtime) | live in `script-js`; tick waits, arrival, boat-fare recovery, return-to-anchor |
+ | `scene/line_of_sight.rs` | line-of-sight over the posted table (JS runtime) | lives in `script-js`; isolate-scene reads |
+ | `compat/keep_list.rs` | combat keep-list composition (JS runtime) | lives in `script-js`; compatibility list |
+ | `compat/modals.rs` | modal helpers (JS runtime) | live in `script-js`; dialog page helpers |
+ | `quest_journal.rs`, `quest_journal/native.rs`, `compat/quest_journal/isolate.rs` | native journal contract and native journal click machine; JS-run journal machine (JS runtime part) | the isolate half lives in `script-js`; one click, validate, capture, one close |
+ | `shop.rs`, `market_catalog.rs` | shop and market descriptors | preset and catalog tables |
+ | `loadout_plan.rs`, `loadouts_store.rs`, `settings_store.rs` | loadout and settings stores | operator-facing descriptors |
+ | `library/rs2b0t_registry.rs`, `library/rs2b0t_registry/paths.rs`, `rs2b0t_registry/settings.rs`, `tooling/declared_abi.rs`, `module_imports.rs`, `identity.rs` | catalog card registration and identity (JS runtime library) | live in `script-js`; import scan, paths, ABI names |
+ | `runtime/isolated_env.rs`, `library/js_cache.rs`, `runtime/memory_profile.rs`, `scene/events.rs` | isolate env, cache, and diagnostics (JS runtime) | live in `script-js`; support, no game actions. The profiling module keeps its root public path |
+ | `runtime/` | Load facade, shapes, cards and isolate (JS runtime) | lives in `script-js` as `src/runtime/` plus `src/library/`, `src/materialize/` and `src/api_v2/`; feature-gated library and isolate |
+ | `runtime/platform.rs` | process-wide V8 platform bootstrap (JS runtime) | lives in `script-js`; protected on embedder main; unprotected only in tests |
+ | `runtime/bindings.rs` | isolate bootstrap registration (JS runtime) | lives in `script-js`; register order and wrappers |
+ | `materialize/callback_v8.rs` | caller-callback invocation (JS runtime) | lives in `script-js`; one mechanism for typed helpers |
+ | `materialize/*_v8.rs` | typed local V8 marshalling (JS runtime) | live in `script-js`; one native call each, no machines |
+ | `materialize/area.rs`, `materialize/buyout_plan.rs`, `materialize/distance.rs`, `materialize/reach_query.rs`, `materialize/shape.rs`, `materialize/line_of_sight.rs`, `materialize/wait_clock.rs` | small typed V8 helpers (JS runtime) | live in `script-js`; Area rect/circle compat constructor, planning, geometry marshalling, paused-time wait clock |
+ | `runtime/canvas_tape.rs` | canvas op tape (JS runtime) | lives in `script-js`; typed flush onto the recorder |
+ | `runtime/snapshot.rs` | snapshot-to-V8 materializer (JS runtime) | lives in `script-js`; typed settings and event rows |
+ | `runtime/paint_chrome.rs`, `runtime/paint_jive.rs` | paint payload builders (JS runtime) | live in `script-js`; chrome and jive paints |
+ | `canvas/mod.rs` | canvas recorder | state and recording API |
+ | `canvas/geom.rs`, `canvas/raster.rs`, `canvas/style.rs`, `canvas/compose.rs` | canvas geometry, raster, style, composition | geometry and parsers are always available. Raster, fonts and composition require `canvas-raster`, which `frontend-core` enables by default |
+ | `shim/mod.rs` | import-remap facade | re-exports, JS bytes untouched |
+ | `interact.rs`, `paint.rs` | runtime-neutral interaction and paint vocabulary | shared by native and loaded scripts |
+ | `shim/content.rs`, `shim/rows.rs`, `shim/modules.rs` | shim Rust producers (JS runtime) | live in `script-js`; content, V8 rows, and module remapping |
+ | `shim/*.js` | embedded JS sources (JS runtime) | live in `script-js` as `src/shim/*.js`; name maps, coercion, await plumbing only |
 
 Native bank booth approach borrows the current scene and the host's cached
 exact reach plane. The snapshot query shares the existing footprint,
 force-approach, directional-wall and stand-ranking rules. It does not copy
 the scene, build a second flood, or allocate a temporary stand vector.
 
-The crate root holds the data the modules embed: `paths/289/` (the built-in
-Quester Path documents) with `paths/path.schema.json`, `schema/isolate.fbs`
-with its checked-in `schema/generated` bindings, `compat-js/` (the JS API v1
-name maps and generator), `host-js/index.d.ts` (the generated JS API v2
-declarations) and `examples/`.
+ The Core crate root holds the data the native modules embed: `paths/289/` (the built-in
+ Quester Path documents) with `paths/path.schema.json`, `fonts/` and `examples/`.
+ The JS runtime crate root holds its own data: `crates/script-js/schema/isolate.fbs`
+ with its checked-in `crates/script-js/schema/generated` bindings, `crates/script-js/compat-js/`
+ (the JS API v1 name maps and generator) and `crates/script-js/host-js/index.d.ts`
+ (the generated JS API v2 declarations).
 
-V8 embedders call `script::bootstrap_v8_platform()` on process main before
-creating any slot, worker or control thread that might create a JS runtime,
-including validation and restarts. The protected platform's Linux
-memory-protection-key permissions are inherited only by descendants created
-after initialization; a once-only call on the first bot cannot authorize
-pre-existing sibling slots. Missing bootstrap returns
-`LoadIsolateError::PlatformNotBootstrapped` before spawning an isolate.
-
-Stable libtest workers are pre-created siblings. Script unit tests and debug
-test consumers with the dev-dependency `script/test-hooks` feature use V8's
-documented unprotected test platform instead. The function and fallback are
-gated by `cfg(test)` or `all(feature = "test-hooks", debug_assertions)`:
+ V8 embedders call `script_js::bootstrap_v8_platform()` on process main before
+ creating any slot, worker or control thread that might create a JS runtime,
+ including validation and restarts. The protected platform's Linux
+ memory-protection-key permissions are inherited only by descendants created
+ after initialization; a once-only call on the first bot cannot authorize
+ pre-existing sibling slots. Missing bootstrap returns
+ `LoadIsolateError::PlatformNotBootstrapped` before spawning an isolate.
+ Stable libtest workers are pre-created siblings. `script-js` unit tests and debug
+ test consumers with the dev-dependency `script-js/test-hooks` feature use V8's
+ documented unprotected test platform instead. The function and fallback are
+ gated by `cfg(test)` or `all(feature = "test-hooks", debug_assertions)`:
 release panel/host-play/tui dependencies cannot compile that path, even if the
 feature is enabled. Their main entrypoints always bootstrap the protected
 platform. The harness-free `v8_platform` subprocess test also initializes the
@@ -1031,8 +1037,8 @@ snapshot Rust already holds.
 | --- | --- | --- |
 | Quester (`script/src/quester/`) | `Quester` | Runs built-in quest Paths for revision 289: the Path compiler turns one authored quest document into stage-gated steps, the runner executes them on host verbs (bank, shop, production, gather and combat adapters), and progress resolves from journal evidence. Paths are documented in [quest-paths.md](quest-paths.md). |
 | Grinch (`script/src/grinch.rs`) | `Grinch` | Collects selected visible base ground-item IDs inside a same-plane anchor square, deposits selected IDs only, then returns to the exact anchor. |
-| Combat (`script/src/combat/`) | shared machine, no card | One observed-state planner for melee, ranged and magic: prayers, sips and eating. Quester combat steps drive it through the typed Path adapter; Load scripts drive it through `api.combat` sessions (`slot/combat.rs`, `api_combat.rs`, `combat_session.rs`). |
-| Sherlock (`script/src/sherlock.rs` on `script/src/clue.rs` plus `script/src/clue/`) | `Sherlock` | Runs clue trails on the one clue step machine, one phase slice each, on the slot's pump thread; the clue machine is compiled with the `load` feature. |
+ | Combat (`script/src/combat/`) | shared machine, no card | One observed-state planner for melee, ranged and magic: prayers, sips and eating. Quester combat steps drive it through the typed Path adapter; Load scripts drive it through `api.combat` sessions (`slot/combat.rs`, `api_combat.rs`, `combat_session.rs`). |
+ | Sherlock (`script-js/src/compat/sherlock.rs` on `script-js/src/compat/clue/`) | `Sherlock` | Runs clue trails on the one clue step machine, one phase slice each, on the slot's pump thread. Sherlock is available only in builds with the JS runtime. Sherlock was meant to be native. In practice it became a port of the compatibility clue machine, so it needs the JS runtime build until the native clue rewrite replaces that machine. Sherlock itself never creates a V8 isolate. |
 
 ## Compatibility shim boundary
 
@@ -1043,10 +1049,12 @@ only. Loops, tables, decisions, retries and sequencing live in Rust step
 machines that read the snapshot Rust already holds. Scripts written for the
 host API run through the same isolate as JS API v2 ([`api/js-api-v2.md`](../api/js-api-v2.md)).
 
-The only JS↔Rust wire is the FlatBuffer: `IsolateBuf` posts snapshots into
-each isolate and decodes the shim's interact batches back. Bounded
-synchronous Rust calculations with typed value marshalling are the one
-authorized exception; they compute and never send a game action.
+ The only JS↔Rust wire is the FlatBuffer: `IsolateBuf` posts snapshots into
+ each isolate and decodes the shim's interact batches back. The wire codec lives in
+ `script-js` as `src/wire/isolate_fb.rs` with its schema at `crates/script-js/schema/isolate.fbs`
+ and bindings at `crates/script-js/schema/generated`. Bounded
+ synchronous Rust calculations with typed value marshalling are the one
+ authorized exception; they compute and never send a game action.
 
 ## Navigation pack and server profiles
 
@@ -1087,7 +1095,8 @@ These are product boundaries. The crate checker (in `274bot-arch`, run via `tool
 | Operator lifecycle: vault, fleet membership and latch, selected bot, marked-bot commands, Load/Log in/Log out/Remove intent, removal settlement, operation results, script assignment/parameters/reload/bulk coordination; fleet/detail projections and the process resource meter | `frontend-core` | panel/tui chrome, a second login queue or script runtime, per-row samplers |
 | Slot workers: spawn/stop/reap, connection and readiness, login FIFO, tick pump, script start/pause/stop/load execution | `host-play` (`Play`) | panel/tui chrome, `frontend-core`, `e2e` |
 | Native per-slot host APIs, snapshot/think, random-event guardian | `host` | nav internals, JS |
-| Script kernel: native card machines, isolate thread; shim coerce/marshal only | `script` | JS policy/routers, a foreign runtime |
+ | Script kernel: native card machines and slot lifecycle | `script` | JS policy/routers, a foreign runtime, the V8 isolate |
+ | JS runtime: V8 isolate, compat machines, catalog and library, isolate wire schema | `script-js` | native card ownership, native slot lifecycle |
 | GPU 3D / CpuPix3D (`BOT_CPU=1`), packet/doAction Java shape | `client` | host bot-action API, 274bot crates in the client repo |
 
 The JS shim must not grow its own API or shared policy. Compatibility maps
@@ -1205,8 +1214,8 @@ Unicode format characters (`Cf`, e.g. U+200E/U+200F) are removed; any other
 non-ASCII inside a path stays and fails closed. Suppressions written
 inside macro bodies or passed as macro arguments count, conservatively: a
 macro-emitted suppression is real, and over-counting hides nothing. The
-FlatBuffers output `crates/script/schema/generated/isolate_generated.rs` is
-explicitly exempt (regenerating it rewrites its own allows). The
+ FlatBuffers output `crates/script-js/schema/generated/isolate_generated.rs` is
+ explicitly exempt (regenerating it rewrites its own allows). The
 `lint-ratchet` lane in the admissions matrix runs the check plus
 `lint_ratchet.py --self-test` (the permanent parser tests in
 `tools/lint-ratchet/test_lint_ratchet.py`), and

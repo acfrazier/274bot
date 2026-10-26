@@ -52,7 +52,7 @@ fn levels_gained_count_from_the_first_game_ready_observation_of_a_run() {
         .unwrap()
         .start_load_settled(
             "export default class T extends LoopingBot { async loop() {} }".to_string(),
-            script::LoadShape::CompatClass,
+            script_js::LoadShape::CompatClass,
             vec![],
         )
         .expect("isolate starts");

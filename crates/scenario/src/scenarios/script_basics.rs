@@ -217,7 +217,7 @@ pub(crate) const BONE_BURIER_V2_BANK: WorldTile = WorldTile {
     level: 0,
 };
 
-/// Isolate self-stop reason from `crates/script/examples/bone_burier_v2.ts`.
+/// Isolate self-stop reason from `crates/script-js/examples/bone_burier_v2.ts`.
 const BONE_BURIER_V2_STOP_REASON: &str = "confirmed loaded current-generation bank exhaustion";
 
 pub(crate) const BONE_BURIER_V2_PREREQS: &[Proof] = &[

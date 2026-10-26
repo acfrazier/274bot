@@ -250,6 +250,24 @@ impl Default for Ledger {
 }
 
 impl Ledger {
+    /// Test-only borrow of the real queued host actions.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn test_outbox(&self) -> &[HostAction] {
+        &self.outbox
+    }
+
+    /// Test-only mutable access for existing receipt-driving fixtures.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn test_outbox_mut(&mut self) -> &mut Vec<HostAction> {
+        &mut self.outbox
+    }
+
+    /// Test-only observation of the real foreground owner's live state.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn test_owner_live(&self) -> bool {
+        self.owner.as_ref().is_some_and(|owner| owner.live())
+    }
+
     pub fn next_id(&mut self) -> Result<NonZeroU64, ActionError> {
         let id = NonZeroU64::new(self.next_id).ok_or(ActionError::Cancelled)?;
         self.next_id = self.next_id.checked_add(1).unwrap_or(0);

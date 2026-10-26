@@ -182,7 +182,7 @@ fn new_profile_form_refuses_an_empty_password() {
     let iso = crate::test_support::IsolatedStores::enter("profile-editor-empty-password");
     let mut core = session("profile-editor-empty-password", &[]);
     let scripts = crate::scripts::Scripts::new(
-        script::JsLibrary::with_cache(
+        script_js::JsLibrary::with_cache(
             iso.dir().join("js-scripts.json"),
             iso.dir().join("js-cache"),
         ),
@@ -833,7 +833,7 @@ fn looping_bot(dir: &std::path::Path) -> (String, LoadShape) {
         "export default class T extends LoopingBot { override loop() {} }",
     )
     .unwrap();
-    let mut library = script::JsLibrary::new(dir.join("js-scripts.json"));
+    let mut library = script_js::JsLibrary::new(dir.join("js-scripts.json"));
     let card = library.load(&path).unwrap();
     (card.js, LoadShape::from_script(card.shape))
 }
@@ -1272,7 +1272,7 @@ fn script_lines_reach_the_slot_log_through_the_poll() {
          override loop() {} }",
     )
     .unwrap();
-    let mut library = script::JsLibrary::new(iso.dir.join("js-scripts.json"));
+    let mut library = script_js::JsLibrary::new(iso.dir.join("js-scripts.json"));
     let card = library.load(&path).unwrap();
     s.start_script(
         "logpoll-carol",

@@ -1,5 +1,5 @@
 /// Frozen `DUEL_FIGHT_ARENAS` as `(minX, maxX, minZ, maxZ)`.
-pub(crate) const PENS: [(i32, i32, i32, i32); 6] = [
+pub const PENS: [(i32, i32, i32, i32); 6] = [
     (3333, 3357, 3244, 3258),
     (3364, 3388, 3225, 3239),
     (3333, 3357, 3206, 3220),

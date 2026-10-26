@@ -1751,7 +1751,7 @@ fn run_combat_cell(fruit_delay: bool) {
         match cell.play.script_start_load(
             &cell.account,
             FIGHT_CONSUMER.to_owned(),
-            script::LoadShape::NativeTick,
+            script_js::LoadShape::NativeTick,
             None,
             vec![],
         ) {

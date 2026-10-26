@@ -1,0 +1,406 @@
+//! Rust-owned `stealRules` bank sequences: frozen `withdrawTo` (the
+//! `bank_withdraw_to` [`crate::machine`] family) and
+//! `closeBankAndConfirmCount` (`bank_close_confirm`). Their chunking is
+//! the kernel's frozen ladder policy ([`crate::bank::ops::next_chunk`]),
+//! shared with the hunt bank.
+//!
+//! The caller's `count` callback is called through the callback path in the
+//! frozen order; without one the count is `Inventory.count(name)` read from
+//! the posted backpack. Pack-full is read from the scene.
+
+use crate::machine::{Begin, Call, Cx, Family, NativeBankChild, Reply, Step, Thrown};
+use crate::observed::{self, Scene};
+use script::bank::compat::js_number;
+use script::bank::ops::{next_chunk, same_name, Chunk};
+use script::bank::request::{BankSeatArgs, BankSeatOperation};
+use serde::Deserialize;
+use serde_json::{json, Value};
+
+/// Frozen withdraw rounds (`guard < 40`).
+const ROUNDS: u32 = 40;
+/// Frozen wait for a Withdraw-10/5/1 to land (`delayUntil(…, 2500)`).
+pub const LAND_MS: u64 = 2_500;
+/// Frozen `closeBankAndConfirmCount` count wait.
+pub const CONFIRM_MS: u64 = 3_000;
+
+/// `Inventory.count(name)` from the posted backpack.
+fn inventory_count(scene: &Scene, name: &str) -> f64 {
+    scene.since_login().inv().map_or(0.0, |rows| {
+        rows.iter()
+            .filter(|row| row.name.as_deref().is_some_and(|got| same_name(got, name)))
+            .map(|row| f64::from(row.count))
+            .sum()
+    })
+}
+
+/// `Inventory.isFull()` from the posted backpack.
+fn inventory_full(scene: &Scene) -> bool {
+    let session = scene.since_login();
+    let size = session.inv_size().unwrap_or(0);
+    let used = session.inv().map_or(0, |rows| {
+        rows.iter()
+            .filter(|row| row.name.as_deref().is_some_and(|name| !name.is_empty()))
+            .count()
+    });
+    size > 0 && used >= usize::try_from(size).unwrap_or(usize::MAX)
+}
+
+/// The caller's `count` hook in both families.
+const COUNT: usize = 0;
+
+/// Reads the count: the caller's hook (one call, answered on the next
+/// step), or `Inventory.count(name)` from the posted backpack when the hook
+/// is optional (`name`) and absent. A required absent hook throws, as the
+/// frozen call does.
+struct Counter {
+    name: Option<String>,
+    asked: bool,
+}
+
+enum Counted {
+    Ask(Call),
+    Value(f64),
+    Threw(Thrown),
+}
+
+impl Counter {
+    fn read(&mut self, cx: &mut Cx<'_>) -> Counted {
+        if let Some(name) = self.name.as_deref().filter(|_| !cx.has(COUNT)) {
+            return Counted::Value(observed::with(|scene| inventory_count(scene, name)));
+        }
+        if !self.asked {
+            self.asked = true;
+            return Counted::Ask(Call {
+                hook: COUNT,
+                args: Vec::new(),
+            });
+        }
+        self.asked = false;
+        match cx.reply() {
+            Some(Reply::Value(value)) => Counted::Value(js_number(&value)),
+            Some(Reply::Threw(thrown)) => Counted::Threw(thrown),
+            None => Counted::Value(f64::NAN),
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum Phase {
+    Start,
+    /// The loop condition's `countInInv() < target`.
+    Check,
+    /// `const before = countInInv()`.
+    Before,
+    /// A Withdraw-X in flight.
+    AwaitX {
+        before: f64,
+        need: f64,
+    },
+    /// `if (countInInv() > before) continue` after a Withdraw-X.
+    AfterX {
+        before: f64,
+        need: f64,
+    },
+    /// A Withdraw-10/5/1 in flight.
+    AwaitOp {
+        before: f64,
+    },
+    /// `delayUntil(() => countInInv() > before, 2500)`.
+    Land {
+        before: f64,
+    },
+    /// `return countInInv() - start`.
+    Finish,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct WithdrawToArgs {
+    name: String,
+    #[serde(default)]
+    target: Value,
+}
+
+/// One awaited frozen `withdrawTo(name, target, countInInv)`.
+pub(crate) struct WithdrawTo {
+    name: String,
+    target: f64,
+    counter: Counter,
+    start: f64,
+    round: u32,
+    phase: Phase,
+    waiting: Option<NativeBankChild>,
+    failure: Option<Thrown>,
+}
+
+impl WithdrawTo {
+    /// Send the labelled withdraw and wait for it; its result is not read.
+    fn withdraw_op(&mut self, label: &'static str, before: f64, cx: &mut Cx<'_>) {
+        let mut args = BankSeatArgs::new(BankSeatOperation::WithdrawLabel);
+        args.set_item_name(Some(self.name.clone()));
+        args.set_menu_op(Some(label.into()));
+        match NativeBankChild::start(args, &[], cx) {
+            Ok(waiting) => {
+                self.waiting = Some(waiting);
+                self.phase = Phase::AwaitOp { before };
+            }
+            Err(error) => self.failure = Some(Thrown::new(error)),
+        }
+    }
+
+    fn land(&mut self, before: f64, cx: &mut Cx<'_>) {
+        cx.clock().arm(LAND_MS);
+        self.phase = Phase::Land { before };
+    }
+
+    /// The Withdraw-X failed or gained nothing: one labelled op instead.
+    fn fallback(&mut self, before: f64, need: f64, cx: &mut Cx<'_>) -> bool {
+        match next_chunk(need.min(10.0)) {
+            Some(Chunk::Op(label)) => {
+                self.withdraw_op(label, before, cx);
+                true
+            }
+            _ => false,
+        }
+    }
+}
+
+impl Family for WithdrawTo {
+    const NAME: &'static str = "bank_withdraw_to";
+    const SNAPSHOT_SENSITIVE: bool = true;
+    const CALLBACKS: &'static [&'static str] = &["count"];
+    /// Frozen `countInInv()` is a synchronous call: a returned promise is a
+    /// value (`NaN` once it meets a number).
+    const SYNC_HOOKS: &'static [usize] = &[COUNT];
+    /// `const start = countInInv()` and the first withdraw join the
+    /// caller's tick.
+    const KICK_ON_START: bool = true;
+    type Args = WithdrawToArgs;
+    type Output = Value;
+
+    fn begin(args: WithdrawToArgs, _cx: &mut Cx<'_>) -> Begin<Self> {
+        // Another bank op is in flight: as the shim's pending guard, no op
+        // of this run could be sent, so nothing is gained.
+        if crate::machine::bank_transfer_busy() {
+            return Begin::Done(json!(0));
+        }
+        Begin::Run(Self {
+            counter: Counter {
+                name: Some(args.name.clone()),
+                asked: false,
+            },
+            name: args.name,
+            target: js_number(&args.target),
+            start: 0.0,
+            round: 0,
+            phase: Phase::Start,
+            waiting: None,
+            failure: None,
+        })
+    }
+
+    fn step(&mut self, cx: &mut Cx<'_>) -> Step<Value> {
+        loop {
+            if let Some(thrown) = self.failure.take() {
+                return Step::Fail(thrown);
+            }
+            let phase = self.phase;
+            if matches!(phase, Phase::Check) && self.round >= ROUNDS {
+                self.phase = Phase::Finish;
+                continue;
+            }
+            let count = match phase {
+                Phase::AwaitX { .. } | Phase::AwaitOp { .. } => None,
+                _ => match self.counter.read(cx) {
+                    Counted::Ask(call) => return Step::Call(call),
+                    Counted::Threw(thrown) => return Step::Fail(thrown),
+                    Counted::Value(count) => Some(count),
+                },
+            };
+            let count = count.unwrap_or(f64::NAN);
+            match phase {
+                Phase::Start => {
+                    self.start = count;
+                    self.phase = Phase::Check;
+                }
+                Phase::Check => {
+                    let full = observed::with(inventory_full);
+                    self.phase = if count < self.target && !full {
+                        Phase::Before
+                    } else {
+                        Phase::Finish
+                    };
+                }
+                Phase::Before => {
+                    let before = count;
+                    let need = self.target - before;
+                    match next_chunk(need) {
+                        None => self.phase = Phase::Finish,
+                        Some(Chunk::Op(label)) => self.withdraw_op(label, before, cx),
+                        Some(Chunk::X(n))
+                            if !n.is_finite() || n.fract() != 0.0 || n > f64::from(i32::MAX) =>
+                        {
+                            if !self.fallback(before, need, cx) {
+                                self.phase = Phase::Finish;
+                            }
+                        }
+                        Some(Chunk::X(n)) => {
+                            let mut args = BankSeatArgs::new(BankSeatOperation::WithdrawDelta);
+                            args.set_item_name(Some(self.name.clone()));
+                            // The same integral i32 bound as the Bank withdraw-X primitive.
+                            args.set_quantity(Some(n as i64));
+                            match NativeBankChild::start(args, &[], cx) {
+                                Ok(waiting) => {
+                                    self.waiting = Some(waiting);
+                                    self.phase = Phase::AwaitX { before, need };
+                                }
+                                Err(error) => return Step::Fail(Thrown::new(error)),
+                            }
+                        }
+                    }
+                }
+                Phase::AwaitX { before, need } => {
+                    let ok = match self.waiting.as_mut().expect("withdraw child").step(cx) {
+                        Step::Wait => return Step::Wait,
+                        Step::Call(call) => return Step::Call(call),
+                        Step::Fail(thrown) => return Step::Fail(thrown),
+                        Step::Done(value) => value == Value::Bool(true),
+                    };
+                    self.waiting = None;
+                    if ok {
+                        self.phase = Phase::AfterX { before, need };
+                    } else if !self.fallback(before, need, cx) {
+                        self.phase = Phase::Finish;
+                    }
+                }
+                Phase::AfterX { before, need } => {
+                    if count > before {
+                        self.round += 1;
+                        self.phase = Phase::Check;
+                    } else if !self.fallback(before, need, cx) {
+                        self.phase = Phase::Finish;
+                    }
+                }
+                Phase::AwaitOp { before } => {
+                    match self.waiting.as_mut().expect("withdraw child").step(cx) {
+                        Step::Wait => return Step::Wait,
+                        Step::Call(call) => return Step::Call(call),
+                        Step::Fail(thrown) => return Step::Fail(thrown),
+                        Step::Done(_) => {}
+                    }
+                    self.waiting = None;
+                    self.land(before, cx);
+                }
+                Phase::Land { before } => {
+                    if count > before {
+                        self.round += 1;
+                        self.phase = Phase::Check;
+                    } else if cx.clock().bound_reached() {
+                        self.phase = Phase::Finish;
+                    } else {
+                        return Step::Wait;
+                    }
+                }
+                Phase::Finish => return Step::Done(json!(count - self.start)),
+            }
+        }
+    }
+}
+
+#[derive(Deserialize)]
+pub(crate) struct CloseConfirmArgs {
+    #[serde(default)]
+    expected: Value,
+}
+
+enum ClosePhase {
+    Begin,
+    Closing(NativeBankChild),
+    /// `delayTicks(1)` after the close, from this posted tick.
+    Tick(u64),
+    Confirm,
+}
+
+/// One awaited frozen `closeBankAndConfirmCount(expected, count)`.
+pub(crate) struct CloseConfirm {
+    expected: f64,
+    counter: Counter,
+    phase: ClosePhase,
+}
+
+fn posted_tick() -> u64 {
+    observed::with(|scene| scene.tick().unwrap_or(0))
+}
+
+impl Family for CloseConfirm {
+    const NAME: &'static str = "bank_close_confirm";
+    const SNAPSHOT_SENSITIVE: bool = true;
+    const CALLBACKS: &'static [&'static str] = &["count"];
+    /// Frozen `count()` is a synchronous call.
+    const SYNC_HOOKS: &'static [usize] = &[COUNT];
+    const KICK_ON_START: bool = true;
+    type Args = CloseConfirmArgs;
+    type Output = bool;
+
+    fn begin(args: CloseConfirmArgs, _cx: &mut Cx<'_>) -> Begin<Self> {
+        Begin::Run(Self {
+            expected: js_number(&args.expected),
+            counter: Counter {
+                name: None,
+                asked: false,
+            },
+            phase: ClosePhase::Begin,
+        })
+    }
+
+    fn step(&mut self, cx: &mut Cx<'_>) -> Step<bool> {
+        loop {
+            match &mut self.phase {
+                ClosePhase::Begin => {
+                    self.phase =
+                        if observed::with(|scene| scene.since_login().bank_open().unwrap_or(false))
+                        {
+                            match NativeBankChild::start(
+                                BankSeatArgs::new(BankSeatOperation::Close),
+                                &[],
+                                cx,
+                            ) {
+                                Ok(closing) => ClosePhase::Closing(closing),
+                                Err(error) => return Step::Fail(Thrown::new(error)),
+                            }
+                        } else {
+                            ClosePhase::Tick(posted_tick())
+                        };
+                }
+                ClosePhase::Closing(closing) => match closing.step(cx) {
+                    Step::Wait => return Step::Wait,
+                    Step::Call(call) => return Step::Call(call),
+                    Step::Fail(thrown) => return Step::Fail(thrown),
+                    Step::Done(Value::Bool(true)) => self.phase = ClosePhase::Tick(posted_tick()),
+                    Step::Done(_) => return Step::Done(false),
+                },
+                ClosePhase::Tick(from) => {
+                    if posted_tick() <= *from {
+                        return Step::Wait;
+                    }
+                    cx.clock().arm(CONFIRM_MS);
+                    self.phase = ClosePhase::Confirm;
+                }
+                ClosePhase::Confirm => {
+                    // The caller's `count` is required, as frozen.
+                    let count = match self.counter.read(cx) {
+                        Counted::Ask(call) => return Step::Call(call),
+                        Counted::Threw(thrown) => return Step::Fail(thrown),
+                        Counted::Value(count) => count,
+                    };
+                    if count >= self.expected {
+                        return Step::Done(true);
+                    }
+                    if cx.clock().bound_reached() {
+                        return Step::Done(false);
+                    }
+                    return Step::Wait;
+                }
+            }
+        }
+    }
+}

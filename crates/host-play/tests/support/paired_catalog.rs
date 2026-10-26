@@ -38,7 +38,7 @@ pub struct CardLedger {
 
 pub struct PreparedCard {
     pub js: String,
-    pub shape: script::LoadShape,
+    pub shape: script_js::LoadShape,
     pub siblings: Vec<(String, String)>,
     pub schema: Vec<script::SettingDef>,
     pub identity: Value,
@@ -127,7 +127,7 @@ fn safe_catalog_path(root: &Path, relative: &str) -> Result<PathBuf, String> {
 
 pub fn hash_file(path: &Path) -> Result<String, String> {
     let bytes = std::fs::read(path).map_err(|error| format!("read {}: {error}", path.display()))?;
-    Ok(script::JsCache::origin_sha(&bytes))
+    Ok(script_js::JsCache::origin_sha(&bytes))
 }
 
 pub fn verify_source_identity(root: &Path, row: &CardLedger) -> Result<PathBuf, String> {
@@ -166,7 +166,7 @@ pub fn prepare_card(
 ) -> Result<PreparedCard, String> {
     let source_path = verify_source_identity(root, row)?;
     let mut library =
-        script::JsLibrary::with_cache(temp.join("js-scripts.json"), temp.join("js-cache"));
+        script_js::JsLibrary::with_cache(temp.join("js-scripts.json"), temp.join("js-cache"));
     let registered = library.register_rs2b0t(root, &temp.join("rs2b0t-path"))?;
     if registered == 0 {
         return Err("frozen catalog registered no script cards".into());
@@ -199,11 +199,11 @@ pub fn prepare_card(
     if let Some(import) = &card.unloadable {
         return Err(format!("{display_name} is unloadable: {import}"));
     }
-    let siblings = script::resolve_sibling_modules(
+    let siblings = script_js::resolve_sibling_modules(
         &card.path,
         &card.origin,
         library.cache(),
-        script::CacheMeta {
+        script_js::CacheMeta {
             kind: card.kind,
             source: card.source,
             shape: None,
@@ -215,7 +215,7 @@ pub fn prepare_card(
         .map(|(url, js)| {
             json!({
                 "module": url,
-                "compiled_sha256": script::JsCache::origin_sha(js.as_bytes()),
+                "compiled_sha256": script_js::JsCache::origin_sha(js.as_bytes()),
             })
         })
         .collect::<Vec<_>>();
@@ -224,7 +224,7 @@ pub fn prepare_card(
             "card": display_name,
             "source_path": card.path,
             "source_sha256": card.sha256,
-            "compiled_sha256": script::JsCache::origin_sha(card.js.as_bytes()),
+            "compiled_sha256": script_js::JsCache::origin_sha(card.js.as_bytes()),
             "siblings": sibling_hashes,
         }),
         js: card.js,

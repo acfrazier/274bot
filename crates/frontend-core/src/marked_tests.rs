@@ -77,7 +77,7 @@ fn fixture(test: &str, profiles: &[&str], loaded: usize) -> Fixture {
         core.load(name, &mut surface);
     }
     let scripts = Scripts::new(
-        script::JsLibrary::with_cache(dir.join("js-scripts.json"), dir.join("js-cache")),
+        script_js::JsLibrary::with_cache(dir.join("js-scripts.json"), dir.join("js-cache")),
         script::ScriptSettingsStore::at(dir.join("script-settings.json")),
     );
     Fixture {
@@ -90,11 +90,11 @@ fn fixture(test: &str, profiles: &[&str], loaded: usize) -> Fixture {
 }
 
 impl Fixture {
-    fn card(&mut self, file: &str) -> (script::JsCard, ScriptChoice) {
+    fn card(&mut self, file: &str) -> (script_js::JsCard, ScriptChoice) {
         self.card_src(file, LOOPING)
     }
 
-    fn card_src(&mut self, file: &str, src: &str) -> (script::JsCard, ScriptChoice) {
+    fn card_src(&mut self, file: &str, src: &str) -> (script_js::JsCard, ScriptChoice) {
         let path = self.dir.join(file);
         std::fs::write(&path, src).unwrap();
         let card = self.scripts.js_mut().load(&path).unwrap();
@@ -103,7 +103,7 @@ impl Fixture {
         (card, sel)
     }
 
-    fn assign(&mut self, name: &str, card: &script::JsCard) {
+    fn assign(&mut self, name: &str, card: &script_js::JsCard) {
         assert!(self
             .scripts
             .persist_assignment(&mut self.core, name, card.assignment()));

@@ -15,6 +15,11 @@ use api::condition::PoisonState;
 use api::WorldTile;
 pub(crate) use facts::poison_unknown_v_rows;
 pub use facts::*;
+/// Return the process-local build count for risk-table test assertions.
+#[cfg(feature = "test-hooks")]
+pub fn risk_table_build_count_for_test() -> usize {
+    facts::build_count_for_test()
+}
 pub use geometry::{build_plan, RoutePath};
 pub use input::*;
 use nav_planner::contract::{BoundZoneKey, ContractError, PackId, ZoneKey, ZoneTableView};
