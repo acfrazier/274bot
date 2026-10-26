@@ -4653,8 +4653,7 @@ fn a_repeated_stop_logs_one_refusal_line() {
 }
 
 /// PANEL-STATE-GAP-1023: every refusal line holds the command, the bots and
-/// the reason. The member case uses a native command available in every build
-/// and asserts that its typed reason appears in the log line.
+/// the reason. A member that carries no text still names its typed reason.
 #[test]
 fn a_refusal_line_names_the_command_the_bots_and_the_reason() {
     use crate::log::{global, LogScope, LogView};
@@ -4663,7 +4662,7 @@ fn a_refusal_line_names_the_command_the_bots_and_the_reason() {
     load(&mut d, &[BOT]);
     let lines_with = |needle: &str| -> Vec<String> {
         let mut view = LogView::new(LogScope::Process);
-        view.edit_filter(|filter| filter.set_text("command refused: UnlockVault"));
+        view.edit_filter(|filter| filter.set_text("command refused: PickBrowseCard"));
         global().refresh(&mut view);
         view.rows()
             .iter()
@@ -4675,13 +4674,13 @@ fn a_refusal_line_names_the_command_the_bots_and_the_reason() {
     // A command for the application, given a bot: refused before it opens.
     let before = d.session().refusals();
     assert!(d
-        .submit(OperatorCommand::UnlockVault, Targets::Profile(BOT))
+        .submit(OperatorCommand::PickBrowseCard, Targets::Profile(BOT))
         .is_err());
     assert_eq!(d.session().refusals(), before + 1);
     let named = lines_with(BOT);
     assert_eq!(named.len(), 1, "{named:?}");
     for part in [
-        "UnlockVault",
+        "PickBrowseCard",
         "on psg5r-bot",
         "cannot take these targets",
     ] {
@@ -4692,12 +4691,16 @@ fn a_refusal_line_names_the_command_the_bots_and_the_reason() {
         );
     }
 
-    // The native command is admitted, then refused with a typed reason.
-    d.submit(OperatorCommand::UnlockVault, Targets::Application)
+    // The native command has no staged pick and no detailed error text.
+    d.submit(OperatorCommand::PickBrowseCard, Targets::Application)
         .expect("opened");
     assert_eq!(d.session().refusals(), before + 2);
-    let typed = lines_with("on application: NotStaged: vault: nothing staged for this row");
-    assert!(!typed.is_empty(), "the typed reason is in the line");
+    let bare = lines_with("on application: NotStaged");
+    assert!(!bare.is_empty(), "the typed reason is in the line");
+    assert!(
+        bare.iter().all(|line| line.ends_with("on application: NotStaged")),
+        "the bare typed reason survives without detailed text: {bare:?}"
+    );
 }
 
 // ---- LOGOUT-RETRY-1025: Log out reaches a login that is still retrying ----

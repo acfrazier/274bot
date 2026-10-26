@@ -494,20 +494,16 @@ impl<'a> ScriptPane<'a> {
     }
 
     fn card_selected(&self, card: &BrowseCard) -> bool {
-        #[cfg(feature = "js")]
-        {
-            self.sel
-                .and_then(ScriptChoice::loaded_card)
-                .is_some_and(|(source, name)| card.source == source && card.name == name)
-        }
-        #[cfg(not(feature = "js"))]
-        {
-            card.kind == CardRuntime::Compiled
-                && self
-                    .sel
-                    .and_then(ScriptChoice::compiled_id)
-                    .is_some_and(|id| CompiledCardId::lookup(&card.name) == Some(id))
-        }
+        self.sel.is_some_and(|selection| {
+            if let Some(id) = selection.compiled_id() {
+                card.kind == CardRuntime::Compiled
+                    && CompiledCardId::lookup(&card.name) == Some(id)
+            } else {
+                selection
+                    .loaded_card()
+                    .is_some_and(|(source, name)| card.source == source && card.name == name)
+            }
+        })
     }
 
     /// The click inside the pane. Buttons live on the second inner line;
@@ -985,6 +981,16 @@ mod tests {
                 unloadable: None,
             },
             sample_file_card(),
+            BrowseCard {
+                name: "Gatherer".into(),
+                description: String::new(),
+                category: "Skilling".into(),
+                tags: Vec::new(),
+                kind: CardRuntime::Compiled,
+                source: CardSource::Builtin,
+                #[cfg(feature = "js")]
+                unloadable: None,
+            },
         ];
         let pane = ScriptPane::new(ScriptRunState::Idle, None, &cards, &[], true, false);
         let area = Rect::new(0, 0, 80, 16);
@@ -1007,6 +1013,25 @@ mod tests {
             16,
         );
         assert!(text.contains('>'), "selected card is marked: {text:?}");
+        let selection = ScriptChoice::compiled(
+            CompiledCardId::lookup("Gatherer").expect("compiled Gatherer card"),
+        );
+        let text = render(
+            ScriptPane::new(
+                ScriptRunState::Idle,
+                Some(&selection),
+                &cards,
+                &[],
+                true,
+                false,
+            ),
+            80,
+            16,
+        );
+        assert!(
+            text.contains("> Gatherer"),
+            "the compiled selection is marked in both builds: {text:?}"
+        );
     }
 
     #[cfg(feature = "js")]

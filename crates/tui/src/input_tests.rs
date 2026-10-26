@@ -345,11 +345,16 @@ fn help_lists_the_focused_pane_first_and_filters() {
     app.on_key(key(KeyCode::F(5)));
     assert_eq!(app.on_key(ch('?')), AppAction::None);
     assert_eq!(help_rows(&app)[0].context, "Script");
-    for c in "reload".chars() {
+    let (query, expected) = if cfg!(feature = "js") {
+        ("reload", "Reload")
+    } else {
+        ("browse", "Browse")
+    };
+    for c in query.chars() {
         app.on_key(ch(c));
     }
     let all = text(&draw(&mut app, 120, 40));
-    assert!(all.contains("Reload"), "{all}");
+    assert!(all.contains(expected), "{all}");
     assert!(!all.contains("dots, collision"), "filtered out: {all}");
     assert_eq!(app.on_key(key(KeyCode::Esc)), AppAction::None);
     assert!(app.modal.is_none());
