@@ -311,6 +311,21 @@ struct KqSlotWitness {
     last_tile: Option<(i32, i32, i32)>,
     last_tick: u32,
     last_bank_component: i32,
+    /// Phase ticks for the terminal summary: fixed `GameSnapshot.tick`
+    /// values, each set once at the existing witness transition and
+    /// never overwritten. `tick_first_observed` is the slot's clock
+    /// origin. Read-only reporting state; no witness latch and no
+    /// pass condition reads these fields. The entry-2 kill tick is
+    /// set only by a kill witnessed while `lair_entries == 2`, so a
+    /// second kill during entry 1 never sets it.
+    tick_first_observed: Option<u32>,
+    tick_first_lair_entry: Option<u32>,
+    tick_first_kill_entry1: Option<u32>,
+    tick_first_bank_return: Option<u32>,
+    tick_second_lair_entry: Option<u32>,
+    tick_first_kill_entry2: Option<u32>,
+    tick_second_bank_return: Option<u32>,
+    tick_safely_banked: Option<u32>,
 }
 
 #[derive(Default)]
@@ -346,6 +361,7 @@ impl KqFleetWitness {
             return;
         }
         let slot = &mut self.slots[slot_index];
+        slot.tick_first_observed.get_or_insert(snap.tick());
         if slot.name.is_none() {
             slot.name = pair_local_name(snap).map(str::to_owned);
             slot.survived = true;
@@ -459,7 +475,11 @@ impl KqFleetWitness {
         slot.in_lair_now = in_lair;
         if in_lair && !slot.was_in_lair {
             slot.lair_entries = slot.lair_entries.saturating_add(1);
+            if slot.lair_entries == 1 {
+                slot.tick_first_lair_entry.get_or_insert(snap.tick());
+            }
             if slot.lair_entries == 2 {
+                slot.tick_second_lair_entry.get_or_insert(snap.tick());
                 slot.second_entry_xp = Some((strength_xp, ranged_xp));
             }
             slot.flying_was_visible = false;
@@ -487,6 +507,19 @@ impl KqFleetWitness {
             slot.disappearances = slot.disappearances.saturating_add(1);
             if slot.flying_zero {
                 slot.kills = slot.kills.saturating_add(1);
+                // The kill tick belongs to the entry in progress: a
+                // second kill during entry 1 must not set the
+                // entry-2 tick, and a kill in a later entry sets
+                // neither.
+                match slot.lair_entries {
+                    1 => {
+                        slot.tick_first_kill_entry1.get_or_insert(snap.tick());
+                    }
+                    2 => {
+                        slot.tick_first_kill_entry2.get_or_insert(snap.tick());
+                    }
+                    _ => {}
+                }
             }
             slot.flying_was_visible = false;
             slot.flying_zero = false;
@@ -576,12 +609,22 @@ impl KqFleetWitness {
             && snap.bank_loaded();
         if fresh_return && !slot.bank_return_latched {
             slot.bank_returns = slot.bank_returns.saturating_add(1);
+            if slot.bank_returns == 1 {
+                slot.tick_first_bank_return.get_or_insert(snap.tick());
+            }
+            if slot.bank_returns == 2 {
+                slot.tick_second_bank_return.get_or_insert(snap.tick());
+            }
             slot.bank_return_latched = true;
         }
         if !at_bank {
             slot.bank_return_latched = false;
         }
-        slot.safely_banked |= slot.bank_returns >= 2 && at_bank && snap.bank_component_id() < 0;
+        let safely_banked_now = slot.bank_returns >= 2 && at_bank && snap.bank_component_id() < 0;
+        if safely_banked_now {
+            slot.tick_safely_banked.get_or_insert(snap.tick());
+        }
+        slot.safely_banked |= safely_banked_now;
 
         // Safe-finish oracle: only snapshots observed after the finish
         // began count, and the closed test is the current bank state
@@ -745,7 +788,14 @@ impl KqFleetWitness {
     /// alone and a pass still records its observation values.
     /// `restock_overlap` and `loot_banked` appear only as observed
     /// values. Neither appears in the unmet list or in a slot's
-    /// missing list, because neither is a gate.
+    /// missing list, because neither is a gate. Each slot also
+    /// carries its phase ticks (`GameSnapshot.tick`, with the
+    /// slot's first observation as the origin): first and second
+    /// lair entries, the first witnessed kill in each entry, the
+    /// first and second fresh bank returns, and the first
+    /// `safely_banked` observation. A phase that never happened
+    /// reads `absent`. The ticks are observations only. They add
+    /// no pass condition.
     ///
     /// The unmet list names the unmet fleet phases and, for the
     /// per-slot terms of [`Self::complete`] that no phase already
@@ -858,8 +908,12 @@ impl KqFleetWitness {
                 ),
                 None => ("?".to_string(), "?".to_string()),
             };
+            let phase = |tick: Option<u32>| match tick {
+                Some(tick) => tick.to_string(),
+                None => "absent".to_string(),
+            };
             slots.push_str(&format!(
-                " s{index}<{}> tile={tile} tick={} bank={bank} entries={} returns={} disp={} kills={} missing=[{}]",
+                " s{index}<{}> tile={tile} tick={} bank={bank} entries={} returns={} disp={} kills={} missing=[{}] phases(GameSnapshot.tick origin={} entry1={} kill1={} bank1={} entry2={} kill2={} bank2={} safe={})",
                 slot.name.as_deref().unwrap_or("?"),
                 slot.last_tick,
                 slot.lair_entries,
@@ -867,6 +921,14 @@ impl KqFleetWitness {
                 slot.disappearances,
                 slot.kills,
                 missing.join(" "),
+                phase(slot.tick_first_observed),
+                phase(slot.tick_first_lair_entry),
+                phase(slot.tick_first_kill_entry1),
+                phase(slot.tick_first_bank_return),
+                phase(slot.tick_second_lair_entry),
+                phase(slot.tick_first_kill_entry2),
+                phase(slot.tick_second_bank_return),
+                phase(slot.tick_safely_banked),
             ));
         }
         format!(
@@ -2875,9 +2937,9 @@ mod duel_round_trip_tests {
 
 #[cfg(test)]
 mod kq_finish_tests {
-    use super::{jive_kq_four_scenario, KqFleetWitness, KQ_BANK};
+    use super::{jive_kq_four_scenario, KqFleetWitness, KQ_BANK, KQ_LAIR};
     use crate::{Proof, StepKind};
-    use api::snapshot::{ChatLineView, GameSnapshot, StatView};
+    use api::snapshot::{ChatLineView, GameSnapshot, NpcView, StatView};
 
     /// One fleet member at the Shantay bank in a loaded scene, with its
     /// bank open (component 5382, loaded) or closed. The closed form
@@ -2895,6 +2957,70 @@ mod kq_finish_tests {
         } else {
             snap.seed_bank_observation(-1, 1, None, Vec::new());
         }
+        snap
+    }
+
+    /// The bank fixture at one snapshot tick.
+    fn at_bank_at(bank_open: bool, tick: u32) -> GameSnapshot {
+        let mut snap = at_bank(bank_open);
+        snap.seed_tick(tick);
+        snap
+    }
+
+    /// The flying Queen (type 1160) at one health value.
+    fn flying_queen(health: i32) -> NpcView {
+        NpcView {
+            index: 3,
+            r#type: Some(1160),
+            name: Some("Kalphite Queen".into()),
+            actions: vec![Some("Attack".into())],
+            tile: api::WorldTile {
+                x: KQ_LAIR.x,
+                z: KQ_LAIR.z,
+                level: KQ_LAIR.level,
+            },
+            distance: 1,
+            animation: -1,
+            animation_frame: -1,
+            pose_animation: -1,
+            orientation: 0,
+            target_orientation: 0,
+            overhead_text: None,
+            spot_animation: -1,
+            spot_animation_stamp: -1,
+            health,
+            total_health: 255,
+            face_entity: -1,
+            target: None,
+            moving: false,
+            running: false,
+            in_combat: true,
+            level: 274,
+            size: 3,
+            network: api::WorldTile {
+                x: KQ_LAIR.x,
+                z: KQ_LAIR.z,
+                level: KQ_LAIR.level,
+            },
+            x: 0,
+            z: 0,
+            yaw: 0,
+        }
+    }
+
+    /// One fleet member in the lair at one snapshot tick, with the
+    /// given NPCs visible and no bank open.
+    fn in_lair_at(tick: u32, npcs: Vec<NpcView>) -> GameSnapshot {
+        let mut snap = GameSnapshot::new();
+        snap.seed_ingame(2);
+        snap.seed_tick(tick);
+        snap.seed_tile(api::WorldTile {
+            x: KQ_LAIR.x,
+            z: KQ_LAIR.z,
+            level: KQ_LAIR.level,
+        });
+        snap.seed_bank_observation(-1, 1, None, Vec::new());
+        snap.seed_npcs(npcs);
         snap
     }
 
@@ -3503,6 +3629,149 @@ mod kq_finish_tests {
                 .starts_with("kq_witness unmet=[]"),
             "the list is empty only once completion holds: {}",
             witness.terminal_summary()
+        );
+    }
+
+    /// Each phase tick is set once, at its existing transition, and
+    /// a later repeat of that transition never overwrites it. The
+    /// kill ticks keep the alive-zero-absent proof: a disappearance
+    /// after a living Queen sets no kill tick. A second kill during
+    /// entry 1 sets neither the entry-1 tick again nor the entry-2
+    /// tick. Only a kill witnessed during entry 2 sets the entry-2
+    /// tick.
+    #[test]
+    fn phase_ticks_are_set_once_at_their_transitions() {
+        let mut witness = started_witness();
+        let slot = 1;
+
+        // (1) First observation is the origin. A later observation
+        // does not move it.
+        witness.observe(slot, &at_bank_at(false, 100));
+        witness.observe(slot, &at_bank_at(false, 101));
+        assert_eq!(witness.slots[slot].tick_first_observed, Some(100));
+
+        // (2) First lair entry. Staying in the lair is not an entry.
+        witness.observe(slot, &in_lair_at(110, Vec::new()));
+        witness.observe(slot, &in_lair_at(111, Vec::new()));
+        assert_eq!(witness.slots[slot].lair_entries, 1);
+        assert_eq!(witness.slots[slot].tick_first_lair_entry, Some(110));
+        assert_eq!(witness.slots[slot].tick_second_lair_entry, None);
+
+        // A disappearance without a zero-health observation is not
+        // a witnessed kill and sets no kill tick.
+        witness.observe(slot, &in_lair_at(115, vec![flying_queen(50)]));
+        witness.observe(slot, &in_lair_at(116, Vec::new()));
+        assert_eq!(witness.slots[slot].kills, 0);
+        assert_eq!(witness.slots[slot].tick_first_kill_entry1, None);
+
+        // (3) First witnessed kill in entry 1: zero health, then
+        // absent. The tick is the absent observation's tick.
+        witness.observe(slot, &in_lair_at(120, vec![flying_queen(0)]));
+        witness.observe(slot, &in_lair_at(121, Vec::new()));
+        assert_eq!(witness.slots[slot].kills, 1);
+        assert_eq!(witness.slots[slot].tick_first_kill_entry1, Some(121));
+        assert_eq!(witness.slots[slot].tick_first_kill_entry2, None);
+
+        // A second kill during entry 1 overwrites nothing. It does
+        // not set the entry-2 kill tick.
+        witness.observe(slot, &in_lair_at(130, vec![flying_queen(0)]));
+        witness.observe(slot, &in_lair_at(131, Vec::new()));
+        assert_eq!(witness.slots[slot].kills, 2);
+        assert_eq!(witness.slots[slot].tick_first_kill_entry1, Some(121));
+        assert_eq!(witness.slots[slot].tick_first_kill_entry2, None);
+
+        // (4) First fresh bank return. The latched return does not
+        // count again while the slot stays at the bank.
+        witness.observe(slot, &at_bank_at(true, 140));
+        witness.observe(slot, &at_bank_at(true, 141));
+        assert_eq!(witness.slots[slot].bank_returns, 1);
+        assert_eq!(witness.slots[slot].tick_first_bank_return, Some(140));
+        assert_eq!(witness.slots[slot].tick_second_bank_return, None);
+
+        // (5) Second lair entry. The first entry tick stays.
+        witness.observe(slot, &in_lair_at(150, Vec::new()));
+        witness.observe(slot, &in_lair_at(151, Vec::new()));
+        assert_eq!(witness.slots[slot].lair_entries, 2);
+        assert_eq!(witness.slots[slot].tick_first_lair_entry, Some(110));
+        assert_eq!(witness.slots[slot].tick_second_lair_entry, Some(150));
+
+        // (6) First witnessed kill in entry 2. A later kill in the
+        // same entry does not overwrite it.
+        witness.observe(slot, &in_lair_at(160, vec![flying_queen(0)]));
+        witness.observe(slot, &in_lair_at(161, Vec::new()));
+        assert_eq!(witness.slots[slot].tick_first_kill_entry1, Some(121));
+        assert_eq!(witness.slots[slot].tick_first_kill_entry2, Some(161));
+        witness.observe(slot, &in_lair_at(170, vec![flying_queen(0)]));
+        witness.observe(slot, &in_lair_at(171, Vec::new()));
+        assert_eq!(witness.slots[slot].tick_first_kill_entry2, Some(161));
+
+        // (7) Second fresh bank return. The first return tick stays.
+        witness.observe(slot, &at_bank_at(true, 180));
+        witness.observe(slot, &at_bank_at(true, 181));
+        assert_eq!(witness.slots[slot].bank_returns, 2);
+        assert_eq!(witness.slots[slot].tick_first_bank_return, Some(140));
+        assert_eq!(witness.slots[slot].tick_second_bank_return, Some(180));
+        assert_eq!(witness.slots[slot].tick_safely_banked, None);
+
+        // (8) First safely_banked observation: at the bank with no
+        // bank component after the second return. A later closed
+        // observation does not overwrite it.
+        witness.observe(slot, &at_bank_at(false, 190));
+        witness.observe(slot, &at_bank_at(false, 191));
+        assert!(witness.slots[slot].safely_banked);
+        assert_eq!(witness.slots[slot].tick_safely_banked, Some(190));
+
+        // The summary carries all eight values on the slot's row,
+        // labelled as GameSnapshot ticks with the origin.
+        let summary = witness.terminal_summary();
+        let slot1 = summary
+            .split("s1<")
+            .nth(1)
+            .and_then(|rest| rest.split(" s2<").next())
+            .expect("slot 1 segment");
+        assert!(
+            slot1.contains(
+                "phases(GameSnapshot.tick origin=100 entry1=110 kill1=121 \
+                 bank1=140 entry2=150 kill2=161 bank2=180 safe=190)"
+            ),
+            "{slot1}"
+        );
+    }
+
+    /// A failing run's summary prints the phase ticks that are set
+    /// and marks every phase that never happened as absent. A slot
+    /// that was never observed has no origin and no phase ticks.
+    #[test]
+    fn terminal_summary_marks_unreached_phases_absent() {
+        let mut witness = started_witness();
+        witness.observe(2, &at_bank_at(false, 50));
+        witness.observe(2, &in_lair_at(60, Vec::new()));
+        assert!(!witness.complete(), "this run is still failing");
+
+        let summary = witness.terminal_summary();
+        let slot2 = summary
+            .split("s2<")
+            .nth(1)
+            .and_then(|rest| rest.split(" s3<").next())
+            .expect("slot 2 segment");
+        assert!(
+            slot2.contains(
+                "phases(GameSnapshot.tick origin=50 entry1=60 kill1=absent \
+                 bank1=absent entry2=absent kill2=absent bank2=absent safe=absent)"
+            ),
+            "{slot2}"
+        );
+        let slot0 = summary
+            .split("s0<")
+            .nth(1)
+            .and_then(|rest| rest.split(" s1<").next())
+            .expect("slot 0 segment");
+        assert!(
+            slot0.contains(
+                "phases(GameSnapshot.tick origin=absent entry1=absent kill1=absent \
+                 bank1=absent entry2=absent kill2=absent bank2=absent safe=absent)"
+            ),
+            "{slot0}"
         );
     }
 }
