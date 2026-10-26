@@ -926,11 +926,13 @@ fn count_before(line: &str, label: &str) -> i64 {
 
 /// Cow eat line: `2 × danger + 1` with danger 1 (`select.rs`, js-api-v2).
 const COW_EAT_LINE: i64 = 3;
+/// One shrimp heals 3. An eat at the line therefore finishes at 6 or below.
+const SHRIMP_HEAL: i64 = 3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum EatVerdict {
     /// The fight started at or below the eat line, the bot ate, and
-    /// hitpoints finished above the line.
+    /// hitpoints finished above the line but not above one shrimp.
     AteAtLine,
     /// The fight started above the eat line and the bot did not eat.
     NoEatAboveLine,
@@ -949,9 +951,10 @@ fn hp_of(line: &str) -> i64 {
 ///
 /// `eat_line` is `2 × danger + 1`. A receipt passes when the fight started
 /// at or below that line, the bot ate at least once, and hitpoints finished
-/// above the line. It fails when the bot never ate at or below the line,
-/// when the end line has no `ate` count, when hitpoints did not finish above
-/// the line, or when the bot ate while already above the line.
+/// above the line and at or below one shrimp over it. It fails when the bot
+/// never ate at or below the line, when the end line has no `ate` count,
+/// when hitpoints did not finish above the line, when they finished above
+/// one shrimp, or when the bot ate while already above the line.
 fn showcase_eat_verdict(
     start_line: &str,
     end_line: &str,
@@ -975,6 +978,9 @@ fn showcase_eat_verdict(
     }
     if end_hp <= eat_line {
         return Err("end hitpoints are not above the eat line");
+    }
+    if end_hp > eat_line + SHRIMP_HEAL {
+        return Err("end hitpoints are above one shrimp");
     }
     Ok(EatVerdict::AteAtLine)
 }
@@ -1354,6 +1360,12 @@ fn showcase_eat_oracle_rejects_an_eat_above_the_line_and_a_missing_count() {
     assert_eq!(
         showcase_eat_verdict(&start, missing, COW_EAT_LINE),
         Err("eat receipt is missing ate or hitpoints")
+    );
+    // The old half-max line ate six shrimps from 3 HP and finished at 21.
+    let (low, over_ate) = eat_lines(COW_EAT_LINE, 21, 6);
+    assert_eq!(
+        showcase_eat_verdict(&low, &over_ate, COW_EAT_LINE),
+        Err("end hitpoints are above one shrimp")
     );
 }
 
