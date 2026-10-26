@@ -26,14 +26,11 @@ const COW_FIELD: WorldTile = WorldTile {
 };
 /// The field's cow spawns (3243..3261, 3258..3295) with a margin.
 const COW_AREA: &str = "{ min_x: 3240, min_z: 3254, max_x: 3266, max_z: 3299, level: 0 }";
-/// Lumbridge chicken pen. ChickenKiller anchors at this tile.
-const CHICKEN_PEN: WorldTile = WorldTile {
-    x: 3235,
-    z: 3295,
-    level: 0,
-};
-/// The pen plus the chickens' wander range.
-const CHICKEN_AREA: &str = "{ min_x: 3220, min_z: 3280, max_x: 3250, max_z: 3310, level: 0 }";
+/// Inside the Lumbridge pen, north of the south fence. The gate tile
+/// 3235,3295 can see a chicken across that fence, and the machine keeps
+/// clicking it.
+const CHICKEN_AREA: &str = "{ min_x: 3226, min_z: 3296, max_x: 3238, max_z: 3302, level: 0 }";
+const CHICKEN_STANDS: [(i32, i32); 3] = [(3231, 3298), (3233, 3298), (3232, 3299)];
 /// Thick Skin, the user's own prayer (varp `prayer0`).
 const THICK_SKIN_VARP: i32 = 83;
 const SHRIMP_ID: i32 = 315;
@@ -1581,18 +1578,32 @@ fn live_api_combat_native_lines_skip_zero_danger_and_hold_the_cow_food_line() {
         cell.play.script_state(&cell.account) == script::RunState::Running
     });
 
-    cell.cheat_until(
-        "tele to the chicken pen",
-        &api::interact::tele_args(CHICKEN_PEN.level, CHICKEN_PEN.x, CHICKEN_PEN.z),
-        Cell::near(CHICKEN_PEN),
-    );
-    let zero = cell.phase(
-        "zero-danger",
-        &format!(
-            "{{ target: {{ npc: 'Chicken' }}, area: {CHICKEN_AREA}, meleeMode: 'aggressive', prayer: true, food: true, budgetTicks: 200 }}"
-        ),
-        protect,
-    );
+    let mut zero = None;
+    for (i, (x, z)) in CHICKEN_STANDS.iter().enumerate() {
+        let stand = WorldTile {
+            x: *x,
+            z: *z,
+            level: 0,
+        };
+        cell.cheat_until(
+            "tele inside the chicken pen",
+            &api::interact::tele_args(stand.level, stand.x, stand.z),
+            Cell::near(stand),
+        );
+        let proof = cell.phase(
+            "zero-danger",
+            &format!(
+                "{{ target: {{ npc: 'Chicken' }}, area: {CHICKEN_AREA}, meleeMode: 'aggressive', prayer: true, food: true, budgetTicks: 80 }}"
+            ),
+            protect,
+        );
+        let hit = proof.facts.xp_gained || proof.facts.killed;
+        zero = Some(proof);
+        if hit || i + 1 == CHICKEN_STANDS.len() {
+            break;
+        }
+    }
+    let zero = zero.expect("a chicken stand");
 
     cell.cheat_until("clear food", "~clearinv", |state| state.shrimps == 0);
     cell.seed_hitpoints(3, |_| true);
