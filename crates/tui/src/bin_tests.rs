@@ -4852,6 +4852,14 @@ fn session_file_failure_after_the_file_was_writing_shows_and_expires() {
         frontend_core::log_file::session_file_phase(),
         frontend_core::log_file::SessionFilePhase::Writing
     );
+    // Steady: a pump compares the stage and builds no text. The status
+    // line's string is the one first built, frame after frame.
+    let steady = app.log.status.as_ref().map(|status| status.as_ptr());
+    assert!(steady.is_some());
+    for _ in 0..200 {
+        session.pump(&mut app);
+    }
+    assert_eq!(app.log.status.as_ref().map(|status| status.as_ptr()), steady);
     frontend_core::log_file::fail_session_sink_for_test("no space left on device");
     pump_until_status(&mut session, &mut app, |status| {
         status.contains("no space left on device")

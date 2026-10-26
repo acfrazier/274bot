@@ -6470,6 +6470,132 @@ fn render_all_dont_show_again_needs_understood_then_saves_the_ack() {
     );
 }
 
+/// Allocation calls over ten warm frames of the surfaces where the saved
+/// settings show their pending and failed state and the session file's
+/// status.
+fn feedback_frame_calls(
+    ctx: &mut dear_imgui_rs::Context,
+    session: &mut crate::session::Session,
+) -> usize {
+    let frame = |ctx: &mut dear_imgui_rs::Context, session: &mut crate::session::Session| {
+        ctx.prepare_frame(
+            dear_imgui_rs::FramePrepareOptions::new([1280.0, 720.0], 1.0 / 60.0)
+                .renderer_has_textures(),
+        );
+        super::draw_test_saved_setting_feedback(ctx.frame(), session);
+        ctx.render();
+    };
+    for _ in 0..5 {
+        frame(ctx, session);
+    }
+    let before = crate::test_alloc::alloc_calls();
+    for _ in 0..10 {
+        frame(ctx, session);
+    }
+    crate::test_alloc::alloc_calls() - before
+}
+
+/// A saved setting that is pending or failed, and a session file that is
+/// writing, add no allocation to a warm frame of the surfaces that show them:
+/// the state is drawn from the text the core and the sink already hold.
+#[test]
+fn settings_feedback_pending_failed_and_writing_states_add_no_allocation_to_a_warm_frame() {
+    use frontend_core::command::DrawSwitch;
+    use frontend_core::{NavPreference as N, OperatorCommand, Setting, SettingStatus, Targets};
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let _guard = crate::test_support::imgui_context_guard();
+    let _sink = crate::test_support::session_file_lock();
+    frontend_core::log_file::apply_session_log_for_test(false);
+    let _iso = frontend_core::test_support::IsolatedStores::enter("panel-s3-feedback-alloc");
+    let mut ctx = dock_host_context();
+    super::amber_style(&mut ctx);
+    let mut session = crate::session::Session::new();
+    hydrate_panel_preferences(&mut session);
+    let baseline = feedback_frame_calls(&mut ctx, &mut session);
+
+    // Steady: the session file is writing.
+    session.set_session_log(true);
+    await_preference(
+        &mut session,
+        frontend_core::log_file::SESSION_LOG_KEY,
+        serde_json::Value::Bool(true),
+    );
+    patiently(|| {
+        session.pump_status();
+        session.poll_panel_preferences();
+        match frontend_core::log_file::session_file_phase() {
+            frontend_core::log_file::SessionFilePhase::Writing => Ok(()),
+            other => Err(format!("not durable within the wait: the file is {other:?}")),
+        }
+    })
+    .unwrap();
+    assert_eq!(
+        feedback_frame_calls(&mut ctx, &mut session),
+        baseline,
+        "a writing session file costs the frame allocations"
+    );
+
+    // Pending: the writes are held.
+    let service = session
+        .core
+        .local_state_for_test()
+        .expect("the panel owns its process state service")
+        .clone();
+    let (release, gate) = std::sync::mpsc::channel::<()>();
+    let gate = std::sync::Mutex::new(gate);
+    service.set_write_stall_for_test(std::sync::Arc::new(move || {
+        let _ = gate.lock().unwrap().recv();
+    }));
+    let failing = std::sync::Arc::new(AtomicBool::new(true));
+    let refusing = std::sync::Arc::clone(&failing);
+    service.set_write_fault_for_test(std::sync::Arc::new(move || refusing.load(Ordering::SeqCst)));
+    let capture = session.draw_shown(DrawSwitch::CaptureInput);
+    session.set_capture(!capture);
+    for preference in [N::AllowTeleports, N::AllowWilderness, N::AllowBankFetch] {
+        session.submit(
+            OperatorCommand::SetNavPreference(preference, true),
+            Targets::Application,
+        );
+    }
+    assert!(matches!(
+        session.core.setting_status(Setting::Nav(N::AllowTeleports)),
+        SettingStatus::Pending
+    ));
+    assert_eq!(
+        feedback_frame_calls(&mut ctx, &mut session),
+        baseline,
+        "a pending setting costs the frame allocations"
+    );
+
+    // Failed: the disk fails the held writes.
+    drop(release);
+    patiently(|| {
+        session.pump_status();
+        session.poll_panel_preferences();
+        if session
+            .core
+            .setting_failure(Setting::Nav(N::AllowBankFetch))
+            .is_some()
+            && !session.preferences_pending()
+        {
+            Ok(())
+        } else {
+            Err("not durable within the wait: the held writes never failed".to_string())
+        }
+    })
+    .unwrap();
+    assert!(session
+        .core
+        .setting_failure(Setting::Nav(N::AllowTeleports))
+        .is_some());
+    assert_eq!(
+        feedback_frame_calls(&mut ctx, &mut session),
+        baseline,
+        "a failed setting costs the frame allocations"
+    );
+    frontend_core::log_file::apply_session_log_for_test(false);
+}
+
 /// A "Don't show again" save that fails is not silent: the dialog says
 /// "Saving…" while the write is held, then keeps its place and shows the
 /// failure under the buttons. Clicking it again is the action that resolves
