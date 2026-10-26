@@ -153,6 +153,10 @@ const REGISTRY: &[Entry] = &[
         scenarios::guardian_event_strange_box_scenario,
     ),
     Entry::new(
+        "guardian_event_strange_box_load_claim",
+        scenarios::guardian_event_strange_box_load_claim_scenario,
+    ),
+    Entry::new(
         "guardian_event_mime",
         scenarios::guardian_event_mime_scenario,
     ),

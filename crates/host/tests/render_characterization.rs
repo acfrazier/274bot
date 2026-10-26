@@ -787,7 +787,7 @@ fn with_slot_setup<R>(
                     true
                 },
                 |_| control.stop.load(Ordering::SeqCst),
-                |_| RandomClaim::Host,
+                |_: &api::DetectedRandom| RandomClaim::Host,
             );
             let square = client.world.square(0, 8, 8);
             SessionAfter {

@@ -335,32 +335,47 @@ fn a_pending_owner_member_settles_on_a_later_poll() {
         .and_then(|report| report.member(subject))
         .and_then(|member| member.pending());
     assert!(matches!(pending, None | Some(Pending::Accepted)));
-    for _ in 0..200 {
-        d.poll();
-        if d.report(remove.request())
-            .is_some_and(|report| report.is_settled())
-        {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(5));
-    }
-    assert!(
-        d.report(remove.request())
-            .is_some_and(|report| report.is_settled()),
-        "remove settles once the slot retires"
+    wait_for_command(
+        &mut d,
+        remove.request(),
+        "the removed profile's slot to retire",
+        |d| {
+            d.report(remove.request())
+                .is_some_and(|report| report.is_settled())
+        },
     );
 }
 
-/// Poll until `request` settles (writes are durable off the UI thread).
-fn settle(d: &mut HeadlessDriver, request: RequestId) {
-    for _ in 0..400 {
+/// A loaded host took more than five seconds to settle a queued preference
+/// write. Use a 10-minute hang guard; it is not the success condition.
+const SETTLE_HANG_GUARD: std::time::Duration = std::time::Duration::from_secs(600);
+
+/// Poll the front-end driver until a product terminal signal appears.
+fn wait_for_command(
+    d: &mut HeadlessDriver,
+    request: RequestId,
+    waiting_for: &str,
+    mut settled: impl FnMut(&mut HeadlessDriver) -> bool,
+) {
+    let deadline = std::time::Instant::now() + SETTLE_HANG_GUARD;
+    loop {
         d.poll();
-        if d.report(request).is_some_and(|report| report.is_settled()) {
+        if settled(d) {
             return;
         }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "command {request:?} did not settle while waiting for {waiting_for}"
+        );
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
-    panic!("command {request:?} did not settle");
+}
+
+/// Poll the session until its report is terminal. Writes settle off the UI thread.
+fn settle(d: &mut HeadlessDriver, request: RequestId) {
+    wait_for_command(d, request, "its command report", |d| {
+        d.report(request).is_some_and(|report| report.is_settled())
+    });
 }
 
 #[test]
@@ -423,30 +438,15 @@ fn terminal_app(d: &HeadlessDriver, request: RequestId) -> Option<Terminal> {
         .cloned()
 }
 
-/// The application member's terminal once it settles, polling the session
-/// as a front end's frames do. A preference write the writer thread still
-/// holds when its bounded wait ends keeps the member pending until the
-/// write's own terminal (a busy disk delays it; nothing fails for that):
-/// this waits for that product signal. [`SETTLE_HANG_GUARD`] only ends a
-/// test whose writer hung; it is not the pass condition.
+/// Wait for the application's terminal product signal while polling the
+/// session as a front end's frames do.
 fn settled_app(d: &mut HeadlessDriver, request: RequestId) -> Option<Terminal> {
-    let start = std::time::Instant::now();
-    loop {
-        if let Some(terminal) = terminal_app(d, request) {
-            return Some(terminal);
-        }
-        d.report(request)?;
-        assert!(
-            start.elapsed() < SETTLE_HANG_GUARD,
-            "the command never settled: its writer hung"
-        );
-        d.poll();
-        std::thread::sleep(std::time::Duration::from_millis(5));
-    }
+    d.report(request)?;
+    wait_for_command(d, request, "the application member terminal", |d| {
+        terminal_app(d, request).is_some()
+    });
+    terminal_app(d, request)
 }
-
-/// See [`settled_app`]: far above any disk delay of a loaded host.
-const SETTLE_HANG_GUARD: std::time::Duration = std::time::Duration::from_secs(600);
 
 fn rejected(rejection: crate::command::Rejection) -> Terminal {
     Settlement::Failed(CommandFailure::Rejected(rejection))
@@ -1946,21 +1946,19 @@ fn a_planned_start_or_copy_reports_only_through_its_result() {
     // Without a game data set the Starts fail: the result still settles,
     // with the failures (a failed Start is a terminal, never Pending).
     let command = d.session().fleet_plan().expect("plan").command();
-    d.submit(command, Targets::Plan).expect("run");
+    let run = d.submit(command, Targets::Plan).expect("run");
     let mut shown = Vec::new();
-    let drain = |d: &mut HeadlessDriver, shown: &mut Vec<String>| {
+    let take_notice = |d: &mut HeadlessDriver, shown: &mut Vec<String>| {
         if let Some(notice) = d.models_mut().scripts.take_notice() {
             shown.push(format!("{notice:?}"));
         }
-        d.poll();
     };
-    for _ in 0..400 {
-        drain(&mut d, &mut shown);
-        if d.session().fleet_result().is_some_and(|r| r.settled()) {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(5));
-    }
+    wait_for_command(&mut d, run.request(), "the fleet result", |d| {
+        take_notice(d, &mut shown);
+        d.session()
+            .fleet_result()
+            .is_some_and(|result| result.request() == Some(run.request()) && result.settled())
+    });
     let result = d.session().fleet_result().expect("result");
     assert!(result.settled(), "{} | shown {shown:?}", result.text());
     assert!(
@@ -1972,12 +1970,13 @@ fn a_planned_start_or_copy_reports_only_through_its_result() {
         .expect("unmark");
     assert_eq!(plan(&mut d, crate::FleetAction::CopySettings), Some(done()));
     let command = d.session().fleet_plan().expect("plan").command();
-    d.submit(command, Targets::Plan).expect("copy");
-    for _ in 0..5 {
-        drain(&mut d, &mut shown);
-        d.session_mut().flush_writes();
-    }
-    drain(&mut d, &mut shown);
+    let copy = d.submit(command, Targets::Plan).expect("copy");
+    wait_for_command(&mut d, copy.request(), "the fleet result", |d| {
+        take_notice(d, &mut shown);
+        d.session()
+            .fleet_result()
+            .is_some_and(|result| result.request() == Some(copy.request()) && result.settled())
+    });
     let result = d.session().fleet_result().expect("result");
     assert!(result.text().starts_with("Copy"), "{}", result.text());
     // An ordinary error (a Start that failed without a game) may show; a
@@ -2445,20 +2444,13 @@ fn copy_to_many(test: &str, count: usize) -> TestDriver {
     d
 }
 
-/// Poll as front-end frames do until the fleet result settles (a paced
-/// copy takes several rounds of saves).
-fn settle_result(d: &mut HeadlessDriver) {
-    let deadline = std::time::Instant::now() + SETTLE_HANG_GUARD;
-    while !d
-        .session()
-        .fleet_result()
-        .is_some_and(crate::FleetResult::settled)
-    {
-        assert!(std::time::Instant::now() < deadline, "the result hung");
-        d.session_mut().flush_writes();
-        d.poll();
-        std::thread::sleep(std::time::Duration::from_millis(2));
-    }
+/// Poll as front-end frames do until this request and its fleet result settle.
+fn settle_result(d: &mut HeadlessDriver, request: RequestId) {
+    wait_for_command(d, request, "the fleet result", |d| {
+        d.session()
+            .fleet_result()
+            .is_some_and(|result| result.request() == Some(request) && result.settled())
+    });
 }
 
 fn starts_held(d: &HeadlessDriver) -> bool {
@@ -2478,7 +2470,7 @@ fn a_native_copy_beyond_the_pending_save_bound_saves_every_bot() {
     for count in [67, 151] {
         let mut d = copy_to_many(&format!("f4-copy-{count}"), count);
         let command = d.session().fleet_plan().expect("plan").command();
-        d.submit(command, Targets::Plan).expect("run");
+        let run = d.submit(command, Targets::Plan).expect("run");
         assert!(starts_held(&d), "{count}: Starts wait for the copy");
         let queued = d
             .models()
@@ -2487,7 +2479,7 @@ fn a_native_copy_beyond_the_pending_save_bound_saves_every_bot() {
             .expect("copy report")
             .pending();
         assert_eq!(queued, count - 1, "{count}: every target waits its turn");
-        settle_result(&mut d);
+        settle_result(&mut d, run.request());
         let result = d.session().fleet_result().expect("result");
         assert_eq!(result.counts().done, count - 1, "{}", result.text());
         assert_eq!(result.counts().failed, 0, "{}", result.text());
@@ -2506,10 +2498,10 @@ fn a_native_copy_beyond_the_pending_save_bound_saves_every_bot() {
 fn cancelling_a_queued_copy_writes_no_waiting_bot_and_releases_starts() {
     let mut d = copy_to_many("f4-copy-cancel", 151);
     let command = d.session().fleet_plan().expect("plan").command();
-    d.submit(command, Targets::Plan).expect("run");
+    let run = d.submit(command, Targets::Plan).expect("run");
     d.submit(OperatorCommand::CancelSettingsSync, Targets::Application)
         .expect("cancel");
-    settle_result(&mut d);
+    settle_result(&mut d, run.request());
     let result = d.session().fleet_result().expect("result");
     let counts = result.counts();
     assert!(counts.skipped >= 150 - 48, "{}", result.text());
@@ -3455,13 +3447,9 @@ fn withdraw_case(waiting: Waiting, withdraw: Withdraw) {
         "{case}: nothing waits after the withdrawal"
     );
     drop(held);
-    for _ in 0..400 {
-        d.poll();
-        if terminal(&d, original, &target).is_some() {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(5));
-    }
+    wait_for_command(&mut d, original, "the cancelled member's terminal", |d| {
+        terminal(d, original, &target).is_some()
+    });
     assert_eq!(
         terminal(&d, original, &target),
         Some(operator_cancelled()),
@@ -3916,13 +3904,9 @@ fn a_failed_world_save_never_logs_the_bot_out() {
     std::fs::rename(&vault, dir.join("vault.aside")).expect("vault aside");
     std::fs::create_dir(&vault).expect("block");
     let run = confirm_switch(&mut d);
-    for _ in 0..400 {
-        land_saves(&mut d);
-        if terminal(&d, run, "alice").is_some() {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(5));
-    }
+    wait_for_command(&mut d, run, "the failed world-save terminal", |d| {
+        terminal(d, run, "alice").is_some()
+    });
     assert!(
         matches!(terminal(&d, run, "alice"), Some(Settlement::Failed(_))),
         "{:?}",

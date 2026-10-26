@@ -49,6 +49,25 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.6` 
 
 - The session log warning for a long background work step (`background work slice overrun`) now names the kind of work that ran long, for example profile preparation. The warning only names the work. The step still takes the same time.
 
+### Random events
+
+- The Guardian now handles a held random event when a running Load script
+  stops ignoring it, is paused or stopped, or fails. A later change by a
+  running script can return the same event to that script.
+  Before, a Strange box could remain unhandled and interrupt every walk.
+  This also affected 0.2.6.
+- Strange box handling now retries a missing Open response or answer result.
+  It uses game ticks and the game's messages and inventory changes.
+  Time while a script owns the box does not consume the Guardian's wait budget.
+  After bounded retries, it reports the last failure and releases the script
+  instead of waiting forever. A fresh message that the box replicated starts
+  another bounded set of attempts. This also affected 0.2.6.
+
+### Scripts
+
+- `Prayer.clear()` no longer repeats a prayer click before the game confirms
+  it in release builds. Its result now counts the clicks it sends.
+
 ### Survival
 
 - Combat and protected walks use a held antipoison dose or Strange fruit

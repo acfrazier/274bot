@@ -57,6 +57,37 @@ use crate::{
 /// a key; never reused, refused at exhaustion.
 static SLOT_KEYS: SlotKeyMinter = SlotKeyMinter::new();
 
+/// The script callback is edge-triggered. Load's cached ignore membership
+/// can change independently while the Guardian keeps the same solver.
+pub(crate) struct ScriptRandomClaims {
+    scripts: ScriptWall,
+    name: String,
+}
+
+impl ScriptRandomClaims {
+    pub(crate) fn new(scripts: ScriptWall, name: String) -> Self {
+        Self { scripts, name }
+    }
+}
+
+impl host::RandomClaimSource for ScriptRandomClaims {
+    fn on_random(&mut self, event: &DetectedRandom) -> RandomClaim {
+        let Some(slot) = script_slot(&self.scripts, &self.name) else {
+            return RandomClaim::Host;
+        };
+        let Ok(mut slot) = slot.lock() else {
+            return RandomClaim::Host;
+        };
+        slot.on_random(event)
+    }
+
+    fn current_claim(&mut self, event: &DetectedRandom) -> Option<RandomClaim> {
+        let slot = script_slot(&self.scripts, &self.name)?;
+        let slot = slot.lock().ok()?;
+        slot.current_random_claim(event)
+    }
+}
+
 /// Snapshot families whose new evidence can settle a parked machine.
 pub(crate) fn script_evidence_dirty(dirty: host::DirtyFamilies) -> bool {
     dirty.iface || dirty.inv || dirty.stat || dirty.chat
@@ -1397,17 +1428,8 @@ fn spawn_slot_thread(
                 let obs_name = username.clone();
                 let obs_catalog_core = slot_catalog_core.clone();
                 let obs_paired_core = slot_paired_core.clone();
-                let knock_name = username.clone();
-                let knock_scripts = Arc::clone(&slot_scripts);
-                let knock = move |ev: &DetectedRandom| -> RandomClaim {
-                    let Some(slot) = script_slot(&knock_scripts, &knock_name) else {
-                        return RandomClaim::Host;
-                    };
-                    let Ok(mut slot) = slot.lock() else {
-                        return RandomClaim::Host;
-                    };
-                    slot.on_random(ev)
-                };
+                let knock =
+                    ScriptRandomClaims::new(Arc::clone(&slot_scripts), username.clone());
                 run_policy = Host::run_client_with_event_policies(
                     &mut client,
                     &username,
