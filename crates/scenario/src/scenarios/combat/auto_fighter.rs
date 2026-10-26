@@ -396,6 +396,25 @@ pub(crate) fn auto_fighter_range_scenario() -> Scenario {
         false,
     )
 }
+/// The `auto_fighter_bank` cell's last watch, fresh Strength XP after the
+/// bank return, in **observed game ticks** (one per `PLAYER_INFO`; see
+/// [`Wait`]). The ordinary post-Start watch is
+/// [`SCRIPT_GOLD_WATCH_TICKS`] (150) and stays the default everywhere else.
+///
+/// `NIGHTLY-QUAL-1025/report.md` cell 4 measured why this one watch is
+/// wider. On two of three qualification runs the bot banked once,
+/// returned, took new Bones and banked a second time before it earned
+/// fresh Strength XP: the second Bones take to the qualifying attack took
+/// 115 and 111 host ticks, leaving only 35 to 39 of the ordinary 150-tick
+/// watch as slack. A trip slightly slower than the measured 115 would
+/// spend the whole watch on that extra bank cycle and fail the cell.
+///
+/// 320 is the ordinary 150-tick watch plus 170 ticks: it holds one full
+/// measured 111-115-tick extra bank cycle with 55 to 59 ticks to spare
+/// beyond the ordinary watch, and it matches the bank watches peer cells
+/// carry (the seeded Ardy Fighter's 320-tick style watch,
+/// `ardy_fighter.rs:19`). Only this cell's last step uses it.
+const AUTO_FIGHTER_BANK_FRESH_XP_WATCH_TICKS: u32 = 320;
 /// Custom Bones loot with burial disabled exercises AutoFighter's BankRun
 /// after a guaranteed Guard drop. No Bones are seeded: the script must loot
 /// them, deposit at East Ardougne, restock ten Trout, close, return and fight.
@@ -475,10 +494,30 @@ pub(crate) fn auto_fighter_bank_scenario() -> Scenario {
             },
         },
     );
+    // The extra bank cycle measured at NIGHTLY-QUAL-1025/report.md cell 4
+    // lands inside this last watch: the bot re-banks after taking new Bones
+    // following the return, so only this step gets the wider budget.
+    scenario
+        .steps
+        .iter_mut()
+        .find(|step| step.name == "watch fresh Strength XP after the bank return")
+        .expect("auto_fighter_bank has its fresh Strength XP watch")
+        .wait
+        .budget_ticks = AUTO_FIGHTER_BANK_FRESH_XP_WATCH_TICKS;
     // Preserve the existing post-Start allowance. Only the content-derived
     // pre-Start guard adds time, at Engine A's ordinary 600 ms game tick.
     scenario.settings.deadline +=
         Duration::from_millis(u64::from(AUTO_FIGHTER_FLOOR_CLEAR_TICKS) * 600);
+    // The wider last watch replaces the 150-tick ordinary watch the shared
+    // 180 s deadline was sized with, so the whole-cell cap grows by exactly
+    // the added 170 ticks (102 s), from 301.2 s to 403.2 s. The 320-tick
+    // watch alone runs 192 s, longer than the 180 s shared cap, and the
+    // slowest measured run (report cell 4, run 3) holds its return witness
+    // before the second Bones take at host tick 183: 183 + 320 = 503
+    // observed ticks would pass the old 502-tick cap.
+    scenario.settings.deadline += Duration::from_millis(
+        u64::from(AUTO_FIGHTER_BANK_FRESH_XP_WATCH_TICKS - SCRIPT_GOLD_WATCH_TICKS) * 600,
+    );
     scenario
 }
 
@@ -763,4 +802,104 @@ pub(crate) fn auto_fighter_food_override_scenario() -> Scenario {
             ),
         ],
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// From `NIGHTLY-QUAL-1025/report.md` cell 4: the second Bones take to
+    /// the qualifying attack took 115 and 111 host ticks in runs 2 and 3.
+    const MEASURED_EXTRA_BANK_CYCLE_TICKS: u32 = 115;
+
+    fn post_start_steps(scenario: &Scenario) -> &[Step] {
+        let start = scenario
+            .steps
+            .iter()
+            .position(|step| matches!(step.kind, StepKind::StartScript))
+            .expect("cell starts its card");
+        &scenario.steps[start + 1..]
+    }
+
+    /// The nightly failure mode: a second bank cycle spends the last watch.
+    /// The bank cell must outlast the ordinary watch plus one measured extra
+    /// cycle, and the widening must stay on that last step.
+    #[test]
+    fn bank_cell_last_watch_covers_the_measured_extra_bank_cycle() {
+        let bank = auto_fighter_bank_scenario();
+        let last = bank.steps.last().expect("the bank cell has steps");
+        assert!(
+            matches!(
+                last.wait.arm,
+                Proof::FreshStatXpGain {
+                    id: STRENGTH_STAT,
+                    min: 1
+                }
+            ),
+            "the widened step is the fresh Strength XP watch"
+        );
+        assert_eq!(last.wait.budget_ticks, 320);
+        assert!(
+            last.wait.budget_ticks > SCRIPT_GOLD_WATCH_TICKS + MEASURED_EXTRA_BANK_CYCLE_TICKS,
+            "the bank watch must outlast the ordinary watch plus one extra bank cycle"
+        );
+        let bank_watches = post_start_steps(&bank);
+        assert!(
+            bank_watches[..bank_watches.len() - 1]
+                .iter()
+                .all(|step| step.wait.budget_ticks == SCRIPT_GOLD_WATCH_TICKS),
+            "the widened budget stays on the last watch only"
+        );
+
+        // Peer cells keep the budget their own builder gives every post-Start
+        // watch: the targets cell's cell-wide 1050, the food cell's ordinary
+        // post-Start watch. Neither inherits the bank cell's override.
+        let targets = auto_fighter_targets_scenario();
+        let targets_last = targets.steps.last().expect("the targets cell has steps");
+        assert!(
+            post_start_steps(&targets)
+                .iter()
+                .all(|step| step.wait.budget_ticks == targets_last.wait.budget_ticks),
+            "the targets cell keeps its cell-wide watch"
+        );
+        assert_eq!(targets_last.wait.budget_ticks, 1050);
+
+        let food = auto_fighter_food_override_scenario();
+        let food_last = food.steps.last().expect("the food cell has steps");
+        assert!(
+            post_start_steps(&food)
+                .iter()
+                .all(|step| step.wait.budget_ticks == SCRIPT_GOLD_WATCH_TICKS),
+            "the food cell keeps the ordinary post-Start watch"
+        );
+        assert_eq!(food_last.wait.budget_ticks, 150);
+    }
+
+    /// The whole-cell cap must hold the wider watch in full. Report cell 4,
+    /// run 3 holds its return witness before the second Bones take at host
+    /// tick 183; the widened watch begins there. 183 + 320 = 503 ticks is
+    /// 301.8 s, past the old 301.2 s cap.
+    #[test]
+    fn bank_cell_deadline_holds_a_full_last_watch() {
+        const SLOWEST_MEASURED_WATCH_START_TICK: u32 = 183;
+        let bank = auto_fighter_bank_scenario();
+        let needed = Duration::from_millis(
+            u64::from(SLOWEST_MEASURED_WATCH_START_TICK + AUTO_FIGHTER_BANK_FRESH_XP_WATCH_TICKS)
+                * 600,
+        );
+        assert!(
+            bank.settings.deadline >= needed,
+            "the cap must hold a full last watch after the slowest measured prefix"
+        );
+        let old_cap = SCRIPT_GOLD_DEADLINE
+            + Duration::from_millis(u64::from(AUTO_FIGHTER_FLOOR_CLEAR_TICKS) * 600);
+        let added = Duration::from_millis(
+            u64::from(AUTO_FIGHTER_BANK_FRESH_XP_WATCH_TICKS - SCRIPT_GOLD_WATCH_TICKS) * 600,
+        );
+        assert_eq!(
+            bank.settings.deadline,
+            old_cap + added,
+            "the cap grows by exactly the added watch ticks"
+        );
+    }
 }
