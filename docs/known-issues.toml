@@ -282,6 +282,7 @@ text = """In the FlaxRunner script, the Spinner banking step does not check whet
   next loop, so work continues, but a trip can be wasted. The fix belongs to
   the upstream script."""
 first = "0.2.5"
+fixed = "0.2.7"
 target = "none"
 severity = "low"
 owner = "upstream rs2b0t FlaxRunner"
@@ -297,6 +298,7 @@ text = """The rs2b0t HerbloreSecondaries script does not eat while it walks, and
   pack. Run this script on an account with mid-level combat stats (the
   script's own tests use level 40) until the script is fixed upstream."""
 first = "0.2.5"
+fixed = "0.2.7"
 target = "none"
 severity = "medium"
 owner = "scripts-misc"
@@ -313,6 +315,7 @@ text = """The rs2b0t GnomeMagicChopper script looks for the Gnome Stronghold
   stuck, move the bot beside the south staircase and restart the script.
   The fix belongs to the upstream script."""
 first = "0.2.5"
+fixed = "0.2.7"
 target = "none"
 severity = "low"
 owner = "scripts-misc"
@@ -344,9 +347,9 @@ owner = "T2 survival"
 [[item]]
 id = "survival-poison-need-status"
 kind = "not-in-release"
-area = "Panel and TUI"
-text = """The panel and TUI do not show a status row for a poison-related cure
-  need. A poison-need status row is not included."""
+area = "Panel and terminal app"
+text = """The panel and terminal app do not show a status row for a poison-related
+  cure need. A poison-need status row is not included."""
 first = "0.2.7"
 target = "none"
 severity = "low"
@@ -378,3 +381,33 @@ listed = "0.2.7"
 target = "none"
 severity = "medium"
 owner = "T2.rest walking"
+
+[[item]]
+id = "copy-settings-renamed-target"
+kind = "known-issue"
+area = "Panel"
+text = """If you use **Copy settings** for a built-in card and rename one of the
+  target bots in **Profiles** before you press **Confirm**, the copy to that bot
+  fails with `settings copy cancelled: bot or vault unavailable`.
+  **Workaround:** rename the bot first, or run **Copy settings** again after
+  the rename. Found by code reading; not yet seen in a running app."""
+first = "0.2.0"
+listed = "0.2.7"
+target = "none"
+severity = "low"
+owner = "panel"
+
+[[item]]
+id = "firegiant-fight-loop-after-last-food"
+kind = "known-issue"
+area = "Scripts"
+text = """The rs2b0t FireGiant script can keep fighting after it eats its last
+  piece of food instead of leaving to bank, and it can attack a giant other
+  than the one hitting it. The bot can die in the fire giant room with an
+  empty pack. Watch the bot's food and stop the script when it runs low until
+  the script is fixed upstream."""
+first = "0.2.6"
+listed = "0.2.7"
+target = "none"
+severity = "medium"
+owner = "upstream rs2b0t FireGiant / survival phase 3"
