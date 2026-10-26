@@ -1,127 +1,301 @@
 # Changelog
 
-All notable public changes to 274bot. Host workspace crate versions are `0.2.6` and
+All notable public changes to 274bot. Host workspace crate versions are `0.2.7` and
 `publish = false` (not on crates.io). Git tags are `0.1.0`, `0.1.1`, …
 
-## Unreleased
+## [0.2.7] — 2026-10-26 — Beta 2
 
 ### Panel and terminal app
 
-- **Log out** now stops a bot whose login keeps failing. A bot that cannot
-  log in (the server is down or refuses it) retries with a growing wait of up
-  to 60 seconds. In 0.2.6 the panel's **Log out** button was greyed out for
-  such a bot and Fleet **Log out all** said "not logged in", so only quitting
-  stopped it. Log out is now offered for a bot that is logging in, waiting to
-  retry or queued, in the panel and the terminal app, for one bot and for
-  Fleet. It parks the bot logged out: no new login attempt starts after you
-  press it. A bot that never logged in still has nothing to log out of, and
-  the terminal app's `u` now says so instead of marking it logged out. The
-  login error line still fades after 15 seconds. **Log out marked** now
-  skips a bot whose login error is waiting for you to act; in 0.2.6 it logged
-  that bot out.
-- Saving shared preferences no longer waits for disk on the panel, TUI or bot
-  thread. Accepted saves continue when you close a settings window. A slow
-  save no longer erases an unsaved checkbox or folder entry during refresh.
-  Each saved change writes one log line that names the changed settings
-  without private text.
-  Quitting during initial preference loading now finishes accepted saves
-  within the shutdown limit or reports their cancellation. Rewriting an
-  unchanged preference file also writes its saved-state log line.
-- Script paint in the panel now follows rs2b0t's layout. The paint has a title bar with the title in the script's accent colour, 16-pixel rows, and rs2b0t's colours. Pause and Stop are compact buttons side by side. Only the small square at the right end of the title bar collapses the paint. The built-in Gatherer and Sherlock scripts now show the same Pause and Stop buttons on their paint. With input capture on, a click on the paint no longer also clicks the game under it.
-- With input capture on, the slot that receives a game press also receives its release. This still holds if the pointer leaves the Game Image. A focus change releases the held button from the slot that received the press.
-- The terminal app can now add a profile. Start `tui-play` on an empty vault to open a **New profile**
-  form. Type the username and the account's own game password. Press Enter to save. The app rejects
-  an empty password and saves nothing. Press `N` in the Fleet pane to add another profile.
-  `tui-play --user NAME` selects only a profile already in the vault. It does not create a profile
-  with a random password. An unknown name stops with a message that names how to add it. If the
-  vault does not exist, `tui-play --user NAME` stops before it asks for a passphrase or creates a
+- **Log out** now stops a bot whose login keeps failing. A bot that cannot log
+  in (the server is down or refuses it) retries with a growing wait of up to 60
+  seconds. In 0.2.6 the panel's **Log out** button was greyed out for such a bot
+  and Fleet **Log out all** said "not logged in", so only quitting stopped it.
+  Log out is now offered for a bot that is logging in, waiting to retry or
+  queued, in the panel and the terminal app, for one bot and for Fleet. It parks
+  the bot logged out: no new login attempt starts after you press it. A bot that
+  never logged in still has nothing to log out of, and the terminal app's `u`
+  now says so instead of marking it logged out. **Log out marked** now skips a
+  bot whose login error is waiting for you to act; in 0.2.6 it logged that bot
+  out.
+- Saving shared preferences no longer waits for disk on the panel or terminal
+  app. Accepted saves continue when you close a settings window. A slow save no
+  longer erases an unsaved checkbox or folder entry during refresh. Each saved
+  change writes one log line that names the changed settings without private
+  text. Quitting during initial preference loading now finishes accepted saves
+  within the shutdown limit or reports their cancellation.
+- Script paint in the panel now follows rs2b0t's layout. The paint has a title
+  bar with the title in the script's accent colour, 16-pixel rows, and rs2b0t's
+  colours. Pause and Stop are compact buttons side by side. Only the small
+  square at the right end of the title bar collapses the paint. The built-in
+  Gatherer and Sherlock scripts now show the same Pause and Stop buttons on
+  their paint. With input capture on, a click on the paint no longer also clicks
+  the game under it.
+- With input capture on, the bot that receives a mouse press in the game view
+  also receives its release. This still holds if the pointer leaves the
+  **Game Image**. A focus change releases the held button from the bot that
+  received the press.
+- The terminal app can now add a profile. Start `tui-play` on an empty vault to
+  open a **New profile** form. Type the username and the account's own game
+  password. Press Enter to save. The app rejects an empty password and saves
+  nothing. Press `N` in the Fleet pane to add another profile.
+  `tui-play --user NAME` selects only a profile already in the vault. It does
+  not create a profile with a random password. An unknown name stops with a
+  message that names how to add it. If the vault does not exist,
+  `tui-play --user NAME` stops before it asks for a passphrase or creates a
   vault.
-- The panel button and the terminal app's Fleet button now read **Log out**, as the panel's Fleet toolbar already did.
-- The panel's profile form also refuses to create a profile with an empty password, with the message `credentials: password required`, and saves nothing.
-- Stopping scripts now clears the Fleet label of every bot whose script was walking. Before, a bot that was walking when its script stopped kept the label `running` in the panel and the terminal app, while its Script section and the Fleet window's script column said `idle`. This was in 0.2.5 and 0.2.6. A walk you ordered yourself with **WalkTo** still shows `running` after a script Stop, because Stop does not end it. The Fleet label, the status filters, **Mark by status** and the Stop button's list of bots now read the same facts about each bot. The resource line now says `9 bots (9 in game)` instead of `9 bots (9 running)`: the number counts the bots that are in the game, not their scripts.
-- When the app refuses a command before it runs, the session log now records one info line with the command, the bots and the reason. The panel and the terminal app write the same line. This covers a refusal by the command itself, for example **Stop** on bots that have no script running, and a refusal the app makes before it sends the command: for example **Copy settings** with no bot focused, **Refresh catalog** with no catalog configured, **Load** on a path that is not a file, a profile import account that cannot be written, a terminal-app key, palette entry or menu item whose command cannot run now, and a terminal-app Guardian setting changed while no bot is focused. A greyed-out button cannot be clicked and records nothing. The panel now greys out these buttons while it would refuse their command, with a tooltip that says why: **Create vault** while the passphrase is empty or only spaces, **Unlock vault** while it is empty, the Local-profile debug buttons **TutSkip**, **Lumbridge**, the **Teles** destinations and **maxme**, and the Debug window's **Send** and **Confirm send**, while no focused bot is in a play session (for a send to marked bots, while no bot is marked), and the Loadouts item slots and **Add supply** while there is no loadout. Before, a click on them did nothing (maxme only wrote a status line inside the Debug window). A terminal-app key, palette entry or menu item that only opens a list or changes the view shows its message and records nothing, for example **W** with no fleet row under the cursor or on a server with one world. Before, the message showed on screen and the log had nothing, or the line had no reason or no bots.
-- A message on the panel's red line or the terminal app's message line now goes away by itself 15 seconds after it appears. An action that fixes the problem clears it at once. In the terminal app, a message that a key, palette entry or menu item shows because its command cannot run now clears as soon as the reason it names is gone: for example, focusing a bot clears "Log in: no bot selected", and picking a script clears "Script parameters: pick a script first". The one exception is "no message", which only a newer message replaces. The terminal app's "is not loaded" message clears when that bot is logged in, and focusing a bot clears "no focused profile" and the Guardian settings message. In the panel, focusing a bot clears "focus a bot first", and a finished save clears "profile is still saving". A newer message replaces it and starts its own 15 seconds. The same text shown again without a new refusal keeps its first 15 seconds. Before, a message stayed until you did something else that happened to clear it.
-- Hovering the Fleet's result line (for example "9 bots stopped") now shows its text in a normal tooltip. It was a thin column one letter wide and as tall as the window.
-- After a failed login, the panel's top line now keeps the login error in red for 15 seconds, also while the bot tries again, waits in the login queue or is logged out in that time. The bot's current state shows under the error. Before, the next state replaced the error almost at once, and the error came back when the next attempt failed. A successful login clears the error at once. A newer failed login replaces it and starts the 15 seconds again, also when its words are the same. The status rows of the panel and the terminal app show this error in red in place of the `last error` row. After the 15 seconds the `last error` row comes back, as before.
-- Right after you unlock the vault, and when you load bots one at a time, each bot now takes its place in your saved profile order at once. Before, such a bot could appear in the wrong place until the next refresh.
+- The panel button and the terminal app's Fleet button now read **Log out**, as
+  the panel's Fleet toolbar already did.
+- The panel's profile form also refuses to create a profile with an empty
+  password, with the message `credentials: password required`, and saves
+  nothing.
+- Stopping scripts now clears the Fleet label of every bot whose script was
+  walking. Before, a bot that was walking when its script stopped kept the label
+  `running` in the panel and the terminal app. Its Script section and the Fleet
+  window's script column said `idle`. This was in 0.2.5 and 0.2.6. A walk you
+  ordered yourself with **WalkTo** still shows `running` after a script Stop,
+  because Stop does not end it. The Fleet label, the status filters,
+  **Mark by status** and the Stop button's list of bots now read the same facts
+  about each bot. The resource line now says `9 bots (9 in game)` instead of
+  `9 bots (9 running)`: the number counts the bots that are in the game, not
+  their scripts.
+- When the app refuses a command, the session log now records one info line with
+  the command, the bots and the reason. The panel and the terminal app write the
+  same line. This covers a refusal by the command itself, for example **Stop**
+  on bots that have no script running. It also covers a refusal the app makes
+  before it sends the command. This includes **Copy settings** with no bot
+  focused and **Refresh catalog** with no catalog configured. It also includes
+  **Load** on a path that is not a file and a profile import account that cannot
+  be written. In the terminal app it also covers a key, palette entry or menu
+  item whose command cannot run now, and a Guardian setting changed while no bot
+  is focused. A terminal-app key, palette entry or menu item that only opens a
+  list or changes the view shows its message and records nothing. An example is
+  **W** with no fleet row under the cursor or on a server with one world.
+  Before, the message showed on screen and the log had nothing, or the line had
+  no reason or no bots.
+- The panel now greys out a button it would refuse and shows the reason in a
+  tooltip. A greyed-out button cannot be clicked and records nothing. This
+  covers **Create vault** while the passphrase is empty or only spaces, and
+  **Unlock vault** while it is empty. It also covers the Local-profile debug
+  buttons **TutSkip**, **Lumbridge**, the **Teles** destinations and **maxme**.
+  The Debug window's **Send** and **Confirm send** are greyed out while no
+  focused bot is in a play session. For a send to marked bots, they are greyed
+  out while no bot is marked. The Loadouts item slots and **Add supply** are
+  greyed out while there is no loadout. Before, a click on them did nothing
+  (**maxme** only wrote a status line inside the Debug window).
+- A message on the panel's red line or the terminal app's message line now
+  clears by itself after 15 seconds, or sooner when you fix the cause. An action
+  that fixes the problem clears it at once. In the terminal app, some messages
+  come from a key, palette entry or menu item whose command cannot run now. Such
+  a message clears as soon as the reason it names is gone. For example, focusing
+  a bot clears "Log in: no bot selected", and picking a script clears "Script
+  parameters: pick a script first". The one exception is "no message", which
+  only a newer message replaces. The terminal app's "is not loaded" message
+  clears when that bot is logged in. Focusing a bot clears "no focused profile"
+  and the Guardian settings message. In the panel, focusing a bot clears "focus
+  a bot first", and a finished save clears "profile is still saving". A newer
+  message replaces it and starts its own 15 seconds. The same text shown again
+  without a new refusal keeps its first 15 seconds. Before, a message stayed
+  until you did something else that happened to clear it.
+- Hovering the Fleet's result line (for example "9 bots stopped") now shows its
+  text in a normal tooltip. It was a thin column one letter wide and as tall as
+  the window.
+- After a failed login, the panel's top line now keeps the login error in red
+  for 15 seconds. It stays while the bot tries again, waits in the login queue
+  or is logged out in that time. The bot's current state shows under the error.
+  Before, the next state replaced the error almost at once, and the error came
+  back when the next attempt failed. A successful login clears the error at
+  once. A newer failed login replaces it and starts the 15 seconds again, also
+  when its words are the same. The status rows of the panel and the terminal app
+  show this error in red in place of the `last error` row. After the 15 seconds
+  the `last error` row comes back, as before.
+- Right after you unlock the vault, and when you load bots one at a time, each
+  bot now takes its place in your saved profile order at once. Before, such a
+  bot could appear in the wrong place until the next refresh.
+- After a bot logs out and in again, the chat lines from its earlier session no
+  longer stay in view until a new message arrives.
 
 ### Host
 
-- The session log warning for a long background work step (`background work slice overrun`) now names the kind of work that ran long, for example profile preparation. The warning only names the work. The step still takes the same time.
+- The session log warning for a long background work step
+  (`background work slice overrun`) now names the kind of work that ran long,
+  for example profile preparation. The warning only names the work. The step
+  still takes the same time.
 
 ### Random events
 
-- The Guardian now handles a held random event when a running Load script
-  stops ignoring it, is paused or stopped, or fails. A later change by a
-  running script can return the same event to that script.
-  Before, a Strange box could remain unhandled and interrupt every walk.
-  This also affected 0.2.6.
-- Strange box handling now retries a missing Open response or answer result.
-  It uses game ticks and the game's messages and inventory changes.
-  Time while a script owns the box does not consume the Guardian's wait budget.
-  After bounded retries, it reports the last failure and releases the script
-  instead of waiting forever. A fresh message that the box replicated starts
-  another bounded set of attempts. This also affected 0.2.6.
+- The Guardian now handles a held random event when a running script that asked
+  to handle that event itself stops ignoring it, is paused or stopped, or fails.
+  A later change by a running script can return the same event to that script.
+  Before, a Strange box could remain unhandled and interrupt every walk. This
+  also affected 0.2.6.
+- Strange box handling now retries a missing Open response or answer result. It
+  uses game ticks and the game's messages and inventory changes. Time while a
+  script owns the box does not count against the time the Guardian waits. After
+  bounded retries, it reports the last failure and releases the script instead
+  of waiting forever. A fresh message that the box replicated starts another
+  bounded set of attempts. This also affected 0.2.6.
 
 ### Scripts
 
-- `Prayer.clear()` no longer repeats a prayer click before the game confirms
-  it in release builds. Its result now counts the clicks it sends.
+- The FlaxRunner, GnomeMagicChopper and HerbloreSecondaries problems listed in
+  0.2.5 and 0.2.6 are fixed in rs2b0t itself. Update your rs2b0t folder to get
+  the fixes.
+
+- `Prayer.clear()` no longer repeats a prayer click before the game confirms it.
+  Its result now counts the clicks it sends.
 
 ### Survival
 
-- Combat and protected walks use a held antipoison dose or Strange fruit
-  before a health bite when poison makes a cure necessary. Walks that only
-  eat also drink a held cure before their next bite.
-- When a bot is poisoned, fighting and walk protection count the next poison hit before they decide to eat. A bot at full hitpoints no longer eats food that would heal nothing.
-- A new profile setting group, Survival and supplies, holds Cure poison: when needed (default), always, or never.
+- Combat and protected walks use a held antipoison dose or Strange fruit before
+  a health bite when poison makes a cure necessary. Walks that only eat also
+  drink a held cure before their next bite.
+- When a bot is poisoned, fighting and walk protection count the next poison hit
+  before they decide to eat. A bot at full hitpoints no longer eats food that
+  would heal nothing.
+- A new profile setting group, **Survival and supplies**, holds **Cure poison**:
+  **When needed** (the default), **Always** or **Never**.
 
-### Developer tools
+### Documentation
 
-- Navigation generation now lives in `nav-bake`. Build `nav-pack`, `cache-content-id`, and `nav-input-audit` from that crate. Runtime planning stays in `nav-planner`. This ownership change keeps v17 pack bytes and routes unchanged, apart from the generator identity in generated metadata.
+- New guides explain the panel window, working with many bots, and the settings.
+  A reference page lists every Fleet action.
+- The built-in scripts guide now explains how to follow a Quester run in the Log
+  window and how to load your own quest guides. Writing a quest guide has its
+  own page for script authors.
 
 ### Fixed during development
 
 - Startup waits for saved preferences before it chooses and loads a profile.
-  Saving a new profile during that wait keeps the terminal app's original boot load and login.
-  Renaming the boot profile keeps its pending load attached to the same profile.
-- `tui-play --user NAME` stops on a missing vault before it prepares the game cache or reads the engine login key. The message is the same. A local server with no engine directory still stops with the engine-directory error.
-- Saving the first profile now waits for saved preferences before it loads
-  or logs in. The panel and terminal app use their existing startup gates.
+  Saving a new profile during that wait keeps the terminal app's original boot
+  load and login. Renaming the boot profile keeps its pending load attached to
+  the same profile.
+- `tui-play --user NAME` stops on a missing vault before it prepares the game
+  cache or reads the engine login key. The message is the same. A local server
+  with no engine directory still stops with the engine-directory error.
+- Saving the first profile now waits for saved preferences before it loads or
+  logs in. The panel and terminal app use their existing startup gates.
 - Selecting a bot before preferences finish loading now keeps that bot focused.
   Startup restoration no longer changes a manual command's target during
-  preference adoption. This applies to the panel and terminal app.
-  Fleet **Log in** also keeps the bot it selects. Removing or deleting a
-  pending restore target prevents startup from restoring it. An early
-  terminal selection cancels startup focus, but keeps the boot load and login.
+  preference adoption. This applies to the panel and terminal app. Fleet
+  **Log in** also keeps the bot it selects. Removing or deleting a pending
+  restore target prevents startup from restoring it. An early terminal selection
+  cancels startup focus, but keeps the boot load and login.
 - A terminal-app preference error now clears after 15 seconds without returning
-  on the next refresh. Recovery clears that error without erasing a newer message.
-
-#### Developer tools
-
-- Live checks that prepare bank stock now send each seed deposit once and wait
-  for the bank to confirm it within the step's existing game-tick budget.
-  A delayed confirmation no longer fails after two ticks.
-  A missing seed or refused deposit still fails.
-  Their receipts retain deposit attempts, proof ticks and inventory revisions.
-- The Betty shop buyout check allows 502 seconds for its complete
-  shop, bank and return cycle. Five measured cycles took 409 to 418 seconds.
-  Its purchase, deposit, return and resumed-purchase checks stay unchanged.
-
-#### Client
-
-- The game client no longer crashes when its stored frame time is ahead of the current time.
+  on the next refresh. Recovery clears that error without erasing a newer
+  message.
 
 #### Survival
 
-- Strange fruit waits for the game's food delay after a bite. Eating the fruit also delays the next combat attack.
+- Strange fruit waits for the game's food delay after a bite. Eating the fruit
+  also delays the next combat attack.
 
 #### Profile settings
 
-- When you save Survival or script settings, the session log shows each setting's
-  value before and after the saved change. A failed save adds no line.
+- When you save Survival or script settings, the session log shows each
+  setting's value before and after the saved change. A failed save adds no line.
   An edit replaced before it is saved also adds no line.
-- The Cure poison labels now limit **When needed** to combat and protected walks and do not claim a poison status row.
+- The Cure poison labels now limit **When needed** to combat and protected walks
+  and do not claim a poison status row.
+
+### Not in this release
+
+- Native bank sorting (`sortBank`), quest-junk discovery (`findQuestJunk`), pack
+  purging at a bank (`purgePackAtBank`) and coin withdrawal (`withdrawCoins`)
+  are **Planned**, not included here. These calls still report `not impl`;
+  moving existing banking into the native seat does not implement them. 0.2.4 to
+  0.2.6 have the same problem.
+- Caller-supplied bank-cost routers (`nearestWalkableBank`,
+  `nearestWalkableBankAsync`, `bankCostForFinder`, `bankCostForNavigator`) and
+  random bank pacing (`bankPace`, `bankPaceTicks`) remain deliberately
+  unavailable. The host does not recreate the foreign router or random pacing.
+  0.2.4 to 0.2.6 have the same problem.
+- The JiveKBD hunting script (King Black Dragon) does not yet bring back Dragon
+  bones reliably. In long fights it can run out of food before the dragon dies
+  and return to the bank without the bones. A fix is planned with the native
+  hunting rewrite. 0.2.4 to 0.2.6 have the same problem.
+- When Grinch banks, it uses the shared bank trip, which still waits up to a
+  fixed time for some bank steps. These waits are planned to become game-timed.
+  0.2.5 to 0.2.6 have the same problem.
+- A bot can't get through a door that another player closes again on every tick,
+  when that player's moves are handled before the bot's. The bot tries the door
+  until its retries run out and then stops at the door. Finding another way
+  around, changing worlds when allowed, and a clear "door held shut" result are
+  planned for a later release. 0.2.5 to 0.2.6 have the same problem.
+- Sherlock was meant to be a native clue solver. In practice it runs on the clue
+  machine ported for rs2b0t clue scripts, so it is available only in builds that
+  include the JS script runtime (every release build does). A native clue solver
+  is planned. 0.1.8 to 0.2.6 have the same problem.
+- The northern Desert Mining Camp mine stays hidden. Its minecart needs dialogue
+  and a chance-gated crossing that the bot does not yet support. There are still
+  85 hidden gathering sites on revision 289 and 66 on 274. 0.2.5 to 0.2.6 have
+  the same problem.
+- After a super antipoison the bot counts only the ordinary immunity time (120
+  game ticks instead of 570), so it may drink again sooner than needed. It is
+  still immune for the real time. Counting the super immunity is planned for a
+  later release.
+- Cure poison does not interrupt Gatherer or Quester steps to drink a held
+  antipoison when poison makes a cure necessary. This behavior is not included.
+- The panel and terminal app do not show a status row for a poison-related cure
+  need. A poison-need status row is not included.
+
+### Known issues
+
+- **Panel (Linux):** on a desktop with two graphics chips (for example a Ryzen
+  with built-in graphics plus a separate graphics card), the panel can close
+  right after it starts with "importing the supplied dmabufs failed". Start it
+  with `WGPU_POWER_PREF=high ./panel-play` until this is fixed. 0.2.0.2 to 0.2.6
+  have the same problem.
+- **Navigation:** With the default Danger routing setting, **When survivable**,
+  bots can refuse walks and bank trips through dangerous monsters instead of
+  checking whether the account can survive the trip. For example, a bot at Rock
+  Crabs can report that no bank is reachable instead of walking to Seers'
+  Village. **Workaround:** set Nav → Danger routing to **Always** (allow danger
+  zones). This permits dangerous routes. Use it only when the account can handle
+  the monsters on the route. 0.2.0 to 0.2.6 have the same problem.
+- **Quester:** The Quester has routes for 20 of the 68 quests. Routes for the
+  other quests are planned in waves. 0.2.0 to 0.2.6 have the same problem.
+- **Scripts:** The Brimhaven Agility Arena script can stop at a plank or pillar
+  it cannot use. The cause is under investigation. 0.2.0 to 0.2.6 have the same
+  problem.
+- **Banking:** `Bank.depositAllMatching` checks about one item per game tick, so
+  large deposits can be slow. A fix is planned for a later release. 0.2.4 to
+  0.2.6 have the same problem.
+- **Scripts:** The rs2b0t Thiever script waits about three game ticks longer
+  than the game requires after each stun, so it gains Thieving XP more slowly
+  than it could. A fix is planned with the native thieving rework. 0.2.4 to
+  0.2.6 have the same problem.
+- **Gatherer:** The lower Desert Mining Camp mine supports Power mode only and
+  requires The Tourist Trap complete. Bank mode refuses this site because the
+  bot cannot remove the slave kit to leave the camp. 0.2.5 to 0.2.6 have the
+  same problem.
+- **Scripts:** With "Pause script on manual movement" off, a script that acts in
+  place can continue after you move the bot yourself. This affects rs2b0t
+  scripts without a Gather or Combat session and built-in scripts other than
+  Quester fights. With the setting on, any running rs2b0t script pauses. A
+  built-in script pauses while it walks or acts, but not between actions. 0.2.6
+  has the same problem.
+- **Panel:** If WalkTo is open while you change Fleet marks, WalkTo keeps the
+  earlier selection until you click **Walk N bots**. **Workaround:** after
+  changing Fleet marks, click **Walk N bots**, or close and reopen WalkTo. 0.2.6
+  has the same problem.
+- **Scripts:** When a script walks from Karamja to the mainland without the 30
+  coins for the boat (`Traversal.walkTo`), the host earns the fare by working
+  for Luthas. If the bot cannot reach Luthas once after filling the banana
+  crate, the walk returns `false` instead of trying again from where the bot
+  stands, so the fare is not paid and the bot does not cross. 0.2.6 has the same
+  problem.
+- **Panel:** If you use **Copy settings** for a built-in card and rename one of
+  the target bots in **Profiles** before you press **Confirm**, the copy to that
+  bot fails with `settings copy cancelled: bot or vault unavailable`.
+  **Workaround:** rename the bot first, or run **Copy settings** again after the
+  rename. Found by code reading; not yet seen in a running app. 0.2.0 to 0.2.6
+  have the same problem.
+- **Scripts:** The rs2b0t FireGiant script can keep fighting after it eats its
+  last piece of food instead of leaving to bank, and it can attack a giant other
+  than the one hitting it. The bot can die in the fire giant room with an empty
+  pack. Watch the bot's food and stop the script when it runs low until the
+  script is fixed upstream. 0.2.6 has the same problem.
 
 ## [0.2.6] — 2026-10-23 — Beta 2
 
