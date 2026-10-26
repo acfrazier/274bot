@@ -626,7 +626,7 @@ mod api_gather_live_tests;
 mod api_gather_tests;
 #[cfg(test)]
 mod bank_core_live;
-#[cfg(all(test, feature = "js"))]
+#[cfg(test)]
 mod bank_fetch_closed_live;
 #[cfg(test)]
 mod bank_memory_live;
