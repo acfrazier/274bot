@@ -597,11 +597,12 @@ pub fn window(ui: &Ui, session: &mut Session) {
             // frame computes nothing.
             fleet_toolbar::body(ui, session, fleet_toolbar::Site::Window, true);
             column_toggles(ui, session);
-            // A Load-order write that is pending or failed (a reorder, or
-            // the quiet write after a rename or delete) says so here.
-            crate::app::setting_feedback_line(ui, session, frontend_core::Setting::ProfileOrder);
             ui.separator();
             table(ui, session);
+            // A Load-order write that is pending or failed (a reorder, or
+            // the quiet write after a rename or delete) says so below the
+            // table, so the rows never move while it saves.
+            crate::app::setting_feedback_line(ui, session, frontend_core::Setting::ProfileOrder);
             #[cfg(test)]
             record_window_layout(ui);
         });
