@@ -1,7 +1,9 @@
 use crossterm::event::{KeyCode, MouseEventKind};
 
 use api::snapshot::ChatOptionView;
-use frontend_core::scripts::{CardRuntime, CardSource, CompiledCardId, ScriptChoice};
+#[cfg(not(feature = "js"))]
+use frontend_core::scripts::CompiledCardId;
+use frontend_core::scripts::{CardRuntime, CardSource, ScriptChoice};
 
 use crate::app::{AppAction, TuiApp};
 use crate::bin::seam::Seam;

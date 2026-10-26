@@ -239,6 +239,7 @@ impl Fixture {
         self.core.flush_writes();
     }
 
+    #[cfg(not(feature = "js"))]
     fn assign_compiled(&mut self, name: &str, id: script::CompiledId) {
         assert!(self.scripts.persist_assignment(
             &mut self.core,
