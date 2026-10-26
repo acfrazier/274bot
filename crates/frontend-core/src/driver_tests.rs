@@ -3044,7 +3044,7 @@ fn wait_state(d: &mut HeadlessDriver, name: &str, want: ScriptRunState) {
 
 /// Start the assigned native script on `name` and publish the helper's
 /// frame on its status row, as the slot's observe does after a tick.
-fn run_helper(d: &mut HeadlessDriver, name: &str, generation: u64) {
+fn run_compiled_helper(d: &mut HeadlessDriver, name: &str, generation: u64) {
     let start = d
         .submit(OperatorCommand::StartScript, Targets::Profile(name))
         .expect("start");
@@ -3052,6 +3052,31 @@ fn run_helper(d: &mut HeadlessDriver, name: &str, generation: u64) {
     wait_state(d, name, ScriptRunState::Running);
     helper_paint(generation).publish(d.session().play().expect("play"), name);
     d.poll();
+}
+
+/// Start a real Load script on `name` and publish the helper's frame on its
+/// status row, as the slot's observe does after a tick.
+#[cfg(feature = "js")]
+fn run_helper(d: &mut HeadlessDriver, name: &str, generation: u64) {
+    d.session()
+        .play()
+        .expect("play")
+        .script_start_load(
+            name,
+            "export function tick(api) { api._n = (api._n || 0) + 1 }".into(),
+            script_js::LoadShape::NativeTick,
+            None,
+            vec![],
+        )
+        .expect("start");
+    wait_state(d, name, ScriptRunState::Running);
+    helper_paint(generation).publish(d.session().play().expect("play"), name);
+    d.poll();
+}
+
+#[cfg(not(feature = "js"))]
+fn run_helper(d: &mut HeadlessDriver, name: &str, generation: u64) {
+    run_compiled_helper(d, name, generation);
 }
 
 fn paint_driver_with_card(
@@ -3072,12 +3097,25 @@ fn paint_driver_with_card(
     assert_eq!(plan(&mut d, crate::FleetAction::Assign), Some(done()));
     run_plan(&mut d);
     for (i, name) in names.iter().enumerate() {
-        run_helper(&mut d, name, 40 + i as u64);
+        run_compiled_helper(&mut d, name, 40 + i as u64);
     }
     d
 }
 fn paint_driver(test: &str, names: &[&str]) -> TestDriver {
-    paint_driver_with_card(test, names, gatherer())
+    #[cfg(feature = "js")]
+    {
+        let mut d = driver(test, names);
+        d.submit(OperatorCommand::Load, Targets::Everyone)
+            .expect("load");
+        for (i, name) in names.iter().enumerate() {
+            run_helper(&mut d, name, 40 + i as u64);
+        }
+        d
+    }
+    #[cfg(not(feature = "js"))]
+    {
+        paint_driver_with_card(test, names, gatherer())
+    }
 }
 
 /// `name`'s displayed frame, as a front end reads it each frame.
@@ -3440,6 +3478,7 @@ enum Waiting {
     /// A paced place behind another bot's Start (fleet Start).
     Paced,
     /// A fleet Assign & restart waiting for its compiled assignment write.
+    #[cfg(not(feature = "js"))]
     CompiledRestartAfterWrite,
     /// A loaded card's preparation for a single Start (untallied).
     #[cfg(feature = "js")]
@@ -3464,8 +3503,9 @@ enum Withdraw {
     Cancel,
 }
 
-/// Planned Stop, Stop Everyone and explicit Cancel each reach the native
-/// paced Start and the native Assign & restart waiting behind its write.
+/// Planned Stop, Stop Everyone and explicit Cancel reach the native paced
+/// Start and the native Assign & restart waiting behind its write.
+#[cfg(not(feature = "js"))]
 #[test]
 fn every_native_waiting_start_is_withdrawn_by_stop_stop_everyone_and_cancel() {
     for waiting in [Waiting::Paced, Waiting::CompiledRestartAfterWrite] {
@@ -3479,12 +3519,17 @@ fn every_native_waiting_start_is_withdrawn_by_stop_stop_everyone_and_cancel() {
     }
 }
 
-/// Preserve the loader, catalogue and loaded-assignment Start withdrawal
-/// cases for the full JS product.
+/// Review F3 r3 (shadow High and sol61 1): planned Stop, Stop Everyone and
+/// an explicit Cancel each reach every place a Start waits. The original
+/// command's member settles cancelled, the Stop or Cancel member is done,
+/// and nothing starts later. A catalog Assign & restart withdrawn before
+/// the scan writes nothing; one withdrawn behind its write keeps the
+/// assignment and drops only the Start.
 #[cfg(feature = "js")]
 #[test]
-fn every_js_waiting_start_is_withdrawn_by_stop_stop_everyone_and_cancel() {
+fn every_waiting_start_is_withdrawn_by_stop_stop_everyone_and_cancel() {
     for waiting in [
+        Waiting::Paced,
         Waiting::Preparation,
         Waiting::FleetPreparation,
         Waiting::CatalogRestart,
@@ -3499,7 +3544,6 @@ fn every_js_waiting_start_is_withdrawn_by_stop_stop_everyone_and_cancel() {
         }
     }
 }
-
 fn withdraw_case(waiting: Waiting, withdraw: Withdraw) {
     let case = format!("{waiting:?}/{withdraw:?}");
     let dir = scratch(&format!("f3-withdraw-{waiting:?}-{withdraw:?}").to_lowercase());
@@ -3527,6 +3571,7 @@ fn withdraw_case(waiting: Waiting, withdraw: Withdraw) {
             let (start, queued) = queued_start(&mut d, &["alice", "bob"]);
             (queued[0].clone(), start)
         }
+        #[cfg(not(feature = "js"))]
         Waiting::CompiledRestartAfterWrite => {
             load(&mut d, &["alice"]);
             mark(&mut d, &["alice"]);
@@ -3683,6 +3728,7 @@ fn withdraw_case(waiting: Waiting, withdraw: Withdraw) {
         Waiting::CatalogRestart => {
             assert_eq!(assignment(&d, &target), None, "{case}: nothing written")
         }
+        #[cfg(not(feature = "js"))]
         Waiting::CompiledRestartAfterWrite => {
             assert!(
                 assignment(&d, &target).is_some(),
@@ -3696,7 +3742,10 @@ fn withdraw_case(waiting: Waiting, withdraw: Withdraw) {
                 "{case}: the write is kept"
             )
         }
-        _ => {}
+        #[cfg(feature = "js")]
+        Waiting::Paced | Waiting::Preparation | Waiting::FleetPreparation => {}
+        #[cfg(not(feature = "js"))]
+        Waiting::Paced => {}
     }
 }
 
@@ -4389,6 +4438,26 @@ fn publish_walks(d: &HeadlessDriver, names: &[&str], walk: Option<(i32, i32, i32
     }
 }
 
+#[cfg(feature = "js")]
+fn start_loop_scripts(d: &mut HeadlessDriver, names: &[&str]) {
+    for name in names {
+        d.session()
+            .play()
+            .expect("play")
+            .script_start_load(
+                name,
+                "export function tick(api) {}".into(),
+                script_js::LoadShape::NativeTick,
+                None,
+                vec![],
+            )
+            .expect("start");
+    }
+    for name in names {
+        wait_state(d, name, ScriptRunState::Running);
+    }
+}
+
 fn start_compiled_scripts(d: &mut HeadlessDriver, names: &[&str]) {
     let data = api::game_data::for_revision(api::selected::ClientRevision::R289).expect("data");
     d.session_mut()
@@ -4439,6 +4508,9 @@ fn nine_running_with_three_walks(test: &str) -> TestDriver {
     let mut d = driver(test, &NINE);
     load(&mut d, &NINE);
     publish_in_game(&d, &NINE);
+    #[cfg(feature = "js")]
+    start_loop_scripts(&mut d, &NINE);
+    #[cfg(not(feature = "js"))]
     start_compiled_scripts(&mut d, &NINE);
     publish_walks(&d, &NINE[..3], Some((2550, 3348, 0)));
     d.poll();
