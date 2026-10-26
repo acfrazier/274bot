@@ -2250,12 +2250,17 @@ fn explicit_cancel_relog_and_removal_settle_the_queued_start_command() {
 #[cfg(feature = "js")]
 const SETTINGS_CARD: &str = "export const SETTINGS = { target: { type: 'string', default: 'Guard' } };\nexport default class T extends LoopingBot { override loop() {} }\n";
 
-/// Load alice, bob and carol, give all a compiled Gatherer card (its copy is
-/// a profile write, so it lands without a game data set), focus alice and
-/// plan a copy of her settings to bob and carol (marked).
+/// Load alice, bob and carol, give all a compiled Gatherer card, focus alice
+/// and plan a copy of her settings to bob and carol (marked). Binding the
+/// selected game data before loading lets native Gatherer settings persist.
 fn copy_plan(test: &str) -> TestDriver {
     let dir = scratch(test);
     let mut d = driver_in(&dir, &["alice", "bob", "carol"]);
+    let data = api::game_data::for_revision(api::selected::ClientRevision::R289).expect("data");
+    d.session_mut()
+        .play_mut()
+        .expect("play")
+        .bind_script_test_data(data);
     load(&mut d, &["alice", "bob", "carol"]);
     let select = d
         .submit(OperatorCommand::Select, Targets::Profile("alice"))
@@ -3197,6 +3202,7 @@ fn native_paint_controls_case(
     let mut d = paint_driver_with_card(test, &["alice"], card);
     d.poll();
     publish_native_paint(&d, "alice", paint);
+    d.poll();
     let running = shown(&d, "alice");
     assert_eq!(
         labels(&running),
@@ -4647,8 +4653,8 @@ fn a_repeated_stop_logs_one_refusal_line() {
 }
 
 /// PANEL-STATE-GAP-1023: every refusal line holds the command, the bots and
-/// the reason. A refused submission names the bots the caller gave. A refused
-/// member that carries no text still names its typed reason.
+/// the reason. The member case uses a native command available in every build
+/// and asserts that its typed reason appears in the log line.
 #[test]
 fn a_refusal_line_names_the_command_the_bots_and_the_reason() {
     use crate::log::{global, LogScope, LogView};
@@ -4657,7 +4663,7 @@ fn a_refusal_line_names_the_command_the_bots_and_the_reason() {
     load(&mut d, &[BOT]);
     let lines_with = |needle: &str| -> Vec<String> {
         let mut view = LogView::new(LogScope::Process);
-        view.edit_filter(|filter| filter.set_text("command refused: PrepareScriptCard"));
+        view.edit_filter(|filter| filter.set_text("command refused: UnlockVault"));
         global().refresh(&mut view);
         view.rows()
             .iter()
@@ -4669,13 +4675,13 @@ fn a_refusal_line_names_the_command_the_bots_and_the_reason() {
     // A command for the application, given a bot: refused before it opens.
     let before = d.session().refusals();
     assert!(d
-        .submit(OperatorCommand::PrepareScriptCard, Targets::Profile(BOT))
+        .submit(OperatorCommand::UnlockVault, Targets::Profile(BOT))
         .is_err());
     assert_eq!(d.session().refusals(), before + 1);
     let named = lines_with(BOT);
     assert_eq!(named.len(), 1, "{named:?}");
     for part in [
-        "PrepareScriptCard",
+        "UnlockVault",
         "on psg5r-bot",
         "cannot take these targets",
     ] {
@@ -4686,12 +4692,12 @@ fn a_refusal_line_names_the_command_the_bots_and_the_reason() {
         );
     }
 
-    // A member refused with a typed reason and no text.
-    d.submit(OperatorCommand::PrepareScriptCard, Targets::Application)
+    // The native command is admitted, then refused with a typed reason.
+    d.submit(OperatorCommand::UnlockVault, Targets::Application)
         .expect("opened");
     assert_eq!(d.session().refusals(), before + 2);
-    let bare = lines_with("on application: NotStaged");
-    assert!(!bare.is_empty(), "the typed reason is in the line");
+    let typed = lines_with("on application: NotStaged: vault: nothing staged for this row");
+    assert!(!typed.is_empty(), "the typed reason is in the line");
 }
 
 // ---- LOGOUT-RETRY-1025: Log out reaches a login that is still retrying ----
