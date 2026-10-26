@@ -2712,6 +2712,7 @@ fn a_plan_whose_last_target_is_gone_ends_with_named_skips() {
     );
 }
 
+#[cfg(feature = "js")]
 /// Review F3-4: an emptied copy plan gives back its prepared scope (and
 /// with it the start hold) and writes nothing.
 #[test]
@@ -2728,6 +2729,38 @@ fn an_emptied_copy_plan_releases_its_scope() {
         d.models().scripts().prepared_settings_sync().is_none(),
         "the prepared scope is released"
     );
+    let result = d.session().fleet_result().expect("result");
+    assert!(result.settled(), "{}", result.text());
+    assert_eq!(result.counts().skipped, 2, "{}", result.text());
+}
+
+#[cfg(not(feature = "js"))]
+#[test]
+fn an_emptied_native_copy_plan_releases_its_scope_and_start_hold() {
+    let mut d = native_copy_plan("native-emptied-copy");
+    assert!(d
+        .session()
+        .play()
+        .expect("play")
+        .script_start_wait_reason()
+        .is_some());
+    let vault = d.session_mut().vault_mut().expect("vault");
+    assert!(vault.remove("bob").expect("remove bob"));
+    assert!(vault.remove("carol").expect("remove carol"));
+    d.poll();
+    let command = d.session().fleet_plan().expect("plan").command();
+    d.submit(command, Targets::Plan)
+        .expect("an emptied plan ends");
+    assert!(
+        d.models().scripts().prepared_settings_sync().is_none(),
+        "the prepared scope is released"
+    );
+    assert!(d
+        .session()
+        .play()
+        .expect("play")
+        .script_start_wait_reason()
+        .is_none());
     let result = d.session().fleet_result().expect("result");
     assert!(result.settled(), "{}", result.text());
     assert_eq!(result.counts().skipped, 2, "{}", result.text());
