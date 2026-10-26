@@ -3,6 +3,8 @@
 All notable public changes to 274bot. Host workspace crate versions are `0.2.7` and
 `publish = false` (not on crates.io). Git tags are `0.1.0`, `0.1.1`, …
 
+## Unreleased
+
 ## [0.2.7] — 2026-10-26 — Beta 2
 
 ### Panel and terminal app
