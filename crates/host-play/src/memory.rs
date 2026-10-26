@@ -7,8 +7,9 @@
 //!
 //! Idle windows require a script-free fleet. Thiever windows require the
 //! fixture's complete initial Lobster pack and no first bank trip. Qualification
-//! arms each bot's PLAYER_INFO counter. Both the configured warmup and its
-//! 600 ms game-tick equivalent must finish before observation starts. A missed
+//! arms each bot's PLAYER_INFO counter. Both the configured warmup and a tick
+//! floor (the warmup in 600 ms game ticks, rounded down) must finish before
+//! observation starts, so a stalled bot still blocks the window. A missed
 //! phase is terminal, even if a bot later returns to its initial state.
 //! Qualification rows save the rule and every bot's tick, food, bank and tile
 //! facts. Other catalog scenarios explicitly report `phase not gated`.
