@@ -849,6 +849,61 @@ fn count_before(line: &str, label: &str) -> i64 {
         .unwrap_or(-1)
 }
 
+/// Cow eat line: `2 × danger + 1` with danger 1 (`select.rs`, js-api-v2).
+const COW_EAT_LINE: i64 = 3;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EatVerdict {
+    /// The fight started at or below the eat line, the bot ate, and
+    /// hitpoints finished above the line.
+    AteAtLine,
+    /// The fight started above the eat line and the bot did not eat.
+    NoEatAboveLine,
+}
+
+/// Hitpoints in a showcase line (`HP 3/40` → 3). `-1` when the line has none.
+fn hp_of(line: &str) -> i64 {
+    line.split("HP ")
+        .nth(1)
+        .and_then(|rest| rest.split('/').next())
+        .and_then(|digits| digits.trim().parse().ok())
+        .unwrap_or(-1)
+}
+
+/// The documented eat rule for one showcase phase.
+///
+/// `eat_line` is `2 × danger + 1`. A receipt passes when the fight started
+/// at or below that line, the bot ate at least once, and hitpoints finished
+/// above the line. It fails when the bot never ate at or below the line,
+/// when the end line has no `ate` count, when hitpoints did not finish above
+/// the line, or when the bot ate while already above the line.
+fn showcase_eat_verdict(
+    start_line: &str,
+    end_line: &str,
+    eat_line: i64,
+) -> Result<EatVerdict, &'static str> {
+    let start_hp = hp_of(start_line);
+    let end_hp = hp_of(end_line);
+    let ate = count_after(end_line, "ate");
+    if start_hp < 0 || end_hp < 0 || ate < 0 {
+        return Err("eat receipt is missing ate or hitpoints");
+    }
+    if start_hp > eat_line {
+        return if ate == 0 {
+            Ok(EatVerdict::NoEatAboveLine)
+        } else {
+            Err("ate while above the eat line")
+        };
+    }
+    if ate < 1 {
+        return Err("never ate at or below the eat line");
+    }
+    if end_hp <= eat_line {
+        return Err("end hitpoints are not above the eat line");
+    }
+    Ok(EatVerdict::AteAtLine)
+}
+
 /// The external-path showcase (`examples/combat_showcase_v2.ts`) end to end,
 /// seeded exactly as its header says.
 #[test]
@@ -879,7 +934,7 @@ fn live_api_combat_showcase_script_runs_every_phase() {
             "give shrimp 20",
             "give 3doseprayerrestore 2",
             "setvar prayer0 1",
-            "~stat_drain hitpoints 36 0",
+            "~stat_drain hitpoints 37 0",
             "~stat_drain prayer 17 0",
         ]
         .into_iter()
@@ -888,7 +943,7 @@ fn live_api_combat_showcase_script_runs_every_phase() {
         vec![THICK_SKIN_VARP],
         |snapshot| {
             let stat = |index: i32| snapshot.stats().iter().find(|stat| stat.index == index);
-            stat(3).is_some_and(|stat| stat.base == 40 && stat.effective <= 4)
+            stat(3).is_some_and(|stat| stat.base == 40 && stat.effective == 3)
                 && stat(5).is_some_and(|stat| stat.base == 43 && stat.effective <= 26)
                 && snapshot
                     .inventory()
@@ -952,8 +1007,17 @@ fn live_api_combat_showcase_script_runs_every_phase() {
             .cloned()
             .unwrap_or_else(|| panic!("no {phase} end line: {lines:#?}"))
     };
+    let eat_start = lines
+        .iter()
+        .rfind(|line| line.contains("[showcase] eat start:"))
+        .cloned()
+        .unwrap_or_else(|| panic!("no eat start line: {lines:#?}"));
     let eat = end("eat");
-    assert!(count_after(&eat, "ate") >= 1, "{eat}");
+    assert_eq!(
+        showcase_eat_verdict(&eat_start, &eat, COW_EAT_LINE),
+        Ok(EatVerdict::AteAtLine),
+        "start={eat_start} end={eat}"
+    );
     let prayer = end("prayer");
     assert!(count_after(&prayer, "protect switches") >= 1, "{prayer}");
     assert!(count_after(&prayer, "prayer doses") >= 1, "{prayer}");
@@ -1159,4 +1223,61 @@ fn showcase_line_counts_read_the_logged_numbers() {
     assert_eq!(count_after(none, "ate"), 0);
     assert_eq!(count_before("[showcase] stop end: stopped", "casts"), -1);
     assert_eq!(count_after("[showcase] stop end: stopped", "ate"), -1);
+}
+
+fn eat_lines(start_hp: i64, end_hp: i64, ate: i64) -> (String, String) {
+    (
+        format!("[showcase] eat start: HP {start_hp}/40; Thick Skin on"),
+        format!(
+            "[showcase] eat end: fought → killed: 12 ticks, 4 swings, 0 casts, \
+             0 damage taken, ate {ate}, prayer doses 0, protect switches 0; HP {end_hp}/40"
+        ),
+    )
+}
+
+#[test]
+fn showcase_eat_oracle_accepts_an_eat_at_the_line() {
+    let (start, end) = eat_lines(COW_EAT_LINE, 6, 1);
+    assert_eq!(
+        showcase_eat_verdict(&start, &end, COW_EAT_LINE),
+        Ok(EatVerdict::AteAtLine)
+    );
+}
+
+#[test]
+fn showcase_eat_oracle_rejects_a_receipt_that_never_eats_below_the_line() {
+    let (start, end) = eat_lines(2, 2, 0);
+    assert_eq!(
+        showcase_eat_verdict(&start, &end, COW_EAT_LINE),
+        Err("never ate at or below the eat line")
+    );
+    let (at_line, still) = eat_lines(COW_EAT_LINE, COW_EAT_LINE, 0);
+    assert_eq!(
+        showcase_eat_verdict(&at_line, &still, COW_EAT_LINE),
+        Err("never ate at or below the eat line")
+    );
+}
+
+#[test]
+fn showcase_eat_oracle_rejects_an_eat_above_the_line_and_a_missing_count() {
+    let (start, end) = eat_lines(4, 7, 1);
+    assert_eq!(
+        showcase_eat_verdict(&start, &end, COW_EAT_LINE),
+        Err("ate while above the eat line")
+    );
+    let (above, stayed) = eat_lines(4, 4, 0);
+    assert_eq!(
+        showcase_eat_verdict(&above, &stayed, COW_EAT_LINE),
+        Ok(EatVerdict::NoEatAboveLine)
+    );
+    let (low, unfinished) = eat_lines(COW_EAT_LINE, COW_EAT_LINE, 1);
+    assert_eq!(
+        showcase_eat_verdict(&low, &unfinished, COW_EAT_LINE),
+        Err("end hitpoints are not above the eat line")
+    );
+    let missing = "[showcase] eat end: fought → killed: 12 ticks; HP 6/40";
+    assert_eq!(
+        showcase_eat_verdict(&start, missing, COW_EAT_LINE),
+        Err("eat receipt is missing ate or hitpoints")
+    );
 }
