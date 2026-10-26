@@ -1899,6 +1899,7 @@ fn panel_window(ui: &Ui, session: &mut Session, progress: Option<StartupProgress
             walkto_button(ui, session);
             slot_config_row(ui, session);
             let order = resolve_heading_order(&session.ui.section_order);
+            panel_member_feedback_line(ui, session, &["section_order"]);
             // The log fills the leftover height only when nothing follows it.
             let log_last = !crate::ui_state::panel_section_visible(&session.ui, "parameters")
                 && order
@@ -2127,6 +2128,7 @@ fn section_open(ui: &Ui, session: &mut Session, id: &str) -> bool {
     let open = ui.collapsing_header(id, TreeNodeFlags::NONE);
     ui.set_item_tooltip("drag to reorder");
     heading_dnd(ui, session, id);
+    panel_member_feedback_line(ui, session, &["collapsed", user.as_str(), id]);
     if open != desired {
         session
             .ui
@@ -2845,6 +2847,7 @@ fn script_category_chips(ui: &Ui, session: &mut Session, order: &[String]) {
             used + gap + chip_w
         };
     }
+    panel_member_feedback_line(ui, session, &["script_category_order"]);
 }
 
 fn category_chip_dnd(ui: &Ui, session: &mut Session, cat: &str) {
@@ -3230,6 +3233,14 @@ fn file_dialog_body(ui: &Ui, session: &mut Session, mode: DialogMode) {
             "Choose the rs2b0t folder whose scripts you want to add to Browse.",
         ),
     }
+    panel_member_feedback_line(
+        ui,
+        session,
+        &[match mode {
+            DialogMode::File => "script_load_last_dir",
+            DialogMode::Folder => "script_catalog_last_dir",
+        }],
+    );
     ui.separator();
     let cwd = match mode {
         DialogMode::File => session.script_load_dir.clone(),
@@ -4954,6 +4965,7 @@ fn mem_popup(ui: &Ui, session: &mut Session) {
             }
             memory_relog_button(ui, session, notice);
         }
+        panel_member_feedback_line(ui, session, &["lowmem"]);
     });
 }
 
@@ -4993,6 +5005,7 @@ fn raster_picker(ui: &Ui, session: &mut Session) {
     ) {
         session.request_focused_raster(frontend_core::command::RasterMode::Cpu);
     }
+    panel_member_feedback_line(ui, session, &["raster"]);
     let mem = if session.focused_lowmem() {
         "lowmem"
     } else {
@@ -5005,6 +5018,7 @@ fn raster_picker(ui: &Ui, session: &mut Session) {
     ui.set_item_tooltip(
         "Queue highmem / lowmem for the next login. Textures, tabs and sound stay unchanged until then. Relog now is offered in the picker and status.",
     );
+    panel_member_feedback_line(ui, session, &["lowmem"]);
     mem_popup(ui, session);
 }
 
@@ -5037,6 +5051,7 @@ fn config_section(ui: &Ui, session: &mut Session, id: &str, body: impl FnOnce(&U
             Some(serde_json::Value::Bool(!open)),
         );
     }
+    panel_member_feedback_line(ui, session, &["config_collapsed", id]);
     if open {
         body(ui, session);
     }
@@ -5059,8 +5074,14 @@ pub(crate) fn setting_feedback_line(ui: &Ui, session: &Session, setting: Setting
 }
 
 /// [`setting_feedback_line`] for a panel-owned setting whose members lie
-/// under `prefix` (the write that failed names its member path).
+/// under `prefix` (the write that failed names its member path): "Saving…"
+/// while a request of the setting is pending, and the retained failure in the
+/// error colour. A new write of the member is the action that resolves the
+/// failure; it leaves by itself after the error timeout.
 pub(crate) fn panel_member_feedback_line(ui: &Ui, session: &Session, prefix: &[&str]) {
+    if session.panel_member_pending(prefix) {
+        ui.text_disabled("Saving…");
+    }
     if let Some(text) = session.panel_member_error(prefix) {
         let _color = ui.push_style_color(StyleColor::Text, session.ui.chrome.error_rgba());
         ui.text_wrapped(text);
@@ -5205,6 +5226,7 @@ fn global_config_section(ui: &Ui, session: &mut Session) {
         ui.text_wrapped(
             "Restart to apply a revision change; explicit CLI/environment selection still wins.",
         );
+        panel_member_feedback_line(ui, session, &["server_revision"]);
     }
     ui.spacing();
     ui.text_colored(session.ui.chrome.accent_rgba(), "Session");

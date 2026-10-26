@@ -6484,6 +6484,244 @@ fn render_all_dont_show_again_needs_understood_then_saves_the_ack() {
     );
 }
 
+/// The text one frame of `draw` shows.
+fn drawn_text(
+    ctx: &mut dear_imgui_rs::Context,
+    session: &mut crate::session::Session,
+    draw: &dyn Fn(&dear_imgui_rs::Ui, &mut crate::session::Session),
+) -> String {
+    let drawn = DrawnText::default();
+    ctx.set_clipboard_backend(drawn.clone());
+    ctx.prepare_frame(
+        dear_imgui_rs::FramePrepareOptions::new([1280.0, 720.0], 1.0 / 60.0)
+            .renderer_has_textures(),
+    );
+    {
+        let ui = ctx.frame();
+        ui.log_to_clipboard(0u32);
+        ui.window("feedback surface")
+            .size([900.0, 700.0], dear_imgui_rs::Condition::Always)
+            .build(|| draw(ui, session));
+        ui.log_finish();
+    }
+    ctx.render();
+    drawn.0.take()
+}
+
+/// Hold every write of `session`'s service until the returned sender is
+/// dropped; each fails while the returned flag is set.
+fn hold_writes(
+    session: &crate::session::Session,
+) -> (
+    std::sync::mpsc::Sender<()>,
+    std::sync::Arc<std::sync::atomic::AtomicBool>,
+) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let service = session
+        .core
+        .local_state_for_test()
+        .expect("the panel owns its process state service")
+        .clone();
+    let (release, gate) = std::sync::mpsc::channel::<()>();
+    let gate = std::sync::Mutex::new(gate);
+    service.set_write_stall_for_test(std::sync::Arc::new(move || {
+        let _ = gate.lock().unwrap().recv();
+    }));
+    let failing = std::sync::Arc::new(AtomicBool::new(true));
+    let refusing = std::sync::Arc::clone(&failing);
+    service.set_write_fault_for_test(std::sync::Arc::new(move || refusing.load(Ordering::SeqCst)));
+    (release, failing)
+}
+
+/// Every panel-owned setting shows its own saved state at its own control,
+/// and the same rule: "Saving…" while its write is held, the failure when it
+/// failed (also after the surface was closed and drawn again), and a new write
+/// of it is the action that resolves the failure (it shows "Saving…" again,
+/// not the old failure). The raster, memory and revision controls, both order
+/// controls, the folds, the remembered folders, the debug panel's saved
+/// commands and the Fleet toolbar fold.
+#[test]
+fn settings_feedback_every_panel_owned_control_shows_saving_then_the_failure_until_retried() {
+    use std::sync::atomic::Ordering;
+    type Draw = fn(&dear_imgui_rs::Ui, &mut crate::session::Session);
+    struct Surface {
+        name: &'static str,
+        /// A write of the setting.
+        write: fn(&mut crate::session::Session),
+        draw: Draw,
+    }
+    let surfaces = [
+        Surface {
+            name: "raster",
+            write: |s| {
+                s.set_focused_raster(frontend_core::command::RasterMode::Cpu);
+            },
+            draw: |ui, s| super::raster_picker(ui, s),
+        },
+        Surface {
+            name: "memory",
+            write: |s| {
+                s.set_focused_lowmem(false);
+            },
+            draw: |ui, s| super::raster_picker(ui, s),
+        },
+        Surface {
+            name: "revision",
+            write: |s| {
+                s.set_server_revision(289).unwrap();
+            },
+            draw: |ui, s| super::global_config_section(ui, s),
+        },
+        Surface {
+            name: "category order",
+            write: |s| {
+                let _ = s.persist_panel_serializable(&["script_category_order"], &["B", "A"]);
+            },
+            draw: |ui, s| {
+                super::script_category_chips(ui, s, &["A".to_owned(), "B".to_owned()]);
+            },
+        },
+        Surface {
+            name: "section order",
+            write: |s| {
+                let _ = s.persist_panel_serializable(&["section_order"], &["log", "status"]);
+            },
+            draw: |ui, s| super::panel_window(ui, s, None),
+        },
+        Surface {
+            name: "fold",
+            write: |s| {
+                let user = s.focused_name().unwrap_or_else(|| "_".into());
+                let _ = s.persist_panel_member(
+                    &["collapsed", user.as_str(), "status"],
+                    Some(serde_json::Value::Bool(true)),
+                );
+            },
+            draw: |ui, s| {
+                super::section_open(ui, s, "status");
+            },
+        },
+        Surface {
+            name: "config fold",
+            write: |s| {
+                let _ = s.persist_panel_member(
+                    &["config_collapsed", "Nav"],
+                    Some(serde_json::Value::Bool(true)),
+                );
+            },
+            draw: |ui, s| super::config_section(ui, s, "Nav", |_, _| {}),
+        },
+        Surface {
+            name: "last directory",
+            write: |s| {
+                let _ = s.persist_panel_serializable(&["script_load_last_dir"], "/somewhere");
+            },
+            draw: |ui, s| super::file_dialog_body(ui, s, super::DialogMode::File),
+        },
+        Surface {
+            name: "debug commands",
+            write: |s| {
+                let prefs = s.ui.debug_panel.clone();
+                let _ = s.persist_panel_serializable(&["debug_panel"], &prefs);
+            },
+            draw: |ui, s| crate::debug_panel::draw(ui, s),
+        },
+        Surface {
+            name: "fleet toolbar fold",
+            write: |s| {
+                let _ = s.persist_panel_member(
+                    &["fleet_toolbar_open"],
+                    Some(serde_json::Value::Bool(false)),
+                );
+            },
+            draw: |ui, s| {
+                crate::fleet_toolbar::header(ui, s, "fleet");
+            },
+        },
+    ];
+    let _guard = crate::test_support::imgui_context_guard();
+    let _iso = frontend_core::test_support::IsolatedStores::enter("panel-s3-every-control");
+    let mut ctx = dock_host_context();
+    super::amber_style(&mut ctx);
+    let mut session = crate::session::Session::new();
+    hydrate_panel_preferences(&mut session);
+    let settle = |session: &mut crate::session::Session| {
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while session.preferences_pending() {
+            session.pump_status();
+            session.poll_panel_preferences();
+            assert!(Instant::now() < deadline, "the writes never ended");
+            thread::sleep(Duration::from_millis(2));
+        }
+    };
+
+    // The writer queues a few writes behind the held one: a few controls at a
+    // time.
+    for chunk in surfaces.chunks(4) {
+        let (release, failing) = hold_writes(&session);
+        for surface in chunk {
+            (surface.write)(&mut session);
+        }
+        for surface in chunk {
+            let shown = drawn_text(&mut ctx, &mut session, &surface.draw);
+            assert!(
+                shown.contains("Saving…"),
+                "{}: the control says it is saving: {shown}",
+                surface.name
+            );
+            assert!(
+                !shown.contains("Preferences not saved"),
+                "{}: nothing failed yet: {shown}",
+                surface.name
+            );
+        }
+
+        // The disk fails the held writes.
+        drop(release);
+        settle(&mut session);
+        for surface in chunk {
+            let shown = drawn_text(&mut ctx, &mut session, &surface.draw);
+            assert!(
+                shown.contains("Preferences not saved"),
+                "{}: the failure shows at the control: {shown}",
+                surface.name
+            );
+            assert!(
+                !shown.contains("Saving…"),
+                "{}: nothing is saving any more: {shown}",
+                surface.name
+            );
+        }
+
+        // A new write of the setting resolves its failure at once: the control
+        // says "Saving…" again, not the old failure.
+        let (release, failing_again) = hold_writes(&session);
+        failing_again.store(false, Ordering::SeqCst);
+        failing.store(false, Ordering::SeqCst);
+        for surface in chunk {
+            (surface.write)(&mut session);
+        }
+        for surface in chunk {
+            let shown = drawn_text(&mut ctx, &mut session, &surface.draw);
+            assert!(
+                shown.contains("Saving…") && !shown.contains("Preferences not saved"),
+                "{}: the retry resolved the failure: {shown}",
+                surface.name
+            );
+        }
+        drop(release);
+        settle(&mut session);
+        for surface in chunk {
+            let shown = drawn_text(&mut ctx, &mut session, &surface.draw);
+            assert!(
+                !shown.contains("Saving…") && !shown.contains("Preferences not saved"),
+                "{}: saved, nothing to say: {shown}",
+                surface.name
+            );
+        }
+    }
+}
+
 /// Allocation calls over ten warm frames of the surfaces where the saved
 /// settings show their pending and failed state and the session file's
 /// status.
