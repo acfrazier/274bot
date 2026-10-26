@@ -982,7 +982,7 @@ impl SlotScript {
 
     /// Borrow the real gameplay seat for conformance tests only.
     #[cfg(any(test, feature = "test-hooks"))]
-    pub fn seat_for_test(&self) -> Option<&GameplaySeat> {
+    pub fn seat_for_test(&self) -> Option<&GameplaySeat<impl Sized>> {
         self.seat.as_deref()
     }
 
