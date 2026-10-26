@@ -28,7 +28,7 @@ pub enum InvItemFieldInit {
 pub static INV_ITEM_FIELDS: [(&str, InvItemFieldInit); 6] = [
     ("name", InvItemFieldInit::Copy),
     ("count", InvItemFieldInit::Copy),
-    ("id", InvItemFieldInit::Copy),
+    ("id", InvItemFieldInit::NullishZero),
     ("slot", InvItemFieldInit::NullishZero),
     ("noted", InvItemFieldInit::StrictTrue),
     ("cert", InvItemFieldInit::NullishMinusOne),
