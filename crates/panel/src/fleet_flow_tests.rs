@@ -90,6 +90,11 @@ impl Rig {
             lowmem: true,
             mainland: false,
         });
+        #[cfg(not(feature = "js"))]
+        play.bind_script_test_data(
+            api::game_data::for_revision(api::selected::ClientRevision::R289)
+                .expect("selected native facts"),
+        );
         for name in loaded {
             play.attach_arm(name, host_play::SlotArm::new(42, false));
             rig.session.core.fleet_mut().add(name);
