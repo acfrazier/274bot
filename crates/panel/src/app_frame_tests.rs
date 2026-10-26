@@ -1624,11 +1624,23 @@ fn stopped_scripts_leave_no_walking_label_on_the_rail(drive: Drive) {
     };
     assert_eq!(caps(&mut rig), expect("running"));
 
-    for name in NINE {
+    let stops = NINE.map(|name| {
         rig.session()
-            .submit(OperatorCommand::StopScript, Targets::Profile(name));
-    }
+            .submit(OperatorCommand::StopScript, Targets::Profile(name))
+            .expect("Stop is admitted")
+            .request()
+    });
     wait(&mut rig, ScriptRunState::Idle);
+    // A native Stop can reach Idle during submit. Its command report still
+    // settles through frames, which ingest the ended run into the fleet model.
+    rig.frames_until("the Stop reports", |rig| {
+        let core = &rig.session().core;
+        stops.iter().all(|request| {
+            core.commands()
+                .report(*request)
+                .is_some_and(|report| report.is_settled())
+        })
+    });
     assert_eq!(caps(&mut rig), expect("idle"), "Stop left a walking label");
     if matches!(drive, Drive::UiFrame) {
         assert!(!rig.text.contains(": running"), "{}", rig.text);

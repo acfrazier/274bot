@@ -2550,6 +2550,13 @@ fn fleet_apply_settings_is_narrowed_to_the_marked_bots() {
 #[test]
 fn marked_compiled_start_keeps_assignments_across_focus_changes() {
     let (mut s, _dir) = session_with_play(&["alice", "bob"]);
+    s.core
+        .play_mut_for_test()
+        .expect("play")
+        .bind_script_test_data(
+            api::game_data::for_revision(api::selected::ClientRevision::R289)
+                .expect("selected native facts"),
+        );
     let card = CompiledCardId::lookup("Gatherer").expect("compiled Gatherer card");
     for name in ["alice", "bob"] {
         s.persist_successful_assignment(name, Assignment::compiled(card));
