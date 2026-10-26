@@ -4395,8 +4395,71 @@ fn idle_among<'a>(f: &Fixture, names: &'a [String]) -> Vec<&'a str> {
 
 /// Start all over more members than one frame may admit must not dispatch
 /// every isolate in the click. The rest wait for later [`Scripts::poll`]s.
+#[cfg(feature = "js")]
 #[test]
 fn start_all_over_n_members_dispatches_at_most_the_permit_budget_in_the_click_frame() {
+    let names = bulk_names(5);
+    let name_refs: Vec<&str> = names.iter().map(String::as_str).collect();
+    let mut f = fixture("pace-click", &name_refs);
+    let card = f.card("loop.ts", LOOPING);
+    for name in &names {
+        f.assign(name, &card);
+    }
+
+    f.core.poll();
+    f.scripts.start_all(&mut f.core, None);
+    let starting = starting_among(&f, &names);
+    let idle = idle_among(&f, &names);
+    assert!(
+        starting <= super::START_ADMIT_PER_FRAME,
+        "Start all dispatched {starting} in the click frame (budget {})",
+        super::START_ADMIT_PER_FRAME
+    );
+    assert!(f.scripts.starts_pending(), "Start all admitted no work");
+    assert_eq!(shown_bulk(&f), "Start all: started 1, queued 4, skipped 0");
+    assert_eq!(starting + idle.len(), names.len());
+    let waiting = names
+        .iter()
+        .find(|name| f.scripts.start_queue_place(name).is_some())
+        .expect("a second member still waits for a permit");
+    let brief = f
+        .core
+        .fleet_view()
+        .row(waiting)
+        .map(|row| row.brief())
+        .unwrap_or("");
+    assert!(
+        brief.starts_with("queued "),
+        "{waiting} should reuse the login-queue brief, got {brief:?}"
+    );
+    f.core.poll();
+    f.scripts.poll(&mut f.core);
+    let after_poll = shown_bulk(&f);
+    assert!(
+        after_poll.starts_with("Start all: started 2, queued 3, skipped 0"),
+        "the later frame grants another waiting member: {after_poll}"
+    );
+    let notice = f.scripts.take_notice();
+    let text = match notice.as_ref().and_then(Notice::text) {
+        Some(text) => text,
+        other => panic!("{other:?}"),
+    };
+    assert!(
+        text.contains("queued"),
+        "the Start all report names the waiting members: {text}"
+    );
+
+    f.settle();
+    for name in &names {
+        f.wait_state(name, ScriptRunState::Running);
+        f.core.play().unwrap().script_stop(name);
+    }
+}
+/// Start all over more members than one frame may admit must not dispatch
+/// every isolate in the click. The rest wait for later [`Scripts::poll`]s.
+#[cfg(not(feature = "js"))]
+#[test]
+fn native_start_all_over_n_members_dispatches_at_most_the_permit_budget_in_the_click_frame() {
     let names = bulk_names(5);
     let name_refs: Vec<&str> = names.iter().map(String::as_str).collect();
     let mut f = native_fixture("pace-click", &name_refs);
@@ -4456,8 +4519,45 @@ fn start_all_over_n_members_dispatches_at_most_the_permit_budget_in_the_click_fr
 }
 
 /// Stop all must drop queued-but-not-yet-admitted Starts so they never run.
+#[cfg(feature = "js")]
 #[test]
 fn stop_all_cancels_queued_starts() {
+    let names = bulk_names(5);
+    let name_refs: Vec<&str> = names.iter().map(String::as_str).collect();
+    let mut f = fixture("pace-stop", &name_refs);
+    let card = f.card("loop.ts", LOOPING);
+    for name in &names {
+        f.assign(name, &card);
+    }
+
+    f.scripts.start_all(&mut f.core, None);
+    let queued: Vec<String> = idle_among(&f, &names)
+        .into_iter()
+        .map(str::to_string)
+        .collect();
+    assert!(
+        !queued.is_empty(),
+        "need members still waiting for a permit"
+    );
+
+    f.scripts.stop_all(&mut f.core);
+    for _ in 0..40 {
+        f.core.poll();
+        f.scripts.poll(&mut f.core);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    for name in &queued {
+        assert_eq!(
+            f.state(name),
+            ScriptRunState::Idle,
+            "{name} started after Stop all cancelled its place"
+        );
+    }
+}
+/// Stop all must drop queued-but-not-yet-admitted Starts so they never run.
+#[cfg(not(feature = "js"))]
+#[test]
+fn native_stop_all_cancels_queued_starts() {
     let names = bulk_names(5);
     let name_refs: Vec<&str> = names.iter().map(String::as_str).collect();
     let mut f = native_fixture("pace-stop", &name_refs);
@@ -4493,8 +4593,91 @@ fn stop_all_cancels_queued_starts() {
 
 /// Re-assigning a member that still holds a Start-all place must not start
 /// the card captured at the click.
+#[cfg(feature = "js")]
 #[test]
 fn reassign_while_queued_does_not_start_stale_work() {
+    let names = bulk_names(5);
+    let name_refs: Vec<&str> = names.iter().map(String::as_str).collect();
+    let mut f = fixture("pace-reassign", &name_refs);
+    let first = f.card("first.ts", LOOPING);
+    let second = f.card("second.ts", LOOPING);
+    for name in &names {
+        f.assign(name, &first);
+    }
+
+    f.scripts.start_all(&mut f.core, None);
+    let queued = names
+        .iter()
+        .find(|name| f.scripts.start_queue_place(name).is_some())
+        .expect("need a member still waiting for a permit")
+        .clone();
+    f.assign(&queued, &second);
+
+    f.settle();
+    assert_eq!(
+        f.state(&queued),
+        ScriptRunState::Idle,
+        "{queued} started after its assignment changed"
+    );
+    assert_ne!(
+        f.core
+            .play()
+            .unwrap()
+            .script_source_identity(&queued)
+            .as_deref(),
+        Some(first.identity_key().as_str())
+    );
+}
+/// Removing a member that still holds a Start-all place must not start it.
+#[cfg(feature = "js")]
+#[test]
+fn remove_while_queued_does_not_start_stale_work() {
+    let names = bulk_names(5);
+    let name_refs: Vec<&str> = names.iter().map(String::as_str).collect();
+    let mut f = fixture("pace-remove", &name_refs);
+    let card = f.card("loop.ts", LOOPING);
+    for name in &names {
+        f.assign(name, &card);
+    }
+
+    f.scripts.start_all(&mut f.core, None);
+    let queued = names
+        .iter()
+        .find(|name| f.scripts.start_queue_place(name).is_some())
+        .expect("need a member still waiting for a permit")
+        .clone();
+    let mut surface = crate::surface::HeadlessSurface::new();
+    f.core.remove(&queued, Instant::now(), &mut surface);
+
+    f.settle();
+    assert_eq!(
+        start_accepted(&f, &queued),
+        0,
+        "frontend dispatched a Start for removed {queued}"
+    );
+    assert_ne!(
+        f.state(&queued),
+        ScriptRunState::Running,
+        "{queued} started after it was removed from the wall"
+    );
+    let report = f
+        .scripts
+        .last_bulk_report()
+        .expect("Start all report after a queued remove");
+    assert!(
+        report.contains(&format!("{queued}: removed")),
+        "grant-time remove must name the member: {report}"
+    );
+    assert!(
+        !report.contains("no slot"),
+        "a wall-member refuse must not reach start_script: {report}"
+    );
+}
+/// Re-assigning a member that still holds a Start-all place must not start
+/// the card captured at the click.
+#[cfg(not(feature = "js"))]
+#[test]
+fn native_reassign_while_queued_does_not_start_stale_work() {
     let names = bulk_names(5);
     let name_refs: Vec<&str> = names.iter().map(String::as_str).collect();
     let mut f = native_fixture("pace-reassign", &name_refs);
@@ -4658,9 +4841,43 @@ fn native_queued_start_rechecks_assignment_removal_and_logout_before_dispatch() 
     }
 }
 
-/// Removing a member that still holds a Start-all place must not start it.
+/// Operator logout while a member is still waiting for a Start-all permit
+/// must not start that member.
+#[cfg(feature = "js")]
 #[test]
-fn remove_while_queued_does_not_start_stale_work() {
+fn logout_while_queued_does_not_start_stale_work() {
+    let names = bulk_names(5);
+    let name_refs: Vec<&str> = names.iter().map(String::as_str).collect();
+    let mut f = fixture("pace-logout", &name_refs);
+    let card = f.card("loop.ts", LOOPING);
+    for name in &names {
+        f.assign(name, &card);
+    }
+
+    f.scripts.start_all(&mut f.core, None);
+    let queued = names
+        .iter()
+        .find(|name| f.scripts.start_queue_place(name).is_some())
+        .expect("need a member still waiting for a permit")
+        .clone();
+    f.core
+        .play()
+        .unwrap()
+        .arm(&queued)
+        .expect("loaded member")
+        .request_logout();
+
+    f.settle();
+    assert_eq!(
+        f.state(&queued),
+        ScriptRunState::Idle,
+        "{queued} started after logout while queued"
+    );
+}
+/// Removing a member that still holds a Start-all place must not start it.
+#[cfg(not(feature = "js"))]
+#[test]
+fn native_remove_while_queued_does_not_start_stale_work() {
     let names = bulk_names(5);
     let name_refs: Vec<&str> = names.iter().map(String::as_str).collect();
     let mut f = native_fixture("pace-remove", &name_refs);
@@ -4705,8 +4922,9 @@ fn remove_while_queued_does_not_start_stale_work() {
 
 /// Operator logout while a member is still waiting for a Start-all permit
 /// must not start that member.
+#[cfg(not(feature = "js"))]
 #[test]
-fn logout_while_queued_does_not_start_stale_work() {
+fn native_logout_while_queued_does_not_start_stale_work() {
     let names = bulk_names(5);
     let name_refs: Vec<&str> = names.iter().map(String::as_str).collect();
     let mut f = native_fixture("pace-logout", &name_refs);
@@ -5318,8 +5536,49 @@ fn marked_catalog_assignment_reports_pending_until_scan_settles() {
 
 /// A member removed while waiting for a marked Start is named as skipped
 /// and the frontend never dispatches a Start for it.
+#[cfg(feature = "js")]
 #[test]
 fn marked_start_removed_member_is_named_and_never_dispatched() {
+    let mut f = fixture("pace-marked-remove", &["alice", "bob", "carol"]);
+    let card = f.card("loop.ts", LOOPING);
+    for name in ["alice", "bob", "carol"] {
+        f.assign(name, &card);
+    }
+    let sel = ScriptChoice::from_script(script::ScriptSel::Loaded(card.source, card.identity_id()));
+    let selected = mark_uids(&[1, 2, 3]);
+    start_marked(&selected, &mut f.core, &mut f.scripts, Some(&sel), None);
+    let click_report = shown_bulk(&f);
+    assert!(
+        click_report.contains("queued") && !click_report.contains("started 3"),
+        "click must not count waiting members as started: {click_report}"
+    );
+    let queued = ["alice", "bob", "carol"]
+        .into_iter()
+        .find(|name| f.scripts.start_queue_place(name).is_some())
+        .expect("need a member still waiting for a permit")
+        .to_string();
+    let mut surface = crate::surface::HeadlessSurface::new();
+    f.core.remove(&queued, Instant::now(), &mut surface);
+    f.settle();
+    let report = shown_bulk(&f);
+    assert!(
+        report.contains(&format!("{queued}: removed")),
+        "grant-time remove must name the member: {report}"
+    );
+    assert_eq!(start_accepted(&f, &queued), 0);
+    assert_ne!(f.state(&queued), ScriptRunState::Running);
+    for name in ["alice", "bob", "carol"] {
+        if name != queued {
+            f.wait_state(name, ScriptRunState::Running);
+            f.core.play().unwrap().script_stop(name);
+        }
+    }
+}
+/// A member removed while waiting for a marked Start is named as skipped
+/// and the frontend never dispatches a Start for it.
+#[cfg(not(feature = "js"))]
+#[test]
+fn native_marked_start_removed_member_is_named_and_never_dispatched() {
     let mut f = native_fixture("pace-marked-remove", &["alice", "bob", "carol"]);
     let id = script::CompiledId("Gatherer");
     for name in ["alice", "bob", "carol"] {
@@ -5358,8 +5617,42 @@ fn marked_start_removed_member_is_named_and_never_dispatched() {
 
 /// Start all while a marked batch is still waiting joins its report: the
 /// waiting members are neither dropped from it nor counted twice.
+#[cfg(feature = "js")]
 #[test]
 fn start_all_while_a_marked_batch_waits_joins_its_report() {
+    let names = bulk_names(5);
+    let name_refs: Vec<&str> = names.iter().map(String::as_str).collect();
+    let mut f = fixture("pace-overlap-marked", &name_refs);
+    let card = f.card("loop.ts", LOOPING);
+    for name in &names {
+        f.assign(name, &card);
+    }
+    let sel = ScriptChoice::from_script(script::ScriptSel::Loaded(card.source, card.identity_id()));
+    let selected = mark_uids(&[1, 2, 3]);
+    start_marked(&selected, &mut f.core, &mut f.scripts, Some(&sel), None);
+    assert_eq!(
+        shown_bulk(&f),
+        "Start selected: started 1, queued 2, skipped 0"
+    );
+    f.scripts.start_all(&mut f.core, None);
+    assert_eq!(
+        shown_bulk(&f),
+        "Start all: started 2, queued 3, skipped 0",
+        "the marked rows still waiting stay counted, the started one is not skipped"
+    );
+    f.settle();
+    assert_eq!(shown_bulk(&f), "Start all: started 5, skipped 0");
+    for name in &names {
+        f.wait_state(name, ScriptRunState::Running);
+        assert_eq!(start_accepted(&f, name), 1, "{name}");
+        f.core.play().unwrap().script_stop(name);
+    }
+}
+/// Start all while a marked batch is still waiting joins its report: the
+/// waiting members are neither dropped from it nor counted twice.
+#[cfg(not(feature = "js"))]
+#[test]
+fn native_start_all_while_a_marked_batch_waits_joins_its_report() {
     let names = bulk_names(5);
     let name_refs: Vec<&str> = names.iter().map(String::as_str).collect();
     let mut f = native_fixture("pace-overlap-marked", &name_refs);
@@ -5496,8 +5789,44 @@ fn a_deleted_file_card_is_refused_even_when_its_stored_path_matches() {
 
 /// A bot logged out while it still waits after a second Start all is
 /// named on the running report and in its own log, and never starts.
+#[cfg(feature = "js")]
 #[test]
 fn logout_while_waiting_after_a_second_start_all_is_reported() {
+    let names: Vec<String> = (0..4).map(|i| format!("lgo-bot{i}")).collect();
+    let name_refs: Vec<&str> = names.iter().map(String::as_str).collect();
+    let mut f = fixture("pace-overlap-logout", &name_refs);
+    let card = f.card("loop.ts", LOOPING);
+    for name in &names {
+        f.assign(name, &card);
+    }
+    f.scripts.start_all(&mut f.core, None);
+    f.scripts.start_all(&mut f.core, None);
+    let last = &names[3];
+    assert!(f.scripts.cancel_queued_as(last, "logged out"));
+    f.core.logout(last);
+    f.settle();
+    assert_eq!(
+        shown_bulk(&f),
+        "Start all: started 3, skipped 1: lgo-bot3: logged out"
+    );
+    assert!(
+        slot_lines(last)
+            .iter()
+            .any(|(_, line)| line == "Start all skipped: logged out"),
+        "{:?}",
+        slot_lines(last)
+    );
+    assert_eq!(start_accepted(&f, last), 0);
+    for name in &names[..3] {
+        f.wait_state(name, ScriptRunState::Running);
+        f.core.play().unwrap().script_stop(name);
+    }
+}
+/// A bot logged out while it still waits after a second Start all is
+/// named on the running report and in its own log, and never starts.
+#[cfg(not(feature = "js"))]
+#[test]
+fn native_logout_while_waiting_after_a_second_start_all_is_reported() {
     let names: Vec<String> = (0..4).map(|i| format!("lgo-bot{i}")).collect();
     let name_refs: Vec<&str> = names.iter().map(String::as_str).collect();
     let mut f = native_fixture("pace-overlap-logout", &name_refs);
