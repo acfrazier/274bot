@@ -2526,34 +2526,43 @@ class SelfUpdateTests(unittest.TestCase):
         if os.environ.get("NIGHTLY_SELF_CHECK_ACTIVE"):
             self.skipTest("the self-check does not re-test the updater")
 
-    def clean_env(self):
-        """NIGHTLY_SELF_UPDATE* cleared, so the update path is attempted."""
+    def enable_update_env(self):
+        """Opt into the update path: NIGHTLY_SELF_UPDATE=1, no re-exec state."""
         patcher = mock.patch.dict(os.environ)
         patcher.start()
         self.addCleanup(patcher.stop)
-        for key in ("NIGHTLY_SELF_UPDATE", "NIGHTLY_SELF_UPDATE_DONE",
-                    "NIGHTLY_SELF_UPDATE_FROM"):
+        for key in ("NIGHTLY_SELF_UPDATE_DONE", "NIGHTLY_SELF_UPDATE_FROM"):
             os.environ.pop(key, None)
+        os.environ["NIGHTLY_SELF_UPDATE"] = "1"
 
-    def test_opt_out_disables_the_update(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            origin = make_branch_repo(root, "origin", branch="dev", files={
-                "tools/nightly/run_nightly.py": "# new\n"})
-            runner = root / "runner"
-            subprocess.run(["git", "clone", "-q", str(origin), str(runner)], check=True)
-            script = runner / "tools/nightly/run_nightly.py"
-            before = script.read_text(encoding="utf-8")
-            # A broken remote proves no fetch is attempted while opted out.
-            subprocess.run(["git", "remote", "set-url", "origin", str(root / "missing.git")],
-                           cwd=runner, check=True)
-            calls: list = []
-            with mock.patch.dict(os.environ, {"NIGHTLY_SELF_UPDATE": "0"}):
-                info = rn.maybe_self_update(runner, script, ["--branch", "dev"],
-                                            _exec=lambda *args: calls.append(args))
-            self.assertEqual(info["status"], "disabled")
-            self.assertEqual(script.read_text(encoding="utf-8"), before)
-            self.assertEqual(calls, [])
+    def test_update_is_off_unless_opted_in(self):
+        off_values = [None, "0", "", "false", "no", "off"]
+        for off in off_values:
+            with self.subTest(opt_in=off):
+                with tempfile.TemporaryDirectory() as tmp:
+                    root = Path(tmp)
+                    origin = make_branch_repo(root, "origin", branch="dev", files={
+                        "tools/nightly/run_nightly.py": "# new\n"})
+                    runner = root / "runner"
+                    subprocess.run(["git", "clone", "-q", str(origin), str(runner)], check=True)
+                    script = runner / "tools/nightly/run_nightly.py"
+                    before = script.read_text(encoding="utf-8")
+                    # A broken remote proves no fetch is attempted while off.
+                    subprocess.run(["git", "remote", "set-url", "origin", str(root / "missing.git")],
+                                   cwd=runner, check=True)
+                    calls: list = []
+                    with mock.patch.dict(os.environ):
+                        os.environ.pop("NIGHTLY_SELF_UPDATE_DONE", None)
+                        os.environ.pop("NIGHTLY_SELF_UPDATE_FROM", None)
+                        if off is None:
+                            os.environ.pop("NIGHTLY_SELF_UPDATE", None)
+                        else:
+                            os.environ["NIGHTLY_SELF_UPDATE"] = off
+                        info = rn.maybe_self_update(runner, script, ["--branch", "dev"],
+                                                    _exec=lambda *args: calls.append(args))
+                    self.assertEqual(info["status"], "disabled")
+                    self.assertEqual(script.read_text(encoding="utf-8"), before)
+                    self.assertEqual(calls, [])
 
     def test_a_failed_self_check_keeps_the_old_code(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -2571,7 +2580,7 @@ class SelfUpdateTests(unittest.TestCase):
             self.assertNotEqual(tip, old_head)
             script = runner / "tools/nightly/run_nightly.py"
             calls: list = []
-            self.clean_env()
+            self.enable_update_env()
             info = rn.maybe_self_update(runner, script, ["--branch", "dev"],
                                         _exec=lambda *args: calls.append(args))
             self.assertEqual(info["status"], "check-failed")
@@ -2605,7 +2614,7 @@ class SelfUpdateTests(unittest.TestCase):
             tip = git("rev-parse", "HEAD", cwd=origin)
             script = runner / "tools/nightly/run_nightly.py"
             calls: list = []
-            self.clean_env()
+            self.enable_update_env()
             info = rn.maybe_self_update(runner, script, ["--branch", "dev"],
                                         _exec=lambda *args: calls.append(args))
             self.assertIsNone(info)
