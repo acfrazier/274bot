@@ -3,7 +3,11 @@ use std::sync::Arc;
 use api::snapshot::{GameSnapshot, WorldTile};
 use nav_planner::world::NavWorld;
 
-use super::{route_inspect, script_slot, PostedWalkOutcome, ScriptWall};
+#[cfg(feature = "js")]
+use super::route_inspect;
+#[cfg(feature = "js")]
+use super::PostedWalkOutcome;
+use super::{script_slot, ScriptWall};
 /// The FlatBuffer snapshot blob posted into a Load isolate each
 /// PLAYER_INFO (schema: `crates/script/schema/isolate.fbs`) carries the
 /// shim-readable fields (`tick, here, ingame, inv, stats, booths, banks,
@@ -32,11 +36,11 @@ use super::{route_inspect, script_slot, PostedWalkOutcome, ScriptWall};
 /// byte-identical. Returns the blob and the fingerprint to store as the
 /// new last-post baseline.
 /// Tests encode through a one-shot builder; the live observe path uses
-/// [`with_script_snapshot_input`] + the slot's [`script::isolate_fb::IsolateBuf`].
-#[cfg(test)]
+/// [`with_script_snapshot_input`] + the JS surface's [`script_js::wire::IsolateBuf`].
+#[cfg(all(test, feature = "js"))]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn script_snapshot_fb(
-    last: Option<&script::isolate_fb::SnapshotFingerprint>,
+    last: Option<&script_js::wire::SnapshotFingerprint>,
     force_banks: bool,
     tick: u64,
     here: Option<(i32, i32, i32)>,
@@ -48,7 +52,7 @@ pub(crate) fn script_snapshot_fb(
     hold: bool,
     ours: bool,
     teleports_enabled: bool,
-) -> (Vec<u8>, script::isolate_fb::SnapshotFingerprint) {
+) -> (Vec<u8>, script_js::wire::SnapshotFingerprint) {
     with_script_snapshot_input(
         tick,
         here,
@@ -69,13 +73,14 @@ pub(crate) fn script_snapshot_fb(
         PostedWalkOutcome::default(),
         route_inspect::PostedInspect::default(),
         |input, native| {
-            script::isolate_fb::encode_snapshot_delta_with_native(last, input, native, force_banks)
+            script_js::wire::encode_snapshot_delta_with_native(last, input, native, force_banks)
         },
     )
 }
 
 /// Note-mode landing id for an unnoted obj (`ObjNames` reverse cert), else
 /// the snapshot def's raw `certlink`.
+#[cfg(feature = "js")]
 fn posted_cert(
     obj_names: Option<&api::obj_names::ObjNames>,
     def: &api::obj_names::ItemDefView,
@@ -87,6 +92,7 @@ fn posted_cert(
         .unwrap_or(def.certificate_link)
 }
 
+#[cfg(feature = "js")]
 fn posted_cert_id(obj_names: Option<&api::obj_names::ObjNames>, id: i32) -> i32 {
     obj_names
         .and_then(|n| n.item(id))
@@ -99,6 +105,7 @@ fn posted_cert_id(obj_names: Option<&api::obj_names::ObjNames>, id: i32) -> i32 
 /// action hole posts as an empty label, so a compat `InvButton` op index
 /// names the slot the native row does. Trailing holes name no op and are
 /// left off.
+#[cfg(feature = "js")]
 fn positional_ops(item: &api::snapshot::ItemView) -> Vec<String> {
     let len = item
         .actions
@@ -113,6 +120,7 @@ fn positional_ops(item: &api::snapshot::ItemView) -> Vec<String> {
 pub(super) struct PackedReach {
     pub(super) view: Arc<api::query::ReachQueryView>,
     pub(super) flood: Option<Arc<api::query::ReachFlood>>,
+    #[cfg(feature = "js")]
     pub(super) stamp: u64,
 }
 
@@ -127,6 +135,7 @@ pub(super) fn pack_cached_reach(
         return PackedReach {
             view: Arc::new(api::query::ReachQueryView::unavailable()),
             flood: None,
+            #[cfg(feature = "js")]
             stamp: 0,
         };
     };
@@ -148,11 +157,13 @@ pub(super) fn pack_cached_reach(
         here_tile,
         canlight_plane,
     );
+    #[cfg(feature = "js")]
     let stamp = key.stamp();
     if cache.contains(&key) {
         return PackedReach {
             view: cache.view_arc(),
             flood: cache.flood_arc(),
+            #[cfg(feature = "js")]
             stamp,
         };
     }
@@ -167,6 +178,7 @@ pub(super) fn pack_cached_reach(
     PackedReach {
         view: cache.pack(key, s.scene(), flood.clone(), canlight_plane),
         flood,
+        #[cfg(feature = "js")]
         stamp,
     }
 }
@@ -199,7 +211,7 @@ pub(crate) fn slot_arrival_reach(
     .view
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "js"))]
 #[allow(clippy::too_many_arguments)] // test wrapper over shorts packer
 pub(crate) fn with_script_snapshot_input<R>(
     tick: u64,
@@ -209,7 +221,7 @@ pub(crate) fn with_script_snapshot_input<R>(
     snapshot: Option<&GameSnapshot>,
     obj_names: Option<&api::obj_names::ObjNames>,
     world: Option<&NavWorld>,
-    npc_boxes: Option<&[script::isolate_fb::NpcBoxInput]>,
+    npc_boxes: Option<&[script::native::snapshot_source::NpcBoxInput]>,
     hold: bool,
     ours: bool,
     teleports_enabled: bool,
@@ -221,8 +233,8 @@ pub(crate) fn with_script_snapshot_input<R>(
     walk_outcome: PostedWalkOutcome,
     inspect: route_inspect::PostedInspect,
     f: impl FnOnce(
-        &script::isolate_fb::SnapshotInput<'_>,
-        script::isolate_fb::NativeFactsInput<'_>,
+        &script::native::snapshot_source::SnapshotInput<'_>,
+        script::native::snapshot_source::NativeFactsInput<'_>,
     ) -> R,
 ) -> R {
     with_script_snapshot_input_shorts(
@@ -245,7 +257,7 @@ pub(crate) fn with_script_snapshot_input<R>(
         walk_outcome,
         &[],
         inspect,
-        script::isolate_fb::BankSelectionInput::default(),
+        script::native::snapshot_source::BankSelectionInput::default(),
         None,
         None,
         0,
@@ -253,6 +265,7 @@ pub(crate) fn with_script_snapshot_input<R>(
     )
 }
 
+#[cfg(feature = "js")]
 /// The same pack with the walk outcome's navigator-named gate shorts: the live
 /// observe path takes this entry point, and [`with_script_snapshot_input`] is
 /// this one with none. The rows are a borrow of THIS frame and are handed to `f`
@@ -268,7 +281,7 @@ pub(crate) fn with_script_snapshot_input_shorts<R>(
     snapshot: Option<&GameSnapshot>,
     obj_names: Option<&api::obj_names::ObjNames>,
     world: Option<&NavWorld>,
-    npc_boxes: Option<&[script::isolate_fb::NpcBoxInput]>,
+    npc_boxes: Option<&[script::native::snapshot_source::NpcBoxInput]>,
     hold: bool,
     ours: bool,
     teleports_enabled: bool,
@@ -278,19 +291,19 @@ pub(crate) fn with_script_snapshot_input_shorts<R>(
     bank_op_result: bool,
     canlight: Option<&[u64]>,
     walk_outcome: PostedWalkOutcome,
-    walk_missing_carry: &[script::isolate_fb::CarryInput<'_>],
+    walk_missing_carry: &[script::native::snapshot_source::CarryInput<'_>],
     inspect: route_inspect::PostedInspect,
-    bank_selection: script::isolate_fb::BankSelectionInput,
+    bank_selection: script::native::snapshot_source::BankSelectionInput,
     precomputed_reach: Option<&api::query::ReachQueryView>,
     precomputed_flood: Option<&api::query::ReachFlood>,
     reach_stamp: u64,
 
     f: impl FnOnce(
-        &script::isolate_fb::SnapshotInput<'_>,
-        script::isolate_fb::NativeFactsInput<'_>,
+        &script::native::snapshot_source::SnapshotInput<'_>,
+        script::native::snapshot_source::NativeFactsInput<'_>,
     ) -> R,
 ) -> R {
-    use script::isolate_fb::{
+    use script::native::snapshot_source::{
         BankApproachInput, BankStandInput, ChatLineInput, ChatOptionInput, CollisionViewInput,
         CombatStyleInput, ItemRowInput, MainModalTextsInput, MakeButtonInput, MakeProductInput,
         NativeFactsInput, NearestBoothInput, PuzzleBoardInput, QuestStatusInput, ReachViewInput,
@@ -1486,7 +1499,7 @@ pub(crate) fn with_script_snapshot_input_shorts<R>(
         walk_outcome_allow_teleports: walk_outcome.allow_teleports,
         walk_outcome_blocked: walk_outcome.blocked,
         walk_missing_carry,
-        route_inspect: script::isolate_fb::RouteInspectFactsInput {
+        route_inspect: script::native::snapshot_source::RouteInspectFactsInput {
             latest: latest_in,
             prev: prev_in,
             running_id: inspect.running_id,

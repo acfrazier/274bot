@@ -255,7 +255,7 @@ fn start_source(
         let start = crate::script_runtime::js_surface_start(
             crate::script_runtime::js_start_card(
                 source.into(),
-                script::LoadShape::NativeTick,
+                script_js::LoadShape::NativeTick,
                 vec![],
             ),
             None,
@@ -355,7 +355,7 @@ fn force_watchdog_sampling(slot: &mut script::SlotScript, here: WorldTile) {
         &[],
         false,
         true,
-        &[script::shim::InteractReq::NoteProgress],
+        &[script::interact::InteractReq::NoteProgress],
     );
     let until = now + script::watchdog::WEDGE;
     let mut packet_tick = now;
@@ -390,7 +390,7 @@ fn finish_watchdog_hold(slot: &mut script::SlotScript, here: WorldTile) {
             &[],
             false,
             true,
-            &[script::shim::InteractReq::RecoveryAnchor {
+            &[script::interact::InteractReq::RecoveryAnchor {
                 x: anchor.x,
                 z: anchor.z,
                 level: anchor.level,
@@ -483,7 +483,7 @@ fn gather_seat_owns_foreground_through_recovery_hold_stop_and_resume_dispatch() 
 
 #[test]
 fn live_gather_seat_delivers_broadcast_posts_and_host_rows_but_drops_game_rows() {
-    use script::shim::InteractReq;
+    use script::interact::InteractReq;
     use script_channels::{BrokerWorld, ChannelBroker};
 
     let mut rig = GatherReconnectRig::with_empty_inventory(
@@ -659,7 +659,7 @@ fn live_gather_seat_delivers_broadcast_posts_and_host_rows_but_drops_game_rows()
 
 #[test]
 fn paused_gather_seat_keeps_host_rows_queued_until_resume_in_every_frame_state() {
-    use script::shim::InteractReq;
+    use script::interact::InteractReq;
 
     for owned in [false, true] {
         for (up, hold, has_snapshot) in [
@@ -754,7 +754,7 @@ fn api_foreground_edges_drop_owned_rows_and_restore_unowned_paused_rows() {
     unowned.isolate_tick_without_host_drain();
     unowned.frame();
     let cell = unowned.slot();
-    let held = || script::shim::InteractReq::Held {
+    let held = || script::interact::InteractReq::Held {
         name: "Logs".into(),
         action: "Drop".into(),
         slot: None,
@@ -940,7 +940,7 @@ impl GatherReconnectRig {
                 .get();
             let mut slot = script::SlotScript::new();
             slot.bind_incarnation(incarnation);
-            slot.bind_surface_factory(Arc::new(script::load::surface::JsSurfaceFactory::default()));
+            slot.bind_surface_factory(Arc::new(script_js::surface::JsSurfaceFactory::default()));
             scripts
                 .lock()
                 .unwrap()
@@ -1012,7 +1012,7 @@ impl GatherReconnectRig {
             PostedWalkOutcome::default(),
             PostedInspect::default(),
             |input, native| {
-                script::load::surface::post_snapshot_delta_pages_for_test(
+                script_js::surface::post_snapshot_delta_pages_for_test(
                     &mut slot, input, native, false,
                 )
             },
@@ -1057,7 +1057,7 @@ impl GatherReconnectRig {
     }
 
     /// Exercise the host's typed-seat drain; only ordinary host rows escape it.
-    fn drain_host(&self) -> (Vec<script::shim::InteractReq>, bool) {
+    fn drain_host(&self) -> (Vec<script::interact::InteractReq>, bool) {
         let cell = self.slot();
         let mut slot = cell.lock().unwrap();
         let (policy, requests, owned) = drain_observed_host_interacts(&mut slot);
@@ -1956,7 +1956,7 @@ fn load_gather_inspect_route_keeps_load_script_options() {
     let (allow_teleports, allow_wilderness, allow_bank_fetch) = requests
         .iter()
         .find_map(|request| match request {
-            script::shim::InteractReq::InspectRoute {
+            script::interact::InteractReq::InspectRoute {
                 allow_teleports,
                 allow_wilderness,
                 allow_bank_fetch,

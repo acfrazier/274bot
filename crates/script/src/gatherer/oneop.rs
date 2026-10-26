@@ -1,5 +1,5 @@
+use crate::interact::InteractReq;
 use crate::native::{ActionContext, ActionError, NativeMachine};
-use crate::shim::InteractReq;
 use std::sync::Arc;
 use std::task::Poll;
 

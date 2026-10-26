@@ -19,10 +19,13 @@
 //! keeps its search text and card list ([`CardSearch`]), so a warm frame
 //! allocates nothing in any state the toolbar shows.
 
+#[cfg(feature = "js")]
 use std::path::PathBuf;
 
 use dear_imgui_rs::{ImString, ItemHoveredFlags, StyleColor, TreeNodeFlags, Ui};
-use frontend_core::scripts::{BrowseCard, CardSource, ScriptChoice};
+#[cfg(feature = "js")]
+use frontend_core::scripts::CardSource;
+use frontend_core::scripts::{BrowseCard, ScriptChoice};
 use frontend_core::{
     contains_ci, FleetAction, FleetCard, FleetModel, FleetOrder, MarkOp, MarkPredicate,
     OperatorCommand, ReorderOp, ShownMarks, Targets, FOCUSED_CARD_LABEL, OWN_CARD_LABEL,
@@ -430,6 +433,7 @@ struct CardEntry {
     slot: usize,
     /// The card as a fleet card choice.
     choice: ScriptChoice,
+    #[cfg(feature = "js")]
     /// A loaded card's source, name and file: what its choice was built
     /// from (a compiled card's choice is its id).
     loaded: Option<(CardSource, String, PathBuf)>,
@@ -439,6 +443,7 @@ impl CardEntry {
     /// Whether `card` is still the card this entry was built from, under
     /// category `category` of the menu.
     fn describes(&self, card: BrowseCard<'_>, category: Option<&String>) -> bool {
+        #[cfg(feature = "js")]
         let same_card = match (card.loaded(), &self.loaded) {
             (None, None) => {
                 card.compiled_id().is_some() && card.compiled_id() == self.choice.compiled_id()
@@ -448,6 +453,10 @@ impl CardEntry {
             }
             _ => false,
         };
+        #[cfg(not(feature = "js"))]
+        let same_card = card
+            .compiled_id()
+            .is_some_and(|id| Some(id) == self.choice.compiled_id());
         same_card && category.is_some_and(|known| known == display_category(card.category()))
     }
 }
@@ -489,6 +498,7 @@ impl CardMenu {
             self.cards.push(CardEntry {
                 slot,
                 choice: card.selection(),
+                #[cfg(feature = "js")]
                 loaded: card.loaded().map(|loaded| {
                     (
                         loaded.source(),

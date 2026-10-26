@@ -7,8 +7,8 @@ use api::snapshot::{
     LocalPlayerView, PlayerView, SceneView, SideTabView, StatView, WorldStateView, WorldTile,
 };
 use api::ItemDefView;
+use script::interact::InteractReq;
 use script::native::{AllowWalkDanger, HostEffect, InteractionReceipt, NativePhase, SettingsBag};
-use script::shim::InteractReq;
 use script::slot::{StartOutcome, StartPoll};
 use script::{CompiledTick, ScriptCtx, SlotScript};
 use std::sync::Arc;

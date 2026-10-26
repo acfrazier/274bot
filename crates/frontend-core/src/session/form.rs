@@ -3,11 +3,15 @@
 use api::identity::RequestId;
 
 use super::commands::{Applied, Submitted};
+#[cfg(feature = "js")]
+use crate::command::FailureKind;
 use crate::command::{
-    FailureKind, FormClose, OperatorCommand, ProfileDraftField, Rejection, SkipReason, SubjectKind,
+    FormClose, OperatorCommand, ProfileDraftField, Rejection, SkipReason, SubjectKind,
 };
 use crate::profile_editor::{FormLeave, FormOpen};
-use crate::rs2b0t_import::{ConflictPolicy, Stage as ImportStage};
+use crate::rs2b0t_import::ConflictPolicy;
+#[cfg(feature = "js")]
+use crate::rs2b0t_import::Stage as ImportStage;
 use crate::surface::SlotSurface;
 use crate::OperatorSession;
 
@@ -190,6 +194,7 @@ impl<Io> OperatorSession<Io> {
                 }
                 no_model()
             }
+            #[cfg(feature = "js")]
             FormRow::ImportPath => {
                 if models.import.is_none() {
                     return no_model();
@@ -210,6 +215,7 @@ impl<Io> OperatorSession<Io> {
                 }
                 Applied::Done
             }
+            #[cfg(feature = "js")]
             FormRow::ImportPreview => {
                 let Some(scripts) = models.scripts.as_deref() else {
                     return no_model();
@@ -227,6 +233,7 @@ impl<Io> OperatorSession<Io> {
                     }
                 }
             }
+            #[cfg(feature = "js")]
             FormRow::ImportPolicy(policy) => {
                 let Some(scripts) = models.scripts.as_deref() else {
                     return no_model();
@@ -240,6 +247,7 @@ impl<Io> OperatorSession<Io> {
                 import.set_policy(self, scripts, policy);
                 Applied::Done
             }
+            #[cfg(feature = "js")]
             FormRow::ImportIncludeUnusable(include) => {
                 let Some(scripts) = models.scripts.as_deref() else {
                     return no_model();
@@ -253,6 +261,7 @@ impl<Io> OperatorSession<Io> {
                 import.set_include_unusable(self, scripts, include);
                 Applied::Done
             }
+            #[cfg(feature = "js")]
             FormRow::ImportBack => {
                 let Some(import) = models.import.as_deref_mut() else {
                     return no_model();
@@ -263,6 +272,7 @@ impl<Io> OperatorSession<Io> {
                 import.back();
                 Applied::Done
             }
+            #[cfg(feature = "js")]
             FormRow::ImportDeletePrompt(on) => {
                 let Some(import) = models.import.as_deref_mut() else {
                     return no_model();
@@ -277,6 +287,7 @@ impl<Io> OperatorSession<Io> {
                 }
                 Applied::Done
             }
+            #[cfg(feature = "js")]
             FormRow::ImportDeleteExport => {
                 let Some(import) = models.import.as_deref_mut() else {
                     return no_model();
@@ -294,6 +305,20 @@ impl<Io> OperatorSession<Io> {
                     }
                 }
             }
+            #[cfg(not(feature = "js"))]
+            FormRow::ImportPath
+            | FormRow::ImportPreview
+            | FormRow::ImportPolicy(_)
+            | FormRow::ImportIncludeUnusable(_)
+            | FormRow::ImportBack
+            | FormRow::ImportDeletePrompt(_)
+            | FormRow::ImportDeleteExport => Applied::Rejected(
+                Rejection::NotApplicable,
+                Some(
+                    script::surface::SurfaceError::NoFactory(script::surface::SurfaceKind::Js)
+                        .to_string(),
+                ),
+            ),
         }
     }
 }

@@ -4,7 +4,9 @@
 //! The `script` crate's types stay behind these; conversions are
 //! crate-private.
 
-use script::{LoadShape as ScriptLoadShape, LoadStage as ScriptLoadStage, ScriptSel};
+use script::ScriptSel;
+#[cfg(feature = "js")]
+use {script_js::LoadShape as ScriptLoadShape, script_js::LoadStage as ScriptLoadStage};
 
 /// The script slot's lifecycle.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -102,6 +104,7 @@ pub enum CardRuntime {
     Compiled,
 }
 
+#[cfg(feature = "js")]
 impl CardRuntime {
     pub(crate) fn from_script(kind: script::ScriptKind) -> Self {
         match kind {
@@ -112,6 +115,7 @@ impl CardRuntime {
     }
 }
 
+#[cfg(feature = "js")]
 /// Which loader a JS source belongs to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum LoadShape {
@@ -125,6 +129,7 @@ pub enum LoadShape {
     Reject,
 }
 
+#[cfg(feature = "js")]
 impl LoadShape {
     pub(crate) fn from_script(shape: ScriptLoadShape) -> Self {
         match shape {
@@ -145,6 +150,7 @@ impl LoadShape {
     }
 }
 
+#[cfg(feature = "js")]
 /// Stage of a retained per-source load failure.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum LoadStage {
@@ -158,6 +164,7 @@ pub enum LoadStage {
     RuntimeLoad,
 }
 
+#[cfg(feature = "js")]
 impl LoadStage {
     pub(crate) fn from_script(stage: ScriptLoadStage) -> Self {
         match stage {
@@ -457,12 +464,14 @@ impl OwnedSchema {
     }
 }
 
+#[cfg(feature = "js")]
 /// A loaded JS card.
 #[derive(Debug, Clone, Copy)]
-pub struct LoadedCard<'a>(&'a script::JsCard);
+pub struct LoadedCard<'a>(&'a script_js::JsCard);
 
+#[cfg(feature = "js")]
 impl<'a> LoadedCard<'a> {
-    pub(crate) fn new(card: &'a script::JsCard) -> Self {
+    pub(crate) fn new(card: &'a script_js::JsCard) -> Self {
         Self(card)
     }
 
@@ -537,12 +546,14 @@ impl<'a> LoadedCard<'a> {
     }
 }
 
+#[cfg(feature = "js")]
 /// A retained per-source load failure.
 #[derive(Debug, Clone, Copy)]
-pub struct LoadFailureView<'a>(&'a script::LoadFailure);
+pub struct LoadFailureView<'a>(&'a script_js::LoadFailure);
 
+#[cfg(feature = "js")]
 impl<'a> LoadFailureView<'a> {
-    pub(crate) fn new(failure: &'a script::LoadFailure) -> Self {
+    pub(crate) fn new(failure: &'a script_js::LoadFailure) -> Self {
         Self(failure)
     }
 

@@ -2,11 +2,12 @@ use api::snapshot::GameSnapshot;
 use client::client::{Client, ClientConfig};
 use client::config::if_type::{ButtonType, ComponentType, IfType, IfTypeMut};
 use client::io::ServerProt;
-use script::isolate_fb::decode_snapshot;
+use script_js::wire::decode_snapshot;
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::script_snapshot_fb;
+#[cfg(feature = "js")]
 use super::SettledStart;
 use crate::PostedWalkOutcome;
 
@@ -312,7 +313,7 @@ impl script::native::Script for QueueMove {
         &mut self,
         ctx: &mut script::native::NativeTick<'_>,
     ) -> Result<script::native::ScriptFlow, script::native::ScriptFailure> {
-        ctx.queue_test_interaction(script::shim::InteractReq::PuzzleMove {
+        ctx.queue_test_interaction(script::interact::InteractReq::PuzzleMove {
             id: PIECE_MOVE,
             slot: 0,
             component: MOVE_BOARD as i32,
@@ -322,6 +323,7 @@ impl script::native::Script for QueueMove {
     }
 }
 
+#[cfg(feature = "js")]
 /// A v2 script that queues the exact board click beside four stale or
 /// forged shapes in the same frame, and reports the posted board.
 const PUZZLE_MOVE_V2: &str = r#"
@@ -352,6 +354,7 @@ export function tick(api) {
 }
 "#;
 
+#[cfg(feature = "js")]
 /// A v2 script that deposits on its first tick and then queues the same
 /// deposit beside a board click on its second, so the later frame runs
 /// with the bank gate already closed by the armed op.
@@ -588,8 +591,8 @@ fn puzzle_move_client() -> Client {
     c
 }
 
-fn move_req(id: i32, slot: i32, component: i32, generation: u64) -> script::shim::InteractReq {
-    script::shim::InteractReq::PuzzleMove {
+fn move_req(id: i32, slot: i32, component: i32, generation: u64) -> script::interact::InteractReq {
+    script::interact::InteractReq::PuzzleMove {
         id,
         slot,
         component,
@@ -644,6 +647,7 @@ fn observe_puzzle_frame(
 /// component — never `INV_BUTTON5` — while a stale generation, an empty
 /// slot, a missing piece and a wrong component queued in the same frame
 /// send nothing.
+#[cfg(feature = "js")]
 #[test]
 fn puzzle_move_drains_as_opheld_on_the_posted_board() {
     let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
@@ -656,7 +660,7 @@ fn puzzle_move_drains_as_opheld_on_the_posted_board() {
         .unwrap()
         .start_load_with_loadouts_settled(
             PUZZLE_MOVE_V2.into(),
-            script::LoadShape::NativeTick,
+            script_js::LoadShape::NativeTick,
             vec![],
             &[],
         )
@@ -1189,6 +1193,7 @@ fn puzzle_move_refuses_closed_stale_and_forged_shapes() {
 /// refuses the neighbouring deposit because a bank op is already pending,
 /// it never arms a bank op of its own, and the two families stay distinct
 /// (`OPHELD5` for the board, `INV_BUTTON1` for the deposit).
+#[cfg(feature = "js")]
 #[test]
 fn puzzle_move_rides_a_frame_with_an_active_bank_op() {
     let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
@@ -1201,7 +1206,7 @@ fn puzzle_move_rides_a_frame_with_an_active_bank_op() {
         .unwrap()
         .start_load_with_loadouts_settled(
             PUZZLE_MOVE_BESIDE_DEPOSIT_V2.into(),
-            script::LoadShape::NativeTick,
+            script_js::LoadShape::NativeTick,
             vec![],
             &[],
         )

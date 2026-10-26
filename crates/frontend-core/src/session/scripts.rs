@@ -6,11 +6,13 @@ use std::path::PathBuf;
 use api::identity::RequestId;
 
 use super::commands::{Applied, Submitted, Targets};
-use crate::command::{
-    CardKind, FailureKind, OperatorCommand, Rejection, SkipReason, Subject, SubjectKind,
-};
+#[cfg(feature = "js")]
+use crate::command::FailureKind;
+use crate::command::{CardKind, OperatorCommand, Rejection, SkipReason, Subject, SubjectKind};
+#[cfg(feature = "js")]
+use crate::scripts::CatalogActionKind;
 use crate::scripts::{
-    AssignmentCommandResult, CatalogActionKind, PaintAction, ParameterCommit, ParameterEditKey,
+    AssignmentCommandResult, PaintAction, ParameterCommit, ParameterEditKey,
     PendingApplicationWait, ScriptChoice, Scripts, StagedSetting, SyncCommandInput,
 };
 use crate::selection::MarkedSelection;
@@ -228,6 +230,7 @@ fn dispatch_application<Io>(
             }
             None => Applied::Rejected(Rejection::NotStaged, None),
         },
+        #[cfg(feature = "js")]
         ScriptRow::PrepareScriptCard => {
             let Some((source, lookup)) = scripts.take_staged_transpile_target() else {
                 return Applied::Rejected(Rejection::NotStaged, None);
@@ -238,6 +241,7 @@ fn dispatch_application<Io>(
                 Err(error) => Applied::Rejected(Rejection::NotApplicable, Some(error)),
             }
         }
+        #[cfg(feature = "js")]
         ScriptRow::SaveLegacySettings => {
             if let Some(staged) = scripts.take_staged_setting() {
                 return commit_staged_setting(core, scripts, staged, None, None);
@@ -282,6 +286,7 @@ fn dispatch_application<Io>(
             scripts.dismiss_restart_prompt();
             Applied::Done
         }
+        #[cfg(feature = "js")]
         ScriptRow::LoadScriptFile => {
             let Some(path) = scripts.take_staged_file_path() else {
                 return Applied::Rejected(Rejection::NotStaged, None);
@@ -295,15 +300,18 @@ fn dispatch_application<Io>(
                 Err(error) => Applied::Rejected(Rejection::NotApplicable, Some(error)),
             }
         }
+        #[cfg(feature = "js")]
         ScriptRow::Reload | ScriptRow::ConfirmReload => {
             let target = scripts.take_staged_reload_target();
             scripts.begin_reload(core, target);
             settle_reload_command(scripts, request)
         }
+        #[cfg(feature = "js")]
         ScriptRow::CancelReload => {
             scripts.cancel_reload();
             Applied::Done
         }
+        #[cfg(feature = "js")]
         ScriptRow::ImportCatalog => {
             let Some(action) = scripts.take_staged_catalog_action() else {
                 return Applied::Rejected(Rejection::NotStaged, None);
@@ -354,11 +362,13 @@ fn dispatch_application<Io>(
                 }
             }
         }
+        #[cfg(feature = "js")]
         ScriptRow::TranspileAll => match scripts.queue_transpile_all_command(request) {
             Ok(true) => Applied::Later,
             Ok(false) => Applied::Done,
             Err(error) => Applied::Rejected(Rejection::NotApplicable, Some(error)),
         },
+        #[cfg(feature = "js")]
         ScriptRow::DeferCatalogImport => {
             let Some(path) = scripts.take_staged_defer_catalog() else {
                 return Applied::Rejected(Rejection::NotStaged, None);
@@ -368,6 +378,22 @@ fn dispatch_application<Io>(
                 Err(error) => Applied::Rejected(Rejection::NotApplicable, Some(error.to_string())),
             }
         }
+        #[cfg(not(feature = "js"))]
+        ScriptRow::PrepareScriptCard
+        | ScriptRow::SaveLegacySettings
+        | ScriptRow::LoadScriptFile
+        | ScriptRow::Reload
+        | ScriptRow::ConfirmReload
+        | ScriptRow::CancelReload
+        | ScriptRow::ImportCatalog
+        | ScriptRow::TranspileAll
+        | ScriptRow::DeferCatalogImport => Applied::Rejected(
+            Rejection::NotApplicable,
+            Some(
+                script::surface::SurfaceError::NoFactory(script::surface::SurfaceKind::Js)
+                    .to_string(),
+            ),
+        ),
         ScriptRow::Start
         | ScriptRow::CancelQueuedStart
         | ScriptRow::SelectScriptCard
@@ -379,6 +405,7 @@ fn dispatch_application<Io>(
     }
 }
 
+#[cfg(feature = "js")]
 fn settle_reload_command(scripts: &mut Scripts, request: RequestId) -> Applied {
     if scripts.reload_validation_pending() {
         scripts.await_application_command(request, PendingApplicationWait::Reload);
@@ -564,20 +591,26 @@ fn start_profile<Io>(
     profile: &str,
     catalog_root: Option<&std::path::Path>,
 ) -> Applied {
-    if scripts.start_queue_place(profile).is_some() || scripts.has_start_preparation(profile) {
+    let waiting = scripts.start_queue_place(profile).is_some();
+    #[cfg(feature = "js")]
+    let waiting = waiting || scripts.has_start_preparation(profile);
+    if waiting {
         register_start_command(core, scripts, request, profile);
         return Applied::Later;
     }
     match scripts.start_selected(core, profile, None, catalog_root) {
         Ok(Some(operation)) => Applied::Operation(operation),
-        Ok(None)
-            if scripts.start_queue_place(profile).is_some()
-                || scripts.has_start_preparation(profile) =>
-        {
-            register_start_command(core, scripts, request, profile);
-            Applied::Later
+        Ok(None) => {
+            let waiting = scripts.start_queue_place(profile).is_some();
+            #[cfg(feature = "js")]
+            let waiting = waiting || scripts.has_start_preparation(profile);
+            if waiting {
+                register_start_command(core, scripts, request, profile);
+                Applied::Later
+            } else {
+                Applied::Done
+            }
         }
-        Ok(None) => Applied::Done,
         Err(error) => Applied::Rejected(Rejection::StartRefused, Some(error.to_string())),
     }
 }
@@ -750,21 +783,44 @@ fn dispatch_settings_sync<Io>(
                     Ok(_) => Applied::Done,
                     Err(error) => Applied::Rejected(Rejection::NotApplicable, Some(error)),
                 }
-            } else if let Some((source, lookup)) = staged.selection.loaded_card() {
-                match scripts.card(source, lookup) {
-                    Some(card) => {
-                        let name = card.name().to_owned();
-                        let path = card.path().to_path_buf();
-                        scripts.prepare_settings_sync(core, &staged.source, source, &name, &path);
-                        Applied::Done
-                    }
-                    None => Applied::Rejected(
-                        Rejection::NotApplicable,
-                        Some("script card is unavailable".into()),
-                    ),
-                }
             } else {
-                Applied::Rejected(Rejection::NotApplicable, None)
+                #[cfg(feature = "js")]
+                {
+                    if let Some((source, lookup)) = staged.selection.loaded_card() {
+                        match scripts.card(source, lookup) {
+                            Some(card) => {
+                                let name = card.name().to_owned();
+                                let path = card.path().to_path_buf();
+                                scripts.prepare_settings_sync(
+                                    core,
+                                    &staged.source,
+                                    source,
+                                    &name,
+                                    &path,
+                                );
+                                Applied::Done
+                            }
+                            None => Applied::Rejected(
+                                Rejection::NotApplicable,
+                                Some("script card is unavailable".into()),
+                            ),
+                        }
+                    } else {
+                        Applied::Rejected(Rejection::NotApplicable, None)
+                    }
+                }
+                #[cfg(not(feature = "js"))]
+                {
+                    Applied::Rejected(
+                        Rejection::NotApplicable,
+                        Some(
+                            script::surface::SurfaceError::NoFactory(
+                                script::surface::SurfaceKind::Js,
+                            )
+                            .to_string(),
+                        ),
+                    )
+                }
             };
             broadcast_script_result(names, applied)
         }

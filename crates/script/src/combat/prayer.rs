@@ -5,8 +5,8 @@
 //! observations settle pending bits; candidates commit only after acceptance,
 //! and batch callers commit only the accepted receipt prefix.
 
+use crate::interact::InteractReq;
 use crate::native::{ActionContext, ActionError, ActionHandle, NativeMachine, NativeTick};
-use crate::shim::InteractReq;
 use api::game_data::SelectedGameData;
 use api::prayer::{OnArg, PrayerObservation, PRAYER_COUNT, TOGGLE_MS};
 use api::quest_progress::EvidenceStamp;
@@ -33,7 +33,7 @@ impl RaisedPrayers {
     }
 
     /// Mark an accepted raise as owned. Ownership rules live in the callers.
-    pub(crate) fn accepted(&mut self, varp: i32, on: bool, displaced: u16) {
+    pub fn accepted(&mut self, varp: i32, on: bool, displaced: u16) {
         let Some(bit) = Self::bit(varp) else {
             return;
         };

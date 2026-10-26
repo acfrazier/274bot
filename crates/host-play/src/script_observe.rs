@@ -8,6 +8,7 @@ use api::host_log;
 use api::hostlog::{Category, Level};
 use api::interact::Driver;
 use api::snapshot::GameSnapshot;
+#[cfg(any(feature = "js", test))]
 use client::client::Client;
 use client::config::Cache;
 use host::{ScriptRunPolicy, SlotInput};
@@ -20,9 +21,10 @@ use super::{
     abort_script_walk, apply_watchdog_nav_action, dispatch_native_bank_deposit,
     dispatch_observed_bank_op, dispatch_script_interact_cached_scoped, pack_cached_reach,
     recovery_walk_idle, reset_script_nav, resumed_walk, route_inspect, script_slot,
-    take_carried_walk, with_script_snapshot_input_shorts, BankDepositDispatch, InteractContext,
-    NavBot, PostedWalkOutcome, ScriptWall,
+    take_carried_walk, BankDepositDispatch, InteractContext, NavBot, ScriptWall,
 };
+#[cfg(feature = "js")]
+use super::{with_script_snapshot_input_shorts, PostedWalkOutcome};
 use crate::debug_enabled;
 #[cfg(feature = "memory-profile")]
 use crate::memory_diagnostics;
@@ -148,6 +150,7 @@ pub(crate) fn delay_ordered_drain_for_test() {
     DELAY_ORDERED_DRAIN.with(|delay| assert!(!delay.replace(true)));
 }
 
+#[cfg(feature = "js")]
 /// Post the slot's snapshot. Only a post the isolate accepted counts as the
 /// isolate having seen the walk outcome it carries (`walk_seq`), so only
 /// then is the live refusal guard released. A refused post leaves the guard
@@ -283,7 +286,7 @@ pub(crate) fn script_observe_with_npc_boxes(
     inv: Option<&[(i32, i32)]>,
     state: Option<WorldState>,
     snapshot: Option<&GameSnapshot>,
-    npc_boxes: Option<&[script::isolate_fb::NpcBoxInput]>,
+    npc_boxes: Option<&[script::native::snapshot_source::NpcBoxInput]>,
     obj_names: Option<&api::obj_names::ObjNames>,
     scripts: &ScriptWall,
     cheats: &Arc<Mutex<HashMap<String, VecDeque<String>>>>,
@@ -312,7 +315,7 @@ pub(crate) fn script_observe_cached(
     inv: Option<&[(i32, i32)]>,
     state: Option<WorldState>,
     snapshot: Option<&GameSnapshot>,
-    npc_boxes: Option<&[script::isolate_fb::NpcBoxInput]>,
+    npc_boxes: Option<&[script::native::snapshot_source::NpcBoxInput]>,
     obj_names: Option<&api::obj_names::ObjNames>,
     scripts: &ScriptWall,
     cheats: &Arc<Mutex<HashMap<String, VecDeque<String>>>>,
@@ -326,6 +329,8 @@ pub(crate) fn script_observe_cached(
     obj_names_arc: Option<Arc<api::obj_names::ObjNames>>,
     run_policy: Option<&mut ScriptRunPolicy>,
 ) -> bool {
+    #[cfg(not(feature = "js"))]
+    let _ = npc_boxes;
     script_observe_cached_with_channels(
         driver,
         name,
@@ -338,6 +343,7 @@ pub(crate) fn script_observe_cached(
         state,
         snapshot,
         None,
+        #[cfg(feature = "js")]
         npc_boxes,
         obj_names,
         scripts,
@@ -352,7 +358,9 @@ pub(crate) fn script_observe_cached(
         slot_input,
         cache,
         obj_names_arc,
+        #[cfg(feature = "js")]
         None,
+        #[cfg(feature = "js")]
         super::script_channels::BrokerWorld::Unavailable,
         run_policy,
         None,
@@ -378,7 +386,7 @@ pub(crate) fn drain_observed_host_interacts(
     slot: &mut SlotScript,
 ) -> (
     Option<DrainedRunPolicyUpdate>,
-    Vec<script::load::QueuedInteract>,
+    Vec<script::interact::QueuedInteract>,
     bool,
 ) {
     let producer_generation = slot.runtime_generation();
@@ -426,7 +434,7 @@ pub(crate) fn script_observe_cached_with_channels(
     state: Option<WorldState>,
     snapshot: Option<&GameSnapshot>,
     bank_memory: Option<&parking_lot::RwLock<api::bank_memory::BankMemory>>,
-    npc_boxes: Option<&[script::isolate_fb::NpcBoxInput]>,
+    #[cfg(feature = "js")] npc_boxes: Option<&[script::native::snapshot_source::NpcBoxInput]>,
     obj_names: Option<&api::obj_names::ObjNames>,
     scripts: &ScriptWall,
     cheats: &Arc<Mutex<HashMap<String, VecDeque<String>>>>,
@@ -439,8 +447,8 @@ pub(crate) fn script_observe_cached_with_channels(
     slot_input: Option<&SlotInput>,
     cache: Option<Arc<Cache>>,
     obj_names_arc: Option<Arc<api::obj_names::ObjNames>>,
-    channels: Option<&super::script_channels::SlotChannels>,
-    channel_world: super::script_channels::BrokerWorld,
+    #[cfg(feature = "js")] channels: Option<&super::script_channels::SlotChannels>,
+    #[cfg(feature = "js")] channel_world: super::script_channels::BrokerWorld,
     run_policy: Option<&mut ScriptRunPolicy>,
     mut debug_replies: Option<&mut super::debug_replies::DebugReplies>,
     service_arm: Option<&SlotArm>,
@@ -482,7 +490,9 @@ pub(crate) fn script_observe_cached_with_channels(
     let mut slot_work_epoch = None;
     let mut has_native_actions = false;
     let mut walk_permissions = None;
+    #[cfg(feature = "js")]
     let mut channel_generation = 0;
+    #[cfg(feature = "js")]
     let mut channel_active = false;
     let mut policy_runtime_generation = None;
     let mut run_policy_update = None;
@@ -616,15 +626,18 @@ pub(crate) fn script_observe_cached_with_channels(
             );
         }
         slot_work_epoch = Some(slot.work_epoch());
-        channel_generation = slot.runtime_generation();
-        // Region loads briefly clear `up`; the isolate and its browser-style
-        // channel survive them. Session boundaries suspend the broker in the
-        // slot loop before this observation runs.
-        channel_active = slot.surface_active()
-            && matches!(
-                slot.state(),
-                script::RunState::Running | script::RunState::Paused
-            );
+        #[cfg(feature = "js")]
+        {
+            channel_generation = slot.runtime_generation();
+            // Region loads briefly clear `up`; the isolate and its browser-style
+            // channel survive them. Session boundaries suspend the broker in the
+            // slot loop before this observation runs.
+            channel_active = slot.surface_active()
+                && matches!(
+                    slot.state(),
+                    script::RunState::Running | script::RunState::Paused
+                );
+        }
         if let Some(pending) = slot.pending_bank_op() {
             if hold || slot.state() == script::RunState::Paused {
                 slot.freeze_pending_bank_op();
@@ -794,13 +807,16 @@ pub(crate) fn script_observe_cached_with_channels(
             // packed banks are re-posted when the NavWorld identity
             // changed (identity = the shared Arc's pointer), not when
             // the stand list merely rebuilds identical.
+            #[cfg(feature = "js")]
             let world_id = world.as_ref().map(|w| Arc::as_ptr(w) as usize);
+            #[cfg(feature = "js")]
             let force_banks = world_id.is_some_and(|id| slot.last_world_id() != Some(id));
-            // Guardian `hold` freezes clocks/nav and cancels owned recovery.
-            // Recovery hold is host-owned and must still reach the isolate so
-            // loop/pump freeze, without being treated as that external freeze.
+            // Guardian hold freezes clocks/nav and cancels owned recovery.
+            // Recovery is host-owned and participates in the same hold
+            // semantics without being treated as a guardian hold.
             let recovery_hold = slot.watchdog().holds_script_actions();
             let isolate_hold = hold || recovery_hold || prayer_cleanup_hold;
+            #[cfg(feature = "js")]
             if slot.surface_active() {
                 let (
                     teleports_enabled,
@@ -862,7 +878,7 @@ pub(crate) fn script_observe_cached_with_channels(
                             0,
                             Vec::new(),
                             route_inspect::PostedInspect::default(),
-                            script::isolate_fb::BankSelectionInput::default(),
+                            script::native::snapshot_source::BankSelectionInput::default(),
                         ),
                     }
                 };
@@ -873,14 +889,15 @@ pub(crate) fn script_observe_cached_with_channels(
                 // table's display name beside them when it has one. Always
                 // supplied — an empty list is the observed "no named short",
                 // so a clear is never omitted.
-                let carry_rows: Vec<script::isolate_fb::CarryInput<'_>> = walk_missing_carry
-                    .iter()
-                    .map(|row| script::isolate_fb::CarryInput {
-                        id: row.id,
-                        count: row.count,
-                        name: obj_names.and_then(|names| names.name(row.id)),
-                    })
-                    .collect();
+                let carry_rows: Vec<script::native::snapshot_source::CarryInput<'_>> =
+                    walk_missing_carry
+                        .iter()
+                        .map(|row| script::native::snapshot_source::CarryInput {
+                            id: row.id,
+                            count: row.count,
+                            name: obj_names.and_then(|names| names.name(row.id)),
+                        })
+                        .collect();
                 let packed = pack_cached_reach(
                     slot.reach_pack_cache(),
                     snapshot,
@@ -952,6 +969,7 @@ pub(crate) fn script_observe_cached_with_channels(
                 // hold: nav follow of the owned recovery route continues,
                 // but script walk arms are not provided. Compiled: skip on
                 // guardian hold.
+                #[cfg(feature = "js")]
                 if slot.surface_active() {
                     slot.on_game_tick(&mut ScriptCtx {
                         driver,
@@ -1239,7 +1257,7 @@ pub(crate) fn script_observe_cached_with_channels(
                             )
                         });
                     interact.extend(resumed.map(|req| {
-                        script::load::QueuedInteract {
+                        script::interact::QueuedInteract {
                             req,
                             observed_walk_outcome_seq: navs
                                 .lock()
@@ -1280,15 +1298,16 @@ pub(crate) fn script_observe_cached_with_channels(
             update.apply(run_policy);
         }
     }
+    #[cfg(feature = "js")]
     if let Some(channels) = channels {
         // Channel requests are the broker's, never the game's. A frame with
         // none allocates nothing, and an untracked slot takes no lock.
-        let is_channel = |queued: &script::load::QueuedInteract| {
+        let is_channel = |queued: &script::interact::QueuedInteract| {
             matches!(
                 queued.req,
-                script::shim::InteractReq::ChannelOpen { .. }
-                    | script::shim::InteractReq::ChannelPost { .. }
-                    | script::shim::InteractReq::ChannelClose { .. }
+                script::interact::InteractReq::ChannelOpen { .. }
+                    | script::interact::InteractReq::ChannelPost { .. }
+                    | script::interact::InteractReq::ChannelClose { .. }
             )
         };
         let channel_reqs = if interact.iter().any(is_channel) {
@@ -1365,12 +1384,15 @@ pub(crate) fn script_observe_cached_with_channels(
                     // Walk releases before the native action loop as well, so
                     // a fresh native drive cannot overtake a reserved stop.
                     if interact.iter().any(|queued| {
-                        matches!(queued.req, script::shim::InteractReq::AbortWalk { .. })
+                        matches!(queued.req, script::interact::InteractReq::AbortWalk { .. })
                     }) {
                         let (releases, remaining): (Vec<_>, Vec<_>) = std::mem::take(&mut interact)
                             .into_iter()
                             .partition(|queued| {
-                                matches!(queued.req, script::shim::InteractReq::AbortWalk { .. })
+                                matches!(
+                                    queued.req,
+                                    script::interact::InteractReq::AbortWalk { .. }
+                                )
                             });
                         interact = remaining;
                         wrote |= dispatch_script_interact_cached_scoped(
@@ -1420,7 +1442,7 @@ pub(crate) fn script_observe_cached_with_channels(
                                 &action.effect,
                                 script::native::HostEffect::Walk(_)
                                     | script::native::HostEffect::Interaction(
-                                        script::shim::InteractReq::WalkTo { .. }
+                                        script::interact::InteractReq::WalkTo { .. }
                                     )
                             )
                         {
@@ -1476,11 +1498,11 @@ pub(crate) fn script_observe_cached_with_channels(
                                 let mut proof_decoded = false;
                                 #[cfg(all(windows, test, feature = "journal-paint-proof"))]
                                 let proof_close =
-                                    matches!(&request, script::shim::InteractReq::CloseModal);
+                                    matches!(&request, script::interact::InteractReq::CloseModal);
                                 let bank_dispatch = bank_deposit.as_ref().map(|trace| {
                                     let matches = matches!(
                                         &request,
-                                        script::shim::InteractReq::InvButton {
+                                        script::interact::InteractReq::InvButton {
                                             id,
                                             slot,
                                             component,
@@ -1516,7 +1538,7 @@ pub(crate) fn script_observe_cached_with_channels(
                                     dispatch.accepted
                                 } else if matches!(
                                     request,
-                                    script::shim::InteractReq::WithdrawX { .. }
+                                    script::interact::InteractReq::WithdrawX { .. }
                                 ) {
                                     if pending_withdraw_x_active {
                                         false
@@ -1746,8 +1768,8 @@ pub(crate) fn script_observe_cached_with_channels(
                             snapshot,
                         );
                         match req {
-                            req @ (script::shim::InteractReq::Deposit { .. }
-                            | script::shim::InteractReq::Withdraw { .. }) => {
+                            req @ (script::interact::InteractReq::Deposit { .. }
+                            | script::interact::InteractReq::Withdraw { .. }) => {
                                 if pending_bank_op_active || armed_bank_op.is_some() {
                                     rejected_bank_op += 1;
                                 } else if let Some(pending) = dispatch_observed_bank_op(
@@ -1760,7 +1782,7 @@ pub(crate) fn script_observe_cached_with_channels(
                                     rejected_bank_op += 1;
                                 }
                             }
-                            req @ script::shim::InteractReq::WithdrawX { .. } => {
+                            req @ script::interact::InteractReq::WithdrawX { .. } => {
                                 let pending = (armed.is_none() && !pending_withdraw_x_active)
                                     .then(|| {
                                         super::bank::dispatch_observed_withdraw_x(
@@ -1845,15 +1867,17 @@ pub(crate) fn script_observe_cached_with_channels(
         } else {
             let rejected_x = interact
                 .iter()
-                .filter(|queued| matches!(&queued.req, script::shim::InteractReq::WithdrawX { .. }))
+                .filter(|queued| {
+                    matches!(&queued.req, script::interact::InteractReq::WithdrawX { .. })
+                })
                 .count();
             let rejected_bank = interact
                 .iter()
                 .filter(|req| {
                     matches!(
                         &req.req,
-                        script::shim::InteractReq::Deposit { .. }
-                            | script::shim::InteractReq::Withdraw { .. }
+                        script::interact::InteractReq::Deposit { .. }
+                            | script::interact::InteractReq::Withdraw { .. }
                     )
                 })
                 .count();
@@ -1883,15 +1907,15 @@ pub(crate) fn script_observe_cached_with_channels(
     } else if !interact.is_empty() {
         let rejected_x = interact
             .iter()
-            .filter(|req| matches!(req.req, script::shim::InteractReq::WithdrawX { .. }))
+            .filter(|req| matches!(req.req, script::interact::InteractReq::WithdrawX { .. }))
             .count();
         let rejected_bank = interact
             .iter()
             .filter(|req| {
                 matches!(
                     &req.req,
-                    script::shim::InteractReq::Deposit { .. }
-                        | script::shim::InteractReq::Withdraw { .. }
+                    script::interact::InteractReq::Deposit { .. }
+                        | script::interact::InteractReq::Withdraw { .. }
                 )
             })
             .count();
@@ -2102,7 +2126,7 @@ fn deliver_native_advice(slot: &mut script::SlotScript, bot: &mut NavBot) -> boo
 fn host_completion_changed(
     slot: &script::SlotScript,
     bot: &NavBot,
-    bank_selection: script::isolate_fb::BankSelectionInput,
+    bank_selection: script::native::snapshot_source::BankSelectionInput,
 ) -> bool {
     slot.posted_snapshot_facts().is_some_and(|last| {
         let inspect = &bot.inspect;
@@ -2125,6 +2149,7 @@ fn host_completion_changed(
     })
 }
 
+#[cfg(feature = "js")]
 pub(crate) fn deliver_channel_events(
     scripts: &ScriptWall,
     deliveries: Vec<super::script_channels::Delivery>,
@@ -2182,14 +2207,14 @@ pub(crate) fn script_observe(
     )
 }
 
-pub(crate) fn take_script_interacts<T: std::borrow::Borrow<script::shim::InteractReq>>(
+pub(crate) fn take_script_interacts<T: std::borrow::Borrow<script::interact::InteractReq>>(
     reqs: Vec<T>,
     slot_input: Option<&SlotInput>,
 ) -> Vec<T> {
     let mut out = Vec::with_capacity(reqs.len());
     for req in reqs {
         match req.borrow() {
-            script::shim::InteractReq::Mouse {
+            script::interact::InteractReq::Mouse {
                 down,
                 x,
                 y,
@@ -2200,7 +2225,7 @@ pub(crate) fn take_script_interacts<T: std::borrow::Borrow<script::shim::Interac
                     inp.enqueue_script_mouse_at(*identity, *down, *x, *y, *button);
                 }
             }
-            script::shim::InteractReq::RunPolicyOverride { .. } => {
+            script::interact::InteractReq::RunPolicyOverride { .. } => {
                 // Host callers split these before dispatch. A raw/direct caller
                 // cannot turn host policy into a game interact.
             }
@@ -2236,10 +2261,13 @@ pub(crate) fn observe_script_inv(
     (running && tick_edge).then(|| snapshot.inv())
 }
 
+#[cfg(any(feature = "js", test))]
 /// Project only the client's bounded active-NPC list. A ready scene with no
 /// projectable NPCs is an available empty update; a non-ready scene is
 /// unavailable so isolates clear any prior geometry.
-pub(crate) fn projected_npc_boxes(client: &Client) -> Option<Vec<script::isolate_fb::NpcBoxInput>> {
+pub(crate) fn projected_npc_boxes(
+    client: &Client,
+) -> Option<Vec<script::native::snapshot_source::NpcBoxInput>> {
     if !client.ingame || client.scene_state != 2 {
         return None;
     }
@@ -2251,7 +2279,7 @@ pub(crate) fn projected_npc_boxes(client: &Client) -> Option<Vec<script::isolate
             .filter_map(|&index| {
                 let slot = usize::try_from(index).ok()?;
                 client::render::npc_overlay_box(client, slot)
-                    .map(|points| script::isolate_fb::NpcBoxInput { index, points })
+                    .map(|points| script::native::snapshot_source::NpcBoxInput { index, points })
             })
             .collect(),
     )
@@ -2261,14 +2289,15 @@ pub(crate) fn projected_npc_boxes(client: &Client) -> Option<Vec<script::isolate
 /// snapshot. Held running isolates still satisfy this gate because they post
 /// the snapshot before dispatching their paint-only tick; idle, paused,
 /// compiled-only, and non-tick frames do not consume one.
+#[cfg(any(feature = "js", test))]
 pub(crate) fn project_npc_boxes_for_isolate_snapshot<F>(
     scripts: &ScriptWall,
     name: &str,
     tick_edge: bool,
     project: F,
-) -> Option<Vec<script::isolate_fb::NpcBoxInput>>
+) -> Option<Vec<script::native::snapshot_source::NpcBoxInput>>
 where
-    F: FnOnce() -> Option<Vec<script::isolate_fb::NpcBoxInput>>,
+    F: FnOnce() -> Option<Vec<script::native::snapshot_source::NpcBoxInput>>,
 {
     if !tick_edge {
         return None;

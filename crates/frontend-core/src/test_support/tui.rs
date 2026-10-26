@@ -15,7 +15,9 @@ use serde_json::{Map, Value};
 use super::VaultFixture;
 use crate::frames::FrameHook;
 use crate::launch::PlayLaunch;
-use crate::scripts::{CardSource, LoadShape, ScriptRunState, Scripts};
+use crate::scripts::ScriptRunState;
+#[cfg(feature = "js")]
+use crate::scripts::{CardSource, LoadShape, Scripts};
 use crate::{GuardianPolicy, OperatorSession};
 
 /// Start the play `launch` describes, with `hook` as every slot's per-frame
@@ -34,6 +36,7 @@ pub fn play_script_state(play: &Play, name: &str) -> ScriptRunState {
     ScriptRunState::from_script(play.script_state(name))
 }
 
+#[cfg(feature = "js")]
 /// Start `source` as a `shape` bot on `name`'s slot, with no settings bag
 /// and no sibling modules: the load path below the script coordinator.
 pub fn start_script_source(
@@ -93,6 +96,7 @@ pub fn remove_saved_profile<Io>(core: &mut OperatorSession<Io>, username: &str) 
         .expect("rewrite the vault");
 }
 
+#[cfg(feature = "js")]
 /// The API family (`unversioned`, `v1`, `v2`) the library classified the card
 /// `lookup` against; `None` when no such card is loaded.
 pub fn card_api_family(scripts: &Scripts, source: CardSource, lookup: &str) -> Option<String> {

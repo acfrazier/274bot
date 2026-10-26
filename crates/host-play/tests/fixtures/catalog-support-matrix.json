@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "frozen_at": "2026-09-10",
-  "generated_from": "crates/script/examples/catalog_inventory.rs output plus the explicit capability/proof ledger in this file",
+  "generated_from": "crates/script-js/examples/catalog_inventory.rs output plus the explicit capability/proof ledger in this file",
   "policy": {
     "host_boundary": "map the JavaScript surface to Rust host APIs; do not clone the foreign runtime, policy, tables, routers, banking, loadout, navigation, recovery, quest, clue, gatherer, or market-maker planners",
     "missing_capability": "BLOCKED: missing <op> with source evidence; imports/startup are not functional support",

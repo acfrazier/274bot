@@ -30,6 +30,7 @@ pub enum FormLeave {
     DeleteTarget,
     /// Turn MultiBox off, which closes the profiles window and the form.
     MultiBoxOff,
+    #[cfg(feature = "js")]
     /// Close the form and open the rs2b0t import in the editor pane.
     OpenImport,
 }
@@ -249,8 +250,9 @@ impl ProfileEditor {
             FormLeave::CloseForm
             | FormLeave::CloseWindow
             | FormLeave::DeleteTarget
-            | FormLeave::MultiBoxOff
-            | FormLeave::OpenImport => self.close(),
+            | FormLeave::MultiBoxOff => self.close(),
+            #[cfg(feature = "js")]
+            FormLeave::OpenImport => self.close(),
         }
         Some(prompt)
     }

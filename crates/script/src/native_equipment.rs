@@ -1,6 +1,6 @@
 //! Observed wear/remove core shared by compiled cards.
+use crate::interact::InteractReq;
 use crate::native::{defer_budget, ActionContext, ActionError, NativeMachine};
-use crate::shim::InteractReq;
 use std::sync::Arc;
 use std::task::Poll;
 use std::time::Duration;

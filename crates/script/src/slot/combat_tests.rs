@@ -6,8 +6,8 @@ use super::*;
 use crate::api_combat::{CombatSessionRequest, InterruptCause, TargetSpec};
 use crate::combat_session::tests::World;
 use crate::ctx::test_support::NullDriver;
+use crate::interact::InteractReq;
 use crate::native::{HostEffect, InteractionReceipt};
-use crate::shim::InteractReq;
 use api::quest_progress::EvidenceStamp;
 
 fn selected() -> Arc<api::game_data::SelectedGameData> {

@@ -1,5 +1,5 @@
+use crate::interact::InteractReq;
 use crate::native::{defer_budget, ActionContext, ActionError, NativeMachine};
-use crate::shim::InteractReq;
 use api::snapshot::ItemView;
 use std::sync::Arc;
 use std::task::Poll;

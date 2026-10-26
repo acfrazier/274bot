@@ -17,7 +17,7 @@ fn test_args<T: serde::de::DeserializeOwned>(value: serde_json::Value) -> T {
 struct Output;
 impl NativeOutput for Output {
     fn status(&mut self, _: ScriptStatus) {}
-    fn paint(&mut self, _: Arc<crate::shim::ScriptPaint>) {}
+    fn paint(&mut self, _: Arc<crate::paint::ScriptPaint>) {}
     fn log(&mut self, _: api::hostlog::Level, _: &str) {}
     fn settings_applied(&mut self, _: u64) {}
 }

@@ -88,7 +88,7 @@ to set.
   tests these. Run the lane for the crate you changed:
 
   ```bash
-  cargo test -p script --features load --tests
+  cargo test -p script-js --tests
   cargo test -p script --no-default-features
   cargo test -p host-play --features live-harness,test-support --test grinch_live
   cargo test -p host-play --features memory-profile

@@ -498,9 +498,10 @@ fn observe_first_combat(watch: &PairWatch) {
     watch.observe_duel("bob", b, false);
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn duel_trainer_schema_defaults_prepare_with_native_counterpart_identity() {
-    let schema = script::settings_schema_from_source(
+    let schema = script_js::settings_schema_from_source(
         r#"export const SETTINGS = {
             mode: { type: 'string', default: 'Train', options: ['Train', 'Clue helper'] },
             partner: { type: 'string', default: '', showIf: { key: 'mode', anyOf: ['Clue helper'] } },
@@ -514,7 +515,7 @@ fn duel_trainer_schema_defaults_prepare_with_native_counterpart_identity() {
         &["alice".into(), "bob".into()],
         PairCase::Duel,
         String::new(),
-        script::LoadShape::CompatClass,
+        script_js::LoadShape::CompatClass,
         &schema,
         Vec::new(),
         &watch,

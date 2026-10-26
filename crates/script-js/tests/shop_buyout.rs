@@ -1,0 +1,146 @@
+// ShopBuyout host facts + in-isolate Rust buyout helper.
+// Frozen ShopBuyout looks up rec from SHOP_DB and calls buyoutPlan; this
+// fixture uses those same specifiers so an empty catalog fallback cannot pass.
+
+use script_js::{LoadIsolate, LoadShape};
+use serde_json::Value;
+
+fn data() -> std::sync::Arc<api::game_data::SelectedGameData> {
+    api::game_data::for_revision(client::io::ClientRevision::R289).unwrap()
+}
+
+fn spawn(src: &str) -> LoadIsolate {
+    LoadIsolate::spawn_with_game_data(src.to_string(), LoadShape::CompatClass, vec![], data())
+        .unwrap()
+}
+
+fn tick(iso: &LoadIsolate) {
+    iso.on_game_tick(1);
+    let _ = iso.probe("true");
+}
+
+const PLAN_SRC: &str = r#"
+import { SHOP_DB } from '../../data/shopdb.js';
+import { buyoutPlan } from '../../api/shop/BuyoutLogic.js';
+export default class T extends LoopingBot {
+    loop() {
+        const rec = Object.values(SHOP_DB).find(r => r.keepers.includes('Aemad')) ?? null;
+        const unknown = Object.values(SHOP_DB).find(r => r.keepers.includes('Shop keeper')) ?? null;
+        let plan = null;
+        let err = null;
+        try {
+            plan = rec
+                ? buyoutPlan(
+                    rec,
+                    { vial_water: 500, bronze_arrow: 500, iron_axe: 2, papyrus: 50 },
+                    200,
+                    new Set(['vial of water']),
+                )
+                : null;
+        } catch (e) {
+            err = String(e.message || e);
+        }
+        let unsupported = null;
+        try {
+            buyoutPlan({ inv: 'generalshop1', keepers: ['Shop keeper'], items: [] }, { pot_empty: 3 }, 200, new Set(['Pot']));
+        } catch (e) {
+            unsupported = String(e.message || e);
+        }
+        globalThis.__probe = {
+            recInv: rec && rec.inv,
+            recKeepers: rec && rec.keepers,
+            unknown,
+            plan,
+            err,
+            unsupported,
+            posted: Object.keys(SHOP_DB).sort(),
+            shopJsonUnknown: (function() {
+                // rustyscript answers an unregistered name with a stub that
+                // throws "<name> is not a function".
+                try {
+                    return globalThis.rustyscript.functions.__rs2b0t_shop({ op: 'buyout-plan', rec: rec, stock: {}, coins: 200, chosen: [] });
+                } catch (e) {
+                    return String(e.message || e).includes('is not a function') ? 'missing' : String(e);
+                }
+            })(),
+        };
+    }
+}
+"#;
+
+#[test]
+fn frozen_shopbuyout_specifiers_get_rec_and_call_rust_planner() {
+    let iso = spawn(PLAN_SRC);
+    tick(&iso);
+    let probe = iso.probe("__probe").unwrap();
+    assert_eq!(probe["recInv"], "adventurershop");
+    assert_eq!(probe["recKeepers"], serde_json::json!(["Aemad", "Kortan"]));
+    assert_eq!(
+        probe["unknown"],
+        Value::Null,
+        "unpublished keepers are absent"
+    );
+    assert_eq!(
+        probe["posted"],
+        serde_json::json!([
+            "adventurershop",
+            "archeryshop",
+            "archeryshop2",
+            "axeshop",
+            "fishingshop",
+            "fishingshop2",
+            "magearena_runeshop",
+            "magicguildshop",
+            "magicshop",
+            "pickaxeshop",
+            "runeshop",
+            "shilofishingshop"
+        ])
+    );
+    assert_eq!(probe["err"], Value::Null);
+    let plan = probe["plan"].as_array().expect("plan");
+    assert_eq!(plan.len(), 1, "selected vial, not all-stock fallback");
+    assert_eq!(plan[0]["obj"], "vial_water");
+    assert_eq!(plan[0]["name"], "Vial of water");
+    assert!(plan[0]["units"].as_i64().unwrap() > 0);
+    assert!(plan[0]["estCost"].as_i64().unwrap() <= 200);
+    let unsupported = probe["unsupported"].as_str().unwrap_or("");
+    assert!(
+        unsupported.contains("not impl"),
+        "unsupported shop must fail closed, got {unsupported:?}"
+    );
+    assert_eq!(
+        probe["shopJsonUnknown"], "missing",
+        "buyout-plan must not ride a JSON shop binding (none is registered)"
+    );
+    iso.join();
+}
+
+#[test]
+fn aubury_selection_ranks_by_base_cost() {
+    let src = r#"
+import { SHOP_DB } from '../../data/shopdb.js';
+import { buyoutPlan } from '../../api/shop/BuyoutLogic.js';
+export default class T extends LoopingBot {
+    loop() {
+        const rec = Object.values(SHOP_DB).find(r => r.keepers.includes('Aubury'));
+        globalThis.__probe = buyoutPlan(
+            rec,
+            { firerune: 5, waterrune: 5, deathrune: 2, chaosrune: 2 },
+            10_000,
+            new Set(['fire rune', 'water rune', 'death rune', 'chaos rune']),
+        );
+    }
+}
+"#;
+    let iso = spawn(src);
+    tick(&iso);
+    let probe = iso.probe("__probe").unwrap();
+    let plan = probe.as_array().expect("plan");
+    let objs: Vec<_> = plan
+        .iter()
+        .map(|row| row["obj"].as_str().unwrap_or(""))
+        .collect();
+    assert_eq!(objs, ["deathrune", "chaosrune", "firerune", "waterrune"]);
+    iso.join();
+}

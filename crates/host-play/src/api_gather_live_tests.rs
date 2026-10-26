@@ -3,12 +3,12 @@
 use super::*;
 use api::snapshot::WorldTile;
 use script::api_gather::{GatherPage, GatherPhase};
-use script::isolate_fb::{IsolateBuf, NativeFactsInput};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use vault::{Profile, ProfileSettings};
+use {script::native::snapshot_source::NativeFactsInput, script_js::wire::IsolateBuf};
 
 const LIVE_SOURCE: &str = r#"
 const channel = new BroadcastChannel(__GATHER_CHANNEL__);
@@ -594,7 +594,7 @@ fn foreground_rejection_receipt_rejects_every_wrong_admission() {
 #[test]
 #[ignore = "requires LIVE=1 and local R289 Gatherer fixtures"]
 fn live_gather_api_receipt_tracks_memory_reconnect_and_wire_shadow() {
-    use script::shim::InteractReq;
+    use script::interact::InteractReq;
     use script_channels::BrokerWorld;
     assert!(
         std::env::var("LIVE").is_ok_and(|value| value == "1"),
@@ -693,7 +693,7 @@ fn live_gather_api_receipt_tracks_memory_reconnect_and_wire_shadow() {
     play.script_start_load(
         &receiver_account,
         receiver_source,
-        script::LoadShape::NativeTick,
+        script_js::LoadShape::NativeTick,
         None,
         vec![],
     )
@@ -706,7 +706,7 @@ fn live_gather_api_receipt_tracks_memory_reconnect_and_wire_shadow() {
     play.script_start_load(
         &account,
         live_source,
-        script::LoadShape::NativeTick,
+        script_js::LoadShape::NativeTick,
         None,
         vec![],
     )
@@ -1075,7 +1075,7 @@ export async function tick(api) {
   globalThis.__progress = await api.questProgress({quest:'cook'});
 }"#
         .into(),
-        script::LoadShape::NativeTick,
+        script_js::LoadShape::NativeTick,
         None,
         vec![],
     )

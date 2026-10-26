@@ -1,0 +1,433 @@
+//! V8 marshalling for the step-machine host (`crate::machine`).
+//!
+//! - `__rs2b0t_machine_start(family, args, hooks)` holds the family's
+//!   declared callbacks off `hooks`, begins the machine and returns its
+//!   start envelope.
+//! - `__rs2b0t_machine_take(handle)` is the parked wait's poll
+//!   (`undefined` while the machine runs).
+//! - [`step`] is the isolate thread's per-tick step, with script callbacks
+//!   invoked through the one callback path (`callback_v8`), each followed
+//!   by a microtask checkpoint; a kick polls the callback promise without
+//!   draining unrelated queued microtasks. A promise still pending is
+//!   held and its state polled.
+//! - [`resume_callbacks`] runs after the tick's pump; [`settle_waits`]
+//!   then resolves awaits for rows that ended in the same tick
+//!   (`__rs2b0t_settle_machines`).
+//!
+//! Nothing here sends to the host: machine ops join the tick's
+//! InteractReq batch in Rust.
+
+use super::callback_v8::{self, Callback, HeldCallback, Throw};
+use crate::machine::{self, Called, Hook, Outcome, Pending, Reply, Started, Take, Thrown};
+use rustyscript::deno_core::error::JsError;
+use rustyscript::deno_core::serde_v8;
+use rustyscript::{json_args, Runtime};
+use serde_json::Value;
+
+pub(crate) fn install(runtime: &mut Runtime) -> Result<(), String> {
+    callback_v8::install(runtime, "__rs2b0t_machine_start", start_callback)?;
+    callback_v8::install(runtime, "__rs2b0t_machine_take", take_callback)
+}
+
+/// Step every live machine once, before the tick's other JS. `claimed`
+/// is join's claim on the tick: once it holds, no further callback runs.
+pub(crate) fn step(runtime: &mut Runtime, claimed: &dyn Fn() -> bool) {
+    machine::step(&mut RuntimeJs { runtime, claimed });
+}
+/// Re-evaluate opted-in machines against a changed snapshot without advancing
+/// the tick or resetting their callback budget.
+pub(crate) fn snapshot_step(
+    runtime: &mut Runtime,
+    tick: u64,
+    evidence_sequence: u64,
+    claimed: &dyn Fn() -> bool,
+) {
+    machine::snapshot_step(&mut RuntimeJs { runtime, claimed }, tick, evidence_sequence);
+}
+
+/// After the tick's pump, resume rows whose callback promise settled.
+/// Kept separate from [`settle_waits`] because callbacks are not the script
+/// loop continuation and must not inherit its interrupt stage.
+pub(crate) fn resume_callbacks(runtime: &mut Runtime, claimed: &dyn Fn() -> bool) {
+    machine::resume(&mut RuntimeJs { runtime, claimed });
+}
+
+/// Settle awaits for machine rows that ended during this tick.
+pub(crate) fn settle_waits(
+    runtime: &mut Runtime,
+    claimed: &dyn Fn() -> bool,
+) -> Result<(), rustyscript::Error> {
+    if machine::any_settled() && !claimed() {
+        super::lineage_v8::call_function_immediate::<()>(
+            runtime,
+            None,
+            "__rs2b0t_settle_machines",
+            json_args!(),
+        )?;
+    }
+    Ok(())
+}
+
+fn start_callback<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    args: v8::FunctionCallbackArguments<'s>,
+    rv: v8::ReturnValue,
+) {
+    super::lineage_v8::assert_guarded(scope);
+    let parent = match super::lineage_v8::resolve_lineage(scope) {
+        super::lineage_v8::Lineage::Root => None,
+        super::lineage_v8::Lineage::Token(handle) => Some(handle),
+        super::lineage_v8::Lineage::Foreign => {
+            let reason = callback_v8::string(scope, "lineage carrier is not installed");
+            let envelope = envelope(scope, "refused", "reason", reason);
+            return callback_v8::finish(scope, rv, envelope);
+        }
+    };
+    let family = args.get(0).to_rust_string_lossy(scope);
+    let hooks = match hold_hooks(scope, &family, args.get(2)) {
+        Ok(hooks) => hooks,
+        Err(throw) => return callback_v8::finish(scope, rv, Err(throw)),
+    };
+    let at = js_queue_len(scope);
+    let started = match serde_v8::from_v8::<Value>(scope, args.get(1)) {
+        Ok(value) => machine::start_with_parent(&family, value, hooks, at, parent),
+        Err(e) => Started::Refused(format!("{family} arguments: {e}")),
+    };
+    if let Started::Running(handle) = &started {
+        if machine::kick_on_start(&family) {
+            machine::kick(*handle, &mut ScopeJs { scope });
+        }
+    }
+    let envelope = match started {
+        Started::Running(handle) => {
+            let handle = callback_v8::num(scope, handle as f64);
+            envelope(scope, "running", "handle", handle)
+        }
+        Started::Settled(outcome) => outcome_envelope(scope, outcome),
+        Started::Refused(reason) => {
+            let reason = callback_v8::string(scope, &reason);
+            envelope(scope, "refused", "reason", reason)
+        }
+    };
+    callback_v8::finish(scope, rv, envelope);
+}
+
+/// `hooks[name]` for each declared callback, read once now and called as
+/// `hooks.name(...)`. A family without callbacks never reads `hooks`.
+fn hold_hooks<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    family: &str,
+    hooks: v8::Local<'s, v8::Value>,
+) -> Result<Vec<Hook>, Throw<'s>> {
+    let names = machine::callbacks_of(family).unwrap_or_default();
+    let mut held = Vec::with_capacity(names.len());
+    for &name in names {
+        let func = callback_v8::get(scope, hooks, name)?;
+        held.push(Hook {
+            present: !func.is_null_or_undefined(),
+            callback: Callback::method(func, hooks, name).hold(scope),
+        });
+    }
+    Ok(held)
+}
+
+fn take_callback<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    args: v8::FunctionCallbackArguments<'s>,
+    rv: v8::ReturnValue,
+) {
+    super::lineage_v8::assert_guarded(scope);
+    let handle = args.get(0).number_value(scope).unwrap_or(0.0) as machine::Handle;
+    if let Take::Settled(outcome) = machine::take(handle) {
+        let envelope = outcome_envelope(scope, outcome);
+        callback_v8::finish(scope, rv, envelope);
+    }
+}
+
+fn outcome_envelope<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    outcome: Outcome,
+) -> callback_v8::JsResult<'s, v8::Local<'s, v8::Value>> {
+    match outcome {
+        Outcome::Done(value) => {
+            let value = serde_v8::to_v8(scope, &value)
+                .map_err(|e| callback_v8::type_error(scope, &format!("machine value: {e}")))?;
+            envelope(scope, "done", "value", value)
+        }
+        Outcome::Refused(reason) => {
+            let reason = callback_v8::string(scope, &reason);
+            envelope(scope, "refused", "reason", reason)
+        }
+        Outcome::Failed(thrown) => {
+            let error = match thrown.value() {
+                Some(value) => v8::Local::new(scope, value),
+                None => {
+                    let message = v8::String::new(scope, thrown.message())
+                        .unwrap_or_else(|| v8::String::empty(scope));
+                    v8::Exception::error(scope, message)
+                }
+            };
+            envelope(scope, "failed", "error", error)
+        }
+        Outcome::Aborted(why) => {
+            let reason = callback_v8::string(scope, why.as_str());
+            envelope(scope, "aborted", "reason", reason)
+        }
+    }
+}
+
+/// `{ kind, [field]: value }`.
+fn envelope<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    kind: &str,
+    field: &str,
+    value: v8::Local<'s, v8::Value>,
+) -> callback_v8::JsResult<'s, v8::Local<'s, v8::Value>> {
+    let kind = callback_v8::string(scope, kind);
+    callback_v8::object(scope, &[("kind", kind), (field, value)])
+}
+
+/// Length of `__rs2b0t_host.interact`: where machine ops sit in the tick
+/// batch relative to the rows JS queued.
+fn js_queue_len(scope: &mut v8::HandleScope) -> usize {
+    let context = scope.get_current_context();
+    let global = context.global(scope);
+    let Some(host_key) = v8::String::new(scope, "__rs2b0t_host") else {
+        return 0;
+    };
+    let Some(host) = global
+        .get(scope, host_key.into())
+        .and_then(|host| host.to_object(scope))
+    else {
+        return 0;
+    };
+    let Some(interact_key) = v8::String::new(scope, "interact") else {
+        return 0;
+    };
+    let Some(rows) = host
+        .get(scope, interact_key.into())
+        .and_then(|rows| v8::Local::<v8::Object>::try_from(rows).ok())
+    else {
+        return 0;
+    };
+    let Some(length_key) = v8::String::new(scope, "length") else {
+        return 0;
+    };
+    // The guarded append-only queue is a Proxy, not a V8 Array handle.
+    rows.get(scope, length_key.into())
+        .filter(|length| length.is_number())
+        .and_then(|length| length.number_value(scope))
+        .filter(|length| (0.0..=u32::MAX as f64).contains(length) && length.fract() == 0.0)
+        .map_or(0, |length| length as usize)
+}
+
+/// Drive a just-started row from the start callback's own scope.
+struct ScopeJs<'s, 'i> {
+    scope: &'s mut v8::HandleScope<'i>,
+}
+
+impl machine::Js for ScopeJs<'_, '_> {
+    fn queue_len(&mut self) -> usize {
+        js_queue_len(self.scope)
+    }
+
+    fn call(&mut self, _hook: Option<&HeldCallback>, _args: &[Value]) -> Called {
+        // V8 machine calls must carry their owning row.
+        Called::Terminated
+    }
+
+    fn call_for(
+        &mut self,
+        handle: machine::Handle,
+        hook: Option<&HeldCallback>,
+        args: &[Value],
+    ) -> Called {
+        // Nested in the caller's JS: draining the isolate queue here would
+        // run unrelated microtasks before the caller continues (M-187).
+        call_hook(self.scope, handle, hook, args, false)
+    }
+
+    fn poll(&mut self, pending: &Pending) -> Option<Reply> {
+        poll_promise(self.scope, pending)
+    }
+
+    /// A start runs inside the caller's own script call: join's claim is
+    /// checked when that call returns. A callback terminated inside the
+    /// kick ends the kick itself ([`machine::Called::Terminated`]).
+    fn claimed(&mut self) -> bool {
+        false
+    }
+
+    fn game_messages_mark(&mut self) -> f64 {
+        super::chatbox_v8::native_mark(self.scope)
+    }
+}
+
+/// The isolate runtime as the machine host's script side.
+struct RuntimeJs<'r> {
+    runtime: &'r mut Runtime,
+    claimed: &'r dyn Fn() -> bool,
+}
+
+impl machine::Js for RuntimeJs<'_> {
+    fn queue_len(&mut self) -> usize {
+        let mut scope = self.runtime.deno_runtime().handle_scope();
+        js_queue_len(&mut scope)
+    }
+
+    fn call(&mut self, _hook: Option<&HeldCallback>, _args: &[Value]) -> Called {
+        // V8 machine calls must carry their owning row.
+        Called::Terminated
+    }
+
+    fn call_for(
+        &mut self,
+        handle: machine::Handle,
+        hook: Option<&HeldCallback>,
+        args: &[Value],
+    ) -> Called {
+        let called = {
+            let scope = &mut self.runtime.deno_runtime().handle_scope();
+            call_hook(scope, handle, hook, args, true)
+        };
+        // `drive` found the pass unhalted just before this call. A
+        // terminate armed since then hit this call's own JS: its
+        // microtasks run as the outermost call returns, and V8 consumes a
+        // termination there without reporting it.
+        match called {
+            Called::Settled(_) | Called::Pending(_) if (self.claimed)() => Called::Terminated,
+            called => called,
+        }
+    }
+
+    fn poll(&mut self, pending: &Pending) -> Option<Reply> {
+        let scope = &mut self.runtime.deno_runtime().handle_scope();
+        poll_promise(scope, pending)
+    }
+
+    fn claimed(&mut self) -> bool {
+        (self.claimed)()
+    }
+
+    fn game_messages_mark(&mut self) -> f64 {
+        let scope = &mut self.runtime.deno_runtime().handle_scope();
+        super::chatbox_v8::native_mark(scope)
+    }
+}
+
+fn call_hook(
+    scope: &mut v8::HandleScope,
+    handle: machine::Handle,
+    hook: Option<&HeldCallback>,
+    args: &[Value],
+    drain_microtasks: bool,
+) -> Called {
+    let Some(hook) = hook else {
+        return Called::Settled(Reply::Threw(Thrown::new("undeclared machine callback")));
+    };
+    match super::lineage_v8::enter_hook(scope, handle, |scope| {
+        call_hook_inner(scope, hook, args, drain_microtasks)
+    }) {
+        Ok(called) => called,
+        Err(Throw::Value(exception)) => Called::Settled(Reply::Threw(thrown(scope, exception))),
+        Err(Throw::Terminated) => Called::Terminated,
+    }
+}
+
+fn call_hook_inner(
+    scope: &mut v8::HandleScope,
+    hook: &HeldCallback,
+    args: &[Value],
+    drain_microtasks: bool,
+) -> Called {
+    let callback = hook.open(scope);
+    let mut argv = Vec::with_capacity(args.len());
+    for arg in args {
+        match serde_v8::to_v8(scope, arg) {
+            Ok(value) => argv.push(value),
+            Err(e) => {
+                let failure = Thrown::new(format!("callback argument: {e}"));
+                return Called::Settled(Reply::Threw(failure));
+            }
+        }
+    }
+    let value = match callback.call(scope, &argv) {
+        Ok(value) => value,
+        Err(Throw::Value(exception)) => {
+            if checkpoint_terminated(scope, drain_microtasks) {
+                return Called::Terminated;
+            }
+            return Called::Settled(Reply::Threw(thrown(scope, exception)));
+        }
+        // Rethrown; the host stops driving and no family sees it as a throw.
+        Err(Throw::Terminated) => return Called::Terminated,
+    };
+    let Ok(promise) = v8::Local::<v8::Promise>::try_from(value) else {
+        if checkpoint_terminated(scope, drain_microtasks) {
+            return Called::Terminated;
+        }
+        return Called::Settled(settled_value(scope, value));
+    };
+    // The host observes the rejection; it is not an unhandled one.
+    if let Some(noop) = v8::Function::new(
+        scope,
+        |_: &mut v8::HandleScope, _: v8::FunctionCallbackArguments, _: v8::ReturnValue| {},
+    ) {
+        promise.catch(scope, noop);
+    }
+    // An `await` on something already settled resumes here, as it
+    // would in the frozen driver's own microtask flush. A kick skips
+    // the isolate drain and polls this promise instead (M-187).
+    if checkpoint_terminated(scope, drain_microtasks) {
+        return Called::Terminated;
+    }
+    Called::Pending(v8::Global::new(scope, promise))
+}
+
+/// Optionally run the callback's microtasks, then report termination.
+///
+/// A tick step is the outermost JS, so it drains: an already-settled
+/// `await` answers in this call (N1(a)), and a continuation's terminate
+/// is visible. A kick is nested in the caller's turn; draining would run
+/// unrelated queued microtasks before the caller continues (M-187). The
+/// host still polls this callback's promise, so an already-fulfilled
+/// return settles without touching the rest of the queue. Inside a kick a
+/// continuation runs later, in the caller's microtasks, so its
+/// termination is not seen here. At the outermost level V8 consumes it;
+/// [`RuntimeJs`] reports that case from the host's halt flag.
+fn checkpoint_terminated(scope: &mut v8::HandleScope, drain_microtasks: bool) -> bool {
+    if drain_microtasks {
+        scope.perform_microtask_checkpoint();
+    }
+    scope.is_execution_terminating()
+}
+
+fn poll_promise(scope: &mut v8::HandleScope, pending: &Pending) -> Option<Reply> {
+    let promise = v8::Local::new(scope, pending);
+    match promise.state() {
+        v8::PromiseState::Pending => None,
+        v8::PromiseState::Fulfilled => {
+            let value = promise.result(scope);
+            Some(settled_value(scope, value))
+        }
+        v8::PromiseState::Rejected => {
+            let reason = promise.result(scope);
+            Some(Reply::Threw(thrown(scope, reason)))
+        }
+    }
+}
+
+fn settled_value(scope: &mut v8::HandleScope, value: v8::Local<v8::Value>) -> Reply {
+    match serde_v8::from_v8::<Value>(scope, value) {
+        Ok(value) => Reply::Value(value),
+        Err(e) => Reply::Threw(Thrown::new(format!("callback result: {e}"))),
+    }
+}
+
+/// The thrown value itself, with its message (`new Error('x')` → `x`,
+/// else V8's text).
+fn thrown(scope: &mut v8::HandleScope, value: v8::Local<v8::Value>) -> Thrown {
+    let error = JsError::from_v8_exception(scope, value);
+    let message = error.message.unwrap_or(error.exception_message);
+    Thrown::js(message, v8::Global::new(scope, value))
+}

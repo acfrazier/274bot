@@ -1,11 +1,11 @@
 use super::*;
 use crate::ctx::test_support::NullDriver;
+use crate::interact::InteractReq;
 use crate::native::request::NativeKind;
 use crate::native::seat_rows::{
     DecodedSeatBatch, SeatInteractDecoded, SeatStartArgs, SeatStartInput,
 };
 use crate::native::{HostEffect, InteractionReceipt};
-use crate::shim::InteractReq;
 use api::identity::RequestId;
 use api::quest_progress::EvidenceStamp;
 use api::selected::{ClientRevision, FactKey, Truth};

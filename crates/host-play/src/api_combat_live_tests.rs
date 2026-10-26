@@ -375,7 +375,7 @@ impl Cell {
             .script_start_load(
                 &self.account,
                 consumer(request),
-                script::LoadShape::NativeTick,
+                script_js::LoadShape::NativeTick,
                 None,
                 vec![],
             )
@@ -416,7 +416,7 @@ impl Cell {
             .script_start_load(
                 &self.account,
                 consumer(request),
-                script::LoadShape::NativeTick,
+                script_js::LoadShape::NativeTick,
                 None,
                 vec![],
             )
@@ -854,9 +854,10 @@ fn count_before(line: &str, label: &str) -> i64 {
 #[test]
 #[ignore = "requires LIVE=1 and the shared local R289 engine"]
 fn live_api_combat_showcase_script_runs_every_phase() {
-    let transpiled =
-        script::transpile_ts(include_str!("../../script/examples/combat_showcase_v2.ts"))
-            .expect("transpile the showcase");
+    let transpiled = script_js::transpile_ts(include_str!(
+        "../../script-js/examples/combat_showcase_v2.ts"
+    ))
+    .expect("transpile the showcase");
     assert!(transpiled.contains("export function tick("));
     let source = transpiled.replacen("export function tick(", "function __showcaseTick(", 1)
         + SHOWCASE_HARNESS;
@@ -901,7 +902,7 @@ fn live_api_combat_showcase_script_runs_every_phase() {
         .script_start_load(
             &cell.account,
             source,
-            script::LoadShape::NativeTick,
+            script_js::LoadShape::NativeTick,
             None,
             vec![],
         )
@@ -937,7 +938,7 @@ fn live_api_combat_showcase_script_runs_every_phase() {
         serde_json::json!({
             "cell": "live_api_combat_showcase_script_runs_every_phase",
             "account": cell.account,
-            "script": "crates/script/examples/combat_showcase_v2.ts",
+            "script": "crates/script-js/examples/combat_showcase_v2.ts",
             "finished_within_deadline": finished,
             "stop_reason": stop,
             "log": lines,

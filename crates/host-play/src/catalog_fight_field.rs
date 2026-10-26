@@ -19,7 +19,7 @@ pub(super) fn choose_fight_field_npc<'a>(
 }
 
 pub(super) fn parse_fight_field_receipt_from_paint(
-    paint: &script::shim::ScriptPaint,
+    paint: &script::paint::ScriptPaint,
 ) -> Option<FightFieldScriptReceipt> {
     paint.lines.iter().find_map(|line| {
         line.strip_prefix(FIGHT_FIELD_RECEIPT_PREFIX)

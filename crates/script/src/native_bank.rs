@@ -10,8 +10,8 @@ use crate::bank::ops::{
     self, deposit_option, CloseBaseline, CloseScan, DepositKind, DepositScan, DepositSpec,
     NoteIntent, Progress, WithdrawGoal, DEPOSIT_VIEW_MS, MAX_DEPOSITS, MAX_MEMO,
 };
+use crate::interact::InteractReq;
 use crate::native::{ActionContext, ActionError, BankDepositTrace, NativeMachine, WalkOptions};
-use crate::shim::InteractReq;
 use api::named_banks::{BankOperation, BankPreferences, NamedBank, NamedBankFacts};
 use api::quest_progress::EvidenceStamp;
 use api::selected::Truth;

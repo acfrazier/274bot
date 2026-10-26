@@ -40,6 +40,7 @@ fn bank(name: &'static str, x: i32, z: i32) -> NamedBank {
     NamedBank::new(name, tile(x, z))
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn bank_pick_v2_explicit_opt_ins_control_the_returned_bank_over_settings_defaults() {
     let catalog = api::named_banks::BANK_CATALOG;
@@ -93,10 +94,10 @@ export async function tick(api) {{
         );
         let mut slot = script::SlotScript::new();
         slot.bind_incarnation(1);
-        slot.bind_surface_factory(Arc::new(script::load::surface::JsSurfaceFactory::default()));
+        slot.bind_surface_factory(Arc::new(script_js::surface::JsSurfaceFactory::default()));
         let settings = serde_json::json!({"useMageBank": defaults, "useZanarisBank": defaults});
         let start = crate::script_runtime::js_surface_start(
-            crate::script_runtime::js_start_card(source, script::LoadShape::NativeTick, vec![]),
+            crate::script_runtime::js_start_card(source, script_js::LoadShape::NativeTick, vec![]),
             settings.as_object().cloned().map(Arc::new),
             Some(api::game_data::for_revision(client::io::ClientRevision::R289).unwrap()),
             Arc::new(NamedBankFacts::from_banks(banks.clone())),
@@ -288,7 +289,7 @@ fn queued_bank_pick_keeps_the_state_of_the_frame_that_queued_it() {
                 cache: &None,
                 obj_names_arc: &None,
             },
-            vec![script::shim::InteractReq::WalkNearestBank],
+            vec![script::interact::InteractReq::WalkNearestBank],
         );
     }
     let all = navs.lock().unwrap();
@@ -2694,6 +2695,7 @@ mod bank_pick_capture {
     }
 }
 
+#[cfg(feature = "js")]
 #[test]
 #[ignore = "event-driven runtime endpoint (0.2.6): native answers must wake only their consumer and publish its next prompt without another game tick"]
 fn bank_callback_answers_progress_on_unchanged_host_frames_without_game_ticks() {
@@ -2721,7 +2723,7 @@ export default class T extends LoopingBot {
         let start = crate::script_runtime::js_surface_start(
             crate::script_runtime::js_start_card(
                 source.into(),
-                script::LoadShape::CompatClass,
+                script_js::LoadShape::CompatClass,
                 vec![],
             ),
             None,

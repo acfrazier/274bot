@@ -8,6 +8,7 @@ use nav_planner::collision::{pack_walk, WorldCollision};
 use nav_planner::pack::{BankAccess, BankStand};
 use nav_planner::transport::{TransportEdge, TransportGraph};
 use nav_planner::world::NavWorld;
+#[cfg(feature = "js")]
 use sha2::Digest;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -2154,10 +2155,14 @@ fn publish_overflow_panics_when_held_full() {
     nav.publish(InspectTerminal::refusal(4, 0, "NoPath"));
 }
 
+#[cfg(feature = "js")]
 fn encode_inspect_bytes(nav: &InspectNav, tick: u64, hold: bool) -> Vec<u8> {
-    use script::isolate_fb::{
-        encode_snapshot_with_native, NativeFactsInput, ReachViewInput, RouteInspectFactsInput,
-        SnapshotInput,
+    use {
+        script::native::snapshot_source::NativeFactsInput,
+        script::native::snapshot_source::ReachViewInput,
+        script::native::snapshot_source::RouteInspectFactsInput,
+        script::native::snapshot_source::SnapshotInput,
+        script_js::wire::encode_snapshot_with_native,
     };
     let latest_hops = nav
         .latest
@@ -2273,11 +2278,13 @@ fn encode_inspect_bytes(nav: &InspectNav, tick: u64, hold: bool) -> Vec<u8> {
     )
 }
 
-fn inspect_begin(iso: &script::LoadIsolate) -> u64 {
+#[cfg(feature = "js")]
+fn inspect_begin(iso: &script_js::LoadIsolate) -> u64 {
     inspect_begin_at(iso, tile(0, 0, 0), tile(1, 1, 0))
 }
 
-fn inspect_begin_at(iso: &script::LoadIsolate, from: WorldTile, to: WorldTile) -> u64 {
+#[cfg(feature = "js")]
+fn inspect_begin_at(iso: &script_js::LoadIsolate, from: WorldTile, to: WorldTile) -> u64 {
     iso.probe(&format!(
             "globalThis.rustyscript.functions.__rs2b0t_inspect({{op:'begin',from:{{x:{},z:{},level:{}}},to:{{x:{},z:{},level:{}}},allow_wilderness:true}})",
             from.x, from.z, from.level, to.x, to.z, to.level
@@ -2287,7 +2294,8 @@ fn inspect_begin_at(iso: &script::LoadIsolate, from: WorldTile, to: WorldTile) -
         .expect("token")
 }
 
-fn inspect_settled(iso: &script::LoadIsolate, token: u64) -> bool {
+#[cfg(feature = "js")]
+fn inspect_settled(iso: &script_js::LoadIsolate, token: u64) -> bool {
     iso.probe(&format!(
         "globalThis.rustyscript.functions.__rs2b0t_inspect({{op:'settled',token:{token}}})"
     ))
@@ -2296,25 +2304,30 @@ fn inspect_settled(iso: &script::LoadIsolate, token: u64) -> bool {
     .unwrap_or(false)
 }
 
-fn inspect_value(iso: &script::LoadIsolate, token: u64) -> serde_json::Value {
+#[cfg(feature = "js")]
+fn inspect_value(iso: &script_js::LoadIsolate, token: u64) -> serde_json::Value {
     iso.probe(&format!(
         "globalThis.rustyscript.functions.__rs2b0t_inspect({{op:'value',token:{token}}})"
     ))
     .unwrap()
 }
 
-fn drain_inspect_acks(iso: &script::LoadIsolate) -> Vec<(u64, u64)> {
+#[cfg(feature = "js")]
+fn drain_inspect_acks(iso: &script_js::LoadIsolate) -> Vec<(u64, u64)> {
     iso.drain_interacts()
         .into_iter()
         .filter_map(|req| match req {
-            script::shim::InteractReq::InspectAck { seq, generation } => Some((seq, generation)),
+            script::interact::InteractReq::InspectAck { seq, generation } => {
+                Some((seq, generation))
+            }
             _ => None,
         })
         .collect()
 }
 
+#[cfg(feature = "js")]
 fn isolate_begin_and_authorize(
-    iso: &script::LoadIsolate,
+    iso: &script_js::LoadIsolate,
     from: WorldTile,
     to: WorldTile,
     tick: u64,
@@ -2333,20 +2346,22 @@ fn isolate_begin_and_authorize(
     let forwarded = iso.drain_interacts().into_iter().any(|req| {
         matches!(
             req,
-            script::shim::InteractReq::InspectRoute { request_id, .. } if request_id == token
+            script::interact::InteractReq::InspectRoute { request_id, .. } if request_id == token
         )
     });
     forwarded.then_some(token)
 }
 
-fn inspect_force_timeout(iso: &script::LoadIsolate, token: u64) {
+#[cfg(feature = "js")]
+fn inspect_force_timeout(iso: &script_js::LoadIsolate, token: u64) {
     iso.probe(&format!(
             "globalThis.rustyscript.functions.__rs2b0t_inspect({{op:'value',token:{token},timed_out:true}})"
         ))
         .unwrap();
 }
 
-fn apply_isolate_acks(navs: &Arc<Mutex<HashMap<String, NavBot>>>, iso: &script::LoadIsolate) {
+#[cfg(feature = "js")]
+fn apply_isolate_acks(navs: &Arc<Mutex<HashMap<String, NavBot>>>, iso: &script_js::LoadIsolate) {
     let acks = drain_inspect_acks(iso);
     let mut all = navs.lock().unwrap();
     let bot = all.get_mut("p").unwrap();
@@ -2355,8 +2370,9 @@ fn apply_isolate_acks(navs: &Arc<Mutex<HashMap<String, NavBot>>>, iso: &script::
     }
 }
 
+#[cfg(feature = "js")]
 fn post_and_apply(
-    iso: &script::LoadIsolate,
+    iso: &script_js::LoadIsolate,
     navs: &Arc<Mutex<HashMap<String, NavBot>>>,
     tick: u64,
 ) {
@@ -2369,14 +2385,15 @@ fn post_and_apply(
     apply_isolate_acks(navs, iso);
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn integrated_host_publish_bytes_isolate_ack_without_new_request() {
     let src = r#"
 export const apiVersion = 2;
 export function tick() {}
 "#;
-    let iso =
-        script::LoadIsolate::spawn(src.into(), script::LoadShape::NativeTick, vec![]).unwrap();
+    let iso = script_js::LoadIsolate::spawn(src.into(), script_js::LoadShape::NativeTick, vec![])
+        .unwrap();
     let world = world_with(TransportGraph::default(), vec![]);
     let navs = Arc::new(Mutex::new(HashMap::new()));
 
@@ -2608,7 +2625,7 @@ export function tick() {}
     let leaked = iso.drain_interacts().into_iter().any(|req| {
         matches!(
             req,
-            script::shim::InteractReq::InspectRoute { request_id: 99, .. }
+            script::interact::InteractReq::InspectRoute { request_id: 99, .. }
         )
     });
     assert!(!leaked, "invented token must not reach the host queue");
@@ -2659,19 +2676,21 @@ export function tick() {}
     iso.join();
 }
 
-fn spawn_native_iso() -> script::LoadIsolate {
-    script::LoadIsolate::spawn(
+#[cfg(feature = "js")]
+fn spawn_native_iso() -> script_js::LoadIsolate {
+    script_js::LoadIsolate::spawn(
         r#"
 export const apiVersion = 2;
 export function tick() {}
 "#
         .into(),
-        script::LoadShape::NativeTick,
+        script_js::LoadShape::NativeTick,
         vec![],
     )
     .unwrap()
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn integrated_id0_full_then_authorized_registered_refuses_not_timeout() {
     let iso = spawn_native_iso();
@@ -2723,6 +2742,7 @@ fn integrated_id0_full_then_authorized_registered_refuses_not_timeout() {
     iso.join();
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn integrated_timeout_orphans_then_authorized_registered_refuses_not_timeout() {
     let iso = spawn_native_iso();
@@ -2791,6 +2811,7 @@ fn integrated_timeout_orphans_then_authorized_registered_refuses_not_timeout() {
     iso.join();
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn integrated_mixed_id0_registered_ack_progress_does_not_starve() {
     let iso = spawn_native_iso();
@@ -3061,6 +3082,7 @@ fn real_content_inspection_world() -> Option<(Arc<NavWorld>, Arc<Cache>, Arc<Obj
 /// Deterministic old/new inspection handoff over the pinned real revision-289
 /// content. Reads `T5W_INSPECT_CAPTURE_BASELINE`; optionally writes the exact
 /// new snapshot when `T5W_INSPECT_CAPTURE_OUT=<path>` is set.
+#[cfg(feature = "js")]
 #[test]
 fn real_content_inspection_capture_bytes() {
     use crate::script_runtime::SettledStart as _;
@@ -3147,7 +3169,7 @@ fn real_content_inspection_capture_bytes() {
         .unwrap()
         .start_load_settled(
             "export const apiVersion = 2; export function tick() {}".to_string(),
-            script::LoadShape::NativeTick,
+            script_js::LoadShape::NativeTick,
             vec![],
         )
         .expect("native observation slot starts");
@@ -3284,8 +3306,8 @@ fn real_content_inspection_capture_bytes() {
         "886f2db744cd8f7f7b90004af412b6a24b0211b2fdd23a460ccc54eb531188ab",
         "immutable real-content inspection capture authority"
     );
-    let old_snapshot = script::isolate_fb::decode_snapshot(&old_bytes).unwrap();
-    let snapshot = script::isolate_fb::decode_snapshot(&bytes).unwrap();
+    let old_snapshot = script_js::wire::decode_snapshot(&old_bytes).unwrap();
+    let snapshot = script_js::wire::decode_snapshot(&bytes).unwrap();
 
     assert_eq!(bytes.len(), 1_360, "new capture size");
     let new_digest: [u8; 32] = sha2::Sha256::digest(&bytes).into();
@@ -3336,10 +3358,7 @@ fn real_content_inspection_capture_bytes() {
     let changed = encode_inspect_bytes(&expected_snapshot, 289_002, false);
     assert_ne!(
         active_fields,
-        format!(
-            "{:?}",
-            script::isolate_fb::decode_snapshot(&changed).unwrap()
-        ),
+        format!("{:?}", script_js::wire::decode_snapshot(&changed).unwrap()),
         "changing an active tick must fail the capture comparison"
     );
     if let Some(output) = output {

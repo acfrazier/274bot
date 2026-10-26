@@ -289,14 +289,14 @@ fn done(result: Poll<Result<AcquireOutcome, ActionError>>) -> AcquireReceipt {
 fn is_open_stand(effect: &HostEffect) -> bool {
     matches!(
         effect,
-        HostEffect::Interaction(crate::shim::InteractReq::OpenStand { .. })
+        HostEffect::Interaction(crate::interact::InteractReq::OpenStand { .. })
     )
 }
 
 fn is_close(effect: &HostEffect) -> bool {
     matches!(
         effect,
-        HostEffect::Interaction(crate::shim::InteractReq::Close)
+        HostEffect::Interaction(crate::interact::InteractReq::Close)
     )
 }
 
@@ -442,7 +442,7 @@ fn authored_partial_withdrawal_transfers_observed_available_count() {
     .is_pending());
     assert!(matches!(
         first_effect(&ledger),
-        HostEffect::Interaction(crate::shim::InteractReq::SetNoteMode { on: false, .. })
+        HostEffect::Interaction(crate::interact::InteractReq::SetNoteMode { on: false, .. })
     ));
     complete_interaction(&mut ledger, 1);
     assert!(poll_at(
@@ -456,14 +456,14 @@ fn authored_partial_withdrawal_transfers_observed_available_count() {
     .is_pending());
     assert!(matches!(
         first_effect(&ledger),
-        HostEffect::Interaction(crate::shim::InteractReq::WithdrawX {
+        HostEffect::Interaction(crate::interact::InteractReq::WithdrawX {
             bank_item_id: ITEM,
             ..
         })
     ));
     assert!(matches!(
         complete_interaction(&mut ledger, 2),
-        HostEffect::Interaction(crate::shim::InteractReq::WithdrawX {
+        HostEffect::Interaction(crate::interact::InteractReq::WithdrawX {
             bank_item_id: ITEM,
             ..
         })
@@ -544,11 +544,11 @@ fn generated_deposit_precedes_live_replan_and_receipts_exact_count() {
     assert!(poll_at(&mut run, &snapshot, None, &mut ledger, 1, OpenGate::Open).is_pending());
     assert!(matches!(
         first_effect(&ledger),
-        HostEffect::Interaction(crate::shim::InteractReq::InvButton { id: PRODUCT, .. })
+        HostEffect::Interaction(crate::interact::InteractReq::InvButton { id: PRODUCT, .. })
     ));
     assert!(matches!(
         complete_interaction(&mut ledger, 1),
-        HostEffect::Interaction(crate::shim::InteractReq::InvButton { id: PRODUCT, .. })
+        HostEffect::Interaction(crate::interact::InteractReq::InvButton { id: PRODUCT, .. })
     ));
     assert!(poll_at(&mut run, &snapshot, None, &mut ledger, 2, OpenGate::Open).is_pending());
     assert!(
@@ -573,19 +573,19 @@ fn generated_deposit_precedes_live_replan_and_receipts_exact_count() {
             .is_some_and(|ledger| !ledger.outbox.is_empty())
         {
             match first_effect(&ledger) {
-                HostEffect::Interaction(crate::shim::InteractReq::SetNoteMode {
+                HostEffect::Interaction(crate::interact::InteractReq::SetNoteMode {
                     on: false,
                     ..
                 }) => {
                     complete_interaction(&mut ledger, tick);
                 }
-                HostEffect::Interaction(crate::shim::InteractReq::WithdrawX {
+                HostEffect::Interaction(crate::interact::InteractReq::WithdrawX {
                     bank_item_id: ITEM,
                     ..
                 }) => {
                     assert!(matches!(
                         complete_interaction(&mut ledger, tick),
-                        HostEffect::Interaction(crate::shim::InteractReq::WithdrawX {
+                        HostEffect::Interaction(crate::interact::InteractReq::WithdrawX {
                             bank_item_id: ITEM,
                             ..
                         })
@@ -657,7 +657,7 @@ fn wear_only_run_waits_for_worn_evidence_without_walk_or_bank_effects() {
 
     assert!(poll_at(&mut run, &snapshot, None, &mut ledger, 1, OpenGate::Open).is_pending());
     assert!(
-        matches!(first_effect(&ledger), HostEffect::Interaction(crate::shim::InteractReq::Held { action, .. }) if action.as_str() == "Wield")
+        matches!(first_effect(&ledger), HostEffect::Interaction(crate::interact::InteractReq::Held { action, .. }) if action.as_str() == "Wield")
     );
     assert!(!ledger
         .as_ref()
@@ -670,7 +670,7 @@ fn wear_only_run_waits_for_worn_evidence_without_walk_or_bank_effects() {
         )));
     assert!(matches!(
         complete_interaction(&mut ledger, 1),
-        HostEffect::Interaction(crate::shim::InteractReq::Held { .. })
+        HostEffect::Interaction(crate::interact::InteractReq::Held { .. })
     ));
 
     assert!(

@@ -1,6 +1,7 @@
 //! Front-end live-harness fixtures (see the parent module).
 
 use std::any::Any;
+#[cfg(feature = "js")]
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -26,7 +27,13 @@ impl crate::test_support::FixtureProfile {
 
 /// Resolve a registered live scenario through the front-end core seam.
 pub fn scenario(name: &str) -> Option<Scenario> {
-    Scenario::get(name)
+    registered_scenario(name).map(Scenario::from)
+}
+
+fn registered_scenario(name: &str) -> Option<scenario::Scenario> {
+    #[cfg(feature = "js")]
+    super::scripts::install_catalog_cards();
+    scenario::get(name)
 }
 
 /// Resolve a registered scenario and apply the selected live fixture mode.
@@ -43,7 +50,8 @@ pub fn scenario_with_profiles_for_test(
     mainland: bool,
     additional_profile: (&'static str, &'static str),
 ) -> Result<Scenario, String> {
-    let mut scenario = scenario::get(name).ok_or_else(|| format!("unknown scenario {name}"))?;
+    let mut scenario =
+        registered_scenario(name).ok_or_else(|| format!("unknown scenario {name}"))?;
     scenario.seed.mainland = mainland;
     scenario
         .seed
@@ -57,7 +65,8 @@ pub fn scenario_with_start_script_for_test(
     name: &str,
     start_script: &'static str,
 ) -> Result<Scenario, String> {
-    let mut scenario = scenario::get(name).ok_or_else(|| format!("unknown scenario {name}"))?;
+    let mut scenario =
+        registered_scenario(name).ok_or_else(|| format!("unknown scenario {name}"))?;
     scenario.settings.start_script = Some(start_script);
     Ok(scenario.into())
 }
@@ -68,7 +77,8 @@ pub fn scenario_with_nav_for_test(
     allow_teleports: bool,
     allow_wilderness: bool,
 ) -> Result<Scenario, String> {
-    let mut scenario = scenario::get(name).ok_or_else(|| format!("unknown scenario {name}"))?;
+    let mut scenario =
+        registered_scenario(name).ok_or_else(|| format!("unknown scenario {name}"))?;
     scenario.settings.nav.allow_teleports = allow_teleports;
     scenario.settings.nav.allow_wilderness = allow_wilderness;
     Ok(scenario.into())
@@ -202,6 +212,7 @@ pub fn pair_watch_for_test(
     watch
 }
 
+#[cfg(feature = "js")]
 /// Create an external-loader witness configured for one source file.
 pub fn external_watch_for_test(
     account: &str,

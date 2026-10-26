@@ -1,7 +1,7 @@
 use super::*;
 
-fn diagnostic_paint(accent: bool, line: &str) -> crate::shim::ScriptPaint {
-    crate::shim::ScriptPaint {
+fn diagnostic_paint(accent: bool, line: &str) -> crate::paint::ScriptPaint {
+    crate::paint::ScriptPaint {
         title: Some("onPaint".into()),
         accent: accent.then(|| "#ff5555".into()),
         lines: vec![line.to_string()],
@@ -12,8 +12,8 @@ fn diagnostic_paint(accent: bool, line: &str) -> crate::shim::ScriptPaint {
     }
 }
 
-fn canvas_only(ops: Vec<CanvasOp>) -> crate::shim::ScriptPaint {
-    crate::shim::ScriptPaint {
+fn canvas_only(ops: Vec<CanvasOp>) -> crate::paint::ScriptPaint {
+    crate::paint::ScriptPaint {
         title: None,
         accent: None,
         lines: Vec::new(),
@@ -24,14 +24,14 @@ fn canvas_only(ops: Vec<CanvasOp>) -> crate::shim::ScriptPaint {
     }
 }
 
-fn user_has_structured(paint: &crate::shim::ScriptPaint) -> bool {
+fn user_has_structured(paint: &crate::paint::ScriptPaint) -> bool {
     paint.title.is_some() || !paint.lines.is_empty() || !paint.buttons.is_empty()
 }
 
 /// Compose this call's native recorder with user `Paint.end` state.
 /// Wrapper diagnostics are typed (`OnPaintOutcome`); user title/accent/lines
 /// are never used as provenance.
-pub fn compose_paint(user: Option<crate::shim::ScriptPaint>) -> crate::shim::ScriptPaint {
+pub fn compose_paint(user: Option<crate::paint::ScriptPaint>) -> crate::paint::ScriptPaint {
     let outcome = take_outcome();
     let taken = take();
     match outcome {

@@ -26,12 +26,15 @@ use crate::rail::{
     TILE_W, UNFOLD_GLYPH,
 };
 use crate::script_picker::{
-    self, card_columns, card_desc_height, card_kind_source, card_rect_activated,
-    card_transpile_label, card_width, centered_row_x, chip_frame_padding, chip_text_color,
-    chip_wraps, dialog_date_color, display_category, format_mtime, move_category,
-    overlay_first_pos, resolve_category_order, title_clip_width, DialogMode, CARD_GAP, CARD_MIN_W,
-    FILE_DIALOG_FIRST_H, FILE_DIALOG_FIRST_W, GLYPH_CHEVRON, GLYPH_FILE, GLYPH_FOLDER,
+    self, card_columns, card_desc_height, card_kind_source, card_rect_activated, card_width,
+    chip_frame_padding, chip_text_color, chip_wraps, display_category, move_category,
+    overlay_first_pos, resolve_category_order, title_clip_width, CARD_GAP, CARD_MIN_W,
     SCRIPTS_FIRST_H, SCRIPTS_FIRST_W,
+};
+#[cfg(feature = "js")]
+use crate::script_picker::{
+    card_transpile_label, centered_row_x, dialog_date_color, format_mtime, DialogMode,
+    FILE_DIALOG_FIRST_H, FILE_DIALOG_FIRST_W, GLYPH_CHEVRON, GLYPH_FILE, GLYPH_FOLDER,
 };
 use crate::walk_map::WalkMapRenderer;
 use crate::window::{self, Gpu, RedrawMode, ShotStatus, Theme};
@@ -39,8 +42,10 @@ use dear_imgui_rs::internal::RawWrapper;
 use dear_imgui_rs::{
     ChildFlags, ColorDisplayMode, ComboBoxOptions, ComboBoxPreviewMode, Condition, DockBuilder,
     DockNodeFlags, DragDropTargetFlags, Id, Key, MouseButton, SplitDirection, StyleColor, StyleVar,
-    TableColumnFlags, TableFlags, TreeNodeFlags, Ui, WindowClass, WindowFlags,
+    TreeNodeFlags, Ui, WindowClass, WindowFlags,
 };
+#[cfg(feature = "js")]
+use dear_imgui_rs::{TableColumnFlags, TableFlags};
 use frontend_core::launch::{
     InstanceConflict, InstanceKind, InstancePermit, Passphrase, PreparationCompletion,
     PreparationJob, ProfilePreparation, ProgressStage, ProgressUnit, ProgressView, ValidationJob,
@@ -63,9 +68,11 @@ use crate::theme::{
     DOCKHOST_PADDING, ERROR, GREEN, PANEL_WIDTH, PANEL_WINDOW, RAIL_WINDOW, TEXT, TEXT_DIM, WARN,
 };
 use frontend_core::resources::{background_ack_text, format_background, format_bots};
+#[cfg(feature = "js")]
+use frontend_core::scripts::CardSource;
 use frontend_core::scripts::{
-    format_setting_value, BrowseCard, CardSource, CompiledCardId, PaintFrame, SchemaRef,
-    ScriptChoice, ScriptRunState, SettingView,
+    format_setting_value, BrowseCard, CompiledCardId, PaintFrame, SchemaRef, ScriptChoice,
+    ScriptRunState, SettingView,
 };
 use frontend_core::{
     FleetOrder, FleetRow, LogoutEligibility, OperatorCommand, Phase, ProfileIdentity, ReorderOp,
@@ -753,8 +760,10 @@ pub struct PanelArgs {
     pub catalog_core: bool,
     /// Dedicated pair_watch proof bridge; ordinary panel-play stays false.
     pub pair_core: bool,
+    #[cfg(feature = "js")]
     /// Dedicated external_watch proof bridge; ordinary panel-play stays false.
     pub external_core: bool,
+    #[cfg(feature = "js")]
     /// Absolute raw `.ts` override; absent uses the tracked host-play fixture.
     pub external_ts: Option<std::path::PathBuf>,
     /// Session-only headed live paint choice; absent preserves panel behavior.
@@ -782,6 +791,7 @@ pub fn parse_args(
     let (profile, rest) = frontend_core::launch::parse_profile_args(args)
         .map_err(|msg| (2, format!("panel-play: {msg}")))?;
     let (nav_paints, rest) = parse_nav_paints(rest)?;
+    #[cfg(feature = "js")]
     let (external_ts, rest) = parse_external_ts(rest)?;
     let (fixture_flags, live_args) = parse_fixture_flags(rest)?;
     let mode = parse_live_args(live_args, env_live)?;
@@ -811,7 +821,9 @@ pub fn parse_args(
         profile,
         catalog_core: false,
         pair_core: false,
+        #[cfg(feature = "js")]
         external_core: false,
+        #[cfg(feature = "js")]
         external_ts,
         nav_paints,
         memory_override,
@@ -947,6 +959,7 @@ fn parse_nav_paints(args: Vec<String>) -> Result<(Option<bool>, Vec<String>), (i
     Ok((value, rest))
 }
 
+#[cfg(feature = "js")]
 fn parse_external_ts(args: Vec<String>) -> Result<(Option<PathBuf>, Vec<String>), (i32, String)> {
     let mut value = None;
     let mut rest = Vec::with_capacity(args.len());
@@ -1066,8 +1079,11 @@ pub fn parse_live_args(
     }
     if let Some(name) = live.as_deref() {
         let script_ok = name.strip_prefix("script_").is_some_and(|n| {
-            n == frontend_core::live::external_loader_scenario_name()
-                || frontend_core::live::Scenario::is_registered(n)
+            #[cfg(feature = "js")]
+            let external_loader = n == frontend_core::live::external_loader_scenario_name();
+            #[cfg(not(feature = "js"))]
+            let external_loader = false;
+            external_loader || frontend_core::live::Scenario::is_registered(n)
         });
         if name != "null_raster"
             && name != "stress50"
@@ -2583,13 +2599,11 @@ fn debug_teleports_popup(ui: &Ui, session: &mut Session) {
     });
 }
 
-/// script: real Browse/Start/Pause/Stop with the rs2b0t disable rules.
+/// script: native Browse/Start/Pause/Stop controls with the rs2b0t disable rules.
 /// `active` = Running|Paused|Stopping: Start and Browse are disabled while
 /// a script holds the slot; Pause/Resume is enabled only while Running or
 /// Paused (label switches to "Resume"); Stop is enabled while active but
-/// not already Stopping. Browse lists the compiled ids then the loaded JS
-/// cards, and selecting does not Start — Start is the section button.
-/// Load opens a path modal; Start spawns the loaded card's isolate.
+/// not already Stopping. JS builds also expose Load and Reload.
 fn script_section(ui: &Ui, session: &mut Session) {
     if !section_open(ui, session, "script") {
         return;
@@ -2601,18 +2615,27 @@ fn script_section(ui: &Ui, session: &mut Session) {
     let name = session
         .script_sel
         .as_ref()
-        .map(|sel| match sel.loaded_card() {
-            Some((source, identity)) => session
-                .scripts
-                .card(source, identity)
-                .map(|card| card.name().to_owned())
-                .unwrap_or_else(|| {
-                    std::path::Path::new(identity)
-                        .file_name()
-                        .map(|name| name.to_string_lossy().into_owned())
-                        .unwrap_or_else(|| identity.to_owned())
-                }),
-            None => sel.label().to_owned(),
+        .map(|sel| {
+            #[cfg(feature = "js")]
+            {
+                match sel.loaded_card() {
+                    Some((source, identity)) => session
+                        .scripts
+                        .card(source, identity)
+                        .map(|card| card.name().to_owned())
+                        .unwrap_or_else(|| {
+                            std::path::Path::new(identity)
+                                .file_name()
+                                .map(|name| name.to_string_lossy().into_owned())
+                                .unwrap_or_else(|| identity.to_owned())
+                        }),
+                    None => sel.label().to_owned(),
+                }
+            }
+            #[cfg(not(feature = "js"))]
+            {
+                sel.label().to_owned()
+            }
         })
         .unwrap_or_else(|| "(none)".to_string());
     ui.text_colored(ACCENT, name);
@@ -2623,6 +2646,7 @@ fn script_section(ui: &Ui, session: &mut Session) {
         ui.same_line();
         ui.text_disabled("(pending)");
     }
+    #[cfg(feature = "js")]
     if let (Some((source, sel_name)), Some(front)) = (
         session
             .script_sel
@@ -2643,7 +2667,10 @@ fn script_section(ui: &Ui, session: &mut Session) {
     }
     script_parameter_draft_recovery(ui, session);
     let avail = ui.content_region_avail()[0];
+    #[cfg(feature = "js")]
     let (w, stack) = scaled_button_row_layout(ui, avail, 3);
+    #[cfg(not(feature = "js"))]
+    let (w, _stack) = scaled_button_row_layout(ui, avail, 1);
     {
         let _browse = if active {
             Some(ui.begin_disabled())
@@ -2651,56 +2678,61 @@ fn script_section(ui: &Ui, session: &mut Session) {
             None
         };
         if ui.button_with_size("Browse…", [w, 0.0]) {
-            // Browse first: a first-use catalog prompt it raises takes the focus.
             session.open_window(PanelWindow::Browse);
+            #[cfg(feature = "js")]
             session.on_script_browse_open();
         }
+        #[cfg(feature = "js")]
         ui.set_item_tooltip("pick a compiled script or a loaded JS bot");
+        #[cfg(not(feature = "js"))]
+        ui.set_item_tooltip("pick a compiled script");
     }
-    if !stack {
-        gap_line(ui);
-    }
+    #[cfg(feature = "js")]
     {
-        let _load = if active {
-            Some(ui.begin_disabled())
-        } else {
-            None
-        };
-        if ui.button_with_size("Load", [w, 0.0]) {
-            session.fill_rs2b0t_cards_once();
-            session.open_script_load_browser();
+        if !stack {
+            gap_line(ui);
         }
-        ui.set_item_tooltip("load an out-of-tree JS bot file (native tick or defineBot)");
-    }
-    if !stack {
-        gap_line(ui);
-    }
-    let confirming = session.script_reload_confirmation_pending();
-    let pending = session.reload_validation_pending();
-    {
-        let _pending = pending.then(|| ui.begin_disabled());
-        let label = if pending {
-            "Reloading…"
+        {
+            let _load = if active {
+                Some(ui.begin_disabled())
+            } else {
+                None
+            };
+            if ui.button_with_size("Load", [w, 0.0]) {
+                session.fill_rs2b0t_cards_once();
+                session.open_script_load_browser();
+            }
+            ui.set_item_tooltip("load an out-of-tree JS bot file (native tick or defineBot)");
+        }
+        if !stack {
+            gap_line(ui);
+        }
+        let confirming = session.script_reload_confirmation_pending();
+        let pending = session.reload_validation_pending();
+        {
+            let _pending = pending.then(|| ui.begin_disabled());
+            let label = if pending {
+                "Reloading…"
+            } else if confirming {
+                "Confirm"
+            } else {
+                "Reload"
+            };
+            if ui.button_with_size(label, [w, 0.0]) {
+                session.begin_script_reload_clicked();
+            }
+        }
+        ui.set_item_tooltip(if pending {
+            "preparing and validating candidate script off the UI thread"
         } else if confirming {
-            "Confirm"
+            "confirm reload: restart listed running bots and stop listed paused bots"
         } else {
-            "Reload"
-        };
-        if ui.button_with_size(label, [w, 0.0]) {
-            session.begin_script_reload_clicked();
+            "hash source and supported siblings; unchanged skips transpile"
+        });
+        if (confirming || pending) && ui.button_with_size("Cancel reload", [avail, 0.0]) {
+            session.cancel_reload();
         }
     }
-    ui.set_item_tooltip(if pending {
-        "preparing and validating candidate script off the UI thread"
-    } else if confirming {
-        "confirm reload: restart listed running bots and stop listed paused bots"
-    } else {
-        "hash source and supported siblings; unchanged skips transpile"
-    });
-    if (confirming || pending) && ui.button_with_size("Cancel reload", [avail, 0.0]) {
-        session.cancel_reload();
-    }
-
     let (sw, sstack) = scaled_button_row_layout(ui, ui.content_region_avail()[0], SCRIPT_ROW.len());
     {
         let _start = if active {
@@ -2880,10 +2912,15 @@ fn browse_script_card(
 ) -> Option<ScriptChoice> {
     let selection = card.selection();
     let selected = session.script_sel.as_ref() == Some(&selection);
-    let id = match (card.compiled_id(), card.loaded()) {
-        (Some(id), _) => format!("##scard-compiled-{}", id.as_str()),
-        (None, Some(loaded)) => format!("##scard-{}", loaded.identity_key()),
-        (None, None) => format!("##scard-{}", card.name()),
+    let id = match card.compiled_id() {
+        Some(id) => format!("##scard-compiled-{}", id.as_str()),
+        #[cfg(feature = "js")]
+        None => card
+            .loaded()
+            .map(|loaded| format!("##scard-{}", loaded.identity_key()))
+            .unwrap_or_else(|| format!("##scard-{}", card.name())),
+        #[cfg(not(feature = "js"))]
+        None => format!("##scard-{}", card.name()),
     };
     let _border = selected.then(|| ui.push_style_color(StyleColor::Border, ACCENT));
     ui.child_window(&id)
@@ -2903,11 +2940,14 @@ fn browse_script_card(
             let gap = ui.clone_style().item_spacing()[0];
             let title_w = title_clip_width(inner, badge_w, gap);
             let badges_below = title_w < scale_px(ui, 32.0);
+            #[cfg(feature = "js")]
             let title_color = if card.unloadable().is_some() {
                 TEXT_DIM
             } else {
                 ACCENT
             };
+            #[cfg(not(feature = "js"))]
+            let title_color = ACCENT;
             if badges_below {
                 {
                     let _clip =
@@ -2941,6 +2981,7 @@ fn browse_script_card(
                     ui.text_disabled(&badge);
                 }
             }
+            #[cfg(feature = "js")]
             if let Some(loaded) = card.loaded() {
                 if let Some(line) = card_transpile_label(
                     session.transpile_front(),
@@ -3011,32 +3052,35 @@ fn browse_card_grid(ui: &Ui, session: &Session, cards: &[&BrowseCard<'_>]) -> Op
     selected
 }
 fn browse_window_body(ui: &Ui, session: &mut Session) {
-    let w = ui.content_region_avail()[0];
-    let pending = session.reload_validation_pending();
-    let label = if pending {
-        "Refreshing catalog…"
-    } else if session.scripts.catalog_refresh_confirm() {
-        "Confirm catalog reload"
-    } else {
-        "Refresh catalog"
-    };
+    #[cfg(feature = "js")]
     {
-        let _pending = pending.then(|| ui.begin_disabled());
-        if ui.button_with_size(label, [w, 0.0]) {
-            session.begin_refresh_catalog();
+        let w = ui.content_region_avail()[0];
+        let pending = session.reload_validation_pending();
+        let label = if pending {
+            "Refreshing catalog…"
+        } else if session.scripts.catalog_refresh_confirm() {
+            "Confirm catalog reload"
+        } else {
+            "Refresh catalog"
+        };
+        {
+            let _pending = pending.then(|| ui.begin_disabled());
+            if ui.button_with_size(label, [w, 0.0]) {
+                session.begin_refresh_catalog();
+            }
         }
-    }
-    if (session.scripts.catalog_refresh_confirm() || pending)
-        && ui.button_with_size("Cancel reload", [w, 0.0])
-    {
-        session.cancel_reload();
-    }
-    ui.spacing();
-    if frontend_core::scripts::paths::rs2b0t_import_deferred() {
-        if ui.button_with_size("Import catalog…", [w, 0.0]) {
-            session.open_rs2b0t_catalog_picker(false);
+        if (session.scripts.catalog_refresh_confirm() || pending)
+            && ui.button_with_size("Cancel reload", [w, 0.0])
+        {
+            session.cancel_reload();
         }
         ui.spacing();
+        if frontend_core::scripts::paths::rs2b0t_import_deferred() {
+            if ui.button_with_size("Import catalog…", [w, 0.0]) {
+                session.open_rs2b0t_catalog_picker(false);
+            }
+            ui.spacing();
+        }
     }
     let mut present = Vec::new();
     for card in session.scripts.browse_cards() {
@@ -3054,52 +3098,55 @@ fn browse_window_body(ui: &Ui, session: &mut Session) {
         script_category_chips(ui, session, &order);
         ui.spacing();
     }
-    let busy = session.transpile_front().is_some();
-    let need = session.scripts.cards_needing_transpile().len();
-    if need > 0 || busy {
-        let w = ui.content_region_avail()[0];
-        let _off = busy.then(|| ui.begin_disabled());
-        if ui.button_with_size("Transpile all", [w, 0.0]) {
-            session.queue_transpile_all();
-        }
-        drop(_off);
-        if busy {
-            if let Some((source, name)) = session.transpile_front() {
-                if let Some(line) = card_transpile_label(
-                    Some((source, name)),
-                    source,
-                    name,
-                    session.transpile_progress().0,
-                    session.transpile_progress().1,
-                ) {
-                    ui.text_disabled(line);
+    #[cfg(feature = "js")]
+    {
+        let busy = session.transpile_front().is_some();
+        let need = session.scripts.cards_needing_transpile().len();
+        if need > 0 || busy {
+            let w = ui.content_region_avail()[0];
+            let _off = busy.then(|| ui.begin_disabled());
+            if ui.button_with_size("Transpile all", [w, 0.0]) {
+                session.queue_transpile_all();
+            }
+            drop(_off);
+            if busy {
+                if let Some((source, name)) = session.transpile_front() {
+                    if let Some(line) = card_transpile_label(
+                        Some((source, name)),
+                        source,
+                        name,
+                        session.transpile_progress().0,
+                        session.transpile_progress().1,
+                    ) {
+                        ui.text_disabled(line);
+                    }
                 }
             }
+            ui.spacing();
         }
-        ui.spacing();
-    }
-    let named_failures = session.scripts.named_failure_output();
-    if !named_failures.is_empty() {
-        // Collapsed by default: the list is long (dim catalog cards are
-        // expected misses) and pushes the script browser off screen.
-        let red = ui.push_style_color(StyleColor::Text, ERROR);
-        let open = ui.collapsing_header(
-            format!(
-                "{} failed###script-failures",
-                session.scripts.load_failure_count()
-            ),
-            TreeNodeFlags::NONE,
-        );
-        red.pop();
-        if open {
-            if ui.button("Copy failures") {
-                if let Ok(mut clip) = arboard::Clipboard::new() {
-                    let _ = clip.set_text(&named_failures);
+        let named_failures = session.scripts.named_failure_output();
+        if !named_failures.is_empty() {
+            // Collapsed by default: the list is long (dim catalog cards are
+            // expected misses) and pushes the script browser off screen.
+            let red = ui.push_style_color(StyleColor::Text, ERROR);
+            let open = ui.collapsing_header(
+                format!(
+                    "{} failed###script-failures",
+                    session.scripts.load_failure_count()
+                ),
+                TreeNodeFlags::NONE,
+            );
+            red.pop();
+            if open {
+                if ui.button("Copy failures") {
+                    if let Ok(mut clip) = arboard::Clipboard::new() {
+                        let _ = clip.set_text(&named_failures);
+                    }
                 }
+                ui.text_wrapped(&named_failures);
             }
-            ui.text_wrapped(&named_failures);
+            ui.spacing();
         }
-        ui.spacing();
     }
     let cards: Vec<BrowseCard<'_>> = session.scripts.browse_cards().collect();
     let mut picked = None;
@@ -3166,9 +3213,11 @@ fn browse_window(ui: &Ui, session: &mut Session) {
         session.script_browse_open = open;
     }
     // A newly opened picker must appear above the Browse window that requested it.
+    #[cfg(feature = "js")]
     file_dialog_windows(ui, session);
 }
 
+#[cfg(feature = "js")]
 fn persist_dialog_cwd(session: &mut Session, mode: DialogMode) {
     match mode {
         DialogMode::File => {
@@ -3192,6 +3241,7 @@ fn persist_dialog_cwd(session: &mut Session, mode: DialogMode) {
     }
 }
 
+#[cfg(feature = "js")]
 fn file_dialog_windows(ui: &Ui, session: &mut Session) {
     let size = scale_size(ui, [FILE_DIALOG_FIRST_W, FILE_DIALOG_FIRST_H]);
     let pos = overlay_spawn_pos(ui, session, size);
@@ -3219,6 +3269,7 @@ fn file_dialog_windows(ui: &Ui, session: &mut Session) {
     }
 }
 
+#[cfg(feature = "js")]
 fn file_dialog_body(ui: &Ui, session: &mut Session, mode: DialogMode) {
     match mode {
         DialogMode::File => ui.text_wrapped("Choose a JavaScript or TypeScript file to load as a script."),
@@ -3810,6 +3861,7 @@ fn parameters_section(ui: &Ui, session: &mut Session) {
     let Some(sel) = &session.script_sel else {
         return;
     };
+    #[cfg(feature = "js")]
     if let Some((source, name)) = sel.loaded_card() {
         if let Some(card) = session.scripts.card(source, name) {
             let bag = session.merged_settings_bag(source, name, card.schema());
@@ -3817,7 +3869,8 @@ fn parameters_section(ui: &Ui, session: &mut Session) {
                 kv_row(ui, &label, &value);
             }
         }
-    } else if let Some(id) = sel.compiled_id() {
+    }
+    if let Some(id) = sel.compiled_id() {
         if let frontend_core::scripts::SchemaView::Ready { fields, .. } = session
             .scripts
             .compiled_schema(&session.core, session.focused_name().as_deref(), id)
@@ -3862,7 +3915,13 @@ fn persist_profile_setting(
             OperatorCommand::SaveScriptSettings(frontend_core::command::CardKind::Native),
             Targets::Profile(&profile),
         );
-    } else if let Some((source, lookup)) = selection.loaded_card() {
+        #[cfg(feature = "js")]
+        {
+            return;
+        }
+    }
+    #[cfg(feature = "js")]
+    if let Some((source, lookup)) = selection.loaded_card() {
         let Some((name, path)) = session
             .scripts
             .card(source, lookup)
@@ -4098,6 +4157,7 @@ fn script_parameter_schema(
     profile: Option<&str>,
     schema: &mut frontend_core::scripts::OwnedSchema,
 ) -> Option<serde_json::Map<String, serde_json::Value>> {
+    #[cfg(feature = "js")]
     if let Some((source, name)) = selection.loaded_card() {
         let Some((card_name, path)) = session.scripts.card(source, name).map(|card| {
             schema.copy_from(card.schema());
@@ -4111,6 +4171,11 @@ fn script_parameter_schema(
         } else {
             session.merged_settings_bag(source, name, schema.as_ref())
         });
+    }
+    #[cfg(not(feature = "js"))]
+    if selection.loaded_card().is_some() {
+        ui.text_disabled("JavaScript runtime unavailable");
+        return None;
     }
     let id = selection.compiled_id()?;
     match session.scripts.compiled_schema(&session.core, profile, id) {
@@ -4392,7 +4457,7 @@ fn apply_to_all_section(ui: &Ui, session: &mut Session) {
 }
 
 /// Draw the Scripts window's Apply to same-card members section for a test.
-#[cfg(test)]
+#[cfg(all(test, feature = "js"))]
 pub(crate) fn draw_test_apply_section(ui: &Ui, session: &mut Session) {
     apply_to_all_section(ui, session);
 }
@@ -4538,12 +4603,14 @@ fn quest_paths_section(ui: &Ui, session: &mut Session) {
 /// read yet (or could not be), versus a card that is simply missing. Shared by
 /// the Script prefs hint and the parameters rail so neither calls a card that
 /// was never loaded "no parameters".
+#[cfg(feature = "js")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum MissingCard {
     CatalogUnavailable,
     CardUnavailable,
 }
 
+#[cfg(feature = "js")]
 impl MissingCard {
     fn of(session: &Session, source: CardSource) -> Self {
         if source == CardSource::Catalog && !session.scripts.catalog_filled() {
@@ -4574,12 +4641,17 @@ fn parameters_rail_placeholder(session: &Session) -> Option<&'static str> {
     let Some(sel) = &session.script_sel else {
         return Some("(no script selected)");
     };
+    #[cfg(feature = "js")]
     if let Some((source, name)) = sel.loaded_card() {
         return match session.scripts.card(source, name) {
             None => Some(MissingCard::of(session, source).rail_text()),
             Some(card) if card.schema().is_empty() => Some("(no parameters)"),
             Some(_) => None,
         };
+    }
+    #[cfg(not(feature = "js"))]
+    if sel.loaded_card().is_some() {
+        return Some("(JavaScript runtime unavailable)");
     }
     let id = sel.compiled_id()?;
     match session
@@ -4612,14 +4684,21 @@ fn script_prefs_disabled_hint(session: &Session) -> Option<&'static str> {
             frontend_core::scripts::SchemaView::Ready { .. } => None,
         };
     }
-    let (source, name) = sel.loaded_card()?;
-    let Some(card) = session.scripts.card(source, name) else {
-        return Some(MissingCard::of(session, source).prefs_hint());
-    };
-    if card.schema().is_empty() {
-        Some("selected script has no parameters")
-    } else {
-        None
+    #[cfg(feature = "js")]
+    {
+        let (source, name) = sel.loaded_card()?;
+        let Some(card) = session.scripts.card(source, name) else {
+            return Some(MissingCard::of(session, source).prefs_hint());
+        };
+        if card.schema().is_empty() {
+            Some("selected script has no parameters")
+        } else {
+            None
+        }
+    }
+    #[cfg(not(feature = "js"))]
+    {
+        sel.loaded_card().map(|_| "JavaScript runtime unavailable")
     }
 }
 
@@ -6268,6 +6347,7 @@ struct ListPick {
 /// divider between them; Close stays at the bottom.
 fn chooser_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
     if !session.wall.chooser_open {
+        #[cfg(feature = "js")]
         if session.profile_import_open || !session.profile_import.is_fresh() {
             session.close_profile_import();
         }
@@ -6355,33 +6435,38 @@ fn chooser_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
     session.wall.chooser_open = session.wall.chooser_open && open;
 }
 
-/// Load all (MultiBox), then New profile and Import on one row. While an
-/// import's writes are being saved the editor pane keeps its report, so
-/// New profile waits.
+/// Load all (MultiBox), then New profile; JavaScript builds also expose
+/// import. While an import's writes are being saved the editor pane keeps
+/// its report, so New profile waits.
 fn profiles_toolbar(ui: &Ui, session: &mut Session, right: f32) {
     let w = on_screen_avail(ui, right);
     if session.multibox && ui.button_with_size("Load all", [w, 0.0]) {
         session.load_all();
     }
+    #[cfg(feature = "js")]
     let (bw, stack) = scaled_button_row_layout(ui, w, 2);
+    #[cfg(not(feature = "js"))]
+    let bw = w;
+    #[cfg(feature = "js")]
     let writing = session.import_writing();
+    #[cfg(feature = "js")]
+    let _waits = ui.begin_disabled_with_cond(writing);
+    if ui.button_with_size("New profile", [bw, 0.0]) {
+        session.begin_edit_profile(None);
+    }
+    #[cfg(feature = "js")]
     {
-        let _waits = ui.begin_disabled_with_cond(writing);
-        if ui.button_with_size("New profile", [bw, 0.0]) {
-            session.begin_edit_profile(None);
+        drop(_waits);
+        if !stack {
+            gap_line(ui);
         }
-    }
-    if !stack {
-        gap_line(ui);
-    }
-    {
         let _open = ui.begin_disabled_with_cond(session.profile_import_open);
         if ui.button_with_size("Import from rs2b0t…", [bw, 0.0]) {
             session.request_open_import();
         }
-    }
-    if writing {
-        ui.text_disabled("Editing waits until the import's writes are saved.");
+        if writing {
+            ui.text_disabled("Editing waits until the import's writes are saved.");
+        }
     }
 }
 
@@ -6402,7 +6487,11 @@ fn profiles_footer_height(ui: &Ui, session: &Session) -> f32 {
 /// stacked below it. Returns what the list was asked to do.
 fn profiles_regions(ui: &Ui, session: &mut Session, right: f32, region_h: f32) -> ListPick {
     let w = on_screen_avail(ui, right);
-    if !session.profile_editor.is_open() && !session.profile_import_open {
+    #[cfg(feature = "js")]
+    let import_open = session.profile_import_open;
+    #[cfg(not(feature = "js"))]
+    let import_open = false;
+    if !session.profile_editor.is_open() && !import_open {
         return profile_list(ui, session, right, [w, region_h]);
     }
     let divider = scale_px(ui, PROFILES_DIVIDER);
@@ -6489,8 +6578,11 @@ fn profile_list(ui: &Ui, session: &Session, right: f32, size: [f32; 2]) -> ListP
     let focused = session.focused_name();
     let members = session.core.members();
     let multibox = session.multibox;
-    // The editor pane keeps an import's report while its writes are saved.
+    // The JavaScript import pane keeps its report while writes settle.
+    #[cfg(feature = "js")]
     let edit_waits = session.import_writing();
+    #[cfg(not(feature = "js"))]
+    let edit_waits = false;
     let mut pick = ListPick::default();
     ui.child_window("##profiles-list")
         .size(size)
@@ -6535,6 +6627,7 @@ fn profiles_editor(ui: &Ui, session: &mut Session, size: [f32; 2]) {
     let min_h = scale_px(ui, PROFILES_REGION_MIN_H) * 0.5;
     // The body is followed by item spacing, then the buttons.
     let h = h - ui.clone_style().item_spacing()[1];
+    #[cfg(feature = "js")]
     if session.profile_import_open {
         let bar = profile_import_bar_height(ui, w);
         let mut preview = false;
@@ -6543,7 +6636,9 @@ fn profiles_editor(ui: &Ui, session: &mut Session, size: [f32; 2]) {
             .child_flags(ChildFlags::NAV_FLATTENED)
             .build(ui, || preview = profile_import_body(ui, session));
         profile_import_bar(ui, session, w, preview);
-    } else if session.profile_editor.is_open() {
+        return;
+    }
+    if session.profile_editor.is_open() {
         let bar = profile_form_bar_height(ui, session, w);
         ui.child_window("##profiles-editor")
             .size([w, (h - bar).max(min_h)])
@@ -6658,6 +6753,7 @@ fn profile_form_bar(ui: &Ui, session: &mut Session, width: f32) {
     }
 }
 
+#[cfg(feature = "js")]
 const IMPORT_DELETE_POPUP: &str = "Delete the rs2b0t export file?";
 
 /// The rs2b0t profile import in the editor pane (vault unlocked): the
@@ -6665,6 +6761,7 @@ const IMPORT_DELETE_POPUP: &str = "Delete the rs2b0t export file?";
 /// until Import), then the report while the writes are saved and after.
 /// The flow is frontend-core's, shared with the TUI. Returns whether Enter
 /// asked for the preview.
+#[cfg(feature = "js")]
 fn profile_import_body(ui: &Ui, session: &mut Session) -> bool {
     use frontend_core::rs2b0t_import::{ConflictPolicy, Stage, PROFILE_FILE_NAME};
     ui.text_colored(ACCENT, "Import rs2b0t profiles");
@@ -6750,11 +6847,13 @@ fn profile_import_body(ui: &Ui, session: &mut Session) -> bool {
     entered
 }
 
+#[cfg(feature = "js")]
 fn profile_import_bar_height(ui: &Ui, width: f32) -> f32 {
     button_rows(ui, width) * ui.frame_height_with_spacing()
 }
 
 /// The import's buttons under its body, and the delete-file confirm.
+#[cfg(feature = "js")]
 fn profile_import_bar(ui: &Ui, session: &mut Session, width: f32, entered: bool) {
     use frontend_core::rs2b0t_import::Stage;
     let (bw, stack) = scaled_button_row_layout(ui, width, 2);
@@ -7418,7 +7517,9 @@ fn init_panel_running(
     state.session.set_nav_paints_override(args.nav_paints);
     state.session.set_catalog_core_enabled(args.catalog_core);
     state.session.set_pair_core_enabled(args.pair_core);
+    #[cfg(feature = "js")]
     state.session.set_external_core_enabled(args.external_core);
+    #[cfg(feature = "js")]
     state.session.set_external_ts(args.external_ts.clone());
     crate::log_pane::apply_session_log_pref(&mut state.session);
     let fixture_mode = if args.run_prepared {

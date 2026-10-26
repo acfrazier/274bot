@@ -4,7 +4,7 @@ use super::{LiveSettings, Scripts};
 use crate::operations::OperationId;
 use crate::session::{ArmMirror, OperatorSession};
 use script::native::ScriptStatus;
-use script::shim::ScriptPaint;
+use script::paint::ScriptPaint;
 use script::{RunState, ScriptLifecycleReceipt};
 use serde_json::{Map, Value};
 use std::sync::Arc;

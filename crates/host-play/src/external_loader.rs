@@ -1002,6 +1002,7 @@ mod tests {
     use super::*;
     use serde_json::Value;
 
+    #[cfg(feature = "js")]
     #[test]
     fn materialized_source_loads_with_the_native_fixture_identity() {
         let source = default_frozen_source();
@@ -1010,7 +1011,7 @@ mod tests {
         let scratch =
             std::env::temp_dir().join(format!("external-fixture-library-{}", std::process::id()));
         let mut library =
-            script::JsLibrary::with_cache(scratch.join("registry.json"), scratch.join("cache"));
+            script_js::JsLibrary::with_cache(scratch.join("registry.json"), scratch.join("cache"));
         let card = library.load(&owned).unwrap();
         assert_eq!(
             card.name, SCRIPT_NAME,

@@ -353,7 +353,7 @@ fn a_script_walk_plans_from_the_slot_memory_with_the_bank_closed() {
     let memory = RwLock::new(session_memory());
     let (navs, _) = empty_nav();
     bind_test_route_scope(&navs, "alice");
-    let walk: script::shim::InteractReq = serde_json::from_value(serde_json::json!({
+    let walk: script::interact::InteractReq = serde_json::from_value(serde_json::json!({
         "op": "walk",
         "x": 4,
         "z": 4,
@@ -406,7 +406,7 @@ fn a_compat_inspect_with_a_closed_bank_and_a_known_memory_is_bank_planned() {
     let state = WorldState::from_snapshot(&closed);
     let (navs, _) = empty_nav();
     let inspect = |client: &mut Client, memory: &RwLock<BankMemory>, request_id: u64| {
-        let request: script::shim::InteractReq = serde_json::from_value(serde_json::json!({
+        let request: script::interact::InteractReq = serde_json::from_value(serde_json::json!({
             "op": "inspect-route",
             "x": 4,
             "z": 4,
@@ -418,10 +418,14 @@ fn a_compat_inspect_with_a_closed_bank_and_a_known_memory_is_bank_planned() {
             "request_id": request_id,
         }))
         .expect("inspect request decodes");
-        let reqs = script::isolate_fb::decode_interact_batch(
-            &script::isolate_fb::encode_interact_batch(&[request]),
-        )
-        .expect("inspect wire decodes");
+        #[cfg(feature = "js")]
+        let reqs =
+            script_js::wire::decode_interact_batch(&script_js::wire::encode_interact_batch(&[
+                request,
+            ]))
+            .expect("inspect wire decodes");
+        #[cfg(not(feature = "js"))]
+        let reqs = [request];
         dispatch_script_interact_cached(
             client,
             &closed,
@@ -470,6 +474,7 @@ fn a_compat_inspect_with_a_closed_bank_and_a_known_memory_is_bank_planned() {
     );
 }
 
+#[cfg(feature = "js")]
 /// D6 pin: compat `Bank.*` and `Inventory.count` read the posted open bank
 /// and pack only. With the fixture bank open they see the knives; with it
 /// closed they answer empty/0 although the slot's memory (passed to the
@@ -500,7 +505,7 @@ export default class T extends LoopingBot {
             .unwrap()
             .start_load_with_loadouts_settled(
                 SRC.into(),
-                script::LoadShape::CompatClass,
+                script_js::LoadShape::CompatClass,
                 vec![],
                 &[],
             )
@@ -790,7 +795,7 @@ fn a_compat_walk_near_a_solid_tile_plans_the_hint_trip_with_the_bank_closed() {
             Some(state.clone()),
             memory,
             "alice",
-            [script::shim::InteractReq::WalkNear {
+            [script::interact::InteractReq::WalkNear {
                 x: 4,
                 z: 4,
                 level: 0,
