@@ -48,7 +48,9 @@ use crate::script_runtime::{
     take_manual_walk_ownership, NavBot, ScriptSlot, ScriptWall,
 };
 #[cfg(feature = "js")]
-use crate::script_runtime::{project_npc_boxes_for_isolate_snapshot, projected_npc_boxes};
+use crate::script_runtime::{
+    deliver_channel_events, project_npc_boxes_for_isolate_snapshot, projected_npc_boxes,
+};
 use crate::{
     catalog_core, login_readiness, paired_core, public_worlds, Play, RandomClaim, RandomStatus,
 };

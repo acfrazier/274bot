@@ -19994,8 +19994,8 @@ fn prayer_overlay_game_snapshot(melee: i32, extra_nonzero: usize) -> GameSnapsho
     snapshot.rebuild(&c);
     snapshot
 }
-#[cfg(feature = "js")]
 
+#[cfg(feature = "js")]
 fn publish_script_snapshot(
     last: Option<&script_js::wire::SnapshotFingerprint>,
     tick: u64,
@@ -20991,8 +20991,8 @@ fn script_observe_posts_blob_while_held_and_skips_dispatch() {
         .unwrap()
         .stop();
 }
-#[cfg(feature = "js")]
 
+#[cfg(feature = "js")]
 fn force_watchdog_sampling(slot: &mut script::SlotScript, here: (i32, i32, i32)) {
     let t = Instant::now() - script::watchdog::WEDGE;
     slot.note_game_packet_tick(t);
