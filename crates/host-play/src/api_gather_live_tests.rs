@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use vault::{Profile, ProfileSettings};
-use {script_js::wire::IsolateBuf, script_js::wire::NativeFactsInput};
+use {script::native::snapshot_source::NativeFactsInput, script_js::wire::IsolateBuf};
 
 const LIVE_SOURCE: &str = r#"
 const channel = new BroadcastChannel(__GATHER_CHANNEL__);
@@ -594,7 +594,7 @@ fn foreground_rejection_receipt_rejects_every_wrong_admission() {
 #[test]
 #[ignore = "requires LIVE=1 and local R289 Gatherer fixtures"]
 fn live_gather_api_receipt_tracks_memory_reconnect_and_wire_shadow() {
-    use script::shim::InteractReq;
+    use script::interact::InteractReq;
     use script_channels::BrokerWorld;
     assert!(
         std::env::var("LIVE").is_ok_and(|value| value == "1"),

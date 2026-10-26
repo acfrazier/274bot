@@ -1305,9 +1305,9 @@ pub(crate) fn script_observe_cached_with_channels(
         let is_channel = |queued: &script::interact::QueuedInteract| {
             matches!(
                 queued.req,
-                script::shim::InteractReq::ChannelOpen { .. }
-                    | script::shim::InteractReq::ChannelPost { .. }
-                    | script::shim::InteractReq::ChannelClose { .. }
+                script::interact::InteractReq::ChannelOpen { .. }
+                    | script::interact::InteractReq::ChannelPost { .. }
+                    | script::interact::InteractReq::ChannelClose { .. }
             )
         };
         let channel_reqs = if interact.iter().any(is_channel) {
@@ -1384,12 +1384,15 @@ pub(crate) fn script_observe_cached_with_channels(
                     // Walk releases before the native action loop as well, so
                     // a fresh native drive cannot overtake a reserved stop.
                     if interact.iter().any(|queued| {
-                        matches!(queued.req, script::shim::InteractReq::AbortWalk { .. })
+                        matches!(queued.req, script::interact::InteractReq::AbortWalk { .. })
                     }) {
                         let (releases, remaining): (Vec<_>, Vec<_>) = std::mem::take(&mut interact)
                             .into_iter()
                             .partition(|queued| {
-                                matches!(queued.req, script::shim::InteractReq::AbortWalk { .. })
+                                matches!(
+                                    queued.req,
+                                    script::interact::InteractReq::AbortWalk { .. }
+                                )
                             });
                         interact = remaining;
                         wrote |= dispatch_script_interact_cached_scoped(
@@ -1439,7 +1442,7 @@ pub(crate) fn script_observe_cached_with_channels(
                                 &action.effect,
                                 script::native::HostEffect::Walk(_)
                                     | script::native::HostEffect::Interaction(
-                                        script::shim::InteractReq::WalkTo { .. }
+                                        script::interact::InteractReq::WalkTo { .. }
                                     )
                             )
                         {
@@ -1495,11 +1498,11 @@ pub(crate) fn script_observe_cached_with_channels(
                                 let mut proof_decoded = false;
                                 #[cfg(all(windows, test, feature = "journal-paint-proof"))]
                                 let proof_close =
-                                    matches!(&request, script::shim::InteractReq::CloseModal);
+                                    matches!(&request, script::interact::InteractReq::CloseModal);
                                 let bank_dispatch = bank_deposit.as_ref().map(|trace| {
                                     let matches = matches!(
                                         &request,
-                                        script::shim::InteractReq::InvButton {
+                                        script::interact::InteractReq::InvButton {
                                             id,
                                             slot,
                                             component,
@@ -1535,7 +1538,7 @@ pub(crate) fn script_observe_cached_with_channels(
                                     dispatch.accepted
                                 } else if matches!(
                                     request,
-                                    script::shim::InteractReq::WithdrawX { .. }
+                                    script::interact::InteractReq::WithdrawX { .. }
                                 ) {
                                     if pending_withdraw_x_active {
                                         false
@@ -1765,8 +1768,8 @@ pub(crate) fn script_observe_cached_with_channels(
                             snapshot,
                         );
                         match req {
-                            req @ (script::shim::InteractReq::Deposit { .. }
-                            | script::shim::InteractReq::Withdraw { .. }) => {
+                            req @ (script::interact::InteractReq::Deposit { .. }
+                            | script::interact::InteractReq::Withdraw { .. }) => {
                                 if pending_bank_op_active || armed_bank_op.is_some() {
                                     rejected_bank_op += 1;
                                 } else if let Some(pending) = dispatch_observed_bank_op(
@@ -1779,7 +1782,7 @@ pub(crate) fn script_observe_cached_with_channels(
                                     rejected_bank_op += 1;
                                 }
                             }
-                            req @ script::shim::InteractReq::WithdrawX { .. } => {
+                            req @ script::interact::InteractReq::WithdrawX { .. } => {
                                 let pending = (armed.is_none() && !pending_withdraw_x_active)
                                     .then(|| {
                                         super::bank::dispatch_observed_withdraw_x(
@@ -1864,15 +1867,17 @@ pub(crate) fn script_observe_cached_with_channels(
         } else {
             let rejected_x = interact
                 .iter()
-                .filter(|queued| matches!(&queued.req, script::shim::InteractReq::WithdrawX { .. }))
+                .filter(|queued| {
+                    matches!(&queued.req, script::interact::InteractReq::WithdrawX { .. })
+                })
                 .count();
             let rejected_bank = interact
                 .iter()
                 .filter(|req| {
                     matches!(
                         &req.req,
-                        script::shim::InteractReq::Deposit { .. }
-                            | script::shim::InteractReq::Withdraw { .. }
+                        script::interact::InteractReq::Deposit { .. }
+                            | script::interact::InteractReq::Withdraw { .. }
                     )
                 })
                 .count();
@@ -1902,15 +1907,15 @@ pub(crate) fn script_observe_cached_with_channels(
     } else if !interact.is_empty() {
         let rejected_x = interact
             .iter()
-            .filter(|req| matches!(req.req, script::shim::InteractReq::WithdrawX { .. }))
+            .filter(|req| matches!(req.req, script::interact::InteractReq::WithdrawX { .. }))
             .count();
         let rejected_bank = interact
             .iter()
             .filter(|req| {
                 matches!(
                     &req.req,
-                    script::shim::InteractReq::Deposit { .. }
-                        | script::shim::InteractReq::Withdraw { .. }
+                    script::interact::InteractReq::Deposit { .. }
+                        | script::interact::InteractReq::Withdraw { .. }
                 )
             })
             .count();
@@ -2202,14 +2207,14 @@ pub(crate) fn script_observe(
     )
 }
 
-pub(crate) fn take_script_interacts<T: std::borrow::Borrow<script::shim::InteractReq>>(
+pub(crate) fn take_script_interacts<T: std::borrow::Borrow<script::interact::InteractReq>>(
     reqs: Vec<T>,
     slot_input: Option<&SlotInput>,
 ) -> Vec<T> {
     let mut out = Vec::with_capacity(reqs.len());
     for req in reqs {
         match req.borrow() {
-            script::shim::InteractReq::Mouse {
+            script::interact::InteractReq::Mouse {
                 down,
                 x,
                 y,
@@ -2220,7 +2225,7 @@ pub(crate) fn take_script_interacts<T: std::borrow::Borrow<script::shim::Interac
                     inp.enqueue_script_mouse_at(*identity, *down, *x, *y, *button);
                 }
             }
-            script::shim::InteractReq::RunPolicyOverride { .. } => {
+            script::interact::InteractReq::RunPolicyOverride { .. } => {
                 // Host callers split these before dispatch. A raw/direct caller
                 // cannot turn host policy into a game interact.
             }

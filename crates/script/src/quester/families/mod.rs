@@ -18,9 +18,9 @@ use super::compile::{
 use super::path::PredicateDocument;
 use crate::combat::{begin_clear_owned_prayers, ClearPrayers, Hygiene, RaisedPrayers};
 use crate::dialogue_outcome::DialogueOutcome;
+use crate::interact::InteractReq;
 use crate::native::walk::Walk;
 use crate::native::{ActionError, ActionHandle, NativeActions, WalkOptions, WalkReceipt};
-use crate::shim::InteractReq;
 use api::selected::{FactKey, Truth};
 use api::snapshot::{ChatLineView, QuestListStatus};
 use api::WorldTile;

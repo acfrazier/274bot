@@ -4659,10 +4659,6 @@
       "owner": "T2"
     },
     {
-      "path": "crates/script/src/shim/mod.rs",
-      "owner": "T2"
-    },
-    {
       "path": "crates/script-js/src/shim/modals.js",
       "owner": "T2"
     },
@@ -7593,6 +7589,42 @@
     {
       "path": "crates/script-js/tests/slot_slot_tests.rs",
       "owner": "T1"
+    },
+    {
+      "path": "crates/script-js/src/api_v2/mod.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script-js/src/compat/mod.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script-js/src/compat/quest_journal/mod.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script-js/src/library/mod.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script-js/src/materialize/mod.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script-js/src/runtime/mod.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script-js/src/scene/mod.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script-js/src/tooling/mod.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script-js/src/wire/mod.rs",
+      "owner": "T2"
     }
   ]
 }

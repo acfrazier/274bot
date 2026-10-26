@@ -1788,18 +1788,19 @@ fn tick_loop(
                             .saturating_sub(output.settled);
                     }
                     let (lineages, mut dropped) = if execution.is_some() {
-                        let lineages =
-                            match crate::materialize::lineage_v8::take_interact_lineages(&mut runtime) {
-                                Ok(lineages) => lineages,
-                                Err(error) => {
-                                    let _ = out.send(ThreadMsg::TickError {
-                                        tick: n,
-                                        generation,
-                                        message: format!("interact lineage: {error}"),
-                                    });
-                                    Vec::new()
-                                }
-                            };
+                        let lineages = match crate::materialize::lineage_v8::take_interact_lineages(
+                            &mut runtime,
+                        ) {
+                            Ok(lineages) => lineages,
+                            Err(error) => {
+                                let _ = out.send(ThreadMsg::TickError {
+                                    tick: n,
+                                    generation,
+                                    message: format!("interact lineage: {error}"),
+                                });
+                                Vec::new()
+                            }
+                        };
                         (
                             lineages,
                             take_seat_interact_overflow(&mut runtime, &out, n, generation),
@@ -2027,7 +2028,9 @@ fn tick_loop(
                 // A row that ended here settles its machine wait in this tick.
                 if !machines_halted(&teardown) {
                     let settled = call_interruptible(&mut runtime, &teardown, |runtime| {
-                        crate::materialize::machine_v8::settle_waits(runtime, &|| machines_halted(&teardown))?;
+                        crate::materialize::machine_v8::settle_waits(runtime, &|| {
+                            machines_halted(&teardown)
+                        })?;
                         runtime.block_on_event_loop(
                             rustyscript::deno_core::PollEventLoopOptions::default(),
                             Some(Duration::from_millis(10)),
@@ -2390,8 +2393,7 @@ fn tick_loop(
                         == work_generation.load(std::sync::atomic::Ordering::Acquire)
                 {
                     if execution.is_some() {
-                        let wait_rows =
-                            parked_waits.min(MAX_SEAT_GAMEPLAY_ROWS as u32) as usize;
+                        let wait_rows = parked_waits.min(MAX_SEAT_GAMEPLAY_ROWS as u32) as usize;
                         let mut rows = Vec::with_capacity(wait_rows);
                         for _ in 0..wait_rows {
                             rows.push((
@@ -2534,7 +2536,8 @@ fn tick_loop(
             }
             IsolateCmd::Probe(expr, reply) => {
                 let value: Result<serde_json::Value, String> =
-                    crate::materialize::lineage_v8::eval(&mut runtime, expr).map_err(|e| e.to_string());
+                    crate::materialize::lineage_v8::eval(&mut runtime, expr)
+                        .map_err(|e| e.to_string());
                 let _ = reply.send(value);
             }
             IsolateCmd::Stop { invoke_hook } => {

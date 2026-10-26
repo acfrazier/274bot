@@ -11,7 +11,7 @@ use crate::quester::compile::{
     CompileContext, CompileError, StepContext, StepOutcome, StepPlan, StepRun,
 };
 use crate::quester::families::reach;
-use crate::shim::InteractReq;
+use crate::interact::InteractReq;
 use api::WorldTile;
 use serde::Deserialize;
 use std::sync::Arc;

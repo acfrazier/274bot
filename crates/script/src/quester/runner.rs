@@ -3975,7 +3975,7 @@ mod tests {
             fn status(&mut self, status: ScriptStatus) {
                 self.0.push(status);
             }
-            fn paint(&mut self, _: Arc<crate::shim::ScriptPaint>) {}
+            fn paint(&mut self, _: Arc<crate::paint::ScriptPaint>) {}
             fn log(&mut self, _: api::hostlog::Level, _: &str) {}
             fn settings_applied(&mut self, _: u64) {}
         }
@@ -4063,7 +4063,7 @@ mod tests {
             fn status(&mut self, status: ScriptStatus) {
                 self.0.push(status);
             }
-            fn paint(&mut self, _: Arc<crate::shim::ScriptPaint>) {}
+            fn paint(&mut self, _: Arc<crate::paint::ScriptPaint>) {}
             fn log(&mut self, _: api::hostlog::Level, _: &str) {}
             fn settings_applied(&mut self, _: u64) {}
         }
@@ -4206,7 +4206,7 @@ mod tests {
             fn status(&mut self, status: ScriptStatus) {
                 self.0.push(status);
             }
-            fn paint(&mut self, _: Arc<crate::shim::ScriptPaint>) {}
+            fn paint(&mut self, _: Arc<crate::paint::ScriptPaint>) {}
             fn log(&mut self, _: api::hostlog::Level, _: &str) {}
             fn settings_applied(&mut self, _: u64) {}
         }
@@ -4658,9 +4658,9 @@ mod tests {
             assert_eq!(queued.len(), 1);
             assert!(matches!(
                 queued[0].effect,
-                crate::native::HostEffect::Interaction(crate::shim::InteractReq::SetRetaliate {
-                    on: true
-                })
+                crate::native::HostEffect::Interaction(
+                    crate::interact::InteractReq::SetRetaliate { on: true }
+                )
             ));
         });
         assert_eq!(script.attempts, 4);
@@ -4956,7 +4956,7 @@ mod tests {
         fn status(&mut self, status: ScriptStatus) {
             self.0.push(status);
         }
-        fn paint(&mut self, _: Arc<crate::shim::ScriptPaint>) {}
+        fn paint(&mut self, _: Arc<crate::paint::ScriptPaint>) {}
         fn log(&mut self, _: api::hostlog::Level, _: &str) {}
         fn settings_applied(&mut self, _: u64) {}
     }
@@ -4970,7 +4970,7 @@ mod tests {
         fn status(&mut self, status: ScriptStatus) {
             self.statuses.push(status);
         }
-        fn paint(&mut self, _: Arc<crate::shim::ScriptPaint>) {}
+        fn paint(&mut self, _: Arc<crate::paint::ScriptPaint>) {}
         fn log(&mut self, level: api::hostlog::Level, message: &str) {
             self.logs.push((level, message.to_owned()));
         }
@@ -5963,7 +5963,7 @@ mod tests {
             fn status(&mut self, status: ScriptStatus) {
                 self.0.push(status);
             }
-            fn paint(&mut self, _: Arc<crate::shim::ScriptPaint>) {}
+            fn paint(&mut self, _: Arc<crate::paint::ScriptPaint>) {}
             fn log(&mut self, _: api::hostlog::Level, _: &str) {}
             fn settings_applied(&mut self, _: u64) {}
         }
@@ -6133,7 +6133,7 @@ mod tests {
             fn status(&mut self, status: ScriptStatus) {
                 self.0.push(status);
             }
-            fn paint(&mut self, _: Arc<crate::shim::ScriptPaint>) {}
+            fn paint(&mut self, _: Arc<crate::paint::ScriptPaint>) {}
             fn log(&mut self, _: api::hostlog::Level, _: &str) {}
             fn settings_applied(&mut self, _: u64) {}
         }
@@ -6227,7 +6227,7 @@ mod tests {
             fn status(&mut self, status: ScriptStatus) {
                 self.0.push(status);
             }
-            fn paint(&mut self, _: Arc<crate::shim::ScriptPaint>) {}
+            fn paint(&mut self, _: Arc<crate::paint::ScriptPaint>) {}
             fn log(&mut self, _: api::hostlog::Level, _: &str) {}
             fn settings_applied(&mut self, _: u64) {}
         }
@@ -6649,7 +6649,7 @@ mod tests {
                     matches!(
                         &action.effect,
                         crate::native::HostEffect::Interaction(
-                            crate::shim::InteractReq::OpenStand { .. }
+                            crate::interact::InteractReq::OpenStand { .. }
                         )
                     )
                 })

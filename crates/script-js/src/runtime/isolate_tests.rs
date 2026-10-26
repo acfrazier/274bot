@@ -2798,10 +2798,10 @@ export function tick(api) {
 
 #[test]
 fn execution_owned_v8_caps_rows_and_reserves_controls() {
-    use script::native::seat_rows::MAX_SEAT_GAMEPLAY_ROWS;
     use api::identity::ExecutionId;
     use api::selected::RunKey;
     use script::interact::InteractReq;
+    use script::native::seat_rows::MAX_SEAT_GAMEPLAY_ROWS;
 
     let source = r#"
 import { Execution } from '../../api/execution/Execution.js';

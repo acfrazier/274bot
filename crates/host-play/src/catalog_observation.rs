@@ -571,7 +571,7 @@ impl Observation {
     pub fn attach_line_of_sight(
         &mut self,
         snapshot: &GameSnapshot,
-        paint: Option<&script::shim::ScriptPaint>,
+        paint: Option<&script::paint::ScriptPaint>,
     ) {
         let scene = snapshot.scene();
         let identity = LineOfSightIdentity {
@@ -618,7 +618,7 @@ impl Observation {
     pub fn attach_actor_observation(
         &mut self,
         snapshot: &GameSnapshot,
-        paint: Option<&script::shim::ScriptPaint>,
+        paint: Option<&script::paint::ScriptPaint>,
     ) {
         let scene = snapshot.scene();
         let identity = LineOfSightIdentity {
@@ -691,7 +691,7 @@ impl Observation {
     pub fn attach_fight_field(
         &mut self,
         snapshot: &GameSnapshot,
-        paint: Option<&script::shim::ScriptPaint>,
+        paint: Option<&script::paint::ScriptPaint>,
     ) {
         let scene = snapshot.scene();
         let identity = LineOfSightIdentity {

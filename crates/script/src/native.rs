@@ -7,8 +7,9 @@ use std::sync::{Arc, LazyLock};
 use std::task::Poll;
 use std::time::{Duration, Instant};
 
+use crate::interact::InteractReq;
+use crate::paint::ScriptPaint;
 use crate::quester::pair::QuestPairPort;
-use crate::shim::{InteractReq, ScriptPaint};
 use crate::{CompiledId, SettingDef};
 use api::game_data::SelectedGameData;
 use api::quest_progress::{EvidenceProvider, EvidenceStamp, QuestProgress};

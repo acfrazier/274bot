@@ -66,7 +66,6 @@ pub mod reach_route;
 pub mod registry;
 
 pub mod settings_store;
-pub mod shim;
 pub mod shop_open;
 pub mod slot;
 /// Sealed external-script authority and shared server-ordered host input.

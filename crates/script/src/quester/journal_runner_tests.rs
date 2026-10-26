@@ -150,14 +150,14 @@ fn finish_read(
     drive(script, snapshot, ledger, tick);
     assert!(matches!(
         ack(ledger, tick),
-        HostEffect::Interaction(crate::shim::InteractReq::IfButton { .. })
+        HostEffect::Interaction(crate::interact::InteractReq::IfButton { .. })
     ));
     journal(snapshot, body);
     drive(script, snapshot, ledger, tick + 1);
     drive(script, snapshot, ledger, tick + 2);
     assert!(matches!(
         ack(ledger, tick + 2),
-        HostEffect::Interaction(crate::shim::InteractReq::CloseModal)
+        HostEffect::Interaction(crate::interact::InteractReq::CloseModal)
     ));
     snapshot.seed_main_modal(-1, vec![]);
     drive(script, snapshot, ledger, tick + 3);
@@ -176,7 +176,7 @@ impl NativeMachine for PendingNativeAction {
     }
 
     fn poll(&mut self, cx: &mut ActionContext<'_>) -> Poll<Result<Self::Output, ActionError>> {
-        match cx.emit(crate::shim::InteractReq::IfButton { component_id: 9000 }) {
+        match cx.emit(crate::interact::InteractReq::IfButton { component_id: 9000 }) {
             Ok(_) => Poll::Pending,
             Err(error) => Poll::Ready(Err(error)),
         }
@@ -501,9 +501,9 @@ fn policy_s2_resume_hands_accepted_combat_raise_to_scoped_cleanup() {
             .outbox
             .iter()
             .filter_map(|action| match &action.effect {
-                HostEffect::Interaction(crate::shim::InteractReq::IfButton { component_id }) => {
-                    Some(*component_id)
-                }
+                HostEffect::Interaction(crate::interact::InteractReq::IfButton {
+                    component_id,
+                }) => Some(*component_id),
                 _ => None,
             })
             .collect();
@@ -524,7 +524,7 @@ fn policy_s2_resume_hands_accepted_combat_raise_to_scoped_cleanup() {
         drive(&mut script, &snapshot, &mut ledger, 3);
         assert_eq!(ledger.as_ref().unwrap().outbox.len(), 1);
         assert!(matches!(ack(&mut ledger, 3),
-        HostEffect::Interaction(crate::shim::InteractReq::IfButton { component_id })
+        HostEffect::Interaction(crate::interact::InteractReq::IfButton { component_id })
             if component_id == replacement.button_com));
         snapshot.seed_varps(cleared_varps);
         drive(&mut script, &snapshot, &mut ledger, 4);
@@ -735,16 +735,16 @@ fn lifecycle_followups_death_preserves_a_respawn_user_prayer_across_pause_and_ho
             .outbox
             .iter()
             .filter_map(|action| match &action.effect {
-                HostEffect::Interaction(crate::shim::InteractReq::IfButton { component_id }) => {
-                    Some(*component_id)
-                }
+                HostEffect::Interaction(crate::interact::InteractReq::IfButton {
+                    component_id,
+                }) => Some(*component_id),
                 _ => None,
             })
             .collect();
         assert_eq!(buttons, vec![raised.button_com]);
         assert!(matches!(
             ack(&mut ledger, 2),
-            HostEffect::Interaction(crate::shim::InteractReq::IfButton { component_id })
+            HostEffect::Interaction(crate::interact::InteractReq::IfButton { component_id })
                 if component_id == raised.button_com
         ));
         assert!(script
@@ -804,7 +804,7 @@ fn lifecycle_followups_death_preserves_a_respawn_user_prayer_across_pause_and_ho
                 .iter()
                 .all(|action| !matches!(
                     &action.effect,
-                    HostEffect::Interaction(crate::shim::InteractReq::IfButton { component_id })
+                    HostEffect::Interaction(crate::interact::InteractReq::IfButton { component_id })
                         if *component_id == raised.button_com
                 )),
             "resumption must not send the old Combat-owned prayer clear"
@@ -861,7 +861,7 @@ fn journal_read_clicks_its_row_on_the_begin_tick() {
     assert!(ledger.as_ref().is_some_and(|ledger| matches!(
         ledger.outbox.first().map(|action| &action.effect),
         Some(HostEffect::Interaction(
-            crate::shim::InteractReq::IfButton { .. }
+            crate::interact::InteractReq::IfButton { .. }
         ))
     )));
 }
@@ -880,7 +880,7 @@ fn advancing_step_rereads_on_its_completion_tick() {
     assert!(ledger.as_ref().is_some_and(|ledger| matches!(
         ledger.outbox.first().map(|action| &action.effect),
         Some(HostEffect::Interaction(
-            crate::shim::InteractReq::IfButton { .. }
+            crate::interact::InteractReq::IfButton { .. }
         ))
     )));
 }
@@ -1007,7 +1007,7 @@ fn advancing_kill_reads_progress_once_the_killed_npc_is_gone() {
     drive(&mut script, &snapshot, &mut ledger, 7);
     assert!(matches!(
         ack(&mut ledger, 7),
-        HostEffect::Interaction(crate::shim::InteractReq::IfButton { .. })
+        HostEffect::Interaction(crate::interact::InteractReq::IfButton { .. })
     ));
 }
 
@@ -1028,7 +1028,7 @@ fn advancing_kill_read_wait_is_bounded() {
     drive(&mut script, &snapshot, &mut ledger, 11);
     assert!(matches!(
         ack(&mut ledger, 11),
-        HostEffect::Interaction(crate::shim::InteractReq::IfButton { .. })
+        HostEffect::Interaction(crate::interact::InteractReq::IfButton { .. })
     ));
 }
 
@@ -1363,7 +1363,7 @@ fn journal_modal_timeout_retries_the_read_instead_of_parking() {
     drive(&mut script, &snapshot, &mut ledger, 2);
     assert!(matches!(
         ack(&mut ledger, 2),
-        HostEffect::Interaction(crate::shim::InteractReq::IfButton { .. })
+        HostEffect::Interaction(crate::interact::InteractReq::IfButton { .. })
     ));
     // The accepted click never shows the journal within the acquire window.
     for tick in 3..=7 {
@@ -1393,7 +1393,7 @@ fn repeated_journal_modal_timeouts_cap_row_clicks_and_name_the_cause() {
         {
             assert!(matches!(
                 ack(&mut ledger, tick),
-                HostEffect::Interaction(crate::shim::InteractReq::IfButton { .. })
+                HostEffect::Interaction(crate::interact::InteractReq::IfButton { .. })
             ));
             clicks += 1;
         }
@@ -1463,7 +1463,7 @@ fn repeated_journal_ownership_loss_caps_row_clicks_per_read() {
             assert!(
                 matches!(
                     ack(&mut ledger, tick),
-                    HostEffect::Interaction(crate::shim::InteractReq::IfButton { .. })
+                    HostEffect::Interaction(crate::interact::InteractReq::IfButton { .. })
                 ),
                 "a lost page must never emit a compensating close"
             );
@@ -1578,7 +1578,7 @@ fn rune_item_handoffs_reread_progress_before_selecting_recovery() {
                     .and_then(|ledger| ledger.outbox.first())
                     .map(|action| &action.effect),
                 Some(HostEffect::Interaction(
-                    crate::shim::InteractReq::IfButton { .. }
+                    crate::interact::InteractReq::IfButton { .. }
                 ))
             ),
             "a quest-changing handoff must query fresh journal progress before recovery"
@@ -1595,7 +1595,7 @@ fn rune_item_handoffs_reread_progress_before_selecting_recovery() {
         drive(script, snapshot, ledger, tick + 2);
         assert!(matches!(
             ack(ledger, tick + 2),
-            HostEffect::Interaction(crate::shim::InteractReq::CloseModal)
+            HostEffect::Interaction(crate::interact::InteractReq::CloseModal)
         ));
         snapshot.seed_main_modal(-1, vec![]);
         drive(script, snapshot, ledger, tick + 3);
@@ -1704,14 +1704,14 @@ fn rune_item_handoffs_reread_progress_before_selecting_recovery() {
         drive(&mut script, &snapshot, &mut ledger, 6);
         assert!(matches!(
             ack(&mut ledger, 6),
-            HostEffect::Interaction(crate::shim::InteractReq::Npc { .. })
+            HostEffect::Interaction(crate::interact::InteractReq::Npc { .. })
         ));
         snapshot.seed_chat_modal(4893, vec!["A handoff page".into()]);
         snapshot.seed_chat_options(vec![], 4899);
         drive(&mut script, &snapshot, &mut ledger, 7);
         assert!(matches!(
             ack(&mut ledger, 7),
-            HostEffect::Interaction(crate::shim::InteractReq::ContinueDialog {
+            HostEffect::Interaction(crate::interact::InteractReq::ContinueDialog {
                 component_id: None
             })
         ));
@@ -1726,7 +1726,7 @@ fn rune_item_handoffs_reread_progress_before_selecting_recovery() {
             ledger.outbox.first().is_some_and(|action| {
                 matches!(
                     action.effect,
-                    HostEffect::Interaction(crate::shim::InteractReq::IfButton { .. })
+                    HostEffect::Interaction(crate::interact::InteractReq::IfButton { .. })
                 )
             })
         }) {
@@ -1787,7 +1787,7 @@ impl NativeOutput for StatusCapture {
     fn status(&mut self, status: ScriptStatus) {
         self.0.push(status);
     }
-    fn paint(&mut self, _: Arc<crate::shim::ScriptPaint>) {}
+    fn paint(&mut self, _: Arc<crate::paint::ScriptPaint>) {}
     fn log(&mut self, _: api::hostlog::Level, _: &str) {}
     fn settings_applied(&mut self, _: u64) {}
 }
@@ -2111,7 +2111,7 @@ impl NestedBankFixture {
             ledger.outbox.first().is_some_and(|action| {
                 matches!(
                     &action.effect,
-                    HostEffect::Interaction(crate::shim::InteractReq::OpenStand { .. })
+                    HostEffect::Interaction(crate::interact::InteractReq::OpenStand { .. })
                 )
             })
         });
@@ -2146,7 +2146,7 @@ impl NestedBankFixture {
         } else if open_stand_pending {
             assert!(matches!(
                 ack(&mut self.ledger, tick),
-                HostEffect::Interaction(crate::shim::InteractReq::OpenStand { .. })
+                HostEffect::Interaction(crate::interact::InteractReq::OpenStand { .. })
             ));
             self.snapshot
                 .seed_bank_observation(1, tick, Some(vec![]), vec![]);
@@ -2745,7 +2745,7 @@ fn close_chat(snapshot: &mut GameSnapshot) {
 fn is_continue(effect: &HostEffect) -> bool {
     matches!(
         effect,
-        HostEffect::Interaction(crate::shim::InteractReq::ContinueDialog { .. })
+        HostEffect::Interaction(crate::interact::InteractReq::ContinueDialog { .. })
     )
 }
 
@@ -2769,14 +2769,14 @@ fn unowned_chat_continue_is_drained_then_the_journal_is_read() {
     let tick = tick - 1;
     assert!(matches!(
         ack(&mut ledger, tick),
-        HostEffect::Interaction(crate::shim::InteractReq::IfButton { .. })
+        HostEffect::Interaction(crate::interact::InteractReq::IfButton { .. })
     ));
     journal(&mut snapshot, "seeded branch");
     drive(&mut script, &snapshot, &mut ledger, tick + 1);
     drive(&mut script, &snapshot, &mut ledger, tick + 2);
     assert!(matches!(
         ack(&mut ledger, tick + 2),
-        HostEffect::Interaction(crate::shim::InteractReq::CloseModal)
+        HostEffect::Interaction(crate::interact::InteractReq::CloseModal)
     ));
     snapshot.seed_main_modal(-1, vec![]);
     drive(&mut script, &snapshot, &mut ledger, tick + 3);
@@ -2894,8 +2894,8 @@ fn the_drain_leaves_a_scroll_its_continue_opened() {
                 !matches!(
                     effect,
                     HostEffect::Interaction(
-                        crate::shim::InteractReq::CloseModal
-                            | crate::shim::InteractReq::IfButton { .. }
+                        crate::interact::InteractReq::CloseModal
+                            | crate::interact::InteractReq::IfButton { .. }
                     )
                 ),
                 "tick {tick}: the drain closed or clicked the scroll"
@@ -2912,7 +2912,7 @@ fn the_drain_leaves_a_scroll_its_continue_opened() {
 struct TraceLog(Vec<String>);
 impl NativeOutput for TraceLog {
     fn status(&mut self, _: ScriptStatus) {}
-    fn paint(&mut self, _: Arc<crate::shim::ScriptPaint>) {}
+    fn paint(&mut self, _: Arc<crate::paint::ScriptPaint>) {}
     fn log(&mut self, _: api::hostlog::Level, message: &str) {
         self.0.push(message.to_owned());
     }

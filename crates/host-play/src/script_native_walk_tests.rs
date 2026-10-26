@@ -3492,7 +3492,7 @@ fn sherlock_bool_walk_inherits_committed_bits_while_isolate_wiring_stays_frozen(
             &rig.world,
             None,
             "alice",
-            vec![script::shim::InteractReq::Walk {
+            vec![script::interact::InteractReq::Walk {
                 x: 4,
                 z: 0,
                 level: 0,
@@ -3527,7 +3527,7 @@ fn sherlock_bool_walk_inherits_committed_bits_while_isolate_wiring_stays_frozen(
 
 #[test]
 fn compat_catalog_exclusions_use_baked_group_geometry_and_rules() {
-    use script::shim::InspectAvoidWire;
+    use script::interact::InspectAvoidWire;
 
     let world = catalog_open_world();
     let table = world.graph.zones.as_ref().expect("zone table");
@@ -3628,7 +3628,7 @@ fn compat_catalog_exclusions_use_baked_group_geometry_and_rules() {
 
 #[test]
 fn compat_named_exclusions_reject_unknown_and_nonfrozen_catalog_names() {
-    use script::shim::InspectAvoidWire;
+    use script::interact::InspectAvoidWire;
 
     let world = catalog_open_world();
     let from = WorldTile {
@@ -3705,7 +3705,7 @@ fn compat_named_exclusions_reject_unknown_and_nonfrozen_catalog_names() {
 
 #[test]
 fn compat_catalog_exclusions_reject_groups_without_baked_geometry() {
-    use script::shim::InspectAvoidWire;
+    use script::interact::InspectAvoidWire;
 
     let world = zoned_open_world();
     let from = WorldTile {
@@ -4937,7 +4937,7 @@ fn takeover_during_pending_worker_cannot_reinstall_follow() {
 
 #[test]
 fn queued_walking_decisions_are_fenced_but_observed_fresh_walk_is_allowed() {
-    use script::shim::InteractReq;
+    use script::interact::InteractReq;
     let mut rig = open_rig(false);
     rig.observe(1);
     rig.wait_routed();

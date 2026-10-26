@@ -1,7 +1,7 @@
 use super::owner::Owner;
 use super::{ActionError, AssessReceipt, InteractionReceipt, WalkEvent, WalkReceipt, WalkRequest};
+use crate::interact::InteractReq;
 use crate::native_bank::{BankPickReceipt, BankPickRequest};
-use crate::shim::InteractReq;
 use api::identity::ActiveClock;
 use api::selected::RunKey;
 use std::num::NonZeroU64;

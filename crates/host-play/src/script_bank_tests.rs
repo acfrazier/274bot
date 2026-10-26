@@ -289,7 +289,7 @@ fn queued_bank_pick_keeps_the_state_of_the_frame_that_queued_it() {
                 cache: &None,
                 obj_names_arc: &None,
             },
-            vec![script::shim::InteractReq::WalkNearestBank],
+            vec![script::interact::InteractReq::WalkNearestBank],
         );
     }
     let all = navs.lock().unwrap();

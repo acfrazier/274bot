@@ -168,9 +168,9 @@ graph, derived from the manifests:
 - `nav-executor` → `api`, `nav`, `client`; `nav` also **dev** for planner test-support fixtures
  - `script` → `api`, `nav`, `vault` (runtime); `client` **dev-only**
  - `script-js` → `script`, `api`, `vault` (runtime); `client` **dev-only**; `nav-planner` **dev-only** (test fixtures only; production JS code uses the Core `script` nav facade)
- - `host-play` → `api`, `client`, `host`, `script`, `script-js`, `vault`; `nav` runtime and **build**; `nav-bake` **build and dev**; `nav-executor` runtime; `scenario` **optional** (and **dev**); `script` also **dev**; `script-js` also **dev**
+ - `host-play` → `api`, `client`, `host`, `script`, `vault`; `script-js` **optional** under `js` and also **dev**; `nav` runtime and **build**; `nav-bake` **build and dev**; `nav-executor` runtime; `scenario` **optional** (and **dev**); `script` also **dev**
  - `scenario` → `api`, `client`, `nav`, `nav-executor`, `script`
- - `frontend-core` → `api`, `host`, `host-play`, `nav`, `script`, `script-js`, `vault`; `client`, `host-play`, `nav-bake`, `scenario` **dev-only**
+ - `frontend-core` → `api`, `host`, `host-play`, `nav`, `script`, `vault`; `script-js` **optional** under `js` and also **dev**; `client`, `host-play`, `nav-bake`, `scenario` **dev-only**
  - `panel` → `api`, `client`, `frontend-core`, `host`, `host-play`, `nav`, `scenario`, `script`, `vault`; `nav-bake` **dev-only**; `frontend-core` and `host-play` also **dev**
  - `tui` → `api`, `client`, `frontend-core`, `host-play`, `nav`, `scenario`, `script`, `vault`; `host`, `nav-bake` **dev-only**; `frontend-core` and `host-play` also **dev**
  - `e2e` → `api`, `client`, `host`, `host-play`, `nav`, `nav-bake`, `scenario`, `vault`; `host-play` also **dev**
@@ -217,7 +217,7 @@ graph, derived from the manifests:
  - **`host-play` → `nav`** is both a runtime dependency and a build-dependency
    (bake/stage nav identity). Both kinds are listed.
  - **`script-js` → `client` and `script-js` → `nav-planner` are `[dev-dependencies]` only.** Production JS code uses the Core `script` nav facade. Promoting either to a normal dependency fails the checker.
- - **`host-play` → `script-js` and `frontend-core` → `script-js` are normal edges.** `host-play` also declares a dev edge for test hooks. The slot binds the JS surface factory from `script-js`; hosts install its cards with `script_js::install_cards()`.
+ - **`host-play` → `script-js` and `frontend-core` → `script-js` are optional production edges enabled by `js`.** Both consumers also declare dev edges for test fixtures. With `js`, the slot binds the JS surface factory and hosts install its cards with `script_js::install_cards()`. Native-only builds do not construct a JS library or bind that factory.
 
 For a new edge, kind, migration, optional-dependency activation, vendored path
 package, or checker change, follow [Changing a boundary](#changing-a-boundary).
@@ -230,14 +230,15 @@ ordinary product diffs. Do not add a second hidden graph.
 
 | Crate | Features |
 | --- | --- |
- | `script` | `canvas-raster`: raster, fonts and composition; `path-schema`: Path JSON Schema generation; `test-hooks`: integration-only seams. No `load` feature and no JS dependencies. |
+ | `script` | `canvas-raster`: raster, fonts and composition; `path-schema`: Path JSON Schema generation; `test-hooks`: integration-only seams. No JS dependencies. |
  | `script-js` | JS runtime crate: V8 isolate, compat machines, catalog and library, isolate wire schema. `test-hooks`: integration-only isolate seams; `memory-profile`: V8 heap and snapshot counters for the host-play harness. |
 | `api` | `path-schema`, `debug-catalog`, `test-hooks` |
 | `host` | `render-diagnostics`, `performance-profile`, `journal-paint-proof` |
-| `host-play` | `live-harness` (pulls in `scenario`), `memory-profile` and `memory-profile-no-alloc` (the fleet memory harness), `test-support`, `live-probe`, `debug-catalog`, `journal-paint-proof` |
-| `panel` | `render-diagnostics`, `memory-profile`, `memory-profile-no-alloc` |
-| `tui` | `memory-profile`, `memory-profile-no-alloc` |
-| `frontend-core` | `test-support` (arm-only spawn fixtures for front-end tests) |
+| `host-play` | `js` (default); `live-harness` (pulls in `scenario`), `memory-profile` and `memory-profile-no-alloc` (the JS-enabled fleet memory harness), `test-support`, `live-probe`, `debug-catalog`, `journal-paint-proof` |
+| `panel` | `js` (default, forwarded to `frontend-core`), `render-diagnostics`, `memory-profile`, `memory-profile-no-alloc` |
+| `tui` | `js` (default, forwarded to `frontend-core`), `memory-profile`, `memory-profile-no-alloc` |
+| `frontend-core` | `js` (default, enables the host JS runtime and `canvas-raster`), `canvas-raster`, `test-support` (arm-only spawn fixtures for front-end tests) |
+| `e2e` | `js` (default, forwarded to `host-play`) |
 
 ## Per-crate module ownership
 
@@ -600,9 +601,16 @@ the operator's consent and adopts the tiles already verified).
 
 ### script
 
+Core interaction and paint types use `script::interact` and `script::paint`.
+The seat and snapshot DTOs use `script::native::seat_rows` and
+`script::native::snapshot_source`; the JS wire module does not re-export them.
+The JS implementation uses the `api_v2`, `compat`, `library`, `materialize`,
+`runtime`, `scene`, and `tooling` directory namespaces. Its crate root keeps
+the curated JS entry points, not aliases for Core types.
+
 | module | owns (one reason to change) | notes |
 | --- | --- | --- |
- | `lib.rs` | crate facade: `ScriptCtx`, `SlotScript`, registry descriptors | no `load` feature and no JS dependencies |
+ | `lib.rs` | crate facade: `ScriptCtx`, `SlotScript`, registry descriptors | runtime-neutral API; no JS dependencies |
  | `ctx.rs` | host-owned per-tick input and shared walk options | compiled cards receive `native::NativeTick`, not this driver |
  | `native.rs`, `registry.rs` | typed card/configuration/output contract and one descriptor registry | metadata, native request kind, preparer and factory. Hosts install the JS cards with `script_js::install_cards()`. Slots refresh their static card view when the publication generation changes |
 | `native/actions.rs`, `native/ledger.rs`, `native/owner.rs`, `native/walk.rs`, `native/walk_wait.rs` | host action ledger and native walk correlation | receipts, revocation identities, route terminal versus arrival |
@@ -660,7 +668,7 @@ the operator's consent and adopts the tiles already verified).
  | `shop.rs`, `market_catalog.rs` | shop and market descriptors | preset and catalog tables |
  | `loadout_plan.rs`, `loadouts_store.rs`, `settings_store.rs` | loadout and settings stores | operator-facing descriptors |
  | `library/rs2b0t_registry.rs`, `library/rs2b0t_registry/paths.rs`, `rs2b0t_registry/settings.rs`, `tooling/declared_abi.rs`, `module_imports.rs`, `identity.rs` | catalog card registration and identity (JS runtime library) | live in `script-js`; import scan, paths, ABI names |
- | `runtime/isolated_env.rs`, `library/js_cache.rs`, `runtime/memory_profile.rs`, `scene/events.rs` | isolate env, cache, and diagnostics (JS runtime) | live in `script-js`; support, no game actions. The profiling module keeps its root public path |
+ | `runtime/isolated_env.rs`, `library/js_cache.rs`, `runtime/memory_profile.rs`, `scene/events.rs` | isolate env, cache, and diagnostics (JS runtime) | live in `script-js`; support, no game actions. Profiling uses `script_js::runtime::memory_profile` |
  | `runtime/` | Load facade, shapes, cards and isolate (JS runtime) | lives in `script-js` as `src/runtime/` plus `src/library/`, `src/materialize/` and `src/api_v2/`; feature-gated library and isolate |
  | `runtime/platform.rs` | process-wide V8 platform bootstrap (JS runtime) | lives in `script-js`; protected on embedder main; unprotected only in tests |
  | `runtime/bindings.rs` | isolate bootstrap registration (JS runtime) | lives in `script-js`; register order and wrappers |
@@ -672,7 +680,7 @@ the operator's consent and adopts the tiles already verified).
  | `runtime/paint_chrome.rs`, `runtime/paint_jive.rs` | paint payload builders (JS runtime) | live in `script-js`; chrome and jive paints |
  | `canvas/mod.rs` | canvas recorder | state and recording API |
  | `canvas/geom.rs`, `canvas/raster.rs`, `canvas/style.rs`, `canvas/compose.rs` | canvas geometry, raster, style, composition | geometry and parsers are always available. Raster, fonts and composition require `canvas-raster`, which `frontend-core` enables by default |
- | `shim/mod.rs` | import-remap facade | re-exports, JS bytes untouched |
+ | `shim/mod.rs` (JS runtime) | JS module remapping and source assembly | lives in `script-js`; imports Core vocabulary without re-exporting it |
  | `interact.rs`, `paint.rs` | runtime-neutral interaction and paint vocabulary | shared by native and loaded scripts |
  | `shim/content.rs`, `shim/rows.rs`, `shim/modules.rs` | shim Rust producers (JS runtime) | live in `script-js`; content, V8 rows, and module remapping |
  | `shim/*.js` | embedded JS sources (JS runtime) | live in `script-js` as `src/shim/*.js`; name maps, coercion, await plumbing only |

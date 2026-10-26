@@ -125,6 +125,11 @@ row 8a. Hunt activation waits for T2/T1 to extend and review its model rule.
  Core `script` carries no JS dependencies (`deno_ast`, the V8 and isolate crates and the
  FlatBuffer wire live in `script-js`).
 
+Rust callers use Core types through `script::interact`, `script::paint`,
+`script::card`, `script::native::seat_rows`, and
+`script::native::snapshot_source`. `script_js::wire` owns the JS isolate
+codec; it does not re-export Core interaction, paint, card, or snapshot types.
+
 A native `ScriptFlow::Blocked` is terminal. So is a published
 `NativePhase::Blocked` carrying a failure, even if the tick returns `Continue`.
 Quester, Gatherer and Sherlock take the same slot-level Stop path as operator

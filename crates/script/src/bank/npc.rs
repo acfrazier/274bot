@@ -1,6 +1,6 @@
 //! M-279 NPC bank access policy, shared by the compat and native adapters.
 
-use crate::shim::InteractReq;
+use crate::interact::InteractReq;
 
 pub(crate) const READY_MS: u64 = 4_000;
 pub(crate) const PAGE_ACK_MS: u64 = 3_000;

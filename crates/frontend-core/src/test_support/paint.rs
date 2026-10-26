@@ -11,14 +11,14 @@ use crate::scripts::PaintFrame;
 /// bands, footer and generation, with an empty canvas unless a canvas
 /// fixture below adds ops. Panel and TUI tests never name the script crate.
 pub struct TestPaint {
-    paint: script::shim::ScriptPaint,
+    paint: script::paint::ScriptPaint,
 }
 
 impl TestPaint {
     /// A paint frame with `title` and `lines` (tests).
     pub fn new(title: Option<&str>, lines: &[&str]) -> Self {
         Self {
-            paint: script::shim::ScriptPaint {
+            paint: script::paint::ScriptPaint {
                 title: title.map(str::to_owned),
                 accent: None,
                 lines: lines.iter().map(|line| (*line).to_owned()).collect(),
@@ -43,7 +43,7 @@ impl TestPaint {
 
     /// Advertise one paint button (tests).
     pub fn with_button(mut self, id: &str, label: &str) -> Self {
-        self.paint.buttons.push(script::shim::ScriptPaintButton {
+        self.paint.buttons.push(script::paint::ScriptPaintButton {
             id: id.to_string(),
             label: label.to_string(),
         });
@@ -53,8 +53,8 @@ impl TestPaint {
     /// Advertise the host's Pause/Resume and Stop controls under the fixed
     /// ids the standard paint-controls helper writes (tests).
     pub fn with_host_controls(self) -> Self {
-        self.with_button(script::shim::HOST_PAUSE_CONTROL_ID, "Pause")
-            .with_button(script::shim::HOST_STOP_CONTROL_ID, "Stop")
+        self.with_button(script::paint::HOST_PAUSE_CONTROL_ID, "Pause")
+            .with_button(script::paint::HOST_STOP_CONTROL_ID, "Stop")
     }
 
     /// Stamp the host-owned frame generation (tests).
@@ -72,7 +72,7 @@ impl TestPaint {
         status: Option<&str>,
         brand: Option<&str>,
     ) -> Self {
-        self.paint.strip = Some(script::shim::PaintChromeBand {
+        self.paint.strip = Some(script::paint::PaintChromeBand {
             id: id.to_string(),
             names: names.iter().map(|name| (*name).to_string()).collect(),
             selected: selected.to_string(),
@@ -84,7 +84,7 @@ impl TestPaint {
 
     /// Advertise the vertical rail band (tests).
     pub fn with_rail(mut self, id: &str, names: &[&str], selected: &str) -> Self {
-        self.paint.rail = Some(script::shim::PaintChromeBand {
+        self.paint.rail = Some(script::paint::PaintChromeBand {
             id: id.to_string(),
             names: names.iter().map(|name| (*name).to_string()).collect(),
             selected: selected.to_string(),
@@ -96,7 +96,7 @@ impl TestPaint {
 
     /// Advertise one tabs band, after any bands already added (tests).
     pub fn with_tab_band(mut self, id: &str, names: &[&str], selected: &str) -> Self {
-        self.paint.tabs.push(script::shim::PaintChromeBand {
+        self.paint.tabs.push(script::paint::PaintChromeBand {
             id: id.to_string(),
             names: names.iter().map(|name| (*name).to_string()).collect(),
             selected: selected.to_string(),

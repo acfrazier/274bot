@@ -5,8 +5,8 @@
 //! observations settle pending bits; candidates commit only after acceptance,
 //! and batch callers commit only the accepted receipt prefix.
 
+use crate::interact::InteractReq;
 use crate::native::{ActionContext, ActionError, ActionHandle, NativeMachine, NativeTick};
-use crate::shim::InteractReq;
 use api::game_data::SelectedGameData;
 use api::prayer::{OnArg, PrayerObservation, PRAYER_COUNT, TOGGLE_MS};
 use api::quest_progress::EvidenceStamp;

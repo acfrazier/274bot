@@ -14,7 +14,7 @@
 
 use script::canvas;
 use script::canvas::CanvasOp;
-use script::shim::{
+use script::paint::{
     PaintChromeBand, ScriptPaint, ScriptPaintButton, HOST_PAUSE_CONTROL_ID, HOST_STOP_CONTROL_ID,
 };
 

@@ -829,7 +829,8 @@ pub(super) fn wire_runtime(
     // Loading evaluates the modules, so a missing `tick`/default
     // export, an unresolvable import, or a syntax error surfaces
     // here, before any tick runs.
-    crate::materialize::lineage_v8::load_modules(runtime, &main, side).map_err(|e| format!("load: {e}"))?;
+    crate::materialize::lineage_v8::load_modules(runtime, &main, side)
+        .map_err(|e| format!("load: {e}"))?;
     Ok(())
 }
 

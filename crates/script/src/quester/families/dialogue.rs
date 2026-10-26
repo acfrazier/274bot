@@ -3,8 +3,8 @@
 
 use super::reach;
 use crate::dialogue_outcome::DialogueOutcome;
+use crate::interact::InteractReq;
 use crate::native::{ActionContext, ActionError, ActionHandle, NativeActions, NativeMachine};
-use crate::shim::InteractReq;
 use api::snapshot::{chat_page_fingerprint, WidgetRoot, WidgetView};
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::Arc;

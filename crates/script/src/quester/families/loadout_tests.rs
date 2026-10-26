@@ -213,10 +213,10 @@ fn drive_to_wear(
             unreachable!();
         };
         match request {
-            crate::shim::InteractReq::Wear { name } => {
+            crate::interact::InteractReq::Wear { name } => {
                 return (withdrawn, name.clone());
             }
-            crate::shim::InteractReq::WithdrawX {
+            crate::interact::InteractReq::WithdrawX {
                 name,
                 count,
                 bank_item_id,
@@ -248,7 +248,7 @@ fn drive_to_wear(
                 }
                 snapshot.seed_inventory(held.clone(), 28);
             }
-            crate::shim::InteractReq::SetNoteMode { .. } => {
+            crate::interact::InteractReq::SetNoteMode { .. } => {
                 ledger_state.as_mut().unwrap().complete_interaction(
                     &authority,
                     InteractionReceipt {
@@ -263,7 +263,7 @@ fn drive_to_wear(
                     },
                 );
             }
-            crate::shim::InteractReq::Close => {
+            crate::interact::InteractReq::Close => {
                 ledger_state.as_mut().unwrap().complete_interaction(
                     &authority,
                     InteractionReceipt {
@@ -774,10 +774,10 @@ fn drive_loadout(
             );
         };
         match request {
-            crate::shim::InteractReq::Wear { name } => {
+            crate::interact::InteractReq::Wear { name } => {
                 return (withdrawn, Ok(Some(name.clone())));
             }
-            crate::shim::InteractReq::Unequip { name } => {
+            crate::interact::InteractReq::Unequip { name } => {
                 accept(&mut ledger_state);
                 let mut equipment = snapshot.equipment().to_vec();
                 let index = equipment
@@ -795,7 +795,7 @@ fn drive_loadout(
                 snapshot.seed_equipment(equipment);
                 snapshot.seed_inventory(inventory, 28);
             }
-            crate::shim::InteractReq::OpenStand { .. } => {
+            crate::interact::InteractReq::OpenStand { .. } => {
                 let rows = fixture
                     .opens_with
                     .clone()
@@ -803,7 +803,7 @@ fn drive_loadout(
                 accept(&mut ledger_state);
                 snapshot.seed_bank_observation(100, now, Some(rows), vec![]);
             }
-            crate::shim::InteractReq::WithdrawX {
+            crate::interact::InteractReq::WithdrawX {
                 name,
                 count,
                 bank_item_id,
@@ -824,8 +824,8 @@ fn drive_loadout(
                 }
                 snapshot.seed_inventory(inventory, 28);
             }
-            crate::shim::InteractReq::SetNoteMode { .. } => accept(&mut ledger_state),
-            crate::shim::InteractReq::Close => {
+            crate::interact::InteractReq::SetNoteMode { .. } => accept(&mut ledger_state),
+            crate::interact::InteractReq::Close => {
                 accept(&mut ledger_state);
                 snapshot.seed_bank_observation(-1, now, None, vec![]);
             }

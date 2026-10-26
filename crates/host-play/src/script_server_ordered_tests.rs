@@ -56,7 +56,7 @@ impl NativeMachine for OrderedMachine {
         };
         if self.follow_drop {
             let Some(request) = self.drop_request else {
-                self.drop_request = Some(cx.emit(script::shim::InteractReq::Held {
+                self.drop_request = Some(cx.emit(script::interact::InteractReq::Held {
                     name: "Logs".into(),
                     action: "Drop".into(),
                     slot: Some(2),
@@ -1701,7 +1701,7 @@ fn ordered_dispatch_does_not_relax_ordinary_invisible_ui_or_target_mask_checks()
         None,
         None,
         "so3-wire",
-        vec![script::shim::InteractReq::UseWidgetOn {
+        vec![script::interact::InteractReq::UseWidgetOn {
             component_id: 101,
             kind: "loc".into(),
             target_name: None,
@@ -1742,9 +1742,9 @@ fn ordered_dispatch_does_not_relax_ordinary_invisible_ui_or_target_mask_checks()
         None,
         "so3-wire",
         vec![
-            script::shim::InteractReq::IfButton { component_id: 102 },
-            script::shim::InteractReq::Answer { option: 1 },
-            script::shim::InteractReq::UseWidgetOn {
+            script::interact::InteractReq::IfButton { component_id: 102 },
+            script::interact::InteractReq::Answer { option: 1 },
+            script::interact::InteractReq::UseWidgetOn {
                 component_id: 101,
                 kind: "loc".into(),
                 target_name: None,
@@ -1900,7 +1900,7 @@ fn ordered_existing_shop_move_op_npc_spills_to_engine_without_host_deferral_or_r
         None,
         None,
         "so3-wire",
-        vec![script::shim::InteractReq::Npc {
+        vec![script::interact::InteractReq::Npc {
             name: "Shopkeeper".into(),
             action: "Trade".into(),
             index: Some(7),
