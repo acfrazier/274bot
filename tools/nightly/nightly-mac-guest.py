@@ -73,12 +73,224 @@ def git_env() -> Dict[str, str]:
     return env
 
 
-def git(args: Sequence[str], *, check: bool = True) -> subprocess.CompletedProcess:
-    return run_command(["git", "-c", "credential.helper=", *args], env=git_env(), check=check)
+def git(args: Sequence[str], *, check: bool = True,
+        timeout: Optional[float] = None) -> subprocess.CompletedProcess:
+    return run_command(["git", "-c", "credential.helper=", *args], env=git_env(), check=check,
+                       timeout=timeout)
+
+
+# ------------------------------------------------- branch list and self-update
+#
+# At the start of a night the controller takes its branch list from GitHub: it
+# fetches the runner checkout's origin and reads tools/nightly/branches.conf
+# from origin/dev. The precedence stays: --branch, then NIGHTLY_BRANCHES, then
+# the GitHub list. A failed fetch falls back to the local file and records a
+# note in the status file, so a night is never lost to a fetch failure.
+#
+# The controller also updates its own checkout (tools/nightly/ under the
+# runner directory) to origin/dev before a night and re-executes itself, after
+# the candidate passes a self-check (py_compile of the runner files plus its
+# own unit tests, about a minute at most). The update is opt-in: only
+# NIGHTLY_SELF_UPDATE=1 (set on the runner machines) updates. Anything else,
+# including unset, keeps the old code. Only the runner checkout is ever
+# touched: every git command below runs with -C at `repo`, the candidate is
+# extracted under a temporary directory, and the re-exec runs the same script
+# path again.
+BRANCHES_REF = "origin/dev"
+BRANCHES_REL = "tools/nightly/branches.conf"
+SELF_UPDATE_ENV = "NIGHTLY_SELF_UPDATE"
+SELF_UPDATE_DONE_ENV = "NIGHTLY_SELF_UPDATE_DONE"
+SELF_UPDATE_FROM_ENV = "NIGHTLY_SELF_UPDATE_FROM"
+# Set in the self-check subprocess: the updater's own tests skip when it is
+# present, so a check never re-tests the updater recursively.
+SELF_CHECK_ACTIVE_ENV = "NIGHTLY_SELF_CHECK_ACTIVE"
+# The whole guard (py_compile plus the controller's own unit tests) fits in
+# about a minute; a slower or hung check keeps the old code instead of the night.
+SELF_UPDATE_TIMEOUT_S = 55
+FETCH_TIMEOUT_S = 120
+RUNNER_PY_FILES = ("run_nightly.py", "nightly-mac-guest.py", "latency_proxy.py")
+SELF_TEST_FILE = "test_nightly_mac_guest.py"
+
+
+def self_update_enabled() -> bool:
+    """NIGHTLY_SELF_UPDATE=1 opts in. Off by default: the update force-checks
+    out origin/dev in the runner checkout, so a hand run from a developer
+    checkout must never update unless the runner machines opted in."""
+    return os.environ.get(SELF_UPDATE_ENV, "0") in ("1", "true", "yes")
+
+
+def reexec(executable: str, args: Sequence[str], env: Dict[str, str]) -> None:
+    """Replace this process with the updated runner.
+
+    On Windows os.execvpe starts a child and the waiting parent exits 0 at
+    once; there the child runs to the end and its exit code becomes ours.
+    (The Mac controller never runs on Windows; shared behavior stays here.)
+    """
+    if os.name == "nt":
+        sys.exit(subprocess.run(args, env=env).returncode)
+    os.execvpe(executable, args, env)
+
+
+def runner_head(repo: Path) -> str:
+    """The runner checkout's HEAD, or "unknown" when it cannot be read."""
+    try:
+        result = git(["-C", str(repo), "rev-parse", "HEAD"], check=False)
+    except OSError:
+        return "unknown"
+    return result.stdout.strip() or "unknown"
+
+
+def fetch_branch_tip(repo: Path, timeout: Optional[float] = FETCH_TIMEOUT_S) -> str:
+    """Fetch origin's dev into the runner checkout; return the tip SHA."""
+    git(["-C", str(repo), "fetch", "--prune", "origin",
+         f"+refs/heads/dev:refs/remotes/{BRANCHES_REF}"], timeout=timeout)
+    return git(["-C", str(repo), "rev-parse", BRANCHES_REF]).stdout.strip()
+
+
+def read_remote_branches(repo: Path) -> Tuple[List[str], str]:
+    """The branch list from origin/dev: fetch, then show the file. Return the
+    list and the tip SHA. Raise on a fetch failure or an empty list."""
+    tip = fetch_branch_tip(repo)
+    text = git(["-C", str(repo), "show", f"{BRANCHES_REF}:{BRANCHES_REL}"]).stdout
+    branches = _validate_branches([line.split("#", 1)[0].strip() for line in text.splitlines()
+                                   if line.split("#", 1)[0].strip()])
+    if not branches:
+        raise NightlyError(f"{BRANCHES_REL} on {BRANCHES_REF} names no branches")
+    return branches, tip
+
+
+def resolve_branches(requested: Optional[Sequence[str]], repo: Path) -> Tuple[List[str], Dict[str, str]]:
+    """The night's branches and where they came from.
+
+    Precedence: --branch, then NIGHTLY_BRANCHES, then the GitHub list on
+    origin/dev. When the fetch fails, the local file is used and the note
+    says so, so a night is never lost to a fetch failure.
+    """
+    if requested:
+        return _validate_branches(list(requested)), {"source": "cli", "commit": "",
+                                                     "note": "from --branch"}
+    env_branches = os.environ.get("NIGHTLY_BRANCHES", "").split()
+    if env_branches:
+        return _validate_branches(env_branches), {"source": "env", "commit": "",
+                                                  "note": "from NIGHTLY_BRANCHES"}
+    try:
+        branches, tip = read_remote_branches(repo)
+    except (NightlyError, subprocess.TimeoutExpired, OSError) as error:
+        branches = read_branches(repo / BRANCHES_REL, None)
+        head = runner_head(repo)
+        return branches, {"source": "local", "commit": head,
+                          "note": (f"fetch of {BRANCHES_REF} failed ({error}); "
+                                   f"using local {BRANCHES_REL}")}
+    return branches, {"source": "github", "commit": tip,
+                      "note": f"from {BRANCHES_REF} at {tip}"}
+
+
+def extract_runner_candidate(repo: Path, dest: Path, ref: str = BRANCHES_REF) -> None:
+    """Materialize origin/dev's tools/nightly/ under `dest` for the self-check.
+    The runner checkout itself is never touched here."""
+    names = git(["-C", str(repo), "ls-tree", "-r", "--name-only", ref, "tools/nightly"]).stdout.split()
+    for name in names:
+        parts = Path(name).parts
+        if not name.startswith("tools/nightly/") or ".." in parts or Path(name).is_absolute():
+            raise NightlyError(f"refusing to extract unsafe path from {ref}: {name!r}")
+        target = dest / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        data = subprocess.run(["git", "-c", "credential.helper=", "-C", str(repo),
+                               "show", f"{ref}:{name}"],
+                              env=git_env(), check=True, stdout=subprocess.PIPE).stdout
+        target.write_bytes(data)
+
+
+def self_check_candidate(candidate: Path, test_file: str = SELF_TEST_FILE,
+                         timeout: float = SELF_UPDATE_TIMEOUT_S) -> Tuple[bool, str]:
+    """py_compile the candidate runner files, then run its own unit tests.
+    Return (True, detail) or (False, reason)."""
+    nightly_dir = candidate / "tools" / "nightly"
+    sources = sorted(str(path) for name in RUNNER_PY_FILES if (path := nightly_dir / name).is_file())
+    if not sources:
+        return False, "candidate has no runner files"
+    compiled = subprocess.run([sys.executable, "-m", "py_compile", *sources],
+                              capture_output=True, text=True)
+    if compiled.returncode:
+        reason = (compiled.stderr or compiled.stdout).strip().splitlines()
+        detail = reason[-1][:300] if reason else "unknown error"
+        return False, f"py_compile failed: {detail}"
+    test_path = nightly_dir / test_file
+    if not test_path.is_file():
+        return False, f"candidate has no {test_file}"
+    env = dict(os.environ, NIGHTLY_SELF_CHECK_ACTIVE="1")
+    try:
+        tested = subprocess.run([sys.executable, "-B", str(test_path)], cwd=str(candidate),
+                                env=env, capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return False, f"{test_file} did not finish within {timeout} s"
+    if tested.returncode:
+        tail = (tested.stderr or tested.stdout).strip().splitlines()
+        detail = tail[-1][:300] if tail else "unknown error"
+        return False, f"{test_file} failed: {detail}"
+    return True, f"py_compile ok; {test_file} passed"
+
+
+def maybe_self_update(repo: Path, script: Path, argv: Optional[Sequence[str]] = None,
+                      _exec: Any = reexec) -> Optional[Dict[str, str]]:
+    """Update the runner checkout to origin/dev and re-execute, after the
+    candidate passes its self-check. Return the status info, or None when this
+    process re-executes (the new process reports status "updated"). Only the
+    runner checkout (`git -C repo`) is ever touched."""
+    head = runner_head(repo)
+    if not self_update_enabled():
+        return {"status": "disabled", "from": head, "to": head,
+                "detail": f"{SELF_UPDATE_ENV} is not 1; running {head}"}
+    if os.environ.get(SELF_UPDATE_DONE_ENV):
+        previous = os.environ.get(SELF_UPDATE_FROM_ENV, "")
+        detail = f"re-executed after self-update to {head}"
+        if previous:
+            detail += f" (was {previous})"
+        return {"status": "updated", "from": previous or head, "to": head, "detail": detail}
+    try:
+        tip = fetch_branch_tip(repo)
+    except (NightlyError, subprocess.TimeoutExpired, OSError) as error:
+        return {"status": "fetch-failed", "from": head, "to": head,
+                "detail": f"fetch of {BRANCHES_REF} failed ({error}); running {head}"}
+    if tip == head:
+        return {"status": "current", "from": head, "to": tip,
+                "detail": f"already at {BRANCHES_REF} {tip}"}
+    with tempfile.TemporaryDirectory(prefix="nightly-self-update-") as tmp:
+        candidate = Path(tmp) / "candidate"
+        try:
+            extract_runner_candidate(repo, candidate)
+        except (NightlyError, subprocess.SubprocessError, OSError) as error:
+            return {"status": "extract-failed", "from": head, "to": tip,
+                    "detail": (f"could not extract {BRANCHES_REF} {tip} "
+                               f"({error}); running {head}")}
+        ok, check_detail = self_check_candidate(candidate)
+    if not ok:
+        return {"status": "check-failed", "from": head, "to": tip,
+                "detail": (f"candidate {BRANCHES_REF} {tip} failed the self-check "
+                           f"({check_detail}); running {head}")}
+    git(["-C", str(repo), "checkout", "--force", "--detach", BRANCHES_REF])
+    env = dict(os.environ, **{SELF_UPDATE_DONE_ENV: "1", SELF_UPDATE_FROM_ENV: head})
+    _exec(sys.executable, [sys.executable, str(script),
+                           *(list(argv) if argv is not None else sys.argv[1:])], env)
+    return None
 
 
 def branch_slug(branch: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]", "-", branch)
+
+
+def _validate_branches(branches: Sequence[str]) -> List[str]:
+    ordered: List[str] = []
+    for branch in branches:
+        if not branch or branch.startswith("-"):
+            raise NightlyError(f"invalid branch name: {branch!r}")
+        if git(["check-ref-format", "--branch", branch], check=False).returncode:
+            raise NightlyError(f"invalid branch name: {branch!r}")
+        if branch not in ordered:
+            ordered.append(branch)
+    if not ordered:
+        raise NightlyError("the nightly branch list is empty")
+    return ordered
 
 
 def read_branches(path: Path, requested: Optional[Sequence[str]]) -> List[str]:
@@ -91,17 +303,7 @@ def read_branches(path: Path, requested: Optional[Sequence[str]]) -> List[str]:
             raise NightlyError(f"cannot read branch list {path}: {error}") from error
         branches = [line.strip() for line in lines
                     if line.strip() and not line.lstrip().startswith("#")]
-    ordered: List[str] = []
-    for branch in branches:
-        if not branch or branch.startswith("-"):
-            raise NightlyError(f"invalid branch name: {branch!r}")
-        if git(["check-ref-format", "--branch", branch], check=False).returncode:
-            raise NightlyError(f"invalid branch name: {branch!r}")
-        if branch not in ordered:
-            ordered.append(branch)
-    if not ordered:
-        raise NightlyError("the nightly branch list is empty")
-    return ordered
+    return _validate_branches(branches)
 
 
 def is_within(path: Path, parent: Path) -> bool:
@@ -1160,9 +1362,13 @@ def guest_cli(argv: Sequence[str]) -> Optional[int]:
 
 class NightlyOrchestrator:
     def __init__(self, settings: Settings, branches: Sequence[str],
-                 vm_factory: Callable[..., TartVM] = TartVM):
+                 vm_factory: Callable[..., TartVM] = TartVM,
+                 branch_list_info: Optional[Dict[str, str]] = None,
+                 self_update_info: Optional[Dict[str, str]] = None):
         self.settings = settings
         self.branches = list(branches)
+        self.branch_list_info = branch_list_info
+        self.self_update_info = self_update_info
         self.vm = vm_factory(settings, self.check_disk)
         self.session: Optional[Dict[str, Any]] = None
         self.input_root: Optional[Path] = None
@@ -1220,6 +1426,15 @@ class NightlyOrchestrator:
             f"dev_commit={self.pins.get('dev', '')}",
             f"branches={','.join(self.branches)}",
         ]
+        if self.branch_list_info is not None:
+            lines.append(f"branch_list_source={self.branch_list_info.get('source', '')}")
+            lines.append(f"branch_list_commit={self.branch_list_info.get('commit', '')}")
+            if self.branch_list_info.get("note"):
+                lines.append(f"branch_list_note={self.branch_list_info['note']}")
+        if self.self_update_info is not None:
+            lines.append(f"self_update={self.self_update_info.get('status', '')}")
+            if self.self_update_info.get("detail"):
+                lines.append(f"self_update_detail={self.self_update_info['detail']}")
         if self.vm.session_id:
             lines.append(f"vm_id={self.vm.session_id}")
         for branch, commit in self.pins.items():
@@ -1568,10 +1783,18 @@ def host_main(argv: Optional[Sequence[str]] = None) -> int:
     args = parse_args(argv)
     settings = Settings.from_environment(dict(os.environ))
     settings.validate()
-    branches = read_branches(settings.runner / "tools/nightly/branches.conf", args.branch)
+    # The self-update re-executes this same script path, so it runs before the
+    # branch list is read: the new code decides the night's branches.
+    self_update_info = maybe_self_update(settings.runner, Path(__file__),
+                                         list(argv) if argv is not None else None)
+    branches, branch_info = resolve_branches(args.branch, settings.runner)
+    log(f"branch list: {branch_info['source']} ({branch_info['note']})")
+    log(f"self-update: {self_update_info['status']} ({self_update_info['detail']})")
     for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
         signal.signal(signum, handle_signal)
-    return NightlyOrchestrator(settings, branches).run()
+    return NightlyOrchestrator(settings, branches,
+                               branch_list_info=branch_info,
+                               self_update_info=self_update_info).run()
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
