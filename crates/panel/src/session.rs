@@ -978,6 +978,9 @@ pub struct Session {
     /// Failed panel-owned writes, one per member path, each kept at its
     /// setting until a later write of it lands or the error timeout passes.
     preference_write_errors: Vec<PanelWriteError>,
+    /// Scratch the frame composes a labelled feedback line in (`label:
+    /// text`), kept so a pending or failed row builds no string per frame.
+    pub(crate) feedback_scratch: String,
     /// The operator's unsettled change of a saved operational setting: what
     /// its control shows while the write is pending. The saved value (the
     /// draw mirror, the Quester controller, the bake gate) follows the
@@ -1671,6 +1674,7 @@ impl Session {
             pending_panel_members: HashMap::new(),
             pending_nav_members,
             preference_write_errors: Vec::new(),
+            feedback_scratch: String::new(),
             setting_drafts: SettingDrafts::default(),
             capture_devices: Some(capture_pref),
             quester_paths,

@@ -250,6 +250,13 @@ pub(crate) fn imgui_context_guard() -> MutexGuard<'static, ()> {
     lock_unpoisoned(&crate::IMGUI_CTX_TEST_GUARD)
 }
 
+/// The process has one session file: a test that opens, fails or closes it
+/// holds this, so another test cannot close it underneath.
+pub(crate) fn session_file_lock() -> MutexGuard<'static, ()> {
+    static LOCK: Mutex<()> = Mutex::new(());
+    lock_unpoisoned(&LOCK)
+}
+
 /// A Dear ImGui context for a test, with the `.ini` settings file off.
 /// Dear ImGui's default is `imgui.ini` in the working directory: every
 /// context would load it at its first frame and write it back when dropped,

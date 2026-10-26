@@ -459,7 +459,7 @@ impl Widget for SettingsPane<'_> {
         };
         let marker = |row| if selected_row == row { "> " } else { "  " };
 
-        let mut rows = [
+        let rows = [
             format!(
                 "{}random events: {}",
                 marker(0),
@@ -527,14 +527,15 @@ impl Widget for SettingsPane<'_> {
                 self.settings.survival().cure_poison().label()
             ),
         ];
-        for (index, row) in rows.iter_mut().enumerate() {
-            for setting in row_settings(index) {
-                if let Some(suffix) = feedback_suffix(self.feedback, *setting) {
-                    row.push_str(&suffix);
-                    break;
-                }
-            }
-        }
+        // What follows each row while its setting is pending or failed:
+        // pieces borrowed from the retained feedback and drawn after the
+        // row's own text, so a frame copies none of it.
+        let row_feedback: [Feedback<'_>; 16] = std::array::from_fn(|index| {
+            row_settings(index)
+                .iter()
+                .find_map(|setting| feedback_parts(self.feedback, *setting))
+                .unwrap_or(NO_FEEDBACK)
+        });
         let quester_heading = format!("{QUESTER_HEADING}: {QUEST_PATHS_HEADING}");
         let note_style = Style::default().fg(Color::DarkGray);
         let heading_style = Style::default().add_modifier(Modifier::BOLD);
@@ -563,25 +564,34 @@ impl Widget for SettingsPane<'_> {
         ];
         let width = area.width.min(100);
         let columns = usize::from(width - 2);
-        let row_heights = rows.each_ref().map(|row| wrapped_rows(row, columns));
+        let row_heights: [u16; 16] = std::array::from_fn(|index| {
+            wrapped_rows_parts(
+                [
+                    rows[index].as_str(),
+                    row_feedback[index][0],
+                    row_feedback[index][1],
+                ],
+                columns,
+            )
+        });
         let header_heights =
             headers.map(|header| header.map_or(0, |(text, _)| wrapped_rows(text, columns)));
         let block_heights: [u16; 16] =
             std::array::from_fn(|index| header_heights[index] + row_heights[index]);
         let selected = self.state.row.min(rows.len() - 1);
         let memory_height = wrapped_rows(memory_note, columns);
-        let scope_dismiss = dismiss_line(
+        let scope_dismiss = dismiss_parts(
             "[d] dismiss this notice",
             self.feedback,
             Setting::Nav(frontend_core::NavPreference::ScriptScopeNoticeAck),
         );
-        let migration_dismiss = dismiss_line(
+        let migration_dismiss = dismiss_parts(
             "[n] dismiss this notice",
             self.feedback,
             Setting::Nav(frontend_core::NavPreference::SurvivableRoutingNoticeAck),
         );
         let scope_height = if show_scope_notice {
-            wrapped_rows(SCRIPT_SCOPE_NOTICE, columns) + wrapped_rows(&scope_dismiss, columns)
+            wrapped_rows(SCRIPT_SCOPE_NOTICE, columns) + wrapped_rows_parts(scope_dismiss, columns)
         } else {
             0
         };
@@ -591,7 +601,7 @@ impl Widget for SettingsPane<'_> {
             wrapped_rows(
                 frontend_core::walk_permissions::survivable_routing_notice(),
                 columns,
-            ) + wrapped_rows(&migration_dismiss, columns)
+            ) + wrapped_rows_parts(migration_dismiss, columns)
         } else {
             0
         };
@@ -674,7 +684,18 @@ impl Widget for SettingsPane<'_> {
             } else {
                 Style::default()
             };
-            y = draw_wrapped(buf, inner, y, bottom, text, row_style);
+            y = draw_wrapped_parts(
+                buf,
+                inner,
+                y,
+                bottom,
+                [
+                    text.as_str(),
+                    row_feedback[index][0],
+                    row_feedback[index][1],
+                ],
+                row_style,
+            );
         }
 
         let yellow = Style::default().fg(Color::Yellow);
@@ -687,7 +708,7 @@ impl Widget for SettingsPane<'_> {
         let migration_bottom = help_bottom + migration_notice_height;
         if show_survivable_routing_notice && migration_notice_height > 0 {
             let dismiss_y =
-                migration_bottom.saturating_sub(wrapped_rows(&migration_dismiss, columns));
+                migration_bottom.saturating_sub(wrapped_rows_parts(migration_dismiss, columns));
             draw_wrapped(
                 buf,
                 inner,
@@ -696,18 +717,18 @@ impl Widget for SettingsPane<'_> {
                 frontend_core::walk_permissions::survivable_routing_notice(),
                 yellow,
             );
-            draw_wrapped(
+            draw_wrapped_parts(
                 buf,
                 inner,
                 dismiss_y,
                 migration_bottom,
-                &migration_dismiss,
+                migration_dismiss,
                 yellow,
             );
         }
         let scope_bottom = migration_bottom + scope_height;
         if show_scope_notice && scope_height > 0 {
-            let dismiss_y = scope_bottom.saturating_sub(wrapped_rows(&scope_dismiss, columns));
+            let dismiss_y = scope_bottom.saturating_sub(wrapped_rows_parts(scope_dismiss, columns));
             draw_wrapped(
                 buf,
                 inner,
@@ -716,7 +737,7 @@ impl Widget for SettingsPane<'_> {
                 SCRIPT_SCOPE_NOTICE,
                 yellow,
             );
-            draw_wrapped(buf, inner, dismiss_y, scope_bottom, &scope_dismiss, yellow);
+            draw_wrapped_parts(buf, inner, dismiss_y, scope_bottom, scope_dismiss, yellow);
         }
         let profile_notice_bottom = inner.bottom().saturating_sub(path_notice_height);
         if let Some(notice) = self.notice {
@@ -815,24 +836,108 @@ fn row_settings(row: usize) -> &'static [Setting] {
     }
 }
 
-/// What follows a row's text when its setting is pending or failed.
-fn feedback_suffix(feedback: &[(Setting, SettingFeedback)], setting: Setting) -> Option<String> {
+/// What follows a row's text: nothing, or the separator and the state of the
+/// row's setting (pending, or its retained failure).
+type Feedback<'a> = [&'a str; 2];
+
+const NO_FEEDBACK: Feedback<'static> = ["", ""];
+
+/// The pieces that follow a row's text when its setting is pending or
+/// failed, borrowed from the retained feedback.
+fn feedback_parts(
+    feedback: &[(Setting, SettingFeedback)],
+    setting: Setting,
+) -> Option<Feedback<'_>> {
     feedback
         .iter()
         .find(|(shown, _)| *shown == setting)
         .map(|(_, state)| match state {
-            SettingFeedback::Pending => " — saving…".to_owned(),
-            SettingFeedback::Failed(text) => format!(" — {text}"),
+            SettingFeedback::Pending => [" — ", "saving…"],
+            SettingFeedback::Failed(text) => [" — ", text.as_str()],
         })
 }
 
-/// A notice's dismiss line with its setting's pending or failed state.
-fn dismiss_line(text: &str, feedback: &[(Setting, SettingFeedback)], setting: Setting) -> String {
-    let mut line = text.to_owned();
-    if let Some(suffix) = feedback_suffix(feedback, setting) {
-        line.push_str(&suffix);
+/// A notice's dismiss line and its setting's pending or failed state, as
+/// the pieces one wrapped line is made of.
+fn dismiss_parts<'a>(
+    text: &'a str,
+    feedback: &'a [(Setting, SettingFeedback)],
+    setting: Setting,
+) -> [&'a str; 3] {
+    let [separator, state] = feedback_parts(feedback, setting).unwrap_or(NO_FEEDBACK);
+    [text, separator, state]
+}
+
+/// Borrow character-wrapped rows of the text `parts` make up in order,
+/// without copying any of it. Each row holds, per part, the slice of it
+/// that row shows (empty when none).
+pub(crate) fn wrapped_parts<'a, const N: usize>(
+    parts: [&'a str; N],
+    width: usize,
+) -> impl Iterator<Item = [&'a str; N]> {
+    let mut rest = parts;
+    let width = width.max(1);
+    std::iter::from_fn(move || {
+        if rest.iter().all(|part| part.is_empty()) {
+            return None;
+        }
+        let mut row = [""; N];
+        let mut used = 0;
+        let mut full = false;
+        for (shown, part) in row.iter_mut().zip(rest.iter_mut()) {
+            if full {
+                break;
+            }
+            let mut end = part.len();
+            for (at, ch) in part.char_indices() {
+                let columns = char_width(part, at, ch);
+                if used > 0 && used + columns > width {
+                    end = at;
+                    full = true;
+                    break;
+                }
+                used += columns;
+            }
+            let (head, tail) = part.split_at(end);
+            *shown = head;
+            *part = tail;
+        }
+        Some(row)
+    })
+}
+
+/// How many wrapped rows the text `parts` make up take.
+fn wrapped_rows_parts<const N: usize>(parts: [&str; N], width: usize) -> u16 {
+    u16::try_from(wrapped_parts(parts, width).count()).unwrap_or(u16::MAX)
+}
+
+/// [`draw_wrapped`] for text made of pieces: each wrapped row draws its
+/// slices one after the other. Allocates nothing.
+fn draw_wrapped_parts<const N: usize>(
+    buf: &mut Buffer,
+    inner: Rect,
+    mut y: u16,
+    bottom: u16,
+    parts: [&str; N],
+    style: Style,
+) -> u16 {
+    let width = usize::from(inner.width).max(1);
+    for row in wrapped_parts(parts, width) {
+        if y < bottom {
+            let mut x = inner.x;
+            let mut left = width;
+            for slice in row {
+                if slice.is_empty() || left == 0 {
+                    continue;
+                }
+                let (next, _) = buf.set_stringn(x, y, slice, left, style);
+                left = left.saturating_sub(usize::from(next.saturating_sub(x)));
+                x = next;
+            }
+        }
+        y += 1;
     }
-    line
+    y
 }
 
 /// Draw `text` into `buf` inside `inner` from row `y`, wrapped at the

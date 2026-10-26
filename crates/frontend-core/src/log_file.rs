@@ -42,6 +42,9 @@ pub const DEFAULT_ROTATION: Rotation = Rotation {
 /// Lines queued for the writer before new ones are dropped.
 const QUEUE_LINES: usize = 4_096;
 
+/// How many session files this process has started ([`session_file_generation`]).
+static SESSION_FILE_GENERATION: AtomicU64 = AtomicU64::new(0);
+
 /// Handle to a running session writer. Dropping it closes the queue; the
 /// writer flushes what it holds and exits without being joined.
 #[derive(Debug)]
@@ -80,6 +83,7 @@ impl SessionLogFile {
     /// and the open happen on the writer thread; a failure is reported to
     /// the process log.
     pub fn start(dir: PathBuf, rotation: Rotation) -> Self {
+        SESSION_FILE_GENERATION.fetch_add(1, Ordering::Relaxed);
         let name = format!(
             "session-{}-{}.log",
             LocalTime::now().stamp(),
@@ -402,6 +406,13 @@ pub fn session_file_status() -> SessionFileStatus {
 /// [`session_file_status`] when the phase changed.
 pub fn session_file_phase() -> SessionFilePhase {
     global().file_phase().unwrap_or(SessionFilePhase::Off)
+}
+
+/// Which session file the process has had open: a count that moves each time
+/// a file is started, so a front end that keeps a label for the file asks
+/// this (and the phase) every frame and builds the label only when one moved.
+pub fn session_file_generation() -> u64 {
+    SESSION_FILE_GENERATION.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// Fixture seam: the open session file's writer fails with `cause`, as a

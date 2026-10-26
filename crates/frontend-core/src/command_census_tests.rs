@@ -712,6 +712,8 @@ const CORE: &[(&str, Decision)] = &[
     ("log_file.rs::restore_session_log", Excluded(STARTUP)),
     ("log_file.rs::session_log_path", Excluded(ACCESSOR)),
     ("log_file.rs::session_file_status", Excluded(ACCESSOR)),
+    ("log_file.rs::session_file_phase", Excluded(ACCESSOR)),
+    ("log_file.rs::session_file_generation", Excluded(ACCESSOR)),
     ("fleet.rs::FleetFilter::staged_mut", Staged(C::SetFleetFilter)),
     ("fleet.rs::FleetModel::staged_filter_mut", Staged(C::SetFleetFilter)),
     ("fleet.rs::FleetModel::stage_card", Staged(C::SetFleetCard)),

@@ -39,6 +39,11 @@ pub struct LogPane {
     /// Last Copy/Save/session-file outcome shown under the controls.
     status: Option<(bool, String)>,
     clipboard: Option<arboard::Clipboard>,
+    /// The stage and file the session-file label was built for, and the
+    /// label (`writing <path>` / `opening <path>`); rebuilt when either
+    /// moved, so a steady frame builds nothing.
+    session_file_label_for: Option<(frontend_core::log_file::SessionFilePhase, u64)>,
+    session_file_label: String,
 }
 
 impl Default for LogPane {
@@ -52,11 +57,38 @@ impl Default for LogPane {
             save: None,
             status: None,
             clipboard: None,
+            session_file_label_for: None,
+            session_file_label: String::new(),
         }
     }
 }
 
 impl LogPane {
+    /// The session-file label for `phase` (`Writing` or `Opening`) of the
+    /// file with `generation`: `writing <path>` or `opening <path>`. Built
+    /// again only when the stage or the file changed.
+    fn session_file_label(
+        &mut self,
+        phase: frontend_core::log_file::SessionFilePhase,
+        generation: u64,
+    ) -> &str {
+        use frontend_core::log_file::SessionFilePhase;
+        use std::fmt::Write as _;
+        if self.session_file_label_for != Some((phase, generation)) {
+            self.session_file_label_for = Some((phase, generation));
+            self.session_file_label.clear();
+            let status = frontend_core::log_file::session_file_status();
+            if let Some(path) = status.path() {
+                let verb = if phase == SessionFilePhase::Writing {
+                    "writing"
+                } else {
+                    "opening"
+                };
+                let _ = write!(self.session_file_label, "{verb} {}", path.display());
+            }
+        }
+        &self.session_file_label
+    }
     /// Point the view at the focused bot (Bot scope) and pull new lines.
     /// Steady state: one atomic load, no allocation.
     pub fn refresh(&mut self, focused: Option<&str>) {
@@ -315,17 +347,16 @@ pub fn session_log_row(ui: &Ui, session: &mut Session) {
             .is_none()
     {
         // The file is the sink's own state, not the saved choice.
-        let status = frontend_core::log_file::session_file_status();
-        if let Some(path) = status.path() {
-            match status.phase() {
-                frontend_core::log_file::SessionFilePhase::Writing => {
-                    ui.text_wrapped(format!("writing {}", path.display()));
-                }
-                frontend_core::log_file::SessionFilePhase::Opening => {
-                    ui.text_wrapped(format!("opening {}", path.display()));
-                }
-                frontend_core::log_file::SessionFilePhase::Off
-                | frontend_core::log_file::SessionFilePhase::Failed => {}
+        let phase = frontend_core::log_file::session_file_phase();
+        if matches!(
+            phase,
+            frontend_core::log_file::SessionFilePhase::Writing
+                | frontend_core::log_file::SessionFilePhase::Opening
+        ) {
+            let generation = frontend_core::log_file::session_file_generation();
+            let label = session.log_pane.session_file_label(phase, generation);
+            if !label.is_empty() {
+                ui.text_wrapped(label);
             }
         }
     }

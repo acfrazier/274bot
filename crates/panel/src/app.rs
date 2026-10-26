@@ -3420,7 +3420,7 @@ fn file_dialog_body(ui: &Ui, session: &mut Session, mode: DialogMode) {
 /// The pending or failed state of the routing permissions, one line per
 /// setting that has one, named by its label (the group's checkboxes and the
 /// Danger routing drop-down).
-fn routing_feedback(ui: &Ui, session: &Session) {
+fn routing_feedback(ui: &Ui, session: &mut Session) {
     use frontend_core::{NavPreference as N, Setting};
     let rows = [
         (
@@ -3443,13 +3443,27 @@ fn routing_feedback(ui: &Ui, session: &Session) {
     for (label, setting) in rows {
         match session.core.setting_status(setting) {
             SettingStatus::Saved => {}
-            SettingStatus::Pending => ui.text_disabled(format!("{label}: saving…")),
+            SettingStatus::Pending => {
+                let line = labelled(&mut session.feedback_scratch, label, "saving…");
+                ui.text_disabled(line);
+            }
             SettingStatus::Failed(text) => {
+                let line = labelled(&mut session.feedback_scratch, label, text);
                 let _color = ui.push_style_color(StyleColor::Text, session.ui.chrome.error_rgba());
-                ui.text_wrapped(format!("{label}: {text}"));
+                ui.text_wrapped(line);
             }
         }
     }
+}
+
+/// `label: text`, composed in `scratch`: the buffer keeps its capacity, so a
+/// line of a size it has held builds nothing.
+fn labelled<'a>(scratch: &'a mut String, label: &str, text: &str) -> &'a str {
+    scratch.clear();
+    scratch.push_str(label);
+    scratch.push_str(": ");
+    scratch.push_str(text);
+    scratch
 }
 
 /// Routing group of the Nav config window: the global routing permissions and
@@ -5646,6 +5660,20 @@ fn draw_test_render_all_warning(ui: &Ui, session: &mut Session) -> Vec<[f32; 4]>
     TEST_RENDER_ALL_ITEMS.with_borrow_mut(Vec::clear);
     render_all_warn_window(ui, session);
     TEST_RENDER_ALL_ITEMS.with_borrow_mut(std::mem::take)
+}
+
+/// One frame of the General config body and the Nav config's routing
+/// feedback, in one window: where the saved settings show their pending and
+/// failed state and the session file's status (tests).
+#[cfg(test)]
+pub(crate) fn draw_test_saved_setting_feedback(ui: &Ui, session: &mut Session) {
+    ui.window("saved setting feedback harness")
+        .position([0.0, 0.0], Condition::Always)
+        .size([480.0, 2400.0], Condition::Always)
+        .build(|| {
+            global_config_section(ui, session);
+            routing_feedback(ui, session);
+        });
 }
 
 fn background_ack_window(ui: &Ui, session: &mut Session) {
