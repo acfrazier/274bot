@@ -1232,7 +1232,6 @@ mod tests {
         assert!(overlay.canvas_dest.is_none());
     }
 
-
     #[cfg(feature = "js")]
     #[test]
     fn measured_fillrect_raster_covers_glyphs() {
@@ -1897,14 +1896,10 @@ mod tests {
 
         crate::test_support::IsolatedStores::ensure_thread();
         let dir = crate::test_support::TestDir::new("panel-paint-native-controls");
-        let mut vault = crate::test_support::VaultFixture::create(
-            &dir.join("v.vault"),
-            "test-passphrase-01",
-        );
+        let mut vault =
+            crate::test_support::VaultFixture::create(&dir.join("v.vault"), "test-passphrase-01");
         for (index, name) in names.iter().enumerate() {
-            vault.put(
-                crate::test_support::FixtureProfile::new(name, "pw").uid(index as i32 + 1),
-            );
+            vault.put(crate::test_support::FixtureProfile::new(name, "pw").uid(index as i32 + 1));
         }
 
         let mut s = crate::session::Session::new();

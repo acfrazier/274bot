@@ -1582,7 +1582,9 @@ fn stopped_scripts_leave_no_walking_label_on_the_rail(drive: Drive) {
                 frontend_core::test_support::scripts::Assignment::compiled(card),
             );
             rig.session().core.flush_writes();
-            rig.session().script_start_profile(name).expect("compiled Start");
+            rig.session()
+                .script_start_profile(name)
+                .expect("compiled Start");
         }
     }
     let wait = |rig: &mut Rig, want: ScriptRunState| {
