@@ -10539,3 +10539,122 @@ fn settings_feedback_panel_requests_own_their_preview_and_failure_by_identity() 
         "the second request failed and says so"
     );
 }
+
+/// A second process's later saved values reach every panel-owned control, not
+/// only the first read: the palette, layout, folds, remembered folders and
+/// order members follow each new durable version.
+#[test]
+fn settings_feedback_a_second_process_version_reaches_every_panel_control_after_hydration() {
+    let _iso = IsolatedStores::enter("panel-s3-second-process-panel");
+    let _reader = crate::ui_state::read_documents_for_test();
+    let mut s = Session::new();
+    hydrate_panel_preferences(&mut s);
+    let peer = crate::test_support::thread_preferences();
+    let column = crate::fleet_columns::FleetColumn::Idle;
+    let flipped = !column.default_on();
+    let refresh = |s: &mut Session| {
+        s.preferences.reload().unwrap();
+        s.pump_status();
+        s.poll_panel_preferences();
+    };
+    let peer_set = |key: &str, value: serde_json::Value| {
+        crate::test_support::set_patiently(&peer, key, value);
+    };
+
+    peer_set(
+        "fleet_columns",
+        serde_json::json!({ column.id(): flipped }),
+    );
+    peer_set("section_order", serde_json::json!(["log", "status"]));
+    peer_set("script_category_order", serde_json::json!(["Zeta", "Alpha"]));
+    peer_set("collapsed", serde_json::json!({ "alice": { "status": true } }));
+    peer_set("script_load_last_dir", serde_json::json!("/peer/load"));
+    peer_set("show_parameters_rail", serde_json::Value::Bool(true));
+    peer_set(
+        "nav",
+        serde_json::json!({ "show_nav_path": true, "color_path": "#0A0B0C" }),
+    );
+    refresh(&mut s);
+    assert_eq!(
+        s.ui.fleet_columns.get(column.id()),
+        Some(&flipped),
+        "the Fleet column choice follows the other process"
+    );
+    assert_eq!(s.ui.section_order, ["log", "status"]);
+    assert_eq!(s.ui.script_category_order, ["Zeta", "Alpha"]);
+    assert_eq!(s.ui.collapsed["alice"]["status"], true);
+    assert_eq!(
+        s.ui.script_load_last_dir.as_deref(),
+        Some(std::path::Path::new("/peer/load"))
+    );
+    assert!(s.ui.show_parameters_rail);
+    assert!(s.ui.nav.show_nav_path);
+    assert_eq!(s.ui.nav.color_path, "#0A0B0C");
+
+    // A later version of the palette arrives too, and this panel's own
+    // pending request keeps previewing until its result.
+    let colors = |accent: &str| {
+        serde_json::to_value(crate::theme::ChromeColors {
+            accent: accent.into(),
+            ..Default::default()
+        })
+        .unwrap()
+    };
+    peer_set("chrome", colors("#998877"));
+    refresh(&mut s);
+    assert_eq!(s.ui.chrome.accent, "#998877");
+    let disk = PanelDisk::install(&s);
+    s.persist_panel_serializable(&["chrome", "accent"], "#112233")
+        .unwrap();
+    s.ui.chrome.accent = "#112233".into();
+    for _ in 0..3 {
+        s.pump_status();
+        s.poll_panel_preferences();
+        assert_eq!(s.ui.chrome.accent, "#112233", "the pending request previews");
+    }
+    disk.release().store(false, Ordering::SeqCst);
+    settle_panel_writes(&mut s);
+    assert_eq!(s.ui.chrome.accent, "#112233");
+    assert_eq!(s.ui.section_order, ["log", "status"], "nothing else moved");
+}
+
+/// The Quest Paths folder field follows another process's saved folder while
+/// it is clean, and keeps what the operator is typing.
+#[test]
+fn settings_feedback_the_quester_folder_field_follows_a_second_process_unless_typed_in() {
+    let _iso = IsolatedStores::enter("panel-s3-quester-field");
+    let _reader = crate::ui_state::read_documents_for_test();
+    let mut s = Session::new();
+    hydrate_panel_preferences(&mut s);
+    let peer = crate::test_support::thread_preferences();
+    let quester = |folder: &str| serde_json::json!({ "enabled": true, "folder": folder });
+    let refresh = |s: &mut Session| {
+        s.preferences.reload().unwrap();
+        s.pump_status();
+        s.poll_panel_preferences();
+    };
+    crate::test_support::set_patiently(&peer, "quester_paths", quester("peer-folder-one"));
+    refresh(&mut s);
+    assert_eq!(
+        s.quester_paths.settings().folder(),
+        std::path::Path::new("peer-folder-one")
+    );
+    assert_eq!(
+        s.quester_paths_folder_edit, "peer-folder-one",
+        "a clean field shows the saved folder"
+    );
+
+    s.quester_paths_folder_edit = "typed-not-committed".into();
+    s.quester_paths_folder_dirty = true;
+    crate::test_support::set_patiently(&peer, "quester_paths", quester("peer-folder-two"));
+    refresh(&mut s);
+    assert_eq!(
+        s.quester_paths.settings().folder(),
+        std::path::Path::new("peer-folder-two")
+    );
+    assert_eq!(
+        s.quester_paths_folder_edit, "typed-not-committed",
+        "what the operator is typing stays"
+    );
+    frontend_core::test_support::scripts::reset_quester_registry();
+}
