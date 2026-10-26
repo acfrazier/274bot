@@ -4458,6 +4458,7 @@ fn start_loop_scripts(d: &mut HeadlessDriver, names: &[&str]) {
     }
 }
 
+#[cfg(not(feature = "js"))]
 fn start_compiled_scripts(d: &mut HeadlessDriver, names: &[&str]) {
     let data = api::game_data::for_revision(api::selected::ClientRevision::R289).expect("data");
     d.session_mut()
@@ -4801,6 +4802,9 @@ fn a_repeated_stop_logs_one_refusal_line() {
     let mut d = driver("psg-refusal", &BOTS);
     load(&mut d, &BOTS);
     publish_in_game(&d, &BOTS);
+    #[cfg(feature = "js")]
+    start_loop_scripts(&mut d, &BOTS);
+    #[cfg(not(feature = "js"))]
     start_compiled_scripts(&mut d, &BOTS);
     mark(&mut d, &BOTS);
     d.poll();
