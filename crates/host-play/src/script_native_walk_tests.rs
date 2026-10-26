@@ -4971,7 +4971,7 @@ fn queued_walking_decisions_are_fenced_but_observed_fresh_walk_is_allowed() {
     rig.slot().lock().unwrap().restore_host_interacts(
         stale
             .into_iter()
-            .map(|req| script_js::QueuedInteract {
+            .map(|req| script::interact::QueuedInteract {
                 req,
                 observed_walk_outcome_seq: 0,
             })
@@ -5003,7 +5003,7 @@ fn queued_walking_decisions_are_fenced_but_observed_fresh_walk_is_allowed() {
     rig.slot()
         .lock()
         .unwrap()
-        .restore_host_interacts(vec![script_js::QueuedInteract {
+        .restore_host_interacts(vec![script::interact::QueuedInteract {
             req: InteractReq::WalkTo {
                 x: 14,
                 z: 0,
