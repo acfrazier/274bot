@@ -72,7 +72,7 @@ fn startup_non_yielding_module_has_bounded_join() {
         return;
     }
     run_exact_child(
-        "isolate::tests::startup_non_yielding_module_has_bounded_join",
+        "runtime::isolate::tests::startup_non_yielding_module_has_bounded_join",
         CHILD,
     );
 }
@@ -138,7 +138,7 @@ fn validate_non_yielding_module_is_bounded() {
         return;
     }
     run_exact_child(
-        "isolate::tests::validate_non_yielding_module_is_bounded",
+        "runtime::isolate::tests::validate_non_yielding_module_is_bounded",
         CHILD,
     );
 }
@@ -211,7 +211,7 @@ fn pause_interrupts_a_newly_started_runaway_tick() {
         return;
     }
     run_exact_child(
-        "isolate::tests::pause_interrupts_a_newly_started_runaway_tick",
+        "runtime::isolate::tests::pause_interrupts_a_newly_started_runaway_tick",
         CHILD,
     );
 }
@@ -252,7 +252,7 @@ fn paint_generation_allocator_separates_reset_and_replacement() {
     }
 
     run_exact_child(
-        "isolate::tests::paint_generation_allocator_separates_reset_and_replacement",
+        "runtime::isolate::tests::paint_generation_allocator_separates_reset_and_replacement",
         CHILD,
     );
 }

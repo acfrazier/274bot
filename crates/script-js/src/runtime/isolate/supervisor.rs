@@ -631,7 +631,7 @@ mod tests {
     fn poisoned_retiree_does_not_stop_process_supervisor() {
         const CHILD: &str = "SCRIPT_POISONED_RETIREE_CHILD";
         const TEST_NAME: &str =
-            "isolate::supervisor::tests::poisoned_retiree_does_not_stop_process_supervisor";
+            "runtime::isolate::supervisor::tests::poisoned_retiree_does_not_stop_process_supervisor";
         if std::env::var_os(CHILD).is_none() {
             let output = std::process::Command::new(std::env::current_exe().unwrap())
                 .args(["--exact", TEST_NAME, "--nocapture"])
