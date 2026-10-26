@@ -28,6 +28,67 @@ sys.modules[SPEC.name] = nightly
 SPEC.loader.exec_module(nightly)
 
 
+_THROWAWAY_ROOT = Path(tempfile.gettempdir()).resolve()
+_real_maybe_self_update = nightly.maybe_self_update
+
+
+def _throwaway_only_maybe_self_update(repo, *args, **kwargs):
+    """The test-only self-update gate: only throwaway repos may be updated.
+
+    Every `repo` below is a directory the test itself created under the
+    system temp dir. The real checkout is never updated: `maybe_self_update`
+    force-checks out `origin/dev`, which would discard uncommitted work.
+    Any other caller fails loudly before git runs.
+    """
+    if not Path(repo).resolve().is_relative_to(_THROWAWAY_ROOT):
+        raise AssertionError(
+            f"refusing to self-update {repo}: tests only update throwaway repos "
+            f"they create under {_THROWAWAY_ROOT}")
+    return _real_maybe_self_update(repo, *args, **kwargs)
+
+
+nightly.maybe_self_update = _throwaway_only_maybe_self_update
+
+
+def _record_real_checkout_state():
+    """HEAD, branch and worktree state of the real checkout, if any.
+
+    `None` when this file does not run from a git checkout (the self-check
+    runs the candidate copy from a bare temporary directory).
+    """
+    repo = HERE.parent.parent
+    try:
+        head = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"],
+                              capture_output=True, text=True, check=True).stdout.strip()
+        branch = subprocess.run(["git", "-C", str(repo), "branch", "--show-current"],
+                                capture_output=True, text=True, check=True).stdout.strip()
+        porcelain = subprocess.run(["git", "-C", str(repo), "status", "--porcelain"],
+                                   capture_output=True, text=True, check=True).stdout
+    except (subprocess.SubprocessError, OSError):
+        return None
+    return (head, branch, porcelain)
+
+
+_REAL_CHECKOUT_STATE = _record_real_checkout_state()
+
+
+def tearDownModule():
+    """No test may touch the real checkout this file runs from.
+
+    A test that reaches `maybe_self_update` (or `host_main()`) with the real
+    runner path force-checks out `origin/dev` and discards uncommitted edits
+    (NIGHTLY-FROM-GITHUB-1026 finding 1). The gate above makes that
+    impossible; this teardown fails the suite if it ever happens anyway.
+    """
+    if _REAL_CHECKOUT_STATE is None:
+        return
+    after = _record_real_checkout_state()
+    if after != _REAL_CHECKOUT_STATE:
+        raise AssertionError(
+            f"a test touched the real checkout {HERE.parent.parent}: "
+            f"before={_REAL_CHECKOUT_STATE!r} after={after!r}")
+
+
 def git(*args, cwd=None):
     return subprocess.run(
         ["git", *args], cwd=cwd, check=True, capture_output=True, text=True
