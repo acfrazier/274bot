@@ -4271,3 +4271,53 @@ fn preference_audit_is_bounded_redacted_and_absent_for_a_noop() {
     assert!(summary.contains(" omitted"));
     assert!(summary.split("; ").count() <= PREFERENCE_AUDIT_MAX_CHANGES + 1);
 }
+
+/// A snapshot is the cached document under the durable version it was
+/// published at: a repeated read is the same version and the same shared
+/// document, this service's own write and another writer's change each move
+/// the version once, and a cold store has no snapshot.
+#[test]
+fn preference_snapshot_versions_move_once_per_durable_change() {
+    let scratch = IsolatedEnv::enter("local-state-preference-snapshot");
+    let preferences = preferences(&scratch);
+    let path = preferences.path();
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    write_private(&path, br#"{"theme":"dark"}"#);
+    preferences.reload().unwrap();
+
+    let first = preferences.snapshot().unwrap();
+    let again = preferences.snapshot().unwrap();
+    assert_eq!(first.version(), again.version(), "a repeated read");
+    assert!(
+        Arc::ptr_eq(first.document(), again.document()),
+        "the document is shared, not copied"
+    );
+    assert_eq!(first.document()["theme"], "dark");
+
+    // This service's own write.
+    match preferences
+        .begin_set("theme", serde_json::json!("light"))
+        .unwrap()
+    {
+        Update::Durable => {}
+        Update::Queued(mut watch) => watch
+            .wait(WAIT)
+            .expect("the write settles")
+            .expect("the write is durable"),
+    }
+    let written = preferences.snapshot().unwrap();
+    assert!(written.version() > first.version());
+    assert_eq!(written.document()["theme"], "light");
+
+    // Another writer's change, seen once the document is read again.
+    write_private(&path, br#"{"theme":"other","outside":1}"#);
+    preferences.reload().unwrap();
+    let outside = preferences.snapshot().unwrap();
+    assert!(outside.version() > written.version());
+    assert_eq!(outside.document()["outside"], 1);
+    assert_eq!(
+        preferences.snapshot().unwrap().version(),
+        outside.version(),
+        "no change, no new version"
+    );
+}

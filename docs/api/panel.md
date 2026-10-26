@@ -629,6 +629,21 @@ accepted save. Reopening it retains the pending save. Until the first read
 finishes, displayed defaults are provisional and walk permissions stay closed.
 Refresh preserves unsaved checkbox and folder entries when their saved values
 did not change.
+
+A saved operational choice (capture input, the sidecar and focused 50 fps
+switches, the walk and danger permissions, the manual-walk pause, the map-bake
+choice, the Quest Paths source, the session log file, and "Don't show again" on
+the notices) takes effect only from the saved state. While its save is pending
+the control shows your choice with **Saving…**. If the save fails, the control
+shows the saved value again and the reason (for example "Not saved: …") appears
+beside it. The reason leaves when you act on the setting again, or after 15
+seconds. A failed "Don't show again" keeps its dialog open with the reason
+under the buttons. The state belongs to the session, so closing and reopening a
+window shows it again. A change another program copy saved reaches every
+control once. Layout, colour and other presentation choices show at once and go
+back to the saved value if their save fails. With the session log file on, the
+Log window also says if the file could not be opened.
+
 The table's columns share the
 window's width, so it never scrolls sideways, and the toolbar and column
 toggles wrap at a narrow width.

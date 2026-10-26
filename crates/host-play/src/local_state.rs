@@ -118,7 +118,8 @@ mod frontend;
 use files::{ContentDigest, LockError, ReadDocument, ReadError, RenameRefusal, Rewrite, StoreKey};
 pub use files::{StateRoot, HINT_SCHEMA_VERSION, MAX_PREFERENCES_BYTES};
 pub use frontend::{
-    PreferenceError, PreferencePatch, Preferences, QueuedUpdate, ServiceLoadouts, Update,
+    PreferenceError, PreferencePatch, PreferenceSnapshot, Preferences, QueuedUpdate,
+    ServiceLoadouts, Update,
 };
 
 /// How many edits of one operator store (loadouts, preferences) may wait
@@ -149,6 +150,10 @@ pub const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(60);
 /// ([`LocalStateService::set_write_stall_for_test`]).
 #[cfg(any(test, feature = "test-support"))]
 pub type WriteStall = Arc<dyn Fn() + Send + Sync>;
+/// A test's decision, at the start of each file write, to fail it
+/// ([`LocalStateService::set_write_fault_for_test`]).
+#[cfg(any(test, feature = "test-support"))]
+pub type WriteFault = Arc<dyn Fn() -> bool + Send + Sync>;
 /// A test's stall before the writer starts a store hydration or readback.
 #[cfg(any(test, feature = "test-support"))]
 pub type ReadStall = Arc<dyn Fn() + Send + Sync>;
@@ -393,6 +398,9 @@ struct State {
     /// with no lock held.
     #[cfg(any(test, feature = "test-support"))]
     write_stall: Option<WriteStall>,
+    /// A test's refusing disk: asked after the stall of each file write.
+    #[cfg(any(test, feature = "test-support"))]
+    write_fault: Option<WriteFault>,
     /// A test stall before a worker read, installed before open queues hydration.
     #[cfg(any(test, feature = "test-support"))]
     read_stall: Option<ReadStall>,
@@ -758,6 +766,25 @@ impl LocalStateService {
         identity: &DomainIdentity,
         freshness: Duration,
     ) -> Result<Arc<serde_json::Map<String, serde_json::Value>>, PreferenceError> {
+        self.preferences_snapshot(identity, freshness)
+            .map(|(_, document)| document)
+    }
+
+    /// Return the cached immutable preference document with the durable
+    /// version it was published under, without file I/O. The version moves
+    /// only when the document's bytes changed (this service's write, or
+    /// another writer's), so it is the applied-version key of a reader.
+    pub(super) fn preferences_snapshot(
+        self: &Arc<Self>,
+        identity: &DomainIdentity,
+        freshness: Duration,
+    ) -> Result<
+        (
+            StoreVersion,
+            Arc<serde_json::Map<String, serde_json::Value>>,
+        ),
+        PreferenceError,
+    > {
         if !self.is_open(identity.domain()) {
             return Err(self.shared.preference_not_ready.clone());
         }
@@ -766,7 +793,7 @@ impl LocalStateService {
         let Some(store) = state.stores.get(&key) else {
             return Err(self.shared.preference_not_ready.clone());
         };
-        let (document, stale) = match &store.file {
+        let (version, document, stale) = match &store.file {
             FileState::Cold => return Err(self.shared.preference_not_ready.clone()),
             FileState::Rejected(rejection) => {
                 return Err(PreferenceError::from_cached(
@@ -784,13 +811,17 @@ impl LocalStateService {
                     .as_ref()
                     .map(|projection| Arc::clone(&projection.document))
                     .unwrap_or_else(|| Arc::clone(&state.preference_default.document));
-                (document, cached.refreshed_at.elapsed() >= freshness)
+                (
+                    cached.version,
+                    document,
+                    cached.refreshed_at.elapsed() >= freshness,
+                )
             }
         };
         if stale {
             self.shared.request_readback(&mut state, &key);
         }
-        Ok(document)
+        Ok((version, document))
     }
 
     pub(super) fn preferences_walk_globals(
@@ -1190,6 +1221,15 @@ impl LocalStateService {
     #[cfg(any(test, feature = "test-support"))]
     pub fn set_write_stall_for_test(&self, stall: WriteStall) {
         self.shared.state.lock().write_stall = Some(stall);
+    }
+
+    /// Test-support seam for front-end tests: `fault` runs on the writer
+    /// thread at the start of each file write, after the stall; when it
+    /// returns true that write settles `Failed(Io)`, as a disk that refuses
+    /// the replacement does, on any platform.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_write_fault_for_test(&self, fault: WriteFault) {
+        self.shared.state.lock().write_fault = Some(fault);
     }
 
     /// Make a hydrated preference lease stale without waiting for a clock tick.
@@ -2904,6 +2944,17 @@ impl Shared {
             let stall = self.state.lock().write_stall.clone();
             if let Some(stall) = stall {
                 stall();
+            }
+            let fault = self.state.lock().write_fault.clone();
+            if fault.is_some_and(|fault| fault()) {
+                host_log!(
+                    Category::Lifecycle,
+                    Level::Warn,
+                    "local state: {domain} write failed (test fault) path={}",
+                    path.display()
+                );
+                self.finish(key, queued, io_failure(domain), false);
+                return;
             }
         }
         let guard =

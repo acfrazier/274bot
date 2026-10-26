@@ -62,6 +62,7 @@ use crate::theme::{
     panel_scale, panel_split_ratio, scale_px, scale_size, ui_scale, ACCENT, ACCENT_HOVER, BG,
     DOCKHOST_PADDING, ERROR, GREEN, PANEL_WIDTH, PANEL_WINDOW, RAIL_WINDOW, TEXT, TEXT_DIM, WARN,
 };
+use frontend_core::command::DrawSwitch;
 use frontend_core::resources::{background_ack_text, format_background, format_bots};
 use frontend_core::scripts::{
     format_setting_value, BrowseCard, CardSource, CompiledCardId, PaintFrame, SchemaRef,
@@ -69,7 +70,7 @@ use frontend_core::scripts::{
 };
 use frontend_core::{
     FleetOrder, FleetRow, LogoutEligibility, OperatorCommand, Phase, ProfileIdentity, ReorderOp,
-    ResourceView, Targets,
+    ResourceView, Setting, SettingStatus, Targets,
 };
 
 #[path = "live_harness.rs"]
@@ -3416,6 +3417,41 @@ fn file_dialog_body(ui: &Ui, session: &mut Session, mode: DialogMode) {
         });
 }
 
+/// The pending or failed state of the routing permissions, one line per
+/// setting that has one, named by its label (the group's checkboxes and the
+/// Danger routing drop-down).
+fn routing_feedback(ui: &Ui, session: &Session) {
+    use frontend_core::{NavPreference as N, Setting};
+    let rows = [
+        (
+            frontend_core::GLOBAL_PERMISSION_LABELS[0].1,
+            Setting::Nav(N::AllowTeleports),
+        ),
+        (
+            frontend_core::GLOBAL_PERMISSION_LABELS[1].1,
+            Setting::Nav(N::AllowWilderness),
+        ),
+        (
+            frontend_core::GLOBAL_PERMISSION_LABELS[2].1,
+            Setting::Nav(N::AllowBankFetch),
+        ),
+        (
+            frontend_core::GLOBAL_PERMISSION_LABELS[3].1,
+            Setting::DangerRouting,
+        ),
+    ];
+    for (label, setting) in rows {
+        match session.core.setting_status(setting) {
+            SettingStatus::Saved => {}
+            SettingStatus::Pending => ui.text_disabled(format!("{label}: saving…")),
+            SettingStatus::Failed(text) => {
+                let _color = ui.push_style_color(StyleColor::Text, session.ui.chrome.error_rgba());
+                ui.text_wrapped(format!("{label}: {text}"));
+            }
+        }
+    }
+}
+
 /// Routing group of the Nav config window: the global routing permissions and
 /// the Danger routing drop-down. The drop-down spans the full width so its
 /// level names never clip at the docked 330 px panel width; the held middle
@@ -3557,6 +3593,7 @@ fn nav_settings_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
             let mut nav = previous_nav.clone();
             let mut changed = false;
             changed |= routing_group(ui, &mut nav);
+            routing_feedback(ui, session);
             if !nav.script_scope_notice_ack {
                 ui.separator();
                 ui.text_wrapped(frontend_core::SCRIPT_SCOPE_NOTICE);
@@ -3564,6 +3601,11 @@ fn nav_settings_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
                     nav.script_scope_notice_ack = true;
                     changed = true;
                 }
+                setting_feedback_line(
+                    ui,
+                    session,
+                    Setting::Nav(frontend_core::NavPreference::ScriptScopeNoticeAck),
+                );
             }
 
             if !nav.survivable_routing_notice_ack {
@@ -3573,6 +3615,11 @@ fn nav_settings_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
                     nav.survivable_routing_notice_ack = true;
                     changed = true;
                 }
+                setting_feedback_line(
+                    ui,
+                    session,
+                    Setting::Nav(frontend_core::NavPreference::SurvivableRoutingNoticeAck),
+                );
             }
 
             if ui.checkbox(
@@ -3581,6 +3628,11 @@ fn nav_settings_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
             ) {
                 changed = true;
             }
+            setting_feedback_line(
+                ui,
+                session,
+                Setting::Nav(frontend_core::NavPreference::PauseScriptOnManualWalkAbort),
+            );
 
             ui.spacing();
             ui.text_colored(ACCENT, "Display");
@@ -3627,8 +3679,7 @@ fn nav_settings_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
 
             ui.spacing();
             ui.text_colored(ACCENT, "WalkTo map");
-            let mut ask =
-                session.map_desk.bake_gate().choice() == frontend_core::MapBakeChoice::Ask;
+            let mut ask = session.map_bake_shown() == frontend_core::MapBakeChoice::Ask;
             if ui.checkbox("ask before baking terrain", &mut ask) {
                 session.set_map_bake_choice(if ask {
                     frontend_core::MapBakeChoice::Ask
@@ -3636,6 +3687,8 @@ fn nav_settings_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
                     frontend_core::MapBakeChoice::Always
                 });
             }
+            setting_feedback_line(ui, session, Setting::MapBake);
+            panel_member_feedback_line(ui, session, &["nav"]);
 
             if changed {
                 let result = commit_nav_settings(session, &previous_nav, nav);
@@ -4487,7 +4540,7 @@ fn quest_paths_section(ui: &Ui, session: &mut Session) {
     } else {
         None
     };
-    let mut enabled = session.quester_paths.settings().enabled();
+    let mut enabled = session.quester_enabled_shown();
     if ui.checkbox(frontend_core::LOAD_PATHS_LABEL, &mut enabled) {
         paths_changed = true;
     }
@@ -4526,6 +4579,7 @@ fn quest_paths_section(ui: &Ui, session: &mut Session) {
     } else if reload_requested {
         session.start_quester_paths_reload();
     }
+    setting_feedback_line(ui, session, Setting::QuesterPaths);
     if let Some(notice) = session.quester_paths.notice() {
         match notice {
             Ok(summary) => ui.text_wrapped(summary.as_ref()),
@@ -4974,12 +5028,38 @@ fn config_section(ui: &Ui, session: &mut Session, id: &str, body: impl FnOnce(&U
     }
 }
 
+/// One line under a saved setting's control: "Saving…" while its write is
+/// pending, the retained failure in the error colour when it failed, and
+/// nothing once it is saved. The core holds the state, so a window that was
+/// closed and reopened shows it again; the failure leaves when an action on
+/// the setting resolves it, or by itself after the error timeout.
+pub(crate) fn setting_feedback_line(ui: &Ui, session: &Session, setting: Setting) {
+    match session.core.setting_status(setting) {
+        SettingStatus::Saved => {}
+        SettingStatus::Pending => ui.text_disabled("Saving…"),
+        SettingStatus::Failed(text) => {
+            let _color = ui.push_style_color(StyleColor::Text, session.ui.chrome.error_rgba());
+            ui.text_wrapped(text);
+        }
+    }
+}
+
+/// [`setting_feedback_line`] for a panel-owned setting whose members lie
+/// under `prefix` (the write that failed names its member path).
+pub(crate) fn panel_member_feedback_line(ui: &Ui, session: &Session, prefix: &[&str]) {
+    if let Some(text) = session.panel_member_error(prefix) {
+        let _color = ui.push_style_color(StyleColor::Text, session.ui.chrome.error_rgba());
+        ui.text_wrapped(text);
+    }
+}
+
 fn global_capture_section(ui: &Ui, session: &mut Session) {
-    let on = session.focus.lock().unwrap().capture;
+    let on = session.draw_shown(DrawSwitch::CaptureInput);
     let mut cur = on;
     if ui.checkbox("capture input", &mut cur) {
         session.set_capture(cur);
     }
+    setting_feedback_line(ui, session, Setting::Draw(DrawSwitch::CaptureInput));
     ui.text_wrapped(if on {
         "the focused grid/Game member; at most one keyboard. Does not raise fps."
     } else {
@@ -5001,6 +5081,8 @@ fn panel_heading_toggles(ui: &Ui, session: &mut Session) {
             }
         }
     }
+    panel_member_feedback_line(ui, session, &["panel_sections"]);
+    panel_member_feedback_line(ui, session, &["show_parameters_rail"]);
     ui.spacing();
     let mut chrome = session.ui.chrome.clone();
     let mut changed = false;
@@ -5043,6 +5125,7 @@ fn panel_heading_toggles(ui: &Ui, session: &mut Session) {
         persist_chrome_member!(green);
         session.ui.chrome = chrome;
     }
+    panel_member_feedback_line(ui, session, &["chrome"]);
 }
 
 fn chrome_color_field(ui: &Ui, label: &str, color: &mut String) -> bool {
@@ -5117,10 +5200,11 @@ fn global_config_section(ui: &Ui, session: &mut Session) {
     ui.text_colored(session.ui.chrome.accent_rgba(), slot);
     global_capture_section(ui, session);
     crate::log_pane::session_log_row(ui, session);
-    let mut sidecar = session.focus.lock().unwrap().sidecar_50;
+    let mut sidecar = session.draw_shown(DrawSwitch::SidecarFullRate);
     if ui.checkbox("sidecar 50 fps", &mut sidecar) {
         session.set_sidecar_50(sidecar);
     }
+    setting_feedback_line(ui, session, Setting::Draw(DrawSwitch::SidecarFullRate));
     ui.text_wrapped("all rail/grid members; all-or-nothing");
     let current = session.focus.lock().unwrap().only_render_selected;
     let mut only = current;
@@ -5135,10 +5219,11 @@ fn global_config_section(ui: &Ui, session: &mut Session) {
         }
         ui.text_wrapped("every drawing slot at 50 fps; not sidecar, not capture, not saved");
     }
-    let mut focused_50 = session.focus.lock().unwrap().focused_50;
+    let mut focused_50 = session.draw_shown(DrawSwitch::FocusedFullRate);
     if ui.checkbox("focused 50 fps", &mut focused_50) {
         session.set_focused_50(focused_50);
     }
+    setting_feedback_line(ui, session, Setting::Draw(DrawSwitch::FocusedFullRate));
     ui.text_wrapped("Game pane only; the focused client on the rail uses the rail cadence.");
     ui.spacing();
     panel_heading_toggles(ui, session);
@@ -5522,12 +5607,23 @@ fn render_all_warn_window(ui: &Ui, session: &mut Session) {
             if cancelled {
                 session.wall.render_all_warn_open = false;
             }
+            // "Don't show again" is durable-only: while it is pending, and
+            // after it failed, this window stays open and says so here.
+            let notice = Setting::Notice(frontend_core::OperatorNotice::RenderAllWarning);
+            setting_feedback_line(ui, session, notice);
+            // The test oracle gets the feedback line's bounds as a fifth
+            // item while the setting shows one.
+            #[cfg(test)]
+            if !matches!(session.core.setting_status(notice), SettingStatus::Saved) {
+                record_test_render_all_item(ui);
+            }
         });
     if !open {
         session.wall.render_all_warn_open = false;
     }
     if !session.wall.render_all_warn_open {
         session.wall.render_all_understood = false;
+        session.wall.render_all_confirming = false;
     }
 }
 
@@ -5577,6 +5673,11 @@ fn background_ack_window(ui: &Ui, session: &mut Session) {
             if ui.button_with_size("Got it, don't show again", [w, 0.0]) {
                 session.ack_background_bots();
             }
+            setting_feedback_line(
+                ui,
+                session,
+                Setting::Notice(frontend_core::OperatorNotice::BackgroundBots),
+            );
         });
     if !open {
         session.dismiss_background_ack();
@@ -7420,7 +7521,6 @@ fn init_panel_running(
     state.session.set_pair_core_enabled(args.pair_core);
     state.session.set_external_core_enabled(args.external_core);
     state.session.set_external_ts(args.external_ts.clone());
-    crate::log_pane::apply_session_log_pref(&mut state.session);
     let fixture_mode = if args.run_prepared {
         frontend_core::live::FixtureMode::RunPrepared
     } else {

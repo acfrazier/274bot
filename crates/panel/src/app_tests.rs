@@ -6434,8 +6434,10 @@ fn render_all_dont_show_again_needs_understood_then_saves_the_ack() {
     render_all_click(&mut ctx, &mut session, understood);
     assert!(session.wall.render_all_understood);
     render_all_click(&mut ctx, &mut session, dont_show);
-    assert!(session.ui.render_all_warning_ack);
-    assert!(!session.wall.render_all_warn_open, "it closes the dialog");
+    assert!(
+        session.wall.render_all_warn_open,
+        "the dialog stays until the acknowledgement is durable"
+    );
     assert!(
         !session.focus.lock().unwrap().only_render_selected,
         "it does what OK does"
@@ -6444,6 +6446,11 @@ fn render_all_dont_show_again_needs_understood_then_saves_the_ack() {
         &mut session,
         "render_all_warning_ack",
         serde_json::json!(true),
+    );
+    assert!(session.ui.render_all_warning_ack);
+    assert!(
+        !session.wall.render_all_warn_open,
+        "the durable acknowledgement closes the dialog"
     );
     assert!(
         crate::ui_state::load(&session.preferences).render_all_warning_ack,
@@ -6461,6 +6468,97 @@ fn render_all_dont_show_again_needs_understood_then_saves_the_ack() {
         !next.wall.render_all_warn_open,
         "no dialog once acknowledged"
     );
+}
+
+/// A "Don't show again" save that fails is not silent: the dialog says
+/// "Saving…" while the write is held, then keeps its place and shows the
+/// failure under the buttons. Clicking it again is the action that resolves
+/// the failure; once the save is durable the dialog closes.
+#[test]
+fn render_all_dont_show_again_failure_shows_in_the_dialog_until_retried() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut ctx = dock_host_context();
+    super::amber_style(&mut ctx);
+    let mut session = crate::session::Session::new();
+    hydrate_panel_preferences(&mut session);
+    let service = session
+        .core
+        .local_state_for_test()
+        .expect("the panel owns its process state service")
+        .clone();
+    let (release, gate) = std::sync::mpsc::channel::<()>();
+    let gate = std::sync::Mutex::new(gate);
+    service.set_write_stall_for_test(std::sync::Arc::new(move || {
+        let _ = gate.lock().unwrap().recv();
+    }));
+    let failing = std::sync::Arc::new(AtomicBool::new(true));
+    let refusing = std::sync::Arc::clone(&failing);
+    service.set_write_fault_for_test(std::sync::Arc::new(move || refusing.load(Ordering::SeqCst)));
+    let notice = frontend_core::Setting::Notice(frontend_core::OperatorNotice::RenderAllWarning);
+
+    let [understood, _ok, _cancel, dont_show] = open_render_all_warning(&mut ctx, &mut session);
+    render_all_click(&mut ctx, &mut session, understood);
+    render_all_click(&mut ctx, &mut session, dont_show);
+    let frame = |ctx: &mut dear_imgui_rs::Context, session: &mut crate::session::Session| {
+        session.pump_status();
+        session.poll_panel_preferences();
+        render_all_frame(ctx, session, [0.0, 0.0], false)
+    };
+    let items = frame(&mut ctx, &mut session);
+    assert!(
+        matches!(
+            session.core.setting_status(notice),
+            frontend_core::SettingStatus::Pending
+        ),
+        "the held write is pending"
+    );
+    assert_eq!(items.len(), 5, "the dialog draws its Saving… line");
+    assert!(items[4][1] >= dont_show[3], "under the buttons");
+    assert!(session.wall.render_all_warn_open);
+    assert!(!session.ui.render_all_warning_ack);
+
+    // The disk fails the held write.
+    release.send(()).unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while session.core.setting_failure(notice).is_none() {
+        frame(&mut ctx, &mut session);
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the failure never came"
+        );
+        std::thread::yield_now();
+    }
+    let items = frame(&mut ctx, &mut session);
+    assert_eq!(
+        items.len(),
+        5,
+        "the dialog draws the failure under its buttons"
+    );
+    assert!(session.wall.render_all_warn_open, "the dialog stays open");
+    assert!(!session.ui.render_all_warning_ack, "nothing was saved");
+    assert!(!crate::ui_state::load(&session.preferences).render_all_warning_ack);
+    assert!(session
+        .core
+        .setting_failure(notice)
+        .is_some_and(|text| text.starts_with("Not saved: ")));
+
+    // The retry is the action that resolves the failure.
+    failing.store(false, Ordering::SeqCst);
+    drop(release);
+    render_all_click(&mut ctx, &mut session, dont_show);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while session.wall.render_all_warn_open {
+        frame(&mut ctx, &mut session);
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the retry never settled"
+        );
+        std::thread::yield_now();
+    }
+    assert_eq!(session.core.setting_failure(notice), None);
+    assert!(session.ui.render_all_warning_ack);
+    assert!(crate::ui_state::load(&session.preferences).render_all_warning_ack);
 }
 
 /// OK alone keeps today's behaviour: it applies for this launch, saves

@@ -38,8 +38,6 @@ pub struct LogPane {
     save: Option<SaveTicket>,
     /// Last Copy/Save/session-file outcome shown under the controls.
     status: Option<(bool, String)>,
-    /// Cached status text for the active per-session log file.
-    session_log_status: Option<String>,
     clipboard: Option<arboard::Clipboard>,
 }
 
@@ -53,23 +51,12 @@ impl Default for LogPane {
             save_requested: false,
             save: None,
             status: None,
-            session_log_status: None,
             clipboard: None,
         }
     }
 }
 
 impl LogPane {
-    /// Cache the session-file label when the preference is applied, rather
-    /// than resolving and formatting the path in every frame.
-    pub fn set_session_log_path(&mut self, path: Option<PathBuf>) {
-        self.session_log_status = path.map(|path| format!("writing {}", path.display()));
-    }
-
-    pub fn session_log_status(&self) -> Option<&str> {
-        self.session_log_status.as_deref()
-    }
-
     /// Point the view at the focused bot (Bot scope) and pull new lines.
     /// Steady state: one atomic load, no allocation.
     pub fn refresh(&mut self, focused: Option<&str>) {
@@ -315,22 +302,30 @@ fn action_row(ui: &Ui, pane: &mut LogPane, focused: Option<&str>) {
 
 /// General config row: the shared per-session log file preference.
 pub fn session_log_row(ui: &Ui, session: &mut Session) {
-    let mut on = session.ui.session_log_file;
+    let mut on = session.session_log_shown();
     if ui.checkbox("session log file", &mut on) {
         session.set_session_log(on);
     }
     ui.set_item_tooltip("write this session's log to ~/.274bot/logs/ (rotated, off by default)");
-    if on {
-        if let Some(status) = session.log_pane.session_log_status() {
-            ui.text_wrapped(status);
+    crate::app::setting_feedback_line(ui, session, frontend_core::Setting::SessionLog);
+    if on
+        && session
+            .core
+            .setting_failure(frontend_core::Setting::SessionLog)
+            .is_none()
+    {
+        // The file is the sink's own state, not the saved choice.
+        match frontend_core::log_file::session_file_status() {
+            frontend_core::log_file::SessionFileStatus::Writing(path) => {
+                ui.text_wrapped(format!("writing {}", path.display()));
+            }
+            frontend_core::log_file::SessionFileStatus::Opening(path) => {
+                ui.text_wrapped(format!("opening {}", path.display()));
+            }
+            frontend_core::log_file::SessionFileStatus::Off
+            | frontend_core::log_file::SessionFileStatus::Failed(_) => {}
         }
     }
-}
-
-/// Start the session file at launch when the saved preference is on.
-pub fn apply_session_log_pref(session: &mut Session) {
-    let path = frontend_core::log_file::restore_session_log(&session.preferences);
-    session.log_pane.set_session_log_path(path);
 }
 
 impl Session {
@@ -352,20 +347,24 @@ impl Session {
     }
 
     /// The "session log file" preference, through `SetSessionLog`.
+    /// Durable-only: the core opens or closes the file when the saved value
+    /// holds it. The checkbox shows the choice while the write is pending
+    /// ([`Self::session_log_shown`]); a failed write, or a file that could
+    /// not be opened, shows beside the checkbox.
     pub(crate) fn set_session_log(&mut self, on: bool) {
-        let Some(submitted) = self.submit(
+        self.setting_drafts.session_log = Some(on);
+        self.submit(
             frontend_core::OperatorCommand::SetSessionLog(on),
             frontend_core::Targets::Application,
-        ) else {
-            return;
-        };
-        match self.core.command_failure(submitted.request()) {
-            Some(error) => self.error = Some(error.to_string()),
-            None => {
-                self.ui.session_log_file = on;
-                self.log_pane
-                    .set_session_log_path(frontend_core::log_file::session_log_path());
-            }
-        }
+        );
+        self.settle_setting_drafts();
+    }
+
+    /// What the session-log checkbox shows: the operator's choice while its
+    /// write is pending, else the saved value.
+    pub(crate) fn session_log_shown(&self) -> bool {
+        self.setting_drafts
+            .session_log
+            .unwrap_or(self.ui.session_log_file)
     }
 }

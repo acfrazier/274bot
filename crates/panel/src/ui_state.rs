@@ -286,6 +286,27 @@ pub(crate) fn apply_pending_members(
     state
 }
 
+/// `state` with the member at `path` taken from what the durable `document`
+/// holds: a failed write's preview is dropped and the saved value shows
+/// again (the default when the document lacks the member). `None` when the
+/// state does not round-trip.
+pub(crate) fn restore_member(
+    state: &PanelUiState,
+    document: &Map<String, Value>,
+    path: &[String],
+) -> Option<PanelUiState> {
+    let durable = serde_json::to_value(load_snapshot(document)).ok()?;
+    let stored = path
+        .iter()
+        .try_fold(&durable, |value, key| value.get(key))
+        .cloned();
+    let mut current = serde_json::to_value(state).ok()?;
+    apply_json_member(current.as_object_mut()?, path, &stored);
+    let mut restored = serde_json::from_value::<PanelUiState>(current).ok()?;
+    restored.debug_panel.normalize();
+    Some(restored)
+}
+
 fn apply_json_member(root: &mut Map<String, Value>, path: &[String], value: &Option<Value>) {
     let Some((leaf, parents)) = path.split_last() else {
         return;

@@ -696,6 +696,25 @@ impl LogStore {
             .as_ref()
             .map(|f| f.path().to_path_buf())
     }
+
+    /// The open session file's path and where its writer stands, if a file
+    /// is open.
+    pub fn file_state(&self) -> Option<(PathBuf, crate::log_file::SinkState)> {
+        self.inner
+            .lock()
+            .file
+            .as_ref()
+            .map(|f| (f.path().to_path_buf(), f.state()))
+    }
+
+    /// The cause the open session file's writer failed with, if it failed
+    /// (allocates only then).
+    pub fn file_failure(&self) -> Option<String> {
+        match self.inner.lock().file.as_ref()?.state() {
+            crate::log_file::SinkState::Failed(cause) => Some(cause),
+            crate::log_file::SinkState::Opening | crate::log_file::SinkState::Open => None,
+        }
+    }
 }
 
 fn append_ring(view: &mut LogView, ring: &Ring, after: u64) {
