@@ -282,6 +282,7 @@ text = """In the FlaxRunner script, the Spinner banking step does not check whet
   next loop, so work continues, but a trip can be wasted. The fix belongs to
   the upstream script."""
 first = "0.2.5"
+fixed = "0.2.7"
 target = "none"
 severity = "low"
 owner = "upstream rs2b0t FlaxRunner"
@@ -297,6 +298,7 @@ text = """The rs2b0t HerbloreSecondaries script does not eat while it walks, and
   pack. Run this script on an account with mid-level combat stats (the
   script's own tests use level 40) until the script is fixed upstream."""
 first = "0.2.5"
+fixed = "0.2.7"
 target = "none"
 severity = "medium"
 owner = "scripts-misc"
@@ -313,6 +315,7 @@ text = """The rs2b0t GnomeMagicChopper script looks for the Gnome Stronghold
   stuck, move the bot beside the south staircase and restart the script.
   The fix belongs to the upstream script."""
 first = "0.2.5"
+fixed = "0.2.7"
 target = "none"
 severity = "low"
 owner = "scripts-misc"
