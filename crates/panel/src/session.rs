@@ -981,6 +981,8 @@ pub struct Session {
     pending_panel_members: Vec<PanelPreferenceMember>,
     /// The last request identity handed out.
     panel_request_seq: u64,
+    /// The durable version the panel-owned members last followed.
+    panel_rebased: Option<api::local_state::StoreVersion>,
     /// Shared Nav values changed by an accepted command but not yet durable.
     pending_nav_members: HashMap<&'static str, bool>,
     /// Failed panel-owned writes, one per member path, each kept at its
@@ -1667,6 +1669,7 @@ impl Session {
             quester_paths_folder_edit,
             quester_paths_folder_dirty: false,
             quester_folder_submitted: None,
+            panel_rebased: None,
             special_areas_dropped: false,
             nav_rebased: None,
             map_desk,
@@ -1825,6 +1828,14 @@ impl Session {
                 }
             }
         }
+        if !self.quester_paths_folder_dirty && self.quester_folder_submitted.is_none() {
+            // A clean field shows the saved folder: another process's save
+            // reaches it. Typed or submitted text stays.
+            let folder = self.quester_paths.settings().folder();
+            if Path::new(&self.quester_paths_folder_edit) != folder {
+                self.quester_paths_folder_edit = folder.to_string_lossy().into_owned();
+            }
+        }
         self.ui.capture = self.draw.capture();
         self.ui.sidecar_50 = self.draw.sidecar_50();
         self.ui.focused_50 = self.draw.focused_50();
@@ -1938,6 +1949,20 @@ impl Session {
         if let Ok(document) = self.preferences.document() {
             self.clear_cached_nav_members(&document);
             self.adopt_panel_preferences(&document);
+            // Every later durable version (another process's save, or this
+            // panel's own landing) rebases the panel-owned members over the
+            // new document, keeping the previews of requests still pending.
+            if self.preferences_ready {
+                let version = self
+                    .preferences
+                    .snapshot()
+                    .ok()
+                    .map(|snapshot| snapshot.version());
+                if version != self.panel_rebased {
+                    self.panel_rebased = version;
+                    self.rebase_panel_members();
+                }
+            }
             // Startup selection is a between-command effect. Lazy policy
             // reads may adopt preferences, but must not replace a command's
             // captured profile or map context.
