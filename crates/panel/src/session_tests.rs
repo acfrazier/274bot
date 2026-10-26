@@ -10243,17 +10243,14 @@ fn settings_feedback_a_failed_dont_show_again_stays_at_the_notice_until_retried(
     assert_eq!(s.core.setting_failure(notice), None);
 }
 
-/// Panel-owned preview choices (palette, layout, remembered launch
-/// choices): the preview shows at once, and a failed write drops only that
-/// preview, shows the durable value again, and reports at the setting.
+/// Panel-owned presentation choices (palette, layout): the preview shows at
+/// once, and a failed write drops only that preview, shows the durable value
+/// again, and reports at the setting. The remembered launch choices are not
+/// previews: see `settings_feedback_launch_choices_take_effect_only_from_the_durable_value`.
 #[test]
-fn settings_feedback_held_then_failed_presentation_and_launch_choices_revert_to_the_durable_value()
-{
+fn settings_feedback_held_then_failed_presentation_choices_revert_to_the_durable_value() {
     let _iso = IsolatedStores::enter("panel-s3-presentation");
     let saved = crate::ui_state::PanelUiState {
-        lowmem: false,
-        server_revision: 289,
-        raster: frontend_core::command::RasterMode::Gpu,
         show_parameters_rail: true,
         chrome: crate::theme::ChromeColors {
             accent: "#112233".into(),
@@ -10268,9 +10265,6 @@ fn settings_feedback_held_then_failed_presentation_and_launch_choices_revert_to_
     assert_eq!(saved_accent, "#112233");
     let disk = PanelDisk::install(&s);
 
-    s.set_focused_lowmem(true);
-    s.set_server_revision(274).unwrap();
-    s.set_focused_raster(frontend_core::command::RasterMode::Cpu);
     s.persist_panel_member(
         &["show_parameters_rail"],
         Some(serde_json::Value::Bool(false)),
@@ -10283,26 +10277,15 @@ fn settings_feedback_held_then_failed_presentation_and_launch_choices_revert_to_
     for _ in 0..3 {
         s.pump_status();
         s.poll_panel_preferences();
-        assert!(s.ui.lowmem, "the preview shows while the write is held");
-        assert_eq!(s.ui.server_revision, 274);
         assert_eq!(s.ui.chrome.accent, "#445566");
         assert!(!s.ui.show_parameters_rail);
     }
 
     disk.release();
     settle_panel_writes(&mut s);
-    assert!(!s.ui.lowmem, "the failed preview is dropped");
-    assert_eq!(s.ui.server_revision, 289);
-    assert_eq!(s.ui.raster, frontend_core::command::RasterMode::Gpu);
     assert_eq!(s.ui.chrome.accent, saved_accent);
     assert!(s.ui.show_parameters_rail);
-    for path in [
-        &["lowmem"][..],
-        &["server_revision"],
-        &["raster"],
-        &["show_parameters_rail"],
-        &["chrome"],
-    ] {
+    for path in [&["show_parameters_rail"][..], &["chrome"]] {
         assert!(
             s.panel_member_error(path)
                 .is_some_and(|text| text.starts_with("Preferences not saved: ")),
@@ -10310,13 +10293,11 @@ fn settings_feedback_held_then_failed_presentation_and_launch_choices_revert_to_
         );
     }
     let document = s.preferences.document().unwrap();
-    for key in ["lowmem", "server_revision", "raster", "chrome"] {
-        assert!(!document.contains_key(key), "{key} was never stored");
-    }
+    assert!(!document.contains_key("chrome"), "chrome was never stored");
 
     // The failure leaves by itself after the error timeout.
     s.expire_panel_write_errors(Instant::now() + frontend_core::ERROR_MESSAGE_TIMEOUT);
-    assert_eq!(s.panel_member_error(&["lowmem"]), None);
+    assert_eq!(s.panel_member_error(&["chrome"]), None);
 }
 
 /// A typed Quest Paths folder survives any number of refresh frames, whether
@@ -10415,4 +10396,146 @@ fn settings_feedback_a_cold_panel_adopts_every_saved_choice_when_released_and_wr
         "no default is written"
     );
     frontend_core::test_support::scripts::reset_quester_registry();
+}
+
+// --- T5.3-S3 round 2: a panel write owns its preview until its own result ---
+
+/// A disk for one panel session's service that holds every file write at its
+/// start until [`SeqDisk::release_one`] lets the oldest go, and fails every
+/// write numbered above the count set by [`SeqDisk::fail_after`] (the first
+/// write is number 1; counting starts when the disk is installed).
+struct SeqDisk {
+    release: std::sync::mpsc::Sender<()>,
+    fail_after: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+impl SeqDisk {
+    fn install(session: &Session) -> Self {
+        use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
+        let service = session
+            .core
+            .local_state_for_test()
+            .expect("the panel owns its process state service");
+        let (release, gate) = std::sync::mpsc::channel::<()>();
+        let gate = Mutex::new(gate);
+        let writes = Arc::new(AtomicUsize::new(0));
+        let fail_after = Arc::new(AtomicUsize::new(usize::MAX));
+        let started = Arc::clone(&writes);
+        service.set_write_stall_for_test(Arc::new(move || {
+            started.fetch_add(1, SeqCst);
+            let _ = gate.lock().unwrap().recv();
+        }));
+        let counted = Arc::clone(&writes);
+        let limit = Arc::clone(&fail_after);
+        service.set_write_fault_for_test(Arc::new(move || {
+            counted.load(SeqCst) > limit.load(SeqCst)
+        }));
+        Self {
+            release,
+            fail_after,
+        }
+    }
+
+    /// Let the oldest held write run.
+    fn release_one(&self) {
+        self.release.send(()).expect("a write waits at the gate");
+    }
+
+    /// Writes numbered above `n` fail.
+    fn fail_after(&self, n: usize) {
+        self.fail_after
+            .store(n, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+/// A panel-owned member is a request: A (`X` to `Y`) and B (`Y` back to `X`,
+/// the value the document held before A) are accepted behind a held writer.
+/// While both are held the preview is B's; when A becomes durable and B fails
+/// the control shows the durable `Y`, not B's `X`, and B's failure is
+/// reported at the setting (it is not mistaken for the already stored `X`).
+/// Two requests of the same value are two requests: the first landing does
+/// not end the second, and its failure shows.
+#[test]
+fn settings_feedback_panel_requests_own_their_preview_and_failure_by_identity() {
+    let _iso = IsolatedStores::enter("panel-s3-request-owner");
+    let _reader = crate::ui_state::read_documents_for_test();
+    let colors = |accent: &str| {
+        serde_json::to_value(crate::theme::ChromeColors {
+            accent: accent.into(),
+            ..Default::default()
+        })
+        .unwrap()
+    };
+    crate::test_support::set_patiently(
+        &crate::test_support::thread_preferences(),
+        "chrome",
+        colors("#AA0000"),
+    );
+    let mut s = Session::new();
+    hydrate_panel_preferences(&mut s);
+    assert_eq!(s.ui.chrome.accent, "#AA0000");
+    let disk = SeqDisk::install(&s);
+    disk.fail_after(1);
+
+    s.persist_panel_serializable(&["chrome", "accent"], "#112233")
+        .unwrap();
+    s.ui.chrome.accent = "#112233".into();
+    s.persist_panel_serializable(&["chrome", "accent"], "#AA0000")
+        .unwrap();
+    s.ui.chrome.accent = "#AA0000".into();
+    for _ in 0..3 {
+        s.pump_status();
+        s.poll_panel_preferences();
+        assert_eq!(
+            s.ui.chrome.accent, "#AA0000",
+            "B's preview shows while both are held"
+        );
+        assert_eq!(s.panel_member_error(&["chrome"]), None);
+    }
+
+    // A lands, B fails.
+    disk.release_one();
+    disk.release_one();
+    settle_panel_writes(&mut s);
+    assert_eq!(
+        s.ui.chrome.accent, "#112233",
+        "B failed: the control shows the durable value A saved"
+    );
+    assert!(
+        s.panel_member_error(&["chrome"])
+            .is_some_and(|text| text.starts_with("Preferences not saved: ")),
+        "B's failure is reported at its setting"
+    );
+    assert_eq!(
+        s.preferences.document().unwrap()["chrome"]["accent"],
+        "#112233"
+    );
+
+    // Two requests of one value: the first landing does not end the second.
+    disk.fail_after(3);
+    for _ in 0..2 {
+        s.persist_panel_serializable(&["chrome", "accent"], "#334455")
+            .unwrap();
+    }
+    s.ui.chrome.accent = "#334455".into();
+    disk.release_one();
+    // The first write is durable (the document now holds the value): the
+    // second request is still pending and still previews it.
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while s.preferences.document().unwrap()["chrome"]["accent"] != "#334455" {
+        s.pump_status();
+        s.poll_panel_preferences();
+        assert!(Instant::now() < deadline, "the first request never landed");
+        thread::sleep(Duration::from_millis(2));
+    }
+    s.poll_panel_preferences();
+    assert_eq!(s.panel_preference_writes_pending(), 1, "B is still pending");
+    assert_eq!(s.ui.chrome.accent, "#334455");
+    disk.release_one();
+    settle_panel_writes(&mut s);
+    assert_eq!(s.ui.chrome.accent, "#334455");
+    assert!(
+        s.panel_member_error(&["chrome"]).is_some(),
+        "the second request failed and says so"
+    );
 }
