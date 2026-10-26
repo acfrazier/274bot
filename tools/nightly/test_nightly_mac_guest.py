@@ -6,6 +6,7 @@ import importlib.util
 import io
 import json
 import os
+import shutil
 import signal
 import subprocess
 import sys
@@ -787,6 +788,191 @@ class NightlyRefreshDocumentationTests(unittest.TestCase):
         ):
             self.assertIn(name, section)
 
+
+def make_branch_repo(root: Path, name: str, *, branch: str = "dev",
+                     files: dict | None = None) -> Path:
+    """A git repo with `files` committed on `branch` (branch-list test helper)."""
+    repo = root / name
+    repo.mkdir(parents=True)
+    git("init", "-q", cwd=repo)
+    git("symbolic-ref", "HEAD", f"refs/heads/{branch}", cwd=repo)
+    for relative, text in (files or {"seed.txt": "seed\n"}).items():
+        path = repo / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+    git("add", ".", cwd=repo)
+    git("-c", "user.name=nightly-test", "-c", "user.email=nightly@example.invalid",
+        "commit", "-qm", "init", cwd=repo)
+    return repo
+
+
+@unittest.skipUnless(shutil.which("git"), "git is not installed")
+class MacBranchListTests(unittest.TestCase):
+    def test_github_list_is_used_when_the_fetch_works(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            origin = make_branch_repo(root, "origin", branch="dev", files={
+                "tools/nightly/branches.conf": "scratch-fix\ndev\n"})
+            tip = git("rev-parse", "HEAD", cwd=origin)
+            runner = root / "runner"
+            subprocess.run(["git", "clone", "-q", str(origin), str(runner)], check=True)
+            (runner / "tools/nightly/branches.conf").write_text("stale-branch\n", encoding="utf-8")
+            with mock.patch.dict(os.environ):
+                os.environ.pop("NIGHTLY_BRANCHES", None)
+                branches, info = nightly.resolve_branches(None, runner)
+            self.assertEqual(branches, ["scratch-fix", "dev"])
+            self.assertEqual(info["source"], "github")
+            self.assertEqual(info["commit"], tip)
+
+    def test_local_list_and_a_status_note_when_the_fetch_fails(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            # No origin remote: the fetch must fail.
+            runner = make_branch_repo(root, "runner", branch="dev", files={
+                "tools/nightly/branches.conf": "# local list\nfix-line\ndev\n"})
+            with mock.patch.dict(os.environ):
+                os.environ.pop("NIGHTLY_BRANCHES", None)
+                branches, info = nightly.resolve_branches(None, runner)
+            self.assertEqual(branches, ["fix-line", "dev"])
+            self.assertEqual(info["source"], "local")
+            self.assertIn("fetch", info["note"])
+
+    def test_requested_branches_win_without_a_fetch(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            # No origin remote: a fetch attempt would fall back to local,
+            # so the requested list proves no fetch was attempted.
+            runner = make_branch_repo(Path(temporary), "runner", branch="dev", files={
+                "tools/nightly/branches.conf": "fix-line\ndev\n"})
+            with mock.patch.dict(os.environ):
+                os.environ.pop("NIGHTLY_BRANCHES", None)
+                branches, info = nightly.resolve_branches(["dev"], runner)
+            self.assertEqual(branches, ["dev"])
+            self.assertEqual(info["source"], "cli")
+
+    def test_env_branches_win_without_a_fetch(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            runner = make_branch_repo(Path(temporary), "runner", branch="dev", files={
+                "tools/nightly/branches.conf": "fix-line\ndev\n"})
+            with mock.patch.dict(os.environ, {"NIGHTLY_BRANCHES": "release/0.2.6 dev"}):
+                branches, info = nightly.resolve_branches(None, runner)
+            self.assertEqual(branches, ["release/0.2.6", "dev"])
+            self.assertEqual(info["source"], "env")
+
+
+@unittest.skipUnless(shutil.which("git"), "git is not installed")
+class MacSelfUpdateTests(unittest.TestCase):
+    def setUp(self):
+        if os.environ.get("NIGHTLY_SELF_CHECK_ACTIVE"):
+            self.skipTest("the self-check does not re-test the updater")
+
+    def clean_env(self):
+        patcher = mock.patch.dict(os.environ)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        for key in ("NIGHTLY_SELF_UPDATE", "NIGHTLY_SELF_UPDATE_DONE",
+                    "NIGHTLY_SELF_UPDATE_FROM"):
+            os.environ.pop(key, None)
+
+    def test_opt_out_disables_the_update(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            origin = make_branch_repo(root, "origin", branch="dev", files={
+                "tools/nightly/nightly-mac-guest.py": "# new\n"})
+            runner = root / "runner"
+            subprocess.run(["git", "clone", "-q", str(origin), str(runner)], check=True)
+            script = runner / "tools/nightly/nightly-mac-guest.py"
+            before = script.read_text(encoding="utf-8")
+            # A broken remote proves no fetch is attempted while opted out.
+            subprocess.run(["git", "remote", "set-url", "origin", str(root / "missing.git")],
+                           cwd=runner, check=True)
+            calls: list = []
+            with mock.patch.dict(os.environ, {"NIGHTLY_SELF_UPDATE": "0"}):
+                info = nightly.maybe_self_update(runner, script, ["--branch", "dev"],
+                                                 _exec=lambda *args: calls.append(args))
+            self.assertEqual(info["status"], "disabled")
+            self.assertEqual(script.read_text(encoding="utf-8"), before)
+            self.assertEqual(calls, [])
+
+    def test_a_failed_self_check_keeps_the_old_code(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            origin = make_branch_repo(root, "origin", branch="dev", files={
+                "tools/nightly/nightly-mac-guest.py": "# old controller\n"})
+            runner = root / "runner"
+            subprocess.run(["git", "clone", "-q", str(origin), str(runner)], check=True)
+            old_head = git("rev-parse", "HEAD", cwd=runner)
+            (origin / "tools/nightly/nightly-mac-guest.py").write_text(
+                "def broken(:\n", encoding="utf-8")
+            git("add", ".", cwd=origin)
+            git("-c", "user.name=nightly-test", "-c", "user.email=nightly@example.invalid",
+                "commit", "-qm", "broken", cwd=origin)
+            tip = git("rev-parse", "HEAD", cwd=origin)
+            self.assertNotEqual(tip, old_head)
+            script = runner / "tools/nightly/nightly-mac-guest.py"
+            calls: list = []
+            self.clean_env()
+            info = nightly.maybe_self_update(runner, script, ["--branch", "dev"],
+                                             _exec=lambda *args: calls.append(args))
+            self.assertEqual(info["status"], "check-failed")
+            self.assertEqual(info["to"], tip)
+            self.assertEqual(script.read_text(encoding="utf-8"), "# old controller\n")
+            self.assertEqual(git("rev-parse", "HEAD", cwd=runner), old_head)
+            self.assertEqual(calls, [])
+
+    def test_a_passing_self_check_updates_and_reexecs(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            origin = root / "origin"
+            origin.mkdir()
+            git("init", "-q", cwd=origin)
+            git("symbolic-ref", "HEAD", "refs/heads/dev", cwd=origin)
+            shutil.copytree(HERE, origin / "tools/nightly",
+                            ignore=shutil.ignore_patterns("__pycache__"))
+            git("add", ".", cwd=origin)
+            git("-c", "user.name=nightly-test", "-c", "user.email=nightly@example.invalid",
+                "commit", "-qm", "controller", cwd=origin)
+            runner = root / "runner"
+            subprocess.run(["git", "clone", "-q", str(origin), str(runner)], check=True)
+            probe = "# nightly self-update probe\n"
+            with (origin / "tools/nightly/nightly-mac-guest.py").open("a", encoding="utf-8") as handle:
+                handle.write(probe)
+            git("add", ".", cwd=origin)
+            git("-c", "user.name=nightly-test", "-c", "user.email=nightly@example.invalid",
+                "commit", "-qm", "probe", cwd=origin)
+            tip = git("rev-parse", "HEAD", cwd=origin)
+            script = runner / "tools/nightly/nightly-mac-guest.py"
+            calls: list = []
+            self.clean_env()
+            info = nightly.maybe_self_update(runner, script, ["--branch", "dev"],
+                                             _exec=lambda *args: calls.append(args))
+            self.assertIsNone(info)
+            self.assertEqual(len(calls), 1)
+            executable, argv, _env = calls[0]
+            self.assertEqual(executable, sys.executable)
+            self.assertEqual(argv[:2], [sys.executable, str(script)])
+            self.assertEqual(argv[2:], ["--branch", "dev"])
+            self.assertIn(probe, script.read_text(encoding="utf-8"))
+            self.assertEqual(git("rev-parse", "HEAD", cwd=runner), tip)
+
+    def test_status_records_branch_list_and_self_update(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            values = {key: str(root / key) for key in nightly.Settings.REQUIRED}
+            settings = nightly.Settings(values)
+            branch_list_info = {"source": "github", "commit": "a" * 40,
+                                "note": "from origin/dev at " + "a" * 40}
+            self_update_info = {"status": "check-failed", "from": "o" * 40, "to": "n" * 40,
+                                "detail": "candidate origin/dev failed the self-check"}
+            orchestrator = nightly.NightlyOrchestrator(
+                settings, ["dev"], vm_factory=FakeVM,
+                branch_list_info=branch_list_info, self_update_info=self_update_info)
+            orchestrator.pins = {"dev": "a" * 40}
+            orchestrator.write_status("testing")
+            status = settings.status.read_text(encoding="utf-8")
+            self.assertIn("branch_list_source=github", status)
+            self.assertIn("branch_list_commit=" + "a" * 40, status)
+            self.assertIn("self_update=check-failed", status)
+            self.assertIn("self_update_detail=candidate origin/dev", status)
 
 
 if __name__ == "__main__":

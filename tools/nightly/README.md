@@ -277,11 +277,57 @@ starts the read-only malbec mirror immediately (after its key is installed).
 
 ## Change the branches
 
-Edit [`branches.conf`](branches.conf), commit, and refresh the stable runner copy.
-The first line is the fix line. Linux reads the list from `/srv/nightly/runner`.
-Mac reads it from the stable copy in `~/.local/lib/274bot-nightly/runner`.
-Do not point the Mac schedule at a task worktree. Refresh the copy after each
-merge that changes `tools/nightly`.
+Edit [`branches.conf`](branches.conf) on `dev`, commit, and push. Nothing on
+the machines changes. At the start of a night each runner fetches origin and
+reads `tools/nightly/branches.conf` from `origin/dev`
+(`git show origin/dev:tools/nightly/branches.conf`). The first line is the
+fix line: when the fix line rolls over (for example `release/0.2.6` to
+`release/0.2.7`), change that line, commit to `dev`, and the next night tests
+the new line on every host. Linux reads the list through `/srv/nightly/runner`,
+Mac through the stable copy in `~/.local/lib/274bot-nightly/runner`, Windows
+through `C:\274bot-nightly\runner`.
+
+Precedence stays: `--branch` on the command line, then `NIGHTLY_BRANCHES`,
+then the GitHub list. A `--branch` hand run and a `NIGHTLY_BRANCHES` host
+never touch the network for the list. When the fetch fails, the runner uses
+its local `branches.conf` and says so in every summary, so a night is never
+lost to a fetch failure.
+
+Each run's `summary.json` records `branch_list` (`source` one of
+`cli`/`env`/`github`/`local`, the `commit` the list came from, and a `note`),
+and `summary.md` has one `Branch list:` line. The Mac status file records
+`branch_list_source=`, `branch_list_commit=` and, on fallback,
+`branch_list_note=`.
+
+## Runner self-update
+
+At the start of a night, before it reads the branch list, the runner updates
+its own checkout of `tools/nightly/` to `origin/dev` and re-executes itself.
+Before switching, it extracts the candidate `tools/nightly/` to a temporary
+directory and runs a self-check: `python3 -m py_compile` of the runner files
+(`run_nightly.py`, `nightly-mac-guest.py`, `latency_proxy.py`) plus the
+runner's own unit tests (`test_run_nightly.py` on Linux and Windows,
+`test_nightly_mac_guest.py` on the Mac controller), about a minute at most.
+When the self-check fails, or the fetch fails, the runner keeps running the
+old code and says so in the summary. Only the runner checkout is ever touched
+(`git -C <runner> ...` plus the temporary candidate); trees, engines,
+catalogs and fixtures are never written. `NIGHTLY_SELF_UPDATE=0` opts out
+(set it in `/etc/274bot-nightly.env`, `nightly.env`, or `mac-nightly.env`).
+
+Each run's `summary.json` records `self_update` (`status` one of
+`updated`/`current`/`check-failed`/`fetch-failed`/`extract-failed`/`disabled`,
+the `from`/`to` commits, and a `detail`), and `summary.md` has one
+`Runner self-update:` line. The Mac status file records `self_update=` and
+`self_update_detail=`.
+
+The self-check runs the candidate's full unit-test file with the updater's own
+tests skipped (guard `NIGHTLY_SELF_CHECK_ACTIVE`), so a check never re-tests
+the updater recursively.
+
+Manual refresh is only a fallback for a checkout with the update opted out:
+`git -C <runner> fetch origin && git -C <runner> checkout --force origin/dev`
+(the checkout is detached after a self-update, so the old
+`git -C <runner> pull --ff-only` no longer applies).
 
 ## Deployment
 
