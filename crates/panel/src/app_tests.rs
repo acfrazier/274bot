@@ -4426,6 +4426,20 @@ fn memory_notice_gets_its_own_readable_popup_row() {
                             }
                         });
                     }
+                    // The memory mode is a remembered launch choice: it takes
+                    // effect (and the offer appears) once its write is durable.
+                    if frame >= 3 {
+                        let deadline = Instant::now() + Duration::from_secs(30);
+                        loop {
+                            session.pump_status();
+                            session.poll_panel_preferences();
+                            if !session.preferences_pending() {
+                                break;
+                            }
+                            assert!(Instant::now() < deadline, "the choice never settled");
+                            thread::sleep(Duration::from_millis(2));
+                        }
+                    }
                     super::mem_popup(ui, &mut session);
                     if frame >= 5 {
                         offer_rect = Some(ui.with_bound_context(|| {

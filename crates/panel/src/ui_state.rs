@@ -312,20 +312,37 @@ pub(crate) fn apply_pending_members<'a>(
     state
 }
 
+/// Whether the member at `path` is a remembered launch choice: the server
+/// revision and the Game-pane raster and low-memory modes. Such a choice
+/// takes effect only when its own write is durable (its owner applies it
+/// then), so a preview never lays over it and a document read never
+/// replaces the value the panel applies.
+pub(crate) fn is_launch_choice(path: &[String]) -> bool {
+    matches!(
+        path.first().map(String::as_str),
+        Some("raster" | "lowmem" | "server_revision")
+    )
+}
+
 /// The panel view of the preferences after a change: the latest durable
 /// `document` with the previews of the requests still `pending` laid over
 /// it (oldest first, so the newest of a member wins). What the panel does
 /// not read from the document stays as `current` has it: the saved choices
 /// the core owns (draw switches, bake choice, notices, session file, walk
-/// grants, the special-areas overlay and the manual-walk pause). A member
-/// this does not name follows the document, so a new panel-owned member is
-/// rebased by default.
+/// grants, the special-areas overlay and the manual-walk pause) and the
+/// launch choices. A member this does not name follows the document, so a
+/// new panel-owned member is rebased by default.
 pub(crate) fn rebased<'a>(
     current: &PanelUiState,
     document: &Map<String, Value>,
     pending: impl IntoIterator<Item = (&'a [String], &'a Option<Value>)>,
 ) -> PanelUiState {
-    let next = apply_pending_members(load_snapshot(document), pending);
+    let next = apply_pending_members(
+        load_snapshot(document),
+        pending
+            .into_iter()
+            .filter(|(path, _)| !is_launch_choice(path)),
+    );
     let nav = NavSettings {
         allow_teleports: current.nav.allow_teleports,
         allow_wilderness: current.nav.allow_wilderness,
@@ -346,6 +363,9 @@ pub(crate) fn rebased<'a>(
         session_log_file: current.session_log_file,
         background_bots_ack: current.background_bots_ack,
         render_all_warning_ack: current.render_all_warning_ack,
+        raster: current.raster,
+        lowmem: current.lowmem,
+        server_revision: current.server_revision,
         nav,
         ..next
     }

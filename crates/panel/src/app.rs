@@ -5183,7 +5183,7 @@ fn global_config_section(ui: &Ui, session: &mut Session) {
         ui.text_disabled("revision fixed for this session");
     } else {
         let revision_preview = session
-            .effective_revision_label()
+            .revision_choice_label()
             .unwrap_or_else(|error| format!("invalid: {error}"));
         ui.text("Revision before session");
         ui.set_next_item_width(-1.0);
