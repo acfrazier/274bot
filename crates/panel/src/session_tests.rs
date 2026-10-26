@@ -1158,6 +1158,8 @@ fn explicit_catalog_default_allows_manual_import_and_preserves_custom_cards() {
 
 #[test]
 fn revision_and_binding_allow_already_loaded_scripts_and_source_edits() {
+    let _composition =
+        map_host::PlayComposition::start().expect("panel fixture starts Play composition");
     let _work_service_guard = crate::work_service_test_lock();
     let (root, cache, manifest, unpack, server) = runtime_profile_fixture(274);
     let catalog = write_looping_catalog(&root.join("catalog"), &[("Chosen", "Chosen")]);
