@@ -808,8 +808,10 @@ SELF_UPDATE_FROM_ENV = "NIGHTLY_SELF_UPDATE_FROM"
 # present, so a check never re-tests the updater recursively.
 SELF_CHECK_ACTIVE_ENV = "NIGHTLY_SELF_CHECK_ACTIVE"
 # The whole guard (py_compile plus the runner's own unit tests) fits in about
-# a minute; a slower or hung check keeps the old code instead of the night.
-SELF_UPDATE_TIMEOUT_S = 55
+# a minute on Linux and macOS. On Windows the same suite takes over two
+# minutes (process and git spawn cost), so the Windows night allows five.
+# A slower or hung check keeps the old code instead of the night.
+SELF_UPDATE_TIMEOUT_S = 300 if IS_WINDOWS else 55
 FETCH_TIMEOUT_S = 120
 RUNNER_PY_FILES = ("run_nightly.py", "nightly-mac-guest.py", "latency_proxy.py")
 SELF_TEST_FILE = "test_run_nightly.py"
@@ -2389,15 +2391,22 @@ def _cell_window(result: CellResult) -> tuple[float, float] | None:
 def probe_latency_proxy(port: int, timeout: float = 5.0) -> tuple[bool, str]:
     """One probe connection through the proxy, before any cell starts.
 
-    The probe sends the game first byte (14). The proxy then connects to
-    the engine. A dead engine makes the proxy close the probe at once. A
-    live engine holds the connection while it waits for the rest of the
-    login, or answers bytes. Both prove the path works.
+    The probe sends the game first byte (14). The proxy then dials the
+    engine, which takes as long as its own upstream dial allows (10 s):
+    a refused loopback connect alone takes about 2 s on the Windows
+    host. A dead engine makes the proxy close the probe once that dial
+    fails. A live engine holds the connection while it waits for the
+    rest of the login, or answers bytes. Both prove the path works.
     """
     try:
         with socket.create_connection(("127.0.0.1", port), timeout=timeout) as sock:
             sock.sendall(bytes([14]))
-            sock.settimeout(1.0)
+            # Wait out the proxy's whole upstream dial. A short wait
+            # mistakes a dead upstream for a live engine that holds the
+            # connection: on Windows the refusal arrives after ~2 s,
+            # past a 1 s wait, so the dead band looked healthy and its
+            # cells started pointlessly before the health rule caught it.
+            sock.settimeout(10.0)
             try:
                 data = sock.recv(1)
             except socket.timeout:

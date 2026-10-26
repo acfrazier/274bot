@@ -2393,22 +2393,27 @@ class Rs2b0tApiDriftTests(unittest.TestCase):
             tree = self.make_tree(root, str(upstream), frozen)
             real_git = shutil.which("git")
             self.assertTrue(real_git)
-            fake_bin = root / "fakebin"
-            fake_bin.mkdir()
-            fake_git = fake_bin / "git"
-            fake_git.write_text(
-                "#!/bin/sh\n"
-                'for a in "$@"; do if [ "$a" = "log" ]; then\n'
-                '  echo "fake log failure: boom" >&2\n  exit 9\nfi; done\n'
-                f'exec "{real_git}" "$@"\n',
+            # A Python fake routed through `git_cmd`, not a PATH shell
+            # script: Windows never runs an extensionless `git` file
+            # (process creation appends .exe only), so the old shell fake
+            # never intercepted there and the real `log` succeeded. The
+            # fake still fails a real subprocess with the real exit code
+            # and stderr, and delegates every other git call to real git.
+            fake_py = root / "fake_git.py"
+            fake_py.write_text(
+                "import subprocess, sys\n"
+                "real, args = sys.argv[1], sys.argv[2:]\n"
+                "if 'log' in args:\n"
+                "    sys.stderr.write('fake log failure: boom\\n')\n"
+                "    sys.exit(9)\n"
+                "sys.exit(subprocess.run([real, *args]).returncode)\n",
                 encoding="utf-8")
-            fake_git.chmod(0o755)
-            old_path = os.environ.get("PATH", "")
-            os.environ["PATH"] = f"{fake_bin}{os.pathsep}{old_path}"
-            try:
+
+            def fake_git_cmd(*args: str) -> list[str]:
+                return [sys.executable, str(fake_py), real_git, *args]
+
+            with mock.patch.object(rn, "git_cmd", side_effect=fake_git_cmd):
                 info = rn.check_rs2b0t_api_drift(tree, catalog)
-            finally:
-                os.environ["PATH"] = old_path
             self.assertEqual(info["status"], "unavailable")
             self.assertIn("9", info.get("reason") or "")
             self.assertIn("boom", info.get("reason") or "")
