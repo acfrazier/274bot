@@ -191,6 +191,7 @@ fn test_scripts(_dir: &std::path::Path) -> crate::scripts::Scripts {
     crate::scripts::Scripts::new()
 }
 
+#[cfg(not(feature = "js"))]
 fn wait_compiled_script_state(
     session: &mut OperatorSession<u32>,
     scripts: &mut crate::scripts::Scripts,
@@ -218,6 +219,7 @@ fn wait_compiled_script_state(
     }
 }
 
+#[cfg(not(feature = "js"))]
 fn start_compiled_script(
     session: &mut OperatorSession<u32>,
     scripts: &mut crate::scripts::Scripts,
@@ -2812,8 +2814,47 @@ fn a_failed_memory_write_resets_the_armed_handshake() {
     );
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn memory_relog_warns_while_a_script_runs() {
+    let iso = script::IsolatedEnv::enter("frontend-core-mem-warn");
+    let mut s = session("mem-warn", &[("alice", 1, false)]);
+    let mut surface = Recorder::default();
+    s.load("alice", &mut surface);
+    assert!(
+        !s.memory_relog_warning("alice"),
+        "no script: Relog-now needs no warning"
+    );
+    let (js, shape) = looping_bot(&iso.dir);
+    s.start_script(
+        "alice",
+        ScriptStart::load(js, shape, None, Vec::new()),
+        Some("file:looping".into()),
+    )
+    .unwrap();
+    let settled = settle_start(&mut s);
+    assert!(
+        settled
+            .iter()
+            .any(|st| st.outcome == Some(script::StartOutcome::Ready)),
+        "the looping script runs: {settled:?}"
+    );
+    assert!(
+        s.memory_relog_warning("alice"),
+        "a running script is interrupted by a relog"
+    );
+
+    let stop = s.stop_script("alice");
+    wait_operation_settled(&mut s, stop);
+    assert!(
+        !s.memory_relog_warning("alice"),
+        "a stopped script needs no warning"
+    );
+}
+
+#[cfg(not(feature = "js"))]
+#[test]
+fn memory_relog_warns_while_a_compiled_script_runs() {
     let iso = script::IsolatedEnv::enter("frontend-core-mem-warn");
     let mut s = session("mem-warn", &[("alice", 1, false)]);
     let mut scripts = test_scripts(&iso.dir);
