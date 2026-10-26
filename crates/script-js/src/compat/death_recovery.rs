@@ -458,7 +458,10 @@ mod tests {
     }
 
     fn post_at(tick: u64, here: Tile, view: &api::query::ReachQueryView) {
-        use crate::wire::{encode_snapshot, ReachViewInput, Snapshot, TileInput};
+        use {
+            crate::wire::{encode_snapshot, Snapshot},
+            script::native::snapshot_source::{ReachViewInput, TileInput},
+        };
         let mut input = crate::wire::tests::empty_input(tick);
         input.here = Some(TileInput {
             x: here.x,

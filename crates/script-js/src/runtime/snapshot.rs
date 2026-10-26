@@ -1,4 +1,4 @@
-//! FlatBuffer-to-V8 snapshot materialization and helpers (feature `load` only).
+//! FlatBuffer-to-V8 snapshot materialization and helpers.
 //!
 //! Builds `__rs2b0t_host.snapshot` on the isolate thread from decoded
 //! FlatBuffers (delta merge, absent-vs-empty, object reuse). Also owns the
@@ -21,7 +21,7 @@ type TableVector<'a, T> = Option<Vector<'a, ForwardsUOffset<T>>>;
 /// old JSON blob. The object is built on the isolate thread directly
 /// from the buffer (v8 object construction — not `JSON.parse`): a wall
 /// of 50+ isolates never parses a JSON document per tick.
-pub(super) fn materialize_snapshot(
+pub(crate) fn materialize_snapshot(
     runtime: &mut Runtime,
     snap: &crate::wire::Snapshot<'_>,
     host_hold: bool,
@@ -2105,11 +2105,11 @@ fn inspect_hop_array<'s, 'a>(
 mod tests {
     use crate::wire::generated::rs_2b_0t::isolate::{QuestStatusBuilder, SnapshotBuilder};
     use crate::wire::tests::empty_input;
-    use crate::wire::{
-        encode_snapshot, encode_snapshot_with_native, ItemRowInput, NativeFactsInput,
-        PuzzleBoardInput,
-    };
     use crate::{LoadIsolate, LoadShape};
+    use {
+        crate::wire::{encode_snapshot, encode_snapshot_with_native},
+        script::native::snapshot_source::{ItemRowInput, NativeFactsInput, PuzzleBoardInput},
+    };
 
     fn spawn_isolate() -> LoadIsolate {
         LoadIsolate::spawn(

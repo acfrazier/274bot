@@ -585,7 +585,10 @@ fn set_key<'s>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::wire::{encode_snapshot, ReachViewInput, TileInput};
+    use {
+        crate::wire::encode_snapshot,
+        script::native::snapshot_source::{ReachViewInput, TileInput},
+    };
 
     /// Post the player at (10,10) with a 4x4 scene window from (8,8), or no
     /// scene at all.

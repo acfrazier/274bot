@@ -2736,8 +2736,9 @@ pub(crate) mod tests {
 
     #[test]
     fn walk_resilient_closest_with_fresh_negative_reach_does_not_arrive() {
-        use crate::wire::{
-            encode_snapshot_with_native, NativeFactsInput, ReachViewInput, Snapshot, TileInput,
+        use {
+            crate::wire::{encode_snapshot_with_native, Snapshot},
+            script::native::snapshot_source::{NativeFactsInput, ReachViewInput, TileInput},
         };
 
         reset();

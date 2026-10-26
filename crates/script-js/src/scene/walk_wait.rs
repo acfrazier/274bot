@@ -260,9 +260,11 @@ fn json_u64(value: Option<&Value>) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::wire::{
-        encode_snapshot, encode_snapshot_with_native, NativeFactsInput, ReachViewInput,
-        SnapshotInput, TileInput,
+    use {
+        crate::wire::{encode_snapshot, encode_snapshot_with_native},
+        script::native::snapshot_source::{
+            NativeFactsInput, ReachViewInput, SnapshotInput, TileInput,
+        },
     };
 
     /// `ResetSession` as the isolate runs it: the scene and the wait.

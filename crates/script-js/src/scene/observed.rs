@@ -1706,11 +1706,15 @@ impl Interner {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::wire::{
-        encode_snapshot, encode_snapshot_delta, encode_snapshot_delta_with_native,
-        encode_snapshot_with_native, BankStandInput, ItemRowInput, NativeFactsInput,
-        QuestStatusInput, ReachViewInput, SceneEntityInput, SideTabIfaceInput, SnapshotInput,
-        StatInput, TileInput,
+    use {
+        crate::wire::{
+            encode_snapshot, encode_snapshot_delta, encode_snapshot_delta_with_native,
+            encode_snapshot_with_native,
+        },
+        script::native::snapshot_source::{
+            BankStandInput, ItemRowInput, NativeFactsInput, QuestStatusInput, ReachViewInput,
+            SceneEntityInput, SideTabIfaceInput, SnapshotInput, StatInput, TileInput,
+        },
     };
 
     fn empty(tick: u64) -> SnapshotInput<'static> {

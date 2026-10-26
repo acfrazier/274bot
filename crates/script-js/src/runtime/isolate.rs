@@ -21,12 +21,8 @@ use super::bindings::wire_runtime;
 use super::snapshot::{
     dispatch_native_events, key_string, materialize_settings_bag, materialize_snapshot,
 };
-#[cfg(test)]
-use crate::library::shape;
 use crate::library::shape::LoadShape;
 use crate::materialize::reach_query;
-#[cfg(test)]
-use crate::materialize::{loadout_v8, machine_v8, paint_chrome, paint_jive, run_policy_v8};
 use rustyscript::{json_args, Runtime, RuntimeOptions};
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize};

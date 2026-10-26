@@ -867,9 +867,12 @@ pub(crate) fn dispatch(input: &Value) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::wire::{
-        encode_snapshot, encode_snapshot_with_native, InspectHopInput, NativeFactsInput,
-        ReachViewInput, RouteInspectFactsInput, RouteInspectTerminalInput, SnapshotInput,
+    use {
+        crate::wire::{encode_snapshot, encode_snapshot_with_native},
+        script::native::snapshot_source::{
+            InspectHopInput, NativeFactsInput, ReachViewInput, RouteInspectFactsInput,
+            RouteInspectTerminalInput, SnapshotInput,
+        },
     };
 
     fn empty_input(tick: u64) -> SnapshotInput<'static> {

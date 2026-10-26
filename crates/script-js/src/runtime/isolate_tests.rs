@@ -765,7 +765,7 @@ loop() {
 /// One posted tick whose only event-relevant fact is a prayer xp table:
 /// an `xp` above the previous tick's value is one `SkillXp` event.
 fn xp_input(tick: u64, inv_size: i32, xp: i32) -> Vec<u8> {
-    let stats = [crate::wire::StatInput {
+    let stats = [script::native::snapshot_source::StatInput {
         index: 5,
         name: "prayer",
         xp,
@@ -2242,8 +2242,13 @@ fn a_synchronous_kick_does_not_run_unrelated_microtasks() {
 
 #[test]
 fn v2_journal_read_hides_paint_until_observed_close_and_reset() {
-    use crate::wire::{IsolateBuf, MainModalTextsInput, NativeFactsInput, QuestStatusInput};
     use script::interact::InteractReq;
+    use {
+        crate::wire::IsolateBuf,
+        script::native::snapshot_source::{
+            MainModalTextsInput, NativeFactsInput, QuestStatusInput,
+        },
+    };
 
     let iso = LoadIsolate::spawn(
         r#"export const apiVersion = 2;
@@ -2327,10 +2332,11 @@ fn post_execution_seat_page<'a>(
     tick: u64,
     live: &'a [script::native::seat::SeatEntry],
     results: &'a [script::native::seat::SeatResult],
-    details: &'a [crate::wire::SeatLiveDetails<'a>],
+    details: &'a [script::native::seat_rows::SeatLiveDetails<'a>],
     api_progress: Option<&'a script::api_progress::ProgressPage>,
 ) {
-    let page = crate::wire::SeatPageInput::new(live, results, details, 0).expect("valid seat page");
+    let page = script::native::seat_rows::SeatPageInput::new(live, results, details, 0)
+        .expect("valid seat page");
     let snapshot = crate::wire::tests::empty_input(tick);
     let bytes = buffer.encode_snapshot_with_native(
         &snapshot,
@@ -2366,10 +2372,10 @@ fn post_bank_prompt_page(
         decisions_consumed,
         prompt: Some(sequence.get()),
     }];
-    let details = [crate::wire::SeatLiveDetails {
+    let details = [script::native::seat_rows::SeatLiveDetails {
         id,
         phase: script::native::NativePhase::Waiting,
-        prompt: Some(crate::wire::SeatPromptInput {
+        prompt: Some(script::native::seat_rows::SeatPromptInput {
             sequence,
             point,
             args: &args,
@@ -2384,13 +2390,14 @@ fn post_execution_gather_page<'a>(
     tick: u64,
     live: &'a [script::native::seat::SeatEntry],
     results: &'a [script::native::seat::SeatResult],
-    details: &'a [crate::wire::SeatLiveDetails<'a>],
+    details: &'a [script::native::seat_rows::SeatLiveDetails<'a>],
     (gather, terminal): (
         Option<&'a script::api_gather::GatherPage>,
         Option<&'a script::api_gather::GatherEnd>,
     ),
 ) {
-    let page = crate::wire::SeatPageInput::new(live, results, details, 0).expect("valid seat page");
+    let page = script::native::seat_rows::SeatPageInput::new(live, results, details, 0)
+        .expect("valid seat page");
     let snapshot = crate::wire::tests::empty_input(tick);
     let bytes = buffer.encode_snapshot_with_native(
         &snapshot,
@@ -2407,13 +2414,13 @@ fn post_execution_gather_page<'a>(
 
 #[test]
 fn v2_execution_seat_start_waits_for_live_ack_and_repeats_terminal_watermark() {
-    use crate::wire::{SeatInteractDecoded, SeatLiveDetails, SeatStartArgs};
     use api::identity::ExecutionId;
     use api::script_contract::ChildOrigin;
     use api::selected::RunKey;
     use script::api_progress::ProgressPage;
     use script::native::request::NativeKind;
     use script::native::seat_rows::SeatMachineEventKind;
+    use script::native::seat_rows::{SeatInteractDecoded, SeatLiveDetails, SeatStartArgs};
     use script::native::{seat::SeatTerminal, NativePhase};
 
     fn assert_root_loop_settled(rows: &[SeatInteractDecoded]) {
@@ -2656,12 +2663,12 @@ export function tick(api) {
 
 #[test]
 fn execution_owned_gather_promise_waits_for_typed_terminal_after_seat_done() {
-    use crate::wire::SeatLiveDetails;
     use api::identity::{ExecutionId, RequestId};
     use api::script_contract::ChildOrigin;
     use api::selected::RunKey;
     use script::api_gather::{GatherCounts, GatherEnd, GatherPage, GatherPhase};
     use script::native::request::NativeKind;
+    use script::native::seat_rows::SeatLiveDetails;
     use script::native::{seat::SeatTerminal, NativePhase};
 
     let source = r#"
@@ -2825,7 +2832,7 @@ export function tick() {
 
     let empty: [script::native::seat::SeatEntry; 0] = [];
     let no_results: [script::native::seat::SeatResult; 0] = [];
-    let no_details: [crate::wire::SeatLiveDetails<'_>; 0] = [];
+    let no_details: [script::native::seat_rows::SeatLiveDetails<'_>; 0] = [];
     let mut buffer = crate::wire::IsolateBuf::new();
     post_execution_seat_page(
         &isolate,
@@ -2910,7 +2917,7 @@ export function tick() {
 
     let empty: [script::native::seat::SeatEntry; 0] = [];
     let no_results: [script::native::seat::SeatResult; 0] = [];
-    let no_details: [crate::wire::SeatLiveDetails<'_>; 0] = [];
+    let no_details: [script::native::seat_rows::SeatLiveDetails<'_>; 0] = [];
     let mut buffer = crate::wire::IsolateBuf::new();
     post_execution_seat_page(
         &isolate,
@@ -3004,12 +3011,15 @@ fn execution_owned_recovery_anchor_bypasses_seat_on_host_lane() {
 
 #[test]
 fn execution_owned_inspect_ack_uses_the_seat_lane() {
-    use crate::wire::{
-        IsolateBuf, NativeFactsInput, RouteInspectFactsInput, RouteInspectTerminalInput,
-    };
     use api::identity::ExecutionId;
     use api::selected::RunKey;
     use script::interact::InteractReq;
+    use {
+        crate::wire::IsolateBuf,
+        script::native::snapshot_source::{
+            NativeFactsInput, RouteInspectFactsInput, RouteInspectTerminalInput,
+        },
+    };
 
     let execution = ExecutionId::first(RunKey {
         slot: 17,

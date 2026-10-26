@@ -487,11 +487,14 @@ fn json_i32(value: &Value) -> i32 {
 mod tests {
     use super::*;
     use crate::machine::{self, Called, Handle, Outcome, Pending, Reply, Started, Take};
-    use crate::wire::{
-        encode_snapshot, encode_snapshot_with_native, ChatLineInput, NativeFactsInput,
-        ReachViewInput, SceneEntityInput, SnapshotInput, TileInput,
-    };
     use script::interact::InteractReq;
+    use {
+        crate::wire::{encode_snapshot, encode_snapshot_with_native},
+        script::native::snapshot_source::{
+            ChatLineInput, NativeFactsInput, ReachViewInput, SceneEntityInput, SnapshotInput,
+            TileInput,
+        },
+    };
 
     fn npc<'a>(
         name: &'a str,

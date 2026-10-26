@@ -49,7 +49,7 @@ fn on_process_main_thread() -> bool {
 /// with the dev-only test-hooks feature. Neither this function nor its callsite
 /// exists in release builds, even when test-hooks is accidentally enabled.
 #[cfg(any(test, all(feature = "test-hooks", debug_assertions)))]
-pub(super) fn bootstrap_test_v8_platform() {
+pub(crate) fn bootstrap_test_v8_platform() {
     PLATFORM.get_or_init(|| {
         let platform = v8::new_unprotected_default_platform(1, true).make_shared();
         deno_core::JsRuntime::init_platform(Some(platform), true);
