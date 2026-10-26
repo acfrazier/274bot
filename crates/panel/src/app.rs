@@ -3915,7 +3915,10 @@ fn persist_profile_setting(
             OperatorCommand::SaveScriptSettings(frontend_core::command::CardKind::Native),
             Targets::Profile(&profile),
         );
-        return;
+        #[cfg(feature = "js")]
+        {
+            return;
+        }
     }
     #[cfg(feature = "js")]
     if let Some((source, lookup)) = selection.loaded_card() {

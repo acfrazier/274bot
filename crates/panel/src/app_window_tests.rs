@@ -250,7 +250,9 @@ fn with_script_section(state: &mut PanelState) -> Option<map_fixture::MapFixture
     // The first-use catalog prompt was already answered this session:
     // Browse/Load never raise it again.
     #[cfg(feature = "js")]
-    state.session.rs2b0t_browse_prompted = true;
+    {
+        state.session.rs2b0t_browse_prompted = true;
+    }
     state
         .session
         .ui
@@ -331,7 +333,7 @@ fn opener_cases() -> Vec<OpenerCase> {
         host: OPENER_HOST,
         label,
     };
-    let mut cases = vec![
+    let cases = vec![
         OpenerCase {
             name: "Profiles",
             target: PanelWindow::Profiles,
@@ -423,6 +425,8 @@ fn opener_cases() -> Vec<OpenerCase> {
         },
     ];
     #[cfg(feature = "js")]
+    let mut cases = cases;
+    #[cfg(feature = "js")]
     cases.push(OpenerCase {
         name: "Load",
         target: PanelWindow::LoadScript,
@@ -500,7 +504,10 @@ fn each_opener_focuses_its_window_when_it_is_already_open() {
         );
         // Dialog and draft state an already-open window must keep.
         state.session.loadouts_search = "keep".into();
-        state.session.script_dialog_search = "keep".into();
+        #[cfg(feature = "js")]
+        {
+            state.session.script_dialog_search = "keep".into();
+        }
 
         match case.press {
             Press::Button { host, label } => {
@@ -526,6 +533,7 @@ fn each_opener_focuses_its_window_when_it_is_already_open() {
             state.session.loadouts_search, "keep",
             "{name}: Loadouts draft kept"
         );
+        #[cfg(feature = "js")]
         assert_eq!(
             state.session.script_dialog_search, "keep",
             "{name}: dialog search kept"

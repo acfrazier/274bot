@@ -1553,8 +1553,18 @@ fn stopped_scripts_leave_no_walking_label_on_the_rail(drive: Drive) {
     let Some(mut rig) = Rig::new(drive, session) else {
         return;
     };
+    #[cfg(not(feature = "js"))]
+    {
+        let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+        rig.session()
+            .core
+            .play_mut_for_test()
+            .unwrap()
+            .bind_script_test_data(data);
+    }
     for name in NINE {
         publish_ingame(rig.session(), name);
+        #[cfg(feature = "js")]
         frontend_core::test_support::scripts::play_start_load(
             &rig.session().core,
             name,
@@ -1564,6 +1574,16 @@ fn stopped_scripts_leave_no_walking_label_on_the_rail(drive: Drive) {
             Vec::new(),
         )
         .unwrap();
+        #[cfg(not(feature = "js"))]
+        {
+            let card = CompiledCardId::lookup("Gatherer").expect("compiled Gatherer card");
+            rig.session().persist_successful_assignment(
+                name,
+                frontend_core::test_support::scripts::Assignment::compiled(card),
+            );
+            rig.session().core.flush_writes();
+            rig.session().script_start_profile(name).expect("compiled Start");
+        }
     }
     let wait = |rig: &mut Rig, want: ScriptRunState| {
         for name in NINE {
