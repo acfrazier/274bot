@@ -1,6 +1,6 @@
 //! Bounded Baker stall mapping: posted pins, filtered loc id, honest results.
 
-use script::shim::InteractReq;
+use script::interact::InteractReq;
 use script_js::wire::{
     ChatLineInput, IsolateBuf, ItemRowInput, ReachViewInput, SceneEntityInput, SnapshotFingerprint,
     SnapshotInput, TileInput,

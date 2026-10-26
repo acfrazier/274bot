@@ -4,10 +4,10 @@
 //! inv proof, and the kept order stay here. Own map and token counter.
 //! Call `hunt_fight::in_area_body` only. Do not call Leave or Fight dispatch.
 
-use crate::hunt::Kind as HuntKind;
-use crate::hunt_fight::{in_area_body, Area, SiteBox, Tile};
-use crate::observed::{self, EntityRow, ItemRow, Scene, SceneRow};
-use crate::task_clock::InstantTaskClock;
+use crate::compat::hunt::Kind as HuntKind;
+use crate::compat::hunt_fight::{in_area_body, Area, SiteBox, Tile};
+use crate::scene::observed::{self, EntityRow, ItemRow, Scene, SceneRow};
+use crate::scene::task_clock::InstantTaskClock;
 use serde_json::{json, Value};
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -490,7 +490,7 @@ fn unexpected(reply: Option<&Value>) -> bool {
 }
 
 fn walk_wait_settled(token: u64) -> bool {
-    crate::walk_wait::dispatch(&json!({ "op": "settled", "token": token }))
+    crate::scene::walk_wait::dispatch(&json!({ "op": "settled", "token": token }))
         .as_bool()
         .unwrap_or(false)
 }

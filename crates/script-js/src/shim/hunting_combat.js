@@ -1,5 +1,5 @@
 // Hunt Tasks and runs: a name map over the Rust hunt families
-// (`crate::hunt`). Rust reads the scene, owns the policy, the walks, the
+// (`crate::compat::hunt`). Rust reads the scene, owns the policy, the walks, the
 // game ops, the waits and the retries; the site crosses once; the
 // CombatHost methods are handed over as hooks Rust calls. A Task class
 // keeps one token: `validate` is one synchronous call, `execute` awaits

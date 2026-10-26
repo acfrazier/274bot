@@ -1,4 +1,4 @@
-use script::shim::InteractReq;
+use script::interact::InteractReq;
 use script_js::wire::{ReachViewInput, SnapshotInput, StatInput, TileInput, VarpInput};
 use script_js::{ApiFamily, JsLibrary, LoadIsolate, LoadShape};
 

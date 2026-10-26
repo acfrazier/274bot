@@ -14,7 +14,7 @@ const LEVEL: i32 = 2;
 const EFFECTIVE: i32 = 3;
 const HP_FRACTION: i32 = 4;
 
-pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
+pub(crate) fn install(runtime: &mut Runtime) -> Result<(), String> {
     cb::install(runtime, HELPER, skills_callback)
 }
 
@@ -253,7 +253,7 @@ globalThis.checkSkills = () =>
 
     #[test]
     fn cold_native_bridge_charge_is_a_reusable_per_depth_scope_cache() {
-        crate::platform::bootstrap_test_v8_platform();
+        crate::runtime::platform::bootstrap_test_v8_platform();
         let mut runtime = Runtime::new(RuntimeOptions::default()).unwrap();
         cb::install_ops(&mut runtime).unwrap();
         install(&mut runtime).unwrap();
@@ -331,7 +331,7 @@ globalThis.checkSixScopes = () => __scope_cache_control(true);
 
     #[test]
     fn skills_callbacks_bound_cold_bridge_cache_and_keep_zero_warm_rust_heap() {
-        crate::platform::bootstrap_test_v8_platform();
+        crate::runtime::platform::bootstrap_test_v8_platform();
         let mut runtime = Runtime::new(RuntimeOptions::default()).unwrap();
         cb::install_ops(&mut runtime).unwrap();
         install(&mut runtime).unwrap();

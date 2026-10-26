@@ -4,7 +4,7 @@
 //! access, deposit, afterDeposit, and return walking belong to the native seat.
 
 use crate::machine::{Begin, Call, Cx, Family, NativeBankChild, Reply, Step, Thrown};
-use crate::observed;
+use crate::scene::observed;
 use api::snapshot::WorldTile as Tile;
 use script::bank::compat::{read_destination, read_tile, truthy};
 use script::bank::request::{BankSeatArgs, BankSeatDestination, BankSeatOperation};

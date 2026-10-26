@@ -24,19 +24,19 @@ use rustyscript::deno_core::serde_v8;
 use rustyscript::{json_args, Runtime};
 use serde_json::Value;
 
-pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
+pub(crate) fn install(runtime: &mut Runtime) -> Result<(), String> {
     callback_v8::install(runtime, "__rs2b0t_machine_start", start_callback)?;
     callback_v8::install(runtime, "__rs2b0t_machine_take", take_callback)
 }
 
 /// Step every live machine once, before the tick's other JS. `claimed`
 /// is join's claim on the tick: once it holds, no further callback runs.
-pub(super) fn step(runtime: &mut Runtime, claimed: &dyn Fn() -> bool) {
+pub(crate) fn step(runtime: &mut Runtime, claimed: &dyn Fn() -> bool) {
     machine::step(&mut RuntimeJs { runtime, claimed });
 }
 /// Re-evaluate opted-in machines against a changed snapshot without advancing
 /// the tick or resetting their callback budget.
-pub(super) fn snapshot_step(
+pub(crate) fn snapshot_step(
     runtime: &mut Runtime,
     tick: u64,
     evidence_sequence: u64,
@@ -48,12 +48,12 @@ pub(super) fn snapshot_step(
 /// After the tick's pump, resume rows whose callback promise settled.
 /// Kept separate from [`settle_waits`] because callbacks are not the script
 /// loop continuation and must not inherit its interrupt stage.
-pub(super) fn resume_callbacks(runtime: &mut Runtime, claimed: &dyn Fn() -> bool) {
+pub(crate) fn resume_callbacks(runtime: &mut Runtime, claimed: &dyn Fn() -> bool) {
     machine::resume(&mut RuntimeJs { runtime, claimed });
 }
 
 /// Settle awaits for machine rows that ended during this tick.
-pub(super) fn settle_waits(
+pub(crate) fn settle_waits(
     runtime: &mut Runtime,
     claimed: &dyn Fn() -> bool,
 ) -> Result<(), rustyscript::Error> {

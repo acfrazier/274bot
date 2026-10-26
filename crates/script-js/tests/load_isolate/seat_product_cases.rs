@@ -1,9 +1,9 @@
 use super::*;
 use api::script_contract::{AbortReason, CallbackCancelReason, ChildOrigin};
 use script::api_progress::ProgressPage;
+use script::interact::InteractReq;
 use script::native::request::NativeKind;
 use script::native::seat::{SeatEntry, SeatResult, SeatTerminal};
-use script::shim::InteractReq;
 use script_js::wire::{
     NativeFactsInput, SeatLiveDetails, SeatPageInput, SeatResultValue, SeatStartArgs,
     SeatStartInput, TileInput,

@@ -6,7 +6,7 @@
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
-use script::shim::InteractReq;
+use script::interact::InteractReq;
 use script_js::wire::{ChatLineInput, SceneEntityInput, SnapshotInput, TileInput};
 use script_js::{LoadIsolate, LoadShape};
 

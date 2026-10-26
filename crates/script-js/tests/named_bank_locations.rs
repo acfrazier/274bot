@@ -10,8 +10,8 @@ use api::quest_progress::EvidenceStamp;
 use api::snapshot::WorldTile;
 use nav_planner::named_banks::resolve;
 use script::bank::{AccessKind, BankPickReceipt, BankStandAccess, PickKind, SelectedBank};
+use script::interact::InteractReq;
 use script::native::{HostEffect, InteractionReceipt, WalkEnd, WalkReceipt};
-use script::shim::InteractReq;
 use script_js::wire::{
     NativeFactsInput, QuestStatusInput, ReachViewInput, SnapshotInput, StatInput, TileInput,
 };

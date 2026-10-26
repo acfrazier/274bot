@@ -2,7 +2,7 @@
 //! Not a rustyscript `register_function` JSON op.
 
 use super::callback_v8;
-use crate::supply_v2;
+use crate::scene::supply_v2;
 use rustyscript::Runtime;
 use script::escape_runes::{self, EscapeRunesError, EscapeRunesFact, RuneCost};
 use script::food_policy::{self, FoodHealOutcome, InvItemName};
@@ -10,7 +10,7 @@ use script::keep_list::{self, CombatKeepOptions};
 
 const PENDING: &str = "__pending__";
 
-pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
+pub(crate) fn install(runtime: &mut Runtime) -> Result<(), String> {
     let context = runtime.deno_runtime().main_context();
     let mut scope = runtime.deno_runtime().handle_scope();
     let global = context.open(&mut scope).global(&mut scope);

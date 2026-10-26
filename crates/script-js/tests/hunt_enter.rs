@@ -1,8 +1,8 @@
 //! Offline EnterLair isolate policy tests. No LIVE.
 
-use script::shim::InteractReq;
-use script_js::hunt_fight::{self, Tile};
-use script_js::hunt_lair::{
+use script::interact::InteractReq;
+use script_js::compat::hunt_fight::{self, Tile};
+use script_js::compat::hunt_lair::{
     self, enter_deadline_remaining_ms, enter_force_bound_reached, enter_token_alive, fee_paid_for,
     set_observation, EnterChatLine, EnterInv, EnterLoc, EnterNpc, EnterObservation,
 };

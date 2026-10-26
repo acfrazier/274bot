@@ -2,11 +2,11 @@
 //! native call each: `__rs2b0t_firemaking(op, ...args)`.
 //!
 //! - `localFirePlot(Tile, origin, half)`: the frozen `±half` box around the
-//!   origin (half-width policy in [`crate::fire::local_fire_half`]).
+//!   origin (half-width policy in [`crate::compat::fire::local_fire_half`]).
 //! - `runInDir(from, plot, dir, occupied, walkable, canStep, cap)`: the frozen
 //!   lane walk, calling the caller's `occupied.has`, `walkable(cur)` and
 //!   `canStep(cur, next)` once per visited tile in the frozen order.
-//! - `noLight*`: the `NoLightTiles` set held in Rust ([`crate::fire`]); the JS
+//! - `noLight*`: the `NoLightTiles` set held in Rust ([`crate::compat::fire`]); the JS
 //!   instance passes only its slot.
 //! - The pure parsing, log-level, spot-selection and local-plot helpers are
 //!   native operations over the existing Firemaking/content facts.
@@ -14,11 +14,11 @@
 use super::callback_v8::{
     self as cb, get, not_impl, number, Callback, Flow, ForOf, JsResult, Poll,
 };
-use crate::fire;
+use crate::compat::fire;
 use rustyscript::Runtime;
 use std::collections::HashSet;
 
-pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
+pub(crate) fn install(runtime: &mut Runtime) -> Result<(), String> {
     cb::install(runtime, "__rs2b0t_firemaking", firemaking)
 }
 

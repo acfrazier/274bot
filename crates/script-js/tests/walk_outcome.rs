@@ -1,6 +1,6 @@
 //! Native walk wait: LoadIsolate + FlatBuffer outcome, not arrival-only timeout.
 
-use script::shim::InteractReq;
+use script::interact::InteractReq;
 use script_js::wire::{
     encode_snapshot, encode_snapshot_delta_with_native, encode_snapshot_with_native,
     NativeFactsInput, ReachViewInput, SnapshotInput, TileInput,

@@ -2,7 +2,7 @@
 // onto the posted native count_dialog_open fact and the existing
 // answer-count command. Queue admission is not a completed withdrawal.
 
-use script::shim::InteractReq;
+use script::interact::InteractReq;
 use script_js::wire::{
     decode_interact_batch, encode_interact_batch, ItemRowInput, ReachViewInput, SnapshotInput,
     TileInput,

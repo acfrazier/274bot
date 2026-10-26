@@ -10,7 +10,7 @@ const USER_EVENT_OPS_PER_TICK: u32 = 5;
 const SHOP_STEPS: [i32; 3] = [10, 5, 1];
 const SELL_STACK_STEP: i32 = 10;
 
-pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
+pub(crate) fn install(runtime: &mut Runtime) -> Result<(), String> {
     cb::install(runtime, "__rs2b0t_shop_op_batch", shop_op_batch)
 }
 

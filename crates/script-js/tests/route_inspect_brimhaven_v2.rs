@@ -2,7 +2,7 @@
 //! Proves the fixture begins/settles on published NativeSnapshot fields,
 //! not a retyped facsimile (LIVE failed because `scene_state` is raw-only).
 
-use script::shim::InteractReq;
+use script::interact::InteractReq;
 use script_js::wire::{
     InspectHopInput, NativeFactsInput, ReachViewInput, RouteInspectFactsInput,
     RouteInspectTerminalInput, SnapshotInput, TileInput,

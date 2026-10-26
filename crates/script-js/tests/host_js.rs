@@ -1,5 +1,5 @@
 // Host JS living index.d.ts — our verbs, not rs2b0t names.
-use script_js::host_js::{host_js_path, render_host_js_dts, write_host_js_dts};
+use script_js::tooling::host_js::{host_js_path, render_host_js_dts, write_host_js_dts};
 
 #[test]
 fn host_js_dts_is_fresh() {
@@ -15,8 +15,8 @@ fn host_js_dts_is_fresh() {
 
 #[test]
 fn ground_identity_request_layout_measurement() {
-    let size = std::mem::size_of::<script::shim::InteractReq>();
-    let alignment = std::mem::align_of::<script::shim::InteractReq>();
+    let size = std::mem::size_of::<script::interact::InteractReq>();
+    let alignment = std::mem::align_of::<script::interact::InteractReq>();
     println!("InteractReq layout: size={size} alignment={alignment}");
     assert_eq!(size, 128, "InteractReq must remain 128 bytes");
     assert_eq!(alignment, 8, "InteractReq must remain 8-byte aligned");

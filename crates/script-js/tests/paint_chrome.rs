@@ -1,7 +1,7 @@
 //! G1-chrome: persistent strip/rail/tabs selection, source-derived rowsLeft,
 //! advertised chrome on ScriptPaint, and statGrid recording. No jive module.
 
-use script::shim::PaintChromeBand;
+use script::paint::PaintChromeBand;
 use script_js::wire::{ReachViewInput, SnapshotInput, TileInput};
 use script_js::{LoadIsolate, LoadShape};
 

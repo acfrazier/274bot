@@ -703,7 +703,7 @@ scene_pages! {
         trade_decline_id: i32,
         shop_open: bool,
         walk_outcome: WalkOutcome,
-        bank_selection: crate::wire::BankSelectionInput,
+        bank_selection: script::native::snapshot_source::BankSelectionInput,
         walk_outcome_cancel_reason: crate::wire::WalkCancelReason,
         /// The posted root of side tab 0, or `-1` when a posted side-tab
         /// table has no row for it.

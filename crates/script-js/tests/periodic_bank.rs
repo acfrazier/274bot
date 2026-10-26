@@ -3,8 +3,8 @@ use std::sync::Arc;
 #[path = "common/bank_slot.rs"]
 mod bank_slot;
 use bank_slot::BankSlot;
+use script::interact::InteractReq;
 use script::native::{HostAction, HostEffect};
-use script::shim::InteractReq;
 use script_js::wire::{ItemRowInput, NativeFactsInput, ReachViewInput, SnapshotInput, TileInput};
 use script_js::LoadShape;
 

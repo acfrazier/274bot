@@ -3,7 +3,7 @@
 // Queue admission is not arrival. Traveller (`walk` / `walk-near`) is
 // a different host op.
 
-use script::shim::InteractReq;
+use script::interact::InteractReq;
 use script_js::wire::{ReachViewInput, SnapshotInput, TileInput};
 use script_js::{LoadIsolate, LoadShape};
 

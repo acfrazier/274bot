@@ -84,22 +84,22 @@ fn validate_non_yielding_module_is_bounded() {
         let baseline = live_runtime_count();
         for attempt in 1..=3 {
             let started = Instant::now();
-            let card = super::super::library::PreparedCard {
-                card: super::super::library::JsCard {
+            let card = crate::library::library::PreparedCard {
+                card: crate::library::library::JsCard {
                     name: "runaway".into(),
                     path: "runaway.ts".into(),
                     shape: LoadShape::NativeTick,
                     origin: "while (true) {}".into(),
                     js: "while (true) {}".into(),
-                    kind: crate::rs2b0t_registry::ScriptKind::NativeTick,
-                    source: crate::rs2b0t_registry::ScriptSource::File,
+                    kind: script::card::ScriptKind::NativeTick,
+                    source: script::card::ScriptSource::File,
                     sha256: String::new(),
                     description: String::new(),
                     category: String::new(),
                     tags: Vec::new(),
                     settings_schema: Vec::new(),
                     unloadable: None,
-                    api_family: super::super::ApiFamily::Unversioned,
+                    api_family: crate::library::shape::ApiFamily::Unversioned,
                 },
                 siblings: Vec::new(),
                 fingerprint: String::new(),
@@ -285,7 +285,7 @@ fn reset_rejects_a_tick_queued_with_the_previous_session_generation() {
 
 #[test]
 fn shim_prelude_defines_globals_for_compat_fixture() {
-    crate::platform::bootstrap_test_v8_platform();
+    crate::runtime::platform::bootstrap_test_v8_platform();
     let mut runtime = Runtime::new(RuntimeOptions::default()).unwrap();
     runtime.eval::<()>(crate::shim::PRELUDE).unwrap();
     let t: bool = runtime.eval("typeof defineBot === 'function'").unwrap();
@@ -307,15 +307,15 @@ fn shim_prelude_defines_globals_for_compat_fixture() {
 
 #[test]
 fn enter_root_clears_cped_after_throw_without_changing_default_termination() {
-    crate::platform::bootstrap_test_v8_platform();
+    crate::runtime::platform::bootstrap_test_v8_platform();
     let mut runtime = Runtime::new(RuntimeOptions::default()).unwrap();
-    super::super::lineage_v8::install(&mut runtime, false).unwrap();
+    crate::materialize::lineage_v8::install(&mut runtime, false).unwrap();
     assert!(!runtime
         .deno_runtime()
         .v8_isolate()
         .is_execution_terminating());
 
-    let failed = super::super::lineage_v8::enter_root(&mut runtime, |runtime| {
+    let failed = crate::materialize::lineage_v8::enter_root(&mut runtime, |runtime| {
         {
             let scope = &mut runtime.deno_runtime().handle_scope();
             let poison = rustyscript::deno_core::v8::Object::new(scope);
@@ -329,7 +329,7 @@ fn enter_root_clears_cped_after_throw_without_changing_default_termination() {
         .v8_isolate()
         .is_execution_terminating());
 
-    let undefined = super::super::lineage_v8::enter_root(&mut runtime, |runtime| {
+    let undefined = crate::materialize::lineage_v8::enter_root(&mut runtime, |runtime| {
         let scope = &mut runtime.deno_runtime().handle_scope();
         scope
             .get_continuation_preserved_embedder_data()
@@ -344,7 +344,7 @@ fn enter_root_clears_cped_after_throw_without_changing_default_termination() {
 
 #[test]
 fn prelude_canvas_keyboard_queues_key_rows_and_blocks_mouse_layout() {
-    crate::platform::bootstrap_test_v8_platform();
+    crate::runtime::platform::bootstrap_test_v8_platform();
     let mut runtime = Runtime::new(RuntimeOptions::default()).unwrap();
     runtime.eval::<()>(crate::shim::PRELUDE).unwrap();
     let report: serde_json::Value = runtime
@@ -435,7 +435,7 @@ loop() {
     assert!(
         reqs.iter().any(|req| matches!(
             req,
-            script::shim::InteractReq::Key {
+            script::interact::InteractReq::Key {
                 down: true,
                 key,
                 ..
@@ -446,7 +446,7 @@ loop() {
     assert!(
         reqs.iter().any(|req| matches!(
             req,
-            script::shim::InteractReq::Key {
+            script::interact::InteractReq::Key {
                 down: false,
                 key,
                 ..
@@ -462,7 +462,7 @@ loop() {
     assert!(
         stale
             .iter()
-            .all(|req| !matches!(req, script::shim::InteractReq::Key { .. })),
+            .all(|req| !matches!(req, script::interact::InteractReq::Key { .. })),
         "stale generation must not deliver keys: {stale:?}"
     );
     iso.join();
@@ -492,7 +492,7 @@ loop() {
     assert!(
         reqs.iter().any(|req| matches!(
             req,
-            script::shim::InteractReq::Mouse {
+            script::interact::InteractReq::Mouse {
                 down: true,
                 x,
                 y,
@@ -503,14 +503,16 @@ loop() {
         "{reqs:?}"
     );
     assert!(
-        reqs.iter()
-            .any(|req| matches!(req, script::shim::InteractReq::Mouse { down: false, .. })),
+        reqs.iter().any(|req| matches!(
+            req,
+            script::interact::InteractReq::Mouse { down: false, .. }
+        )),
         "{reqs:?}"
     );
     assert!(
         reqs.iter().any(|req| matches!(
             req,
-            script::shim::InteractReq::Key { down: true, key, .. } if key == "2"
+            script::interact::InteractReq::Key { down: true, key, .. } if key == "2"
         )),
         "{reqs:?}"
     );
@@ -522,7 +524,7 @@ loop() {
     assert!(
         stale
             .iter()
-            .all(|req| !matches!(req, script::shim::InteractReq::Mouse { .. })),
+            .all(|req| !matches!(req, script::interact::InteractReq::Mouse { .. })),
         "stale generation must not deliver mouse: {stale:?}"
     );
     iso.join();
@@ -550,7 +552,7 @@ loop() {
     assert!(
         reqs.iter().any(|req| matches!(
             req,
-            script::shim::InteractReq::Mouse {
+            script::interact::InteractReq::Mouse {
                 down: true,
                 identity: 42,
                 ..
@@ -590,7 +592,7 @@ async loop() {
     assert!(
         first.iter().any(|req| matches!(
             req,
-            script::shim::InteractReq::Mouse {
+            script::interact::InteractReq::Mouse {
                 down: true,
                 identity: 42,
                 ..
@@ -608,7 +610,7 @@ async loop() {
     assert!(
         second.iter().any(|req| matches!(
             req,
-            script::shim::InteractReq::Mouse {
+            script::interact::InteractReq::Mouse {
                 down: false,
                 identity: 42,
                 ..
@@ -646,7 +648,7 @@ async loop() {
     let first = iso.drain_interacts();
     assert!(first.iter().any(|req| matches!(
         req,
-        script::shim::InteractReq::Mouse {
+        script::interact::InteractReq::Mouse {
             down: true,
             identity: 42,
             ..
@@ -661,7 +663,7 @@ async loop() {
     assert!(
         second.iter().any(|req| matches!(
             req,
-            script::shim::InteractReq::Mouse {
+            script::interact::InteractReq::Mouse {
                 down: false,
                 identity: 42,
                 ..
@@ -674,7 +676,7 @@ async loop() {
 
 #[test]
 fn mouse_gesture_identity_overflow_fails_closed() {
-    let mouse = |down| script::shim::InteractReq::Mouse {
+    let mouse = |down| script::interact::InteractReq::Mouse {
         down,
         x: 10.0,
         y: 10.0,
@@ -684,17 +686,19 @@ fn mouse_gesture_identity_overflow_fails_closed() {
     let mut gestures = MouseGestureIdentities::default();
     let mut downs: Vec<_> = (0..=MAX_MOUSE_GESTURES).map(|_| mouse(true)).collect();
     stamp_mouse_gesture_identities(&mut downs, 7, &mut gestures);
-    assert!(downs
-        .iter()
-        .all(|req| matches!(req, script::shim::InteractReq::Mouse { identity: 7, .. })));
+    assert!(downs.iter().all(|req| matches!(
+        req,
+        script::interact::InteractReq::Mouse { identity: 7, .. }
+    )));
     assert!(gestures.pairs.is_empty());
     assert_eq!(gestures.unpairable, 33);
 
     let mut ups: Vec<_> = (0..=MAX_MOUSE_GESTURES).map(|_| mouse(false)).collect();
     stamp_mouse_gesture_identities(&mut ups, 7, &mut gestures);
-    assert!(ups
-        .iter()
-        .all(|req| matches!(req, script::shim::InteractReq::Mouse { identity: 0, .. })));
+    assert!(ups.iter().all(|req| matches!(
+        req,
+        script::interact::InteractReq::Mouse { identity: 0, .. }
+    )));
     assert_eq!(gestures.unpairable, 0);
 }
 
@@ -731,14 +735,14 @@ loop() {
     assert!(
         reqs.iter().any(|req| matches!(
             req,
-            script::shim::InteractReq::Key { down: true, key, .. } if key == "2"
+            script::interact::InteractReq::Key { down: true, key, .. } if key == "2"
         )),
         "sibling key dropped: {reqs:?}"
     );
     assert!(
         reqs.iter().any(|req| matches!(
             req,
-            script::shim::InteractReq::Mouse {
+            script::interact::InteractReq::Mouse {
                 down: true,
                 x,
                 y,
@@ -749,8 +753,10 @@ loop() {
         "valid center down dropped: {reqs:?}"
     );
     assert!(
-        reqs.iter()
-            .any(|req| matches!(req, script::shim::InteractReq::Mouse { down: false, .. })),
+        reqs.iter().any(|req| matches!(
+            req,
+            script::interact::InteractReq::Mouse { down: false, .. }
+        )),
         "valid center up dropped: {reqs:?}"
     );
     iso.join();
@@ -772,8 +778,8 @@ fn xp_input(tick: u64, inv_size: i32, xp: i32) -> Vec<u8> {
     crate::wire::encode_snapshot(&input)
 }
 
-fn xp_event(skill: i32) -> crate::events::NativeEvent {
-    crate::events::NativeEvent::SkillXp {
+fn xp_event(skill: i32) -> crate::scene::events::NativeEvent {
+    crate::scene::events::NativeEvent::SkillXp {
         skill,
         name: format!("skill{skill}"),
         xp: skill,
@@ -855,7 +861,7 @@ export function tick(api) { globalThis.__ticks = (globalThis.__ticks || 0) + 1; 
 /// in order, so the newest are the ones still worth running.
 #[test]
 fn compat_event_queue_is_capped_and_keeps_the_newest_events() {
-    crate::platform::bootstrap_test_v8_platform();
+    crate::runtime::platform::bootstrap_test_v8_platform();
     let mut runtime = Runtime::new(RuntimeOptions::default()).unwrap();
     let first: Vec<_> = (0..300).map(xp_event).collect();
     dispatch_native_events(&mut runtime, &first).unwrap();
@@ -1031,14 +1037,14 @@ export function tick(api) {
     let snapshot = crate::wire::tests::empty_input(1);
     iso.post_snapshot(crate::wire::encode_snapshot_with_native(
         &snapshot,
-        crate::wire::NativeFactsInput::default(),
+        script::native::snapshot_source::NativeFactsInput::default(),
     ));
     machine_tick(&iso, 1);
     let reqs = iso.drain_interacts();
     assert!(
         reqs.iter().any(|req| matches!(
             req,
-            script::shim::InteractReq::Held { name, action, .. }
+            script::interact::InteractReq::Held { name, action, .. }
                 if name == "Bones" && action == "Bury"
         )),
         "unbound native-v2 guarded queue lost Held request: {reqs:?}; logs={:?}; lifecycle={:?}",
@@ -1048,8 +1054,8 @@ export function tick(api) {
     iso.join();
 }
 
-fn if_button(id: i32) -> script::shim::InteractReq {
-    script::shim::InteractReq::IfButton { component_id: id }
+fn if_button(id: i32) -> script::interact::InteractReq {
+    script::interact::InteractReq::IfButton { component_id: id }
 }
 
 fn spawn_machine_card(body: &str) -> LoadIsolate {
@@ -1736,7 +1742,8 @@ fn exercise_bank_sync_prompt(
             .iter()
             .flat_map(|batch| &batch.machine_events)
             .any(|event| {
-                event.id == id && event.kind == crate::machine::MachineEventKind::Failed
+                event.id == id
+                    && event.kind == script::native::seat_rows::SeatMachineEventKind::Failed
             }),
         "{family}/{member} throw must fail the row: {thrown_batches:?}"
     );
@@ -2236,7 +2243,7 @@ fn a_synchronous_kick_does_not_run_unrelated_microtasks() {
 #[test]
 fn v2_journal_read_hides_paint_until_observed_close_and_reset() {
     use crate::wire::{IsolateBuf, MainModalTextsInput, NativeFactsInput, QuestStatusInput};
-    use script::shim::InteractReq;
+    use script::interact::InteractReq;
 
     let iso = LoadIsolate::spawn(
         r#"export const apiVersion = 2;
@@ -2327,7 +2334,7 @@ fn post_execution_seat_page<'a>(
     let snapshot = crate::wire::tests::empty_input(tick);
     let bytes = buffer.encode_snapshot_with_native(
         &snapshot,
-        crate::wire::NativeFactsInput {
+        script::native::snapshot_source::NativeFactsInput {
             api_progress,
             seat_page: Some(page),
             ..Default::default()
@@ -2387,7 +2394,7 @@ fn post_execution_gather_page<'a>(
     let snapshot = crate::wire::tests::empty_input(tick);
     let bytes = buffer.encode_snapshot_with_native(
         &snapshot,
-        crate::wire::NativeFactsInput {
+        script::native::snapshot_source::NativeFactsInput {
             api_gather: gather,
             api_gather_outcome: terminal,
             seat_page: Some(page),
@@ -2400,13 +2407,13 @@ fn post_execution_gather_page<'a>(
 
 #[test]
 fn v2_execution_seat_start_waits_for_live_ack_and_repeats_terminal_watermark() {
-    use crate::machine::MachineEventKind;
     use crate::wire::{SeatInteractDecoded, SeatLiveDetails, SeatStartArgs};
     use api::identity::ExecutionId;
     use api::script_contract::ChildOrigin;
     use api::selected::RunKey;
     use script::api_progress::ProgressPage;
     use script::native::request::NativeKind;
+    use script::native::seat_rows::SeatMachineEventKind;
     use script::native::{seat::SeatTerminal, NativePhase};
 
     fn assert_root_loop_settled(rows: &[SeatInteractDecoded]) {
@@ -2416,7 +2423,7 @@ fn v2_execution_seat_start_waits_for_live_ack_and_repeats_terminal_watermark() {
                 [SeatInteractDecoded {
                     lineage: None,
                     mirror_owner: None,
-                    request: script::shim::InteractReq::LoopSettled,
+                    request: script::interact::InteractReq::LoopSettled,
                 }]
             ),
             "a synchronous v2 tick reports one root loop settlement: {rows:?}"
@@ -2483,12 +2490,12 @@ export function tick(api) {
                 SeatInteractDecoded {
                     lineage: None,
                     mirror_owner: None,
-                    request: script::shim::InteractReq::LoopSettled,
+                    request: script::interact::InteractReq::LoopSettled,
                 },
                 SeatInteractDecoded {
                     lineage: None,
                     mirror_owner: None,
-                    request: script::shim::InteractReq::WaitEnqueued,
+                    request: script::interact::InteractReq::WaitEnqueued,
                 }
             ]
         ),
@@ -2573,7 +2580,7 @@ export function tick(api) {
             batch
                 .machine_events
                 .iter()
-                .any(|event| event.id == id && event.kind == MachineEventKind::Done)
+                .any(|event| event.id == id && event.kind == SeatMachineEventKind::Done)
         }),
         "local terminal is published against the admitted native owner"
     );
@@ -2791,10 +2798,10 @@ export function tick(api) {
 
 #[test]
 fn execution_owned_v8_caps_rows_and_reserves_controls() {
-    use crate::wire::MAX_SEAT_GAMEPLAY_ROWS;
+    use script::native::seat_rows::MAX_SEAT_GAMEPLAY_ROWS;
     use api::identity::ExecutionId;
     use api::selected::RunKey;
-    use script::shim::InteractReq;
+    use script::interact::InteractReq;
 
     let source = r#"
 import { Execution } from '../../api/execution/Execution.js';
@@ -2879,7 +2886,7 @@ export function tick() {
 fn execution_owned_reset_restates_parked_waits_on_the_seat_lane() {
     use api::identity::ExecutionId;
     use api::selected::RunKey;
-    use script::shim::InteractReq;
+    use script::interact::InteractReq;
 
     let source = r#"
 import { Execution } from '../../api/execution/Execution.js';
@@ -2954,7 +2961,7 @@ export function tick() {
 fn execution_owned_recovery_anchor_bypasses_seat_on_host_lane() {
     use api::identity::ExecutionId;
     use api::selected::RunKey;
-    use script::shim::InteractReq;
+    use script::interact::InteractReq;
 
     let execution = ExecutionId::first(RunKey {
         slot: 16,
@@ -3002,7 +3009,7 @@ fn execution_owned_inspect_ack_uses_the_seat_lane() {
     };
     use api::identity::ExecutionId;
     use api::selected::RunKey;
-    use script::shim::InteractReq;
+    use script::interact::InteractReq;
 
     let execution = ExecutionId::first(RunKey {
         slot: 17,
@@ -3053,9 +3060,9 @@ fn execution_owned_inspect_ack_uses_the_seat_lane() {
 /// frames. `body` is what each frame records after its title and status
 /// row.
 fn paint_runtime(body: &str) -> Runtime {
-    crate::platform::bootstrap_test_v8_platform();
+    crate::runtime::platform::bootstrap_test_v8_platform();
     let mut runtime = Runtime::new(RuntimeOptions::default()).unwrap();
-    super::super::lineage_v8::install(&mut runtime, false).unwrap();
+    crate::materialize::lineage_v8::install(&mut runtime, false).unwrap();
     let source = format!(
         r#"
 import {{ Paint }} from '../../paint/Paint.js';
@@ -3072,7 +3079,7 @@ globalThis.__frames = (n) => {{
 export function tick() {{}}
 "#
     );
-    super::super::lineage_v8::enter_root(&mut runtime, |runtime| {
+    crate::materialize::lineage_v8::enter_root(&mut runtime, |runtime| {
         wire_runtime(
             runtime,
             &source,

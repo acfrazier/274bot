@@ -1,7 +1,7 @@
 //! Typed local V8 marshalling for gather query helpers.
 //! Not a rustyscript `register_function` JSON op and not a prayer machine.
 
-use crate::supply_v2;
+use crate::scene::supply_v2;
 use rustyscript::Runtime;
 use serde_json::Value;
 
@@ -10,7 +10,7 @@ const PENDING: &str = "__pending__";
 /// The same numeric gate as the scene helpers' `sceneLimitOk`.
 const SCENE_LIMIT_MAX: i32 = 64;
 
-pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
+pub(crate) fn install(runtime: &mut Runtime) -> Result<(), String> {
     let context = runtime.deno_runtime().main_context();
     let mut scope = runtime.deno_runtime().handle_scope();
     let global = context.open(&mut scope).global(&mut scope);

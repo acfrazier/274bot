@@ -1,4 +1,4 @@
-// Dragon sites: a name map over the host's site table (`crate::hunt_catalog`),
+// Dragon sites: a name map over the host's site table (`crate::compat::hunt_catalog`),
 // shaped into the frozen `DragonSite` rows (Tile instances, RegExp lines,
 // an `inArea` over the table's boxes).
 import Tile from '../../../geometry/Tile.js';

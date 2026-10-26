@@ -5,7 +5,7 @@ use api::quest_progress::EvidenceStamp;
 use api::selected::{Knowledge, RunKey, Truth};
 use api::snapshot::QuestListStatus;
 use script::api_progress::{ProgressPage, QuestProgressRow};
-use script::shim::InteractReq;
+use script::interact::InteractReq;
 use script_js::wire::{encode_snapshot_delta_with_native, NativeFactsInput, SnapshotInput};
 use script_js::{LoadIsolate, LoadShape};
 

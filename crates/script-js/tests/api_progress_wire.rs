@@ -4,7 +4,7 @@ use api::quest_progress::{EvidenceStamp, ProgressFlag};
 use api::selected::{FactKey, Gap, Knowledge, RunKey, Truth};
 use api::snapshot::QuestListStatus;
 use script::api_progress::{ProgressPage, QuestPathRow, QuestProgressRow};
-use script_js::observed;
+use script_js::scene::observed;
 use script_js::wire::{
     encode_snapshot_delta_with_native, NativeFactsInput, Snapshot, SnapshotFingerprint,
 };

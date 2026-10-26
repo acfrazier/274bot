@@ -6,8 +6,8 @@
 //! and the window read the isolate scene. A queued close is not accepted.
 
 use crate::machine::{Begin, Cx, Family, Step};
-use crate::observed::{self, Scene};
-use script::shim::InteractReq;
+use crate::scene::observed::{self, Scene};
+use script::interact::InteractReq;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -127,7 +127,7 @@ mod tests {
 
         fn call(
             &mut self,
-            _hook: Option<&crate::callback_v8::HeldCallback>,
+            _hook: Option<&crate::materialize::callback_v8::HeldCallback>,
             _args: &[Value],
         ) -> Called {
             panic!("the modals family calls no script callback");

@@ -1,5 +1,5 @@
 // Declared JS catalog ABI (rs2b0t-api index.d.ts names). Not the Rust host ABI.
-use script_js::declared_abi::{
+use script_js::tooling::declared_abi::{
     declared_surface_path, fixture_path, load_fixture, parse_index_dts, render_declared_surface,
     write_declared_surface, write_fixture, DeclaredKind,
 };
@@ -224,7 +224,7 @@ fn regen_js_declared_abi() {
         "wrote {} exports to {} and {}",
         exports.len(),
         fixture_path().display(),
-        script_js::declared_abi::declared_surface_path().display()
+        script_js::tooling::declared_abi::declared_surface_path().display()
     );
 }
 

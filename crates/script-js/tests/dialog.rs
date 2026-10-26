@@ -2,7 +2,7 @@
 // import marshals into Rust-owned sequencing; queued npc/continue/answer
 // verbs are the existing FlatBuffer actions, not a completed dialogue.
 
-use script::shim::InteractReq;
+use script::interact::InteractReq;
 use script_js::wire::{
     encode_snapshot, encode_snapshot_with_native, ChatOptionInput, NativeFactsInput,
     ReachViewInput, SceneEntityInput, SnapshotInput, TileInput,

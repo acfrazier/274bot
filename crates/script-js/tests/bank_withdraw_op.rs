@@ -61,8 +61,8 @@ mod native_bank_seat {
 
     use api::named_banks::NamedBankFacts;
     use api::quest_progress::EvidenceStamp;
+    use script::interact::InteractReq;
     use script::native::{HostEffect, InteractionReceipt};
-    use script::shim::InteractReq;
     use script_js::wire::{ItemRowInput, NativeFactsInput};
     use script_js::LoadShape;
     use serde_json::{json, Value};

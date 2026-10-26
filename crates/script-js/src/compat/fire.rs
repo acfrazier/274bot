@@ -10,10 +10,10 @@
 //! caller's own `runInDir` callbacks.
 
 use crate::machine::{Begin, Cx, Family, Step};
-use crate::observed::{self, ItemRow, Scene, Text};
+use crate::scene::observed::{self, ItemRow, Scene, Text};
 use api::query::ReachQueryView;
 use api::snapshot::WorldTile;
-use script::shim::InteractReq;
+use script::interact::InteractReq;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::cell::RefCell;

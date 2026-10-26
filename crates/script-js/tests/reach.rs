@@ -1,7 +1,7 @@
 //! Reach.npcDialog: shim marshals into the Rust sequencer; queued verbs are
 //! the existing FlatBuffer walk-near / npc actions.
 
-use script::shim::InteractReq;
+use script::interact::InteractReq;
 use script_js::wire::{
     encode_snapshot, encode_snapshot_with_native, ChatLineInput, NativeFactsInput, ReachViewInput,
     SceneEntityInput, SnapshotInput, TileInput,

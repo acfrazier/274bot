@@ -3,7 +3,7 @@
 //!
 //! One token per isolate over the landed held-step identify. Each Rust-family
 //! pass fills its facts from the latest posted isolate scene
-//! ([`crate::observed`]); Sherlock and unit tests may still supply facts
+//! ([`crate::scene::observed`]); Sherlock and unit tests may still supply facts
 //! directly. Verbs are [`verb_req`]. The v1 adapter's `execute` awaits the
 //! `clue` family; `validate` is the enabled gate plus one begin. This machine
 //! owns
@@ -327,10 +327,10 @@ use scene::*;
 use talk::*;
 pub use verbs::verb_req;
 
-use crate::clue::ARRIVE_RADIUS;
+use crate::compat::clue::ARRIVE_RADIUS;
 use crate::machine::{Begin, Call, Cx, Family, Reply, Step};
-use crate::observed;
-use crate::task_clock::InstantTaskClock;
+use crate::scene::observed;
+use crate::scene::task_clock::InstantTaskClock;
 use api::clue_logic::{identify_step, NONE_HELD};
 use api::clue_pack::SHARK_ID;
 use api::clue_puzzle::{self, Board, PuzzleRow};
@@ -339,7 +339,7 @@ use api::game_data::{
     TrioGiverRow,
 };
 use script::food_policy::food_forms_for;
-use script::shim::InteractReq;
+use script::interact::InteractReq;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::borrow::Cow;
@@ -347,7 +347,7 @@ use std::cell::RefCell;
 use std::time::{Duration, Instant};
 
 /// The packed constrained clue whose trail crosses the Duel Arena.
-const DUEL_CLUE_ID: i32 = crate::duel::CLUE_ID;
+const DUEL_CLUE_ID: i32 = crate::compat::duel::CLUE_ID;
 /// No selected pin. The same public token the landed V8 held-step wrapper
 /// publishes: the machine refuses with it rather than calling a page empty.
 const MISSING_SELECTED_DATA: &str = "missing-selected-data";
@@ -919,7 +919,7 @@ impl ClueRuntime {
         let Some(death) = self.death.as_mut() else {
             return false;
         };
-        crate::observed::with(|scene| {
+        crate::scene::observed::with(|scene| {
             let Some(lines) = scene.since_login().chat_lines() else {
                 return false;
             };
@@ -930,7 +930,7 @@ impl ClueRuntime {
     /// A posted zero-effective-hitpoints stat freezes clue work but is not
     /// itself evidence of death. Missing stats are not zero.
     fn observed_hitpoints_zero() -> bool {
-        crate::observed::with(|scene| {
+        crate::scene::observed::with(|scene| {
             scene
                 .since_login()
                 .stats()
@@ -1563,7 +1563,7 @@ impl ClueRuntime {
         if row.id == DUEL_CLUE_ID
             && input.get("duel_crossed").and_then(Value::as_bool) != Some(true)
         {
-            let tile = crate::duel::CLUE_TILE;
+            let tile = crate::compat::duel::CLUE_TILE;
             return json!({
                 "kind": "duel-travel",
                 "x": tile.x,
@@ -1591,7 +1591,7 @@ impl ClueRuntime {
             return self.guarded(row, tile, input, selected);
         }
         if row.id == DUEL_CLUE_ID {
-            let tile = crate::duel::CLUE_TILE;
+            let tile = crate::compat::duel::CLUE_TILE;
             return self.dig(
                 Tile {
                     x: tile.x,

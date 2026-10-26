@@ -3,7 +3,7 @@
 // and the host re-resolves the exact posted control. A queued click is not
 // a completed make.
 
-use script::shim::InteractReq;
+use script::interact::InteractReq;
 use script_js::wire::{
     encode_snapshot_with_native, ChatOptionInput, ItemRowInput, MakeButtonInput, MakeProductInput,
     NativeFactsInput, ReachViewInput, SnapshotInput, TileInput,

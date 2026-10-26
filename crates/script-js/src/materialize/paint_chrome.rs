@@ -80,11 +80,11 @@ impl ChromeState {
     }
 }
 
-pub(super) fn reset() {
+pub(crate) fn reset() {
     STATE.with(|s| s.borrow_mut().reset_store());
 }
 
-pub(super) fn store_select(key: &str, name: &str) {
+pub(crate) fn store_select(key: &str, name: &str) {
     if key.is_empty() || name.is_empty() {
         return;
     }
@@ -112,7 +112,7 @@ pub(super) fn rail_select(id: &str, names: &[String]) -> String {
     STATE.with(|s| s.borrow().resolve_rail(&format!("rail:{id}"), names))
 }
 
-pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
+pub(crate) fn install(runtime: &mut Runtime) -> Result<(), String> {
     let context = runtime.deno_runtime().main_context();
     let mut scope = runtime.deno_runtime().handle_scope();
     let global = context.open(&mut scope).global(&mut scope);

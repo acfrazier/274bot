@@ -1,4 +1,4 @@
-// Loot guard: a name map onto the Rust gap rule (`crate::hunt_catalog`).
+// Loot guard: a name map onto the Rust gap rule (`crate::compat::hunt_catalog`).
 export const LOOT_GUARD = 4;
 
 export function guarded(drop, bodies, radius = LOOT_GUARD) {

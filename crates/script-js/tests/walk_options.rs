@@ -3,7 +3,7 @@
 //! `WalkExecutor.ts:230`) and walkTo's `WalkOptions`
 //! (`WalkExecutor.ts:113–139, 165–177, 226–245`).
 
-use script::shim::InteractReq;
+use script::interact::InteractReq;
 use script_js::wire::TileInput;
 use script_js::{LoadIsolate, LoadShape};
 
@@ -327,7 +327,7 @@ fn walk_to_avoid_zone_rectangles_ride_the_walk_request() {
     match world_walks(&ops).as_slice() {
         [InteractReq::Walk { avoid, .. }] => assert_eq!(
             avoid,
-            &vec![script::shim::InspectAvoidWire::Rect {
+            &vec![script::interact::InspectAvoidWire::Rect {
                 min_x: 2848,
                 max_x: 2880,
                 min_z: 3590,

@@ -7,7 +7,7 @@
 //! `if-button` / `close-modal` for a successful run.
 use std::time::Duration;
 
-use script::shim::InteractReq;
+use script::interact::InteractReq;
 use script_js::wire::{
     IsolateBuf, MainModalTextsInput, NativeFactsInput, QuestStatusInput, ReachViewInput,
     SnapshotFingerprint, SnapshotInput,

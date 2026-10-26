@@ -7,10 +7,10 @@ use api::identity::RequestId;
 use api::script_contract::ChildOrigin;
 
 use script::bank::request::BankSeatOperation;
+use script::interact::InteractReq;
 use script::native::request::NativeKind;
 use script::native::seat::SeatEntry;
 use script::native::NativePhase;
-use script::shim::InteractReq;
 use script_js::wire::{
     BankApproachInput, BankStandInput, ItemRowInput, NativeFactsInput, ReachViewInput,
     SeatLiveDetails, SeatPageInput, SeatStartArgs, SnapshotInput, StatInput, TileInput,

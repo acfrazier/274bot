@@ -1,6 +1,6 @@
 //! Served T2 inventory-family behavior through real LoadIsolate V8 instances.
 
-use script::shim::InteractReq;
+use script::interact::InteractReq;
 use serde_json::{json, Value};
 use {
     script_js::wire::encode_snapshot_with_native, script_js::wire::ItemRowInput,

@@ -3,7 +3,7 @@
 //! until arrived or timeout; a one-shot WalkNear returns and EnterCourse
 //! no longer validates (`southOfRidge` is false in the pit).
 
-use script::shim::InteractReq;
+use script::interact::InteractReq;
 use script_js::wire::{
     encode_snapshot, encode_snapshot_with_native, ChatLineInput, NativeFactsInput, ReachViewInput,
     SceneEntityInput, SnapshotInput, TileInput,

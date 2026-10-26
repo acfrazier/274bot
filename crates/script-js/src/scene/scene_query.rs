@@ -1,10 +1,10 @@
 //! v2 scene projections and quest-tab status over the isolate scene.
 //!
 //! `api.sceneLocs` / `sceneNpcs` / `questStatus` are typed local helpers:
-//! they read [`crate::observed`] and return the posted copy. They never
+//! they read [`crate::scene::observed`] and return the posted copy. They never
 //! enqueue a game op.
 
-use crate::observed::{self, EntityRow, PlayerRow, QuestStatusRow, QuestTab, SceneRow};
+use crate::scene::observed::{self, EntityRow, PlayerRow, QuestStatusRow, QuestTab, SceneRow};
 use api::line_of_sight::CollisionQuery;
 use std::rc::Rc;
 
@@ -440,7 +440,7 @@ fn copy_place(
     x: i32,
     z: i32,
     level: i32,
-    actions: &[crate::observed::Text],
+    actions: &[crate::scene::observed::Text],
 ) -> SceneRowOut {
     SceneRowOut {
         id,
@@ -454,7 +454,7 @@ fn copy_place(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::observed::{self, EntityRow, QuestStatusRow, QuestTab, SceneRow};
+    use crate::scene::observed::{self, EntityRow, QuestStatusRow, QuestTab, SceneRow};
     use api::line_of_sight::CollisionQuery;
     use std::sync::Arc;
 

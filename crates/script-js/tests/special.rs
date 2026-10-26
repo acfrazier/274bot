@@ -1,4 +1,4 @@
-use script::shim::InteractReq;
+use script::interact::InteractReq;
 use script_js::wire::{
     ItemRowInput, ReachViewInput, SideTabIfaceInput, SnapshotInput, TileInput, VarpInput,
 };

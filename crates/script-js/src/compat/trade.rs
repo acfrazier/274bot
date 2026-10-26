@@ -11,8 +11,8 @@
 //! decline pieces.
 
 use crate::machine::{Begin, Call, Cx, Family, Reply, Step};
-use crate::observed::{self, ItemRow, Ops, Scene, Text};
-use script::shim::InteractReq;
+use crate::scene::observed::{self, ItemRow, Ops, Scene, Text};
+use script::interact::InteractReq;
 use serde::Deserialize;
 use serde_json::{json, Value};
 

@@ -4,11 +4,11 @@
 //! machine families and synthetic posts only.
 
 use super::{grove_anchor, recovery_facts, BoatFacts};
+use crate::compat::walk::tests::{post_walk_outcome, reset, NoJs};
 use crate::machine::{self, Outcome, Started, Take};
-use crate::observed::{self, CarryRow, ChatLine, EntityRow, ItemRow, SceneRow};
-use crate::walk::tests::{post_walk_outcome, reset, NoJs};
+use crate::scene::observed::{self, CarryRow, ChatLine, EntityRow, ItemRow, SceneRow};
 use api::snapshot::WorldTile;
-use script::shim::InteractReq;
+use script::interact::InteractReq;
 use serde_json::json;
 use std::collections::VecDeque;
 use std::rc::Rc;
@@ -57,7 +57,7 @@ fn recovery_skips_fact_selection_off_island_and_logs_selected_fact_errors() {
     reset();
     let mut world = World::new(mainland, 5);
     world.post();
-    crate::supply_v2::configure(None);
+    crate::scene::supply_v2::configure(None);
     let mut logs = VecDeque::new();
     assert!(recovery_facts(PORT_SARIM, &mut logs).unwrap().is_none());
     assert!(
@@ -68,7 +68,7 @@ fn recovery_skips_fact_selection_off_island_and_logs_selected_fact_errors() {
     reset();
     let mut world = World::new(MUSA, 5);
     world.post();
-    crate::supply_v2::configure(None);
+    crate::scene::supply_v2::configure(None);
     assert!(recovery_facts(PORT_SARIM, &mut logs).is_err());
     assert_eq!(logs.len(), 1);
     assert!(
@@ -80,7 +80,7 @@ fn recovery_skips_fact_selection_off_island_and_logs_selected_fact_errors() {
 fn selected_facts() -> Rc<BoatFacts> {
     let data = api::game_data::for_revision(client::io::ClientRevision::R289)
         .expect("selected Karamja game data");
-    crate::supply_v2::configure(Some(data));
+    crate::scene::supply_v2::configure(Some(data));
     BoatFacts::selected().expect("selected Karamja facts")
 }
 

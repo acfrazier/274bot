@@ -8,8 +8,8 @@
 //!   `keyState`, `feePrepaid`). Bounded calculations over the caller's
 //!   arguments and the isolate scene; nothing here sends an action.
 
-use crate::hunt_fight::Tile;
-use crate::observed;
+use crate::compat::hunt_fight::Tile;
+use crate::scene::observed;
 use script::combat::policy;
 use serde_json::{json, Value};
 
@@ -231,7 +231,7 @@ fn num(v: Option<&Value>) -> f64 {
 }
 
 fn flag(v: Option<&Value>) -> bool {
-    crate::hunt::truthy(v.unwrap_or(&Value::Null))
+    crate::compat::hunt::truthy(v.unwrap_or(&Value::Null))
 }
 
 fn field<'a>(v: Option<&'a Value>, key: &str) -> Option<&'a Value> {
@@ -293,7 +293,7 @@ fn attack_range(style: &str) -> Value {
 /// `CLUE_DB[id] !== undefined || CASKET_IDS[id] !== undefined`: the
 /// selected trail facts are this revision's clue scrolls and caskets.
 fn is_clue_obj(id: i32) -> bool {
-    crate::supply_v2::selected_data()
+    crate::scene::supply_v2::selected_data()
         .and_then(|data| {
             data.trails().map(|facts| {
                 facts.rows.iter().any(|row| row.id == id)
@@ -514,7 +514,7 @@ pub(crate) fn call(name: &str, args: &[Value]) -> Result<Value, String> {
                 listed
                     || (flag(field(f, "bankCommon"))
                         && api::content::matches_common_bank_loot(
-                            crate::supply_v2::random_event_casket_id(),
+                            crate::scene::supply_v2::random_event_casket_id(),
                             name,
                             id,
                         ))
@@ -532,7 +532,7 @@ pub(crate) fn call(name: &str, args: &[Value]) -> Result<Value, String> {
         "escapeRunesFor" => {
             let id = text(0);
             match script::escape_runes::escape_runes_for_optional(
-                crate::supply_v2::selected_data().as_deref(),
+                crate::scene::supply_v2::selected_data().as_deref(),
                 &id,
             ) {
                 Ok(fact) => json!({

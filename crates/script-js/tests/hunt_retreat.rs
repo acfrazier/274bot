@@ -1,7 +1,7 @@
 //! Offline Retreat isolate policy tests. No LIVE.
 
-use script::shim::InteractReq;
-use script_js::hunt_fight::{
+use script::interact::InteractReq;
+use script_js::compat::hunt_fight::{
     self, hold_token_alive, last_hp, retreat_deadline_remaining_ms, retreat_force_bound_reached,
     retreat_token_alive, seen_contains, skip_contains, token_alive, FightNpc, FightObservation,
     Tile, RETREAT_HOP_MS, RETREAT_RETRY_MS,

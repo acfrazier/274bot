@@ -1,4 +1,4 @@
-use script::shim::InteractReq;
+use script::interact::InteractReq;
 use {
     script_js::wire::encode_snapshot, script_js::wire::ReachViewInput,
     script_js::wire::SceneEntityInput, script_js::wire::SnapshotInput, script_js::wire::TileInput,

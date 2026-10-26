@@ -48,7 +48,7 @@ struct LevelRow {
     cells: [String; 3],
 }
 
-pub(super) fn reset() {
+pub(crate) fn reset() {
     STATE.with(|s| {
         let mut st = s.borrow_mut();
         st.baselines.clear();
@@ -56,7 +56,7 @@ pub(super) fn reset() {
     });
 }
 
-pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
+pub(crate) fn install(runtime: &mut Runtime) -> Result<(), String> {
     let context = runtime.deno_runtime().main_context();
     let mut scope = runtime.deno_runtime().handle_scope();
     let global = context.open(&mut scope).global(&mut scope);

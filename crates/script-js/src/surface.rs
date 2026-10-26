@@ -1,7 +1,7 @@
 //! JavaScript cards and the run that carries their isolate and wire state.
 
-use super::isolate::{GameplayFactory, LoadIsolate, Ready};
-use super::{ApiFamily, LoadShape};
+use crate::library::shape::{ApiFamily, LoadShape};
+use crate::runtime::isolate::{GameplayFactory, LoadIsolate, Ready};
 use crate::wire::{IsolateBuf, SnapshotFingerprint};
 use api::identity::ExecutionId;
 use script::interact::{InteractReq, QueuedInteract};

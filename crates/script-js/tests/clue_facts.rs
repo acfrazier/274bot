@@ -2,7 +2,7 @@
 //! clue machine's live host path over posted snapshots.
 use api::clue_facts::CluePin;
 use client::io::ClientRevision;
-use script::shim::InteractReq;
+use script::interact::InteractReq;
 use script_js::{LoadIsolate, LoadShape};
 
 fn facts(revision: ClientRevision) -> api::game_data::TrailFacts {

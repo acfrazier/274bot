@@ -1,5 +1,5 @@
 // Hunting rules: a name map, one Rust helper call each
-// (`crate::hunt_catalog`), plus the declared constants.
+// (`crate::compat::hunt_catalog`), plus the declared constants.
 import Tile from '../../../geometry/Tile.js';
 
 const logic = (name, ...args) => globalThis.__rs2b0t_hunt_logic(name, ...args);

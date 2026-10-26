@@ -10,11 +10,11 @@ mod plan;
 pub(crate) use plan::BankProj;
 use plan::*;
 
-use crate::hunt::{hook, names, number, text, Host, Kind as HuntKind};
-use crate::hunt_fight::{Area, SiteBox, Tile};
+use crate::compat::hunt::{hook, names, number, text, Host, Kind as HuntKind};
+use crate::compat::hunt_fight::{Area, SiteBox, Tile};
 use crate::machine::Ended;
-use crate::observed::{self, ItemRow, Scene, Skill, Skills};
-use crate::task_clock::InstantTaskClock;
+use crate::scene::observed::{self, ItemRow, Scene, Skill, Skills};
+use crate::scene::task_clock::InstantTaskClock;
 use serde_json::{json, Value};
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -644,7 +644,7 @@ fn with_bank<T>(token: u64, f: impl FnOnce(&mut BankRuntime) -> T) -> Option<T> 
 }
 
 fn walk_wait_settled(token: u64) -> bool {
-    crate::walk_wait::dispatch(&json!({ "op": "settled", "token": token }))
+    crate::scene::walk_wait::dispatch(&json!({ "op": "settled", "token": token }))
         .as_bool()
         .unwrap_or(false)
 }
@@ -1449,7 +1449,7 @@ fn escape_runes(rt: &mut BankRuntime, proj: &BankProj) -> Option<Value> {
                 .iter()
                 .map(|r| (r.rune.clone(), r.count))
                 .collect();
-            if let Some(why) = crate::hunt::escape_shortfall(esc.level, &per_cast) {
+            if let Some(why) = crate::compat::hunt::escape_shortfall(esc.level, &per_cast) {
                 rt.log(format!(
                     "WARNING: the {} cannot be cast ({why}). The next trip walks out through the gate.",
                     esc.label
@@ -2274,14 +2274,14 @@ mod tests {
     fn post_motion_outcome(tick: u64, request_id: u64, motion: u8) {
         let bytes = motion_outcome_snapshot(tick, request_id, motion);
         let snapshot = Snapshot::from_bytes(&bytes).expect("motion outcome snapshot");
-        crate::observed::apply(&snapshot);
-        crate::walk_wait::on_snapshot(&snapshot);
+        crate::scene::observed::apply(&snapshot);
+        crate::scene::walk_wait::on_snapshot(&snapshot);
     }
 
     #[test]
     fn compat_hunt_bank_waits_for_route_motion_then_retries_when_stationary() {
-        crate::observed::on_reset();
-        crate::walk_wait::on_reset();
+        crate::scene::observed::on_reset();
+        crate::scene::walk_wait::on_reset();
         BankObservation::empty().post();
 
         let target = Tile {
@@ -2289,7 +2289,7 @@ mod tests {
             z: 3557,
             level: 0,
         };
-        let request_id = crate::walk_wait::dispatch(&json!({
+        let request_id = crate::scene::walk_wait::dispatch(&json!({
             "op": "begin",
             "x": target.x,
             "z": target.z,
@@ -2334,7 +2334,7 @@ mod tests {
     /// Withdraw-10; no need still emits one Withdraw-1.
     #[test]
     fn named_withdraw_emits_the_frozen_chunk_shapes() {
-        crate::observed::on_reset();
+        crate::scene::observed::on_reset();
         BankObservation::empty().post();
         let ladder = hunt_row(&["Withdraw-1", "Withdraw-5", "Withdraw-10", "Withdraw-X"]);
 
@@ -2421,7 +2421,7 @@ mod tests {
     /// the selected row's id — never a count, never an action.
     #[test]
     fn deposit_emits_the_name_and_selected_id_only() {
-        crate::observed::on_reset();
+        crate::scene::observed::on_reset();
         BankObservation::empty().post();
         let mut rt = BankRuntime::new(9);
         let step = emit_deposit(&mut rt, "Bones", 526, OpKind::Deposit);

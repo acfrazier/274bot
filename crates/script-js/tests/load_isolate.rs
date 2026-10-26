@@ -522,7 +522,7 @@ fn tick_bank_slot(
     );
 }
 
-fn bank_interaction(action: &script::native::HostAction) -> &script::shim::InteractReq {
+fn bank_interaction(action: &script::native::HostAction) -> &script::interact::InteractReq {
     let script::native::HostEffect::Interaction(request) = &action.effect else {
         panic!("expected a native bank interaction");
     };
@@ -2336,13 +2336,13 @@ fn malformed_interact_rows_are_logged_not_dropped_silently() {
     assert!(
         matches!(
             iso.drain_interacts().as_slice(),
-            [script::shim::InteractReq::Mouse { down: true, .. }]
+            [script::interact::InteractReq::Mouse { down: true, .. }]
         ),
         "the valid sibling is forwarded"
     );
     assert_eq!(
         iso.drain_lifecycle(),
-        vec![script::shim::InteractReq::WaitEnqueued],
+        vec![script::interact::InteractReq::WaitEnqueued],
         "the wait facts survive"
     );
     let logs = iso.drain_logs();
@@ -2648,7 +2648,7 @@ export default class T extends LoopingBot {
         base: 50,
         effective: 50,
     };
-    let button = |id| script::shim::InteractReq::IfButton { component_id: id };
+    let button = |id| script::interact::InteractReq::IfButton { component_id: id };
     let start_stats = [magic(1000)];
     let mut snap = base_snapshot();
     snap.here = Some(script_js::wire::TileInput {
@@ -2729,7 +2729,7 @@ export default class T extends LoopingBot {
     let value = iso
         .probe("__rs2b0t_host.paint")
         .expect("paint record readable");
-    let paint: script::shim::ScriptPaint =
+    let paint: script::paint::ScriptPaint =
         serde_json::from_value(value).expect("decodes as ScriptPaint");
     assert_eq!(paint.title.as_deref(), Some("BoneBurier — digging"));
     assert_eq!(paint.accent.as_deref(), Some("#f3e6a2"));
@@ -2854,10 +2854,10 @@ export default class T extends LoopingBot {
     // An empty frame (the host stamps its own generation on receipt).
     let blank = |iso: &LoadIsolate| {
         iso.paint().is_some_and(|p| {
-            script::shim::ScriptPaint {
+            script::paint::ScriptPaint {
                 generation: 0,
                 ..(*p).clone()
-            } == script::shim::ScriptPaint::default()
+            } == script::paint::ScriptPaint::default()
         })
     };
 
@@ -3205,7 +3205,7 @@ export default class T extends LoopingBot {
     assert_eq!(actions.len(), 1);
     assert!(matches!(
         bank_interaction(&actions[0]),
-        script::shim::InteractReq::OpenBooth { id: 2213, .. }
+        script::interact::InteractReq::OpenBooth { id: 2213, .. }
     ));
     accept_bank_interaction(&mut slot, &actions[0], 1, true);
     assert_eq!(
@@ -3821,7 +3821,7 @@ export default class T extends LoopingBot {
     let _ = iso.probe("true");
     assert_eq!(
         iso.drain_lifecycle(),
-        vec![script::shim::InteractReq::LoopSettled],
+        vec![script::interact::InteractReq::LoopSettled],
         "fulfilled loop under hold is scheduler progress"
     );
     assert!(
@@ -4490,7 +4490,7 @@ export default class T extends LoopingBot {
     let reqs = iso.drain_interacts();
     assert_eq!(
         reqs,
-        vec![script::shim::InteractReq::Held {
+        vec![script::interact::InteractReq::Held {
             name: "Bones".into(),
             action: "Bury".into(),
             slot: None,
@@ -4672,20 +4672,22 @@ export default class T extends LoopingBot {
     let reqs = iso.drain_interacts();
     assert_eq!(
         reqs.iter()
-            .filter(|r| matches!(r, script::shim::InteractReq::IfButton { .. }))
+            .filter(|r| matches!(r, script::interact::InteractReq::IfButton { .. }))
             .count(),
         1,
         "makeX must not invent comId+1: {reqs:?}"
     );
     assert!(
-        reqs.iter()
-            .any(|r| matches!(r, script::shim::InteractReq::IfButton { component_id: 42 })),
+        reqs.iter().any(|r| matches!(
+            r,
+            script::interact::InteractReq::IfButton { component_id: 42 }
+        )),
         "makeX clicks the posted qty button: {reqs:?}"
     );
     assert!(
         !reqs
             .iter()
-            .any(|r| matches!(r, script::shim::InteractReq::AnswerCount { .. })),
+            .any(|r| matches!(r, script::interact::InteractReq::AnswerCount { .. })),
         "a closed count dialog must not receive Answer-Count: {reqs:?}"
     );
     iso.join();
@@ -4713,7 +4715,7 @@ export default class T extends LoopingBot {
     let _ = iso.probe("1 + 1");
     assert_eq!(
         iso.drain_interacts(),
-        vec![script::shim::InteractReq::Wear {
+        vec![script::interact::InteractReq::Wear {
             name: "Staff of fire".into()
         }],
         "empty posted ops must still name-map onto host Wear"
@@ -4742,7 +4744,7 @@ export default class T extends LoopingBot {
     let _ = iso.probe("1 + 1");
     assert_eq!(
         iso.drain_interacts(),
-        vec![script::shim::InteractReq::Unequip {
+        vec![script::interact::InteractReq::Unequip {
             name: "Iron chainbody".into()
         }],
         "a worn item's unequip is one host Unequip, never a Wear"
@@ -4779,7 +4781,7 @@ export default class T extends LoopingBot {
     let _ = iso.probe("1 + 1");
     assert_eq!(
         iso.drain_interacts(),
-        vec![script::shim::InteractReq::IfButton { component_id: 42 }],
+        vec![script::interact::InteractReq::IfButton { component_id: 42 }],
         "first tick clicks the posted Make-X button"
     );
     iso.on_game_tick(2);
@@ -4794,7 +4796,7 @@ export default class T extends LoopingBot {
     let _ = iso.probe("1 + 1");
     assert_eq!(
         iso.drain_interacts(),
-        vec![script::shim::InteractReq::AnswerCount { value: 27 }],
+        vec![script::interact::InteractReq::AnswerCount { value: 27 }],
         "Answer-Count waits for the posted count dialog"
     );
     iso.join();
@@ -4865,7 +4867,7 @@ export default class T extends LoopingBot {
     );
     assert!(matches!(
         bank_interaction(&actions[0]),
-        script::shim::InteractReq::OpenBooth {
+        script::interact::InteractReq::OpenBooth {
             x: 200,
             z: 100,
             level: 0,
@@ -4968,7 +4970,7 @@ export default class T extends LoopingBot {
         assert_eq!(actions.len(), 1);
         assert!(matches!(
             bank_interaction(&actions[0]),
-            script::shim::InteractReq::OpenBooth {
+            script::interact::InteractReq::OpenBooth {
                 x: 101,
                 z: 100,
                 level: 0,
@@ -5128,7 +5130,7 @@ export default class T extends LoopingBot {
     assert_eq!(actions.len(), 1, "the arrived preset opens its live chest");
     assert!(matches!(
         bank_interaction(&actions[0]),
-        script::shim::InteractReq::OpenBooth {
+        script::interact::InteractReq::OpenBooth {
             x: 151,
             z: 150,
             level: 0,
@@ -5306,7 +5308,7 @@ export default class T extends LoopingBot {
     );
     assert!(matches!(
         bank_interaction(&actions[0]),
-        script::shim::InteractReq::OpenBooth {
+        script::interact::InteractReq::OpenBooth {
             x: 300,
             z: 400,
             level: 0,
@@ -5519,7 +5521,7 @@ export default class T extends LoopingBot {
     assert_eq!(actions.len(), 1);
     assert!(matches!(
         bank_interaction(&actions[0]),
-        script::shim::InteractReq::InvButton {
+        script::interact::InteractReq::InvButton {
             id: 62,
             slot: 0,
             component: SIDE_GRID,
@@ -5604,7 +5606,7 @@ export default class T extends LoopingBot {
     assert_eq!(actions.len(), 1);
     assert!(matches!(
         bank_interaction(&actions[0]),
-        script::shim::InteractReq::InvButton {
+        script::interact::InteractReq::InvButton {
             id: 526,
             slot: 1,
             component: SIDE_GRID,
@@ -5698,7 +5700,7 @@ export default class T extends LoopingBot {
     assert_eq!(actions.len(), 1);
     assert!(matches!(
         bank_interaction(&actions[0]),
-        script::shim::InteractReq::InvButton {
+        script::interact::InteractReq::InvButton {
             id: 526,
             slot: 0,
             component: SIDE_GRID,
@@ -5773,7 +5775,7 @@ export default class T extends LoopingBot {
     assert_eq!(actions.len(), 1);
     assert!(matches!(
         bank_interaction(&actions[0]),
-        script::shim::InteractReq::Close
+        script::interact::InteractReq::Close
     ));
     accept_bank_interaction(&mut slot, &actions[0], 1, true);
 
@@ -5836,7 +5838,7 @@ export default class T extends LoopingBot {
     assert_eq!(actions.len(), 1);
     assert!(matches!(
         bank_interaction(&actions[0]),
-        script::shim::InteractReq::InvButton {
+        script::interact::InteractReq::InvButton {
             id: 526,
             slot: 0,
             component: SIDE_GRID,
@@ -5975,7 +5977,7 @@ export default class T extends LoopingBot {
     assert_eq!(actions.len(), 1);
     assert!(matches!(
         bank_interaction(&actions[0]),
-        script::shim::InteractReq::InvButton {
+        script::interact::InteractReq::InvButton {
             id: 405,
             slot: 0,
             component: SIDE_GRID,
@@ -6174,7 +6176,7 @@ export default class T extends LoopingBot {
     assert_eq!(actions.len(), 1);
     assert!(matches!(
         bank_interaction(&actions[0]),
-        script::shim::InteractReq::WithdrawX {
+        script::interact::InteractReq::WithdrawX {
             name,
             count: 25,
             bank_item_id: 526,
@@ -6249,7 +6251,7 @@ export default class T extends LoopingBot {
     assert_eq!(actions.len(), 1);
     assert!(matches!(
         bank_interaction(&actions[0]),
-        script::shim::InteractReq::WithdrawX {
+        script::interact::InteractReq::WithdrawX {
             name,
             count: 20,
             bank_item_id: 379,
@@ -6265,7 +6267,7 @@ export default class T extends LoopingBot {
     assert_eq!(actions.len(), 1);
     assert!(matches!(
         bank_interaction(&actions[0]),
-        script::shim::InteractReq::Withdraw { name, action }
+        script::interact::InteractReq::Withdraw { name, action }
             if name == "Lobster" && action == "Withdraw-10"
     ));
     accept_bank_interaction(&mut slot, &actions[0], 2, true);
@@ -6276,7 +6278,7 @@ export default class T extends LoopingBot {
     assert_eq!(actions.len(), 1);
     assert!(matches!(
         bank_interaction(&actions[0]),
-        script::shim::InteractReq::Withdraw { name, action }
+        script::interact::InteractReq::Withdraw { name, action }
             if name == "Lobster" && action == "Withdraw-10"
     ));
     accept_bank_interaction(&mut slot, &actions[0], 3, true);
@@ -6289,7 +6291,7 @@ export default class T extends LoopingBot {
     assert_eq!(actions.len(), 1);
     assert!(matches!(
         bank_interaction(&actions[0]),
-        script::shim::InteractReq::Close
+        script::interact::InteractReq::Close
     ));
     accept_bank_interaction(&mut slot, &actions[0], 4, true);
 
@@ -6383,7 +6385,7 @@ export default class T extends LoopingBot {
         assert_eq!(actions.len(), 1);
         assert!(matches!(
             bank_interaction(&actions[0]),
-            script::shim::InteractReq::InvButton {
+            script::interact::InteractReq::InvButton {
                 id: 1515,
                 slot: 3,
                 component: 601,
@@ -6490,7 +6492,7 @@ export default class T extends LoopingBot {
     assert_eq!(actions.len(), 1);
     assert!(matches!(
         bank_interaction(&actions[0]),
-        script::shim::InteractReq::WithdrawX {
+        script::interact::InteractReq::WithdrawX {
             name,
             count: 5,
             bank_item_id: 100,
@@ -6575,7 +6577,7 @@ export default class T extends LoopingBot {
     assert_eq!(actions.len(), 1);
     assert!(matches!(
         bank_interaction(&actions[0]),
-        script::shim::InteractReq::Close
+        script::interact::InteractReq::Close
     ));
     accept_bank_interaction(&mut slot, &actions[0], 1, true);
     assert_eq!(slot.probe("__ok").unwrap(), serde_json::Value::Null);
@@ -6618,7 +6620,7 @@ export default class T extends LoopingBot {
     assert_eq!(actions.len(), 1);
     assert!(matches!(
         bank_interaction(&actions[0]),
-        script::shim::InteractReq::Close
+        script::interact::InteractReq::Close
     ));
     accept_bank_interaction(&mut slot, &actions[0], 1, true);
     tick_bank_slot(&mut slot, &mut input, 2, 1, SIDE_ROOT, &mut snapshot);
@@ -6666,7 +6668,7 @@ export default class T extends LoopingBot {
     assert_eq!(actions.len(), 1);
     assert!(matches!(
         bank_interaction(&actions[0]),
-        script::shim::InteractReq::InvButton {
+        script::interact::InteractReq::InvButton {
             id: 4242,
             slot: 0,
             component: SIDE_GRID,
@@ -6808,7 +6810,7 @@ export default class T extends LoopingBot {
     let _ = iso.probe("__probe");
     assert_eq!(
         iso.drain_interacts(),
-        vec![script::shim::InteractReq::UseWidgetOn {
+        vec![script::interact::InteractReq::UseWidgetOn {
             component_id: 1234,
             kind: "held".into(),
             target_name: Some("Steel platebody".into()),
@@ -6842,7 +6844,7 @@ export default class T extends LoopingBot {
     let _ = iso.probe("__probe");
     assert_eq!(
         iso.drain_interacts(),
-        vec![script::shim::InteractReq::ContinueDialog { component_id: None }],
+        vec![script::interact::InteractReq::ContinueDialog { component_id: None }],
         "ChatDialog.continue queues the continue interact op"
     );
     iso.join();
@@ -6957,7 +6959,7 @@ export default class T extends LoopingBot {
     assert_eq!(value, true, "useOn accepts a loc target");
     assert_eq!(
         iso.drain_interacts(),
-        vec![script::shim::InteractReq::UseOn {
+        vec![script::interact::InteractReq::UseOn {
             name: "Knife".into(),
             kind: "loc".into(),
             target_name: Some("Tree".into()),
@@ -7016,7 +7018,7 @@ export default class T extends LoopingBot {
     assert_eq!(iso.probe("__probe").unwrap(), true);
     assert_eq!(
         iso.drain_interacts(),
-        vec![script::shim::InteractReq::UseOn {
+        vec![script::interact::InteractReq::UseOn {
             name: "Willow shortbow".into(),
             kind: "inv".into(),
             target_name: Some("Willow shortbow".into()),
@@ -7301,7 +7303,7 @@ export default class T extends LoopingBot {
     assert_eq!(actions.len(), 1);
     assert!(matches!(
         bank_interaction(&actions[0]),
-        script::shim::InteractReq::SetNoteMode { on: true }
+        script::interact::InteractReq::SetNoteMode { on: true }
     ));
     accept_bank_interaction(&mut slot, &actions[0], 1, true);
     tick_bank_slot(&mut slot, &mut input, 2, 1, SIDE_ROOT, &mut snapshot);
@@ -7357,7 +7359,7 @@ export default class T extends LoopingBot {
     assert_eq!(actions.len(), 1);
     assert!(matches!(
         bank_interaction(&actions[0]),
-        script::shim::InteractReq::SetNoteMode { on: true }
+        script::interact::InteractReq::SetNoteMode { on: true }
     ));
     accept_bank_interaction(&mut slot, &actions[0], 1, false);
     tick_bank_slot(&mut slot, &mut input, 2, 1, SIDE_ROOT, &mut snapshot);
@@ -7787,7 +7789,7 @@ export default class T extends LoopingBot {
     assert_eq!(value["bit64"], true);
     assert_eq!(
         iso.drain_interacts(),
-        Vec::<script::shim::InteractReq>::new(),
+        Vec::<script::interact::InteractReq>::new(),
         "lookups are sync JS reads, no queued command"
     );
     iso.join();
@@ -8012,7 +8014,7 @@ export default class T extends LoopingBot {
     assert_eq!(value["bit32"], true);
     assert_eq!(
         iso.drain_interacts(),
-        Vec::<script::shim::InteractReq>::new(),
+        Vec::<script::interact::InteractReq>::new(),
         "lookups are sync JS reads, no queued command"
     );
     iso.join();
@@ -8112,7 +8114,7 @@ export default class T extends LoopingBot {
     assert_eq!(value, "go", "walkOpening parks on its native machine");
     let drained = iso.drain_interacts();
     match &drained[..] {
-        [script::shim::InteractReq::Walk {
+        [script::interact::InteractReq::Walk {
             x: 3222,
             z: 3295,
             level: 0,
@@ -8153,7 +8155,7 @@ export default class T extends TaskBot {
     let _ = iso.probe("__rs_bot");
     assert_eq!(
         iso.drain_interacts(),
-        vec![script::shim::InteractReq::ContinueDialog { component_id: None }],
+        vec![script::interact::InteractReq::ContinueDialog { component_id: None }],
         "awaited execute() queues ContinueDialog.continue"
     );
     iso.join();
@@ -8321,7 +8323,7 @@ export default class T extends LoopingBot {
     );
     let drained = iso.drain_interacts();
     match &drained[..] {
-        [script::shim::InteractReq::Walk {
+        [script::interact::InteractReq::Walk {
             x: 3222,
             z: 3295,
             level: 0,
@@ -8374,7 +8376,7 @@ export default class T extends LoopingBot {
     );
     let drained = iso.drain_interacts();
     match &drained[..] {
-        [script::shim::InteractReq::Walk {
+        [script::interact::InteractReq::Walk {
             x: 3222,
             z: 3223,
             level: 0,
@@ -8432,7 +8434,7 @@ export default class T extends LoopingBot {
     );
     let drained = iso.drain_interacts();
     match &drained[..] {
-        [script::shim::InteractReq::Walk {
+        [script::interact::InteractReq::Walk {
             x: 3222,
             z: 3295,
             level: 0,
@@ -8664,7 +8666,7 @@ export default class T extends LoopingBot {
     let _ = iso.probe("__probe");
     assert_eq!(
         iso.drain_interacts(),
-        vec![script::shim::InteractReq::IfButton { component_id: 77 }]
+        vec![script::interact::InteractReq::IfButton { component_id: 77 }]
     );
     iso.join();
 }
@@ -8974,7 +8976,7 @@ export default class T extends LoopingBot {
     assert_eq!(iso.probe("__probe").unwrap(), true);
     assert_eq!(
         iso.drain_interacts(),
-        vec![script::shim::InteractReq::SetCameraYaw { yaw: 100 }],
+        vec![script::interact::InteractReq::SetCameraYaw { yaw: 100 }],
         "setCameraYaw queues set-camera-yaw for the host write"
     );
     iso.join();
@@ -9031,7 +9033,7 @@ export default class T extends LoopingBot {
     let _ = iso.probe("__probe");
     assert_eq!(
         iso.drain_interacts(),
-        vec![script::shim::InteractReq::UseWidgetOn {
+        vec![script::interact::InteractReq::UseWidgetOn {
             component_id: 1234,
             kind: "loc".into(),
             target_name: Some("Tree".into()),
@@ -9630,7 +9632,7 @@ export default class T extends LoopingBot {
     let reqs = iso.drain_interacts();
     assert_eq!(
         reqs,
-        vec![script::shim::InteractReq::Player {
+        vec![script::interact::InteractReq::Player {
             name: "bob".into(),
             action: "Trade with".into(),
         }],
@@ -9660,7 +9662,7 @@ export default class T extends LoopingBot {
     let _ = iso.probe("1 + 1");
     assert_eq!(
         iso.drain_interacts(),
-        vec![script::shim::InteractReq::IfButton { component_id: 9001 }],
+        vec![script::interact::InteractReq::IfButton { component_id: 9001 }],
         "Trade.accept queues if-button on posted trade_accept_id"
     );
     iso.join();
@@ -9687,7 +9689,7 @@ export default class T extends LoopingBot {
     let _ = iso.probe("1 + 1");
     assert_eq!(
         iso.drain_interacts(),
-        vec![script::shim::InteractReq::IfButton { component_id: 9002 }],
+        vec![script::interact::InteractReq::IfButton { component_id: 9002 }],
         "Trade.decline queues if-button on posted trade_decline_id"
     );
     iso.join();
@@ -9719,7 +9721,7 @@ export default class T extends LoopingBot {
     let _ = iso.probe("1 + 1");
     assert_eq!(
         iso.drain_interacts(),
-        vec![script::shim::InteractReq::InvButton {
+        vec![script::interact::InteractReq::InvButton {
             id: 526,
             slot: 0,
             component: 3322,
@@ -9757,7 +9759,7 @@ export default class T extends LoopingBot {
     let _ = iso.probe("1 + 1");
     assert_eq!(
         iso.drain_interacts(),
-        vec![script::shim::InteractReq::InvButton {
+        vec![script::interact::InteractReq::InvButton {
             id: 526,
             slot: 0,
             component: 3322,
@@ -9795,7 +9797,7 @@ export default class T extends LoopingBot {
     let _ = iso.probe("1 + 1");
     assert_eq!(
         iso.drain_interacts(),
-        vec![script::shim::InteractReq::InvButton {
+        vec![script::interact::InteractReq::InvButton {
             id: 379,
             slot: 0,
             component: 3415,
@@ -9924,7 +9926,7 @@ export default class T extends LoopingBot {
     let _ = iso.probe("1 + 1");
     assert_eq!(
         iso.drain_interacts(),
-        vec![script::shim::InteractReq::ShopButton {
+        vec![script::interact::InteractReq::ShopButton {
             kind: "buy".into(),
             name: "Lobster".into(),
             id: 377,
@@ -9956,7 +9958,7 @@ export default class T extends LoopingBot {
     assert_eq!(
         iso.drain_interacts(),
         vec![
-            script::shim::InteractReq::ShopButton {
+            script::interact::InteractReq::ShopButton {
                 kind: "buy".into(),
                 name: "Lobster".into(),
                 id: 377,
@@ -9964,7 +9966,7 @@ export default class T extends LoopingBot {
                 component: 9201,
                 chunk: 5,
             },
-            script::shim::InteractReq::ShopButton {
+            script::interact::InteractReq::ShopButton {
                 kind: "buy".into(),
                 name: "Lobster".into(),
                 id: 377,
@@ -9972,7 +9974,7 @@ export default class T extends LoopingBot {
                 component: 9201,
                 chunk: 1,
             },
-            script::shim::InteractReq::ShopButton {
+            script::interact::InteractReq::ShopButton {
                 kind: "buy".into(),
                 name: "Lobster".into(),
                 id: 377,
@@ -10014,7 +10016,7 @@ export default class T extends LoopingBot {
     iso.probe("true").unwrap();
     assert!(matches!(
         iso.drain_interacts().as_slice(),
-        [script::shim::InteractReq::ShopButton {
+        [script::interact::InteractReq::ShopButton {
             kind,
             chunk: 1,
             ..
@@ -10070,7 +10072,7 @@ export default class T extends LoopingBot {
         iso.drain_interacts()
             .into_iter()
             .map(|op| match op {
-                script::shim::InteractReq::ShopButton { chunk, .. } => chunk,
+                script::interact::InteractReq::ShopButton { chunk, .. } => chunk,
                 other => panic!("unexpected interaction: {other:?}"),
             })
             .collect::<Vec<_>>(),
@@ -10102,7 +10104,7 @@ export default class T extends LoopingBot {
         iso.drain_interacts()
             .into_iter()
             .map(|op| match op {
-                script::shim::InteractReq::ShopButton { chunk, .. } => chunk,
+                script::interact::InteractReq::ShopButton { chunk, .. } => chunk,
                 other => panic!("unexpected interaction: {other:?}"),
             })
             .collect::<Vec<_>>(),
@@ -10159,7 +10161,7 @@ export default class T extends LoopingBot {
     );
     assert_eq!(
         iso.drain_interacts(),
-        vec![script::shim::InteractReq::UseOn {
+        vec![script::interact::InteractReq::UseOn {
             name: "Tinderbox".into(),
             kind: "inv".into(),
             target_name: Some("Logs".into()),
@@ -10298,7 +10300,7 @@ export default class T extends LoopingBot {
     );
     assert_eq!(
         iso.drain_interacts(),
-        vec![script::shim::InteractReq::Npc {
+        vec![script::interact::InteractReq::Npc {
             name: "Hans".into(),
             action: "Talk-to".into(),
             index: Some(7),
@@ -10662,7 +10664,7 @@ export default class T extends LoopingBot {
     assert_eq!(value, true, "heldOp finds the posted id in a sparse inv");
     assert_eq!(
         iso.drain_interacts(),
-        vec![script::shim::InteractReq::Held {
+        vec![script::interact::InteractReq::Held {
             name: "Logs".into(),
             action: "Use".into(),
             slot: None,
@@ -10938,7 +10940,7 @@ fn session_reset_discards_unread_old_interactions_and_preserves_the_isolate() {
     );
     assert_eq!(
         iso.drain_interacts(),
-        vec![script::shim::InteractReq::SetCameraYaw { yaw: 2 }]
+        vec![script::interact::InteractReq::SetCameraYaw { yaw: 2 }]
     );
     iso.join();
 }
@@ -11155,7 +11157,7 @@ export default class T extends LoopingBot {
     assert!(
         interactions.iter().any(|request| matches!(
             request,
-            script::shim::InteractReq::Npc {
+            script::interact::InteractReq::Npc {
                 name,
                 action,
                 index: Some(7),
@@ -11257,7 +11259,7 @@ export default class T extends LoopingBot {
     assert!(
         iso.drain_interacts().iter().any(|request| matches!(
             request,
-            script::shim::InteractReq::Npc {
+            script::interact::InteractReq::Npc {
                 name,
                 action,
                 index: Some(7),
@@ -11474,7 +11476,7 @@ export default class T extends LoopingBot {
     assert_eq!(actions.len(), 1);
     assert!(matches!(
         bank_interaction(&actions[0]),
-        script::shim::InteractReq::InvButton {
+        script::interact::InteractReq::InvButton {
             id: 1963,
             slot: 0,
             component: SIDE_GRID,

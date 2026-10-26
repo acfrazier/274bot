@@ -5,12 +5,12 @@
 //! live Chebyshev, unlock consumes 1591 not keyItem.id, inside is not
 //! cell-later, and walk-to carries no flags. They do not mirror phases.
 
-use script::shim::InteractReq;
-use script_js::hunt_cell::{
+use script::interact::InteractReq;
+use script_js::compat::hunt_cell::{
     self, cell_deadline_remaining_ms, cell_force_bound_reached, cell_token_alive, set_observation,
     CellInv, CellLoc, CellNpc, CellObservation, DOOR_MS, VELRAK_WALK_MS, WALK_LEG_MS,
 };
-use script_js::hunt_fight::Tile;
+use script_js::compat::hunt_fight::Tile;
 use script_js::wire::{
     encode_snapshot, ItemRowInput, SceneEntityInput, Snapshot, SnapshotInput, TileInput,
 };
@@ -413,7 +413,7 @@ fn posted_npc_distance_zero_does_not_skip_the_walk() {
     };
     let bytes = encode_snapshot(&snap_scene(cell_here(), &[], &[], &[npc]));
     let reader = Snapshot::from_bytes(&bytes).unwrap();
-    script_js::observed::apply(&reader);
+    script_js::scene::observed::apply(&reader);
     let step = call(token, proj.clone(), Some(json!({ "held": true })));
     assert_eq!(kind(&step), "delay-ticks", "{step}");
     let step = call(token, proj, None);
@@ -559,7 +559,7 @@ fn posted_loc_distance_does_not_pick_the_door() {
         &[],
     ));
     let reader = Snapshot::from_bytes(&bytes).unwrap();
-    script_js::observed::apply(&reader);
+    script_js::scene::observed::apply(&reader);
     let token = begin();
     let proj = site(json!({}));
     assert_eq!(kind(&call(token, proj.clone(), None)), "delay-ticks");
@@ -1048,7 +1048,7 @@ fn snapshot_bank_row_is_not_completion() {
     };
     let bytes = encode_snapshot(&snap_rows(outside(), &[cert], &[bank]));
     let reader = Snapshot::from_bytes(&bytes).unwrap();
-    script_js::observed::apply(&reader);
+    script_js::scene::observed::apply(&reader);
     let step = call(begin(), site(json!({})), None);
     assert_ne!(
         step["value"], true,

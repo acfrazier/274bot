@@ -4,7 +4,7 @@
 //! frozen `CombatStyle` tables: `__rs2b0t_describe_combat_style(resolution)`,
 //! `__rs2b0t_parse_combat_style` / `__rs2b0t_try_parse_combat_style(name)`
 //! and `__rs2b0t_parse_range_style(name)`; and the frozen `AttackClock`
-//! ([`crate::attack_clock`]): `__rs2b0t_swing_started()` and
+//! ([`crate::scene::attack_clock`]): `__rs2b0t_swing_started()` and
 //! `__rs2b0t_attack_clock_{new,observe,attacked,reset}`.
 //!
 //! The remaining per-cast costs are `SelectedGameData::runes_per_cast`; the
@@ -19,7 +19,7 @@ use super::callback_v8::{self as cb, not_impl, number, Callback, JsResult};
 use api::game_data::RemainingRuneCost;
 use rustyscript::Runtime;
 
-pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
+pub(crate) fn install(runtime: &mut Runtime) -> Result<(), String> {
     cb::install(runtime, "__rs2b0t_combat_style", combat_style)?;
     cb::install(
         runtime,
@@ -78,7 +78,7 @@ fn swing_started<'s>(
     _args: v8::FunctionCallbackArguments<'s>,
     mut rv: v8::ReturnValue,
 ) {
-    let started = crate::attack_clock::swing_started_this_tick();
+    let started = crate::scene::attack_clock::swing_started_this_tick();
     rv.set(v8::Boolean::new(scope, started).into());
 }
 
@@ -88,7 +88,10 @@ fn clock_new<'s>(
     _args: v8::FunctionCallbackArguments<'s>,
     mut rv: v8::ReturnValue,
 ) {
-    rv.set(cb::num(scope, crate::attack_clock::clock_new() as f64));
+    rv.set(cb::num(
+        scope,
+        crate::scene::attack_clock::clock_new() as f64,
+    ));
 }
 
 /// `clock.observe(anim, tick)` (`eatTiming.ts:31-39`) with the caller's anim.
@@ -100,7 +103,7 @@ fn clock_observe<'s>(
     let result = clock_slot(scope, args.get(0)).and_then(|slot| {
         let anim = js_number(scope, args.get(1));
         let tick = js_number(scope, args.get(2));
-        crate::attack_clock::clock_observe(slot, anim, tick)
+        crate::scene::attack_clock::clock_observe(slot, anim, tick)
             .map(|()| v8::undefined(scope).into())
             .ok_or_else(|| unknown_clock(scope))
     });
@@ -115,7 +118,7 @@ fn clock_attacked<'s>(
 ) {
     let result = clock_slot(scope, args.get(0)).and_then(|slot| {
         let tick = js_number(scope, args.get(1));
-        crate::attack_clock::clock_attacked(slot, tick)
+        crate::scene::attack_clock::clock_attacked(slot, tick)
             .map(|attacked| v8::Boolean::new(scope, attacked).into())
             .ok_or_else(|| unknown_clock(scope))
     });
@@ -129,7 +132,7 @@ fn clock_reset<'s>(
     rv: v8::ReturnValue,
 ) {
     let result = clock_slot(scope, args.get(0)).and_then(|slot| {
-        crate::attack_clock::clock_reset(slot)
+        crate::scene::attack_clock::clock_reset(slot)
             .map(|()| v8::undefined(scope).into())
             .ok_or_else(|| unknown_clock(scope))
     });
@@ -138,7 +141,7 @@ fn clock_reset<'s>(
 
 /// Frozen `COMBAT_STYLE` (`api/combat/CombatStyle.ts:3-13`): the melee style a
 /// trimmed, lowercased token names.
-pub(super) fn melee_style(name: &str) -> Option<&'static str> {
+pub(crate) fn melee_style(name: &str) -> Option<&'static str> {
     match name.trim().to_lowercase().as_str() {
         "attack" | "accurate" => Some("attack"),
         "strength" | "aggressive" => Some("strength"),
@@ -273,7 +276,8 @@ fn remaining_costs<'s>(
             names.push(cb::to_string(scope, item)?);
         }
     }
-    Ok(crate::supply_v2::selected_data().and_then(|data| data.runes_per_cast(&spell, &names)))
+    Ok(crate::scene::supply_v2::selected_data()
+        .and_then(|data| data.runes_per_cast(&spell, &names)))
 }
 
 fn casts_available<'s>(
@@ -377,7 +381,7 @@ fn controller_resolution<'s>(
     } else {
         String::new()
     };
-    let resolution = super::bindings::resolve_combat_style_modes(&style, &offered);
+    let resolution = crate::runtime::bindings::resolve_combat_style_modes(&style, &offered);
     let Some(requested) = resolution
         .get("requested")
         .and_then(serde_json::Value::as_str)

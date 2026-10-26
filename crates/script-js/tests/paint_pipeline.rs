@@ -8,7 +8,7 @@
 
 use std::path::PathBuf;
 
-use script::shim::ScriptPaint;
+use script::paint::ScriptPaint;
 use script_js::LoadIsolate;
 
 mod common;
@@ -55,7 +55,7 @@ fn digest(paint: &ScriptPaint) -> String {
 fn examplebot_source() -> String {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/ExampleBot.ts");
     let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
-    let pin = script_js::js_cache::JsCache::origin_sha(&bytes);
+    let pin = script_js::library::js_cache::JsCache::origin_sha(&bytes);
     assert_eq!(
         pin, "8e8e27cd9c2e57cd6478132e4bfaf910678664898db44915acc08ffc501c0973",
         "tracked ExampleBot fixture drifted from rs2b0t 96410ec5 script-template"

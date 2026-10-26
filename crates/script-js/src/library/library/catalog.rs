@@ -212,7 +212,7 @@ pub struct CatalogPreparationResult {
 
 #[derive(Debug)]
 struct CatalogIncoming {
-    card: crate::rs2b0t_registry::RegistryCard,
+    card: script::card::RegistryCard,
     path: PathBuf,
     origin: Option<String>,
     addition: Option<CatalogAddedCard>,
@@ -245,7 +245,7 @@ impl JsLibrary {
             .ok_or(CatalogSnapshotError::SnapshotTooLarge)?;
         add_capacity(&mut snapshot_bytes, self.cache.root().as_os_str().len())
             .ok_or(CatalogSnapshotError::SnapshotTooLarge)?;
-        let index = crate::rs2b0t_registry::registry_index_path(root);
+        let index = crate::library::rs2b0t_registry::registry_index_path(root);
         let mut measured_source_bytes = match std::fs::metadata(&index) {
             Ok(metadata) if metadata.is_file() => usize::try_from(metadata.len())
                 .map_err(|_| CatalogSnapshotError::RegistryIndexSizeOverflow)?
@@ -727,7 +727,7 @@ enum CatalogNameList {
 
 fn catalog_incoming_bytes(incoming: &CatalogIncoming) -> Option<usize> {
     let card_bytes = registry_card_bytes(&incoming.card)?
-        .checked_sub(std::mem::size_of::<crate::rs2b0t_registry::RegistryCard>())?;
+        .checked_sub(std::mem::size_of::<script::card::RegistryCard>())?;
     let mut bytes = card_bytes.checked_add(incoming.path.as_os_str().len())?;
     if let Some(origin) = &incoming.origin {
         bytes = bytes.checked_add(origin.capacity())?;
@@ -786,8 +786,8 @@ struct CatalogDiffWork {
     completed: u32,
     used: usize,
     source_limit: usize,
-    registry_index: Option<crate::rs2b0t_registry::RegistryIndex>,
-    registrations: Vec<crate::rs2b0t_registry::RegistryCard>,
+    registry_index: Option<crate::library::rs2b0t_registry::RegistryIndex>,
+    registrations: Vec<script::card::RegistryCard>,
     sources: HashMap<String, String>,
     source_files: usize,
     registration_index: usize,
@@ -867,7 +867,7 @@ impl CatalogDiffWork {
         snapshot: &CatalogPreparationSnapshot,
     ) -> Result<(), CatalogWorkerError> {
         self.source_limit = snapshot.source_limit();
-        let index = crate::rs2b0t_registry::registry_index_path(&snapshot.root);
+        let index = crate::library::rs2b0t_registry::registry_index_path(&snapshot.root);
         let index_limit = self.source_limit.min(MAX_CATALOG_INDEX_BYTES);
         let index_ts = vault::read_regular_file(&index, index_limit as u64).map_err(|error| {
             CatalogWorkerError::Registry {
@@ -876,12 +876,10 @@ impl CatalogDiffWork {
             }
         })?;
         self.used = index_ts.capacity();
-        let registry_index =
-            crate::rs2b0t_registry::RegistryIndex::parse(&index_ts).map_err(|error| {
-                CatalogWorkerError::Registry {
-                    path: index.display().to_string(),
-                    reason: error.to_string(),
-                }
+        let registry_index = crate::library::rs2b0t_registry::RegistryIndex::parse(&index_ts)
+            .map_err(|error| CatalogWorkerError::Registry {
+                path: index.display().to_string(),
+                reason: error.to_string(),
             })?;
         let registrations =
             registry_index
@@ -978,7 +976,7 @@ impl CatalogDiffWork {
             self.phase = CatalogDiffPhase::SiblingSources;
             return Ok(());
         };
-        let siblings = crate::rs2b0t_registry::same_dir_import_rels(&relative, &text);
+        let siblings = crate::library::rs2b0t_registry::same_dir_import_rels(&relative, &text);
         if siblings.len() > MAX_PREPARATION_SIBLINGS {
             return Err(CatalogWorkerError::TooManySiblings { relative });
         }
@@ -1891,8 +1889,8 @@ fn ensure_catalog_diff_bound(
     }
 }
 
-fn registry_card_bytes(card: &crate::rs2b0t_registry::RegistryCard) -> Option<usize> {
-    let mut bytes = std::mem::size_of::<crate::rs2b0t_registry::RegistryCard>();
+fn registry_card_bytes(card: &script::card::RegistryCard) -> Option<usize> {
+    let mut bytes = std::mem::size_of::<script::card::RegistryCard>();
     for value in [
         &card.name,
         &card.rel_path,
@@ -2047,7 +2045,7 @@ fn complete_catalog_sources_bounded(
 ) -> Result<(), String> {
     let mut sibling_rels = HashSet::new();
     for (relative, text) in sources.iter() {
-        let siblings = crate::rs2b0t_registry::same_dir_import_rels(relative, text);
+        let siblings = crate::library::rs2b0t_registry::same_dir_import_rels(relative, text);
         if siblings.len() > MAX_PREPARATION_SIBLINGS {
             return Err(format!(
                 "catalog source {relative} has more than 128 sibling modules"
@@ -2122,14 +2120,14 @@ pub(super) fn resolve_catalog_settings_schema_bounded(
     card_path: &Path,
     candidate_origin: &str,
     source_limit: usize,
-) -> Result<Vec<crate::rs2b0t_registry::SettingDef>, String> {
+) -> Result<Vec<script::card::SettingDef>, String> {
     let root =
         catalog_root.ok_or_else(|| format!("catalog {name}: registry root is unavailable"))?;
-    let index = crate::rs2b0t_registry::registry_index_path(root);
+    let index = crate::library::rs2b0t_registry::registry_index_path(root);
     let index_limit = source_limit.min(MAX_CATALOG_INDEX_BYTES);
     let index_ts = vault::read_regular_file(&index, index_limit as u64)
         .map_err(|error| format!("$RS2B0T registry {}: {error}", index.display()))?;
-    let registry_index = crate::rs2b0t_registry::RegistryIndex::parse(&index_ts)
+    let registry_index = crate::library::rs2b0t_registry::RegistryIndex::parse(&index_ts)
         .map_err(|error| format!("$RS2B0T registry {}: {error}", index.display()))?;
     let registrations = registry_index
         .registrations()
@@ -2209,7 +2207,9 @@ impl JsLibrary {
     fn complete_catalog_sources(sources: &mut HashMap<String, String>, root: &Path) {
         let sibling_rels: Vec<String> = sources
             .iter()
-            .flat_map(|(rel, text)| crate::rs2b0t_registry::same_dir_import_rels(rel, text))
+            .flat_map(|(rel, text)| {
+                crate::library::rs2b0t_registry::same_dir_import_rels(rel, text)
+            })
             .collect();
         for sib in sibling_rels {
             if sources.contains_key(&sib) {
@@ -2222,12 +2222,12 @@ impl JsLibrary {
                 sources.insert(sib, text);
             }
         }
-        crate::rs2b0t_registry::insert_shop_db_from_root(sources, root);
+        crate::library::rs2b0t_registry::insert_shop_db_from_root(sources, root);
     }
 
     fn registry_sources(
         root: &Path,
-        cards: &[crate::rs2b0t_registry::RegistryCard],
+        cards: &[script::card::RegistryCard],
     ) -> HashMap<String, String> {
         let mut sources = HashMap::new();
         for card in cards {
@@ -2250,7 +2250,7 @@ impl JsLibrary {
     /// boots find the catalog without `$RS2B0T` set. Returns the number of
     /// cards registered.
     pub fn register_rs2b0t(&mut self, root: &Path, path_file: &Path) -> Result<usize, String> {
-        let index = crate::rs2b0t_registry::registry_index_path(root);
+        let index = crate::library::rs2b0t_registry::registry_index_path(root);
         let index_ts = std::fs::read_to_string(&index)
             .map_err(|e| format!("$RS2B0T registry {}: {e}", index.display()))?;
         let registry_cards = parse_registry_with_sources(&index_ts, &HashMap::new())
@@ -2350,7 +2350,7 @@ impl JsLibrary {
         name: &str,
         card_path: &Path,
         candidate_origin: &str,
-    ) -> Result<Vec<crate::rs2b0t_registry::SettingDef>, String> {
+    ) -> Result<Vec<script::card::SettingDef>, String> {
         resolve_catalog_settings_schema_bounded(
             self.catalog_root.as_deref(),
             name,
@@ -2524,7 +2524,7 @@ impl CatalogDiff {
         for (name, incoming) in &self.incoming {
             add_catalog_bytes(&mut bytes, name.capacity()).ok()?;
             let card_bytes = registry_card_bytes(&incoming.card)?
-                .checked_sub(std::mem::size_of::<crate::rs2b0t_registry::RegistryCard>())?;
+                .checked_sub(std::mem::size_of::<script::card::RegistryCard>())?;
             add_catalog_bytes(&mut bytes, card_bytes).ok()?;
             add_catalog_bytes(&mut bytes, incoming.path.as_os_str().len()).ok()?;
             if let Some(origin) = &incoming.origin {

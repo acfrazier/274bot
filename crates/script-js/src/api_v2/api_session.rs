@@ -3,12 +3,12 @@
 //! The `GatherSession` row owns the isolate-local admission record. Its Drop
 //! clears Busy on every terminal and abort path, including ordinary Done.
 use crate::machine::{Begin, Cx, Family, Step};
-use crate::observed;
+use crate::scene::observed;
 use script::api_gather::GatherEnd;
 use script::api_progress::ProgressPage;
 use script::gatherer::GathererSettings;
+use script::interact::InteractReq;
 use script::native::SettingsBag;
-use script::shim::InteractReq;
 use serde::Deserialize;
 use serde_json::Value;
 use std::cell::RefCell;
@@ -56,17 +56,17 @@ pub(crate) fn pending_stop_intents() -> [Option<InteractReq>; 2] {
 
 /// Whether any Hunt run row is live; a combat start is `busy` while one is.
 fn hunt_live() -> bool {
-    use crate::hunt::Hunt;
+    use crate::compat::hunt::Hunt;
     use crate::machine::live;
-    live(<Hunt<crate::hunt_fight::FightKind> as Family>::NAME)
-        || live(<Hunt<crate::hunt_fight::HoldKind> as Family>::NAME)
-        || live(<Hunt<crate::hunt_fight::RetreatKind> as Family>::NAME)
-        || live(<Hunt<crate::hunt_fight::WalkSpotKind> as Family>::NAME)
-        || live(<Hunt<crate::hunt_lair::Enter> as Family>::NAME)
-        || live(<Hunt<crate::hunt_leave::Leave> as Family>::NAME)
-        || live(<Hunt<crate::hunt_key::Key> as Family>::NAME)
-        || live(<Hunt<crate::hunt_cell::Cell> as Family>::NAME)
-        || live(<Hunt<crate::hunt_bank::Bank> as Family>::NAME)
+    live(<Hunt<crate::compat::hunt_fight::FightKind> as Family>::NAME)
+        || live(<Hunt<crate::compat::hunt_fight::HoldKind> as Family>::NAME)
+        || live(<Hunt<crate::compat::hunt_fight::RetreatKind> as Family>::NAME)
+        || live(<Hunt<crate::compat::hunt_fight::WalkSpotKind> as Family>::NAME)
+        || live(<Hunt<crate::compat::hunt_lair::Enter> as Family>::NAME)
+        || live(<Hunt<crate::compat::hunt_leave::Leave> as Family>::NAME)
+        || live(<Hunt<crate::compat::hunt_key::Key> as Family>::NAME)
+        || live(<Hunt<crate::compat::hunt_cell::Cell> as Family>::NAME)
+        || live(<Hunt<crate::compat::hunt_bank::Bank> as Family>::NAME)
 }
 
 struct GatherRecord {

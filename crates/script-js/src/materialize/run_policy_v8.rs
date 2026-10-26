@@ -24,7 +24,7 @@ thread_local! {
 
 /// Install the direct `__rs2b0t_run_override` callback. Its pending value is
 /// isolate-thread local and never shared with the host.
-pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
+pub(crate) fn install(runtime: &mut Runtime) -> Result<(), String> {
     clear();
     callback_v8::install(runtime, "__rs2b0t_run_override", run_override_callback)
 }
@@ -45,18 +45,18 @@ fn run_override_callback<'s, 'cb>(
     }
 }
 
-pub(super) fn take_pending() -> Option<script::shim::InteractReq> {
+pub(crate) fn take_pending() -> Option<script::interact::InteractReq> {
     PENDING_OVERRIDE.with(|pending| match pending.replace(PendingOverride::Empty) {
         PendingOverride::Empty => None,
         PendingOverride::Replace(policy) => {
-            Some(script::shim::InteractReq::RunPolicyOverride { policy })
+            Some(script::interact::InteractReq::RunPolicyOverride { policy })
         }
     })
 }
 
 /// Re-publish the run's latest replacement after a connection generation
 /// reset. Ordinary interaction rows remain connection-scoped and are dropped.
-pub(super) fn requeue_current() {
+pub(crate) fn requeue_current() {
     let current = CURRENT_OVERRIDE.with(Cell::get);
     PENDING_OVERRIDE.with(|pending| pending.set(current));
 }

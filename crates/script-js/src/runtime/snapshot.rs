@@ -26,10 +26,10 @@ pub(super) fn materialize_snapshot(
     snap: &crate::wire::Snapshot<'_>,
     host_hold: bool,
 ) -> Result<(), String> {
-    super::entity_pages::ensure(runtime)?;
+    crate::materialize::entity_pages::ensure(runtime)?;
     let context = runtime.deno_runtime().main_context();
     let mut scope = runtime.deno_runtime().handle_scope();
-    let pages_state = super::entity_pages::state(&scope)
+    let pages_state = crate::materialize::entity_pages::state(&scope)
         .expect("entity page mapping installed before snapshot materialization");
     // Open the cached templates briefly; rows are instantiated from them
     // while no state borrow is held.
@@ -50,7 +50,7 @@ pub(super) fn materialize_snapshot(
         || snap.has_ground()
         || snap.has_self_slot()
     {
-        let mut generation = crate::scene_query::entity_generation();
+        let mut generation = crate::scene::scene_query::entity_generation();
         if !snap.has_npcs() {
             generation.npcs = None;
         }
@@ -73,10 +73,10 @@ pub(super) fn materialize_snapshot(
             .expect("self slot captures generation")
             .self_slot
     });
-    let mut staged_entity_pages = super::entity_pages::StagedEntityPages {
+    let mut staged_entity_pages = crate::materialize::entity_pages::StagedEntityPages {
         generation,
         self_slot,
-        ..super::entity_pages::StagedEntityPages::default()
+        ..crate::materialize::entity_pages::StagedEntityPages::default()
     };
     let global = context.open(&mut scope).global(&mut scope);
     let host_key = js_string(&mut scope, "__rs2b0t_host")?;
@@ -372,7 +372,7 @@ pub(super) fn materialize_snapshot(
                     3 => "fallback",
                     _ => "none",
                 },
-                "bank": crate::bank_select::selected(selection.bank_index),
+                "bank": crate::scene::bank_select::selected(selection.bank_index),
             })
         };
         let value = rustyscript::deno_core::serde_v8::to_v8(&mut scope, value)
@@ -1044,8 +1044,8 @@ pub(super) fn materialize_settings_bag(
     runtime: &mut Runtime,
     bag: &serde_json::Map<String, serde_json::Value>,
 ) -> Result<(), String> {
-    crate::bank_select::settings(bag);
-    crate::duel::settings(bag);
+    crate::scene::bank_select::settings(bag);
+    crate::compat::duel::settings(bag);
     let context = runtime.deno_runtime().main_context();
     let mut scope = runtime.deno_runtime().handle_scope();
     let global = context.open(&mut scope).global(&mut scope);
@@ -1128,14 +1128,14 @@ fn json_object_without<'s>(
 
 fn native_event_object<'s>(
     scope: &mut v8::HandleScope<'s>,
-    ev: &crate::events::NativeEvent,
+    ev: &crate::scene::events::NativeEvent,
 ) -> Result<v8::Local<'s, v8::Value>, String> {
     let wrapped = v8::Object::new(scope);
     let type_name = js_string(scope, ev.type_name())?;
     set(scope, wrapped, "type", type_name)?;
     let payload = v8::Object::new(scope);
     match ev {
-        crate::events::NativeEvent::ChatMessage {
+        crate::scene::events::NativeEvent::ChatMessage {
             type_,
             username,
             text,
@@ -1155,7 +1155,7 @@ fn native_event_object<'s>(
             let text_value = js_string(scope, text)?;
             set(scope, payload, "text", text_value)?;
         }
-        crate::events::NativeEvent::SkillXp {
+        crate::scene::events::NativeEvent::SkillXp {
             skill,
             name,
             xp,
@@ -1170,7 +1170,7 @@ fn native_event_object<'s>(
             let delta_v = num(scope, *delta as f64);
             set(scope, payload, "delta", delta_v)?;
         }
-        crate::events::NativeEvent::InventoryChanged {
+        crate::scene::events::NativeEvent::InventoryChanged {
             slot,
             id,
             name,
@@ -1206,7 +1206,7 @@ fn native_event_object<'s>(
 
 pub(super) fn dispatch_native_events(
     runtime: &mut Runtime,
-    events: &[crate::events::NativeEvent],
+    events: &[crate::scene::events::NativeEvent],
 ) -> Result<(), String> {
     if events.is_empty() {
         return Ok(());
@@ -1232,7 +1232,7 @@ pub(super) fn dispatch_native_events(
     // — a flush that stalls must not grow the isolate heap without
     // bound. The oldest entries fall off first, matching the flush's
     // in-order drain.
-    super::lineage_v8::eval::<()>(
+    crate::materialize::lineage_v8::eval::<()>(
         runtime,
         "(() => {
     const b = globalThis.__rs2b0t_native_event_batch;

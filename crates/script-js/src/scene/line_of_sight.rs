@@ -1,6 +1,6 @@
 //! v1/v2 line-of-sight over the posted collision table in the isolate scene.
 
-use crate::observed::{self, Scene};
+use crate::scene::observed::{self, Scene};
 use api::line_of_sight::{
     flag_at, line_of_sight_v1, line_of_sight_v2, CollisionQuery, LineOfSightError,
 };

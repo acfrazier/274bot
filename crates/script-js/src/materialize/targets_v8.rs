@@ -15,7 +15,7 @@
 use super::callback_v8::{self as cb, Callback, Flow, ForOf, JsResult};
 use rustyscript::Runtime;
 
-pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
+pub(crate) fn install(runtime: &mut Runtime) -> Result<(), String> {
     cb::install(runtime, "__rs2b0t_choose_target", choose_target)
 }
 

@@ -4,11 +4,11 @@
 //! rune/level precheck, and `!in_area_body` completion stay here. Own map
 //! and token counter. Call `hunt_fight::in_area_body` only.
 
-use crate::hunt::{hook, strict_true, Host, Kind as HuntKind};
-use crate::hunt_fight::{Area, SiteBox, Tile};
+use crate::compat::hunt::{hook, strict_true, Host, Kind as HuntKind};
+use crate::compat::hunt_fight::{Area, SiteBox, Tile};
 use crate::machine::Ended;
-use crate::observed::{self, ItemRow, Scene, SceneRow};
-use crate::task_clock::InstantTaskClock;
+use crate::scene::observed::{self, ItemRow, Scene, SceneRow};
+use crate::scene::task_clock::InstantTaskClock;
 use api::game_data::SelectedGameData;
 use serde_json::{json, Value};
 use std::cell::RefCell;
@@ -476,7 +476,7 @@ fn unexpected(reply: Option<&Value>) -> bool {
 }
 
 fn walk_wait_settled(token: u64) -> bool {
-    crate::walk_wait::dispatch(&json!({ "op": "settled", "token": token }))
+    crate::scene::walk_wait::dispatch(&json!({ "op": "settled", "token": token }))
         .as_bool()
         .unwrap_or(false)
 }
@@ -1001,7 +1001,7 @@ impl HuntKind for Leave {
             next_effect(
                 rt,
                 proj,
-                crate::supply_v2::selected_data().as_deref(),
+                crate::scene::supply_v2::selected_data().as_deref(),
                 reply,
             )
         })

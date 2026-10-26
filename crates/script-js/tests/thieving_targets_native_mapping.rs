@@ -6,7 +6,7 @@
 //! inline copy of that body (the reference) and the native export over the same
 //! inputs and compares target/blocked identity plus the callback sequence.
 
-use script::shim::InteractReq;
+use script::interact::InteractReq;
 use script_js::wire::{
     encode_snapshot, encode_snapshot_delta, ItemRowInput, SceneEntityInput, SnapshotFingerprint,
     StatInput,

@@ -13,9 +13,9 @@
 //! JS keeps the frozen names (`takeAnchor`, `anchor`, `pendingRecovery`,
 //! `clear`) and makes one native call per member.
 
-use super::callback_v8::{self, JsResult};
+use crate::materialize::callback_v8::{self, JsResult};
 use rustyscript::Runtime;
-pub use script::native::recovery_hints::{HintTile, RecoveryHintsCell};
+use script::native::recovery_hints::{HintTile, RecoveryHintsCell};
 use std::cell::RefCell;
 use std::sync::Arc;
 

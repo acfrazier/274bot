@@ -20,7 +20,7 @@
 //!   ([`crate::bank::compat::withdraw_op`]), the matching op label or `null`.
 
 use super::callback_v8::{self as cb, Callback, JsResult};
-use crate::periodic_bank::{
+use crate::compat::periodic_bank::{
     minutes_since_last_bank, parse_bank_strategy, should_bank_now, suppressed,
 };
 use rustyscript::Runtime;
@@ -48,7 +48,7 @@ const BANK_SORT_CATEGORY_ORDER: [&str; 19] = [
     "junk",
 ];
 
-pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
+pub(crate) fn install(runtime: &mut Runtime) -> Result<(), String> {
     cb::install(
         runtime,
         "__rs2b0t_periodic_bank_validate",
@@ -193,7 +193,8 @@ fn periodic_due<'s>(
         Some(value) => value,
     };
     let off = first.is_string() && first.to_rust_string_lossy(scope) == "off";
-    let in_combat = crate::observed::with(|scene| scene.since_login().in_combat().unwrap_or(false));
+    let in_combat =
+        crate::scene::observed::with(|scene| scene.since_login().in_combat().unwrap_or(false));
     if off || in_combat || suppressed() {
         return Ok(false);
     }
@@ -225,10 +226,10 @@ fn periodic_bank_rules<'s>(
                 String::new()
             };
             let strategy = match parse_bank_strategy(&label) {
-                crate::periodic_bank::BankStrategy::Off => "off",
-                crate::periodic_bank::BankStrategy::Items => "items",
-                crate::periodic_bank::BankStrategy::Time => "time",
-                crate::periodic_bank::BankStrategy::Either => "either",
+                crate::compat::periodic_bank::BankStrategy::Off => "off",
+                crate::compat::periodic_bank::BankStrategy::Items => "items",
+                crate::compat::periodic_bank::BankStrategy::Time => "time",
+                crate::compat::periodic_bank::BankStrategy::Either => "either",
             };
             Ok(cb::string(scope, strategy))
         }
@@ -251,7 +252,7 @@ fn death_due<'s>(
     instance: v8::Local<'s, v8::Object>,
     opts: v8::Local<'s, v8::Value>,
 ) -> JsResult<'s, bool> {
-    use crate::death_recovery as death;
+    use crate::compat::death_recovery as death;
     let observed = death::observe(scope, instance);
     if observed.died {
         call_option(scope, opts, "onDeath")?;
@@ -698,7 +699,7 @@ fn bank_snapshot<'s>(
             f64::NAN
         };
 
-        crate::observed::with(|scene| {
+        crate::scene::observed::with(|scene| {
             let latest = scene.latest();
             let rows = latest.bank().map_or(&[][..], Vec::as_slice);
             match operation.as_str() {
@@ -761,7 +762,7 @@ fn bank_snapshot<'s>(
 
 fn bank_items<'s>(
     scope: &mut v8::HandleScope<'s>,
-    rows: &[crate::observed::ItemRow],
+    rows: &[crate::scene::observed::ItemRow],
 ) -> JsResult<'s, v8::Local<'s, v8::Value>> {
     let items = v8::Array::new(scope, 0);
     for (index, row) in rows.iter().enumerate() {

@@ -4,7 +4,7 @@ use rustyscript::deno_core::v8;
 use rustyscript::Runtime;
 use script::content::RUNE_ROUTES;
 
-pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
+pub(crate) fn install(runtime: &mut Runtime) -> Result<(), String> {
     callback_v8::install(runtime, "__rs2b0t_rune_craft_locations", catalog)
 }
 
@@ -85,7 +85,7 @@ mod tests {
     use rustyscript::{Module, RuntimeOptions};
 
     fn setup() -> Runtime {
-        crate::platform::bootstrap_test_v8_platform();
+        crate::runtime::platform::bootstrap_test_v8_platform();
         let mut runtime = Runtime::new(RuntimeOptions::default()).unwrap();
         callback_v8::install_ops(&mut runtime).unwrap();
         install(&mut runtime).unwrap();

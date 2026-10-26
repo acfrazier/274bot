@@ -1,7 +1,7 @@
 //! Offline WalkToSpot isolate policy tests. No LIVE.
 
-use script::shim::InteractReq;
-use script_js::hunt_fight::{
+use script::interact::InteractReq;
+use script_js::compat::hunt_fight::{
     self, last_hp, walk_deadline_remaining_ms, walk_force_bound_reached, walk_token_alive,
     FightObservation, Tile,
 };

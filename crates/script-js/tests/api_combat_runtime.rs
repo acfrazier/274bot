@@ -10,8 +10,8 @@ use script::api_combat::{
 };
 use script::api_gather::GatherPhase;
 use script::combat::{MeleeMode, Pick, Style};
+use script::interact::InteractReq;
 use script::native::{NativePhase, ScriptStatus, StatusField, StatusValue};
-use script::shim::InteractReq;
 use script_js::wire::{
     encode_snapshot_delta_with_native, NativeFactsInput, SnapshotFingerprint, SnapshotInput,
 };

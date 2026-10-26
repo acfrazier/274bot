@@ -1,6 +1,6 @@
 //! Private per-isolate pairing between materialized entity rows and native facts.
 
-use crate::scene_query::{EntityCategory, EntityGeneration};
+use crate::scene::scene_query::{EntityCategory, EntityGeneration};
 use rustyscript::deno_core::v8;
 use rustyscript::Runtime;
 use std::cell::RefCell;
@@ -47,9 +47,9 @@ pub(super) const NPC_NETWORK_ROW_FIELDS: [&str; 2] = ["network_x", "network_z"];
 /// actual values afterwards therefore updates existing fast fields instead of
 /// adding fields to a fresh empty object, which V8 turns into a dictionary
 /// once a row exceeds its incremental-store soft limit.
-pub(super) struct EntityRowShapes {
-    pub(super) common: v8::Global<v8::ObjectTemplate>,
-    pub(super) npc_network: v8::Global<v8::ObjectTemplate>,
+pub(crate) struct EntityRowShapes {
+    pub(crate) common: v8::Global<v8::ObjectTemplate>,
+    pub(crate) npc_network: v8::Global<v8::ObjectTemplate>,
 }
 
 impl EntityRowShapes {
@@ -94,7 +94,7 @@ fn row_template<'a>(
 /// per-isolate row templates live here. The mutable JavaScript arrays and
 /// wrapper/query objects are not cached.
 #[derive(Default)]
-pub(super) struct EntityPages {
+pub(crate) struct EntityPages {
     pub generation: EntityGeneration,
     pub npcs: Vec<v8::Global<v8::Object>>,
     pub locs: Vec<v8::Global<v8::Object>>,
@@ -117,18 +117,18 @@ impl EntityPages {
 
 /// Stage the changed entity categories until the whole snapshot is published.
 #[derive(Default)]
-pub(super) struct StagedEntityPages {
-    pub(super) generation: Option<EntityGeneration>,
-    pub(super) npcs: Option<Vec<v8::Global<v8::Object>>>,
-    pub(super) locs: Option<Vec<v8::Global<v8::Object>>>,
-    pub(super) players: Option<Vec<v8::Global<v8::Object>>>,
-    pub(super) ground: Option<Vec<v8::Global<v8::Object>>>,
-    pub(super) self_slot: Option<i32>,
+pub(crate) struct StagedEntityPages {
+    pub(crate) generation: Option<EntityGeneration>,
+    pub(crate) npcs: Option<Vec<v8::Global<v8::Object>>>,
+    pub(crate) locs: Option<Vec<v8::Global<v8::Object>>>,
+    pub(crate) players: Option<Vec<v8::Global<v8::Object>>>,
+    pub(crate) ground: Option<Vec<v8::Global<v8::Object>>>,
+    pub(crate) self_slot: Option<i32>,
 }
 
 impl StagedEntityPages {
     /// Publish every changed row/fact pair together after snapshot success.
-    pub(super) fn commit(self, state: &Rc<RefCell<EntityPages>>) {
+    pub(crate) fn commit(self, state: &Rc<RefCell<EntityPages>>) {
         let Self {
             generation,
             npcs,
@@ -189,7 +189,7 @@ impl StagedEntityPages {
 }
 
 /// Install an empty native mapping in this isolate's private V8 slot.
-pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
+pub(crate) fn install(runtime: &mut Runtime) -> Result<(), String> {
     let shapes = {
         let mut scope = runtime.deno_runtime().handle_scope();
         EntityRowShapes::create(&mut scope)?
@@ -206,7 +206,7 @@ pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
 }
 
 /// Read the private mapping slot without exposing it to JavaScript.
-pub(super) fn state(scope: &v8::HandleScope) -> Option<Rc<RefCell<EntityPages>>> {
+pub(crate) fn state(scope: &v8::HandleScope) -> Option<Rc<RefCell<EntityPages>>> {
     scope.get_slot::<Rc<RefCell<EntityPages>>>().cloned()
 }
 
@@ -215,7 +215,7 @@ pub(super) fn state(scope: &v8::HandleScope) -> Option<Rc<RefCell<EntityPages>>>
 /// A session reset keeps the installed slot but releases every cached V8
 /// handle, including the templates; the next snapshot rebuilds them on this
 /// same isolate thread.
-pub(super) fn ensure(runtime: &mut Runtime) -> Result<(), String> {
+pub(crate) fn ensure(runtime: &mut Runtime) -> Result<(), String> {
     let Some(state) = runtime
         .deno_runtime()
         .v8_isolate()
@@ -236,7 +236,7 @@ pub(super) fn ensure(runtime: &mut Runtime) -> Result<(), String> {
 }
 
 /// Clear all row roots and native owners while the isolate is still alive.
-pub(super) fn reset(runtime: &mut Runtime) {
+pub(crate) fn reset(runtime: &mut Runtime) {
     let Some(state) = runtime
         .deno_runtime()
         .v8_isolate()

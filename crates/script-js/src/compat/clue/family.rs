@@ -15,7 +15,7 @@ pub struct Clue {
     pub(super) last_hook: Option<usize>,
     pub(super) resume: Option<bool>,
     /// The 3554 Duel Arena crossing, while it runs.
-    pub(super) duel_travel: Option<crate::duel::Travel>,
+    pub(super) duel_travel: Option<crate::compat::duel::Travel>,
     pub(super) duel_crossed: bool,
 }
 
@@ -88,7 +88,7 @@ impl Family for Clue {
         if let Some(step) = self.drive_travel(cx) {
             return step;
         }
-        let selected = crate::supply_v2::selected_data();
+        let selected = crate::scene::supply_v2::selected_data();
         loop {
             let mut payload = json!({ "op": "next", "token": self.token });
             if let Some(resume) = self.resume.take() {
@@ -149,7 +149,7 @@ impl Family for Clue {
                     else {
                         return Step::Done(json!({ "kind": "aborted", "reason": "clue-duel" }));
                     };
-                    self.duel_travel = Some(crate::duel::Travel::clue(x, z, level, radius));
+                    self.duel_travel = Some(crate::compat::duel::Travel::clue(x, z, level, radius));
                     if let Some(step) = self.drive_travel(cx) {
                         return step;
                     }

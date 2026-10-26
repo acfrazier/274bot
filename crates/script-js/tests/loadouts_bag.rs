@@ -282,7 +282,7 @@ export default class T extends LoopingBot {
     assert!(
         actions.iter().any(|request| matches!(
             request,
-            script::shim::InteractReq::WithdrawX { name, count, action, .. }
+            script::interact::InteractReq::WithdrawX { name, count, action, .. }
                 if name == "Lobster" && *count == 10 && action == "Withdraw 10"
         )),
         "fresh bank must withdraw the loadout quantity (10): {actions:?}"
@@ -290,7 +290,7 @@ export default class T extends LoopingBot {
     assert!(
         reqs.iter().any(|r| matches!(
             &r.req,
-            script::shim::InteractReq::Wear { name } if name == "Rune scimitar"
+            script::interact::InteractReq::Wear { name } if name == "Rune scimitar"
         )),
         "wear must use righthand, not a queued success: {reqs:?}"
     );

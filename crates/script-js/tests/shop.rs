@@ -3,7 +3,7 @@
 // batching, the waits and the settlement, and the host re-resolves the exact
 // posted row the queued op names. A queued click is never a transfer.
 
-use script::shim::InteractReq;
+use script::interact::InteractReq;
 use script_js::wire::{
     encode_snapshot_with_native, ChatLineInput, ItemRowInput, NativeFactsInput, ReachViewInput,
     SceneEntityInput, SnapshotInput, TileInput,

@@ -1,4 +1,4 @@
-use script::shim::InteractReq;
+use script::interact::InteractReq;
 use script_js::wire::{
     IsolateBuf, ReachViewInput, SideTabIfaceInput, SnapshotFingerprint, SnapshotInput, TileInput,
     VarpInput,

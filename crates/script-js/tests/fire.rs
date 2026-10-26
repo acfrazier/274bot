@@ -2,7 +2,7 @@
 // the log name / plot / refused keys, Rust owns the start/light waits and
 // AABB selection, and a queued use-on is not a lit fire.
 
-use script::shim::InteractReq;
+use script::interact::InteractReq;
 use script_js::wire::{
     ChatLineInput, ItemRowInput, ReachViewInput, SceneEntityInput, SnapshotInput, StatInput,
     TileInput,

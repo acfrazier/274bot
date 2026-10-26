@@ -1,5 +1,5 @@
 //! `__rs2b0t_hunt(op, family, ...)`: the synchronous half of the hunt
-//! Task classes (`crate::hunt`). One native call per class method:
+//! Task classes (`crate::compat::hunt`). One native call per class method:
 //!
 //! - `('begin', family, site)` mints a session token and keeps its site;
 //! - `('validate', family, token, hooks)` / `('blocksLoot', 'hunt-fight',
@@ -11,15 +11,15 @@
 //! host: the asynchronous half (`execute`) is one machine run.
 
 use super::callback_v8::{self, Throw};
-use crate::hunt::{self, Host, Kind, HOOKS};
-use crate::hunt_fight::{FightKind, HoldKind, RetreatKind, WalkSpotKind};
-use crate::hunt_lair::Enter;
+use crate::compat::hunt::{self, Host, Kind, HOOKS};
+use crate::compat::hunt_fight::{FightKind, HoldKind, RetreatKind, WalkSpotKind};
+use crate::compat::hunt_lair::Enter;
 use crate::machine::Ended;
 use rustyscript::deno_core::serde_v8;
 use rustyscript::Runtime;
 use serde_json::Value;
 
-pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
+pub(crate) fn install(runtime: &mut Runtime) -> Result<(), String> {
     callback_v8::install(runtime, "__rs2b0t_hunt", hunt_callback)?;
     callback_v8::install(runtime, "__rs2b0t_hunt_logic", logic_callback)?;
     callback_v8::install(runtime, "__rs2b0t_enclave_targets", enclave_targets)?;
@@ -27,7 +27,7 @@ pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
 }
 
 /// `__rs2b0t_hunt_logic(name, ...args)`: one frozen hunting function
-/// (`crate::hunt_catalog::call`) over the caller's plain arguments.
+/// (`crate::compat::hunt_catalog::call`) over the caller's plain arguments.
 fn logic_callback<'s>(
     scope: &mut v8::HandleScope<'s>,
     args: v8::FunctionCallbackArguments<'s>,
@@ -43,7 +43,7 @@ fn logic_callback<'s>(
             serde_v8::from_v8(scope, arg).unwrap_or(Value::Null)
         });
     }
-    let result = match crate::hunt_catalog::call(&name, &values) {
+    let result = match crate::compat::hunt_catalog::call(&name, &values) {
         Ok(value) => match serde_v8::to_v8(scope, &value) {
             Ok(value) => Ok(value),
             Err(e) => Err(callback_v8::type_error(scope, &e.to_string())),
@@ -159,14 +159,14 @@ fn hunt_callback<'s>(
         // Frozen `feePrepaid(site)`: the script's module-level paid-for key.
         "feePrepaid" => {
             let key = args.get(2).to_rust_string_lossy(scope);
-            Ok(v8::Boolean::new(scope, crate::hunt_lair::fee_paid_for(&key)).into())
+            Ok(v8::Boolean::new(scope, crate::compat::hunt_lair::fee_paid_for(&key)).into())
         }
         "reset" | "interruptWatch" if family == FightKind::NAME => {
             let token = token(scope, args.get(2));
             if op == "reset" {
-                crate::hunt_fight::reset(token);
+                crate::compat::hunt_fight::reset(token);
             } else {
-                crate::hunt_fight::interrupt_watch(token);
+                crate::compat::hunt_fight::interrupt_watch(token);
             }
             Ok(v8::undefined(scope).into())
         }
@@ -227,9 +227,11 @@ fn read<'s>(
         thrown: None,
     };
     let answer = match (op, family) {
-        ("blocksLoot", FightKind::NAME) => {
-            hunt::with_session::<FightKind, _>(token, &mut host, crate::hunt_fight::blocks_loot)
-        }
+        ("blocksLoot", FightKind::NAME) => hunt::with_session::<FightKind, _>(
+            token,
+            &mut host,
+            crate::compat::hunt_fight::blocks_loot,
+        ),
         ("validate", FightKind::NAME) => validate::<FightKind>(token, &mut host),
         ("validate", HoldKind::NAME) => validate::<HoldKind>(token, &mut host),
         ("validate", RetreatKind::NAME) => validate::<RetreatKind>(token, &mut host),

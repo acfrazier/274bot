@@ -338,7 +338,7 @@ export default class T extends LoopingBot {
     assert_eq!(iso.probe("__ok").unwrap(), true);
     assert_eq!(
         iso.drain_interacts(),
-        vec![script::shim::InteractReq::UseWidgetOn {
+        vec![script::interact::InteractReq::UseWidgetOn {
             component_id: 1922,
             kind: "held".into(),
             target_name: Some("Copper ore".into()),

@@ -4,7 +4,7 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use script::shim::InteractReq;
+use script::interact::InteractReq;
 use script::{ScriptSource, SlotScript, WatchdogAction};
 use script_js::wire::{
     encode_snapshot_with_native, CollisionViewInput, NativeFactsInput, QuestStatusInput,
@@ -846,7 +846,7 @@ export function tick(api) {
 
 #[test]
 fn v2_inspect_route_uses_isolate_token_and_rejects_invented_ids() {
-    use script::shim::InspectAvoidWire;
+    use script::interact::InspectAvoidWire;
     let src = r#"
 export const apiVersion = 2;
 export function tick(api) {

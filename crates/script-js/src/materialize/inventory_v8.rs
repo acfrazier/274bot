@@ -5,11 +5,11 @@
 //! Neither path retains rows or changes the existing interaction queue.
 
 use super::callback_v8 as cb;
-use crate::observed::{self, ItemRow};
+use crate::scene::observed::{self, ItemRow};
 use rustyscript::Runtime;
 use script::bank::ops::side_observation;
 
-pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
+pub(crate) fn install(runtime: &mut Runtime) -> Result<(), String> {
     cb::install(runtime, "__rs2b0t_inventory", inventory_callback)?;
     cb::install(runtime, "__rs2b0t_pack_rules", pack_rules_callback)
 }
@@ -1077,7 +1077,7 @@ fn should_bank<'s>(
 #[cfg(test)]
 mod allocation_tests {
     use super::*;
-    use crate::observed::{ItemRow, Ops, Text};
+    use crate::scene::observed::{ItemRow, Ops, Text};
     use rustyscript::{Runtime, RuntimeOptions};
 
     const INVENTORY_SETUP: &str = r#"
@@ -1129,7 +1129,7 @@ globalThis.checkInventory = () => {
 "#;
 
     fn setup() -> Runtime {
-        crate::platform::bootstrap_test_v8_platform();
+        crate::runtime::platform::bootstrap_test_v8_platform();
         let row = ItemRow {
             id: 10,
             count: 2,

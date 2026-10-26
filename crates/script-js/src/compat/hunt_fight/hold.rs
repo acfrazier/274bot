@@ -118,7 +118,7 @@ fn hold_validate_inner(proj: &Projection, obs: &FightObservation) -> bool {
 }
 
 pub(super) fn walk_wait_settled(token: u64) -> bool {
-    crate::walk_wait::dispatch(&json!({ "op": "settled", "token": token }))
+    crate::scene::walk_wait::dispatch(&json!({ "op": "settled", "token": token }))
         .as_bool()
         .unwrap_or(false)
 }
@@ -531,7 +531,7 @@ mod tests {
     #[test]
     fn hold_reports_unavailable_protection_instead_of_silently_disabling_it() {
         seed_protect_observation();
-        crate::supply_v2::configure(None);
+        crate::scene::supply_v2::configure(None);
         let mut runtime = HoldRuntime::new(23);
         let effect = hold_next_effect(&mut runtime, &parse_projection(&json!({})), None);
         assert_eq!(effect["kind"], "failed");

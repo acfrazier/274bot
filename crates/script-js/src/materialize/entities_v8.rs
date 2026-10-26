@@ -7,10 +7,10 @@
 
 use super::callback_v8::{self as cb, Flow, ForOf, JsResult, Poll};
 use super::entity_pages;
-use crate::scene_query::{EntityCategory, EntityFacts};
+use crate::scene::scene_query::{EntityCategory, EntityFacts};
 use rustyscript::Runtime;
 
-pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
+pub(crate) fn install(runtime: &mut Runtime) -> Result<(), String> {
     entity_pages::install(runtime)?;
     cb::install(runtime, "__rs2b0t_entities_v8", entities_callback)
 }
@@ -2029,7 +2029,8 @@ fn input_take_obj<'s>(
     let Some(state) = entity_pages::state(scope) else {
         return Ok(boolean(scope, false));
     };
-    let current_level = crate::observed::with(|scene| scene.latest().here().map(|tile| tile.level));
+    let current_level =
+        crate::scene::observed::with(|scene| scene.latest().here().map(|tile| tile.level));
     let selected = current_level.and_then(|level| {
         let pages = state.borrow();
         pages.generation.ground.as_deref().and_then(|rows| {
@@ -2131,7 +2132,7 @@ globalThis.checkNativeQuery = () => {
 "#;
 
     fn setup() -> Runtime {
-        crate::platform::bootstrap_test_v8_platform();
+        crate::runtime::platform::bootstrap_test_v8_platform();
         let mut runtime = Runtime::new(RuntimeOptions::default()).unwrap();
         cb::install_ops(&mut runtime).unwrap();
         super::super::distance::install(&mut runtime).unwrap();
@@ -2198,8 +2199,8 @@ globalThis.checkNativeQuery = () => {
     }
 
     fn post_entities(runtime: &mut Runtime, snapshot: &crate::wire::Snapshot<'_>) {
-        crate::observed::apply(snapshot);
-        super::super::snapshot::materialize_snapshot(runtime, snapshot, false).unwrap();
+        crate::scene::observed::apply(snapshot);
+        crate::runtime::snapshot::materialize_snapshot(runtime, snapshot, false).unwrap();
     }
 
     /// A cold native post with `count` NPC rows (25-field shape) and `count`
@@ -2328,11 +2329,11 @@ globalThis.__make_ground_requests = count => {
         // the dictionary path's 14,451,728.
         const MAX_GROWTH: usize = 4_194_304;
         let mut runtime = setup();
-        crate::line_of_sight_v8::install(&mut runtime).unwrap();
+        crate::materialize::line_of_sight::install(&mut runtime).unwrap();
         runtime
             .eval::<()>("globalThis.__rs2b0t_host = {};")
             .unwrap();
-        crate::observed::on_reset();
+        crate::scene::observed::on_reset();
 
         let small_bytes = entity_growth_post_bytes(1, 64);
         let small = crate::wire::Snapshot::from_bytes(&small_bytes).unwrap();
@@ -2374,11 +2375,11 @@ globalThis.__make_ground_requests = count => {
     #[test]
     fn production_entity_queries_allocate_no_rust_heap_after_warmup() {
         let mut runtime = setup();
-        crate::line_of_sight_v8::install(&mut runtime).unwrap();
+        crate::materialize::line_of_sight::install(&mut runtime).unwrap();
         runtime
             .eval::<()>("globalThis.__rs2b0t_host = {};")
             .unwrap();
-        crate::observed::on_reset();
+        crate::scene::observed::on_reset();
         let bytes = entity_post_bytes();
         let snapshot = crate::wire::Snapshot::from_bytes(&bytes).unwrap();
         post_entities(&mut runtime, &snapshot);
@@ -2417,7 +2418,7 @@ globalThis.__make_ground_requests = count => {
     #[test]
     fn production_query_cold_charge_reuses_independent_scope_cache() {
         let mut runtime = setup();
-        crate::line_of_sight_v8::install(&mut runtime).unwrap();
+        crate::materialize::line_of_sight::install(&mut runtime).unwrap();
         cb::install(&mut runtime, "__scope_cache_control", scope_cache_control).unwrap();
         runtime
             .eval::<()>(
@@ -2428,7 +2429,7 @@ globalThis.checkThirteenScopes = () => __scope_cache_control(true);
 "#,
             )
             .unwrap();
-        crate::observed::on_reset();
+        crate::scene::observed::on_reset();
         let bytes = entity_post_bytes();
         let snapshot = crate::wire::Snapshot::from_bytes(&bytes).unwrap();
         post_entities(&mut runtime, &snapshot);
@@ -2491,11 +2492,11 @@ globalThis.checkThirteenScopes = () => __scope_cache_control(true);
     #[test]
     fn entity_posting_measures_shared_owners_and_original_row_roots() {
         let mut runtime = setup();
-        crate::line_of_sight_v8::install(&mut runtime).unwrap();
+        crate::materialize::line_of_sight::install(&mut runtime).unwrap();
         runtime
             .eval::<()>("globalThis.__rs2b0t_host = {};")
             .unwrap();
-        crate::observed::on_reset();
+        crate::scene::observed::on_reset();
         let bytes = entity_post_bytes();
         let snapshot = crate::wire::Snapshot::from_bytes(&bytes).unwrap();
         let cold = allocation_counter::measure(|| post_entities(&mut runtime, &snapshot));
@@ -2503,7 +2504,7 @@ globalThis.checkThirteenScopes = () => __scope_cache_control(true);
         let scope = runtime.deno_runtime().handle_scope();
         let state = entity_pages::state(&scope).unwrap();
         let pages = state.borrow();
-        let latest = crate::scene_query::entity_generation();
+        let latest = crate::scene::scene_query::entity_generation();
         let row_roots: usize = [&pages.npcs, &pages.players, &pages.locs, &pages.ground]
             .into_iter()
             .map(|rows| {
@@ -2534,10 +2535,10 @@ globalThis.checkThirteenScopes = () => __scope_cache_control(true);
              EntityRow={} SceneRow={} PlayerRow={} GlobalObject={} row-root-capacity-bytes={row_roots}",
             std::mem::size_of::<entity_pages::EntityPages>(),
             std::mem::size_of::<std::cell::RefCell<entity_pages::EntityPages>>(),
-            std::mem::size_of::<crate::scene_query::EntityGeneration>(),
-            std::mem::size_of::<crate::observed::EntityRow>(),
-            std::mem::size_of::<crate::observed::SceneRow>(),
-            std::mem::size_of::<crate::observed::PlayerRow>(),
+            std::mem::size_of::<crate::scene::scene_query::EntityGeneration>(),
+            std::mem::size_of::<crate::scene::observed::EntityRow>(),
+            std::mem::size_of::<crate::scene::observed::SceneRow>(),
+            std::mem::size_of::<crate::scene::observed::PlayerRow>(),
             std::mem::size_of::<v8::Global<v8::Object>>(),
         );
         assert_eq!(replacement.count_current, 0);
@@ -2546,8 +2547,8 @@ globalThis.checkThirteenScopes = () => __scope_cache_control(true);
 
     #[test]
     fn shared_entity_page_publication_moves_existing_vectors() {
-        use crate::observed::{EntityRow, PlayerRow, SceneRow};
-        crate::observed::on_reset();
+        use crate::scene::observed::{EntityRow, PlayerRow, SceneRow};
+        crate::scene::observed::on_reset();
         let npcs = vec![EntityRow::default(); 2];
         let locs = vec![SceneRow::default(); 2];
         let players = vec![
@@ -2565,11 +2566,11 @@ globalThis.checkThirteenScopes = () => __scope_cache_control(true);
         let player_ptr = players.as_ptr();
         let ground_ptr = ground.as_ptr();
         let metadata = allocation_counter::measure(|| {
-            crate::observed::post(1, |post| {
+            crate::scene::observed::post(1, |post| {
                 post.npcs(npcs).locs(locs).players(players).ground(ground);
             });
         });
-        crate::observed::with(|scene| {
+        crate::scene::observed::with(|scene| {
             let lens = scene.latest();
             assert_eq!(lens.npcs().unwrap().as_ptr(), npc_ptr);
             assert_eq!(lens.locs().unwrap().as_ptr(), loc_ptr);

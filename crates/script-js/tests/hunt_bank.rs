@@ -5,11 +5,11 @@
 //! walk-near radius 3 with the three allow flags false. They do not mirror
 //! phases.
 
-use script_js::hunt_bank::{
+use script_js::compat::hunt_bank::{
     self, bank_deadline_remaining_ms, bank_force_bound_reached, bank_token_alive, set_observation,
     BankObservation, BankRow, APPROACH_RADIUS, CLOSE_MS, OPEN_MS, WALK_LEG_MS, WITHDRAW_MS,
 };
-use script_js::hunt_fight::Tile;
+use script_js::compat::hunt_fight::Tile;
 use script_js::wire::{encode_snapshot, ItemRowInput, Snapshot, SnapshotInput, TileInput};
 use script_js::LoadShape;
 use serde_json::{json, Value};
@@ -261,7 +261,7 @@ fn snapshot_slot_minus_one_is_not_a_real_held_row() {
     snap.bank_generation = 4;
     let bytes = encode_snapshot(&snap);
     let reader = Snapshot::from_bytes(&bytes).unwrap();
-    script_js::observed::apply(&reader);
+    script_js::scene::observed::apply(&reader);
     let step = call(token, proj, Some(json!({ "opened": true })));
     assert_ne!(kind(&step), "withdraw", "{step}");
     assert!(!step.to_string().contains("Velrak"), "{step}");
@@ -639,7 +639,7 @@ export async function tick(api) {
     let (_, legacy, _) = slot.slot.drain_host_interacts();
     assert!(!legacy
         .iter()
-        .any(|row| matches!(row.req, script::shim::InteractReq::WalkNear { .. })));
+        .any(|row| matches!(row.req, script::interact::InteractReq::WalkNear { .. })));
     slot.stop();
 }
 
@@ -735,7 +735,7 @@ export async function tick(api) {
     let (action, tick) = sent.expect("Hunt bank-open must reach the native seat");
     assert!(matches!(
         action.effect,
-        HostEffect::Interaction(script::shim::InteractReq::OpenBooth { id: 2213, .. })
+        HostEffect::Interaction(script::interact::InteractReq::OpenBooth { id: 2213, .. })
     ));
     assert_eq!(
         slot.probe("typeof globalThis.__done").unwrap(),

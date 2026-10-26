@@ -6,7 +6,7 @@
 //! owns no sequencing, so every assertion is about what the isolate machine
 //! answered and what reached the interact drain.
 use client::io::ClientRevision;
-use script::shim::InteractReq;
+use script::interact::InteractReq;
 use script_js::wire::{ItemRowInput, SceneEntityInput, SnapshotInput, TileInput};
 use script_js::{LoadIsolate, LoadShape};
 use std::time::{Duration, Instant};

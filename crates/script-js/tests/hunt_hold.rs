@@ -1,7 +1,7 @@
 //! Offline HoldSafespot isolate policy tests. No LIVE.
 
-use script::shim::InteractReq;
-use script_js::hunt_fight::{
+use script::interact::InteractReq;
+use script_js::compat::hunt_fight::{
     self, hold_deadline_remaining_ms, hold_force_bound_reached, hold_token_alive, last_hp,
     seen_contains, skip_contains, token_alive, FightNpc, FightObservation, Tile,
 };
@@ -1153,11 +1153,11 @@ export default class T extends LoopingBot {
     assert!(
         !drained.iter().any(|req| matches!(
             req,
-            script::shim::InteractReq::WalkNear {
+            script::interact::InteractReq::WalkNear {
                 x: 2931,
                 z: 9690,
                 ..
-            } | script::shim::InteractReq::Npc { .. }
+            } | script::interact::InteractReq::Npc { .. }
         )),
         "no corridor walk or Jailer after a failed bank stop: {drained:?}"
     );

@@ -69,29 +69,29 @@ fn selected() -> Arc<SelectedGameData> {
     api::game_data::for_revision(ClientRevision::R274).expect("selected data")
 }
 
-fn clue_death_line(seq: i32) -> crate::observed::ChatLine {
-    crate::observed::ChatLine {
+fn clue_death_line(seq: i32) -> crate::scene::observed::ChatLine {
+    crate::scene::observed::ChatLine {
         seq,
         text: std::rc::Rc::<str>::from("Oh dear, you are dead!"),
     }
 }
 
-fn replace_clue_chat(lines: Vec<crate::observed::ChatLine>) {
-    crate::observed::replace(1, true, |post| {
+fn replace_clue_chat(lines: Vec<crate::scene::observed::ChatLine>) {
+    crate::scene::observed::replace(1, true, |post| {
         post.chat_lines(lines);
     });
 }
 
-fn post_clue_chat(lines: Vec<crate::observed::ChatLine>) {
-    crate::observed::post(2, |post| {
+fn post_clue_chat(lines: Vec<crate::scene::observed::ChatLine>) {
+    crate::scene::observed::post(2, |post| {
         post.chat_lines(lines);
     });
 }
 
 fn post_clue_hitpoints(effective: i32) {
-    crate::observed::post(3, |post| {
-        post.stats(crate::observed::Skills {
-            hitpoints: Some(crate::observed::Skill {
+    crate::scene::observed::post(3, |post| {
+        post.stats(crate::scene::observed::Skills {
+            hitpoints: Some(crate::scene::observed::Skill {
                 effective,
                 ..Default::default()
             }),
@@ -1494,7 +1494,7 @@ fn collecting_closes_the_posted_reward_then_takes_the_casket_overflow() {
     assert_eq!(took["token"], json!(token), "{took}");
     assert_eq!(
         verb_req(&took),
-        Some(script::shim::InteractReq::Obj {
+        Some(script::interact::InteractReq::Obj {
             x: 3222,
             z: 3223,
             level: 1,
@@ -6614,7 +6614,7 @@ fn a_key_keeper_step_walks_attacks_and_takes_the_key_it_drops() {
         assert_eq!(taken["action"], TAKE, "{id} {taken}");
         assert_eq!(
             verb_req(&taken),
-            Some(script::shim::InteractReq::Obj {
+            Some(script::interact::InteractReq::Obj {
                 x: spawn.x,
                 z: spawn.z,
                 level: spawn.level,
@@ -7917,7 +7917,7 @@ fn a_refused_strip_booth_open_waits_once_then_fails_finitely() {
     force_bound();
     let failed = call(&data, token, page, arrived);
     assert_eq!(failed["kind"], "aborted", "{failed}");
-    assert_eq!(failed["reason"], crate::clue::BANK_APPROACH_FAILED);
+    assert_eq!(failed["reason"], crate::compat::clue::BANK_APPROACH_FAILED);
     assert_no_completion(&failed);
     assert_eq!(stripped(), vec!["Rune full helm".to_string()]);
     on_reset();
@@ -7967,7 +7967,7 @@ fn a_legacy_strip_routes_once_then_opens_under_the_same_bound() {
     force_bound();
     let failed = call(&data, token, page, arrived);
     assert_eq!(failed["kind"], "aborted", "{failed}");
-    assert_eq!(failed["reason"], crate::clue::BANK_APPROACH_FAILED);
+    assert_eq!(failed["reason"], crate::compat::clue::BANK_APPROACH_FAILED);
     assert_no_completion(&failed);
     assert_eq!(stripped(), vec!["Rune full helm".to_string()]);
     on_reset();
@@ -8520,14 +8520,14 @@ fn a_full_pack_is_made_room_for_before_the_reclaim_claim() {
 
 #[test]
 fn omitted_scalar_pages_fall_back_to_the_scene_and_the_echo_wins() {
-    crate::observed::on_reset();
+    crate::scene::observed::on_reset();
     let bare = json!({ "op": "next" });
     assert_eq!(posted_here(&bare), None, "no echo and no scene: no tile");
     assert_eq!(posted_inv_size(&bare), None);
     assert!(!posted_hold(&bare));
 
-    crate::observed::post(3, |post| {
-        post.here(crate::observed::Tile {
+    crate::scene::observed::post(3, |post| {
+        post.here(crate::scene::observed::Tile {
             x: 3200,
             z: 3218,
             level: 1,

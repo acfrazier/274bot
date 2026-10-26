@@ -1,5 +1,5 @@
-// Hunting supply: a name map over the Rust hunt families (`crate::hunt`)
-// and the hunting helpers (`crate::hunt_catalog`). Rust owns the loops,
+// Hunting supply: a name map over the Rust hunt families (`crate::compat::hunt`)
+// and the hunting helpers (`crate::compat::hunt_catalog`). Rust owns the loops,
 // walks, ops, waits and the bank-trip policy; the flask plans are declared
 // data.
 import { runMachine, notImpl } from '../../../shim/_kernel.js';

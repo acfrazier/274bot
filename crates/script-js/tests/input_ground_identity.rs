@@ -1,4 +1,4 @@
-use script::shim::InteractReq;
+use script::interact::InteractReq;
 use script_js::wire::{
     encode_snapshot, ReachViewInput, SceneEntityInput, SnapshotInput, TileInput,
 };
