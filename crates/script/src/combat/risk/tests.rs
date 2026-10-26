@@ -1166,7 +1166,6 @@ fn u2_unknown_classes_fail_closed_through_the_real_assessment() {
         ("trail_hard2", false, UnknownKind::CounterProtect),
         ("ikov_firewarrior", false, UnknownKind::Magic),
         ("wizard", false, UnknownKind::Mixed),
-        ("man", false, UnknownKind::MissingStat),
         ("poisonspider", true, UnknownKind::Poison),
     ] {
         let npc = tables.selected().npc_by_config(config).unwrap();
@@ -1206,6 +1205,17 @@ fn u2_unknown_classes_fail_closed_through_the_real_assessment() {
             "{config}"
         );
     }
+
+    // No strength= line: the engine default is 1 (NpcType.ts:106). Max hit 1
+    // is select.rs:204 at strength 1 and strengthbonus 0. No packed 289 row
+    // still lacks the stat after that default, so this test no longer has a
+    // real-table MissingStat row.
+    let man = tables.selected().npc_by_config("man").unwrap();
+    assert_eq!(man.strength, Some(1));
+    let man_risk = KindRisk::from_npc(man, &tables);
+    assert_eq!(man_risk.unknown, UnknownKind::Known);
+    assert_eq!(man_risk.max_hit, 1);
+    assert_eq!(crate::combat::select::facts::npc_max_hit(man), Some(1));
 }
 
 /// T5.1 representation closure: risk reads each zone's facts through that

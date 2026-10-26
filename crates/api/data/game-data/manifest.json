@@ -213,8 +213,8 @@
         "npc_configs": 3,
         "digest": "61fad0df0a3449eb85e52902d83668c8ef56fe4e61337ff0fdc98b528c9ab9d1"
       },
-      "bytes": 5339728,
-      "sha256": "0cb51b1ed56d296a76293697419b442de60b3a4a8a7f959632f3192d4facf475",
+      "bytes": 5333515,
+      "sha256": "87d8949b93ec8725d3712083d2b54b38b24cf855c79853a1001fdfc6e168e7b6",
       "engine_commit": "4c95f87efe00b068cadbd229d94736626907bd1a",
       "content_commit": "000c19997e07206131bcb3c884265840efce416d",
       "inputs": [
@@ -8614,8 +8614,8 @@
         "npc_configs": 3,
         "digest": "61fad0df0a3449eb85e52902d83668c8ef56fe4e61337ff0fdc98b528c9ab9d1"
       },
-      "bytes": 6329688,
-      "sha256": "82158054fb824cf6347ab0e2afea39d7b3f5c877a92cd9417f7b994fa37fd215",
+      "bytes": 6322263,
+      "sha256": "c8c51062640fa63ea4ab995ff3cd72e6874fb78bd8c1a8f92e6a422c84118018",
       "engine_commit": "cc359656b4acd216ca452495874b6beba9a0ac75",
       "content_commit": "92649430fcbc83538d8c4367ecb96cee1a67a944",
       "inputs": [
