@@ -1747,7 +1747,7 @@ mod tests {
     enum TestServerCommand {
         SendFrames {
             frames: Vec<Vec<u8>>,
-            done: Sender<io::Result<()>>,
+            done: Sender<io::Result<usize>>,
         },
         DrainBinaries {
             expected_binary: Vec<u8>,
@@ -1979,12 +1979,42 @@ mod tests {
             assert!(server_result(result));
         }
 
-        fn send_frames(&self, frames: Vec<Vec<u8>>) {
+        /// Have the server write `frames`, one TLS record each, and return
+        /// once the client's own socket holds every byte. The server's write
+        /// acknowledgement alone does not say that: a kernel may deliver
+        /// loopback bytes after the writer returns (macOS does), and a drive
+        /// that runs first reads nothing and misses the first turn.
+        fn send_frames(&mut self, frames: Vec<Vec<u8>>) {
             let (done, result) = mpsc::channel();
             self.commands
                 .send(TestServerCommand::SendFrames { frames, done })
                 .unwrap();
-            server_result(result);
+            let wire = server_result(result);
+            self.wait_for_client_bytes(wire);
+        }
+
+        fn wait_for_client_bytes(&mut self, wire: usize) {
+            let deadline = Instant::now() + Duration::from_secs(3);
+            let mut probe = vec![0_u8; wire];
+            let mut events = mio::Events::with_capacity(8);
+            loop {
+                // Peeking leaves the bytes for the endpoint's own read.
+                match self
+                    .endpoint
+                    .with_tls(|tls| tls.socket.inner().peek(&mut probe))
+                {
+                    Ok(queued) if queued >= wire => return,
+                    Ok(_) => {}
+                    Err(error) if error.kind() == io::ErrorKind::WouldBlock => {}
+                    Err(error) => panic!("peek the test WSS client socket: {error}"),
+                }
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                assert!(
+                    !remaining.is_zero(),
+                    "the server's {wire} ciphertext bytes never reached the client socket"
+                );
+                self.poll.poll(&mut events, Some(remaining)).unwrap();
+            }
         }
     }
 
@@ -2035,6 +2065,32 @@ mod tests {
         )
     }
 
+    /// The server's socket, counting the ciphertext bytes it has written so a
+    /// test can tell when the client's kernel queue holds them all.
+    struct CountingSocket {
+        inner: StdTcpStream,
+        written: Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    impl Read for CountingSocket {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            self.inner.read(buf)
+        }
+    }
+
+    impl Write for CountingSocket {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            let count = self.inner.write(buf)?;
+            self.written
+                .fetch_add(count, std::sync::atomic::Ordering::SeqCst);
+            Ok(count)
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            self.inner.flush()
+        }
+    }
+
     fn serve_wss_test_connection(
         listener: TcpListener,
         commands: Receiver<TestServerCommand>,
@@ -2046,7 +2102,14 @@ mod tests {
         while connection.is_handshaking() {
             connection.complete_io(&mut socket)?;
         }
-        let mut tls = rustls::StreamOwned::new(connection, socket);
+        let written = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let mut tls = rustls::StreamOwned::new(
+            connection,
+            CountingSocket {
+                inner: socket,
+                written: Arc::clone(&written),
+            },
+        );
         let request = read_http_head(&mut tls)?;
         let request = std::str::from_utf8(&request)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
@@ -2066,6 +2129,7 @@ mod tests {
             match command {
                 TestServerCommand::SendFrames { frames, done } => {
                     let mut result = Ok(());
+                    let wire_before = written.load(std::sync::atomic::Ordering::SeqCst);
                     // Each flush emits one TLS application record for the next
                     // test frame, while the client receives no new event hint.
                     for frame in frames {
@@ -2078,7 +2142,8 @@ mod tests {
                             break;
                         }
                     }
-                    let _ = done.send(result);
+                    let wire = written.load(std::sync::atomic::Ordering::SeqCst) - wire_before;
+                    let _ = done.send(result.map(|()| wire));
                 }
                 TestServerCommand::DrainBinaries {
                     expected_binary,
@@ -2296,6 +2361,14 @@ mod tests {
             "loopback send buffer did not reach WouldBlock"
         );
 
+        // The kernel frees send-buffer space on its own schedule (ACKs, window
+        // updates, autotuning), so by now the real socket may accept the Pong
+        // after all. Refuse the Pong's first socket write so that it meets a
+        // WouldBlock whatever the kernel has done meanwhile; the backlog the
+        // real socket refused is still queued ahead of it.
+        fixture
+            .endpoint
+            .with_tls_mut(|tls| tls.socket.refuse_one_socket_write_for_test());
         assert!(matches!(fixture.on_event(true, false), WssStep::Ready));
         fixture.drive();
         assert!(fixture.endpoint.ws_write_pending);
@@ -2305,9 +2378,12 @@ mod tests {
         );
 
         let drained = fixture.start_drain_binaries(record, published_binary_count);
+        // The peer drains and the kernel reports the socket writable: only
+        // that may release the queued Pong. Wait for the real readiness event
+        // rather than spinning.
+        let deadline = Instant::now() + Duration::from_secs(5);
         let mut pong_flushed = false;
-        for _ in 0..128 {
-            fixture.on_event(false, true);
+        while Instant::now() < deadline {
             let turn = fixture.drive();
             if !fixture.endpoint.ws_write_pending
                 && !fixture.endpoint.with_tls(|tls| tls.wants_write())
@@ -2316,7 +2392,7 @@ mod tests {
                 break;
             }
             if turn.stop != TcpStop::LocalWork {
-                thread::yield_now();
+                fixture.wait_for_event(deadline);
             }
         }
         assert!(
