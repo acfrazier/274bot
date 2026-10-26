@@ -9,9 +9,10 @@ use crate::focus::draw_for_slot;
 use crate::picker::{
     format_walkto_status, walkto_actions_enabled, walkto_footer_labels, walkto_selection_caption,
 };
+#[cfg(feature = "js")]
+use crate::test_support::save_store_patiently;
 use crate::test_support::{
-    patiently, save_store_patiently, set_patiently, thread_preferences, thread_state_root, TestDir,
-    TestPath,
+    patiently, set_patiently, thread_preferences, thread_state_root, TestDir, TestPath,
 };
 use api::identity::Deadline;
 use api::snapshot::{GameSnapshot, WorldTile};
@@ -32,10 +33,13 @@ use frontend_core::scripts::{CardSource, CompiledCardId, Loadouts, ScriptChoice,
 use frontend_core::scripts::{LoadShape, LoadStage};
 use frontend_core::surface::InputSender;
 use frontend_core::surface::{FrameBuf, InputEv, SlotInput};
+#[cfg(feature = "js")]
 use frontend_core::test_support::session::{
-    assignment_key, clear_vault, core_vault_debug_rows, install_vault, vault_debug_rows,
-    vault_upsert, with_assignment, with_lamp_auto, with_lamp_skill, with_random_events,
-    with_settings_bag, with_tutorial_skipped,
+    assignment_key, core_vault_debug_rows, vault_debug_rows, with_settings_bag,
+};
+use frontend_core::test_support::session::{
+    clear_vault, install_vault, vault_upsert, with_assignment, with_lamp_auto, with_lamp_skill,
+    with_random_events, with_tutorial_skipped,
 };
 use frontend_core::test_support::{FixtureProfile, IsolatedStores, VaultFixture};
 use host_play as map_host;
@@ -511,6 +515,7 @@ fn explicit_profile_wins_saved_revision_and_bound_session_refuses_changes() {
     .unwrap();
     session.bind_profile().unwrap();
     assert!(session.server_label().starts_with("local-274"));
+    #[cfg(feature = "js")]
     assert_eq!(session.catalog_root().unwrap(), None);
     assert!(session.set_server_revision(289).is_err());
     assert!(session.bind_profile().is_err());
@@ -3070,7 +3075,9 @@ fn unlock_defers_automatic_focus_until_preferences_are_ready() {
         session.quester_paths_folder_edit,
         folder_draft.to_string_lossy().into_owned()
     );
+    #[cfg(feature = "js")]
     assert_eq!(session.script_load_dir, load_dir);
+    #[cfg(feature = "js")]
     assert_eq!(session.rs2b0t_catalog_dir, catalog_dir);
     frontend_core::test_support::scripts::reset_quester_registry();
 }
@@ -5967,6 +5974,7 @@ fn live_prepare_script_sets_script_sel_for_catalog_start_script() {
     );
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn live_prepare_sherlock_starts_the_compiled_card_without_catalog() {
     let iso = IsolatedStores::enter("sherlock-live");

@@ -8,10 +8,13 @@ use frontend_core::test_support::scripts::{
     compiled_identity_key, nothing_changed_reload_message, raw_content_fingerprint,
     session_script_bag, TestLibrary,
 };
-use frontend_core::test_support::scripts::{Assignment, TestSchema};
+use frontend_core::test_support::scripts::Assignment;
+#[cfg(feature = "js")]
+use frontend_core::test_support::scripts::TestSchema;
 use frontend_core::test_support::session::install_vault;
 use frontend_core::test_support::{FixtureProfile, IsolatedStores, VaultFixture};
 use frontend_core::FleetAction;
+#[cfg(feature = "js")]
 use std::fs;
 use std::time::{Duration, Instant};
 
