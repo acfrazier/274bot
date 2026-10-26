@@ -9,7 +9,6 @@ pub mod audio;
 pub mod cache;
 pub mod catalog_core;
 pub mod evidence_writer;
-#[cfg(feature = "js")]
 pub mod external_loader;
 pub mod fd_limit;
 pub mod live_gate;
