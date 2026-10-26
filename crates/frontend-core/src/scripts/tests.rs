@@ -8,13 +8,16 @@ use std::time::{Duration, Instant};
 
 #[cfg(feature = "js")]
 use super::CatalogError;
+#[cfg(feature = "js")]
+use super::{parse_parameter_text, CardSource, SchemaRef};
 use super::{
-    parse_parameter_text, CardRuntime, CardSource, CompiledCardId, Notice, ParameterCommit,
-    ParameterEditKey, SchemaRef, ScriptChoice, ScriptRunState, ScriptStartErrorKind, Scripts,
-    SettingView,
+    CardRuntime, CompiledCardId, Notice, ParameterCommit, ParameterEditKey, ScriptChoice,
+    ScriptRunState, ScriptStartErrorKind, Scripts, SettingView,
 };
+#[cfg(feature = "js")]
+use crate::command::Pending;
 use crate::command::{
-    CardKind, CommandBook, CommandFailure, Completion, OperatorCommand, Pending, Stage, Subject,
+    CardKind, CommandBook, CommandFailure, Completion, OperatorCommand, Stage, Subject,
 };
 use crate::marked::prepare_apply_settings_marked;
 use crate::operations::{ActionKind, Outcome};

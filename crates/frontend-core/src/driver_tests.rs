@@ -2122,6 +2122,7 @@ fn no_later_start(d: &mut HeadlessDriver, names: &[String]) {
     for name in names {
         let scripts = d.models().scripts();
         assert!(scripts.start_queue_place(name).is_none(), "{name} queued");
+        #[cfg(feature = "js")]
         assert!(!scripts.has_start_preparation(name), "{name} preparing");
         assert!(
             !failures.iter().any(|(failed, _)| failed == name),
@@ -2518,6 +2519,7 @@ fn cancelling_a_queued_copy_writes_no_waiting_bot_and_releases_starts() {
     assert!(!starts_held(&d), "Cancel releases the start hold");
 }
 
+#[cfg(feature = "js")]
 /// Review F3 r2-1: a fleet Start joins a single Start's untallied
 /// preparation; the assignment then changes while it waits. The
 /// preparation is withdrawn `reassigned`, and both Start commands settle
@@ -2549,6 +2551,7 @@ fn a_withdrawn_shared_preparation_settles_the_single_and_the_fleet_start() {
     );
 }
 
+#[cfg(feature = "js")]
 /// Review F3 r2-1: a planned Stop on a bot whose single Start still waits
 /// on its loaded card's preparation cancels that preparation: the Stop
 /// member is done, the Start member cancelled, and nothing starts later.

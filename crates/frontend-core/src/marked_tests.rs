@@ -5,20 +5,25 @@
 #[cfg(feature = "js")]
 use std::path::PathBuf;
 #[cfg(feature = "js")]
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use std::time::Instant;
 
 use host_play::{InstancePermit, Play, PlayOptions, SlotStatus};
 use vault::{Profile, ProfileSettings, Vault};
 
+#[cfg(feature = "js")]
 use super::{
-    assign_and_restart_marked, assign_marked, combined_bulk_scope, marked_availability,
-    prepare_apply_settings_marked, restart_scope, BulkScope, MarkedAction, MarkedBlock,
-    RestartScope,
+    assign_and_restart_marked, assign_marked, prepare_apply_settings_marked, restart_scope,
+};
+use super::{
+    combined_bulk_scope, marked_availability, BulkScope, MarkedAction, MarkedBlock, RestartScope,
 };
 #[cfg(feature = "js")]
 use crate::scripts::ScriptStartErrorKind;
 use crate::scripts::{CardSource, ScriptChoice, ScriptRunState, Scripts};
-use crate::selection::{marked_startable, start_marked, MarkedSelection, ProfileIdentity};
+#[cfg(feature = "js")]
+use crate::selection::start_marked;
+use crate::selection::{marked_startable, MarkedSelection, ProfileIdentity};
 use crate::session::OperatorSession;
 use crate::surface::HeadlessSurface;
 
