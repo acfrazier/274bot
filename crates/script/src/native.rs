@@ -20,24 +20,44 @@ pub mod abi;
 mod actions;
 pub mod custody;
 pub mod divergence;
+pub mod recovery_hints;
 pub mod request;
 pub mod seat;
+pub mod seat_rows;
 pub mod services;
+pub mod snapshot_source;
 pub use request::NativeRequest;
 pub use services::{
     LocalStateCapability, PromptPoint, ScriptServices, SeatPromptPort, ServiceAuthority,
     ServiceError,
 };
 pub mod death;
-pub(crate) mod ledger;
+pub mod ledger;
 mod owner;
+mod server_ordered;
 pub mod thieve;
-pub(crate) mod thieving_core;
+pub mod thieving_core;
+pub use server_ordered::ServerOrderedCompletion;
 pub mod walk;
 pub mod walk_wait;
 pub use ledger::{BankDepositTrace, HostAction, HostAuthority, HostEffect, QuietReadOwner};
 
 pub type SettingsBag = serde_json::Map<String, serde_json::Value>;
+
+/// Why the host's latest walk outcome ended, as compiled cards read it: the
+/// two values of the schema enum `isolate.fbs` `WalkCancelReason`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum WalkCancelReason {
+    #[default]
+    None,
+    /// A manual movement took the walk over.
+    UserInput,
+}
+
+/// The largest walk outcome sequence the slot can pack: bits 0-62. The host
+/// counts outcomes from 1 with a plain increment and never wraps; the
+/// lifetime note is at `ledger::ObservedWalkOutcome`.
+pub const WALK_OUTCOME_SEQ_MAX: u64 = u64::MAX >> 1;
 
 /// A walk-local permission bit. Inherit uses the captured global and
 /// per-script settings; Allow can add permission and Forbid can narrow it.
@@ -128,7 +148,7 @@ pub trait WalkDangerQuery {
         target: WorldTile,
         loc_id: Option<i32>,
         radius: u16,
-        arrival: nav::contract::ArrivalKind,
+        arrival: nav_planner::contract::ArrivalKind,
     ) -> WalkDanger<'_>;
 
     /// Restrict only the chosen target's access goals after eligibility checks.
@@ -139,7 +159,7 @@ pub trait WalkDangerQuery {
         target: WorldTile,
         loc_id: Option<i32>,
         radius: u16,
-        arrival: nav::contract::ArrivalKind,
+        arrival: nav_planner::contract::ArrivalKind,
         existing: Option<&WalkGoals>,
     ) -> Result<Option<WalkGoals>, WalkGoalsError>;
 }
@@ -155,7 +175,7 @@ impl WalkDangerQuery for AllowWalkDanger {
         _target: WorldTile,
         _loc_id: Option<i32>,
         _radius: u16,
-        _arrival: nav::contract::ArrivalKind,
+        _arrival: nav_planner::contract::ArrivalKind,
     ) -> WalkDanger<'_> {
         WalkDanger::Allowed
     }
@@ -165,7 +185,7 @@ impl WalkDangerQuery for AllowWalkDanger {
         _target: WorldTile,
         _loc_id: Option<i32>,
         _radius: u16,
-        _arrival: nav::contract::ArrivalKind,
+        _arrival: nav_planner::contract::ArrivalKind,
         _existing: Option<&WalkGoals>,
     ) -> Result<Option<WalkGoals>, WalkGoalsError> {
         Ok(None)
@@ -283,7 +303,21 @@ pub type PrepareCard =
 pub type CreateScript =
     fn(RunKey, Arc<PreparedConfig>, &mut RetainedMemory) -> Result<Box<dyn Script>, StartError>;
 
-#[derive(Debug)]
+/// Static lifecycle hooks registered by a compiled card.
+///
+/// The card descriptor owns these function pointers. They carry no per-bot
+/// state. The owning slot invokes them on its pump thread, never a control
+/// thread.
+#[derive(Debug, Clone, Copy)]
+pub struct CardLifecycle {
+    pub on_stop: fn(),
+    pub on_reset: fn(),
+    pub on_resume: fn(),
+    pub on_pause: fn(),
+    pub on_hold: fn(bool),
+}
+
+#[derive(Debug, Clone, Copy)]
 pub struct CompiledCard {
     pub id: CompiledId,
     pub name: &'static str,
@@ -294,6 +328,7 @@ pub struct CompiledCard {
     pub per_account_settings: &'static [&'static str],
     pub prepare: PrepareCard,
     pub create: CreateScript,
+    pub lifecycle: Option<&'static CardLifecycle>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -342,16 +377,32 @@ pub struct RetainedMemory {
     clue: crate::clue::ClueRecovery,
     gather: crate::gatherer::GatherRetained,
     quester: crate::quester::QuesterRetained,
-    #[cfg(feature = "load")]
     sherlock: SherlockRetained,
 }
 
 /// Watchdog-retained death state; active clue tokens and action ownership stay card-local.
-#[cfg(feature = "load")]
 #[derive(Default)]
-pub(crate) struct SherlockRetained {
-    pub(crate) death_seq: Option<i32>,
-    pub(crate) death_pending: bool,
+pub struct SherlockRetained {
+    death_seq: Option<i32>,
+    death_pending: bool,
+}
+
+impl SherlockRetained {
+    pub fn death_seq(&self) -> Option<i32> {
+        self.death_seq
+    }
+
+    pub fn set_death_seq(&mut self, death_seq: Option<i32>) {
+        self.death_seq = death_seq;
+    }
+
+    pub fn death_pending(&self) -> bool {
+        self.death_pending
+    }
+
+    pub fn set_death_pending(&mut self, death_pending: bool) {
+        self.death_pending = death_pending;
+    }
 }
 
 impl RetainedMemory {
@@ -367,8 +418,7 @@ impl RetainedMemory {
         &mut self.quester
     }
 
-    #[cfg(feature = "load")]
-    pub(crate) fn sherlock(&mut self) -> &mut SherlockRetained {
+    pub fn sherlock(&mut self) -> &mut SherlockRetained {
         &mut self.sherlock
     }
 }
@@ -474,11 +524,18 @@ pub struct NativeTick<'a> {
     pub prompt_port: Option<&'a mut dyn SeatPromptPort>,
     /// Read-only danger admission for target selection, borrowed from the host.
     pub walk_danger: Option<&'a dyn WalkDangerQuery>,
-    #[cfg(feature = "load")]
     pub(crate) frame: HostFrame<'a>,
 }
 
 impl<'frame> NativeTick<'frame> {
+    pub fn frame(&self) -> &HostFrame<'frame> {
+        &self.frame
+    }
+
+    pub fn frame_mut(&mut self) -> &mut HostFrame<'frame> {
+        &mut self.frame
+    }
+
     /// Bind the actual native frame to the host's current execution fence,
     /// session gate and optional T5.2 state capability. A standalone test
     /// frame without the host authority cannot mint a service.
@@ -539,12 +596,33 @@ impl NativeTick<'_> {
 /// The existing Sherlock adapter's single borrowed host bridge. No driver or
 /// action facility escapes here. The host/Load clue extraction replaces this
 /// bridge; effects still use the slot's existing compiled queue in the meantime.
-#[cfg(feature = "load")]
-pub(crate) struct HostFrame<'a> {
-    pub here: Option<(i32, i32, i32)>,
-    pub snapshot: Option<&'a api::snapshot::GameSnapshot>,
-    pub obj_names: Option<&'a api::obj_names::ObjNames>,
-    pub compiled: crate::CompiledTick<'a>,
+pub struct HostFrame<'a> {
+    pub(crate) here: Option<(i32, i32, i32)>,
+    pub(crate) snapshot: Option<&'a api::snapshot::GameSnapshot>,
+    pub(crate) obj_names: Option<&'a api::obj_names::ObjNames>,
+    pub(crate) compiled: crate::CompiledTick<'a>,
+}
+
+impl<'a> HostFrame<'a> {
+    pub fn here(&self) -> Option<(i32, i32, i32)> {
+        self.here
+    }
+
+    pub fn snapshot(&self) -> Option<&'a api::snapshot::GameSnapshot> {
+        self.snapshot
+    }
+
+    pub fn obj_names(&self) -> Option<&'a api::obj_names::ObjNames> {
+        self.obj_names
+    }
+
+    pub fn compiled(&self) -> &crate::CompiledTick<'a> {
+        &self.compiled
+    }
+
+    pub fn compiled_mut(&mut self) -> &mut crate::CompiledTick<'a> {
+        &mut self.compiled
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -610,6 +688,9 @@ pub struct ActionContext<'a> {
     pub(crate) evidence: EvidenceStamp,
     pub(crate) pin: &'a SelectedPin,
     pub(crate) snapshot: SnapshotView<'a>,
+    pub(crate) condition: Option<api::condition::BotCondition>,
+    pub(crate) poison_unknown_pulse: u8,
+    pub(crate) cure_poison: crate::survival::CurePoison,
     pub(crate) retained: &'a mut RetainedMemory,
     pub(crate) action_id: u64,
     pub(crate) active_now: Duration,
@@ -619,7 +700,30 @@ pub struct ActionContext<'a> {
     pub(crate) budget: &'a mut ledger::TickBudget,
     pub(crate) eligible: bool,
     pub(crate) observed_walk_outcome_seq: u64,
+    /// The host's cancel reason for `observed_walk_outcome_seq`.
+    pub(crate) observed_walk_cancel_reason: WalkCancelReason,
 }
+/// Track manual takeover outcomes relative to one native step's begin.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ManualTakeoverWatch {
+    baseline: u64,
+}
+
+impl ManualTakeoverWatch {
+    /// Capture the latest observed walk outcome when the step begins.
+    pub fn begin(cx: &ActionContext<'_>) -> Self {
+        Self {
+            baseline: cx.observed_walk_outcome_seq,
+        }
+    }
+
+    /// Return true when a later outcome carries the `UserInput` reason.
+    pub fn interrupted(&self, cx: &ActionContext<'_>) -> bool {
+        cx.observed_walk_outcome_seq != self.baseline
+            && cx.observed_walk_cancel_reason == WalkCancelReason::UserInput
+    }
+}
+
 /// Revocable owner identity; no caller can mint a lease.
 pub struct QuietReadLease {
     owner: Arc<owner::Owner>,
@@ -761,7 +865,7 @@ pub struct WalkRequest {
     /// within this margin; off-scene geometry is an estimate, not arrival proof.
     pub radius: u16,
     /// Destination settlement mode; `Reach` remains the default behavior.
-    pub arrival: nav::contract::ArrivalKind,
+    pub arrival: nav_planner::contract::ArrivalKind,
     pub options: WalkOptions,
     pub required_after: EvidenceStamp,
     pub evidence: Option<Arc<dyn EvidenceProvider>>,
@@ -865,6 +969,54 @@ pub enum WalkEnd {
     Cancelled,
     NeedsEvidence(Arc<[QuestGate]>),
 }
+// USER-0.2.3-GATHERER §1 records a progressed return ending Expired at the
+// Traveller's 60-call bound (equal to observed ticks in the current host);
+// §3 records the normal content-derived stand succeeding. One fresh plan
+// from the observed position is the supported recovery.
+const MAX_RETURN_RECOVERY_ACTIONS: u8 = 1;
+
+#[derive(Default)]
+pub(crate) struct ReturnStallRecovery {
+    actions: u8,
+    pending: bool,
+}
+
+impl ReturnStallRecovery {
+    pub(crate) fn observe(&mut self, end: &WalkEnd) -> bool {
+        let transient = matches!(
+            end,
+            WalkEnd::Stalled(stall)
+                if matches!(stall.why, WalkStallReason::Expired | WalkStallReason::Dropped)
+        );
+        if transient && self.actions < MAX_RETURN_RECOVERY_ACTIONS && !self.pending {
+            self.pending = true;
+            true
+        } else {
+            false
+        }
+    }
+
+    pub(crate) fn pending(&self) -> bool {
+        self.pending
+    }
+
+    pub(crate) fn action_submitted(&mut self) {
+        if self.pending {
+            self.actions = self.actions.saturating_add(1);
+            self.pending = false;
+        }
+    }
+
+    pub(crate) fn reset(&mut self) {
+        self.actions = 0;
+        self.pending = false;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn actions(&self) -> u8 {
+        self.actions
+    }
+}
 #[derive(Debug, Clone)]
 pub struct WalkReceipt {
     pub request_id: u64,
@@ -873,7 +1025,7 @@ pub struct WalkReceipt {
     /// without a loc), with or without candidates. Other arrivals report None.
     pub goal: Option<WorldTile>,
     pub end: WalkEnd,
-    pub blocked: Option<Arc<[nav::contract::ZoneKey]>>,
+    pub blocked: Option<Arc<[nav_planner::contract::ZoneKey]>>,
     pub detail: Option<Arc<str>>,
     pub refusal: Option<WalkRefusal>,
     pub assessment: Option<Arc<crate::combat::risk::RouteAssessment>>,
@@ -984,6 +1136,21 @@ impl<'a> ActionContext<'a> {
     pub fn snapshot(&self) -> SnapshotView<'a> {
         self.snapshot
     }
+    /// The host's complete live condition, checked against the frame at entry.
+    pub fn condition(&self) -> Option<&api::condition::BotCondition> {
+        self.condition.as_ref()
+    }
+    /// Strongest poison pulse in the selected content, or the saturated bound.
+    pub fn poison_unknown_pulse(&self) -> u8 {
+        self.poison_unknown_pulse
+    }
+    pub fn eligible(&self) -> bool {
+        self.eligible
+    }
+    /// The profile's Cure poison setting for this frame.
+    pub fn cure_poison(&self) -> crate::survival::CurePoison {
+        self.cure_poison
+    }
     pub fn retained(&mut self) -> &mut RetainedMemory {
         self.retained
     }
@@ -1024,37 +1191,51 @@ impl<M: NativeMachine> ActionHandle<M> {
         ActionRevoker(Arc::clone(&self.owner))
     }
 }
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ActionError {
+    #[error("the native action owner is busy")]
     Busy,
+    #[error("the native action is held")]
     Held,
+    #[error("this native runtime exhausted its observed-tick emission allowance or owner storage")]
     BudgetExhausted,
+    #[error("the native action identity is stale")]
     Stale,
+    #[error("the native action was cancelled")]
     Cancelled,
     /// A step adapter was interrupted by manual movement, not owner revocation.
+    #[error("manual input interrupted the native action")]
     UserInput,
+    #[error("the native action is unavailable: {0}")]
     Unavailable(Arc<str>),
+    #[error("the native action failed: {0}")]
     Failed(Arc<str>),
     /// A typed permanent refusal from the shared bank-deposit machine.
+    #[error("bank deposit was refused: {0:?}")]
     BankDeposit(crate::bank::ops::DepositFailure),
-    /// A hit on the local player closed the dialogue before it finished
-    /// (the NPC combat scripts `if_close` on every swing, including a
-    /// 0-damage miss). Typed so callers never match on a reason string;
-    /// runners treat it like `Blocked` (park for an explicit retry).
+    /// A hit on the local player closed the dialogue before it finished.
+    #[error("combat interrupted the dialogue")]
     CombatInterrupted,
     /// The step cannot continue safely without an explicit operator retry.
+    #[error("the native action is blocked: {0}")]
     Blocked(Arc<str>),
     /// The action requires typed quest evidence before it can continue.
+    #[error("the native action needs quest evidence: {0:?}")]
     NeedsEvidence(Arc<[QuestGate]>),
     /// Typed capacity or duplicate refusal from exact ground-item Take.
+    #[error("ground-item Take was refused: {0:?}")]
     GroundTake(api::ground_take::GroundRefusal),
     /// Invalid bounded candidate-goal request, rejected before host admission.
+    #[error("walk goals were refused: {0}")]
     WalkGoals(WalkGoalsError),
+    /// A typed server-ordered admission refusal, before host dispatch.
+    #[error(transparent)]
+    ServerOrdered(#[from] api::interact::server_ordered::ServerOrderedError),
 }
 
 /// A poll-time admission that has used this tick's event must retry later.
 /// Callers commit request state only after this returns `Ready(Ok(_))`.
-pub(crate) fn defer_budget<T>(result: Result<T, ActionError>) -> Poll<Result<T, ActionError>> {
+pub fn defer_budget<T>(result: Result<T, ActionError>) -> Poll<Result<T, ActionError>> {
     match result {
         Err(ActionError::BudgetExhausted) => Poll::Pending,
         result => Poll::Ready(result),

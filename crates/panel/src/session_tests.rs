@@ -31,7 +31,7 @@ use frontend_core::scripts::{
     CardSource, CompiledCardId, LoadShape, LoadStage, Loadouts, ScriptChoice, ScriptRunState,
 };
 use frontend_core::surface::InputSender;
-use frontend_core::surface::{FrameBuf, SlotInput};
+use frontend_core::surface::{FrameBuf, InputEv, SlotInput};
 use frontend_core::test_support::session::{
     assignment_key, clear_vault, core_vault_debug_rows, install_vault, vault_debug_rows,
     vault_upsert, with_assignment, with_lamp_auto, with_lamp_skill, with_random_events,
@@ -41,28 +41,27 @@ use frontend_core::test_support::{FixtureProfile, IsolatedStores, VaultFixture};
 use host_play as map_host;
 use host_play::profile::ProfileEnvironment;
 use host_play::{ProfileOptions, SlotArm, SlotStatus, StartupPhase};
-use nav::collision::WorldCollision;
-use nav::paint::{MAX_DRAW_TILES, NEAR_FULL_DENSITY};
-use nav::router::{
+use nav_planner::collision::WorldCollision;
+use nav_planner::paint::{MAX_DRAW_TILES, NEAR_FULL_DENSITY};
+use nav_planner::router::{
     CursorStep, FindOptions, Leg, Route, SearchCompletion, SearchCursor, SearchRequest,
 };
-use nav::tile::Tile;
-use nav::transport::{TransportEdge, TransportGraph, TransportKind};
-use nav::traveller::Traveller;
-use nav::world::NavWorld;
-use nav::zones::ZoneExempt;
-use nav::WorldState;
+use nav_planner::tile::Tile;
+use nav_planner::transport::{TransportEdge, TransportGraph, TransportKind};
+use nav_planner::world::NavWorld;
+use nav_planner::zones::ZoneExempt;
+use nav_planner::WorldState;
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
 #[path = "../../host-play/tests/support/map_fixture.rs"]
-mod map_fixture;
+pub(super) mod map_fixture;
 use map_fixture::MapFixture;
 #[path = "../../host-play/tests/support/upgrade_home.rs"]
 mod upgrade_home;
@@ -75,6 +74,27 @@ fn seed_ui_state(state: &crate::ui_state::PanelUiState) {
     crate::ui_state::save(&thread_preferences(), state);
 }
 
+fn await_preference(session: &mut Session, key: &str, expected: serde_json::Value) {
+    patiently(|| {
+        session.pump_status();
+        session.poll_panel_preferences();
+        if !session.preferences_pending()
+            && session.preferences.value(key) == Some(expected.clone())
+        {
+            Ok(())
+        } else {
+            Err("not durable within the panel preference wait".into())
+        }
+    })
+    .unwrap();
+}
+
+fn hydrate_panel_preferences(session: &mut Session) {
+    session.preferences.reload().unwrap();
+    session.poll_panel_preferences();
+    assert!(session.panel_preferences_ready());
+}
+
 #[test]
 fn session_cache_is_unset_until_a_profile_is_bound() {
     let session = Session::new();
@@ -83,6 +103,59 @@ fn session_cache_is_unset_until_a_profile_is_bound() {
     assert!(
         cache_dir.is_empty(),
         "cache path must come from the resolved profile, not the standalone-client default: {cache_dir:?}"
+    );
+}
+
+#[test]
+fn panel_member_intent_keeps_unedited_document_members() {
+    let _iso = IsolatedStores::enter("panel-member-intent");
+    let mut session = Session::new();
+    let preferences = session.preferences.share();
+    let mut chrome = serde_json::to_value(crate::theme::ChromeColors::default())
+        .unwrap()
+        .as_object()
+        .unwrap()
+        .clone();
+    chrome.insert("accent".into(), serde_json::json!("#111111"));
+    chrome.insert("text".into(), serde_json::json!("#222222"));
+    chrome.insert("extension".into(), serde_json::json!("preserve"));
+    set_patiently(&preferences, "chrome", serde_json::Value::Object(chrome));
+    set_patiently(
+        &preferences,
+        "third_party",
+        serde_json::json!({"untouched": true}),
+    );
+
+    session
+        .persist_panel_member(&["chrome", "accent"], Some(serde_json::json!("#AABBCC")))
+        .unwrap();
+    patiently(|| {
+        session.poll_panel_preferences();
+        let Ok(document) = preferences.document() else {
+            return Err("not durable within panel preference wait".into());
+        };
+        if session.panel_preference_writes_pending() == 0
+            && document
+                .get("chrome")
+                .and_then(serde_json::Value::as_object)
+                .and_then(|chrome| chrome.get("accent"))
+                == Some(&serde_json::json!("#AABBCC"))
+        {
+            Ok(())
+        } else {
+            Err("not durable within panel preference wait".into())
+        }
+    })
+    .unwrap();
+
+    let document = preferences.document().unwrap();
+    let chrome = document["chrome"].as_object().unwrap();
+    assert_eq!(chrome["accent"], serde_json::json!("#AABBCC"));
+    assert_eq!(chrome["text"], serde_json::json!("#222222"));
+    assert_eq!(chrome["extension"], serde_json::json!("preserve"));
+    assert_eq!(
+        document["third_party"],
+        serde_json::json!({"untouched": true})
     );
 }
 
@@ -245,8 +318,8 @@ fn plant_snapshot(unpack: &Path, revision: u16, packs: &[(String, Vec<u8>)]) {
         .find(|(name, _)| name == "versionlist")
         .unwrap()
         .1;
-    let transfer = nav::manifest::hash_bytes(versionlist);
-    let negotiated = nav::manifest::hash_bytes(&crc_body(packs)[..36]);
+    let transfer = nav_planner::manifest::hash_bytes(versionlist);
+    let negotiated = nav_planner::manifest::hash_bytes(&crc_body(packs)[..36]);
     let input = unpack.join("fixture-input");
     std::fs::create_dir_all(&input).unwrap();
     for (name, bytes) in packs {
@@ -267,15 +340,37 @@ fn plant_snapshot(unpack: &Path, revision: u16, packs: &[(String, Vec<u8>)]) {
 }
 
 /// Mock update server: `/crc` matching the fixture packs, plus pack GETs if
-/// a runtime refresh asks. Detached so unit tests never need a live engine.
-fn serve_fixture_crc(packs: Vec<(String, Vec<u8>)>) -> u16 {
+/// a runtime refresh asks. The owning fixture stops and joins the server.
+struct FixtureCrcServer {
+    port: u16,
+    stop: Arc<AtomicBool>,
+    worker: Option<thread::JoinHandle<()>>,
+}
+
+impl FixtureCrcServer {
+    fn port(&self) -> u16 {
+        self.port
+    }
+}
+
+impl Drop for FixtureCrcServer {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Release);
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
+    }
+}
+
+fn serve_fixture_crc(packs: Vec<(String, Vec<u8>)>) -> FixtureCrcServer {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
-    thread::spawn(move || {
-        listener.set_nonblocking(true).unwrap();
-        let deadline = Instant::now() + Duration::from_secs(30);
+    listener.set_nonblocking(true).unwrap();
+    let stop = Arc::new(AtomicBool::new(false));
+    let worker_stop = Arc::clone(&stop);
+    let worker = thread::spawn(move || {
         let body = crc_body(&packs);
-        while Instant::now() < deadline {
+        while !worker_stop.load(Ordering::Acquire) {
             let (mut sock, _) = match listener.accept() {
                 Ok(conn) => {
                     // Accepted sockets inherit O_NONBLOCK from the listener on macOS/BSD.
@@ -321,10 +416,16 @@ fn serve_fixture_crc(packs: Vec<(String, Vec<u8>)>) -> u16 {
             let _ = sock.write_all(&response);
         }
     });
-    port
+    FixtureCrcServer {
+        port,
+        stop,
+        worker: Some(worker),
+    }
 }
 
-fn runtime_profile_fixture(revision: u16) -> (TestDir, PathBuf, PathBuf, PathBuf, u16) {
+fn runtime_profile_fixture(
+    revision: u16,
+) -> (TestDir, PathBuf, PathBuf, PathBuf, FixtureCrcServer) {
     let (root, cache, _) = checked_profile_fixture(revision);
     let packs = identity_packs();
     for (name, bytes) in &packs {
@@ -339,8 +440,8 @@ fn runtime_profile_fixture(revision: u16) -> (TestDir, PathBuf, PathBuf, PathBuf
     .unwrap();
     let unpack = root.join("unpack");
     plant_snapshot(&unpack, revision, &packs);
-    let port = serve_fixture_crc(packs);
-    (root, cache, manifest_path, unpack, port)
+    let server = serve_fixture_crc(packs);
+    (root, cache, manifest_path, unpack, server)
 }
 
 fn preparation_only_session() -> Session {
@@ -390,7 +491,7 @@ fn join_validation(session: &mut Session, generation: u64) -> ValidatedProfile {
 
 #[test]
 fn explicit_profile_wins_saved_revision_and_bound_session_refuses_changes() {
-    let (root, cache, manifest, unpack, port) = runtime_profile_fixture(274);
+    let (root, cache, manifest, unpack, server) = runtime_profile_fixture(274);
     let mut session = Session::new();
     session.ui.server_revision = 289;
     configure_isolated_profile(
@@ -400,7 +501,7 @@ fn explicit_profile_wins_saved_revision_and_bound_session_refuses_changes() {
             cache_dir: Some(cache),
             cache_manifest: Some(manifest),
             unpack_dir: Some(unpack),
-            http_port: Some(port),
+            http_port: Some(server.port()),
             ..ProfileOptions::default()
         },
         &root,
@@ -415,7 +516,8 @@ fn explicit_profile_wins_saved_revision_and_bound_session_refuses_changes() {
 
 #[test]
 fn stale_profile_preparation_is_dropped_without_partial_session_state() {
-    let (root, cache, manifest, unpack, port) = runtime_profile_fixture(274);
+    let _work_service_guard = crate::work_service_test_lock();
+    let (root, cache, manifest, unpack, server) = runtime_profile_fixture(274);
     let mut session = Session::new();
     configure_isolated_profile(
         &mut session,
@@ -424,7 +526,7 @@ fn stale_profile_preparation_is_dropped_without_partial_session_state() {
             cache_dir: Some(cache),
             cache_manifest: Some(manifest),
             unpack_dir: Some(unpack),
-            http_port: Some(port),
+            http_port: Some(server.port()),
             ..ProfileOptions::default()
         },
         &root,
@@ -483,8 +585,8 @@ fn profile_preparation_failure_keeps_vault_play_and_slots_absent() {
 
 #[test]
 fn validated_profile_unlock_uses_the_ticket_without_rebinding() {
-    let (root, cache, manifest, unpack, port) = runtime_profile_fixture(274);
     let _work_service_guard = crate::work_service_test_lock();
+    let (root, cache, manifest, unpack, server) = runtime_profile_fixture(274);
     let mut session = Session::new();
     configure_isolated_profile(
         &mut session,
@@ -493,7 +595,7 @@ fn validated_profile_unlock_uses_the_ticket_without_rebinding() {
             cache_dir: Some(cache.clone()),
             cache_manifest: Some(manifest),
             unpack_dir: Some(unpack),
-            http_port: Some(port),
+            http_port: Some(server.port()),
             vault_path: Some(root.join("prepared.vault")),
             ..ProfileOptions::default()
         },
@@ -527,8 +629,8 @@ fn validated_profile_unlock_uses_the_ticket_without_rebinding() {
 #[test]
 fn start_handle_reads_operator_loadouts_through_the_sessions_service() {
     let _iso = IsolatedStores::enter("start-handle-loadouts");
-    let (root, cache, manifest, unpack, port) = runtime_profile_fixture(274);
     let _work_service_guard = crate::work_service_test_lock();
+    let (root, cache, manifest, unpack, server) = runtime_profile_fixture(274);
     let mut session = Session::new();
     configure_isolated_profile(
         &mut session,
@@ -537,7 +639,7 @@ fn start_handle_reads_operator_loadouts_through_the_sessions_service() {
             cache_dir: Some(cache),
             cache_manifest: Some(manifest),
             unpack_dir: Some(unpack),
-            http_port: Some(port),
+            http_port: Some(server.port()),
             vault_path: Some(root.join("prepared.vault")),
             ..ProfileOptions::default()
         },
@@ -770,7 +872,7 @@ fn panel_profile_install_does_not_decode_reach_until_layer_demand() {
     let world = profile.world().unwrap();
     assert_eq!(profile.nav_load_counters().reach_reads, 1);
     assert_eq!(profile.nav_load_counters().reach_hashes, 1);
-    nav::paint::reset_bake_reach_calls();
+    nav_planner::paint::reset_bake_reach_calls();
     // An eager install would keep the old verified payload and paint it even
     // after the file changes. First layer demand must instead fail closed.
     let path = profile.nav_pack().with_extension("navreach");
@@ -784,7 +886,7 @@ fn panel_profile_install_does_not_decode_reach_until_layer_demand() {
     assert!(profile.reach().is_none());
     assert_eq!(profile.nav_load_counters().reach_reads, 2);
     assert_eq!(profile.nav_load_counters().reach_hashes, 2);
-    assert_eq!(nav::paint::bake_reach_calls(), 0);
+    assert_eq!(nav_planner::paint::bake_reach_calls(), 0);
 }
 
 #[test]
@@ -800,17 +902,17 @@ fn panel_map_uses_the_shared_lazy_sidecar_and_releases_its_binding() {
     let world = profile.world().unwrap();
     assert_eq!(profile.nav_load_counters().reach_reads, 1);
     assert_eq!(profile.nav_load_counters().reach_hashes, 1);
-    nav::paint::reset_bake_reach_calls();
+    nav_planner::paint::reset_bake_reach_calls();
     let map_bits = crate::picker::map_reach_bitset(&world).unwrap();
     assert_eq!(&*map_bits, &[0u64]);
     assert!(Arc::ptr_eq(&map_bits, &profile.reach().unwrap()));
     assert_eq!(Arc::strong_count(&map_bits), 2, "profile plus paint lease");
-    assert_eq!(nav::paint::bake_reach_calls(), 0);
-    let mut other = nav::world::NavWorld::load_pack(profile.nav_pack()).unwrap();
+    assert_eq!(nav_planner::paint::bake_reach_calls(), 0);
+    let mut other = nav_planner::world::NavWorld::load_pack(profile.nav_pack()).unwrap();
     other.collision.origin.x += 1;
     assert!(crate::picker::map_reach_bitset(&other).is_none());
     assert!(crate::picker::reach_bitset(&other).is_none());
-    assert_eq!(nav::paint::bake_reach_calls(), 0);
+    assert_eq!(nav_planner::paint::bake_reach_calls(), 0);
     session.release_walk_map();
     assert!(Arc::ptr_eq(
         &map_bits,
@@ -1057,7 +1159,7 @@ fn explicit_catalog_default_allows_manual_import_and_preserves_custom_cards() {
 #[test]
 fn revision_and_binding_allow_already_loaded_scripts_and_source_edits() {
     let _work_service_guard = crate::work_service_test_lock();
-    let (root, cache, manifest, unpack, port) = runtime_profile_fixture(274);
+    let (root, cache, manifest, unpack, server) = runtime_profile_fixture(274);
     let catalog = write_looping_catalog(&root.join("catalog"), &[("Chosen", "Chosen")]);
     let source = catalog.join("src/bot/scripts/Chosen/Chosen.ts");
     let env = ProfileEnvironment {
@@ -1077,7 +1179,7 @@ fn revision_and_binding_allow_already_loaded_scripts_and_source_edits() {
                 cache_dir: Some(cache),
                 cache_manifest: Some(manifest),
                 unpack_dir: Some(unpack),
-                http_port: Some(port),
+                http_port: Some(server.port()),
                 catalog_root: Some(catalog),
                 ..ProfileOptions::default()
             }),
@@ -1643,7 +1745,7 @@ fn walled_world() -> NavWorld {
     let mut flags = vec![0u32; width * height];
     flags[width + 1] = CollisionFlag::W_N as u32 | CollisionFlag::W_S as u32;
     flags[2 * width + 2] = CollisionFlag::WR_GRND as u32;
-    let (walk, blocked) = nav::collision::pack_walk(&flags);
+    let (walk, blocked) = nav_planner::collision::pack_walk(&flags);
     NavWorld::from_parts(
         WorldCollision {
             origin: WorldTile {
@@ -1666,8 +1768,8 @@ fn compact_route_completion(
     world: &Arc<NavWorld>,
     from: WorldTile,
     to: WorldTile,
-) -> (nav::contract::NavLease, SearchCompletion) {
-    let lease = nav::producer::lease(world).expect("fixture pack lease");
+) -> (nav_planner::contract::NavLease, SearchCompletion) {
+    let lease = nav_planner::producer::lease(world).expect("fixture pack lease");
     let mut cursor = SearchCursor::new(
         SearchRequest::Single {
             from,
@@ -1886,7 +1988,7 @@ fn publish_nav_debug_carries_reach_from_the_bitset() {
     let mut flags = vec![0u32; width * height];
     flags[width + 1] = CollisionFlag::WALK_BLOCK_FLAGS as u32;
     flags[2 * width + 2] = CollisionFlag::WR_GRND as u32;
-    let (walk, blocked) = nav::collision::pack_walk(&flags);
+    let (walk, blocked) = nav_planner::collision::pack_walk(&flags);
     let world = NavWorld::from_parts(
         WorldCollision {
             origin: WorldTile {
@@ -1928,6 +2030,8 @@ fn publish_nav_debug_carries_reach_from_the_bitset() {
                 varp_req: vec![],
                 worn_req: vec![],
                 worn_all_req: vec![],
+                forbidden_held: vec![],
+                forbidden_worn: vec![],
                 members_req: false,
                 wildy_cap: None,
                 quest_gates: None,
@@ -2014,9 +2118,9 @@ fn saved_collision_prefs_without_drawing_do_not_load_navflags() {
         level: 0,
     };
     let flags = vec![0u32, 0, 0, 0];
-    let bytes = nav::pack::encode_flags_sidecar(origin, 1, 1, &flags);
+    let bytes = nav_bake::pack::encode_flags_sidecar(origin, 1, 1, &flags);
     std::fs::write(&path, &bytes).unwrap();
-    let digest = nav::manifest::hash_bytes(&bytes);
+    let digest = nav_planner::manifest::hash_bytes(&bytes);
 
     crate::picker::drop_flags_sidecar();
     crate::picker::reset_flags_load_count();
@@ -2089,9 +2193,9 @@ fn remove_only_focused_drawing_slot_releases_flags() {
         level: 0,
     };
     let flags = vec![0u32, 0, 0, 0];
-    let bytes = nav::pack::encode_flags_sidecar(origin, 1, 1, &flags);
+    let bytes = nav_bake::pack::encode_flags_sidecar(origin, 1, 1, &flags);
     std::fs::write(&path, &bytes).unwrap();
-    let digest = nav::manifest::hash_bytes(&bytes);
+    let digest = nav_planner::manifest::hash_bytes(&bytes);
 
     crate::picker::drop_flags_sidecar();
     crate::picker::set_navflags_binding(path, Some(digest), true);
@@ -2319,6 +2423,8 @@ fn door_route() -> Route {
                     varp_req: vec![],
                     worn_req: vec![],
                     worn_all_req: vec![],
+                    forbidden_held: vec![],
+                    forbidden_worn: vec![],
                     members_req: false,
                     wildy_cap: None,
                     quest_gates: None,
@@ -2343,7 +2449,7 @@ fn face_only_cells_publish_with_fill_without_labels() {
     let mut flags = vec![0u32; width * height];
     flags[width + 1] = CollisionFlag::W_S as u32;
     flags[width + 2] = CollisionFlag::W_NE as u32;
-    let (walk, blocked) = nav::collision::pack_walk(&flags);
+    let (walk, blocked) = nav_planner::collision::pack_walk(&flags);
     let world = NavWorld::from_parts(
         WorldCollision {
             origin: WorldTile {
@@ -2568,6 +2674,8 @@ fn nav_path_subsamples_to_the_draw_budget_keeping_hops() {
                     varp_req: vec![],
                     worn_req: vec![],
                     worn_all_req: vec![],
+                    forbidden_held: vec![],
+                    forbidden_worn: vec![],
                     members_req: false,
                     wildy_cap: None,
                     quest_gates: None,
@@ -2748,12 +2856,14 @@ fn multibox_unlock_fixture() -> (Session, TestPath) {
 #[test]
 fn multibox_before_unlock_registers_auto_focused_profile() {
     let (mut session, path) = multibox_unlock_fixture();
+    hydrate_panel_preferences(&mut session);
     assert!(session.set_multibox(true));
     assert!(session.multibox && session.wall.chooser_open);
     assert!(!session.core.vault_open());
     assert!(session.core.slots().is_empty());
     assert!(session.core.members().is_empty());
     assert!(session.unlock_at(&path, "test-passphrase-01"));
+    session.poll_panel_preferences();
     assert_eq!(session.focused_name().as_deref(), Some("alice"));
     assert!(session
         .core
@@ -2787,7 +2897,9 @@ fn multibox_before_unlock_registers_auto_focused_profile() {
 #[test]
 fn single_mode_unlock_makes_the_focused_bot_a_fleet_member() {
     let (mut session, path) = multibox_unlock_fixture();
+    hydrate_panel_preferences(&mut session);
     assert!(session.unlock_at(&path, "test-passphrase-01"));
+    session.poll_panel_preferences();
     assert_eq!(session.focused_name().as_deref(), Some("alice"));
     assert!(session.core.slots().contains_key("alice"));
     assert!(!session.multibox, "no MultiBox, no rail");
@@ -2814,10 +2926,380 @@ fn single_mode_unlock_makes_the_focused_bot_a_fleet_member() {
 }
 
 #[test]
+fn o1_panel_late_preferences_publish_order_before_startup_load() {
+    let iso = IsolatedStores::enter("o1-panel-late-order");
+    let (mut session, vault) = multibox_unlock_fixture();
+    let root = iso.dir().join("saved-state");
+    let preferences = frontend_core::UiPreferences::open_for_test(root.clone());
+    preferences
+        .set(
+            frontend_core::PROFILE_ORDER_KEY,
+            serde_json::json!({"2": 10, "1": 20}),
+        )
+        .unwrap();
+    preferences
+        .set("last_focus", serde_json::json!("alice"))
+        .unwrap();
+    let service = host_play::local_state::LocalStateService::open_process(
+        host_play::local_state::StateRoot::new(root),
+    );
+    session.core.bind_local_state(service);
+    session.preferences = session.core.preferences().unwrap();
+    session.preferences_ready = false;
+    assert!(session.unlock_at(&vault, "test-passphrase-01"));
+    assert!(
+        session.core.slots().is_empty(),
+        "unlock only installs the vault"
+    );
+    session.preferences.reload().unwrap();
+    session.poll_panel_preferences();
+    assert_eq!(session.core.profile_names(), ["bob", "alice"]);
+    assert_eq!(session.focused_name().as_deref(), Some("alice"));
+    session.load("bob");
+    assert_eq!(session.core.members(), ["bob", "alice"]);
+    let focus = session.focus.lock().unwrap();
+    assert_eq!(focus.focused.as_deref(), Some("bob"));
+    assert!(session
+        .core
+        .play_for_test()
+        .unwrap()
+        .arm("alice")
+        .unwrap()
+        .wants_login());
+}
+
+#[test]
+fn o1_panel_warm_unlock_only_installs_the_vault() {
+    let _iso = IsolatedStores::enter("o1-panel-warm-order");
+    let (mut session, vault) = multibox_unlock_fixture();
+    hydrate_panel_preferences(&mut session);
+    assert!(session.unlock_at(&vault, "test-passphrase-01"));
+    assert!(session.core.slots().is_empty());
+    assert!(session.focused_name().is_none());
+    session.poll_panel_preferences();
+    assert_eq!(session.core.members(), ["alice"]);
+    assert_eq!(session.focused_name().as_deref(), Some("alice"));
+}
+
+#[test]
+fn unlock_defers_automatic_focus_until_preferences_are_ready() {
+    let isolated = IsolatedStores::enter("panel-cold-start");
+    let (mut session, path) = multibox_unlock_fixture();
+    let preferences = session.preferences.share();
+    let load_dir = isolated.dir().join("script-load");
+    let catalog_dir = isolated.dir().join("script-catalog");
+    let quester_dir = isolated.dir().join("quester-paths");
+    for directory in [&load_dir, &catalog_dir, &quester_dir] {
+        std::fs::create_dir_all(directory).unwrap();
+    }
+    set_patiently(&preferences, "last_focus", serde_json::json!("alice"));
+    set_patiently(&preferences, "capture", serde_json::json!(false));
+    set_patiently(&preferences, "sidecar_50", serde_json::json!(true));
+    set_patiently(&preferences, "focused_50", serde_json::json!(false));
+    set_patiently(
+        &preferences,
+        "map_bake",
+        serde_json::to_value(frontend_core::MapBakeChoice::Always).unwrap(),
+    );
+    set_patiently(
+        &preferences,
+        "quester_paths",
+        serde_json::json!({
+            "enabled": true,
+            "folder": quester_dir.to_string_lossy()
+        }),
+    );
+    set_patiently(
+        &preferences,
+        "script_load_last_dir",
+        serde_json::json!(load_dir.to_string_lossy()),
+    );
+    set_patiently(
+        &preferences,
+        "script_catalog_last_dir",
+        serde_json::json!(catalog_dir.to_string_lossy()),
+    );
+    seed_ui_state(&crate::ui_state::PanelUiState {
+        script_load_last_dir: Some(load_dir.clone()),
+        script_catalog_last_dir: Some(catalog_dir.clone()),
+        ..Default::default()
+    });
+    session.preferences_ready = false;
+    let folder_draft = isolated.dir().join("uncommitted-folder");
+    session.quester_paths_folder_edit = folder_draft.to_string_lossy().into_owned();
+    session.quester_paths_folder_dirty = true;
+
+    assert!(session.unlock_at(&path, "test-passphrase-01"));
+    assert!(session.core.vault_open());
+    assert!(session.core.slots().is_empty());
+    assert!(session.focused_name().is_none());
+    assert!(session.startup_focus_pending.is_some());
+    session.preferences.reload().unwrap();
+
+    patiently(|| {
+        session.poll_panel_preferences();
+        if session.panel_preferences_ready() {
+            Ok(())
+        } else {
+            Err("not durable within panel preference adoption wait".into())
+        }
+    })
+    .unwrap();
+
+    assert!(session.startup_focus_pending.is_none());
+    assert_eq!(session.focused_name().as_deref(), Some("alice"));
+    assert!(session.core.slots().contains_key("alice"));
+    assert!(!session.draw.capture());
+    assert!(session.draw.sidecar_50());
+    assert!(!session.draw.focused_50());
+    {
+        let focus = session.focus.lock().unwrap();
+        assert!(!focus.capture);
+        assert!(focus.sidecar_50);
+        assert!(!focus.focused_50);
+    }
+    assert_eq!(
+        session.map_desk.bake_gate().choice(),
+        frontend_core::MapBakeChoice::Always
+    );
+    assert!(session.quester_paths.settings().enabled());
+    assert_eq!(
+        session.quester_paths.settings().folder(),
+        quester_dir.as_path()
+    );
+    assert_eq!(
+        session.quester_paths_folder_edit,
+        folder_draft.to_string_lossy().into_owned()
+    );
+    assert_eq!(session.script_load_dir, load_dir);
+    assert_eq!(session.rs2b0t_catalog_dir, catalog_dir);
+    frontend_core::test_support::scripts::reset_quester_registry();
+}
+
+#[test]
+fn operator_focus_before_preference_adoption_keeps_walk_target() {
+    for path in ["select", "chooser", "multibox", "existing", "first-profile"] {
+        let _iso = IsolatedStores::enter(&format!("panel-startup-focus-{path}"));
+        let (mut session, vault) = multibox_unlock_fixture();
+        session.preferences.reload().unwrap();
+        session.preferences_ready = false;
+        assert!(session.unlock_at(&vault, "test-passphrase-01"));
+        assert!(session.startup_focus_pending.is_some());
+        match path {
+            "select" => session.select("bob"),
+            "chooser" => session.pick_profile("bob"),
+            "multibox" => {
+                session.set_multibox(true);
+                session.pick_profile("bob");
+            }
+            "existing" => {
+                session.select("bob");
+                session.focus_when_ready(super::StartupFocus::Restore);
+                session.focus_existing("bob").unwrap();
+            }
+            "first-profile" => {
+                session.focus_when_ready(super::StartupFocus::SavedProfile("alice".into()));
+                session.select("bob");
+            }
+            _ => unreachable!(),
+        }
+        assert_eq!(session.focused_name().as_deref(), Some("bob"), "{path}");
+        let world = open_world(4, 4);
+        session.select_picker_tile(
+            &world,
+            Tile {
+                x: 2,
+                z: 2,
+                level: 0,
+            },
+        );
+        session.confirm_picker_walk(&world);
+        assert!(
+            session.panel_preferences_ready(),
+            "{path}: WalkTo adopts preferences"
+        );
+        let report = session
+            .core
+            .commands()
+            .reports()
+            .find(|report| report.command() == frontend_core::OperatorCommand::WalkTo)
+            .expect("WalkTo command report");
+        let bob = session.core.profile_identity_or_synthetic("bob");
+        assert!(
+            report
+                .member(frontend_core::command::Subject::Profile(bob))
+                .is_some(),
+            "{path}: the command must target the operator's selection: {report:?}"
+        );
+        assert_eq!(session.focused_name().as_deref(), Some("bob"), "{path}");
+        session.poll_panel_preferences();
+        assert!(session.startup_focus_pending.is_none(), "{path}");
+        assert_eq!(session.focused_name().as_deref(), Some("bob"), "{path}");
+    }
+}
+
+#[test]
+fn walk_preference_adoption_does_not_apply_startup_focus_mid_command() {
+    let _iso = IsolatedStores::enter("panel-command-startup-focus");
+    let (mut session, vault) = multibox_unlock_fixture();
+    session.preferences.reload().unwrap();
+    session.preferences_ready = false;
+    assert!(session.unlock_at(&vault, "test-passphrase-01"));
+    // A captured command context is not an operator focus decision. Keep the
+    // automatic restore pending while exercising lazy policy adoption.
+    session.set_focus_for_test("bob");
+    let world = open_world(4, 4);
+    session.select_picker_tile(
+        &world,
+        Tile {
+            x: 2,
+            z: 2,
+            level: 0,
+        },
+    );
+    session.confirm_picker_walk(&world);
+    assert!(session.panel_preferences_ready());
+    let report = session
+        .core
+        .commands()
+        .reports()
+        .find(|report| report.command() == frontend_core::OperatorCommand::WalkTo)
+        .expect("WalkTo command report");
+    let bob = session.core.profile_identity_or_synthetic("bob");
+    assert!(
+        report
+            .member(frontend_core::command::Subject::Profile(bob))
+            .is_some(),
+        "lazy preference adoption must not replace the captured target: {report:?}"
+    );
+    assert_eq!(session.focused_name().as_deref(), Some("bob"));
+    assert!(session.startup_focus_pending.is_some());
+    session.poll_panel_preferences();
+    assert_eq!(session.focused_name().as_deref(), Some("alice"));
+    assert!(session.startup_focus_pending.is_none());
+}
+
+#[test]
+fn removing_the_focused_bot_cancels_startup_focus() {
+    let _iso = IsolatedStores::enter("panel-remove-startup-focus");
+    let (mut session, vault) = multibox_unlock_fixture();
+    session.preferences.reload().unwrap();
+    session.preferences_ready = false;
+    assert!(session.unlock_at(&vault, "test-passphrase-01"));
+    session.select("alice");
+    session.focus_when_ready(super::StartupFocus::SavedProfile("alice".into()));
+    session.rail_remove("alice");
+    assert!(session.focused_name().is_none());
+    session.poll_panel_preferences();
+    assert!(
+        session.focused_name().is_none(),
+        "startup must not reload the removed focus"
+    );
+    assert!(session.startup_focus_pending.is_none());
+}
+
+fn fleet_login_profile(session: &mut Session, name: &str) {
+    session.pump_status();
+    session.fleet_model.clear_marks_for_test();
+    let identity = session.core.profile_identity(name).unwrap();
+    session.fleet_model.set_mark_for_test(identity, true);
+    session.plan_fleet_action(frontend_core::FleetAction::Login);
+    if session.core.fleet_plan().is_some() {
+        session.confirm_fleet_plan();
+    }
+    session.pump_status();
+}
+
+#[test]
+fn fleet_login_focus_cancels_pending_startup_restore() {
+    let _iso = IsolatedStores::enter("panel-fleet-startup-focus");
+    let (mut session, vault) = multibox_unlock_fixture();
+    session.preferences.reload().unwrap();
+    session.preferences_ready = false;
+    assert!(session.unlock_at(&vault, "test-passphrase-01"));
+    assert!(session.startup_focus_pending.is_some());
+    fleet_login_profile(&mut session, "bob");
+    assert_eq!(session.core.selected(), Some("bob"));
+    assert_eq!(session.focused_name().as_deref(), Some("bob"));
+    session.poll_panel_preferences();
+    assert_eq!(session.core.selected(), Some("bob"));
+    assert_eq!(
+        session.focus.lock().unwrap().focused.as_deref(),
+        Some("bob")
+    );
+    assert_eq!(session.core.members(), ["bob"]);
+    assert!(session.startup_focus_pending.is_none());
+}
+
+#[test]
+fn removing_unfocused_restore_target_cancels_startup_restore() {
+    for saved_profile in [false, true] {
+        let _iso = IsolatedStores::enter("panel-remove-unfocused-startup");
+        let (mut session, vault) = multibox_unlock_fixture();
+        session.preferences.reload().unwrap();
+        session.preferences_ready = false;
+        assert!(session.unlock_at(&vault, "test-passphrase-01"));
+        fleet_login_profile(&mut session, "bob");
+        fleet_login_profile(&mut session, "alice");
+        assert_eq!(session.core.selected(), Some("bob"));
+        assert!(session.core.members().iter().any(|name| name == "alice"));
+        // Keep removal independent of the Fleet selection cancellation.
+        session.focus_when_ready(if saved_profile {
+            super::StartupFocus::SavedProfile("alice".into())
+        } else {
+            super::StartupFocus::Restore
+        });
+        session.rail_remove("alice");
+        assert!(!session.core.members().iter().any(|name| name == "alice"));
+        session.poll_panel_preferences();
+        assert_eq!(session.core.members(), ["bob"]);
+        assert_eq!(session.core.selected(), Some("bob"));
+        assert!(session.startup_focus_pending.is_none());
+    }
+}
+
+#[test]
+fn deleting_pending_saved_profile_cancels_startup_restore() {
+    let _iso = IsolatedStores::enter("panel-delete-startup-focus");
+    let (mut session, vault) = multibox_unlock_fixture();
+    session.preferences.reload().unwrap();
+    session.preferences_ready = false;
+    assert!(session.unlock_at(&vault, "test-passphrase-01"));
+    session.focus_when_ready(super::StartupFocus::SavedProfile("alice".into()));
+    assert!(session.vault_remove("alice"));
+    assert!(!session.profile_names().iter().any(|name| name == "alice"));
+    session.poll_panel_preferences();
+    assert!(session.core.members().is_empty());
+    assert!(session.core.selected().is_none());
+    assert!(session.focus.lock().unwrap().focused.is_none());
+    assert!(session.startup_focus_pending.is_none());
+}
+
+#[test]
+fn deleting_other_profile_keeps_pending_saved_profile_restore() {
+    let _iso = IsolatedStores::enter("panel-delete-other-startup-focus");
+    let (mut session, vault) = multibox_unlock_fixture();
+    session.preferences.reload().unwrap();
+    session.preferences_ready = false;
+    assert!(session.unlock_at(&vault, "test-passphrase-01"));
+    session.focus_when_ready(super::StartupFocus::SavedProfile("bob".into()));
+    assert!(session.vault_remove("alice"));
+    assert!(session.startup_focus_pending.is_some());
+    session.poll_panel_preferences();
+    assert_eq!(session.core.selected(), Some("bob"));
+    assert_eq!(
+        session.focus.lock().unwrap().focused.as_deref(),
+        Some("bob")
+    );
+    assert_eq!(session.core.members(), ["bob"]);
+}
+
+#[test]
 fn multibox_profile_pick_restores_that_profiles_script_heading() {
     let (mut session, path) = multibox_unlock_fixture();
-    session.set_multibox(true);
+    hydrate_panel_preferences(&mut session);
     assert!(session.unlock_at(&path, "test-passphrase-01"));
+    session.poll_panel_preferences();
     let thiever = Some(ScriptChoice::loaded(CardSource::Catalog, "Thiever"));
     let gatherer = Some(ScriptChoice::compiled(
         CompiledCardId::lookup("Gatherer").unwrap(),
@@ -2882,8 +3364,10 @@ fn multibox_roundtrip_keeps_profile_assignments_and_settings_isolated() {
     session.persist_ui = false;
     session.core.set_spawn_workers(false);
     session.scripts.set_legacy_store(legacy_path.clone());
+    hydrate_panel_preferences(&mut session);
     session.set_multibox(true);
     assert!(session.unlock_at(&path, "test-passphrase-01"));
+    session.poll_panel_preferences();
 
     for (step, selected) in [
         ("unlock", "alice"),
@@ -2998,6 +3482,7 @@ fn walk_status_is_dash_when_no_route() {
 #[test]
 fn picker_walk_zone_policy_is_blocking_by_default_and_all_only_when_opted_in() {
     let mut session = Session::new();
+    hydrate_panel_preferences(&mut session);
     assert_eq!(
         session.ui.nav.danger_level(),
         frontend_core::DangerLevel::WhenSurvivable
@@ -3098,7 +3583,7 @@ fn restored_enabled_folder_loads_when_game_data_becomes_ready() {
     .unwrap();
 
     let mut session = Session::new();
-    assert!(session.quester_paths.settings().enabled());
+    hydrate_panel_preferences(&mut session);
     let selected = api::selected::FamilyPreparation::run(|_| {
         api::game_data::for_revision(api::selected::ClientRevision::R289)
             .expect("selected 289 game data")
@@ -3153,6 +3638,7 @@ fn quest_paths_checkbox_keeps_saved_folder_after_failed_folder_save() {
     .unwrap();
 
     let mut session = Session::new();
+    hydrate_panel_preferences(&mut session);
     assert_eq!(session.quester_paths.settings().folder(), saved.as_path());
     assert!(!session.quester_paths.settings().enabled());
 
@@ -3191,6 +3677,14 @@ fn quest_paths_checkbox_keeps_saved_folder_after_failed_folder_save() {
     session
         .persist_quester_paths_change(true, false)
         .expect("checkbox toggle saves enabled with the already-saved folder");
+    await_preference(
+        &mut session,
+        "quester_paths",
+        serde_json::json!({
+            "enabled": true,
+            "folder": saved.to_string_lossy()
+        }),
+    );
     assert!(session.quester_paths.settings().enabled());
     assert_eq!(session.quester_paths.settings().folder(), saved.as_path());
     let document: serde_json::Value =
@@ -3827,22 +4321,27 @@ fn walk_count_follows_marks_made_elsewhere_while_the_picker_is_open() {
 /// (sidecar off, focused on).
 #[test]
 fn fifty_fps_choices_are_saved_and_restored() {
-    let fresh = Session::new();
+    let mut fresh = Session::new();
+    hydrate_panel_preferences(&mut fresh);
     {
         let f = fresh.focus.lock().unwrap();
         assert!(!f.sidecar_50, "a missing key: sidecar off");
         assert!(f.focused_50, "a missing key: focused on, as before");
     }
     let mut s = Session::new();
+    hydrate_panel_preferences(&mut s);
     s.set_sidecar_50(true);
     s.set_focused_50(false);
+    await_preference(&mut s, "sidecar_50", serde_json::json!(true));
+    await_preference(&mut s, "focused_50", serde_json::json!(false));
     let saved = crate::ui_state::load(&s.preferences);
     assert!(
         saved.sidecar_50 && !saved.focused_50,
         "written to the preferences"
     );
 
-    let next = Session::new();
+    let mut next = Session::new();
+    hydrate_panel_preferences(&mut next);
     {
         let f = next.focus.lock().unwrap();
         assert!(f.sidecar_50, "the next launch restores sidecar 50 fps");
@@ -4097,7 +4596,7 @@ fn picker_mine_world() -> NavWorld {
             }
         }
     }
-    let (walk, blocked) = nav::collision::pack_walk(&flags);
+    let (walk, blocked) = nav_planner::collision::pack_walk(&flags);
     NavWorld::from_parts(
         WorldCollision {
             origin: WorldTile {
@@ -4126,16 +4625,9 @@ fn picker_confirm_feeds_the_focused_slots_latched_essence_session() {
     let arms = host_play::WalkArms::default();
     arms.lock().unwrap().insert(
         "alice".into(),
-        Arc::new(Mutex::new(host_play::WalkArm {
-            traveller: {
-                let mut t = Traveller::new();
-                t.set_essence(nav::essence::essence_session_for_wizard(553));
-                t
-            },
-            route: None,
-            bank_fetch: None,
-            ..Default::default()
-        })),
+        Arc::new(Mutex::new(host_play::WalkArm::with_latched_essence(
+            nav_planner::essence::essence_session_for_wizard(553),
+        ))),
     );
     s.core.set_walk_arms(arms);
     let world = picker_mine_world();
@@ -4202,7 +4694,7 @@ fn picker_confirm_no_path_keeps_destination_without_arming() {
     for z in 0..3 {
         flags[z * 3 + 1] = CollisionFlag::WALK_BLOCK_FLAGS as u32;
     }
-    let (walk, blocked) = nav::collision::pack_walk(&flags);
+    let (walk, blocked) = nav_planner::collision::pack_walk(&flags);
     let world = NavWorld::from_parts(
         WorldCollision {
             origin: WorldTile {
@@ -4252,6 +4744,8 @@ fn toll_world() -> NavWorld {
     let edge = TransportEdge {
         takeoff: None,
         worn_all_req: Vec::new(),
+        forbidden_held: Vec::new(),
+        forbidden_worn: Vec::new(),
         kind: TransportKind::Door,
         player_delta: None,
         at: WorldTile {
@@ -4283,7 +4777,7 @@ fn toll_world() -> NavWorld {
     let mut graph = TransportGraph::default();
     graph.at.entry(edge.at).or_default().push(0);
     graph.edges.push(edge);
-    let (walk, blocked) = nav::collision::pack_walk(&flags);
+    let (walk, blocked) = nav_planner::collision::pack_walk(&flags);
     NavWorld::from_parts(
         WorldCollision {
             origin: WorldTile {
@@ -4444,6 +4938,8 @@ fn picker_confirm_ignores_teles_until_allow_teleports() {
     graph.teleports.push(TransportEdge {
         takeoff: None,
         worn_all_req: Vec::new(),
+        forbidden_held: Vec::new(),
+        forbidden_worn: Vec::new(),
         kind: TransportKind::Teleport,
         player_delta: None,
         at: WorldTile {
@@ -4468,7 +4964,7 @@ fn picker_confirm_ignores_teles_until_allow_teleports() {
         wildy_cap: None,
         quest_gates: None,
     });
-    let (walk, blocked) = nav::collision::pack_walk(&flags);
+    let (walk, blocked) = nav_planner::collision::pack_walk(&flags);
     let world = NavWorld::from_parts(
         WorldCollision {
             origin: WorldTile {
@@ -4559,8 +5055,8 @@ fn picker_confirm_uses_find_with_options() {
     // Routing gates wilderness entry on the packed `graph.wilderness`
     // rules; pack the surface zone so the fixture has a wilderness.
     let mut graph = TransportGraph {
-        wilderness: nav::transport::WildernessRules {
-            zones: vec![nav::transport::WildernessZone {
+        wilderness: nav_planner::transport::WildernessRules {
+            zones: vec![nav_planner::transport::WildernessZone {
                 x1: 2944,
                 z1: 3520,
                 x2: 3391,
@@ -4577,6 +5073,8 @@ fn picker_confirm_uses_find_with_options() {
     graph.teleports.push(TransportEdge {
         takeoff: None,
         worn_all_req: Vec::new(),
+        forbidden_held: Vec::new(),
+        forbidden_worn: Vec::new(),
         kind: TransportKind::Teleport,
         player_delta: None,
         at: WorldTile {
@@ -4601,7 +5099,7 @@ fn picker_confirm_uses_find_with_options() {
         wildy_cap: None,
         quest_gates: None,
     });
-    let (walk, blocked) = nav::collision::pack_walk(&flags);
+    let (walk, blocked) = nav_planner::collision::pack_walk(&flags);
     let world = NavWorld::from_parts(
         WorldCollision {
             origin: WorldTile {
@@ -4674,7 +5172,7 @@ fn a_picker_walk_shows_the_member_running_until_it_ends() {
     s.core.fleet_mut().add("alice");
     s.pump_status();
     let before = s.core.fleet_view().rows_generation();
-    assert!(!s.core.fleet_view().row("alice").unwrap().walking());
+    assert!(!s.core.fleet_view().row("alice").unwrap().manual_walk());
 
     let dest = Tile {
         x: 2,
@@ -4685,7 +5183,7 @@ fn a_picker_walk_shows_the_member_running_until_it_ends() {
     assert!(s.confirm_picker_walk(&world));
     s.pump_status();
     let walking = s.core.fleet_view().row("alice").unwrap();
-    assert!(walking.walking());
+    assert!(walking.manual_walk());
     assert_eq!(walking.brief(), "running");
     assert!(
         s.core.fleet_view().rows_generation() > before,
@@ -4698,14 +5196,14 @@ fn a_picker_walk_shows_the_member_running_until_it_ends() {
         held.route = None;
         s.pump_status();
         assert!(
-            s.core.fleet_view().row("alice").unwrap().walking(),
+            s.core.fleet_view().row("alice").unwrap().manual_walk(),
             "an arm in use keeps its last answer; the pump does not wait"
         );
     }
     s.core.finish_walk_for_test("alice");
     s.pump_status();
     let arrived = s.core.fleet_view().row("alice").unwrap();
-    assert!(!arrived.walking());
+    assert!(!arrived.manual_walk());
     assert_eq!(arrived.brief(), "idle");
     assert_eq!(s.walk_status_text(), "—");
 }
@@ -4795,6 +5293,7 @@ fn focus_first_prefers_last_focus() {
             ..Default::default()
         },
     );
+    s.ui.last_focus = Some("bob".into());
     s.focus_first_profile();
     assert_eq!(s.focused_name().as_deref(), Some("bob"));
     assert_eq!(
@@ -4805,19 +5304,24 @@ fn focus_first_prefers_last_focus() {
 
 #[test]
 fn select_saves_last_focus() {
+    // Model initial preference hydration completing after this focus write.
+    // The test-only preference mirror must retain the committed key.
     seed_ui_state(&crate::ui_state::PanelUiState::default());
     let path = tmp_vault("select-last-focus.vault");
     let mut s = Session::new();
+    s.preferences.reload().unwrap();
     install_vault(
         &mut s.core,
         VaultFixture::create(&path, "test-passphrase-01"),
     );
     vault_upsert(&mut s.core, profile("alice", "pw", 42));
     s.select("alice");
-    assert_eq!(
-        crate::ui_state::load(&s.preferences).last_focus.as_deref(),
-        Some("alice")
-    );
+    await_preference(&mut s, "last_focus", serde_json::json!("alice"));
+    let stored = s.preferences.reload().unwrap();
+    assert_eq!(stored.get("last_focus"), Some(&serde_json::json!("alice")));
+    s.preferences_ready = false;
+    s.poll_panel_preferences();
+    assert_eq!(s.ui.last_focus.as_deref(), Some("alice"));
 }
 
 #[test]
@@ -5821,6 +6325,41 @@ fn closing_game_pane_leaves_capture_pref_on() {
 }
 
 #[test]
+fn closing_game_pane_releases_a_captured_mouse_hold() {
+    let input = SlotInput::new();
+    let mut s = Session::new();
+    s.core.set_spawn_workers(false);
+    s.core.set_play(Some(empty_play()));
+    s.core.insert_slot_io(
+        "alice",
+        SlotIo {
+            input: Arc::clone(&input),
+            pixels: FrameBuf::new(),
+        },
+    );
+    s.set_focus_for_test("alice");
+    s.set_game_pane_open(true);
+    s.set_capture(true);
+    let sender = s
+        .map_desk
+        .duplicate_input_sender()
+        .expect("capture is attached to the focused slot");
+    assert!(sender.send(InputEv::Down {
+        button: 2,
+        x: 10,
+        y: 20,
+    }));
+    let mut shell = client::client::GameShell::new();
+    input.drain(&mut shell);
+    assert_eq!(shell.mouse_button, 2);
+
+    s.set_game_pane_open(false);
+    input.drain(&mut shell);
+    assert_eq!(shell.mouse_button, 0);
+    assert!(!s.map_desk.input_connected());
+}
+
+#[test]
 fn reopening_game_pane_resumes_capture_drain() {
     let mut s = Session::new();
     s.core.insert_slot_io(
@@ -5844,8 +6383,10 @@ fn set_capture_persists_to_panel_ui() {
     seed_ui_state(&crate::ui_state::PanelUiState::default());
     let mut s = Session::new();
     s.set_capture(false);
+    await_preference(&mut s, "capture", serde_json::json!(false));
     assert!(!crate::ui_state::load(&s.preferences).capture);
     s.set_capture(true);
+    await_preference(&mut s, "capture", serde_json::json!(true));
     assert!(crate::ui_state::load(&s.preferences).capture);
 }
 
@@ -6485,6 +7026,7 @@ fn chooser_world_edit_persists_and_updates_running_slot() {
 fn save_credentials_creates_new_profile_when_username_is_new() {
     let path = tmp_vault("new-user.vault");
     let mut s = Session::new();
+    hydrate_panel_preferences(&mut s);
     install_vault(
         &mut s.core,
         VaultFixture::create(&path, "test-passphrase-01"),
@@ -6531,6 +7073,7 @@ fn save_credentials_rejects_empty_username() {
 fn save_credentials_without_focus_upserts_spawns_and_selects() {
     let path = tmp_vault("empty-first-run.vault");
     let mut s = Session::new();
+    hydrate_panel_preferences(&mut s);
     install_vault(
         &mut s.core,
         VaultFixture::create(&path, "test-passphrase-01"),
@@ -6549,9 +7092,92 @@ fn save_credentials_without_focus_upserts_spawns_and_selects() {
 }
 
 #[test]
+fn first_profile_save_waits_for_preferences_before_selecting_and_loading_once() {
+    let iso = IsolatedStores::enter("panel-first-profile-cold-preferences");
+    let mut session = Session::new();
+    session.core.set_spawn_workers(false);
+    let (entered, entered_rx) = std::sync::mpsc::sync_channel(1);
+    let (release, release_rx) = std::sync::mpsc::channel();
+    let release_rx = Mutex::new(release_rx);
+    let first = std::sync::atomic::AtomicBool::new(true);
+    let service = host_play::local_state::LocalStateService::open_process_with_read_stall_for_test(
+        host_play::local_state::StateRoot::new(iso.dir().join("cold-state")),
+        Arc::new(move || {
+            if first.swap(false, Ordering::SeqCst) {
+                let _ = entered.send(());
+                let _ = release_rx.lock().unwrap().recv();
+            }
+        }),
+    );
+    entered_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+    session.core.bind_local_state(service);
+    session.preferences = session.core.preferences().unwrap();
+    session.preferences_ready = false;
+    let path = iso.dir().join("vault");
+    assert!(session.unlock_at(&path, "test-passphrase-01"));
+    session.begin_edit_profile(None);
+    *session.profile_editor.draft_mut().username_mut() = "alice".into();
+    *session.profile_editor.draft_mut().password_mut() = "pw".into();
+    *session
+        .profile_editor
+        .draft_mut()
+        .settings_mut()
+        .auto_login_mut() = true;
+    assert!(session.save_credentials());
+    session.core.flush_writes();
+
+    for _ in 0..4 {
+        session.poll_panel_preferences();
+        session.pump_status();
+        assert!(!session.preferences.ready());
+        assert!(session.core.profile("alice").is_some());
+        assert!(
+            session.core.slots().is_empty(),
+            "saving the first profile must not select or load before preferences are ready"
+        );
+        assert!(session.focused_name().is_none());
+    }
+
+    release.send(()).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while session.core.slots().is_empty() && Instant::now() < deadline {
+        session.poll_panel_preferences();
+        session.pump_status();
+        thread::sleep(Duration::from_millis(5));
+    }
+    assert!(session.panel_preferences_ready());
+    assert_eq!(session.focused_name().as_deref(), Some("alice"));
+    let arm = session.core.play_for_test().unwrap().arm("alice").unwrap();
+    assert!(arm.wants_login());
+    let selections = |session: &Session| {
+        session
+            .core
+            .commands()
+            .reports()
+            .filter(|report| report.command() == frontend_core::OperatorCommand::Select)
+            .count()
+    };
+    // `select` also submits the render-focus mirror. Further pumps must
+    // neither repeat that selection nor replace the loaded login arm.
+    let selected = selections(&session);
+    assert!(selected > 0);
+    for _ in 0..4 {
+        session.poll_panel_preferences();
+        session.pump_status();
+        assert_eq!(selections(&session), selected);
+        assert_eq!(session.core.slots().len(), 1);
+        assert!(Arc::ptr_eq(
+            &arm,
+            &session.core.play_for_test().unwrap().arm("alice").unwrap()
+        ));
+    }
+}
+
+#[test]
 fn save_credentials_does_not_duplicate_running_slot() {
     let path = tmp_vault("no-dup-slot.vault");
     let mut s = Session::new();
+    hydrate_panel_preferences(&mut s);
     install_vault(
         &mut s.core,
         VaultFixture::create(&path, "test-passphrase-01"),
@@ -6579,6 +7205,7 @@ fn save_credentials_does_not_duplicate_running_slot() {
 fn save_credentials_rename_editing_profile_replaces_old_key() {
     let path = tmp_vault("rename-creds.vault");
     let mut s = Session::new();
+    hydrate_panel_preferences(&mut s);
     install_vault(
         &mut s.core,
         VaultFixture::create(&path, "test-passphrase-01"),
@@ -6616,6 +7243,7 @@ fn first_time_save_spawns_nothing_until_the_write_is_durable() {
     let dir = TestDir::new("save-first-time");
     let path = dir.join("vault.vault");
     let mut s = Session::new();
+    hydrate_panel_preferences(&mut s);
     s.core.set_spawn_workers(false);
     s.core.set_play(Some(empty_play()));
     install_vault(
@@ -6896,6 +7524,50 @@ fn set_random_event_policy_persists_without_spawning() {
         s.core.slots().is_empty(),
         "editing a policy must not spawn a slot"
     );
+}
+
+#[test]
+fn set_survival_persists_and_mirrors_running_arm() {
+    let path = tmp_vault("survival-settings-arm.vault");
+    let mut s = Session::new();
+    install_vault(
+        &mut s.core,
+        VaultFixture::create(&path, "test-passphrase-01"),
+    );
+    vault_upsert(&mut s.core, profile("alice", "pw", 42));
+    let mut play = frontend_core::test_support::empty_play(&host_play::PlayOptions {
+        host: "127.0.0.1".into(),
+        transport: client::Transport::Tcp,
+        port: 43594,
+        cache_dir: "/tmp".into(),
+        lowmem: true,
+        mainland: false,
+    });
+    let arm = SlotArm::new(42, false);
+    // The arm's mirrored byte: 0 = when needed, 1 = always, 2 = never
+    // (the script policy's fixed encoding).
+    assert_eq!(
+        arm.cure_poison.load(Ordering::Relaxed),
+        0,
+        "default: cure when needed"
+    );
+    play.attach_arm("alice", Arc::clone(&arm));
+    s.core.set_play(Some(play));
+    assert!(s.set_survival("alice", frontend_core::CurePoison::Never));
+    s.core.flush_writes();
+    assert_eq!(
+        arm.cure_poison.load(Ordering::Relaxed),
+        2,
+        "the choice must reach the live arm without respawn"
+    );
+    assert_eq!(
+        s.core.profile("alice").unwrap().survival().cure_poison(),
+        frontend_core::CurePoison::Never,
+        "the choice persists on the profile"
+    );
+    assert!(s.set_survival("alice", frontend_core::CurePoison::Always));
+    s.core.flush_writes();
+    assert_eq!(arm.cure_poison.load(Ordering::Relaxed), 1);
 }
 
 #[test]
@@ -7235,53 +7907,102 @@ fn login_all_during_loading_scene_publishes_no_control_owned_place() {
     );
 }
 
+/// Log out follows the shared projection for the focused bot. A connected
+/// session is eligible before the scene is ready and in game, a refused login that the
+/// slot still retries is eligible too, and a bot that never logged in or
+/// that Log out already parked is not (an operator logout's latch does not
+/// make it eligible again; only the repeat guard's park does).
 #[test]
-fn focused_connection_is_distinct_from_game_readiness() {
+fn logout_retry_focused_eligibility_follows_the_shared_projection() {
+    use frontend_core::LogoutEligibility as E;
     let mut s = Session::new();
-    s.set_focus_for_test("alice");
-    assert!(!s.focused_connected());
-    assert!(!s.focused_ingame());
-    let play = empty_play();
-    play.statuses.lock().unwrap().push(SlotStatus {
-        username: "alice".into(),
-        connected: true,
-        ingame: false,
-        startup_phase: StartupPhase::LoadingScene,
-        ..SlotStatus::default()
-    });
+    let mut play = empty_play();
+    for (name, uid) in [("alice", 1), ("bob", 2)] {
+        play.attach_arm(name, SlotArm::new(uid, true));
+        s.core.fleet_mut().add(name);
+    }
     s.core.set_play(Some(play));
-    s.statuses.refresh_from_play(&s.core);
-    assert!(s.focused_connected());
+    s.set_focus_for_test("alice");
+    assert_eq!(s.focused_logout_eligibility(), Some(E::NotLoggedIn));
+    let publish = |s: &Session, edit: &dyn Fn(&mut SlotStatus)| {
+        let play = s.core.play_for_test().unwrap();
+        let mut rows = play.statuses.lock().unwrap();
+        if rows.is_empty() {
+            rows.push(SlotStatus {
+                username: "alice".into(),
+                ..SlotStatus::default()
+            });
+        }
+        edit(&mut rows[0]);
+    };
+    publish(&s, &|row| {
+        row.connected = true;
+        row.ingame = false;
+        row.startup_phase = StartupPhase::LoadingScene;
+    });
+    s.core.poll_host();
+    assert_eq!(
+        s.focused_logout_eligibility(),
+        Some(E::LoggingIn),
+        "connected, scene still loading"
+    );
     assert!(!s.focused_ingame());
-}
+    publish(&s, &|row| {
+        row.ingame = true;
+        row.scene_state = 2;
+        row.startup_phase = StartupPhase::Ready;
+    });
+    s.core.poll_host();
+    assert_eq!(s.focused_logout_eligibility(), Some(E::LoggedIn));
 
-/// Only the repeat guard's park (offline, unqueued, possibly holding script
-/// work) enables Logout for an offline slot; an operator logout's latch
-/// does not, so an already logged-out profile is not latched again.
-#[test]
-fn focused_guard_park_is_only_the_repeat_guard_latch() {
-    let mut s = Session::new();
-    s.set_focus_for_test("alice");
-    let play = empty_play();
-    play.statuses.lock().unwrap().push(SlotStatus {
-        username: "alice".into(),
-        login_latch_reason: Some(host_play::LoginLatchReason::OperatorLogout),
-        ..SlotStatus::default()
+    // A refused login the slot still wants: the host retries it.
+    s.core
+        .play_for_test()
+        .unwrap()
+        .arm("alice")
+        .unwrap()
+        .arm_explicit_login();
+    publish(&s, &|row| {
+        row.connected = false;
+        row.ingame = false;
+        row.scene_state = 0;
+        row.startup_phase = StartupPhase::Error;
+        row.error = Some("Error connecting to server.".into());
     });
-    s.core.set_play(Some(play));
-    s.statuses.refresh_from_play(&s.core);
-    assert!(!s.focused_guard_parked());
-    s.core.play_for_test().unwrap().statuses.lock().unwrap()[0].login_latch_reason =
-        Some(host_play::LoginLatchReason::RepeatedUnexpectedLogouts {
-            count: 3,
-            window_seconds: 600,
-        });
-    s.statuses.refresh_from_play(&s.core);
-    assert!(s.focused_guard_parked());
+    s.core.poll_host();
+    assert_eq!(s.focused_logout_eligibility(), Some(E::RetryingLogin));
+
+    // Log out parks it: nothing is left to cancel.
+    s.logout("alice");
+    s.core.poll_host();
+    assert_eq!(s.focused_logout_eligibility(), Some(E::NotLoggedIn));
+    assert!(!s
+        .core
+        .play_for_test()
+        .unwrap()
+        .arm("alice")
+        .unwrap()
+        .wants_login());
+
+    // The repeat guard's park (offline, unqueued, may hold script work) is
+    // eligible; another bot's park is not this bot's.
+    let arm = s.core.play_for_test().unwrap().arm("alice").unwrap();
+    arm.arm_explicit_login();
+    arm.complete_login_for_test();
+    arm.exit_and_trip_repeat_guard_for_test();
+    publish(&s, &|row| {
+        row.login_latched = true;
+        row.login_latch_reason = arm.login_latch_reason();
+    });
+    s.core.poll_host();
+    assert_eq!(s.focused_logout_eligibility(), Some(E::GuardParked));
     s.set_focus_for_test("bob");
-    assert!(
-        !s.focused_guard_parked(),
-        "another slot's park is not bob's"
+    assert_eq!(s.focused_logout_eligibility(), Some(E::NotLoggedIn));
+    s.set_focus_for_test("nobody");
+    assert_eq!(
+        s.focused_logout_eligibility(),
+        Some(E::NotLoggedIn),
+        "an unprojected focus has nothing to cancel"
     );
 }
 
@@ -8604,13 +9325,16 @@ fn two_live_session(label: &str) -> (Session, IsolatedStores) {
     );
     vault_upsert(&mut s.core, profile("alice", "pw", 42));
     vault_upsert(&mut s.core, profile("bob", "pw", 43));
+    hydrate_panel_preferences(&mut s);
+    s.load("alice");
+    s.select("alice");
     (s, iso)
 }
 
 #[test]
 fn single_mode_select_offers_background_ack_until_persisted() {
     let (mut s, _iso) = two_live_session("bg-ack-select");
-    s.select("alice");
+    hydrate_panel_preferences(&mut s);
     assert!(
         !s.background_ack_open,
         "one live slot is not a background fleet"
@@ -8626,6 +9350,7 @@ fn single_mode_select_offers_background_ack_until_persisted() {
         "dismiss without ack shows the notice again"
     );
     s.ack_background_bots();
+    await_preference(&mut s, "background_bots_ack", serde_json::json!(true));
     assert!(!s.background_ack_open);
     assert!(frontend_core::resources::background_bots_acked(
         &s.preferences
@@ -8656,6 +9381,7 @@ fn background_ack_survives_session_restart() {
     s.select("bob");
     assert!(s.background_ack_open);
     s.ack_background_bots();
+    await_preference(&mut s, "background_bots_ack", serde_json::json!(true));
     drop(s);
     let mut s2 = Session::new();
     s2.core.set_spawn_workers(false);
@@ -8664,8 +9390,8 @@ fn background_ack_survives_session_restart() {
         &mut s2.core,
         VaultFixture::create(&tmp_vault("bg-ack-restart-2"), "test-passphrase-01"),
     );
-    vault_upsert(&mut s2.core, profile("alice", "pw", 42));
     vault_upsert(&mut s2.core, profile("bob", "pw", 43));
+    hydrate_panel_preferences(&mut s2);
     s2.select("alice");
     s2.select("bob");
     assert!(
@@ -8713,12 +9439,17 @@ fn live_persist_off_skips_background_ack() {
 #[test]
 fn failed_ack_persist_then_success_clears_only_that_error() {
     let (mut s, iso) = two_live_session("bg-ack-fail");
-    s.select("alice");
+    hydrate_panel_preferences(&mut s);
     s.select("bob");
     assert!(s.background_ack_open);
-    let parent = s.preferences.path().parent().unwrap().to_path_buf();
-    let _ = std::fs::remove_dir_all(&parent);
-    std::fs::write(&parent, b"not-a-dir").unwrap();
+    await_preference(&mut s, "last_focus", serde_json::json!("bob"));
+    // An unreadable preferences file refuses the store on every platform. (A
+    // folder replaced by a file does not: a read through it fails as
+    // `NotADirectory` on Unix but as `NotFound` on Windows, which the store
+    // reads as "no file yet", and the write then fails later, not at once.)
+    let path = s.preferences.path();
+    crate::test_support::write_private_fixture(&path, b"{malformed").unwrap();
+    assert!(s.preferences.reload().is_err());
     s.error = None;
     s.ack_background_bots();
     assert!(
@@ -8735,8 +9466,10 @@ fn failed_ack_persist_then_success_clears_only_that_error() {
     assert!(!frontend_core::resources::background_bots_acked(
         &s.preferences
     ));
-    std::fs::remove_file(&parent).unwrap();
+    std::fs::remove_file(&path).unwrap();
+    s.preferences.reload().unwrap();
     s.ack_background_bots();
+    await_preference(&mut s, "background_bots_ack", serde_json::json!(true));
     assert!(!s.background_ack_open);
     assert!(s.error.is_none(), "got {:?}", s.error);
     assert!(frontend_core::resources::background_bots_acked(
@@ -8748,10 +9481,11 @@ fn failed_ack_persist_then_success_clears_only_that_error() {
 #[test]
 fn successful_ack_preserves_unrelated_error() {
     let (mut s, _iso) = two_live_session("bg-ack-unrelated");
-    s.select("alice");
+    hydrate_panel_preferences(&mut s);
     s.select("bob");
     s.error = Some("chooser: vault locked".into());
     s.ack_background_bots();
+    await_preference(&mut s, "background_bots_ack", serde_json::json!(true));
     assert!(!s.background_ack_open);
     assert_eq!(s.error.as_deref(), Some("chooser: vault locked"));
     assert!(frontend_core::resources::background_bots_acked(
@@ -8834,6 +9568,7 @@ fn background_count_ignores_terminal_status_rows() {
 fn a_profile_still_saving_cannot_be_selected_loaded_or_deleted_from_the_chooser() {
     let path = tmp_vault("saving-gate.vault");
     let mut s = Session::new();
+    hydrate_panel_preferences(&mut s);
     s.core.set_spawn_workers(false);
     s.core.set_play(Some(empty_play()));
     let mut vault = VaultFixture::create(&path, "test-passphrase-01");
@@ -9115,4 +9850,211 @@ fn panel_frame_hook_receives_client_through_slot_frame() {
     );
 
     assert!(session.mainland_sent.lock().unwrap().contains("alice"));
+}
+
+/// The banner message stays until the shared timeout passes, or a newer
+/// message replaces it and restarts the timer: the same rule as the terminal
+/// app's message line (`frontend_core::ERROR_MESSAGE_TIMEOUT`). An action
+/// that resolves a message clears it earlier; that is proved by
+/// `a_refusal_before_submission_logs_once_and_the_resolving_action_clears_it`.
+#[test]
+fn the_banner_message_expires_unless_replaced() {
+    use frontend_core::ERROR_MESSAGE_TIMEOUT as TIMEOUT;
+    let second = std::time::Duration::from_secs(1);
+    let mut s = Session::new();
+    let t0 = Instant::now();
+
+    // No action: it stays for the whole timeout, then goes.
+    s.error = Some("first".into());
+    s.expire_error(t0);
+    s.expire_error(t0 + TIMEOUT - second);
+    assert_eq!(s.error.as_deref(), Some("first"));
+    s.expire_error(t0 + TIMEOUT);
+    assert_eq!(s.error, None);
+
+    // A newer message replaces it and restarts the timer.
+    s.error = Some("older".into());
+    s.expire_error(t0);
+    s.error = Some("newer".into());
+    s.expire_error(t0 + TIMEOUT - second);
+    s.expire_error(t0 + TIMEOUT + second);
+    assert_eq!(s.error.as_deref(), Some("newer"), "the timer restarted");
+    s.expire_error(t0 + TIMEOUT * 2 - second);
+    assert_eq!(s.error, None);
+}
+
+/// The lines the process log holds for refusals that name `bot`.
+fn refusal_lines_naming(bot: &str) -> Vec<String> {
+    use frontend_core::log::{global, LogScope, LogView};
+    let mut view = LogView::new(LogScope::Process);
+    view.edit_filter(|filter| filter.set_text("command refused"));
+    global().refresh(&mut view);
+    view.rows()
+        .iter()
+        .map(|row| row.message().to_owned())
+        .filter(|line| line.contains(bot))
+        .collect()
+}
+
+/// PANEL-STATE-GAP-1023: a refusal the panel makes before it can submit
+/// (Copy settings with no focus, or on a bot with no card) logs one `info`
+/// line at the shared command boundary, with the command, the bots and the
+/// reason; and the action that resolves it (focusing a bot, here) clears the
+/// banner at once, not only when the timeout passes.
+#[test]
+fn a_refusal_before_submission_logs_once_and_the_resolving_action_clears_it() {
+    let _iso = IsolatedStores::enter("psg-resolve-refusal");
+    let mut s = Session::new();
+    s.core.set_spawn_workers(false);
+    s.core.set_play(Some(empty_play()));
+    install_vault(
+        &mut s.core,
+        VaultFixture::create(&tmp_vault("psg-resolve-refusal"), "test-passphrase-01"),
+    );
+    vault_upsert(&mut s.core, profile("psg-f3-zed", "pw", 44));
+    s.persist_ui = false;
+    assert_eq!(s.focused_name(), None);
+    let before = s.core.refusals();
+
+    s.copy_focused_settings_to_same_card();
+    assert_eq!(s.error.as_deref(), Some("Copy settings: focus a bot first"));
+    assert_eq!(s.core.refusals(), before + 1, "one refusal counted");
+    s.select("psg-f3-zed");
+    assert_eq!(s.focused_name().as_deref(), Some("psg-f3-zed"));
+    assert_eq!(s.error, None, "focusing a bot resolved the message");
+
+    // A bot with no card: the line names that bot.
+    s.copy_focused_settings_to_same_card();
+    assert_eq!(
+        s.error.as_deref(),
+        Some("Copy settings: the focused bot has no card")
+    );
+    assert_eq!(s.core.refusals(), before + 2);
+    let lines = refusal_lines_naming("psg-f3-zed");
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    for part in [
+        "PlanFleetAction(CopySettings)",
+        "on psg-f3-zed",
+        "Copy settings: the focused bot has no card",
+    ] {
+        assert!(
+            lines[0].contains(part),
+            "{part:?} missing from {:?}",
+            lines[0]
+        );
+    }
+}
+
+/// Whether the process log holds a refusal line containing `line`. The log
+/// redacts every registered password (the short ones other tests register
+/// too, such as "test"), wherever it appears: so a line that holds a path is
+/// compared after the same redaction, whatever the temporary folder is called.
+fn refusal_logged(line: &str) -> bool {
+    use frontend_core::log::{global, LogScope, LogView};
+    let mut view = LogView::new(LogScope::Process);
+    view.edit_filter(|filter| filter.set_text("command refused: "));
+    global().refresh(&mut view);
+    let wanted = api::hostlog::redact(line);
+    view.rows().iter().any(|row| {
+        row.message().starts_with("command refused: ")
+            && api::hostlog::redact(row.message()).contains(&*wanted)
+    })
+}
+
+/// PANEL-STATE-GAP-1023 (F2): a command the panel refuses before it can
+/// submit it is refused at the shared command boundary, as every other
+/// refusal is: one `info` line names the command, the bots and the reason,
+/// and the banner shows the reason. The Refresh catalog button with no
+/// catalog configured, Load on a path that is not a file, and Use this
+/// folder on a folder with no catalog.
+#[test]
+fn the_panels_own_refusals_log_at_the_command_boundary() {
+    let iso = IsolatedStores::enter("psg-panel-own-refusals");
+    let mut s = Session::new();
+    s.persist_ui = false;
+    assert_eq!(s.catalog_root().unwrap(), None);
+    let before = s.core.refusals();
+
+    s.begin_refresh_catalog();
+    assert_eq!(
+        s.error.as_deref(),
+        Some("Refresh catalog: no catalog configured")
+    );
+    assert_eq!(s.core.refusals(), before + 1, "one refusal counted");
+    assert!(refusal_logged(
+        "command refused: ImportCatalog on no bots: Refresh catalog: no catalog configured"
+    ));
+
+    let missing = iso.dir().join("psg-missing.ts");
+    s.load_js(&missing);
+    assert_eq!(s.core.refusals(), before + 2);
+    assert!(refusal_logged(&format!(
+        "command refused: LoadScriptFile on no bots: script: not a file: {}",
+        missing.display()
+    )));
+
+    let empty = iso.dir().join("psg-no-catalog");
+    std::fs::create_dir_all(&empty).unwrap();
+    let refused = s.import_rs2b0t_catalog(&empty).unwrap_err();
+    assert!(refused.starts_with("no catalog at "), "{refused}");
+    assert_eq!(s.core.refusals(), before + 3);
+    assert!(refusal_logged(&format!(
+        "command refused: ImportCatalog on no bots: {refused}"
+    )));
+}
+
+/// PANEL-STATE-GAP-1023 (R3-M1, panel): the refusal of a profile whose
+/// first save is still being written waits for that save. It stays while
+/// the write is held and clears on the first frame after the save is
+/// durable, long before its timeout.
+#[test]
+fn a_still_saving_refusal_clears_when_the_save_finishes() {
+    let path = tmp_vault("saving-clears.vault");
+    let mut s = Session::new();
+    s.core.set_spawn_workers(false);
+    s.core.set_play(Some(empty_play()));
+    let mut vault = VaultFixture::create(&path, "test-passphrase-01");
+    vault.put(profile("alice", "pw", 42));
+    install_vault(&mut s.core, vault);
+    let gate = s.core.write_gate();
+    let held = gate.lock().unwrap();
+    assert!(s
+        .submit(
+            frontend_core::OperatorCommand::OpenNewProfileForm,
+            frontend_core::Targets::Application,
+        )
+        .is_some());
+    *s.profile_editor.username_mut() = "bob".into();
+    assert!(s
+        .submit(
+            frontend_core::OperatorCommand::EditProfileDraft(
+                frontend_core::command::ProfileDraftField::Username,
+            ),
+            frontend_core::Targets::Application,
+        )
+        .is_some());
+    *s.profile_editor.password_mut() = "pw".into();
+    assert!(s
+        .submit(
+            frontend_core::OperatorCommand::EditProfileDraft(
+                frontend_core::command::ProfileDraftField::Password,
+            ),
+            frontend_core::Targets::Application,
+        )
+        .is_some());
+    assert!(s.save_credentials());
+
+    let refused = "bob: profile is still saving";
+    let before = s.core.refusals();
+    assert!(!s.load("bob"), "Load is refused while bob saves");
+    assert_eq!(s.core.refusals(), before + 1);
+    assert_eq!(s.error.as_deref(), Some(refused));
+    s.pump_status();
+    assert_eq!(s.error.as_deref(), Some(refused), "the save is still held");
+
+    drop(held);
+    s.core.flush_writes();
+    s.pump_status();
+    assert!(!s.core.profile_saving("bob"));
+    assert_eq!(s.error, None, "the finished save resolved the message");
 }

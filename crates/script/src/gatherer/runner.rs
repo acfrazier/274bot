@@ -22,14 +22,14 @@ use crate::bank::{self, PickKind, SelectedBank};
 use crate::native::walk::Walk;
 use crate::native::{
     ActionError, ActionHandle, ConfigError, Interrupt, NativePhase, NativeTick, PreparedConfig,
-    Script, ScriptFailure, ScriptFlow, SettingsApply, StopReason, WalkBit, WalkEnd, WalkOptions,
-    WalkReceipt, WalkRequest, WalkStallReason,
+    ReturnStallRecovery, Script, ScriptFailure, ScriptFlow, SettingsApply, StopReason, WalkBit,
+    WalkEnd, WalkOptions, WalkReceipt, WalkRequest,
 };
 use api::game_data::GatherForbiddenState;
 use api::gather_methods::known_rows;
 use api::selected::{RunKey, Truth};
 use api::snapshot::{ItemView, StatView, WorldTile};
-use nav::contract::ArrivalKind;
+use nav_planner::contract::ArrivalKind;
 use std::sync::Arc;
 use std::task::Poll;
 
@@ -39,10 +39,6 @@ mod recover;
 const MAX_AVOID: usize = 8;
 const MAX_BANK_OPEN_ATTEMPTS: u8 = 3;
 const MAX_BANK_CLOSE_ATTEMPTS: u8 = 3;
-// USER-0.2.3-GATHERER §1 records a progressed return ending Expired at the
-// Traveller's 60-poll bound; §3 records the normal content-derived stand
-// succeeding. One fresh plan from observed position is the supported recovery.
-const MAX_RETURN_RECOVERY_ACTIONS: u8 = 1;
 // Fishing's maximum movement timer is 529 ticks (280 + random(250)):
 // skill_fishing/scripts/fishing_movement.rs2:8-12. Add a 60-tick whirlpool
 // (macro events/scripts/fishing/macro_event_whirlpool.rs2:7); 800 exceeds both.
@@ -145,7 +141,7 @@ fn walk_failure_message(receipt: &WalkReceipt) -> String {
 fn hazard_retreat_stand(
     here: WorldTile,
     hazard: WorldTile,
-    collision: Option<nav::contract::CollisionView<'_>>,
+    collision: Option<nav_planner::contract::CollisionView<'_>>,
 ) -> Option<WorldTile> {
     const SPAN: usize = (HAZARD_RETREAT_RADIUS as usize) * 2 + 1;
     let mut dx = here.x.saturating_sub(hazard.x).signum();
@@ -246,10 +242,8 @@ struct GatherScratch {
     bank_close_attempts: u8,
     /// Last tick a catch or XP was credited; bounds fishing surveys.
     last_yield_tick: u64,
-    /// At most one admitted replan for a resource return; admission deferrals
-    /// do not consume this bound.
-    return_recovery_actions: u8,
-    return_recovery_pending: bool,
+    /// Tracks one pending or admitted return recovery across ticks.
+    return_stall_recovery: ReturnStallRecovery,
     /// Whether this trip found an item at Deposit that engine content forbids banking.
     /// Retained across action restarts until the next trip begins.
     kept_unbankable: bool,
@@ -408,8 +402,7 @@ impl Gatherer {
         self.scratch.withdrawals = None;
         self.scratch.kept_unbankable = false;
         self.scratch.withdrew_supplies = false;
-        self.scratch.return_recovery_actions = 0;
-        self.scratch.return_recovery_pending = false;
+        self.scratch.return_stall_recovery.reset();
         self.supply_missing = None;
         self.advance_trip(TripStep::Select);
         self.set_event("bank trip due");
@@ -514,16 +507,7 @@ impl Gatherer {
                 now: tick.cx.evidence().tick,
                 skill_stat: self.skill_stat(snapshot.stats()),
                 avoided: &self.avoid,
-                collision: {
-                    #[cfg(feature = "load")]
-                    {
-                        tick.frame.compiled.collision
-                    }
-                    #[cfg(not(feature = "load"))]
-                    {
-                        None
-                    }
-                },
+                collision: tick.frame.compiled.collision,
             },
         ) {
             ResourceReturn::Ready(selected) => {
@@ -537,12 +521,10 @@ impl Gatherer {
                 };
                 self.method = Arc::clone(&selected.plan.alias);
                 self.target = Some(selected.plan);
-                let recovery = self.scratch.return_recovery_pending;
+                let recovery = self.scratch.return_stall_recovery.pending();
                 let submitted = self.trip_walk(stand, radius, ArrivalKind::Area, goals, tick);
                 if recovery && submitted {
-                    self.scratch.return_recovery_actions =
-                        self.scratch.return_recovery_actions.saturating_add(1);
-                    self.scratch.return_recovery_pending = false;
+                    self.scratch.return_stall_recovery.action_submitted();
                     self.set_event("return recovery action submitted after transient Stalled");
                 } else if !recovery {
                     self.set_event("returning to work area");
@@ -1527,7 +1509,6 @@ impl Gatherer {
                 .snapshot()
                 .local_player()
                 .map(|player| player.value.player.network);
-            #[cfg(feature = "load")]
             let arrived_at = self.target.as_ref().and_then(|target| {
                 let api::selected::EntityId::Loc(id) = target.entity else {
                     return None;
@@ -1540,8 +1521,6 @@ impl Gatherer {
                     id,
                 )
             });
-            #[cfg(not(feature = "load"))]
-            let arrived_at: Option<bool> = None;
             api::host_log!(
                 api::hostlog::Category::NavTrace,
                 api::hostlog::Level::Debug,
@@ -1570,23 +1549,12 @@ impl Gatherer {
             self.fail("manual-movement", "cancelled by user input");
             return;
         }
-        if self.trip == TripStep::Return
-            && self.scratch.return_recovery_actions < MAX_RETURN_RECOVERY_ACTIONS
-            && !self.scratch.return_recovery_pending
-            && matches!(
-                &result.end,
-                WalkEnd::Stalled(stall)
-                    if matches!(
-                        stall.why,
-                        WalkStallReason::Expired | WalkStallReason::Dropped
-                    )
-            )
+        if self.trip == TripStep::Return && self.scratch.return_stall_recovery.observe(&result.end)
         {
             // The typed Traveller terminal includes its current server tile;
             // rebuild the content-derived observation stand from the fresh
             // snapshot, not from the route that stalled.
             self.target = None;
-            self.scratch.return_recovery_pending = true;
             self.return_to_resources(tick);
             return;
         }
@@ -1652,8 +1620,7 @@ impl Gatherer {
                     self.fail("return-failed", "return receipt did not establish arrival at the resource observation stand");
                     return;
                 }
-                self.scratch.return_recovery_actions = 0;
-                self.scratch.return_recovery_pending = false;
+                self.scratch.return_stall_recovery.reset();
                 self.trips = self.trips.saturating_add(1);
                 self.advance_trip(TripStep::Idle);
                 self.needs_validate = true;
@@ -2043,16 +2010,7 @@ impl Gatherer {
                 now: tick.cx.evidence().tick,
                 skill_stat,
                 fishing: &mut self.scratch.fishing,
-                collision: {
-                    #[cfg(feature = "load")]
-                    {
-                        tick.frame.compiled.collision
-                    }
-                    #[cfg(not(feature = "load"))]
-                    {
-                        None
-                    }
-                },
+                collision: tick.frame.compiled.collision,
             },
         );
         self.zone_gated = selected.zone_gated;
@@ -2188,23 +2146,14 @@ impl Gatherer {
     }
 
     fn escape_hazard(&mut self, tick: &mut NativeTick<'_>) {
-        let collision = {
-            #[cfg(feature = "load")]
-            {
-                tick.frame.compiled.collision
-            }
-            #[cfg(not(feature = "load"))]
-            {
-                None
-            }
-        };
+        let collision = tick.frame.compiled.collision;
         self.retreat_from_hazard(tick, collision);
     }
 
     fn retreat_from_hazard(
         &mut self,
         tick: &mut NativeTick<'_>,
-        collision: Option<nav::contract::CollisionView<'_>>,
+        collision: Option<nav_planner::contract::CollisionView<'_>>,
     ) {
         let now = tick.cx.evidence().tick;
         if self
@@ -2562,6 +2511,9 @@ impl Script for Gatherer {
             // boundary edit is no longer eligible to activate either.
             self.pending = None;
             return Ok(SettingsApply::RestartRequired);
+        }
+        if let Some(error) = &prepared.site_error {
+            return Err(error.clone());
         }
         if self.prepared.settings.boundary_changed(&prepared.settings) {
             self.pending = Some(next);
@@ -3563,7 +3515,7 @@ mod tests {
         here: WorldTile,
         radius: i32,
         mut blocked: impl FnMut(WorldTile) -> bool,
-    ) -> nav::collision::WorldCollision {
+    ) -> nav_planner::collision::WorldCollision {
         let origin = WorldTile {
             x: here.x - radius,
             z: here.z - radius,
@@ -3584,8 +3536,8 @@ mod tests {
                 }
             }
         }
-        let (walk, packed) = nav::collision::pack_walk(&flags);
-        nav::collision::WorldCollision {
+        let (walk, packed) = nav_planner::collision::pack_walk(&flags);
+        nav_planner::collision::WorldCollision {
             origin,
             width: size,
             height: size,
@@ -3981,7 +3933,8 @@ mod tests {
         });
         let lease = crate::gatherer::select::tests::test_nav_lease_for_collision(&collision);
         assert_eq!(
-            nav::router::local_step_component(&collision, here, HAZARD_RETREAT_RADIUS).len(),
+            nav_planner::router::local_step_component(&collision, here, HAZARD_RETREAT_RADIUS)
+                .len(),
             1,
             "the router cannot leave a four-neighbour cage"
         );
@@ -4062,14 +4015,14 @@ mod tests {
             level: 0,
         }));
         assert_eq!(
-            nav::paint::flood_component_id(&collision, &[here], island),
+            nav_planner::paint::flood_component_id(&collision, &[here], island),
             None
         );
         let stand =
             hazard_retreat_stand(here, hazard, Some(lease.collision())).expect("a reachable stand");
         assert_ne!(stand, island);
         assert_eq!(
-            nav::paint::flood_component_id(&collision, &[here], stand),
+            nav_planner::paint::flood_component_id(&collision, &[here], stand),
             Some(0)
         );
     }
@@ -4118,7 +4071,7 @@ mod tests {
         assert_ne!(stand, hazard);
         assert!(world.collision.walkable(stand));
         assert_eq!(
-            nav::paint::flood_component_id(&world.collision, &[here], stand),
+            nav_planner::paint::flood_component_id(&world.collision, &[here], stand),
             Some(0)
         );
         assert!(

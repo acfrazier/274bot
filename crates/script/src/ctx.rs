@@ -5,6 +5,8 @@ use api::interact::Driver;
 use api::lifecycle::SessionGate;
 pub use api::random::{DetectedRandom, RandomClaim};
 
+use crate::interact::InteractReq;
+
 /// Walk opt-ins a script may pass to [`ScriptCtx::walk_with`]. All default
 /// off, mirroring the three booleans of the host's router options; the nav
 /// type also carries essence and zone-exemption state the host owns, so the
@@ -39,9 +41,17 @@ pub struct CompiledTick<'a> {
     /// this tick (design-bank-snapshot §1.2): `None` in a bare ctx or when
     /// the host has no memory for the slot.
     pub bank_memory: Option<&'a api::bank_memory::BankMemory>,
+    /// This frame's complete, live condition. Never posted into an isolate.
+    pub condition: Option<api::condition::BotCondition>,
+    /// Strongest selected NPC poison pulse. `None` fails closed at the reader.
+    pub poison_unknown_pulse: Option<u8>,
+    /// The profile's Cure poison setting for this frame, read from the
+    /// slot's mirror once per frame. The default cures when needed; a
+    /// bare ctx carries the default. Never posted into an isolate.
+    pub cure_poison: crate::survival::CurePoison,
     /// Packed world collision for off-scene Area arrival (resource return
     /// stands). `None` in a bare ctx or when the host has no nav pack.
-    pub collision: Option<nav::contract::CollisionView<'a>>,
+    pub collision: Option<nav_planner::contract::CollisionView<'a>>,
     /// Lazy, read-only danger admission for compiled target selection.
     /// Missing navigation data is not permission to start a new walk.
     pub walk_danger: Option<&'a dyn crate::native::WalkDangerQuery>,
@@ -61,8 +71,7 @@ pub struct CompiledTick<'a> {
     /// when the tick returns; the isolate path forwards a queue of its own
     /// instead, and `None` in a bare ctx — a script that enqueues with
     /// nothing parked sends nothing.
-    #[cfg(feature = "load")]
-    pub interacts: Option<Vec<crate::shim::InteractReq>>,
+    pub interacts: Option<Vec<InteractReq>>,
 }
 
 /// What one observed game-tick gives a script: the send-side driver, the
@@ -256,8 +265,8 @@ pub mod test_support {
         fn loc_typecode(&self, _scene_x: i32, _scene_z: i32) -> Option<i32> {
             None
         }
-        fn out(&mut self) -> &mut dyn Out {
-            &mut self.out
+        fn send_packet(&mut self, packet: &api::prot::Send) -> Result<(), api::prot::PacketError> {
+            packet.write_for_revision(self.revision(), &mut self.out)
         }
         fn login(&mut self, _username: &str, _password: &str, _reconnect: bool) -> bool {
             true

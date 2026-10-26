@@ -2,18 +2,20 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use api::snapshot::WorldTile;
-use nav::bank_fetch::BankRows;
-use nav::collision::{pack_walk, WorldCollision};
-use nav::map::formats::{ClientPois, Coverage, CoverageLevel, ServiceIdentity, ServicePois};
-use nav::map::identity::{CatalogueIdentity, Digest};
-use nav::map::poi::*;
-use nav::map::spatial::GameTile;
-use nav::map::{Rows, Text};
-use nav::router::FindOptions;
-use nav::tile::Tile;
-use nav::transport::{TransportEdge, TransportGraph, TransportKind};
-use nav::world::NavWorld;
-use nav::WorldState;
+use nav_planner::bank_fetch::BankRows;
+use nav_planner::collision::{pack_walk, WorldCollision};
+use nav_planner::map::formats::{
+    ClientPois, Coverage, CoverageLevel, ServiceIdentity, ServicePois,
+};
+use nav_planner::map::identity::{CatalogueIdentity, Digest};
+use nav_planner::map::poi::*;
+use nav_planner::map::spatial::GameTile;
+use nav_planner::map::{Rows, Text};
+use nav_planner::router::FindOptions;
+use nav_planner::tile::Tile;
+use nav_planner::transport::{TransportEdge, TransportGraph, TransportKind};
+use nav_planner::world::NavWorld;
+use nav_planner::WorldState;
 
 use super::*;
 
@@ -95,16 +97,16 @@ fn world(origin: Tile, size: usize, blocks: &[(usize, usize, usize)]) -> NavWorl
 fn install_zone_wall(world: &mut NavWorld) {
     let zones = (0..8)
         .map(|z| {
-            nav::zones::Zone::npc(
+            nav_planner::zones::Zone::npc(
                 wt(3203, 3200 + z, 0),
                 0,
-                nav::zones::ZoneClass::Always,
+                nav_planner::zones::ZoneClass::Always,
                 u16::MAX,
                 0,
             )
         })
         .collect();
-    let kinds = vec![nav::zones::ZoneKind::new(
+    let kinds = vec![nav_planner::zones::ZoneKind::new(
         "test-barrier",
         "Test barrier",
         123,
@@ -113,7 +115,7 @@ fn install_zone_wall(world: &mut NavWorld) {
         false,
     )];
     world.graph.zones = Some(
-        nav::zones::ZoneTable::from_parts(
+        nav_planner::zones::ZoneTable::from_parts(
             zones,
             kinds,
             vec![],
@@ -192,6 +194,8 @@ fn edge(kind: TransportKind, at: WorldTile, to: WorldTile) -> TransportEdge {
     TransportEdge {
         takeoff: None,
         worn_all_req: Vec::new(),
+        forbidden_held: Vec::new(),
+        forbidden_worn: Vec::new(),
         kind,
         player_delta: None,
         at,
@@ -661,6 +665,8 @@ fn walk_failure_names_membership_when_a_members_only_route_exists() {
     graph.edges.push(TransportEdge {
         takeoff: None,
         worn_all_req: Vec::new(),
+        forbidden_held: Vec::new(),
+        forbidden_worn: Vec::new(),
         kind: TransportKind::Boat,
         player_delta: None,
         at: from,
@@ -1015,7 +1021,7 @@ fn ready_catalogue_retains_searchable_normalized_access_and_rejects_foreign_iden
         fixture::CountingMapProducer, MapCacheRoot, MapDemand, MapDemandManager, MapJobStatus,
         MapProfileDescriptor,
     };
-    use nav::map::formats::{CatalogueManifest, PayloadReceipt};
+    use nav_planner::map::formats::{CatalogueManifest, PayloadReceipt};
 
     let world = Arc::new(world(t(0, 0, 0), 8, &[(3, 3, 0)]));
     let fixture = MapFixture::new(&world, "local-289");
@@ -1069,16 +1075,22 @@ fn ready_catalogue_retains_searchable_normalized_access_and_rejects_foreign_iden
     let handle = manager
         .request(descriptor, MapDemand::CatalogueOnly)
         .unwrap();
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let hang_guard = std::time::Instant::now() + std::time::Duration::from_secs(120);
     loop {
         match handle.status() {
             MapJobStatus::Ready => break,
             MapJobStatus::Queued | MapJobStatus::Running(_) => {
+                let remaining = hang_guard.saturating_duration_since(std::time::Instant::now());
                 assert!(
-                    std::time::Instant::now() < deadline,
-                    "catalogue did not settle"
+                    !remaining.is_zero(),
+                    "catalogue WorkAdmission hang guard expired"
                 );
-                handle.wait_for_change(std::time::Duration::from_millis(100));
+                let outcome = handle.wait_for_change(remaining);
+                assert_ne!(
+                    outcome,
+                    script::work_admission::PublicationWaitOutcome::Unavailable,
+                    "WorkAdmission became unavailable before the catalogue hang guard"
+                );
             }
             other => panic!("catalogue ended {other:?}"),
         }
@@ -1096,7 +1108,7 @@ fn ready_catalogue_retains_searchable_normalized_access_and_rejects_foreign_iden
             Some(Arc::clone(&ready_map.catalogue)),
             None,
         ),
-        Err(nav::map::MapError::Identity)
+        Err(nav_planner::map::MapError::Identity)
     ));
     let catalogue = Catalogue::from_ready(
         Arc::clone(&world),
@@ -1132,7 +1144,7 @@ fn ready_catalogue_retains_searchable_normalized_access_and_rejects_foreign_iden
 #[test]
 fn actual_route_projection_follows_live_script_manual_precedence_and_focus() {
     let world = world(t(0, 0, 0), 5, &[]);
-    let route = nav::router::find_with(
+    let route = nav_planner::router::find_with(
         &world.collision,
         &world.graph,
         wt(0, 0, 0),
@@ -1161,7 +1173,7 @@ fn actual_route_projection_follows_live_script_manual_precedence_and_focus() {
     assert_eq!(play.with_map_route("bob", Some(&manual), None, read), None);
     {
         let mut manual = manual.lock().unwrap();
-        manual.route = Some(Arc::new(nav::router::Route {
+        manual.route = Some(Arc::new(nav_planner::router::Route {
             dest: wt(2, 3, 0),
             ..route.clone()
         }));
@@ -1171,7 +1183,7 @@ fn actual_route_projection_follows_live_script_manual_precedence_and_focus() {
         play.with_map_route("alice", Some(&manual), None, read),
         Some((RouteSource::Script, 7, wt(3, 3, 0)))
     );
-    let live = nav::router::Route {
+    let live = nav_planner::router::Route {
         dest: wt(4, 3, 0),
         ..route
     };
@@ -1355,7 +1367,7 @@ fn selected_spell_names_match_only_bound_spell_landings() {
         Catalogue::new(Arc::clone(&world), identity(), digest(8), None, None)
             .unwrap()
             .with_game_data(data(digest(9))),
-        Err(nav::map::MapError::Identity)
+        Err(nav_planner::map::MapError::Identity)
     ));
     let catalogue = Catalogue::new(world, identity(), digest(8), None, None)
         .unwrap()
@@ -1726,15 +1738,15 @@ fn manual_walk_refuses_before_boarding_and_names_the_total_coin_shortfall() {
         edge(TransportKind::Ladder, wt(0, 0, 3), wt(0, 0, 2)),
     ]);
     nav.graph.zones = Some(
-        nav::zones::ZoneTable::from_parts(
-            vec![nav::zones::Zone::npc(
+        nav_planner::zones::ZoneTable::from_parts(
+            vec![nav_planner::zones::Zone::npc(
                 wt(0, 0, 3),
                 0,
-                nav::zones::ZoneClass::Always,
+                nav_planner::zones::ZoneClass::Always,
                 u16::MAX,
                 0,
             )],
-            vec![nav::zones::ZoneKind::new(
+            vec![nav_planner::zones::ZoneKind::new(
                 "free-unsafe-detour",
                 "Unsafe detour",
                 123,
@@ -1763,13 +1775,13 @@ fn manual_walk_refuses_before_boarding_and_names_the_total_coin_shortfall() {
         inv: HashMap::from([(995, 30)]),
         ..WorldState::empty()
     };
-    assert!(nav::router::find_with(
+    assert!(nav_planner::router::find_with(
         &nav.collision,
         &nav.graph,
         wt(0, 0, 0),
         wt(0, 0, 2),
         FindOptions {
-            zones: nav::zones::ZoneExempt::all(),
+            zones: nav_planner::zones::ZoneExempt::all(),
             ..FindOptions::default()
         },
         &state

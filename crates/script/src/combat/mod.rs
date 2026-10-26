@@ -8,7 +8,7 @@
 //! `Unprotected(NoAmmo)`. After an open-tactic kill at zero danger, wind-down
 //! attempts at most four reachable nearby pickups of the selected ammunition.
 mod arbiter;
-pub(crate) mod arm;
+pub mod arm;
 pub mod frame;
 pub mod guard;
 mod machine;
@@ -33,7 +33,7 @@ pub use prayer::{
     RaisedPrayers,
 };
 pub use request::*;
-pub use risk::{PoisonState, RiskInput, RouteAssessment};
+pub use risk::{RiskInput, RouteAssessment};
 pub use select::{facts, ident, retaliate, taken_by_another};
 pub use tables::CombatTables;
 pub use threats::{HitOnset, HitOnsets, Threat, ThreatSet};

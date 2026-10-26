@@ -261,8 +261,8 @@ fn with_script_section(state: &mut PanelState) -> Option<map_fixture::MapFixture
 }
 
 fn with_local_profile(state: &mut PanelState) -> Option<map_fixture::MapFixture> {
-    let world = nav::world::NavWorld::from_parts(
-        nav::collision::WorldCollision {
+    let world = nav_planner::world::NavWorld::from_parts(
+        nav_planner::collision::WorldCollision {
             origin: api::snapshot::WorldTile {
                 x: 0,
                 z: 0,
@@ -274,7 +274,7 @@ fn with_local_profile(state: &mut PanelState) -> Option<map_fixture::MapFixture>
             blocked: vec![0u64; 1],
             flags: None,
         },
-        nav::transport::TransportGraph::default(),
+        nav_planner::transport::TransportGraph::default(),
         Vec::new(),
     );
     let fixture = map_fixture::MapFixture::new(&world, "local-289");
@@ -283,6 +283,23 @@ fn with_local_profile(state: &mut PanelState) -> Option<map_fixture::MapFixture>
         .launcher
         .install_template(ProfileTemplate::from_host(Arc::clone(&fixture.template)));
     Some(fixture)
+}
+
+/// The Local server profile with a focused bot and a play session: the maxme
+/// button draws enabled only while a Debug command has both to go to.
+fn with_local_focused_bot(state: &mut PanelState) -> Option<map_fixture::MapFixture> {
+    add_vault(state);
+    let play = frontend_core::test_support::empty_play(&host_play::PlayOptions {
+        host: "127.0.0.1".into(),
+        transport: client::Transport::Tcp,
+        port: 43594,
+        cache_dir: "/tmp".into(),
+        lowmem: true,
+        mainland: false,
+    });
+    state.session.core.set_play(Some(play));
+    state.session.set_focus_for_test("alice");
+    with_local_profile(state)
 }
 
 fn profile_section(ui: &Ui, state: &mut PanelState) {
@@ -382,7 +399,7 @@ fn opener_cases() -> Vec<OpenerCase> {
         OpenerCase {
             name: "maxme",
             target: PanelWindow::Debug,
-            setup: with_local_profile,
+            setup: with_local_focused_bot,
             opener: debug_section,
             press: button("maxme"),
         },
@@ -627,6 +644,9 @@ fn multibox_before_unlock_then_picks_keep_both_on_the_rail_without_a_start() {
         },
     );
     let mut session = Session::new();
+    session.preferences.reload().unwrap();
+    session.poll_panel_preferences();
+    assert!(session.panel_preferences_ready());
     session.persist_ui = false;
     session.core.set_spawn_workers(false);
     let mut state = panel_state(session);
@@ -679,6 +699,7 @@ fn multibox_before_unlock_then_picks_keep_both_on_the_rail_without_a_start() {
         .take_requested_unlock()
         .expect("unlock requested");
     assert!(state.session.unlock_at(&path, pass.as_str()));
+    state.session.poll_panel_preferences();
     step(&mut ctx, &mut state, FrameInput::default());
     let s = &state.session;
     assert_eq!(s.focused_name().as_deref(), Some("alice"));
@@ -736,8 +757,8 @@ fn multibox_before_unlock_then_picks_keep_both_on_the_rail_without_a_start() {
 #[test]
 fn rail_mark_tooltip_follows_whether_the_server_allows_debug() {
     let _guard = crate::test_support::imgui_context_guard();
-    let world = nav::world::NavWorld::from_parts(
-        nav::collision::WorldCollision {
+    let world = nav_planner::world::NavWorld::from_parts(
+        nav_planner::collision::WorldCollision {
             origin: api::snapshot::WorldTile {
                 x: 0,
                 z: 0,
@@ -749,7 +770,7 @@ fn rail_mark_tooltip_follows_whether_the_server_allows_debug() {
             blocked: vec![0u64; 1],
             flags: None,
         },
-        nav::transport::TransportGraph::default(),
+        nav_planner::transport::TransportGraph::default(),
         Vec::new(),
     );
     let mut ctx = context();

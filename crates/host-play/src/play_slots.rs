@@ -23,7 +23,7 @@ use host::{
     prepare_client, should_emit_tick, wake_channel, DetectedRandom, FrameBuf, Host, Pump,
     ScriptRunPolicy, SlotInput, SlotPark, SlotRender, SlotWake, TitleWait,
 };
-use nav::world::NavWorld;
+use nav_planner::world::NavWorld;
 use vault::Profile;
 
 #[cfg(feature = "memory-profile")]
@@ -60,6 +60,37 @@ use crate::{
 /// spawned worker. Process-wide, so two `Play`s in one process never share
 /// a key; never reused, refused at exhaustion.
 static SLOT_KEYS: SlotKeyMinter = SlotKeyMinter::new();
+
+/// The script callback is edge-triggered. Load's cached ignore membership
+/// can change independently while the Guardian keeps the same solver.
+pub(crate) struct ScriptRandomClaims {
+    scripts: ScriptWall,
+    name: String,
+}
+
+impl ScriptRandomClaims {
+    pub(crate) fn new(scripts: ScriptWall, name: String) -> Self {
+        Self { scripts, name }
+    }
+}
+
+impl host::RandomClaimSource for ScriptRandomClaims {
+    fn on_random(&mut self, event: &DetectedRandom) -> RandomClaim {
+        let Some(slot) = script_slot(&self.scripts, &self.name) else {
+            return RandomClaim::Host;
+        };
+        let Ok(mut slot) = slot.lock() else {
+            return RandomClaim::Host;
+        };
+        slot.on_random(event)
+    }
+
+    fn current_claim(&mut self, event: &DetectedRandom) -> Option<RandomClaim> {
+        let slot = script_slot(&self.scripts, &self.name)?;
+        let slot = slot.lock().ok()?;
+        slot.current_random_claim(event)
+    }
+}
 
 /// Snapshot families whose new evidence can settle a parked machine.
 pub(crate) fn script_evidence_dirty(dirty: host::DirtyFamilies) -> bool {
@@ -106,7 +137,7 @@ pub(crate) fn script_state_builds_nav_facts(script_state: Option<script::RunStat
 pub(super) type SlotFrame = Arc<dyn Fn(&mut Client, &str, SlotFrameInput) + Send + Sync>;
 
 #[cfg(any(test, feature = "test-support"))]
-pub(super) type PostNativePlayerInfo = Arc<dyn Fn(&Client, &str) + Send + Sync>;
+pub(super) type PostFrameObserver = Arc<dyn Fn(&Client, &str) + Send + Sync>;
 
 pub(super) fn take_slot_frame_input(
     input: &SlotInput,
@@ -230,17 +261,27 @@ impl Play {
     /// Retire all name-owned registries and return the worker handle without
     /// joining it. Registry guards are always released before stopping a
     /// removed script, so cleanup adds no script-wall -> script-slot edge.
+    /// The unloaded run ends as a Stop's does: the script stops first, then
+    /// [`SlotStatus::retire_script_run`] retires its row once, and only then
+    /// is the row removed. Lock order is the Stop paths' (script, then
+    /// statuses), never nested: each guard ends before the next is taken.
     fn take_slot_for_stop(&mut self, name: &str) -> Option<thread::JoinHandle<()>> {
         #[cfg(test)]
         let arm = self.arms.get(name).cloned();
         self.signal_slot_stop(name);
         self.spawned.remove(name);
-        lock_statuses(&self.statuses).retain(|status| status.username != name);
         self.arms.remove(name);
         let removed = self.scripts.lock().unwrap().remove(name);
         if let Some(slot) = removed {
             stop_retired_script(slot);
         }
+        lock_statuses(&self.statuses).retain_mut(|status| {
+            if status.username != name {
+                return true;
+            }
+            status.retire_script_run();
+            false
+        });
         self.cheats.lock().unwrap().remove(name);
         self.wires.lock().unwrap().remove(name);
         #[cfg(test)]
@@ -626,6 +667,8 @@ impl Play {
             Arc::clone(&self.per_frame),
             #[cfg(any(test, feature = "test-support"))]
             self.post_native_player_info.clone(),
+            #[cfg(feature = "test-support")]
+            self.post_host_frame.clone(),
             Arc::clone(&self.capacity),
             &mut self.handles,
         );
@@ -657,7 +700,7 @@ pub(super) fn reset_slot_session_work(
         let Ok(mut slot) = slot.lock() else {
             return None;
         };
-        if keep_work && slot.load_active() {
+        if keep_work && slot.surface_active() {
             let carry = slot.reconnect_session_work();
             Some(carry.then(|| slot.runtime_generation()))
         } else {
@@ -673,7 +716,11 @@ pub(super) fn reset_slot_session_work(
     }
     match held {
         Some(carry) => hold_script_nav(navs, name, carry),
-        None => reset_script_nav(navs, name, None),
+        None => {
+            // The relogged session's status rows reset with the login
+            // (`reset_slot_observation`), including the walk destination.
+            reset_script_nav(navs, name, None);
+        }
     }
     // Prayer varps are temporary: relog starts all-off. Do not carry a toggle
     // from the old session into the new one, even if its route is held.
@@ -728,7 +775,7 @@ fn reset_slot_session_boundary(
             .and_then(|slot| {
                 slot.lock()
                     .ok()
-                    .map(|slot| (slot.runtime_generation(), slot.load_active()))
+                    .map(|slot| (slot.runtime_generation(), slot.surface_active()))
             })
             .unwrap_or((0, false));
         let deliveries = if kept && !stopping {
@@ -1015,7 +1062,9 @@ fn spawn_slot_thread(
     slot_paired_core: paired_core::PairWatch,
     slot_frame: SlotFrame,
     #[cfg(any(test, feature = "test-support"))]
-    post_native_player_info: Option<PostNativePlayerInfo>,
+    post_native_player_info: Option<PostFrameObserver>,
+    #[cfg(feature = "test-support")]
+    post_host_frame: Option<PostFrameObserver>,
     slot_capacity: Arc<host::CapacityMonitor>,
     handles: &mut HashMap<String, thread::JoinHandle<()>>,
 ) {
@@ -1665,17 +1714,8 @@ fn spawn_slot_thread(
                 let obs_name = username.clone();
                 let obs_catalog_core = slot_catalog_core.clone();
                 let obs_paired_core = slot_paired_core.clone();
-                let knock_name = username.clone();
-                let knock_scripts = Arc::clone(&slot_scripts);
-                let knock = move |ev: &DetectedRandom| -> RandomClaim {
-                    let Some(slot) = script_slot(&knock_scripts, &knock_name) else {
-                        return RandomClaim::Host;
-                    };
-                    let Ok(mut slot) = slot.lock() else {
-                        return RandomClaim::Host;
-                    };
-                    slot.on_random(ev)
-                };
+                let knock =
+                    ScriptRandomClaims::new(Arc::clone(&slot_scripts), username.clone());
                 run_policy = Host::run_client_with_event_policies(
                     &mut client,
                     &username,
@@ -1693,6 +1733,8 @@ fn spawn_slot_thread(
                         let slot_frame = Arc::clone(&slot_frame);
                         #[cfg(any(test, feature = "test-support"))]
                         let post_native_player_info = post_native_player_info.clone();
+                        #[cfg(feature = "test-support")]
+                        let post_host_frame = post_host_frame.clone();
                         let slot_statuses = Arc::clone(&slot_statuses);
                         let slot_scripts = Arc::clone(&slot_scripts);
                         let slot_input = Arc::clone(&slot_input);
@@ -1804,13 +1846,31 @@ fn spawn_slot_thread(
                                         &observe_channels,
                                     );
                                     slot_bank.session_ended();
+                                    if let Some(bot) = slot_navs.lock().unwrap().get_mut(name) {
+                                        bot.condition.session_ended();
+                                    }
                                 }
                                 last_nav_step = None;
                             }
                             host::publish_snapshot(&mut nav_snapshot, c, drain);
+                            if session_boundary && c.ingame {
+                                slot_navs.lock().unwrap().entry(name.to_owned()).or_default()
+                                    .condition.session_started(nav_snapshot.tick(), c.chat_seq as i32, slot_world.as_deref().and_then(crate::admission::condition_tables));
+                            }
                             // The open bank's rows reach the account memory
                             // here (design-bank-snapshot §1.3); a close saves.
                             slot_bank.observe_frame(&nav_snapshot);
+                            let condition = {
+                                let mut navs = slot_navs.lock().unwrap();
+                                if let Some(bot) = navs.get_mut(name) {
+                                    bot.condition.observe_frame(&nav_snapshot, &drain, status.hold);
+                                    bot.condition.published()
+                                } else {
+                                    api::condition::BotCondition::default()
+                                }
+                            };
+                            let condition_dispatch = slot_navs.lock().unwrap().get(name)
+                                .and_then(|bot| bot.condition.dispatch_checkpoint(c));
                             api::hostlog::set_tick(nav_snapshot.tick());
                             debug_replies.observe(name, &nav_snapshot);
                             // `script_observe_with_npc_boxes` below reaps the
@@ -2027,6 +2087,7 @@ fn spawn_slot_thread(
                                         // click that bumps no family. Bool copy.
                                         s.tutorial_pending = nav_snapshot.tutorial_pending();
                                         s.random = if session_boundary { RandomStatus::default() } else { status.clone() };
+                                        s.condition = condition;
                                         publish_script_paint(s, paint.clone());
                                         here = nav_snapshot.tile();
                                         let (tx, tz, level) = here.unwrap_or((-1, -1, -1));
@@ -2098,6 +2159,7 @@ fn spawn_slot_thread(
                                 Some(&mut *run_policy),
                                 Some(&mut debug_replies),
                                 Some(seat_arm),
+                                Some(&slot_statuses),
                                 )
                             };
                             let crate::script_runtime::ScriptObservation {
@@ -2110,6 +2172,10 @@ fn spawn_slot_thread(
                                 script_evidence_dirty(drain.dirty),
                                 nav_state,
                             );
+                            #[cfg(feature = "test-support")]
+                            if let Some(observer) = &post_host_frame {
+                                observer(c, name);
+                            }
                             #[cfg(test)]
                             if crate::combat_proof::capture_enabled(name) {
                                 crate::combat_proof::record_frame(name, *script_tick, &nav_snapshot);
@@ -2223,6 +2289,14 @@ fn spawn_slot_thread(
                             if tick_edge {
                                 if let Some(observer) = &post_native_player_info {
                                     observer(c, name);
+                                }
+                            }
+                            // Inspect actual queued packets before mainloop's
+                            // next flush. This spans scripts, wires and Traveller.
+                            // Guardian dispatch is already covered by status.hold.
+                            if let Some(checkpoint) = condition_dispatch {
+                                if let Some(bot) = slot_navs.lock().unwrap().get_mut(name) {
+                                    bot.condition.observe_dispatch(c, checkpoint);
                                 }
                             }
                             // Busy flag for the idle scheduler: a slot with

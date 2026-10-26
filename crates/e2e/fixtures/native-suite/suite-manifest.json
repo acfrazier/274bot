@@ -99,7 +99,8 @@
    "Cargo.lock"
   ],
   "subsystem_paths": {
-   "crates/nav/": "nav",
+   "crates/nav-planner/": "nav",
+   "crates/nav-executor/": "nav",
    "crates/panel/": "panel",
    "crates/tui/": "panel"
   },

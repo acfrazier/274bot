@@ -9,15 +9,16 @@ use super::{
     apply_only_render_selected, apply_ui_scale, boot_failure_is_fatal, boot_for,
     clamp_hop_label_px, debug_caption, drive_startup, edit_parameters_enabled, finish_panel_run,
     game_window_flags, hold_script_terminal_shot, live_exit_code, live_null_tick, live_script_tick,
-    live_smoke_tick, live_stress_tick, loading_text, logout_enabled, manual_shot_label, parse_args,
-    parse_live_args, request_clean_stop_capture, request_native_failure_capture, runner_config,
-    script_failure_scenario, smoke_settled, smoke_should_fire, startup_progress,
-    status_value_visible, Boot, LiveBoot, LiveHarness, LiveNull, LiveScript, LiveSmoke, LiveStress,
-    PanelState, ProgressPhase, RunMode, ShotStatus, SoakCapture, StartupPreparation, BASE_WINDOW_H,
-    BASE_WINDOW_W, LIVE_USAGE, NAV_FULL_SHOT_DRAIN, SMOKE_DEADLINE, SMOKE_SETTLE,
+    live_smoke_tick, live_stress_tick, loading_text, login_logout_row, logout_enabled,
+    manual_shot_label, parse_args, parse_live_args, request_clean_stop_capture,
+    request_native_failure_capture, runner_config, script_failure_scenario, smoke_settled,
+    smoke_should_fire, startup_progress, status_value_visible, Boot, LiveBoot, LiveHarness,
+    LiveNull, LiveScript, LiveSmoke, LiveStress, PanelState, ProgressPhase, RunMode, ShotStatus,
+    SoakCapture, StartupPreparation, BASE_WINDOW_H, BASE_WINDOW_W, LIVE_USAGE, NAV_FULL_SHOT_DRAIN,
+    SMOKE_DEADLINE, SMOKE_SETTLE,
 };
 use crate::log_pane::log_follow_bottom;
-use crate::test_support::TestDir;
+use crate::test_support::{patiently, TestDir};
 use crate::theme::{
     applet_offset, fit_applet, game_window_title, native_applet, panel_split_ratio, PANEL_WIDTH,
 };
@@ -28,6 +29,27 @@ use frontend_core::scripts::{CardSource, ScriptChoice, ScriptRunState};
 use frontend_core::test_support::live::tick_scenario_runner_for_test;
 use host_play::profile::ProfileEnvironment;
 use host_play::SharedClientTemplate;
+
+fn await_preference(session: &mut crate::session::Session, key: &str, expected: serde_json::Value) {
+    patiently(|| {
+        session.pump_status();
+        session.poll_panel_preferences();
+        if !session.preferences_pending()
+            && session.preferences.value(key) == Some(expected.clone())
+        {
+            Ok(())
+        } else {
+            Err("not durable within the panel preference wait".into())
+        }
+    })
+    .unwrap();
+}
+
+fn hydrate_panel_preferences(session: &mut crate::session::Session) {
+    session.preferences.reload().unwrap();
+    session.poll_panel_preferences();
+    assert!(session.panel_preferences_ready());
+}
 
 #[test]
 #[ignore]
@@ -313,13 +335,150 @@ fn parameters_rail_does_not_call_an_unloaded_catalog_card_parameterless() {
 }
 
 #[test]
-fn logout_is_enabled_only_for_a_connected_queued_or_guard_parked_focus() {
-    assert!(!logout_enabled(false, true, true, false, false));
-    assert!(!logout_enabled(true, false, true, false, false));
-    assert!(!logout_enabled(true, true, false, false, false));
-    assert!(logout_enabled(true, true, true, false, false));
-    assert!(logout_enabled(true, true, false, true, false));
-    assert!(logout_enabled(true, true, false, false, true));
+fn logout_retry_button_is_enabled_only_for_a_focus_with_a_login_or_session_to_end() {
+    use frontend_core::LogoutEligibility as E;
+    for eligible in [
+        E::LoggedIn,
+        E::LoggingIn,
+        E::RetryingLogin,
+        E::Queued,
+        E::GuardParked,
+    ] {
+        assert!(logout_enabled(true, Some(eligible)), "{eligible:?}");
+        assert!(!logout_enabled(false, Some(eligible)), "vault locked");
+    }
+    assert!(!logout_enabled(true, Some(E::NotLoggedIn)));
+    assert!(!logout_enabled(true, None), "no focused profile");
+}
+
+/// One frame of the side panel's Log in / Log out row in its own window,
+/// the pointer at `point` with the left button `pressed`. Returns the Log
+/// out button's rectangle (the last item the row draws).
+fn logout_row_frame(
+    ctx: &mut dear_imgui_rs::Context,
+    session: &mut crate::session::Session,
+    point: [f32; 2],
+    pressed: bool,
+) -> [[f32; 2]; 2] {
+    let io = ctx.io_mut();
+    io.add_mouse_pos_event(point);
+    io.add_mouse_button_event(dear_imgui_rs::MouseButton::Left, pressed);
+    ctx.prepare_frame(
+        dear_imgui_rs::FramePrepareOptions::new([1280.0, 720.0], 1.0 / 60.0)
+            .renderer_has_textures(),
+    );
+    let mut rect = [[0.0; 2]; 2];
+    {
+        let ui = ctx.frame();
+        ui.window("Log out row")
+            .position([0.0, 0.0], dear_imgui_rs::Condition::Always)
+            .size([420.0, 140.0], dear_imgui_rs::Condition::Always)
+            .build(|| {
+                login_logout_row(ui, session);
+                rect = [ui.item_rect_min(), ui.item_rect_max()];
+            });
+    }
+    ctx.render();
+    rect
+}
+
+/// Click the drawn Log out button of `session`'s focused bot with real
+/// frames: lay the row out, hover, press, release.
+fn click_drawn_logout(ctx: &mut dear_imgui_rs::Context, session: &mut crate::session::Session) {
+    let mut rect = [[0.0; 2]; 2];
+    for _ in 0..3 {
+        rect = logout_row_frame(ctx, session, [900.0, 600.0], false);
+    }
+    let centre = [
+        (rect[0][0] + rect[1][0]) * 0.5,
+        (rect[0][1] + rect[1][1]) * 0.5,
+    ];
+    assert!(rect[1][0] > rect[0][0], "the Log out button is drawn");
+    for pressed in [false, true, false, false] {
+        logout_row_frame(ctx, session, centre, pressed);
+    }
+}
+
+/// LOGOUT-RETRY-1025 r2 (Grok): the drawn side-panel button, not its helper.
+/// A bot whose login is refused and retried gets a Log out button that
+/// works: the click parks it, so the slot makes no further attempt. A bot
+/// that never logged in gets one that does nothing. Wiring the button back to
+/// the connected / queued / guard-parked rule fails the first half.
+#[test]
+fn logout_retry_the_drawn_side_panel_button_reaches_a_retrying_login() {
+    use frontend_core::LogoutEligibility as E;
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut ctx = dock_host_context();
+    super::amber_style(&mut ctx);
+    let dir = TestDir::new("logout-retry-button");
+    let mut session = crate::session::Session::new();
+    let mut vault =
+        frontend_core::test_support::VaultFixture::create(&dir.join("vault"), "test-passphrase-01");
+    for (i, name) in ["alice", "bob"].iter().enumerate() {
+        vault.put(frontend_core::test_support::FixtureProfile::new(name, "pw").uid(1 + i as i32));
+    }
+    session.core.set_spawn_workers(false);
+    frontend_core::test_support::session::install_vault(&mut session.core, vault);
+    session.persist_ui = false;
+    let mut play = frontend_core::test_support::empty_play(&host_play::PlayOptions {
+        host: "127.0.0.1".into(),
+        transport: client::Transport::Tcp,
+        port: 1,
+        cache_dir: "/tmp".into(),
+        lowmem: true,
+        mainland: false,
+    });
+    for (i, name) in ["alice", "bob"].iter().enumerate() {
+        play.attach_arm(name, host_play::SlotArm::new(1 + i as i32, false));
+        session.core.fleet_mut().add(name);
+        session.core.insert_slot_io(
+            name,
+            crate::session::SlotIo {
+                input: frontend_core::surface::SlotInput::new(),
+                pixels: frontend_core::surface::FrameBuf::new(),
+            },
+        );
+    }
+    session.core.set_play(Some(play));
+    let arm = |session: &crate::session::Session, name: &str| {
+        session.core.play_for_test().unwrap().arm(name).unwrap()
+    };
+    // bob's login is refused and the slot still wants it: the host retries.
+    arm(&session, "bob").arm_explicit_login();
+    session
+        .core
+        .play_for_test()
+        .unwrap()
+        .statuses
+        .lock()
+        .unwrap()
+        .push(host_play::SlotStatus {
+            username: "bob".into(),
+            startup_phase: host_play::StartupPhase::Error,
+            startup_phase_started: Instant::now(),
+            error: Some("Error connecting to server.".into()),
+            ..host_play::SlotStatus::default()
+        });
+    session.core.poll_host();
+
+    session.set_focus_for_test("alice");
+    session.core.poll_host();
+    assert_eq!(session.focused_logout_eligibility(), Some(E::NotLoggedIn));
+    click_drawn_logout(&mut ctx, &mut session);
+    assert!(
+        !arm(&session, "alice").login_latched(),
+        "a bot that never logged in has a Log out button that does nothing"
+    );
+
+    session.set_focus_for_test("bob");
+    session.core.poll_host();
+    assert_eq!(session.focused_logout_eligibility(), Some(E::RetryingLogin));
+    assert!(arm(&session, "bob").wants_login(), "the slot would retry");
+    click_drawn_logout(&mut ctx, &mut session);
+    assert!(
+        arm(&session, "bob").login_latched() && !arm(&session, "bob").wants_login(),
+        "the drawn Log out button parks a retrying bot"
+    );
 }
 
 fn checked_fixture(revision: u16) -> (TestDir, PathBuf, PathBuf) {
@@ -435,8 +594,8 @@ fn plant_snapshot(unpack: &std::path::Path, revision: u16, packs: &[(String, Vec
         .find(|(name, _)| name == "versionlist")
         .unwrap()
         .1;
-    let transfer = nav::manifest::hash_bytes(versionlist);
-    let negotiated = nav::manifest::hash_bytes(&crc_body(packs)[..36]);
+    let transfer = nav_planner::manifest::hash_bytes(versionlist);
+    let negotiated = nav_planner::manifest::hash_bytes(&crc_body(packs)[..36]);
     let input = unpack.join("fixture-input");
     std::fs::create_dir_all(&input).unwrap();
     for (name, bytes) in packs {
@@ -728,23 +887,14 @@ fn normal_unlock_waits_for_work_admission_validation_then_uses_prepared_profile(
         pass: "prepared-pass".into(),
     });
     drive_startup(&mut state, &mut startup);
-    let deadline = Instant::now() + Duration::from_secs(60);
-    loop {
-        let done = startup
-            .validate
-            .as_ref()
-            .map(|validation| validation.job.is_finished())
-            .unwrap_or(false);
-        if done {
-            break;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "WorkAdmission validation did not settle"
-        );
-        drive_startup(&mut state, &mut startup);
-        thread::sleep(Duration::from_millis(5));
-    }
+    let validation = startup.validate.as_ref().expect("final validation job");
+    assert!(
+        frontend_core::test_support::wait_for_work_admission_publication(
+            Duration::from_secs(120),
+            || validation.job.is_finished(),
+        ),
+        "WorkAdmission validation hang guard expired or service became unavailable"
+    );
     drive_startup(&mut state, &mut startup);
     assert!(state.session.profile_bound());
     assert!(state.session.core.vault_open());
@@ -764,14 +914,13 @@ fn live_boot_stays_deferred_while_final_validation_is_in_flight() {
     assert!(!state.session.core.vault_open());
     assert!(!state.session.core.has_play());
     assert!(state.session.core.slots().is_empty());
-    let deadline = Instant::now() + Duration::from_secs(60);
-    while !validation.job.is_finished() {
-        assert!(
-            Instant::now() < deadline,
-            "WorkAdmission validation did not settle"
-        );
-        thread::sleep(Duration::from_millis(5));
-    }
+    assert!(
+        frontend_core::test_support::wait_for_work_admission_publication(
+            Duration::from_secs(120),
+            || validation.job.is_finished(),
+        ),
+        "WorkAdmission validation hang guard expired or service became unavailable"
+    );
     assert!(validation.job.join().is_ok());
     assert!(matches!(validation.boot, Boot::Live(LiveBoot::Smoke)));
 }
@@ -2243,7 +2392,7 @@ fn manual_shot_rejects_an_empty_published_snapshot() {
     state.session.core.publish_test_snapshot(
         "alice",
         api::snapshot::GameSnapshot::new(),
-        nav::WorldState::default(),
+        nav_planner::WorldState::default(),
     );
     super::enqueue_manual_shot(&mut state);
     assert!(state.shot_state.lock().unwrap().requests.is_empty());
@@ -2338,7 +2487,7 @@ fn clean_stop_rearms_written_shot_once_and_can_complete() {
     assert!(snapshot.ingame() && snapshot.scene_state() == 2);
     session
         .core
-        .publish_test_snapshot("alice", snapshot, nav::WorldState::default());
+        .publish_test_snapshot("alice", snapshot, nav_planner::WorldState::default());
 
     let shots = std::sync::Mutex::new(crate::window::ShotState::default());
     let label = "bone-stop";
@@ -2417,7 +2566,7 @@ fn clean_stop_missing_scene_cannot_reuse_prior_written_capture() {
     snapshot.rebuild(&client);
     session
         .core
-        .publish_test_snapshot("alice", snapshot, nav::WorldState::default());
+        .publish_test_snapshot("alice", snapshot, nav_planner::WorldState::default());
     let shots = std::sync::Mutex::new(crate::window::ShotState::default());
     shots.lock().unwrap().mark_written("bone-stop");
     let mut live = LiveScript {
@@ -2506,8 +2655,11 @@ fn live_script_tick_latches_pass_reports_soak_readbacks_and_fail() {
     s.set_focus_for_test("catalogtest");
     let mut terminal_snapshot = api::snapshot::GameSnapshot::new();
     terminal_snapshot.rebuild(&script_client());
-    s.core
-        .publish_test_snapshot("catalogtest", terminal_snapshot, nav::WorldState::default());
+    s.core.publish_test_snapshot(
+        "catalogtest",
+        terminal_snapshot,
+        nav_planner::WorldState::default(),
+    );
     let shots = std::sync::Mutex::new(crate::window::ShotState::default());
     shots.lock().unwrap().mark_written("core-pass");
     let mut baseline = host_play::catalog_core::Observation {
@@ -2793,7 +2945,7 @@ fn native_failure_rearms_written_shot_and_waits_for_current_capture() {
     assert!(snapshot.ingame() && snapshot.scene_state() == 2);
     session
         .core
-        .publish_test_snapshot("alice", snapshot, nav::WorldState::default());
+        .publish_test_snapshot("alice", snapshot, nav_planner::WorldState::default());
 
     let shots = std::sync::Mutex::new(crate::window::ShotState::default());
     let label = "thiever";
@@ -2865,7 +3017,7 @@ fn native_failure_missing_scene_cannot_reuse_prior_written_capture() {
     snapshot.rebuild(&client);
     session
         .core
-        .publish_test_snapshot("alice", snapshot, nav::WorldState::default());
+        .publish_test_snapshot("alice", snapshot, nav_planner::WorldState::default());
     let shots = std::sync::Mutex::new(crate::window::ShotState::default());
     shots.lock().unwrap().mark_written("thiever");
     super::enqueue_current_terminal_shot(&session, &shots, "thiever");
@@ -2918,9 +3070,9 @@ fn pair_terminal_decision_requests_scene2_snapshots_for_both_actors() {
     assert!(snap_a.ingame() && snap_a.scene_state() == 2);
     assert!(snap_b.ingame() && snap_b.scene_state() == 2);
     s.core
-        .publish_test_snapshot("alice", snap_a, nav::WorldState::default());
+        .publish_test_snapshot("alice", snap_a, nav_planner::WorldState::default());
     s.core
-        .publish_test_snapshot("bob", snap_b, nav::WorldState::default());
+        .publish_test_snapshot("bob", snap_b, nav_planner::WorldState::default());
 
     let shots = std::sync::Mutex::new(crate::window::ShotState::default());
     let mut live = LiveScript {
@@ -3026,7 +3178,7 @@ fn insert_named_scene2(session: &mut crate::session::Session, name: &str, player
     assert!(snap.ingame() && snap.scene_state() == 2);
     session
         .core
-        .publish_test_snapshot(name, snap, nav::WorldState::default());
+        .publish_test_snapshot(name, snap, nav_planner::WorldState::default());
 }
 
 fn sidecar_actor_and_scene(json: &str) -> (String, i64) {
@@ -3149,7 +3301,7 @@ fn pump_shots_does_not_promote_a_presented_actor_that_left_scene2() {
     state.session.core.publish_test_snapshot(
         "alice",
         api::snapshot::GameSnapshot::new(),
-        nav::WorldState::default(),
+        nav_planner::WorldState::default(),
     );
     state.shot_state.lock().unwrap().enqueue_for_actor(
         "air-alice".into(),
@@ -3357,7 +3509,7 @@ fn alice_scene2_session() -> crate::session::Session {
     snap.rebuild(&client);
     assert!(snap.ingame() && snap.scene_state() == 2);
     s.core
-        .publish_test_snapshot("alice", snap, nav::WorldState::default());
+        .publish_test_snapshot("alice", snap, nav_planner::WorldState::default());
     s
 }
 
@@ -3848,6 +4000,48 @@ fn switching_the_edit_target_resets_a_focused_text_field() {
     );
 }
 
+/// The profile form draws the Survival and supplies section with the
+/// Cure poison row and the saved value's label. This frame test is the
+/// headless stand-in for a headed capture: it builds the real chooser
+/// window through ImGui and reads back every text item it drew.
+#[test]
+fn profile_form_draws_the_survival_section() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let dir = TestDir::new("chooser-survival-section");
+    let mut session = crate::session::Session::new();
+    let mut vault =
+        frontend_core::test_support::VaultFixture::create(&dir.join("vault"), "test-passphrase-01");
+    vault.put(frontend_core::test_support::FixtureProfile::new("Hans", "hpass").uid(43));
+    frontend_core::test_support::session::install_vault(&mut session.core, vault);
+    session.begin_edit_profile(Some("Hans"));
+    let mut ctx = crate::test_support::imgui_context();
+    let drawn = DrawnText::default();
+    ctx.set_clipboard_backend(drawn.clone());
+    for _ in 0..2 {
+        ctx.prepare_frame(
+            dear_imgui_rs::FramePrepareOptions::new([900.0, 700.0], 1.0 / 60.0)
+                .renderer_has_textures(),
+        );
+        {
+            let ui = ctx.frame();
+            ui.log_to_clipboard(0u32);
+            super::chooser_window(ui, &mut session, None);
+            ui.log_finish();
+        }
+        ctx.render();
+    }
+    let text = drawn.0.take();
+    assert!(
+        text.contains("Survival and supplies"),
+        "the section heading draws:\n{text}"
+    );
+    assert!(text.contains("Cure poison"), "the row draws:\n{text}");
+    assert!(
+        text.contains("When needed: drink for health in combat or protected walks"),
+        "the saved default's label draws:\n{text}"
+    );
+}
+
 /// Every text item one ImGui frame drew, read back from ImGui's own text
 /// log (`LogToClipboard` finishes into this clipboard backend): one line
 /// per row, same-row items joined by a space, buttons as `[ label ]`.
@@ -3881,6 +4075,289 @@ fn draw_status_detail(detail: &frontend_core::SlotDetail, walk: &str, mem: &str)
     drawn.0.take()
 }
 
+#[test]
+fn script_prefs_labels_wrap_inside_the_normal_and_narrow_window() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut ctx = dock_host_context();
+    let drawn = DrawnText::default();
+    ctx.set_clipboard_backend(drawn.clone());
+    let mut label_text = String::new();
+    let labels = [
+        "Raw fish to cook",
+        "Fire ground search radius",
+        "Bank stand tile",
+        "Range stand tile",
+        "Openable obstacles",
+        "Cook surface search radius",
+    ];
+    for width in [360.0, 220.0] {
+        for _ in 0..2 {
+            ctx.prepare_frame(
+                dear_imgui_rs::FramePrepareOptions::new([800.0, 900.0], 1.0 / 60.0)
+                    .renderer_has_textures(),
+            );
+            {
+                let ui = ctx.frame();
+                ui.log_to_clipboard(0u32);
+                ui.window("Script prefs labels")
+                    .size([width, 800.0], dear_imgui_rs::Condition::Always)
+                    .build(|| {
+                        let left = ui.cursor_screen_pos()[0];
+                        let right = left + ui.content_region_avail()[0];
+                        for label in labels {
+                            let schema = frontend_core::test_support::scripts::TestSchema::setting(
+                                "field",
+                                "string",
+                                None,
+                                Some(label),
+                                &[],
+                            );
+                            super::script_parameter_label(
+                                ui,
+                                schema.schema_ref().get("field").unwrap(),
+                                &mut label_text,
+                            );
+                            assert!(
+                                ui.item_rect_min()[0] >= left - 0.5
+                                    && ui.item_rect_max()[0] <= right + 0.5,
+                                "{label} exceeds the {width}-pixel window"
+                            );
+                        }
+                    });
+                ui.log_finish();
+            }
+            ctx.render();
+        }
+        let text = drawn.0.take();
+        for label in labels {
+            assert!(
+                text.contains(label),
+                "the full label must be readable: {label}"
+            );
+        }
+    }
+}
+
+#[test]
+fn script_prefs_draw_number_bounds_and_invalid_text_at_the_field() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut ctx = dock_host_context();
+    let drawn = DrawnText::default();
+    ctx.set_clipboard_backend(drawn.clone());
+    let mut session = crate::session::Session::new();
+    let selection = ScriptChoice::loaded(CardSource::Catalog, "CookBot");
+    let mut schema = frontend_core::test_support::scripts::TestSchema::setting(
+        "leashRadius",
+        "number",
+        Some("12"),
+        Some("Cook surface search radius"),
+        &[],
+    );
+    schema.set_min("2").set_max("20");
+    let bag = serde_json::Map::from_iter([("leashRadius".into(), serde_json::json!(12))]);
+    for step in 0..5 {
+        if step == 3 {
+            ctx.io_mut().add_input_character('4');
+            ctx.io_mut().add_input_character('0');
+        }
+        ctx.prepare_frame(
+            dear_imgui_rs::FramePrepareOptions::new([800.0, 700.0], 1.0 / 60.0)
+                .renderer_has_textures(),
+        );
+        {
+            let ui = ctx.frame();
+            ui.log_to_clipboard(0u32);
+            ui.window("Script prefs number")
+                .size([360.0, 500.0], dear_imgui_rs::Condition::Always)
+                .build(|| {
+                    let right = ui.cursor_screen_pos()[0] + ui.content_region_avail()[0];
+                    if step == 1 {
+                        ui.set_keyboard_focus_here();
+                    }
+                    super::script_parameter_rows(
+                        ui,
+                        &mut session,
+                        &selection,
+                        None,
+                        schema.schema_ref(),
+                        bag.clone(),
+                    );
+                    assert!(ui.item_rect_max()[0] <= right + 0.5, "the error wraps");
+                });
+            ui.log_finish();
+        }
+        ctx.render();
+    }
+    let text = drawn.0.take();
+    let error = session
+        .scripts
+        .parameter_text_error_for(None, &selection, "leashRadius")
+        .expect("typing an out-of-range value validates before Enter or closing the form");
+    assert!(text.contains("Cook surface search radius"));
+    assert!(text.contains("Valid range: 2–20"), "{text}");
+    assert!(
+        text.contains("40"),
+        "the invalid draft remains in the open form"
+    );
+    assert!(
+        text.contains(error),
+        "the field displays its validation error: {text}"
+    );
+}
+#[test]
+fn discarding_invalid_script_parameter_removes_its_dock_banner() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut session = crate::session::Session::new();
+    let selection = ScriptChoice::loaded(CardSource::Catalog, "CookBot");
+    let mut schema = frontend_core::test_support::scripts::TestSchema::setting(
+        "leashRadius",
+        "number",
+        Some("12"),
+        Some("Cook surface search radius"),
+        &[],
+    );
+    schema.set_min("2").set_max("20");
+    let def = schema.schema_ref().get("leashRadius").unwrap();
+    let key = frontend_core::scripts::ParameterEditKey::new(Some("alice"), &selection, def.id());
+    *session.scripts.parameter_text_mut_for(
+        Some("alice"),
+        &selection,
+        def.id(),
+        "12",
+        Some(serde_json::json!(12)),
+    ) = "40".into();
+    session.scripts.stage_parameter_validation(
+        key,
+        &selection,
+        "12",
+        Some(serde_json::json!(12)),
+        def,
+        &[],
+    );
+    let edit = session
+        .submit_script_command(
+            frontend_core::command::OperatorCommand::EditParameterText,
+            frontend_core::Targets::Application,
+        )
+        .expect("the field validation command is submitted");
+    assert!(session.core.command_failure(edit.request()).is_some());
+    let error = session
+        .scripts
+        .parameter_text_error_for(Some("alice"), &selection, def.id())
+        .expect("the field keeps its validation error")
+        .to_owned();
+    let mut ctx = dock_host_context();
+    let drawn = DrawnText::default();
+    ctx.set_clipboard_backend(drawn.clone());
+    let banner_text = |ctx: &mut dear_imgui_rs::Context, session: &crate::session::Session| {
+        ctx.prepare_frame(
+            dear_imgui_rs::FramePrepareOptions::new([800.0, 700.0], 1.0 / 60.0)
+                .renderer_has_textures(),
+        );
+        {
+            let ui = ctx.frame();
+            ui.log_to_clipboard(0u32);
+            ui.window("script validation banner")
+                .build(|| super::banner(ui, session, None));
+            ui.log_finish();
+        }
+        ctx.render();
+        drawn.0.take()
+    };
+    let invalid_banner = banner_text(&mut ctx, &session);
+
+    session.scripts.stage_profile_parameter_discard("alice");
+    let discard = session
+        .submit_script_command(
+            frontend_core::command::OperatorCommand::DiscardParameterText,
+            frontend_core::Targets::Application,
+        )
+        .expect("the draft discard command is submitted");
+    assert!(session.core.command_failure(discard.request()).is_none());
+    assert!(session
+        .scripts
+        .parameter_draft_details("alice")
+        .next()
+        .is_none());
+    let discarded_banner = banner_text(&mut ctx, &session);
+    assert!(
+        !discarded_banner.contains(&error),
+        "discarded validation remained on the dock banner: {discarded_banner}"
+    );
+    assert!(
+        !invalid_banner.contains(&error),
+        "field validation appeared on the dock banner: {invalid_banner}"
+    );
+}
+
+#[test]
+fn main_script_recovery_names_the_hidden_card_and_field() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let iso = frontend_core::test_support::IsolatedStores::enter("script-hidden-field");
+    let path = iso.dir().join("CookBot.ts");
+    std::fs::write(
+        &path,
+        "export const SETTINGS = { leashRadius: { type: 'number', default: 12, min: 2, max: 20, label: 'Cook surface search radius' } };\nexport default class CookBot extends LoopingBot { loop() {} }\n",
+    ).unwrap();
+    let mut session = crate::session::Session::new();
+    let card = session.scripts.load_card(&path).unwrap();
+    let selection = ScriptChoice::loaded(CardSource::File, card.identity_id());
+    let mut schema = frontend_core::scripts::OwnedSchema::default();
+    schema.copy_from(
+        session
+            .scripts
+            .card(CardSource::File, card.identity_id())
+            .unwrap()
+            .schema(),
+    );
+    let def = schema.as_ref().get("leashRadius").unwrap();
+    session.set_focus_for_test("alice");
+    *session.scripts.parameter_text_mut_for(
+        Some("alice"),
+        &selection,
+        def.id(),
+        "12",
+        Some(serde_json::json!(12)),
+    ) = "40".into();
+    let error = session
+        .scripts
+        .validate_parameter_buffer_for(
+            Some("alice"),
+            &selection,
+            def.id(),
+            ("12", Some(serde_json::json!(12))),
+            def,
+            &[],
+        )
+        .unwrap_err();
+    session.script_sel = Some(ScriptChoice::compiled(
+        frontend_core::scripts::CompiledCardId::lookup("Gatherer").unwrap(),
+    ));
+    let mut ctx = dock_host_context();
+    let drawn = DrawnText::default();
+    ctx.set_clipboard_backend(drawn.clone());
+    for _ in 0..2 {
+        ctx.prepare_frame(
+            dear_imgui_rs::FramePrepareOptions::new([800.0, 700.0], 1.0 / 60.0)
+                .renderer_has_textures(),
+        );
+        {
+            let ui = ctx.frame();
+            ui.log_to_clipboard(0u32);
+            ui.window("main script recovery")
+                .size([360.0, 500.0], dear_imgui_rs::Condition::Always)
+                .build(|| super::script_parameter_draft_recovery(ui, &mut session));
+            ui.log_finish();
+        }
+        ctx.render();
+    }
+    let text = drawn.0.take();
+    assert!(
+        text.contains(&format!("CookBot: Cook surface search radius: {error}")),
+        "{text}"
+    );
+    assert!(text.contains("Discard unsaved settings"), "{text}");
+}
 #[test]
 fn memory_notice_gets_its_own_readable_popup_row() {
     let _guard = crate::test_support::imgui_context_guard();
@@ -5503,18 +5980,118 @@ fn the_delete_prompt_keeps_a_stable_width_so_both_buttons_stay_on_screen() {
     assert_prompt_holds_on_screen(&mut ui, super::PROFILE_DELETE_POPUP);
 }
 
-#[test]
-fn unlock_sends_the_passphrase_exactly_as_typed() {
-    let mut session = crate::session::Session::new();
-    session.pass_scratch.push_str("  spaced pass ");
-    super::submit_vault_pass(&mut session, true);
-    let sent = session.take_requested_unlock().expect("unlock requested");
-    assert_eq!(sent.as_str(), "  spaced pass ");
+/// One frame of the vault prompt's Create vault (`exists` false) or Unlock
+/// vault button in a plain window. With `press`, ImGui is asked to activate
+/// the button by its id, which presses it on the next frame exactly as a
+/// click does and never while it is greyed out. Returns whether the button
+/// was drawn greyed out (disabled).
+fn vault_pass_button_frame(
+    ctx: &mut dear_imgui_rs::Context,
+    session: &mut crate::session::Session,
+    exists: bool,
+    press: bool,
+) -> bool {
+    use dear_imgui_rs::sys;
 
-    // Create still needs something besides spaces.
+    let label = if exists {
+        c"Unlock vault"
+    } else {
+        c"Create vault"
+    };
+    ctx.prepare_frame(
+        dear_imgui_rs::FramePrepareOptions::new([800.0, 600.0], 1.0 / 60.0).renderer_has_textures(),
+    );
+    let ui = ctx.frame();
+    let mut disabled = None;
+    ui.window("##vault-prompt")
+        .position([0.0, 0.0], dear_imgui_rs::Condition::Always)
+        .size([320.0, 240.0], dear_imgui_rs::Condition::Always)
+        .flags(
+            WindowFlags::NO_TITLE_BAR
+                | WindowFlags::NO_RESIZE
+                | WindowFlags::NO_MOVE
+                | WindowFlags::NO_SAVED_SETTINGS
+                | WindowFlags::NO_SCROLLBAR,
+        )
+        .build(|| {
+            if press {
+                // SAFETY: the frame's context is bound and `label` is a
+                // NUL-terminated static string.
+                ui.with_bound_context(|| unsafe {
+                    sys::igActivateItemByID(sys::igGetID_Str(label.as_ptr()));
+                });
+            }
+            super::vault_pass_button(ui, session, exists);
+            // SAFETY: the frame's context is bound; the item ImGui reads
+            // back is the one just submitted in this window.
+            disabled = Some(ui.with_bound_context(|| unsafe {
+                assert_eq!(
+                    sys::igGetItemID(),
+                    sys::igGetID_Str(label.as_ptr()),
+                    "the button is the last item"
+                );
+                sys::igGetItemFlags() & sys::ImGuiItemFlags_Disabled as sys::ImGuiItemFlags != 0
+            }));
+        });
+    ctx.render();
+    disabled.expect("the vault button draws")
+}
+
+/// Press the vault button as a click does: asked on one frame, pressed on
+/// the next, shown on the one after.
+fn press_vault_pass_button(
+    ctx: &mut dear_imgui_rs::Context,
+    session: &mut crate::session::Session,
+    exists: bool,
+) {
+    vault_pass_button_frame(ctx, session, exists, true);
+    vault_pass_button_frame(ctx, session, exists, false);
+    vault_pass_button_frame(ctx, session, exists, false);
+}
+
+/// Create vault and Unlock vault are greyed out while the typed passphrase
+/// cannot be sent (Create: empty once trimmed; Unlock: empty), so no click
+/// on them is dropped without a refusal. A usable passphrase is sent
+/// exactly as typed.
+#[test]
+fn the_vault_buttons_are_greyed_out_until_the_passphrase_can_be_sent() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let mut ctx = dock_host_context();
+    let mut session = crate::session::Session::new();
+    for (exists, typed, usable) in [
+        (false, "", false),
+        (false, "   ", false),
+        (false, " new pass ", true),
+        (true, "", false),
+        (true, "   ", true),
+        (true, "  spaced pass ", true),
+    ] {
+        session.pass_scratch.clear();
+        session.pass_scratch.push_str(typed);
+        assert_eq!(
+            vault_pass_button_frame(&mut ctx, &mut session, exists, false),
+            !usable,
+            "vault file exists: {exists}, typed {typed:?}"
+        );
+    }
+
+    session.pass_scratch.clear();
     session.pass_scratch.push_str("   ");
-    super::submit_vault_pass(&mut session, false);
+    let refusals = session.core.refusals();
+    press_vault_pass_button(&mut ctx, &mut session, false);
     assert!(session.take_requested_unlock().is_none());
+    assert_eq!(
+        session.core.refusals(),
+        refusals,
+        "a greyed-out button records nothing"
+    );
+
+    session.pass_scratch.clear();
+    session.pass_scratch.push_str("  spaced pass ");
+    press_vault_pass_button(&mut ctx, &mut session, true);
+    let sent = session.take_requested_unlock().expect("unlock requested");
+    assert_eq!(sent.as_str(), "  spaced pass ", "sent exactly as typed");
+    assert!(session.pass_scratch.is_empty());
 }
 
 /// Content width of the docked Nav config window at scale 1: the width the
@@ -5576,6 +6153,145 @@ fn nav_routing_pointer_frame(
 /// Centre of an item rect, where a pointer click lands.
 fn rect_centre([min_x, min_y, max_x, max_y]: [f32; 4]) -> [f32; 2] {
     [(min_x + max_x) / 2.0, (min_y + max_y) / 2.0]
+}
+
+#[test]
+fn nav_panel_edit_persists_only_the_changed_member() {
+    let _isolated = frontend_core::test_support::IsolatedStores::enter("panel-nav-member");
+    let mut session = crate::session::Session::new();
+    let preferences = session.preferences.share();
+    let before = crate::nav_settings::NavSettings::default();
+    let mut expected_nav = serde_json::to_value(&before).unwrap();
+    expected_nav
+        .as_object_mut()
+        .unwrap()
+        .insert("extension".into(), serde_json::json!({"keep": true}));
+    crate::test_support::set_patiently(&preferences, "nav", expected_nav.clone());
+
+    let mut after = before.clone();
+    after.hop_labels = !after.hop_labels;
+    let expected_hop_labels = after.hop_labels;
+    super::commit_nav_settings(&mut session, &before, after).unwrap();
+    expected_nav["hop_labels"] = expected_hop_labels.into();
+
+    patiently(|| {
+        session.poll_panel_preferences();
+        let Ok(document) = session.preferences.document() else {
+            return Err("not durable within panel Nav preference wait".into());
+        };
+        if document.get("nav") == Some(&expected_nav) {
+            Ok(())
+        } else {
+            Err("not durable within Nav presentation member wait".into())
+        }
+    })
+    .unwrap();
+}
+
+#[test]
+fn nav_presentation_writers_keep_disjoint_nested_members() {
+    let _isolated = frontend_core::test_support::IsolatedStores::enter("panel-nav-two-writers");
+    let mut first = crate::session::Session::new();
+    let preferences = first.preferences.share();
+    let first_before = first.ui.nav.clone();
+    crate::test_support::set_patiently(
+        &preferences,
+        "nav",
+        serde_json::to_value(&first_before).unwrap(),
+    );
+    let mut second = crate::session::Session::new();
+    let second_before = second.ui.nav.clone();
+    let mut second_after = second_before.clone();
+    second_after.hop_labels = !second_after.hop_labels;
+    let expected_hop_labels = second_after.hop_labels;
+    super::commit_nav_settings(&mut second, &second_before, second_after).unwrap();
+    crate::test_support::patiently(|| {
+        preferences.reload().map_err(|error| error.to_string())?;
+        if preferences.document().unwrap()["nav"]["hop_labels"] == expected_hop_labels {
+            Ok(())
+        } else {
+            Err("not durable within second Nav writer wait".into())
+        }
+    })
+    .unwrap();
+    let mut first_after = first_before.clone();
+    first_after.show_nav_path = !first_after.show_nav_path;
+    let expected_show_nav_path = first_after.show_nav_path;
+    super::commit_nav_settings(&mut first, &first_before, first_after).unwrap();
+    crate::test_support::patiently(|| {
+        preferences.reload().map_err(|error| error.to_string())?;
+        if preferences.document().unwrap()["nav"]["show_nav_path"] == expected_show_nav_path {
+            Ok(())
+        } else {
+            Err("not durable within first Nav writer wait".into())
+        }
+    })
+    .unwrap();
+    let saved = preferences.document().unwrap();
+    assert_eq!(saved["nav"]["hop_labels"], expected_hop_labels);
+    assert_eq!(saved["nav"]["show_nav_path"], expected_show_nav_path);
+}
+
+#[test]
+fn nav_core_edit_writes_once_and_preserves_other_members() {
+    let _isolated = frontend_core::test_support::IsolatedStores::enter("panel-nav-core-member");
+    let mut session = crate::session::Session::new();
+    let preferences = session.preferences.share();
+    let before = session.ui.nav.clone();
+    let mut expected_nav = serde_json::to_value(&before).unwrap();
+    expected_nav
+        .as_object_mut()
+        .unwrap()
+        .insert("extension".into(), serde_json::json!({"keep": true}));
+    crate::test_support::set_patiently(&preferences, "nav", expected_nav.clone());
+    let writes = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let observed_writes = std::sync::Arc::clone(&writes);
+    let service = session
+        .core
+        .local_state_for_test()
+        .expect("the panel owns its process state service")
+        .clone();
+    service.set_write_stall_for_test(std::sync::Arc::new(move || {
+        observed_writes.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }));
+    let audits = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let observed_audits = std::sync::Arc::clone(&audits);
+    service.set_audit_hook(std::sync::Arc::new(move |record| {
+        observed_audits.lock().unwrap().push(record.clone());
+    }));
+
+    let mut after = before.clone();
+    after.allow_teleports = !after.allow_teleports;
+    let expected_allow_teleports = after.allow_teleports;
+    super::commit_nav_settings(&mut session, &before, after).unwrap();
+    expected_nav["allow_teleports"] = expected_allow_teleports.into();
+
+    crate::test_support::patiently(|| {
+        session.pump_status();
+        let Ok(document) = session.preferences.document() else {
+            return Err("not durable within core Nav preference wait".into());
+        };
+        if document.get("nav") == Some(&expected_nav) && !session.core.preferences_pending() {
+            Ok(())
+        } else {
+            Err("not durable within core Nav member wait".into())
+        }
+    })
+    .unwrap();
+    assert_eq!(writes.load(std::sync::atomic::Ordering::SeqCst), 1);
+    let audits = audits.lock().unwrap();
+    assert_eq!(audits.len(), 1, "one Nav action has one saved-state audit");
+    let api::local_state::AuditOrigin::Submitted { request } = audits[0].origin() else {
+        panic!("the Nav audit must name its accepted request");
+    };
+    let host_play::local_state::RequestState::Settled(api::identity::Settlement::Completed(
+        receipt,
+    )) = service.request_state(request)
+    else {
+        panic!("the one Nav request must have one durable result");
+    };
+    assert_eq!(receipt.request(), Some(request));
+    assert_eq!(receipt.version(), audits[0].version());
 }
 
 /// At the docked Nav config width every Routing row stays inside the content
@@ -5712,6 +6428,7 @@ fn render_all_dont_show_again_needs_understood_then_saves_the_ack() {
     let mut ctx = dock_host_context();
     super::amber_style(&mut ctx);
     let mut session = crate::session::Session::new();
+    hydrate_panel_preferences(&mut session);
     assert!(
         session.focus.lock().unwrap().only_render_selected,
         "only render focused starts on"
@@ -5735,6 +6452,11 @@ fn render_all_dont_show_again_needs_understood_then_saves_the_ack() {
         !session.focus.lock().unwrap().only_render_selected,
         "it does what OK does"
     );
+    await_preference(
+        &mut session,
+        "render_all_warning_ack",
+        serde_json::json!(true),
+    );
     assert!(
         crate::ui_state::load(&session.preferences).render_all_warning_ack,
         "the choice is written to the preferences"
@@ -5743,7 +6465,7 @@ fn render_all_dont_show_again_needs_understood_then_saves_the_ack() {
     // The next launch: the box starts on again, and unchecking it applies
     // at once.
     let mut next = crate::session::Session::new();
-    assert!(next.ui.render_all_warning_ack);
+    hydrate_panel_preferences(&mut next);
     assert!(next.focus.lock().unwrap().only_render_selected);
     super::only_render_selected_clicked(&mut next, false);
     assert!(!next.focus.lock().unwrap().only_render_selected);
@@ -6425,4 +7147,165 @@ fn profiles_list_and_editor_split_by_width_and_scroll_on_their_own() {
             );
         }
     }
+}
+
+/// The banner and then the status rows one frame draws for `session`,
+/// split at a marker line.
+fn draw_banner_and_status(session: &crate::session::Session) -> (String, String) {
+    const MARK: &str = "--status rows--";
+    let mut ctx = crate::test_support::imgui_context();
+    let drawn = DrawnText::default();
+    ctx.set_clipboard_backend(drawn.clone());
+    ctx.prepare_frame(
+        dear_imgui_rs::FramePrepareOptions::new([900.0, 400.0], 1.0 / 60.0).renderer_has_textures(),
+    );
+    {
+        let ui = ctx.frame();
+        ui.log_to_clipboard(0u32);
+        ui.window("banner")
+            .size([880.0, 380.0], dear_imgui_rs::Condition::Always)
+            .build(|| {
+                super::banner(ui, session, None);
+                ui.text(MARK);
+                if let Some(detail) = session.core.fleet_view().detail() {
+                    super::status_detail_rows(ui, detail, "—", "lowmem");
+                }
+            });
+        ui.log_finish();
+    }
+    ctx.render();
+    let text = drawn.0.take();
+    let (banner, status) = text.split_once(MARK).expect("the marker line");
+    (banner.to_owned(), status.to_owned())
+}
+
+/// LOGIN-NOTICE-1024: the headed check's sequence on the panel. bob's
+/// refused login stays on the top line, in the words of the error state
+/// line, while the retry's Connecting, a queue wait and a parked logged
+/// out replace the state line under it; the status rows show it in place
+/// of the `last error` row. It is gone at the shared 15 s timeout, and
+/// the error is then history.
+#[test]
+fn the_panel_top_line_keeps_a_login_notice_through_retry_states_until_it_expires() {
+    use crate::session::{Session, SlotIo};
+    use frontend_core::surface::{FrameBuf, SlotInput};
+    use frontend_core::ERROR_MESSAGE_TIMEOUT as TIMEOUT;
+    use host_play::{SlotArm, SlotStatus, StartupPhase};
+
+    let _guard = crate::test_support::imgui_context_guard();
+    let refused = "Error connecting to server. (connect: Connection refused)";
+    let top = format!("Login {refused}");
+    let mut s = Session::new();
+    let mut play = frontend_core::test_support::empty_play(&host_play::PlayOptions {
+        host: "127.0.0.1".into(),
+        transport: client::Transport::Tcp,
+        port: 1,
+        cache_dir: "/tmp".into(),
+        lowmem: true,
+        mainland: false,
+    });
+    play.attach_arm("alice", SlotArm::new(1, false));
+    play.attach_arm("bob", SlotArm::new(2, false));
+    for name in ["alice", "bob"] {
+        s.core.fleet_mut().add(name);
+        s.core.insert_slot_io(
+            name,
+            SlotIo {
+                input: SlotInput::new(),
+                pixels: FrameBuf::new(),
+            },
+        );
+    }
+    s.set_focus_for_test("bob");
+    s.core.set_play(Some(play));
+    s.login_all();
+    let edit = |s: &Session, edit: &dyn Fn(&mut SlotStatus)| {
+        let play = s.core.play_for_test().unwrap();
+        let mut rows = play.statuses.lock().unwrap();
+        match rows.iter_mut().find(|row| row.username == "bob") {
+            Some(row) => edit(row),
+            None => {
+                let mut row = SlotStatus {
+                    username: "bob".into(),
+                    ..SlotStatus::default()
+                };
+                edit(&mut row);
+                rows.push(row);
+            }
+        }
+    };
+
+    let t0 = Instant::now();
+    edit(&s, &|r| {
+        r.startup_phase = StartupPhase::Error;
+        r.startup_phase_started = t0;
+        r.error = Some(refused.into());
+    });
+    s.core.poll_at(t0);
+    let (banner, status) = draw_banner_and_status(&s);
+    assert_eq!(banner.matches(&top).count(), 1, "said once:\n{banner}");
+    assert!(!status.contains("last error"), "{status}");
+
+    let mut seen = Vec::new();
+    for (at, label, state, step) in [
+        (
+            1,
+            "retry connecting",
+            "Logging in",
+            &(|r: &mut SlotStatus| {
+                r.startup_phase = StartupPhase::Connecting;
+                r.startup_phase_started = Instant::now();
+                r.error = None;
+            }) as &dyn Fn(&mut SlotStatus),
+        ),
+        (
+            2,
+            "queue wait",
+            "Waiting in login queue (2/3)",
+            &|r: &mut SlotStatus| {
+                r.startup_phase = StartupPhase::Queueing;
+                r.startup_phase_started = Instant::now();
+                (r.queue_position, r.queue_total) = (2, 3);
+            },
+        ),
+    ] {
+        edit(&s, step);
+        s.core.poll_at(t0 + Duration::from_secs(at));
+        let (banner, status) = draw_banner_and_status(&s);
+        assert!(banner.contains(&top), "{label}:\n{banner}");
+        assert!(
+            banner.contains(state),
+            "{label}: the live state too:\n{banner}"
+        );
+        assert!(
+            status.contains(&format!("login {refused}")) && !status.contains("last error"),
+            "{label}:\n{status}"
+        );
+        seen.push(banner);
+    }
+
+    s.logout("bob");
+    let parked = "Logged out (Log in to connect)";
+    for at in [Duration::from_secs(3), TIMEOUT - Duration::from_secs(1)] {
+        s.core.poll_at(t0 + at);
+        let (banner, _) = draw_banner_and_status(&s);
+        assert!(banner.contains(&top), "{at:?}:\n{banner}");
+        assert!(banner.contains(parked), "{at:?}:\n{banner}");
+        let top_at = banner.find(&top).unwrap();
+        assert!(
+            top_at < banner.find(parked).unwrap(),
+            "the notice comes first"
+        );
+        seen.push(banner);
+    }
+
+    s.core.poll_at(t0 + TIMEOUT);
+    let (banner, status) = draw_banner_and_status(&s);
+    assert!(!banner.contains("Login Error"), "expired:\n{banner}");
+    assert!(banner.contains(parked), "{banner}");
+    assert!(
+        status.contains(&format!("last error {refused}")),
+        "the error is history now:\n{status}"
+    );
+    println!("LOGIN_NOTICE_PANEL_TOP {seen:#?}\nLOGIN_NOTICE_PANEL_EXPIRED {banner}");
 }

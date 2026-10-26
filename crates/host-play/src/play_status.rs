@@ -7,6 +7,14 @@ use client::client::{Client, LoginError};
 
 use super::RandomStatus;
 
+#[cfg(test)]
+thread_local! {
+    /// Every [`SlotStatus::retire_script_run`] on this thread, as (bot, had
+    /// paint, had walk), so a test can count the retirements a path makes.
+    pub(crate) static RETIRED_RUNS: std::cell::RefCell<Vec<(String, bool, bool)>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
 /// Pollable per-slot view; the slot threads update it after each frame.
 /// `clone_from` reuses the destination's string buffers, so a poll that
 /// copies rows into a retained vector allocates nothing in steady state.
@@ -99,6 +107,8 @@ pub struct SlotStatus {
     /// `client_frame` return each observe. The chrome contract both the
     /// panel and the TUI bind.
     pub random: RandomStatus,
+    /// Complete observed account condition, or a boundary-marked last fact.
+    pub condition: api::condition::BotCondition,
     /// The slot script's latest recorded paint frame (the Load isolate
     /// forwards it after every tick that painted). Disconnect and Pause retain
     /// this shared frame; Stop or slot unload clears it from the lifecycle
@@ -146,6 +156,7 @@ impl Clone for SlotStatus {
             chat_head: self.chat_head.clone(),
             tutorial_pending: self.tutorial_pending,
             random: self.random.clone(),
+            condition: self.condition,
             script_paint: self.script_paint.clone(),
         }
     }
@@ -192,6 +203,7 @@ impl Clone for SlotStatus {
         self.chat_head.clone_from(&source.chat_head);
         self.tutorial_pending = source.tutorial_pending;
         self.script_paint.clone_from(&source.script_paint);
+        self.condition = source.condition;
         let (random, from) = (&mut self.random, &source.random);
         random.kind.clone_from(&from.kind);
         random.name.clone_from(&from.name);
@@ -255,6 +267,50 @@ impl SlotStatus {
         .then_some((self.tile_x, self.tile_z, self.tile_level))
     }
 
+    /// The destination of the published script walk. `walk_*` hold `-1`
+    /// while no script walk is published; this is the one reader of that
+    /// sentinel for front ends.
+    pub fn script_walk(&self) -> Option<(i32, i32, i32)> {
+        (self.walk_x != -1).then_some((self.walk_x, self.walk_z, self.walk_level))
+    }
+
+    /// Publish the armed script walk's destination. The pump's per-uid nav
+    /// step is the only caller; the destination ends through
+    /// [`Self::retire_script_walk`].
+    pub(crate) fn publish_script_walk(&mut self, destination: Option<api::snapshot::WorldTile>) {
+        let (x, z, level) = destination.map_or((-1, -1, -1), |tile| (tile.x, tile.z, tile.level));
+        (self.walk_x, self.walk_z, self.walk_level) = (x, z, level);
+    }
+
+    /// End the published script walk destination. This is the only place
+    /// that clears it. A login boundary ends it with the old session (a
+    /// script that holds its work re-arms the walk after the next login);
+    /// a run's end ends it through [`Self::retire_script_run`].
+    pub(crate) fn retire_script_walk(&mut self) {
+        self.publish_script_walk(None);
+    }
+
+    /// End everything a script run published on this row: its paint frame and
+    /// its walk destination. Every way a run ends reaches it once: an
+    /// explicit Stop and a run that ends on its own (`retire_script_run_status`
+    /// in `play_scripts.rs`), a worker's terminal outcome
+    /// (`publish_worker_terminal`), and an unload, which stops the script,
+    /// retires the run and only then removes the row (`take_slot_for_stop`).
+    /// A logout or relog resets the walk only ([`Self::retire_script_walk`]):
+    /// a paused script keeps its paint frame.
+    pub(crate) fn retire_script_run(&mut self) {
+        #[cfg(test)]
+        RETIRED_RUNS.with(|runs| {
+            runs.borrow_mut().push((
+                self.username.clone(),
+                self.script_paint.is_some(),
+                self.script_walk().is_some(),
+            ));
+        });
+        self.script_paint = None;
+        self.retire_script_walk();
+    }
+
     /// A preparation failure that is terminal for the current slot lifetime.
     /// Login errors also use `StartupPhase::Error`, but are retryable and do
     /// not carry this producer-owned asset-initialization fact.
@@ -298,7 +354,7 @@ pub fn player_world_tile(
 
 /// The local player's world tile `(x, z, level)` from the scene origin,
 /// route head, and [`Client::minusedlevel`] — the same level
-/// [`GameSnapshot::tile`] and [`nav::traveller::Traveller::follow`] use.
+/// [`GameSnapshot::tile`] and [`nav_executor::Traveller::follow`] use.
 pub fn player_here_tile(c: &Client) -> Option<(i32, i32, i32)> {
     c.local_player.as_ref().map(|lp| {
         let (tx, tz) = player_world_tile(
@@ -353,6 +409,7 @@ impl Default for SlotStatus {
             chat_head: String::new(),
             tutorial_pending: false,
             random: RandomStatus::default(),
+            condition: api::condition::BotCondition::default(),
             script_paint: None,
         }
     }
@@ -599,10 +656,9 @@ pub(super) fn reset_slot_observation(s: &mut SlotStatus) {
     // A fresh login clears the client's pending box, so the row must not
     // keep reporting one (else the drain would click a menu).
     s.tutorial_pending = false;
-    s.walk_x = -1;
-    s.walk_z = -1;
-    s.walk_level = -1;
+    s.retire_script_walk();
     s.random = RandomStatus::default();
+    s.condition.session = api::condition::SessionMark::Boundary;
 }
 
 pub(super) fn publish_slot_observation_reset(statuses: &Arc<Mutex<Vec<SlotStatus>>>, name: &str) {
@@ -651,7 +707,7 @@ pub(super) fn publish_worker_terminal(
     let mut rows = lock_statuses(statuses);
     if let Some(status) = rows.iter_mut().find(|status| status.username == name) {
         reset_slot_observation(status);
-        status.script_paint = None;
+        status.retire_script_run();
         status.login_started = None;
         status.queue_position = -1;
         status.queue_total = -1;

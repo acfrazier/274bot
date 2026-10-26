@@ -4,8 +4,8 @@ use client::config::if_type::{ComponentType, IfTypeMut};
 use client::config::IfType;
 use client::dash3d::ClientPlayer;
 use client::io::{ClientProt, ServerProt};
-use nav::grid::StepGrid;
-use nav::tile::Tile;
+use nav_planner::grid::StepGrid;
+use nav_planner::tile::Tile;
 use std::path::PathBuf;
 use std::sync::Mutex;
 use std::time::Duration;
@@ -88,6 +88,113 @@ fn stop_script_requires_a_host_observed_idle_slot() {
     runner.observe_script_idle(true);
     advance_game_ticks_until_done(&mut runner, &mut c);
     assert_eq!(runner.status(), RunnerStatus::Passed);
+}
+
+/// A failing Await appends its read-only terminal summary to the
+/// receipt message, on its own tick budget and on the whole-run
+/// deadline alike; an Await without one keeps the plain message.
+#[test]
+fn await_terminal_summary_reaches_the_failure_receipt() {
+    fn await_runner(
+        summary: Option<Box<dyn Fn() -> String + Send + Sync>>,
+        budget: u32,
+        deadline: Duration,
+    ) -> ScenarioRunner {
+        let mut scenario = stat_scenario(0, budget);
+        scenario.steps[0].kind = StepKind::Await {
+            evidence: "never_ready",
+            ready: Box::new(|_| false),
+            summary,
+        };
+        scenario.settings.deadline = deadline;
+        let mut runner = ScenarioRunner::new(scenario);
+        runner.set_scene_settle(Duration::ZERO);
+        runner
+    }
+    let summary = || -> Option<Box<dyn Fn() -> String + Send + Sync>> {
+        Some(Box::new(|| "unmet=[alpha beta] s0 disp=1".to_string()))
+    };
+
+    let mut runner = await_runner(summary(), 3, Duration::from_secs(3600));
+    let mut c = seeded_client();
+    advance_game_ticks_until_done(&mut runner, &mut c);
+    let RunnerStatus::Failed(message) = runner.status() else {
+        panic!("budget failure expected: {:?}", runner.status());
+    };
+    assert!(
+        message.contains("never_ready") || message.contains("not seen within 3"),
+        "{message}"
+    );
+    assert!(
+        message.contains("[unmet=[alpha beta] s0 disp=1]"),
+        "{message}"
+    );
+
+    let mut runner = await_runner(summary(), 100_000, Duration::ZERO);
+    let mut c = seeded_client();
+    for _ in 0..10 {
+        c.bump_gens(ServerProt::PLAYER_INFO);
+        runner.tick(&mut c);
+        if matches!(runner.status(), RunnerStatus::Failed(_)) {
+            break;
+        }
+    }
+    let RunnerStatus::Failed(message) = runner.status() else {
+        panic!("deadline failure expected: {:?}", runner.status());
+    };
+    assert!(message.contains("deadline"), "{message}");
+    assert!(
+        message.contains("[unmet=[alpha beta] s0 disp=1]"),
+        "{message}"
+    );
+
+    let mut runner = await_runner(None, 3, Duration::from_secs(3600));
+    let mut c = seeded_client();
+    advance_game_ticks_until_done(&mut runner, &mut c);
+    let RunnerStatus::Failed(message) = runner.status() else {
+        panic!("budget failure expected: {:?}", runner.status());
+    };
+    assert!(!message.contains("unmet=["), "{message}");
+}
+
+/// A passing Await records its read-only terminal summary as the
+/// pass receipt's message, so observation values in the summary
+/// reach the receipt on a pass too. An Await without one keeps a
+/// pass receipt with no message.
+#[test]
+fn await_terminal_summary_reaches_the_pass_receipt() {
+    fn passing_runner(summary: Option<Box<dyn Fn() -> String + Send + Sync>>) -> ScenarioRunner {
+        let mut scenario = stat_scenario(0, 100);
+        scenario.steps[0].kind = StepKind::Await {
+            evidence: "already_ready",
+            ready: Box::new(|_| true),
+            summary,
+        };
+        let mut runner = ScenarioRunner::new(scenario);
+        runner.set_scene_settle(Duration::ZERO);
+        runner
+    }
+
+    let mut runner = passing_runner(Some(Box::new(|| {
+        "kq_witness unmet=[] restock_overlap=false".to_string()
+    })));
+    let mut c = seeded_client();
+    advance_game_ticks_until_done(&mut runner, &mut c);
+    assert_eq!(runner.status(), RunnerStatus::Passed);
+    let evidence = runner.evidence().expect("pass evidence");
+    assert_eq!(evidence.outcome, "PASS");
+    assert_eq!(
+        evidence.message.as_deref(),
+        Some("kq_witness unmet=[] restock_overlap=false"),
+        "the pass receipt records the summary's observation values"
+    );
+
+    let mut runner = passing_runner(None);
+    let mut c = seeded_client();
+    advance_game_ticks_until_done(&mut runner, &mut c);
+    assert_eq!(runner.status(), RunnerStatus::Passed);
+    let evidence = runner.evidence().expect("pass evidence");
+    assert_eq!(evidence.message, None);
 }
 
 #[test]
@@ -640,7 +747,7 @@ fn follow_failure_keeps_snapshot_for_existing_same_client_cycle_budget_failure()
             z: 3220,
             level: 0,
         },
-        legs: vec![nav::router::Leg::Walk {
+        legs: vec![nav_planner::router::Leg::Walk {
             tiles: vec![
                 WorldTile {
                     x: 3220,
@@ -694,7 +801,7 @@ fn record_position_names_the_run_before_the_first_tick() {
 
 #[test]
 fn hold_skips_follow_and_keeps_the_armed_route() {
-    use nav::router::Route;
+    use nav_planner::router::Route;
 
     let mut c = seeded_client();
     let dest = WorldTile {
@@ -1104,7 +1211,7 @@ fn walk_scenario(dest: WorldTile, budget: u32) -> Scenario {
     }
 }
 
-/// A `Walk` step routes exactly like `Follow`: `nav::router::find`
+/// A `Walk` step routes exactly like `Follow`: `nav_planner::router::find`
 /// over the whole-world `NavWorld` (collision + transport graph),
 /// driven by `Traveller::follow` one leg per delivered frame.
 #[test]
@@ -1650,6 +1757,28 @@ fn deadline_fails_a_stuck_run() {
         RunnerStatus::Failed(msg) => assert!(msg.contains("deadline"), "msg: {msg}"),
         other => panic!("expected Failed, got {other:?}"),
     }
+    assert!(runner.deadline_exceeded(), "the deadline ended the run");
+}
+
+/// R3-F1 (M0 round 5): a step failure read after the deadline is still a
+/// step failure. `deadline_exceeded` reports the recorded cause, not the
+/// time at which the caller reads the status.
+#[test]
+fn a_step_failure_read_after_the_deadline_is_not_a_deadline_failure() {
+    let mut runner = ScenarioRunner::new(stat_scenario(999, 1));
+    runner.set_scene_settle(Duration::ZERO);
+    runner.set_deadline(Duration::ZERO);
+    let mut c = seeded_client();
+    runner.tick(&mut c);
+    let RunnerStatus::Failed(msg) = runner.status() else {
+        panic!("expected Failed, got {:?}", runner.status());
+    };
+    assert!(msg.contains("not seen within 1 game tick"), "msg: {msg}");
+    assert!(runner.started.elapsed() > runner.deadline());
+    assert!(
+        !runner.deadline_exceeded(),
+        "a step failure is not a deadline failure"
+    );
 }
 
 /// A one-step shot scenario: no send, the arm holds on the first
@@ -3266,6 +3395,230 @@ fn fresh_tutorial_leaving_the_session_clears_the_baseline() {
     );
 }
 
+#[test]
+fn fresh_tutorial_relog_with_a_retained_old_reply_keeps_waiting() {
+    let mut c = seeded_client();
+    // The pre-relog reply: the same line the reseed step later asks the
+    // new session to send again (`reseed_after_relog` in
+    // `clue_walk_arrive_live`, whose wait is FreshTutorial).
+    c.add_chat(0, "get tutorial: 1000", "");
+    c.bump_gens(ServerProt::MESSAGE_GAME);
+    let mut runner = ScenarioRunner::with_world(fresh_tutorial_scenario(), None);
+    runner.set_scene_settle(Duration::ZERO);
+    runner.tick(&mut c);
+    assert!(
+        matches!(runner.status(), RunnerStatus::Running { .. }),
+        "the pre-relog line at the baseline must not satisfy the reseed: {:?}",
+        runner.status()
+    );
+
+    // Relog: leave the session (the step baseline clears), then return
+    // with the old line still retained in the snapshot ring. The runner
+    // re-baselines on that retained line, so it stays stale.
+    c.ingame = false;
+    c.bump_gens(ServerProt::REBUILD_NORMAL);
+    runner.tick(&mut c);
+    assert_eq!(runner.fresh_chat_baseline, None);
+    c.ingame = true;
+    advance_one_game_tick(&mut runner, &mut c, false);
+    advance_one_game_tick(&mut runner, &mut c, false);
+    assert!(
+        matches!(runner.status(), RunnerStatus::Running { .. }),
+        "a retained pre-relog line must not pass after the relog: {:?}",
+        runner.status()
+    );
+
+    // Only a strictly newer reply from the new session satisfies it.
+    c.add_chat(0, "get tutorial: 1000", "");
+    c.bump_gens(ServerProt::MESSAGE_GAME);
+    advance_one_game_tick(&mut runner, &mut c, false);
+    assert_eq!(runner.status(), RunnerStatus::Passed);
+}
+
+/// The brimhaven_agility watch chain in miniature: a preceding watch
+/// (one Coin stands in for obstacle XP), the first-tag chat prompt, the
+/// first tag's no-ticket state, and the later earned ticket
+/// (`scenarios/production/agility.rs` keeps the same milestones). The
+/// prompt arm takes its chat baseline from the preceding watch's start,
+/// so a prompt sent while that watch runs counts and an older one does
+/// not.
+fn brimhaven_tag_ticket_scenario() -> Scenario {
+    let watch = |name: &'static str, arm: Proof| Step {
+        name,
+        kind: StepKind::Perform {
+            send: Box::new(|_, _| true),
+        },
+        wait: wait(arm, 10),
+    };
+    Scenario {
+        name: "brimhaven-tag-ticket",
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: false,
+        },
+        steps: vec![
+            watch(
+                "watch obstacle XP from a real hop before the first Tag",
+                Proof::ItemId { id: 995, count: 1 },
+            ),
+            watch(
+                "watch the first Tag prompt for the next pillar",
+                Proof::FreshChatSincePreviousStep {
+                    needle: "tag the next",
+                },
+            ),
+            watch(
+                "confirm the first Tag grants no ticket",
+                Proof::ItemIdAtMost { id: 2996, count: 0 },
+            ),
+            watch(
+                "watch a later Tag grant the first ticket",
+                Proof::ItemId { id: 2996, count: 1 },
+            ),
+        ],
+        proof: Proof::ItemId { id: 2996, count: 1 },
+        companions: vec![],
+        settings: ScenarioSettings::default(),
+    }
+}
+
+/// The content's two consecutive first-tag messages, in send order
+/// (`agilityarena.rs2:72-73`): the second line pushes the matching first
+/// line off the chat head in the same burst.
+fn send_first_tag_prompt(c: &mut Client) {
+    c.add_chat(
+        0,
+        "You get tickets by tagging more than one pillar in a row, tag the next",
+        "",
+    );
+    c.add_chat(0, "pillar!", "");
+    c.bump_gens(ServerProt::MESSAGE_GAME);
+}
+
+#[test]
+fn brimhaven_two_line_tag_prompt_passes_then_waits_for_the_ticket() {
+    let mut c = seeded_client();
+    set_inv(&mut c, &[]);
+    let mut runner = ScenarioRunner::with_world(brimhaven_tag_ticket_scenario(), None);
+    runner.set_scene_settle(Duration::ZERO);
+    runner.tick(&mut c);
+    assert_eq!(
+        runner.status(),
+        RunnerStatus::Running { step: 0, total: 4 },
+        "no obstacle progress yet: the preceding watch must wait"
+    );
+
+    // The prompt bursts while the preceding watch is still running, so
+    // it is newer than that watch's start baseline but older than the
+    // prompt step's own start.
+    send_first_tag_prompt(&mut c);
+    set_inv(&mut c, &[(995, 1)]);
+    assert_running_for_game_ticks(
+        &mut runner,
+        &mut c,
+        3,
+        "the burst passes the preceding, prompt and no-ticket watches, then waits for a ticket",
+    );
+    assert_eq!(
+        runner.status(),
+        RunnerStatus::Running { step: 3, total: 4 },
+        "the run must sit on the later-ticket watch, not pass on the prompt alone"
+    );
+
+    set_inv(&mut c, &[(995, 1), (2996, 1)]);
+    advance_game_ticks_until_done(&mut runner, &mut c);
+    assert_eq!(runner.status(), RunnerStatus::Passed);
+}
+
+#[test]
+fn brimhaven_prompt_from_before_the_previous_watch_is_stale_history() {
+    let mut c = seeded_client();
+    // No ticket is seeded: with one held, the later no-ticket step
+    // could never pass, so the run would fail even if the prompt step
+    // wrongly accepted the stale line.
+    set_inv(&mut c, &[(995, 1)]);
+    // The matching line is already in the ring before the preceding
+    // watch (and therefore before its baseline) begins. It must never
+    // satisfy the prompt step.
+    send_first_tag_prompt(&mut c);
+    let mut runner = ScenarioRunner::with_world(brimhaven_tag_ticket_scenario(), None);
+    runner.set_scene_settle(Duration::ZERO);
+    for _ in 0..20 {
+        advance_one_game_tick(&mut runner, &mut c, false);
+    }
+    match runner.status() {
+        RunnerStatus::Failed(msg) => {
+            assert!(
+                msg.contains("watch the first Tag prompt for the next pillar"),
+                "a prompt from before the previous-watch baseline must fail at the prompt step: {msg}"
+            );
+            assert!(
+                msg.contains("fresh_chat_since_previous_step"),
+                "the failure must name the prompt arm: {msg}"
+            );
+            assert!(
+                msg.contains("not seen within 10 game ticks"),
+                "the prompt step must exhaust its own 10-game-tick budget: {msg}"
+            );
+        }
+        other => panic!(
+            "a prompt received before the previous-watch baseline must not pass, got {other:?}"
+        ),
+    }
+}
+
+#[test]
+fn brimhaven_run_without_a_tag_prompt_fails() {
+    let mut c = seeded_client();
+    // No ticket is seeded: with one held, the later no-ticket step
+    // could never pass, so the run would fail even if the prompt step
+    // were skipped or wrongly satisfied.
+    set_inv(&mut c, &[(995, 1)]);
+    c.add_chat(0, "pillar!", "");
+    c.bump_gens(ServerProt::MESSAGE_GAME);
+    let mut runner = ScenarioRunner::with_world(brimhaven_tag_ticket_scenario(), None);
+    runner.set_scene_settle(Duration::ZERO);
+    for _ in 0..20 {
+        advance_one_game_tick(&mut runner, &mut c, false);
+    }
+    match runner.status() {
+        RunnerStatus::Failed(msg) => {
+            assert!(
+                msg.contains("watch the first Tag prompt for the next pillar"),
+                "a run with no tag prompt must fail at the prompt step: {msg}"
+            );
+            assert!(
+                msg.contains("fresh_chat_since_previous_step"),
+                "the failure must name the prompt arm: {msg}"
+            );
+            assert!(
+                msg.contains("not seen within 10 game ticks"),
+                "the prompt step must exhaust its own 10-game-tick budget: {msg}"
+            );
+        }
+        other => panic!("a run with no tag prompt must fail, got {other:?}"),
+    }
+}
+
+#[test]
+fn brimhaven_run_without_ticket_progress_fails() {
+    let mut c = seeded_client();
+    set_inv(&mut c, &[]);
+    let mut runner = ScenarioRunner::with_world(brimhaven_tag_ticket_scenario(), None);
+    runner.set_scene_settle(Duration::ZERO);
+    runner.tick(&mut c);
+    send_first_tag_prompt(&mut c);
+    set_inv(&mut c, &[(995, 1)]);
+    for _ in 0..24 {
+        advance_one_game_tick(&mut runner, &mut c, false);
+    }
+    assert!(
+        matches!(runner.status(), RunnerStatus::Failed(_)),
+        "the prompt alone must not pass without the later ticket, got {:?}",
+        runner.status()
+    );
+}
+
 fn visited_within_scenario() -> Scenario {
     let watch = |name: &'static str, min: i32, max: i32| Step {
         name,
@@ -4007,6 +4360,86 @@ fn ardy_fighter_bank_style_watch_accepts_the_final_r10_receipt() {
     oracle_settle(&mut runner, &mut c, 2);
     set_world_tile(&mut c, ARDY_ORACLE.bank);
     oracle_open_bank(&mut c, &[(ARDY_BONES, 5)]);
+    set_inv(&mut c, &[]);
+    oracle_settle(&mut runner, &mut c, 2);
+    oracle_close_bank(&mut c);
+    oracle_settle(&mut runner, &mut c, 2);
+    set_world_tile(&mut c, ARDY_ORACLE.field);
+    oracle_settle(&mut runner, &mut c, 2);
+    oracle_gain_strength(&mut c);
+    assert_eq!(oracle_finish(&mut runner, &mut c), RunnerStatus::Passed);
+}
+
+/// The 2026-10-24 nightly receipt on `dev` `58080a889`
+/// (`NIGHTLY/2026-10-24-dev-58080a889/cells/ardy_fighter_bank`): three
+/// pre-style trips deposited four Bones and two successful steals were eaten,
+/// then the final leg's restock was refused at both Baker's stands before a
+/// catch. The receipt's final tile is the East Ardougne booth with that
+/// catch's Bones still in the pack and no food held, so the fourth deposit
+/// lands 213 game ticks after the third (the return, one refusal run at each
+/// stand, the catch and the bank walk), beyond the former one-refusal-run
+/// leg. Projected on: one steal held, the style, and the ordinary bank chain.
+#[test]
+fn ardy_fighter_bank_style_watch_accepts_the_nightly_1024_receipt() {
+    let (mut runner, mut c) = ardy_bank_after_start();
+    ardy_pre_style_trip(&mut runner, &mut c, 1, 90);
+    set_world_tile(&mut c, ARDY_ORACLE.field);
+    oracle_settle(&mut runner, &mut c, 20);
+    ardy_steal(&mut c, 1901);
+    oracle_settle(&mut runner, &mut c, 2);
+    set_inv(&mut c, &[]);
+    ardy_pre_style_trip(&mut runner, &mut c, 2, 70);
+    set_world_tile(&mut c, ARDY_ORACLE.field);
+    oracle_settle(&mut runner, &mut c, 20);
+    ardy_steal(&mut c, ARDY_CAKE);
+    oracle_settle(&mut runner, &mut c, 2);
+    set_inv(&mut c, &[]);
+    // The third trip deposits two Bones in one observed rise (banked 2 to 4).
+    set_world_tile(&mut c, ARDY_ORACLE.field);
+    c.stat_xp[ARDY_ATTACK_STAT] += 40;
+    c.bump_gens(ServerProt::UPDATE_STAT);
+    oracle_settle(&mut runner, &mut c, 1);
+    set_inv(&mut c, &[(ARDY_BONES, 1)]);
+    oracle_settle(&mut runner, &mut c, 90);
+    set_world_tile(&mut c, ARDY_ORACLE.bank);
+    oracle_open_bank(&mut c, &[(ARDY_BONES, 2)]);
+    oracle_settle(&mut runner, &mut c, 1);
+    set_inv(&mut c, &[]);
+    oracle_open_bank(&mut c, &[(ARDY_BONES, 4)]);
+    oracle_settle(&mut runner, &mut c, 1);
+    oracle_close_bank(&mut c);
+    oracle_settle(&mut runner, &mut c, 1);
+    assert_ardy_running(&runner, "the third deposit (four Bones banked)");
+    // Final leg: return and one refused run at each stand (no progress
+    // signal), the catch, then the walk to the booth.
+    set_world_tile(&mut c, ARDY_ORACLE.field);
+    oracle_settle(&mut runner, &mut c, 119);
+    c.stat_xp[ARDY_ATTACK_STAT] += 40;
+    c.bump_gens(ServerProt::UPDATE_STAT);
+    oracle_settle(&mut runner, &mut c, 1);
+    set_inv(&mut c, &[(ARDY_BONES, 1)]);
+    oracle_settle(&mut runner, &mut c, 90);
+    set_world_tile(&mut c, ARDY_ORACLE.bank);
+    oracle_open_bank(&mut c, &[(ARDY_BONES, 4)]);
+    oracle_settle(&mut runner, &mut c, 1);
+    set_inv(&mut c, &[]);
+    oracle_open_bank(&mut c, &[(ARDY_BONES, 5)]);
+    oracle_settle(&mut runner, &mut c, 1);
+    assert_ardy_running(&runner, "the fourth deposit after two refusal runs");
+    oracle_close_bank(&mut c);
+    oracle_settle(&mut runner, &mut c, 1);
+    set_world_tile(&mut c, ARDY_ORACLE.field);
+    oracle_settle(&mut runner, &mut c, 20);
+    ardy_steal(&mut c, ARDY_CAKE);
+    oracle_settle(&mut runner, &mut c, 2);
+    set_combat_style(&mut c, 1);
+    oracle_settle(&mut runner, &mut c, 7);
+    oracle_gain_strength(&mut c);
+    oracle_settle(&mut runner, &mut c, 2);
+    set_inv(&mut c, &[(ARDY_BONES, 1)]);
+    oracle_settle(&mut runner, &mut c, 2);
+    set_world_tile(&mut c, ARDY_ORACLE.bank);
+    oracle_open_bank(&mut c, &[(ARDY_BONES, 6)]);
     set_inv(&mut c, &[]);
     oracle_settle(&mut runner, &mut c, 2);
     oracle_close_bank(&mut c);

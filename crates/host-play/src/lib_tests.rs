@@ -6,7 +6,7 @@ use client::config::if_type::ComponentType;
 use client::io::client_stream::LoginCancel;
 use client::{ClientSessionConfig, ClientSessionProfile};
 use host::{Guardian, GuardianLiveContext, InputEv};
-use nav::bank_fetch::BankRows;
+use nav_planner::bank_fetch::BankRows;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::Arc;
@@ -105,14 +105,21 @@ fn native_requested(
     to: WorldTile,
     radius: i32,
     allow_teleports: bool,
-) -> (WorldTile, i32, bool, bool, bool, nav::zones::ZoneExempt) {
+) -> (
+    WorldTile,
+    i32,
+    bool,
+    bool,
+    bool,
+    nav_planner::zones::ZoneExempt,
+) {
     (
         to,
         radius,
         allow_teleports,
         false,
         false,
-        nav::zones::ZoneExempt::NONE,
+        nav_planner::zones::ZoneExempt::NONE,
     )
 }
 fn test_navs(name: &str) -> Arc<Mutex<HashMap<String, NavBot>>> {
@@ -556,10 +563,10 @@ use client::client::MiniMenuAction;
 use client::config::if_type::ButtonType;
 use client::config::Cache;
 use client::io::{Packet, ServerProt};
-use nav::collision::WorldCollision;
-use nav::router::Leg;
-use nav::tile::Tile;
-use nav::transport::{TransportEdge, TransportGraph, TransportKind};
+use nav_planner::collision::WorldCollision;
+use nav_planner::router::Leg;
+use nav_planner::tile::Tile;
+use nav_planner::transport::{TransportEdge, TransportGraph, TransportKind};
 use vault::ProfileSettings;
 
 #[test]
@@ -4601,7 +4608,7 @@ fn route_publication_rejects_stale_results_and_preserves_route_on_failure() {
             true,
             false,
             false,
-            nav::zones::ZoneExempt::NONE,
+            nav_planner::zones::ZoneExempt::NONE,
         )),
         ..Default::default()
     };
@@ -4816,7 +4823,7 @@ fn route_end_of_a_retargeted_walk_does_not_settle_the_new_walk() {
     assert_eq!(bot.route_destination(), Some(a), "A still followed");
     apply_nav_follow_outcome(
         bot,
-        Some(nav::traveller::TravelOutcome::Arrived { at: a }),
+        Some(nav_executor::TravelOutcome::Arrived { at: a }),
         false,
     );
     assert!(!bot.has_route());
@@ -4829,7 +4836,7 @@ fn route_end_of_a_retargeted_walk_does_not_settle_the_new_walk() {
     bot.publish_route(2, 8, false, RouteOutcome::Routed(route_to(b)));
     apply_nav_follow_outcome(
         bot,
-        Some(nav::traveller::TravelOutcome::Arrived { at: b }),
+        Some(nav_executor::TravelOutcome::Arrived { at: b }),
         false,
     );
     assert_eq!(bot.walk_outcome_seq, 1, "B's own route end publishes");
@@ -4858,7 +4865,7 @@ fn stall_of_a_retargeted_walk_does_not_fail_the_new_walk() {
         dest,
         ticks: 0.0,
     };
-    let gave_up = |at| Some(nav::traveller::TravelOutcome::GaveUp { at, hops: 40 });
+    let gave_up = |at| Some(nav_executor::TravelOutcome::GaveUp { at, hops: 40 });
     let navs = Arc::new(Mutex::new(HashMap::from([(
         "bank".to_string(),
         NavBot {
@@ -4928,7 +4935,7 @@ fn route_end_of_request_id_zero_publishes_nothing() {
     );
     apply_nav_follow_outcome(
         &mut bot,
-        Some(nav::traveller::TravelOutcome::Arrived { at: dest }),
+        Some(nav_executor::TravelOutcome::Arrived { at: dest }),
         false,
     );
     assert!(!bot.has_route(), "the route ended");
@@ -4963,14 +4970,14 @@ fn end_blocked_follow_settles_the_armed_walk_as_a_blocked_route_end() {
     );
     apply_nav_follow_outcome(
         &mut bot,
-        Some(nav::traveller::TravelOutcome::Stalled {
+        Some(nav_executor::TravelOutcome::Stalled {
             at: WorldTile {
                 x: 4,
                 z: 3,
                 level: 0,
             },
             aiming: dest,
-            why: nav::traveller::HopFailure::EndBlocked,
+            why: nav_executor::HopFailure::EndBlocked,
             tries: 0,
         }),
         false,
@@ -4995,14 +5002,14 @@ fn end_blocked_follow_settles_the_armed_walk_as_a_blocked_route_end() {
     );
     apply_nav_follow_outcome(
         &mut bot,
-        Some(nav::traveller::TravelOutcome::Stalled {
+        Some(nav_executor::TravelOutcome::Stalled {
             at: WorldTile {
                 x: 4,
                 z: 3,
                 level: 0,
             },
             aiming: dest,
-            why: nav::traveller::HopFailure::Dropped,
+            why: nav_executor::HopFailure::Dropped,
             tries: 1,
         }),
         false,
@@ -5133,7 +5140,7 @@ fn bot_clone_generation_guard(bot: &NavBot) {
             false,
             false,
             false,
-            nav::zones::ZoneExempt::NONE,
+            nav_planner::zones::ZoneExempt::NONE,
         )),
         ..Default::default()
     };
@@ -5433,7 +5440,7 @@ fn mid_follow_terminals_publish_the_armed_request_id() {
     };
     apply_nav_follow_outcome(
         &mut bot,
-        Some(nav::traveller::TravelOutcome::Refused {
+        Some(nav_executor::TravelOutcome::Refused {
             at: dest,
             reason: api::interact::SendReason::NotIngame,
         }),
@@ -5458,10 +5465,13 @@ fn mid_follow_terminals_publish_the_armed_request_id() {
     bot.route_request_id = 8;
     apply_nav_follow_outcome(
         &mut bot,
-        Some(nav::traveller::TravelOutcome::Blocked {
+        Some(nav_executor::TravelOutcome::Blocked {
             at: dest,
             leg: 0,
-            detail: "missing loc".into(),
+            why: nav_executor::BlockedWhy::TrollDoorMissing {
+                loc_id: 1,
+                tile: dest,
+            },
         }),
         true,
     );
@@ -6001,7 +6011,7 @@ fn two_same_key_old_mid_follow_terminal_before_snapshot_keeps_later_refusal() {
         assert_eq!(bot.walk_outcome_request_id, second_id);
         apply_nav_follow_outcome(
             bot,
-            Some(nav::traveller::TravelOutcome::GaveUp { at: dest, hops: 3 }),
+            Some(nav_executor::TravelOutcome::GaveUp { at: dest, hops: 3 }),
             false,
         );
         assert_eq!(
@@ -6229,7 +6239,7 @@ fn approach_candidates_avoid_occupied_target_and_stay_in_radius() {
 /// rectangle that seals the only way leaves no route.
 #[test]
 fn a_script_walk_routes_around_its_avoid_rectangle() {
-    let request = |avoid: Vec<nav::router::AvoidRect>| ScriptRouteRequest {
+    let request = |avoid: Vec<nav_planner::router::AvoidRect>| ScriptRouteRequest {
         candidate_goals: None,
         admission: crate::admission::Admission::manual(
             FindOptions::default(),
@@ -6238,7 +6248,7 @@ fn a_script_walk_routes_around_its_avoid_rectangle() {
             crate::WalkGlobals::default(),
         ),
         loc_id: None,
-        arrival: nav::arrival::ArrivalKind::Reach,
+        arrival: nav_planner::arrival::ArrivalKind::Reach,
         generation: 0,
         request_id: 0,
         world: Arc::new(open_world(12, 8)),
@@ -6265,7 +6275,7 @@ fn a_script_walk_routes_around_its_avoid_rectangle() {
             ..Default::default()
         })),
     };
-    let thrower = nav::router::AvoidRect {
+    let thrower = nav_planner::router::AvoidRect {
         min_x: 2,
         max_x: 9,
         min_z: 0,
@@ -6310,7 +6320,7 @@ fn a_script_walk_routes_around_its_avoid_rectangle() {
         "the route keeps out of the avoid rectangle: {:?}",
         walked(&around)
     );
-    let sealed = nav::router::AvoidRect {
+    let sealed = nav_planner::router::AvoidRect {
         max_z: 7,
         ..thrower
     };
@@ -6332,7 +6342,7 @@ fn radius_route_job_keeps_first_connected_open_floor_approach() {
             crate::WalkGlobals::default(),
         ),
         loc_id: None,
-        arrival: nav::arrival::ArrivalKind::Reach,
+        arrival: nav_planner::arrival::ArrivalKind::Reach,
         generation: 0,
         request_id: 0,
         world,
@@ -6377,7 +6387,7 @@ fn radius_route_job_drops_wall_separated_candidate() {
         flags[z * 7 + 3] |= client::dash3d::CollisionFlag::W_E as u32;
         flags[z * 7 + 4] |= client::dash3d::CollisionFlag::W_W as u32;
     }
-    let (walk, blocked) = nav::collision::pack_walk(&flags);
+    let (walk, blocked) = nav_planner::collision::pack_walk(&flags);
     world.collision.walk = walk;
     world.collision.blocked = blocked;
     let request = ScriptRouteRequest {
@@ -6389,7 +6399,7 @@ fn radius_route_job_drops_wall_separated_candidate() {
             crate::WalkGlobals::default(),
         ),
         loc_id: None,
-        arrival: nav::arrival::ArrivalKind::Reach,
+        arrival: nav_planner::arrival::ArrivalKind::Reach,
         generation: 0,
         request_id: 0,
         world: Arc::new(world),
@@ -6428,7 +6438,7 @@ fn radius_route_job_drops_wall_separated_candidate() {
     );
     assert!((route.dest.x - to.x).abs().max((route.dest.z - to.z).abs()) <= 1);
     assert!(
-        nav::router::local_step_component(&world.collision, to, 1).contains(&route.dest),
+        nav_planner::router::local_step_component(&world.collision, to, 1).contains(&route.dest),
         "selected destination must be step-connected to the target"
     );
 }
@@ -6451,7 +6461,7 @@ fn radius_route_job_uses_occupied_target_approach_candidates() {
             crate::WalkGlobals::default(),
         ),
         loc_id: None,
-        arrival: nav::arrival::ArrivalKind::Reach,
+        arrival: nav_planner::arrival::ArrivalKind::Reach,
         generation: 0,
         request_id: 0,
         world: Arc::new(world),
@@ -6506,7 +6516,7 @@ fn compat_radius_falls_back_to_arrival_endpoints_when_walkable_anchor_is_unreach
             crate::WalkGlobals::default(),
         ),
         loc_id: None,
-        arrival: nav::arrival::ArrivalKind::Reach,
+        arrival: nav_planner::arrival::ArrivalKind::Reach,
         generation: 0,
         request_id: 0,
         world: Arc::new(open_world(7, 7)),
@@ -6525,7 +6535,7 @@ fn compat_radius_falls_back_to_arrival_endpoints_when_walkable_anchor_is_unreach
             ..Default::default()
         })),
     };
-    let avoid_anchor = nav::router::AvoidRect {
+    let avoid_anchor = nav_planner::router::AvoidRect {
         min_x: target.x,
         max_x: target.x,
         min_z: target.z,
@@ -6566,7 +6576,7 @@ fn compat_radius_falls_back_to_arrival_endpoints_when_walkable_anchor_is_unreach
         route.dest
     );
 
-    let unreachable = make_request(vec![nav::router::AvoidRect {
+    let unreachable = make_request(vec![nav_planner::router::AvoidRect {
         min_x: target.x - 2,
         max_x: target.x + 2,
         min_z: target.z - 2,
@@ -6606,7 +6616,7 @@ fn compat_radius_falls_back_to_an_in_radius_endpoint_when_center_is_blocked() {
             crate::WalkGlobals::default(),
         ),
         loc_id: None,
-        arrival: nav::arrival::ArrivalKind::Reach,
+        arrival: nav_planner::arrival::ArrivalKind::Reach,
         generation: 0,
         request_id: 0,
         world: Arc::clone(&world),
@@ -6667,7 +6677,7 @@ fn exact_tile_route_job_reaches_the_tile_or_refuses_an_occupied_one() {
             ),
             bank_origin: Default::default(),
             loc_id: None,
-            arrival: nav::arrival::ArrivalKind::Reach,
+            arrival: nav_planner::arrival::ArrivalKind::Reach,
             generation: 0,
             request_id: 0,
             world: Arc::new(world),
@@ -6717,7 +6727,7 @@ fn radius_route_job_respects_wall_l_diagonal_geometry() {
     flags[3 * 7 + 4] |= client::dash3d::CollisionFlag::W_W as u32
         | client::dash3d::CollisionFlag::W_N as u32
         | client::dash3d::CollisionFlag::W_S as u32;
-    let (walk, blocked) = nav::collision::pack_walk(&flags);
+    let (walk, blocked) = nav_planner::collision::pack_walk(&flags);
     world.collision.walk = walk;
     world.collision.blocked = blocked;
     let request = ScriptRouteRequest {
@@ -6729,7 +6739,7 @@ fn radius_route_job_respects_wall_l_diagonal_geometry() {
             crate::WalkGlobals::default(),
         ),
         loc_id: None,
-        arrival: nav::arrival::ArrivalKind::Reach,
+        arrival: nav_planner::arrival::ArrivalKind::Reach,
         generation: 0,
         request_id: 0,
         world: Arc::new(world),
@@ -6749,7 +6759,7 @@ fn radius_route_job_respects_wall_l_diagonal_geometry() {
         completion: Default::default(),
         exclusions: None,
     };
-    let component = nav::router::local_step_component(&request.world.collision, target, 1);
+    let component = nav_planner::router::local_step_component(&request.world.collision, target, 1);
     let same_side = WorldTile {
         x: 2,
         z: 3,
@@ -6777,7 +6787,7 @@ fn radius_route_job_drops_detour_outside_radius() {
         flags[z * 7 + 3] |= client::dash3d::CollisionFlag::W_E as u32;
         flags[z * 7 + 4] |= client::dash3d::CollisionFlag::W_W as u32;
     }
-    let (walk, blocked) = nav::collision::pack_walk(&flags);
+    let (walk, blocked) = nav_planner::collision::pack_walk(&flags);
     world.collision.walk = walk;
     world.collision.blocked = blocked;
     let target = WorldTile {
@@ -6794,7 +6804,7 @@ fn radius_route_job_drops_detour_outside_radius() {
             crate::WalkGlobals::default(),
         ),
         loc_id: None,
-        arrival: nav::arrival::ArrivalKind::Reach,
+        arrival: nav_planner::arrival::ArrivalKind::Reach,
         generation: 0,
         request_id: 0,
         world: Arc::new(world),
@@ -6814,7 +6824,7 @@ fn radius_route_job_drops_detour_outside_radius() {
         completion: Default::default(),
         exclusions: None,
     };
-    let component = nav::router::local_step_component(&request.world.collision, target, 1);
+    let component = nav_planner::router::local_step_component(&request.world.collision, target, 1);
     assert!(!component.contains(&WorldTile {
         x: 4,
         z: 3,
@@ -6853,7 +6863,7 @@ fn actual_289_radius_arrival_stays_out_of_horvik() {
             crate::WalkGlobals::default(),
         ),
         loc_id: None,
-        arrival: nav::arrival::ArrivalKind::Reach,
+        arrival: nav_planner::arrival::ArrivalKind::Reach,
         generation: 0,
         request_id: 0,
         world: Arc::clone(&world),
@@ -6896,7 +6906,9 @@ fn actual_289_radius_arrival_stays_out_of_horvik() {
         )),
         "radius arrival must not use Horvik door 1530"
     );
-    assert!(nav::router::local_step_component(&world.collision, to, 2).contains(&route.dest));
+    assert!(
+        nav_planner::router::local_step_component(&world.collision, to, 2).contains(&route.dest)
+    );
 }
 
 #[test]
@@ -7195,6 +7207,8 @@ fn failed_bank_stand_subroute_omits_private_leg_metadata() {
     let edge = TransportEdge {
         takeoff: None,
         worn_all_req: Vec::new(),
+        forbidden_held: Vec::new(),
+        forbidden_worn: Vec::new(),
         kind: TransportKind::Boat,
         player_delta: None,
         at,
@@ -7464,6 +7478,325 @@ fn script_stop_clears_offline_published_paint() {
         play.statuses.lock().unwrap()[0].script_paint.is_none(),
         "script lifecycle owner clears paint without an online observe"
     );
+}
+
+/// PANEL-STATE-GAP-1023: every way to stop a script run retires the run's
+/// published walk destination with it, through the one terminal path, while
+/// another bot's published walk is untouched. The pump's nav step never runs
+/// again once the route is gone, so nothing else would clear the row.
+#[test]
+fn every_script_stop_retires_the_run_walk_and_only_that_runs_walk() {
+    let mut play = run_with_io(
+        &PlayOptions {
+            host: "127.0.0.1".into(),
+            transport: client::Transport::Tcp,
+            port: 43594,
+            cache_dir: "/tmp".into(),
+            lowmem: true,
+            mainland: false,
+        },
+        vec![],
+        |_| (None, None),
+        |_, _, _| {},
+    )
+    .expect("Play construction succeeds");
+    for name in ["alice", "bob"] {
+        play.attach_arm(name, SlotArm::new(7, false));
+        play.statuses.lock().unwrap().push(SlotStatus {
+            username: name.into(),
+            ..SlotStatus::default()
+        });
+    }
+    let publish_walks = |play: &Play| {
+        for row in play.statuses.lock().unwrap().iter_mut() {
+            (row.walk_x, row.walk_z, row.walk_level) = (2550, 3348, 0);
+        }
+    };
+    type Walk = Option<(i32, i32, i32)>;
+    let walks = |play: &Play| -> Vec<(String, Walk)> {
+        play.statuses
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|row| {
+                (
+                    row.username.clone(),
+                    (row.walk_x != -1).then_some((row.walk_x, row.walk_z, row.walk_level)),
+                )
+            })
+            .collect()
+    };
+    let start = |play: &Play, identity: &str| {
+        play.script_start_load(
+            "alice",
+            "export function tick(api) {}".into(),
+            script::LoadShape::NativeTick,
+            None,
+            vec![],
+        )
+        .unwrap();
+        wait_script_state(play, "alice", script::RunState::Running);
+        play.script_attach_identity("alice", identity);
+    };
+    let kept = Some((2550, 3348, 0));
+
+    start(&play, "card:a");
+    publish_walks(&play);
+    play.script_stop("alice");
+    wait_script_state(&play, "alice", script::RunState::Idle);
+    assert_eq!(
+        walks(&play),
+        [("alice".into(), None), ("bob".into(), kept)],
+        "Play::script_stop"
+    );
+
+    start(&play, "card:a");
+    publish_walks(&play);
+    let generation = play.script_runtime_generation("alice").unwrap();
+    assert!(play.script_stop_if_identity_generation("alice", "card:a", generation));
+    wait_script_state(&play, "alice", script::RunState::Idle);
+    assert_eq!(
+        walks(&play),
+        [("alice".into(), None), ("bob".into(), kept)],
+        "Play::script_stop_if_identity_generation"
+    );
+
+    start(&play, "card:a");
+    publish_walks(&play);
+    play.script_start_handle().stop("alice").unwrap();
+    wait_script_state(&play, "alice", script::RunState::Idle);
+    assert_eq!(
+        walks(&play),
+        [("alice".into(), None), ("bob".into(), kept)],
+        "ScriptStartHandle::stop"
+    );
+}
+
+/// PANEL-STATE-GAP-1023: a Stop that names the run (`script_native_stop`)
+/// retires that run's published rows with it, and a Stop that names a
+/// different run changes nothing.
+#[test]
+fn script_native_stop_retires_only_the_named_runs_rows() {
+    let mut play = run_with_io(
+        &PlayOptions {
+            host: "127.0.0.1".into(),
+            transport: client::Transport::Tcp,
+            port: 43594,
+            cache_dir: "/tmp".into(),
+            lowmem: true,
+            mainland: false,
+        },
+        vec![],
+        |_| (None, None),
+        |_, _, _| {},
+    )
+    .expect("Play construction succeeds");
+    for name in ["alice", "bob"] {
+        play.attach_arm(name, SlotArm::new(7, false));
+        let mut row = SlotStatus {
+            username: name.into(),
+            script_paint: Some(Arc::new(script::shim::ScriptPaint::default())),
+            ..SlotStatus::default()
+        };
+        row.publish_script_walk(Some(WorldTile {
+            x: 2550,
+            z: 3348,
+            level: 0,
+        }));
+        play.statuses.lock().unwrap().push(row);
+    }
+    let slot = script_slot_or_insert(&play.scripts, "alice");
+    slot.lock()
+        .unwrap()
+        .start_test_script(Box::new(TickCounter(Arc::new(Mutex::new(0)))), None)
+        .unwrap();
+    let run = slot
+        .lock()
+        .unwrap()
+        .native_run()
+        .expect("the started script is a native run");
+    let published = |play: &Play| -> Vec<(bool, bool)> {
+        play.statuses
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|row| (row.script_paint.is_some(), row.script_walk().is_some()))
+            .collect()
+    };
+
+    let stale = api::selected::RunKey {
+        run: run.run + 1,
+        ..run
+    };
+    assert!(!play.script_native_stop("alice", stale));
+    assert_eq!(
+        published(&play),
+        [(true, true), (true, true)],
+        "a Stop for another run retires nothing"
+    );
+
+    assert!(play.script_native_stop("alice", run));
+    assert_eq!(
+        published(&play),
+        [(false, false), (true, true)],
+        "Play::script_native_stop retires that run's paint and walk, and only that bot's"
+    );
+}
+
+/// PANEL-STATE-GAP-1023: a run's published walk ends with the run however the
+/// run ends: a disconnect, a relog, a worker that fails or panics, and an
+/// unload (which then removes the row). A logout or relog keeps a held
+/// script's paint frame. The explicit Stops are covered above; the unload's
+/// retirement itself is counted in the next test.
+#[test]
+fn every_other_way_a_run_ends_retires_its_published_rows() {
+    let mut play = run_with_io(
+        &PlayOptions {
+            host: "127.0.0.1".into(),
+            transport: client::Transport::Tcp,
+            port: 43594,
+            cache_dir: "/tmp".into(),
+            lowmem: true,
+            mainland: false,
+        },
+        vec![],
+        |_| (None, None),
+        |_, _, _| {},
+    )
+    .expect("Play construction succeeds");
+    let names = ["kept", "logout", "relog", "failed", "panicked", "unloaded"];
+    for name in names {
+        let mut row = SlotStatus {
+            username: name.into(),
+            script_paint: Some(Arc::new(script::shim::ScriptPaint::default())),
+            ..SlotStatus::default()
+        };
+        row.publish_script_walk(Some(WorldTile {
+            x: 2550,
+            z: 3348,
+            level: 0,
+        }));
+        play.statuses.lock().unwrap().push(row);
+    }
+    crate::play_status::publish_slot_disconnected(&play.statuses, "logout");
+    crate::play_status::publish_slot_observation_reset(&play.statuses, "relog");
+    crate::play_status::publish_worker_terminal(
+        &play.statuses,
+        "failed",
+        crate::play_status::WorkerTerminal::Failed,
+        None,
+    );
+    crate::play_status::publish_worker_terminal(
+        &play.statuses,
+        "panicked",
+        crate::play_status::WorkerTerminal::Panicked,
+        None,
+    );
+    play.stop_slot("unloaded");
+
+    let published: Vec<(String, bool, bool)> = play
+        .statuses
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|row| {
+            (
+                row.username.clone(),
+                row.script_paint.is_some(),
+                row.script_walk().is_some(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        published,
+        [
+            ("kept".to_owned(), true, true),
+            ("logout".to_owned(), true, false),
+            ("relog".to_owned(), true, false),
+            ("failed".to_owned(), false, false),
+            ("panicked".to_owned(), false, false),
+        ],
+        "a logout or relog ends the walk and keeps the paint of a held script; a worker that fails or panics ends both; only the bot whose run did not end keeps its rows; the unloaded bot's row is gone"
+    );
+}
+
+/// PANEL-STATE-GAP-1023 (F4): an unload ends its bot's run as a Stop does.
+/// Both unload entry points stop the script, retire the run's row through
+/// `SlotStatus::retire_script_run` exactly once while the row still holds the
+/// run's paint and walk, and only then remove the row. The bot that stays
+/// keeps its run and its rows.
+#[test]
+fn an_unload_retires_the_run_once_before_it_removes_the_row() {
+    let mut play = run_with_io(
+        &PlayOptions {
+            host: "127.0.0.1".into(),
+            transport: client::Transport::Tcp,
+            port: 43594,
+            cache_dir: "/tmp".into(),
+            lowmem: true,
+            mainland: false,
+        },
+        vec![],
+        |_| (None, None),
+        |_, _, _| {},
+    )
+    .expect("Play construction succeeds");
+    for name in ["kept", "stopped", "retiring"] {
+        play.attach_arm(name, SlotArm::new(7, false));
+        let mut row = SlotStatus {
+            username: name.into(),
+            script_paint: Some(Arc::new(script::shim::ScriptPaint::default())),
+            ..SlotStatus::default()
+        };
+        row.publish_script_walk(Some(WorldTile {
+            x: 2550,
+            z: 3348,
+            level: 0,
+        }));
+        play.statuses.lock().unwrap().push(row);
+        script_slot_or_insert(&play.scripts, name)
+            .lock()
+            .unwrap()
+            .start_test_script(Box::new(TickCounter(Arc::new(Mutex::new(0)))), None)
+            .unwrap();
+    }
+    crate::play_status::RETIRED_RUNS.with(|runs| runs.borrow_mut().clear());
+    let kept_state = play.script_state("kept");
+    assert_ne!(kept_state, script::RunState::Idle);
+
+    play.stop_slot("stopped");
+    play.begin_stop_slot("retiring");
+
+    let retired = crate::play_status::RETIRED_RUNS.with(std::cell::RefCell::take);
+    assert_eq!(
+        retired,
+        [
+            ("stopped".to_owned(), true, true),
+            ("retiring".to_owned(), true, true),
+        ],
+        "each unload retires its run once, before the row is removed (Play::stop_slot, Play::begin_stop_slot)"
+    );
+    let rows: Vec<(String, bool, bool)> = play
+        .statuses
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|row| {
+            (
+                row.username.clone(),
+                row.script_paint.is_some(),
+                row.script_walk().is_some(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        rows,
+        [("kept".to_owned(), true, true)],
+        "the unloaded rows are gone; the bot that stays keeps its rows"
+    );
+    assert!(script_slot(&play.scripts, "stopped").is_none());
+    assert!(script_slot(&play.scripts, "retiring").is_none());
+    assert_eq!(play.script_state("kept"), kept_state);
 }
 
 #[test]
@@ -8603,6 +8936,7 @@ fn host_internal_tutorial_probe_is_not_tracked_as_debug_reply() {
         None,
         Some(&mut replies),
         None,
+        None,
     );
 
     assert_eq!(
@@ -8715,7 +9049,7 @@ fn disconnect_reset_discards_queued_work_and_pauses_session_state() {
                 false,
                 false,
                 false,
-                nav::zones::ZoneExempt::NONE,
+                nav_planner::zones::ZoneExempt::NONE,
             )),
             ..NavBot::default()
         }),
@@ -9165,16 +9499,19 @@ fn t23_bank_start_compat_slot(scripts: &ScriptWall, name: &str, source: &str) {
     let mut slot = slot.lock().unwrap();
     let game_data =
         api::game_data::for_revision(api::selected::ClientRevision::R289).expect("R289 game data");
-    slot.start_load_with_settings_and_game_data(
-        source.to_string(),
-        script::LoadShape::CompatClass,
+    let start = crate::script_runtime::js_surface_start(
+        crate::script_runtime::js_start_card(
+            source.to_string(),
+            script::LoadShape::CompatClass,
+            vec![],
+        ),
         None,
-        vec![],
-        &[],
         Some(Arc::clone(&game_data)),
         Arc::new(api::named_banks::NamedBankFacts::empty()),
-    )
-    .expect("compat bank slot starts");
+        Arc::from(Vec::<api::loadout::Loadout>::new()),
+    );
+    slot.start_surface_with_settings(start)
+        .expect("compat bank slot starts");
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         match slot.poll_start() {
@@ -9253,6 +9590,7 @@ fn t23_bank_observe(
             None,
             None,
             super::script_channels::BrokerWorld::Local,
+            None,
             None,
             None,
             None,
@@ -9787,7 +10125,7 @@ fn inspect_route_cross_zone_exemption_routes_through_the_named_barrier() {
         z: 0,
         level: 0,
     };
-    let collision = nav::collision::WorldCollision {
+    let collision = nav_planner::collision::WorldCollision {
         origin: from,
         width: 40,
         height: 1,
@@ -9795,21 +10133,21 @@ fn inspect_route_cross_zone_exemption_routes_through_the_named_barrier() {
         blocked: vec![0; 1],
         flags: None,
     };
-    let mut graph = nav::transport::TransportGraph::default();
+    let mut graph = nav_planner::transport::TransportGraph::default();
     graph.zones = Some(
-        nav::zones::ZoneTable::from_parts(
-            vec![nav::zones::Zone::npc(
+        nav_planner::zones::ZoneTable::from_parts(
+            vec![nav_planner::zones::Zone::npc(
                 WorldTile {
                     x: 2,
                     z: 0,
                     level: 0,
                 },
                 0,
-                nav::zones::ZoneClass::Always,
+                nav_planner::zones::ZoneClass::Always,
                 u16::MAX,
                 0,
             )],
-            vec![nav::zones::ZoneKind::new(
+            vec![nav_planner::zones::ZoneKind::new(
                 "test-barrier",
                 "Test barrier",
                 123,
@@ -9929,7 +10267,7 @@ fn accepted_open_booth_cancels_only_the_requesting_slot_walk() {
         false,
         false,
         false,
-        nav::zones::ZoneExempt::NONE,
+        nav_planner::zones::ZoneExempt::NONE,
     ));
     navs.lock().unwrap().extend([
         (
@@ -10005,7 +10343,7 @@ fn rejected_open_booth_does_not_cancel_the_requesting_slot_walk() {
         false,
         false,
         false,
-        nav::zones::ZoneExempt::NONE,
+        nav_planner::zones::ZoneExempt::NONE,
     ));
     navs.lock().unwrap().insert(
         "alice".into(),
@@ -14414,6 +14752,8 @@ fn dispatch_script_interact_walk_forwards_allow_teleports() {
     graph.teleports.push(TransportEdge {
         takeoff: None,
         worn_all_req: Vec::new(),
+        forbidden_held: Vec::new(),
+        forbidden_worn: Vec::new(),
         kind: TransportKind::Teleport,
         player_delta: None,
         at: WorldTile {
@@ -14438,7 +14778,7 @@ fn dispatch_script_interact_walk_forwards_allow_teleports() {
         wildy_cap: None,
         quest_gates: None,
     });
-    let (walk, blocked) = nav::collision::pack_walk(&flags);
+    let (walk, blocked) = nav_planner::collision::pack_walk(&flags);
     let world = Some(Arc::new(NavWorld::from_parts(
         WorldCollision {
             origin: WorldTile {
@@ -14639,10 +14979,10 @@ fn queued_walk_keeps_the_state_of_the_frame_that_queued_it() {
 /// entry on `graph.wilderness`, so a fixture without zones gates nothing.
 fn wilderness_entry_world() -> NavWorld {
     let flags = vec![0u32; 5 * 12];
-    let (walk, blocked) = nav::collision::pack_walk(&flags);
+    let (walk, blocked) = nav_planner::collision::pack_walk(&flags);
     let graph = TransportGraph {
-        wilderness: nav::transport::WildernessRules {
-            zones: vec![nav::transport::WildernessZone {
+        wilderness: nav_planner::transport::WildernessRules {
+            zones: vec![nav_planner::transport::WildernessZone {
                 x1: 2944,
                 z1: 3520,
                 x2: 3391,
@@ -14800,7 +15140,14 @@ fn changed_wilderness_or_bank_fetch_does_not_coalesce() {
             let bot = &navs.lock().unwrap()["flags"];
             bot.walk_request_id == 12
                 && bot.requested_route
-                    == Some((dest, 1, false, true, false, nav::zones::ZoneExempt::NONE))
+                    == Some((
+                        dest,
+                        1,
+                        false,
+                        true,
+                        false,
+                        nav_planner::zones::ZoneExempt::NONE,
+                    ))
         }),
         "changed wilderness must not reuse the prior permissioned route"
     );
@@ -14822,7 +15169,14 @@ fn changed_wilderness_or_bank_fetch_does_not_coalesce() {
             let bot = &navs.lock().unwrap()["flags"];
             bot.walk_request_id == 13
                 && bot.requested_route
-                    == Some((dest, 1, false, true, true, nav::zones::ZoneExempt::NONE))
+                    == Some((
+                        dest,
+                        1,
+                        false,
+                        true,
+                        true,
+                        nav_planner::zones::ZoneExempt::NONE,
+                    ))
         }),
         "changed bank-fetch must not reuse the prior permissioned route"
     );
@@ -14836,7 +15190,7 @@ fn dispatch_v2_walk_near_forwards_plane_radius_and_request_id() {
         level: 0,
     };
     let flags = vec![0u32; 7 * 7];
-    let (walk, blocked) = nav::collision::pack_walk(&flags);
+    let (walk, blocked) = nav_planner::collision::pack_walk(&flags);
     let world = Some(Arc::new(NavWorld::from_parts(
         WorldCollision {
             origin: WorldTile {
@@ -15164,8 +15518,8 @@ fn player_here_tile_uses_minusedlevel_not_hardcoded_zero() {
 
 #[test]
 fn step_bank_fetch_walk_stand_matches_player_plane() {
-    use nav::bank_fetch::BankStep;
-    use nav::router::{Leg, Route};
+    use nav_planner::bank_fetch::BankStep;
+    use nav_planner::router::{Leg, Route};
     use std::collections::VecDeque;
 
     let final_route = Arc::new(Route {
@@ -15238,7 +15592,7 @@ fn step_bank_fetch_walk_stand_matches_player_plane() {
         &mut driver,
         &snap,
         stale_stand_route,
-        &mut nav::traveller::TravelOptions {
+        &mut nav_executor::TravelOptions {
             close_enough: 0,
             ..Default::default()
         },
@@ -15301,6 +15655,8 @@ fn knife_nav_world_with_target(knife_id: i32, solid_target: bool) -> NavWorld {
     let edge = TransportEdge {
         takeoff: None,
         worn_all_req: Vec::new(),
+        forbidden_held: Vec::new(),
+        forbidden_worn: Vec::new(),
         kind: TransportKind::Door,
         player_delta: None,
         at: WorldTile {
@@ -15332,9 +15688,9 @@ fn knife_nav_world_with_target(knife_id: i32, solid_target: bool) -> NavWorld {
     let mut graph = TransportGraph::default();
     graph.at.entry(edge.at).or_default().push(0);
     graph.edges.push(edge);
-    let (walk, blocked) = nav::collision::pack_walk(&flags);
+    let (walk, blocked) = nav_planner::collision::pack_walk(&flags);
     NavWorld::from_parts(
-        nav::collision::WorldCollision {
+        nav_planner::collision::WorldCollision {
             origin: WorldTile {
                 x: 0,
                 z: 0,
@@ -15347,14 +15703,14 @@ fn knife_nav_world_with_target(knife_id: i32, solid_target: bool) -> NavWorld {
             flags: None,
         },
         graph,
-        vec![nav::pack::BankStand {
+        vec![nav_planner::pack::BankStand {
             name: "Bank booth".into(),
             tile: WorldTile {
                 x: 0,
                 z: 4,
                 level: 0,
             },
-            access: nav::pack::BankAccess::Booth { op: 2 },
+            access: nav_planner::pack::BankAccess::Booth { op: 2 },
         }],
     )
 }
@@ -15402,11 +15758,11 @@ fn bank_fetch_session_retains_pack_withdraws_wears_then_finds() {
                 FindOptions::default(),
                 &state,
             ),
-            Err(nav::router::RouteError::NoPath)
+            Err(nav_planner::router::RouteError::NoPath)
         ),
         "junk but no knife stays fail-closed even for the session"
     );
-    let missing = nav::router::find_missing_item_reqs(
+    let missing = nav_planner::router::find_missing_item_reqs(
         &world.collision,
         &world.graph,
         from,
@@ -15417,10 +15773,10 @@ fn bank_fetch_session_retains_pack_withdraws_wears_then_finds() {
     .expect("only the worn knife is missing");
     assert_eq!(
         missing,
-        vec![nav::router::MissingReq::WearAny { ids: vec![2] }]
+        vec![nav_planner::router::MissingReq::WearAny { ids: vec![2] }]
     );
     let bank_rows: Vec<(i32, i32)> = snap.bank().iter().map(|it| (it.def.id, it.count)).collect();
-    let fetch = nav::bank_fetch::plan_bank_fetch(
+    let fetch = nav_planner::bank_fetch::plan_bank_fetch(
         &missing,
         &state,
         &bank_rows,
@@ -15432,19 +15788,20 @@ fn bank_fetch_session_retains_pack_withdraws_wears_then_finds() {
         &[],
     )
     .expect("the banked knife plans a trip");
-    let access = nav::bank_fetch::nearest_bank_access(&world.collision, world.banks(), from)
-        .expect("knife world has an access tile");
+    let access =
+        nav_planner::bank_fetch::nearest_bank_access(&world.collision, world.banks(), from)
+            .expect("knife world has an access tile");
     assert_eq!(
         fetch.steps,
         vec![
-            nav::bank_fetch::BankStep::Walk {
+            nav_planner::bank_fetch::BankStep::Walk {
                 x: access.x,
                 z: access.z,
                 level: access.level
             },
-            nav::bank_fetch::BankStep::Open,
-            nav::bank_fetch::BankStep::Withdraw { id: 2, count: 1 },
-            nav::bank_fetch::BankStep::Wear { id: 2 },
+            nav_planner::bank_fetch::BankStep::Open,
+            nav_planner::bank_fetch::BankStep::Withdraw { id: 2, count: 1 },
+            nav_planner::bank_fetch::BankStep::Wear { id: 2 },
         ],
         "retain the pack, withdraw the knife, then Wear to equip and close"
     );
@@ -15610,7 +15967,7 @@ fn allow_bank_fetch_on_script_walk_arm_drives_shortage_withdrawal() {
 
 #[test]
 fn compat_walk_fetch_on_with_full_pack_preserves_non_route_items() {
-    use nav::bank_fetch::BankStep;
+    use nav_planner::bank_fetch::BankStep;
     use std::collections::VecDeque;
     let mut c = bank_fetch_client();
     {
@@ -15714,8 +16071,8 @@ fn compat_walk_fetch_on_with_full_pack_preserves_non_route_items() {
     }
     assert!(c.out.pos > before, "the coin shortage must be withdrawn");
     assert_eq!(WorldState::from_snapshot(&snapshot).inv, state.inv);
-    let missing = [nav::router::MissingReq::Carry { id: 2, count: 60 }];
-    let post = nav::bank_fetch::plan_bank_fetch(
+    let missing = [nav_planner::router::MissingReq::Carry { id: 2, count: 60 }];
+    let post = nav_planner::bank_fetch::plan_bank_fetch(
         &missing,
         &state,
         &[(2, 30)],
@@ -15742,7 +16099,7 @@ fn compat_walk_fetch_on_with_full_pack_preserves_non_route_items() {
 
 #[test]
 fn bank_fetch_withdraw_x_answers_only_the_shortage_and_waits_without_resending() {
-    use nav::bank_fetch::BankStep;
+    use nav_planner::bank_fetch::BankStep;
     let mut client = bank_fetch_client();
     {
         let cache = Arc::get_mut(&mut client.cache).unwrap();
@@ -15765,8 +16122,8 @@ fn bank_fetch_withdraw_x_answers_only_the_shortage_and_waits_without_resending()
         z: 4,
         level: 0,
     };
-    let plan = nav::bank_fetch::plan_bank_fetch(
-        &[nav::router::MissingReq::Carry { id: 2, count: 7 }],
+    let plan = nav_planner::bank_fetch::plan_bank_fetch(
+        &[nav_planner::router::MissingReq::Carry { id: 2, count: 7 }],
         &state,
         &[(2, 20)],
         world.banks(),
@@ -15994,7 +16351,7 @@ fn allow_bank_fetch_off_stand_walk_follows_stand_sub_route() {
         "Walk must still be the front step (not skipped to Open/final)"
     );
     let dest = bot.route_destination();
-    let access = nav::bank_fetch::nearest_bank_access(
+    let access = nav_planner::bank_fetch::nearest_bank_access(
         &world.collision,
         world.banks(),
         WorldTile {
@@ -16015,8 +16372,8 @@ fn allow_bank_fetch_off_stand_walk_follows_stand_sub_route() {
     );
 }
 
-fn dummy_fetch_route() -> nav::router::Route {
-    use nav::router::{Leg, Route};
+fn dummy_fetch_route() -> nav_planner::router::Route {
+    use nav_planner::router::{Leg, Route};
     Route {
         legs: vec![Leg::Walk {
             tiles: vec![WorldTile {
@@ -16036,9 +16393,9 @@ fn dummy_fetch_route() -> nav::router::Route {
 
 fn packed_npc_world(tile: WorldTile) -> NavWorld {
     let flags = vec![0u32; 25];
-    let (walk, blocked) = nav::collision::pack_walk(&flags);
+    let (walk, blocked) = nav_planner::collision::pack_walk(&flags);
     NavWorld::from_parts(
-        nav::collision::WorldCollision {
+        nav_planner::collision::WorldCollision {
             origin: WorldTile {
                 x: tile.x - 2,
                 z: tile.z - 2,
@@ -16051,10 +16408,10 @@ fn packed_npc_world(tile: WorldTile) -> NavWorld {
             flags: None,
         },
         TransportGraph::default(),
-        vec![nav::pack::BankStand {
+        vec![nav_planner::pack::BankStand {
             name: "Banker".into(),
             tile,
-            access: nav::pack::BankAccess::Npc {
+            access: nav_planner::pack::BankAccess::Npc {
                 name: "Banker".into(),
                 op: 3,
                 choose: None,
@@ -16153,7 +16510,7 @@ fn open_bank_at_here_sends_npc_op_for_packed_teller_not_scene_booth() {
 /// failed or the snapshot had not changed.
 #[test]
 fn bank_fetch_wear_close_wait_for_snapshot() {
-    use nav::bank_fetch::BankStep;
+    use nav_planner::bank_fetch::BankStep;
     use std::collections::VecDeque;
 
     let mut c = bank_fetch_client();
@@ -16208,7 +16565,7 @@ fn bank_fetch_wear_close_wait_for_snapshot() {
 
 #[test]
 fn s2b_bank_close_reassesses_the_real_final_route_and_keeps_frozen_authority() {
-    use nav::bank_fetch::BankStep;
+    use nav_planner::bank_fetch::BankStep;
     use script::native::RiskPolicy;
     let mut client = bank_fetch_client();
     client.local_player = Some(client::dash3d::ClientPlayer::at(0, 4));
@@ -16238,7 +16595,7 @@ fn s2b_bank_close_reassesses_the_real_final_route_and_keeps_frozen_authority() {
         ..FindOptions::default()
     };
     let route = Arc::new(
-        nav::router::find_with(
+        nav_planner::router::find_with(
             &world.collision,
             &world.graph,
             from,
@@ -16252,7 +16609,7 @@ fn s2b_bank_close_reassesses_the_real_final_route_and_keeps_frozen_authority() {
         policy: RiskPolicy::Proceed,
         grants: options.zones,
         allow: Default::default(),
-        input: crate::admission::capture(&snapshot, false, Default::default(), false),
+        input: crate::admission::capture(&snapshot, false, None, false),
         generation: 7,
         compat_v1: false,
         enforce: true,
@@ -16292,7 +16649,7 @@ fn s2b_bank_close_reassesses_the_real_final_route_and_keeps_frozen_authority() {
     };
     #[cfg(feature = "test-support")]
     {
-        let (_, kernels) = nav::router::count_kernel_searches(close);
+        let (_, kernels) = nav_planner::router::count_kernel_searches(close);
         assert_eq!(kernels, 0, "bank close must not re-search on the slot pump");
     }
     #[cfg(not(feature = "test-support"))]
@@ -16323,7 +16680,7 @@ fn s2b_bank_close_reassesses_the_real_final_route_and_keeps_frozen_authority() {
     );
     assert_eq!(
         fresh.input,
-        crate::admission::capture(&snapshot, false, admission.input.poison, false)
+        crate::admission::capture(&snapshot, false, bot.condition.current(), false)
     );
     assert!(Arc::ptr_eq(
         bot.route_basis.as_ref().expect("frozen basis"),
@@ -16338,7 +16695,7 @@ fn s2b_bank_close_reassesses_the_real_final_route_and_keeps_frozen_authority() {
 
 #[test]
 fn bank_fetch_open_uses_packed_npc_access() {
-    use nav::bank_fetch::BankStep;
+    use nav_planner::bank_fetch::BankStep;
     use std::collections::VecDeque;
 
     let mut c = closed_banker_client();
@@ -16388,9 +16745,9 @@ fn bank_fetch_open_uses_packed_npc_access() {
 #[test]
 fn bank_fetch_walk_targets_access_tile_not_blocked_booth() {
     use client::dash3d::CollisionFlag;
-    use nav::bank_fetch::{nearest_bank_access, plan_bank_fetch, BankStep};
-    use nav::collision::pack_walk;
-    use nav::router::{find_with, FindOptions};
+    use nav_planner::bank_fetch::{nearest_bank_access, plan_bank_fetch, BankStep};
+    use nav_planner::collision::pack_walk;
+    use nav_planner::router::{find_with, FindOptions};
 
     let mut flags = vec![0u32; 25];
     flags[2 * 5 + 2] |= CollisionFlag::SQ_BLOCKED as u32;
@@ -16401,7 +16758,7 @@ fn bank_fetch_walk_targets_access_tile_not_blocked_booth() {
         level: 0,
     };
     let world = NavWorld::from_parts(
-        nav::collision::WorldCollision {
+        nav_planner::collision::WorldCollision {
             origin: WorldTile {
                 x: 0,
                 z: 0,
@@ -16414,10 +16771,10 @@ fn bank_fetch_walk_targets_access_tile_not_blocked_booth() {
             flags: None,
         },
         TransportGraph::default(),
-        vec![nav::pack::BankStand {
+        vec![nav_planner::pack::BankStand {
             name: "Bank booth".into(),
             tile: booth,
-            access: nav::pack::BankAccess::Booth { op: 2 },
+            access: nav_planner::pack::BankAccess::Booth { op: 2 },
         }],
     );
     let from = WorldTile {
@@ -16449,7 +16806,7 @@ fn bank_fetch_walk_targets_access_tile_not_blocked_booth() {
     )
     .expect("access tile is routable");
     let fetch = plan_bank_fetch(
-        &[nav::router::MissingReq::Carry { id: 995, count: 1 }],
+        &[nav_planner::router::MissingReq::Carry { id: 995, count: 1 }],
         &WorldState::default(),
         &[(995, 1)],
         world.banks(),
@@ -16473,7 +16830,7 @@ fn bank_fetch_walk_targets_access_tile_not_blocked_booth() {
 /// A closed bank cannot withdraw: abort instead of hanging on Withdraw.
 #[test]
 fn bank_fetch_withdraw_aborts_when_bank_closed() {
-    use nav::bank_fetch::BankStep;
+    use nav_planner::bank_fetch::BankStep;
     use std::collections::VecDeque;
 
     let mut c = bank_fetch_client();
@@ -16511,7 +16868,7 @@ fn bank_fetch_withdraw_aborts_when_bank_closed() {
 fn pump_fetch_session(
     c: &mut Client,
     snap: &GameSnapshot,
-    steps: Vec<nav::bank_fetch::BankStep>,
+    steps: Vec<nav_planner::bank_fetch::BankStep>,
     walk_arm: bool,
     max: u32,
 ) -> (u32, u32, bool) {
@@ -16567,7 +16924,7 @@ fn pump_fetch_session(
 /// the script pump and on the panel/TUI pump alike.
 #[test]
 fn bank_fetch_wear_aborts_after_bounded_wait() {
-    use nav::bank_fetch::BankStep;
+    use nav_planner::bank_fetch::BankStep;
 
     let mut c = bank_fetch_client();
     c.main_modal_id = -1;
@@ -16601,8 +16958,8 @@ fn bank_fetch_wear_aborts_after_bounded_wait() {
 /// booth instead of hanging.
 #[test]
 fn bank_fetch_open_falls_back_to_booth_when_teller_missing() {
-    use nav::collision::pack_walk;
-    use nav::pack::{BankAccess, BankStand};
+    use nav_planner::collision::pack_walk;
+    use nav_planner::pack::{BankAccess, BankStand};
 
     let mut c = bank_client();
     c.main_modal_id = -1;
@@ -16636,7 +16993,7 @@ fn bank_fetch_open_falls_back_to_booth_when_teller_missing() {
     let flags = vec![0u32; 25];
     let (walk, blocked) = pack_walk(&flags);
     let world = NavWorld::from_parts(
-        nav::collision::WorldCollision {
+        nav_planner::collision::WorldCollision {
             origin: WorldTile {
                 x: booth.x - 2,
                 z: booth.z - 2,
@@ -16687,7 +17044,7 @@ fn bank_fetch_open_falls_back_to_booth_when_teller_missing() {
 /// panel/TUI pump, which re-wraps the session every pump.
 #[test]
 fn bank_fetch_withdraw_does_not_resend_while_in_flight() {
-    use nav::bank_fetch::BankStep;
+    use nav_planner::bank_fetch::BankStep;
 
     let mut c = bank_fetch_client();
     let mut snap = GameSnapshot::new();
@@ -16715,7 +17072,7 @@ fn bank_fetch_withdraw_does_not_resend_while_in_flight() {
 /// bank's rows must never count as items that have landed in the backpack.
 #[test]
 fn bank_fetch_reads_the_backpack_not_the_bank_while_open() {
-    use nav::bank_fetch::BankStep;
+    use nav_planner::bank_fetch::BankStep;
     use std::collections::VecDeque;
 
     let mut c = bank_client();
@@ -16793,7 +17150,7 @@ fn bank_fetch_reads_the_backpack_not_the_bank_while_open() {
 /// the step keeps waiting and lands once the obj shows where it went.
 #[test]
 fn bank_fetch_waits_through_the_gap_after_a_sent_move() {
-    use nav::bank_fetch::BankStep;
+    use nav_planner::bank_fetch::BankStep;
     use std::collections::VecDeque;
 
     let set_rows = |c: &mut Client, com: usize, obj: Vec<i32>, n: Vec<i32>| {
@@ -16915,7 +17272,7 @@ fn bank_fetch_waits_through_the_gap_after_a_sent_move() {
 /// this transient bank view cannot cause a duplicate Wear.
 #[test]
 fn bank_fetch_wear_ignores_its_own_bank_close_until_equipped() {
-    use nav::bank_fetch::BankStep;
+    use nav_planner::bank_fetch::BankStep;
     use std::collections::VecDeque;
 
     let set_rows = |c: &mut Client, com: usize, obj: Vec<i32>, n: Vec<i32>| {
@@ -17037,7 +17394,7 @@ fn bank_fetch_wear_ignores_its_own_bank_close_until_equipped() {
 /// sends the Withdraw a second time.
 #[test]
 fn bank_fetch_withdraw_ignores_an_unrelated_backpack_change() {
-    use nav::bank_fetch::BankStep;
+    use nav_planner::bank_fetch::BankStep;
 
     let set_side = |c: &mut Client, obj: Vec<i32>, n: Vec<i32>| {
         c.set_iface_mut(
@@ -17148,8 +17505,8 @@ fn unbound_inv_tab_bank_rows_are_not_carried_for_planning() {
         z: 0,
         level: 0,
     };
-    let fetch = nav::bank_fetch::plan_bank_fetch(
-        &[nav::router::MissingReq::WearAny { ids: vec![2] }],
+    let fetch = nav_planner::bank_fetch::plan_bank_fetch(
+        &[nav_planner::router::MissingReq::WearAny { ids: vec![2] }],
         &state,
         &bank_rows,
         world.banks(),
@@ -17160,19 +17517,20 @@ fn unbound_inv_tab_bank_rows_are_not_carried_for_planning() {
         &[],
     )
     .expect("the banked knife plans a trip");
-    let access = nav::bank_fetch::nearest_bank_access(&world.collision, world.banks(), from)
-        .expect("knife world has an access tile");
+    let access =
+        nav_planner::bank_fetch::nearest_bank_access(&world.collision, world.banks(), from)
+            .expect("knife world has an access tile");
     assert_eq!(
         fetch.steps,
         vec![
-            nav::bank_fetch::BankStep::Walk {
+            nav_planner::bank_fetch::BankStep::Walk {
                 x: access.x,
                 z: access.z,
                 level: access.level
             },
-            nav::bank_fetch::BankStep::Open,
-            nav::bank_fetch::BankStep::Withdraw { id: 2, count: 1 },
-            nav::bank_fetch::BankStep::Wear { id: 2 },
+            nav_planner::bank_fetch::BankStep::Open,
+            nav_planner::bank_fetch::BankStep::Withdraw { id: 2, count: 1 },
+            nav_planner::bank_fetch::BankStep::Wear { id: 2 },
         ],
         "the open-bank Wear follows withdrawal and closes the bank as it equips"
     );
@@ -17200,9 +17558,9 @@ fn packed_teller_rows_do_not_grow_script_snapshot_fingerprint() {
             })
             .sum()
     }
-    fn world_with(stands: Vec<nav::pack::BankStand>) -> NavWorld {
+    fn world_with(stands: Vec<nav_planner::pack::BankStand>) -> NavWorld {
         NavWorld::from_parts(
-            nav::collision::WorldCollision {
+            nav_planner::collision::WorldCollision {
                 origin: WorldTile {
                     x: 0,
                     z: 0,
@@ -17218,23 +17576,23 @@ fn packed_teller_rows_do_not_grow_script_snapshot_fingerprint() {
             stands,
         )
     }
-    let booth = nav::pack::BankStand {
+    let booth = nav_planner::pack::BankStand {
         name: "Bank booth".into(),
         tile: WorldTile {
             x: 1,
             z: 0,
             level: 0,
         },
-        access: nav::pack::BankAccess::Booth { op: 2 },
+        access: nav_planner::pack::BankAccess::Booth { op: 2 },
     };
-    let teller = nav::pack::BankStand {
+    let teller = nav_planner::pack::BankStand {
         name: "Banker".into(),
         tile: WorldTile {
             x: 1,
             z: 1,
             level: 0,
         },
-        access: nav::pack::BankAccess::Npc {
+        access: nav_planner::pack::BankAccess::Npc {
             name: "Banker".into(),
             op: 3,
             choose: Some("I'd like to access my bank account, please.".into()),
@@ -17541,7 +17899,7 @@ export default class T extends LoopingBot {
             );
             true
         },
-        |_| RandomClaim::Host,
+        |_: &api::DetectedRandom| RandomClaim::Host,
     );
 
     // The isolate and runtime generation survive a reconnect. The second host
@@ -17645,7 +18003,7 @@ export default class T extends LoopingBot {
                 _ => false,
             }
         },
-        |_| RandomClaim::Host,
+        |_: &api::DetectedRandom| RandomClaim::Host,
     );
 
     assert_eq!(slot.lock().unwrap().state(), script::RunState::Idle);
@@ -17795,7 +18153,7 @@ export default class T extends LoopingBot {
             );
             true
         },
-        |_| RandomClaim::Host,
+        |_: &api::DetectedRandom| RandomClaim::Host,
     );
 
     slot.lock().unwrap().stop();
@@ -17970,7 +18328,7 @@ fn native_walk_reads_snapshot_stats_when_arm_state_is_missing() {
         !from_empty_arm.map_members,
         "membership is not inferred from GameSnapshot when the arm is missing"
     );
-    let armed = nav::WorldState::empty().with_map_members(true);
+    let armed = nav_planner::WorldState::empty().with_map_members(true);
     let reused = super::script_runtime::route_world_state(&snap, Some(armed));
     assert!(
         !reused.stats.contains_key(&SKILL_FISHING),
@@ -18007,7 +18365,7 @@ fn script_observe_compiled_running_skips_isolate_snapshot_encode() {
         .unwrap()
         .lock()
         .unwrap()
-        .load_active());
+        .surface_active());
     script_observe(
         &mut c,
         "alice",
@@ -18031,7 +18389,7 @@ fn script_observe_compiled_running_skips_isolate_snapshot_encode() {
             .unwrap()
             .lock()
             .unwrap()
-            .has_snapshot_fingerprint(),
+            .has_posted_snapshot(),
         "compiled-only Running must not encode isolate snapshot delta"
     );
 }
@@ -18128,7 +18486,7 @@ fn script_observe_load_isolate_still_encodes_snapshot_on_tick_edge() {
         .unwrap()
         .lock()
         .unwrap()
-        .load_active());
+        .surface_active());
     script_observe(
         &mut c,
         "alice",
@@ -18152,7 +18510,7 @@ fn script_observe_load_isolate_still_encodes_snapshot_on_tick_edge() {
             .unwrap()
             .lock()
             .unwrap()
-            .has_snapshot_fingerprint(),
+            .has_posted_snapshot(),
         "Load isolate must still encode snapshot delta on tick edge"
     );
     script_slot(&scripts, "alice")
@@ -18792,7 +19150,11 @@ fn script_snapshot_crops_shared_canlight_from_profile_plane() {
         blocked: vec![0; cells.div_ceil(64)],
         flags: None,
     };
-    let world = NavWorld::from_parts(collision, nav::transport::TransportGraph::default(), vec![]);
+    let world = NavWorld::from_parts(
+        collision,
+        nav_planner::transport::TransportGraph::default(),
+        vec![],
+    );
     let mut bits = vec![0u64; cells.div_ceil(64)];
     let lit = WorldTile {
         x: 3205,
@@ -20140,7 +20502,7 @@ fn script_snapshot_fb_posts_only_changed_tables() {
     let names = api::obj_names::ObjNames::from_objs(&objs);
     let inv = vec![(1, 2)];
     let world = Some(Arc::new(NavWorld::from_parts(
-        nav::collision::WorldCollision {
+        nav_planner::collision::WorldCollision {
             origin: WorldTile {
                 x: 0,
                 z: 0,
@@ -20152,15 +20514,15 @@ fn script_snapshot_fb_posts_only_changed_tables() {
             blocked: vec![0u64; 2usize.div_ceil(64)],
             flags: None,
         },
-        nav::transport::TransportGraph::default(),
-        vec![nav::pack::BankStand {
+        nav_planner::transport::TransportGraph::default(),
+        vec![nav_planner::pack::BankStand {
             name: "Bank booth".into(),
             tile: WorldTile {
                 x: 1,
                 z: 0,
                 level: 0,
             },
-            access: nav::pack::BankAccess::Booth { op: 2 },
+            access: nav_planner::pack::BankAccess::Booth { op: 2 },
         }],
     )));
 
@@ -20305,6 +20667,7 @@ fn inventory_from_ifaces_maps_1_based_ids_to_0_based() {
     let mut rec = NavRec {
         walked: None,
         held_ops: 0,
+        held_item_ids: Vec::new(),
         npc_ops: 0,
         if_button_components: Vec::new(),
         move_calls: 0,
@@ -20395,8 +20758,8 @@ impl Driver for GuardRec {
     fn loc_typecode(&self, _scene_x: i32, _scene_z: i32) -> Option<i32> {
         None
     }
-    fn out(&mut self) -> &mut dyn api::prot::Out {
-        &mut self.sink
+    fn send_packet(&mut self, packet: &api::prot::Send) -> Result<(), api::prot::PacketError> {
+        packet.write_for_revision(self.revision(), &mut self.sink)
     }
     fn login(&mut self, _username: &str, _password: &str, _reconnect: bool) -> bool {
         false
@@ -21478,7 +21841,14 @@ fn following_script_walk() -> NavBot {
             dest,
             ticks: 0.0,
         })),
-        requested_route: Some((dest, 2, false, true, true, nav::zones::ZoneExempt::NONE)),
+        requested_route: Some((
+            dest,
+            2,
+            false,
+            true,
+            true,
+            nav_planner::zones::ZoneExempt::NONE,
+        )),
         walk_request_id: 9,
         route_request_id: 9,
         ..NavBot::default()
@@ -21495,8 +21865,8 @@ fn an_aborted_walk_ends_its_bank_fetch_session() {
     let route = bot.route.clone().unwrap();
     bot.bank_fetch = Some(PendingBankFetch {
         steps: vec![
-            nav::bank_fetch::BankStep::Open,
-            nav::bank_fetch::BankStep::Close,
+            nav_planner::bank_fetch::BankStep::Open,
+            nav_planner::bank_fetch::BankStep::Close,
         ]
         .into(),
         dest: route.dest,
@@ -21695,7 +22065,7 @@ fn session_reset_clears_live_recovery_walk() {
                 false,
                 true,
                 false,
-                nav::zones::ZoneExempt::NONE,
+                nav_planner::zones::ZoneExempt::NONE,
             )),
             ..NavBot::default()
         }),
@@ -21866,14 +22236,14 @@ export default class T extends LoopingBot {{
         NavWorld::from_parts(
             open.collision,
             open.graph,
-            vec![nav::pack::BankStand {
+            vec![nav_planner::pack::BankStand {
                 name: "Bank booth".into(),
                 tile: WorldTile {
                     x: 3253,
                     z: 3419,
                     level: 0,
                 },
-                access: nav::pack::BankAccess::Booth { op: 2 },
+                access: nav_planner::pack::BankAccess::Booth { op: 2 },
             }],
         )
     } else {
@@ -22125,6 +22495,7 @@ fn dirty_snapshot_pumps_compiled_without_replenishing_events() {
             None,
             None,
             None,
+            None,
         );
     };
     observe(&mut rig, true, false, 1);
@@ -22178,7 +22549,14 @@ struct ReconnectRig {
 
 type ArmedWalk = (
     u64,
-    Option<(WorldTile, i32, bool, bool, bool, nav::zones::ZoneExempt)>,
+    Option<(
+        WorldTile,
+        i32,
+        bool,
+        bool,
+        bool,
+        nav_planner::zones::ZoneExempt,
+    )>,
 );
 
 impl ReconnectRig {
@@ -22231,16 +22609,19 @@ impl ReconnectRig {
         let slot = script_slot_or_insert(&scripts, "alice");
         let ready_session = {
             let mut slot = slot.lock().unwrap();
-            slot.start_load_with_settings_and_game_data(
-                source,
-                script::LoadShape::CompatClass,
+            let start = crate::script_runtime::js_surface_start(
+                crate::script_runtime::js_start_card(
+                    source,
+                    script::LoadShape::CompatClass,
+                    vec![],
+                ),
                 None,
-                vec![],
-                &[],
                 Some(selected),
                 named_banks,
-            )
-            .expect("start bank-wake Load slot");
+                Arc::from(Vec::<api::loadout::Loadout>::new()),
+            );
+            slot.start_surface_with_settings(start)
+                .expect("start bank-wake Load slot");
             let deadline = Instant::now() + Duration::from_secs(10);
             loop {
                 match slot.poll_start() {
@@ -22365,11 +22746,12 @@ impl ReconnectRig {
             None,
             None,
             None,
+            None,
         );
         crate::script_runtime::pump_route_work(&self.navs, "alice");
         let slot = self.slot();
         let slot = slot.lock().unwrap();
-        if slot.load_active() {
+        if slot.surface_active() {
             slot.probe("true").unwrap();
         }
     }
@@ -22688,7 +23070,7 @@ fn manual_config_on_recovery_click_resume_never_replays_cancelled_work() {
         assert_eq!(bot.walk_outcome_generation, original_generation);
         assert_eq!(
             bot.walk_outcome_cancel_reason,
-            script::isolate_fb::WalkCancelReason::UserInput
+            script::native::WalkCancelReason::UserInput
         );
         assert!(bot.carried_walk.is_none());
         (bot.walk_outcome_seq, bot.walk_outcome_generation)
@@ -22934,7 +23316,7 @@ fn manual_round3_reconnect_click_keeps_the_carried_walk_after_relog() {
         exclusions,
         None,
         None,
-        nav::arrival::ArrivalKind::Reach,
+        nav_planner::arrival::ArrivalKind::Reach,
         true,
     ));
     assert!(
@@ -22983,7 +23365,7 @@ fn manual_resume_click_after_resume_receipts_carried_request_once() {
         receipt_id, armed.0,
         "carry must not disappear without a receipt"
     );
-    assert_eq!(reason, script::isolate_fb::WalkCancelReason::UserInput);
+    assert_eq!(reason, script::native::WalkCancelReason::UserInput);
     assert_eq!(
         receipt_generation, original_generation,
         "carry retains route correlation"
@@ -23391,14 +23773,24 @@ fn a_walk_queued_before_the_pause_goes_out_once_after_resume() {
     rig.slot().lock().unwrap().stop();
 }
 
-fn walk_dest(x: i32, z: i32) -> Option<(WorldTile, i32, bool, bool, bool, nav::zones::ZoneExempt)> {
+fn walk_dest(
+    x: i32,
+    z: i32,
+) -> Option<(
+    WorldTile,
+    i32,
+    bool,
+    bool,
+    bool,
+    nav_planner::zones::ZoneExempt,
+)> {
     Some((
         WorldTile { x, z, level: 0 },
         1,
         false,
         true,
         true,
-        nav::zones::ZoneExempt::NONE,
+        nav_planner::zones::ZoneExempt::NONE,
     ))
 }
 
@@ -25647,6 +26039,236 @@ fn load_ignored_randoms_decline_only_listed_events() {
 }
 
 #[test]
+fn load_changed_ignore_list_reclaims_the_same_box_without_restarting_it() {
+    let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
+    let slot = script_slot_or_insert(&scripts, "alice");
+    let mut client = guardian_client();
+    plant_inv_item(&mut client, 3062);
+    let item = &mut Arc::get_mut(&mut client.cache).unwrap().objs[3062];
+    item.name = "Strange box".into();
+    item.iop = [Some("Open".into()), None, None, None, None];
+    {
+        let mut slot = slot.lock().unwrap();
+        slot.start_load_settled(
+            "export default class T extends LoopingBot {
+                ignoredRandoms() { return globalThis.ignoreBox === false ? [] : ['Strange box']; }
+                loop() {}
+            }"
+            .into(),
+            script::LoadShape::CompatClass,
+            vec![],
+        )
+        .unwrap();
+    }
+    let publish = |ignore: bool, tick| {
+        let mut slot = slot.lock().unwrap();
+        slot.probe(&format!("globalThis.ignoreBox = {ignore}"))
+            .unwrap();
+        slot.on_game_tick(&mut script::ScriptCtx {
+            driver: &mut NavRec::default(),
+            tick,
+            here: None,
+            walk: None,
+            walk_with: None,
+            inv: None,
+            snapshot: None,
+            obj_names: None,
+            compiled: script::CompiledTick::default(),
+        });
+        slot.probe("1").unwrap();
+        assert_eq!(slot.ignored_randoms().is_empty(), !ignore);
+    };
+    let mut source =
+        crate::play_slots::ScriptRandomClaims::new(Arc::clone(&scripts), "alice".into());
+    let mut guardian = Guardian::new();
+    let mut driver = GuardRec::default();
+    let settings = ProfileSettings::default();
+    let mut snap = GameSnapshot::new();
+
+    publish(true, 1);
+    tick_at(&mut client, &mut snap);
+    let status = guardian.tick(&mut driver, &snap, &settings, 0, Some(&mut source));
+    assert_eq!(status.claim, RandomClaim::Handle);
+    assert!(status.ours && !status.hold);
+    assert!(driver.menus.is_empty());
+
+    publish(false, 2);
+    tick_at(&mut client, &mut snap);
+    let status = guardian.tick(&mut driver, &snap, &settings, 0, Some(&mut source));
+    assert_eq!(status.claim, RandomClaim::Host);
+    assert!(status.hold);
+    assert_eq!(driver.menus.len(), 1, "the same held box now opens");
+    driver.menus.clear();
+
+    // The reverse handoff must suppress actions without resetting the
+    // in-flight Open. Returning it to Host must not send Open a second time.
+    publish(true, 3);
+    tick_at(&mut client, &mut snap);
+    let status = guardian.tick(&mut driver, &snap, &settings, 0, Some(&mut source));
+    assert_eq!(status.claim, RandomClaim::Handle);
+    assert!(!status.hold);
+    assert!(driver.menus.is_empty());
+    publish(false, 4);
+    tick_at(&mut client, &mut snap);
+    let status = guardian.tick(&mut driver, &snap, &settings, 0, Some(&mut source));
+    assert_eq!(status.claim, RandomClaim::Host);
+    assert!(status.hold);
+    assert!(
+        driver.menus.is_empty(),
+        "claim refresh preserves the solver"
+    );
+
+    publish(true, 5);
+    tick_at(&mut client, &mut snap);
+    assert_eq!(
+        guardian
+            .tick(&mut driver, &snap, &settings, 0, Some(&mut source))
+            .claim,
+        RandomClaim::Handle
+    );
+    slot.lock().unwrap().stop();
+    tick_at(&mut client, &mut snap);
+    let status = guardian.tick(&mut driver, &snap, &settings, 0, Some(&mut source));
+    assert_eq!(
+        status.claim,
+        RandomClaim::Host,
+        "Stop returns the held event"
+    );
+    assert!(status.hold);
+}
+
+#[test]
+fn load_stop_or_slot_reset_returns_the_box_before_a_compiled_script_starts() {
+    struct NoRandomCallback(Arc<Mutex<usize>>);
+    impl script::native::Script for NoRandomCallback {
+        fn tick(
+            &mut self,
+            _ctx: &mut script::native::NativeTick<'_>,
+        ) -> Result<script::native::ScriptFlow, script::native::ScriptFailure> {
+            Ok(script::native::ScriptFlow::Continue)
+        }
+        fn on_random(&mut self, _event: &DetectedRandom) -> RandomClaim {
+            *self.0.lock().unwrap() += 1;
+            RandomClaim::Handle
+        }
+    }
+    for reset in [false, true] {
+        let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
+        let slot = script_slot_or_insert(&scripts, "alice");
+        {
+            let mut slot = slot.lock().unwrap();
+            slot.start_load_settled(
+                "export default class T extends LoopingBot {
+                    ignoredRandoms() { return ['Strange box']; }
+                    loop() {}
+                }"
+                .into(),
+                script::LoadShape::CompatClass,
+                vec![],
+            )
+            .unwrap();
+            slot.on_game_tick(&mut script::ScriptCtx {
+                driver: &mut NavRec::default(),
+                tick: 1,
+                here: None,
+                walk: None,
+                walk_with: None,
+                inv: None,
+                snapshot: None,
+                obj_names: None,
+                compiled: script::CompiledTick::default(),
+            });
+            slot.probe("1").unwrap();
+            assert_eq!(slot.ignored_randoms(), vec!["Strange box"]);
+        }
+        let mut client = guardian_client();
+        plant_inv_item(&mut client, 3062);
+        let item = &mut Arc::get_mut(&mut client.cache).unwrap().objs[3062];
+        item.name = "Strange box".into();
+        item.iop = [Some("Open".into()), None, None, None, None];
+        let mut source =
+            crate::play_slots::ScriptRandomClaims::new(Arc::clone(&scripts), "alice".into());
+        let mut guardian = Guardian::new();
+        let mut driver = GuardRec::default();
+        let settings = ProfileSettings::default();
+        let mut snap = GameSnapshot::new();
+        tick_at(&mut client, &mut snap);
+        assert_eq!(
+            guardian
+                .tick(&mut driver, &snap, &settings, 0, Some(&mut source))
+                .claim,
+            RandomClaim::Handle
+        );
+        assert!(driver.menus.is_empty());
+
+        {
+            let mut slot = slot.lock().unwrap();
+            if reset {
+                *slot = script::SlotScript::new();
+            } else {
+                slot.stop();
+            }
+        }
+        tick_at(&mut client, &mut snap);
+        let status = guardian.tick(&mut driver, &snap, &settings, 0, Some(&mut source));
+        assert_eq!(status.claim, RandomClaim::Host, "reset={reset}");
+        assert!(status.hold);
+        assert_eq!(
+            driver.menus.len(),
+            1,
+            "the next observed tick opens the box"
+        );
+        assert!(wait_settled(|| {
+            let mut slot = slot.lock().unwrap();
+            slot.observe_lifecycle();
+            slot.state() == script::RunState::Idle
+        }));
+
+        let calls = Arc::new(Mutex::new(0));
+        slot.lock()
+            .unwrap()
+            .start_test_script(Box::new(NoRandomCallback(Arc::clone(&calls))), None)
+            .unwrap();
+        tick_at(&mut client, &mut snap);
+        let status = guardian.tick(&mut driver, &snap, &settings, 0, Some(&mut source));
+        assert_eq!(status.claim, RandomClaim::Host);
+        assert!(status.hold);
+        assert_eq!(*calls.lock().unwrap(), 0, "no new event edge or callback");
+        assert_eq!(driver.menus.len(), 1, "the in-flight Open is preserved");
+    }
+}
+
+#[test]
+fn seeded_box_claim_fixture_loads_its_real_imports_and_arms() {
+    let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
+    let slot = script_slot_or_insert(&scripts, "alice");
+    let mut slot = slot.lock().unwrap();
+    slot.start_load_settled(
+        include_str!("../../script/examples/guardian_claim_toggle.js").into(),
+        script::LoadShape::CompatClass,
+        vec![],
+    )
+    .expect("the live fixture imports its supported modules");
+    slot.on_game_tick(&mut script::ScriptCtx {
+        driver: &mut NavRec::default(),
+        tick: 1,
+        here: None,
+        walk: None,
+        walk_with: None,
+        inv: None,
+        snapshot: None,
+        obj_names: None,
+        compiled: script::CompiledTick::default(),
+    });
+    assert_eq!(
+        slot.probe("globalThis.__rs2b0t_host.paint.lines.includes('guardian-box:armed')")
+            .unwrap(),
+        true
+    );
+    assert_eq!(slot.ignored_randoms(), vec!["strange box"]);
+}
+
+#[test]
 fn event_signal_pending_reads_true_during_dialog_hold() {
     // Task 12: the guardian's dialog hold is posted into the isolate
     // (`hold: true` on the blob), so `EventSignal.pending()` reads
@@ -25888,6 +26510,7 @@ struct NavRec {
     walked: Option<(i32, i32)>,
     /// Held-item ops (OP_HELD1..=5): the jewellery rub arm's press.
     held_ops: usize,
+    held_item_ids: Vec<i32>,
     /// NPC operation presses emitted by transport hops.
     npc_ops: usize,
     /// The component ids pressed via IF_BUTTON, in order (the follow's
@@ -25901,14 +26524,17 @@ struct NavRec {
 }
 
 impl Driver for NavRec {
-    fn set_menu(&mut self, _slot: i32, action: i32, _a: i32, _b: i32, c: i32) {
+    fn set_menu(&mut self, _slot: i32, action: i32, a: i32, _b: i32, c: i32) {
         self.menu_order.push((action, c));
         match action {
             MiniMenuAction::OP_HELD1
             | MiniMenuAction::OP_HELD2
             | MiniMenuAction::OP_HELD3
             | MiniMenuAction::OP_HELD4
-            | MiniMenuAction::OP_HELD5 => self.held_ops += 1,
+            | MiniMenuAction::OP_HELD5 => {
+                self.held_ops += 1;
+                self.held_item_ids.push(a);
+            }
             MiniMenuAction::OP_NPC1
             | MiniMenuAction::OP_NPC2
             | MiniMenuAction::OP_NPC3
@@ -25948,8 +26574,8 @@ impl Driver for NavRec {
     fn loc_typecode(&self, _scene_x: i32, _scene_z: i32) -> Option<i32> {
         None
     }
-    fn out(&mut self) -> &mut dyn api::prot::Out {
-        &mut self.sink
+    fn send_packet(&mut self, packet: &api::prot::Send) -> Result<(), api::prot::PacketError> {
+        packet.write_for_revision(self.revision(), &mut self.sink)
     }
     fn login(&mut self, _username: &str, _password: &str, _reconnect: bool) -> bool {
         true
@@ -25985,7 +26611,7 @@ fn nav_rig() -> NavRig {
     // transport edges — the collision+graph shape `find` consumes, built
     // directly (no pack file on disk in unit tests).
     nav_rig_with(Some(Arc::new(NavWorld::from_parts(
-        nav::collision::WorldCollision {
+        nav_planner::collision::WorldCollision {
             origin: WorldTile {
                 x: 0,
                 z: 0,
@@ -25997,7 +26623,7 @@ fn nav_rig() -> NavRig {
             blocked: vec![0u64; 40usize.div_ceil(64)],
             flags: None,
         },
-        nav::transport::TransportGraph::default(),
+        nav_planner::transport::TransportGraph::default(),
         Vec::new(),
     ))))
 }
@@ -26124,9 +26750,9 @@ fn raw_bank_walk_reaches_resolved_stand_before_native_v2_opens_booth() {
     let mut snap = GameSnapshot::new();
     nav_snapshot_at(&mut c, &mut snap, 3, 5);
 
-    let (walk, blocked) = nav::collision::pack_walk(&vec![0u32; 4 * 16 * 16]);
+    let (walk, blocked) = nav_planner::collision::pack_walk(&vec![0u32; 4 * 16 * 16]);
     let world = Arc::new(NavWorld::from_parts(
-        nav::collision::WorldCollision {
+        nav_planner::collision::WorldCollision {
             origin: WorldTile {
                 x: 3250,
                 z: 3416,
@@ -26138,11 +26764,11 @@ fn raw_bank_walk_reaches_resolved_stand_before_native_v2_opens_booth() {
             blocked,
             flags: None,
         },
-        nav::transport::TransportGraph::default(),
-        vec![nav::pack::BankStand {
+        nav_planner::transport::TransportGraph::default(),
+        vec![nav_planner::pack::BankStand {
             name: "Bank booth".into(),
             tile: booth,
-            access: nav::pack::BankAccess::Booth { op: 2 },
+            access: nav_planner::pack::BankAccess::Booth { op: 2 },
         }],
     ));
     let game_data = api::game_data::for_revision(client::io::ClientRevision::R274).unwrap();
@@ -26354,9 +26980,9 @@ fn native_v2_open_stand_aborts_armed_walk_after_operable_neighbor() {
     let mut snap = GameSnapshot::new();
     nav_snapshot_at(&mut c, &mut snap, 6, 4);
 
-    let (walk, blocked) = nav::collision::pack_walk(&vec![0u32; 4 * 16 * 16]);
+    let (walk, blocked) = nav_planner::collision::pack_walk(&vec![0u32; 4 * 16 * 16]);
     let world = Arc::new(NavWorld::from_parts(
-        nav::collision::WorldCollision {
+        nav_planner::collision::WorldCollision {
             origin: WorldTile {
                 x: 3200,
                 z: 3200,
@@ -26368,7 +26994,7 @@ fn native_v2_open_stand_aborts_armed_walk_after_operable_neighbor() {
             blocked,
             flags: None,
         },
-        nav::transport::TransportGraph::default(),
+        nav_planner::transport::TransportGraph::default(),
         Vec::new(),
     ));
     let world_opt = Some(Arc::clone(&world));
@@ -26737,6 +27363,8 @@ fn host_npc_hop_recovery_retargets_and_clears_after_landing() {
     let edge = TransportEdge {
         takeoff: None,
         worn_all_req: Vec::new(),
+        forbidden_held: Vec::new(),
+        forbidden_worn: Vec::new(),
         kind: TransportKind::Npc,
         player_delta: None,
         at: WorldTile {
@@ -26981,7 +27609,7 @@ fn host_walk_recovers_when_a_late_modal_stalls_the_first_reissue() {
 #[test]
 fn walk_near_follow_ends_when_here_is_within_the_requested_radius() {
     let world = Arc::new(NavWorld::from_parts(
-        nav::collision::WorldCollision {
+        nav_planner::collision::WorldCollision {
             origin: WorldTile {
                 x: 0,
                 z: 0,
@@ -26993,7 +27621,7 @@ fn walk_near_follow_ends_when_here_is_within_the_requested_radius() {
             blocked: vec![0u64; 400usize.div_ceil(64)],
             flags: None,
         },
-        nav::transport::TransportGraph::default(),
+        nav_planner::transport::TransportGraph::default(),
         Vec::new(),
     ));
     let navs: Arc<Mutex<HashMap<String, NavBot>>> = Arc::new(Mutex::new(HashMap::new()));
@@ -27214,7 +27842,7 @@ fn native_walk_receives_host_arrival_even_if_the_next_frame_is_outside_radius() 
                                 },
                                 candidate_goals: None,
                                 radius: 1,
-                                arrival: nav::arrival::ArrivalKind::Reach,
+                                arrival: nav_planner::arrival::ArrivalKind::Reach,
                                 loc_id: None,
                                 options: script::native::WalkOptions::default(),
                                 required_after: tick.cx.evidence(),
@@ -27336,7 +27964,7 @@ fn walled_reach(x: i32, z: i32) -> Arc<api::query::ReachQueryView> {
 #[test]
 fn walk_near_follow_does_not_end_through_a_closed_wall() {
     let world = Arc::new(NavWorld::from_parts(
-        nav::collision::WorldCollision {
+        nav_planner::collision::WorldCollision {
             origin: WorldTile {
                 x: 0,
                 z: 0,
@@ -27348,7 +27976,7 @@ fn walk_near_follow_does_not_end_through_a_closed_wall() {
             blocked: vec![0u64; 400usize.div_ceil(64)],
             flags: None,
         },
-        nav::transport::TransportGraph::default(),
+        nav_planner::transport::TransportGraph::default(),
         Vec::new(),
     ));
     let navs: Arc<Mutex<HashMap<String, NavBot>>> = Arc::new(Mutex::new(HashMap::new()));
@@ -27445,9 +28073,9 @@ fn walk_near_blocked_target_routes_to_an_arrival_capable_stand() {
         level: 0,
     };
     flags[dest.z as usize * SIZE + dest.x as usize] |= CollisionFlag::SQ_BLOCKED as u32;
-    let (walk, blocked) = nav::collision::pack_walk(&flags);
+    let (walk, blocked) = nav_planner::collision::pack_walk(&flags);
     let world = Arc::new(NavWorld::from_parts(
-        nav::collision::WorldCollision {
+        nav_planner::collision::WorldCollision {
             origin: WorldTile {
                 x: 0,
                 z: 0,
@@ -27459,7 +28087,7 @@ fn walk_near_blocked_target_routes_to_an_arrival_capable_stand() {
             blocked,
             flags: None,
         },
-        nav::transport::TransportGraph::default(),
+        nav_planner::transport::TransportGraph::default(),
         Vec::new(),
     ));
 
@@ -27634,7 +28262,7 @@ fn arm_snapshot_route(
 #[test]
 fn modeled_booth_behind_closed_door_routes_with_the_baked_graph() {
     use client::dash3d::CollisionFlag;
-    use nav::transport::{TransportEdge, TransportKind};
+    use nav_planner::transport::{TransportEdge, TransportKind};
 
     const SIZE: usize = 64;
     let booth = WorldTile {
@@ -27680,6 +28308,8 @@ fn modeled_booth_behind_closed_door_routes_with_the_baked_graph() {
     let edge = TransportEdge {
         takeoff: None,
         worn_all_req: Vec::new(),
+        forbidden_held: Vec::new(),
+        forbidden_worn: Vec::new(),
         kind: TransportKind::Door,
         player_delta: None,
         at: WorldTile {
@@ -27711,9 +28341,9 @@ fn modeled_booth_behind_closed_door_routes_with_the_baked_graph() {
     let mut graph = TransportGraph::default();
     graph.at.entry(edge.at).or_default().push(0);
     graph.edges.push(edge);
-    let (walk, blocked) = nav::collision::pack_walk(&flags);
+    let (walk, blocked) = nav_planner::collision::pack_walk(&flags);
     let world = Arc::new(NavWorld::from_parts(
-        nav::collision::WorldCollision {
+        nav_planner::collision::WorldCollision {
             origin: WorldTile {
                 x: 0,
                 z: 0,
@@ -27795,9 +28425,9 @@ fn modeled_two_by_two_loc_routes_to_a_full_footprint_arrival_stand() {
         client.collision[0].flags[offset][9] |= CollisionFlag::W_N;
     }
     plant_nav_footprint_loc(&mut client, target.x, target.z, 2, 2);
-    let (walk, blocked) = nav::collision::pack_walk(&flags);
+    let (walk, blocked) = nav_planner::collision::pack_walk(&flags);
     let world = Arc::new(NavWorld::from_parts(
-        nav::collision::WorldCollision {
+        nav_planner::collision::WorldCollision {
             origin: WorldTile {
                 x: 0,
                 z: 0,
@@ -28075,7 +28705,7 @@ fn assert_snapshot_route_no_path(
 #[test]
 fn offscene_solid_radius_goals_reach_target_side_through_packed_door() {
     use client::dash3d::CollisionFlag;
-    use nav::transport::{TransportEdge, TransportKind};
+    use nav_planner::transport::{TransportEdge, TransportKind};
 
     const SIZE: usize = 64;
     let target = WorldTile {
@@ -28098,6 +28728,8 @@ fn offscene_solid_radius_goals_reach_target_side_through_packed_door() {
     let edge = TransportEdge {
         takeoff: None,
         worn_all_req: Vec::new(),
+        forbidden_held: Vec::new(),
+        forbidden_worn: Vec::new(),
         kind: TransportKind::Door,
         player_delta: None,
         at: WorldTile {
@@ -28205,11 +28837,11 @@ fn raw_flags_world(
     flags: &[u32],
     size: usize,
     graph: TransportGraph,
-    banks: Vec<nav::pack::BankStand>,
+    banks: Vec<nav_planner::pack::BankStand>,
 ) -> NavWorld {
-    let (walk, blocked) = nav::collision::pack_walk(flags);
+    let (walk, blocked) = nav_planner::collision::pack_walk(flags);
     NavWorld::from_parts(
-        nav::collision::WorldCollision {
+        nav_planner::collision::WorldCollision {
             origin: WorldTile {
                 x: 0,
                 z: 0,
@@ -28397,6 +29029,8 @@ fn solid_target_behind_worn_gate_in_a_large_world_plans_a_bank_session() {
     let door = TransportEdge {
         takeoff: None,
         worn_all_req: Vec::new(),
+        forbidden_held: Vec::new(),
+        forbidden_worn: Vec::new(),
         kind: TransportKind::Door,
         player_delta: None,
         at: WorldTile {
@@ -28432,14 +29066,14 @@ fn solid_target_behind_worn_gate_in_a_large_world_plans_a_bank_session() {
         &flags,
         SIZE,
         graph,
-        vec![nav::pack::BankStand {
+        vec![nav_planner::pack::BankStand {
             name: "Bank booth".into(),
             tile: WorldTile {
                 x: 30,
                 z: 50,
                 level: 0,
             },
-            access: nav::pack::BankAccess::Booth { op: 2 },
+            access: nav_planner::pack::BankAccess::Booth { op: 2 },
         }],
     ));
     let snapshot = raw_flags_scene(&flags, SIZE, (0, 0), from);
@@ -28491,7 +29125,7 @@ fn solid_target_behind_worn_gate_in_a_large_world_plans_a_bank_session() {
 #[test]
 fn unfetchable_stands_do_not_hide_a_fetchable_one() {
     use client::dash3d::CollisionFlag;
-    use nav::bank_fetch::BankStep;
+    use nav_planner::bank_fetch::BankStep;
 
     const SIZE: usize = 32;
     let from = WorldTile {
@@ -28519,6 +29153,8 @@ fn unfetchable_stands_do_not_hide_a_fetchable_one() {
             graph.edges.push(TransportEdge {
                 takeoff: None,
                 worn_all_req: Vec::new(),
+                forbidden_held: Vec::new(),
+                forbidden_worn: Vec::new(),
                 kind: TransportKind::Door,
                 player_delta: None,
                 at: from,
@@ -28543,10 +29179,10 @@ fn unfetchable_stands_do_not_hide_a_fetchable_one() {
         graph
     };
     let snapshot = raw_flags_scene(&flags, SIZE, (0, 0), from);
-    let booth = nav::pack::BankStand {
+    let booth = nav_planner::pack::BankStand {
         name: "Bank booth".into(),
         tile: from,
-        access: nav::pack::BankAccess::Booth { op: 2 },
+        access: nav_planner::pack::BankAccess::Booth { op: 2 },
     };
     let carried = WorldState {
         inv: HashMap::from([(3, 1)]),
@@ -28608,7 +29244,7 @@ fn unfetchable_stands_do_not_hide_a_fetchable_one() {
 #[test]
 fn a_full_bank_stack_keeps_a_carried_coin_for_a_wear_only_session() {
     use client::dash3d::CollisionFlag;
-    use nav::bank_fetch::BankStep;
+    use nav_planner::bank_fetch::BankStep;
 
     const SIZE: usize = 32;
     let from = WorldTile {
@@ -28635,6 +29271,8 @@ fn a_full_bank_stack_keeps_a_carried_coin_for_a_wear_only_session() {
     graph.edges.push(TransportEdge {
         takeoff: None,
         worn_all_req: Vec::new(),
+        forbidden_held: Vec::new(),
+        forbidden_worn: Vec::new(),
         kind: TransportKind::Door,
         player_delta: None,
         at: from,
@@ -28655,10 +29293,10 @@ fn a_full_bank_stack_keeps_a_carried_coin_for_a_wear_only_session() {
         wildy_cap: None,
         quest_gates: None,
     });
-    let booth = nav::pack::BankStand {
+    let booth = nav_planner::pack::BankStand {
         name: "Bank booth".into(),
         tile: from,
-        access: nav::pack::BankAccess::Booth { op: 2 },
+        access: nav_planner::pack::BankAccess::Booth { op: 2 },
     };
     let world = Arc::new(raw_flags_world(&flags, SIZE, graph, vec![booth]));
     let snapshot = raw_flags_scene(&flags, SIZE, (0, 0), from);
@@ -28780,7 +29418,7 @@ fn real_v16_return_radius_endpoint_is_native_arrival() {
     };
     let path = std::path::PathBuf::from(path);
     let mut world = NavWorld::load_pack(&path).expect("real v16 pack");
-    let flags = nav::pack::read_flags_sidecar(&path.with_extension("navflags"), false)
+    let flags = nav_planner::pack::read_flags_sidecar(&path.with_extension("navflags"), false)
         .expect("matching raw flags");
     assert_eq!(flags.origin, world.collision.origin);
     assert_eq!(
@@ -28820,7 +29458,7 @@ fn real_v16_return_radius_endpoint_is_native_arrival() {
         to: target,
         radius: 12,
         loc_id: None,
-        arrival: nav::arrival::ArrivalKind::Reach,
+        arrival: nav_planner::arrival::ArrivalKind::Reach,
         opts: FindOptions {
             allow_teleports: false,
             allow_wilderness: false,
@@ -28835,13 +29473,13 @@ fn real_v16_return_radius_endpoint_is_native_arrival() {
         compat_tile_intent: false,
         completion: Default::default(),
     };
-    let route = nav::router::find_with_avoid(
+    let route = nav_planner::router::find_with_avoid(
         &request.world.collision,
         &request.world.graph,
         origin,
         endpoint,
         request.opts,
-        &nav::WorldState::empty(),
+        &nav_planner::WorldState::empty(),
         &[],
     )
     .expect("reported fallback endpoint routes");
@@ -28897,7 +29535,7 @@ fn real_v16_return_radius_endpoint_is_native_arrival() {
 #[test]
 fn radius_walk_route_end_publishes_a_settled_outcome() {
     let world = Arc::new(NavWorld::from_parts(
-        nav::collision::WorldCollision {
+        nav_planner::collision::WorldCollision {
             origin: WorldTile {
                 x: 0,
                 z: 0,
@@ -28909,7 +29547,7 @@ fn radius_walk_route_end_publishes_a_settled_outcome() {
             blocked: vec![0u64; 1600usize.div_ceil(64)],
             flags: None,
         },
-        nav::transport::TransportGraph::default(),
+        nav_planner::transport::TransportGraph::default(),
         Vec::new(),
     ));
     let navs: Arc<Mutex<HashMap<String, NavBot>>> = Arc::new(Mutex::new(HashMap::new()));
@@ -29016,6 +29654,8 @@ fn glory_edge() -> TransportEdge {
     TransportEdge {
         takeoff: None,
         worn_all_req: Vec::new(),
+        forbidden_held: Vec::new(),
+        forbidden_worn: Vec::new(),
         kind: TransportKind::Teleport,
         player_delta: None,
         at: WorldTile {
@@ -29168,7 +29808,7 @@ fn step_nav_bot_passes_graph_teleports_for_a_multi_dest_jewellery_rub() {
         },
     ];
     let world = Some(Arc::new(NavWorld::from_parts(
-        nav::collision::WorldCollision {
+        nav_planner::collision::WorldCollision {
             origin: WorldTile {
                 x: 0,
                 z: 0,
@@ -29266,6 +29906,8 @@ fn toll_nav_world() -> NavWorld {
     let edge = TransportEdge {
         takeoff: None,
         worn_all_req: Vec::new(),
+        forbidden_held: Vec::new(),
+        forbidden_worn: Vec::new(),
         kind: TransportKind::Door,
         player_delta: None,
         at: WorldTile {
@@ -29297,9 +29939,9 @@ fn toll_nav_world() -> NavWorld {
     let mut graph = TransportGraph::default();
     graph.at.entry(edge.at).or_default().push(0);
     graph.edges.push(edge);
-    let (walk, blocked) = nav::collision::pack_walk(&flags);
+    let (walk, blocked) = nav_planner::collision::pack_walk(&flags);
     NavWorld::from_parts(
-        nav::collision::WorldCollision {
+        nav_planner::collision::WorldCollision {
             origin: WorldTile {
                 x: 0,
                 z: 0,
@@ -29385,7 +30027,7 @@ fn script_observe_walk_uses_slot_state_across_a_toll() {
 /// latch.
 fn mine_nav_world() -> NavWorld {
     NavWorld::from_parts(
-        nav::collision::WorldCollision {
+        nav_planner::collision::WorldCollision {
             origin: WorldTile {
                 x: 2880,
                 z: 4800,
@@ -29422,7 +30064,7 @@ fn script_observe_walk_uses_the_latched_essence_session() {
         NavBot {
             traveller: {
                 let mut t = Traveller::new();
-                t.set_essence(nav::essence::essence_session_for_wizard(553));
+                t.set_essence(nav_planner::essence::essence_session_for_wizard(553));
                 t
             },
             route: None,
@@ -29947,6 +30589,9 @@ fn abort_walk_request_stops_only_the_machines_own_follow() {
 
 #[path = "script_native_walk_tests.rs"]
 mod native_walk;
+
+#[path = "script_server_ordered_tests.rs"]
+mod server_ordered;
 
 #[path = "script_progress_tests.rs"]
 mod script_progress;
@@ -30481,6 +31126,7 @@ mod host_batch_tests {
                 None,
                 None,
                 None,
+                None,
             )
         }
 
@@ -30499,7 +31145,7 @@ mod host_batch_tests {
             state: None,
             bank: BankRows::default(),
         };
-        assert!(arm.route_with_radius(4, 0, 0, nav::router::FindOptions::default(), 0));
+        assert!(arm.route_with_radius(4, 0, 0, nav_planner::router::FindOptions::default(), 0));
         assert!(
             wait_for_route_work(&rig.navs, "alice", |bot| {
                 !bot.route_work_pending() && bot.has_route()
@@ -30835,6 +31481,951 @@ fn direct_connection_has_no_world_type() {
     assert_eq!(direct.world_members(), api::selected::Truth::Unknown);
 }
 
+#[cfg(test)]
+mod quest_route_evidence_tests {
+    use super::*;
+    use api::identity::Scope;
+    use api::quest_progress::EvidenceStamp;
+    use api::selected::{QuestGate, RunKey, Truth};
+    use api::snapshot::{ItemActionFamily, ItemContainer, ItemView, QuestStatusView, StatView};
+    use script::native::{NativeTick, Script, ScriptFailure, ScriptFlow};
+    use std::num::NonZeroU16;
+    use std::sync::LazyLock;
+
+    #[derive(Clone, Copy)]
+    enum QuestListFrame {
+        Complete,
+        Unsupported,
+        Unavailable,
+    }
+
+    fn selected_r289() -> Arc<api::game_data::SelectedGameData> {
+        static SELECTED: LazyLock<Arc<api::game_data::SelectedGameData>> = LazyLock::new(|| {
+            let selected = api::game_data::for_revision(api::selected::ClientRevision::R289)
+                .expect("selected R289 game data");
+            let worker_data = Arc::clone(&selected);
+            let input =
+                script::preparation::PreparationInput::new(1, 0, 8 * 1024 * 1024, 2 * 1024 * 1024)
+                    .expect("quest preparation budget");
+            script::preparation::submit(
+                script::preparation::PreparationKind::Profile,
+                api::identity::Scope::Process,
+                input,
+                move |worker| worker_data.prepare_quests(worker),
+            )
+            .expect("submit production quest preparation")
+            .join()
+            .expect("quest preparation worker")
+            .expect("prepare selected quest family");
+            assert!(
+                selected.try_quests().is_some(),
+                "production preparation must retain the selected quest catalog"
+            );
+            selected
+        });
+        Arc::clone(&SELECTED)
+    }
+
+    fn selected_quest(
+        selected: &api::game_data::SelectedGameData,
+    ) -> (api::selected::FactKey, String) {
+        let catalog = selected.try_quests().expect("selected quest catalog");
+        let facts = catalog
+            .iter()
+            .next()
+            .expect("selected quest catalog has rows");
+        (facts.id.clone(), facts.display.to_string())
+    }
+
+    fn family(
+        selected: &api::game_data::SelectedGameData,
+    ) -> nav_planner::quest_gates::QuestFamilyId {
+        let identity = selected
+            .quest_family_identity()
+            .expect("selected quest family identity");
+        nav_planner::quest_gates::QuestFamilyId::new(identity.sha256, identity.schema)
+    }
+
+    fn tile(x: i32, z: i32) -> api::snapshot::WorldTile {
+        api::snapshot::WorldTile { x, z, level: 0 }
+    }
+
+    fn gate_world(
+        family: nav_planner::quest_gates::QuestFamilyId,
+        quest: api::selected::FactKey,
+    ) -> Arc<NavWorld> {
+        use client::dash3d::CollisionFlag;
+        use nav_planner::transport::{TransportEdge, TransportGraph, TransportKind};
+
+        let origin = tile(0, 0);
+        let mut flags = vec![0; 5];
+        flags[0] |= CollisionFlag::W_E as u32;
+        flags[1] |= CollisionFlag::W_W as u32;
+        let (walk, blocked) = nav_planner::collision::pack_walk(&flags);
+        let edge = TransportEdge {
+            kind: TransportKind::Door,
+            at: origin,
+            to: tile(3, 0),
+            takeoff: Some(origin),
+            player_delta: None,
+            loc_id: 1,
+            option: 0,
+            ticks: 2,
+            dir: None,
+            open_loc_id: None,
+            skill_req: Vec::new(),
+            item_req: Vec::new(),
+            consumed_req: Vec::new(),
+            item_returns: Vec::new(),
+            quest_req: Vec::new(),
+            varp_req: Vec::new(),
+            worn_req: Vec::new(),
+            worn_all_req: Vec::new(),
+            forbidden_held: Vec::new(),
+            forbidden_worn: Vec::new(),
+            members_req: false,
+            wildy_cap: None,
+            quest_gates: Some(
+                nav_planner::quest_gates::QuestGates::new(family, [QuestGate::Complete(quest)])
+                    .expect("typed Complete gate"),
+            ),
+        };
+        let mut graph = TransportGraph {
+            quest_family: Some(family),
+            ..TransportGraph::default()
+        };
+        graph.at.entry(origin).or_default().push(0);
+        graph.edges.push(edge);
+        Arc::new(NavWorld::from_parts(
+            nav_planner::collision::WorldCollision {
+                origin,
+                width: 5,
+                height: 1,
+                walk,
+                blocked,
+                flags: None,
+            },
+            graph,
+            Vec::new(),
+        ))
+    }
+
+    fn quest_snapshot(
+        selected: &api::game_data::SelectedGameData,
+        frame: QuestListFrame,
+    ) -> GameSnapshot {
+        let (_, name) = selected_quest(selected);
+        let mut snapshot = nav_frame_at(0, 0);
+        let colour = match frame {
+            QuestListFrame::Complete | QuestListFrame::Unavailable => {
+                nav_planner::world_state::QUEST_COMPLETE_COLOUR
+            }
+            QuestListFrame::Unsupported => 0x123456,
+        };
+        snapshot.seed_quest_statuses(
+            vec![QuestStatusView {
+                component_id: 1,
+                name,
+                colour,
+            }],
+            !matches!(frame, QuestListFrame::Unavailable),
+        );
+        snapshot
+    }
+
+    fn start_compat_route(
+        world: Arc<NavWorld>,
+        selected: Arc<api::game_data::SelectedGameData>,
+    ) -> NavRig {
+        let rig = nav_rig_with(Some(world));
+        let slot = script_slot(&rig.scripts, "alice").expect("test slot");
+        let mut slot = slot.lock().unwrap();
+        slot.stop();
+        let source = r#"
+import { Traversal } from '../../api/walking/Traversal.js';
+globalThis.__fireWalk = false;
+export default class T extends LoopingBot {
+    async loop() {
+        if (!globalThis.__fireWalk) return;
+        globalThis.__fireWalk = false;
+        Traversal.walkTo(
+            { x: 4, z: 0, level: 0 },
+            { radius: 0, timeoutMs: 300000 },
+        );
+    }
+}
+"#;
+        let start = crate::script_runtime::js_surface_start(
+            crate::script_runtime::js_start_card(
+                source.to_owned(),
+                script::LoadShape::CompatClass,
+                vec![],
+            ),
+            None,
+            Some(selected),
+            Arc::new(api::named_banks::NamedBankFacts::empty()),
+            Arc::from(Vec::<api::loadout::Loadout>::new()),
+        );
+        slot.start_surface_with_settings(start)
+            .expect("start compatibility route script");
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            match slot.poll_start() {
+                script::StartPoll::Settled(script::StartOutcome::Ready) => break,
+                script::StartPoll::Pending => {
+                    assert!(
+                        Instant::now() < deadline,
+                        "compatibility script start stalled"
+                    );
+                    std::thread::yield_now();
+                }
+                other => panic!("compatibility script start failed: {other:?}"),
+            }
+        }
+        slot.on_is_up(true);
+        let session = api::identity::SessionKey::first(
+            slot.slot_key_for_test().expect("compatibility slot key"),
+        );
+        slot.align_seat_session(Some(session));
+        drop(slot);
+        rig
+    }
+
+    fn observe(
+        rig: &NavRig,
+        driver: &mut NavRec,
+        snapshot: &GameSnapshot,
+        tick: u64,
+        state: Option<nav_planner::WorldState>,
+    ) {
+        script_observe(
+            driver,
+            "alice",
+            true,
+            true,
+            tick,
+            snapshot.tile(),
+            None,
+            state,
+            Some(snapshot),
+            None,
+            &rig.scripts,
+            &rig.cheats,
+            &rig.navs,
+            &rig.world,
+            false,
+            false,
+        );
+        // The isolate's tick posts a host command; the next observation
+        // dispatches it, as in ReconnectRig::frames.
+        let slot = script_slot(&rig.scripts, "alice").expect("observed script slot");
+        if slot.lock().unwrap().native_run().is_some() {
+            return;
+        }
+        slot.lock()
+            .unwrap()
+            .probe("true")
+            .expect("settle isolate tick");
+        script_observe(
+            driver,
+            "alice",
+            true,
+            false,
+            tick,
+            snapshot.tile(),
+            None,
+            None,
+            Some(snapshot),
+            None,
+            &rig.scripts,
+            &rig.cheats,
+            &rig.navs,
+            &rig.world,
+            false,
+            false,
+        );
+    }
+
+    fn route_run(slot: &script::SlotScript) -> RunKey {
+        slot.native_run().unwrap_or_else(|| {
+            let Scope::Slot(key) = slot.work_scope().expect("slot work scope") else {
+                panic!("compatibility route must use slot scope");
+            };
+            RunKey {
+                slot: key.incarnation().get(),
+                run: slot.runtime_generation(),
+                session: slot.work_epoch(),
+            }
+        })
+    }
+
+    fn start_walk(slot: &Arc<Mutex<script::SlotScript>>) {
+        slot.lock()
+            .unwrap()
+            .probe("globalThis.__fireWalk = true")
+            .expect("enable compatibility walk");
+    }
+
+    fn await_walk(rig: &NavRig) {
+        assert!(
+            wait_for_route_work(&rig.navs, "alice", |bot| {
+                !bot.route_work_pending() && bot.walk_request_id != 0
+            }),
+            "compatibility route request did not settle"
+        );
+    }
+
+    #[test]
+    fn compatibility_queue_route_uses_only_matching_observed_complete_rows() {
+        let selected = selected_r289();
+        let (quest, _) = selected_quest(&selected);
+        let selected_family = family(&selected);
+
+        let rig = start_compat_route(
+            gate_world(selected_family, quest.clone()),
+            Arc::clone(&selected),
+        );
+        let slot = script_slot(&rig.scripts, "alice").expect("compatibility slot");
+        let snapshot = quest_snapshot(&selected, QuestListFrame::Complete);
+        let mut driver = NavRec::default();
+
+        // Observation retains selected identity and its causal stamp only.
+        observe(&rig, &mut driver, &snapshot, 1, None);
+        {
+            let navs = rig.navs.lock().unwrap();
+            let bot = navs.get("alice").expect("navigation bot");
+            assert!(bot.quest_context.is_some());
+            assert!(bot.route_quest_evidence.is_none());
+            assert!(!bot.route_work_pending());
+        }
+
+        start_walk(&slot);
+        observe(&rig, &mut driver, &snapshot, 2, None);
+        await_walk(&rig);
+        let expected = EvidenceStamp {
+            run: route_run(&slot.lock().unwrap()),
+            tick: 2,
+            sequence: 2,
+        };
+        let navs = rig.navs.lock().unwrap();
+        let bot = navs.get("alice").expect("navigation bot");
+        assert!(
+            bot.has_route(),
+            "the observed Complete row must open the gate"
+        );
+        let evidence = bot
+            .route_quest_evidence
+            .as_ref()
+            .expect("published route retains request evidence");
+        assert_eq!(evidence.required_after(), expected);
+        assert_eq!(
+            evidence.test(&QuestGate::Complete(quest)),
+            Truth::True,
+            "the gate must use the captured ordinary quest-list evidence"
+        );
+    }
+
+    #[test]
+    fn compatibility_queue_route_fails_closed_for_wrong_family_and_bad_rows() {
+        let selected = selected_r289();
+        let (quest, _) = selected_quest(&selected);
+        let selected_family = family(&selected);
+        let wrong_family = nav_planner::quest_gates::QuestFamilyId::new(
+            [0xA5; 32],
+            NonZeroU16::new(1).expect("nonzero test schema"),
+        );
+        assert_ne!(wrong_family, selected_family);
+
+        for (label, edge_family, frame) in [
+            ("wrong family", wrong_family, QuestListFrame::Complete),
+            (
+                "unavailable list",
+                selected_family,
+                QuestListFrame::Unavailable,
+            ),
+            (
+                "unsupported status colour",
+                selected_family,
+                QuestListFrame::Unsupported,
+            ),
+        ] {
+            let rig = start_compat_route(
+                gate_world(edge_family, quest.clone()),
+                Arc::clone(&selected),
+            );
+            let slot = script_slot(&rig.scripts, "alice").expect("compatibility slot");
+            start_walk(&slot);
+            let snapshot = quest_snapshot(&selected, frame);
+            let mut driver = NavRec::default();
+            observe(&rig, &mut driver, &snapshot, 1, None);
+            await_walk(&rig);
+            let navs = rig.navs.lock().unwrap();
+            let bot = navs.get("alice").expect("navigation bot");
+            assert!(!bot.has_route(), "{label} must not open the typed gate");
+            assert!(bot.walk_outcome_failed, "{label} must report no route");
+        }
+    }
+
+    #[derive(Default)]
+    struct Advice {
+        request_id: Option<u64>,
+    }
+
+    struct Adviser {
+        shared: Arc<Mutex<Advice>>,
+    }
+
+    impl Script for Adviser {
+        fn tick(&mut self, tick: &mut NativeTick<'_>) -> Result<ScriptFlow, ScriptFailure> {
+            let mut shared = self.shared.lock().unwrap();
+            if shared.request_id.is_none() {
+                let id = tick
+                    .actions
+                    .assess_walk(
+                        script::native::WalkRequest {
+                            target: tile(4, 0),
+                            candidate_goals: None,
+                            radius: 0,
+                            arrival: nav_planner::arrival::ArrivalKind::Reach,
+                            loc_id: None,
+                            options: script::native::WalkOptions::default(),
+                            required_after: tick.cx.evidence(),
+                            evidence: None,
+                            cross: Box::default(),
+                            protect: false,
+                            food_guard: false,
+                            allow: Default::default(),
+                        },
+                        &mut tick.cx,
+                    )
+                    .map_err(|error| ScriptFailure {
+                        code: "quest-assess-test".into(),
+                        message: format!("{error:?}").into(),
+                    })?;
+                shared.request_id = Some(id);
+            }
+            Ok(ScriptFlow::Continue)
+        }
+    }
+
+    #[test]
+    fn native_assessment_uses_the_same_complete_row_and_request_stamp() {
+        let selected = selected_r289();
+        let (quest, _) = selected_quest(&selected);
+        let world = gate_world(family(&selected), quest);
+        let rig = nav_rig_with(Some(world));
+        let slot = script_slot(&rig.scripts, "alice").expect("test slot");
+        let shared = Arc::new(Mutex::new(Advice::default()));
+        {
+            let mut slot = slot.lock().unwrap();
+            slot.stop();
+            slot.start_test_script(
+                Box::new(Adviser {
+                    shared: Arc::clone(&shared),
+                }),
+                Some(Arc::clone(&selected)),
+            )
+            .expect("start native assessment");
+        }
+        let snapshot = quest_snapshot(&selected, QuestListFrame::Complete);
+        let mut driver = NavRec::default();
+        observe(
+            &rig,
+            &mut driver,
+            &snapshot,
+            7,
+            Some(nav_planner::WorldState::from_snapshot(&snapshot)),
+        );
+        assert!(shared.lock().unwrap().request_id.is_some());
+        assert!(
+            wait_until(60_000, || {
+                script_runtime::pump_route_work(&rig.navs, "alice");
+                rig.navs
+                    .lock()
+                    .unwrap()
+                    .get("alice")
+                    .is_some_and(|bot| bot.assess_result.is_some())
+            }),
+            "native advisory route did not settle"
+        );
+
+        let slot = slot.lock().unwrap();
+        let expected = EvidenceStamp {
+            run: slot.native_run().expect("native run key"),
+            tick: 7,
+            sequence: 7,
+        };
+        let navs = rig.navs.lock().unwrap();
+        let receipt = &navs
+            .get("alice")
+            .expect("navigation bot")
+            .assess_result
+            .as_ref()
+            .expect("assessment receipt")
+            .1;
+        assert_eq!(receipt.evidence, expected);
+        assert!(
+            receipt.route_ticks > 0,
+            "the assessed route crosses the gate"
+        );
+        assert_eq!(
+            receipt.refusal, None,
+            "the Complete row must not produce a no-route refusal"
+        );
+    }
+
+    fn gatherer_snapshot(
+        selected: &api::game_data::SelectedGameData,
+        target: api::snapshot::WorldTile,
+    ) -> GameSnapshot {
+        let from = tile(target.x - 4, target.z);
+        let mut client = nav_client();
+        client.map_build_base_x = target.x - 52;
+        client.map_build_base_z = target.z - 52;
+        plant_nav_footprint_loc(&mut client, 52, 52, 3, 3);
+        for x in 52..55 {
+            for z in 52..55 {
+                client.collision[0].flags[x][z] |= client::dash3d::CollisionFlag::SQ_BLOCKED;
+            }
+        }
+        let mut snapshot = GameSnapshot::new();
+        nav_snapshot_at(&mut client, &mut snapshot, 48, 52);
+        let mut player = snapshot.local_player().unwrap().clone();
+        player.player.actor.tile = from;
+        snapshot.seed_local_player(player);
+        let mut locs = snapshot.locs().to_vec();
+        locs[0].id = 1309;
+        locs[0].name = Some("Yew".into());
+        locs[0].actions = vec![Some("Chop down".into())];
+        snapshot.seed_locs(locs);
+        snapshot.seed_stats(vec![StatView {
+            index: 8,
+            name: "woodcutting".into(),
+            effective: 60,
+            base: 60,
+            xp: 0,
+            used: true,
+        }]);
+        snapshot.seed_inventory(Vec::new(), 28);
+        snapshot.seed_equipment(vec![ItemView {
+            def: api::ItemDefView {
+                id: 1351,
+                name: Some("Bronze axe".into()),
+                stackable: false,
+                members: false,
+                base_value: 0,
+                noted: false,
+                certificate_link: -1,
+                certificate_template: -1,
+            },
+            container: ItemContainer::Equipment,
+            action_family: ItemActionFamily::Held,
+            slot: 0,
+            count: 1,
+            actions: vec![Some("Remove".into())],
+            component_id: -1,
+        }]);
+        let (_, name) = selected_quest(selected);
+        snapshot.seed_quest_statuses(
+            vec![QuestStatusView {
+                component_id: 1,
+                name,
+                colour: nav_planner::world_state::QUEST_COMPLETE_COLOUR,
+            }],
+            true,
+        );
+        snapshot
+    }
+
+    fn gatherer_world(
+        target: api::snapshot::WorldTile,
+        family: nav_planner::quest_gates::QuestFamilyId,
+        quest: api::selected::FactKey,
+    ) -> Arc<NavWorld> {
+        use client::dash3d::CollisionFlag;
+        use nav_planner::transport::{TransportEdge, TransportGraph, TransportKind};
+
+        let origin = tile(target.x - 4, target.z - 2);
+        let width = 8usize;
+        let height = 5usize;
+        let mut flags = vec![0; width * height];
+        for z in 0..height {
+            flags[z * width] |= CollisionFlag::W_E as u32;
+            flags[z * width + 1] |= CollisionFlag::W_W as u32;
+        }
+        let (walk, blocked) = nav_planner::collision::pack_walk(&flags);
+        let from = tile(origin.x, target.z);
+        let landing = tile(target.x - 1, target.z);
+        let edge = TransportEdge {
+            kind: TransportKind::Door,
+            at: from,
+            to: landing,
+            takeoff: Some(from),
+            player_delta: None,
+            loc_id: 1,
+            option: 0,
+            ticks: 2,
+            dir: None,
+            open_loc_id: None,
+            skill_req: Vec::new(),
+            item_req: Vec::new(),
+            consumed_req: Vec::new(),
+            item_returns: Vec::new(),
+            quest_req: Vec::new(),
+            varp_req: Vec::new(),
+            worn_req: Vec::new(),
+            worn_all_req: Vec::new(),
+            forbidden_held: Vec::new(),
+            forbidden_worn: Vec::new(),
+            members_req: false,
+            wildy_cap: None,
+            quest_gates: Some(
+                nav_planner::quest_gates::QuestGates::new(family, [QuestGate::Complete(quest)])
+                    .expect("typed Complete gate"),
+            ),
+        };
+        let mut graph = TransportGraph {
+            quest_family: Some(family),
+            ..TransportGraph::default()
+        };
+        // Resource selection needs observed zone data. This synthetic world
+        // has no danger zones, rather than an unavailable zone table.
+        graph.zones = Some(
+            nav_planner::zones::ZoneTable::from_parts(
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                origin,
+                width as u32,
+                height as u32,
+                &graph.wilderness,
+            )
+            .expect("empty danger zones fit the synthetic Gatherer world"),
+        );
+        graph.at.entry(from).or_default().push(0);
+        graph.edges.push(edge);
+        Arc::new(NavWorld::from_parts(
+            nav_planner::collision::WorldCollision {
+                origin,
+                width,
+                height,
+                walk,
+                blocked,
+                flags: None,
+            },
+            graph,
+            Vec::new(),
+        ))
+    }
+
+    #[test]
+    fn native_gatherer_walk_crosses_the_typed_gate_from_live_quest_rows() {
+        let selected = selected_r289();
+        let (quest, _) = selected_quest(&selected);
+        let family = family(&selected);
+        let target = tile(3085, 3468);
+        let from = tile(target.x - 4, target.z);
+        let world = gatherer_world(target, family, quest.clone());
+        let rig = nav_rig_with(Some(world));
+        let slot = script_slot(&rig.scripts, "alice").expect("Gatherer slot");
+        let snapshot = gatherer_snapshot(&selected, target);
+        let mut settings = script::native::SettingsBag::new();
+        settings.insert("skill".into(), serde_json::json!("Woodcutting"));
+        settings.insert("woodcuttingResources".into(), serde_json::json!(["yew"]));
+        settings.insert("location".into(), serde_json::json!("Start"));
+        settings.insert("radius".into(), serde_json::json!(12));
+        settings.insert("disposition".into(), serde_json::json!("Power"));
+        {
+            let mut slot = slot.lock().unwrap();
+            slot.stop();
+            slot.start_compiled(
+                "alice",
+                script::CompiledId("Gatherer"),
+                Arc::new(settings),
+                Arc::clone(&selected),
+                Arc::default(),
+            )
+            .expect("start selected Gatherer");
+            let deadline = Instant::now() + Duration::from_secs(20);
+            loop {
+                match slot.poll_start() {
+                    script::StartPoll::Settled(script::StartOutcome::Ready) => break,
+                    script::StartPoll::Pending => {
+                        assert!(Instant::now() < deadline, "Gatherer preparation stalled");
+                        std::thread::yield_now();
+                    }
+                    other => panic!("Gatherer start failed: {other:?}"),
+                }
+            }
+        }
+
+        let mut driver = NavRec::default();
+        let requested_at = (1..=8).find(|tick| {
+            observe(
+                &rig,
+                &mut driver,
+                &snapshot,
+                *tick,
+                Some(nav_planner::WorldState::from_snapshot(&snapshot)),
+            );
+            rig.navs
+                .lock()
+                .unwrap()
+                .get("alice")
+                .is_some_and(|bot| bot.native_walk.is_some())
+        });
+        let requested_at = requested_at.expect("Gatherer must request a native walk");
+        assert!(
+            wait_for_route_work(&rig.navs, "alice", |bot| {
+                !bot.route_work_pending() && bot.has_route()
+            }),
+            "native Gatherer route did not publish across the gate"
+        );
+
+        let slot = slot.lock().unwrap();
+        let expected = EvidenceStamp {
+            run: slot.native_run().expect("Gatherer native run"),
+            tick: requested_at,
+            sequence: requested_at,
+        };
+        let destination = queued(&rig.navs).expect("Gatherer route destination");
+        assert!(destination.x > from.x, "the route must reach the far side");
+        let navs = rig.navs.lock().unwrap();
+        let bot = navs.get("alice").expect("navigation bot");
+        let evidence = bot
+            .route_quest_evidence
+            .as_ref()
+            .expect("published Gatherer route retains its evidence");
+        assert_eq!(evidence.required_after(), expected);
+        assert_eq!(
+            evidence.test(&QuestGate::Complete(quest)),
+            Truth::True,
+            "the Gatherer route must use the captured Complete row"
+        );
+    }
+
+    fn cook_quest(selected: &api::game_data::SelectedGameData) -> api::selected::FactKey {
+        let catalog = selected.try_quests().expect("selected quest catalog");
+        let id = catalog
+            .iter()
+            .find(|facts| facts.id.0.as_ref() == "cook")
+            .expect("selected Cook's Assistant fact")
+            .id
+            .clone();
+        id
+    }
+
+    fn compiled_sheep_walk(
+        selected: &Arc<api::game_data::SelectedGameData>,
+    ) -> Arc<script::quester::compile::CompiledPath> {
+        use script::quester::path::{PathDocument, PredicateDocument};
+
+        let mut document: PathDocument = serde_json::from_str(script::quester::compile::SHEEP_JSON)
+            .expect("bundled Sheep Shearer path");
+        let header = document.quest.as_mut().expect("Sheep quest header");
+        header.owns_inventory = true;
+        header.coin_float = 0;
+        let sequence = document.roles[0]
+            .sequences
+            .iter_mut()
+            .find(|sequence| sequence.stage.0.as_ref() == "sheep:0")
+            .expect("Sheep not-started sequence");
+        let step = &mut sequence.steps[0];
+        step.kind = "walk".into();
+        step.args = serde_json::json!({
+            "tile": [3224, 3220, 0],
+            "source": "native Quester entrance-gate host test",
+            "radius": 0
+        });
+        step.advances = Some(false);
+        step.skip_if = PredicateDocument::Any(Vec::new());
+        step.settle = PredicateDocument::Fact {
+            kind: "near".into(),
+            version: 1,
+            args: serde_json::json!({"tile": [3224, 3220, 0], "radius": 0}),
+        };
+
+        let bytes = serde_json::to_vec(&document).expect("serialize modified Quester path");
+        let quests = selected.try_quests().expect("selected quest catalog");
+        let selected = Arc::clone(selected);
+        let input =
+            script::preparation::PreparationInput::new(1, 0, 8 * 1024 * 1024, 2 * 1024 * 1024)
+                .expect("Quester path compilation budget");
+        script::preparation::submit(
+            script::preparation::PreparationKind::Profile,
+            Scope::Process,
+            input,
+            move |worker| {
+                script::quester::compile::compile_path_for_gang(
+                    &bytes,
+                    &selected,
+                    &quests,
+                    worker,
+                    None,
+                    &script::local_state::OperatorLoadouts::absent(),
+                )
+            },
+        )
+        .expect("submit production Quester path compilation")
+        .join()
+        .expect("Quester path compilation worker")
+        .expect("compile native Quester path")
+    }
+
+    fn quester_snapshot(
+        selected: &api::game_data::SelectedGameData,
+        gate_quest: &api::selected::FactKey,
+    ) -> GameSnapshot {
+        let catalog = selected.try_quests().expect("selected quest catalog");
+        let gate = catalog
+            .iter()
+            .find(|facts| facts.id.0.as_ref() == gate_quest.0.as_ref())
+            .expect("selected route-gate quest");
+        let sheep = catalog
+            .iter()
+            .find(|facts| facts.id.0.as_ref() == "sheep")
+            .expect("selected Sheep Shearer fact");
+        let mut snapshot = nav_frame_at(3220, 3220);
+        snapshot.seed_inventory(Vec::new(), 28);
+        snapshot.seed_equipment(Vec::new());
+        snapshot.seed_quest_statuses(
+            vec![
+                QuestStatusView {
+                    component_id: 1,
+                    name: gate.display.to_string(),
+                    colour: nav_planner::world_state::QUEST_COMPLETE_COLOUR,
+                },
+                QuestStatusView {
+                    component_id: 2,
+                    name: sheep.display.to_string(),
+                    colour: 0xF80000,
+                },
+            ],
+            true,
+        );
+        snapshot
+    }
+
+    struct QuesterWalkHarness {
+        control: Arc<Mutex<Option<script::quester::runner::Quester>>>,
+    }
+
+    impl Script for QuesterWalkHarness {
+        fn tick(&mut self, tick: &mut NativeTick<'_>) -> Result<ScriptFlow, ScriptFailure> {
+            self.control
+                .lock()
+                .unwrap()
+                .as_mut()
+                .expect("installed Quester")
+                .tick(tick)
+        }
+
+        fn interrupt(&mut self, event: script::native::Interrupt) {
+            self.control
+                .lock()
+                .unwrap()
+                .as_mut()
+                .expect("installed Quester")
+                .interrupt(event);
+        }
+
+        fn on_random(&mut self, event: &api::DetectedRandom) -> api::RandomClaim {
+            self.control
+                .lock()
+                .unwrap()
+                .as_mut()
+                .expect("installed Quester")
+                .on_random(event)
+        }
+
+        fn on_stop(&mut self, reason: script::native::StopReason) {
+            self.control
+                .lock()
+                .unwrap()
+                .as_mut()
+                .expect("installed Quester")
+                .on_stop(reason);
+        }
+    }
+
+    #[test]
+    fn native_quester_walk_crosses_typed_gate_from_live_quest_rows() {
+        let selected = selected_r289();
+        let quest = cook_quest(&selected);
+        let quests = selected.try_quests().expect("selected quest catalog");
+        let path = compiled_sheep_walk(&selected);
+        let world = gatherer_world(tile(3224, 3220), family(&selected), quest.clone());
+        let rig = nav_rig_with(Some(world));
+        let slot = script_slot(&rig.scripts, "alice").expect("Quester slot");
+        let snapshot = quester_snapshot(&selected, &quest);
+        let control = Arc::new(Mutex::new(None));
+        {
+            let mut slot = slot.lock().unwrap();
+            slot.stop();
+            slot.start_test_script(
+                Box::new(QuesterWalkHarness {
+                    control: Arc::clone(&control),
+                }),
+                Some(Arc::clone(&selected)),
+            )
+            .expect("start native Quester");
+            let run = slot.native_run().expect("native Quester run");
+            *control.lock().unwrap() = Some(script::quester::runner::Quester::new(
+                run,
+                Arc::clone(&path),
+                Arc::clone(&selected),
+                Arc::clone(&quests),
+                Arc::new(api::named_banks::NamedBankFacts::empty()),
+            ));
+        }
+
+        let mut driver = NavRec::default();
+        let requested_at = (1..=8).find(|tick| {
+            observe(
+                &rig,
+                &mut driver,
+                &snapshot,
+                *tick,
+                Some(nav_planner::WorldState::from_snapshot(&snapshot)),
+            );
+            rig.navs
+                .lock()
+                .unwrap()
+                .get("alice")
+                .is_some_and(|bot| bot.native_walk.is_some())
+        });
+        let requested_at = requested_at.expect("native Quester must request a walk");
+        assert!(
+            wait_for_route_work(&rig.navs, "alice", |bot| {
+                !bot.route_work_pending() && bot.has_route()
+            }),
+            "native Quester route did not publish across the typed gate"
+        );
+
+        let destination = queued(&rig.navs).expect("Quester route destination");
+        assert!(
+            destination.x > 3220,
+            "the Quester route must reach the far side of the transport"
+        );
+        let slot = slot.lock().unwrap();
+        let run = slot.native_run().expect("native Quester run");
+        let navs = rig.navs.lock().unwrap();
+        let bot = navs.get("alice").expect("navigation bot");
+        let evidence = bot
+            .route_quest_evidence
+            .as_ref()
+            .expect("published Quester route retains its evidence");
+        assert_eq!(evidence.required_after().run, run);
+        assert_eq!(evidence.required_after().tick, requested_at);
+        assert_eq!(
+            evidence.test(&QuestGate::Complete(quest)),
+            Truth::True,
+            "the Quester route must use the captured Complete row"
+        );
+    }
+}
 mod ground_selected_identity_tests {
     use super::*;
     use script::isolate_fb::{decode_interact_batch, encode_interact_batch};
@@ -30942,7 +32533,6 @@ mod ground_selected_identity_tests {
             assert!(rec.menus.is_empty() && rec.walks.is_empty());
         }
     }
-
     #[test]
     fn exact_ground_id_does_not_override_tile_or_plane() {
         let (snapshot, names) = fixture(&[1053, 1055, 1057]);

@@ -779,13 +779,15 @@ impl StepPlan for CombatPlan {
             last_outcome: None,
             target_gone_restarts: 0,
             raised_prayers: RaisedPrayers::empty(),
-            walk_outcome_seq_at_begin: cx.tick.cx.observed_walk_outcome_seq,
+            manual_takeover_watch: crate::native::ManualTakeoverWatch::default(),
             finish_target_index: None,
             finish_ticks_elapsed: 0,
             finish_last_tick: None,
             trace_event: None,
         };
         run.begin_combat(cx)?;
+        run.manual_takeover_watch = crate::native::ManualTakeoverWatch::begin(&cx.tick.cx);
+
         Ok(Box::new(run))
     }
 
@@ -921,7 +923,7 @@ impl NativeMachine for AbortHold {
         let live_attacker = has_live_attacker(&snapshot, &self.tables);
         self.observe_threat_free(cx.evidence().tick, live_attacker);
         if let Some(guard) = self.guard.as_mut() {
-            if let Some(op) = guard.tick(&snapshot) {
+            if let Some(op) = guard.tick(&snapshot, cx.condition(), cx.cure_poison()) {
                 if matches!(&op, GuardOp::Unprotectable { .. }) {
                     self.protect_unavailable = true;
                 }
@@ -1077,7 +1079,7 @@ fn guard_interaction(op: &GuardOp) -> Option<InteractReq> {
         GuardOp::IfButton { component } => Some(InteractReq::IfButton {
             component_id: *component,
         }),
-        GuardOp::Drink { name } => Some(InteractReq::Held {
+        GuardOp::Drink { name, .. } => Some(InteractReq::Held {
             name: name.to_string(),
             action: "Drink".to_owned(),
             slot: None,
@@ -1114,29 +1116,12 @@ struct CombatRun {
     last_outcome: Option<StepOutcome>,
     target_gone_restarts: u8,
     raised_prayers: RaisedPrayers,
-    walk_outcome_seq_at_begin: u64,
+    manual_takeover_watch: crate::native::ManualTakeoverWatch,
     finish: Option<FinishConfig>,
     finish_target_index: Option<usize>,
     finish_ticks_elapsed: u64,
     finish_last_tick: Option<u64>,
     trace_event: Option<StepTraceEvent>,
-}
-
-/// Whether walk outcome `seq` was cancelled by user input. The cancel reason
-/// lives in the isolate's observed scene, which exists only with `load`.
-#[cfg(feature = "load")]
-fn user_walk_cancelled(seq: u64) -> bool {
-    crate::observed::with(|scene| {
-        let latest = scene.latest();
-        latest.walk_outcome_seq() == Some(seq)
-            && latest.walk_outcome_cancel_reason()
-                == Some(crate::isolate_fb::WalkCancelReason::UserInput)
-    })
-}
-
-#[cfg(not(feature = "load"))]
-fn user_walk_cancelled(_seq: u64) -> bool {
-    false
 }
 
 impl CombatRun {
@@ -1210,14 +1195,6 @@ impl CombatRun {
             }
             _ => self.raised_prayers,
         }
-    }
-
-    fn user_interrupted_since_begin(&self, cx: &StepContext<'_, '_>) -> bool {
-        let current_seq = cx.tick.cx.observed_walk_outcome_seq;
-        if current_seq == self.walk_outcome_seq_at_begin {
-            return false;
-        }
-        user_walk_cancelled(current_seq)
     }
 
     fn begin_combat(&mut self, cx: &mut StepContext<'_, '_>) -> Result<(), ActionError> {
@@ -1868,7 +1845,7 @@ impl CombatRun {
 impl StepRun for CombatRun {
     fn poll(&mut self, cx: &mut StepContext<'_, '_>) -> Poll<Result<StepOutcome, ActionError>> {
         self.capture_prayer_cleanup();
-        if self.user_interrupted_since_begin(cx) {
+        if self.manual_takeover_watch.interrupted(&cx.tick.cx) {
             self.action = None;
             return Poll::Ready(Err(ActionError::UserInput));
         }

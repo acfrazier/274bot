@@ -7,11 +7,23 @@ pub const RUN_ORB_OFF: i32 = 152;
 /// Lumbridge courtyard hop (`tele` arg). Same as rs2b0t `mainlandAccount`.
 pub const OFF_ISLAND_TELE: &str = "0,50,50,20,20";
 
-/// Diagnostic checkpoint of the actual encrypted packet sink. Captured only
-/// when interaction tracing is enabled; never part of per-bot retained state.
+/// Checkpoint of the actual encrypted packet sink. The checkpoint retains only
+/// its cursor and cipher, never payload bytes or per-bot state.
 pub struct PacketCheckpoint {
     start: usize,
     cipher: Option<client::io::Isaac>,
+}
+
+impl PacketCheckpoint {
+    /// Capture a real client's current outgoing cursor and cipher without
+    /// allocating. Consume this checkpoint with [`Driver::trace_packets`]
+    /// before the client's next socket flush.
+    pub fn capture(client: &Client) -> Self {
+        Self {
+            start: client.out.pos,
+            cipher: client.out.random.clone(),
+        }
+    }
 }
 
 /// The send-side driver the kernel writes through. `Client` implements it
@@ -75,16 +87,17 @@ pub trait Driver {
     /// the value `interact_with_loc` matches via `type_code2`. Test
     /// drivers return `None` so [`op_loc`] falls back to the loc id.
     fn loc_typecode(&self, scene_x: i32, scene_z: i32) -> Option<i32>;
-    /// Detached recorder sink. Real clients use the reservation-aware
-    /// `send_packet` and `walk_step` overrides instead of writing here.
-    fn out(&mut self) -> &mut dyn Out;
-    fn send_packet(&mut self, send: Send) -> bool {
-        let revision = self.revision();
-        send.write_for_revision(revision, self.out())
-    }
-    fn walk_step(&mut self, step: crate::prot::WalkStep) -> bool {
-        let revision = self.revision();
-        step.write_for_revision(revision, self.out())
+    /// Emit one typed packet using this driver's bound revision.
+    /// Required in every build, including opt-in test recorders.
+    fn send_packet(&mut self, packet: &Send) -> Result<(), crate::prot::PacketError>;
+    /// Complete observation of the previous producer's packet without writing bytes.
+    /// Call before changing input lineage or measuring a new row's commits.
+    /// Recording drivers have no deferred packet observation.
+    fn finish_pending_packet(&mut self) {}
+    /// Return the monotonic count of packets committed to the normal encrypted sink.
+    /// Drivers without a real sink return `None`; action costs are not a substitute.
+    fn packet_commit_count(&self) -> Option<u64> {
+        None
     }
     /// Optional real-sink instrumentation, not an estimate from action costs.
     fn packet_checkpoint(&self) -> Option<Box<PacketCheckpoint>> {
@@ -222,22 +235,18 @@ impl Driver for Client {
         (gd != 0).then_some(gd)
     }
 
-    fn out(&mut self) -> &mut dyn Out {
-        &mut self.out
+    fn send_packet(&mut self, packet: &Send) -> Result<(), crate::prot::PacketError> {
+        packet.write_for_client(self)
     }
-    fn send_packet(&mut self, send: Send) -> bool {
-        send.write_for_client(self)
+    fn finish_pending_packet(&mut self) {
+        self.out.finish_packet();
     }
-
-    fn walk_step(&mut self, step: crate::prot::WalkStep) -> bool {
-        step.write_for_client(self)
+    fn packet_commit_count(&self) -> Option<u64> {
+        self.out.committed_packet_count()
     }
 
     fn packet_checkpoint(&self) -> Option<Box<PacketCheckpoint>> {
-        Some(Box::new(PacketCheckpoint {
-            start: self.out.pos,
-            cipher: self.out.random.clone(),
-        }))
+        Some(Box::new(PacketCheckpoint::capture(self)))
     }
 
     fn trace_packets(&self, mut checkpoint: PacketCheckpoint, visit: &mut dyn FnMut(u8)) -> bool {
@@ -344,6 +353,7 @@ impl Driver for Client {
     }
 
     fn consume_chat_key(&mut self, key: i32) {
+        self.out.observe_foreign_local_input();
         Client::consume_chat_key(self, key);
     }
 
@@ -427,13 +437,13 @@ pub fn op_loc<D: Driver + ?Sized>(driver: &mut D, x: i32, z: i32, loc_id: i32) -
 
 /// Close the open modal (`CLOSE_MODAL`).
 pub fn close_modal<D: Driver + ?Sized>(driver: &mut D) -> bool {
-    let accepted = driver.send_packet(Send::close_modal());
+    let accepted = driver.send_packet(&Send::close_modal()).is_ok();
     mark_input_activity(driver, accepted)
 }
 
 /// Answer a count dialog with `amount` (`RESUME_P_COUNTDIALOG`).
 pub fn answer_count<D: Driver + ?Sized>(driver: &mut D, amount: i32) -> bool {
-    if !driver.send_packet(Send::count_dialog(amount)) {
+    if driver.send_packet(&Send::count_dialog(amount)).is_err() {
         return false;
     }
     driver.count_dialog_submitted();

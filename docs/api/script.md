@@ -22,7 +22,7 @@ Catalog cards come from an external `$RS2B0T` / `--catalog` checkout
 (upstream `rs2b2t/rs2b0t` layout: `src/bot/scripts`), not a copy in this
 tree. `$RS2B0T` wins over the persisted root (`~/.274bot/rs2b0t-path`,
 written on the first successful catalog parse). Scripts run on whatever
-world the bound **server profile** logged into (see [README.md](../../README.md)).
+world the bound **server profile** logged into (see [server-profiles.md](../reference/server-profiles.md)).
 
 Compatibility is **partial**. Unsupported helpers and options fail
 explicitly. Do not treat runner PASS, a single live gold, or a historical
@@ -52,6 +52,16 @@ worker, then installs only if the captured slot/control generation is current.
 Assignment changes after Ready, never on enqueue. Stop, replacement and
 profile removal invalidate late replies. Invalid settings or factory failure
 retain the previous assignment and report a structured rejection.
+
+Preparation callbacks share one WorkAdmission background worker. Pass the
+existing `FamilyPreparation` capability to nested family decoders. Profile
+preparation uses `TemplatePreparation::step_on_worker` for this reason.
+Do not submit another background job and wait for it from that worker.
+`WorkService::wait_terminal` returns `WorkWaitError::WouldDeadlock` for a
+pending job on the caller's own background worker. `PreparedTask::join`
+preserves that typed error and abandons the unconsumed job. An already
+published terminal remains consumable without waiting. This refusal does
+not mark the service unavailable.
 
 `NativeTick` borrows the frame/evidence/pin/recovery views and the shared
 status/paint/log output. Native instances allocate no isolate. Status and paint
@@ -310,7 +320,7 @@ maximum-deaths reason. The count spans the queued Paths in one run.
 The additive setting keeps schema version 3; saved records without it receive
 the default. An explicit Start begins a new death allowance.
 
-The pair machinery below is Path-authoring reference (no bundled Beta 1 Path uses
+The pair machinery below is Path-authoring reference (no bundled Beta 2 Path uses
 `partner` yet): Shield of Arrav and Hero's Quest require two accounts explicitly
 running their own Quester in the same Play, with reciprocal partner settings and opposite
 effective gangs. A separate panel or TUI process is not the same Play. The owned
@@ -1132,6 +1142,12 @@ a choice list; lists with more than 16 choices support search. The panel
 combo has the same eligibility and search threshold. Search matches site
 names and ids; Esc cancels without changing the selection.
 
+The lower Desert Mining Camp site requires The Tourist Trap complete and all
+three slave-kit pieces worn. It supports Power mode only. Bank-mode Start
+rejects this site with the reason stored in its `banking_unavailable` field.
+The bot cannot remove the kit to pass the camp's exit, so it has no return
+route to a bank.
+
 Site chooses an accessible placement of a selected resource nearest the
 camp's resource centroid. That retained anchor survives Pause/Resume; changing
 the site requires a fresh Start. The work area remains `anchor ± radius`,
@@ -1485,7 +1501,7 @@ names the card; the host fills the catalog and dispatches
 `script_start_load` at live boot.
 
 External raw-TypeScript smoke for the suite runner is a separate
-`external_watch` / `--external-ts` path ([../e2e-suite.md](../e2e-suite.md));
+`external_watch` / `--external-ts` path ([../dev/e2e-suite.md](../dev/e2e-suite.md));
 ordinary operator Load is the File/catalog flow above.
 
 ## Host input versus native observations
@@ -1545,8 +1561,8 @@ Combat begins — retires them on death, and hands them to the host on any Stop
 ## Nav vs scripts
 
 WalkTo stays the panel **WalkTo** button + traveller. Script walk requests use
-the host's shared `nav::router::find` and the slot pump's
-`nav::traveller::Traveller::follow`; `SlotStatus.walk_{x,z,level}` mirrors the
+the host's shared `nav_planner::router::find` and the slot pump's
+`nav_executor::Traveller::follow`; `SlotStatus.walk_{x,z,level}` mirrors the
 armed destination and clears on arrival. Find runs off-pump; follow steps on
 the slot pump under the existing admission fence. Typed native walks correlate
 host outcomes with their run, action and request owners. Inherited walk options
@@ -1729,22 +1745,30 @@ baseline and settles false during admission or its next machine step, rather tha
 waiting on a request the host's dispatch fence rejected. Stop/Start clears the prior
 run's cancellation outcome and delivery guard.
 
-A Load script's live `api.gather` or `api.combat` session is owned work even
-with no walk in flight (`SlotScript::manual_input_owner`): manual movement
-reaches the session through `note_manual_walk_takeover`, and the owner-pause
-preference below applies. A Gatherer gathering in place blocks
-`manual-movement`; Combat settles `interrupted` / `user-input` after its
-scoped prayer clear. Browse-started native cards keep the walk-scoped rule
-above.
+A Load script's live `api.gather` or `api.combat` session and a built-in
+script's live native action are owned work even with no walk in flight.
+Manual movement reaches these owners through `note_manual_walk_takeover`
+(`SlotScript::manual_input_owner`). A Gatherer API session gathering in place
+blocks `manual-movement`; Combat settles `interrupted` / `user-input` after
+its scoped prayer clear. Browse-started native cards also receive takeover
+while a native action is live. With Pause off, other in-place native families
+can continue unless they handle takeover, as Quester fights do.
 
 The owner-pause preference is `nav.pause_script_on_manual_walk_abort`,
-displayed as “Pause script on manual movement,” and defaults to ON. It gates
-only pausing the script that owns the cancelled operation; OFF still cancels
-and publishes the same terminal while leaving the script running. In that mode
-compat walking settles `false`, while v2 can inspect its correlated
-`walk_outcome_cancel_reason: 'user-input'` and make its own decision. The
-setting does not forbid a fresh script-issued walk after the takeover is
-observed.
+displayed as “Pause script on manual movement,” and defaults to ON. With it
+ON, manual movement pauses the running script behind an active walk, native
+action, or API session. It also pauses any running Load script, including an
+rs2b0t script, even without owned work. A built-in script between actions does
+not pause unless it still owns a walk. OFF still cancels walks and API
+sessions without pausing the script. Compat walking settles `false`, while
+v2 can inspect its correlated `walk_outcome_cancel_reason: 'user-input'` and
+make its own decision. The setting does not forbid a fresh script-issued walk
+after the takeover is observed.
+
+User-owned viewport and minimap clicks, qualifying world-menu actions, and
+TUI Manual steps count as movement intent, even without displacement.
+World-menu Examine and Cancel selections and script-generated input do not.
+See [Nav](nav.md) for other exclusions and the known detector residue.
 
 This differs from movement during work that was already operator-paused or
 reconnect-carried: that idle carry is excluded from cancellation and retains

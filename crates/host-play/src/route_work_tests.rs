@@ -72,7 +72,7 @@ struct HeldRoute {
 impl CooperativeJob for HeldRoute {
     type Output = RouteStageResult;
     type Error = RouteJobError;
-    type Phase = nav::contract::RoutePhase;
+    type Phase = nav_planner::contract::RoutePhase;
 
     fn request_thread(&self) -> Option<api::work::RequestThread<'_>> {
         Some(api::work::RequestThread::new("route-owner-test"))
@@ -322,6 +322,29 @@ fn replacing_a_running_route_releases_its_charge_once_after_return() {
 #[test]
 fn dropping_navbot_releases_its_running_route_charge_once_after_return() {
     running_owner_release(true);
+}
+
+/// Review F1 (M0ReviewSol): a route ticket still running on the worker is
+/// walking work although no route or pending demand exists yet, so the M0
+/// live cell must not inject.
+#[test]
+fn m0_host_gate_rejects_a_pending_route_ticket() {
+    let shared = service();
+    let (ticket, release) = submit_held(&shared, true);
+    let mut bot = NavBot::default();
+    install_owner(&shared, &mut bot, ticket);
+    assert!(!bot.has_route() && bot.pending_route.is_none());
+    assert!(bot.route_work_pending() && bot.walk_work_live());
+    let host = crate::combat_live_proof_tests::m0_host_state(&bot);
+    assert_eq!(host["route_ticket"], true);
+    assert_eq!(host["pending_route"], false);
+    assert!(
+        !crate::combat_live_proof_tests::m0_host_gate_open(&host),
+        "M0 must not inject while a route ticket is pending"
+    );
+    drop(bot);
+    release.unwrap().send(()).unwrap();
+    wait_for_capacity(&shared, api::work::WorkCapacity::EMPTY);
 }
 
 #[test]

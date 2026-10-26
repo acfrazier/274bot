@@ -29,9 +29,11 @@ use crate::operations::{
     write_op, ActionKind, OpChange, OperationBook, OperationId, OperationReport, Outcome,
 };
 use crate::profile_saves::{SaveBook, SaveRecord, SaveResult, SaveSettled, WriteFailure};
-use crate::profiles::{ProfileWriter, Written};
+use crate::profiles::{ProfileAuditBefore, ProfileAuditKind, ProfileWriter, Written};
 use crate::resources::{ResourceView, Resources};
-use crate::scripts::{LiveDelivery, LiveSettings, SettingsResult, SettingsWrite};
+use crate::scripts::{
+    LiveDelivery, LiveSettings, ScriptSettingsLog, SettingsResult, SettingsWrite,
+};
 use crate::surface::SlotSurface;
 use crate::views::{FleetView, Inputs, QueuePlace, Views};
 
@@ -381,6 +383,10 @@ enum ArmMirrorKind {
         event: String,
         policy: RandomEventPolicy,
     },
+    /// The Cure poison setting's post-write mirror.
+    Survival {
+        new: crate::profile_draft::CurePoison,
+    },
     /// Memory mode (`ProfileSettings.lowmem`): queued for the next login.
     /// Set when the toggle is issued and re-affirmed once durable; a failed
     /// write resets the arm to the restored durable value. No client state
@@ -433,6 +439,10 @@ impl ArmMirror {
         Self(ArmMirrorKind::RandomEventPolicy { event, policy })
     }
 
+    pub fn survival(new: crate::CurePoison) -> Self {
+        Self(ArmMirrorKind::Survival { new })
+    }
+
     pub fn memory(lowmem: bool) -> Self {
         Self(ArmMirrorKind::Memory(lowmem))
     }
@@ -443,6 +453,13 @@ impl ArmMirror {
 
     pub fn script_settings(card: String, live: Option<LiveSettings>) -> Self {
         Self(ArmMirrorKind::ScriptSettings { card, live })
+    }
+    pub(crate) fn script_settings_identity(&self) -> Option<String> {
+        match &self.0 {
+            ArmMirrorKind::ScriptSettings { card, .. } => Some(card.clone()),
+            ArmMirrorKind::NativeSettings { id, .. } => Some(script::compiled_identity_key(*id)),
+            _ => None,
+        }
     }
 
     pub fn native_settings(
@@ -474,6 +491,7 @@ impl ArmMirror {
         match (&self.0, &earlier.0) {
             (ArmMirrorKind::AutoLogin(_), ArmMirrorKind::AutoLogin(_))
             | (ArmMirrorKind::Guardian { .. }, ArmMirrorKind::Guardian { .. })
+            | (ArmMirrorKind::Survival { .. }, ArmMirrorKind::Survival { .. })
             | (ArmMirrorKind::Remember(_), ArmMirrorKind::Remember(_))
             | (ArmMirrorKind::Memory(_), ArmMirrorKind::Memory(_))
             | (ArmMirrorKind::ScriptAssignment, ArmMirrorKind::ScriptAssignment) => true,
@@ -579,7 +597,7 @@ mod scripts;
 mod vault_rows;
 mod world_switch;
 pub(crate) use commands::StagedProfileWrite;
-pub use commands::{GuardianEdit, SubmitError, Submitted, Targets};
+pub use commands::{GuardianEdit, SubmitError, Submitted, SurvivalEdit, Targets};
 pub use map::{GameInputEvent, MapDesk};
 pub(crate) use native_settings::NativeCopyCancellation;
 use native_settings::{PendingDelivery, PendingPreparation};
@@ -625,6 +643,9 @@ pub struct OperatorSession<Io> {
     saves: SaveBook,
     /// Settled script-parameter writes, drained by the script coordinator.
     settings_writes: Vec<SettingsWrite>,
+    /// Audit metadata for queued script-setting writes.
+    script_settings_logs: HashMap<OperationId, ScriptSettingsLog>,
+
     /// Command-backed script assignment writes, drained by the script coordinator.
     script_assignment_writes: VecDeque<ScriptAssignmentWrite>,
     /// Load Starts whose setup has not settled, by slot.
@@ -667,6 +688,9 @@ pub struct OperatorSession<Io> {
     /// Play's composition-root driver retained during profile/cache
     /// preparation, before a Play takes ownership of maintenance.
     network_driver: Option<PlayComposition>,
+    preferences_adopted: bool,
+    preference_error: Option<String>,
+    initial_preference_failure: Option<crate::prefs::PreferenceError>,
     /// Process-lifetime single-instance lock (or an explicit skip).
     _instance: InstancePermit,
     /// Shared host-capacity warning; both front ends read [`Self::capacity_notice`].
@@ -753,6 +777,8 @@ impl<Io> OperatorSession<Io> {
             deliveries: Vec::new(),
             write_failures: Vec::new(),
             saves: SaveBook::default(),
+            script_settings_logs: HashMap::new(),
+
             settings_writes: Vec::new(),
             script_assignment_writes: VecDeque::new(),
             starts: HashMap::new(),
@@ -775,6 +801,9 @@ impl<Io> OperatorSession<Io> {
             walk_globals_store: None,
             local_state: None,
             network_driver: None,
+            preferences_adopted: false,
+            preference_error: None,
+            initial_preference_failure: None,
             _instance: instance,
             capacity: None,
             capacity_kind: CapacityKind::Clear,
@@ -828,6 +857,8 @@ impl<Io> OperatorSession<Io> {
         self.vault = Some(vault);
         self.profiles_generation = self.profiles_generation.wrapping_add(1);
         self.writer = None;
+        // Publish the UID/name projection before any startup or explicit Load.
+        self.reconcile_profile_order();
     }
 
     /// Start the Play-owned network composition before profile/cache
@@ -965,7 +996,7 @@ impl<Io> OperatorSession<Io> {
     pub fn with_slot_world_state<R>(
         &self,
         name: &str,
-        f: impl FnOnce(&api::snapshot::GameSnapshot, &nav::WorldState) -> R,
+        f: impl FnOnce(&api::snapshot::GameSnapshot, &nav_planner::WorldState) -> R,
     ) -> Option<R> {
         self.frames.with_world_state(name, f)
     }
@@ -983,6 +1014,9 @@ impl<Io> OperatorSession<Io> {
     /// each `Play`, so slots and forms write through one service.
     pub fn bind_local_state(&mut self, service: Arc<host_play::local_state::LocalStateService>) {
         self.local_state = Some(service);
+        self.preferences_adopted = false;
+        self.preference_error = None;
+        self.initial_preference_failure = None;
     }
 
     /// Open the process local-state service over the operator's state
@@ -1000,6 +1034,47 @@ impl<Io> OperatorSession<Io> {
         self.local_state
             .as_ref()
             .map(|service| crate::prefs::UiPreferences::new(service.preferences()))
+    }
+
+    /// The retained startup or quiet-save preference error, if one occurred.
+    pub fn preference_error(&self) -> Option<&str> {
+        self.preference_error.as_deref()
+    }
+
+    fn poll_initial_preferences(&mut self) {
+        if self.preferences_adopted {
+            return;
+        }
+        let Some(preferences) = self.preferences() else {
+            return;
+        };
+        match preferences.document() {
+            Ok(_) => {
+                if self.initial_preference_failure.take().is_some() {
+                    self.preference_error = None;
+                }
+                self.adopt_operator_preferences();
+            }
+            Err(error) if error.is_not_ready() => {}
+            Err(error) => {
+                if self.initial_preference_failure.as_ref() != Some(&error) {
+                    self.preference_error = Some(error.to_string());
+                    self.initial_preference_failure = Some(error);
+                }
+            }
+        }
+    }
+
+    /// Prepare automatic startup without loading or selecting a profile.
+    /// Both front ends use this gate before consuming a deferred request.
+    /// A cold or failed preference store is not an empty saved order.
+    pub fn prepare_startup(&mut self) -> bool {
+        self.poll_initial_preferences();
+        if self.vault.is_none() || (self.local_state.is_some() && !self.preferences_adopted) {
+            return false;
+        }
+        self.reconcile_profile_order();
+        true
     }
 
     /// The process local-state service bound at startup, if any.
@@ -1224,7 +1299,7 @@ impl<Io> OperatorSession<Io> {
         &mut self,
         name: &str,
         snapshot: api::snapshot::GameSnapshot,
-        world_state: nav::WorldState,
+        world_state: nav_planner::WorldState,
     ) {
         self.frames
             .publish_test_snapshot(name, snapshot, world_state);
@@ -1246,6 +1321,32 @@ impl<Io> OperatorSession<Io> {
 
     pub(crate) fn set_outcome(&mut self, op: OperationId, slot: &str, outcome: Outcome) {
         self.operations.set(op, slot, outcome);
+    }
+    pub(crate) fn track_script_settings_log(&mut self, op: OperationId, audit: ScriptSettingsLog) {
+        self.script_settings_logs.insert(op, audit);
+    }
+
+    pub(crate) fn log_legacy_script_settings(
+        &mut self,
+        card: &str,
+        action: &str,
+        field: &str,
+        old_value: Option<&serde_json::Value>,
+        new_value: &serde_json::Value,
+    ) -> OperationId {
+        let op = self.open_operation(ActionKind::SaveProfile);
+        self.operations.set(op, "legacy", Outcome::Completed);
+        let old_value =
+            old_value.map_or_else(|| "<unset>".to_owned(), serde_json::Value::to_string);
+        crate::log::global().process_line(
+            Source::Script,
+            Level::Info,
+            &format!(
+                "saved script settings; profile legacy; card {card}; action {action}; field {field}; old {old_value}; new {new_value}; op#{}",
+                op.0
+            ),
+        );
+        op
     }
 
     /// Failure text of `id`, for a front end's error line.
@@ -1338,7 +1439,6 @@ impl<Io> OperatorSession<Io> {
         if self.order_reconciled_at == Some(self.profiles_generation) {
             return;
         }
-        let before = self.profile_order.names().len();
         let changed = match self.vault.as_ref() {
             Some(vault) => {
                 let rows = || {
@@ -1357,12 +1457,12 @@ impl<Io> OperatorSession<Io> {
                 self.durable_order.reconcile(rows(), pending);
                 self.profile_order.reconcile(rows(), pending)
             }
-            None => false,
+            None => crate::profile_order::Reconciled::default(),
         };
-        if changed || self.profile_order.names().len() != before {
+        if changed.stored_changed || changed.sequence_changed {
             self.profiles_generation = self.profiles_generation.wrapping_add(1);
         }
-        if changed && self.order_saved {
+        if changed.stored_changed && self.order_saved {
             self.persist_profile_order_quietly();
         }
         self.order_reconciled_at = Some(self.profiles_generation);
@@ -1416,7 +1516,7 @@ impl<Io> OperatorSession<Io> {
                 self.durable_order.assign_from(&self.profile_order);
             }
             Ok(host_play::local_state::Update::Queued(queued)) => self.order_writes.push(queued),
-            Err(error) => order_write_failed(&error),
+            Err(error) => self.retain_order_write_error(&error),
         }
     }
 
@@ -1429,11 +1529,16 @@ impl<Io> OperatorSession<Io> {
                 Some(outcome) => {
                     self.order_writes.swap_remove(index);
                     if let Err(error) = outcome {
-                        order_write_failed(&error);
+                        self.retain_order_write_error(&error);
                     }
                 }
             }
         }
+    }
+
+    fn retain_order_write_error(&mut self, error: &crate::prefs::PreferenceError) {
+        order_write_failed(error);
+        self.preference_error = Some(format!("profile order: {error}"));
     }
 
     /// Live slots other than the selected one.
@@ -2061,7 +2166,7 @@ impl<Io> OperatorSession<Io> {
     }
 
     /// `name`'s known bank rows (empty without a play).
-    pub fn bank_rows(&self, name: &str) -> nav::bank_fetch::BankRows {
+    pub fn bank_rows(&self, name: &str) -> nav_planner::bank_fetch::BankRows {
         self.play
             .as_ref()
             .map(|play| play.bank_rows(name))
@@ -2069,7 +2174,7 @@ impl<Io> OperatorSession<Io> {
     }
 
     /// The bound navigation world, once loaded.
-    pub fn nav_world(&self) -> Option<Arc<nav::world::NavWorld>> {
+    pub fn nav_world(&self) -> Option<Arc<nav_planner::world::NavWorld>> {
         self.play.as_ref()?.world()
     }
 
@@ -2281,6 +2386,7 @@ impl<Io> OperatorSession<Io> {
     }
 
     fn poll_host_at(&mut self, now: Instant) {
+        self.poll_initial_preferences();
         // The saved Load order follows the vault before anything reads it
         // (both halves of a split poll reach here).
         self.reconcile_profile_order();
@@ -2314,7 +2420,7 @@ impl<Io> OperatorSession<Io> {
             self.settle_operations();
             self.log_operations();
         }
-        self.refresh_views();
+        self.refresh_views(now);
         self.resources
             .poll(now, self.play.as_ref(), self.selected.as_deref());
         self.refresh_capacity(now);
@@ -2407,10 +2513,10 @@ impl<Io> OperatorSession<Io> {
                 self.start_places.insert(name.clone(), place);
             }
         }
-        self.refresh_views();
+        self.refresh_views(Instant::now());
     }
 
-    fn refresh_views(&mut self) {
+    fn refresh_views(&mut self, now: Instant) {
         let selected = self.selected.as_deref();
         let card = selected
             .and_then(|name| self.vault.as_ref()?.get(name))
@@ -2438,6 +2544,7 @@ impl<Io> OperatorSession<Io> {
             walks: walks.as_deref(),
             card,
             start_places: &self.start_places,
+            now,
         };
         self.views.refresh(&input, &self.op_changes);
     }
@@ -3064,6 +3171,13 @@ impl<Io> OperatorSession<Io> {
         if let Some(card) = mirror.native_identity() {
             self.native_edits.insert((member.clone(), card), op);
         }
+        let audit = if matches!(&mirror.0, ArmMirrorKind::Survival { .. }) {
+            Some(ProfileAuditKind::SurvivalCurePoison)
+        } else {
+            mirror
+                .script_settings_identity()
+                .map(ProfileAuditKind::ScriptSettings)
+        };
         self.writes.insert(
             op,
             PendingWrite {
@@ -3075,7 +3189,7 @@ impl<Io> OperatorSession<Io> {
             },
         );
         if let Some(writer) = self.writer.as_mut() {
-            writer.submit(op, changes, assignment_action);
+            writer.submit(op, changes, assignment_action, audit);
         }
     }
 
@@ -3141,6 +3255,26 @@ impl<Io> OperatorSession<Io> {
             ArmMirror::random_event_policy(event, policy),
             "random",
         )
+    }
+
+    /// Persist a profile's Cure poison setting through `save_profile`
+    /// (the only write path); a running slot's arm follows once the
+    /// write is durable, so the slot sees the change within one frame
+    /// and never before it is saved.
+    pub(crate) fn set_survival_settings(
+        &mut self,
+        name: &str,
+        cure_poison: crate::CurePoison,
+    ) -> Result<OperationId, String> {
+        let mut profile = self
+            .vault
+            .as_ref()
+            .ok_or_else(|| "survival: vault locked".to_string())?
+            .get(name)
+            .cloned()
+            .ok_or_else(|| format!("survival: no profile {name}"))?;
+        profile.settings.survival.cure_poison = cure_poison.to_vault();
+        self.save_profile(profile, ArmMirror::survival(cure_poison), "survival")
     }
 
     /// The profile a form's Save writes: the draft's credentials over the
@@ -3344,9 +3478,52 @@ impl<Io> OperatorSession<Io> {
     }
 
     fn settle_write(&mut self, written: Written) {
+        let script_settings_log = self.script_settings_logs.remove(&written.op);
         let Some(mut pending) = self.writes.remove(&written.op) else {
             return;
         };
+        let audit_before = written.audit_before;
+        let profile_name = pending.member.as_str();
+        let committed_profile = written
+            .durable
+            .iter()
+            .find(|(name, _)| name == profile_name)
+            .and_then(|(_, profile)| profile.as_ref());
+        let own_setting = written.superseded
+            && self.keeps_own_setting(profile_name, &pending.mirror, &written.later);
+        let settles_successfully = written.result.is_ok()
+            && !pending.copy_abandoned
+            && (!written.superseded || own_setting);
+        // Audit lines use the writer's pre-commit value and the committed row.
+        let setting_log = if settles_successfully {
+            script_settings_log.and_then(|audit| {
+                committed_profile
+                    .map(|after| audit.details(audit_before.as_deref(), &after.settings))
+            })
+        } else {
+            None
+        };
+        let survival_transition = if settles_successfully {
+            match (
+                &pending.mirror.0,
+                audit_before.as_deref(),
+                committed_profile,
+            ) {
+                (
+                    ArmMirrorKind::Survival { .. },
+                    Some(ProfileAuditBefore::SurvivalCurePoison(old)),
+                    Some(after),
+                ) => {
+                    let old = crate::CurePoison::from_vault(*old);
+                    let new = crate::CurePoison::from_vault(after.settings.survival.cure_poison);
+                    (old != new).then_some((old, new))
+                }
+                _ => None,
+            }
+        } else {
+            None
+        };
+
         // Profiles whose newest queued write this is: only those may be put
         // back on failure, so an older failure cannot undo a newer edit.
         let mut newest = Vec::new();
@@ -3378,29 +3555,47 @@ impl<Io> OperatorSession<Io> {
         }
         let member = pending.member;
         let script_assignment = matches!(&pending.mirror.0, ArmMirrorKind::ScriptAssignment);
-        let settings = matches!(
+        let script_settings = matches!(
             &pending.mirror.0,
-            ArmMirrorKind::ScriptSettings { .. } | ArmMirrorKind::Remember(Some(_))
+            ArmMirrorKind::ScriptSettings { .. } | ArmMirrorKind::NativeSettings { .. }
         );
-        // A superseded write (later writes in this commit wrote every row it
-        // did) is durable only inside their rows. If the commit succeeded, it
-        // still settles on its own when it carries a setting (a live effect
-        // or a card's parameters) that no later write of the member in the
-        // commit replaces: each distinct change is saved, reported and
-        // applied, and the slot never sees a replaced value. Otherwise it is
-        // Cancelled: a failed commit fails, restores and reports once,
-        // through the write owning the row.
-        let own_setting =
-            written.superseded && self.keeps_own_setting(&member, &pending.mirror, &written.later);
-        // A form save registered under this operation settles from this
-        // write's own commit result, superseded or not: every write in a
-        // commit shares it.
+
+        // Form saves use this operation's commit result, even when a later
+        // write in the same commit also updates the profile.
+
         let tracked = self.saves.tracks(written.op);
         let durable_row = committed.is_some();
         let commit_error = written.result.as_ref().err().filter(|_| tracked).cloned();
         let result = match written.result {
             Ok(()) if !written.superseded || own_setting => {
                 self.operations.set(written.op, &member, Outcome::Completed);
+                if script_settings {
+                    if let Some(details) = setting_log.as_deref() {
+                        crate::log::global().slot_line(
+                            &member,
+                            Source::Script,
+                            Level::Info,
+                            &format!(
+                                "saved script settings; profile {member}; {details}; op#{}",
+                                written.op.0
+                            ),
+                        );
+                    }
+                }
+                if let Some((old, new)) = survival_transition {
+                    crate::log::global().slot_line(
+                        &member,
+                        Source::Host,
+                        Level::Info,
+                        &format!(
+                            "survival cure_poison {} -> {}; profile {member}; action survival; op#{}",
+                            old.key(),
+                            new.key(),
+                            written.op.0
+                        ),
+                    );
+                }
+
                 if tracked {
                     let saved = if durable_row {
                         SaveResult::Saved
@@ -3504,7 +3699,7 @@ impl<Io> OperatorSession<Io> {
                     op: written.op,
                     result,
                 });
-        } else if settings {
+        } else if script_settings {
             self.settings_writes
                 .push(SettingsWrite::new(written.op, member, result));
         }
@@ -3558,6 +3753,11 @@ impl<Io> OperatorSession<Io> {
                         .lock()
                         .unwrap()
                         .insert(event, policy);
+                }
+            }
+            ArmMirrorKind::Survival { new } => {
+                if let Some(arm) = play.arm(name) {
+                    arm.set_cure_poison(new.to_vault());
                 }
             }
             ArmMirrorKind::Memory(lowmem) => {
@@ -3751,7 +3951,7 @@ fn record_transitions(
 }
 
 /// Log a saved Load order write that failed outside a command.
-fn order_write_failed(error: &std::io::Error) {
+fn order_write_failed(error: &crate::prefs::PreferenceError) {
     host_log!(
         Category::Lifecycle,
         Level::Warn,

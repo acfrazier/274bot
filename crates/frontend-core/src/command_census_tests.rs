@@ -67,6 +67,8 @@ const MAP_DRAFT: &str =
 const GAME_INPUT_STAGING: &str =
     "stages GameInput events into the core queue only (no dispatch); `ui_frame` submits GameInput once per frame";
 const FORMAT: &str = "pure formatting or parsing; no state";
+const UI_TIMER: &str =
+    "presentation timer: clears a front end's own message line after a timeout; no operator decision";
 const LOG_VIEW: &str =
     "control of the log read projection (scope, filter, follow); not transport, work admission or a durable write";
 const SEAM_ROWS: &str = "the command seam: every row, chosen by its literal argument";
@@ -208,6 +210,9 @@ const CORE: &[(&str, Decision)] = &[
     ("profile_draft.rs::SettingsDraft::lamp_auto_mut", Staged(C::EditProfileDraft(ProfileDraftField::Settings))),
     ("profile_draft.rs::SettingsDraft::clue_duel_partner_mut", Staged(C::EditProfileDraft(ProfileDraftField::Settings))),
     ("profile_draft.rs::SettingsDraft::set_random_event_policy", Staged(C::EditProfileDraft(ProfileDraftField::Settings))),
+    ("profile_draft.rs::SettingsDraft::survival_mut", Staged(C::EditProfileDraft(ProfileDraftField::Settings))),
+    ("profile_draft.rs::SurvivalDraft::set_cure_poison", Staged(C::EditProfileDraft(ProfileDraftField::Settings))),
+    ("profile_draft.rs::SurvivalSettings::cure_poison_mut", Staged(C::EditProfileDraft(ProfileDraftField::Settings))),
     // profile_editor.rs: the profile edit form (moved from the panel chooser).
     ("profile_editor.rs::ProfileEditor::draft_mut", Staged(C::EditProfileDraft(ProfileDraftField::Settings))),
     ("profile_editor.rs::ProfileEditor::username_mut", Staged(C::EditProfileDraft(ProfileDraftField::Username))),
@@ -216,16 +221,12 @@ const CORE: &[(&str, Decision)] = &[
         "profile_editor.rs::ProfileEditor::settle",
         Excluded("adopts the durable writer's results (SaveProfile's Owner terminal)"),
     ),
-    // prefs.rs: the preferences document handle.
-    (
-        "prefs.rs::UiPreferences::update",
-        Excluded("a front end's own presentation state (layout, last focus) in its document section; operator preferences go through their rows"),
-    ),
     ("resources.rs::background_bots_acked", Excluded("reads the background-bots acknowledgement; no state change")),
     ("resources.rs::clear_background_bots_ack_error", Excluded("drops a stale banner line; presentation")),
     ("session.rs::OperatorSession::open_process_state", Excluded(STARTUP)),
     ("session/commands.rs::OperatorSession::stage_new_profile", Staged(C::CreateProfile)),
     ("session/commands.rs::OperatorSession::stage_guardian", Staged(C::SetGuardian)),
+    ("session/commands.rs::OperatorSession::stage_survival", Staged(C::SetSurvival)),
     (
         "surface.rs::SpawnProfile::set_lowmem",
         Excluded("a surface adjusts its disposable spawn copy (session-only memory override); never written back"),
@@ -244,6 +245,13 @@ const CORE: &[(&str, Decision)] = &[
     ("resources.rs::cpu_from_delta", Excluded(FORMAT)),
     ("resources.rs::format_bytes", Excluded(FORMAT)),
     ("resources.rs::format_bots", Excluded(FORMAT)),
+    ("error_expiry.rs::ErrorExpiry::observe", Excluded(UI_TIMER)),
+    ("error_expiry.rs::ErrorExpiry::waits_for", Excluded(UI_TIMER)),
+    ("error_expiry.rs::ErrorExpiry::resolve", Excluded(UI_TIMER)),
+    (
+        "session/commands.rs::OperatorSession::refuse_unsubmitted",
+        Excluded("logs and counts a front end's refusal of a command it could not submit; changes no operator state"),
+    ),
     ("resources.rs::format_background", Excluded(FORMAT)),
     ("resources.rs::background_ack_text", Excluded(FORMAT)),
     ("resources.rs::ResourceView::copy_from", Excluded(PROJECTION)),
@@ -359,6 +367,10 @@ const CORE: &[(&str, Decision)] = &[
         Staged(C::DiscardParameterText),
     ),
     (
+        "scripts/mod.rs::Scripts::stage_profile_parameter_discard",
+        Staged(C::DiscardParameterText),
+    ),
+    (
         "scripts/sync.rs::Scripts::stage_settings_sync_prepare",
         StagedFor(
             &[
@@ -385,6 +397,12 @@ const CORE: &[(&str, Decision)] = &[
     ("scripts/paint.rs::map_applet_rect", Excluded(FORMAT)),
     ("scripts/paint.rs::CanvasCache::store", Excluded(PROJECTION)),
     ("scripts/paint.rs::CanvasCache::clear", Excluded(PROJECTION)),
+    (
+        "scripts/paint_layout.rs::PaintLayout::compute",
+        Excluded(PROJECTION),
+    ),
+    ("scripts/paint_layout.rs::clipped_prefix", Excluded(FORMAT)),
+    ("scripts/paint_style.rs::parse_accent", Excluded(FORMAT)),
     // scripts/paths.rs: operator file locations.
     ("scripts/paths.rs::bot_home", Excluded(PATH_READ)),
     ("scripts/paths.rs::bot_file", Excluded(PATH_READ)),
@@ -599,6 +617,10 @@ const CORE: &[(&str, Decision)] = &[
     // session/map.rs: the map desk stages row inputs and adopts owner results.
     ("session/map.rs::MapDesk::clear_walk_dest", Excluded(PROJECTION)),
     (
+        "session/map.rs::MapDesk::adopt_bake_choice",
+        Excluded("adopts the process writer's ready preference without saving it"),
+    ),
+    (
         "session/map.rs::MapDesk::note_ready_without_terrain",
         Excluded("adopts the ready demand's result (no terrain) into the prompt: owner result"),
     ),
@@ -617,6 +639,10 @@ const CORE: &[(&str, Decision)] = &[
         Staged(C::GameInput),
     ),
     ("session/map.rs::MapDesk::stage_game_input", Staged(C::GameInput)),
+    (
+        "session/map.rs::MapDesk::stage_captured_input_to",
+        Staged(C::GameInput),
+    ),
     (
         "session/map.rs::MapDesk::set_input_sender",
         Excluded("device plumbing: attaches the capture channel; no operator decision"),
@@ -640,6 +666,7 @@ const CORE: &[(&str, Decision)] = &[
     ("driver.rs::HeadlessDriver::submit", Rows(&OperatorCommand::ALL, SEAM_ROWS)),
     ("driver.rs::HeadlessDriver::poll", Excluded(PUMP)),
     ("session.rs::OperatorSession::poll", Excluded(PUMP)),
+    ("session.rs::OperatorSession::prepare_startup", Excluded(PUMP)),
     ("session.rs::OperatorSession::poll_at", Excluded(PUMP)),
     ("session.rs::OperatorSession::poll_host", Excluded(PUMP)),
     (
@@ -782,7 +809,13 @@ const SURFACE: &[(&str, Decision)] = &[
             "the vault prompt's pass: unlock the existing vault or create a new one",
         ),
     ),
-    ("panel/session.rs::Session::reset_vault", Row(C::ResetVault)),
+    (
+        "panel/session.rs::Session::start_vault",
+        Rows(
+            &[C::UnlockVault, C::CreateVault],
+            "refuses the vault prompt's pass before it submits (no bound profile): Unlock when the vault file exists, Create when it does not",
+        ),
+    ),
     // --- panel: fleet view ---
     (
         "panel/fleet.rs::table",
@@ -846,6 +879,14 @@ const SURFACE: &[(&str, Decision)] = &[
     ),
     ("panel/input_capture.rs::maybe_send_click", Excluded(GAME_INPUT_STAGING)),
     ("panel/input_capture.rs::stream_capture", Excluded(GAME_INPUT_STAGING)),
+    (
+        "panel/input_capture.rs::PaintMouseGate::route",
+        Excluded(GAME_INPUT_STAGING),
+    ),
+    (
+        "panel/input_capture.rs::PaintMouseGate::route_button",
+        Excluded(GAME_INPUT_STAGING),
+    ),
     (
         "panel/session.rs::Session::maybe_drain_getvar_dialogue",
         Excluded(GAME_INPUT_STAGING),
@@ -956,6 +997,16 @@ const SURFACE: &[(&str, Decision)] = &[
                 C::EditProfileDraft(ProfileDraftField::Settings),
             ],
             "the random-event controls stage guardian and policy edits",
+        ),
+    ),
+    (
+        "panel/app.rs::slot_survival_section",
+        Rows(
+            &[
+                C::SetSurvival,
+                C::EditProfileDraft(ProfileDraftField::Settings),
+            ],
+            "the cure poison control stages the survival edit",
         ),
     ),
     (
@@ -1095,9 +1146,13 @@ const SURFACE: &[(&str, Decision)] = &[
     (
         "tui/bin.rs::TuiSession::run_fleet_plan",
         Rows(
-            &[C::SwitchWorld(1)],
-            "Confirm submits the waiting plan's own command (`FleetPlan::command`, `Targets::Plan`): the row follows the plan's action, and Switch world's row is issued only through a plan",
+            &[C::SwitchWorld(1), C::PlanFleetAction(crate::fleet_plan::FleetAction::Start)],
+            "Confirm submits the waiting plan's own command (`FleetPlan::command`, `Targets::Plan`): the row follows the plan's action, and Switch world's row is issued only through a plan; with no plan waiting, the confirmed action's PlanFleetAction is refused at the command boundary",
         ),
+    ),
+    (
+        "tui/commands.rs::Command::operator_command",
+        Excluded("names the operator command a palette command runs, for the refusal line of an unavailable one; issues none"),
     ),
     (
         "tui/bin.rs::TuiSession::script_start",
@@ -1109,8 +1164,8 @@ const SURFACE: &[(&str, Decision)] = &[
     (
         "tui/bin.rs::TuiSession::persist_settings",
         Rows(
-            &[C::SetMemoryMode(MemoryMode::Low), C::SetGuardian],
-            "the settings popup's profile rows: guardian fields and memory mode, written through the profile row",
+            &[C::SetMemoryMode(MemoryMode::Low), C::SetGuardian, C::SetSurvival],
+            "the settings popup's profile rows: guardian fields, memory mode and cure poison, written through the profile row",
         ),
     ),
     (
@@ -1133,6 +1188,17 @@ const SURFACE: &[(&str, Decision)] = &[
                 C::DeleteProfileImportExport,
             ],
             "the Preview action may fill the catalog; its branches edit the path, choose preview options, confirm profile writes, return to the path, stage or cancel deletion, and confirm export deletion",
+        ),
+    ),
+    (
+        "tui/bin.rs::TuiSession::new_profile_key",
+        Rows(
+            &[
+                C::EditProfileDraft(ProfileDraftField::Username),
+                C::EditProfileDraft(ProfileDraftField::Password),
+                C::CloseProfileForm(FormClose::Form),
+            ],
+            "the New profile overlay keys: typing stages the focused field's draft edit, Enter saves through `new_profile_save` (the CreateProfile handler), Esc closes the form",
         ),
     ),
     (

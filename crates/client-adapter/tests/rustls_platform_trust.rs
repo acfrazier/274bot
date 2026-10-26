@@ -36,7 +36,7 @@ fn leaf(issuer: &Certificate, issuer_key: &KeyPair, expired: bool) -> Certificat
     if expired {
         params.not_after = params.not_before;
     }
-    issuer
+    params
         .signed_by(&key, issuer, issuer_key)
         .expect("sign test leaf")
         .der()

@@ -280,6 +280,7 @@ fn error_reason(error: &ActionError) -> Arc<str> {
             Arc::from(format!("ground-take-already-owned:{id}"))
         }
         ActionError::WalkGoals(reason) => Arc::from(format!("walk-goals:{reason:?}")),
+        ActionError::ServerOrdered(reason) => Arc::from(format!("server-ordered:{reason}")),
     }
 }
 

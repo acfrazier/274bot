@@ -3,7 +3,7 @@ use super::{
     ZoneInterval,
 };
 use api::WorldTile;
-use nav::contract::{
+use nav_planner::contract::{
     LegView, RouteView, TransportKind, WildernessView, ZoneClass, ZoneKey, ZoneTableView, ZoneView,
 };
 use std::future::Future;

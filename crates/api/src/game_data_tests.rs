@@ -91,10 +91,8 @@ fn family_preparation_runs_off_the_callers_thread() {
     let caller = std::thread::current().id();
     let prepared = crate::selected::FamilyPreparation::run(|worker| {
         let data = for_revision(ClientRevision::R289).unwrap();
-        assert!(matches!(
-            data.prepare_quests(worker),
-            Err(FactError::FamilyUnavailable(_))
-        ));
+        assert!(!data.prepare_quests(worker).unwrap().is_empty());
+        assert!(data.quest_family_identity().is_some());
         (std::thread::current().id(), data.selected_pin().unwrap())
     })
     .unwrap()
@@ -167,8 +165,8 @@ fn is_bearing_distance(token: &str) -> bool {
 #[test]
 fn named_sites_are_selected_core_rows_with_skill_key_closure() {
     for (revision, counts) in [
-        (ClientRevision::R274, [231, 33, 25]),
-        (ClientRevision::R289, [231, 33, 25]),
+        (ClientRevision::R274, [231, 37, 26]),
+        (ClientRevision::R289, [231, 37, 26]),
     ] {
         let data = for_revision(revision).unwrap();
         let mut ids = std::collections::HashSet::new();
@@ -255,13 +253,29 @@ fn named_sites_are_selected_core_rows_with_skill_key_closure() {
 }
 
 #[test]
+fn lower_mine_site_declares_the_tourist_trap_and_banking_limit_for_both_revisions() {
+    let reason = "No bank route returns from the lower mine. The mine requires the slave kit, but the camp exit rejects worn kit pieces.";
+    for revision in [ClientRevision::R274, ClientRevision::R289] {
+        let data = for_revision(revision).unwrap();
+        let site = data
+            .gather_site("mining", "mining.desert_mining_camp.underground")
+            .unwrap();
+        assert!(site.requires.contains(&GatherSiteRequirement::Quest {
+            name: "The Tourist Trap".into(),
+        }));
+        assert_eq!(site.banking_unavailable.as_deref(), Some(reason));
+    }
+}
+
+#[test]
 fn named_site_wire_rejects_unknown_fields_and_legacy_core_defaults_empty() {
     let row = serde_json::json!({
         "id": "mining.fixture", "skill": "mining", "label": "Fixture · Copper ore 1",
         "region": {"min_x": 1, "min_z": 2, "max_x": 1, "max_z": 2, "level": 0},
         "keys": [{"key": "copper", "count": 1}]
     });
-    assert!(serde_json::from_value::<GatherSiteOption>(row.clone()).is_ok());
+    let decoded = serde_json::from_value::<GatherSiteOption>(row.clone()).unwrap();
+    assert_eq!(decoded.banking_unavailable, None);
     for changed in [
         {
             let mut changed = row.clone();

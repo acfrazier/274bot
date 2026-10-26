@@ -1876,6 +1876,23 @@ mod tests {
         crate::load::reach_query::on_reset();
     }
 
+    #[test]
+    fn loc_op_fractional_expect_ms_stays_pending_before_its_rounded_deadline() {
+        let mut clock = crate::task_clock::InstantTaskClock::new();
+        clock.set_freeze(true, false);
+        let window = loc_expect_window(&json!(0.5)).expect("positive fraction has a window");
+        assert_eq!(window, 1);
+
+        clock.arm(window);
+        assert!(
+            !clock.bound_reached(),
+            "fractional timeout stays pending before its one-millisecond deadline"
+        );
+
+        clock.deadline = clock.frozen_at;
+        assert!(clock.bound_reached(), "timeout is ready at its deadline");
+    }
+
     struct Driver {
         reach: NpcReach,
         clock: crate::task_clock::InstantTaskClock,

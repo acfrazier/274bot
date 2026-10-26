@@ -122,6 +122,9 @@ impl Probe<'_> {
         let mut budget = TickBudget::default();
         budget.observe(evidence.tick);
         let cx = ActionContext {
+            condition: None,
+            poison_unknown_pulse: u8::MAX,
+            cure_poison: crate::survival::CurePoison::WhenNeeded,
             evidence,
             pin: &pin,
             snapshot: SnapshotView::new(Some(snapshot), evidence).with_bank_memory(Some(self.bank)),
@@ -134,6 +137,7 @@ impl Probe<'_> {
             budget: &mut budget,
             eligible: true,
             observed_walk_outcome_seq: 0,
+            observed_walk_cancel_reason: crate::native::WalkCancelReason::None,
         };
         f(&PredicateContext {
             cx: &cx,

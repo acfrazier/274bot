@@ -11,13 +11,14 @@ use ratatui::text::Line;
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget, Wrap};
 use ratatui::Frame;
 
-use nav::tile::Tile;
+use nav_planner::tile::Tile;
 
 use crate::app::{wasd_target, AppAction, TuiApp};
 use crate::commands::Command;
 use crate::fleet_card::CardPicker;
 use crate::help::{filter_rows, help_rows, render_help, HelpState};
 use crate::layout::{contains, Screen};
+use crate::new_profile::NewProfileView;
 use crate::palette::{palette_commands, render_palette, PaletteState};
 use crate::profile_import::{ImportAction, ImportView};
 use crate::world_picker::WorldPicker;
@@ -36,6 +37,9 @@ pub enum Modal {
     Manual,
     /// Import rs2b0t's profile export: path, preview, report.
     ProfileImport(ImportView),
+    /// Add a profile to the vault: username and its own password, over
+    /// the shared profile form the binary owns.
+    NewProfile(NewProfileView),
     /// Pick the card the fleet actions use (Enter picks, Esc keeps).
     FleetCard(CardPicker),
     /// Pick the world a bot (or the marked bots) moves to (Enter picks, Esc
@@ -54,6 +58,7 @@ impl Modal {
             Modal::Message { .. } => "Message",
             Modal::Manual => "Manual walk",
             Modal::ProfileImport(_) => "rs2b0t import",
+            Modal::NewProfile(_) => "New profile",
             Modal::FleetCard(_) => "Fleet card",
             Modal::WorldPicker(_) => "World picker",
         }
@@ -68,6 +73,7 @@ impl Modal {
             Modal::Message { .. } => "Up/Down scroll · Esc close",
             Modal::Manual => "W A S D / arrows step one tile · Esc disarm",
             Modal::ProfileImport(view) => view.hints(),
+            Modal::NewProfile(view) => view.hints(),
             Modal::FleetCard(_) => "Up/Down · Enter pick · Esc keep the card",
             Modal::WorldPicker(_) => "Up/Down · Enter pick · Esc cancel",
         }
@@ -138,7 +144,7 @@ impl ContextItem {
                 let mut label = command.label(app).to_string();
                 if let Err(reason) = command.availability(app) {
                     label.push_str(" - ");
-                    label.push_str(reason);
+                    label.push_str(reason.text());
                 }
                 label
             }
@@ -349,6 +355,11 @@ impl TuiApp {
                 ),
                 None => (Some(Modal::ProfileImport(view)), AppAction::None),
             },
+            // Every key goes to the binary, which owns the editor; it
+            // closes the overlay itself on Esc or a saved profile.
+            Modal::NewProfile(view) => {
+                (Some(Modal::NewProfile(view)), AppAction::NewProfileKey(key))
+            }
         };
         if self.modal.is_none() {
             self.modal = keep;
@@ -393,8 +404,14 @@ impl TuiApp {
                 return match command.availability(self) {
                     Ok(()) => (None, self.run_command(command)),
                     Err(reason) => {
-                        state.note = Some(reason);
-                        (Some(Modal::Palette(state)), AppAction::None)
+                        // The palette keeps its note; the refusal is the
+                        // same one a key makes (message line, its need, and
+                        // the command-boundary log line).
+                        state.note = Some(reason.text());
+                        (
+                            Some(Modal::Palette(state)),
+                            self.unavailable(command, reason),
+                        )
                     }
                 };
             }
@@ -432,7 +449,7 @@ impl TuiApp {
                 (None, AppAction::Quit)
             }
             ConfirmKind::RestartSettings { .. } => (None, AppAction::ScriptRestartSettings),
-            ConfirmKind::FleetPlan { .. } => (None, AppAction::RunFleetPlan),
+            ConfirmKind::FleetPlan { action, .. } => (None, AppAction::RunFleetPlan(action)),
         }
     }
 
@@ -469,10 +486,7 @@ impl TuiApp {
             }
             ContextItem::Run(command) => match command.availability(self) {
                 Ok(()) => self.run_command(command),
-                Err(reason) => {
-                    self.error = Some(format!("{}: {reason}", command.label(self)));
-                    AppAction::None
-                }
+                Err(reason) => self.unavailable(command, reason),
             },
         }
     }
@@ -549,6 +563,9 @@ impl TuiApp {
             // A click never closes the import: the typed path or the
             // report would be lost. Esc closes it.
             Modal::ProfileImport(view) => (Some(Modal::ProfileImport(view)), AppAction::None),
+            // A click never closes the form either: the typed password
+            // would be lost. Esc closes it.
+            Modal::NewProfile(view) => (Some(Modal::NewProfile(view)), AppAction::None),
         };
         if self.modal.is_none() {
             self.modal = keep;
@@ -611,6 +628,7 @@ impl TuiApp {
             Modal::Message { scroll } => self.draw_message(*scroll, area, buf),
             Modal::Manual => self.draw_manual(area, buf),
             Modal::ProfileImport(view) => self.regions.modal = view.render(area, buf),
+            Modal::NewProfile(view) => self.regions.modal = view.render(area, buf),
         }
         self.modal = Some(modal);
     }

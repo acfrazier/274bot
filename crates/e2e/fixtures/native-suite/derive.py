@@ -747,7 +747,9 @@ def main():
             ("shared_paths", ["crates/host-play/", "crates/api/", "crates/host/", "crates/vault/",
                               "crates/script/", "crates/scenario/", "vendor/fr-client-rust/", "Cargo.toml",
                               "Cargo.lock"]),
-            ("subsystem_paths", OrderedDict([("crates/nav/", "nav"), ("crates/panel/", "panel"),
+            ("subsystem_paths", OrderedDict([("crates/nav-planner/", "nav"),
+                                             ("crates/nav-executor/", "nav"),
+                                             ("crates/panel/", "panel"),
                                              ("crates/tui/", "panel")])),
             ("ignored_paths", ["crates/e2e/", "docs/", "target/"]),
             ("shared_reason", "shared code changed (host-play/api/host/script/scenario adapter, runtime or api) — "

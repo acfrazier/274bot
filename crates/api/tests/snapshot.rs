@@ -3649,6 +3649,39 @@ fn chat_burst_in_one_gen_gets_distinct_sequences() {
     assert_eq!(lines[1].sequence, two_seq);
 }
 
+/// A cold login clears the client chat ring (`chat_text`) after logout
+/// left it in place. The snapshot only republishes that empty ring when
+/// the chat generation moves with the clear: without a move it keeps the
+/// stale pre-login ring (the stale-history failure shape), and with one
+/// the ring and head both read empty.
+#[test]
+fn chat_clear_publishes_only_when_the_chat_generation_moves() {
+    let mut c = client_with_npc();
+    c.add_chat(0, "get tutorial: 1000", "");
+    let mut snap = GameSnapshot::new();
+    c.bump_gens(ServerProt::MESSAGE_GAME);
+    assert!(snap.rebuild_family(&c, Family::Chat));
+    assert_eq!(snap.chat(), Some("get tutorial: 1000"));
+
+    for entry in c.chat_text.iter_mut() {
+        *entry = String::new();
+    }
+    assert!(
+        !snap.rebuild_family(&c, Family::Chat),
+        "an ungated clear must not republish the chat family"
+    );
+    assert_eq!(
+        snap.chat(),
+        Some("get tutorial: 1000"),
+        "without a chat-generation move the stale ring survives"
+    );
+
+    c.gens.chat += 1;
+    assert!(snap.rebuild_family(&c, Family::Chat));
+    assert_eq!(snap.chat(), None, "the cleared ring publishes no head");
+    assert!(snap.chat_lines().is_empty(), "the cleared ring is empty");
+}
+
 /// `rebuild`/`rebuild_family` take `&Client`: a shared borrow suffices
 /// now that the ground-item sweep uses the immutable `LinkList` iterator.
 #[test]
@@ -4374,6 +4407,54 @@ fn full_snapshot_counts_player_info_not_player_invalidations() {
     c.bump_gens(ServerProt::PLAYER_INFO);
     assert!(snap.rebuild(&c));
     assert_eq!(snap.tick(), 3, "count every PLAYER_INFO between rebuilds");
+}
+
+#[test]
+fn walk_diagnostic_history_uses_observed_scene_and_server_movement() {
+    let mut c = client_with_npc();
+    c.ingame = true;
+    c.scene_state = 2;
+    c.map_build_base_x = 3200;
+    c.map_build_base_z = 3200;
+    c.local_player = Some(ClientPlayer::at(4, 5));
+    c.bump_gens(ServerProt::REBUILD_NORMAL);
+    c.bump_gens(ServerProt::PLAYER_INFO);
+    let mut snap = GameSnapshot::new();
+    snap.rebuild(&c);
+    assert_eq!(snap.last_scene_rebuild_tick(), Some(1));
+    assert_eq!(snap.last_server_movement_tick(), None);
+
+    let player = c.local_player.as_mut().unwrap();
+    player.route_x[0] = 5;
+    player.entity.x += 128;
+    c.bump_gens(ServerProt::PLAYER_INFO);
+    snap.rebuild(&c);
+    assert_eq!(snap.last_server_movement_tick(), Some(2));
+
+    // Rendering and loc refreshes do not imply server movement or a new scene.
+    c.local_player.as_mut().unwrap().entity.x += 128;
+    c.gens.scene += 1;
+    snap.rebuild(&c);
+    assert_eq!(snap.last_scene_rebuild_tick(), Some(1));
+    assert_eq!(snap.last_server_movement_tick(), Some(2));
+
+    c.scene_state = 1;
+    c.map_build_base_x = 3192;
+    c.local_player.as_mut().unwrap().route_x[0] = 13;
+    c.bump_gens(ServerProt::REBUILD_NORMAL);
+    c.bump_gens(ServerProt::PLAYER_INFO);
+    snap.rebuild(&c);
+    assert_eq!(snap.last_scene_rebuild_tick(), Some(3));
+    assert_eq!(snap.last_server_movement_tick(), Some(2));
+    c.scene_state = 2;
+    c.bump_gens(ServerProt::PLAYER_INFO);
+    snap.rebuild(&c);
+    assert_eq!(snap.last_scene_rebuild_tick(), Some(3));
+    assert_eq!(snap.last_server_movement_tick(), Some(2));
+
+    snap.reset_session(c.gens);
+    assert_eq!(snap.last_scene_rebuild_tick(), None);
+    assert_eq!(snap.last_server_movement_tick(), None);
 }
 
 /// The scene family reads `attached` from the socket (the §3.1 "socket

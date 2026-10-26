@@ -229,7 +229,7 @@ fn the_core_owned_application_decisions_have_their_frozen_columns() {
     use ProcessCapability as P;
     use Settles::{AtDispatch, Owner};
     use SubjectKind::{Application, Profile};
-    let rows: [Columns; 32] = [
+    let rows: [Columns; 33] = [
         (C::SetFleetFilter, Application, AtDispatch, None, None),
         (
             C::SetFleetSort(FleetOrder::Name),
@@ -299,6 +299,13 @@ fn the_core_owned_application_decisions_have_their_frozen_columns() {
         ),
         (
             C::SetGuardian,
+            Profile,
+            Owner,
+            None,
+            Some(ActionKind::SaveProfile),
+        ),
+        (
+            C::SetSurvival,
             Profile,
             Owner,
             None,

@@ -253,15 +253,18 @@ fn start_source(
             static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
             slot.bind_incarnation(NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
         }
-        slot.start_load_with_loadouts_and_game_data(
-            source.into(),
-            script::LoadShape::NativeTick,
-            vec![],
-            &[],
+        let start = crate::script_runtime::js_surface_start(
+            crate::script_runtime::js_start_card(
+                source.into(),
+                script::LoadShape::NativeTick,
+                vec![],
+            ),
+            None,
             Some(selected),
             Arc::new(api::named_banks::NamedBankFacts::empty()),
-        )
-        .expect("v2 isolate starts");
+            Arc::from(Vec::<api::loadout::Loadout>::new()),
+        );
+        slot.start_surface(start).expect("v2 isolate starts");
     }
     let deadline = Instant::now() + Duration::from_secs(60);
     loop {
@@ -323,6 +326,7 @@ fn observe_frame(
         Some(policy),
         None,
         service_arm,
+        None,
     );
     crate::script_runtime::pump_route_work(navs, SLOT);
     let mut packets = Vec::new();
@@ -582,6 +586,7 @@ fn live_gather_seat_delivers_broadcast_posts_and_host_rows_but_drops_game_rows()
         Some(&sender),
         BrokerWorld::Local,
         Some(&mut rig.policy),
+        None,
         None,
         None,
     );
@@ -936,6 +941,7 @@ impl GatherReconnectRig {
                 .get();
             let mut slot = script::SlotScript::new();
             slot.bind_incarnation(incarnation);
+            slot.bind_surface_factory(Arc::new(script::load::surface::JsSurfaceFactory::default()));
             scripts
                 .lock()
                 .unwrap()
@@ -987,7 +993,7 @@ impl GatherReconnectRig {
         let names = Arc::clone(&self.names);
         let cell = self.slot();
         let mut slot = cell.lock().unwrap();
-        let bytes = with_script_snapshot_input(
+        let pages = with_script_snapshot_input(
             tick,
             Some((tile.x, tile.z, tile.level)),
             true,
@@ -1006,18 +1012,11 @@ impl GatherReconnectRig {
             None,
             PostedWalkOutcome::default(),
             PostedInspect::default(),
-            |input, native| slot.encode_snapshot_delta_with_native(input, native, false),
-        );
-        let encoded = script::isolate_fb::Snapshot::from_bytes(&bytes).unwrap();
-        let pages = (
-            encoded
-                .api_gather()
-                .is_some_and(|page| page.request_id() != 0),
-            encoded.api_gather_outcome().is_some(),
-        );
-        assert!(
-            slot.post_snapshot(bytes),
-            "reconnect keyframe is accepted by the real isolate"
+            |input, native| {
+                script::load::surface::post_snapshot_delta_pages_for_test(
+                    &mut slot, input, native, false,
+                )
+            },
         );
         let mut context = script::ScriptCtx {
             driver: &mut self.client,
@@ -1688,7 +1687,7 @@ fn recreated_load_isolates_never_inherit_old_seat_pages_or_authority() {
                         let cell = rig.slot();
                         let mut slot = cell.lock().unwrap();
                         slot.poll_start();
-                        if slot.state() == script::RunState::Running && slot.load_active() {
+                        if slot.state() == script::RunState::Running && slot.surface_active() {
                             break;
                         }
                         assert!(
@@ -1834,8 +1833,8 @@ fn danger_route_world() -> NavWorld {
     let width = 12;
     let height = 1;
     let flags = vec![0u32; width * height * 4];
-    let (walk, blocked) = nav::collision::pack_walk(&flags);
-    let collision = nav::collision::WorldCollision {
+    let (walk, blocked) = nav_planner::collision::pack_walk(&flags);
+    let collision = nav_planner::collision::WorldCollision {
         origin: WorldTile {
             x: 0,
             z: 0,
@@ -1847,21 +1846,21 @@ fn danger_route_world() -> NavWorld {
         blocked,
         flags: None,
     };
-    let mut graph = nav::transport::TransportGraph::default();
+    let mut graph = nav_planner::transport::TransportGraph::default();
     graph.zones = Some(
-        nav::zones::ZoneTable::from_parts(
-            vec![nav::zones::Zone::npc(
+        nav_planner::zones::ZoneTable::from_parts(
+            vec![nav_planner::zones::Zone::npc(
                 WorldTile {
                     x: 6,
                     z: 0,
                     level: 0,
                 },
                 0,
-                nav::zones::ZoneClass::Always,
+                nav_planner::zones::ZoneClass::Always,
                 u16::MAX,
                 0,
             )],
-            vec![nav::zones::ZoneKind::new(
+            vec![nav_planner::zones::ZoneKind::new(
                 "danger",
                 "Danger zone",
                 1,
@@ -1884,10 +1883,10 @@ fn danger_route_world() -> NavWorld {
 
 fn wilderness_route_world() -> NavWorld {
     let flags = vec![0u32; 5 * 12];
-    let (walk, blocked) = nav::collision::pack_walk(&flags);
-    let graph = nav::transport::TransportGraph {
-        wilderness: nav::transport::WildernessRules {
-            zones: vec![nav::transport::WildernessZone {
+    let (walk, blocked) = nav_planner::collision::pack_walk(&flags);
+    let graph = nav_planner::transport::TransportGraph {
+        wilderness: nav_planner::transport::WildernessRules {
+            zones: vec![nav_planner::transport::WildernessZone {
                 x1: 2944,
                 z1: 3520,
                 x2: 3391,
@@ -1899,10 +1898,10 @@ fn wilderness_route_world() -> NavWorld {
             divisor: 8,
             offset: 1,
         },
-        ..nav::transport::TransportGraph::default()
+        ..nav_planner::transport::TransportGraph::default()
     };
     NavWorld::from_parts(
-        nav::collision::WorldCollision {
+        nav_planner::collision::WorldCollision {
             origin: WorldTile {
                 x: 3099,
                 z: 3518,
@@ -1923,15 +1922,15 @@ fn route_exists(
     world: &NavWorld,
     from: WorldTile,
     to: WorldTile,
-    options: nav::router::FindOptions,
+    options: nav_planner::router::FindOptions,
 ) -> bool {
-    nav::router::find_with_avoid(
+    nav_planner::router::find_with_avoid(
         &world.collision,
         &world.graph,
         from,
         to,
         options,
-        &nav::WorldState::default(),
+        &nav_planner::WorldState::default(),
         &[],
     )
     .is_ok()
@@ -1970,11 +1969,11 @@ fn load_gather_inspect_route_keeps_load_script_options() {
     let options = crate::walk_permissions::compiled_options(
         &rig.navs,
         SLOT,
-        nav::router::FindOptions {
+        nav_planner::router::FindOptions {
             allow_teleports,
             allow_wilderness,
             allow_bank_fetch,
-            ..nav::router::FindOptions::default()
+            ..nav_planner::router::FindOptions::default()
         },
     );
     assert_eq!(
@@ -2023,7 +2022,7 @@ fn load_gather_watchdog_arm_walk_keeps_load_script_options() {
         Some((3100, 3519, 0)),
         &rig.navs,
         &world,
-        Some(&nav::WorldState::empty()),
+        Some(&nav_planner::WorldState::empty()),
         None,
         SLOT,
     );

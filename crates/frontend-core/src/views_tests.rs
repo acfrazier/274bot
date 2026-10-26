@@ -230,9 +230,12 @@ fn a_member_row_follows_every_offline_transition() {
     assert_eq!(detail(&s).since, None);
     assert_eq!(s.fleet_view().counts().ready, 1);
 
-    step(&mut s, &|r| r.walk_x = 3210);
-    assert_eq!(row(&s, "vt-alice").brief, "running");
-    assert_eq!(row(&s, "vt-alice").light(), Light::Green);
+    // A destination on the host row with no live script run is not a walk:
+    // the published script walk belongs to its run.
+    publish(&s, "vt-alice", |r| r.walk_x = 3210);
+    s.poll();
+    assert_eq!(row(&s, "vt-alice").brief, "idle");
+    assert!(!row(&s, "vt-alice").script_walk());
 
     // The connection drops: the host parks it for the retry.
     step(&mut s, &|r| {
@@ -1082,4 +1085,459 @@ fn focused_manual_refusal_without_a_route_retains_its_shared_reason() {
         detail(&session).manual_walk_risk.as_deref(),
         Some(reason.as_ref())
     );
+}
+
+/// PANEL-STATE-GAP-1023: a script walk and a WalkTo walk are separate facts.
+/// The script walk belongs to its run and ends with it: Stop retires the
+/// published destination, and a destination left on the row by anything else
+/// never reads as a walk once the run is gone. A WalkTo walk belongs to no
+/// run, so a script Stop leaves it visible.
+#[test]
+fn a_script_walk_ends_with_its_run_and_a_manual_walk_survives_the_stop() {
+    let arm = Arc::new(Mutex::new(host_play::WalkArm::default()));
+    let walks = Arc::new(Mutex::new(HashMap::from([(
+        "vs-bob".into(),
+        Arc::clone(&arm),
+    )])));
+    let mut s = fleet("separate-facts", &["vs-alice", "vs-bob"], false);
+    s.set_walk_arms(walks);
+    for name in ["vs-alice", "vs-bob"] {
+        publish(&s, name, |r| {
+            phase_to(r, StartupPhase::Ready);
+            (r.connected, r.ingame, r.scene_state) = (true, true, 2);
+        });
+    }
+    for name in ["vs-alice", "vs-bob"] {
+        s.play()
+            .unwrap()
+            .script_start_load(
+                name,
+                "export function tick(api) {}".into(),
+                script::LoadShape::NativeTick,
+                None,
+                vec![],
+            )
+            .unwrap();
+    }
+    let deadline = Instant::now() + Duration::from_secs(60);
+    for name in ["vs-alice", "vs-bob"] {
+        while s.play().unwrap().script_state(name) != script::RunState::Running {
+            assert!(Instant::now() < deadline, "{name} never ran");
+            s.play().unwrap().pump_script_lifecycle(name);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+    publish(&s, "vs-alice", |r| {
+        (r.walk_x, r.walk_z, r.walk_level) = (3210, 3200, 0)
+    });
+    arm.lock().unwrap().route = Some(Arc::new(nav_planner::router::Route {
+        legs: Vec::new(),
+        dest: api::snapshot::WorldTile {
+            x: 3220,
+            z: 3200,
+            level: 0,
+        },
+        ticks: 1.0,
+    }));
+    s.poll();
+    let alice = row(&s, "vs-alice");
+    assert_eq!(
+        (alice.script_walk(), alice.manual_walk(), alice.brief()),
+        (true, false, "running")
+    );
+    let bob = row(&s, "vs-bob");
+    assert_eq!(
+        (bob.script_walk(), bob.manual_walk(), bob.brief()),
+        (false, true, "running")
+    );
+
+    for name in ["vs-alice", "vs-bob"] {
+        s.play().unwrap().script_stop(name);
+    }
+    for name in ["vs-alice", "vs-bob"] {
+        while s.play().unwrap().script_state(name) != script::RunState::Idle {
+            assert!(Instant::now() < deadline, "{name} never stopped");
+            s.play().unwrap().pump_script_lifecycle(name);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+    s.poll();
+    let alice = row(&s, "vs-alice");
+    assert_eq!(
+        (alice.script(), alice.script_walk(), alice.brief()),
+        (RunState::Idle, false, "idle"),
+        "Stop retired the run's walk"
+    );
+    let bob = row(&s, "vs-bob");
+    assert_eq!(
+        (
+            bob.script(),
+            bob.script_walk(),
+            bob.manual_walk(),
+            bob.brief()
+        ),
+        (RunState::Idle, false, true, "running"),
+        "a WalkTo walk is not a script run: Stop leaves it visible"
+    );
+
+    // A destination left on the row after the run is gone is not a walk,
+    // whoever left it.
+    publish(&s, "vs-alice", |r| {
+        (r.walk_x, r.walk_z, r.walk_level) = (3210, 3200, 0)
+    });
+    s.poll();
+    let alice = row(&s, "vs-alice");
+    assert_eq!((alice.script_walk(), alice.brief()), (false, "idle"));
+
+    arm.lock().unwrap().route = None;
+    s.poll();
+    assert_eq!(row(&s, "vs-bob").brief(), "idle");
+}
+
+const REFUSED: &str = "Error connecting to server. (connect: Connection refused)";
+
+/// Two loaded bots with bob selected and a Log in wanted for bob, and bob's
+/// refused login published at `t0` and seen by the poll at `t0`.
+fn refused_bob(test: &str, t0: Instant) -> OperatorSession<()> {
+    let mut s = fleet(test, &["vn-alice", "vn-bob"], false);
+    s.select("vn-bob");
+    s.login("vn-bob", &mut HeadlessSurface::new());
+    publish(&s, "vn-bob", |r| {
+        phase_to(r, StartupPhase::Error);
+        r.error = Some(REFUSED.into());
+    });
+    s.poll_at(t0);
+    s
+}
+
+/// LOGIN-NOTICE-1024: the regression the headed check found. After a
+/// refused login, the retry's Connecting, a queue wait and a parked logged
+/// out each replace the state line, but none of them is a newer message or
+/// resolves the failure, so the login notice stays until the shared
+/// timeout. The state line keeps telling the truth beside it.
+#[test]
+fn login_notice_survives_retry_and_parked_states_until_the_timeout() {
+    use crate::ERROR_MESSAGE_TIMEOUT as TIMEOUT;
+    let t0 = Instant::now();
+    let mut s = refused_bob("notice-survives", t0);
+    let line = format!("login {REFUSED}");
+    assert_eq!(row(&s, "vn-bob").phase, Phase::LoginError);
+    assert_eq!(detail(&s).state, line);
+    assert_eq!(detail(&s).row.login_notice(), Some(line.as_str()));
+    assert_eq!(
+        detail(&s).login_notice_line(),
+        None,
+        "the error state line already says it"
+    );
+    assert_eq!(row(&s, "vn-alice").login_notice(), None, "per bot");
+
+    // The next attempt: the host clears its error (mark_login_started).
+    publish(&s, "vn-bob", |r| {
+        phase_to(r, StartupPhase::Connecting);
+        r.error = None;
+    });
+    s.poll_at(t0 + Duration::from_secs(1));
+    assert_eq!(row(&s, "vn-bob").phase, Phase::Connecting);
+    assert_eq!(detail(&s).state, "logging in…");
+    assert_eq!(detail(&s).login_notice_line(), Some(line.as_str()));
+    assert_eq!(
+        row(&s, "vn-bob").last_error(),
+        None,
+        "the notice, not the history row, shows the error"
+    );
+
+    publish(&s, "vn-bob", |r| {
+        phase_to(r, StartupPhase::Queueing);
+        (r.queue_position, r.queue_total) = (1, 2);
+    });
+    s.poll_at(t0 + Duration::from_secs(2));
+    assert_eq!(row(&s, "vn-bob").phase, Phase::Queued);
+    assert_eq!(detail(&s).login_notice_line(), Some(line.as_str()));
+
+    s.logout("vn-bob");
+    s.poll_at(t0 + Duration::from_secs(3));
+    assert_eq!(row(&s, "vn-bob").phase, Phase::LoggedOut);
+    assert_eq!(detail(&s).state, "logged out (Log in to connect)");
+    assert_eq!(detail(&s).login_notice_line(), Some(line.as_str()));
+
+    s.poll_at(t0 + TIMEOUT - Duration::from_millis(1));
+    assert_eq!(detail(&s).login_notice_line(), Some(line.as_str()));
+    let generation = s.fleet_view().generation();
+    s.poll_at(t0 + TIMEOUT);
+    assert_eq!(detail(&s).row.login_notice(), None, "gone at 15 s");
+    assert!(
+        s.fleet_view().generation() > generation,
+        "the expiry is a visible change"
+    );
+    assert_eq!(
+        row(&s, "vn-bob").last_error(),
+        Some(REFUSED),
+        "the error stays as history"
+    );
+    assert_eq!(detail(&s).state, "logged out (Log in to connect)");
+}
+
+/// A second refused attempt with the same words is a newer message: it
+/// restarts the 15 s.
+#[test]
+fn login_notice_renews_on_a_repeated_failure_with_the_same_text() {
+    use crate::ERROR_MESSAGE_TIMEOUT as TIMEOUT;
+    let t0 = Instant::now();
+    let mut s = refused_bob("notice-renews", t0);
+    publish(&s, "vn-bob", |r| {
+        phase_to(r, StartupPhase::Connecting);
+        r.error = None;
+    });
+    s.poll_at(t0 + Duration::from_secs(5));
+    let again = t0 + Duration::from_secs(10);
+    publish(&s, "vn-bob", |r| {
+        r.startup_phase = StartupPhase::Error;
+        r.startup_phase_started = again;
+        r.error = Some(REFUSED.into());
+    });
+    s.poll_at(again);
+    s.poll_at(t0 + TIMEOUT);
+    assert!(
+        detail(&s).row.login_notice().is_some(),
+        "the second failure restarted the clock"
+    );
+    s.poll_at(again + TIMEOUT - Duration::from_millis(1));
+    assert!(detail(&s).row.login_notice().is_some());
+    s.poll_at(again + TIMEOUT);
+    assert_eq!(detail(&s).row.login_notice(), None);
+}
+
+/// A successful login resolves the notice at once.
+#[test]
+fn login_notice_clears_on_a_successful_login() {
+    let t0 = Instant::now();
+    let mut s = refused_bob("notice-resolved", t0);
+    publish(&s, "vn-bob", |r| {
+        phase_to(r, StartupPhase::Connecting);
+        r.error = None;
+    });
+    s.poll_at(t0 + Duration::from_secs(1));
+    assert!(detail(&s).row.login_notice().is_some());
+    publish(&s, "vn-bob", |r| {
+        phase_to(r, StartupPhase::LoadingScene);
+        r.connected = true;
+    });
+    s.poll_at(t0 + Duration::from_secs(2));
+    assert_eq!(row(&s, "vn-bob").phase, Phase::Loading);
+    assert_eq!(detail(&s).row.login_notice(), None, "resolved by the login");
+    assert_eq!(detail(&s).login_notice_line(), None);
+}
+
+/// Size tripwire: a bot with no login notice pays one pointer on its row and
+/// one in its derivation state: the row is 168 bytes + 8 for the boxed notice
+/// = 176, the state 16 + 8 = 24 (an inline `Option<String>` and clock made
+/// it 192 + 120), so keep the notice boxed. `guard_parked` sits in the row's
+/// padding beside the other flags and does not grow it.
+#[cfg(target_pointer_width = "64")]
+#[test]
+fn a_bot_without_a_login_notice_costs_two_pointers() {
+    assert_eq!(std::mem::size_of::<FleetRow>(), 176);
+    assert_eq!(std::mem::size_of::<RowState>(), 24);
+}
+
+/// LOGOUT-RETRY-1025: Log out acts on every state with a login or a
+/// session to end, among them a refused login that is retrying, and on
+/// nothing else.
+#[test]
+fn logout_retry_eligible_for_pending_and_retrying_logins_only() {
+    use crate::LogoutEligibility::{
+        GuardParked, LoggedIn, LoggingIn, NotLoggedIn, Queued, RetryingLogin,
+    };
+    let place = QueuePlace::of(&SlotStatus {
+        startup_phase: StartupPhase::Queueing,
+        queue_position: 1,
+        queue_total: 2,
+        ..SlotStatus::default()
+    });
+    assert!(place.is_some());
+    let case = |phase: Phase, edit: &dyn Fn(&mut FleetRow)| {
+        let mut row = FleetRow::fixture("bot", phase, None, None);
+        edit(&mut row);
+        row.logout_eligibility()
+    };
+    let plain = |_: &mut FleetRow| {};
+    for (phase, want) in [
+        (Phase::Offline, NotLoggedIn),
+        (Phase::LoggedOut, NotLoggedIn),
+        (Phase::Failed, NotLoggedIn),
+        (Phase::LoginError, NotLoggedIn),
+        (Phase::Preparing, LoggingIn),
+        (Phase::Waiting, LoggingIn),
+        (Phase::Connecting, LoggingIn),
+        (Phase::Loading, LoggingIn),
+        (Phase::Ready, LoggedIn),
+    ] {
+        assert_eq!(case(phase, &plain), want, "{phase:?}");
+    }
+    assert_eq!(
+        case(Phase::LoginError, &|row| row.retrying = true),
+        RetryingLogin,
+        "a refused login that the host retries"
+    );
+    assert_eq!(
+        case(Phase::Queued, &|row| row.queue = place),
+        Queued,
+        "a place in the login queue"
+    );
+    assert_eq!(
+        case(Phase::LoggedOut, &|row| row.guard_parked = true),
+        GuardParked
+    );
+    assert_eq!(case(Phase::Offline, &|row| row.loaded = false), NotLoggedIn);
+    assert_eq!(
+        FleetRow::for_profile("unloaded").logout_eligibility(),
+        NotLoggedIn
+    );
+}
+
+/// The poll derives the facts Log out reads: a refused login that the slot
+/// still wants is retrying (eligible); once Log out parks the slot it is not.
+#[test]
+fn logout_retry_poll_projects_a_retrying_login_as_eligible_until_log_out_parks_it() {
+    let mut s = fleet("logout-retry", &["lr-bob"], false);
+    let arm = s.play().unwrap().arm("lr-bob").expect("arm");
+    arm.arm_explicit_login();
+    publish(&s, "lr-bob", |r| {
+        phase_to(r, StartupPhase::Error);
+        r.error = Some("Error connecting to server.".into());
+    });
+    s.poll();
+    let retrying = row(&s, "lr-bob");
+    assert_eq!(
+        (retrying.phase, retrying.retrying),
+        (Phase::LoginError, true)
+    );
+    assert!(retrying.logout_eligibility().eligible());
+    arm.request_logout();
+    s.poll();
+    let parked = row(&s, "lr-bob");
+    assert_eq!(parked.phase, Phase::LoggedOut);
+    assert!(!parked.logout_eligibility().eligible());
+}
+
+/// Put `name`'s row as the worker publishes it after the repeat guard trips:
+/// disconnected, the latch and its reason on the row.
+fn publish_guard_park(s: &OperatorSession<()>, name: &str, reason: host_play::LoginLatchReason) {
+    publish(s, name, |r| {
+        r.connected = false;
+        r.ingame = false;
+        r.login_latched = true;
+        r.login_latch_reason = Some(reason);
+        phase_to(r, StartupPhase::Queueing);
+    });
+}
+
+/// A bot with a live session whose repeat guard then trips on the arm.
+fn guard_tripped(test: &str, name: &str) -> (OperatorSession<()>, std::sync::Arc<SlotArm>) {
+    let s = fleet(test, &[name], false);
+    let arm = s.play().unwrap().arm(name).expect("arm");
+    arm.arm_explicit_login();
+    arm.complete_login_for_test();
+    arm.exit_and_trip_repeat_guard_for_test();
+    assert!(matches!(
+        arm.login_latch_reason(),
+        Some(host_play::LoginLatchReason::RepeatedUnexpectedLogouts { .. })
+    ));
+    (s, arm)
+}
+
+/// LOGOUT-RETRY-1025 r2 (Sol F2): the repeat guard's park makes Log out
+/// eligible while the arm holds that latch, and the fact comes from the arm,
+/// not from a reason the worker published: the row below is the disconnected
+/// row the worker published before it republished the latch.
+#[test]
+fn logout_retry_guard_trip_is_eligible_while_the_arm_holds_the_latch() {
+    use crate::LogoutEligibility::GuardParked;
+    let (mut s, _arm) = guard_tripped("lr-guard-trip", "lr-gus");
+    publish(&s, "lr-gus", |r| phase_to(r, StartupPhase::Queueing));
+    s.poll();
+    let gus = row(&s, "lr-gus");
+    assert_eq!(gus.phase, Phase::LoggedOut);
+    assert!(gus.guard_parked(), "the arm holds the repeat guard's latch");
+    assert_eq!(gus.logout_eligibility(), GuardParked);
+}
+
+/// An operator Log out replaces the guard's latch, and a later Log in lifts
+/// it: a reason the status published before either must not keep the bot
+/// eligible as guard-parked.
+#[test]
+fn logout_retry_operator_logout_then_login_ends_the_guard_fact() {
+    use crate::LogoutEligibility::{LoggingIn, NotLoggedIn};
+    let (mut s, arm) = guard_tripped("lr-guard-logout", "lr-hal");
+    publish_guard_park(&s, "lr-hal", arm.login_latch_reason().unwrap());
+    s.poll();
+    assert!(row(&s, "lr-hal").guard_parked());
+
+    arm.request_logout();
+    s.poll();
+    let logged_out = row(&s, "lr-hal");
+    assert_eq!(logged_out.phase, Phase::LoggedOut);
+    assert!(
+        !logged_out.guard_parked(),
+        "the status still names the guard, the arm no longer does"
+    );
+    assert_eq!(logged_out.logout_eligibility(), NotLoggedIn);
+
+    arm.arm_explicit_login();
+    s.poll();
+    let login = row(&s, "lr-hal");
+    assert!(!login.guard_parked());
+    assert_eq!(
+        login.logout_eligibility(),
+        LoggingIn,
+        "eligible because a login is pending, not because of the old park"
+    );
+}
+
+/// A worker that ends while the guard holds the bot leaves a terminal row
+/// that still carries the reason; the row is Failed and not eligible.
+#[test]
+fn logout_retry_a_worker_that_terminates_while_guard_parked_is_not_eligible() {
+    let (mut s, arm) = guard_tripped("lr-guard-terminal", "lr-ivy");
+    publish_guard_park(&s, "lr-ivy", arm.login_latch_reason().unwrap());
+    s.poll();
+    assert!(row(&s, "lr-ivy").guard_parked());
+    publish(&s, "lr-ivy", |r| {
+        phase_to(r, StartupPhase::Error);
+        r.worker_terminal = Some(host_play::WorkerTerminal::Panicked);
+        r.error = Some("slot worker panicked: synthetic".into());
+    });
+    s.poll();
+    let ivy = row(&s, "lr-ivy");
+    assert_eq!(ivy.phase, Phase::Failed);
+    assert!(!ivy.guard_parked());
+    assert!(!ivy.logout_eligibility().eligible());
+}
+
+/// Once the finished worker is reaped its arm is gone, and the terminal row
+/// that is left (with the guard's reason on it) is not eligible either.
+#[test]
+fn logout_retry_a_reaped_guard_parked_worker_is_not_eligible() {
+    let (mut s, arm) = guard_tripped("lr-guard-reaped", "lr-jon");
+    publish_guard_park(&s, "lr-jon", arm.login_latch_reason().unwrap());
+    publish(&s, "lr-jon", |r| {
+        phase_to(r, StartupPhase::Error);
+        r.worker_terminal = Some(host_play::WorkerTerminal::Failed);
+        r.error = Some("slot worker exited unexpectedly".into());
+    });
+    s.play_mut()
+        .unwrap()
+        .attach_finished_worker_for_test("lr-jon", arm);
+    s.poll();
+    assert!(s.play().unwrap().arm("lr-jon").is_none(), "poll reaps it");
+    let jon = row(&s, "lr-jon");
+    assert!(!jon.guard_parked());
+    assert!(!jon.logout_eligibility().eligible());
+    // The same row without the terminal marker: no worker arm, no ownership.
+    publish(&s, "lr-jon", |r| r.worker_terminal = None);
+    s.poll();
+    let jon = row(&s, "lr-jon");
+    assert_eq!(jon.phase, Phase::Offline);
+    assert!(!jon.guard_parked());
+    assert!(!jon.logout_eligibility().eligible());
 }

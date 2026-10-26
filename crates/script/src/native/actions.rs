@@ -5,7 +5,7 @@ use crate::native_bank::{BankPickReceipt, BankPickRequest};
 use std::panic::{catch_unwind, resume_unwind, AssertUnwindSafe};
 
 impl ActionContext<'_> {
-    fn owner(&self) -> Result<Arc<Owner>, ActionError> {
+    pub(super) fn owner(&self) -> Result<Arc<Owner>, ActionError> {
         let owner = self
             .ledger
             .as_ref()
@@ -68,8 +68,7 @@ impl ActionContext<'_> {
 
     /// A seat continuation keeps its owned arguments until admission can spend
     /// a transition. This check does not consume or renew the slot's budget.
-    #[cfg(feature = "load")]
-    pub(crate) fn may_begin_this_tick(&self) -> bool {
+    pub fn may_begin_this_tick(&self) -> bool {
         self.may_continue_this_tick() && self.budget.transition_available()
     }
 
@@ -277,7 +276,7 @@ impl ActionContext<'_> {
             return Err(ActionError::Stale);
         }
         if request.candidate_goals.is_some()
-            && (request.arrival != nav::contract::ArrivalKind::Area
+            && (request.arrival != nav_planner::contract::ArrivalKind::Area
                 || request.loc_id.is_some()
                 || request.radius != 0)
         {
@@ -344,7 +343,7 @@ impl ActionContext<'_> {
             return Err(ActionError::Stale);
         }
         if request.candidate_goals.is_some()
-            && (request.arrival != nav::contract::ArrivalKind::Area
+            && (request.arrival != nav_planner::contract::ArrivalKind::Area
                 || request.loc_id.is_some()
                 || request.radius != 0)
         {
@@ -692,8 +691,7 @@ impl NativeActions {
     /// Resume a retained request cursor after a kept session boundary.
     /// The caller selects the request from the closed reconnect-policy table;
     /// interrupted sub-operations and non-kept resets must not call this.
-    #[cfg(feature = "load")]
-    pub(crate) fn resume_kept<M: NativeMachine>(
+    pub fn resume_kept<M: NativeMachine>(
         &mut self,
         kind: super::request::NativeKind,
         handle: &mut ActionHandle<M>,
@@ -919,12 +917,16 @@ mod tests {
         let mut budget = ledger::TickBudget::default();
         budget.observe(1);
         let mut cx = ActionContext {
+            condition: None,
+            poison_unknown_pulse: u8::MAX,
+            cure_poison: crate::survival::CurePoison::WhenNeeded,
             evidence,
             pin: &pin,
             snapshot: SnapshotView::new(None, evidence),
             retained: &mut retained,
             action_id: owner.id.get(),
             observed_walk_outcome_seq: 0,
+            observed_walk_cancel_reason: crate::native::WalkCancelReason::None,
             active_now: Duration::ZERO,
             wall_now: Instant::now(),
             ledger: &mut ledger,
@@ -1280,12 +1282,16 @@ mod tests {
         let mut budget = ledger::TickBudget::default();
         budget.observe(1);
         let mut cx = ActionContext {
+            condition: None,
+            poison_unknown_pulse: u8::MAX,
             evidence,
+            cure_poison: crate::survival::CurePoison::WhenNeeded,
             pin: &pin,
             snapshot: SnapshotView::new(snapshot, evidence),
             retained: &mut retained,
             action_id: 0,
             observed_walk_outcome_seq: 0,
+            observed_walk_cancel_reason: crate::native::WalkCancelReason::None,
             active_now,
             wall_now: Instant::now(),
             ledger,
@@ -1296,7 +1302,6 @@ mod tests {
         f(&mut cx)
     }
 
-    #[cfg(feature = "load")]
     #[test]
     fn kept_resume_preserves_cursor_revokes_old_authority_and_spends_transition() {
         use crate::native::request::NativeKind;
@@ -1799,7 +1804,7 @@ mod tests {
                 },
                 candidate_goals: None,
                 radius: 0,
-                arrival: nav::contract::ArrivalKind::Reach,
+                arrival: nav_planner::contract::ArrivalKind::Reach,
                 options: WalkOptions::default(),
                 required_after: cx.evidence(),
                 evidence: None,
@@ -2312,7 +2317,7 @@ mod tests {
                 candidate_goals: None,
                 loc_id: None,
                 radius: 0,
-                arrival: nav::contract::ArrivalKind::Reach,
+                arrival: nav_planner::contract::ArrivalKind::Reach,
                 options: WalkOptions::default(),
                 required_after: cx.evidence(),
                 evidence: None,
@@ -2412,7 +2417,7 @@ mod tests {
                             candidate_goals: None,
                             loc_id: None,
                             radius,
-                            arrival: nav::contract::ArrivalKind::Reach,
+                            arrival: nav_planner::contract::ArrivalKind::Reach,
                             options: WalkOptions::default(),
                             required_after: cx.evidence(),
                             evidence: None,
@@ -2474,7 +2479,7 @@ mod tests {
             candidate_goals: None,
             loc_id: None,
             radius: 0,
-            arrival: nav::contract::ArrivalKind::Reach,
+            arrival: nav_planner::contract::ArrivalKind::Reach,
             options: WalkOptions::default(),
             required_after: evidence,
             evidence: None,

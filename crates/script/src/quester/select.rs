@@ -220,12 +220,16 @@ mod tests {
         let mut ledger = None;
         let mut budget = TickBudget::default();
         let cx = ActionContext {
+            condition: None,
+            poison_unknown_pulse: u8::MAX,
+            cure_poison: crate::survival::CurePoison::WhenNeeded,
             evidence: stamp(),
             pin: &pin,
             snapshot: view,
             retained: &mut retained,
             action_id: 0,
             observed_walk_outcome_seq: 0,
+            observed_walk_cancel_reason: crate::native::WalkCancelReason::None,
             active_now: Duration::ZERO,
             wall_now: Instant::now(),
             ledger: &mut ledger,

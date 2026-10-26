@@ -50,6 +50,16 @@ impl ScriptRunState {
     pub fn is_active(self) -> bool {
         matches!(self, Self::Starting | Self::Running | Self::Paused)
     }
+
+    /// Starting, running, paused or stopping: the run still owns its slot.
+    /// This is the one definition of an "active script" for Stop eligibility
+    /// and for tying a published script walk to its run.
+    pub fn is_live(self) -> bool {
+        matches!(
+            self,
+            Self::Starting | Self::Running | Self::Paused | Self::Stopping
+        )
+    }
 }
 
 /// Where a script card's metadata came from.

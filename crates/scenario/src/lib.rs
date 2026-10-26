@@ -432,14 +432,14 @@ pub enum StepKind {
         #[allow(clippy::type_complexity)]
         send: Box<dyn Fn(&mut Client, &GameSnapshot) -> bool + Send + Sync>,
     },
-    /// Nav walk: arm `nav::router::find` over the collision + transport
+    /// Nav walk: arm `nav_planner::router::find` over the collision + transport
     /// graph derived from the baked pack and drive `Traveller::follow`
     /// one route step per client cycle until arrival. Identical to `Follow`;
     /// arm is `arrived(dest)`, the proof mirrors it, so a walk that ends
     /// anywhere but the destination fails the step with the terminal
     /// outcome's message.
     Walk { dest: WorldTile },
-    /// Whole-world nav: arm `nav::router::find` over the collision +
+    /// Whole-world nav: arm `nav_planner::router::find` over the collision +
     /// transport graph derived from the baked pack and drive
     /// `Traveller::follow` one route step per client cycle until the route terminates.
     /// The wait arm is `arrived(dest)`; the proof mirrors it, so a follow
@@ -483,6 +483,16 @@ pub enum StepKind {
         #[allow(clippy::type_complexity)]
         send: Box<dyn Fn(&mut Client, &GameSnapshot) -> bool + Send + Sync>,
     },
+    /// Native seed deposit through the open bank window. Pending bank-side
+    /// data re-arms once per observed game tick. An accepted send waits for
+    /// `wait.arm` without sending again, for at most two observed game ticks.
+    /// The runner owns the attempt so missing rows, missing Deposit All
+    /// operations and refused sends name their branch in the failure.
+    NativeSeedDeposit {
+        unnoted_id: i32,
+        quantity: i32,
+        note_id: Option<i32>,
+    },
     /// Host-only fleet observation. Sends no game action and advances only
     /// when `ready` accepts the evolving driven-slot snapshot. Companion
     /// closures may feed the same shared witness. `evidence` is the named
@@ -491,6 +501,18 @@ pub enum StepKind {
         evidence: &'static str,
         #[allow(clippy::type_complexity)]
         ready: Box<dyn Fn(&GameSnapshot) -> bool + Send + Sync>,
+        /// Read-only terminal summary of what this step is still
+        /// waiting for, plus any observation values it reports.
+        /// The runner appends the most recent reached summary to
+        /// the failure message (a step tick budget, the whole-run
+        /// deadline, or a later step), and records it as the pass
+        /// receipt's message. A failure receipt therefore names
+        /// the unmet witness terms instead of only the step, and a
+        /// pass receipt still records observation values, such as
+        /// a chance outcome that must never gate the run. It sends
+        /// nothing and must not change witness or game state.
+        /// `None` keeps the plain messages.
+        summary: Option<Box<dyn Fn() -> String + Send + Sync>>,
     },
     /// Scenario-only native lamp witness. Sends no game action. The runner
     /// latches one post-entry episode from its existing host hold input plus
@@ -609,9 +631,46 @@ fn gold_script_nav() -> ScenarioNav {
 /// under the old dirty-snapshot counting. The same number now bounds
 /// the wait by game time instead of by snapshot churn.
 const SCRIPT_GOLD_WATCH_TICKS: u32 = 150;
+/// Brimhaven agility-arena watch for the first ticket after the first
+/// Tag, in observed game ticks (one per `PLAYER_INFO`; see [`Wait`]).
+///
+/// Content bound: the arena clerk moves the flashing arrow to a new
+/// pillar every 98 `map_clock` ticks (`agilityarena_clerk.rs2:78-86`
+/// sets the next pillar time to `map_clock + 98`). The player pillar
+/// timer fires at the end of a period and keeps ticket eligibility
+/// only when a pillar was tagged in that period
+/// (`agilityarena.rs2:40-48`). The first tag sets eligibility and
+/// grants no ticket; a tag in the next period grants the ticket
+/// (`agilityarena.rs2:67-84`). A first tag just after one period
+/// begins and a second tag just before the next period ends can
+/// therefore be up to 2 * 98 = 196 game ticks apart. This watch
+/// starts after the first tag, so the bound from its own start is
+/// smaller. The value 220 adds a stated 24-game-tick margin over
+/// the 196-tick bound for timer re-arm and observed-tick alignment.
+/// The ordinary gold watch and the 180 s [`SCRIPT_GOLD_DEADLINE`]
+/// stay unchanged; the deadline can still end a worst-case run
+/// first. Only the `brimhaven_agility` ticket step uses this budget.
+const BRIMHAVEN_TICKET_WATCH_TICKS: u32 = 220;
 /// Seed + tele + drain + the short watch. Not a 6-minute soak. Wall-clock
 /// whole-scenario cap (independent of game-tick budgets).
 const SCRIPT_GOLD_DEADLINE: Duration = Duration::from_secs(180);
+/// FlaxRunner pair cell whole-run cap. The worst of three measured passing
+/// runs took 170.6 s in total: 155.5 s of script plus 15.1 s of setup
+/// (`FIX-025/f/flax/report.md`). That is only 9.4 s under the shared 180 s
+/// [`SCRIPT_GOLD_DEADLINE`], and the nightly run was still spinning flax
+/// when that cap ended it. 240 s is about 1.4x the worst measured total,
+/// a 69.4 s margin. Only `flax_runner` uses this cap; the other pair
+/// cells keep [`SCRIPT_GOLD_DEADLINE`].
+const FLAX_RUNNER_DEADLINE: Duration = Duration::from_secs(240);
+/// BrimhavenAgility whole-run cap. A valid run can need about 318 counted
+/// game ticks: up to 122 ticks outside the ticket watch (`run-1`, 272 ticks
+/// in 179.6 s with the old 150-tick watch) plus the 196-tick content bound
+/// on a late second tag ([`BRIMHAVEN_TICKET_WATCH_TICKS`]). At 600 ms that
+/// is about 191 s, plus 11.7-16.4 s measured outside counted ticks, so about
+/// 207 s; the shared 180 s [`SCRIPT_GOLD_DEADLINE`] would end such a run
+/// (`NIGHTLY-TRIAGE-1024/brimhaven/review-opus-r2.md`, round 3, R3-1).
+/// 240 s allows about 372 ticks. Only `brimhaven_agility` uses this cap.
+const BRIMHAVEN_AGILITY_DEADLINE: Duration = Duration::from_secs(240);
 /// SmithingBot product→fresh-bank watch after the first pack item appears.
 ///
 /// **Units:** this constant is a `budget_ticks` count of observed game
@@ -683,17 +742,23 @@ const SMITHING_PRODUCT_DEPOSIT_WATCH_TICKS: u32 = 240;
 /// The reverse dungeon wait remains 240 game ticks (144s). First-egg,
 /// empty, close and further-egg waits remain 150 game ticks.
 ///
-/// **Deadline:** the estimated run needs about 385s. The fixed deadline is
-/// 420s. The 600- and 240-game-tick waits allow 504s together, so the whole-run
-/// deadline can end the scenario before both waits exhaust. Keep that deadline
-/// unless live evidence shows the expected terminal predicate needs more time.
-/// Script `walkTo` `timeoutMs` 180_000 per hop is unchanged; diagnosis remains
-/// provisional. No product seed, forced post-Start bank, debug command or
-/// engine acceleration was used. The prior 1755 ladder stall (empty-pack cell)
-/// is not included.
+/// **Deadline:** the text above sizes the cycle for the old fresh-account
+/// seed (HP 10), which FIX-025-F-HERBLORE replaced with upstream's level-40
+/// account. At 40 the script spends its lobsters on pack-full eats instead
+/// of HP eats, so a trip gathers 26 to 27 eggs and the measured full cycle
+/// grew: four completed sizing runs took 627, 622, 627 and 627 game ticks
+/// (longest wall 403.05s), and a fifth had looted 26 eggs, banked and
+/// returned but was still short of the terminal egg at 656 game ticks when
+/// the old 420s wall expired (420.73s). The fixed deadline is 600s: 196.95s
+/// above the longest complete run and 179.27s above the expired run. The
+/// per-watch budgets can still sum past it (deposit 360s, empty and close
+/// 90s each, return 144s), so on a stall the whole-run deadline ends the
+/// scenario first. Script `walkTo` `timeoutMs` 180_000 per hop is unchanged. No
+/// forced post-Start bank, debug command or engine acceleration was used.
+/// The prior 1755 ladder stall (empty-pack cell) is not included.
 const HERBLORE_EGG_DEPOSIT_WATCH_TICKS: u32 = 600;
 const HERBLORE_EGG_RETURN_WATCH_TICKS: u32 = 240;
-const HERBLORE_EGG_DEADLINE: Duration = Duration::from_secs(420);
+const HERBLORE_EGG_DEADLINE: Duration = Duration::from_secs(600);
 /// B2's completed HerbloreSecondaries cycle needed 412 observed game ticks
 /// (`FIX-025/integrate-b2/engine-a-600ms-b2/cells/herblore_secondaries/receipt.json`).
 /// The newt branch still returned from Draynor at its old 180s deadline.
@@ -787,8 +852,7 @@ const ARDY_THIEVER_FIGHT_DEADLINE: Duration = Duration::from_secs(240);
 /// **Deadline:** pre-Start about 12s. Gear trip about 30s. Fletch about 5s.
 /// Deposit trip and return about 35s. Two geometric chops at 2.4s a roll.
 /// 420s leaves about 140 rolls for two logs, so P(fewer than 2) < 0.1%.
-/// The per-arm budgets are the binding limit. Same 420s pattern as
-/// [`HERBLORE_EGG_DEADLINE`].
+/// The per-arm budgets are the binding limit.
 const MAGIC_TREE_CHOP_WATCH_GAME_TICKS: u32 = 450;
 const MAGIC_TREE_CHOP_DEADLINE: Duration = Duration::from_secs(420);
 
@@ -946,58 +1010,147 @@ fn native_bank_seed(
     }
 }
 
+/// Progress of one native seed-deposit attempt. Pending data re-arms the
+/// attempt. An accepted send latches the step until its bank proof arrives
+/// or the step's existing observed-game-tick budget expires.
+///
+/// Deposit All moves the item with `inv_moveitem_uncert`, without `p_delay`
+/// (`interface_bank/scripts/bank_deposit.rs2:4,18-27`, `bank.rs2:87-107`,
+/// move at `bank.rs2:102`). The bank inventory change is the proof signal,
+/// not a separate post-send timer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SeedDepositProgress {
+    /// The fresh bank already holds the seed and the pack no longer
+    /// does. The attempt sent nothing.
+    AlreadyDeposited,
+    /// Bank-side data is not ready yet, or the dispatch raced the
+    /// client's live state. The attempt sent no deposit.
+    BankPending,
+    /// The attempt sent the Deposit All interaction for the seed row.
+    DepositSent,
+}
+
+/// The branch of a native seed-deposit attempt that failed after the
+/// bank reported ready. The runner puts this text in the step
+/// failure, so the receipt names the branch instead of a bare
+/// driver rejection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SeedDepositFailure {
+    /// No bank-side row matches the seed's inventory id.
+    MissingRow { inv_id: i32 },
+    /// A matching bank-side row exists, but none carries Deposit All.
+    MissingOperation { inv_id: i32 },
+    /// The Deposit All interaction was refused before dispatch.
+    SendRefused { inv_id: i32, reason: SendReason },
+}
+
+impl std::fmt::Display for SeedDepositFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SeedDepositFailure::MissingRow { inv_id } => write!(
+                f,
+                "native seed deposit: no bank-side row for item {inv_id} after bank-side readiness"
+            ),
+            SeedDepositFailure::MissingOperation { inv_id } => write!(
+                f,
+                "native seed deposit: bank-side row for item {inv_id} has no Deposit All operation"
+            ),
+            SeedDepositFailure::SendRefused { inv_id, reason } => write!(
+                f,
+                "native seed deposit: Deposit All send for item {inv_id} refused: {reason:?}"
+            ),
+        }
+    }
+}
+
+/// True while the deposit pane cannot yet be judged: the bank is
+/// closed or its main table has no current full, the side root is
+/// down, or no packet for the side component has been observed.
+/// These are the signals the native snapshot view uses to decide
+/// that bank-side rows are posted (open withdraw component, raised
+/// side root, side packet generation), plus the main table's own
+/// loaded flag. A pending bank is never accepted as ready and never
+/// hard-fails the deposit. The step's game-tick budget bounds the
+/// wait.
+fn native_seed_bank_side_pending(snapshot: &GameSnapshot) -> bool {
+    snapshot.bank_component_id() < 0
+        || !snapshot.bank_loaded()
+        || snapshot.modals().side < 0
+        || snapshot.bank_side_packet_generation().is_none()
+}
+
+/// One native seed-deposit attempt against the open bank window.
+/// Pending bank-side data returns [`SeedDepositProgress::BankPending`]
+/// and sends nothing. Once the readiness signals report complete
+/// data, a missing row, a missing Deposit All operation, or a
+/// refused send is a real failure and names its branch. The deposit
+/// itself keeps the exact-id row match: bulk fixtures sit in the
+/// bank-side pack as certificates, not as unnoted bases.
+pub(crate) fn native_seed_deposit_attempt(
+    c: &mut Client,
+    snapshot: &GameSnapshot,
+    unnoted_id: i32,
+    quantity: i32,
+    note_id: Option<i32>,
+) -> Result<SeedDepositProgress, SeedDepositFailure> {
+    let inv_id = note_id.unwrap_or(unnoted_id);
+    if (Proof::BankItemId {
+        id: unnoted_id,
+        count: quantity,
+    })
+    .check(snapshot, None)
+        && (Proof::ItemIdAtMost {
+            id: inv_id,
+            count: 0,
+        })
+        .check(snapshot, None)
+    {
+        return Ok(SeedDepositProgress::AlreadyDeposited);
+    }
+    if native_seed_bank_side_pending(snapshot) {
+        return Ok(SeedDepositProgress::BankPending);
+    }
+    let mut rows = snapshot.bank_side().iter().filter(|item| {
+        item.def.id == inv_id
+            && match note_id {
+                Some(_) => item.def.noted && item.def.certificate_link == unnoted_id,
+                None => !item.def.noted,
+            }
+    });
+    let Some(first) = rows.next() else {
+        return Err(SeedDepositFailure::MissingRow { inv_id });
+    };
+    let Some((item, op)) = std::iter::once(first)
+        .chain(rows)
+        .find_map(|item| bank_deposit_all_op(&item.actions).map(|op| (item, op)))
+    else {
+        return Err(SeedDepositFailure::MissingOperation { inv_id });
+    };
+    let mut ix = Interactions::new(snapshot, c);
+    match ix.interact(OpTarget::Item(item), ActionSpec::Operation(op)) {
+        SendResult::Sent { .. } => Ok(SeedDepositProgress::DepositSent),
+        // The snapshot raced the client's live state between rebuild
+        // and dispatch. Retry on the next observed game tick. The
+        // shop-banker opener treats the same reasons as transient.
+        SendResult::Refused {
+            reason: SendReason::SceneUnavailable | SendReason::OffScene | SendReason::StaleTarget,
+            ..
+        } => Ok(SeedDepositProgress::BankPending),
+        SendResult::Refused { reason, .. } => {
+            Err(SeedDepositFailure::SendRefused { inv_id, reason })
+        }
+    }
+}
+
 fn native_bank_deposit(name: &'static str, seeds: Vec<NativeSeed>) -> Vec<Step> {
     seeds
         .into_iter()
         .map(|seed| Step {
             name,
-            kind: StepKind::Repeat {
-                send: Box::new(move |c, snapshot| {
-                    let inv_id = seed.note_id.unwrap_or(seed.unnoted_id);
-                    if (Proof::BankItemId {
-                        id: seed.unnoted_id,
-                        count: seed.quantity,
-                    })
-                    .check(snapshot, None)
-                        && (Proof::ItemIdAtMost {
-                            id: inv_id,
-                            count: 0,
-                        })
-                        .check(snapshot, None)
-                    {
-                        return true;
-                    }
-                    // Open bank UI without a current full is not ready:
-                    // bank_side is empty and deposit would hard-fail the
-                    // Repeat send. Soft-wait on existing session signals;
-                    // never invent rows or accept a closed/stale bank.
-                    if snapshot.bank_component_id() >= 0 && !snapshot.bank_loaded() {
-                        return true;
-                    }
-                    let mut ix = Interactions::new(snapshot, c);
-                    snapshot
-                        .bank_side()
-                        .iter()
-                        .filter(|item| {
-                            // Bank-side rows are the pack: bulk fixtures sit
-                            // there as certificates, not as unnoted bases.
-                            item.def.id == inv_id
-                                && match seed.note_id {
-                                    Some(_) => {
-                                        item.def.noted
-                                            && item.def.certificate_link == seed.unnoted_id
-                                    }
-                                    None => !item.def.noted,
-                                }
-                        })
-                        .filter_map(|item| bank_deposit_all_op(&item.actions).map(|op| (item, op)))
-                        .any(|(item, op)| {
-                            matches!(
-                                ix.interact(OpTarget::Item(item), ActionSpec::Operation(op)),
-                                SendResult::Sent { .. }
-                            )
-                        })
-                }),
+            kind: StepKind::NativeSeedDeposit {
+                unnoted_id: seed.unnoted_id,
+                quantity: seed.quantity,
+                note_id: seed.note_id,
             },
             wait: Wait {
                 arm: Proof::BankItemId {

@@ -320,7 +320,7 @@ pub(super) fn wire_runtime(
                         bytes.into_iter().map(serde_json::Value::from).collect(),
                     )
                 })
-                .map_err(rustyscript::Error::Runtime)
+                .map_err(|error| rustyscript::Error::Runtime(error.to_string()))
         })
         .map_err(|e| format!("register BroadcastChannel codec: {e}"))?;
     runtime
@@ -707,7 +707,7 @@ pub(super) fn wire_runtime(
                     .unwrap_or("");
                 match crate::canvas::measure_text(text) {
                     Ok(w) => Ok(serde_json::json!(w)),
-                    Err(msg) => Err(rustyscript::Error::Runtime(msg)),
+                    Err(msg) => Err(rustyscript::Error::Runtime(msg.to_string())),
                 }
             },
         )

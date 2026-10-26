@@ -18,10 +18,12 @@
 
 #[cfg(feature = "memory-profile")]
 pub mod bench;
+pub mod bot_projection;
 pub mod bulk;
 pub mod capacity;
 pub mod command;
 pub mod driver;
+pub mod error_expiry;
 pub mod fleet;
 pub mod fleet_plan;
 pub mod frames;
@@ -31,6 +33,7 @@ pub mod launch;
 pub mod live;
 pub mod log;
 pub mod log_file;
+mod login_notice;
 pub mod map_bake;
 pub mod map_decode;
 pub mod marked;
@@ -61,10 +64,12 @@ pub mod views;
 pub mod walk_map;
 pub mod walk_permissions;
 
+pub use bot_projection::{BotProjection, LogoutEligibility, StopEligibility};
 pub use bulk::{BulkOutcome, BulkReport, BulkRow};
 pub use capacity::{CapacityNotice, CapacityWarning, RenderPolicyLabel};
 pub use command::{CommandBook, CommandReport, FleetOrder, OperatorCommand};
 pub use driver::HeadlessDriver;
+pub use error_expiry::{ErrorExpiry, ERROR_MESSAGE_TIMEOUT};
 pub use fleet::{
     contains_ci, fill_visible_row_indices, fleet_row_matches, state_label, Fleet, FleetCard,
     FleetFilter, FleetMarkCounts, FleetModel, MarkOp, MarkPredicate, ShownMarks,
@@ -88,7 +93,8 @@ pub use nav_prefs::{nav_preference, NavPreference};
 pub use operations::{ActionKind, MemberOutcome, OperationId, OperationReport, Outcome};
 pub use prefs::UiPreferences;
 pub use profile_draft::{
-    GuardianPolicy, ProfileDraft, ProfileView, SettingsDraft, GUARDIAN_EVENTS,
+    CurePoison, GuardianPolicy, ProfileDraft, ProfileView, SettingsDraft, SurvivalDraft,
+    SurvivalSettings, GUARDIAN_EVENTS, SURVIVAL_FIELDS,
 };
 pub use profile_editor::{FormLeave, FormOpen, LeavePrompt, ProfileEditor, SaveRefused};
 pub use profile_form::{
@@ -109,7 +115,7 @@ pub use selection::{
 pub use session::{
     pick_focus, ArmMirror, DrawPolicy, GameInputEvent, GuardianEdit, MapDesk, MemoryNotice,
     Notice as OperatorNotice, OperatorSession, Removal, ScriptStart, Selection, SlotTransition,
-    StartSettled, SubmitError, Submitted, Targets, Transition, SLOT_REMOVE_TIMEOUT,
+    StartSettled, SubmitError, Submitted, SurvivalEdit, Targets, Transition, SLOT_REMOVE_TIMEOUT,
 };
 pub use slot_view::{SlotView, StatusBuf};
 pub use surface::{HeadlessSurface, SlotAttach, SlotSurface, SpawnProfile};
@@ -119,3 +125,6 @@ pub use walk_permissions::{
     GLOBAL_DANGER_WARNING, GLOBAL_PERMISSION_LABELS, ROUTING_SCOPE_NOTE, SCRIPT_SCOPE_NOTICE,
     SURVIVABLE_ROUTING_NOTICE, SURVIVABLE_ROUTING_TOOLTIP,
 };
+
+#[cfg(test)]
+mod survival_live_tests;

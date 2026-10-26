@@ -168,9 +168,10 @@ checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
 name = "api"
-version = "0.2.4"
+version = "0.2.7"
 dependencies = [
  "allocation-counter",
+ "api",
  "client",
  "flate2",
  "parking_lot",
@@ -675,7 +676,7 @@ dependencies = [
 
 [[package]]
 name = "client-adapter"
-version = "0.2.4"
+version = "0.2.7"
 dependencies = [
  "client",
  "libc",
@@ -1482,7 +1483,7 @@ checksum = "d0881ea181b1df73ff77ffaaf9c7544ecc11e82fba9b5f27b262a3c73a332555"
 
 [[package]]
 name = "e2e"
-version = "0.2.4"
+version = "0.2.7"
 dependencies = [
  "api",
  "client",
@@ -1490,7 +1491,8 @@ dependencies = [
  "host-play",
  "image",
  "libc",
- "nav",
+ "nav-bake",
+ "nav-planner",
  "scenario",
  "serde",
  "serde_json",
@@ -1698,7 +1700,7 @@ dependencies = [
 
 [[package]]
 name = "frontend-core"
-version = "0.2.4"
+version = "0.2.7"
 dependencies = [
  "api",
  "client",
@@ -1706,7 +1708,8 @@ dependencies = [
  "host",
  "host-play",
  "libc",
- "nav",
+ "nav-bake",
+ "nav-planner",
  "parking_lot",
  "png",
  "scenario",
@@ -2064,8 +2067,9 @@ dependencies = [
 
 [[package]]
 name = "host"
-version = "0.2.4"
+version = "0.2.7"
 dependencies = [
+ "allocation-counter",
  "api",
  "client",
  "client-adapter",
@@ -2080,7 +2084,7 @@ dependencies = [
 
 [[package]]
 name = "host-play"
-version = "0.2.4"
+version = "0.2.7"
 dependencies = [
  "allocation-counter",
  "api",
@@ -2090,7 +2094,9 @@ dependencies = [
  "crossterm",
  "host",
  "libc",
- "nav",
+ "nav-bake",
+ "nav-executor",
+ "nav-planner",
  "parking_lot",
  "png",
  "rand_core",
@@ -2713,17 +2719,43 @@ dependencies = [
 ]
 
 [[package]]
-name = "nav"
-version = "0.2.4"
+name = "nav-bake"
+version = "0.2.7"
+dependencies = [
+ "allocation-counter",
+ "api",
+ "client",
+ "nav-planner",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 2.0.20",
+]
+
+[[package]]
+name = "nav-executor"
+version = "0.2.7"
+dependencies = [
+ "api",
+ "client",
+ "nav-planner",
+ "thiserror 2.0.20",
+]
+
+[[package]]
+name = "nav-planner"
+version = "0.2.7"
 dependencies = [
  "allocation-counter",
  "api",
  "client",
  "libc",
  "png",
+ "proc-macro2",
  "serde",
  "serde_json",
  "sha2",
+ "syn 2.0.119",
  "thiserror 2.0.20",
 ]
 
@@ -3393,7 +3425,7 @@ dependencies = [
 
 [[package]]
 name = "panel"
-version = "0.2.4"
+version = "0.2.7"
 dependencies = [
  "api",
  "arboard",
@@ -3404,7 +3436,8 @@ dependencies = [
  "frontend-core",
  "host-play",
  "libc",
- "nav",
+ "nav-bake",
+ "nav-planner",
  "objc2 0.5.2",
  "objc2-app-kit 0.2.2",
  "objc2-foundation 0.2.2",
@@ -4285,12 +4318,13 @@ dependencies = [
 
 [[package]]
 name = "scenario"
-version = "0.2.4"
+version = "0.2.7"
 dependencies = [
  "api",
  "client",
  "image",
- "nav",
+ "nav-executor",
+ "nav-planner",
  "script",
  "serde",
  "serde_json",
@@ -4344,7 +4378,7 @@ checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 
 [[package]]
 name = "script"
-version = "0.2.4"
+version = "0.2.7"
 dependencies = [
  "ab_glyph",
  "allocation-counter",
@@ -4354,7 +4388,7 @@ dependencies = [
  "deno_core",
  "flatbuffers",
  "libc",
- "nav",
+ "nav-planner",
  "parking_lot",
  "rand",
  "rustyscript",
@@ -4364,6 +4398,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "syn 2.0.119",
  "thiserror 2.0.20",
  "tiny-skia",
  "tokio",
@@ -5670,7 +5705,7 @@ checksum = "d2df906b07856748fa3f6e0ad0cbaa047052d4a7dd609e231c4f72cee8c36f31"
 
 [[package]]
 name = "tui"
-version = "0.2.4"
+version = "0.2.7"
 dependencies = [
  "api",
  "client",
@@ -5679,7 +5714,8 @@ dependencies = [
  "host",
  "host-play",
  "libc",
- "nav",
+ "nav-bake",
+ "nav-planner",
  "ratatui",
  "serde_json",
 ]
@@ -5851,7 +5887,7 @@ checksum = "ba73ea9cf16a25df0c8caa16c51acb937d5712a8429db78a3ee29d5dcacd3a65"
 
 [[package]]
 name = "vault"
-version = "0.2.4"
+version = "0.2.7"
 dependencies = [
  "aes",
  "aes-gcm",

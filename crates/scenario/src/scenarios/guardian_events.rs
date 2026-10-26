@@ -37,6 +37,15 @@ const BONES_ID: i32 = 526;
 const KEBAB_ID: i32 = 1971;
 const BEER_ID: i32 = 1917;
 
+const STRANGE_BOX_ID: i32 = 3062;
+const STRANGE_BOX_LOAD_FILE: &str = "guardian_claim_toggle.js";
+const STRANGE_BOX_ARMED_RECEIPT: &str = "guardian-box:armed";
+const STRANGE_BOX_OWNED_RECEIPT: &str = "guardian-box:ignored";
+const STRANGE_BOX_ELIGIBLE_RECEIPT: &str = "guardian-box:eligible";
+const STRANGE_BOX_RESUMED_RECEIPT: &str = "guardian-box:resumed";
+const STRANGE_BOX_WATCH_TICKS: u32 = 120;
+const STRANGE_BOX_RECEIPT_TICKS: u32 = 60;
+
 /// The host-play harpoon cells' Catherby stand (`gatherer_live.rs`
 /// `CATHERBY_HARPOON_START`), on the shore within eight tiles of the
 /// `0_40_53_rarefish` Cage/Harpoon spots, which carry the whirlpool type
@@ -389,6 +398,141 @@ pub(crate) fn guardian_event_cell(
             start_script: Some(activity.start_script()),
             script_settings_inject: activity.inject(),
             fixture_loadouts: (activity == Activity::Thieving).then_some(THIEVING_LOADOUTS),
+            nav: gold_script_nav(),
+            ..Default::default()
+        },
+    }
+}
+
+/// Prove a Load ignore-list handoff, then stop a new ignoring Load run with
+/// another held box and require the Guardian to consume that box too.
+pub(crate) fn guardian_event_strange_box_load_claim_scenario() -> Scenario {
+    let mut steps = script_live_seed_steps();
+    steps.push(start_catalog_step());
+    let receipt_step = |name: &'static str, prefix: &'static str| Step {
+        name,
+        kind: StepKind::Perform {
+            send: Box::new(|_, _| true),
+        },
+        wait: Wait {
+            arm: Proof::ScriptReceipt { prefix },
+            budget_ticks: STRANGE_BOX_RECEIPT_TICKS,
+        },
+    };
+    steps.push(receipt_step(
+        "prove the Load ignore policy is armed before seeding the box",
+        STRANGE_BOX_ARMED_RECEIPT,
+    ));
+    steps.push(Step {
+        name: "seed one account-owned Strange box while Load ignores it",
+        kind: StepKind::Perform {
+            send: Box::new(|client, _| cheat(client, "give macro_cube 1").is_sent()),
+        },
+        wait: Wait {
+            arm: Proof::ItemId {
+                id: STRANGE_BOX_ID,
+                count: 1,
+            },
+            budget_ticks: 60,
+        },
+    });
+    steps.push(receipt_step(
+        "prove the Load script initially ignores the persistent Strange box",
+        STRANGE_BOX_OWNED_RECEIPT,
+    ));
+    steps.push(Step {
+        name: "observe the script-owned box hand off to native Guardian",
+        kind: StepKind::ObserveRandomEvent {
+            cell: RandomEventCell {
+                event: "strange box",
+                trigger: Trigger::Seeded,
+                oracle: Oracle::StrangeBoxHandoff,
+                skill: FISHING_STAT,
+            },
+        },
+        wait: Wait {
+            arm: Proof::IngameScene2,
+            budget_ticks: STRANGE_BOX_WATCH_TICKS,
+        },
+    });
+    steps.push(receipt_step(
+        "prove ignoredRandoms clears while the same Strange box persists",
+        STRANGE_BOX_ELIGIBLE_RECEIPT,
+    ));
+    steps.push(receipt_step(
+        "prove the Load script resumes after native Guardian solves the box",
+        STRANGE_BOX_RESUMED_RECEIPT,
+    ));
+    steps.push(Step {
+        name: "stop the first Load run after its claim handoff",
+        kind: StepKind::StopScript,
+        wait: Wait {
+            arm: Proof::ScriptIdle,
+            budget_ticks: 10,
+        },
+    });
+    steps.push(start_catalog_step());
+    steps.push(receipt_step(
+        "prove the new Load run ignores boxes before the Stop case",
+        STRANGE_BOX_ARMED_RECEIPT,
+    ));
+    steps.push(Step {
+        name: "seed another account-owned Strange box for the Stop case",
+        kind: StepKind::Perform {
+            send: Box::new(|client, _| cheat(client, "give macro_cube 1").is_sent()),
+        },
+        wait: Wait {
+            arm: Proof::ItemId {
+                id: STRANGE_BOX_ID,
+                count: 1,
+            },
+            budget_ticks: 60,
+        },
+    });
+    steps.push(receipt_step(
+        "prove the new Load run owns the box before Stop",
+        STRANGE_BOX_OWNED_RECEIPT,
+    ));
+    steps.push(Step {
+        name: "stop Load while its ignore claim owns the held Strange box",
+        kind: StepKind::StopScript,
+        wait: Wait {
+            arm: Proof::ScriptIdle,
+            budget_ticks: 10,
+        },
+    });
+    steps.push(Step {
+        name: "prove Guardian solves the stopped script's held Strange box",
+        kind: StepKind::Perform {
+            send: Box::new(|_, _| true),
+        },
+        wait: Wait {
+            arm: Proof::ItemIdAtMost {
+                id: STRANGE_BOX_ID,
+                count: 0,
+            },
+            budget_ticks: STRANGE_BOX_WATCH_TICKS,
+        },
+    });
+
+    Scenario {
+        name: "guardian_event_strange_box_load_claim",
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: true,
+        },
+        steps,
+        proof: Proof::ItemIdAtMost {
+            id: STRANGE_BOX_ID,
+            count: 0,
+        },
+        companions: vec![],
+        settings: ScenarioSettings {
+            full_rate: true,
+            require_mainland_base: true,
+            deadline: Duration::from_secs(300),
+            start_script: None,
+            start_file: Some(STRANGE_BOX_LOAD_FILE),
             nav: gold_script_nav(),
             ..Default::default()
         },

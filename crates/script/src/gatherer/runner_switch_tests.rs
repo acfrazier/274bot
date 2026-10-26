@@ -233,7 +233,7 @@ fn assert_return_recovery_submitted(gatherer: &Gatherer) {
         gatherer.last_event.as_ref(),
         "return recovery action submitted after transient Stalled"
     );
-    assert_eq!(gatherer.scratch.return_recovery_actions, 1);
+    assert_eq!(gatherer.scratch.return_stall_recovery.actions(), 1);
 }
 fn catherby_npc(index: usize, type_id: usize, tile: WorldTile) -> NpcView {
     NpcView {
@@ -859,7 +859,7 @@ fn resource_approach_arrival_selects_and_clicks_without_a_settle_tick() {
                             _ => None,
                         },
                         radius: 1,
-                        arrival: nav::contract::ArrivalKind::Reach,
+                        arrival: nav_planner::contract::ArrivalKind::Reach,
                         options: crate::native::WalkOptions::default(),
                         required_after: tick.cx.evidence(),
                         evidence: None,
@@ -1471,7 +1471,7 @@ fn end_blocked_return_stall_is_terminal_not_a_transient_replan() {
             .map(|failure| failure.code.as_ref()),
         Some("return-failed")
     );
-    assert_eq!(gatherer.scratch.return_recovery_actions, 0);
+    assert_eq!(gatherer.scratch.return_stall_recovery.actions(), 0);
     if let Some(ledger) = ledger {
         assert!(ledger.outbox.is_empty());
     }
@@ -1750,4 +1750,84 @@ fn unbankable_items_report_supply_reason_when_withdrawals_fill_the_pack() {
         "supply withdrawals filled the inventory; no space remains for gathering"
     );
     assert!(matches!(gatherer.active, Active::None));
+}
+
+#[test]
+fn power_gatherer_rejects_bank_edit_at_lower_mine() {
+    let (power_config, bank_config) = FamilyPreparation::run(|families| {
+        let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+        let mut cx = crate::native::PrepareContext {
+            pin: selected.selected_pin().unwrap(),
+            selected,
+            banks: Arc::default(),
+            families,
+        };
+        let mut power_settings = crate::native::SettingsBag::new();
+        for (key, value) in [
+            ("skill", serde_json::json!("Mining")),
+            ("miningResources", serde_json::json!(["copper"])),
+            ("location", serde_json::json!("Site")),
+            (
+                "site",
+                serde_json::json!("mining.desert_mining_camp.underground"),
+            ),
+            ("radius", serde_json::json!(20)),
+            ("disposition", serde_json::json!("Power")),
+        ] {
+            power_settings.insert(key.into(), value);
+        }
+        let power_config =
+            super::super::card::prepare(&mut cx, 1, Arc::new(power_settings)).unwrap();
+        let mut bank_settings = crate::native::SettingsBag::new();
+        for (key, value) in [
+            ("skill", serde_json::json!("Mining")),
+            ("miningResources", serde_json::json!(["copper"])),
+            ("location", serde_json::json!("Site")),
+            (
+                "site",
+                serde_json::json!("mining.desert_mining_camp.underground"),
+            ),
+            ("radius", serde_json::json!(20)),
+            ("disposition", serde_json::json!("Bank")),
+        ] {
+            bank_settings.insert(key.into(), value);
+        }
+        let bank_config = super::super::card::prepare(&mut cx, 2, Arc::new(bank_settings)).unwrap();
+        (power_config, bank_config)
+    })
+    .unwrap()
+    .join()
+    .unwrap();
+    let bank_start_error = match super::super::card::create(
+        RunKey {
+            slot: 1,
+            run: 1,
+            session: 1,
+        },
+        Arc::clone(&bank_config),
+        &mut crate::native::RetainedMemory::default(),
+    ) {
+        Err(crate::native::StartError::Config(error)) => error,
+        Err(error) => panic!("unexpected Bank-mode Start error: {error}"),
+        Ok(_) => panic!("Bank-mode Start unexpectedly accepted the lower mine"),
+    };
+    let mut gatherer = Gatherer::new(
+        RunKey {
+            slot: 1,
+            run: 1,
+            session: 1,
+        },
+        Arc::clone(&power_config),
+        Arc::clone(power_config.get::<Arc<Prepared>>().unwrap()),
+        GatherRetained::default(),
+    );
+
+    let edit_error = match gatherer.configure(Arc::clone(&bank_config)) {
+        Err(error) => error,
+        Ok(_) => panic!("the running Power Gatherer accepted Bank mode at the lower mine"),
+    };
+
+    assert_eq!(edit_error, bank_start_error);
+    assert_eq!(gatherer.settings().disposition, "Power");
+    assert!(gatherer.pending.is_none());
 }

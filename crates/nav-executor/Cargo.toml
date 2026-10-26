@@ -1,0 +1,18 @@
+[package]
+name = "nav-executor"
+version.workspace = true
+edition = "2021"
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+api = { path = "../api" }
+nav-planner = { path = "../nav-planner" }
+client = { workspace = true }
+thiserror = "=2.0.20"
+
+[dev-dependencies]
+api = { path = "../api", features = ["test-support"] }
+nav-planner = { path = "../nav-planner", features = ["test-support"] }

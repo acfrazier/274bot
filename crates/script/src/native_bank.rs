@@ -16,6 +16,7 @@ use api::named_banks::{BankOperation, BankPreferences, NamedBank, NamedBankFacts
 use api::quest_progress::EvidenceStamp;
 use api::selected::Truth;
 use api::snapshot::{LocView, QuestListStatus, QuestStatusView, StatView, WorldTile};
+use serde_json::{json, Value};
 use std::num::NonZeroU64;
 use std::sync::Arc;
 use std::task::Poll;
@@ -54,14 +55,13 @@ const SELECT_BOUND: Duration = Duration::from_secs(5);
 /// reconnect, `Player.ts:562`; an operator cheat, `ClientCheatHandler.ts`).
 pub const MAX_BANK_REOPENS: u8 = 2;
 
-pub(crate) fn air_distance_squared(a: WorldTile, b: WorldTile) -> i64 {
+pub fn air_distance_squared(a: WorldTile, b: WorldTile) -> i64 {
     let dx = i64::from(a.x) - i64::from(b.x);
     let dz = i64::from(a.z) - i64::from(b.z);
     dx * dx + dz * dz
 }
 
-#[cfg(feature = "load")]
-pub(crate) fn nearest_eligible_bank(
+pub fn nearest_eligible_bank(
     facts: &NamedBankFacts,
     from: WorldTile,
     mut eligible: impl FnMut(&NamedBank) -> bool,
@@ -72,6 +72,40 @@ pub(crate) fn nearest_eligible_bank(
         .filter(|bank| eligible(bank))
         .min_by_key(|bank| air_distance_squared(from, bank.air_tile()))
         .copied()
+}
+
+pub fn bank_value(bank: &NamedBank) -> Value {
+    let mut value = json!({"name": bank.name, "tile": {"x": bank.tile.x, "z": bank.tile.z, "level": bank.tile.level}});
+    if let Some(definition) = bank.definition {
+        if let Some(approach) = definition.approach {
+            value["approach"] = json!({"x": approach.x, "z": approach.z, "level": approach.level});
+        }
+        if let Some(npc) = definition.npc {
+            value["npcAccess"] = json!({"name": npc.name, "op": npc.op});
+            if let Some(choose) = definition.choose {
+                value["npcAccess"]["choose"] = json!(choose);
+            }
+        } else if let Some(object) = definition.object {
+            value["access"] = json!({"name": object.name, "op": object.op});
+            if let Some(open) = definition.open_first {
+                value["access"]["openFirst"] = json!({"name": open.name, "op": open.op});
+            }
+        }
+        if definition.skill.is_some() || definition.quest.is_some() || definition.setting.is_some()
+        {
+            value["requires"] = json!({});
+            if let Some((_, level)) = definition.skill {
+                value["requires"]["skill"] = json!({"name": "fishing", "level": level});
+            }
+            if let Some(quest) = definition.quest {
+                value["requires"]["quest"] = json!(quest);
+            }
+            if let Some(setting) = definition.setting {
+                value["requires"]["setting"] = json!(setting);
+            }
+        }
+    }
+    value
 }
 
 #[derive(Clone)]

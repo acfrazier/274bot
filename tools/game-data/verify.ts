@@ -1,18 +1,21 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { verifyCacheIdentity } from './cache-identity.ts';
-import { extractTalkKeyFacts, extractTrailFacts, extractTrioGiversFacts, assertTalkKeyPins, assertTrioGiverPins, trailContentFiles, loadEquipmentNamesCurated, parseFrozenEquipmentNameArrays, assertPinned, revisions, requestedRevisions } from './generate.ts';
+import { extractTalkKeyFacts, extractTrailFacts, extractTrioGiversFacts, assertTalkKeyPins, assertTrioGiverPins, trailContentFiles, loadEquipmentNamesCurated, parseFrozenEquipmentNameArrays, assertPinned, assertServerOrderedPinned, revisions, requestedRevisions } from './generate.ts';
 import { parsePack, walkContentFiles } from './extractors/common.ts';
 import { parseCombatScripts } from './extractors/combat.ts';
 import { extractNpcNamesFacts } from './extractors/npc-names.ts';
 import { extractGatheringFamily, compareCodepoint, gatherResources, gatherSites, hiddenSitesRecord, HIDDEN_SITES_FILE, miningHazards, SITE_OVERRIDES, type GatherSiteWire } from './extractors/gathering.ts';
 import { extractQuestIdentityFacts, questIdentityContentFiles } from './extractors/quests.ts';
-import { assertRs2b0tPinned, bankCatalogRust, cookCatalogRust, extractBankCatalog, extractBankPlacements, extractCookCatalog, extractCookSurfaces, familyBytes, familyInputs, requireEnvPath, BASE_ENGINE_INPUT_PATHS, DEBUG_ENGINE_INPUT_PATHS, DEBUG_SCHEMA_VERSION, baseProvenanceInputs } from './generate.ts';
+import { assertRs2b0tPinned, bankCatalogRust, cookCatalogRust, extractBankCatalog, extractBankPlacements, extractCookCatalog, extractCookSurfaces, familyBytes, familyInputs, requireEnvPath, BASE_ENGINE_INPUT_PATHS, DEBUG_ENGINE_INPUT_PATHS, DEBUG_SCHEMA_VERSION, QUESTS_SCHEMA, baseProvenanceInputs, serverOrderedProvenanceInputs, runtimeNpcOperations, npcEvidenceBytes } from './generate.ts';
 import { ENGINE_DEBUG_COMMANDS, extractDebugCatalog, engineHandlerRelative } from './extractors/debug.ts';
 import { extractQuestStartFacts, questStartContentFiles } from './extractors/quest-starts.ts';
 import { extractDialogueUiFacts } from './extractors/dialogue-ui.ts';
+import { loadServerOrderedFacts } from './extractors/server-ordered.ts';
+import { extractNpcTransformClosure } from './extractors/npc-transforms.ts';
 const root = path.resolve(import.meta.dirname, '../..');
 const expected = Object.fromEntries(revisions.map(spec => [spec.revision, {
     engine: spec.expectedEngine, content: spec.expectedContent,
@@ -36,6 +39,17 @@ const expectedDropNames: Record<number, Record<string, string[]>> = {
     },
 };
 function digest(file: string) { const data = fs.readFileSync(file); return { bytes: data.length, sha256: crypto.createHash('sha256').update(data).digest('hex') }; }
+function npcEvidenceSha256(file: string, regeneratedBytes: string) {
+    if (fs.existsSync(file)) return digest(file).sha256;
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'game-data-npc-evidence-'));
+    try {
+        const temporaryFile = path.join(directory, path.basename(file));
+        fs.writeFileSync(temporaryFile, regeneratedBytes);
+        return digest(temporaryFile).sha256;
+    } finally {
+        fs.rmSync(directory, { recursive: true, force: true });
+    }
+}
 function assertEqual(actual: unknown, expectedValue: unknown, label: string) { if (actual !== expectedValue) throw new Error(`${label}: expected ${expectedValue}, got ${actual}`); }
 /** Item categories as written in the selected content: alias to its `.obj` `category=` literal, or `null` when the section sets none. */
 function extractItemCategories(contentRoot: string): Map<string, string | null> {
@@ -175,6 +189,7 @@ async function verifyRevision(revision: number) {
     assertEqual(payload.schema_version, 5, `${revision} schema`); assertEqual(payload.revision, revision, `${revision} revision`); assertEqual(payload.provenance.engine_commit, pin.engine, `${revision} engine pin`); assertEqual(payload.provenance.content_commit, pin.content, `${revision} content pin`);
     const spec = revisions.find((each) => each.revision === revision)!;
     const pinnedCommits = assertPinned(spec);
+    assertServerOrderedPinned(spec);
     verifyCacheIdentity(revision, pin.engineRoot, pin.cache);
     const baseContentFiles = baseProvenanceInputs(pin.engineRoot, pin.contentRoot).content_inputs.map((input) => input.path);
     const npcNames = extractNpcNamesFacts(pin.contentRoot, revision);
@@ -188,6 +203,31 @@ async function verifyRevision(revision: number) {
     assertEqual(JSON.stringify(payload.provenance.content_inputs.map((input: { path: string }) => input.path)), JSON.stringify(expectedContentFiles), `${revision} complete content provenance`);
     if (payload.debug_commands !== undefined || payload.debug_names !== undefined) throw new Error(`${revision}: the debug catalog lives in the debug family, not the core asset`);
     assertEqual(JSON.stringify(payload.dialogue_ui), JSON.stringify(extractDialogueUiFacts(pin.contentRoot)), `${revision} source-proven dialogue UI`);
+    const contentId = spec.cacheIdentity.content_id;
+    if (!contentId) throw new Error(`${revision}: selected content identity is missing`);
+    const npcEvidence = revision === 289 ? extractNpcTransformClosure(spec.engine, spec.content) : undefined;
+    const npcOperations = npcEvidence ? runtimeNpcOperations(npcEvidence) : undefined;
+    if (npcEvidence) {
+        const evidenceFile = path.join(root, 'tools/game-data/evidence/289-npc-transforms.json');
+        const actualSha256 = npcEvidenceSha256(evidenceFile, npcEvidenceBytes(npcEvidence));
+        assertEqual(actualSha256, payload.server_ordered?.npc_transforms?.evidence_sha256,
+            `${revision} development-only NPC closure evidence SHA-256`);
+    }
+    const serverOrdered = revision === 289 ? {
+        ...await loadServerOrderedFacts({
+            contentRoot: spec.content,
+            engineRoot: spec.engine,
+            revision,
+            engineCommit: pinnedCommits.engineCommit,
+            contentCommit: pinnedCommits.contentCommit,
+            cacheId: spec.cacheIdentity.cache_id,
+            contentId,
+        }),
+        npc_transforms: npcOperations!,
+    } : undefined;
+    assertEqual(JSON.stringify(payload.server_ordered), JSON.stringify(serverOrdered), `${revision} source-proven server-ordered catalog`);
+    const serverOrderedInputs = npcEvidence ? serverOrderedProvenanceInputs(spec.engine, spec.content, npcEvidence.source_inputs) : undefined;
+    assertEqual(JSON.stringify(payload.provenance.server_ordered_inputs), JSON.stringify(serverOrderedInputs), `${revision} complete server-ordered input closure`);
     assertEqual(JSON.stringify(payload.provenance.inputs.map((input: { path: string }) => input.path)), JSON.stringify([...BASE_ENGINE_INPUT_PATHS]), `${revision} base engine inputs`);
     for (const input of [...payload.provenance.inputs, ...payload.provenance.decoder_sources, ...payload.provenance.content_inputs]) { const base = payload.provenance.content_inputs.includes(input) ? pin.contentRoot : pin.engineRoot; const actual = digest(path.join(base, input.path)); assertEqual(actual.bytes, input.bytes, `${revision} ${input.path} bytes`); assertEqual(actual.sha256, input.sha256, `${revision} ${input.path} hash`); }
     const output = digest(file); assertEqual(output.bytes, manifestRow.bytes, `${revision} output bytes`); assertEqual(output.sha256, manifestRow.sha256, `${revision} output hash`); assertEqual(JSON.stringify(payload.provenance.cache_identity), JSON.stringify(pin.cache), `${revision} cache identity`);
@@ -492,8 +532,9 @@ async function verifyRevision(revision: number) {
     }
     if (payload.gather_methods !== undefined || payload.gather_placements !== undefined || payload.provenance.placement_inputs !== undefined) throw new Error(`${revision}: gathering facts live in the gathering family, not the core asset`);
     const gathering = extractGatheringFamily(pin.contentRoot);
+    const upstream = familyInputs(spec, pinnedCommits);
     const familyFile = path.join(root, `crates/api/data/game-data/${revision}/gathering.json`);
-    if (!fs.readFileSync(familyFile).equals(Buffer.from(familyBytes(familyInputs(spec, pinnedCommits), gathering, 'gathering')))) throw new Error(`${revision}: gathering family differs from the writer extract`);
+    if (!fs.readFileSync(familyFile).equals(Buffer.from(familyBytes(upstream, gathering, 'gathering')))) throw new Error(`${revision}: gathering family differs from the writer extract`);
     assertEqual(JSON.stringify(manifestRow.families?.gathering), JSON.stringify({ path: `${revision}/gathering.json`, schema: gathering.schema, ...digest(familyFile) }), `${revision} manifest gathering descriptor`);
     assertEqual(JSON.stringify(manifestRow.gathering), JSON.stringify(gathering.summary), `${revision} manifest gathering summary`);
     assertEqual(JSON.stringify(payload.mining_hazards), JSON.stringify(miningHazards(gathering.payload)), `${revision} core mining_hazards is the family's hazard slice`);
@@ -564,6 +605,11 @@ async function verifyRevision(revision: number) {
     if (payload.quest_prereqs !== undefined) throw new Error(`${revision}: quest_prereqs is not a second field`);
     const extractedQuest = extractQuestIdentityFacts(pin.contentRoot, revision);
     assertEqual(JSON.stringify(questIdentity), JSON.stringify(extractedQuest), `${revision} quest_identity matches the writer extract`);
+    const questsFile = path.join(root, `crates/api/data/game-data/${revision}/quests.json`);
+    const questsDraft = { schema: QUESTS_SCHEMA, payload: extractedQuest };
+    assertEqual(JSON.stringify(Object.keys(questsDraft.payload).sort()), JSON.stringify(['coverage', 'rows']), `${revision} quests family is identity rows plus coverage only`);
+    if (!fs.readFileSync(questsFile).equals(Buffer.from(familyBytes(upstream, questsDraft, 'quests')))) throw new Error(`${revision}: quests family differs from the writer extract`);
+    assertEqual(JSON.stringify(manifestRow.families?.quests), JSON.stringify({ path: `${revision}/quests.json`, schema: QUESTS_SCHEMA, ...digest(questsFile) }), `${revision} manifest quests descriptor`);
     if (revision === 289 && payload.quest_starts === undefined) throw new Error(`${revision}: quest_starts family missing`);
     if (payload.quest_starts !== undefined) {
         const questStarts = payload.quest_starts;
@@ -745,10 +791,10 @@ async function verifyRevision(revision: number) {
     assertEqual(JSON.stringify(payload.gather_sites), JSON.stringify(siteResult.rows), `${revision} core gather_sites is the family's named site slice`);
     assertEqual(JSON.stringify(manifestRow.gather_sites), JSON.stringify(siteResult.report), `${revision} manifest gather_sites summary`);
     const expectedSiteReport = revision === 289
-        ? { woodcutting: { sites: 231, direct: 0, dropped: 1205, outside_box: 0, extra: 26, renamed: 5, required: 5, override_dropped: 61 }, mining: { sites: 33, direct: 0, dropped: 13, outside_box: 0, extra: 8, renamed: 2, required: 1, override_dropped: 16 }, fishing: { sites: 25, direct: 20, dropped: 5, outside_box: 0, extra: 2, renamed: 0, required: 0, override_dropped: 13 } }
-        : { woodcutting: { sites: 231, direct: 0, dropped: 1198, outside_box: 0, extra: 26, renamed: 5, required: 5, override_dropped: 45 }, mining: { sites: 33, direct: 0, dropped: 13, outside_box: 0, extra: 8, renamed: 2, required: 1, override_dropped: 15 }, fishing: { sites: 25, direct: 20, dropped: 5, outside_box: 0, extra: 2, renamed: 0, required: 0, override_dropped: 11 } };
+        ? { woodcutting: { sites: 231, direct: 0, dropped: 1205, outside_box: 0, extra: 26, renamed: 5, required: 5, override_dropped: 61 }, mining: { sites: 37, direct: 0, dropped: 13, outside_box: 0, extra: 11, renamed: 6, required: 4, override_dropped: 12 }, fishing: { sites: 26, direct: 20, dropped: 5, outside_box: 0, extra: 3, renamed: 1, required: 0, override_dropped: 12 } }
+        : { woodcutting: { sites: 231, direct: 0, dropped: 1198, outside_box: 0, extra: 26, renamed: 5, required: 5, override_dropped: 45 }, mining: { sites: 37, direct: 0, dropped: 13, outside_box: 0, extra: 11, renamed: 6, required: 4, override_dropped: 11 }, fishing: { sites: 26, direct: 20, dropped: 5, outside_box: 0, extra: 3, renamed: 1, required: 0, override_dropped: 10 } };
     assertEqual(JSON.stringify(siteResult.report), JSON.stringify(expectedSiteReport), `${revision} gather_sites report`);
-    assertEqual((payload.gather_sites as GatherSiteWire[]).length, 289, `${revision} gather_sites row count`);
+    assertEqual((payload.gather_sites as GatherSiteWire[]).length, 294, `${revision} gather_sites row count`);
     const siteRows = payload.gather_sites as GatherSiteWire[];
     const siteRow = (id: string) => {
         const found = siteRows.find((row) => row.id === id);
@@ -793,7 +839,9 @@ async function verifyRevision(revision: number) {
     assertEqual(JSON.stringify(committedHidden[String(revision)]), JSON.stringify(hiddenSitesRecord(siteResult.hidden)), `${revision} ${HIDDEN_SITES_FILE}`);
     // The published wire shape: exactly the TS GatherSiteWire fields, with region keys in writer order.
     for (const row of siteRows) {
-        assertEqual(JSON.stringify(Object.keys(row).sort()), JSON.stringify(['id', 'keys', 'label', 'region', 'requires', 'skill']), `${revision} ${row.id} wire fields`);
+        const fields = ['id', 'keys', 'label', 'region', 'requires', 'skill'];
+        if (row.banking_unavailable !== undefined) fields.unshift('banking_unavailable');
+        assertEqual(JSON.stringify(Object.keys(row).sort()), JSON.stringify(fields), `${revision} ${row.id} wire fields`);
         assertEqual(JSON.stringify(Object.keys(row.region).sort()), JSON.stringify(['level', 'max_x', 'max_z', 'min_x', 'min_z']), `${revision} ${row.id} region fields`);
     }
     publishedSiteIds.set(revision, siteRows.map((row) => row.id));
@@ -830,7 +878,7 @@ const crossPin = pinnedGivers274 && pinnedGivers289 ? 'verified' : 'not checked:
 if (pinnedGivers274 && pinnedGivers289 && JSON.stringify(pinnedGivers289) !== JSON.stringify(pinnedGivers274)) throw new Error('trio_givers: the two pins disagree on the selected identity, display name, or unique spawn');
 const pinnedSites274 = publishedSiteIds.get(274); const pinnedSites289 = publishedSiteIds.get(289);
 if (pinnedSites274 && pinnedSites289) {
-    assertEqual(pinnedSites274.filter((id) => pinnedSites289.includes(id)).length, 289, 'gather_sites shared ids across revisions');
+    assertEqual(pinnedSites274.filter((id) => pinnedSites289.includes(id)).length, 294, 'gather_sites shared ids across revisions');
     assertEqual(JSON.stringify(pinnedSites289.filter((id) => !pinnedSites274.includes(id)).sort()), '[]', 'gather_sites 289-only rows');
     assertEqual(pinnedSites274.filter((id) => !pinnedSites289.includes(id)).length, 0, 'gather_sites 274-only rows');
 }

@@ -1,3 +1,5 @@
+#![cfg(feature = "load")]
+
 use super::*;
 use crate::isolate_fb::{
     DecodedSeatBatch, SeatCancelDecoded, SeatInteractDecoded, SeatMirrorRevoke, SeatStartInput,

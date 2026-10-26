@@ -230,6 +230,10 @@ fn attach_loopback(client: &mut Client) -> (std::net::TcpListener, std::net::Tcp
 }
 
 fn plant_bank_side(client: &mut Client, id: i32, count: i32) {
+    plant_bank_side_op(client, id, count, "Deposit All");
+}
+
+fn plant_bank_side_op(client: &mut Client, id: i32, count: i32, op: &str) {
     use client::config::if_type::{ComponentType, IfType, IfTypeMut};
     client.set_iface(
         700,
@@ -247,7 +251,7 @@ fn plant_bank_side(client: &mut Client, id: i32, count: i32) {
             id: 701,
             layer_id: 700,
             r#type: ComponentType::TYPE_INV,
-            iop: [Some("Deposit All".into()), None, None, None, None],
+            iop: [Some(op.into()), None, None, None, None],
             ..Default::default()
         },
     );
@@ -262,6 +266,34 @@ fn plant_bank_side(client: &mut Client, id: i32, count: i32) {
     client.side_modal_id = 700;
 }
 
+/// One 274-format `UPDATE_INV_FULL` payload: `g2` component, `g1`
+/// entry count, then per entry a `g2` raw id (obj id + 1) and a `g1`
+/// count, with 255 promoting the count to `g4`.
+fn inv_full_packet(component: i32, entries: &[(i32, i32)]) -> client::io::Packet {
+    let mut bytes = vec![(component >> 8) as u8, component as u8, entries.len() as u8];
+    for (raw_id, count) in entries {
+        bytes.push((raw_id >> 8) as u8);
+        bytes.push(*raw_id as u8);
+        if *count >= 255 {
+            bytes.push(255);
+            bytes.extend_from_slice(&count.to_be_bytes());
+        } else {
+            bytes.push(*count as u8);
+        }
+    }
+    client::io::Packet::new(bytes)
+}
+
+/// `plant_bank_side` plus the side component's full inventory
+/// packet, so the snapshot carries a bank-side packet generation
+/// (the readiness signal a real bank open publishes).
+fn plant_bank_side_full(client: &mut Client, id: i32, count: i32) {
+    use client::io::ServerProt;
+    plant_bank_side(client, id, count);
+    let mut full = inv_full_packet(701, &[(id + 1, count)]);
+    client.handle_packet(ServerProt::UPDATE_INV_FULL, &mut full);
+}
+
 fn deposit_step(scenario: &Scenario, id: i32, count: i32) -> &Step {
     scenario
         .steps
@@ -270,7 +302,7 @@ fn deposit_step(scenario: &Scenario, id: i32, count: i32) -> &Step {
             matches!(
                 (&step.kind, &step.wait.arm),
                 (
-                    StepKind::Repeat { .. },
+                    StepKind::NativeSeedDeposit { .. },
                     Proof::BankItemId {
                         id: wait_id,
                         count: wait_count
@@ -280,27 +312,34 @@ fn deposit_step(scenario: &Scenario, id: i32, count: i32) -> &Step {
         })
         .unwrap_or_else(|| {
             panic!(
-                "{} deposits obj {id} x{count} through a Repeat wait",
+                "{} deposits obj {id} x{count} through a native seed-deposit wait",
                 scenario.name
             )
         })
 }
 
-fn send_deposit(name: &str, id: i32, count: i32, side_id: i32, side_count: i32) -> (bool, i32) {
-    use api::snapshot::Family;
-    let mut client = native_seed_client();
-    plant_bank_side(&mut client, side_id, side_count);
-    let _peer = attach_loopback(&mut client);
+/// Rebuild a snapshot from a planted client and assert the deposit
+/// readiness signals all report ready: open loaded main table,
+/// raised side root, observed side packet generation.
+fn ready_bank_snapshot(client: &Client) -> GameSnapshot {
     let mut snapshot = GameSnapshot::new();
-    assert!(snapshot.rebuild_family(&client, Family::BankSide));
+    snapshot.rebuild(client);
+    assert!(snapshot.bank_component_id() >= 0, "bank must be open");
+    assert!(snapshot.bank_loaded(), "main bank table must be loaded");
+    assert!(snapshot.modals().side >= 0, "side root must be raised");
     assert!(
-        snapshot.rebuild(&client) || !snapshot.bank_side().is_empty(),
-        "bank-side rows must rebuild from the planted deposit component"
+        snapshot.bank_side_packet_generation().is_some(),
+        "a side packet generation must be observed"
     );
-    if snapshot.bank_side().is_empty() {
-        client.bump_gens(client::io::ServerProt::UPDATE_INV_FULL);
-        assert!(snapshot.rebuild_family(&client, Family::BankSide));
-    }
+    snapshot
+}
+
+fn send_deposit(name: &str, id: i32, count: i32, side_id: i32, side_count: i32) -> (bool, i32) {
+    let mut client = native_seed_client();
+    plant_loaded_empty_bank(&mut client);
+    plant_bank_side_full(&mut client, side_id, side_count);
+    let _peer = attach_loopback(&mut client);
+    let snapshot = ready_bank_snapshot(&client);
     assert_eq!(
         snapshot
             .bank_side()
@@ -312,11 +351,19 @@ fn send_deposit(name: &str, id: i32, count: i32, side_id: i32, side_count: i32) 
     );
     let scenario = get(name).unwrap_or_else(|| panic!("{name} is registered"));
     let step = deposit_step(&scenario, id, count);
-    let StepKind::Repeat { send } = &step.kind else {
-        panic!("{name} deposit must be a Repeat step");
+    let StepKind::NativeSeedDeposit {
+        unnoted_id,
+        quantity,
+        note_id,
+    } = step.kind
+    else {
+        panic!("{name} deposit must be a native seed-deposit step");
     };
-    let ok = send(&mut client, &snapshot);
-    (ok, client.menu_param_a.first().copied().unwrap_or(-1))
+    let sent = matches!(
+        native_seed_deposit_attempt(&mut client, &snapshot, unnoted_id, quantity, note_id),
+        Ok(SeedDepositProgress::DepositSent)
+    );
+    (sent, client.menu_param_a.first().copied().unwrap_or(-1))
 }
 
 #[test]
@@ -721,18 +768,503 @@ fn herblore_native_deposit_soft_waits_open_unloaded_bank() {
 
     let scenario = get("herblore_secondaries").expect("herblore_secondaries");
     let step = deposit_step(&scenario, LOBSTER_ID, HERBLORE_EGG_FOOD_SEED);
-    let StepKind::Repeat { send } = &step.kind else {
-        panic!("deposit must be Repeat");
+    let StepKind::NativeSeedDeposit {
+        unnoted_id,
+        quantity,
+        note_id,
+    } = step.kind
+    else {
+        panic!("deposit must be a native seed-deposit step");
     };
     let before_out = client.out.pos;
-    assert!(
-        send(&mut client, &snapshot),
+    assert_eq!(
+        native_seed_deposit_attempt(&mut client, &snapshot, unnoted_id, quantity, note_id),
+        Ok(SeedDepositProgress::BankPending),
         "open unloaded bank must soft-wait, not hard-reject like headed eggs"
     );
     assert_eq!(
         client.out.pos, before_out,
         "soft-wait must not emit a deposit op while bank_side is unpublished"
     );
+}
+
+/// NIGHTLY-FIX-1023 C5: the seed deposit must tell pending bank-side
+/// data apart from a real failure, and each real failure branch must
+/// name itself. The five cases: loaded main table with pending side
+/// data, missing expected seed after readiness, absent Deposit All,
+/// send rejection, completed deposit.
+#[test]
+fn native_seed_deposit_attempt_names_each_branch() {
+    use client::io::ServerProt;
+
+    // Pending side data, no side root yet: the main table is loaded
+    // but the deposit pane has not been raised. Soft-wait, no send.
+    let mut client = native_seed_client();
+    plant_loaded_empty_bank(&mut client);
+    let _peer = attach_loopback(&mut client);
+    let mut snapshot = GameSnapshot::new();
+    snapshot.rebuild(&client);
+    assert!(snapshot.bank_loaded(), "main table must be loaded");
+    assert!(snapshot.modals().side < 0, "side root must still be down");
+    let before_out = client.out.pos;
+    assert_eq!(
+        native_seed_deposit_attempt(&mut client, &snapshot, COINS_ID, 200, None),
+        Ok(SeedDepositProgress::BankPending)
+    );
+    assert_eq!(client.out.pos, before_out, "pending must not send");
+
+    // Pending side data, rows visible but no side packet observed:
+    // link-array rows alone are not readiness.
+    let mut client = native_seed_client();
+    plant_loaded_empty_bank(&mut client);
+    plant_bank_side(&mut client, COINS_ID, 200);
+    let _peer = attach_loopback(&mut client);
+    let mut snapshot = GameSnapshot::new();
+    snapshot.rebuild(&client);
+    assert!(snapshot.bank_loaded(), "main table must be loaded");
+    assert_eq!(
+        snapshot
+            .bank_side()
+            .iter()
+            .map(|item| item.def.id)
+            .collect::<Vec<_>>(),
+        vec![COINS_ID],
+        "planted rows are visible before any side packet"
+    );
+    assert!(
+        snapshot.bank_side_packet_generation().is_none(),
+        "no side packet has been observed yet"
+    );
+    let before_out = client.out.pos;
+    assert_eq!(
+        native_seed_deposit_attempt(&mut client, &snapshot, COINS_ID, 200, None),
+        Ok(SeedDepositProgress::BankPending)
+    );
+    assert_eq!(client.out.pos, before_out, "pending must not send");
+
+    // Missing expected seed after readiness: the side packet is in,
+    // but it carries a hammer, not the coin seed. Hard failure that
+    // names the missing-row branch.
+    let mut client = native_seed_client();
+    plant_loaded_empty_bank(&mut client);
+    plant_bank_side_full(&mut client, HAMMER_ID, 1);
+    let _peer = attach_loopback(&mut client);
+    let snapshot = ready_bank_snapshot(&client);
+    let before_out = client.out.pos;
+    let failure =
+        native_seed_deposit_attempt(&mut client, &snapshot, COINS_ID, 200, None).unwrap_err();
+    assert_eq!(failure, SeedDepositFailure::MissingRow { inv_id: COINS_ID });
+    assert!(
+        failure.to_string().contains("no bank-side row"),
+        "failure text must name the branch: {failure}"
+    );
+    assert_eq!(client.out.pos, before_out, "missing row must not send");
+
+    // Absent Deposit All: the row exists after readiness, but its
+    // component offers only Deposit 1.
+    let mut client = native_seed_client();
+    plant_loaded_empty_bank(&mut client);
+    plant_bank_side_op(&mut client, COINS_ID, 200, "Deposit 1");
+    let mut side_full = inv_full_packet(701, &[(COINS_ID + 1, 200)]);
+    client.handle_packet(ServerProt::UPDATE_INV_FULL, &mut side_full);
+    let _peer = attach_loopback(&mut client);
+    let snapshot = ready_bank_snapshot(&client);
+    let before_out = client.out.pos;
+    let failure =
+        native_seed_deposit_attempt(&mut client, &snapshot, COINS_ID, 200, None).unwrap_err();
+    assert_eq!(
+        failure,
+        SeedDepositFailure::MissingOperation { inv_id: COINS_ID }
+    );
+    assert!(
+        failure.to_string().contains("no Deposit All operation"),
+        "failure text must name the branch: {failure}"
+    );
+    assert_eq!(
+        client.out.pos, before_out,
+        "missing operation must not send"
+    );
+
+    // Send rejection: readiness and the row are real, but the client
+    // has no stream, so dispatch refuses before any bytes go out.
+    let mut client = native_seed_client();
+    plant_loaded_empty_bank(&mut client);
+    plant_bank_side_full(&mut client, COINS_ID, 200);
+    client.bump_gens(ServerProt::UPDATE_INV_FULL);
+    let snapshot = ready_bank_snapshot(&client);
+    assert!(!snapshot.attached(), "no loopback stream is attached");
+    assert_eq!(
+        native_seed_deposit_attempt(&mut client, &snapshot, COINS_ID, 200, None),
+        Err(SeedDepositFailure::SendRefused {
+            inv_id: COINS_ID,
+            reason: SendReason::NotAttached,
+        })
+    );
+
+    // Completed deposit: the fresh bank already holds the seed and
+    // the pack is empty. Nothing is sent.
+    let mut client = native_seed_client();
+    plant_loaded_empty_bank(&mut client);
+    client.set_iface_mut(
+        601,
+        client::config::if_type::IfTypeMut {
+            link_obj_type: Some(vec![COINS_ID + 1, 0]),
+            link_obj_number: Some(vec![200, 0]),
+            ..Default::default()
+        },
+    );
+    let mut full = inv_full_packet(601, &[(COINS_ID + 1, 200)]);
+    client.handle_packet(ServerProt::UPDATE_INV_FULL, &mut full);
+    let _peer = attach_loopback(&mut client);
+    let mut snapshot = GameSnapshot::new();
+    snapshot.rebuild(&client);
+    assert!(
+        (Proof::BankItemId {
+            id: COINS_ID,
+            count: 200
+        })
+        .check(&snapshot, None),
+        "the fresh bank must already hold the seed"
+    );
+    let before_out = client.out.pos;
+    assert_eq!(
+        native_seed_deposit_attempt(&mut client, &snapshot, COINS_ID, 200, None),
+        Ok(SeedDepositProgress::AlreadyDeposited)
+    );
+    assert_eq!(client.out.pos, before_out, "completed must not re-send");
+
+    // Ready bank, row and operation present, stream attached: the
+    // deposit dispatch goes out for the exact seed row.
+    let mut client = native_seed_client();
+    plant_loaded_empty_bank(&mut client);
+    plant_bank_side_full(&mut client, COINS_ID, 200);
+    let _peer = attach_loopback(&mut client);
+    let snapshot = ready_bank_snapshot(&client);
+    assert_eq!(
+        native_seed_deposit_attempt(&mut client, &snapshot, COINS_ID, 200, None),
+        Ok(SeedDepositProgress::DepositSent)
+    );
+    assert_eq!(
+        client.menu_param_a.first().copied().unwrap_or(-1),
+        COINS_ID,
+        "the dispatch must address the coin row"
+    );
+}
+
+/// The branch name must reach the runner failure text, which is the
+/// receipt message. A ready bank whose side packet carries no coin
+/// seed fails by branch, not by a bare driver rejection.
+#[test]
+fn native_seed_deposit_runner_failure_names_the_missing_row_branch() {
+    let deposit = native_bank_deposit(
+        "deposit the coin seed through the bank window",
+        vec![NativeSeed {
+            unnoted_id: COINS_ID,
+            debug_alias: "coins",
+            note_alias: None,
+            quantity: 200,
+            note_id: None,
+        }],
+    )
+    .remove(0);
+    let scenario = Scenario {
+        name: "native_seed_deposit_missing_row",
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: false,
+        },
+        steps: vec![deposit],
+        proof: Proof::BankItemId {
+            id: COINS_ID,
+            count: 200,
+        },
+        companions: vec![],
+        settings: ScenarioSettings::default(),
+    };
+    let mut runner = ScenarioRunner::with_world(scenario, None);
+    runner.set_scene_settle(Duration::ZERO);
+
+    let mut client = native_seed_client();
+    let _peer = attach_loopback(&mut client);
+    plant_loaded_empty_bank(&mut client);
+    plant_bank_side_full(&mut client, HAMMER_ID, 1);
+    runner.tick(&mut client);
+    match runner.status() {
+        RunnerStatus::Failed(message) => {
+            assert!(
+                message.contains("no bank-side row for item 995"),
+                "runner failure must name the deposit branch: {message}"
+            );
+            assert!(
+                !message.contains("driver rejected the send"),
+                "the branch replaces the bare rejection: {message}"
+            );
+        }
+        other => panic!("missing seed row must fail the run, got {other:?}"),
+    }
+}
+
+fn seed_deposit_runner(ids: &[(i32, Option<i32>)], budget_ticks: u32) -> ScenarioRunner {
+    let mut steps = native_bank_deposit(
+        "deposit the native seed",
+        ids.iter()
+            .map(|&(unnoted_id, note_id)| NativeSeed {
+                unnoted_id,
+                debug_alias: "test_seed",
+                note_alias: None,
+                quantity: 200,
+                note_id,
+            })
+            .collect(),
+    );
+    for step in &mut steps {
+        step.wait.budget_ticks = budget_ticks;
+    }
+    let scenario = Scenario {
+        name: "native_seed_deposit_settlement",
+        seed: Seed {
+            profiles: vec![("test", "test")],
+            mainland: false,
+        },
+        steps,
+        proof: Proof::BankItemId {
+            id: ids.last().unwrap().0,
+            count: 200,
+        },
+        companions: vec![],
+        settings: ScenarioSettings::default(),
+    };
+    let mut runner = ScenarioRunner::with_world(scenario, None);
+    runner.set_scene_settle(Duration::ZERO);
+    runner
+}
+
+/// The bank-side update can precede the main bank update. A sent deposit
+/// must not send again or reinterpret its consumed row as a missing seed.
+#[test]
+fn native_seed_deposit_waits_for_main_bank_after_side_row_disappears() {
+    use client::io::ServerProt;
+
+    for (id, note_id) in [(COINS_ID, None), (LOBSTER_ID, Some(NOTED_LOBSTER_ID))] {
+        let mut runner = seed_deposit_runner(&[(id, note_id)], 200);
+        let mut client = native_seed_client();
+        let _peer = attach_loopback(&mut client);
+        plant_loaded_empty_bank(&mut client);
+        plant_bank_side_full(&mut client, note_id.unwrap_or(id), 200);
+        for _ in 0..23 {
+            client.bump_gens(ServerProt::PLAYER_INFO);
+        }
+        runner.tick(&mut client);
+        assert_eq!(runner.status(), RunnerStatus::Running { step: 0, total: 1 });
+        let sent = client.out.pos;
+
+        // Even if the server has not posted the removal yet, a second
+        // observed tick must not repeat an already accepted interaction.
+        client.bump_gens(ServerProt::PLAYER_INFO);
+        runner.tick(&mut client);
+        assert_eq!(client.out.pos, sent, "a sent deposit must not repeat");
+
+        let mut empty_side = inv_full_packet(701, &[]);
+        client.handle_packet(ServerProt::UPDATE_INV_FULL, &mut empty_side);
+        runner.tick(&mut client);
+        assert_eq!(runner.status(), RunnerStatus::Running { step: 0, total: 1 });
+        for _ in 0..20 {
+            client.bump_gens(ServerProt::MESSAGE_GAME);
+            runner.tick(&mut client);
+        }
+        assert_eq!(runner.status(), RunnerStatus::Running { step: 0, total: 1 });
+        assert_eq!(client.out.pos, sent, "settlement sends nothing");
+
+        // The fresh bank proof arrives at the next observed game tick.
+        let mut bank_full = inv_full_packet(601, &[(id + 1, 200)]);
+        client.handle_packet(ServerProt::UPDATE_INV_FULL, &mut bank_full);
+        client.bump_gens(ServerProt::PLAYER_INFO);
+        runner.tick(&mut client);
+        runner.tick(&mut client);
+        assert_eq!(runner.status(), RunnerStatus::Passed);
+        assert_eq!(client.out.pos, sent);
+        let attempts = &runner.evidence().unwrap().seed_deposits;
+        assert_eq!(attempts.len(), 2);
+        assert_eq!((attempts[0].tick, attempts[0].result), (23, "DepositSent"));
+        assert_eq!(
+            (attempts[1].tick, attempts[1].result),
+            (25, "ProofObserved")
+        );
+        assert!(!attempts[0].proof);
+        assert!(attempts[1].proof);
+        assert_eq!(attempts[1].side, 0);
+        assert_eq!(attempts[1].bank, 200);
+        assert!(attempts[1].side_generation > attempts[0].side_generation);
+        assert!(attempts[1].main_generation > attempts[0].main_generation);
+    }
+}
+
+/// A consumed row is not a failure while the bank proof is still pending.
+/// The step's own budget, not a shorter post-send cap, bounds this wait.
+#[test]
+fn native_seed_deposit_accepts_bank_proof_several_ticks_after_send() {
+    use client::io::ServerProt;
+
+    for (id, note_id) in [(COINS_ID, None), (LOBSTER_ID, Some(NOTED_LOBSTER_ID))] {
+        let mut runner = seed_deposit_runner(&[(id, note_id)], 200);
+        let mut client = native_seed_client();
+        let _peer = attach_loopback(&mut client);
+        plant_loaded_empty_bank(&mut client);
+        plant_bank_side_full(&mut client, note_id.unwrap_or(id), 200);
+        runner.tick(&mut client);
+        let sent = client.out.pos;
+
+        let mut empty_side = inv_full_packet(701, &[]);
+        client.handle_packet(ServerProt::UPDATE_INV_FULL, &mut empty_side);
+        let mut short_bank = inv_full_packet(601, &[(id + 1, 199)]);
+        client.handle_packet(ServerProt::UPDATE_INV_FULL, &mut short_bank);
+        for _ in 0..7 {
+            client.bump_gens(ServerProt::PLAYER_INFO);
+            runner.tick(&mut client);
+            assert_eq!(runner.status(), RunnerStatus::Running { step: 0, total: 1 });
+            assert_eq!(client.out.pos, sent, "a pending proof must not resend");
+        }
+
+        let mut bank_full = inv_full_packet(601, &[(id + 1, 200)]);
+        client.handle_packet(ServerProt::UPDATE_INV_FULL, &mut bank_full);
+        client.bump_gens(ServerProt::PLAYER_INFO);
+        runner.tick(&mut client);
+        runner.tick(&mut client);
+        assert_eq!(runner.status(), RunnerStatus::Passed);
+        assert_eq!(client.out.pos, sent);
+        let attempts = &runner.evidence().unwrap().seed_deposits;
+        assert_eq!(attempts.len(), 2);
+        assert_eq!((attempts[0].tick, attempts[0].result), (0, "DepositSent"));
+        assert_eq!((attempts[1].tick, attempts[1].result), (8, "ProofObserved"));
+        assert!(attempts[1].proof);
+    }
+}
+
+#[test]
+fn native_seed_deposit_consumed_row_without_bank_proof_fails_on_observed_tick() {
+    use client::io::ServerProt;
+
+    for bank_count in [0, 199] {
+        let mut runner = seed_deposit_runner(&[(COINS_ID, None)], 5);
+        let mut client = native_seed_client();
+        let _peer = attach_loopback(&mut client);
+        plant_loaded_empty_bank(&mut client);
+        plant_bank_side_full(&mut client, COINS_ID, 200);
+        // Start the step at tick zero so its full five-tick budget remains.
+        runner.tick(&mut client);
+        let sent = client.out.pos;
+        let mut empty_side = inv_full_packet(701, &[]);
+        client.handle_packet(ServerProt::UPDATE_INV_FULL, &mut empty_side);
+        let mut bank_full = inv_full_packet(601, &[(COINS_ID + 1, bank_count)]);
+        client.handle_packet(ServerProt::UPDATE_INV_FULL, &mut bank_full);
+        runner.tick(&mut client);
+        assert_eq!(runner.status(), RunnerStatus::Running { step: 0, total: 1 });
+        for _ in 0..20 {
+            client.bump_gens(ServerProt::MESSAGE_GAME);
+            runner.tick(&mut client);
+        }
+        assert_eq!(runner.status(), RunnerStatus::Running { step: 0, total: 1 });
+        for _ in 0..4 {
+            client.bump_gens(ServerProt::PLAYER_INFO);
+            runner.tick(&mut client);
+            assert_eq!(runner.status(), RunnerStatus::Running { step: 0, total: 1 });
+            assert_eq!(client.out.pos, sent);
+        }
+        client.bump_gens(ServerProt::PLAYER_INFO);
+        runner.tick(&mut client);
+        match runner.status() {
+            RunnerStatus::Failed(message) => {
+                assert!(message.contains("5 game ticks"), "{message}");
+            }
+            other => panic!("missing bank proof must fail, got {other:?}"),
+        }
+        assert_eq!(client.out.pos, sent);
+    }
+}
+
+#[test]
+fn native_seed_deposit_without_consumption_still_exhausts_proof_budget() {
+    use client::io::ServerProt;
+
+    let mut runner = seed_deposit_runner(&[(COINS_ID, None)], 3);
+    let mut client = native_seed_client();
+    let _peer = attach_loopback(&mut client);
+    plant_loaded_empty_bank(&mut client);
+    plant_bank_side_full(&mut client, COINS_ID, 200);
+    runner.tick(&mut client);
+    let sent = client.out.pos;
+    for _ in 0..2 {
+        client.bump_gens(ServerProt::PLAYER_INFO);
+        runner.tick(&mut client);
+        assert_eq!(runner.status(), RunnerStatus::Running { step: 0, total: 1 });
+    }
+    client.bump_gens(ServerProt::PLAYER_INFO);
+    runner.tick(&mut client);
+    match runner.status() {
+        RunnerStatus::Failed(message) => assert!(message.contains("3 game ticks"), "{message}"),
+        other => panic!("unprocessed deposit must fail within its budget, got {other:?}"),
+    }
+    assert_eq!(client.out.pos, sent);
+}
+
+#[test]
+fn native_seed_deposit_runner_keeps_refused_send_as_failure() {
+    use client::io::ServerProt;
+
+    let mut runner = seed_deposit_runner(&[(COINS_ID, None)], 200);
+    let mut client = native_seed_client();
+    plant_loaded_empty_bank(&mut client);
+    plant_bank_side_full(&mut client, COINS_ID, 200);
+    client.bump_gens(ServerProt::UPDATE_INV_FULL);
+    runner.tick(&mut client);
+    match runner.status() {
+        RunnerStatus::Failed(message) => {
+            assert!(message.contains("refused: NotAttached"), "{message}");
+        }
+        other => panic!("refused deposit must fail, got {other:?}"),
+    }
+}
+
+#[test]
+fn native_seed_deposit_send_latch_resets_for_next_seed() {
+    use client::io::ServerProt;
+
+    let mut runner = seed_deposit_runner(
+        &[(COINS_ID, None), (LOBSTER_ID, Some(NOTED_LOBSTER_ID))],
+        200,
+    );
+    let mut client = native_seed_client();
+    let _peer = attach_loopback(&mut client);
+    plant_loaded_empty_bank(&mut client);
+    // This episode retains both seeds in the bank. The shared empty-bank
+    // fixture has one slot, and the client discards updates beyond capacity.
+    client.set_iface_mut(
+        601,
+        client::config::if_type::IfTypeMut {
+            link_obj_type: Some(vec![0, 0]),
+            link_obj_number: Some(vec![0, 0]),
+            ..Default::default()
+        },
+    );
+    plant_bank_side_full(&mut client, COINS_ID, 200);
+    runner.tick(&mut client);
+    let first_sent = client.out.pos;
+    plant_bank_side_full(&mut client, NOTED_LOBSTER_ID, 200);
+    let mut bank_full = inv_full_packet(601, &[(COINS_ID + 1, 200)]);
+    client.handle_packet(ServerProt::UPDATE_INV_FULL, &mut bank_full);
+    runner.tick(&mut client);
+    assert_eq!(runner.status(), RunnerStatus::Running { step: 1, total: 2 });
+    runner.tick(&mut client);
+    assert!(client.out.pos > first_sent, "the next seed must send");
+    assert_eq!(client.menu_param_a[0], NOTED_LOBSTER_ID);
+    assert_eq!(runner.status(), RunnerStatus::Running { step: 1, total: 2 });
+    let mut empty_side = inv_full_packet(701, &[]);
+    client.handle_packet(ServerProt::UPDATE_INV_FULL, &mut empty_side);
+    let mut bank_full = inv_full_packet(601, &[(COINS_ID + 1, 200), (LOBSTER_ID + 1, 200)]);
+    client.handle_packet(ServerProt::UPDATE_INV_FULL, &mut bank_full);
+    runner.tick(&mut client);
+    runner.tick(&mut client);
+    assert_eq!(runner.status(), RunnerStatus::Passed);
 }
 
 /// An already loaded bank must remain usable by the following deposit.
@@ -939,7 +1471,7 @@ fn herblore_seed_bank_waits_for_one_open_ack_before_deposit() {
 
     let mut full = Packet::new(vec![2, 89, 0]);
     client.handle_packet(ServerProt::UPDATE_INV_FULL, &mut full);
-    plant_bank_side(&mut client, NOTED_LOBSTER_ID, HERBLORE_EGG_FOOD_SEED);
+    plant_bank_side_full(&mut client, NOTED_LOBSTER_ID, HERBLORE_EGG_FOOD_SEED);
     client.bump_gens(ServerProt::UPDATE_INV_FULL);
     runner.tick(&mut client);
     assert_eq!(runner.status(), RunnerStatus::Running { step: 1, total: 2 });
@@ -1202,7 +1734,7 @@ fn herblore_eggs_deposit_watch_covers_natural_cycle_only() {
     let eggs = get("herblore_secondaries").expect("herblore_secondaries");
     assert_eq!(
         eggs.settings.deadline, HERBLORE_EGG_DEADLINE,
-        "420s retains the estimated egg cycle wall; the 600- and 240-game-tick waits can exceed it together"
+        "600s covers the measured level-40 cycle (622-627 game ticks, one run past 656); the 600- and 240-game-tick waits can exceed it together"
     );
     let deposit = eggs
         .steps
@@ -1267,6 +1799,73 @@ fn herblore_eggs_deposit_watch_covers_natural_cycle_only() {
     assert_eq!(
         further.wait.budget_ticks, SCRIPT_GOLD_WATCH_TICKS,
         "further-egg arm is not loosened"
+    );
+}
+
+#[test]
+fn herblore_eggs_seeds_upstream_combat_levels_before_dungeon_tele() {
+    // FIX-025-F-HERBLORE: at fresh-account levels (HP 10) the bot died to
+    // Skeleton/Thug hits during the single return walk, because the script
+    // cannot eat mid-walk (no Sustain hook) and its heal-fit rule refuses a
+    // 12-heal lobster above HP 5. Upstream's eggs e2e runs this script on a
+    // level-40 account; this cell must seed the same account levels so its
+    // egg/bank/return proofs do not gate on hit-roll chance.
+    let eggs = get("herblore_secondaries").expect("herblore_secondaries");
+    let start = eggs
+        .steps
+        .iter()
+        .position(|step| matches!(step.kind, StepKind::StartScript))
+        .expect("eggs Start");
+    let seed = eggs.steps[..start]
+        .iter()
+        .position(|step| step.name == "seed upstream combat levels before the dungeon trip")
+        .expect("combat seed before Start");
+    let StepKind::Perform { send } = &eggs.steps[seed].kind else {
+        panic!("combat seed is a native fixture operation");
+    };
+    let mut client = native_seed_client();
+    assert!(send(&mut client, &GameSnapshot::new()));
+    for stat in [
+        "attack",
+        "strength",
+        "defence",
+        "hitpoints",
+        "agility",
+        "herblore",
+    ] {
+        assert!(
+            emitted_has(&client, &format!("setstat {stat} 40")),
+            "{stat} matches the upstream e2e account level 40"
+        );
+    }
+    assert_eq!(
+        eggs.steps[seed].wait.arm,
+        Proof::Stat {
+            id: HITPOINTS_STAT,
+            min: 40
+        },
+        "the seed is acknowledged at 40 hitpoints before anything hostile"
+    );
+    let drain = eggs.steps[..start]
+        .iter()
+        .position(|step| {
+            step.name == "drain setstat level-up dialogs before the hostile-field teleport"
+        })
+        .expect("setstat drain before Start");
+    assert!(matches!(
+        eggs.steps[drain].kind,
+        StepKind::DrainDialogs { choice: 1 }
+    ));
+    assert_eq!(eggs.steps[drain].wait.arm, Proof::NoActiveContinue);
+    let tele = eggs.steps[..start]
+        .iter()
+        .position(|step| {
+            step.name == "tele to the Edgeville dungeon egg field with lobster food before Start"
+        })
+        .expect("egg field teleport before Start");
+    assert!(
+        seed < drain && drain < tele,
+        "seed levels, drain level-up dialogs, then the dungeon teleport: seed={seed} drain={drain} tele={tele}"
     );
 }
 
@@ -1359,7 +1958,7 @@ fn production_native_seed_proofs_bound_exact_counts_before_start() {
                 matches!(
                     (&step.kind, &step.wait.arm),
                     (
-                        StepKind::Repeat { .. },
+                        StepKind::NativeSeedDeposit { .. },
                         Proof::BankItemId { id, count }
                     ) if *id == unnoted_id && *count == note_count
                 )
@@ -1441,7 +2040,7 @@ fn production_native_seed_proofs_bound_exact_counts_before_start() {
             matches!(
                 (&step.kind, &step.wait.arm),
                 (
-                    StepKind::Repeat { .. },
+                    StepKind::NativeSeedDeposit { .. },
                     Proof::BankItemId {
                         id: COINS_ID,
                         count: HERBLORE_NEWT_COIN_SEED
@@ -2407,40 +3006,19 @@ fn remaining_production_options_are_registered_with_ordered_exact_proofs() {
 
 #[test]
 fn bank_cells_register_their_cards_injects_and_watch_chain() {
-    for (name, card, deadline) in [
-        (
-            "auto_fighter_bank",
-            "AutoFighter",
-            SCRIPT_GOLD_DEADLINE + Duration::from_millis(202 * 600),
-        ),
-        ("moss_giant_bank", "MossGiant", SCRIPT_GOLD_DEADLINE),
-        ("moss_giant_bank_start", "MossGiant", SCRIPT_GOLD_DEADLINE),
-        ("hill_giant_bank", "HillGiant", SCRIPT_GOLD_DEADLINE),
-        (
-            "rock_crab_bank_seeded",
-            "RockCrab",
-            Duration::from_secs(360),
-        ),
+    for (name, card) in [
+        ("auto_fighter_bank", "AutoFighter"),
+        ("moss_giant_bank", "MossGiant"),
+        ("moss_giant_bank_start", "MossGiant"),
+        ("hill_giant_bank", "HillGiant"),
+        ("rock_crab_bank_seeded", "RockCrab"),
         // The frozen trip reaches the field ~128s in (two banks).
-        (
-            "chaos_druid_bank",
-            "ChaosDruidKiller",
-            Duration::from_secs(300),
-        ),
-        (
-            "ardy_fighter_bank",
-            "ArdyFighter",
-            ARDY_FIGHTER_BANK_DEADLINE,
-        ),
-        (
-            "ardy_fighter_bank_seeded",
-            "ArdyFighter",
-            SCRIPT_GOLD_DEADLINE,
-        ),
+        ("chaos_druid_bank", "ChaosDruidKiller"),
+        ("ardy_fighter_bank", "ArdyFighter"),
+        ("ardy_fighter_bank_seeded", "ArdyFighter"),
     ] {
         let scenario = get(name).unwrap_or_else(|| panic!("{name} registered"));
         assert_eq!(scenario.settings.start_script, Some(card));
-        assert_eq!(scenario.settings.deadline, deadline, "{name}");
         assert_eq!(scenario.settings.terminal_shot, Some(name));
         assert!(scenario.settings.full_rate && scenario.seed.mainland);
         let start = scenario
@@ -3093,22 +3671,14 @@ fn prepared_remaining_combat_cells_use_source_derived_profiles_and_long_budgets(
     for (name, card, level) in names_cards_and_levels {
         let scenario = get(name).unwrap_or_else(|| panic!("{name} registered"));
         assert_eq!(scenario.settings.start_script, Some(card), "{name}");
-        let (deadline, min_watch_ticks) = match name {
-            "green_dragon_bank_prepared" => (Duration::from_secs(600), 1500),
-            "green_dragon_bank_default_prepared" => (
-                GREEN_DRAGON_BANK_DEFAULT_PREPARED_QUALIFICATION_DEADLINE,
-                1800,
-            ),
-            "green_dragon_tele" => (Duration::from_secs(480), 1200),
-            "fire_giant_bank_prepared" | "fire_giant_camelot_prepared" => {
-                (Duration::from_secs(600), 1500)
-            }
-            _ => (Duration::from_secs(300), 750),
+        let min_watch_ticks = match name {
+            "green_dragon_bank_prepared"
+            | "fire_giant_bank_prepared"
+            | "fire_giant_camelot_prepared" => 1500,
+            "green_dragon_bank_default_prepared" => 1800,
+            "green_dragon_tele" => 1200,
+            _ => 750,
         };
-        assert_eq!(
-            scenario.settings.deadline, deadline,
-            "{name}: named combat/travel qualification wall budget"
-        );
         assert_eq!(scenario.settings.terminal_shot, Some(name), "{name}");
         let start = scenario
             .steps
@@ -3682,6 +4252,19 @@ fn bank_cells_seed_the_weapon_they_acknowledge_and_only_real_bank_windows() {
             && !hill_prepared.contains("givebank limpwurt"),
         "prepared Hill must not seed earned-kill cargo: {hill_prepared}"
     );
+    let moss_bank = seed("moss_giant_bank");
+    assert!(
+        moss_bank.contains("give lobster 5"),
+        "moss_giant_bank carries five Lobster so the first giant dies before the food does: {moss_bank}"
+    );
+    assert!(
+        moss_bank.contains("givebank lobster 24"),
+        "moss_giant_bank keeps the MossGiant withdraw window: {moss_bank}"
+    );
+    assert!(
+        !moss_bank.contains("give big_bones") && !moss_bank.contains("givebank big_bones"),
+        "moss_giant_bank earns its Big bones, never seeds them: {moss_bank}"
+    );
     let moss_start = seed("moss_giant_bank_start");
     assert!(
         moss_start.contains("give big_bones 1"),
@@ -3777,6 +4360,53 @@ fn moss_giant_bank_start_orders_startup_banking_before_fresh_combat_xp() {
         bones_bank < lobster_restock && lobster_restock < closed && closed < fresh_xp,
         "startup banking watches must stay ordered before fresh combat XP"
     );
+}
+
+/// `moss_giant_bank` carries its own whole-cell deadline after the shared
+/// builder returns, the way `hill_giant_bank` does, sized for the five-Lobster
+/// seed (`MOSS-GIANT-DEADLINE-1026/r2/report.md`): the trip trigger moves to a
+/// modelled median of 206 ticks (p99 279), the trigger-to-fresh-XP leg is
+/// 125-136 ticks (`UPSTREAM-MOSSGIANT-1026/report.md`), and about 18 s of
+/// seeding precedes Start. Every other cell this file defines keeps the
+/// deadline it had: the fight-only and startup-bank siblings the shared gold
+/// cap, and the two qualification cells their existing 300 s.
+#[test]
+fn moss_giant_bank_deadline_is_scoped_to_the_cell() {
+    let bank = get("moss_giant_bank").expect("moss_giant_bank registered");
+    assert_eq!(
+        bank.settings.deadline,
+        Duration::from_secs(300),
+        "moss_giant_bank uses its own 300 s whole-cell cap"
+    );
+    let slow_cycle_ticks = 279 + 136;
+    assert!(
+        bank.settings.deadline >= Duration::from_millis(slow_cycle_ticks * 600 + 18_000),
+        "300 s holds the p99 trip tick plus the slowest return leg and the seeding time"
+    );
+    let bones_step = bank
+        .steps
+        .iter()
+        .find(|step| matches!(step.wait.arm, Proof::BankItemId { id: 532, .. }))
+        .expect("moss_giant_bank watches the earned Big bones reach the bank");
+    assert_eq!(
+        bones_step.wait.budget_ticks, 400,
+        "the Big-bones watch holds the p99.9 trip tick (307) plus the 59-tick booth leg"
+    );
+    for name in ["moss_giant", "moss_giant_bank_start"] {
+        let scenario = get(name).unwrap_or_else(|| panic!("{name} registered"));
+        assert_eq!(
+            scenario.settings.deadline, SCRIPT_GOLD_DEADLINE,
+            "{name} keeps the shared 180 s gold deadline"
+        );
+    }
+    for name in ["moss_giant_prepared", "moss_giant_dart"] {
+        let scenario = get(name).unwrap_or_else(|| panic!("{name} registered"));
+        assert_eq!(
+            scenario.settings.deadline,
+            Duration::from_secs(300),
+            "{name} keeps its existing qualification deadline"
+        );
+    }
 }
 
 #[test]
@@ -3881,7 +4511,6 @@ fn hill_giant_loot_deposit_arms_deposit_only_after_combat_loot() {
             "kill and trip legs keep the ordinary watch"
         );
     }
-    assert_eq!(full.settings.deadline, SCRIPT_GOLD_DEADLINE);
 }
 
 #[test]
@@ -5647,7 +6276,7 @@ fn wildy_agility_registers_the_full_ordered_course_on_the_observed_player_plane(
 fn brimhaven_agility_registers_fee_tags_ticket_and_subsequent_xp() {
     let brim = get("brimhaven_agility").expect("brimhaven_agility");
     assert_eq!(brim.settings.start_script, Some("BrimhavenAgility"));
-    assert_eq!(brim.settings.deadline, SCRIPT_GOLD_DEADLINE);
+    assert_eq!(brim.settings.deadline, BRIMHAVEN_AGILITY_DEADLINE);
     let inject = settings_inject_map(brim.settings.script_settings_inject).unwrap();
     assert_eq!(inject.get("stealRestock"), Some(&Value::Bool(false)));
     assert_eq!(
@@ -5722,7 +6351,7 @@ fn brimhaven_agility_registers_fee_tags_ticket_and_subsequent_xp() {
                 id: AGILITY_STAT,
                 min: 1,
             },
-            Proof::Chat {
+            Proof::FreshChatSincePreviousStep {
                 needle: "tag the next",
             },
             Proof::Varp { id: 309, min: 15 },
@@ -5734,6 +6363,24 @@ fn brimhaven_agility_registers_fee_tags_ticket_and_subsequent_xp() {
             },
         ]
     );
+    let ticket_step = brim.steps[start + 1..]
+        .iter()
+        .find(|step| step.name == "watch a later Tag grant the first ticket")
+        .expect("ticket watch step");
+    assert_eq!(
+        ticket_step.wait.budget_ticks, BRIMHAVEN_TICKET_WATCH_TICKS,
+        "ticket watch keeps the content-derived two-period budget"
+    );
+    for step in brim.steps[start + 1..]
+        .iter()
+        .filter(|step| step.name != "watch a later Tag grant the first ticket")
+    {
+        assert_eq!(
+            step.wait.budget_ticks, SCRIPT_GOLD_WATCH_TICKS,
+            "{} keeps the ordinary gold watch",
+            step.name
+        );
+    }
     assert_eq!(
         brim.proof,
         Proof::FreshStatXpGain {
@@ -6066,7 +6713,6 @@ fn superheater_cases_register_exact_ids_and_bank_cycles() {
 fn chicken_killer_bank_registers_loot_count_feather_trip() {
     let bank = get("chicken_killer_bank").expect("chicken_killer_bank");
     assert_eq!(bank.settings.start_script, Some("ChickenKiller"));
-    assert_eq!(bank.settings.deadline, SCRIPT_GOLD_DEADLINE);
     let inject = settings_inject_map(bank.settings.script_settings_inject).unwrap();
     assert_eq!(
         inject.get("bankStrategy"),
@@ -6087,6 +6733,11 @@ fn chicken_killer_bank_registers_loot_count_feather_trip() {
         .iter()
         .position(|step| matches!(step.kind, StepKind::StartScript))
         .unwrap();
+    assert_eq!(
+        bank.steps[start + 1].wait.budget_ticks,
+        SCRIPT_GOLD_WATCH_TICKS
+    );
+    assert!(bank.steps[start + 1].name.starts_with("watch "));
     let seed = bank.steps[..start]
         .iter()
         .map(|step| step.wait.arm)
@@ -7355,21 +8006,88 @@ fn ardy_thiever_fight_prepares_food_and_attacks_a_real_guard_before_start() {
         .iter()
         .find(|step| step.wait.arm == Proof::NpcNameTargetingLocal { name: "Guard" })
         .expect("a real Guard must target the player before Start");
-    let StepKind::Perform { send } = &attack.kind else {
-        panic!("the fixture sends one ordinary Attack");
+    let StepKind::Repeat { send } = &attack.kind else {
+        panic!("the fixture Attack must re-admit once per game tick");
     };
+    assert_eq!(
+        attack.wait.budget_ticks, 150,
+        "the admission wait stays bounded by the step budget"
+    );
     let mut client = native_seed_client();
     let _peer = attach_loopback(&mut client);
     let mut snapshot = GameSnapshot::new();
     snapshot.rebuild(&client);
-    assert!(!send(&mut client, &snapshot));
+    // No Guard in this snapshot: admission waits for a later one
+    // instead of failing, and invents no combat.
+    assert!(send(&mut client, &snapshot));
     assert_eq!(client.out.pos, 0, "no Guard means no invented combat");
     plant_named_banker(&mut client, "Guard", 21, 20);
     std::sync::Arc::get_mut(&mut client.cache).unwrap().npcs[0].op =
         vec![Some("Attack".into()), None, None, None, None];
+    // The only Guard is busy with another player (face_entity player
+    // slot 7): not eligible, so admission waits and sends nothing.
+    client.npc[1].as_mut().unwrap().entity.face_entity = 32_768 + 7;
+    let snapshot = rebuild_npc_chat_snapshot(&mut client);
+    assert!(send(&mut client, &snapshot));
+    assert_eq!(client.out.pos, 0, "a busy Guard must not be attacked");
+    // The Guard moved out of admission range: still a wait, no send.
+    client.npc[1].as_mut().unwrap().entity.face_entity = -1;
+    client.npc[1].as_mut().unwrap().entity.x = 28 * 128;
+    let snapshot = rebuild_npc_chat_snapshot(&mut client);
+    assert!(send(&mut client, &snapshot));
+    assert_eq!(client.out.pos, 0, "a Guard past range must not be attacked");
+    // Back in range and free: the real Guard receives one Attack,
+    // and a repeat send on the next tick does not re-Attack it
+    // while the fixture waits for it to target the player.
+    client.npc[1].as_mut().unwrap().entity.x = 21 * 128;
     let snapshot = rebuild_npc_chat_snapshot(&mut client);
     assert!(send(&mut client, &snapshot));
     assert!(client.out.pos > 0, "the real Guard receives an NPC Attack");
+    let after_attack = client.out.pos;
+    assert!(send(&mut client, &snapshot));
+    assert_eq!(
+        client.out.pos, after_attack,
+        "the sent Attack must not be re-sent while its Guard is still free"
+    );
+    // The sent Guard engaged another player before targeting this
+    // one: admission releases it and waits for a free Guard again.
+    client.npc[1].as_mut().unwrap().entity.face_entity = 32_768 + 7;
+    let snapshot = rebuild_npc_chat_snapshot(&mut client);
+    assert!(send(&mut client, &snapshot));
+    assert_eq!(
+        client.out.pos, after_attack,
+        "a released busy Guard must not be attacked"
+    );
+    client.npc[1].as_mut().unwrap().entity.face_entity = -1;
+    let snapshot = rebuild_npc_chat_snapshot(&mut client);
+    assert!(send(&mut client, &snapshot));
+    assert!(
+        client.out.pos > after_attack,
+        "a free Guard after release receives a fresh Attack"
+    );
+
+    // Negative: a real dispatch refusal still fails the send. With
+    // no stream attached, the interaction refuses before dispatch.
+    let scenario = get("ardy_thiever_fight").unwrap();
+    let attack = scenario
+        .steps
+        .iter()
+        .find(|step| step.wait.arm == Proof::NpcNameTargetingLocal { name: "Guard" })
+        .expect("a real Guard must target the player before Start");
+    let StepKind::Repeat { send } = &attack.kind else {
+        panic!("the fixture Attack must re-admit once per game tick");
+    };
+    let mut client = native_seed_client();
+    plant_named_banker(&mut client, "Guard", 21, 20);
+    std::sync::Arc::get_mut(&mut client.cache).unwrap().npcs[0].op =
+        vec![Some("Attack".into()), None, None, None, None];
+    let snapshot = rebuild_npc_chat_snapshot(&mut client);
+    assert!(!snapshot.attached(), "no loopback stream is attached");
+    assert!(
+        !send(&mut client, &snapshot),
+        "a refused Attack dispatch must fail the fixture send"
+    );
+    assert_eq!(client.out.pos, 0, "a refused dispatch sends no Attack");
 }
 
 #[test]
@@ -8257,7 +8975,7 @@ fn flax_aio_and_secondary_cases_register_collection_cycles() {
             matches!(
                 (&step.kind, &step.wait.arm),
                 (
-                    StepKind::Repeat { .. },
+                    StepKind::NativeSeedDeposit { .. },
                     Proof::BankItemId {
                         id: LOBSTER_ID,
                         count: HERBLORE_EGG_FOOD_SEED
@@ -9949,7 +10667,6 @@ fn script_gold_watch_is_a_short_agentic_budget() {
     for name in [
         "bone_burier",
         "chicken_killer",
-        "chicken_killer_bank",
         "thiever",
         "alcher",
         "alcher_custom_alias",
@@ -10757,7 +11474,7 @@ fn nav_routes_is_ten_borrowed_ods_with_item_seed() {
 
 #[test]
 fn pair_cells_register_two_visible_actors_and_shared_start() {
-    for (name, card, dest) in [
+    for (name, card, dest, deadline) in [
         (
             "nature_crafter_air",
             "NatureCrafter",
@@ -10766,6 +11483,7 @@ fn pair_cells_register_two_visible_actors_and_shared_start() {
                 z: 3288,
                 level: 0,
             },
+            SCRIPT_GOLD_DEADLINE,
         ),
         (
             "mule_crafter_air",
@@ -10775,6 +11493,7 @@ fn pair_cells_register_two_visible_actors_and_shared_start() {
                 z: 3288,
                 level: 0,
             },
+            SCRIPT_GOLD_DEADLINE,
         ),
         (
             "flax_runner",
@@ -10784,6 +11503,7 @@ fn pair_cells_register_two_visible_actors_and_shared_start() {
                 z: 3444,
                 level: 0,
             },
+            FLAX_RUNNER_DEADLINE,
         ),
         (
             "duel_arena",
@@ -10793,6 +11513,7 @@ fn pair_cells_register_two_visible_actors_and_shared_start() {
                 z: 3274,
                 level: 0,
             },
+            SCRIPT_GOLD_DEADLINE,
         ),
     ] {
         let s = get(name).unwrap_or_else(|| panic!("{name} must be registered"));
@@ -10804,7 +11525,7 @@ fn pair_cells_register_two_visible_actors_and_shared_start() {
         );
         assert_eq!(s.settings.start_script, Some(card));
         assert_eq!(s.settings.inject_companion_as, None);
-        assert_eq!(s.settings.deadline, SCRIPT_GOLD_DEADLINE);
+        assert_eq!(s.settings.deadline, deadline, "{name} deadline");
         assert_eq!(s.settings.terminal_shot, Some(name));
         assert!(
             s.settings.full_rate,
@@ -12480,7 +13201,8 @@ fn shop_buyout_variants_prove_product_bank_and_resumed_purchase() {
         let scenario = get(name).unwrap_or_else(|| panic!("{name} is registered"));
         assert_eq!(scenario.settings.start_script, Some("ShopBuyout"));
         let expected_deadline = match name {
-            "shop_buyout_betty" | "shop_buyout_bob" => SHOP_BUYOUT_BETTY_DEADLINE,
+            "shop_buyout_betty" => SHOP_BUYOUT_BETTY_DEADLINE,
+            "shop_buyout_bob" => SHOP_BUYOUT_BOB_DEADLINE,
             "shop_buyout_gerrant" => SHOP_BUYOUT_GERRANT_DEADLINE,
             "shop_buyout_nurmof" => SHOP_BUYOUT_NURMOF_DEADLINE,
             _ => SCRIPT_GOLD_DEADLINE,
@@ -13579,7 +14301,7 @@ fn shop_buyout_npc_opener_does_not_retalk_after_choice_before_bank_loaded() {
     );
 
     plant_loaded_empty_bank(&mut client);
-    plant_bank_side(&mut client, COINS_ID, SHOP_BUYOUT_COIN_SEED);
+    plant_bank_side_full(&mut client, COINS_ID, SHOP_BUYOUT_COIN_SEED);
     client.bump_gens(ServerProt::UPDATE_INV_FULL);
     runner.tick(&mut client);
     assert_eq!(

@@ -11,7 +11,7 @@ window feature. The client rasters into a frame (wgpu GPU 3D by default,
 CpuPix3D if `BOT_CPU=1`); the panel blits that frame and feeds input back.
 
 Bind one immutable entry from `~/.274bot/servers.json` for the process
-(`--profile NAME` or `--rs2b2t`; see [README.md](../../README.md)).
+(`--profile NAME` or `--rs2b2t`; see [server-profiles.md](../reference/server-profiles.md)).
 Shared flags match host-play (`--engine`, `--cache`, `--vault`, `--catalog`,
 `--lowmem`/`--highmem`, `--nav-paints on|off`, `--live`, optional
 `--external-ts` for the dedicated loader smoke).
@@ -62,9 +62,15 @@ not create Debug reply-log entries. The Profiles editor
 offers `auto` or each listed rs2b2t world; the selected world is used on the
 next slot start. Live slot rows display the current world.
 
-Last focused profile is restored from `~/.274bot/panel-ui.json`
-(`last_focus`). Collapsible section open/closed state persists there per
-profile; **script** and **parameters** default closed.
+After unlock, the next preference-ready poll reconciles saved profile order
+before restoring `last_focus` from `~/.274bot/panel-ui.json`.
+An earlier explicit selection keeps its focus instead.
+Preference adoption during a command never changes that command's target.
+This includes the first bot selected by Fleet **Log in**.
+Removing or deleting a pending restore target cancels that restore.
+Before preferences identify the saved target, any removal cancels the restore.
+Collapsible section open/closed state persists there per profile.
+**script** and **parameters** default closed.
 
 ## Log and panel layout
 
@@ -97,11 +103,12 @@ still showing after its run stopped keeps its rows.
 
 ## Wiring
 
-`Session::unlock` starts an empty `Play` (shared `Arc<Cache>`, login FIFO)
-via `host_play::run_with_io`, then selects the restored `last_focus` (or
-the first vault name), which spawns **that one slot**. Parked profiles do
-not get a `Client` until you select them; once spawned they stay up so the
-picker can change focus.
+`Session::unlock` installs an empty `Play` (shared `Arc<Cache>`, login FIFO).
+It does not load or select a profile. A later poll waits for the unlocked vault
+and durable preferences, then reconciles saved profile order before choosing
+the restored `last_focus` or the first profile. It loads only that profile.
+Parked profiles receive no `Client` until selection. Loaded clients remain
+available when focus changes.
 Each running slot has its own `PixelBuf` + `SlotInput`. A per-frame
 observe hook applies the focus `set_draw` switch and the mainland hop.
 The runner is configured with **docking on, multi-viewports off** (single
@@ -395,7 +402,9 @@ username/password; **New profile** is a blank edit. The editor stays on
 the profile it opened on while other rows are loaded or focused. **Save**
 upserts and selects; changing the username renames the profile. A new
 profile or a rename onto a username another profile already has is
-refused with an error and nothing is written. The row **✕** deletes the
+refused with an error and nothing is written. A new profile with an empty
+password is refused with `credentials: password required` and nothing is
+written. The row **✕** deletes the
 **vault profile only** — a live wall member keeps running and stays on
 the rail (Save re-creates the row).
 **Import from rs2b0t…** (vault unlocked) reads rs2b0t's
@@ -533,8 +542,8 @@ and **drag-reorderable** (order in `panel-ui.json`). Default order:
 is drawn after them and is not reorderable.
 Login / WalkTo / config stay at the top.
 
-**Log in** / **Logout** sit above WalkTo (always shown; disabled while
-the vault is locked or no profile is focused. Logout also needs the
+**Log in** / **Log out** sit above WalkTo (always shown; disabled while
+the vault is locked or no profile is focused. Log out also needs the
 focused slot ingame). WalkTo is full-width under that row, then
 **General config** / **Nav config** / **Loadouts** (wraps so labels are
 not clipped). **Profile** is below those buttons and above **debug**
@@ -612,6 +621,14 @@ from the wall keeps its place. **Name** and **Status** only sort the view:
 they never change the saved order, and reordering needs **Load order**. A
 reorder stays pending until the file is written; if the write fails, the
 error is shown and the last saved order comes back.
+
+Shared preferences still use `panel-ui.json`. Reads use the latest cached
+saved state. Saves run on the process writer, so a slow disk does not block
+the panel, TUI or bot thread. Closing a settings window does not cancel an
+accepted save. Reopening it retains the pending save. Until the first read
+finishes, displayed defaults are provisional and walk permissions stay closed.
+Refresh preserves unsaved checkbox and folder entries when their saved values
+did not change.
 The table's columns share the
 window's width, so it never scrolls sideways, and the toolbar and column
 toggles wrap at a narrow width.
@@ -658,8 +675,9 @@ groups): the durable walk permissions — teleports, wilderness
 and bank fetch (all default off) plus **Danger routing**, a full-width drop-down
 (Never, When survivable (the default), Always; When survivable shows the note
 `Not available yet: acts as Never.` under it and admits routes as Never) — **Pause script on
-manual movement** (default on; it also pauses the script behind a Gatherer or
-combat session), and debug paints / labels. A script allows danger zones for its
+manual movement** (default on; manual movement pauses any running rs2b0t
+script, or a built-in script with an active walk or native action), and debug
+paints / labels. A script allows danger zones for its
 own walks in its Script prefs Walk permissions; a single WalkTo walk is allowed
 with its own checkbox (below). WalkTo map holds **ask before baking terrain**.
 The Quest Paths folder loader (folder, reload) sits under the Quester card's
@@ -683,7 +701,7 @@ keeping its gear and its place, with a warning and an audit line in the
 log; while that cannot be done the file is refused. Text and
 buttons wrap or equal-width-squish — **no horizontal scroll**.
 `chrome.rs` keeps the section inventory (`wired: bool`). Title (MultiBox
-is a live toggle), dim **build line** (`beta 1 ·` git short SHA,
+is a live toggle), dim **build line** (`beta 2 ·` git short SHA,
 `-dirty` when the tree was dirty; hover is crate version then full
 commit + built time), banner, profile, **debug** (loopback), and status
 key/value rows (including **mem**: highmem/lowmem) fill out the strip.

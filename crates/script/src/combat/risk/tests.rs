@@ -4,12 +4,12 @@ use crate::combat::tables::CombatTables;
 use crate::native::WalkAllow;
 use api::selected::ClientRevision;
 use api::WorldTile;
-use nav::contract::{
+use nav_planner::contract::{
     BoundZoneExempt, BoundZoneKey, NavLease, RouteView, WildernessView, ZoneTableView,
 };
-use nav::router::{Leg, Route};
-use nav::transport::{TransportEdge, TransportKind, WildernessRules, WildernessZone};
-use nav::zones::{Zone, ZoneClass, ZoneKind, ZoneTable};
+use nav_planner::router::{Leg, Route};
+use nav_planner::transport::{TransportEdge, TransportKind, WildernessRules, WildernessZone};
+use nav_planner::zones::{Zone, ZoneClass, ZoneKind, ZoneTable};
 use std::future::Future;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -51,7 +51,7 @@ impl Fixture {
         self.lease.wilderness()
     }
     fn route<'a>(&self, route: &'a Route) -> RouteView<'a> {
-        nav::producer::route_view(&self.lease, route).expect("the lease identity is minted")
+        nav_planner::producer::route_view(&self.lease, route).expect("the lease identity is minted")
     }
     fn path<'a>(&self, route: &'a Route) -> RoutePath<'a> {
         RoutePath::new(self.route(route)).unwrap()
@@ -130,7 +130,7 @@ fn route(first: i32, last: i32) -> Route {
 fn zone_table(
     zones: Vec<Zone>,
     kinds: Vec<ZoneKind>,
-    carves: Vec<(u16, nav::router::AvoidRect)>,
+    carves: Vec<(u16, nav_planner::router::AvoidRect)>,
     shapes: Vec<u64>,
     wilderness: &WildernessRules,
 ) -> ZoneTable {
@@ -884,6 +884,138 @@ pub(super) fn assess_poison_state(poison: PoisonState, crossing: bool) -> Arc<Ro
     assess(fx.route(&walk), &context(&fx, &risks, &tables), value)
 }
 
+fn unattributed_onset() -> PoisonState {
+    PoisonState::Onset {
+        since: 0,
+        q: None,
+        hit_since_line: false,
+    }
+}
+
+#[test]
+fn replay_onset_charges_unknown_pulse() {
+    let tables = tables();
+    let fx = Fixture::empty();
+    let walk = route(10, 20);
+    let mut value = input(90, 90, 0, &tables);
+    value.poison = unattributed_onset();
+
+    let result = super::replay::replay(
+        fx.path(&walk),
+        &RoutePlan::default(),
+        &value,
+        &tables,
+        WalkAllow::default(),
+        None,
+        |_, _, _, _, _| {},
+    )
+    .unwrap();
+    assert_eq!(result.hp_after, 79);
+}
+
+#[test]
+fn replay_hits_charges_onset_per_period() {
+    let tables = tables();
+    let fx = Fixture::empty();
+    let walk = route(10, 132);
+    let mut value = input(90, 90, 0, &tables);
+    value.poison = unattributed_onset();
+
+    let result = super::replay::replay(
+        fx.path(&walk),
+        &RoutePlan::default(),
+        &value,
+        &tables,
+        WalkAllow::default(),
+        None,
+        |_, _, _, _, _| {},
+    )
+    .unwrap();
+    // 123 tiles take 185 bounded replay ticks: fires at 0, 30, ..., 180.
+    assert!(result.passed);
+    assert_eq!(result.hp_after, 90 - 7 * 11);
+}
+
+#[test]
+fn replay_early_pass_refuses_onset() {
+    let tables = tables();
+    let fx = Fixture::empty();
+    let walk = route(10, 20);
+    let mut value = input(5, 5, 0, &tables);
+    value.poison = unattributed_onset();
+
+    let result = super::replay::replay(
+        fx.path(&walk),
+        &RoutePlan::default(),
+        &value,
+        &tables,
+        WalkAllow::default(),
+        None,
+        |_, _, _, _, _| {},
+    )
+    .unwrap();
+    assert!(!result.passed);
+    assert_eq!(result.failed_tick, Some(0));
+}
+
+#[test]
+fn replay_no_crossing_walk_refuses_onset_on_failed_baseline() {
+    let tables = tables();
+    let fx = Fixture::empty();
+    let risks = RiskTables::build(&tables);
+    let estimate = context(&fx, &risks, &tables);
+    let short_walk = route(10, 20);
+    let mut no_food = input(5, 5, 0, &tables);
+    no_food.poison = unattributed_onset();
+    let assessment = assess(fx.route(&short_walk), &estimate, no_food);
+    assert!(assessment.plan.crossings.is_empty());
+    assert_eq!(assessment.verdict, Verdict::Unsurvivable);
+
+    let long_walk = route(10, 252);
+    let mut carried_food = input(20, 30, 1, &tables);
+    carried_food.poison = unattributed_onset();
+    let assessment = assess(fx.route(&long_walk), &estimate, carried_food);
+    assert!(assessment.plan.crossings.is_empty());
+    assert_eq!(assessment.verdict, Verdict::FixableWith);
+}
+
+#[test]
+fn replay_refreshed_poisoned_charges_max_pulse() {
+    let tables = tables();
+    let fx = Fixture::empty();
+    let walk = route(10, 20);
+    let mut value = input(90, 90, 0, &tables);
+    value.poison = PoisonState::Poisoned {
+        per_tick: 3,
+        last_mark: 0,
+        hit_since_mark: true,
+    };
+
+    let result = super::replay::replay(
+        fx.path(&walk),
+        &RoutePlan::default(),
+        &value,
+        &tables,
+        WalkAllow::default(),
+        None,
+        |_, _, _, _, _| {},
+    )
+    .unwrap();
+    assert_eq!(result.hp_after, 79);
+    assert_eq!(
+        eat_line(
+            fx.path(&walk),
+            &RoutePlan::default(),
+            0,
+            &value,
+            &tables,
+            WalkAllow::default()
+        ),
+        Ok(23),
+        "a refreshed no-crossing floor uses the strongest pulse"
+    );
+}
+
 #[test]
 fn u9_compact_layout_and_limit_round_trips() {
     assert!(std::mem::size_of::<RiskInput>() <= 128);
@@ -1561,7 +1693,8 @@ fn u4_u14_poison_through_safe_gap_and_no_crossing_exemption() {
     let mut poisoned = input(90, 90, 0, &tables);
     poisoned.poison = PoisonState::Poisoned {
         per_tick: 1,
-        last_tick: 0,
+        last_mark: 0,
+        hit_since_mark: false,
     };
     let mut ticks = Vec::new();
     replay(
@@ -1612,7 +1745,7 @@ fn u4_u14_poison_through_safe_gap_and_no_crossing_exemption() {
 }
 
 #[test]
-fn u4_u14_no_crossing_poison_is_not_a_refusal_or_a_fetchable_food_fix() {
+fn u4_u14_no_crossing_poison_refuses_lethal_baseline_without_fetchable_food() {
     let tables = tables();
     let fx = Fixture::new(one_zone(&tables, 120, 1), WildernessRules::default());
     let risks = RiskTables::build(&tables);
@@ -1621,11 +1754,13 @@ fn u4_u14_no_crossing_poison_is_not_a_refusal_or_a_fetchable_food_fix() {
     let mut poisoned = input(10, 40, 0, &tables);
     poisoned.poison = PoisonState::Poisoned {
         per_tick: 11,
-        last_tick: 0,
+        last_mark: 0,
+        hit_since_mark: false,
     };
     let assessment = assess(fx.route(&safe), &cx, poisoned);
     assert!(assessment.plan.crossings.is_empty());
-    assert_eq!(assessment.verdict, Verdict::Survivable);
+    // A8: an empty crossing list cannot turn a lethal poison replay into safety.
+    assert_eq!(assessment.verdict, Verdict::Unsurvivable);
     assert_eq!(
         assessment.hp_after, 0,
         "retain the conservative poison replay"
@@ -1723,6 +1858,8 @@ fn edge(at: WorldTile, to: WorldTile, ticks: i32) -> TransportEdge {
         varp_req: vec![],
         worn_req: vec![],
         worn_all_req: vec![],
+        forbidden_held: Vec::new(),
+        forbidden_worn: Vec::new(),
         members_req: false,
         wildy_cap: None,
         quest_gates: None,
@@ -1808,7 +1945,8 @@ fn r1_m2_pending_heal_waits_until_the_transport_delay_ends() {
     let mut value = input(10, 40, 2, &tables);
     value.poison = PoisonState::Poisoned {
         per_tick: 5,
-        last_tick: 0,
+        last_mark: 0,
+        hit_since_mark: false,
     };
     let plan = build_plan(path, fx.zones(), &risks, fx.wilderness(), &value).unwrap();
     let mut trace = Vec::new();
@@ -1851,7 +1989,7 @@ fn u1_geometry_activation_carves_origin_envelope_transport_and_nine_crossings() 
     };
     let mut zone = Zone::npc(tile(100), 2, ZoneClass::LevelRule, 114, 0);
     zone.wild = true;
-    let carve = nav::router::AvoidRect {
+    let carve = nav_planner::router::AvoidRect {
         min_x: 98,
         max_x: 99,
         min_z: 98,
@@ -2592,7 +2730,8 @@ fn u5_b1_b3_live_classification_multi_and_input_limits() {
     let mut poisoned = input(10, 40, 0, &tables);
     poisoned.poison = PoisonState::Poisoned {
         per_tick: 6,
-        last_tick: 0,
+        last_mark: 0,
+        hit_since_mark: false,
     };
     assert!(
         estimated_floor(path, &weak, 1, &poisoned, &tables, WalkAllow::default())
@@ -2759,6 +2898,7 @@ fn u9_cold_shared_tables_and_kind_build_measurement() {
     eprintln!("S2a first build selected={selected_elapsed:?} combat={combat_elapsed:?} risk={elapsed:?}; RiskTables allocations={} payload={}B retained={}B; npcs={} zoned kinds={}",
         allocations.count_total,allocations.bytes_total,allocations.bytes_current,combat.selected().npc_names().unwrap().rows.len(),fx.table.kinds().len());
     let payload = payload.unwrap();
+    assert!(facts::build_count_for_test() > 0);
     for kind in fx.table.kinds() {
         assert!(payload.npc(kind.npc_id).is_some(), "{}", kind.id);
     }
@@ -2769,13 +2909,26 @@ fn u9_cold_shared_tables_and_kind_build_measurement() {
 #[ignore = "isolated cold construction-count probe; run explicitly"]
 fn u9_normal_slot_start_does_not_construct_risk_tables() {
     assert_eq!(facts::build_count_for_test(), 0);
+    use std::sync::Arc;
+
     let mut slot = crate::SlotScript::new();
-    slot.start_load_with_loadouts(
-        "export function tick() {}".into(),
-        crate::load::LoadShape::NativeTick,
-        vec![],
-        &[],
-    )
+    let source: Arc<str> = "export function tick() {}".into();
+    let family = crate::resolve_api_family(&source)
+        .ok()
+        .map(|(_, family)| family);
+    slot.bind_surface_factory(Arc::new(crate::load::surface::JsSurfaceFactory::default()));
+    slot.start_surface(crate::surface::SurfaceStart {
+        card: Arc::new(crate::load::surface::JsStartCard {
+            source,
+            shape: crate::load::LoadShape::NativeTick,
+            siblings: Arc::default(),
+            family,
+        }),
+        settings_bag: None,
+        game_data: None,
+        named_banks: Arc::default(),
+        loadouts: Arc::default(),
+    })
     .unwrap();
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     while slot.state() != crate::slot::RunState::Running && std::time::Instant::now() < deadline {
@@ -3307,7 +3460,7 @@ fn t5_1_assessment_and_admission_refuse_another_pack() {
     );
     assert_eq!(
         other.zones().kind(assessment.plan.intervals[0].zone).err(),
-        Some(nav::contract::ContractError::PackMismatch)
+        Some(nav_planner::contract::ContractError::PackMismatch)
     );
     assert_eq!(
         assessment.plan.intervals[0].key(fx.zones()),
@@ -3443,7 +3596,8 @@ fn t5w_assessment_yields_one_unit_and_drops_geometry_and_replay_state() {
     let mut poisoned = clear;
     poisoned.poison = PoisonState::Poisoned {
         per_tick: 1,
-        last_tick: 0,
+        last_mark: 0,
+        hit_since_mark: false,
     };
     let calls = Arc::new(AtomicUsize::new(0));
     let drops = Arc::new(AtomicUsize::new(0));

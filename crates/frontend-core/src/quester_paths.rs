@@ -1,11 +1,10 @@
 //! Durable operator configuration and asynchronous reload for Quester Paths.
 
 use api::identity::{Scope, WorkIdentity};
-use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use crate::prefs::UiPreferences;
+use crate::prefs::{PreferenceError, PreferencePatch, UiPreferences};
 use host_play::local_state::Update;
 
 /// Shared settings label used by panel and TUI.
@@ -87,32 +86,28 @@ impl QuesterPathsView {
         preferences: &UiPreferences,
         before: &Self,
         after: &Self,
-    ) -> io::Result<Update> {
+    ) -> Result<Update, PreferenceError> {
         let enabled_changed = before.enabled != after.enabled;
         let folder_changed = before.folder != after.folder;
         if !enabled_changed && !folder_changed {
             return Ok(Update::Durable);
         }
-        let enabled = after.enabled;
-        let folder = after.folder.to_string_lossy().into_owned();
-        preferences.begin_update(move |document| {
-            let settings = document
-                .entry("quester_paths")
-                .or_insert_with(|| serde_json::json!({}));
-            if !settings.is_object() {
-                *settings = serde_json::json!({});
-            }
-            let settings = settings
-                .as_object_mut()
-                .expect("replacement quester_paths value is an object");
-            if enabled_changed {
-                settings.insert("enabled".into(), serde_json::Value::Bool(enabled));
-            }
-            if folder_changed {
-                settings.insert("folder".into(), serde_json::Value::String(folder.clone()));
-            }
-            Ok(())
-        })
+        let mut patch = PreferencePatch::default();
+        if enabled_changed {
+            patch.set_member(
+                &["quester_paths", "enabled"],
+                Some(serde_json::Value::Bool(after.enabled)),
+            )?;
+        }
+        if folder_changed {
+            patch.set_member(
+                &["quester_paths", "folder"],
+                Some(serde_json::Value::String(
+                    after.folder.to_string_lossy().into_owned(),
+                )),
+            )?;
+        }
+        preferences.begin_patch(patch)
     }
 
     /// Apply the durable source to the process-wide registry configuration.
@@ -331,9 +326,8 @@ impl QuesterPathsController {
     }
 
     /// Persist (when requested), apply and reload a changed source. The
-    /// settings apply once the write is accepted; a write still queued
-    /// when the bounded wait ends comes back [`Update::Queued`] for the
-    /// command to settle from.
+    /// settings apply once the write is accepted. A pending write returns
+    /// [`Update::Queued`] for the command to settle from the service-owned result.
     pub(crate) fn apply_changed(
         &mut self,
         preferences: &UiPreferences,
@@ -705,11 +699,18 @@ mod tests {
         let started = Arc::new(AtomicBool::new(false));
         let released = Arc::new(AtomicBool::new(false));
         let _release_on_panic = ReleaseHeldWork(Arc::clone(&released));
-        // Reserve bounded jobs until the byte ledger reports Full. One
-        // 48 MiB reservation is smaller than this folder reload's charge,
-        // so the next attempt must wait rather than refuse the reload.
+        // Keep retrying when unrelated work causes Full. Stop only when our
+        // own held jobs leave too little room for the folder reload.
+        let service = script::work_admission::WorkService::shared().expect("WorkAdmission service");
+        let deadline = Instant::now() + Duration::from_secs(60);
         let mut held = Vec::new();
-        for index in 0..64_u64 {
+        let mut index = 0_u64;
+        loop {
+            assert!(
+                Instant::now() < deadline,
+                "fixture could not reserve enough WorkAdmission capacity"
+            );
+            let observed = service.lock().publication_epoch();
             let worker_started = Arc::clone(&started);
             let worker_released = Arc::clone(&released);
             let request = script::preparation::submit_cooperative(
@@ -733,11 +734,32 @@ mod tests {
                     }
                 },
             );
+            index += 1;
             match request {
                 Ok(job) => held.push(job),
                 Err(script::preparation::PreparationError::Refused(
                     api::work::SubmissionRefusal::Full,
-                )) => break,
+                )) => {
+                    let (jobs, epoch) = {
+                        let service = service.lock();
+                        let jobs = service.capacity().jobs();
+                        (jobs, service.publication_epoch())
+                    };
+                    if epoch == observed && jobs == held.len() {
+                        break;
+                    }
+                    match script::work_admission::WorkService::wait_for_publication_change(
+                        &service,
+                        epoch,
+                        Duration::from_secs(1),
+                    ) {
+                        script::work_admission::PublicationWaitOutcome::Changed
+                        | script::work_admission::PublicationWaitOutcome::TimedOut => {}
+                        script::work_admission::PublicationWaitOutcome::Unavailable => {
+                            panic!("WorkAdmission became unavailable during the fixture")
+                        }
+                    }
+                }
                 Err(error) => panic!("temporary capacity fixture: {error}"),
             }
         }

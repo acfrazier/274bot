@@ -177,13 +177,23 @@ fn scope_switches_between_slot_process_and_all_in_order() {
         messages(&view),
         ["a1", "vault: wrong passphrase", "b1", "a2"]
     );
-    view.follow_slot(Some("alice"));
-    assert_eq!(view.scope(), &LogScope::All, "All ignores focus changes");
     line(&store, Some("bob"), Source::Login, Level::Info, "b2");
     line(&store, Some("alice"), Source::Script, Level::Info, "a3");
     store.refresh(&mut view);
     assert_eq!(view.rows().back().unwrap().message(), "a3");
     assert_eq!(view.len(), 6);
+
+    // Back from every bot to the focused bot (the panel and TUI "bot"
+    // scope): the view shows that bot's lines again, not the merged rows.
+    view.follow_slot(Some("alice"));
+    store.refresh(&mut view);
+    assert_eq!(messages(&view), ["a1", "a2", "a3"]);
+
+    view.set_scope(LogScope::All);
+    store.refresh(&mut view);
+    view.follow_slot(None);
+    store.refresh(&mut view);
+    assert_eq!(messages(&view), ["vault: wrong passphrase"]);
 }
 
 #[test]

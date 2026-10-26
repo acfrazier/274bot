@@ -2,6 +2,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::io::{self, BufReader, Read};
+use std::num::NonZeroU16;
 use std::sync::{Arc, OnceLock};
 
 use client::io::ClientRevision;
@@ -724,6 +725,7 @@ pub struct QuestRequirements {
 /// One seed join. `id` is the seed id. `complete` is one constant, not a range.
 /// `unknown_sides` stays empty. Enum index is not a field.
 #[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct QuestIdentityRow {
     pub id: String,
     pub component: String,
@@ -1056,6 +1058,7 @@ pub struct QuestCoverageRecord {
 /// Roster identity. Absence is `None`, not an empty list.
 /// A coverage record is a sibling, not a row.
 #[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct QuestIdentityFacts {
     pub rows: Vec<QuestIdentityRow>,
     #[serde(default)]
@@ -1305,6 +1308,9 @@ pub struct GatherSiteOption {
     /// names them; no gate reads this list. Empty when nothing gates the site.
     #[serde(default)]
     pub requires: Vec<GatherSiteRequirement>,
+    /// User-facing reason that Bank mode cannot use this site. Other dispositions remain available.
+    #[serde(default)]
+    pub banking_unavailable: Option<String>,
 }
 
 /// One requirement a published gather site names. `kind` selects the variant.
@@ -1355,6 +1361,15 @@ impl DialogueUiIds {
     }
 }
 
+/// Identity of the verified embedded `quests.json` artifact.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct QuestFamilyIdentity {
+    /// SHA-256 of the complete artifact bytes.
+    pub sha256: [u8; 32],
+    /// Nonzero schema declared by the verified artifact descriptor.
+    pub schema: NonZeroU16,
+}
+
 /// Generated immutable facts for one client/cache revision.
 #[derive(Debug, Deserialize)]
 pub struct SelectedGameData {
@@ -1378,6 +1393,12 @@ pub struct SelectedGameData {
     special: Option<SpecialControls>,
     #[serde(default)]
     dialogue_ui: Option<DialogueUiIds>,
+    #[serde(default, rename = "server_ordered")]
+    server_ordered_wire: Option<crate::interact::server_ordered::CatalogWire>,
+    #[serde(skip)]
+    server_ordered: Option<crate::interact::server_ordered::ServerOrderedCatalog>,
+    #[serde(skip)]
+    server_ordered_status: Option<Result<(), crate::interact::server_ordered::ContractError>>,
     #[serde(default)]
     teleports: Vec<TeleportSpell>,
     #[serde(default)]
@@ -1463,6 +1484,45 @@ impl SelectedGameData {
         })
     }
 
+    /// Return the immutable server-ordered catalog for the exact selected pin.
+    ///
+    /// This cache-only access neither decodes nor allocates. Unproved revisions,
+    /// unbound facts, and a different pin cannot authorize a content operation.
+    pub fn server_ordered_catalog(
+        &self,
+        pin: &SelectedPin,
+    ) -> Result<
+        &crate::interact::server_ordered::ServerOrderedCatalog,
+        crate::interact::server_ordered::ContractError,
+    > {
+        use crate::interact::server_ordered::ContractError;
+        let bound = self
+            .selected_pin
+            .as_ref()
+            .ok_or(ContractError::ContractUnavailable)?
+            .as_ref()
+            .map_err(|_| ContractError::PinMismatch)?;
+        if bound.as_ref() != pin {
+            return Err(ContractError::PinMismatch);
+        }
+        self.server_ordered_status
+            .as_ref()
+            .ok_or(ContractError::ContractUnavailable)?
+            .as_ref()
+            .map_err(|error| *error)?;
+        self.server_ordered
+            .as_ref()
+            .ok_or(ContractError::ContractUnavailable)
+    }
+
+    /// Return the verified quest artifact identity after preparation.
+    ///
+    /// This cache-only accessor returns `None` before preparation. It never
+    /// decodes or hashes the artifact.
+    pub fn quest_family_identity(&self) -> Option<QuestFamilyIdentity> {
+        crate::quest_facts::cached_identity(self)
+    }
+
     fn bind_pin(
         &self,
         byte_len: u64,
@@ -1531,14 +1591,21 @@ impl SelectedGameData {
         }))
     }
 
-    /// Body owned by M-296: no typed quest family is installed before its asset cutover.
+    /// Verify and decode the immutable quest identity artifact for an offline
+    /// navigation bake. Never call this on a pump or tick; runtime preparation
+    /// uses `prepare_quests` and cache-only accessors instead.
+    pub fn quest_identity_for_bake(
+        &self,
+    ) -> Result<(QuestIdentityFacts, QuestFamilyIdentity), FactError> {
+        crate::quest_facts::for_bake(self)
+    }
+
+    /// Verify and prepare the selected identity-only quest family off-pump.
     pub fn prepare_quests(
         &self,
-        _worker: &mut crate::selected::FamilyPreparation,
+        worker: &mut crate::selected::FamilyPreparation,
     ) -> Result<Arc<crate::quest_facts::QuestCatalog>, crate::selected::FactError> {
-        Err(crate::selected::FactError::FamilyUnavailable(
-            crate::selected::QUESTS_FAMILY.clone(),
-        ))
+        crate::quest_facts::prepare(self, worker)
     }
 
     /// Verify and decode the selected gathering family, or share the copy another user holds. Off-pump only.
@@ -1549,9 +1616,9 @@ impl SelectedGameData {
         crate::gather_methods::prepare(self, worker)
     }
 
-    /// Cache-only; M-296 installs the weak cache with the typed family.
+    /// Return the prepared quest catalog from cache. This never decodes or hashes.
     pub fn try_quests(&self) -> Option<Arc<crate::quest_facts::QuestCatalog>> {
-        None
+        crate::quest_facts::cached(self)
     }
 
     /// Cache-only: the prepared gathering catalog after its first process decode. Never decodes.
@@ -1812,6 +1879,22 @@ impl SelectedGameData {
             MANIFEST,
             expected_revision,
         ));
+        let catalog = match (data.server_ordered_wire.take(), &data.selected_pin) {
+            (Some(facts), Some(Ok(pin))) => {
+                crate::interact::server_ordered::ServerOrderedCatalog::bind(facts, pin)
+            }
+            (Some(_), Some(Err(_))) => {
+                Err(crate::interact::server_ordered::ContractError::PinMismatch)
+            }
+            _ => Err(crate::interact::server_ordered::ContractError::ContractUnavailable),
+        };
+        data.server_ordered_status = Some(match catalog {
+            Ok(catalog) => {
+                data.server_ordered = Some(catalog);
+                Ok(())
+            }
+            Err(error) => Err(error),
+        });
         Ok(Arc::new(data))
     }
 

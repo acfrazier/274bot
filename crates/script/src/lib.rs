@@ -6,9 +6,7 @@
 /// Inventory-first acquisition shared by native consumers.
 pub mod acquire;
 pub mod api_combat;
-#[cfg(feature = "load")]
 pub mod api_gather;
-#[cfg(feature = "load")]
 pub mod api_progress;
 #[cfg(feature = "load")]
 mod api_session;
@@ -19,10 +17,9 @@ pub mod bank_hints;
 /// Native boost-potion descriptors, planning and sip selection.
 pub mod boost_potions;
 pub mod canvas;
-#[cfg(feature = "load")]
+pub mod card;
 pub mod channel;
 pub mod combat;
-#[cfg(feature = "load")]
 mod combat_session;
 /// Curated script site configuration and the hostile-attacker predicate.
 pub mod content;
@@ -30,6 +27,7 @@ pub mod ctx;
 pub mod declared_abi;
 #[cfg(feature = "load")]
 mod duel;
+pub mod duel_arena;
 /// Script-side Ent tile lookup over caller-supplied rows.
 pub mod ent;
 pub mod escape_runes;
@@ -49,23 +47,25 @@ pub mod grinch;
 pub mod ground_take;
 pub mod host_js;
 pub mod identity;
+pub mod interact;
 #[cfg(feature = "load")]
 pub mod isolate_fb;
 pub mod isolated_env;
 #[cfg(feature = "load")]
 pub mod js_cache;
-mod keep_list;
+pub mod keep_list;
 #[cfg(feature = "load")]
 pub mod load;
 pub mod loadout_plan;
 pub mod loadouts_store;
 pub mod local_state;
-mod module_imports;
+pub mod module_imports;
 pub mod native;
 pub mod native_bank;
 pub mod native_equipment;
 pub mod native_production;
 pub mod native_shop;
+pub mod paint;
 pub mod preparation;
 pub mod quester;
 /// Pure ranged supply predicate (`rangeSupplyEmpty`).
@@ -75,15 +75,19 @@ pub mod registry;
 pub mod rs2b0t_registry;
 pub mod settings_store;
 pub mod shim;
-mod shop_open;
+pub mod shop_open;
 pub mod slot;
+/// Sealed external-script authority and shared server-ordered host input.
+pub mod surface;
+/// Pure condition derivation and survival arithmetic.
+pub mod survival;
 pub mod trade_screen;
 pub mod watchdog;
 pub mod work_admission;
 
+pub use card::ScriptSel;
 pub use ctx::{CompiledTick, DetectedRandom, FindOptions, RandomClaim, ScriptCtx};
-#[cfg(feature = "load")]
-pub use duel::{duel_name, duel_partner_name};
+pub use duel_arena::{duel_name, duel_partner_name};
 pub use identity::{
     card_assignment, card_identity_id, card_identity_key, claim_legacy_overrides,
     combine_fingerprints, compiled_assignment, compiled_identity_key, file_identity,
@@ -99,7 +103,7 @@ pub use load::{
     live_example_path, live_file_fixture_path, live_file_fixture_stem, parse_declared_api_version,
     raw_content_fingerprint, resolve_api_family, scan_import_specifiers,
     scan_same_folder_js_imports, sibling_module_url, ApiFamily, CatalogApplyReport, CatalogDiff,
-    JsCard, LoadFailure, LoadShape, LoadStage, PreparedCard, ScriptSel, VersionDiag,
+    JsCard, LoadFailure, LoadShape, LoadStage, PreparedCard, VersionDiag,
 };
 /// Cache/transpile-backed library and sibling resolution (isolate feature).
 #[cfg(feature = "load")]
@@ -122,7 +126,6 @@ pub use settings_store::{
     card_key, coerce_setting_value, default_script_settings_path, format_setting_value, merge_bag,
     parameter_rows, setting_visible, ScriptSettingsStore, CLUE_DUEL_PARTNER,
 };
-#[cfg(feature = "load")]
 pub use slot::StartLoadError;
 pub use slot::{
     CompiledDelivery, RunState, ScriptLifecycleReceipt, ScriptTerminalState, SlotScript,
@@ -195,7 +198,7 @@ mod machine;
 /// Frozen market catalog facts over the selected revision's items.
 #[cfg(feature = "load")]
 mod market_catalog;
-mod melee_weapons;
+pub mod melee_weapons;
 #[cfg(feature = "load")]
 mod modals;
 /// One decoded snapshot scene per isolate thread, read by the step machines.

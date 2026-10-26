@@ -6,6 +6,37 @@
 
 use serde_json::{Map, Number, Value};
 
+/// A rejected value in the bounded channel codec.
+#[derive(Debug, thiserror::Error)]
+pub enum ChannelError {
+    #[error("BroadcastChannel message exceeds 16384 bytes")]
+    MessageTooLarge,
+    #[error("callback argument list exceeds 128 entries")]
+    ArgumentListTooLong,
+    #[error("BroadcastChannel message nesting exceeds 8")]
+    NestingTooDeep,
+    #[error("BroadcastChannel message has too many values")]
+    TooManyValues,
+    #[error("BroadcastChannel array exceeds 128 entries")]
+    ArrayTooLong,
+    #[error("BroadcastChannel object exceeds 128 fields")]
+    ObjectTooLarge,
+    #[error("BroadcastChannel string exceeds 1024 bytes")]
+    StringTooLong,
+    #[error("BroadcastChannel message has trailing bytes")]
+    TrailingBytes,
+    #[error("BroadcastChannel number is not finite")]
+    NumberNotFinite,
+    #[error("BroadcastChannel object has duplicate field")]
+    DuplicateField,
+    #[error("BroadcastChannel message has unknown value tag")]
+    UnknownTag,
+    #[error("BroadcastChannel message is truncated")]
+    Truncated,
+    #[error("BroadcastChannel string is not UTF-8")]
+    InvalidUtf8,
+}
+
 pub const MAX_CHANNEL_BYTES: usize = 16 * 1024;
 const MAX_DEPTH: usize = 8;
 const MAX_NODES: usize = 512;
@@ -20,22 +51,21 @@ const STRING: u8 = 4;
 const ARRAY: u8 = 5;
 const OBJECT: u8 = 6;
 
-pub fn encode(value: &Value) -> Result<Vec<u8>, String> {
+pub fn encode(value: &Value) -> Result<Vec<u8>, ChannelError> {
     let mut out = Vec::with_capacity(256);
     let mut nodes = 0;
     encode_value(value, 0, &mut nodes, &mut out)?;
     if out.len() > MAX_CHANNEL_BYTES {
-        return Err("BroadcastChannel message exceeds 16384 bytes".into());
+        return Err(ChannelError::MessageTooLarge);
     }
     Ok(out)
 }
 
 /// Encode a borrowed callback argument list in the same bounded clone format.
 /// The list's values stay with the native continuation, rather than being cloned.
-#[cfg(any(feature = "load", test))]
-pub(crate) fn encode_arguments(values: &[Value]) -> Result<Vec<u8>, String> {
+pub fn encode_arguments(values: &[Value]) -> Result<Vec<u8>, ChannelError> {
     if values.len() > MAX_COLLECTION {
-        return Err("callback argument list exceeds 128 entries".into());
+        return Err(ChannelError::ArgumentListTooLong);
     }
     let mut out = Vec::with_capacity(256);
     out.push(ARRAY);
@@ -52,13 +82,13 @@ fn encode_value(
     depth: usize,
     nodes: &mut usize,
     out: &mut Vec<u8>,
-) -> Result<(), String> {
+) -> Result<(), ChannelError> {
     if depth > MAX_DEPTH {
-        return Err("BroadcastChannel message nesting exceeds 8".into());
+        return Err(ChannelError::NestingTooDeep);
     }
     *nodes += 1;
     if *nodes > MAX_NODES {
-        return Err("BroadcastChannel message has too many values".into());
+        return Err(ChannelError::TooManyValues);
     }
     match value {
         Value::Null => out.push(NULL),
@@ -68,7 +98,7 @@ fn encode_value(
             let number = number
                 .as_f64()
                 .filter(|number| number.is_finite())
-                .ok_or("BroadcastChannel number is not finite")?;
+                .ok_or(ChannelError::NumberNotFinite)?;
             out.push(NUMBER);
             out.extend_from_slice(&number.to_le_bytes());
         }
@@ -78,7 +108,7 @@ fn encode_value(
         }
         Value::Array(values) => {
             if values.len() > MAX_COLLECTION {
-                return Err("BroadcastChannel array exceeds 128 entries".into());
+                return Err(ChannelError::ArrayTooLong);
             }
             out.push(ARRAY);
             put_len(values.len(), out);
@@ -88,7 +118,7 @@ fn encode_value(
         }
         Value::Object(fields) => {
             if fields.len() > MAX_COLLECTION {
-                return Err("BroadcastChannel object exceeds 128 fields".into());
+                return Err(ChannelError::ObjectTooLarge);
             }
             out.push(OBJECT);
             put_len(fields.len(), out);
@@ -99,7 +129,7 @@ fn encode_value(
         }
     }
     if out.len() > MAX_CHANNEL_BYTES {
-        return Err("BroadcastChannel message exceeds 16384 bytes".into());
+        return Err(ChannelError::MessageTooLarge);
     }
     Ok(())
 }
@@ -108,24 +138,24 @@ fn put_len(len: usize, out: &mut Vec<u8>) {
     out.extend_from_slice(&(len as u16).to_le_bytes());
 }
 
-fn put_text(text: &str, out: &mut Vec<u8>) -> Result<(), String> {
+fn put_text(text: &str, out: &mut Vec<u8>) -> Result<(), ChannelError> {
     if text.len() > MAX_STRING_BYTES {
-        return Err("BroadcastChannel string exceeds 1024 bytes".into());
+        return Err(ChannelError::StringTooLong);
     }
     put_len(text.len(), out);
     out.extend_from_slice(text.as_bytes());
     Ok(())
 }
 
-pub fn decode(bytes: &[u8]) -> Result<Value, String> {
+pub fn decode(bytes: &[u8]) -> Result<Value, ChannelError> {
     if bytes.len() > MAX_CHANNEL_BYTES {
-        return Err("BroadcastChannel message exceeds 16384 bytes".into());
+        return Err(ChannelError::MessageTooLarge);
     }
     let mut cursor = Cursor { bytes, pos: 0 };
     let mut nodes = 0;
     let value = cursor.value(0, &mut nodes)?;
     if cursor.pos != bytes.len() {
-        return Err("BroadcastChannel message has trailing bytes".into());
+        return Err(ChannelError::TrailingBytes);
     }
     Ok(value)
 }
@@ -136,13 +166,13 @@ struct Cursor<'a> {
 }
 
 impl Cursor<'_> {
-    fn value(&mut self, depth: usize, nodes: &mut usize) -> Result<Value, String> {
+    fn value(&mut self, depth: usize, nodes: &mut usize) -> Result<Value, ChannelError> {
         if depth > MAX_DEPTH {
-            return Err("BroadcastChannel message nesting exceeds 8".into());
+            return Err(ChannelError::NestingTooDeep);
         }
         *nodes += 1;
         if *nodes > MAX_NODES {
-            return Err("BroadcastChannel message has too many values".into());
+            return Err(ChannelError::TooManyValues);
         }
         match self.byte()? {
             NULL => Ok(Value::Null),
@@ -152,17 +182,17 @@ impl Cursor<'_> {
                 let bytes: [u8; 8] = self.take(8)?.try_into().expect("bounded slice");
                 let number = f64::from_le_bytes(bytes);
                 if !number.is_finite() {
-                    return Err("BroadcastChannel number is not finite".into());
+                    return Err(ChannelError::NumberNotFinite);
                 }
                 Number::from_f64(number)
                     .map(Value::Number)
-                    .ok_or_else(|| "BroadcastChannel number is invalid".into())
+                    .ok_or(ChannelError::NumberNotFinite)
             }
             STRING => Ok(Value::String(self.text()?)),
             ARRAY => {
                 let len = self.len()?;
                 if len > MAX_COLLECTION {
-                    return Err("BroadcastChannel array exceeds 128 entries".into());
+                    return Err(ChannelError::ArrayTooLong);
                 }
                 let mut values = Vec::with_capacity(len);
                 for _ in 0..len {
@@ -173,47 +203,47 @@ impl Cursor<'_> {
             OBJECT => {
                 let len = self.len()?;
                 if len > MAX_COLLECTION {
-                    return Err("BroadcastChannel object exceeds 128 fields".into());
+                    return Err(ChannelError::ObjectTooLarge);
                 }
                 let mut fields = Map::new();
                 for _ in 0..len {
                     let key = self.text()?;
                     if fields.contains_key(&key) {
-                        return Err("BroadcastChannel object has duplicate field".into());
+                        return Err(ChannelError::DuplicateField);
                     }
                     fields.insert(key, self.value(depth + 1, nodes)?);
                 }
                 Ok(Value::Object(fields))
             }
-            _ => Err("BroadcastChannel message has unknown value tag".into()),
+            _ => Err(ChannelError::UnknownTag),
         }
     }
 
-    fn byte(&mut self) -> Result<u8, String> {
+    fn byte(&mut self) -> Result<u8, ChannelError> {
         Ok(*self.take(1)?.first().expect("one-byte slice"))
     }
 
-    fn len(&mut self) -> Result<usize, String> {
+    fn len(&mut self) -> Result<usize, ChannelError> {
         let bytes: [u8; 2] = self.take(2)?.try_into().expect("bounded slice");
         Ok(u16::from_le_bytes(bytes) as usize)
     }
 
-    fn text(&mut self) -> Result<String, String> {
+    fn text(&mut self) -> Result<String, ChannelError> {
         let len = self.len()?;
         if len > MAX_STRING_BYTES {
-            return Err("BroadcastChannel string exceeds 1024 bytes".into());
+            return Err(ChannelError::StringTooLong);
         }
         std::str::from_utf8(self.take(len)?)
             .map(str::to_owned)
-            .map_err(|_| "BroadcastChannel string is not UTF-8".into())
+            .map_err(|_| ChannelError::InvalidUtf8)
     }
 
-    fn take(&mut self, len: usize) -> Result<&[u8], String> {
+    fn take(&mut self, len: usize) -> Result<&[u8], ChannelError> {
         let end = self
             .pos
             .checked_add(len)
             .filter(|end| *end <= self.bytes.len())
-            .ok_or("BroadcastChannel message is truncated")?;
+            .ok_or(ChannelError::Truncated)?;
         let value = &self.bytes[self.pos..end];
         self.pos = end;
         Ok(value)
@@ -255,5 +285,61 @@ mod tests {
         .is_err());
         assert!(decode(&[ARRAY, 1]).is_err());
         assert!(encode(&json!("x".repeat(1025))).is_err());
+        for (error, expected) in [
+            (
+                ChannelError::MessageTooLarge,
+                "BroadcastChannel message exceeds 16384 bytes",
+            ),
+            (
+                ChannelError::ArgumentListTooLong,
+                "callback argument list exceeds 128 entries",
+            ),
+            (
+                ChannelError::NestingTooDeep,
+                "BroadcastChannel message nesting exceeds 8",
+            ),
+            (
+                ChannelError::TooManyValues,
+                "BroadcastChannel message has too many values",
+            ),
+            (
+                ChannelError::ArrayTooLong,
+                "BroadcastChannel array exceeds 128 entries",
+            ),
+            (
+                ChannelError::ObjectTooLarge,
+                "BroadcastChannel object exceeds 128 fields",
+            ),
+            (
+                ChannelError::StringTooLong,
+                "BroadcastChannel string exceeds 1024 bytes",
+            ),
+            (
+                ChannelError::TrailingBytes,
+                "BroadcastChannel message has trailing bytes",
+            ),
+            (
+                ChannelError::NumberNotFinite,
+                "BroadcastChannel number is not finite",
+            ),
+            (
+                ChannelError::DuplicateField,
+                "BroadcastChannel object has duplicate field",
+            ),
+            (
+                ChannelError::UnknownTag,
+                "BroadcastChannel message has unknown value tag",
+            ),
+            (
+                ChannelError::Truncated,
+                "BroadcastChannel message is truncated",
+            ),
+            (
+                ChannelError::InvalidUtf8,
+                "BroadcastChannel string is not UTF-8",
+            ),
+        ] {
+            assert_eq!(error.to_string(), expected);
+        }
     }
 }

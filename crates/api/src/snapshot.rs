@@ -56,6 +56,10 @@ pub struct GameSnapshot {
     thieving_stun_tick: Option<u32>,
     #[serde(skip)]
     thieving_stun_stamp: Option<i32>,
+    #[serde(skip)]
+    last_scene_rebuild_tick: Option<u32>,
+    #[serde(skip)]
+    last_server_movement_tick: Option<u32>,
     players: Vec<PlayerView>,
     /// Whether the player family has posted at least once in this session.
     #[serde(skip)]
@@ -143,8 +147,11 @@ pub struct GameSnapshot {
     /// gate so a movement rebuilds only that family.
     inventory: Vec<ItemView>,
     equipment: Vec<ItemView>,
-    /// Worn component slot data has been posted, including an observed empty set.
+    /// Whether the loaded worn-items tab has non-empty, aligned item and count arrays.
     equipment_available: bool,
+    /// Latest received equipment packet revision.
+    #[serde(skip)]
+    equipment_packet_generation: Option<u64>,
     bank: Vec<ItemView>,
     bank_side: Vec<ItemView>,
     /// Latest received inventory packet revision for the inv-tab component.
@@ -291,6 +298,8 @@ impl Default for GameSnapshot {
             taking_damage: false,
             thieving_stun_tick: None,
             thieving_stun_stamp: None,
+            last_scene_rebuild_tick: None,
+            last_server_movement_tick: None,
             players: Vec::new(),
             players_available: false,
             projectiles: Vec::with_capacity(MAX_PROJECTILES_PER_SNAPSHOT),
@@ -322,6 +331,7 @@ impl Default for GameSnapshot {
             inventory: Vec::new(),
             equipment: Vec::new(),
             equipment_available: false,
+            equipment_packet_generation: None,
             bank: Vec::new(),
             bank_side: Vec::new(),
             inventory_packet_generation: None,
@@ -446,6 +456,10 @@ impl GameSnapshot {
     pub fn seed_inventory_packet_generations(&mut self, main: Option<u64>, side: Option<u64>) {
         self.inventory_packet_generation = main;
         self.bank_side_packet_generation = side;
+    }
+    /// Offline fixture observation of the equipment packet revision.
+    pub fn seed_equipment_packet_generation(&mut self, generation: Option<u64>) {
+        self.equipment_packet_generation = generation;
     }
 
     /// Offline fixture observation of a trade page; production uses decoded widgets.
@@ -872,6 +886,18 @@ impl GameSnapshot {
         self.tick
     }
 
+    /// Latest observed tick at which scene loading began or the scene identity changed.
+    /// This is an observation time, not the client's collision-grid refresh time.
+    pub fn last_scene_rebuild_tick(&self) -> Option<u32> {
+        self.last_scene_rebuild_tick
+    }
+
+    /// Latest PLAYER_INFO observation that changed an already known server tile.
+    /// Render interpolation and scene-only refreshes do not advance this value.
+    pub fn last_server_movement_tick(&self) -> Option<u32> {
+        self.last_server_movement_tick
+    }
+
     /// The inventory view `(obj id, count)` from the last inv rebuild.
     pub fn inv(&self) -> &[(i32, i32)] {
         &self.inv
@@ -989,6 +1015,11 @@ impl GameSnapshot {
     /// an observed empty worn set is posted, a pre-login frame is not.
     pub fn equipment_posted(&self) -> bool {
         self.equipment_available
+    }
+
+    /// Latest received packet generation for the equipment component, if any.
+    pub fn equipment_packet_generation(&self) -> Option<u64> {
+        self.equipment_packet_generation
     }
 
     /// Bank item views from the last bank rebuild (the open main modal's

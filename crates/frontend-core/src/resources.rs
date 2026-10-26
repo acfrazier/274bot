@@ -657,10 +657,11 @@ fn format_rate(bytes_per_sec: f64) -> String {
     }
 }
 
-/// `"{n} bots ({ingame} running)"`, singular `bot` for one.
+/// `"{n} bots ({ingame} in game)"`, singular `bot` for one. The count is
+/// the clients in game; it says nothing about their scripts.
 pub fn format_bots(n: usize, ingame: usize) -> String {
     let noun = if n == 1 { "bot" } else { "bots" };
-    format!("{n} {noun} ({ingame} running)")
+    format!("{n} {noun} ({ingame} in game)")
 }
 
 /// The background-bot count: `1 other`, `3 others`.

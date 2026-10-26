@@ -1,8 +1,8 @@
 use std::sync::Mutex;
 
 use api::snapshot::WorldTile;
-use nav::contract::RouteView;
-use nav::router::Route;
+use nav_planner::contract::RouteView;
+use nav_planner::router::Route;
 
 use crate::{Play, ScriptNavPaint, WalkArm};
 
@@ -80,7 +80,7 @@ impl<'a> RouteProjection<'a> {
                 destination: route.dest,
             },
             route: RouteProjectionPath::Legacy(route),
-            aim: arm.traveller.current_aim(),
+            aim: arm.current_aim(),
         })
     }
     fn script(bot: &'a crate::script_runtime::NavBot) -> Option<Self> {

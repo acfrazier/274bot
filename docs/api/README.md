@@ -1,8 +1,17 @@
-# Agent API
+# Reference pages in `docs/api`
 
-Beta kernel surface a bot agent codes against in 0.2.4 Beta 1: reading world state,
+> **Which page do I need?** Using the app: the [panel](panel.md), the
+> [terminal app](tui.md), the [vault](vault.md) and [login](login.md) pages.
+> Writing scripts: [script.md](script.md) and [js-api-v2.md](js-api-v2.md).
+> Changing 274bot: everything else on this page, and the
+> [docs index](../README.md).
+
+## Developer overview: the Agent API
+
+Beta kernel surface a bot agent codes against in 0.2.7 Beta 2: reading world state,
 acting, settling, navigating, and logging in — through the `api` crate
-(`crates/api`) plus `nav` (`crates/nav`) and the host tick. The script
+(`crates/api`), `nav-planner` (`crates/nav-planner`), `nav-executor`
+(`crates/nav-executor`) and the host tick. The script
 crate is the runner kernel (compiled cards + Load isolate + catalog
 registration). Catalog helper compatibility is **partial** and fail-closed;
 honest skilling bots are not “all green by default.” Revision server profiles,
@@ -10,13 +19,13 @@ the random-event guardian, and `tui-play` are in this tree. Revision **289**
 is the production revision; 274 packs build but are best-effort, neither
 tested nor claimed.
 
-- [snapshot.md](snapshot.md) — the full gen-stamped world read model
+- [snapshot.md](../dev/snapshot.md) — the full gen-stamped world read model
   (`GameSnapshot` + `ReadContext`)
-- [query.md](query.md) — the fluent `Query<T>` read DSL + typed filters
-- [interact.md](interact.md) — `Driver` + the `Interactions` orchestration layer
-- [settle.md](settle.md) — pollable `Settle`/`Outcome`/`Evidence`
-- [nav.md](nav.md) — whole-world collision + transport graph (pack v16) +
-  Dijkstra router + `Traveller::follow` + WalkTo picker + BankBudget fetch
+- [query.md](../dev/query.md) — the fluent `Query<T>` read DSL + typed filters
+- [interact.md](../dev/interact.md) — `Driver` + the `Interactions` orchestration layer
+- [settle.md](../dev/settle.md) — pollable `Settle`/`Outcome`/`Evidence`
+- [nav.md](nav.md) — whole-world collision + transport graph (pack v17) +
+  Dijkstra router (`nav`) + `Traveller::follow` (`nav-executor`) + WalkTo picker + BankBudget fetch
 - [login.md](login.md) — login FIFO throttle numbers + server profiles
 - [vault.md](vault.md) — encrypted profile vault, assignments, passphrase policy and channels
 - [panel.md](panel.md) — native UI (`panel-play`): chrome, MultiBox, Fleet, scripts
@@ -29,7 +38,8 @@ tested nor claimed.
 | Crate | Role |
 | --- | --- |
 | `api` | Read model (`snapshot` + `query`), act primitives (`interact`), settle/evidence (`settle`), legal send table (`prot`), item/loc defs (`obj_names`) |
-| `nav` | Whole-world collision bake, transport graph, Dijkstra router, pollable `Traveller::follow`, WalkTo picker grid |
+| `nav` | Whole-world collision bake, transport graph, Dijkstra router, WalkTo picker grid |
+| `nav-executor` | Pollable `Traveller::follow` over the `nav` world |
 | `host` | One OS thread per client slot; drains gens per frame; snapshot/think after drain |
 | `vault` | Encrypted profile store (AES-256-GCM), per-profile script assignment/settings |
 | `host-play` | CLI + shared `Play`: resolve server profile, unlock vault, run slots |
@@ -37,7 +47,7 @@ tested nor claimed.
 | `scenario` | Shared headed/headless live scenario runner (`panel-play --live` and `crates/e2e`) |
 | `e2e` | Headless live twins (`LIVE=1`) + `e2e-suite` ordered runner |
 | `frontend-core` | Shared panel/TUI scripts, nav prefs, resource meter |
-| `panel` | Native UI (`panel-play`): profiles, Log in/Logout, WalkTo, scripts, MultiBox |
+| `panel` | Native UI (`panel-play`): profiles, Log in/Log out, WalkTo, scripts, MultiBox |
 | `tui` | Headless operator panel (`tui-play`): ratatui + crossterm, same `host_play::Play`, raster Off |
 
 The client is the `vendor/fr-client-rust` submodule (path dep as `client`).
@@ -72,4 +82,4 @@ LIVE=1 cargo test -p host-play -- --ignored --test-threads=1
 capture, and the `crates/scenario` engine via `--live <scenario>` with
 screenshots); `crates/e2e` is the headless twin. Failures print `FAIL:` and
 `exit(1)`. Wait until `ingame && scene_state == 2`. Suite contracts:
-[../e2e-suite.md](../e2e-suite.md).
+[../dev/e2e-suite.md](../dev/e2e-suite.md).

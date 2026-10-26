@@ -11,6 +11,7 @@ use std::path::PathBuf;
 use frontend_core::command::OperatorCommand;
 use frontend_core::launch::{InstancePermit, PlayConfig};
 use frontend_core::scripts::{CompiledCardId, ScriptChoice};
+use frontend_core::test_support::IsolatedStores;
 use frontend_core::{FleetAction, FleetCard, HeadlessDriver, MarkOp, Targets};
 use vault::{Profile, ProfileSettings, Vault};
 
@@ -95,8 +96,31 @@ fn scratch(label: &str) -> PathBuf {
     dir
 }
 
+/// A driver that owns its isolated bot home for the whole test. The driver
+/// field drops first, while the guard still points every store at the
+/// scratch home; the guard then removes that home.
+struct FleetDriver {
+    driver: HeadlessDriver,
+    _iso: IsolatedStores,
+}
+
+impl std::ops::Deref for FleetDriver {
+    type Target = HeadlessDriver;
+
+    fn deref(&self) -> &HeadlessDriver {
+        &self.driver
+    }
+}
+
+impl std::ops::DerefMut for FleetDriver {
+    fn deref_mut(&mut self) -> &mut HeadlessDriver {
+        &mut self.driver
+    }
+}
+
 /// A driver over `BOTS` loaded profiles, every one marked.
-fn driver(label: &str) -> HeadlessDriver {
+fn driver(label: &str) -> FleetDriver {
+    let iso = IsolatedStores::enter(&format!("fleet-plan-{label}"));
     let dir = scratch(label);
     // Hermetic: no world pack from the operator's home (see memory_notice.rs).
     std::env::set_var("NAV_PACK", dir.join("empty.navpack"));
@@ -118,6 +142,13 @@ fn driver(label: &str) -> HeadlessDriver {
     }
     drop(vault);
     let mut d = HeadlessDriver::open(&dir.join("state"), InstancePermit::skip());
+    // Driver startup hydrates preferences asynchronously. Adopt the initial
+    // snapshot before measuring a frame window so a late first read cannot
+    // be charged to a quiet or waiting fleet-plan frame.
+    let preferences = d.session().preferences().expect("driver preferences");
+    preferences.reload().expect("read initial preferences");
+    d.poll();
+    assert!(preferences.ready(), "initial preferences are hydrated");
     d.session_mut().set_spawn_workers(false);
     d.unlock(
         vault_path,
@@ -133,7 +164,10 @@ fn driver(label: &str) -> HeadlessDriver {
         Targets::Application,
     )
     .expect("mark");
-    d
+    FleetDriver {
+        driver: d,
+        _iso: iso,
+    }
 }
 
 fn settle_writes(d: &mut HeadlessDriver) {

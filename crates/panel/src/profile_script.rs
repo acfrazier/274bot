@@ -163,10 +163,8 @@ impl Session {
                     let _ = frontend_core::scripts::paths::clear_rs2b0t_import_at(
                         &frontend_core::scripts::paths::rs2b0t_import_file(),
                     );
+                    let _ = self.persist_panel_serializable(&["script_catalog_last_dir"], &root);
                     self.ui.script_catalog_last_dir = Some(root);
-                    if self.persist_ui {
-                        crate::ui_state::save(&self.preferences, &self.ui);
-                    }
                     self.rs2b0t_catalog_open = false;
                     self.error = None;
                 }
@@ -221,13 +219,15 @@ impl Session {
         self.apply_script_notice();
     }
 
-    /// Product UI catalog refresh.
+    /// Product UI catalog refresh. With no catalog root to read, the refresh
+    /// is refused at the shared command boundary, like every other refusal.
     pub fn begin_refresh_catalog(&mut self) {
-        match self.catalog_root() {
-            Ok(Some(root)) => self.begin_refresh_catalog_at(&root),
-            Ok(None) => self.error = Some("Refresh catalog: no catalog configured".into()),
-            Err(error) => self.error = Some(format!("Refresh catalog: {error}")),
-        }
+        let reason = match self.catalog_root() {
+            Ok(Some(root)) => return self.begin_refresh_catalog_at(&root),
+            Ok(None) => "Refresh catalog: no catalog configured".to_owned(),
+            Err(error) => format!("Refresh catalog: {error}"),
+        };
+        self.refuse_command(OperatorCommand::ImportCatalog, &[], None, &reason);
     }
 
     pub(crate) fn begin_refresh_catalog_at(&mut self, root: &Path) {

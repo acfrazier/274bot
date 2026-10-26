@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use api::snapshot::{GameSnapshot, WorldTile};
-use nav::world::NavWorld;
+use nav_planner::world::NavWorld;
 
 use super::{route_inspect, script_slot, PostedWalkOutcome, ScriptWall};
 /// The FlatBuffer snapshot blob posted into a Load isolate each
@@ -1083,7 +1083,7 @@ pub(crate) fn with_script_snapshot_input_shorts<R>(
         })
     });
     let banks = world.map(|w| {
-        use nav::pack::BankAccess;
+        use nav_planner::pack::BankAccess;
         w.banks()
             .iter()
             .filter_map(|b| match &b.access {

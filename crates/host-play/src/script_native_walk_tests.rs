@@ -2,7 +2,7 @@
 //! delivery and native drain, the route-work service and `step_nav_bot`.
 use super::*;
 use client::dash3d::CollisionFlag;
-use nav::bank_fetch::BankRows;
+use nav_planner::bank_fetch::BankRows;
 use script::native::walk::Walk;
 use script::native::{
     ActionError, ActionHandle, NativeTick, Script, ScriptFailure, ScriptFlow, WalkEnd, WalkEvent,
@@ -25,7 +25,7 @@ struct Walker {
     target: Option<WorldTile>,
     later_target: Option<WorldTile>,
     radius: u16,
-    arrival: nav::arrival::ArrivalKind,
+    arrival: nav_planner::arrival::ArrivalKind,
     options: script::native::WalkOptions,
     candidate_goals: Option<script::native::WalkGoals>,
     result: Option<Result<WalkReceipt, ActionError>>,
@@ -222,7 +222,7 @@ fn native_near_walk_after_compat_tile_walk_uses_arrival_endpoint() {
         target.x,
         target.z,
         target.level,
-        nav::router::FindOptions::default(),
+        nav_planner::router::FindOptions::default(),
         1,
         900,
         true,
@@ -241,7 +241,7 @@ fn native_near_walk_after_compat_tile_walk_uses_arrival_endpoint() {
         let mut shared = rig.shared.lock();
         shared.target = Some(target);
         shared.radius = 1;
-        shared.arrival = nav::arrival::ArrivalKind::Reach;
+        shared.arrival = nav_planner::arrival::ArrivalKind::Reach;
     }
 
     rig.observe(1);
@@ -283,7 +283,7 @@ fn candidate_walk_returns_and_settles_the_chosen_goal() {
     {
         let mut shared = rig.shared.lock();
         shared.target = Some(tile(20));
-        shared.arrival = nav::contract::ArrivalKind::Area;
+        shared.arrival = nav_planner::contract::ArrivalKind::Area;
         shared.candidate_goals =
             Some(script::native::WalkGoals::new(vec![tile(8), tile(4)]).unwrap());
     }
@@ -312,7 +312,7 @@ fn candidate_walk_keeps_preferred_stand_and_reports_its_tier() {
         {
             let mut shared = rig.shared.lock();
             shared.target = Some(tile(20));
-            shared.arrival = nav::contract::ArrivalKind::Area;
+            shared.arrival = nav_planner::contract::ArrivalKind::Area;
             shared.candidate_goals = Some(
                 script::native::WalkGoals::with_preferred(vec![preferred, tile(4)], &[preferred])
                     .unwrap(),
@@ -348,7 +348,7 @@ fn candidate_walk_rejects_a_radius_instead_of_changing_its_meaning() {
     {
         let mut shared = rig.shared.lock();
         shared.radius = 1;
-        shared.arrival = nav::contract::ArrivalKind::Area;
+        shared.arrival = nav_planner::contract::ArrivalKind::Area;
         shared.candidate_goals = Some(
             script::native::WalkGoals::new(vec![WorldTile {
                 x: 4,
@@ -376,12 +376,12 @@ fn candidate_walk_rejects_a_radius_instead_of_changing_its_meaning() {
 fn native_follow_failure_preserves_hop_detail_in_receipt() {
     for (why, expected, name) in [
         (
-            nav::traveller::HopFailure::Expired,
+            nav_executor::HopFailure::Expired,
             script::native::WalkStallReason::Expired,
             "Expired",
         ),
         (
-            nav::traveller::HopFailure::Dropped,
+            nav_executor::HopFailure::Dropped,
             script::native::WalkStallReason::Dropped,
             "Dropped",
         ),
@@ -389,7 +389,7 @@ fn native_follow_failure_preserves_hop_detail_in_receipt() {
         let mut rig = open_rig(false);
         rig.observe(1);
         rig.wait_routed();
-        let failure = nav::traveller::TravelOutcome::Stalled {
+        let failure = nav_executor::TravelOutcome::Stalled {
             at: WorldTile {
                 x: 0,
                 z: 0,
@@ -454,10 +454,10 @@ fn native_end_blocked_follow_preserves_typed_stall_in_receipt() {
         let mut navs = rig.navs.lock().unwrap();
         super::apply_nav_follow_outcome(
             navs.get_mut("alice").unwrap(),
-            Some(nav::traveller::TravelOutcome::Stalled {
+            Some(nav_executor::TravelOutcome::Stalled {
                 at,
                 aiming,
-                why: nav::traveller::HopFailure::EndBlocked,
+                why: nav_executor::HopFailure::EndBlocked,
                 tries: 0,
             }),
             false,
@@ -479,7 +479,7 @@ fn native_end_blocked_follow_preserves_typed_stall_in_receipt() {
 
 #[test]
 fn stale_and_legacy_follow_failures_do_not_acquire_native_detail() {
-    let failure = || nav::traveller::TravelOutcome::Stalled {
+    let failure = || nav_executor::TravelOutcome::Stalled {
         at: WorldTile {
             x: 0,
             z: 0,
@@ -490,7 +490,7 @@ fn stale_and_legacy_follow_failures_do_not_acquire_native_detail() {
             z: 0,
             level: 0,
         },
-        why: nav::traveller::HopFailure::Dropped,
+        why: nav_executor::HopFailure::Dropped,
         tries: 3,
     };
 
@@ -535,18 +535,18 @@ fn stale_and_legacy_follow_failures_do_not_acquire_native_detail() {
 
 fn zoned_open_world() -> NavWorld {
     let mut world = open_world(40, 1);
-    let zones = vec![nav::zones::Zone::npc(
+    let zones = vec![nav_planner::zones::Zone::npc(
         WorldTile {
             x: 2,
             z: 0,
             level: 0,
         },
         0,
-        nav::zones::ZoneClass::Always,
+        nav_planner::zones::ZoneClass::Always,
         u16::MAX,
         0,
     )];
-    let kinds = vec![nav::zones::ZoneKind::new(
+    let kinds = vec![nav_planner::zones::ZoneKind::new(
         "test-barrier",
         "Test barrier",
         123,
@@ -554,7 +554,7 @@ fn zoned_open_world() -> NavWorld {
         false,
         false,
     )];
-    let table = nav::zones::ZoneTable::from_parts(
+    let table = nav_planner::zones::ZoneTable::from_parts(
         zones,
         kinds,
         vec![],
@@ -573,19 +573,55 @@ fn catalog_open_world() -> NavWorld {
     let mut world = open_world(40, 10);
     let tile = |x, z| WorldTile { x, z, level: 0 };
     let mut zones = vec![
-        nav::zones::Zone::npc(tile(2, 0), 0, nav::zones::ZoneClass::Always, u16::MAX, 0),
-        nav::zones::Zone::npc(tile(10, 2), 1, nav::zones::ZoneClass::Always, u16::MAX, 0),
-        nav::zones::Zone::npc(tile(20, 2), 1, nav::zones::ZoneClass::Always, u16::MAX, 0),
-        nav::zones::Zone::npc(tile(10, 6), 1, nav::zones::ZoneClass::Always, u16::MAX, 0),
-        nav::zones::Zone::npc(tile(20, 6), 1, nav::zones::ZoneClass::Always, u16::MAX, 0),
-        nav::zones::Zone::npc(tile(30, 0), 0, nav::zones::ZoneClass::Always, u16::MAX, 0),
+        nav_planner::zones::Zone::npc(
+            tile(2, 0),
+            0,
+            nav_planner::zones::ZoneClass::Always,
+            u16::MAX,
+            0,
+        ),
+        nav_planner::zones::Zone::npc(
+            tile(10, 2),
+            1,
+            nav_planner::zones::ZoneClass::Always,
+            u16::MAX,
+            0,
+        ),
+        nav_planner::zones::Zone::npc(
+            tile(20, 2),
+            1,
+            nav_planner::zones::ZoneClass::Always,
+            u16::MAX,
+            0,
+        ),
+        nav_planner::zones::Zone::npc(
+            tile(10, 6),
+            1,
+            nav_planner::zones::ZoneClass::Always,
+            u16::MAX,
+            0,
+        ),
+        nav_planner::zones::Zone::npc(
+            tile(20, 6),
+            1,
+            nav_planner::zones::ZoneClass::Always,
+            u16::MAX,
+            0,
+        ),
+        nav_planner::zones::Zone::npc(
+            tile(30, 0),
+            0,
+            nav_planner::zones::ZoneClass::Always,
+            u16::MAX,
+            0,
+        ),
     ];
     zones[0].group = 0;
     for zone in &mut zones[1..5] {
         zone.group = 1;
     }
     zones[5].group = 2;
-    let kinds = vec![nav::zones::ZoneKind::new(
+    let kinds = vec![nav_planner::zones::ZoneKind::new(
         "test-barrier",
         "Test barrier",
         123,
@@ -594,10 +630,10 @@ fn catalog_open_world() -> NavWorld {
         false,
     )];
     let groups = vec![
-        nav::zones::ZoneGroup::new(
+        nav_planner::zones::ZoneGroup::new(
             "white-wolf-mountain",
             "White Wolf Mountain",
-            nav::router::AvoidRect {
+            nav_planner::router::AvoidRect {
                 min_x: 2,
                 max_x: 2,
                 min_z: 0,
@@ -606,10 +642,10 @@ fn catalog_open_world() -> NavWorld {
             },
             vec![0].into_boxed_slice(),
         ),
-        nav::zones::ZoneGroup::new(
+        nav_planner::zones::ZoneGroup::new(
             "draynor-jail-guards",
             "Draynor jail guards",
-            nav::router::AvoidRect {
+            nav_planner::router::AvoidRect {
                 min_x: 9,
                 max_x: 21,
                 min_z: 1,
@@ -618,10 +654,10 @@ fn catalog_open_world() -> NavWorld {
             },
             vec![1, 2, 3, 4].into_boxed_slice(),
         ),
-        nav::zones::ZoneGroup::new(
+        nav_planner::zones::ZoneGroup::new(
             "death-plateau-throwers",
             "Death Plateau thrower trolls",
-            nav::router::AvoidRect {
+            nav_planner::router::AvoidRect {
                 min_x: 30,
                 max_x: 30,
                 min_z: 0,
@@ -631,7 +667,7 @@ fn catalog_open_world() -> NavWorld {
             vec![5].into_boxed_slice(),
         ),
     ];
-    let table = nav::zones::ZoneTable::from_parts(
+    let table = nav_planner::zones::ZoneTable::from_parts(
         zones,
         kinds,
         groups,
@@ -649,18 +685,18 @@ fn catalog_open_world() -> NavWorld {
 
 fn add_selection_zone(
     world: &mut NavWorld,
-    zone: nav::zones::Zone,
-    carve: Option<nav::router::AvoidRect>,
+    zone: nav_planner::zones::Zone,
+    carve: Option<nav_planner::router::AvoidRect>,
 ) {
     let carves = carve.map_or_else(Vec::new, |carve| vec![(0, carve)]);
-    let (npc_id, vislevel) = if zone.class == nav::zones::ZoneClass::LevelRule {
+    let (npc_id, vislevel) = if zone.class == nav_planner::zones::ZoneClass::LevelRule {
         (0, zone.cap / 2)
     } else {
         (-1, 0)
     };
-    let table = nav::zones::ZoneTable::from_parts(
+    let table = nav_planner::zones::ZoneTable::from_parts(
         vec![zone],
-        vec![nav::zones::ZoneKind::new(
+        vec![nav_planner::zones::ZoneKind::new(
             "test-danger",
             "Test danger",
             npc_id,
@@ -682,9 +718,9 @@ fn add_selection_zone(
 
 fn selection_zone_world(
     target: WorldTile,
-    zone: nav::zones::Zone,
-    carve: Option<nav::router::AvoidRect>,
-    wilderness: nav::transport::WildernessRules,
+    zone: nav_planner::zones::Zone,
+    carve: Option<nav_planner::router::AvoidRect>,
+    wilderness: nav_planner::transport::WildernessRules,
 ) -> NavWorld {
     let mut world = open_world_at(target.x - 8, target.z - 8, 32, 32);
     world.graph.wilderness = wilderness;
@@ -759,7 +795,7 @@ fn selection_danger(
     target: WorldTile,
     loc_id: Option<i32>,
     radius: u16,
-    arrival: nav::contract::ArrivalKind,
+    arrival: nav_planner::contract::ArrivalKind,
 ) -> Result<(), String> {
     use script::native::{WalkDanger, WalkDangerQuery};
 
@@ -773,8 +809,8 @@ fn selection_danger(
     }
 }
 
-fn avoid_rect(min_x: i32, max_x: i32, min_z: i32, max_z: i32) -> nav::router::AvoidRect {
-    nav::router::AvoidRect {
+fn avoid_rect(min_x: i32, max_x: i32, min_z: i32, max_z: i32) -> nav_planner::router::AvoidRect {
+    nav_planner::router::AvoidRect {
         min_x,
         max_x,
         min_z,
@@ -1234,6 +1270,95 @@ fn food_only_abort_walk_routes_with_low_or_disallowed_prayer() {
         assert!(rig.driver.if_button_components.is_empty());
         assert_eq!(rig.end(), None);
     }
+}
+
+#[test]
+fn native_host_walk_uses_never_policy_and_still_eats_when_poisoned() {
+    let mut rig = open_rig(false);
+    rig.shared.lock().food_guard = true;
+    seed_protect_frame(&mut rig.snapshot, 43);
+    rig.snapshot.seed_tick(1);
+    rig.observe(1);
+    rig.wait_routed();
+    let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+    rig.snapshot.seed_inventory(
+        ["lobster", "1doseantipoison"]
+            .into_iter()
+            .enumerate()
+            .map(|(slot, alias)| {
+                let fact = data.item_by_alias(alias).unwrap();
+                api::snapshot::ItemView {
+                    def: api::ItemDefView {
+                        id: fact.id,
+                        name: fact.name.clone(),
+                        stackable: false,
+                        members: true,
+                        base_value: 0,
+                        noted: false,
+                        certificate_link: -1,
+                        certificate_template: -1,
+                    },
+                    slot: slot as i32,
+                    count: 1,
+                    container: api::snapshot::ItemContainer::Inventory,
+                    action_family: api::snapshot::ItemActionFamily::Held,
+                    actions: vec![Some(if slot == 0 { "Eat" } else { "Drink" }.into())],
+                    component_id: 3214,
+                }
+            })
+            .collect(),
+        28,
+    );
+    let mut stats = rig.snapshot.stats().to_vec();
+    stats
+        .iter_mut()
+        .find(|stat| stat.index == 3)
+        .unwrap()
+        .effective = 1;
+    rig.snapshot.seed_stats(stats);
+    rig.snapshot
+        .seed_inventory_packet_generations(Some(1), None);
+    let drain = host::DrainResult {
+        player_info: true,
+        npc_rows_coherent: true,
+        session_changed: false,
+        gens: Default::default(),
+        dirty: Default::default(),
+    };
+    {
+        let mut navs = rig.navs.lock().unwrap();
+        let bot = navs.get_mut("alice").unwrap();
+        bot.cure_poison = script::survival::CurePoison::Never;
+        bot.condition.session_started(
+            1,
+            0,
+            Some((script::combat::guard::shared_tables().unwrap(), 11)),
+        );
+        bot.condition.observe_frame(&rig.snapshot, &drain, false);
+        rig.snapshot.seed_tick(2);
+        rig.snapshot
+            .seed_chat_lines(vec![api::snapshot::ChatLineView {
+                type_: 0,
+                username: None,
+                text: "You have been poisoned!".into(),
+                sequence: 1,
+            }]);
+        bot.condition.observe_frame(&rig.snapshot, &drain, false);
+        assert!(matches!(
+            bot.condition.current().unwrap().poison,
+            api::condition::PoisonState::Onset { .. }
+        ));
+    }
+    rig.step();
+    assert_eq!(
+        rig.driver.held_ops, 1,
+        "Never must still admit the due food"
+    );
+    assert_eq!(
+        rig.driver.held_item_ids,
+        [379],
+        "the host must use NavBot's Never policy, not drink the held cure",
+    );
 }
 
 #[test]
@@ -2214,8 +2339,8 @@ fn host_walk(rig: &Rig, x: i32, retarget: bool) -> bool {
         x,
         0,
         0,
-        nav::router::FindOptions {
-            zones: nav::zones::ZoneExempt::all(),
+        nav_planner::router::FindOptions {
+            zones: nav_planner::zones::ZoneExempt::all(),
             ..Default::default()
         },
         0,
@@ -2282,7 +2407,7 @@ fn an_unproven_crossing_reaches_the_native_owner_typed() {
         // The follow's pre-send recheck refused the crossing.
         crate::script_runtime::apply_nav_follow_outcome(
             rig.navs.lock().unwrap().get_mut("alice").unwrap(),
-            Some(nav::traveller::TravelOutcome::EvidenceUnproven {
+            Some(nav_executor::TravelOutcome::EvidenceUnproven {
                 at: WorldTile {
                     x: 0,
                     z: 0,
@@ -2333,7 +2458,7 @@ fn native_cross_exemption_is_scoped_to_one_walk() {
     rig.wait_routed();
     crate::script_runtime::apply_nav_follow_outcome(
         rig.navs.lock().unwrap().get_mut("alice").unwrap(),
-        Some(nav::traveller::TravelOutcome::Arrived {
+        Some(nav_executor::TravelOutcome::Arrived {
             at: WorldTile {
                 x: 4,
                 z: 0,
@@ -2363,7 +2488,7 @@ fn native_cross_exemption_is_scoped_to_one_walk() {
     assert_eq!(second.end, WalkEnd::Refused);
     assert_eq!(
         second.blocked.as_deref(),
-        Some(&[nav::zones::ZoneKey::Zone(0)][..])
+        Some(&[nav_planner::zones::ZoneKey::Zone(0)][..])
     );
     assert!(second
         .detail
@@ -2447,7 +2572,7 @@ fn native_admission_global_and_walk_danger_permissions_and_forbid() {
 
 #[test]
 fn selection_query_uses_live_loc_access_tiles_and_zone_carves() {
-    use nav::contract::ArrivalKind;
+    use nav_planner::contract::ArrivalKind;
 
     let target = WorldTile {
         x: 20,
@@ -2458,9 +2583,9 @@ fn selection_query_uses_live_loc_access_tiles_and_zone_carves() {
     let snapshot = selection_snapshot(target, 3, 0, None);
     let fully_zoned = selection_zone_world(
         target,
-        nav::zones::Zone::hazard(all_approaches, 0, 0),
+        nav_planner::zones::Zone::hazard(all_approaches, 0, 0),
         None,
-        nav::transport::WildernessRules::default(),
+        nav_planner::transport::WildernessRules::default(),
     );
     assert_eq!(
         selection_danger(
@@ -2477,9 +2602,9 @@ fn selection_query_uses_live_loc_access_tiles_and_zone_carves() {
 
     let center_only = selection_zone_world(
         target,
-        nav::zones::Zone::hazard(avoid_rect(20, 20, 20, 20), 0, 0),
+        nav_planner::zones::Zone::hazard(avoid_rect(20, 20, 20, 20), 0, 0),
         None,
-        nav::transport::WildernessRules::default(),
+        nav_planner::transport::WildernessRules::default(),
     );
     assert_eq!(
         selection_danger(
@@ -2501,14 +2626,14 @@ fn selection_query_uses_live_loc_access_tiles_and_zone_carves() {
     };
     let carved = selection_zone_world(
         target,
-        nav::zones::Zone::hazard(all_approaches, 0, 0),
+        nav_planner::zones::Zone::hazard(all_approaches, 0, 0),
         Some(avoid_rect(
             north_access.x,
             north_access.x,
             north_access.z,
             north_access.z,
         )),
-        nav::transport::WildernessRules::default(),
+        nav_planner::transport::WildernessRules::default(),
     );
     assert_eq!(
         selection_danger(
@@ -2552,14 +2677,14 @@ fn selection_query_uses_live_loc_access_tiles_and_zone_carves() {
 
     let diagonal_only = selection_zone_world(
         target,
-        nav::zones::Zone::hazard(all_approaches, 0, 0),
+        nav_planner::zones::Zone::hazard(all_approaches, 0, 0),
         Some(avoid_rect(
             target.x - 1,
             target.x - 1,
             target.z - 1,
             target.z - 1,
         )),
-        nav::transport::WildernessRules::default(),
+        nav_planner::transport::WildernessRules::default(),
     );
     assert_eq!(
         selection_danger(
@@ -2584,9 +2709,9 @@ fn selection_safe_access_goals_restrict_mixed_live_loc_stands() {
     let denied = at(19, 20);
     let world = selection_zone_world(
         target,
-        nav::zones::Zone::hazard(avoid_rect(19, 19, 20, 20), 0, 0),
+        nav_planner::zones::Zone::hazard(avoid_rect(19, 19, 20, 20), 0, 0),
         None,
-        nav::transport::WildernessRules::default(),
+        nav_planner::transport::WildernessRules::default(),
     );
     let snapshot = selection_snapshot(target, 3, 0, None);
     let navs = Arc::new(Mutex::new(HashMap::new()));
@@ -2599,7 +2724,12 @@ fn selection_safe_access_goals_restrict_mixed_live_loc_stands() {
     );
 
     assert_eq!(
-        query.check(target, Some(1276), 1, nav::contract::ArrivalKind::Reach),
+        query.check(
+            target,
+            Some(1276),
+            1,
+            nav_planner::contract::ArrivalKind::Reach
+        ),
         WalkDanger::Allowed,
         "one safe live loc stand keeps the mixed-stand resource eligible"
     );
@@ -2608,7 +2738,7 @@ fn selection_safe_access_goals_restrict_mixed_live_loc_stands() {
             target,
             Some(1276),
             1,
-            nav::contract::ArrivalKind::Reach,
+            nav_planner::contract::ArrivalKind::Reach,
             None,
         )
         .unwrap()
@@ -2639,9 +2769,9 @@ fn selection_safe_access_goals_preserve_allowed_and_uncovered_stands() {
     let denied = at(19, 20);
     let world = selection_zone_world(
         target,
-        nav::zones::Zone::hazard(avoid_rect(19, 19, 20, 20), 0, 0),
+        nav_planner::zones::Zone::hazard(avoid_rect(19, 19, 20, 20), 0, 0),
         None,
-        nav::transport::WildernessRules::default(),
+        nav_planner::transport::WildernessRules::default(),
     );
     let snapshot = selection_snapshot(target, 3, 0, None);
 
@@ -2672,7 +2802,7 @@ fn selection_safe_access_goals_preserve_allowed_and_uncovered_stands() {
                     target,
                     Some(1276),
                     1,
-                    nav::contract::ArrivalKind::Reach,
+                    nav_planner::contract::ArrivalKind::Reach,
                     None
                 ),
                 Ok(None)
@@ -2698,7 +2828,7 @@ fn selection_safe_access_goals_preserve_allowed_and_uncovered_stands() {
                 target,
                 Some(1276),
                 1,
-                nav::contract::ArrivalKind::Reach,
+                nav_planner::contract::ArrivalKind::Reach,
                 Some(&existing)
             ),
             Ok(None)
@@ -2722,9 +2852,9 @@ fn selection_safe_access_goals_filter_existing_goal_tiers() {
     let uncovered_fallback = at(50, 50);
     let world = selection_zone_world(
         target,
-        nav::zones::Zone::hazard(avoid_rect(19, 19, 20, 20), 0, 0),
+        nav_planner::zones::Zone::hazard(avoid_rect(19, 19, 20, 20), 0, 0),
         None,
-        nav::transport::WildernessRules::default(),
+        nav_planner::transport::WildernessRules::default(),
     );
     let navs = Arc::new(Mutex::new(HashMap::new()));
     let query =
@@ -2745,7 +2875,7 @@ fn selection_safe_access_goals_filter_existing_goal_tiers() {
             target,
             Some(1276),
             1,
-            nav::contract::ArrivalKind::Reach,
+            nav_planner::contract::ArrivalKind::Reach,
             Some(&existing),
         )
         .unwrap()
@@ -2764,9 +2894,9 @@ fn selection_safe_access_goals_reject_empty_and_oversized_restrictions() {
     let target = at(20, 20);
     let world = selection_zone_world(
         target,
-        nav::zones::Zone::hazard(avoid_rect(19, 22, 19, 22), 0, 0),
+        nav_planner::zones::Zone::hazard(avoid_rect(19, 22, 19, 22), 0, 0),
         None,
-        nav::transport::WildernessRules::default(),
+        nav_planner::transport::WildernessRules::default(),
     );
     let snapshot = selection_snapshot(target, 3, 0, None);
     let navs = Arc::new(Mutex::new(HashMap::new()));
@@ -2783,7 +2913,7 @@ fn selection_safe_access_goals_reject_empty_and_oversized_restrictions() {
                 target,
                 Some(1276),
                 1,
-                nav::contract::ArrivalKind::Reach,
+                nav_planner::contract::ArrivalKind::Reach,
                 None
             ),
             Err(WalkGoalsError::Empty)
@@ -2795,7 +2925,7 @@ fn selection_safe_access_goals_reject_empty_and_oversized_restrictions() {
     let mut large_world = open_world(60, 60);
     add_selection_zone(
         &mut large_world,
-        nav::zones::Zone::hazard(avoid_rect(30, 30, 30, 30), 0, 0),
+        nav_planner::zones::Zone::hazard(avoid_rect(30, 30, 30, 30), 0, 0),
         None,
     );
     let large_query = crate::walk_permissions::SelectionDangerQuery::new(
@@ -2811,7 +2941,7 @@ fn selection_safe_access_goals_reject_empty_and_oversized_restrictions() {
                 large_target,
                 None,
                 40,
-                nav::contract::ArrivalKind::Area,
+                nav_planner::contract::ArrivalKind::Area,
                 None
             ),
             Err(WalkGoalsError::TooMany {
@@ -2834,7 +2964,7 @@ fn native_typed_walk_restricts_mixed_live_loc_stands_through_route_and_follow() 
     let mut world = open_world(40, 40);
     add_selection_zone(
         &mut world,
-        nav::zones::Zone::hazard(avoid_rect(19, 19, 20, 20), 0, 0),
+        nav_planner::zones::Zone::hazard(avoid_rect(19, 19, 20, 20), 0, 0),
         None,
     );
     let world = Arc::new(world);
@@ -2857,7 +2987,12 @@ fn native_typed_walk_restricts_mixed_live_loc_stands_through_route_and_follow() 
         None,
     );
     assert_eq!(
-        query.check(target, Some(1276), 1, nav::contract::ArrivalKind::Reach),
+        query.check(
+            target,
+            Some(1276),
+            1,
+            nav_planner::contract::ArrivalKind::Reach
+        ),
         WalkDanger::Allowed,
         "a safe legal live stand leaves the resource selectable"
     );
@@ -2866,7 +3001,7 @@ fn native_typed_walk_restricts_mixed_live_loc_stands_through_route_and_follow() 
             target,
             Some(1276),
             1,
-            nav::contract::ArrivalKind::Reach,
+            nav_planner::contract::ArrivalKind::Reach,
             None,
         )
         .unwrap()
@@ -2878,7 +3013,7 @@ fn native_typed_walk_restricts_mixed_live_loc_stands_through_route_and_follow() 
         let mut shared = rig.shared.lock();
         shared.target = Some(target);
         shared.radius = 0;
-        shared.arrival = nav::contract::ArrivalKind::Area;
+        shared.arrival = nav_planner::contract::ArrivalKind::Area;
         shared.candidate_goals = Some(safe_goals);
     }
     rig.observe_with_here(1, start);
@@ -2897,7 +3032,7 @@ fn native_typed_walk_restricts_mixed_live_loc_stands_through_route_and_follow() 
             }
         } else {
             for leg in &route.legacy_route().expect("legacy route backing").legs {
-                if let nav::router::Leg::Walk { tiles } = leg {
+                if let nav_planner::router::Leg::Walk { tiles } = leg {
                     positions.extend_from_slice(tiles);
                 }
             }
@@ -2935,7 +3070,7 @@ fn native_typed_walk_restricts_mixed_live_loc_stands_through_route_and_follow() 
 
 #[test]
 fn selection_query_uses_area_and_reach_candidates_off_scene() {
-    use nav::contract::ArrivalKind;
+    use nav_planner::contract::ArrivalKind;
 
     let target = WorldTile {
         x: 20,
@@ -2957,9 +3092,9 @@ fn selection_query_uses_area_and_reach_candidates_off_scene() {
         flags[left] |= CollisionFlag::W_E as u32;
         flags[right] |= CollisionFlag::W_W as u32;
     }
-    let (walk, blocked) = nav::collision::pack_walk(&flags);
+    let (walk, blocked) = nav_planner::collision::pack_walk(&flags);
     let mut world = NavWorld::from_parts(
-        nav::collision::WorldCollision {
+        nav_planner::collision::WorldCollision {
             origin,
             width: WIDTH,
             height: HEIGHT,
@@ -2967,7 +3102,7 @@ fn selection_query_uses_area_and_reach_candidates_off_scene() {
             blocked,
             flags: None,
         },
-        nav::transport::TransportGraph::default(),
+        nav_planner::transport::TransportGraph::default(),
         Vec::new(),
     );
     let safe_alternative = WorldTile {
@@ -2977,7 +3112,7 @@ fn selection_query_uses_area_and_reach_candidates_off_scene() {
     };
     add_selection_zone(
         &mut world,
-        nav::zones::Zone::hazard(avoid_rect(18, 22, 18, 22), 0, 0),
+        nav_planner::zones::Zone::hazard(avoid_rect(18, 22, 18, 22), 0, 0),
         Some(avoid_rect(
             safe_alternative.x,
             safe_alternative.x,
@@ -3000,19 +3135,21 @@ fn selection_query_uses_area_and_reach_candidates_off_scene() {
 
 #[test]
 fn selection_query_reuses_combat_and_wilderness_zone_activity() {
-    use nav::contract::ArrivalKind;
+    use nav_planner::contract::ArrivalKind;
 
     let target = WorldTile {
         x: 20,
         z: 20,
         level: 0,
     };
-    let rule = || nav::zones::Zone::npc(target, 0, nav::zones::ZoneClass::LevelRule, 10, 0);
+    let rule = || {
+        nav_planner::zones::Zone::npc(target, 0, nav_planner::zones::ZoneClass::LevelRule, 10, 0)
+    };
     let no_wilderness = selection_zone_world(
         target,
         rule(),
         None,
-        nav::transport::WildernessRules::default(),
+        nav_planner::transport::WildernessRules::default(),
     );
     let low_combat = selection_snapshot(target, 3, 0, None);
     let high_combat = selection_snapshot(target, 51, 0, None);
@@ -3040,8 +3177,8 @@ fn selection_query_reuses_combat_and_wilderness_zone_activity() {
         "the packed combat cap makes the zone inactive above its threshold"
     );
 
-    let wilderness = nav::transport::WildernessRules {
-        zones: vec![nav::transport::WildernessZone {
+    let wilderness = nav_planner::transport::WildernessRules {
+        zones: vec![nav_planner::transport::WildernessZone {
             x1: target.x,
             z1: target.z,
             x2: target.x,
@@ -3111,7 +3248,12 @@ fn selection_query_and_native_walk_share_effective_card_danger_permissions() {
             );
             assert_eq!(
                 matches!(
-                    query.check(query_tile, None, 0, nav::contract::ArrivalKind::Area),
+                    query.check(
+                        query_tile,
+                        None,
+                        0,
+                        nav_planner::contract::ArrivalKind::Area
+                    ),
                     WalkDanger::Allowed
                 ),
                 permitted,
@@ -3192,7 +3334,12 @@ fn selection_query_checks_packed_draynor_jail_tree_against_safe_tiles() {
         None,
     );
     assert_eq!(
-        query.check(target, Some(1276), 1, nav::contract::ArrivalKind::Reach),
+        query.check(
+            target,
+            Some(1276),
+            1,
+            nav_planner::contract::ArrivalKind::Reach
+        ),
         WalkDanger::Denied {
             zone: "Draynor jail guards"
         },
@@ -3200,7 +3347,12 @@ fn selection_query_checks_packed_draynor_jail_tree_against_safe_tiles() {
     );
 
     let table = world.graph.zones.as_ref().expect("packed zone table");
-    let filter = nav::zones::ZoneFilter::new(table, Some(3), &[], &nav::zones::ZoneExempt::NONE);
+    let filter = nav_planner::zones::ZoneFilter::new(
+        table,
+        Some(3),
+        &[],
+        &nav_planner::zones::ZoneExempt::NONE,
+    );
     let safe_tile = (target.x - 32..=target.x + 32)
         .flat_map(|x| {
             (target.z - 32..=target.z + 32).map(move |z| WorldTile {
@@ -3218,7 +3370,7 @@ fn selection_query_checks_packed_draynor_jail_tree_against_safe_tiles() {
         })
         .expect("a safe packed alternative near Draynor");
     assert_eq!(
-        query.check(safe_tile, None, 0, nav::contract::ArrivalKind::Area),
+        query.check(safe_tile, None, 0, nav_planner::contract::ArrivalKind::Area),
         WalkDanger::Allowed,
         "a safe packed alternative remains eligible"
     );
@@ -3323,7 +3475,7 @@ fn sherlock_bool_walk_inherits_committed_bits_while_isolate_wiring_stays_frozen(
         let options = crate::walk_permissions::compiled_options(
             &rig.navs,
             "alice",
-            nav::router::FindOptions::default(),
+            nav_planner::router::FindOptions::default(),
         );
         assert_eq!(options.allow_teleports, compiled);
         assert_eq!(options.allow_wilderness, compiled);
@@ -3392,7 +3544,7 @@ fn compat_catalog_exclusions_use_baked_group_geometry_and_rules() {
         .iter()
         .map(|member| {
             let zone = &table.zones()[usize::from(*member)];
-            nav::router::AvoidRect {
+            nav_planner::router::AvoidRect {
                 min_x: zone.min_x,
                 max_x: zone.max_x,
                 min_z: zone.min_z,
@@ -3428,7 +3580,7 @@ fn compat_catalog_exclusions_use_baked_group_geometry_and_rules() {
             .avoid_wire
             .push(InspectAvoidWire::Catalog(id.to_string()));
         crate::script_runtime::resolve_route_exclusions(
-            nav::router::FindOptions::default(),
+            nav_planner::router::FindOptions::default(),
             &world,
             from,
             to,
@@ -3489,7 +3641,7 @@ fn compat_named_exclusions_reject_unknown_and_nonfrozen_catalog_names() {
         .push(InspectAvoidWire::Catalog("no-such-zone".to_string()));
     assert_eq!(
         crate::script_runtime::resolve_route_exclusions(
-            nav::router::FindOptions::default(),
+            nav_planner::router::FindOptions::default(),
             &world,
             from,
             from,
@@ -3505,7 +3657,7 @@ fn compat_named_exclusions_reject_unknown_and_nonfrozen_catalog_names() {
     ));
     assert_eq!(
         crate::script_runtime::resolve_route_exclusions(
-            nav::router::FindOptions::default(),
+            nav_planner::router::FindOptions::default(),
             &world,
             from,
             from,
@@ -3520,7 +3672,7 @@ fn compat_named_exclusions_reject_unknown_and_nonfrozen_catalog_names() {
     unknown_cross.cross.push(Arc::from("no-such-zone"));
     assert_eq!(
         crate::script_runtime::resolve_route_exclusions(
-            nav::router::FindOptions::default(),
+            nav_planner::router::FindOptions::default(),
             &world,
             from,
             from,
@@ -3537,7 +3689,7 @@ fn compat_named_exclusions_reject_unknown_and_nonfrozen_catalog_names() {
     };
     assert_eq!(
         crate::script_runtime::resolve_route_exclusions(
-            nav::router::FindOptions::default(),
+            nav_planner::router::FindOptions::default(),
             &world,
             from,
             from,
@@ -3565,7 +3717,7 @@ fn compat_catalog_exclusions_reject_groups_without_baked_geometry() {
         .push(InspectAvoidWire::Catalog("white-wolf-mountain".to_string()));
     assert_eq!(
         crate::script_runtime::resolve_route_exclusions(
-            nav::router::FindOptions::default(),
+            nav_planner::router::FindOptions::default(),
             &world,
             from,
             from,
@@ -3771,7 +3923,7 @@ fn manual_cancellation_detail_clears_when_the_next_walk_arms() {
             8,
             0,
             0,
-            nav::router::FindOptions::default(),
+            nav_planner::router::FindOptions::default(),
             0,
             true,
             99,
@@ -3798,7 +3950,7 @@ fn manual_cancellation_detail_clears_when_the_next_walk_arms() {
     );
     assert_eq!(
         rig.navs.lock().unwrap()["alice"].walk_outcome_cancel_reason,
-        script::isolate_fb::WalkCancelReason::UserInput,
+        script::native::WalkCancelReason::UserInput,
         "the previously published receipt remains intact"
     );
     completed
@@ -3849,7 +4001,7 @@ fn manual_takeover_of_carried_walk_keeps_its_receipt_identity() {
         assert_eq!(bot.walk_outcome_allow_teleports, teleports);
         assert_eq!(
             bot.walk_outcome_cancel_reason,
-            script::isolate_fb::WalkCancelReason::UserInput
+            script::native::WalkCancelReason::UserInput
         );
     }
 }
@@ -3896,7 +4048,7 @@ fn manual_click_terminal_resets_on_stop_before_the_next_load_snapshot() {
     ));
     assert_eq!(
         play.navs.lock().unwrap()["alice"].walk_outcome_cancel_reason,
-        script::isolate_fb::WalkCancelReason::UserInput
+        script::native::WalkCancelReason::UserInput
     );
     assert!(play.script_walk_cancelled_by_user("alice"));
 
@@ -3904,7 +4056,7 @@ fn manual_click_terminal_resets_on_stop_before_the_next_load_snapshot() {
     let navs = play.navs.lock().unwrap();
     assert_eq!(
         navs["alice"].walk_outcome_cancel_reason,
-        script::isolate_fb::WalkCancelReason::None,
+        script::native::WalkCancelReason::None,
         "Stop clears the prior run's UserInput outcome"
     );
     assert_eq!(navs["alice"].walk_outcome_request_id, 0);
@@ -3965,6 +4117,272 @@ fn manual_frame(hold: bool) -> crate::SlotFrameInput {
     }
 }
 
+/// An admitted machine with no walking request or API session.
+struct InPlace {
+    command: Arc<std::sync::atomic::AtomicU8>,
+}
+
+impl script::native::NativeMachine for InPlace {
+    type Args = Arc<std::sync::atomic::AtomicU8>;
+    type Output = ();
+
+    fn begin(
+        command: Self::Args,
+        _: &mut script::native::ActionContext<'_>,
+    ) -> Result<Self, ActionError> {
+        command.store(4, std::sync::atomic::Ordering::Relaxed);
+        Ok(Self { command })
+    }
+
+    fn poll(&mut self, _: &mut script::native::ActionContext<'_>) -> Poll<Result<(), ActionError>> {
+        if self.command.load(std::sync::atomic::Ordering::Relaxed) == 2 {
+            Poll::Ready(Ok(()))
+        } else {
+            Poll::Pending
+        }
+    }
+}
+
+struct InPlaceScript {
+    command: Arc<std::sync::atomic::AtomicU8>,
+    handle: Option<ActionHandle<InPlace>>,
+    begun: bool,
+}
+
+impl Script for InPlaceScript {
+    fn tick(&mut self, tick: &mut NativeTick<'_>) -> Result<ScriptFlow, ScriptFailure> {
+        let command = self.command.load(std::sync::atomic::Ordering::Relaxed);
+        if command == 1 {
+            self.handle = None;
+        } else if let Some(handle) = &self.handle {
+            if tick.actions.poll(handle, &mut tick.cx).is_ready() {
+                self.handle = None;
+            }
+        } else if !self.begun && command != 3 {
+            self.handle = Some(
+                tick.actions
+                    .begin::<InPlace>(Arc::clone(&self.command), &mut tick.cx)
+                    .unwrap(),
+            );
+            self.begun = true;
+        }
+        Ok(ScriptFlow::Continue)
+    }
+}
+
+fn in_place_rig(command: u8) -> (Rig, Arc<std::sync::atomic::AtomicU8>) {
+    let mut rig = open_rig(false);
+    rig.slot().lock().unwrap().stop();
+    let command = Arc::new(std::sync::atomic::AtomicU8::new(command));
+    rig.slot()
+        .lock()
+        .unwrap()
+        .start_test_script(
+            Box::new(InPlaceScript {
+                command: Arc::clone(&command),
+                handle: None,
+                begun: false,
+            }),
+            None,
+        )
+        .unwrap();
+    rig.observe(1);
+    (rig, command)
+}
+
+struct TakeoverLog(Mutex<Vec<String>>);
+
+impl api::hostlog::Sink for TakeoverLog {
+    fn record(&self, record: &api::hostlog::Record<'_>) {
+        if record
+            .message
+            .contains("walk outcome=cancelled reason=UserInput")
+        {
+            self.0.lock().unwrap().push(record.message.to_owned());
+        }
+    }
+}
+
+static TAKEOVER_LOG: TakeoverLog = TakeoverLog(Mutex::new(Vec::new()));
+
+#[test]
+fn takeover_is_taken_for_a_live_native_owner_without_a_walk() {
+    const CHILD: &str = "S2_NATIVE_TAKEOVER_LOG_TEST";
+    if std::env::var(CHILD).as_deref() != Ok("1") {
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "tests::native_walk::takeover_is_taken_for_a_live_native_owner_without_a_walk",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .output()
+            .expect("run isolated takeover sink test");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            output.status.success() && stdout.contains("1 passed; 0 failed;"),
+            "takeover child failed: {stdout}\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
+    assert!(api::hostlog::install_sink(&TAKEOVER_LOG));
+    let (rig, command) = in_place_rig(0);
+    assert_eq!(command.load(std::sync::atomic::Ordering::Relaxed), 4);
+    let slot = rig.slot();
+    {
+        let slot = slot.lock().unwrap();
+        assert!(!slot.live_walking_operation());
+        assert!(!slot.surface_active());
+    }
+    assert!(!rig.navs.lock().unwrap()["alice"].walk_work_live());
+    let before = rig.navs.lock().unwrap()["alice"].walk_outcome_seq;
+    assert!(crate::script_runtime::take_manual_walk_ownership(
+        &rig.scripts,
+        &rig.navs,
+        "alice",
+        manual_frame(false),
+        true,
+        41,
+        false,
+    ));
+    let bots = rig.navs.lock().unwrap();
+    assert_eq!(bots["alice"].walk_outcome_seq, before + 1);
+    assert_eq!(bots["alice"].manual_takeover_watermark, before + 1);
+    drop(bots);
+    assert!(TAKEOVER_LOG.0.lock().unwrap().iter().any(|line| {
+        line.contains("tick=41 live_work=true active_walk=false live_native_owner=true live_walking_operation=false api_session=false")
+    }));
+}
+
+#[test]
+fn takeover_with_pause_on_pauses_a_native_owner_without_a_walk() {
+    let (rig, _) = in_place_rig(0);
+    let before = rig.navs.lock().unwrap()["alice"].walk_outcome_seq;
+    assert!(crate::script_runtime::take_manual_walk_ownership(
+        &rig.scripts,
+        &rig.navs,
+        "alice",
+        manual_frame(false),
+        true,
+        1,
+        true,
+    ));
+    assert_eq!(rig.slot().lock().unwrap().state(), script::RunState::Paused);
+    assert_eq!(
+        rig.navs.lock().unwrap()["alice"].walk_outcome_seq,
+        before + 1
+    );
+}
+
+#[test]
+fn takeover_is_refused_for_an_absent_revoked_or_completed_owner() {
+    for command in [3, 1, 2] {
+        let (mut rig, control) = in_place_rig(if command == 3 { 3 } else { 0 });
+        control.store(command, std::sync::atomic::Ordering::Relaxed);
+        rig.observe(2);
+        assert!(!rig.slot().lock().unwrap().has_native_actions());
+        let before = rig.navs.lock().unwrap()["alice"].walk_outcome_seq;
+        assert!(!crate::script_runtime::take_manual_walk_ownership(
+            &rig.scripts,
+            &rig.navs,
+            "alice",
+            manual_frame(false),
+            true,
+            2,
+            false,
+        ));
+        assert_eq!(
+            rig.navs.lock().unwrap()["alice"].walk_outcome_seq,
+            before,
+            "owner command {command}"
+        );
+    }
+}
+
+fn in_place_load_rig() -> Rig {
+    let mut rig = open_rig(false);
+    rig.slot().lock().unwrap().stop();
+    let start = crate::script_runtime::js_surface_start(
+        crate::script_runtime::js_start_card(
+            "export function tick(api) { globalThis.s2Ticks = (globalThis.s2Ticks || 0) + 1; }"
+                .into(),
+            script::LoadShape::NativeTick,
+            Vec::new(),
+        ),
+        None,
+        None,
+        Arc::new(api::named_banks::NamedBankFacts::empty()),
+        Arc::from(Vec::<api::loadout::Loadout>::new()),
+    );
+    {
+        let slot = rig.slot();
+        let mut slot = slot.lock().unwrap();
+        slot.bind_surface_factory(Arc::new(script::load::surface::JsSurfaceFactory::default()));
+        slot.start_surface(start).unwrap();
+    }
+    rig.slot().lock().unwrap().probe("true").unwrap();
+    rig.observe(1);
+    rig.slot().lock().unwrap().probe("true").unwrap();
+    rig
+}
+
+#[test]
+fn takeover_with_pause_on_pauses_a_load_script_without_a_walk() {
+    let mut rig = in_place_load_rig();
+    let slot = rig.slot();
+    let ticks = slot.lock().unwrap().probe("globalThis.s2Ticks").unwrap();
+    assert!(!slot.lock().unwrap().manual_input_owner());
+    assert!(crate::script_runtime::take_manual_walk_ownership(
+        &rig.scripts,
+        &rig.navs,
+        "alice",
+        manual_frame(false),
+        true,
+        1,
+        true,
+    ));
+    assert_eq!(slot.lock().unwrap().state(), script::RunState::Paused);
+    rig.observe(2);
+    assert_eq!(
+        slot.lock().unwrap().probe("globalThis.s2Ticks").unwrap(),
+        ticks
+    );
+    // Non-walking compat rows are covered by the live Thiever cell:
+    // manual_takeover_compat_live_tests::compat_thiever_pauses_on_viewport_click.
+    slot.lock().unwrap().resume();
+    rig.observe(3);
+    assert_eq!(slot.lock().unwrap().state(), script::RunState::Running);
+    assert!(
+        slot.lock()
+            .unwrap()
+            .probe("globalThis.s2Ticks")
+            .unwrap()
+            .as_u64()
+            > ticks.as_u64()
+    );
+}
+
+#[test]
+fn takeover_with_pause_off_leaves_a_load_script_without_a_walk_alone() {
+    let rig = in_place_load_rig();
+    let before = rig.navs.lock().unwrap()["alice"].walk_outcome_seq;
+    assert!(!crate::script_runtime::take_manual_walk_ownership(
+        &rig.scripts,
+        &rig.navs,
+        "alice",
+        manual_frame(false),
+        true,
+        1,
+        false,
+    ));
+    assert_eq!(
+        rig.slot().lock().unwrap().state(),
+        script::RunState::Running
+    );
+    assert_eq!(rig.navs.lock().unwrap()["alice"].walk_outcome_seq, before);
+}
+
 #[test]
 fn manual_step_takeover_must_end_active_walk_before_follow() {
     let mut rig = open_rig(false);
@@ -4015,7 +4433,7 @@ fn manual_step_takeover_must_end_active_walk_before_follow() {
     assert_eq!(bot.walk_outcome_request_id, request);
     assert_eq!(
         bot.walk_outcome_cancel_reason,
-        script::isolate_fb::WalkCancelReason::UserInput
+        script::native::WalkCancelReason::UserInput
     );
     assert_eq!(bot.user_move_intent_seq, 1);
     assert_eq!(bot.manual_takeover_watermark, before);
@@ -4124,7 +4542,7 @@ fn manual_round3_click_after_arrival_keeps_the_completed_receipt() {
     rig.wait_routed();
     crate::script_runtime::apply_nav_follow_outcome(
         rig.navs.lock().unwrap().get_mut("alice").unwrap(),
-        Some(nav::traveller::TravelOutcome::Arrived {
+        Some(nav_executor::TravelOutcome::Arrived {
             at: WorldTile {
                 x: 4,
                 z: 0,
@@ -4179,7 +4597,7 @@ fn manual_round3_click_after_arrival_keeps_the_completed_receipt() {
         assert!(!bot.walk_outcome_failed);
         assert_eq!(
             bot.walk_outcome_cancel_reason,
-            script::isolate_fb::WalkCancelReason::None
+            script::native::WalkCancelReason::None
         );
         assert_eq!(bot.manual_takeover_watermark, 0);
         assert_eq!(bot.user_move_intent_seq, 1, "idle intent is still observed");
@@ -4187,6 +4605,212 @@ fn manual_round3_click_after_arrival_keeps_the_completed_receipt() {
     rig.observe(3);
     assert_eq!(rig.end(), Some(Ok(WalkEnd::RouteEnded)));
     assert_eq!(rig.shared.lock().results.len(), 1);
+}
+
+/// A compiled fight keeps its walk request registered after the walk arrives
+/// (`script/src/slot.rs` `live_walking_operation`), so a later manual step is
+/// an eligible takeover. The host then has no correlated request: the posted
+/// reason stays `None` and only the sequence and the watermark move. The
+/// compiled side still reads that takeover outcome as `UserInput`, and the
+/// next ordinary outcome clears it.
+#[test]
+fn takeover_after_an_arrived_walk_moves_only_the_sequence_and_reads_user_input_compiled() {
+    let mut rig = open_rig(false);
+    rig.observe(1);
+    rig.wait_routed();
+    crate::script_runtime::apply_nav_follow_outcome(
+        rig.navs.lock().unwrap().get_mut("alice").unwrap(),
+        Some(nav_executor::TravelOutcome::Arrived {
+            at: WorldTile {
+                x: 4,
+                z: 0,
+                level: 0,
+            },
+        }),
+        false,
+    );
+    rig.observe(2);
+    assert_eq!(rig.end(), Some(Ok(WalkEnd::RouteEnded)));
+    let mut navs = rig.navs.lock().unwrap();
+    let bot = navs.get_mut("alice").unwrap();
+    let (seq, request, generation) = (
+        bot.walk_outcome_seq,
+        bot.walk_outcome_request_id,
+        bot.walk_outcome_generation,
+    );
+    assert_eq!(
+        bot.compiled_walk_cancel_reason(),
+        script::native::WalkCancelReason::None
+    );
+
+    bot.cancel_for_manual_input();
+    assert_eq!(
+        bot.walk_outcome_cancel_reason,
+        script::native::WalkCancelReason::None,
+        "no correlated request: the posted Load reason stays None"
+    );
+    assert_eq!(bot.walk_outcome_request_id, request);
+    assert_eq!(bot.walk_outcome_generation, generation);
+    assert!(!bot.walk_outcome_failed);
+    assert_eq!(bot.walk_outcome_seq, seq + 1, "the sequence moves");
+    assert_eq!(
+        bot.manual_takeover_watermark,
+        seq + 1,
+        "the watermark moves"
+    );
+    assert_eq!(
+        bot.compiled_walk_cancel_reason(),
+        script::native::WalkCancelReason::UserInput
+    );
+
+    bot.clear_walk_outcome();
+    assert_eq!(bot.walk_outcome_seq, seq + 2);
+    assert_eq!(
+        bot.compiled_walk_cancel_reason(),
+        script::native::WalkCancelReason::None,
+        "a later ordinary outcome is not a takeover"
+    );
+}
+
+/// Review probe F1 (M0ReviewSol), with the gate expression replaced by the
+/// live cell's gate: an admitted compact route (`route` is None) is walking
+/// work, so the M0 cell must not inject.
+#[test]
+fn m0_host_gate_must_reject_a_live_compact_route() {
+    let mut rig = open_rig(false);
+    rig.observe(1);
+    rig.wait_routed();
+    let bots = rig.navs.lock().unwrap();
+    let bot = &bots["alice"];
+    assert!(
+        bot.compact_route.is_some() && bot.route.is_none(),
+        "exercise the actual admitted compact route"
+    );
+    assert!(bot.has_route(), "the native walk has not arrived");
+    assert!(bot.native_walk.as_ref().is_some_and(|owner| owner.live()));
+    let host = crate::combat_live_proof_tests::m0_host_state(bot);
+    assert_eq!(host["compact_route"], true);
+    assert_eq!(host["walk_work_live"], true);
+    assert!(
+        !crate::combat_live_proof_tests::m0_host_gate_open(&host),
+        "M0 must not inject on a live compact route"
+    );
+}
+
+/// The allowed case: the route arrived and the native walk owner is still
+/// registered and live.
+#[test]
+fn m0_host_gate_accepts_an_arrived_walk_with_a_live_owner() {
+    let mut rig = open_rig(false);
+    rig.observe(1);
+    rig.wait_routed();
+    let mut bots = rig.navs.lock().unwrap();
+    let bot = bots.get_mut("alice").unwrap();
+    crate::script_runtime::apply_nav_follow_outcome(
+        bot,
+        Some(nav_executor::TravelOutcome::Arrived {
+            at: WorldTile {
+                x: 4,
+                z: 0,
+                level: 0,
+            },
+        }),
+        false,
+    );
+    assert!(!bot.walk_work_live(), "the route arrived");
+    assert!(bot.native_walk.as_ref().is_some_and(|owner| owner.live()));
+    let host = crate::combat_live_proof_tests::m0_host_state(bot);
+    assert_eq!(host["native_walk_live"], true);
+    assert!(crate::combat_live_proof_tests::m0_host_gate_open(&host));
+}
+
+/// After a manual takeover, later ordinary outcomes (an arrival, a failure
+/// and a navigation reset) move the sequence past the watermark and leave
+/// the watermark unchanged, so the compiled side never reuses the old
+/// `UserInput` reason.
+#[test]
+fn later_ordinary_outcomes_do_not_reuse_the_manual_takeover_watermark() {
+    let mut rig = open_rig(false);
+    rig.observe(1);
+    rig.wait_routed();
+    let mut bots = rig.navs.lock().unwrap();
+    let bot = bots.get_mut("alice").unwrap();
+    bot.cancel_for_manual_input();
+    let watermark = bot.manual_takeover_watermark;
+    assert_ne!(watermark, 0);
+    assert_eq!(
+        bot.compiled_walk_cancel_reason(),
+        script::native::WalkCancelReason::UserInput
+    );
+    let goal = WorldTile {
+        x: 4,
+        z: 0,
+        level: 0,
+    };
+    bot.walk_request_id = 997;
+    bot.route_request_id = 997;
+    bot.requested_route = Some(native_requested(goal, 0, false));
+    crate::script_runtime::apply_nav_follow_outcome(
+        bot,
+        Some(nav_executor::TravelOutcome::Arrived { at: goal }),
+        false,
+    );
+    assert_eq!(bot.manual_takeover_watermark, watermark);
+    assert!(bot.walk_outcome_seq > watermark);
+    assert_eq!(
+        bot.compiled_walk_cancel_reason(),
+        script::native::WalkCancelReason::None,
+        "an arrival after the takeover is not a takeover"
+    );
+    bot.note_failure(bot.route_generation, 998, goal, 0, false);
+    assert!(bot.walk_outcome_seq > watermark);
+    assert_eq!(
+        bot.compiled_walk_cancel_reason(),
+        script::native::WalkCancelReason::None,
+        "a failure after the takeover is not a takeover"
+    );
+    drop(bots);
+    crate::script_runtime::reset_script_nav(&rig.navs, "alice", None);
+    let bots = rig.navs.lock().unwrap();
+    let bot = &bots["alice"];
+    assert_eq!(bot.manual_takeover_watermark, watermark);
+    assert!(bot.walk_outcome_seq > watermark);
+    assert_eq!(
+        bot.compiled_walk_cancel_reason(),
+        script::native::WalkCancelReason::None,
+        "a navigation reset after the takeover is not a takeover"
+    );
+}
+
+/// A reconnect holds navigation and later resets it. Neither step is a
+/// manual takeover: the watermark stays 0 and the compiled reason stays
+/// `None`.
+#[test]
+fn reconnect_hold_and_reset_do_not_create_a_manual_cancel_reason() {
+    let mut rig = open_rig(false);
+    rig.observe(1);
+    rig.wait_routed();
+    let seq = rig.navs.lock().unwrap()["alice"].walk_outcome_seq;
+    let generation = rig.slot().lock().unwrap().runtime_generation();
+    crate::script_runtime::hold_script_nav(&rig.navs, "alice", Some(generation));
+    let bots = rig.navs.lock().unwrap();
+    let bot = &bots["alice"];
+    assert_eq!(bot.walk_outcome_seq, seq);
+    assert_eq!(bot.manual_takeover_watermark, 0);
+    assert_eq!(
+        bot.compiled_walk_cancel_reason(),
+        script::native::WalkCancelReason::None
+    );
+    drop(bots);
+    crate::script_runtime::reset_script_nav(&rig.navs, "alice", None);
+    let bots = rig.navs.lock().unwrap();
+    let bot = &bots["alice"];
+    assert!(bot.walk_outcome_seq > seq);
+    assert_eq!(bot.manual_takeover_watermark, 0);
+    assert_eq!(
+        bot.compiled_walk_cancel_reason(),
+        script::native::WalkCancelReason::None
+    );
 }
 
 #[test]
@@ -4373,7 +4997,7 @@ fn queued_walking_decisions_are_fenced_but_observed_fresh_walk_is_allowed() {
         assert_eq!(bots["alice"].walk_outcome_request_id, original);
         assert_eq!(
             bots["alice"].walk_outcome_cancel_reason,
-            script::isolate_fb::WalkCancelReason::UserInput
+            script::native::WalkCancelReason::UserInput
         );
     }
     rig.slot()
@@ -4481,9 +5105,9 @@ fn water_area_world(separating_wall: bool) -> NavWorld {
             flags[z * SIZE + 10] |= CollisionFlag::SQ_BLOCKED as u32;
         }
     }
-    let (walk, blocked) = nav::collision::pack_walk(&flags);
+    let (walk, blocked) = nav_planner::collision::pack_walk(&flags);
     NavWorld::from_parts(
-        nav::collision::WorldCollision {
+        nav_planner::collision::WorldCollision {
             origin: WorldTile {
                 x: 0,
                 z: 0,
@@ -4495,7 +5119,7 @@ fn water_area_world(separating_wall: bool) -> NavWorld {
             blocked,
             flags: None,
         },
-        nav::transport::TransportGraph::default(),
+        nav_planner::transport::TransportGraph::default(),
         Vec::new(),
     )
 }
@@ -4506,7 +5130,7 @@ fn water_area_rig(separating_wall: bool, radius: u16) -> Rig {
         let mut shared = rig.shared.lock();
         shared.target = Some(WATER_CENTER);
         shared.radius = radius;
-        shared.arrival = nav::arrival::ArrivalKind::Area;
+        shared.arrival = nav_planner::arrival::ArrivalKind::Area;
     }
     for tile in [
         WATER_CENTER,
@@ -4637,7 +5261,7 @@ fn reach_walk_keeps_adjacent_solid_target_arrival() {
         let mut shared = rig.shared.lock();
         shared.target = Some(target);
         shared.radius = 1;
-        shared.arrival = nav::arrival::ArrivalKind::Reach;
+        shared.arrival = nav_planner::arrival::ArrivalKind::Reach;
     }
     let x = (target.x - rig.client.map_build_base_x) as usize;
     let z = (target.z - rig.client.map_build_base_z) as usize;
@@ -4710,17 +5334,17 @@ fn area_route_refresh_keeps_mode_through_native_receipt() {
         &rig.snapshot,
         WATER_CENTER,
         40,
-        nav::router::FindOptions {
+        nav_planner::router::FindOptions {
             allow_teleports: !basis.options.allow_teleports,
             allow_wilderness: !basis.options.allow_wilderness,
             allow_bank_fetch: !basis.options.allow_bank_fetch,
-            ..nav::router::FindOptions::default()
+            ..nav_planner::router::FindOptions::default()
         },
         request_id,
         crate::script_runtime::ScriptRouteExclusions::default(),
         Some(authority),
         None,
-        nav::arrival::ArrivalKind::Area,
+        nav_planner::arrival::ArrivalKind::Area,
         false,
     ));
     assert!(
@@ -4753,7 +5377,7 @@ fn area_route_refresh_keeps_mode_through_native_receipt() {
             bot.route_arrival,
         )
     };
-    assert_eq!(arrival, nav::arrival::ArrivalKind::Area);
+    assert_eq!(arrival, nav_planner::arrival::ArrivalKind::Area);
     assert_eq!(goal, WATER_SHORE);
     rig.step_at(goal);
     rig.observe_at(2, goal);
@@ -4764,7 +5388,7 @@ fn area_route_refresh_keeps_mode_through_native_receipt() {
 #[ignore = "requires WORLD_NAV_PACK pointing to the real 289 nav pack"]
 fn real_catherby_water_centroid_accepts_area_shore_but_preserves_reach_refusal() {
     use crate::ScriptRouteRequest;
-    use nav::arrival::ArrivalKind;
+    use nav_planner::arrival::ArrivalKind;
 
     let pack = std::env::var_os("WORLD_NAV_PACK").expect("WORLD_NAV_PACK is required");
     let world = Arc::new(NavWorld::load_pack(std::path::Path::new(&pack)).unwrap());
@@ -5159,10 +5783,22 @@ fn s2b_admission_per_bot_layouts() {
     // Grinch's shared native progress and evidence-wait run fences add two
     // inline Option<RunKey> values (64 B): macOS SlotScript measures 4608 B.
     // Neither fence retains a scene or allocates a per-bot heap payload.
+    // EVENT-RUNTIME-S2 adds one inline u64 consumed-takeover sequence:
+    // macOS SlotScript measures 4616 B (+8 B), with no new heap payload.
+    // Entrance evidence adds a 48 B RouteQuestContext and an 8 B provider-byte
+    // account to NavBot's retained QuestEvidence.
+    // Removing the legacy-grid fields shrank Traveller by 88 B (904 B to
+    // 816 B), so the measured NavBot exact pin falls from 3760 B to 3672 B.
+    // Nav split S3's typed NPC hop reason shrank NavBot by 16 B (3656 B).
+    // SURVIVAL-1.1 adds the 104 B inline SlotCondition owner, and the walk
+    // stall diagnostic adds 16 B to Traveller (original send tile and tick
+    // across resends): NavBot measures 3776 B, with no new heap payload and
+    // no SlotScript growth.
+    // SURVIVAL-1.4 adds one byte of cure_poison, padded to 8 by alignment: NavBot is 3784 B.
     // Rust 1.98.1 is pinned for the workspace and CI. These are lib-test
     // layouts: test-only inspection budgets and bank fixtures are included.
-    // Linux's std::sync::Mutex is 8 B smaller than macOS's for each of the
-    // fifteen inline LoadIsolate mutexes, so SlotScript is 120 B smaller.
+    // S0c moves the platform-specific isolate mutexes into the surface run.
+    // The shared 64-bit slot layout no longer contains those mutexes.
     #[cfg(all(
         target_os = "macos",
         target_arch = "aarch64",
@@ -5175,7 +5811,7 @@ fn s2b_admission_per_bot_layouts() {
             std::mem::size_of::<script::combat::Combat>(),
             std::mem::size_of::<script::combat::WalkGuard>()
         ),
-        (3704, 4608, 512, 264)
+        (3784, 1608, 512, 264)
     );
     #[cfg(all(
         target_os = "linux",
@@ -5190,7 +5826,7 @@ fn s2b_admission_per_bot_layouts() {
             std::mem::size_of::<script::combat::Combat>(),
             std::mem::size_of::<script::combat::WalkGuard>()
         ),
-        (3704, 4488, 512, 264)
+        (3784, 1608, 512, 264)
     );
     assert!(std::mem::size_of::<script::combat::Combat>() <= 512);
     assert!(std::mem::size_of::<script::combat::WalkGuard>() <= 264);
@@ -5198,8 +5834,9 @@ fn s2b_admission_per_bot_layouts() {
 
 mod s2b_admission_contract {
     use super::*;
+    use api::condition::PoisonState;
     use script::combat::guard::{Escape, EscapeAction, EscapeOwner, EscapeState};
-    use script::combat::risk::{PoisonState, UnknownWhy, Verdict};
+    use script::combat::risk::{UnknownWhy, Verdict};
     use script::native::{AssessReceipt, WalkBit};
 
     fn tile(x: i32) -> WorldTile {
@@ -5211,15 +5848,15 @@ mod s2b_admission_contract {
         let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
         let npc = data.npc_by_config("icewarrior").unwrap();
         world.graph.zones = Some(
-            nav::zones::ZoneTable::from_parts(
-                vec![nav::zones::Zone::npc(
+            nav_planner::zones::ZoneTable::from_parts(
+                vec![nav_planner::zones::Zone::npc(
                     tile(120),
                     1,
-                    nav::zones::ZoneClass::Always,
+                    nav_planner::zones::ZoneClass::Always,
                     u16::MAX,
                     0,
                 )],
-                vec![nav::zones::ZoneKind::new(
+                vec![nav_planner::zones::ZoneKind::new(
                     "ice",
                     "Ice warrior",
                     npc.id,
@@ -5410,8 +6047,8 @@ mod s2b_admission_contract {
                 },
             ]);
             assert_eq!(
-                rig.slot().lock().unwrap().api_family(),
-                Some(script::ApiFamily::V1)
+                rig.slot().lock().unwrap().surface_family(),
+                Some(script::surface::SurfaceFamily::JsV1)
             );
             rig.frames(1);
             assert!(rig.wait_for_route_work(5_000, || rig
@@ -5468,8 +6105,8 @@ mod s2b_admission_contract {
         nav_snapshot_at(&mut rig.client, &mut rig.snap, 0, 0);
         observed_loadout(&mut rig.snap);
         assert_eq!(
-            rig.slot().lock().unwrap().api_family(),
-            Some(script::ApiFamily::V1)
+            rig.slot().lock().unwrap().surface_family(),
+            Some(script::surface::SurfaceFamily::JsV1)
         );
         rig.t23_bank_frame(1, true);
         assert!(rig.wait_for_route_work(5_000, || rig
@@ -5584,9 +6221,9 @@ mod s2b_admission_contract {
         assert!(shared.lock().receipt.is_some());
     }
 
-    fn oversized_route_refusal() -> nav::producer::OwnerResultRefusal {
-        let maximum = nav::producer::OWNER_RESULT_MAX_BYTES;
-        let ledger = nav::producer::OwnerResultLedger::with_limits(maximum * 2, maximum);
+    fn oversized_route_refusal() -> nav_planner::producer::OwnerResultRefusal {
+        let maximum = nav_planner::producer::OWNER_RESULT_MAX_BYTES;
+        let ledger = nav_planner::producer::OwnerResultLedger::with_limits(maximum * 2, maximum);
         match ledger.try_reserve_bytes(maximum + 1) {
             Err(error) => error,
             Ok(_) => panic!("the oversized route result must refuse owner custody"),
@@ -5595,8 +6232,8 @@ mod s2b_admission_contract {
 
     fn expected_oversized_route_refusal() -> script::native::WalkRefusal {
         script::native::WalkRefusal::RouteTooLarge {
-            required_bytes: nav::producer::OWNER_RESULT_MAX_BYTES + 1,
-            maximum_bytes: nav::producer::OWNER_RESULT_MAX_BYTES,
+            required_bytes: nav_planner::producer::OWNER_RESULT_MAX_BYTES + 1,
+            maximum_bytes: nav_planner::producer::OWNER_RESULT_MAX_BYTES,
         }
     }
 
@@ -5790,15 +6427,18 @@ mod s2b_admission_contract {
             ));
         };
 
-        slot.lock()
-            .unwrap()
-            .start_load_with_loadouts(
+        let start = crate::script_runtime::js_surface_start(
+            crate::script_runtime::js_start_card(
                 "export function tick(api) {}".into(),
                 script::LoadShape::NativeTick,
                 Vec::new(),
-                &[],
-            )
-            .unwrap();
+            ),
+            None,
+            None,
+            Arc::new(api::named_banks::NamedBankFacts::empty()),
+            Arc::from(Vec::<api::loadout::Loadout>::new()),
+        );
+        slot.lock().unwrap().start_surface(start).unwrap();
         assert_frozen(script::RunState::Starting);
         assert!(wait_until(5_000, || {
             let mut slot = slot.lock().unwrap();
@@ -5837,4 +6477,189 @@ mod s2b_admission_contract {
         }
         assert!(!NavBot::default().ordinary_movement_owned(0));
     }
+}
+
+/// One full observation, keeping the result the test wrappers drop.
+fn observe_full(rig: &mut Rig, tick: u64) -> crate::script_runtime::ScriptObservation {
+    crate::script_runtime::script_observe_cached_with_channels(
+        &mut rig.driver,
+        "alice",
+        true,
+        true,
+        false,
+        tick,
+        Some((0, 0, 0)),
+        None,
+        None,
+        Some(&rig.snapshot),
+        None,
+        None,
+        None,
+        &rig.scripts,
+        &rig.cheats,
+        &rig.navs,
+        &rig.world,
+        false,
+        false,
+        false,
+        None,
+        None,
+        None,
+        None,
+        None,
+        crate::script_channels::BrokerWorld::Unavailable,
+        None,
+        None,
+        None,
+        Some(&rig.statuses),
+    )
+}
+
+/// PANEL-STATE-GAP-1023: a run that ends on its own resets its navigation in
+/// the observer, and the same observation ends the run's published walk
+/// destination, once. The nav step runs only while a route or cleanup is
+/// armed, so nothing else would clear the row. Here the lifecycle reaps a
+/// Stop with its walk still armed.
+#[test]
+fn a_run_that_ends_in_the_pump_retires_its_published_walk_once() {
+    let mut rig = open_rig(false);
+    {
+        let mut shared = rig.shared.lock();
+        shared.target = Some(WorldTile {
+            x: 20,
+            z: 0,
+            level: 0,
+        });
+    }
+    rig.observe(1);
+    rig.wait_routed();
+    rig.step();
+    assert!(
+        rig.statuses.lock().unwrap()[0].script_walk().is_some(),
+        "the nav step published the armed destination"
+    );
+
+    rig.slot().lock().unwrap().stop();
+    let mut tick = 2;
+    assert!(wait_until(5_000, || {
+        tick += 1;
+        observe_full(&mut rig, tick);
+        rig.statuses.lock().unwrap()[0].script_walk().is_none()
+    }));
+    assert_eq!(queued(&rig.navs), None, "the run's route ended with it");
+
+    // A later publication stands for the next run's walk: the ended run does
+    // not retire it again.
+    rig.statuses.lock().unwrap()[0].publish_script_walk(Some(WorldTile {
+        x: 7,
+        z: 7,
+        level: 0,
+    }));
+    for _ in 0..3 {
+        tick += 1;
+        observe_full(&mut rig, tick);
+    }
+    assert!(
+        rig.statuses.lock().unwrap()[0].script_walk().is_some(),
+        "an ended run is retired once"
+    );
+}
+
+/// PANEL-STATE-GAP-1023: a run that fails ends its published rows the same
+/// way (the lifecycle receipt names its generation), once per run.
+#[test]
+fn a_failed_run_retires_its_published_rows_once() {
+    let mut rig = open_rig(true);
+    rig.statuses.lock().unwrap()[0].publish_script_walk(Some(WorldTile {
+        x: 20,
+        z: 0,
+        level: 0,
+    }));
+    let mut tick = 1;
+    assert!(wait_until(5_000, || {
+        tick += 1;
+        observe_full(&mut rig, tick);
+        rig.slot()
+            .lock()
+            .unwrap()
+            .terminal_lifecycle_generation()
+            .is_some()
+            && rig.statuses.lock().unwrap()[0].script_walk().is_none()
+    }));
+
+    rig.statuses.lock().unwrap()[0].publish_script_walk(Some(WorldTile {
+        x: 7,
+        z: 7,
+        level: 0,
+    }));
+    for _ in 0..3 {
+        tick += 1;
+        observe_full(&mut rig, tick);
+    }
+    assert!(
+        rig.statuses.lock().unwrap()[0].script_walk().is_some(),
+        "a failed run is retired once"
+    );
+}
+
+/// PANEL-STATE-GAP-1023: a Stop that lands between the nav step's read of the
+/// armed destination and its status write must not be overwritten. The nav
+/// step parks at that point; a Stop thread runs `Play::script_stop`'s own
+/// sequence (stop the run, reset navigation, release the slot, retire the
+/// published rows); the step then writes. The destination read belongs to the
+/// retired run, so it must not be published after the retirement.
+#[test]
+fn a_stop_between_the_walk_read_and_its_publication_is_not_overwritten() {
+    use std::sync::mpsc::channel;
+    use std::time::Duration;
+
+    let mut rig = open_rig(false);
+    {
+        let mut shared = rig.shared.lock();
+        shared.target = Some(WorldTile {
+            x: 20,
+            z: 0,
+            level: 0,
+        });
+    }
+    rig.observe(1);
+    rig.wait_routed();
+    rig.step();
+    assert!(
+        rig.statuses.lock().unwrap()[0].script_walk().is_some(),
+        "the nav step published the armed destination"
+    );
+
+    let (read_tx, read_rx) = channel::<()>();
+    let (stopped_tx, stopped_rx) = channel::<()>();
+    let slot = rig.slot();
+    let navs = Arc::clone(&rig.navs);
+    let statuses = Arc::clone(&rig.statuses);
+    let stopper = std::thread::spawn(move || {
+        read_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+        let mut guard = slot.lock().unwrap();
+        guard.stop();
+        crate::script_runtime::reset_script_nav(&navs, "alice", None);
+        drop(guard);
+        crate::play_scripts::retire_script_run_status(&statuses, "alice");
+        // The publisher may have stopped waiting by now.
+        let _ = stopped_tx.send(());
+    });
+    crate::script_runtime::BEFORE_PUBLISH.with(|hook| {
+        *hook.borrow_mut() = Some(Box::new(move || {
+            read_tx.send(()).unwrap();
+            // Where the destination is read under the navigation lock, the
+            // Stop waits for that lock; where it is not, the Stop finishes here.
+            let _ = stopped_rx.recv_timeout(Duration::from_secs(1));
+        }));
+    });
+    rig.step();
+    stopper.join().unwrap();
+
+    assert_eq!(queued(&rig.navs), None, "Stop ended the run's route");
+    assert_eq!(
+        rig.statuses.lock().unwrap()[0].script_walk(),
+        None,
+        "an in-flight publication restored the retired run's destination"
+    );
 }

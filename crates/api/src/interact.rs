@@ -7,7 +7,7 @@
 use client::client::{Client, MiniMenuAction};
 use client::io::ClientRevision;
 
-use crate::prot::{Out, Send};
+use crate::prot::Send;
 use crate::snapshot::{
     GameSnapshot, GroundItemView, ItemActionFamily, ItemContainer, ItemView, LocView, NpcView,
     PlayerView, ReadContext, SceneView, ToggleControlsView, WidgetView, WorldTile,
@@ -16,6 +16,8 @@ use crate::snapshot::{
 mod driver;
 pub use driver::*;
 
+/// Selected, source-proven facts for named server-ordered content operations.
+pub mod server_ordered;
 // ---------------------------------------------------------------------------
 // Wire types. `Interactions` resolves a `WireCommand` from
 // a target/action pair, gates it, and returns a `SendResult`; these enums
@@ -1214,10 +1216,9 @@ impl<'a> Interactions<'a> {
             WireCommand::WalkNearest { tile } => {
                 driver::walk_nearest(&mut *self.driver, tile.x, tile.z)
             }
-            WireCommand::DoorStep { tile } => self.driver.walk_step(crate::prot::WalkStep {
-                x: tile.x,
-                z: tile.z,
-            }),
+            WireCommand::DoorStep { tile } => Send::move_gameclick(false, tile.x, tile.z, &[])
+                .and_then(|send| self.driver.send_packet(&send))
+                .is_ok(),
             WireCommand::SideTab { tab } => self.driver.click_side_tab(*tab),
             WireCommand::Login { username, password } => {
                 login(&mut *self.driver, username, password, false)

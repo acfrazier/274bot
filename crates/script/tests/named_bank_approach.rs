@@ -10,8 +10,7 @@ use api::named_banks::NamedBankFacts;
 use api::quest_progress::EvidenceStamp;
 use api::snapshot::WorldTile;
 use script::isolate_fb::{
-    ChatOptionInput, IsolateBuf, NativeFactsInput, ReachViewInput, SceneEntityInput,
-    SnapshotFingerprint, SnapshotInput, TileInput,
+    ChatOptionInput, NativeFactsInput, ReachViewInput, SceneEntityInput, SnapshotInput, TileInput,
 };
 use script::native::{HostAction, HostEffect, InteractionReceipt, WalkEnd, WalkReceipt};
 use script::shim::InteractReq;
@@ -36,18 +35,15 @@ fn post_snapshot_native(slot: &mut BankSlot, input: &SnapshotInput<'_>) {
 
 fn post_snapshot_delta_native(
     slot: &mut BankSlot,
-    encoder: &mut IsolateBuf,
-    last: &mut Option<SnapshotFingerprint>,
-    input: &SnapshotInput<'_>,
+    surface_input: &SnapshotInput<'_>,
+    native_input: &SnapshotInput<'_>,
 ) {
-    let (bytes, next) = encoder.encode_snapshot_delta_with_native(
-        last.as_ref(),
-        input,
+    slot.post_snapshot_with_observations(
+        surface_input,
         NativeFactsInput::default(),
-        false,
+        native_input,
+        NativeFactsInput::default(),
     );
-    *last = Some(next);
-    slot.post_snapshot_bytes(bytes, input, NativeFactsInput::default());
 }
 
 fn tick(slot: &mut BankSlot, n: u64, input: &SnapshotInput<'_>) {
@@ -511,9 +507,7 @@ fn unnamed_banking_open_continues_through_omitted_locs_to_fresh_bank() {
     snap.here = Some(tile(100, 100));
     snap.locs = &locs;
     snap.reach = reach.view();
-    let mut encoder = IsolateBuf::new();
-    let mut last = None;
-    post_snapshot_delta_native(&mut slot, &mut encoder, &mut last, &snap);
+    post_snapshot_delta_native(&mut slot, &snap, &snap);
     tick(&mut slot, 1, &snap);
     let walk = one_action(
         &mut slot,
@@ -535,7 +529,7 @@ fn unnamed_banking_open_continues_through_omitted_locs_to_fresh_bank() {
 
     snap.tick = 2;
     snap.here = Some(tile(199, 100));
-    post_snapshot_delta_native(&mut slot, &mut encoder, &mut last, &snap);
+    post_snapshot_delta_native(&mut slot, &snap, &snap);
     tick(&mut slot, 2, &snap);
     let open = one_action(
         &mut slot,
@@ -927,9 +921,7 @@ fn a_named_approach_opens_the_same_identity_across_an_omitted_locs_delta() {
     snap.bank_generation = 7;
     snap.locs = &initial_locs;
     snap.reach = reach.view();
-    let mut encoder = IsolateBuf::new();
-    let mut last = None;
-    post_snapshot_delta_native(&mut slot, &mut encoder, &mut last, &snap);
+    post_snapshot_delta_native(&mut slot, &snap, &snap);
     tick(&mut slot, 1, &snap);
     let walk = one_action(&mut slot, "nearest named booth must be approached");
     assert!(matches!(
@@ -944,7 +936,7 @@ fn a_named_approach_opens_the_same_identity_across_an_omitted_locs_delta() {
     // original scene row and the click must reuse that selected identity.
     snap.tick = 2;
     snap.here = Some(tile(3011, 3353));
-    post_snapshot_delta_native(&mut slot, &mut encoder, &mut last, &snap);
+    post_snapshot_delta_native(&mut slot, &snap, &snap);
     tick(&mut slot, 2, &snap);
     let open = one_action(
         &mut slot,

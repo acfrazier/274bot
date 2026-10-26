@@ -605,7 +605,7 @@ fn in_game_wearing(core: &mut OperatorSession<()>, name: &str, worn: &[(&str, i3
             })
             .collect(),
     );
-    core.publish_test_snapshot(name, snapshot, nav::WorldState::default());
+    core.publish_test_snapshot(name, snapshot, nav_planner::WorldState::default());
 }
 
 #[test]

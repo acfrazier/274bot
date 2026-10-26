@@ -20,9 +20,9 @@ use std::time::{Duration, Instant};
 use api::snapshot::WorldTile;
 use common::{fail, live, options, profiles, wait_ingame};
 use host_play::run_with_io;
-use nav::router::{find, find_with, FindOptions};
-use nav::transport::TransportKind;
-use nav::world::NavWorld;
+use nav_planner::router::{find, find_with, FindOptions};
+use nav_planner::transport::TransportKind;
+use nav_planner::world::NavWorld;
 use scenario::default_pack_path;
 
 /// A wilderness tile in the main zone (surface pair decodes to
@@ -106,7 +106,7 @@ fn nav_wildy() {
             allow_bank_fetch: false,
             ..Default::default()
         },
-        &nav::WorldState::empty(),
+        &nav_planner::WorldState::empty(),
     )
     .unwrap_or_else(|e| {
         fail(&format!(
@@ -136,7 +136,7 @@ fn nav_wildy() {
     if levers.len() < 2 {
         fail(&format!(
             "nav_wildy: pack carries {} lever edges (locs 1814/1815), need >= 2 \
-             (rebake with `cargo run -p nav --bin nav-pack`)",
+             (rebake with `cargo run -p nav-bake --bin nav-pack`)",
             levers.len()
         ));
     }
@@ -180,7 +180,7 @@ fn nav_wildy() {
             allow_bank_fetch: false,
             ..Default::default()
         },
-        &nav::WorldState::empty(),
+        &nav_planner::WorldState::empty(),
     )
     .map(|route| {
         if route.dest != WILDY_LEVER_LANDING {

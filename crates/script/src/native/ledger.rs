@@ -13,7 +13,9 @@ pub(crate) struct Runtime {
     pub ledger: Option<Box<Ledger>>,
     pub budget: TickBudget,
     pub clock: ActiveClock,
-    pub observed_walk_outcome_seq: u64,
+    pub observed_walk_outcome: ObservedWalkOutcome,
+    /// The latest manual takeover sequence consumed by Resume.
+    pub takeover_consumed_seq: u64,
     /// One confirmed native gameplay change, fenced to its run and session.
     pub pending_note_progress: Option<RunKey>,
 }
@@ -29,11 +31,58 @@ impl Runtime {
     pub fn clear_note_progress(&mut self) {
         self.pending_note_progress = None;
     }
+    /// Consume the currently observed manual takeover when the slot resumes.
+    pub fn consume_manual_takeover(&mut self) {
+        self.takeover_consumed_seq = self.observed_walk_outcome.seq();
+    }
 
     /// Consume the one pending stamp, even when it belongs to an old
     /// run/session. A stale marker is never carried into the current run.
     pub fn take_note_progress(&mut self, run: RunKey) -> bool {
         self.pending_note_progress.take() == Some(run)
+    }
+}
+
+/// The host walk outcome the slot observed last: its sequence and its cancel
+/// reason, packed in one word so the per-slot runtime keeps its size
+/// (`s2b_admission_per_bot_layouts` pins `SlotScript`). The sequence uses
+/// bits 0-62 (a 63-bit domain, `1..=WALK_OUTCOME_SEQ_MAX`) and the reason
+/// uses bit 63. The host counts the sequence from 1 with a plain increment
+/// and never wraps it, because readers compare sequences in order (the
+/// manual takeover watermark uses `>=`). This relies on a lifetime
+/// assumption: at one outcome per 600 ms tick, the count needs about 175
+/// billion years to reach 2^63, so in practice the sequence never wraps and
+/// never reaches bit 63. A sequence above the domain breaks the host
+/// contract: debug builds panic, and release builds drop bit 63, so the
+/// sequence never changes the reason.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ObservedWalkOutcome(u64);
+
+impl ObservedWalkOutcome {
+    const USER_INPUT: u64 = 1 << 63;
+
+    pub fn new(seq: u64, cancel_reason: super::WalkCancelReason) -> Self {
+        debug_assert!(
+            seq <= super::WALK_OUTCOME_SEQ_MAX,
+            "walk outcome sequence above WALK_OUTCOME_SEQ_MAX"
+        );
+        let reason = match cancel_reason {
+            super::WalkCancelReason::None => 0,
+            super::WalkCancelReason::UserInput => Self::USER_INPUT,
+        };
+        Self((seq & super::WALK_OUTCOME_SEQ_MAX) | reason)
+    }
+
+    pub fn seq(self) -> u64 {
+        self.0 & !Self::USER_INPUT
+    }
+
+    pub fn cancel_reason(self) -> super::WalkCancelReason {
+        if self.0 & Self::USER_INPUT == 0 {
+            super::WalkCancelReason::None
+        } else {
+            super::WalkCancelReason::UserInput
+        }
     }
 }
 /// Typed host work retains an owner, never a frame borrow. The host must check
@@ -71,6 +120,7 @@ pub enum HostEffect {
     Walk(WalkRequest),
     BankPick(BankPickRequest),
     AssessWalk(WalkRequest),
+    ServerOrdered(crate::surface::ServerOrderedEnvelope),
 }
 
 /// A host continuation retains this fence after consuming the request payload.
@@ -106,6 +156,12 @@ impl HostAuthority {
     pub fn request_id(&self) -> NonZeroU64 {
         self.request
     }
+
+    /// Revoke only this request at a real dispatch boundary in integration tests.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn cancel_request_for_test(&self) {
+        self.owner.cancel_interaction(self.request);
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -122,6 +178,7 @@ impl HostAction {
                 self.owner.interaction_live(self.request_id)
             }
             HostEffect::Walk(_) => self.owner.walk_live(self.request_id),
+            HostEffect::ServerOrdered(_) => self.owner.batch_live(self.request_id),
         }
     }
     pub fn run(&self) -> RunKey {
@@ -141,27 +198,30 @@ impl HostAction {
 
 /// Allocated only on first native admission. There is one foreground owner,
 /// one outstanding walk and a bounded outbox, not a second navigation runtime.
-pub(crate) struct Ledger {
-    pub owner: Option<Arc<Owner>>,
+pub struct Ledger {
+    pub(crate) owner: Option<Arc<Owner>>,
     next_id: u64,
-    pub outbox: Vec<HostAction>,
-    pub walk: Option<WalkReceipt>,
-    pub walk_events: Vec<WalkEvent>,
-    pub interaction: Option<InteractionReceipt>,
-    pub interaction_request: Option<NonZeroU64>,
-    pub bank_pick: Option<BankPickReceipt>,
-    pub bank_pick_request: Option<NonZeroU64>,
-    pub assess_owner: Option<Arc<Owner>>,
-    pub assess_receipt: Option<AssessReceipt>,
-    pub assess_request: Option<NonZeroU64>,
-    pub batch_receipts: [Option<InteractionReceipt>; 5],
+    pub(crate) outbox: Vec<HostAction>,
+    pub(crate) walk: Option<WalkReceipt>,
+    pub(crate) walk_events: Vec<WalkEvent>,
+    pub(crate) interaction: Option<InteractionReceipt>,
+    pub(crate) interaction_request: Option<NonZeroU64>,
+    pub(crate) bank_pick: Option<BankPickReceipt>,
+    pub(crate) bank_pick_request: Option<NonZeroU64>,
+    // Keep the 72-byte terminal envelope lazy instead of widening every native ledger.
+    pub(crate) server_ordered: Option<Box<super::ServerOrderedCompletion>>,
+    pub(crate) server_ordered_request: Option<NonZeroU64>,
+    pub(crate) assess_owner: Option<Arc<Owner>>,
+    pub(crate) assess_receipt: Option<AssessReceipt>,
+    pub(crate) assess_request: Option<NonZeroU64>,
+    pub(crate) batch_receipts: [Option<InteractionReceipt>; 5],
     next_batch_receipt: usize,
-    pub quiet_since: Option<(NonZeroU64, NonZeroU64, Instant)>,
+    pub(crate) quiet_since: Option<(NonZeroU64, NonZeroU64, Instant)>,
     /// The open bank session (login run, snapshot session generation) known
     /// to be in Item withdraw mode: a native machine opened it (the server
     /// resets `%bankcert` on open) or pressed Item in it. It outlives one
     /// machine so a later verb in the same session skips the press.
-    pub bank_item_session: Option<(RunKey, u64)>,
+    pub(crate) bank_item_session: Option<(RunKey, u64)>,
 }
 
 impl Default for Ledger {
@@ -176,6 +236,8 @@ impl Default for Ledger {
             interaction_request: None,
             bank_pick: None,
             bank_pick_request: None,
+            server_ordered: None,
+            server_ordered_request: None,
             assess_owner: None,
             assess_receipt: None,
             assess_request: None,
@@ -243,6 +305,8 @@ impl Ledger {
         self.interaction_request = None;
         self.bank_pick = None;
         self.bank_pick_request = None;
+        self.server_ordered = None;
+        self.server_ordered_request = None;
         self.batch_receipts.fill(None);
         self.next_batch_receipt = 0;
         self.quiet_since = None;
@@ -296,6 +360,29 @@ impl Ledger {
         {
             self.interaction = Some(receipt);
         }
+    }
+
+    pub fn complete_server_ordered(
+        &mut self,
+        authority: &HostAuthority,
+        completion: super::ServerOrderedCompletion,
+    ) {
+        let request = authority.request_id();
+        // Cancellation can revoke authority after a committed prefix. Retain
+        // its terminal evidence, but never settle a replacement owner or run.
+        if completion.dispatch.request_id != request.get()
+            || completion.evidence.run != authority.run()
+            || self.server_ordered_request != Some(request)
+            || self.server_ordered.is_some()
+            || !self.owner.as_ref().is_some_and(|owner| {
+                owner.run == authority.run() && owner.id == authority.action_id()
+            })
+        {
+            return;
+        }
+        authority.owner.cancel_interaction(request);
+        self.server_ordered = Some(Box::new(completion));
+        self.server_ordered_request = None;
     }
 
     pub fn complete_bank_pick(&mut self, authority: &HostAuthority, receipt: BankPickReceipt) {
@@ -359,7 +446,7 @@ enum Seen {
 /// z (11 bits each), and the level (2 bits). Its spare high bits hold the
 /// shared scene-entry latch.
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
-pub(crate) struct SceneKey(u32);
+pub struct SceneKey(u32);
 
 impl SceneKey {
     fn observe(snapshot: Option<&api::snapshot::GameSnapshot>) -> Option<Self> {
@@ -373,7 +460,7 @@ impl SceneKey {
         ))
     }
 
-    pub(crate) fn from_parts(level: i32, origin: Option<(i32, i32)>) -> Self {
+    pub fn from_parts(level: i32, origin: Option<(i32, i32)>) -> Self {
         let level = (level as u32) & 0b11;
         let origin = origin.map_or(0, |(x, z)| {
             (1 << 22) | ((((x as u32) >> 3) & 0x7ff) << 11) | (((z as u32) >> 3) & 0x7ff)
@@ -398,14 +485,14 @@ impl SceneKey {
 /// Shared native/compat latch packed into SceneKey's spare high bits, so
 /// evidence wakes cannot clear scene entry without growing TickBudget.
 #[derive(Default)]
-pub(crate) struct SceneFence(SceneKey);
+pub struct SceneFence(SceneKey);
 
 impl SceneFence {
-    pub(crate) fn next_tick(&mut self) {
+    pub fn next_tick(&mut self) {
         self.0 .0 &= !SCENE_ENTERED_BIT;
     }
 
-    pub(crate) fn observe(&mut self, scene: Option<SceneKey>) {
+    pub fn observe(&mut self, scene: Option<SceneKey>) {
         let (seen, scene) = match scene {
             Some(scene) => (Seen::Scene, scene),
             None => (Seen::Outside, SceneKey::default()),
@@ -420,7 +507,7 @@ impl SceneFence {
             SceneKey((scene.0 & SCENE_KEY_MASK) | ((seen as u32) << SCENE_SEEN_SHIFT) | entered);
     }
 
-    pub(crate) fn entered_scene(&self) -> bool {
+    pub fn entered_scene(&self) -> bool {
         self.0 .0 & SCENE_ENTERED_BIT != 0
     }
 }
@@ -455,7 +542,6 @@ impl TickBudget {
         self.scene.entered_scene()
     }
 
-    #[cfg(feature = "load")]
     pub(super) fn transition_available(&self) -> bool {
         self.transitions < Self::MAX_TRANSITIONS
     }
@@ -792,5 +878,46 @@ mod tests {
         // A relog's first in-game frame enters its scene.
         budget.observe_frame(9, Some(&scene_frame(0, 3184, 3311, (3120, 3256))));
         assert!(budget.entered_scene());
+    }
+}
+
+#[cfg(test)]
+mod observed_walk_outcome_tests {
+    use super::super::{WalkCancelReason, WALK_OUTCOME_SEQ_MAX};
+    use super::ObservedWalkOutcome;
+
+    #[test]
+    fn packed_outcome_keeps_sequence_and_reason() {
+        assert_eq!(ObservedWalkOutcome::default().seq(), 0);
+        assert_eq!(
+            ObservedWalkOutcome::default().cancel_reason(),
+            WalkCancelReason::None
+        );
+        for seq in [1, 41, WALK_OUTCOME_SEQ_MAX - 1, WALK_OUTCOME_SEQ_MAX] {
+            for reason in [WalkCancelReason::None, WalkCancelReason::UserInput] {
+                let outcome = ObservedWalkOutcome::new(seq, reason);
+                assert_eq!((outcome.seq(), outcome.cancel_reason()), (seq, reason));
+            }
+        }
+    }
+
+    /// A sequence above the host range breaks the host contract: debug
+    /// builds stop at the producer boundary.
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic(expected = "walk outcome sequence above WALK_OUTCOME_SEQ_MAX")]
+    fn sequence_above_the_host_range_panics_in_debug() {
+        let _ = ObservedWalkOutcome::new(WALK_OUTCOME_SEQ_MAX + 1, WalkCancelReason::None);
+    }
+
+    /// Release builds drop bit 63: the sequence never sets the reason.
+    #[cfg(not(debug_assertions))]
+    #[test]
+    fn sequence_above_the_host_range_never_sets_the_reason_in_release() {
+        let outcome = ObservedWalkOutcome::new(u64::MAX, WalkCancelReason::None);
+        assert_eq!(
+            (outcome.seq(), outcome.cancel_reason()),
+            (WALK_OUTCOME_SEQ_MAX, WalkCancelReason::None)
+        );
     }
 }

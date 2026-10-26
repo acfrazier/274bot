@@ -1,6 +1,5 @@
 //! Compiled registration transaction and shared presentation, owned by SlotScript.
 use super::*;
-#[cfg(feature = "load")]
 use crate::native::HostFrame;
 use crate::native::{
     ActionContext, ConfigError, Interrupt, NativeActions, NativeOutput, NativePhase, NativeTick,
@@ -398,6 +397,14 @@ pub(super) fn frame_context<'a>(
             .with_reach(ctx.compiled.reach)
             .with_bank_memory(ctx.compiled.bank_memory)
             .with_world_members(ctx.compiled.world_members),
+        condition: ctx.compiled.condition.filter(|fact| {
+            fact.session == api::condition::SessionMark::Live
+                && ctx
+                    .snapshot
+                    .is_some_and(|snapshot| snapshot.tick() == fact.tick)
+        }),
+        poison_unknown_pulse: ctx.compiled.poison_unknown_pulse.unwrap_or(u8::MAX),
+        cure_poison: ctx.compiled.cure_poison,
         retained,
         action_id: 0,
         active_now: runtime.clock.now(now).as_duration(),
@@ -406,14 +413,21 @@ pub(super) fn frame_context<'a>(
         pending_note_progress: Some(&mut runtime.pending_note_progress),
         budget: &mut runtime.budget,
         eligible: !ctx.compiled.hold,
-        observed_walk_outcome_seq: runtime.observed_walk_outcome_seq,
+        observed_walk_outcome_seq: runtime.observed_walk_outcome.seq(),
+        observed_walk_cancel_reason: if runtime.observed_walk_outcome.seq()
+            == runtime.takeover_consumed_seq
+        {
+            crate::native::WalkCancelReason::None
+        } else {
+            runtime.observed_walk_outcome.cancel_reason()
+        },
     }
 }
 
 /// Borrowed, owner-controlled seat capabilities passed to one compiled tick.
-pub(super) struct SeatTickPorts<'a> {
-    pub authority: Option<crate::native::ServiceAuthority<'a>>,
-    pub prompt: Option<&'a mut dyn crate::native::SeatPromptPort>,
+pub struct SeatTickPorts<'a> {
+    pub(crate) authority: Option<crate::native::ServiceAuthority<'a>>,
+    pub(crate) prompt: Option<&'a mut dyn crate::native::SeatPromptPort>,
 }
 
 impl CompiledRun {
@@ -489,7 +503,6 @@ impl CompiledRun {
                 crate::quester::pair::PairFrame { binding, inventory },
             );
         }
-        #[cfg(feature = "load")]
         let interacts = ctx.compiled.interacts.take();
         let result = {
             let mut tick = NativeTick {
@@ -501,7 +514,6 @@ impl CompiledRun {
                 service_authority: seat_ports.authority,
                 prompt_port: seat_ports.prompt,
                 walk_danger: ctx.compiled.walk_danger,
-                #[cfg(feature = "load")]
                 frame: HostFrame {
                     here: ctx.here,
                     snapshot: ctx.snapshot,
@@ -511,12 +523,14 @@ impl CompiledRun {
                         reach: ctx.compiled.reach,
                         reach_flood: ctx.compiled.reach_flood,
                         bank_memory: ctx.compiled.bank_memory,
+                        condition: ctx.compiled.condition,
+                        poison_unknown_pulse: ctx.compiled.poison_unknown_pulse,
+                        cure_poison: ctx.compiled.cure_poison,
                         world_members: ctx.compiled.world_members,
                         collision: ctx.compiled.collision,
                         walk_danger: ctx.compiled.walk_danger,
                         hold: ctx.compiled.hold,
                         service_gate: ctx.compiled.service_gate,
-                        #[cfg(feature = "load")]
                         interacts,
                     },
                 },
@@ -524,10 +538,7 @@ impl CompiledRun {
             // Take the queue back even after a card panic, then let SlotScript
             // revoke/discard it before the host can drain any partial effects.
             let result = catch_unwind(AssertUnwindSafe(|| self.script.tick(&mut tick)));
-            #[cfg(feature = "load")]
             let interacts = tick.frame.compiled.interacts.take();
-            #[cfg(not(feature = "load"))]
-            let interacts = None;
             (result, interacts)
         };
         let (result, interacts) = result;
@@ -968,7 +979,6 @@ pub(super) fn prepare_run(
 /// Off-pump preparation for an API seat's unlisted native card (no Browse
 /// registry entry): `build` creates the card from the selected data on the
 /// preparation worker and returns its prepared configuration.
-#[cfg(feature = "load")]
 pub(super) fn prepare_native_run(
     run: RunKey,
     selected: Arc<api::game_data::SelectedGameData>,
@@ -1070,7 +1080,7 @@ impl SlotScript {
         if self.quest_pairs.as_ref().is_some_and(|pairs| pairs.busy()) {
             return Err(StartError::Unavailable("Stop this pair first".into()));
         }
-        if !matches!(self.state, RunState::Idle | RunState::Error) || self.load_active() {
+        if !matches!(self.state, RunState::Idle | RunState::Error) || self.surface_active() {
             return Err(StartError::Busy);
         }
         if self.incarnation == 0 {
@@ -1314,7 +1324,6 @@ impl SlotScript {
         self.bank_op_result_seq = 0;
         self.bank_op_result = false;
         self.last_settings_fp = None;
-        #[cfg(feature = "load")]
         {
             self.compiled_interacts.clear();
             self.compiled_interact_outcome_seqs.clear();
@@ -1332,8 +1341,7 @@ impl SlotScript {
 
     pub fn observe_lifecycle(&mut self) {
         self.poll_compiled();
-        #[cfg(feature = "load")]
-        self.observe_load_lifecycle();
+        self.observe_surface_lifecycle();
     }
 
     pub fn native_run(&self) -> Option<RunKey> {
@@ -1352,7 +1360,6 @@ impl SlotScript {
             .compiled
             .as_ref()
             .and_then(|run| run.output.status.clone());
-        #[cfg(feature = "load")]
         let status = status.or_else(|| self.api_status());
         status.or_else(|| self.terminal_native_status.clone())
     }
@@ -1471,11 +1478,10 @@ impl SlotScript {
 
     pub(super) fn fail_compiled(&mut self, failure: ScriptFailure) {
         self.revoke_native_input();
-        #[cfg(feature = "load")]
         {
             self.compiled_interacts.clear();
             self.compiled_interact_outcome_seqs.clear();
-            self.clue_abort_owed = true;
+            self.card_abort_owed = true;
         }
         self.pending_logs.push(failure.message.to_string());
         self.last_error = Some(failure.message.to_string());
@@ -1529,7 +1535,7 @@ impl SlotScript {
         script: Box<dyn Script>,
         selected: Option<Arc<api::game_data::SelectedGameData>>,
     ) -> Result<(), String> {
-        if !matches!(self.state, RunState::Idle | RunState::Error) || self.load_active() {
+        if !matches!(self.state, RunState::Idle | RunState::Error) || self.surface_active() {
             return Err(StartError::Busy.to_string());
         }
         let selected = match selected {
@@ -1572,11 +1578,19 @@ impl SlotScript {
 
 #[cfg(all(test, feature = "load"))]
 #[derive(Default)]
-pub(crate) struct TestOutput {
-    pub statuses: Vec<ScriptStatus>,
-    pub paints: Vec<Arc<crate::shim::ScriptPaint>>,
-    pub logs: Vec<String>,
+pub struct TestOutput {
+    pub(crate) statuses: Vec<ScriptStatus>,
+    pub(crate) paints: Vec<Arc<crate::shim::ScriptPaint>>,
+    pub(crate) logs: Vec<String>,
 }
+
+#[cfg(all(test, feature = "load"))]
+impl TestOutput {
+    pub fn paints(&self) -> &[Arc<crate::paint::ScriptPaint>] {
+        &self.paints
+    }
+}
+
 #[cfg(all(test, feature = "load"))]
 impl NativeOutput for TestOutput {
     fn status(&mut self, status: ScriptStatus) {

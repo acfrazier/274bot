@@ -312,8 +312,12 @@ fn with_tick<R>(
         prompt_port: None,
         actions: &mut actions,
         cx: crate::native::ActionContext {
+            condition: None,
+            poison_unknown_pulse: u8::MAX,
+            cure_poison: crate::survival::CurePoison::WhenNeeded,
             evidence,
             observed_walk_outcome_seq: 0,
+            observed_walk_cancel_reason: crate::native::WalkCancelReason::None,
             pin: &pin,
             snapshot: SnapshotView::new(Some(&world.snapshot), evidence),
             retained: &mut retained,
@@ -332,6 +336,9 @@ fn with_tick<R>(
             snapshot: Some(&world.snapshot),
             obj_names: None,
             compiled: crate::CompiledTick {
+                condition: None,
+                poison_unknown_pulse: None,
+                cure_poison: crate::survival::CurePoison::WhenNeeded,
                 walk_danger: None,
                 selected: Some(&world.data),
                 reach: None,

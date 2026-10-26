@@ -325,14 +325,14 @@ fn v2_combat_keep_names<'s>(
     if !field_is_string(scope, input, "food") {
         return Err("invalid-args".into());
     }
-    let options = CombatKeepOptions {
-        food: field_string(scope, input, "food")?,
-        style: optional_string(scope, input, "style")?,
-        spell: optional_string(scope, input, "spell")?,
-        ammo: optional_string(scope, input, "ammo")?,
-        weapon: optional_string(scope, input, "weapon")?,
-        extra: optional_string_array(scope, input, "extra")?,
-    };
+    let options = CombatKeepOptions::new(
+        field_string(scope, input, "food")?,
+        optional_string(scope, input, "style")?,
+        optional_string(scope, input, "spell")?,
+        optional_string(scope, input, "ammo")?,
+        optional_string(scope, input, "weapon")?,
+        optional_string_array(scope, input, "extra")?,
+    );
     let names = keep_list::combat_keep_names(data.as_ref(), &options);
     let arr = v8::Array::new(scope, names.len() as i32);
     for (i, name) in names.iter().enumerate() {

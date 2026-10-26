@@ -120,7 +120,7 @@ impl SlotScript {
         token: u64,
         request: &Arc<CombatSessionRequest>,
     ) {
-        if !self.load_active() {
+        if !self.surface_active() {
             return;
         }
         let seat = self.api.get_or_insert_with(|| Box::new(ApiSeat::default()));
@@ -144,7 +144,7 @@ impl SlotScript {
             return;
         }
         let Some(selected) = self
-            .load_identity
+            .surface_start
             .as_ref()
             .and_then(|identity| identity.game_data.clone())
         else {
@@ -345,12 +345,7 @@ impl SlotScript {
                         .map(|seat| seat.as_mut() as &mut dyn crate::native::SeatPromptPort),
                 },
             );
-            #[cfg(feature = "load")]
-            {
-                ctx.compiled.interacts = interacts;
-            }
-            #[cfg(not(feature = "load"))]
-            let _ = interacts;
+            ctx.compiled.interacts = interacts;
             run.finish_tick();
             result
         };

@@ -22,13 +22,14 @@
 
 use crate::native::request::NativeKind;
 use crate::native::seat::{SeatEntry, SeatResult as NativeSeatResult, SeatTerminal};
+pub use crate::native::seat_rows::*;
+pub use crate::native::snapshot_source::*;
 use crate::native::NativePhase;
 use api::identity::RequestId;
 use api::script_contract::{
     AbortReason, CallbackCancelReason, DecisionSequence, Refusal, RequestStamp,
-    CONTROL_RESERVATION, MAX_CANCEL_CARRY, MAX_DECIDE_CARRY, MAX_ENCODED_GAMEPLAY,
-    MAX_INTERACT_REQS as CONTRACT_MAX_INTERACT_REQS, MAX_LIVE, MAX_PENDING_STARTS, MAX_RESULTS,
-    MAX_START_CHARGE, MAX_WALK_RELEASES,
+    MAX_INTERACT_REQS as CONTRACT_MAX_INTERACT_REQS, MAX_RESULTS, MAX_START_CHARGE,
+    MAX_WALK_RELEASES,
 };
 use api::snapshot::{ActorKind, ProjectileView, MAX_PROJECTILES_PER_SNAPSHOT};
 use flatbuffers::{
@@ -52,6 +53,16 @@ pub use generated::rs_2b_0t::isolate::{
     SeatRefusal, SeatResult, SettingRow, SideTabIface, Snapshot, Stat, StatusField, Tile, Varp,
     WalkCancelReason, WidgetText,
 };
+
+impl From<crate::native::WalkCancelReason> for WalkCancelReason {
+    fn from(reason: crate::native::WalkCancelReason) -> Self {
+        match reason {
+            crate::native::WalkCancelReason::None => Self::None,
+            crate::native::WalkCancelReason::UserInput => Self::UserInput,
+        }
+    }
+}
+
 pub(crate) const LOCAL_PLAYER_MOTION_UNKNOWN: u8 = 0;
 pub(crate) const LOCAL_PLAYER_MOTION_STATIONARY: u8 = 1;
 pub(crate) const LOCAL_PLAYER_MOTION_MOVING: u8 = 2;
@@ -85,24 +96,6 @@ macro_rules! presence_methods {
 
 /// Max shim interact rows per tick (isolate→host).
 const MAX_INTERACT_REQS: usize = CONTRACT_MAX_INTERACT_REQS;
-/// Seat starts retained by the adapter and encoded per batch (§28.4–28.5).
-pub const MAX_SEAT_STARTS: usize = MAX_PENDING_STARTS;
-/// Seat decisions carried until terminal receipt (§28.5).
-pub const MAX_SEAT_DECISIONS: usize = MAX_DECIDE_CARRY;
-/// Seat cancellations carried for live and pending children (§28.5).
-pub const MAX_SEAT_CANCELS: usize = MAX_CANCEL_CARRY;
-/// Total reserved controls and legacy releases (§28.5).
-pub const MAX_SEAT_RESERVED_ROWS: usize = CONTROL_RESERVATION;
-/// Remaining gameplay/lifecycle rows after reservation (§28.5).
-pub const MAX_SEAT_GAMEPLAY_ROWS: usize = MAX_ENCODED_GAMEPLAY;
-/// Maximum live entries on one seat page.
-pub const MAX_SEAT_LIVE: usize = MAX_LIVE;
-/// Maximum retained terminal results on one seat page.
-pub const MAX_SEAT_RESULTS: usize = MAX_RESULTS;
-/// Maximum bytes in each structured-clone wire vector.
-pub const MAX_SEAT_BINARY_BYTES: usize = MAX_START_CHARGE;
-/// Maximum distinct mirror revocations carried in one interact batch.
-pub const MAX_SEAT_MIRROR_REVOKES: usize = 141;
 
 /// Max paint lines per frame (isolate→host).
 const MAX_PAINT_LINES: usize = 512;
@@ -120,399 +113,6 @@ pub const SNAPSHOT_CANVAS_H: i32 = api::native_input::APPLET_H;
 const RUN_OPTION_ABSENT: u8 = 0;
 const RUN_OPTION_FALSE_OR_FLOOR: u8 = 1;
 const RUN_OPTION_TRUE_OR_NAN: u8 = 2;
-
-/// A game tile `{x, z, level}`.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub struct TileInput {
-    pub x: i32,
-    pub z: i32,
-    pub level: i32,
-}
-
-/// Compact native reach query posted on the isolate snapshot.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct ReachViewInput<'a> {
-    pub available: bool,
-    pub base_x: i32,
-    pub base_z: i32,
-    pub level: i32,
-    pub width: i32,
-    pub height: i32,
-    pub walkable: &'a [u32],
-    pub reachable: &'a [u32],
-    pub reachable_adj: &'a [u32],
-    pub exact_rank: &'a [u16],
-    pub adjacent_rank: &'a [u16],
-    pub step: &'a [u8],
-    pub canlight: &'a [u32],
-    /// Non-zero: fingerprint compares this stamp instead of copying vectors.
-    pub stamp: u64,
-}
-
-impl ReachViewInput<'static> {
-    /// Fail-closed view: no scene, empty dims, empty bitsets.
-    pub const UNAVAILABLE: Self = Self {
-        available: false,
-        base_x: 0,
-        base_z: 0,
-        level: 0,
-        width: 0,
-        height: 0,
-        walkable: &[],
-        reachable: &[],
-        reachable_adj: &[],
-        exact_rank: &[],
-        adjacent_rank: &[],
-        step: &[],
-        canlight: &[],
-        stamp: 0,
-    };
-}
-
-/// One current-plane raw i32 collision grid posted on the isolate snapshot.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct CollisionViewInput<'a> {
-    pub available: bool,
-    pub base_x: i32,
-    pub base_z: i32,
-    pub level: i32,
-    pub width: i32,
-    pub height: i32,
-    pub flags: &'a [i32],
-}
-
-impl CollisionViewInput<'static> {
-    pub const UNAVAILABLE: Self = Self {
-        available: false,
-        base_x: 0,
-        base_z: 0,
-        level: 0,
-        width: 0,
-        height: 0,
-        flags: &[],
-    };
-}
-
-/// One skill row: the snapshot's stat index, name, xp, base, and effective.
-#[derive(Clone, Copy)]
-pub struct StatInput<'a> {
-    pub index: i32,
-    pub name: &'a str,
-    pub xp: i32,
-    pub base: i32,
-    pub effective: i32,
-}
-
-/// A scene entity view posted into the isolate (npc/loc/player/ground).
-#[derive(Clone, Copy)]
-pub struct SceneEntityInput<'a> {
-    pub index: i32,
-    pub id: i32,
-    pub name: Option<&'a str>,
-    pub x: i32,
-    pub z: i32,
-    pub level: i32,
-    pub distance: i32,
-    pub health: i32,
-    pub max_health: i32,
-    pub in_combat: bool,
-    pub animating: bool,
-    pub actions: &'a [String],
-    pub reachable: bool,
-    pub reachable_adj: bool,
-    pub combat_level: i32,
-    /// `0` none, `1` npc, `2` player.
-    pub target_kind: i32,
-    /// `-1` when not facing anyone.
-    pub target_index: i32,
-    /// NPC packed size in tiles. `0` omits the new slots (loc/player/ground).
-    pub size: i32,
-    /// Path-head network SW x. Packed only with `size >= 1`.
-    pub nx: i32,
-    /// Path-head network SW z. Packed only with `size >= 1`.
-    pub nz: i32,
-    /// Placed loc shape; `0` for non-loc rows and omitted from their wire table.
-    pub shape: i32,
-    /// Placed loc angle; `0` for non-loc rows and omitted from their wire table.
-    pub angle: i32,
-}
-
-/// One chat modal BUTTON_OK choice, including the exact component direct
-/// catalog callers pass to `actions.ifButton`.
-#[derive(Clone, Copy)]
-pub struct ChatOptionInput<'a> {
-    pub text: &'a str,
-    pub com_id: i32,
-}
-
-/// One inv/bank/equipment row posted from the live snapshot.
-#[derive(Clone, Copy)]
-pub struct ItemRowInput<'a> {
-    pub name: Option<&'a str>,
-    pub count: i32,
-    pub id: i32,
-    pub ops: &'a [String],
-    pub noted: bool,
-    pub cert: i32,
-    pub component_id: i32,
-    pub slot: i32,
-}
-
-impl<'a> ItemRowInput<'a> {
-    pub const fn nc(name: Option<&'a str>, count: i32) -> Self {
-        Self {
-            name,
-            count,
-            id: 0,
-            ops: &[],
-            noted: false,
-            cert: -1,
-            component_id: -1,
-            slot: -1,
-        }
-    }
-}
-
-/// Posted side-tab root component id (`reader.sideTabInterface`).
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub struct SideTabIfaceInput {
-    pub index: i32,
-    pub id: i32,
-}
-
-/// Posted game-chat ring line.
-#[derive(Clone, Copy)]
-pub struct ChatLineInput<'a> {
-    pub seq: i32,
-    pub text: &'a str,
-    pub type_: i32,
-    pub username: Option<&'a str>,
-}
-
-#[derive(Clone, Copy)]
-pub struct MakeButtonInput {
-    pub qty: i32,
-    pub com_id: i32,
-}
-
-#[derive(Clone, Copy)]
-pub struct MakeProductInput<'a> {
-    pub object_id: i32,
-    pub name: &'a str,
-    pub buttons: &'a [MakeButtonInput],
-}
-
-/// One combat-style varp-select button with its label.
-#[derive(Clone, Copy)]
-pub struct CombatStyleInput<'a> {
-    pub mode: i32,
-    pub label: &'a str,
-    pub component_id: i32,
-}
-
-/// One varp index/value pair.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub struct VarpInput {
-    pub index: i32,
-    pub value: i32,
-}
-
-/// A packed bank stand the shim walks to / opens. `kind` is `"booth"` or
-/// `"npc"`; `op` is the stand's 1-based access op slot; `choose` is the
-/// teller dialog option (deferred), `None` for a booth.
-#[derive(Clone, Copy)]
-pub struct BankStandInput<'a> {
-    pub name: &'a str,
-    pub x: i32,
-    pub z: i32,
-    pub level: i32,
-    pub kind: &'a str,
-    pub op: i32,
-    pub choose: Option<&'a str>,
-}
-
-/// The Rust-picked nearest Use-quickly booth on the player's plane.
-pub struct NearestBoothInput<'a> {
-    pub x: i32,
-    pub z: i32,
-    pub level: i32,
-    pub id: i32,
-    pub name: &'a str,
-    pub op: &'a str,
-}
-
-/// The host-observed PLAYER_INFO facts sent to the isolate, plus correlated
-/// movement intent and walk-outcome reason. No cloned World. `inv`/`bank`/
-/// `bank_side` rows carry the resolved obj name (`None` when the host table
-/// has no name for the id — a script query never matches); `stats` the stat
-/// index/name/xp; `booths` the scene locs with a `Use-quickly` action; `banks`
-/// the packed stands; `hold`/`ours` the guardian's status for
-/// `EventSignal.pending()`.
-pub struct SnapshotInput<'a> {
-    pub tick: u64,
-    pub here: Option<TileInput>,
-    pub ingame: bool,
-    pub inv: &'a [ItemRowInput<'a>],
-    /// The inv tab's slot count (28 bound, 0 while tutorial-locked) — the
-    /// `reader.inventorySize()` read a script's onStart gates on.
-    pub inv_size: i32,
-    pub stats: &'a [StatInput<'a>],
-    pub booths: &'a [TileInput],
-    pub nearest_booth: Option<NearestBoothInput<'a>>,
-    pub banks: &'a [BankStandInput<'a>],
-    pub bank: &'a [ItemRowInput<'a>],
-    pub bank_side: &'a [ItemRowInput<'a>],
-    pub bank_open: bool,
-    pub bank_loaded: bool,
-    pub bank_generation: u64,
-    pub count_dialog_open: bool,
-    pub withdraw_x_result_seq: u64,
-    pub withdraw_x_result: bool,
-    pub hold: bool,
-    pub ours: bool,
-    pub npcs: &'a [SceneEntityInput<'a>],
-    pub bank_op_result_seq: u64,
-    pub bank_op_result: bool,
-    pub locs: &'a [SceneEntityInput<'a>],
-    pub players: &'a [SceneEntityInput<'a>],
-    pub ground: &'a [SceneEntityInput<'a>],
-    pub equipment: &'a [ItemRowInput<'a>],
-    pub chat_open: bool,
-    pub chat_continue: bool,
-    pub chat_text: Option<&'a str>,
-    pub chat_options: &'a [ChatOptionInput<'a>],
-    pub side_tab: i32,
-    pub varps: &'a [VarpInput],
-    pub combat_styles: &'a [CombatStyleInput<'a>],
-    pub run_energy: i32,
-    pub run_enabled: bool,
-    pub retaliate_enabled: bool,
-    pub my_name: Option<&'a str>,
-    pub in_combat: bool,
-    pub animating: bool,
-    pub main_modal_id: i32,
-    pub chat_modal_id: i32,
-    pub make_products: &'a [MakeProductInput<'a>],
-    pub side_tab_ifaces: &'a [SideTabIfaceInput],
-    pub spell_buttons: &'a [CombatStyleInput<'a>],
-    pub chat_lines: &'a [ChatLineInput<'a>],
-    /// The bank Note toggle component id (-1 when absent).
-    pub bank_note_on: i32,
-    /// The bank Item toggle component id (-1 when absent).
-    pub bank_note_off: i32,
-    /// Client `GameSnapshot::scene_state` (2 = 3D ready).
-    pub scene_state: i32,
-    /// Local player run weight from `GameSnapshot::local_player`.
-    pub weight: i32,
-    /// Local player combat level from `GameSnapshot::local_player`.
-    pub combat_level: i32,
-    /// Orbit camera yaw (`CameraView::orbit_yaw`).
-    pub camera_yaw: i32,
-    /// Orbit camera pitch (`CameraView::orbit_pitch`).
-    pub camera_pitch: i32,
-    /// Whether packed nav last armed with `allow_teleports` (default off).
-    pub teleports_enabled: bool,
-    /// Local player table index (`GameSnapshot::self_slot`).
-    pub self_slot: i32,
-    pub trade_offer_open: bool,
-    pub trade_confirm_open: bool,
-    pub trade_partner: Option<&'a str>,
-    pub trade_mine: &'a [ItemRowInput<'a>],
-    pub trade_theirs: &'a [ItemRowInput<'a>],
-    pub trade_side: &'a [ItemRowInput<'a>],
-    pub trade_accept_id: i32,
-    pub trade_decline_id: i32,
-    pub shop_open: bool,
-    pub shop_stock: &'a [ItemRowInput<'a>],
-    /// Compact native reach query view. Always present on a keyframe;
-    /// unavailable when `here` is missing or the scene is not available.
-    pub reach: ReachViewInput<'a>,
-    /// Local `Game.attackedByPlayer`: `face_entity >= PLAYER_FACE_BASE`.
-    pub attacked_by_player: bool,
-    /// Local decoded face: `0` none, `1` npc, `2` player.
-    pub self_target_kind: i32,
-    /// Local decoded face index. `-1` when kind is none.
-    pub self_target_index: i32,
-    /// Selected-world widget text rows. Absent id is not a stale IfType label.
-    pub widgets: &'a [WidgetTextInput<'a>],
-    /// Latest qualifying user movement intent, independent of a walk terminal.
-    pub user_move_intent_seq: u64,
-    /// Bounded cancellation reason for the latest posted walk outcome.
-    pub walk_outcome_cancel_reason: WalkCancelReason,
-}
-
-/// Borrowed prompt data for one live seat request.
-#[derive(Clone, Copy)]
-pub struct SeatPromptInput<'a> {
-    /// Nonzero sequence associated with the current prompt.
-    pub sequence: DecisionSequence,
-    /// Family-specific decision point.
-    pub point: &'a str,
-    /// Bounded binary structured-clone prompt arguments.
-    pub args: &'a [u8],
-}
-
-/// The family-owned portion of one seat live-page row.
-#[derive(Clone, Copy)]
-pub struct SeatLiveDetails<'a> {
-    /// Must identify the corresponding [`SeatEntry`] at the same index.
-    pub id: RequestId,
-    /// Family phase represented on the status page.
-    pub phase: NativePhase,
-    /// Borrowed current prompt, if the family is awaiting a decision.
-    pub prompt: Option<SeatPromptInput<'a>>,
-}
-
-/// Borrowed snapshot view of the seat forest and retained terminal ledger.
-///
-/// `live_details` has exactly one row per `live` entry, in the same order.
-/// The family machine or isolate adapter owns phase and prompt payloads;
-/// this projection never fabricates them from forest state.
-/// `mirror_revokes_consumed` is the highest contiguous mirror revoke applied by the host.
-#[derive(Clone, Copy)]
-pub struct SeatPageInput<'a> {
-    live: &'a [SeatEntry],
-    results: &'a [NativeSeatResult],
-    result_values: &'a [SeatResultValue<'a>],
-    live_details: &'a [SeatLiveDetails<'a>],
-    mirror_revokes_consumed: u64,
-}
-
-/// Optional successful or failed result bytes for one terminal seat entry.
-#[derive(Clone, Copy)]
-pub struct SeatResultValue<'a> {
-    /// Must identify exactly one terminal result on the same page.
-    pub id: RequestId,
-    /// Bounded structured-clone result bytes.
-    pub value: &'a [u8],
-}
-
-impl<'a> SeatPageInput<'a> {
-    /// Validate and borrow one complete seat page and its revoke acknowledgement.
-    pub fn new(
-        live: &'a [SeatEntry],
-        results: &'a [NativeSeatResult],
-        live_details: &'a [SeatLiveDetails<'a>],
-        mirror_revokes_consumed: u64,
-    ) -> Result<Self, String> {
-        let page = Self {
-            live,
-            results,
-            result_values: &[],
-            live_details,
-            mirror_revokes_consumed,
-        };
-        validate_seat_page(&page)?;
-        Ok(page)
-    }
-
-    /// Attach optional result bytes and validate the complete page.
-    pub fn with_result_values(mut self, values: &'a [SeatResultValue<'a>]) -> Result<Self, String> {
-        self.result_values = values;
-        validate_seat_page(&self)?;
-        Ok(self)
-    }
-}
 
 fn seat_refusal_wire(refusal: Refusal) -> Result<SeatRefusal, String> {
     match refusal {
@@ -587,122 +187,6 @@ fn seat_terminal_wire(
     }
 }
 
-fn validate_seat_page(page: &SeatPageInput<'_>) -> Result<(), String> {
-    if page.live.len() > MAX_SEAT_LIVE {
-        return Err(format!(
-            "seat live vector length {} exceeds cap {MAX_SEAT_LIVE}",
-            page.live.len()
-        ));
-    }
-    if page.results.len() > MAX_SEAT_RESULTS {
-        return Err(format!(
-            "seat result vector length {} exceeds cap {MAX_SEAT_RESULTS}",
-            page.results.len()
-        ));
-    }
-    if page.live.len() + page.results.len() > MAX_RESULTS {
-        return Err(format!(
-            "seat live and result credits exceed cap {MAX_RESULTS}"
-        ));
-    }
-    let mut ids = [0u64; MAX_RESULTS];
-    let mut id_count = 0usize;
-    if page.live_details.len() != page.live.len() {
-        return Err(format!(
-            "seat live/detail count mismatch: {} live, {} details",
-            page.live.len(),
-            page.live_details.len()
-        ));
-    }
-    for (index, (entry, details)) in page.live.iter().zip(page.live_details).enumerate() {
-        if entry.id != details.id {
-            return Err(format!("seat live/detail id mismatch at index {index}"));
-        }
-        if entry.parent == Some(entry.id) {
-            return Err(format!(
-                "seat live entry {} is its own parent",
-                entry.id.get()
-            ));
-        }
-        ids[id_count] = entry.id.get();
-        id_count += 1;
-        match details.prompt {
-            Some(prompt)
-                if entry.prompt == Some(prompt.sequence.get())
-                    && entry.decisions_consumed.checked_add(1) == Some(prompt.sequence.get()) =>
-            {
-                if prompt.args.len() > MAX_SEAT_BINARY_BYTES {
-                    return Err(format!(
-                        "seat prompt args length {} exceeds cap {MAX_SEAT_BINARY_BYTES}",
-                        prompt.args.len()
-                    ));
-                }
-            }
-            None if entry.prompt.is_none() => {}
-            _ => {
-                return Err(format!(
-                    "seat live entry {} has misaligned prompt sequence",
-                    entry.id.get()
-                ))
-            }
-        }
-    }
-    let mut previous_seq = 0;
-    for result in page.results.iter() {
-        if result.seq == 0 || result.seq <= previous_seq {
-            return Err("seat results are not strictly ordered by terminal sequence".into());
-        }
-        ids[id_count] = result.id.get();
-        id_count += 1;
-        seat_terminal_wire(result.outcome)?;
-        previous_seq = result.seq;
-    }
-    for (index, result_value) in page.result_values.iter().enumerate() {
-        if result_value.value.len() > MAX_SEAT_BINARY_BYTES {
-            return Err(format!(
-                "seat result value length {} exceeds cap {MAX_SEAT_BINARY_BYTES}",
-                result_value.value.len()
-            ));
-        }
-        if page.result_values[..index]
-            .iter()
-            .any(|previous| previous.id == result_value.id)
-        {
-            return Err(format!(
-                "duplicate seat result value for {}",
-                result_value.id.get()
-            ));
-        }
-        let mut matching = page
-            .results
-            .iter()
-            .filter(|result| result.id == result_value.id);
-        let result = matching.next().ok_or_else(|| {
-            format!(
-                "seat result value {} has no matching terminal result",
-                result_value.id.get()
-            )
-        })?;
-        if matching.next().is_some() {
-            return Err(format!(
-                "seat result value {} matches multiple terminal results",
-                result_value.id.get()
-            ));
-        }
-        if !matches!(result.outcome, SeatTerminal::Done | SeatTerminal::Failed) {
-            return Err(format!(
-                "seat result value {} requires a Done or Failed outcome",
-                result_value.id.get()
-            ));
-        }
-    }
-    ids[..id_count].sort_unstable();
-    if ids[..id_count].windows(2).any(|pair| pair[0] == pair[1]) {
-        return Err("duplicate live/terminal seat id".into());
-    }
-    Ok(())
-}
-
 /// Typed family arguments for a native start being encoded.
 pub enum SeatStartArgsRef<'a> {
     /// This family has no typed I-wire payload yet.
@@ -745,14 +229,6 @@ pub struct SeatCancelInput {
     /// Typed cancellation reason.
     pub reason: CallbackCancelReason,
 }
-/// One coalesced, sequence-ordered in-isolate mirror revocation.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct SeatMirrorRevoke {
-    /// Revoked mirror owner.
-    pub owner: RequestId,
-    /// Monotone revoke sequence, retried until acknowledged by the page.
-    pub seq: u64,
-}
 
 /// A gameplay/control row with push-time seat lineage and local mirror owner.
 pub struct SeatInteractRequest<'a> {
@@ -781,340 +257,6 @@ pub struct SeatInteractBatchInput<'a> {
     pub reqs: &'a [SeatInteractRequest<'a>],
 }
 
-/// One decoded start; the slot owner constructs its generation-bound stamp.
-#[derive(Debug, Clone, PartialEq)]
-pub struct SeatStartInput {
-    /// Nonzero request identity.
-    pub id: RequestId,
-    /// Nearest seat ancestor; `None` denotes a proven root.
-    pub parent: Option<RequestId>,
-    /// Raw RunKey run stamp; slot construction binds it.
-    pub run: u64,
-    /// Raw RunKey session-epoch stamp; not a login-session seat entry.
-    pub session: u64,
-    /// Semantic family of the request.
-    pub kind: NativeKind,
-    /// Family arguments decoded from the wire.
-    pub args: SeatStartArgs,
-}
-
-/// Owned typed arguments decoded from a native start.
-#[derive(Debug, Clone, PartialEq)]
-#[expect(
-    clippy::large_enum_variant,
-    reason = "the bounded start batch owns its typed bank arguments without an additional allocation per decoded request"
-)]
-pub enum SeatStartArgs {
-    /// No typed argument schema is active for this family.
-    Empty,
-    /// Decoded gather settings.
-    Gather(crate::native::SettingsBag),
-    /// Decoded combat-session request.
-    Combat(crate::api_combat::CombatSessionRequest),
-    /// Decoded quest-progress name.
-    QuestProgress(String),
-    /// Decoded typed banking operation.
-    Bank(crate::bank::request::BankSeatArgs),
-}
-
-/// One decoded decision answer.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SeatDecisionInput {
-    /// Request this decision answers.
-    pub of: RequestId,
-    /// Nonzero per-request prompt sequence.
-    pub sequence: DecisionSequence,
-    /// Owned bounded binary structured-clone answer.
-    pub answer: Vec<u8>,
-}
-
-/// One decoded cancellation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SeatCancelDecoded {
-    /// Request whose callback or subtree is cancelled.
-    pub of: RequestId,
-    /// Typed cancellation reason.
-    pub reason: CallbackCancelReason,
-}
-
-/// One decoded legacy interaction row with required captured lineage.
-#[derive(Debug)]
-pub struct SeatInteractDecoded {
-    /// Required physical wire lineage; `None` is a proven Root.
-    pub lineage: Option<RequestId>,
-    /// In-isolate machine mirror that owned this emission, if any.
-    pub mirror_owner: Option<RequestId>,
-    /// Request payload to dispatch with the captured lineage.
-    pub request: crate::shim::InteractReq,
-}
-
-/// Fully decoded wire batch, including controls, mirror revocations, and rows.
-#[derive(Debug)]
-pub struct DecodedSeatBatch {
-    /// Highest retained terminal consumed by this batch.
-    pub consumed_terminal_seq: u64,
-    /// Decoded pending starts.
-    pub starts: Vec<SeatStartInput>,
-    /// Decoded carried decisions.
-    pub decisions: Vec<SeatDecisionInput>,
-    /// Decoded carried cancellations.
-    pub cancels: Vec<SeatCancelDecoded>,
-    /// Decoded, sequence-ordered mirror revocations.
-    pub mirror_revokes: Vec<SeatMirrorRevoke>,
-    /// Decoded interaction rows with their captured lineage.
-    pub reqs: Vec<SeatInteractDecoded>,
-}
-
-/// Optional native facts appended to the isolate snapshot. Kept separate
-/// from [`SnapshotInput`] so callers can omit these facts when unused.
-#[derive(Clone, Copy, Default)]
-pub struct NativeFactsInput<'a> {
-    pub self_chat: Option<&'a str>,
-    pub hint_tile: Option<(i32, i32)>,
-    pub retaliate_controls: Option<(i32, i32)>,
-    pub quest_statuses: Option<&'a [QuestStatusInput<'a>]>,
-    /// The main modal's paired text walk. `None` = not supplied this post
-    /// (omit the slot — the isolate keeps its last pair). `Some` with
-    /// `root: -1, texts: []` = observed closed, a present table. The two
-    /// are not equal, and an empty vector is still a supplied walk.
-    pub main_modal_texts: Option<MainModalTextsInput<'a>>,
-    /// The open puzzle board (rows + session generation). `None` = not
-    /// supplied this post (omit both slots — the isolate keeps its last
-    /// board); `Some` with `component_id: -1` = observed closed, a present
-    /// table. The two are not equal. A present board always posts the
-    /// generation in the same buffer.
-    pub puzzle_board: Option<PuzzleBoardInput<'a>>,
-    pub npc_boxes: Option<&'a [NpcBoxInput]>,
-    /// The shop side interface's player pack rows (`shop_template_side:inv`,
-    /// 3823). `None` = that container was not decoded this rebuild: Sell must
-    /// fail closed rather than act on an empty stand-in. `Some([])` = decoded
-    /// and empty.
-    pub shop_player: Option<&'a [ItemRowInput<'a>]>,
-    /// Main-modal skill-multi TYPE_INV rows. `None` = that panel was not
-    /// decoded this rebuild (anvil ops fail closed). `Some([])` = decoded
-    /// and empty.
-    pub main_make: Option<&'a [ItemRowInput<'a>]>,
-    /// Compact bank dest/readiness. `None` omits the field (delta keep /
-    /// tests without a model). `Some([])` is an explicit empty table.
-    pub bank_approaches: Option<&'a [BankApproachInput]>,
-    /// Host-published walk outcome sequence. `0` on old buffers / never published.
-    pub walk_outcome_seq: u64,
-    pub walk_outcome_generation: u64,
-    pub walk_outcome_failed: bool,
-    pub walk_outcome_x: i32,
-    pub walk_outcome_z: i32,
-    pub walk_outcome_level: i32,
-    pub walk_outcome_radius: i32,
-    pub walk_outcome_allow_teleports: bool,
-    pub walk_outcome_request_id: u64,
-    /// The settled route end is frozen `'blocked'`: the player stands next
-    /// to a last tile the live scene refuses. Part of the walk outcome.
-    pub walk_outcome_blocked: bool,
-    /// The walk outcome's navigator-named gate shorts. ALWAYS supplied — an
-    /// empty slice is the observed "this outcome names no short", and the pack
-    /// posts it with the family above in the same buffer, so a clear is never
-    /// omitted. One family, not two: the rows ride inside
-    /// [`Self::walk_outcome_seq`]'s delta.
-    pub walk_missing_carry: &'a [CarryInput<'a>],
-    pub route_inspect: RouteInspectFactsInput<'a>,
-    /// Posted collision family. `None` omits the table (old callers / first
-    /// post without Collision). `Some(UNAVAILABLE)` posts a clear.
-    pub collision: Option<CollisionViewInput<'a>>,
-    pub bank_selection: BankSelectionInput,
-    /// The local player's primary animation id (frozen `reader.selfAnim()`,
-    /// `-1` idle or no local player). `None` omits the slot (callers that
-    /// do not observe it); the isolate keeps its last value.
-    pub self_anim: Option<i32>,
-    /// Authoritative local actor movement. `None` means there is no local
-    /// player observation; old buffers likewise decode as unknown.
-    pub local_player_moving: Option<bool>,
-    /// The host's live gather session. `None` means do not write this delta
-    /// page; `Some` has a status only after the card publishes one.
-    pub api_gather: Option<&'a crate::api_gather::GatherPage>,
-    /// The retained terminal result. Absence means retain any prior outcome.
-    pub api_gather_outcome: Option<&'a crate::api_gather::GatherEnd>,
-    /// The host's live combat session (gather page shape). `None` clears a
-    /// previously posted page, exactly like `api_gather`.
-    pub api_combat: Option<&'a crate::api_combat::CombatPage>,
-    /// The retained combat terminal. Absence means retain any prior outcome.
-    pub api_combat_outcome: Option<&'a crate::api_combat::CombatEnd>,
-    /// The most recently published progress acknowledgment or terminal.
-    /// Absence omits the page and retains the isolate's prior value.
-    pub api_progress: Option<&'a crate::api_progress::ProgressPage>,
-    /// Bank item packet generation (`-1` while closed), not the open/close
-    /// session identity. `None` omits the slot and keeps the last value.
-    pub bank_snapshot_generation: Option<i64>,
-    /// Live projectiles from the observed snapshot. `None` omits the page;
-    /// `Some(&[])` explicitly clears it. Encoding keeps at most
-    /// `MAX_PROJECTILES_PER_SNAPSHOT` projectiles targeted at `self_slot`.
-    pub projectiles: Option<&'a [ProjectileView]>,
-    /// Host-published native fingerprint for the current chat modal page.
-    pub chat_page_fingerprint: u64,
-    /// `modals().side` (`-1` none). With `bank_open` it is the posted-side
-    /// fact for `bank_side`. `None` omits the slot; the isolate keeps its
-    /// last root.
-    pub side_modal_id: Option<i32>,
-    /// The complete forest/result status page. `None` omits it; `Some` with
-    /// empty slices explicitly clears both wire vectors.
-    pub seat_page: Option<SeatPageInput<'a>>,
-}
-
-/// A terminal select-only result. Its ordinal is resolved against Start's
-/// immutable bank facts, never a JS-supplied bank object.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct BankSelectionInput {
-    pub request_id: u64,
-    pub generation: u64,
-    pub bank_index: i32,
-    pub kind: u8,
-}
-
-impl Default for BankSelectionInput {
-    fn default() -> Self {
-        Self {
-            request_id: 0,
-            generation: 0,
-            bank_index: -1,
-            kind: 0,
-        }
-    }
-}
-
-/// Host-published inspect family on the snapshot. All-zero is omitted / old buffer.
-#[derive(Clone, Copy, Default)]
-pub struct RouteInspectFactsInput<'a> {
-    pub latest: RouteInspectTerminalInput<'a>,
-    pub prev: RouteInspectTerminalInput<'a>,
-    pub running_id: u64,
-    pub pending_id: u64,
-    pub accepted_id: u64,
-    pub replaced_id: u64,
-    pub replaced_prev_id: u64,
-    pub refused_id: u64,
-    pub refused_id_2: u64,
-    pub refused_id_3: u64,
-    pub unobserved: u64,
-}
-
-#[derive(Clone, Copy, Default)]
-pub struct RouteInspectTerminalInput<'a> {
-    pub seq: u64,
-    pub generation: u64,
-    pub request_id: u64,
-    pub ok: bool,
-    pub reason: Option<&'a str>,
-    pub bank_planned: bool,
-    pub ticks: f64,
-    pub hops: &'a [InspectHopInput<'a>],
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct InspectHopInput<'a> {
-    pub kind: &'a str,
-    pub loc_id: i32,
-    pub loc_name: &'a str,
-    pub action: &'a str,
-    pub option: i32,
-    pub from_x: i32,
-    pub from_z: i32,
-    pub from_level: i32,
-    pub to_x: i32,
-    pub to_z: i32,
-    pub to_level: i32,
-    pub ticks: i32,
-}
-
-/// One native bank-booth dest + readiness row.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct BankApproachInput {
-    pub loc_id: i32,
-    pub x: i32,
-    pub z: i32,
-    pub level: i32,
-    pub can_operate: bool,
-    pub dest_ok: bool,
-    pub dest_x: i32,
-    pub dest_z: i32,
-    pub dest_level: i32,
-}
-
-/// One native NPC projection in overlay-canvas pixels.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct NpcBoxInput {
-    pub index: i32,
-    pub points: [(i32, i32); 8],
-}
-
-/// One quest-tab row after Rust resolves the native display colour.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub struct QuestStatusInput<'a> {
-    pub name: &'a str,
-    pub status: &'a str,
-    /// The walked TYPE_TEXT id — the row's click target. `None` omits the
-    /// slot (an old buffer / a row the walk had no id for); a present `0`
-    /// is a real id and is posted. Not a sentinel: `-1` is never written
-    /// for an absent id.
-    pub component_id: Option<i32>,
-}
-
-/// The main modal's paired text walk: the root the walk used and its
-/// TYPE_TEXT lines in walk order. Kept off [`SnapshotInput`] (like
-/// [`NativeFactsInput`]) so one-shot callers that post `main_modal_id`
-/// alone do not gain a pair they never walked.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub struct MainModalTextsInput<'a> {
-    /// The root this walk was taken from — the same integer the buffer
-    /// posts as `main_modal_id`. `-1` is an observed closed modal.
-    pub root: i32,
-    /// TYPE_TEXT lines in walk order, tags intact. Empty is a real walk
-    /// (a closed modal, or an open one whose tree has no text).
-    pub texts: &'a [String],
-}
-
-/// The open puzzle board's piece container, the rows it stores and its
-/// session generation. ONE value: a present board always writes
-/// `component_id`, `size` and `items` together, and the generation is
-/// written in the same buffer (never without the table), so a buffer can
-/// never carry one session's rows beside another session's generation.
-/// Kept off [`SnapshotInput`] (like [`NativeFactsInput`]) so one-shot
-/// callers that never walked a board do not gain an observation they did
-/// not make.
-#[derive(Clone, Copy)]
-pub struct PuzzleBoardInput<'a> {
-    /// The identified TYPE_INV component, or `-1` for an observed closed
-    /// board (posted as `{ -1, 0, [] }` plus the generation, NOT omitted —
-    /// an omitted slot keeps the isolate's last board).
-    pub component_id: i32,
-    /// The component's `link_obj_type` slot count, not `items.len()`: a
-    /// wrong size is an observation and is posted as observed.
-    pub size: i32,
-    /// The identified widget's stored rows, sparse (an empty slot
-    /// contributes no row). Empty is a real board with no pieces.
-    pub items: &'a [ItemRowInput<'a>],
-    /// Session identity of the board family. Bumps on session open, close
-    /// or a new component id — never on a piece move.
-    pub generation: u64,
-}
-
-/// One navigator-named gate short: an `item_req` stack the strict route
-/// needed and the player's posted pack could not prove. `name` is the host obj
-/// table's display name for `id` and is `None` when that table has none — the
-/// join is always the id, so a row without a name is still posted.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct CarryInput<'a> {
-    pub id: i32,
-    pub count: i32,
-    pub name: Option<&'a str>,
-}
-
-/// One currently posted widget text row (`reader.ifText`).
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub struct WidgetTextInput<'a> {
-    pub component_id: i32,
-    pub text: &'a str,
-    /// Number of observed TYPE_INV rows; `-1` for non-inventory widgets.
-    pub item_count: i32,
-}
 /// Decode `buf` as a root-`Snapshot` FlatBuffer after bounded verification.
 pub fn decode_snapshot(buf: &[u8]) -> Result<Snapshot<'_>, String> {
     let snapshot = Snapshot::from_bytes(buf)?;
@@ -1774,16 +916,16 @@ struct SeatPromptFingerprint {
 impl From<SeatPageInput<'_>> for SeatPageFingerprint {
     fn from(page: SeatPageInput<'_>) -> Self {
         let mut result_values = page
-            .result_values
+            .result_values()
             .iter()
             .map(|value| (value.id.get(), value.value.to_vec()))
             .collect::<Vec<_>>();
         result_values.sort_unstable_by_key(|(id, _)| *id);
         Self {
             live: page
-                .live
+                .live()
                 .iter()
-                .zip(page.live_details)
+                .zip(page.live_details())
                 .map(|(entry, details)| SeatLiveFingerprint {
                     id: entry.id.get(),
                     parent: entry.parent.map_or(0, RequestId::get),
@@ -1797,12 +939,12 @@ impl From<SeatPageInput<'_>> for SeatPageFingerprint {
                 })
                 .collect(),
             results: page
-                .results
+                .results()
                 .iter()
                 .map(|result| (result.id.get(), result.seq, result.outcome))
                 .collect(),
             result_values,
-            mirror_revokes_consumed: page.mirror_revokes_consumed,
+            mirror_revokes_consumed: page.mirror_revokes_consumed(),
         }
     }
 }
@@ -2211,7 +1353,7 @@ impl SnapshotFingerprint {
             walk_outcome_allow_teleports: native.walk_outcome_allow_teleports,
             walk_outcome_request_id: native.walk_outcome_request_id,
             walk_outcome_blocked: native.walk_outcome_blocked,
-            walk_outcome_cancel_reason: input.walk_outcome_cancel_reason,
+            walk_outcome_cancel_reason: input.walk_outcome_cancel_reason.into(),
             walk_missing_carry: native
                 .walk_missing_carry
                 .iter()
@@ -2752,6 +1894,11 @@ impl IsolateBuf {
     #[cfg(test)]
     pub(crate) fn into_backing_capacity(self) -> usize {
         self.builder.collapse().0.capacity()
+    }
+
+    #[cfg(feature = "test-hooks")]
+    pub(crate) fn finished_snapshot_bytes_for_test(&self) -> &[u8] {
+        self.builder.finished_data()
     }
 
     fn copy_finished(&self) -> Vec<u8> {
@@ -3374,7 +2521,7 @@ fn encode_snapshot_masked_into(
         native.seat_page.map(|page| {
             let (live, results) =
                 seat_page_vectors_off(b, page).expect("seat page validated before encoding");
-            (live, results, page.mirror_revokes_consumed)
+            (live, results, page.mirror_revokes_consumed())
         })
     } else {
         None
@@ -3671,7 +2818,7 @@ fn encode_snapshot_masked_into(
         table.add_walk_outcome_allow_teleports(native.walk_outcome_allow_teleports);
         table.add_walk_outcome_request_id(native.walk_outcome_request_id);
         table.add_walk_outcome_blocked(native.walk_outcome_blocked);
-        table.add_walk_outcome_cancel_reason(input.walk_outcome_cancel_reason);
+        table.add_walk_outcome_cancel_reason(input.walk_outcome_cancel_reason.into());
         // the observed "no named short", so a clear is never omitted. Only a
         // caller that supplied no list at all omits the slot.
         if let Some(off) = walk_missing_carry_off {
@@ -4587,22 +3734,22 @@ fn seat_page_vectors_off<'b>(
     b: &mut FlatBufferBuilder<'b>,
     page: SeatPageInput<'_>,
 ) -> Result<(SeatLiveVector<'b>, SeatResultVector<'b>), String> {
-    validate_seat_page(&page)?;
+    page.validate().map_err(|error| error.to_string())?;
     let mut live_offsets = [WIPOffset::new(0); MAX_SEAT_LIVE];
-    for (index, (entry, details)) in page.live.iter().zip(page.live_details).enumerate() {
+    for (index, (entry, details)) in page.live().iter().zip(page.live_details()).enumerate() {
         live_offsets[index] = seat_live_off(b, entry, *details);
     }
-    let live = b.create_vector(&live_offsets[..page.live.len()]);
+    let live = b.create_vector(&live_offsets[..page.live().len()]);
     let mut result_offsets = [WIPOffset::new(0); MAX_SEAT_RESULTS];
-    for (index, result) in page.results.iter().enumerate() {
+    for (index, result) in page.results().iter().enumerate() {
         let value = page
-            .result_values
+            .result_values()
             .iter()
             .find(|value| value.id == result.id)
             .map(|value| value.value);
         result_offsets[index] = seat_result_off(b, result, value)?;
     }
-    let results = b.create_vector(&result_offsets[..page.results.len()]);
+    let results = b.create_vector(&result_offsets[..page.results().len()]);
     Ok((live, results))
 }
 
@@ -5075,7 +4222,8 @@ fn validate_seat_start(start: &SeatStartRef<'_>) -> Result<(), String> {
             }
         }
         (NativeKind::BankPlan | NativeKind::BankNearest, SeatStartArgsRef::Bank(args)) => {
-            args.validate(start.kind)?;
+            args.validate(start.kind)
+                .map_err(|error| error.to_string())?;
         }
         (NativeKind::BankPlan | NativeKind::BankNearest, _) => {
             return Err("bank native starts must use typed bank arguments".into())
@@ -5338,16 +4486,10 @@ fn bank_object_access_off<'b>(
     b: &mut FlatBufferBuilder<'b>,
     access: &crate::bank::request::BankSeatObjectAccess,
 ) -> WIPOffset<BankSeatObjectAccess<'b>> {
-    let name = b.create_string(&access.name);
-    let op = b.create_string(&access.op);
-    let open_first_name = access
-        .open_first_name
-        .as_deref()
-        .map(|name| b.create_string(name));
-    let open_first_op = access
-        .open_first_op
-        .as_deref()
-        .map(|op| b.create_string(op));
+    let name = b.create_string(access.name());
+    let op = b.create_string(access.op());
+    let open_first_name = access.open_first_name().map(|name| b.create_string(name));
+    let open_first_op = access.open_first_op().map(|op| b.create_string(op));
     let mut table = BankSeatObjectAccessBuilder::new(b);
     table.add_name(name);
     table.add_op(op);
@@ -5364,12 +4506,9 @@ fn bank_npc_access_off<'b>(
     b: &mut FlatBufferBuilder<'b>,
     access: &crate::bank::request::BankSeatNpcAccess,
 ) -> WIPOffset<BankSeatNpcAccess<'b>> {
-    let name = b.create_string(&access.name);
-    let op = b.create_string(&access.op);
-    let choose = access
-        .choose
-        .as_deref()
-        .map(|choice| b.create_string(choice));
+    let name = b.create_string(access.name());
+    let op = b.create_string(access.op());
+    let choose = access.choose().map(|choice| b.create_string(choice));
     let mut table = BankSeatNpcAccessBuilder::new(b);
     table.add_name(name);
     table.add_op(op);
@@ -5383,14 +4522,12 @@ fn bank_destination_off<'b>(
     b: &mut FlatBufferBuilder<'b>,
     destination: &crate::bank::request::BankSeatDestination,
 ) -> WIPOffset<BankSeatDestination<'b>> {
-    let tile = bank_tile_off(b, destination.tile);
+    let tile = bank_tile_off(b, destination.tile());
     let object_access = destination
-        .object_access
-        .as_ref()
+        .object_access()
         .map(|access| bank_object_access_off(b, access));
     let npc_access = destination
-        .npc_access
-        .as_ref()
+        .npc_access()
         .map(|access| bank_npc_access_off(b, access));
     let mut table = BankSeatDestinationBuilder::new(b);
     table.add_tile(tile);
@@ -5407,50 +4544,47 @@ fn bank_args_off<'b>(
     b: &mut FlatBufferBuilder<'b>,
     bank: &crate::bank::request::BankSeatArgs,
 ) -> WIPOffset<BankSeatArgs<'b>> {
-    let (item_id, item_name) =
-        if bank.operation == crate::bank::request::BankSeatOperation::WithdrawLoad {
-            match bank.withdraw_load_selector.as_ref() {
-                Some(crate::bank::request::WithdrawLoadSelector::Id(id)) => (Some(*id), None),
-                Some(crate::bank::request::WithdrawLoadSelector::Name(name)) => {
-                    (None, Some(name.as_str()))
-                }
-                None => (None, None),
+    let operation = bank.operation();
+    let (item_id, item_name) = if operation == crate::bank::request::BankSeatOperation::WithdrawLoad
+    {
+        match bank.withdraw_load_selector() {
+            Some(crate::bank::request::WithdrawLoadSelector::Id(id)) => (Some(*id), None),
+            Some(crate::bank::request::WithdrawLoadSelector::Name(name)) => {
+                (None, Some(name.as_str()))
             }
-        } else {
-            (bank.item_id, bank.item_name.as_deref())
-        };
+            None => (None, None),
+        }
+    } else {
+        (bank.item_id(), bank.item_name())
+    };
     let item_name = item_name.map(|name| b.create_string(name));
-    let menu_op = bank.menu_op.as_deref().map(|op| b.create_string(op));
-    let stand = bank.stand.map(|tile| bank_tile_off(b, tile));
+    let menu_op = bank.menu_op().map(|op| b.create_string(op));
+    let stand = bank.stand().map(|tile| bank_tile_off(b, tile));
     let destination = bank
-        .destination
-        .as_ref()
+        .destination()
         .map(|destination| bank_destination_off(b, destination));
     let object_access = bank
-        .object_access
-        .as_ref()
+        .object_access()
         .map(|access| bank_object_access_off(b, access));
     let npc_access = bank
-        .npc_access
-        .as_ref()
+        .npc_access()
         .map(|access| bank_npc_access_off(b, access));
     let fallback_access = bank
-        .fallback_access
-        .as_ref()
+        .fallback_access()
         .map(|access| bank_object_access_off(b, access));
-    let return_to = bank.return_to.map(|tile| bank_tile_off(b, tile));
-    let keep_names = if bank.keep_names.is_empty() {
+    let return_to = bank.return_to().map(|tile| bank_tile_off(b, tile));
+    let keep_names = if bank.keep_names().is_empty() {
         None
     } else {
-        Some(bank_string_vector_off(b, &bank.keep_names))
+        Some(bank_string_vector_off(b, bank.keep_names()))
     };
-    let obstacles = if bank.obstacles.is_empty() {
+    let obstacles = if bank.obstacles().is_empty() {
         None
     } else {
-        Some(bank_string_vector_off(b, &bank.obstacles))
+        Some(bank_string_vector_off(b, bank.obstacles()))
     };
     let mut table = BankSeatArgsBuilder::new(b);
-    table.add_operation(bank_operation_wire(bank.operation));
+    table.add_operation(bank_operation_wire(operation));
     if let Some(item_id) = item_id {
         table.add_item_id(item_id);
     }
@@ -5460,10 +4594,10 @@ fn bank_args_off<'b>(
     if let Some(menu_op) = menu_op {
         table.add_menu_op(menu_op);
     }
-    if let Some(quantity) = bank.quantity {
+    if let Some(quantity) = bank.quantity() {
         table.add_quantity(quantity);
     }
-    if let Some(lands_as_id) = bank.lands_as_id {
+    if let Some(lands_as_id) = bank.lands_as_id() {
         table.add_lands_as_id(lands_as_id);
     }
     if let Some(stand) = stand {
@@ -5487,32 +4621,32 @@ fn bank_args_off<'b>(
     if let Some(names) = keep_names {
         table.add_keep_names(names);
     }
-    if let Some(timeout_ms) = bank.timeout_ms {
+    if let Some(timeout_ms) = bank.timeout_ms() {
         table.add_timeout_ms(timeout_ms);
     }
-    if let Some(baseline_generation) = bank.baseline_generation {
+    if let Some(baseline_generation) = bank.baseline_generation() {
         table.add_baseline_generation(baseline_generation);
     }
-    if let Some(prefer_nearby) = bank.prefer_nearby {
+    if let Some(prefer_nearby) = bank.prefer_nearby() {
         table.add_prefer_nearby(prefer_nearby);
     }
-    if let Some(nearby_radius) = bank.nearby_radius {
+    if let Some(nearby_radius) = bank.nearby_radius() {
         table.add_nearby_radius(nearby_radius);
     }
     if let Some(obstacles) = obstacles {
         table.add_obstacles(obstacles);
     }
-    table.add_allow_wilderness(bank.allow_wilderness);
-    if let Some(use_mage_bank) = bank.use_mage_bank {
+    table.add_allow_wilderness(bank.allow_wilderness());
+    if let Some(use_mage_bank) = bank.use_mage_bank() {
         table.add_use_mage_bank(use_mage_bank);
     }
-    if let Some(use_zanaris_bank) = bank.use_zanaris_bank {
+    if let Some(use_zanaris_bank) = bank.use_zanaris_bank() {
         table.add_use_zanaris_bank(use_zanaris_bank);
     }
-    table.add_note_mode(bank.note_mode);
-    table.add_deposit_all(bank.deposit_all);
-    table.add_common_junk(bank.common_junk);
-    table.add_hooks_present(bank.hooks_present);
+    table.add_note_mode(bank.note_mode());
+    table.add_deposit_all(bank.deposit_all());
+    table.add_common_junk(bank.common_junk());
+    table.add_hooks_present(bank.hooks_present());
     table.finish()
 }
 
@@ -6498,50 +5632,44 @@ fn decode_bank_tile(tile: Tile<'_>) -> api::snapshot::WorldTile {
 fn decode_bank_object_access(
     row: BankSeatObjectAccess<'_>,
 ) -> Result<crate::bank::request::BankSeatObjectAccess, String> {
-    Ok(crate::bank::request::BankSeatObjectAccess {
-        name: row
-            .name()
+    Ok(crate::bank::request::BankSeatObjectAccess::new(
+        row.name()
             .ok_or_else(|| "bank object access has no name".to_string())?
             .to_owned(),
-        op: row
-            .op()
+        row.op()
             .ok_or_else(|| "bank object access has no op".to_string())?
             .to_owned(),
-        open_first_name: row.open_first_name().map(str::to_owned),
-        open_first_op: row.open_first_op().map(str::to_owned),
-    })
+        row.open_first_name().map(str::to_owned),
+        row.open_first_op().map(str::to_owned),
+    ))
 }
 
 fn decode_bank_npc_access(
     row: BankSeatNpcAccess<'_>,
 ) -> Result<crate::bank::request::BankSeatNpcAccess, String> {
-    Ok(crate::bank::request::BankSeatNpcAccess {
-        name: row
-            .name()
+    Ok(crate::bank::request::BankSeatNpcAccess::new(
+        row.name()
             .ok_or_else(|| "bank NPC access has no name".to_string())?
             .to_owned(),
-        op: row
-            .op()
+        row.op()
             .ok_or_else(|| "bank NPC access has no op".to_string())?
             .to_owned(),
-        choose: row.choose().map(str::to_owned),
-    })
+        row.choose().map(str::to_owned),
+    ))
 }
 
 fn decode_bank_destination(
     row: BankSeatDestination<'_>,
 ) -> Result<crate::bank::request::BankSeatDestination, String> {
-    Ok(crate::bank::request::BankSeatDestination {
-        tile: row
-            .tile()
+    Ok(crate::bank::request::BankSeatDestination::new(
+        row.tile()
             .map(decode_bank_tile)
             .ok_or_else(|| "bank destination has no tile".to_string())?,
-        object_access: row
-            .object_access()
+        row.object_access()
             .map(decode_bank_object_access)
             .transpose()?,
-        npc_access: row.npc_access().map(decode_bank_npc_access).transpose()?,
-    })
+        row.npc_access().map(decode_bank_npc_access).transpose()?,
+    ))
 }
 
 fn decode_bank_args(
@@ -6552,7 +5680,7 @@ fn decode_bank_args(
     let operation = bank_operation_from_wire(row.operation())?;
     let mut args = crate::bank::request::BankSeatArgs::new(operation);
     if operation == crate::bank::request::BankSeatOperation::WithdrawLoad {
-        args.withdraw_load_selector = match (row.item_id(), row.item_name()) {
+        args.set_withdraw_load_selector(match (row.item_id(), row.item_name()) {
             (Some(id), None) => Some(crate::bank::request::WithdrawLoadSelector::Id(id)),
             (None, Some(name)) => Some(crate::bank::request::WithdrawLoadSelector::Name(
                 name.to_owned(),
@@ -6561,46 +5689,50 @@ fn decode_bank_args(
             (Some(_), Some(_)) => {
                 return Err("WithdrawLoad requires exactly one of item_id and item_name".to_string())
             }
-        };
+        });
     } else {
-        args.item_id = row.item_id();
-        args.item_name = row.item_name().map(str::to_owned);
+        args.set_item_id(row.item_id());
+        args.set_item_name(row.item_name().map(str::to_owned));
     }
-    args.menu_op = row.menu_op().map(str::to_owned);
-    args.quantity = row.quantity();
-    args.lands_as_id = row.lands_as_id();
-    args.stand = row.stand().map(decode_bank_tile);
-    args.destination = row.destination().map(decode_bank_destination).transpose()?;
-    args.object_access = row
-        .object_access()
-        .map(decode_bank_object_access)
-        .transpose()?;
-    args.npc_access = row.npc_access().map(decode_bank_npc_access).transpose()?;
-    args.fallback_access = row
-        .fallback_access()
-        .map(decode_bank_object_access)
-        .transpose()?;
-    args.return_to = row.return_to().map(decode_bank_tile);
-    args.keep_names = row
-        .keep_names()
-        .map(|names| names.iter().map(str::to_owned).collect())
-        .unwrap_or_default();
-    args.timeout_ms = row.timeout_ms();
-    args.baseline_generation = row.baseline_generation();
-    args.prefer_nearby = row.prefer_nearby();
-    args.nearby_radius = row.nearby_radius();
-    args.obstacles = row
-        .obstacles()
-        .map(|names| names.iter().map(str::to_owned).collect())
-        .unwrap_or_default();
-    args.allow_wilderness = row.allow_wilderness();
-    args.use_mage_bank = row.use_mage_bank();
-    args.use_zanaris_bank = row.use_zanaris_bank();
-    args.note_mode = row.note_mode();
-    args.deposit_all = row.deposit_all();
-    args.common_junk = row.common_junk();
-    args.hooks_present = row.hooks_present();
-    args.validate(kind)?;
+    args.set_menu_op(row.menu_op().map(str::to_owned));
+    args.set_quantity(row.quantity());
+    args.set_lands_as_id(row.lands_as_id());
+    args.set_stand(row.stand().map(decode_bank_tile));
+    args.set_destination(row.destination().map(decode_bank_destination).transpose()?);
+    args.set_object_access(
+        row.object_access()
+            .map(decode_bank_object_access)
+            .transpose()?,
+    );
+    args.set_npc_access(row.npc_access().map(decode_bank_npc_access).transpose()?);
+    args.set_fallback_access(
+        row.fallback_access()
+            .map(decode_bank_object_access)
+            .transpose()?,
+    );
+    args.set_return_to(row.return_to().map(decode_bank_tile));
+    args.set_keep_names(
+        row.keep_names()
+            .map(|names| names.iter().map(str::to_owned).collect())
+            .unwrap_or_default(),
+    );
+    args.set_timeout_ms(row.timeout_ms());
+    args.set_baseline_generation(row.baseline_generation());
+    args.set_prefer_nearby(row.prefer_nearby());
+    args.set_nearby_radius(row.nearby_radius());
+    args.set_obstacles(
+        row.obstacles()
+            .map(|names| names.iter().map(str::to_owned).collect())
+            .unwrap_or_default(),
+    );
+    args.set_allow_wilderness(row.allow_wilderness());
+    args.set_use_mage_bank(row.use_mage_bank());
+    args.set_use_zanaris_bank(row.use_zanaris_bank());
+    args.set_note_mode(row.note_mode());
+    args.set_deposit_all(row.deposit_all());
+    args.set_common_junk(row.common_junk());
+    args.set_hooks_present(row.hooks_present());
+    args.validate(kind).map_err(|error| error.to_string())?;
     Ok(args)
 }
 
@@ -10020,6 +9152,89 @@ pub(crate) mod tests {
 
     #[test]
     fn seat_page_rejects_unsorted_and_overbound_pages() {
+        use crate::native::seat_rows::SeatPageError;
+        for (error, expected) in [
+            (
+                SeatPageError::LiveTooLarge { len: 17 },
+                format!("seat live vector length 17 exceeds cap {MAX_SEAT_LIVE}"),
+            ),
+            (
+                SeatPageError::ResultsTooLarge { len: 17 },
+                format!("seat result vector length 17 exceeds cap {MAX_SEAT_RESULTS}"),
+            ),
+            (
+                SeatPageError::CreditLimit,
+                format!(
+                    "seat live and result credits exceed cap {}",
+                    api::script_contract::MAX_RESULTS
+                ),
+            ),
+            (
+                SeatPageError::LiveDetailCountMismatch {
+                    live: 2,
+                    details: 1,
+                },
+                "seat live/detail count mismatch: 2 live, 1 details".to_owned(),
+            ),
+            (
+                SeatPageError::LiveDetailIdMismatch { index: 3 },
+                "seat live/detail id mismatch at index 3".to_owned(),
+            ),
+            (
+                SeatPageError::OwnParent { id: 17 },
+                "seat live entry 17 is its own parent".to_owned(),
+            ),
+            (
+                SeatPageError::PromptArgsTooLarge { len: 9999 },
+                format!("seat prompt args length 9999 exceeds cap {MAX_SEAT_BINARY_BYTES}"),
+            ),
+            (
+                SeatPageError::PromptSequenceMismatch { id: 17 },
+                "seat live entry 17 has misaligned prompt sequence".to_owned(),
+            ),
+            (
+                SeatPageError::UnorderedResults,
+                "seat results are not strictly ordered by terminal sequence".to_owned(),
+            ),
+            (
+                SeatPageError::ResultValueTooLarge { len: 9999 },
+                format!("seat result value length 9999 exceeds cap {MAX_SEAT_BINARY_BYTES}"),
+            ),
+            (
+                SeatPageError::DuplicateResultValue { id: 17 },
+                "duplicate seat result value for 17".to_owned(),
+            ),
+            (
+                SeatPageError::MissingTerminalResult { id: 17 },
+                "seat result value 17 has no matching terminal result".to_owned(),
+            ),
+            (
+                SeatPageError::AmbiguousTerminalResult { id: 17 },
+                "seat result value 17 matches multiple terminal results".to_owned(),
+            ),
+            (
+                SeatPageError::ResultValueOutcome { id: 17 },
+                "seat result value 17 requires a Done or Failed outcome".to_owned(),
+            ),
+            (
+                SeatPageError::DuplicateSeatId,
+                "duplicate live/terminal seat id".to_owned(),
+            ),
+            (
+                SeatPageError::LocalArgsTooLargeRefusal,
+                "local ArgsTooLarge refusal cannot be published on the seat wire".to_owned(),
+            ),
+            (
+                SeatPageError::ResetTerminal,
+                "Reset is not a seat-published terminal".to_owned(),
+            ),
+            (
+                SeatPageError::TerminatedTerminal,
+                "Terminated is not a seat-published terminal".to_owned(),
+            ),
+        ] {
+            assert_eq!(error.to_string(), expected);
+        }
         let result = |id, seq| NativeSeatResult {
             id: RequestId::from_raw(id).expect("result id"),
             seq,
@@ -10032,6 +9247,7 @@ pub(crate) mod tests {
         assert!(SeatPageInput::new(&[], &unsorted, &[], 0)
             .err()
             .expect("terminal sequence must be ordered")
+            .to_string()
             .contains("strictly ordered"));
 
         let too_many_results = (0..=MAX_SEAT_RESULTS)
@@ -10040,6 +9256,7 @@ pub(crate) mod tests {
         assert!(SeatPageInput::new(&[], &too_many_results, &[], 0)
             .err()
             .expect("result vector must stay bounded")
+            .to_string()
             .contains("exceeds cap"));
 
         let live = (0..=MAX_SEAT_LIVE)
@@ -10064,10 +9281,12 @@ pub(crate) mod tests {
         assert!(SeatPageInput::new(&live, &[], &details, 0)
             .err()
             .expect("live vector must stay bounded")
+            .to_string()
             .contains("exceeds cap"));
         assert!(SeatPageInput::new(&live[..1], &[], &[], 0)
             .err()
             .expect("live/detail vectors must align")
+            .to_string()
             .contains("count mismatch"));
     }
 
@@ -10116,6 +9335,7 @@ pub(crate) mod tests {
             .with_result_values(&duplicate)
             .err()
             .expect("duplicate value ID rejected")
+            .to_string()
             .contains("duplicate seat result value"));
 
         let refused_value = [SeatResultValue {
@@ -10127,6 +9347,7 @@ pub(crate) mod tests {
             .with_result_values(&refused_value)
             .err()
             .expect("refused outcome value rejected")
+            .to_string()
             .contains("Done or Failed"));
 
         let oversized = vec![0; MAX_SEAT_BINARY_BYTES + 1];
@@ -10139,6 +9360,7 @@ pub(crate) mod tests {
             .with_result_values(&oversized_value)
             .err()
             .expect("oversized value rejected")
+            .to_string()
             .contains("exceeds cap"));
     }
 
@@ -10387,148 +9609,149 @@ pub(crate) mod tests {
             z: 3210,
             level: 1,
         };
-        let object_access = || BankSeatObjectAccess {
-            name: "Bank booth".into(),
-            op: "Bank".into(),
-            open_first_name: None,
-            open_first_op: None,
+        let object_access =
+            || BankSeatObjectAccess::new("Bank booth".into(), "Bank".into(), None, None);
+        let object_access_with_opener = || {
+            BankSeatObjectAccess::new(
+                "Bank chest".into(),
+                "Bank".into(),
+                Some("Closed chest".into()),
+                Some("Open".into()),
+            )
         };
-        let object_access_with_opener = || BankSeatObjectAccess {
-            name: "Bank chest".into(),
-            op: "Bank".into(),
-            open_first_name: Some("Closed chest".into()),
-            open_first_op: Some("Open".into()),
-        };
-        let npc_access = || BankSeatNpcAccess {
-            name: "Banker".into(),
-            op: "Bank".into(),
-            choose: Some("I'd like to access my bank account".into()),
+        let npc_access = || {
+            BankSeatNpcAccess::new(
+                "Banker".into(),
+                "Bank".into(),
+                Some("I'd like to access my bank account".into()),
+            )
         };
         let mut payloads = Vec::new();
 
         let mut args = BankSeatArgs::new(Operation::OpenBooth);
-        args.stand = Some(tile());
-        args.object_access = Some(object_access());
+        args.set_stand(Some(tile()));
+        args.set_object_access(Some(object_access()));
         payloads.push(args);
 
         let mut args = BankSeatArgs::new(Operation::OpenNearest);
-        args.object_access = Some(object_access());
+        args.set_object_access(Some(object_access()));
         payloads.push(args);
         payloads.push(BankSeatArgs::new(Operation::OpenNearestWorld));
 
         let mut args = BankSeatArgs::new(Operation::OpenObject);
-        args.object_access = Some(object_access());
-        args.hooks_present = HOOK_LOG;
+        args.set_object_access(Some(object_access()));
+        args.set_hooks_present(HOOK_LOG);
         payloads.push(args);
 
         let mut args = BankSeatArgs::new(Operation::OpenNpc);
-        args.npc_access = Some(npc_access());
-        args.hooks_present = HOOK_LOG;
+        args.set_npc_access(Some(npc_access()));
+        args.set_hooks_present(HOOK_LOG);
         payloads.push(args);
 
         let mut args = BankSeatArgs::new(Operation::OpenAccess);
-        args.object_access = Some(object_access_with_opener());
-        args.npc_access = Some(npc_access());
-        args.fallback_access = Some(object_access());
-        args.hooks_present = HOOK_LOG;
+        args.set_object_access(Some(object_access_with_opener()));
+        args.set_npc_access(Some(npc_access()));
+        args.set_fallback_access(Some(object_access()));
+        args.set_hooks_present(HOOK_LOG);
         payloads.push(args);
 
         let mut args = BankSeatArgs::new(Operation::Open);
-        args.stand = Some(tile());
-        args.destination = Some(BankSeatDestination {
-            tile: tile(),
-            object_access: Some(object_access()),
-            npc_access: Some(npc_access()),
-        });
-        args.object_access = Some(object_access());
-        args.prefer_nearby = Some(false);
-        args.nearby_radius = Some(12.5);
-        args.obstacles = vec!["Gate".into(), "Fence".into()];
-        args.hooks_present = HOOK_LOG;
+        args.set_stand(Some(tile()));
+        args.set_destination(Some(BankSeatDestination::new(
+            tile(),
+            Some(object_access()),
+            Some(npc_access()),
+        )));
+        args.set_object_access(Some(object_access()));
+        args.set_prefer_nearby(Some(false));
+        args.set_nearby_radius(Some(12.5));
+        args.set_obstacles(vec!["Gate".into(), "Fence".into()]);
+        args.set_hooks_present(HOOK_LOG);
         payloads.push(args);
 
         let mut args = BankSeatArgs::new(Operation::Select);
-        args.stand = Some(tile());
-        args.allow_wilderness = true;
-        args.use_mage_bank = Some(false);
-        args.use_zanaris_bank = Some(true);
+        args.set_stand(Some(tile()));
+        args.set_allow_wilderness(true);
+        args.set_use_mage_bank(Some(false));
+        args.set_use_zanaris_bank(Some(true));
         payloads.push(args);
 
         let mut args = BankSeatArgs::new(Operation::DepositLabel);
-        args.item_name = Some("Rune essence".into());
-        args.menu_op = Some("Deposit-1".into());
+        args.set_item_name(Some("Rune essence".into()));
+        args.set_menu_op(Some("Deposit-1".into()));
         payloads.push(args);
 
         let mut args = BankSeatArgs::new(Operation::WithdrawLabel);
-        args.item_id = Some(995);
-        args.menu_op = Some("Withdraw-5".into());
+        args.set_item_id(Some(995));
+        args.set_menu_op(Some("Withdraw-5".into()));
         payloads.push(args);
 
         let mut args = BankSeatArgs::new(Operation::WithdrawLabel);
-        args.item_name = Some("Coins".into());
-        args.quantity = Some(1_500);
+        args.set_item_name(Some("Coins".into()));
+        args.set_quantity(Some(1_500));
         payloads.push(args);
 
         let mut args = BankSeatArgs::new(Operation::WithdrawDelta);
-        args.item_id = Some(995);
-        args.quantity = Some(27);
-        args.lands_as_id = Some(995);
+        args.set_item_id(Some(995));
+        args.set_quantity(Some(27));
+        args.set_lands_as_id(Some(995));
         payloads.push(args);
 
         let mut args = BankSeatArgs::new(Operation::WithdrawLoad);
-        args.withdraw_load_selector = Some(WithdrawLoadSelector::Name("Rune essence".into()));
+        args.set_withdraw_load_selector(Some(WithdrawLoadSelector::Name("Rune essence".into())));
         payloads.push(args);
 
         let mut args = BankSeatArgs::new(Operation::WithdrawLoad);
-        args.withdraw_load_selector = Some(WithdrawLoadSelector::Id(995));
+        args.set_withdraw_load_selector(Some(WithdrawLoadSelector::Id(995)));
         payloads.push(args);
         payloads.push(BankSeatArgs::new(Operation::DepositAll));
 
         let mut args = BankSeatArgs::new(Operation::DepositKeep);
-        args.keep_names = vec!["Coins".into(), "Abyssal pearl".into()];
+        args.set_keep_names(vec!["Coins".into(), "Abyssal pearl".into()]);
         payloads.push(args);
 
         let mut args = BankSeatArgs::new(Operation::DepositMatch);
-        args.hooks_present = DEPOSIT_MATCH_HOOK_MATCH | DEPOSIT_MATCH_HOOK_LOG;
+        args.set_hooks_present(DEPOSIT_MATCH_HOOK_MATCH | DEPOSIT_MATCH_HOOK_LOG);
         payloads.push(args);
 
         let mut args = BankSeatArgs::new(Operation::SetNoteMode);
-        args.note_mode = true;
+        args.set_note_mode(true);
         payloads.push(args);
 
         let mut args = BankSeatArgs::new(Operation::Close);
-        args.timeout_ms = Some(2_000.5);
+        args.set_timeout_ms(Some(2_000.5));
         payloads.push(args);
 
         let mut args = BankSeatArgs::new(Operation::WaitReady);
-        args.timeout_ms = Some(1_500.0);
-        args.hooks_present = HOOK_LOG;
+        args.set_timeout_ms(Some(1_500.0));
+        args.set_hooks_present(HOOK_LOG);
         payloads.push(args);
 
         let mut args = BankSeatArgs::new(Operation::WaitSnapshotAfter);
-        args.timeout_ms = Some(500.0);
-        args.baseline_generation = Some(42.0);
+        args.set_timeout_ms(Some(500.0));
+        args.set_baseline_generation(Some(42.0));
         payloads.push(args);
 
         let mut args = BankSeatArgs::new(Operation::BankNearest);
-        args.destination = Some(BankSeatDestination {
-            tile: tile(),
-            object_access: Some(object_access()),
-            npc_access: Some(npc_access()),
-        });
-        args.object_access = Some(object_access());
-        args.return_to = Some(tile());
-        args.deposit_all = true;
-        args.common_junk = false;
-        args.hooks_present =
-            BANK_NEAREST_HOOK_DEPOSIT | BANK_NEAREST_HOOK_AFTER_DEPOSIT | BANK_NEAREST_HOOK_LOG;
+        args.set_destination(Some(BankSeatDestination::new(
+            tile(),
+            Some(object_access()),
+            Some(npc_access()),
+        )));
+        args.set_object_access(Some(object_access()));
+        args.set_return_to(Some(tile()));
+        args.set_deposit_all(true);
+        args.set_common_junk(false);
+        args.set_hooks_present(
+            BANK_NEAREST_HOOK_DEPOSIT | BANK_NEAREST_HOOK_AFTER_DEPOSIT | BANK_NEAREST_HOOK_LOG,
+        );
         payloads.push(args);
 
         let starts = payloads
             .iter()
             .enumerate()
             .map(|(index, args)| {
-                let kind = if args.operation == Operation::BankNearest {
+                let kind = if args.operation() == Operation::BankNearest {
                     NativeKind::BankNearest
                 } else {
                     NativeKind::BankPlan
@@ -10555,7 +9778,7 @@ pub(crate) mod tests {
         let decoded = decode_seat_interact_batch(&bytes).expect("decode bank starts");
         assert_eq!(decoded.starts.len(), payloads.len());
         for (start, expected) in decoded.starts.iter().zip(payloads) {
-            let kind = if expected.operation == Operation::BankNearest {
+            let kind = if expected.operation() == Operation::BankNearest {
                 NativeKind::BankNearest
             } else {
                 NativeKind::BankPlan
@@ -10567,7 +9790,122 @@ pub(crate) mod tests {
 
     #[test]
     fn bank_start_payload_rejects_mismatches_missing_fields_and_oversize_text() {
-        use crate::bank::request::{BankSeatArgs, BankSeatOperation as Operation};
+        use crate::bank::request::{
+            BankRequestError, BankSeatArgs, BankSeatOperation as Operation,
+        };
+
+        let display_cases = [
+            (
+                BankRequestError::NoOperation,
+                "bank seat start has no operation",
+            ),
+            (
+                BankRequestError::NativeKindMismatch {
+                    operation: Operation::BankNearest,
+                    expected_kind: NativeKind::BankPlan,
+                },
+                "bank operation BankNearest requires native kind BankPlan",
+            ),
+            (
+                BankRequestError::ObjectOpenFirstPair,
+                "object open-first name and op must be supplied together",
+            ),
+            (
+                BankRequestError::OpenFirstNotAccepted {
+                    operation: Operation::Close,
+                },
+                "bank operation Close does not accept an open-first object access",
+            ),
+            (
+                BankRequestError::InvalidSnapshotBaseline,
+                "bank snapshot baseline must be finite and nonnegative",
+            ),
+            (
+                BankRequestError::UnsafeQuantity,
+                "bank quantity is outside the safe integer range",
+            ),
+            (
+                BankRequestError::UnusedFields {
+                    operation: Operation::DepositAll,
+                    mask: 0x5,
+                },
+                "bank operation DepositAll carries unused fields (mask 0x5)",
+            ),
+            (
+                BankRequestError::UnknownCallbackBits {
+                    operation: Operation::DepositMatch,
+                    mask: 0x8,
+                },
+                "bank operation DepositMatch has unknown callback bits 0x8",
+            ),
+            (
+                BankRequestError::OpenObjectMissingAccess,
+                "OpenObject requires object_access",
+            ),
+            (
+                BankRequestError::OpenNpcMissingAccess,
+                "OpenNpc requires npc_access",
+            ),
+            (
+                BankRequestError::DepositLabelMissingItemName,
+                "DepositLabel requires item_name",
+            ),
+            (
+                BankRequestError::DepositLabelMissingMenuOp,
+                "DepositLabel requires menu_op",
+            ),
+            (
+                BankRequestError::WithdrawLabelNeedsOneSelector,
+                "WithdrawLabel requires exactly one of item_id and item_name",
+            ),
+            (
+                BankRequestError::IdWithdrawLabelNeedsMenuOp,
+                "id-based WithdrawLabel requires menu_op and no quantity",
+            ),
+            (
+                BankRequestError::NameWithdrawLabelConflicts,
+                "name-based WithdrawLabel cannot combine menu_op and quantity",
+            ),
+            (
+                BankRequestError::WithdrawDeltaNeedsOneSelector,
+                "WithdrawDelta requires exactly one of item_id and item_name",
+            ),
+            (
+                BankRequestError::WithdrawDeltaMissingQuantity,
+                "WithdrawDelta requires quantity",
+            ),
+            (
+                BankRequestError::WithdrawDeltaInvalidQuantity,
+                "WithdrawDelta quantity must be a positive i32",
+            ),
+            (
+                BankRequestError::NameWithdrawDeltaHasLandsAsId,
+                "name-based WithdrawDelta does not accept lands_as_id",
+            ),
+            (
+                BankRequestError::WithdrawLoadMissingSelector,
+                "WithdrawLoad requires an item selector",
+            ),
+            (
+                BankRequestError::WaitSnapshotAfterMissingBaseline,
+                "WaitSnapshotAfter requires baseline_generation",
+            ),
+            (
+                BankRequestError::SelectOriginOutOfBounds,
+                "Select origin is outside the supported bank-selection bounds",
+            ),
+            (
+                BankRequestError::TooManyStrings,
+                "bank start string count exceeds the start charge bound",
+            ),
+        ];
+        for (error, expected) in display_cases {
+            assert_eq!(error.to_string(), expected);
+        }
+        assert_eq!(
+            BankRequestError::TextTooLong { max_bytes: 17 }.to_string(),
+            "bank start text exceeds 17 bytes"
+        );
 
         let stamp = || {
             RequestStamp::new(
@@ -10612,21 +9950,21 @@ pub(crate) mod tests {
             .contains("requires object_access"));
 
         args = BankSeatArgs::new(Operation::DepositMatch);
-        args.hooks_present = 1 << 2;
+        args.set_hooks_present(1 << 2);
         assert!(encode(NativeKind::BankPlan, &args)
             .expect_err("unknown callback bit rejected")
             .contains("unknown callback bits"));
 
         args = BankSeatArgs::new(Operation::WithdrawLabel);
-        args.item_id = Some(995);
-        args.item_name = Some("Coins".into());
+        args.set_item_id(Some(995));
+        args.set_item_name(Some("Coins".into()));
         assert!(encode(NativeKind::BankPlan, &args)
             .expect_err("conflicting selectors rejected")
             .contains("exactly one of item_id and item_name"));
 
         args = BankSeatArgs::new(Operation::WithdrawLabel);
-        args.item_name = Some("Coins".into());
-        args.quantity = Some(i64::MIN);
+        args.set_item_name(Some("Coins".into()));
+        args.set_quantity(Some(i64::MIN));
         assert!(encode(NativeKind::BankPlan, &args)
             .expect_err("unsafe integer rejected")
             .contains("safe integer"));
@@ -10637,8 +9975,8 @@ pub(crate) mod tests {
             .contains("requires baseline_generation"));
 
         args = BankSeatArgs::new(Operation::DepositLabel);
-        args.item_name = Some("x".repeat(MAX_START_CHARGE + 1));
-        args.menu_op = Some("Deposit".into());
+        args.set_item_name(Some("x".repeat(MAX_START_CHARGE + 1)));
+        args.set_menu_op(Some("Deposit".into()));
         assert!(encode(NativeKind::BankPlan, &args)
             .expect_err("oversize text rejected")
             .contains("bank start text exceeds"));
@@ -10697,13 +10035,13 @@ pub(crate) mod tests {
             };
             let mut args = BankSeatArgs::new(operation);
             if use_quantity {
-                args.quantity = Some(1);
+                args.set_quantity(Some(1));
             } else {
-                args.note_mode = true;
+                args.set_note_mode(true);
             }
             if operation == Operation::DepositLabel {
-                args.item_name = Some("Coins".into());
-                args.menu_op = Some("Deposit".into());
+                args.set_item_name(Some("Coins".into()));
+                args.set_menu_op(Some("Deposit".into()));
             }
             let error = encode(kind, &args).expect_err("populated unused field rejected");
             assert!(
@@ -11176,6 +10514,7 @@ pub(crate) mod tests {
         assert!(SeatPageInput::new(&live, &[], &details, 0)
             .err()
             .expect("producer prompt-args cap")
+            .to_string()
             .contains("prompt args length"));
     }
 

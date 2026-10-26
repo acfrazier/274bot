@@ -9,8 +9,8 @@ use api::snapshot::{GameSnapshot, WorldTile};
 use client::client::Client;
 use host::Pump;
 use host_play::{ProfileOptions, SharedClientTemplate};
-use nav::router::{find_with, FindOptions, Leg};
-use nav::traveller::{TravelEvent, TravelOptions, TravelOutcome, Traveller};
+use nav_executor::{TravelEvent, TravelOptions, TravelOutcome, Traveller};
+use nav_planner::router::{find_with, FindOptions, Leg};
 use serde_json::json;
 
 const ORIGIN: WorldTile = WorldTile {
@@ -80,8 +80,9 @@ fn live_mage_arena_webs_cellar_and_gundai_arrive() {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_millis();
-    let prefix = std::env::var("BOT_LIVE_NAME_PREFIX").unwrap_or_else(|_| "ml".into());
-    let name = format!("{prefix}{}", serial % 1_000_000_000);
+    let name = host_play::mint_live_names(1)
+        .pop()
+        .expect("one live account");
     let receipt_path =
         PathBuf::from(std::env::var_os("NAV_SCRIPTED_LADDERS_RECEIPT").expect("receipt path"));
     let profile = ProfileOptions {
@@ -150,11 +151,12 @@ fn live_mage_arena_webs_cellar_and_gundai_arrive() {
         s.ingame()
             && s.scene_state() == 2
             && s.tile() == Some((ORIGIN.x, ORIGIN.z, ORIGIN.level))
-            && nav::WorldState::from_snapshot(s)
+            && nav_planner::WorldState::from_snapshot(s)
                 .combat_level
                 .is_some_and(|level| level >= 100)
     });
-    let state = nav::WorldState::from_snapshot(&snapshot).with_map_members(profile.map_members());
+    let state =
+        nav_planner::WorldState::from_snapshot(&snapshot).with_map_members(profile.map_members());
     let route = find_with(
         &world.collision,
         &world.graph,
@@ -288,13 +290,13 @@ fn live_mage_arena_webs_cellar_and_gundai_arrive() {
 #[ignore = "requires LIVE=1, WORLD_ENGINE_DIR, WORLD_NAV_PACK, NAV_RELATIVE_LADDER_RECEIPT and disposable HOME"]
 fn live_viking_seer_ladder_uses_player_relative_landing() {
     assert_eq!(std::env::var("LIVE").as_deref(), Ok("1"));
-    let prefix = std::env::var("BOT_LIVE_NAME_PREFIX").unwrap_or_else(|_| "nr".into());
-    assert!(!prefix.is_empty());
     let serial = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_millis();
-    let name = format!("{prefix}{}", serial % 1_000_000_000);
+    let name = host_play::mint_live_names(1)
+        .pop()
+        .expect("one live account");
     let receipt_path =
         PathBuf::from(std::env::var_os("NAV_RELATIVE_LADDER_RECEIPT").expect("receipt path"));
     let origin = WorldTile {
@@ -350,7 +352,7 @@ fn live_viking_seer_ladder_uses_player_relative_landing() {
         origin,
         destination,
         FindOptions::default(),
-        &nav::WorldState::empty().with_map_members(profile.map_members()),
+        &nav_planner::WorldState::empty().with_map_members(profile.map_members()),
     )
     .expect("non-anchor Viking seer ladder route");
     let planned_edge = route
@@ -494,13 +496,13 @@ fn live_viking_seer_ladder_uses_player_relative_landing() {
 #[ignore = "requires LIVE=1, WORLD_ENGINE_DIR, WORLD_NAV_PACK, BOT_CACHE_DIR, NAV_GANGPLANK_RECEIPT, NAV_GANGPLANK_EVIDENCE_DIR and disposable HOME"]
 fn live_karamja_gangplank_2084_uses_player_relative_landing() {
     assert_eq!(std::env::var("LIVE").as_deref(), Ok("1"));
-    let prefix = std::env::var("BOT_LIVE_NAME_PREFIX").unwrap_or_else(|_| "gp3".into());
-    assert!(!prefix.is_empty());
     let serial = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_millis();
-    let name = format!("{prefix}{}", serial % 1_000_000_000);
+    let name = host_play::mint_live_names(1)
+        .pop()
+        .expect("one live account");
     let receipt_path =
         PathBuf::from(std::env::var_os("NAV_GANGPLANK_RECEIPT").expect("receipt path"));
     let origin = WorldTile {
@@ -555,7 +557,7 @@ fn live_karamja_gangplank_2084_uses_player_relative_landing() {
         origin,
         destination,
         FindOptions::default(),
-        &nav::WorldState::empty().with_map_members(profile.map_members()),
+        &nav_planner::WorldState::empty().with_map_members(profile.map_members()),
     )
     .expect("route across Karamja ship gangplank");
     let (transport_index, planned_edge) = route

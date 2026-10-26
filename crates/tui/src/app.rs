@@ -27,15 +27,15 @@ use frontend_core::scripts::{
 use frontend_core::walk_map::{
     display_walk_name_into, WalkCatalogue, WalkMap, WalkObservedService, WalkSearch, WalkSlotStatus,
 };
-use frontend_core::{FleetCounts, ResourceView, SlotDetail, WalkGlobalsView};
+use frontend_core::{FleetCounts, OperatorCommand, ResourceView, SlotDetail, WalkGlobalsView};
 use frontend_core::{MapBakeChoice, NavPreference};
-use nav::map::poi::{PoiKind, PoiRecord};
-use nav::router::{FindOptions, Route};
-use nav::tile::Tile;
-use nav::world::NavWorld;
+use nav_planner::map::poi::{PoiKind, PoiRecord};
+use nav_planner::router::{FindOptions, Route};
+use nav_planner::tile::Tile;
+use nav_planner::world::NavWorld;
 
 use crate::chat::{chat_modal_open, Chat, ChatAction, ChatState, ChatView};
-use crate::commands::{script_command, Command};
+use crate::commands::{script_command, Command, Unavailable};
 use crate::fleet::FleetState;
 use crate::layout::{Pane, Regions, Screen};
 use crate::loadouts::{LoadoutsPane, LoadoutsState};
@@ -191,10 +191,53 @@ impl WalkSendState {
     }
 }
 
+/// What a refusal on the message line waits for: the action that supplies
+/// it clears the line at once (`TuiSession::clear_resolved_error`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ErrorNeed {
+    /// The precondition the reason names holds again
+    /// ([`Unavailable::missing`] is false).
+    Precondition(Unavailable),
+    /// The profile called this is loaded (logged in).
+    Loaded(String),
+}
+
+impl ErrorNeed {
+    /// Whether the need holds in `app`.
+    pub fn met(&self, app: &TuiApp) -> bool {
+        match self {
+            ErrorNeed::Precondition(reason) => !reason.missing(app),
+            ErrorNeed::Loaded(name) => app
+                .fleet_model
+                .rows()
+                .iter()
+                .any(|row| row.name() == name && row.loaded()),
+        }
+    }
+}
+
+/// A command the app refuses before any submission: the session shows
+/// `reason`, which clears when `need` holds, and logs the refusal at the
+/// command boundary (the command, `bot` and `reason`). `command` is `None`
+/// for a command that only changes the screen ([`Command::refusal`]): no
+/// operator command is refused, so nothing is logged.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Refusal {
+    pub command: Option<OperatorCommand>,
+    /// The bot the refused command named, if it named one.
+    pub bot: Option<String>,
+    pub reason: std::borrow::Cow<'static, str>,
+    pub need: Option<ErrorNeed>,
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum AppAction {
     /// Quit the app.
     Quit,
+    /// The app refuses a command before any submission (nothing to act on).
+    /// The session shows the reason and logs a refused operator command at
+    /// the command boundary.
+    Refused(Refusal),
     /// Select `name` (mirrored onto the core `select`). Never a spawn or
     /// login; only Enter or a click on a fleet row, a context menu or the
     /// palette produce it.
@@ -285,8 +328,8 @@ pub enum AppAction {
     /// at once when it needs no confirmation, otherwise the confirm
     /// overlay shows the plan's prompt.
     PlanFleet(frontend_core::FleetAction),
-    /// Confirm: run the waiting fleet plan (`Targets::Plan`).
-    RunFleetPlan,
+    /// Confirm: run the waiting fleet plan for this action (`Targets::Plan`).
+    RunFleetPlan(frontend_core::FleetAction),
     /// Cancel: drop the waiting fleet plan (`CancelFleetPlan`).
     CancelFleetPlan,
     /// Reload the focused heading's card, or confirm a shown warning.
@@ -317,6 +360,11 @@ pub enum AppAction {
     SettingsDraftEdited(SettingsEdit),
     /// One step of the rs2b0t profile import; the binary owns the flow.
     ProfileImport(crate::profile_import::ImportAction),
+    /// Open the shared New profile form (`OpenNewProfileForm`); the
+    /// overlay is already open, the binary opens the editor behind it.
+    OpenNewProfile,
+    /// A key for the New profile overlay: the binary owns the editor.
+    NewProfileKey(KeyEvent),
     /// A key for the parameters popup: the binary owns the commit path.
     ParamsKey(KeyEvent),
     /// A key for the loadouts popup: the binary owns the form.
@@ -534,6 +582,7 @@ pub struct TuiApp {
     /// The global manual-movement pause preference changed; the session persists it.
     pub pause_script_on_manual_walk_abort_dirty: bool,
     shared_preferences: Option<frontend_core::UiPreferences>,
+    preferences_adopted: bool,
     pub loadouts_state: LoadoutsState,
     /// The focused slot's script lifecycle (shape display only).
     pub script_state: ScriptRunState,
@@ -664,6 +713,7 @@ impl TuiApp {
             pause_script_on_manual_walk_abort: true,
             pause_script_on_manual_walk_abort_dirty: false,
             shared_preferences: None,
+            preferences_adopted: false,
             map_bake_dirty: false,
             loadouts_state: LoadoutsState::default(),
             script_state: ScriptRunState::Idle,
@@ -706,6 +756,16 @@ impl TuiApp {
     /// Bind the shared process-service preferences. Walk permissions are
     /// refreshed again for every relevant render and admission.
     pub fn restore_preferences(&mut self, preferences: frontend_core::UiPreferences) {
+        self.shared_preferences = Some(preferences.share());
+        if !preferences.ready() {
+            let view = WalkGlobalsView::read(&preferences);
+            self.walk_permissions = view;
+            self.nav = view.globals();
+            return;
+        }
+        self.preferences_adopted = true;
+        let preserve_folder = self.settings_state.folder_changed || self.quester_paths_dirty;
+        let preserve_enabled = self.quester_paths_dirty;
         self.quester_paths_controller.restore(&preferences);
         let enabled = self.quester_paths_controller.settings().enabled();
         let folder = self
@@ -713,14 +773,22 @@ impl TuiApp {
             .settings()
             .folder()
             .to_path_buf();
-        self.quester_paths.set_enabled(enabled);
-        self.quester_paths.set_folder(folder);
-        self.pause_script_on_manual_walk_abort = frontend_core::nav_preference(
-            &preferences,
-            frontend_core::NavPreference::PauseScriptOnManualWalkAbort,
-        )
-        .unwrap_or(true);
-        self.shared_preferences = Some(preferences.share());
+        if !preserve_enabled {
+            self.quester_paths.set_enabled(enabled);
+        }
+        if !preserve_folder {
+            self.quester_paths.set_folder(folder);
+        }
+        if !self.pause_script_on_manual_walk_abort_dirty {
+            self.pause_script_on_manual_walk_abort = frontend_core::nav_preference(
+                &preferences,
+                frontend_core::NavPreference::PauseScriptOnManualWalkAbort,
+            )
+            .unwrap_or(true);
+        }
+        if !self.map_bake_dirty {
+            self.map_bake = frontend_core::load_map_bake_choice(&preferences);
+        }
         self.refresh_walk_permissions();
         self.map.restore_persisted_wilderness(&preferences);
     }
@@ -730,6 +798,15 @@ impl TuiApp {
     /// widgets; production binds and rereads the shared preferences (cheap
     /// per pump: the service re-reads the file at most once per second).
     pub(crate) fn refresh_walk_permissions(&mut self) {
+        if !self.preferences_adopted {
+            if let Some(preferences) = self
+                .shared_preferences
+                .as_ref()
+                .filter(|prefs| prefs.ready())
+            {
+                self.restore_preferences(preferences.share());
+            }
+        }
         let view = self.shared_preferences.as_ref().map_or(
             WalkGlobalsView::new(
                 self.nav,
@@ -738,17 +815,59 @@ impl TuiApp {
             ),
             WalkGlobalsView::read,
         );
-        self.adopt_walk_permissions(view);
+        if !self.preferences_adopted && self.shared_preferences.is_some() {
+            self.walk_permissions = view;
+        } else if view != self.walk_permissions {
+            self.adopt_walk_permissions(view);
+        }
     }
 
     /// Adopt `view`, the durable walk permissions the core just read, into
     /// every TUI view of them (the edit buffer, the acknowledgements, the
     /// one-shot zone grant and an open parameters popup).
     pub(crate) fn adopt_walk_permissions(&mut self, view: WalkGlobalsView) {
+        let before = self.walk_permissions;
+        let old = before.globals();
+        let next = view.globals();
+        let changed = |draft, old, next| if old == next { draft } else { next };
+        self.nav = frontend_core::WalkGlobals::new(
+            changed(
+                self.nav.allow_teleports(),
+                old.allow_teleports(),
+                next.allow_teleports(),
+            ),
+            changed(
+                self.nav.allow_wilderness(),
+                old.allow_wilderness(),
+                next.allow_wilderness(),
+            ),
+            changed(
+                self.nav.allow_bank_fetch(),
+                old.allow_bank_fetch(),
+                next.allow_bank_fetch(),
+            ),
+            changed(
+                self.nav.allow_danger_zones(),
+                old.allow_danger_zones(),
+                next.allow_danger_zones(),
+            ),
+            changed(
+                self.nav.survivable_routing(),
+                old.survivable_routing(),
+                next.survivable_routing(),
+            ),
+        );
+        self.script_scope_notice_ack = changed(
+            self.script_scope_notice_ack,
+            before.script_scope_notice_ack(),
+            view.script_scope_notice_ack(),
+        );
+        self.survivable_routing_notice_ack = changed(
+            self.survivable_routing_notice_ack,
+            before.survivable_routing_notice_ack(),
+            view.survivable_routing_notice_ack(),
+        );
         self.walk_permissions = view;
-        self.nav = view.globals();
-        self.script_scope_notice_ack = view.script_scope_notice_ack();
-        self.survivable_routing_notice_ack = view.survivable_routing_notice_ack();
         if !view.danger_this_walk(true) {
             self.map_route_through_zones = false;
         }
@@ -785,6 +904,21 @@ impl TuiApp {
     /// The focused slot's username.
     pub fn focused_name(&self) -> Option<String> {
         self.focused.and_then(|i| self.names.get(i)).cloned()
+    }
+    /// Whether a bot has the focus ([`Self::focused_name`] without the copy).
+    pub(crate) fn has_focus(&self) -> bool {
+        self.focused.is_some_and(|i| i < self.names.len())
+    }
+    /// Whether Log out acts on the focused bot: the shared projection's
+    /// answer from its fleet row, the same one Fleet Log out uses.
+    pub(crate) fn focused_logout_eligible(&self) -> bool {
+        self.focused
+            .and_then(|i| self.names.get(i))
+            .and_then(|name| {
+                let index = self.fleet_model.index_of_name(name)?;
+                self.fleet_model.rows().get(index)
+            })
+            .is_some_and(|row| row.logout_eligibility().eligible())
     }
     pub(crate) fn profile_id_for_name(&self, name: &str) -> frontend_core::ProfileIdentity {
         frontend_core::profile_id_for_name(&self.names, &self.profile_ids, name)
@@ -1027,9 +1161,14 @@ impl TuiApp {
     pub(crate) fn map_enter(&mut self) -> AppAction {
         if let Some(pending) = self.map_model.pending() {
             if self.walk_send.mode == WalkSendMode::Group {
-                if self.walk_send.checked_count(self.fleet_model.marks()) == 0 {
-                    self.error = Some("no bots selected".into());
-                    return AppAction::None;
+                let reason = Unavailable::NoCheckedBots;
+                if reason.missing(self) {
+                    return AppAction::Refused(Refusal {
+                        command: Some(OperatorCommand::GroupWalk),
+                        bot: None,
+                        reason: reason.text().into(),
+                        need: reason.need(),
+                    });
                 }
                 return AppAction::MapWalkGroup;
             }
@@ -1682,10 +1821,12 @@ impl TuiApp {
             }
             Command::ScriptStart => match self.script_sel.as_ref().map(ScriptChoice::duplicate) {
                 Some(sel) => AppAction::ScriptStart(sel),
-                None => {
-                    self.error = Some("script: browse to pick one first".into());
-                    AppAction::None
-                }
+                None => AppAction::Refused(Refusal {
+                    command: Some(OperatorCommand::StartScript),
+                    bot: self.focused_name(),
+                    reason: "script: browse to pick one first".into(),
+                    need: Unavailable::NoScriptPicked.need(),
+                }),
             },
             Command::ScriptPause => AppAction::ScriptPause,
             Command::ScriptStop => AppAction::ScriptStop,

@@ -11,7 +11,7 @@ use client::client::{Client, ClientConfig};
 use client::config::{Cache, IfType, IfTypeMut};
 use client::io::JagFile;
 use host::login_queue::LoginQueue;
-use nav::world::NavWorld;
+use nav_planner::world::NavWorld;
 use parking_lot::Mutex as QueueMutex;
 use rand_core::{OsRng, RngCore};
 use vault::{Profile, Vault, VaultError};
@@ -257,9 +257,27 @@ impl SharedClientTemplate {
         Self::load_with_progress(profile, &progress::ProfileProgressObserver::default())
     }
 
+    /// Blocking convenience for callers outside the preparation worker.
+    /// Worker callers must pass their capability to `load_on_worker`.
     pub fn load_with_progress(
         profile: Arc<ServerProfile>,
         observer: &progress::ProfileProgressObserver,
+    ) -> Result<Arc<Self>, String> {
+        Self::load_inner(profile, observer, None)
+    }
+
+    pub(crate) fn load_on_worker(
+        profile: Arc<ServerProfile>,
+        observer: &progress::ProfileProgressObserver,
+        worker: &mut api::selected::FamilyPreparation,
+    ) -> Result<Arc<Self>, String> {
+        Self::load_inner(profile, observer, Some(worker))
+    }
+
+    fn load_inner(
+        profile: Arc<ServerProfile>,
+        observer: &progress::ProfileProgressObserver,
+        worker: Option<&mut api::selected::FamilyPreparation>,
     ) -> Result<Arc<Self>, String> {
         profile.validate_resources_with_progress(observer)?;
         observer.report(progress::ProfileProgress::steps(
@@ -270,6 +288,33 @@ impl SharedClientTemplate {
         let (cache, ifaces, ifaces_mut) =
             load_template_checked(profile.client().cache_dir(), observer)?;
         let game_data = profile.game_data();
+        if let Some(data) = game_data.as_ref() {
+            if let Some(worker) = worker {
+                // The enclosing profile job already owns the preparation
+                // worker and its scratch/result reservation.
+                data.prepare_quests(worker)
+                    .map_err(|error| format!("quest family preparation: {error:?}"))?;
+            } else {
+                let data = Arc::clone(data);
+                let input = script::preparation::PreparationInput::new(
+                    1,
+                    0,
+                    8 * 1024 * 1024,
+                    2 * 1024 * 1024,
+                )
+                .map_err(|error| format!("quest family charge: {error}"))?;
+                script::preparation::submit(
+                    script::preparation::PreparationKind::Profile,
+                    api::identity::Scope::Process,
+                    input,
+                    move |worker| data.prepare_quests(worker),
+                )
+                .map_err(|error| format!("quest family preparation: {error}"))?
+                .join()
+                .map_err(|error| format!("quest family preparation: {error}"))?
+                .map_err(|error| format!("quest family preparation: {error:?}"))?;
+            }
+        }
         observer.report(progress::ProfileProgress::steps(
             progress::ProfileProgressStage::LoadingGameData,
             4,
@@ -529,6 +574,8 @@ impl Play {
             per_frame: Arc::new(|_: &mut Client, _: &str, _: crate::SlotFrameInput| {}),
             #[cfg(any(test, feature = "test-support"))]
             post_native_player_info: None,
+            #[cfg(feature = "test-support")]
+            post_host_frame: None,
             spawned: HashSet::new(),
             arms: HashMap::new(),
             profiles: HashMap::new(),

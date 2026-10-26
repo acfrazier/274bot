@@ -14,6 +14,8 @@
 mod loadouts;
 mod native;
 mod paint;
+mod paint_layout;
+pub mod paint_style;
 pub mod paths;
 mod vocab;
 pub(crate) use loadouts::Refused;
@@ -26,6 +28,10 @@ pub(crate) use paint::{
 pub use paint::{
     map_applet_rect, CanvasCache, CanvasOps, CanvasRaster, ChromeBandView, PaintButtonView,
     PaintControl, PaintFrame, PaintView,
+};
+pub use paint_layout::{
+    clipped_prefix, ButtonItem, ChromeItem, FooterLayout, PaintLayout, PaintRect, PaintSlot,
+    RowItem, TabItem,
 };
 pub use vocab::{
     format_setting_value, CardRuntime, CardSource, CompiledCardId, LoadFailureView, LoadShape,
@@ -47,6 +53,8 @@ pub use parameter_edit::{
 mod sync;
 
 use std::collections::{HashMap, VecDeque};
+use std::fmt::Write as _;
+
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -61,10 +69,37 @@ use vault::ScriptAssignment;
 
 use crate::command::{CommandFailure, Completion, FailureKind, Subject};
 use crate::operations::OperationId;
+use crate::profiles::ProfileAuditBefore;
 use crate::session::{
     ArmMirror, OperatorSession, ScriptAssignmentWrite, ScriptStart, StartSettled,
 };
 use crate::QueuePlace;
+
+/// Log metadata for a setting write. The values come from the committed
+/// rows when the write settles.
+pub(crate) struct ScriptSettingsLog {
+    identity: String,
+    card: String,
+    action: &'static str,
+    schema: Vec<script::SettingDef>,
+}
+
+impl ScriptSettingsLog {
+    pub(crate) fn details(
+        &self,
+        before: Option<&ProfileAuditBefore>,
+        after: &vault::ProfileSettings,
+    ) -> String {
+        let old = match before {
+            Some(ProfileAuditBefore::ScriptSettings(values)) => {
+                script_settings_values_from_entry(&self.identity, values.as_ref())
+            }
+            _ => Map::new(),
+        };
+        let new = script_settings_values(after, &self.identity);
+        format_script_settings_log(&self.card, self.action, &self.schema, &old, &new)
+    }
+}
 
 pub use reload::{
     CatalogError, PendingReload, PendingReloadKind, ReloadOutcome, ReloadWarning, TranspileError,
@@ -423,8 +458,12 @@ impl From<script::StartLoadError> for ScriptStartError {
                 (ScriptStartErrorKind::NoLoadouts, reason)
             }
             script::StartLoadError::Waiting(reason) => (ScriptStartErrorKind::Waiting, reason),
-            script::StartLoadError::RuntimeLoad(reason) => {
+            script::StartLoadError::RuntimeLoad(reason)
+            | script::StartLoadError::Surface(script::surface::SurfaceError::Spawn(reason)) => {
                 (ScriptStartErrorKind::RuntimeLoad, reason)
+            }
+            script::StartLoadError::Surface(error) => {
+                (ScriptStartErrorKind::Refused, error.to_string())
             }
         };
         Self { kind, message }
@@ -649,8 +688,9 @@ struct StagedReloadTarget {
 }
 
 #[derive(Debug)]
-pub(crate) struct StagedParameterDiscard {
-    pub(crate) key: ParameterEditKey,
+pub(crate) enum StagedParameterDiscard {
+    Field(ParameterEditKey),
+    Profile(String),
 }
 
 #[derive(Debug)]
@@ -1050,7 +1090,13 @@ impl Scripts {
 
     /// Stage the focused parameter edit for `DiscardParameterText`.
     pub fn stage_parameter_discard(&mut self, key: ParameterEditKey) {
-        self.staged_parameter_discard = Some(StagedParameterDiscard { key });
+        self.staged_parameter_discard = Some(StagedParameterDiscard::Field(key));
+    }
+
+    /// Stage all drafts for one profile, including cards no longer displayed.
+    /// Accepted writes still block Start until their terminal result.
+    pub fn stage_profile_parameter_discard(&mut self, profile: &str) {
+        self.staged_parameter_discard = Some(StagedParameterDiscard::Profile(profile.to_owned()));
     }
 
     pub(crate) fn take_staged_parameter_discard(&mut self) -> Option<StagedParameterDiscard> {
@@ -1425,15 +1471,24 @@ impl Scripts {
     }
 
     /// Write one legacy global per-card override and save the store.
-    pub(crate) fn set_legacy_value(
+    pub(crate) fn set_legacy_value<Io>(
         &mut self,
+        core: &mut OperatorSession<Io>,
         source: CardSource,
         name: &str,
         id: &str,
+        old_value: Option<Value>,
         value: Value,
     ) -> Result<(), String> {
-        self.legacy.set_value(source.to_script(), name, id, value);
-        self.legacy.save()
+        let source = source.to_script();
+        let card = self
+            .js
+            .get(source, name)
+            .map_or(name, |card| card.name.as_str());
+        self.legacy.set_value(source, name, id, value.clone());
+        self.legacy.save()?;
+        core.log_legacy_script_settings(card, "parameter edit", id, old_value.as_ref(), &value);
+        Ok(())
     }
 
     /// Disjoint library, legacy store and inject bag for live Start.
@@ -1777,7 +1832,7 @@ impl Scripts {
         self.pending_browse.get(profile)
     }
 
-    /// Stage an edit of `profile`'s settings and queue its durable write.
+    /// Stage `profile`'s settings and queue their durable write.
     fn upsert_profile_settings<Io>(
         &mut self,
         core: &mut OperatorSession<Io>,
@@ -1786,6 +1841,7 @@ impl Scripts {
         log_action: &'static str,
         edit: impl FnOnce(&mut vault::ProfileSettings),
     ) -> Result<OperationId, String> {
+        let setting_identity = mirror.script_settings_identity();
         let result = core.vault().map(|vault| {
             if mirror.is_native_settings() {
                 core.profile_for_edit(profile).cloned()
@@ -1797,14 +1853,51 @@ impl Scripts {
             None => Err("script: vault locked".to_string()),
             Some(None) => Err(format!("script: no profile {profile}")),
             Some(Some(mut row)) => {
+                let audit = setting_identity
+                    .as_deref()
+                    .map(|identity| self.script_settings_log(identity, log_action));
                 edit(&mut row.settings);
-                core.save_profile_with_log_action(row, mirror, "script", log_action)
+                let result = core.save_profile_with_log_action(row, mirror, "script", log_action);
+                if let (Ok(op), Some(audit)) = (result.as_ref(), audit) {
+                    core.track_script_settings_log(*op, audit);
+                }
+                result
             }
         };
         if let Err(error) = &result {
             self.show(error.clone());
         }
         result
+    }
+
+    fn script_settings_log(&self, identity: &str, action: &'static str) -> ScriptSettingsLog {
+        if let Some(name) = identity.strip_prefix("compiled:") {
+            if let Some(card) = script::compiled_id(name).and_then(script::compiled_card) {
+                return ScriptSettingsLog {
+                    identity: identity.to_string(),
+                    card: card.name.to_string(),
+                    action,
+                    schema: (card.schema)().to_vec(),
+                };
+            }
+        } else if let Some((source, lookup)) = identity.split_once(':') {
+            if let Some(card) =
+                script::parse_source_kind(source).and_then(|source| self.js.get(source, lookup))
+            {
+                return ScriptSettingsLog {
+                    identity: identity.to_string(),
+                    card: card.name.clone(),
+                    action,
+                    schema: card.settings_schema.clone(),
+                };
+            }
+        }
+        ScriptSettingsLog {
+            identity: identity.to_string(),
+            card: identity.to_string(),
+            action,
+            schema: Vec::new(),
+        }
     }
 
     /// Save `profile`'s last successful assignment. Re-starting the same
@@ -2072,6 +2165,60 @@ impl Scripts {
         let source = source.to_script();
         self.legacy
             .merged_bag(source, name, schema, self.inject.as_ref())
+    }
+    /// Read one setting from its durable profile or legacy bag, with schema
+    /// defaults applied but no staged writes or scenario injection.
+    pub(crate) fn durable_setting_value<Io>(
+        &self,
+        core: &OperatorSession<Io>,
+        profile: Option<&str>,
+        selection: &ScriptChoice,
+        field: &str,
+    ) -> Option<Value> {
+        match selection.as_script() {
+            script::ScriptSel::Loaded(source, lookup) => {
+                let card = self.js.get(*source, lookup)?;
+                let overrides = match profile {
+                    Some(profile) => {
+                        let identity = script::card_identity_key(*source, &card.path, &card.name);
+                        let row = core.durable_profile(profile)?;
+                        row.settings
+                            .script_settings
+                            .get(&identity)
+                            .cloned()
+                            .unwrap_or_else(|| {
+                                script::migrate_overrides(
+                                    &card.name,
+                                    &self.legacy_overrides_for(&identity, &card.name),
+                                )
+                            })
+                    }
+                    None => self.legacy.overrides(*source, &card.name),
+                };
+                script::merge_bag(&card.settings_schema, &overrides, None)
+                    .get(field)
+                    .cloned()
+            }
+            script::ScriptSel::Compiled(id) => {
+                let profile = profile?;
+                let card = script::compiled_card(*id)?;
+                let row = core.durable_profile(profile)?;
+                let identity = script::compiled_identity_key(*id);
+                let overrides = match row.settings.script_settings.get(&identity) {
+                    Some(entry) => {
+                        let (version, values) = vault::CompiledSettingsRecord::view(entry).ok()?;
+                        if version != card.schema_version {
+                            return None;
+                        }
+                        values.clone()
+                    }
+                    None => Map::new(),
+                };
+                script::merge_bag((card.schema)(), &overrides, None)
+                    .get(field)
+                    .cloned()
+            }
+        }
     }
 
     /// Set one typed parameter on `profile`'s bag for a card. The write is
@@ -2364,9 +2511,10 @@ impl Scripts {
             .map_err(ScriptStartError::from)
     }
 
-    /// Operator Start on `profile`: its pending Browse selection, then the
-    /// shared Browse selection, then the front end's heading, then its
-    /// assignment. Another profile's draft never reaches this Start.
+    /// Operator Start on `profile`: the card its Script section shows (its
+    /// pending Browse selection, then the front end's heading, then its
+    /// assignment). The shared Browse selection is not this profile's card
+    /// and never reaches this Start, nor does another profile's draft.
     /// Refused while the profile's script is active.
     pub(crate) fn start_selected<Io>(
         &mut self,
@@ -2385,12 +2533,6 @@ impl Scripts {
             .pending_browse
             .get(profile)
             .map(|sel| sel.as_script().clone())
-            .or_else(|| {
-                self.browse_selection
-                    .as_ref()
-                    .map(ScriptChoice::as_script)
-                    .cloned()
-            })
             .or_else(|| heading.cloned())
             .or_else(|| Self::assignment(core, profile).and_then(|a| sel_from_assignment(&a)))
             .ok_or_else(|| ScriptStartError::refused("no assignment"))?;
@@ -2437,7 +2579,7 @@ impl Scripts {
     ) -> Result<Option<OperationId>, script::StartLoadError> {
         if self.parameter_edit_blocks_start(profile) {
             return Err(script::StartLoadError::Waiting(
-                "settings edit is uncommitted or its save has not settled".into(),
+                "Settings are uncommitted or saving. In Script prefs, press Enter to save a field or discard unsaved settings.".into(),
             ));
         }
         if core.play().is_none() {
@@ -3482,6 +3624,96 @@ impl Scripts {
         core.publish_start_queue(|name| self.admit.status(name));
     }
 }
+fn script_settings_values(settings: &vault::ProfileSettings, identity: &str) -> Map<String, Value> {
+    script_settings_values_from_entry(identity, settings.script_settings.get(identity))
+}
+
+fn script_settings_values_from_entry(
+    identity: &str,
+    entry: Option<&Map<String, Value>>,
+) -> Map<String, Value> {
+    if identity.starts_with("compiled:") {
+        return entry
+            .and_then(|entry| vault::CompiledSettingsRecord::view(entry).ok())
+            .map(|(_, values)| values.clone())
+            .unwrap_or_default();
+    }
+    entry.cloned().unwrap_or_default()
+}
+
+fn format_script_settings_log(
+    card: &str,
+    action: &str,
+    schema: &[script::SettingDef],
+    old: &Map<String, Value>,
+    new: &Map<String, Value>,
+) -> String {
+    let mut details = String::new();
+    write!(&mut details, "card {card}; action {action}").expect("writing to String cannot fail");
+    let mut changed = false;
+    for setting in schema {
+        if old.get(&setting.id) == new.get(&setting.id) {
+            continue;
+        }
+        changed = true;
+        let default = setting_default_value(setting);
+        append_script_setting_log_change(
+            &mut details,
+            &setting.id,
+            old.get(&setting.id).or(default.as_ref()),
+            new.get(&setting.id).or(default.as_ref()),
+        );
+    }
+    for (field, old_value) in old {
+        if schema.iter().any(|setting| setting.id == *field) || new.get(field) == Some(old_value) {
+            continue;
+        }
+        changed = true;
+        append_script_setting_log_change(&mut details, field, Some(old_value), new.get(field));
+    }
+    for (field, new_value) in new {
+        if schema.iter().any(|setting| setting.id == *field) || old.contains_key(field) {
+            continue;
+        }
+        changed = true;
+        append_script_setting_log_change(&mut details, field, None, Some(new_value));
+    }
+    if !changed {
+        let old = serde_json::to_string(old).expect("JSON settings maps always serialize");
+        let new = serde_json::to_string(new).expect("JSON settings maps always serialize");
+        append_script_setting_log_change(
+            &mut details,
+            "settings",
+            Some(&Value::String(old)),
+            Some(&Value::String(new)),
+        );
+    }
+    details
+}
+
+fn append_script_setting_log_change(
+    details: &mut String,
+    field: &str,
+    old: Option<&Value>,
+    new: Option<&Value>,
+) {
+    write!(details, "; field {field}; old ").expect("writing to String cannot fail");
+    match old {
+        Some(value) => write!(details, "{value}").expect("writing to String cannot fail"),
+        None => details.push_str("<unset>"),
+    }
+    details.push_str("; new ");
+    match new {
+        Some(value) => write!(details, "{value}").expect("writing to String cannot fail"),
+        None => details.push_str("<unset>"),
+    }
+}
+
+fn setting_default_value(setting: &script::SettingDef) -> Option<Value> {
+    setting.default.as_deref().map(|default| {
+        serde_json::from_str(default).unwrap_or_else(|_| Value::String(default.to_owned()))
+    })
+}
 
 /// The command terminal of a Start withdrawn before it ran, by the reason
 /// it was withdrawn.
@@ -3522,14 +3754,11 @@ fn slot_names<Io>(core: &OperatorSession<Io>) -> Vec<String> {
 }
 
 fn script_active<Io>(core: &OperatorSession<Io>, name: &str) -> bool {
-    matches!(
+    ScriptRunState::from_script(
         core.play()
             .map_or(script::RunState::Idle, |p| p.script_state(name)),
-        script::RunState::Starting
-            | script::RunState::Running
-            | script::RunState::Paused
-            | script::RunState::Stopping
     )
+    .is_live()
 }
 
 fn wall_member<Io>(core: &OperatorSession<Io>, name: &str) -> bool {

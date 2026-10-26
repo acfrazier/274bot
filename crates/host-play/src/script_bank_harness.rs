@@ -37,7 +37,7 @@ impl Driver for HeldDriver {
     fn loc_typecode(&self, _: i32, _: i32) -> Option<i32> {
         panic!("held follow must not run");
     }
-    fn out(&mut self) -> &mut dyn api::prot::Out {
+    fn send_packet(&mut self, _: &api::prot::Send) -> Result<(), api::prot::PacketError> {
         panic!("held bank walk wrote a packet");
     }
     fn login(&mut self, _: &str, _: &str, _: bool) -> bool {
@@ -136,7 +136,7 @@ pub(super) fn request(
         None,
         native.as_ref().map(|native| &native.request),
     );
-    let lease = nav::producer::lease(world).unwrap();
+    let lease = nav_planner::producer::lease(world).unwrap();
     let native = native.map(|native| NativePickContext {
         authority: native.authority,
         evidence: native.evidence,
@@ -210,6 +210,8 @@ pub fn measures_captured_native_bank_pick_cpu() {
     let state = WorldState {
         inv: serde_json::from_value(captured["inv"].clone()).unwrap(),
         worn: serde_json::from_value(captured["worn"].clone()).unwrap(),
+        inventory_ready: captured["inventory_ready"].as_bool().unwrap(),
+        equipment_ready: captured["equipment_ready"].as_bool().unwrap(),
         allow_fetchable_worn: captured["allow_fetchable_worn"].as_bool().unwrap(),
         stats: serde_json::from_value(captured["stats"].clone()).unwrap(),
         combat_level: serde_json::from_value(captured["combat_level"].clone()).unwrap(),

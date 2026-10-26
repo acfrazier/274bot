@@ -1,7 +1,7 @@
 //! Small typed projections of the operator session, shared by the panel
 //! and the TUI: one [`FleetRow`] per fleet member (phase, queue place,
-//! script state, walking, a retained error, the newest operation) and a
-//! [`SlotDetail`] for the selected slot only.
+//! script state, walking, a retained error, the current login notice, the
+//! newest operation) and a [`SlotDetail`] for the selected slot only.
 //!
 //! [`crate::OperatorSession::poll`] refreshes them from the status rows it
 //! already polled and the front end's walk arms. A row whose facts did not
@@ -22,6 +22,7 @@ use host_play::{Play, SlotArm, SlotStatus, StartupPhase, WalkArm};
 
 use api::hostlog::{Level, Source};
 
+use crate::login_notice::{LoginFailure, LoginNotice};
 use crate::operations::{write_op, ActionKind, OpChange, OperationId, OperationReport, Outcome};
 
 /// Longest error or operation reason a row keeps, in bytes; longer text
@@ -247,16 +248,33 @@ pub struct FleetRow {
     /// error that holds the login until the operator acts, and in every
     /// other phase.
     retrying: bool,
+    /// The repeat guard parked the slot after repeated unexpected logouts:
+    /// offline and unqueued, it may still hold a script's work, which a
+    /// Log out ends.
+    guard_parked: bool,
     /// Authenticated client session, independent of game readiness.
     connected: bool,
     script: RunState,
-    /// A walk is queued on the slot.
-    walking: bool,
+    /// The script run's published walk destination is live (tied to the run:
+    /// only while the script lifecycle is live).
+    script_walk: bool,
+    /// A WalkTo walk is armed on the front end for this bot.
+    manual_walk: bool,
     /// The lifetime's error. While [`Self::phase`] is an error phase this is
     /// the current error; otherwise it is the last login error, kept (as
     /// history) until the slot is ready, goes offline or a new worker
     /// lifetime starts. At most [`REASON_CAP`] bytes.
     error: Option<String>,
+    /// The current login notice (`login {error}`, the words of the error
+    /// state line): the newest failed login, kept through the retry's
+    /// state changes until the bot logs in, a newer login fails, or
+    /// [`crate::ERROR_MESSAGE_TIMEOUT`] passes ([`crate::login_notice`]).
+    /// Boxed: a bot with no failed login pays one pointer, not a `String`.
+    #[expect(
+        clippy::box_collection,
+        reason = "the row's one-pointer slot; a bare `String` is 24 bytes on every row"
+    )]
+    login_notice: Option<Box<String>>,
     /// Newest lifecycle operation on this slot (Load, Log in/out, Remove,
     /// Start/Pause/Resume/Stop, Apply to all) or failed profile write. Kept
     /// per slot, so it outlives the bounded operation history.
@@ -275,10 +293,13 @@ impl Default for FleetRow {
             phase: Phase::Offline,
             queue: None,
             retrying: false,
+            guard_parked: false,
             connected: false,
             script: RunState::Idle,
-            walking: false,
+            script_walk: false,
+            manual_walk: false,
             error: None,
+            login_notice: None,
             last_op: None,
             brief: String::from(Phase::Offline.label()),
         }
@@ -296,10 +317,13 @@ impl FleetRow {
         self.phase = source.phase;
         self.queue = source.queue;
         self.retrying = source.retrying;
+        self.guard_parked = source.guard_parked;
         self.connected = source.connected;
         self.script = source.script;
-        self.walking = source.walking;
+        self.script_walk = source.script_walk;
+        self.manual_walk = source.manual_walk;
         self.error.clone_from(&source.error);
+        self.login_notice.clone_from(&source.login_notice);
         match (&mut self.last_op, source.last_op.as_ref()) {
             (Some(held), Some(brief)) => *held = brief.duplicate(),
             (_, Some(brief)) => self.last_op = Some(brief.duplicate()),
@@ -317,10 +341,13 @@ impl FleetRow {
             phase: Phase::Offline,
             queue: None,
             retrying: false,
+            guard_parked: false,
             connected: false,
             script: RunState::Idle,
-            walking: false,
+            script_walk: false,
+            manual_walk: false,
             error: None,
+            login_notice: None,
             last_op: None,
             brief: String::new(),
         };
@@ -358,10 +385,13 @@ impl FleetRow {
         self.phase = Phase::Offline;
         self.queue = None;
         self.retrying = false;
+        self.guard_parked = false;
         self.connected = false;
         self.script = RunState::Idle;
-        self.walking = false;
+        self.script_walk = false;
+        self.manual_walk = false;
         self.error = None;
+        self.login_notice = None;
         self.last_op = None;
         self.brief.clear();
         self.brief.push_str(Phase::Offline.label());
@@ -398,6 +428,11 @@ impl FleetRow {
         self.retrying
     }
 
+    /// The repeat guard parked the slot (see [`crate::LogoutEligibility`]).
+    pub fn guard_parked(&self) -> bool {
+        self.guard_parked
+    }
+
     /// Authenticated client session, independent of game readiness.
     pub fn connected(&self) -> bool {
         self.connected
@@ -408,13 +443,38 @@ impl FleetRow {
         self.script
     }
 
-    /// A walk is queued on the slot.
-    pub fn walking(&self) -> bool {
-        self.walking
+    /// The script run's published walk is live. It belongs to the run, so it
+    /// is never true while the script is idle or failed.
+    pub fn script_walk(&self) -> bool {
+        self.script_walk
+    }
+
+    /// A WalkTo walk is armed on the front end for this bot. It belongs to
+    /// no script run, so a script Stop leaves it visible.
+    pub fn manual_walk(&self) -> bool {
+        self.manual_walk
     }
 
     /// The lifetime's error, when one is retained.
     pub fn error(&self) -> Option<&str> {
+        self.error.as_deref()
+    }
+
+    /// The current login notice, whatever the phase: `login {error}`, the
+    /// same words as the error state line. The newest failed login keeps it
+    /// through the retry's state changes until the bot logs in, a newer
+    /// login fails, or [`crate::ERROR_MESSAGE_TIMEOUT`] passes.
+    pub fn login_notice(&self) -> Option<&str> {
+        self.login_notice.as_deref().map(String::as_str)
+    }
+
+    /// The last error as history, for a `last error` row: only while the
+    /// phase is not an error (the state line then says it) and no login
+    /// notice stands (the notice then says it). Both front ends show this.
+    pub fn last_error(&self) -> Option<&str> {
+        if self.phase.is_error() || self.login_notice.is_some() {
+            return None;
+        }
         self.error.as_deref()
     }
 
@@ -428,9 +488,13 @@ impl FleetRow {
         &self.brief
     }
 
-    /// A script is running or a walk is queued.
+    /// The bot is doing something the label calls `running`: a script is
+    /// starting or running, its published walk is live, or a WalkTo walk is
+    /// armed. Each is a separate fact; none is inferred from another.
     pub fn busy(&self) -> bool {
-        self.script == RunState::Running || self.walking
+        matches!(self.script, RunState::Starting | RunState::Running)
+            || self.script_walk
+            || self.manual_walk
     }
 
     pub fn light(&self) -> Light {
@@ -488,12 +552,7 @@ impl FleetRow {
                 let _ = write!(self.brief, "queued {}/{}", place.position, place.total);
                 return;
             }
-            Phase::Ready
-                if self.walking
-                    || matches!(self.script, RunState::Running | RunState::Starting) =>
-            {
-                "running"
-            }
+            Phase::Ready if self.busy() => "running",
             Phase::Ready => "idle",
             Phase::Preparing => "starting",
             Phase::LoginError => "error",
@@ -547,6 +606,11 @@ impl FleetRow {
     /// Set the retained lifetime error (test fixtures).
     pub fn set_error(&mut self, error: Option<String>) {
         self.error = error;
+    }
+
+    /// Set the current login notice line (test fixtures).
+    pub fn set_login_notice(&mut self, notice: Option<String>) {
+        self.login_notice = notice.map(Box::new);
     }
 
     /// Set the newest operation brief (test fixtures).
@@ -638,6 +702,16 @@ impl SlotDetail {
     /// One status line for the phase.
     pub fn state(&self) -> &str {
         &self.state
+    }
+
+    /// The current login notice as a line of its own: `None` when no notice
+    /// stands or when the state line already says it (an error phase that
+    /// shows this same failure). Both front ends show it next to the state
+    /// line, and in place of the `last error` row ([`FleetRow::last_error`]).
+    pub fn login_notice_line(&self) -> Option<&str> {
+        self.row
+            .login_notice()
+            .filter(|notice| *notice != self.state)
     }
 
     /// When the in-flight phase began, for an elapsed timer.
@@ -874,12 +948,16 @@ impl<'a> FleetView<'a> {
 }
 
 /// Per-row derivation state that is not part of the projection.
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Debug, Default)]
 struct RowState {
     /// Index of the row's status in the last poll (checked first).
     hint: usize,
     /// [`SlotArm::lifetime_id`] of the worker the row last saw (0: none).
     lifetime: u64,
+    /// The clock of the row's login notice ([`FleetRow::login_notice`]).
+    /// Boxed and created by the bot's first failed login: a bot that never
+    /// failed one pays one pointer.
+    notice: Option<Box<LoginNotice>>,
 }
 
 /// The front end's walk arms (routes its WalkTo armed), keyed by slot.
@@ -897,6 +975,8 @@ pub(crate) struct Inputs<'a> {
     pub card: Option<&'a str>,
     /// Start-all / marked-Start places. Login-queue phases ignore this.
     pub start_places: &'a HashMap<String, QueuePlace>,
+    /// The session's poll time: the login notices' clock.
+    pub now: Instant,
 }
 
 /// The cached projections owned by the session.
@@ -1129,7 +1209,7 @@ fn update_row(row: &mut FleetRow, state: &mut RowState, input: &Inputs<'_>) -> b
     let arm = input.play.and_then(|play| play.arm(&row.name));
     let lifetime = arm.as_ref().map_or(0, |arm| arm.lifetime_id());
     let new_lifetime = std::mem::replace(&mut state.lifetime, lifetime) != lifetime;
-    let (phase, retrying) = phase_of(status, arm.as_deref());
+    let (phase, retrying, guard_parked) = phase_of(status, arm.as_deref());
     let queue = match phase {
         Phase::Queued | Phase::LoginError => status.and_then(QueuePlace::of),
         _ => input.start_places.get(row.name.as_str()).copied(),
@@ -1141,36 +1221,50 @@ fn update_row(row: &mut FleetRow, state: &mut RowState, input: &Inputs<'_>) -> b
     let mut changed = false;
     let world = status.and_then(|s| s.world);
     let connected = status.is_some_and(|s| s.connected);
-    // A script walk is published on the host row; a WalkTo walk lives on
-    // the front end's arm.
-    let walking = status.is_some_and(|s| s.walk_x != -1)
-        || match input.walks.and_then(|walks| walks.get(&row.name)) {
-            None => false,
-            Some(walk) => match walk.try_lock() {
-                Ok(walk) => walk.route.is_some(),
-                // Its slot thread is stepping the walk right now: keep the
-                // last answer rather than wait on the slot.
-                Err(TryLockError::WouldBlock) => row.walking,
-                Err(TryLockError::Poisoned(_)) => false,
-            },
-        };
+    // The script walk is published on the host row and belongs to the script
+    // run: a destination left on the row after the run ended is not a walk.
+    // A WalkTo walk lives on the front end's arm and belongs to no run.
+    let script_walk = script.is_live() && status.is_some_and(|s| s.script_walk().is_some());
+    let manual_walk = match input.walks.and_then(|walks| walks.get(&row.name)) {
+        None => false,
+        Some(walk) => match walk.try_lock() {
+            Ok(walk) => walk.route.is_some(),
+            // Its slot thread is stepping the walk right now: keep the
+            // last answer rather than wait on the slot.
+            Err(TryLockError::WouldBlock) => row.manual_walk,
+            Err(TryLockError::Poisoned(_)) => false,
+        },
+    };
     if (
         row.world,
         row.phase,
         row.queue,
         row.retrying,
+        row.guard_parked,
         row.connected,
         row.script,
-        row.walking,
-    ) != (world, phase, queue, retrying, connected, script, walking)
-    {
+        row.script_walk,
+        row.manual_walk,
+    ) != (
+        world,
+        phase,
+        queue,
+        retrying,
+        guard_parked,
+        connected,
+        script,
+        script_walk,
+        manual_walk,
+    ) {
         row.world = world;
         row.phase = phase;
         row.queue = queue;
         row.retrying = retrying;
+        row.guard_parked = guard_parked;
         row.connected = connected;
         row.script = script;
-        row.walking = walking;
+        row.script_walk = script_walk;
+        row.manual_walk = manual_walk;
         changed = true;
     }
     match status.and_then(|s| s.error.as_deref()) {
@@ -1186,32 +1280,65 @@ fn update_row(row: &mut FleetRow, state: &mut RowState, input: &Inputs<'_>) -> b
         // The host cleared it for a retry: keep it as the last error.
         None => {}
     }
+    // A failed login of this worker (the host's Error phase with its text)
+    // is the row's login notice, apart from the phase: a retry's Connecting
+    // or a parked logged out does not clear it.
+    let failure = status
+        .filter(|s| {
+            arm.is_some()
+                && phase != Phase::Failed
+                && s.startup_phase == StartupPhase::Error
+                && s.error.is_some()
+        })
+        .and_then(|s| {
+            Some(LoginFailure {
+                lifetime,
+                at: s.startup_phase_started,
+                text: row.error.as_deref()?,
+            })
+        });
+    let logged_in = matches!(phase, Phase::Loading | Phase::Ready);
+    changed |= crate::login_notice::update_slot(
+        &mut state.notice,
+        &mut row.login_notice,
+        failure,
+        logged_in,
+        input.now,
+    );
     changed
 }
 
 /// The single phase derivation, with whether a login error is a retry
-/// wait ([`FleetRow::retrying`]). `arm` is the slot's live worker lifetime:
+/// wait ([`FleetRow::retrying`]) and whether the repeat guard holds the slot
+/// ([`FleetRow::guard_parked`]). `arm` is the slot's live worker lifetime:
 /// its intent (not the row's last published latch) decides whether a
 /// disconnected worker is parked, and whether a failed login is retried or
-/// held for the operator; both answers come from the same intent read.
-fn phase_of(status: Option<&SlotStatus>, arm: Option<&SlotArm>) -> (Phase, bool) {
+/// held for the operator. The guard fact is read from that same latch and
+/// only on the parked branch, so a terminal worker or a row with no arm
+/// never carries it: it means current guard ownership, not the last
+/// published reason.
+fn phase_of(status: Option<&SlotStatus>, arm: Option<&SlotArm>) -> (Phase, bool, bool) {
     let Some(s) = status else {
-        return (Phase::Offline, false);
+        return (Phase::Offline, false, false);
     };
     if s.worker_terminal.is_some() || s.terminal_startup_error().is_some() {
-        return (Phase::Failed, false);
+        return (Phase::Failed, false, false);
     }
     let Some(arm) = arm else {
-        return (Phase::Offline, false);
+        return (Phase::Offline, false, false);
     };
     if s.ingame {
-        return (Phase::Ready, false);
+        return (Phase::Ready, false, false);
     }
     if s.connected {
-        return (Phase::Loading, false);
+        return (Phase::Loading, false, false);
     }
-    if arm.login_latched() {
-        return (Phase::LoggedOut, false);
+    if let Some(reason) = arm.login_latch_reason() {
+        let guard = matches!(
+            reason,
+            host_play::LoginLatchReason::RepeatedUnexpectedLogouts { .. }
+        );
+        return (Phase::LoggedOut, false, guard);
     }
     let phase = match s.startup_phase {
         StartupPhase::Preparing => Phase::Preparing,
@@ -1230,7 +1357,7 @@ fn phase_of(status: Option<&SlotStatus>, arm: Option<&SlotArm>) -> (Phase, bool)
                 }
             } else if failed {
                 // Still wanted: the host retries it after its backoff.
-                return (Phase::LoginError, true);
+                return (Phase::LoginError, true, false);
             } else if QueuePlace::of(s).is_some() {
                 Phase::Queued
             } else {
@@ -1238,7 +1365,7 @@ fn phase_of(status: Option<&SlotStatus>, arm: Option<&SlotArm>) -> (Phase, bool)
             }
         }
     };
-    (phase, false)
+    (phase, false, false)
 }
 
 /// Refresh the selected slot's detail fields. Text is built into `scratch`

@@ -1,9 +1,9 @@
 use std::time::Duration;
 
-pub(crate) const PICKPOCKET: &str = "Pickpocket";
-pub(crate) const STEAL_FROM: &str = "Steal-from";
+pub const PICKPOCKET: &str = "Pickpocket";
+pub const STEAL_FROM: &str = "Steal-from";
 
-pub(crate) fn level_ready(effective: Option<i32>, required: i32) -> Option<bool> {
+pub fn level_ready(effective: Option<i32>, required: i32) -> Option<bool> {
     effective.map(|level| level >= required)
 }
 

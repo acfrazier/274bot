@@ -58,8 +58,8 @@ impl Driver for Rec {
     fn loc_typecode(&self, _scene_x: i32, _scene_z: i32) -> Option<i32> {
         None
     }
-    fn out(&mut self) -> &mut dyn Out {
-        &mut self.out
+    fn send_packet(&mut self, packet: &api::prot::Send) -> Result<(), api::prot::PacketError> {
+        packet.write_for_revision(self.revision(), &mut self.out)
     }
     fn login(&mut self, _username: &str, _password: &str, _reconnect: bool) -> bool {
         true
@@ -1950,7 +1950,7 @@ fn assert_resource_return(
     request: &script::native::WalkRequest,
     anchor: WorldTile,
 ) {
-    assert_eq!(request.arrival, nav::contract::ArrivalKind::Area);
+    assert_eq!(request.arrival, nav_planner::contract::ArrivalKind::Area);
     assert_eq!(request.radius, 1);
     assert_eq!(request.target.level, anchor.level);
     let region = api::gather_methods::SceneRegionInput {

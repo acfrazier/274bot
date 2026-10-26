@@ -50,7 +50,7 @@ struct CompatJournalLeaseState {
 /// Shared Rust-only quiet state for a compatibility journal machine. The
 /// isolate thread is the producer and the host reads it without a JS/shim
 /// round trip. Both token and work generation fence every transition.
-pub(crate) struct CompatJournalLease {
+pub struct CompatJournalLease {
     state: parking_lot::Mutex<Option<CompatJournalLeaseState>>,
     active: std::sync::atomic::AtomicBool,
     producer_generation: std::sync::atomic::AtomicU64,
@@ -69,12 +69,12 @@ impl Default for CompatJournalLease {
 }
 
 impl CompatJournalLease {
-    pub(crate) fn set_generation(&self, generation: u64) {
+    pub fn set_generation(&self, generation: u64) {
         self.producer_generation
             .store(generation, std::sync::atomic::Ordering::Release);
     }
 
-    pub(crate) fn set_host_generation(&self, generation: u64) {
+    pub fn set_host_generation(&self, generation: u64) {
         self.host_generation
             .store(generation, std::sync::atomic::Ordering::Release);
     }
@@ -122,13 +122,13 @@ impl CompatJournalLease {
         }
     }
 
-    pub(crate) fn revoke(&self) {
+    pub fn revoke(&self) {
         *self.state.lock() = None;
         self.active
             .store(false, std::sync::atomic::Ordering::Release);
     }
 
-    pub(crate) fn live(&self, generation: u64, now: std::time::Instant) -> bool {
+    pub fn live(&self, generation: u64, now: std::time::Instant) -> bool {
         if !self.active.load(std::sync::atomic::Ordering::Acquire) {
             return false;
         }
@@ -516,7 +516,7 @@ pub(crate) struct QuestJournalArgs {
 }
 
 /// Drives one admitted journal token from its click through the observed close.
-pub(crate) struct QuestJournal {
+pub struct QuestJournal {
     token: u64,
 }
 
@@ -639,32 +639,32 @@ fn posted_sequence() -> Option<u64> {
     observed::with(|scene| scene.latest().main_modal_texts().and(scene.tick()))
 }
 
-pub(crate) fn on_pause() {
+pub fn on_pause() {
     RUNTIME.with(|rt| {
         let held = rt.borrow().clock.held;
         rt.borrow_mut().clock.set_freeze(true, held);
     });
 }
 
-pub(crate) fn on_resume() {
+pub fn on_resume() {
     RUNTIME.with(|rt| {
         let held = rt.borrow().clock.held;
         rt.borrow_mut().clock.set_freeze(false, held);
     });
 }
 
-pub(crate) fn on_hold(held: bool) {
+pub fn on_hold(held: bool) {
     RUNTIME.with(|rt| {
         let paused = rt.borrow().clock.paused;
         rt.borrow_mut().clock.set_freeze(paused, held);
     });
 }
 
-pub(crate) fn bind_compat_runtime(lease: std::sync::Arc<CompatJournalLease>) {
+pub fn bind_compat_runtime(lease: std::sync::Arc<CompatJournalLease>) {
     RUNTIME.with(|rt| rt.borrow_mut().bind_compat(lease));
 }
 
-pub(crate) fn on_stop() {
+pub fn on_stop() {
     RUNTIME.with(|rt| {
         let mut rt = rt.borrow_mut();
         rt.abort();
@@ -672,7 +672,7 @@ pub(crate) fn on_stop() {
     });
 }
 
-pub(crate) fn on_reset() {
+pub fn on_reset() {
     RUNTIME.with(|rt| {
         let mut rt = rt.borrow_mut();
         rt.abort();
@@ -680,7 +680,7 @@ pub(crate) fn on_reset() {
     });
 }
 
-pub(crate) fn dispatch(input: &Value) -> Value {
+pub fn dispatch(input: &Value) -> Value {
     match input.get("op").and_then(Value::as_str).unwrap_or("") {
         "begin" => RUNTIME.with(|rt| rt.borrow_mut().begin(input)),
         _ => json!({ "kind": "notImpl", "reason": "unknown quest journal op" }),

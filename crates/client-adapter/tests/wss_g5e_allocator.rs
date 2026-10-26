@@ -16,6 +16,7 @@ use std::cell::{Cell, UnsafeCell};
 use std::fmt::Write as _;
 use std::fs::OpenOptions;
 use std::io::{self, Read, Write};
+#[cfg(target_os = "linux")]
 use std::mem::MaybeUninit;
 use std::net::{TcpListener, TcpStream};
 use std::path::PathBuf;

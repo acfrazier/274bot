@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -10,12 +11,15 @@ import { parseDbRows, parseSections } from './extractors/gathering-content.ts';
 import { extractQuestIdentityFacts } from './extractors/quests.ts';
 import { extractQuestStartFacts } from './extractors/quest-starts.ts';
 import type { TrioGiverFacts, TalkKeyFacts } from './generate.ts';
-import { categoryName, familyBytes, familyInputs, generateSelected, revisions, requestedRevisions, type SelectedBuild } from './generate.ts';
+import { QUESTS_SCHEMA, categoryName, extractQuestsFamily, familyBytes, familyInputs, generateSelected, revisions, requestedRevisions, runtimeNpcOperations, npcEvidenceBytes, type SelectedBuild } from './generate.ts';
 import { sha256, sourceFile } from './extractors/common.ts';
 import { extractCombatStyleFacts, parseCombatScripts } from './extractors/combat.ts';
 import { extractNpcNamesFacts } from './extractors/npc-names.ts';
 import './dialogue-ui.test.ts';
+import './server-ordered.test.ts';
+import './npc-transforms.test.ts';
 import { extractKaramjaFacts } from './extractors/karamja.ts';
+import type { NpcTransformClosureEvidence } from './extractors/npc-transforms.ts';
 
 const repoRoot = path.resolve(import.meta.dirname, '../..');
 
@@ -29,6 +33,39 @@ assert.deepEqual(
     ['\uE000', '\u{10000}'],
     'ordering compares Unicode code points rather than locale collation or UTF-16 units',
 );
+
+{
+    const evidence: NpcTransformClosureEvidence = {
+        schema: 1,
+        source_inputs: { engine: [], content: [] },
+        source_spans: [{ file: 'scripts/test.rs2', first: 1, last: 2 }],
+        npc_types: [1, 2].map(npc_type_id => ({ npc_type_id, category_id: null, config_state: 'complete', source_refs: [0] })),
+        actions: [1, 2].map(npc_type_id => ({
+            npc_type_id, slot: 1, state: 'present', label: 'Talk-to', trigger_code: 1,
+            trigger_kind: 'type', trigger_target_id: npc_type_id,
+            operation_fingerprint: 'a'.repeat(64), source_refs: [0],
+        })),
+        transform_edges: [],
+        unresolved: [],
+        proofs: [1, 2].map(npc_type_id => ({
+            npc_type_id, slot: 1, status: npc_type_id === 1 ? 'unchanged' : 'unavailable',
+            reachable_npc_type_ids: [npc_type_id], mismatched_npc_type_ids: [],
+            evidence_refs: [0], unresolved_refs: [],
+        })),
+        engine: { complete: true, source_refs: { numeric_dispatch: [0], type_change: [0], reversion: [0], static_type_decoder: [0] } },
+    };
+    const runtime = runtimeNpcOperations(evidence);
+    assert.deepEqual(runtime.operations, [{ npc_type_id: 1, slot: 1, operation_fingerprint: 'a'.repeat(64) }]);
+    assert.equal(runtime.evidence_sha256, crypto.createHash('sha256').update(npcEvidenceBytes(evidence)).digest('hex'));
+    assert.deepEqual(Object.keys(runtime), ['schema', 'evidence_sha256', 'operations']);
+    evidence.proofs[0].unresolved_refs.push(0);
+    assert.throws(() => runtimeNpcOperations(evidence), /positive NPC proof disagrees/);
+    evidence.proofs[0].unresolved_refs.length = 0;
+    evidence.npc_types[0].config_state = 'missing';
+    assert.throws(() => runtimeNpcOperations(evidence), /positive NPC proof disagrees/);
+    evidence.engine.complete = false;
+    assert.deepEqual(runtimeNpcOperations(evidence).operations, []);
+}
 
 
 /** Pinned-tree roots are the generator's required GAME_DATA_*_CONTENT variables, never literals. */
@@ -1352,6 +1389,23 @@ try {
     const manifest = JSON.parse(manifestBytes);
     // The exported serializer is the one the pipeline uses: byte-identical for both families.
     const upstream = familyInputs(pipelineSpec, assertPinned(pipelineSpec));
+    const withoutContractCachePins = {
+        ...pipelineSpec,
+        generatedInputs: {
+            ...pipelineSpec.generatedInputs,
+            engine: pipelineSpec.generatedInputs.engine.filter(input => ![
+                'data/pack/client/interface', 'data/pack/client/title',
+                'data/pack/server/interface.dat', 'data/pack/server/mesanim.dat',
+            ].includes(input.path)),
+        },
+    };
+    const existingUpstream = familyInputs(withoutContractCachePins, assertPinned(withoutContractCachePins));
+    assert.equal(familyBytes(upstream, { schema: 2, payload: { quest: 'cook' } }, 'quests'),
+        familyBytes(existingUpstream, { schema: 2, payload: { quest: 'cook' } }, 'quests'),
+        'server-ordered-only cache pins do not change existing quest bytes or nav bindings');
+    assert.equal(familyBytes(upstream, { schema: 3, payload: { resource: 'oak' } }, 'gathering'),
+        familyBytes(existingUpstream, { schema: 3, payload: { resource: 'oak' } }, 'gathering'),
+        'server-ordered-only cache pins do not change existing gathering bytes');
     assert.equal(fs.readFileSync(path.join(liveDirectory, 'gathering.json'), 'utf8'), familyBytes(upstream, { schema: 3, payload: { resource: 'oak' } }, 'gathering'));
     assert.equal(fs.readFileSync(path.join(liveDirectory, 'quests.json'), 'utf8'), familyBytes(upstream, { schema: 2, payload: { quest: 'cook' } }, 'quests'));
     assert.equal(sha256(path.join(liveDirectory, 'gathering.json')).sha256, manifest.families.gathering.sha256, 'the manifest digests the exact family bytes');
@@ -1673,6 +1727,44 @@ assertQuestRows(withExtras);
 assert.deepEqual(withExtras.coverage, []);
 assert.equal(withExtras.rows.some((row) => row.id === 'routequest' && row.display === 'In Search of the Myreque'), true);
 assert.equal(withExtras.rows.some((row) => row.id === 'misc' || row.id === 'troll_love' || row.id === 'mm'), false);
+// ---- quests family publication: schema, identity-only deterministic payload, actual descriptor ----
+{
+    assert.equal(QUESTS_SCHEMA, 1, 'quests family schema is pinned');
+    const draft = extractQuestsFamily(questRoot, 289);
+    assert.equal(draft.schema, QUESTS_SCHEMA);
+    assert.deepEqual(draft.payload, quest289, 'the family payload is the existing identity extract, unchanged');
+    const payload = JSON.parse(JSON.stringify(draft.payload)) as { rows: { id: string }[]; coverage: unknown[] };
+    assert.deepEqual(Object.keys(payload).sort(), ['coverage', 'rows'], 'identity rows plus coverage only: no stage fields');
+    const rowKeys = ['id', 'component', 'display', 'varp', 'varp_id', 'complete', 'quest_points', 'unknown_sides', 'requirements', 'members', 'kind', 'journal_title', 'journal_script'];
+    for (const row of payload.rows) assert.deepEqual(Object.keys(row).sort(), [...rowKeys].sort(), `quest row ${row.id} carries no stage fields`);
+    const upstream = { revision: 289, engine_commit: 'engine', content_commit: 'content', cache_id: 'cache', content_id: 'content', inputs: [] };
+    const first = familyBytes(upstream, draft, 'quests');
+    const envelope = JSON.parse(first);
+    assert.deepEqual(Object.keys(envelope), ['schema', 'revision', 'engine_commit', 'content_commit', 'cache_id', 'content_id', 'inputs', 'facts']);
+    assert.equal(envelope.schema, QUESTS_SCHEMA);
+    assert.deepEqual(envelope.facts, quest289);
+    // Deterministic: two independent fixture writes serialize to identical bytes.
+    const otherRoot = questFixture();
+    try {
+        assert.equal(familyBytes(upstream, extractQuestsFamily(otherRoot, 289), 'quests'), first, 'no clocks, no host paths in the payload');
+    } finally {
+        fs.rmSync(otherRoot, { recursive: true, force: true });
+    }
+    // Actual artifact descriptor: computed from the written bytes, never hand-written.
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'quests-family-'));
+    try {
+        const file = path.join(dir, 'quests.json');
+        fs.writeFileSync(file, first);
+        const descriptor = { path: '289/quests.json', schema: draft.schema, ...sha256(file) };
+        assert.equal(descriptor.bytes, Buffer.byteLength(first));
+        assert.equal(descriptor.sha256, crypto.createHash('sha256').update(first).digest('hex'), 'the descriptor digests the exact family bytes');
+        fs.appendFileSync(file, ' ');
+        assert.notEqual(sha256(file).sha256, descriptor.sha256, 'any tampered byte moves the digest');
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+    assert.throws(() => familyBytes(upstream, { schema: 0, payload: {} }, 'quests'), /invalid extractor schema/);
+}
 
 const pinQuest274 = extractQuestIdentityFacts(pinContentRoot(274), 274);
 const pinQuest289 = extractQuestIdentityFacts(pinContentRoot(289), 289);
@@ -3033,10 +3125,10 @@ for (const { revision, root } of gatheringPins) {
     for (const item of siteCore.items) if (item.name !== null && item.name !== '') siteItemNames.set(item.id, item.name);
     const namedResourceRows = gatherResources(facts, siteItemNames);
     const siteResult = gatherSites(facts, namedResourceRows, root, siteBanksAll);
-    assert.equal(siteResult.rows.length, 289, `${revision} named sites`);
+    assert.equal(siteResult.rows.length, 294, `${revision} named sites`);
     const expectedSiteReport = revision === 289
-        ? { woodcutting: { sites: 231, direct: 0, dropped: 1205, outside_box: 0, extra: 26, renamed: 5, required: 5, override_dropped: 61 }, mining: { sites: 33, direct: 0, dropped: 13, outside_box: 0, extra: 8, renamed: 2, required: 1, override_dropped: 16 }, fishing: { sites: 25, direct: 20, dropped: 5, outside_box: 0, extra: 2, renamed: 0, required: 0, override_dropped: 13 } }
-        : { woodcutting: { sites: 231, direct: 0, dropped: 1198, outside_box: 0, extra: 26, renamed: 5, required: 5, override_dropped: 45 }, mining: { sites: 33, direct: 0, dropped: 13, outside_box: 0, extra: 8, renamed: 2, required: 1, override_dropped: 15 }, fishing: { sites: 25, direct: 20, dropped: 5, outside_box: 0, extra: 2, renamed: 0, required: 0, override_dropped: 11 } };
+        ? { woodcutting: { sites: 231, direct: 0, dropped: 1205, outside_box: 0, extra: 26, renamed: 5, required: 5, override_dropped: 61 }, mining: { sites: 37, direct: 0, dropped: 13, outside_box: 0, extra: 11, renamed: 6, required: 4, override_dropped: 12 }, fishing: { sites: 26, direct: 20, dropped: 5, outside_box: 0, extra: 3, renamed: 1, required: 0, override_dropped: 12 } }
+        : { woodcutting: { sites: 231, direct: 0, dropped: 1198, outside_box: 0, extra: 26, renamed: 5, required: 5, override_dropped: 45 }, mining: { sites: 37, direct: 0, dropped: 13, outside_box: 0, extra: 11, renamed: 6, required: 4, override_dropped: 11 }, fishing: { sites: 26, direct: 20, dropped: 5, outside_box: 0, extra: 3, renamed: 1, required: 0, override_dropped: 10 } };
     assert.deepEqual(siteResult.report, expectedSiteReport, `${revision} site report`);
     // Without the table the same rows keep their nearest-label names: the table is the only thing that renames or drops them.
     if (revision === 289) {
@@ -3113,7 +3205,7 @@ for (const { revision, root } of gatheringPins) {
     assert.equal(offering('woodcutting', 'normal').length, 212, `${revision} normal-tree choices`);
     assert.equal(offering('woodcutting', 'oak').length, 117, `${revision} oak choices`);
     assert.equal(offering('woodcutting', 'willow').length, 50, `${revision} willow choices`);
-    assert.equal(offering('mining', 'coal').length, 17, `${revision} coal choices`);
+    assert.equal(offering('mining', 'coal').length, 19, `${revision} coal choices`);
     assert.deepEqual(
         offering('woodcutting', 'willow').filter((row) => /draynor/i.test(`${row.id} ${row.label}`)).map((row) => row.id),
         ['woodcutting.draynor'],
@@ -3148,9 +3240,27 @@ for (const { revision, root } of gatheringPins) {
     const ids274 = siteRowsByRevision.get(274)!.map((row) => row.id);
     const rows289 = siteRowsByRevision.get(289)!;
     const ids289 = rows289.map((row) => row.id);
-    assert.equal(ids274.filter((id) => ids289.includes(id)).length, 289, 'shared site ids');
+    assert.equal(ids274.filter((id) => ids289.includes(id)).length, 294, 'shared site ids');
     assert.deepEqual(ids289.filter((id) => !ids274.includes(id)).sort(), [], '289-only site rows');
     assert.equal(ids274.filter((id) => !ids289.includes(id)).length, 0, 'no 274-only rows');
+}
+
+{
+    const requires = [
+        { kind: 'worn', item: 1844, name: 'Slave shirt' },
+        { kind: 'worn', item: 1845, name: 'Slave robe' },
+        { kind: 'worn', item: 1846, name: 'Slave boots' },
+        { kind: 'quest', name: 'The Tourist Trap' },
+    ];
+    const bankingUnavailable = 'No bank route returns from the lower mine. The mine requires the slave kit, but the camp exit rejects worn kit pieces.';
+    for (const revision of [274, 289]) {
+        const lowerMine = siteRowsByRevision
+            .get(revision)!
+            .find((row) => row.id === 'mining.desert_mining_camp.underground');
+        assert.ok(lowerMine, `${revision} lower mine is published`);
+        assert.deepEqual(lowerMine.requires, requires, `${revision} lower mine requirements`);
+        assert.equal(lowerMine.banking_unavailable, bankingUnavailable, `${revision} lower mine banking limit`);
+    }
 }
 // Real rows for the naming rules and the 0.2.0 id contract, checked on the regenerated data.
 {
@@ -3160,10 +3270,13 @@ for (const { revision, root } of gatheringPins) {
         assert.ok(found, `289 site ${id} is published`);
         return found!;
     };
-    // Underground: the nearest labels.txt label to the surface projection, `<name> (underground)`, id `<skill>.<slug>.underground`.
-    // Dropped by the override table: the desert camp entrances need slave robes worn, so neither is a row on 289.
-    // The surface `mining.desert_mining_camp` is a 0.2.0 id and stays; only its two underground entrances are dropped.
-    assert.ok(!rows289.some((row) => row.id === 'mining.desert_mining_camp.underground' || row.id === 'mining.desert_mining_camp.underground.n'), '289 desert camp underground entrances are dropped');
+    // The lower mine has a proven worn-kit entrance and needs The Tourist Trap. The northern room remains beyond the dialogue and chance-gated minecart.
+    assert.equal(at289('mining.desert_mining_camp.underground').banking_unavailable, 'No bank route returns from the lower mine. The mine requires the slave kit, but the camp exit rejects worn kit pieces.');
+    assert.ok(!rows289.some((row) => row.id === 'mining.desert_mining_camp.underground.n'), '289 northern mine remains hidden behind the minecart');
+    assert.deepEqual(at289('mining.grand_tree.underground').requires, [{ kind: 'quest', name: 'The Grand Tree' }]);
+    assert.deepEqual(at289('mining.grand_tree.underground.2').requires, [{ kind: 'quest', name: 'The Grand Tree' }]);
+    assert.ok(at289('mining.desert_mining_camp'));
+    assert.ok(at289('fishing.dark_wizards_tower.underground.nw'));
     // The Falador Mining Guild cluster (3042,9758) is named by the nearest-label rule (Park is 23 tiles from its projection, Falador 39); the override table renames it.
     const guild = rows289.find((row) => row.skill === 'mining' && row.region.min_x <= 3042 && row.region.max_x >= 3042 && row.region.min_z <= 9758 && row.region.max_z >= 9758);
     assert.equal(guild?.id, 'mining.park.underground.se', '3042,9758 is the Park underground cluster');

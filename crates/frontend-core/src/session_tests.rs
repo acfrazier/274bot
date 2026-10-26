@@ -178,6 +178,37 @@ fn session(test: &str, profiles: &[(&str, i32, bool)]) -> OperatorSession<u32> {
     session
 }
 
+#[test]
+fn new_profile_form_refuses_an_empty_password() {
+    let iso = crate::test_support::IsolatedStores::enter("profile-editor-empty-password");
+    let mut core = session("profile-editor-empty-password", &[]);
+    let scripts = crate::scripts::Scripts::new(
+        script::JsLibrary::with_cache(
+            iso.dir().join("js-scripts.json"),
+            iso.dir().join("js-cache"),
+        ),
+        script::ScriptSettingsStore::at(iso.dir().join("script-settings.json")),
+    );
+    let mut editor = crate::ProfileEditor::new();
+    editor.open(&core, "");
+    editor.username_mut().push_str("alice");
+
+    assert_eq!(
+        editor.save(&mut core, &scripts, OperatorCommand::CreateProfile),
+        Err(crate::SaveRefused::Refused)
+    );
+    assert_eq!(
+        editor
+            .save_state()
+            .notice()
+            .and_then(|notice| notice.error()),
+        Some("credentials: password required")
+    );
+    assert!(core.profile("alice").is_none(), "nothing was saved");
+    core.flush_writes();
+    assert!(core.profile("alice").is_none(), "nothing was queued");
+}
+
 fn arm(session: &OperatorSession<u32>, name: &str) -> Arc<SlotArm> {
     session.play().unwrap().arm(name).expect("live arm")
 }
@@ -332,7 +363,7 @@ fn load_follows_saved_auto_login_while_login_arms_an_explicit_handshake() {
         arm(&s, "auto").wants_login(),
         "Load follows saved auto-login"
     );
-    assert_eq!(s.members(), ["manual".to_string(), "auto".to_string()]);
+    assert_eq!(s.members(), ["auto".to_string(), "manual".to_string()]);
     assert_eq!(s.selected(), None, "Load is not selection");
 
     let login = s.login("manual", &mut surface);
@@ -1392,6 +1423,198 @@ fn random_event_policy_persists_and_mirrors_after_durable_write() {
         s.operation(op).unwrap().outcome("alice"),
         Some(&Outcome::Completed)
     );
+}
+
+#[test]
+fn survival_mirror_reaches_running_slot_within_one_frame() {
+    let name = "survival-mirror-alice";
+    let mut s = session("survival-mirror", &[(name, 1, false)]);
+    let mut surface = Recorder::default();
+    s.load(name, &mut surface);
+    let alice = arm(&s, name);
+    assert_eq!(
+        alice.cure_poison(),
+        script::survival::CurePoison::WhenNeeded,
+        "a fresh arm mirrors the default"
+    );
+    let op = s
+        .set_survival_settings(name, crate::CurePoison::Never)
+        .unwrap();
+    assert_eq!(
+        alice.cure_poison(),
+        script::survival::CurePoison::WhenNeeded,
+        "a running slot changes only after the profile write is durable"
+    );
+
+    s.flush_writes();
+    assert_eq!(
+        s.operation(op).unwrap().outcome(name),
+        Some(&Outcome::Completed)
+    );
+    assert_eq!(
+        alice.cure_poison(),
+        script::survival::CurePoison::Never,
+        "the durable write is on the arm for the next frame the slot observes"
+    );
+    let saved = Vault::unlock(&vault_path("survival-mirror"), "test-passphrase-01").unwrap();
+    assert_eq!(
+        saved.get(name).unwrap().settings.survival.cure_poison,
+        vault::CurePoison::Never
+    );
+}
+
+#[test]
+fn set_survival_logs_one_audit_line() {
+    let name = "survival-audit-alice";
+    let mut s = session("survival-audit", &[(name, 1, false)]);
+    let first = s
+        .set_survival_settings(name, crate::CurePoison::Never)
+        .unwrap();
+    s.flush_writes();
+    assert_eq!(
+        slot_log(name),
+        [(
+            Source::Host,
+            Level::Info,
+            format!(
+                "survival cure_poison when_needed -> never; profile {name}; action survival; op#{}",
+                first.0
+            ),
+        )],
+        "one durable survival write logs one audit line"
+    );
+
+    let second = s
+        .set_survival_settings(name, crate::CurePoison::Always)
+        .unwrap();
+    s.flush_writes();
+    assert_eq!(
+        slot_log(name).len(),
+        2,
+        "each write logs its own line, no more"
+    );
+    assert_eq!(
+        slot_log(name).last().unwrap(),
+        &(
+            Source::Host,
+            Level::Info,
+            format!(
+                "survival cure_poison never -> always; profile {name}; action survival; op#{}",
+                second.0
+            ),
+        ),
+        "the old value is the row the write replaced"
+    );
+}
+
+#[test]
+fn combined_survival_writes_log_the_durable_transition_once() {
+    let name = "survival-coalesced-alice";
+    let mut s = session("survival-coalesced", &[(name, 1, false)]);
+    let gate = s.write_gate();
+    let held = gate.lock().unwrap();
+    let superseded = s
+        .set_survival_settings(name, crate::CurePoison::Never)
+        .unwrap();
+    let final_write = s
+        .set_survival_settings(name, crate::CurePoison::Always)
+        .unwrap();
+    drop(held);
+    s.flush_writes();
+
+    assert_eq!(
+        s.operation(superseded).unwrap().outcome(name),
+        Some(&Outcome::Cancelled)
+    );
+    assert_eq!(
+        s.operation(final_write).unwrap().outcome(name),
+        Some(&Outcome::Completed)
+    );
+    assert_eq!(
+        slot_log(name),
+        [(
+            Source::Host,
+            Level::Info,
+            format!(
+                "survival cure_poison when_needed -> always; profile {name}; action survival; op#{}",
+                final_write.0
+            ),
+        )],
+        "one committed change logs its durable transition"
+    );
+}
+
+#[test]
+fn failed_pending_survival_write_then_success_logs_only_the_durable_transition() {
+    let name = "survival-failed-then-success-alice";
+    let test = "survival-failed-then-success";
+    let mut s = session(test, &[(name, 1, false)]);
+    let blocked = block_writes(&vault_path(test));
+
+    let failed = s
+        .set_survival_settings(name, crate::CurePoison::Never)
+        .unwrap();
+    let failed_write = s
+        .writer
+        .as_mut()
+        .and_then(ProfileWriter::wait_take)
+        .expect("the failed write reaches the writer");
+    assert!(failed_write.result.is_err());
+
+    unblock_writes(blocked);
+    let successful = s
+        .set_survival_settings(name, crate::CurePoison::Always)
+        .unwrap();
+    s.settle_write(failed_write);
+    let successful_write = s
+        .writer
+        .as_mut()
+        .and_then(ProfileWriter::wait_take)
+        .expect("the following write reaches the writer");
+    s.settle_write(successful_write);
+
+    assert!(s
+        .operation(failed)
+        .unwrap()
+        .outcome(name)
+        .unwrap()
+        .is_failed());
+    assert_eq!(
+        s.operation(successful).unwrap().outcome(name),
+        Some(&Outcome::Completed)
+    );
+    assert_eq!(
+        slot_log(name),
+        [(
+            Source::Host,
+            Level::Info,
+            format!(
+                "survival cure_poison when_needed -> always; profile {name}; action survival; op#{}",
+                successful.0
+            ),
+        )],
+        "the failed setting never appears in the audit history"
+    );
+}
+
+#[test]
+fn random_settings_write_path_unchanged() {
+    // Regression pin: the guardian write path still persists through
+    // save_profile and mirrors the running arm. This test names no
+    // survival type, so it also passes on the base commit.
+    let name = "survival-pin-alice";
+    let mut s = session("survival-pin", &[(name, 1, false)]);
+    let mut surface = Recorder::default();
+    s.load(name, &mut surface);
+    let alice = arm(&s, name);
+    s.set_random_settings(name, false, "Magic", false).unwrap();
+    s.flush_writes();
+    assert!(!alice.random_events.load(Ordering::Relaxed));
+    assert_eq!(alice.lamp_skill.lock().unwrap().as_str(), "Magic");
+    let saved = Vault::unlock(&vault_path("survival-pin"), "test-passphrase-01").unwrap();
+    let settings = &saved.get(name).unwrap().settings;
+    assert!(!settings.random_events);
+    assert_eq!(settings.lamp_skill, "Magic");
 }
 
 #[test]
@@ -2830,4 +3053,103 @@ fn dirty(
         target,
         &crate::ProfileDraft::from_parts(username, password, settings.clone()),
     )
+}
+
+/// Reopen both durable stores, adopt ranks while locked, then insert clients
+/// without a poll between unlock and Load. The vault UID survives a rename.
+#[test]
+fn o1_restart_applies_saved_order_before_individual_loads() {
+    let path = vault_path("o1-restart-order");
+    let vault = vault_with(
+        "o1-restart-order",
+        &[("A", 1, false), ("B", 2, false), ("C", 3, false)],
+    );
+    drop(vault);
+    let root = path.parent().unwrap().join("state");
+    {
+        let preferences = crate::UiPreferences::open_for_test(root.clone());
+        preferences
+            .set(
+                crate::PROFILE_ORDER_KEY,
+                serde_json::json!({"3": 10, "1": 20, "2": 30}),
+            )
+            .unwrap();
+    }
+    let service = host_play::local_state::LocalStateService::open_process(
+        host_play::local_state::StateRoot::new(root),
+    );
+    let mut session = OperatorSession::<u32>::new(InstancePermit::SkipLock);
+    session.set_spawn_workers(false);
+    session.bind_local_state(service);
+    session.preferences().unwrap().reload().unwrap();
+    session.adopt_operator_preferences();
+    assert!(!session.vault_open());
+    let mut vault = Vault::unlock(&path, "test-passphrase-01").unwrap();
+    let mut renamed = vault.get("A").unwrap().clone();
+    renamed.username = "A-renamed".into();
+    vault.remove("A").unwrap();
+    vault.upsert(renamed).unwrap();
+    session.start(vault, empty_play());
+    assert_eq!(session.profile_names(), ["C", "A-renamed", "B"]);
+    let mut surface = Recorder::default();
+    for (name, expected) in [
+        ("B", vec!["B"]),
+        ("C", vec!["C", "B"]),
+        ("A-renamed", vec!["C", "A-renamed", "B"]),
+    ] {
+        session.load(name, &mut surface);
+        assert_eq!(session.members(), expected);
+    }
+    assert!(
+        session.order_writes.is_empty(),
+        "projection alone must not save"
+    );
+}
+
+#[test]
+fn o1_same_length_uid_name_projection_invalidates_without_a_save() {
+    let mut session = session(
+        "o1-sequence-generation",
+        &[("A", 1, false), ("B", 2, false)],
+    );
+    session.reconcile_profile_order();
+    session.order_saved = true;
+    let mut fleet = crate::FleetModel::new();
+    assert!(fleet.refresh(&session));
+    assert_eq!(
+        fleet
+            .rows()
+            .iter()
+            .map(|row| row.name())
+            .collect::<Vec<_>>(),
+        ["A", "B"]
+    );
+    // The authoritative vault now maps the same two UIDs to exchanged names.
+    // Stored rank keys do not change, but cached Fleet rows must rebuild.
+    let vault = session.vault.as_mut().unwrap();
+    let mut a = vault.get("A").unwrap().clone();
+    let mut b = vault.get("B").unwrap().clone();
+    a.username = "B".into();
+    b.username = "A".into();
+    vault.upsert(a).unwrap();
+    vault.upsert(b).unwrap();
+    session.order_reconciled_at = None;
+    let generation = session.profiles_generation;
+    session.reconcile_profile_order();
+    assert_eq!(session.profile_order().names(), ["B", "A"]);
+    assert_ne!(
+        session.profiles_generation, generation,
+        "publish the changed sequence"
+    );
+    assert!(fleet.refresh(&session));
+    assert_eq!(
+        fleet
+            .rows()
+            .iter()
+            .map(|row| row.name())
+            .collect::<Vec<_>>(),
+        ["B", "A"]
+    );
+    assert_eq!(session.order_write_seq, 0, "no rank changed");
+    assert!(session.order_writes.is_empty());
 }

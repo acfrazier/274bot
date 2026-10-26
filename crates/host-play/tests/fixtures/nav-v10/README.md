@@ -7,14 +7,14 @@ encoder itself, not patched from newer bytes.
 ## Provenance
 
 - Source: commit `a167fb6e9e0db0ac2a83bee9c953b691d596b759` (last `274V10`
-  encoder, `nav::pack::VERSION = 10`), extracted with `git archive`.
+  encoder, `nav_planner::pack::VERSION = 10`), extracted with `git archive`.
 - Generator: a throwaway `nav` example run in that tree, encoding the same
   2×1 world as `tiny_v8_pack()` in `tests/session_profile.rs` (origin
   `(3200, 3200, 0)`, all-open walk bytes, empty `TransportGraph`, no banks):
 
   ```rust
   let (walk, blocked) = pack_walk(&[0; 8]);
-  let bytes = nav::pack::encode(
+  let bytes = nav_planner::pack::encode(
       &WorldCollision { origin, width: 2, height: 1, walk, blocked, flags: None },
       &TransportGraph::default(),
       &[],

@@ -47,8 +47,12 @@ use frontend_core::launch::{
     ValidationPending,
 };
 use frontend_core::process::debug_enabled;
+use frontend_core::surface::map_image_to_applet;
 
-use crate::input_capture::{discard_unconsumed_native_capture, stream_capture, KeyboardOwner};
+use crate::input_capture::{
+    discard_unconsumed_native_capture, stream_capture, KeyboardOwner, MouseButtons, MouseFrame,
+    MouseTarget, PaintMouseGate,
+};
 use crate::session::{
     debug_dest_cheats, debug_main_buttons_for, debug_maxme_cheats, script_active,
     script_pause_enabled, script_stop_enabled, PanelWindow, Session,
@@ -64,7 +68,8 @@ use frontend_core::scripts::{
     ScriptChoice, ScriptRunState, SettingView,
 };
 use frontend_core::{
-    FleetOrder, FleetRow, OperatorCommand, Phase, ProfileIdentity, ReorderOp, ResourceView, Targets,
+    FleetOrder, FleetRow, LogoutEligibility, OperatorCommand, Phase, ProfileIdentity, ReorderOp,
+    ResourceView, Targets,
 };
 
 #[path = "live_harness.rs"]
@@ -153,6 +158,9 @@ struct PanelState {
     game_view: Option<GameView>,
     session: Session,
     keyboard: KeyboardOwner,
+    /// Press-origin routing for captured mouse buttons at the paint
+    /// boundary, shared by the single-bot pane and the grid pane.
+    mouse_gate: PaintMouseGate,
     dock_inited: bool,
     /// Which dock layout the tree was last built with; `None` before the
     /// first init. A MultiBox toggle rebuilds the tree when this differs.
@@ -631,6 +639,7 @@ impl PanelState {
             game_view: None,
             session,
             keyboard: KeyboardOwner::default(),
+            mouse_gate: PaintMouseGate::default(),
             dock_inited: false,
             dock_layout: None,
             game_dock_node: None,
@@ -1083,6 +1092,12 @@ fn focused_paint(session: &Session) -> Option<Option<PaintFrame>> {
     Some(session.core.script_paint(name))
 }
 
+/// Draw the focused slot's script paint over the Game Image and apply
+/// its hit, if any. Returns whether the pointer is inside the drawn
+/// paint panel this frame. The panes give that to the mouse gate,
+/// which decides where a press that starts now belongs: a press on
+/// the paint never also clicks the game under it. A release follows
+/// the press that started it, not this frame's pointer place.
 fn overlay_script_paint(
     ui: &Ui,
     gpu: &mut Gpu,
@@ -1090,7 +1105,7 @@ fn overlay_script_paint(
     paint: Option<Option<PaintFrame>>,
     min: [f32; 2],
     size: [f32; 2],
-) {
+) -> bool {
     match paint {
         Some(paint) => {
             if let Some((hit, generation)) = state.paint.frame(
@@ -1111,8 +1126,12 @@ fn overlay_script_paint(
                     }
                 }
             }
+            state.paint.pointer_inside_panel()
         }
-        None => state.paint.release_canvas(gpu),
+        None => {
+            state.paint.release_canvas(gpu);
+            false
+        }
     }
 }
 
@@ -1360,13 +1379,136 @@ fn game_window(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, title: &str) {
         }
         if state.session.walkto_open {
             picker::draw_picker(ui, Some(gpu), &mut state.session, &mut state.walk_map);
+            let (capture_enabled, capture_keys) = {
+                let focus = state.session.focus.lock().unwrap();
+                (focus.capture, should_capture(&focus))
+            };
+            let slot = state.session.core.selected();
+            capture_game_mouse(
+                ui,
+                &state.session.core,
+                &mut state.session.map_desk,
+                &mut state.keyboard,
+                &mut state.mouse_gate,
+                MouseCaptureView {
+                    slot,
+                    image_min: [0.0; 2],
+                    image_size: [0.0; 2],
+                    image_hovered: false,
+                    pointer_in_paint: false,
+                    capture_enabled,
+                    capture_keys,
+                },
+            );
         } else if grid {
             grid_pane(ui, gpu, state, avail);
         } else {
             game_pane(ui, gpu, state, avail);
         }
     });
-    state.session.set_game_pane_open(built.is_some());
+    let open = built.is_some();
+    state.session.set_game_pane_open(open);
+    if !open {
+        state.mouse_gate.clear();
+    }
+}
+
+struct MouseCaptureView<'a> {
+    slot: Option<&'a str>,
+    image_min: [f32; 2],
+    image_size: [f32; 2],
+    image_hovered: bool,
+    pointer_in_paint: bool,
+    capture_enabled: bool,
+    capture_keys: bool,
+}
+
+/// Capture button edges for the shared Game panes.
+fn capture_game_mouse(
+    ui: &Ui,
+    core: &frontend_core::OperatorSession<crate::session::SlotIo>,
+    map_desk: &mut frontend_core::MapDesk,
+    keyboard: &mut KeyboardOwner,
+    mouse_gate: &mut PaintMouseGate,
+    view: MouseCaptureView<'_>,
+) {
+    let MouseCaptureView {
+        slot,
+        image_min,
+        image_size,
+        image_hovered,
+        pointer_in_paint,
+        capture_enabled,
+        capture_keys,
+    } = view;
+    if !capture_enabled {
+        mouse_gate.clear();
+        return;
+    }
+
+    let mouse = ui.io().mouse_pos();
+    let buttons = MouseButtons {
+        left_down: ui.is_mouse_clicked(MouseButton::Left),
+        right_down: ui.is_mouse_clicked(MouseButton::Right),
+        left_up: ui.is_mouse_released(MouseButton::Left),
+        right_up: ui.is_mouse_released(MouseButton::Right),
+    };
+    let applet_point = if image_hovered {
+        map_image_to_applet(
+            mouse[0] - image_min[0],
+            mouse[1] - image_min[1],
+            image_size[0],
+            image_size[1],
+        )
+    } else {
+        None
+    };
+    if image_hovered {
+        stream_capture(
+            map_desk,
+            mouse[0] - image_min[0],
+            mouse[1] - image_min[1],
+            image_size[0],
+            image_size[1],
+            false,
+            false,
+            false,
+            false,
+            &[],
+        );
+    }
+
+    let input = slot
+        .and_then(|name| core.slot_io(name))
+        .map(|slot| Arc::clone(&slot.input));
+    let is_new_game_press = image_hovered
+        && !pointer_in_paint
+        && input.is_some()
+        && (buttons.left_down || buttons.right_down);
+    let sender = if is_new_game_press {
+        map_desk.duplicate_input_sender()
+    } else {
+        None
+    };
+    let target = slot
+        .zip(input.as_ref())
+        .map(|(slot, input)| MouseTarget { slot, input });
+    let frame = MouseFrame {
+        target,
+        sender,
+        image_hovered,
+        pointer_in_paint,
+        applet_point,
+        buttons,
+    };
+    mouse_gate.route(map_desk, frame, |name, input| {
+        core.slot_io(name)
+            .is_some_and(|slot| Arc::ptr_eq(&slot.input, input))
+    });
+
+    if capture_keys && image_hovered {
+        keyboard.capture_keys(ui, map_desk);
+    }
 }
 
 /// Single-bot / rail Game pane: native 765×503, centred in the leaf.
@@ -1379,10 +1521,14 @@ fn game_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
     if state.game_view.is_none() {
         state.game_view = Some(GameView::init(gpu));
     }
-    let (draw, capture) = {
+    let (draw, capture, capture_enabled) = {
         let focus = state.session.focus.lock().unwrap();
-        (should_draw(&focus), should_capture(&focus))
+        (should_draw(&focus), should_capture(&focus), focus.capture)
     };
+    let name = state.session.focused_name().unwrap_or_default();
+    let mut image_min = [0.0; 2];
+    let mut image_hovered = false;
+    let mut pointer_in_paint = false;
     // A head the render service refused (its cap is full) draws nothing:
     // say so in this cell instead of showing a stale picture.
     let refused = draw
@@ -1401,7 +1547,6 @@ fn game_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
         // read-back), the `PixMap` arm uploads the CPU pixels. `take`
         // returning `None` is "no new frame since the last upload", the
         // same skip the old snapshot path gave.
-        let name = state.session.focused_name().unwrap_or_default();
         let gen = buf.as_ref().map(|p| p.generation()).unwrap_or(0);
         let dirty = state.last_upload.as_ref() != Some(&(name.clone(), gen));
         if dirty {
@@ -1432,7 +1577,12 @@ fn game_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
         }
         let view = state.game_view.as_ref().expect("game view initialized");
         ui.image(view.tex_id, size);
+        // The capture gate and anchor belong to the Image item. Read
+        // them now: after the overlays the last submitted item is no
+        // longer guaranteed to be the Image.
         let min = ui.item_rect_min();
+        image_min = min;
+        image_hovered = ui.is_item_hovered();
         #[cfg(feature = "render-diagnostics")]
         {
             let fb = ui.io().display_framebuffer_scale();
@@ -1454,31 +1604,27 @@ fn game_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
         // Script-paint overlay: the focused slot's paint renders in an
         // ImGui window over the chatbox rect — never on the game texture.
         let paint = focused_paint(&state.session);
-        overlay_script_paint(ui, gpu, state, paint, min, size);
-        // Capture: only map/enqueue while on and hovered;
-        // capture off skips the coord math entirely (tx is
-        // also None).
-        if capture && ui.is_item_hovered() {
-            let mouse = ui.io().mouse_pos();
-            let min = ui.item_rect_min();
-            stream_capture(
-                &mut state.session.map_desk,
-                mouse[0] - min[0],
-                mouse[1] - min[1],
-                size[0],
-                size[1],
-                ui.is_mouse_clicked(MouseButton::Left),
-                ui.is_mouse_clicked(MouseButton::Right),
-                ui.is_mouse_released(MouseButton::Left),
-                ui.is_mouse_released(MouseButton::Right),
-                &[],
-            );
-            state.keyboard.capture_keys(ui, &mut state.session.map_desk);
-        }
+        pointer_in_paint = overlay_script_paint(ui, gpu, state, paint, min, size);
     } else {
         ui.text_disabled("renderer off");
         state.paint.release_canvas(gpu);
     }
+    capture_game_mouse(
+        ui,
+        &state.session.core,
+        &mut state.session.map_desk,
+        &mut state.keyboard,
+        &mut state.mouse_gate,
+        MouseCaptureView {
+            slot: (!name.is_empty()).then_some(name.as_str()),
+            image_min,
+            image_size: size,
+            image_hovered,
+            pointer_in_paint,
+            capture_enabled,
+            capture_keys: capture,
+        },
+    );
 }
 
 /// MultiBox grid-mode Game pane: same cap as the sidecar (dot, name +
@@ -1488,6 +1634,14 @@ fn game_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
 fn grid_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
     state.sync_fleet();
     let shown = state.session.fleet_model.counts().shown_loaded();
+    let (capture, capture_enabled, only_selected) = {
+        let focus = state.session.focus.lock().unwrap();
+        (
+            should_capture(&focus),
+            focus.capture,
+            focus.only_render_selected,
+        )
+    };
     if shown == 0 {
         state.queue_cards.clear();
         let loaded = state
@@ -1506,6 +1660,23 @@ fn grid_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
         // which also disposes them, is not drawn in Grid).
         let model = &state.session.fleet_model;
         dispose_idle_views(&mut state.views, gpu, |name| tile_shown(model, name));
+        // A filtered Grid can hide its cells while a focused game press remains held.
+        capture_game_mouse(
+            ui,
+            &state.session.core,
+            &mut state.session.map_desk,
+            &mut state.keyboard,
+            &mut state.mouse_gate,
+            MouseCaptureView {
+                slot: state.session.core.selected(),
+                image_min: [0.0; 2],
+                image_size: [0.0; 2],
+                image_hovered: false,
+                pointer_in_paint: false,
+                capture_enabled,
+                capture_keys: capture,
+            },
+        );
         return;
     }
     // The cells read the model's rows while their clicks need the session:
@@ -1514,10 +1685,6 @@ fn grid_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
     let model = std::mem::take(&mut state.session.fleet_model);
     let labels = std::mem::take(&mut state.fleet_labels);
     let cells = grid_cells(shown, avail);
-    let (capture, only_selected) = {
-        let focus = state.session.focus.lock().unwrap();
-        (should_capture(&focus), focus.only_render_selected)
-    };
     {
         let focus = state.session.focus.lock().unwrap();
         dispose_idle_views(&mut state.views, gpu, |name| {
@@ -1528,7 +1695,12 @@ fn grid_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
     let switch_world = state.session.can_switch_world();
     // Only the focused cell paints the script overlay (an `Arc`, no copy).
     let mut focused_paint = focused_paint(&state.session);
+    let mut image_min = [0.0; 2];
+    let mut image_size = [0.0; 2];
+    let mut image_hovered = false;
+    let mut pointer_in_paint = false;
     let mut clicked = None;
+    let mut target_slot = None;
     for ((index, row), [cx, cy, cw, ch]) in model
         .shown_rows()
         .filter(|(_, row)| row.loaded())
@@ -1543,6 +1715,9 @@ fn grid_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
                 draw_for_slot(&focus, name),
             )
         };
+        if is_focused {
+            target_slot = Some(name);
+        }
         ui.set_cursor_pos([cx, cy]);
         let preview = rail_preview_open(
             name,
@@ -1586,32 +1761,27 @@ fn grid_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
                 after[1] + ((remain_h - size[1]) * 0.5).max(0.0),
             ]);
             body_clicked = cell_body(ui, gpu, state, name, size, draw);
-            let image_min = ui.item_rect_min();
-            if is_focused && capture && ui.is_item_hovered() {
-                let mouse = ui.io().mouse_pos();
-                let min = image_min;
-                stream_capture(
-                    &mut state.session.map_desk,
-                    mouse[0] - min[0],
-                    mouse[1] - min[1],
-                    size[0],
-                    size[1],
-                    ui.is_mouse_clicked(MouseButton::Left),
-                    ui.is_mouse_clicked(MouseButton::Right),
-                    ui.is_mouse_released(MouseButton::Left),
-                    ui.is_mouse_released(MouseButton::Right),
-                    &[],
-                );
-                state.keyboard.capture_keys(ui, &mut state.session.map_desk);
-            }
-            state.queue_cards.frame(ui, name, row.queue(), image_min);
+            // As in the single-bot pane: the capture gate and anchor
+            // belong to the cell's Image item, read before the
+            // overlays draw over it.
+            let cell_image_min = ui.item_rect_min();
             if is_focused {
-                overlay_script_paint(
+                image_min = cell_image_min;
+                image_size = size;
+                image_hovered = ui.is_item_hovered();
+            }
+            state
+                .queue_cards
+                .frame(ui, name, row.queue(), cell_image_min);
+            // Only the focused cell writes the paint flag: a later open
+            // cell must not clear the value the capture gate reads.
+            if is_focused {
+                pointer_in_paint = overlay_script_paint(
                     ui,
                     gpu,
                     state,
                     focused_paint.take(),
-                    ui.item_rect_min(),
+                    cell_image_min,
                     size,
                 );
             }
@@ -1621,7 +1791,9 @@ fn grid_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
         if cap_fold {
             let next = !preview;
             state.session.ui.rail_preview.insert(name.to_string(), next);
-            crate::ui_state::save(&state.session.preferences, &state.session.ui);
+            let _ = state
+                .session
+                .persist_panel_member(&["rail_preview", name], Some(serde_json::Value::Bool(next)));
         } else if cap_remove {
             clicked = Some(TileClick::Remove(index));
         } else if cap_world {
@@ -1630,6 +1802,22 @@ fn grid_pane(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState, avail: [f32; 2]) {
             clicked = Some(TileClick::Select(index));
         }
     }
+    capture_game_mouse(
+        ui,
+        &state.session.core,
+        &mut state.session.map_desk,
+        &mut state.keyboard,
+        &mut state.mouse_gate,
+        MouseCaptureView {
+            slot: target_slot,
+            image_min,
+            image_size,
+            image_hovered,
+            pointer_in_paint,
+            capture_enabled,
+            capture_keys: capture,
+        },
+    );
     state.queue_cards.end_frame();
     state.session.fleet_model = model;
     state.fleet_labels = labels;
@@ -1859,10 +2047,23 @@ fn capacity_banner(ui: &Ui, session: &Session) {
     }
 }
 
+/// The top lines: a panel message first, then the focused bot's current
+/// login notice, then (with no panel message) startup progress or the
+/// bot's live state. The notice outlives the retry's state changes, so the
+/// state line shows under it; when the state line says the same failure,
+/// the notice says it once.
 fn banner(ui: &Ui, session: &Session, progress: Option<StartupProgressView>) {
+    let detail = session.core.fleet_view().detail();
     if let Some(err) = &session.error {
         ui.text_colored(ERROR, err);
-    } else if session.profile_preparing() {
+    }
+    if let Some(notice) = detail.and_then(|detail| detail.row().login_notice()) {
+        ui.text_colored(ERROR, sentence_case(notice));
+    }
+    if session.error.is_some() {
+        return;
+    }
+    if session.profile_preparing() {
         if let Some(progress) = progress {
             loading_banner(ui, progress.phase, &progress.progress);
         } else {
@@ -1872,8 +2073,11 @@ fn banner(ui: &Ui, session: &Session, progress: Option<StartupProgressView>) {
                 &ProgressView::steps(ProgressStage::SelectingServerProfile, 0, 1),
             );
         }
-    } else if let Some(detail) = session.core.fleet_view().detail() {
-        slot_banner(ui, detail);
+    } else if let Some(detail) = detail {
+        // An error state line that says the notice's failure is not repeated.
+        if detail.row().login_notice() != Some(detail.state()) {
+            slot_banner(ui, detail);
+        }
     }
 }
 
@@ -1926,10 +2130,13 @@ fn section_open(ui: &Ui, session: &mut Session, id: &str) -> bool {
         session
             .ui
             .collapsed
-            .entry(user)
+            .entry(user.clone())
             .or_default()
             .insert(id.to_string(), !open);
-        crate::ui_state::save(&session.preferences, &session.ui);
+        let _ = session.persist_panel_member(
+            &["collapsed", user.as_str(), id],
+            Some(serde_json::Value::Bool(!open)),
+        );
     }
     open
 }
@@ -1963,8 +2170,8 @@ fn heading_dnd(ui: &Ui, session: &mut Session, id: &str) {
                 if let Some(from) = heading_from_key(p.data) {
                     let mut order = resolve_heading_order(&session.ui.section_order);
                     move_heading(&mut order, &from, id);
+                    let _ = session.persist_panel_serializable(&["section_order"], &order);
                     session.ui.section_order = order;
-                    crate::ui_state::save(&session.preferences, &session.ui);
                 }
             }
         }
@@ -2036,14 +2243,7 @@ fn vault_unlock_prompt(ui: &Ui, session: &mut Session) {
         .hint(hint)
         .build();
     let w = ui.content_region_avail()[0];
-    let label = if exists {
-        "Unlock vault"
-    } else {
-        "Create vault"
-    };
-    if ui.button_with_size(label, [w, 0.0]) {
-        submit_vault_pass(session, exists);
-    }
+    vault_pass_button(ui, session, exists);
     if exists {
         if ui.button_with_size("Reset vault", [w, 0.0]) {
             session.vault_reset_understood = false;
@@ -2064,21 +2264,52 @@ fn vault_unlock_prompt(ui: &Ui, session: &mut Session) {
     }
 }
 
-/// Unlock with the passphrase exactly as typed: a vault made in the terminal
-/// may begin or end with spaces. Create keeps the vault rule (non-empty once
-/// trimmed) and stores the typed text too, so both front ends agree.
-fn submit_vault_pass(session: &mut Session, exists: bool) {
-    let typed = session.pass_scratch.as_str();
-    let usable = if exists {
+/// The prompt's **Unlock vault** (a vault file exists) or **Create vault**
+/// button, the full content width. A passphrase the command would refuse
+/// greys it out, with a tooltip that says what to type: a greyed-out button
+/// cannot be clicked, so no click is dropped without a refusal.
+fn vault_pass_button(ui: &Ui, session: &mut Session, exists: bool) {
+    let w = ui.content_region_avail()[0];
+    let label = if exists {
+        "Unlock vault"
+    } else {
+        "Create vault"
+    };
+    let usable = vault_pass_usable(&session.pass_scratch, exists);
+    {
+        let _off = (!usable).then(|| ui.begin_disabled());
+        if ui.button_with_size(label, [w, 0.0]) {
+            submit_vault_pass(session);
+        }
+    }
+    if !usable {
+        ui.set_item_tooltip(if exists {
+            "type the vault passphrase"
+        } else {
+            "type a passphrase that is not only spaces"
+        });
+    }
+}
+
+/// Whether the vault prompt's button can send `typed`: Unlock takes the
+/// passphrase exactly as typed (a vault made in the terminal may begin or
+/// end with spaces) and needs some text; Create keeps the vault rule
+/// (non-empty once trimmed). The prompt greys its button out otherwise.
+fn vault_pass_usable(typed: &str, exists: bool) -> bool {
+    if exists {
         !typed.is_empty()
     } else {
         !typed.trim().is_empty()
-    };
-    if usable {
-        let pass = Passphrase::from(typed);
-        session.request_unlock(pass);
-        session.pass_scratch.clear();
     }
+}
+
+/// Send the typed passphrase as is, for Unlock or Create; both front ends
+/// store the typed text. Only an enabled button calls this
+/// ([`vault_pass_usable`]).
+fn submit_vault_pass(session: &mut Session) {
+    let pass = Passphrase::from(session.pass_scratch.as_str());
+    session.request_unlock(pass);
+    session.pass_scratch.clear();
 }
 
 /// profile: orange current name (like script) plus Profiles (opens the
@@ -2154,38 +2385,24 @@ fn paint_inverse_combo_arrow(ui: &Ui) {
     .build();
 }
 
-fn logout_enabled(
-    vault_open: bool,
-    focused: bool,
-    connected: bool,
-    queued: bool,
-    guard_parked: bool,
-) -> bool {
-    vault_open && focused && (connected || queued || guard_parked)
+fn logout_enabled(vault_open: bool, eligibility: Option<LogoutEligibility>) -> bool {
+    vault_open && eligibility.is_some_and(LogoutEligibility::eligible)
 }
 
-/// Log in / Logout above WalkTo. Always drawn; disabled while the vault
-/// is locked or no profile is focused. Logout needs a connected, genuinely
-/// queued or repeat-guard-parked focused slot, so an unloaded profile cannot
-/// be latched accidentally.
+/// Log in / Log out above WalkTo. Always drawn; disabled while the vault
+/// is locked or no profile is focused. Log out follows the shared
+/// projection ([`LogoutEligibility`], also Fleet's and the TUI's): a
+/// connected slot, a pending or retrying login, a queued place or a
+/// repeat-guard park. An unloaded or logged-out profile cannot be latched
+/// accidentally.
 fn login_logout_row(ui: &Ui, session: &mut Session) {
     let avail = ui.content_region_avail()[0];
     let cells = scaled_button_cells(ui, avail, 2);
     let vault_open = session.core.vault_open();
     let focused = session.focused_name();
     let can_login = vault_open && focused.is_some();
-    let focused_queued = focused
-        .as_deref()
-        .and_then(|name| session.queue_for(name))
-        .is_some();
-    let guard_parked = session.focused_guard_parked();
-    let can_logout = logout_enabled(
-        vault_open,
-        focused.is_some(),
-        session.focused_connected(),
-        focused_queued,
-        guard_parked,
-    );
+    let eligibility = session.focused_logout_eligibility();
+    let can_logout = logout_enabled(vault_open, eligibility);
     {
         let _off = (!can_login).then(|| ui.begin_disabled());
         if ui.button_with_size("Log in", [cells[0].0, 0.0]) {
@@ -2206,7 +2423,7 @@ fn login_logout_row(ui: &Ui, session: &mut Session) {
     }
     {
         let _off = (!can_logout).then(|| ui.begin_disabled());
-        if ui.button_with_size("Logout", [cells[1].0, 0.0]) {
+        if ui.button_with_size("Log out", [cells[1].0, 0.0]) {
             if let Some(name) = focused.as_deref() {
                 session.logout(name);
             }
@@ -2215,12 +2432,21 @@ fn login_logout_row(ui: &Ui, session: &mut Session) {
             "unlock the vault first"
         } else if focused.is_none() {
             "pick a profile"
-        } else if focused_queued {
-            "cancel the focused slot's queued login"
-        } else if guard_parked {
-            "end the parked session — its held script work is discarded"
         } else {
-            "log out the focused slot — it stays in the picker"
+            match eligibility {
+                Some(LogoutEligibility::RetryingLogin) => {
+                    "stop the focused slot's login retries — it stays in the picker"
+                }
+                Some(LogoutEligibility::Queued) => "cancel the focused slot's queued login",
+                Some(LogoutEligibility::LoggingIn) => "cancel the focused slot's login",
+                Some(LogoutEligibility::GuardParked) => {
+                    "end the parked session — its held script work is discarded"
+                }
+                Some(LogoutEligibility::LoggedIn) => {
+                    "log out the focused slot — it stays in the picker"
+                }
+                Some(LogoutEligibility::NotLoggedIn) | None => "the focused slot is not logged in",
+            }
         });
     }
 }
@@ -2251,7 +2477,11 @@ fn debug_caption(id: &str) -> &str {
     }
 }
 
-/// Local-engine debug cheats. Omitted on rs2b2t.
+/// Local-engine debug cheats. Omitted on rs2b2t. A cheat button draws
+/// disabled, its tooltip naming why, while a Debug command has no bot to go to
+/// ([`Session::debug_send_target`]: no focused bot, no play session; maxme
+/// follows the Debug panel's target scope), so a click always has a target
+/// when it reaches [`Session::cheat_focused`] or the bulk send.
 fn debug_section(ui: &Ui, session: &mut Session) {
     if !session.debug_ui() {
         return;
@@ -2261,6 +2491,8 @@ fn debug_section(ui: &Ui, session: &mut Session) {
     }
     let show_tutskip = session.focused_tutorial_skipped() == Some(false);
     let main = debug_main_buttons_for(session.profile_class(), show_tutskip);
+    let cheat_block = session.debug_send_target().err();
+    let maxme_block = crate::debug_panel::send_block(session);
     let avail = ui.content_region_avail()[0];
     // Packed one row even when a scrollbar trims avail below MIN_BUTTON —
     // stacking turns DebugPanel/Lumbridge/maxme/Teles into four strip-width
@@ -2280,19 +2512,22 @@ fn debug_section(ui: &Ui, session: &mut Session) {
                 ui.set_item_tooltip("DebugPanel v2 — full cheat catalog");
             }
             "TutSkip" => {
+                let _off = cheat_block.is_some().then(|| ui.begin_disabled());
                 if ui.button_with_size(caption, [w, 0.0]) {
                     session.cheat_focused("setvar tutorial 1000");
                     session.mark_tutorial_skipped();
                 }
-                ui.set_item_tooltip("setvar tutorial 1000");
+                ui.set_item_tooltip(cheat_block.unwrap_or("setvar tutorial 1000"));
             }
             "Lumbridge" => {
+                let _off = cheat_block.is_some().then(|| ui.begin_disabled());
                 if ui.button_with_size(caption, [w, 0.0]) {
                     session.cheat_focused("~home");
                 }
-                ui.set_item_tooltip("~home — Lumbridge courtyard");
+                ui.set_item_tooltip(cheat_block.unwrap_or("~home — Lumbridge courtyard"));
             }
             "maxme" => {
+                let _off = maxme_block.is_some().then(|| ui.begin_disabled());
                 if ui.button_with_size(caption, [w, 0.0]) {
                     session.open_window(PanelWindow::Debug);
                     crate::debug_panel::request_bulk_send(
@@ -2307,7 +2542,9 @@ fn debug_section(ui: &Ui, session: &mut Session) {
                         "This sets every skill to 99.".into(),
                     );
                 }
-                ui.set_item_tooltip("19× setstat 99 — confirmation is required");
+                ui.set_item_tooltip(
+                    maxme_block.unwrap_or("19× setstat 99 — confirmation is required"),
+                );
             }
             "Teles" if ui.button_with_size(caption, [w, 0.0]) => {
                 ui.open_popup("##debug-teles");
@@ -2320,6 +2557,9 @@ fn debug_section(ui: &Ui, session: &mut Session) {
 
 fn debug_teleports_popup(ui: &Ui, session: &mut Session) {
     ui.popup("##debug-teles", || {
+        // The destinations are rail cheats like Lumbridge: disabled, the
+        // tooltip naming why, while no bot can take one.
+        let cheat_block = session.debug_send_target().err();
         let dests = debug_dest_cheats();
         let scale = ui_scale(ui);
         let avail = PANEL_WIDTH;
@@ -2333,11 +2573,12 @@ fn debug_teleports_popup(ui: &Ui, session: &mut Session) {
             if i > 0 && i % cols != 0 {
                 gap_line(ui);
             }
+            let _off = cheat_block.is_some().then(|| ui.begin_disabled());
             if ui.button_with_size(dest.label, [bw, 0.0]) {
                 session.cheat_focused(dest.cheat);
                 ui.close_current_popup();
             }
-            ui.set_item_tooltip(dest.tooltip);
+            ui.set_item_tooltip(cheat_block.unwrap_or(dest.tooltip));
         }
     });
 }
@@ -2400,6 +2641,7 @@ fn script_section(ui: &Ui, session: &mut Session) {
             ui.text_disabled(line);
         }
     }
+    script_parameter_draft_recovery(ui, session);
     let avail = ui.content_region_avail()[0];
     let (w, stack) = scaled_button_row_layout(ui, avail, 3);
     {
@@ -2622,8 +2864,8 @@ fn category_chip_dnd(ui: &Ui, session: &mut Session, cat: &str) {
                     let mut order =
                         resolve_category_order(&session.ui.script_category_order, &present);
                     move_category(&mut order, &from, cat);
+                    let _ = session.persist_panel_serializable(&["script_category_order"], &order);
                     session.ui.script_category_order = order;
-                    crate::ui_state::save(&session.preferences, &session.ui);
                 }
             }
         }
@@ -2806,7 +3048,7 @@ fn browse_window_body(ui: &Ui, session: &mut Session) {
     let order = resolve_category_order(&session.ui.script_category_order, &present);
     if order != session.ui.script_category_order {
         session.ui.script_category_order = order.clone();
-        crate::ui_state::save(&session.preferences, &session.ui);
+        let _ = session.persist_panel_serializable(&["script_category_order"], &order);
     }
     if !order.is_empty() {
         script_category_chips(ui, session, &order);
@@ -2937,7 +3179,16 @@ fn persist_dialog_cwd(session: &mut Session, mode: DialogMode) {
         }
     }
     if session.persist_ui {
-        crate::ui_state::save(&session.preferences, &session.ui);
+        match mode {
+            DialogMode::File => {
+                let path = session.script_load_dir.clone();
+                let _ = session.persist_panel_serializable(&["script_load_last_dir"], &path);
+            }
+            DialogMode::Folder => {
+                let path = session.rs2b0t_catalog_dir.clone();
+                let _ = session.persist_panel_serializable(&["script_catalog_last_dir"], &path);
+            }
+        }
     }
 }
 
@@ -3297,6 +3548,11 @@ fn nav_settings_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
         .flags(WindowFlags::NO_COLLAPSE)
         .size(scale_size(ui, [360.0, 480.0]), Condition::FirstUseEver)
         .build(|| {
+            if !session.panel_preferences_ready() {
+                ui.text_disabled("Loading preferences…");
+            } else if session.preferences_pending() {
+                ui.text_disabled("Saving preferences…");
+            }
             let previous_nav = session.ui.nav.clone();
             let mut nav = previous_nav.clone();
             let mut changed = false;
@@ -3404,9 +3660,8 @@ fn nav_settings_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
 }
 
 /// Commit an edited Nav config: every operator preference that changed
-/// is its own command (`SetNavPreference`, `SetDangerLevel`); the rest of
-/// `after` is the panel's path paint and display state, saved as its own
-/// presentation preferences.
+/// is its own command (`SetNavPreference`, `SetDangerLevel`); panel-owned
+/// presentation values submit only their changed members.
 fn commit_nav_settings(
     session: &mut Session,
     before: &crate::nav_settings::NavSettings,
@@ -3424,51 +3679,89 @@ fn commit_nav_settings(
     let flags = [
         (
             P::AllowTeleports,
+            "allow_teleports",
             before.allow_teleports,
             after.allow_teleports,
         ),
         (
             P::AllowWilderness,
+            "allow_wilderness",
             before.allow_wilderness,
             after.allow_wilderness,
         ),
         (
             P::AllowBankFetch,
+            "allow_bank_fetch",
             before.allow_bank_fetch,
             after.allow_bank_fetch,
         ),
         (
             P::ScriptScopeNoticeAck,
+            "script_scope_notice_ack",
             before.script_scope_notice_ack,
             after.script_scope_notice_ack,
         ),
         (
             P::SurvivableRoutingNoticeAck,
+            "survivable_routing_notice_ack",
             before.survivable_routing_notice_ack,
             after.survivable_routing_notice_ack,
         ),
         (
             P::PauseScriptOnManualWalkAbort,
+            "pause_script_on_manual_walk_abort",
             before.pause_script_on_manual_walk_abort,
             after.pause_script_on_manual_walk_abort,
         ),
         (
             P::ShowSpecialAreas,
+            "show_special_areas",
             before.show_special_areas,
             after.show_special_areas,
         ),
     ];
-    for (preference, was, now) in flags {
+    for (preference, key, was, now) in flags {
         if was != now {
+            session.remember_nav_preference(key, now);
             submit(session, OperatorCommand::SetNavPreference(preference, now));
         }
     }
     if before.danger_level() != after.danger_level() {
+        session.remember_nav_preference("allow_danger_zones", after.allow_danger_zones);
+        session.remember_nav_preference("survivable_routing", after.survivable_routing);
         submit(
             session,
             OperatorCommand::SetDangerLevel(after.danger_level()),
         );
     }
+
+    macro_rules! persist_panel_nav_member {
+        ($field:ident) => {
+            if before.$field != after.$field {
+                if let Err(error) =
+                    session.persist_panel_serializable(&["nav", stringify!($field)], &after.$field)
+                {
+                    failure.get_or_insert(error);
+                }
+            }
+        };
+    }
+    persist_panel_nav_member!(show_nav_path);
+    persist_panel_nav_member!(hop_labels);
+    persist_panel_nav_member!(hop_label_px);
+    persist_panel_nav_member!(color_path);
+    persist_panel_nav_member!(color_transport);
+    persist_panel_nav_member!(color_click);
+    persist_panel_nav_member!(color_text);
+    persist_panel_nav_member!(collision_fill);
+    persist_panel_nav_member!(nsew_labels);
+    persist_panel_nav_member!(client_trail);
+    persist_panel_nav_member!(color_collision);
+    persist_panel_nav_member!(color_client);
+    persist_panel_nav_member!(color_client_run_alt);
+    persist_panel_nav_member!(component_flood);
+    persist_panel_nav_member!(camera_follow);
+
     session.route_through_zones = frontend_core::WalkGlobalsView::new(
         after.walk_globals(),
         after.script_scope_notice_ack,
@@ -3476,11 +3769,9 @@ fn commit_nav_settings(
     )
     .danger_this_walk(session.route_through_zones);
     session.ui.nav = after;
-    let saved = crate::ui_state::save_to_checked(&session.preferences, &session.ui)
-        .map_err(|error| error.to_string());
     match failure {
         Some(error) => Err(error),
-        None => saved,
+        None => Ok(()),
     }
 }
 
@@ -3556,7 +3847,12 @@ fn persist_profile_setting(
 ) {
     if selection.compiled_id().is_some() {
         let Some(profile) = session.focused_name() else {
-            session.error = Some("parameters: select a profile first".into());
+            session.refuse_command(
+                OperatorCommand::SaveScriptSettings(frontend_core::command::CardKind::Native),
+                &[],
+                Some(crate::session::ErrorNeed::FocusedBot),
+                "parameters: select a profile first",
+            );
             return;
         };
         session
@@ -3644,7 +3940,7 @@ fn script_parameter_text_input(
     options: &[String],
     current: Option<serde_json::Value>,
 ) {
-    let label = def.display_label();
+    script_parameter_label(ui, def, &mut session.script_parameter_label);
     let initial_text = current
         .as_ref()
         .map(format_setting_value)
@@ -3658,7 +3954,8 @@ fn script_parameter_text_input(
             &initial_text,
             current.clone(),
         );
-        ui.input_text(format!("{label}##param-{id}", id = def.id()), text)
+        ui.set_next_item_width(-1.0);
+        ui.input_text(format!("##param-{id}", id = def.id()), text)
             .build()
     };
     let active = ui.is_item_active();
@@ -3672,7 +3969,12 @@ fn script_parameter_text_input(
         session.submit_script_command(OperatorCommand::DiscardParameterText, Targets::Application);
     } else if changed || commit {
         if commit && profile.is_none() && selection.compiled_id().is_some() {
-            session.error = Some("parameters: select a profile first".into());
+            session.refuse_command(
+                OperatorCommand::SaveScriptSettings(frontend_core::command::CardKind::Native),
+                &[],
+                Some(crate::session::ErrorNeed::FocusedBot),
+                "parameters: select a profile first",
+            );
             return;
         }
         let key = frontend_core::scripts::ParameterEditKey::new(profile, selection, def.id());
@@ -3703,12 +4005,59 @@ fn script_parameter_text_input(
             );
         }
     }
+}
+
+/// Labels and number bounds have their own wrapped rows, never the clipped
+/// label area to the right of an ImGui input.
+fn script_parameter_label(ui: &Ui, def: SettingView<'_>, text: &mut String) {
+    use std::fmt::Write as _;
+    ui.text_wrapped(def.display_label());
+    if def.ty() == "number" {
+        text.clear();
+        let _ = match def.bounds() {
+            (Some(min), Some(max), _) => write!(text, "Valid range: {min}–{max}"),
+            (Some(min), None, _) => write!(text, "Minimum: {min}"),
+            (None, Some(max), _) => write!(text, "Maximum: {max}"),
+            (None, None, _) => return,
+        };
+        ui.text_wrapped(text);
+    }
+}
+
+fn script_parameter_error(
+    ui: &Ui,
+    session: &Session,
+    profile: Option<&str>,
+    selection: &ScriptChoice,
+    field: &str,
+) {
     if let Some(error) = session
         .scripts
-        .parameter_text_error_for(profile, selection, def.id())
+        .parameter_text_error_for(profile, selection, field)
     {
-        ui.same_line();
-        ui.text_colored(ERROR, error);
+        let _color = ui.push_style_color(dear_imgui_rs::StyleColor::Text, ERROR);
+        ui.text_wrapped(error);
+    }
+}
+
+/// Hidden drafts remain recoverable after closing prefs or changing cards.
+fn script_parameter_draft_recovery(ui: &Ui, session: &mut Session) {
+    use std::fmt::Write as _;
+    let Some(profile) = session.focused_name() else {
+        return;
+    };
+    if !session.scripts.has_parameter_draft(&profile) {
+        return;
+    }
+    ui.text_wrapped("Unsaved settings prevent Start. In Script prefs, press Enter to save a field or Escape to discard it.");
+    for (card, field, reason) in session.scripts.parameter_draft_details(&profile) {
+        session.script_parameter_label.clear();
+        let _ = write!(session.script_parameter_label, "{card}: {field}: {reason}");
+        ui.text_wrapped(&session.script_parameter_label);
+    }
+    if ui.button("Discard unsaved settings") {
+        session.scripts.stage_profile_parameter_discard(&profile);
+        session.submit_script_command(OperatorCommand::DiscardParameterText, Targets::Application);
     }
 }
 
@@ -3736,6 +4085,8 @@ fn script_parameter_editors(ui: &Ui, session: &mut Session) {
         script_parameter_rows(ui, session, &selection, profile, schema.as_ref(), bag);
     }
     session.script_param_schema = schema;
+    // A new draft must not move the active field out of the visible rows.
+    script_parameter_draft_recovery(ui, session);
 }
 
 /// Fill `schema` with the selected card's fields and return its bag, or say
@@ -3826,7 +4177,7 @@ fn script_parameter_rows(
                 ui.text(group);
             }
         }
-        let label = def.display_label().to_string();
+        let label = def.display_label();
         let resolved = frontend_core::scripts::resolve_parameter_options(
             def,
             &bag,
@@ -3835,7 +4186,8 @@ fn script_parameter_rows(
         );
         let array_editable = parameter_array_editor_enabled(def, &bag, &resolved);
         if def.options_from().is_some() && resolved.is_empty() && !array_editable {
-            ui.text_disabled(unavailable_parameter_text(&label, def, &bag, &resolved));
+            ui.text_wrapped(unavailable_parameter_text(label, def, &bag, &resolved));
+            script_parameter_error(ui, session, profile.as_deref(), selection, def.id());
             if session.script_parameter_filter_id.as_deref() == Some(def.id()) {
                 session.script_parameter_filter.clear();
                 session.script_parameter_filter_id = None;
@@ -3844,6 +4196,7 @@ fn script_parameter_rows(
         }
         match def.ty() {
             "boolean" => {
+                script_parameter_label(ui, def, &mut session.script_parameter_label);
                 let global = permission_global;
                 let mut value = bag
                     .get(def.id())
@@ -3859,7 +4212,7 @@ fn script_parameter_rows(
                             "Allow for this script even when the global setting is off.",
                         );
                     }
-                    if ui.checkbox(&label, &mut value) {
+                    if ui.checkbox(format!("Enabled##param-{}", def.id()), &mut value) {
                         persist_profile_setting(
                             session,
                             selection,
@@ -3882,7 +4235,7 @@ fn script_parameter_rows(
                 );
             }
             "string" if !resolved.is_empty() => {
-                ui.text(&label);
+                script_parameter_label(ui, def, &mut session.script_parameter_label);
                 let opts = resolved.selectable();
                 let stored = bag
                     .get(def.id())
@@ -3945,7 +4298,7 @@ fn script_parameter_rows(
                 }
             }
             "string[]" if array_editable => {
-                ui.text(&label);
+                script_parameter_label(ui, def, &mut session.script_parameter_label);
                 let mut selected: Vec<String> = bag
                     .get(def.id())
                     .and_then(|value| value.as_array())
@@ -3966,7 +4319,11 @@ fn script_parameter_rows(
                     let _off =
                         (!on && !resolved.is_selectable_index(index)).then(|| ui.begin_disabled());
                     let shown = resolved.label_for(opt);
-                    if ui.checkbox(format!("{shown}##param-{id}-{opt}", id = def.id()), &mut on) {
+                    let toggled =
+                        ui.checkbox(format!("##param-{id}-{opt}", id = def.id()), &mut on);
+                    ui.same_line();
+                    ui.text_wrapped(shown);
+                    if toggled || ui.is_item_clicked() {
                         changed |= resolved.toggle_array_choice(&mut selected, index);
                     }
                 }
@@ -3988,12 +4345,13 @@ fn script_parameter_rows(
                 );
             }
             _ => {
-                ui.text_disabled(format!("{label} (unsupported type {})", def.ty()));
+                ui.text_wrapped(format!("{label} (unsupported type {})", def.ty()));
             }
         }
         if let Some(help) = def.help() {
             ui.set_item_tooltip(help);
         }
+        script_parameter_error(ui, session, profile.as_deref(), selection, def.id());
     }
     if session.focused_name().is_some() {
         apply_to_all_section(ui, session);
@@ -4091,11 +4449,14 @@ fn script_prefs_window(ui: &Ui, session: &mut Session, panel_dock: Option<Id>) {
                 "Show parameters in rail",
                 &mut session.ui.show_parameters_rail,
             ) {
-                crate::ui_state::save(&session.preferences, &session.ui);
+                let _ = session.persist_panel_member(
+                    &["show_parameters_rail"],
+                    Some(serde_json::Value::Bool(session.ui.show_parameters_rail)),
+                );
             }
             ui.spacing();
             ui.text_wrapped(
-                "Edits are validated and saved before live delivery. Native cards report applied, pending boundary, or restart required; Load scripts receive the complete bag.",
+                "Text fields: Enter saves, Escape discards. Leaving a field saves a valid edit. Other controls save immediately. A failed save restores the saved value. Native cards can require a restart.",
             );
             ui.spacing();
             if edit_parameters_enabled() {
@@ -4132,16 +4493,23 @@ fn quest_paths_section(ui: &Ui, session: &mut Session) {
     }
     ui.text("Folder");
     ui.set_next_item_width(-1.0);
-    ui.input_text(
-        "##quester-path-folder",
-        &mut session.quester_paths_folder_edit,
-    )
-    .build();
+    let folder_edited = ui
+        .input_text(
+            "##quester-path-folder",
+            &mut session.quester_paths_folder_edit,
+        )
+        .build();
+    if folder_edited {
+        session.quester_paths_folder_dirty = true;
+    }
     let mut folder_committed = false;
     if ui.is_item_deactivated_after_edit() {
         folder_committed = true;
         paths_changed |= Path::new(&session.quester_paths_folder_edit)
             != session.quester_paths.settings().folder();
+        if !paths_changed {
+            session.quester_paths_folder_dirty = false;
+        }
     }
     drop(_path_controls_disabled);
 
@@ -4377,10 +4745,12 @@ fn status_detail_rows(ui: &Ui, d: &frontend_core::SlotDetail, walk: &str, mem: &
     if let Some(random) = d.random() {
         kv_row(ui, "random", random);
     }
-    if !d.row().phase().is_error() {
-        if let Some(error) = d.row().error() {
-            kv_row(ui, "last error", error);
-        }
+    // The current login notice takes the history row's place while it
+    // stands (the terminal app's status pane does the same).
+    if let Some(notice) = d.login_notice_line() {
+        ui.text_colored(ERROR, notice);
+    } else if let Some(error) = d.row().last_error() {
+        kv_row(ui, "last error", error);
     }
     if let Some(op) = d.row().last_op() {
         kv_row(ui, "operation", &op.to_string());
@@ -4594,7 +4964,10 @@ fn config_section(ui: &Ui, session: &mut Session, id: &str, body: impl FnOnce(&U
     };
     if open != desired {
         session.ui.config_collapsed.insert(id.to_string(), !open);
-        crate::ui_state::save(&session.preferences, &session.ui);
+        let _ = session.persist_panel_member(
+            &["config_collapsed", id],
+            Some(serde_json::Value::Bool(!open)),
+        );
     }
     if open {
         body(ui, session);
@@ -4620,7 +4993,12 @@ fn panel_heading_toggles(ui: &Ui, session: &mut Session) {
         let mut visible = crate::ui_state::panel_section_visible(&session.ui, id);
         if ui.checkbox(*id, &mut visible) {
             crate::ui_state::set_panel_section_visible(&mut session.ui, id, visible);
-            crate::ui_state::save(&session.preferences, &session.ui);
+            let value = serde_json::Value::Bool(visible);
+            if *id == "parameters" {
+                let _ = session.persist_panel_member(&["show_parameters_rail"], Some(value));
+            } else {
+                let _ = session.persist_panel_member(&["panel_sections", id], Some(value));
+            }
         }
     }
     ui.spacing();
@@ -4640,8 +5018,30 @@ fn panel_heading_toggles(ui: &Ui, session: &mut Session) {
     changed |= chrome_color_field(ui, "error", &mut chrome.error);
     changed |= chrome_color_field(ui, "green", &mut chrome.green);
     if changed {
+        macro_rules! persist_chrome_member {
+            ($field:ident) => {
+                if session.ui.chrome.$field != chrome.$field {
+                    let _ = session.persist_panel_serializable(
+                        &["chrome", stringify!($field)],
+                        &chrome.$field,
+                    );
+                }
+            };
+        }
+        persist_chrome_member!(accent);
+        persist_chrome_member!(accent_hover);
+        persist_chrome_member!(bg);
+        persist_chrome_member!(bg_deep);
+        persist_chrome_member!(text);
+        persist_chrome_member!(text_dim);
+        persist_chrome_member!(frame);
+        persist_chrome_member!(hover_fill);
+        persist_chrome_member!(active_fill);
+        persist_chrome_member!(border);
+        persist_chrome_member!(warn);
+        persist_chrome_member!(error);
+        persist_chrome_member!(green);
         session.ui.chrome = chrome;
-        crate::ui_state::save(&session.preferences, &session.ui);
     }
 }
 
@@ -4665,6 +5065,16 @@ fn chrome_color_field(ui: &Ui, label: &str, color: &mut String) -> bool {
 }
 
 fn global_config_section(ui: &Ui, session: &mut Session) {
+    if !session.panel_preferences_ready() {
+        ui.text_disabled("Loading preferences…");
+    } else if session.preferences_pending() {
+        ui.text_disabled("Saving preferences…");
+    }
+    if let Some(error) = session.panel_preference_write_error() {
+        ui.text_colored(session.ui.chrome.error_rgba(), "Preference save failed:");
+        ui.text_wrapped(error);
+    }
+    ui.spacing();
     ui.text_colored([1.0, 1.0, 1.0, 1.0], "Server:");
     {
         let _color = ui.push_style_color(StyleColor::Text, session.ui.chrome.accent_rgba());
@@ -4889,6 +5299,13 @@ fn rail_toolbar(ui: &Ui, session: &mut Session) {
 #[cfg(test)]
 pub(crate) fn draw_test_rail_toolbar(ui: &Ui, session: &mut Session) {
     rail_toolbar(ui, session);
+}
+
+/// Draw the strip's Local-engine debug cheat buttons for a test, in the
+/// current window.
+#[cfg(test)]
+pub(crate) fn draw_test_debug_section(ui: &Ui, session: &mut Session) {
+    debug_section(ui, session);
 }
 
 /// Draw the right-hand strip for a test at `pos` and `size` (its own size is
@@ -5258,7 +5675,9 @@ fn rail_tiles(ui: &Ui, gpu: &mut Gpu, state: &mut PanelState) {
         if cap_fold {
             let next = !preview;
             state.session.ui.rail_preview.insert(name.to_string(), next);
-            crate::ui_state::save(&state.session.preferences, &state.session.ui);
+            let _ = state
+                .session
+                .persist_panel_member(&["rail_preview", name], Some(serde_json::Value::Bool(next)));
         } else if cap_remove {
             clicked = Some(TileClick::Remove(index));
         } else if cap_world {
@@ -6174,6 +6593,7 @@ fn profile_form_body(ui: &Ui, session: &mut Session) {
     }
     slot_capture_section(ui, session);
     slot_random_section(ui, session);
+    slot_survival_section(ui, session);
     slot_clue_section(ui, session);
 }
 
@@ -6369,42 +6789,52 @@ fn profile_import_bar(ui: &Ui, session: &mut Session, width: f32, entered: bool)
                             .map(|(index, name, command)| (index, name.to_owned(), command))
                             .collect::<Vec<_>>();
                         for (index, name, planned_command) in planned {
-                            match planned_command {
+                            let staged = match planned_command {
                                 OperatorCommand::CreateProfile => {
-                                    if let Err(error) =
-                                        session.profile_import.stage_create_account(index)
-                                    {
-                                        session.error = Some(error.to_string());
-                                        break;
-                                    }
-                                    let _ = session.submit(
-                                        OperatorCommand::CreateProfile,
-                                        Targets::Application,
-                                    );
+                                    session.profile_import.stage_create_account(index)
                                 }
                                 OperatorCommand::SaveProfile => {
-                                    if let Err(error) =
-                                        session.profile_import.stage_save_account(index)
-                                    {
-                                        session.error = Some(error.to_string());
-                                        break;
-                                    }
-                                    let _ = session.submit(
-                                        OperatorCommand::SaveProfile,
-                                        Targets::Profile(&name),
-                                    );
+                                    session.profile_import.stage_save_account(index)
                                 }
                                 _ => {
-                                    session.error = Some(format!(
-                                        "Profile import account {name} has an unsupported writer."
-                                    ));
+                                    session.refuse_command(
+                                        planned_command,
+                                        &[&name],
+                                        None,
+                                        &format!(
+                                            "Profile import account {name} has an unsupported writer."
+                                        ),
+                                    );
                                     break;
                                 }
+                            };
+                            if let Err(error) = staged {
+                                session.refuse_command(
+                                    planned_command,
+                                    &[&name],
+                                    None,
+                                    &error.to_string(),
+                                );
+                                break;
                             }
+                            let targets = if planned_command == OperatorCommand::CreateProfile {
+                                Targets::Application
+                            } else {
+                                Targets::Profile(&name)
+                            };
+                            let _ = session.submit(planned_command, targets);
                             session.profile_import.cancel_staged_account(index);
                         }
                     }
-                    Err(error) => session.error = Some(error.to_string()),
+                    // Import replans the preview against the current vault
+                    // before any account row exists; a refused replan is
+                    // refused as the preview it repeats.
+                    Err(error) => session.refuse_command(
+                        OperatorCommand::PreviewProfileImport,
+                        &[],
+                        None,
+                        &error.to_string(),
+                    ),
                 }
                 changed = true;
             }
@@ -6737,6 +7167,82 @@ fn slot_random_section(ui: &Ui, session: &mut Session) {
             Targets::Application,
         );
     }
+}
+
+/// The Survival and supplies section: the profile's Cure poison row.
+/// The choice uses the same vault save path as the random-event and
+/// lamp controls, and a running slot sees it within one frame.
+fn slot_survival_section(ui: &Ui, session: &mut Session) {
+    ui.text_disabled("Survival and supplies");
+    ui.text_disabled("Cure poison");
+    ui.same_line();
+    let mut policy = session
+        .profile_editor
+        .draft()
+        .settings()
+        .survival()
+        .cure_poison();
+    if cure_poison_combo(ui, &mut policy) {
+        session
+            .profile_editor
+            .draft_mut()
+            .settings_mut()
+            .survival_mut()
+            .set_cure_poison(policy);
+        if let Some(name) = session
+            .profile_editor
+            .target()
+            .filter(|n| !n.is_empty())
+            .map(str::to_owned)
+        {
+            session
+                .core
+                .stage_survival(frontend_core::SurvivalEdit::cure_poison(policy));
+            if let Some(submitted) =
+                session.submit(OperatorCommand::SetSurvival, Targets::Profile(&name))
+            {
+                session.error = session
+                    .core
+                    .command_failure(submitted.request())
+                    .map(|reason| reason.to_string());
+            }
+        }
+        let _ = session.submit(
+            OperatorCommand::EditProfileDraft(frontend_core::command::ProfileDraftField::Settings),
+            Targets::Application,
+        );
+    }
+    ui.text_wrapped(policy.label());
+}
+
+fn cure_poison_combo(ui: &Ui, policy: &mut frontend_core::CurePoison) -> bool {
+    use frontend_core::CurePoison::{Always, Never, WhenNeeded};
+
+    let preview = match *policy {
+        WhenNeeded => "When needed",
+        Always => "Always",
+        Never => "Never",
+    };
+    let options = ComboBoxOptions::new().preview_mode(ComboBoxPreviewMode::Preview);
+    let mut changed = false;
+    ui.set_next_item_width(-1.0);
+    if let Some(_open) = ui.begin_combo_with_flags("##cure-poison", preview, options) {
+        for (option, label) in [
+            (WhenNeeded, "When needed"),
+            (Always, "Always"),
+            (Never, "Never"),
+        ] {
+            let selected = option == *policy;
+            if ui.selectable_config(label).selected(selected).build() {
+                *policy = option;
+                changed = true;
+            }
+            if selected {
+                ui.set_item_default_focus();
+            }
+        }
+    }
+    changed
 }
 
 /// lamp skill combo: the client skill table (the lamp dialogue's own
@@ -7419,6 +7925,7 @@ fn record_presented_upload(
 /// order of these calls is the frame's contract (the pump publishes the
 /// status the live tick reads).
 fn frame_pumps(state: &mut PanelState, live_failure: &Mutex<Option<String>>) -> bool {
+    state.session.poll_panel_preferences();
     apply_amber_current(&state.session.ui.chrome);
     let wrote_shots = pump_shots(state);
     pump_record(state);

@@ -10,11 +10,11 @@ use client::client::Client;
 use host::Pump;
 use host_play::walk_map::{ActionError, ActionKind, FocusToken, MapContext, MapModel};
 use host_play::{ProfileOptions, SharedClientTemplate, SlotArm, WalkArms};
-use nav::bank_fetch::BankRows;
-use nav::map::identity::Digest;
-use nav::router::{FindOptions, Leg};
-use nav::tile::Tile;
-use nav::WorldState;
+use nav_planner::bank_fetch::BankRows;
+use nav_planner::map::identity::Digest;
+use nav_planner::router::{FindOptions, Leg};
+use nav_planner::tile::Tile;
+use nav_planner::WorldState;
 use serde_json::{json, Value};
 
 fn live_profile_options() -> ProfileOptions {
@@ -134,12 +134,7 @@ fn live_manual_walk_two_fares_sixty_to_zero_and_thirty_refused() {
     let coin_id = data.item_by_alias("coins").expect("content coin alias").id;
     let prefix = std::env::var("BOT_LIVE_NAME_PREFIX").expect("explicit name prefix");
     assert_eq!(prefix, "nf");
-    let stamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_millis()
-        % 100_000_000;
-    let names: [String; 2] = std::array::from_fn(|index| format!("{prefix}{stamp}{index}"));
+    let names = host_play::mint_live_names(2);
     let mut cells = Vec::new();
     // One seeded cell exercises refusal first, then successful execution.
     for (slot, initial_coins) in [30, 60].into_iter().enumerate() {
@@ -260,7 +255,9 @@ fn live_manual_walk_two_fares_sixty_to_zero_and_thirty_refused() {
             .legs
             .iter()
             .filter_map(|leg| match leg {
-                Leg::Transport { edge } if edge.kind == nav::transport::TransportKind::Boat => {
+                Leg::Transport { edge }
+                    if edge.kind == nav_planner::transport::TransportKind::Boat =>
+                {
                     Some(edge.loc_id)
                 }
                 _ => None,
@@ -358,7 +355,7 @@ fn live_manual_walk_two_fares_sixty_to_zero_and_thirty_refused() {
             "final_tile":snapshot.tile(),"ingame":snapshot.ingame(),"scene_state":snapshot.scene_state(),
             "brimhaven":brimhaven,"karamja":karamja,"ships":ships,"observations":observations});
         cells.push(receipt.clone());
-        std::fs::write(evidence.join("receipt.json"), serde_json::to_vec_pretty(&json!({"pack_format":nav::pack::FORMAT_ID,"pack_sha256":identity.nav_sha256,"cells":cells})).unwrap()).unwrap();
+        std::fs::write(evidence.join("receipt.json"), serde_json::to_vec_pretty(&json!({"pack_format":nav_planner::pack::FORMAT_ID,"pack_sha256":identity.nav_sha256,"cells":cells})).unwrap()).unwrap();
         assert!(brimhaven && karamja, "{receipt}");
         assert_eq!(
             snapshot.tile(),
@@ -399,7 +396,9 @@ fn live_shilo_cart_ten_coins_to_zero() {
         .unwrap()
         .as_millis()
         % 100_000_000;
-    let account = format!("{prefix}{stamp}");
+    let account = host_play::mint_live_names(1)
+        .pop()
+        .expect("one live account");
     let evidence = evidence_root.join(format!("shilo-cart-{account}-{stamp}"));
     std::fs::create_dir_all(&evidence).unwrap();
     let mut client = template.prepare_client(1, true).unwrap();
@@ -490,7 +489,7 @@ fn live_shilo_cart_ten_coins_to_zero() {
         .legs
         .iter()
         .filter_map(|leg| match leg {
-            Leg::Transport { edge } if edge.kind == nav::transport::TransportKind::Npc => {
+            Leg::Transport { edge } if edge.kind == nav_planner::transport::TransportKind::Npc => {
                 Some(edge.loc_id)
             }
             _ => None,
@@ -555,7 +554,7 @@ fn live_shilo_cart_ten_coins_to_zero() {
     let receipt = json!({
         "account":account,"initial_coins":10,"final_coins":coins(&snapshot,coin_id),
         "final_tile":snapshot.tile(),"ingame":snapshot.ingame(),"scene_state":snapshot.scene_state(),
-        "carts":carts,"observations":observations,"pack_format":nav::pack::FORMAT_ID,"pack_sha256":identity.nav_sha256,
+        "carts":carts,"observations":observations,"pack_format":nav_planner::pack::FORMAT_ID,"pack_sha256":identity.nav_sha256,
     });
     save_frame(
         &mut client,

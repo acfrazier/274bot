@@ -10,8 +10,12 @@ use std::collections::HashMap;
 mod paths;
 mod settings;
 
+pub use crate::card::{
+    ItemOptionCandidate, ItemOptionSpec, RegistryCard, ScriptKind, ScriptSource, SettingDef,
+};
+
 #[cfg(feature = "load")]
-pub(crate) use paths::absolute_clean;
+pub use paths::absolute_clean;
 pub use paths::{
     clear_rs2b0t_import_at, default_rs2b0t_import_file, default_rs2b0t_path_file,
     persist_rs2b0t_root, persist_rs2b0t_root_at, registry_index_path, rs2b0t_import_deferred,
@@ -19,82 +23,12 @@ pub use paths::{
     rs2b0t_root_checked_at, script_file_path, set_rs2b0t_import_deferred_at,
 };
 #[cfg(feature = "load")]
-pub(crate) use settings::insert_shop_db_from_root;
+pub use settings::insert_shop_db_from_root;
 use settings::parse_settings_export;
 pub(crate) use settings::{
     catalog_option_table, is_revision_fact_option_ident, w1c_equipment_option_families,
 };
 pub use settings::{settings_schema_from_source, try_settings_schema_from_source};
-
-/// How a script card is executed in the host.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ScriptKind {
-    Compat,
-    NativeTick,
-    Compiled,
-}
-
-/// Where a script card's metadata came from.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ScriptSource {
-    Catalog,
-    File,
-    Builtin,
-}
-
-/// One catalog-declared selected-item candidate. `key` is the persisted
-/// alias; `label` is an optional identity override from the source table.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ItemOptionCandidate {
-    pub key: String,
-    pub label: Option<String>,
-}
-
-/// High-alchemy selected-item choice descriptor. Prefix keys are always
-/// published; candidates are filtered/sorted later from borrowed facts.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ItemOptionSpec {
-    pub prefix: Vec<String>,
-    pub candidates: Vec<ItemOptionCandidate>,
-    /// When true, resolved chip keys follow alphabetical label order (frozen
-    /// `[...ALCH_ITEMS].sort((a,b)=>a.label.localeCompare(b.label)).map`).
-    pub sort_keys_by_label: bool,
-}
-
-/// One setting field from a script's `settingsSchema` export.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SettingDef {
-    pub id: String,
-    pub ty: String,
-    pub default: Option<String>,
-    pub label: Option<String>,
-    pub min: Option<String>,
-    pub max: Option<String>,
-    pub step: Option<String>,
-    pub options: Vec<String>,
-    pub option_labels: Vec<String>,
-    pub group: Option<String>,
-    pub show_if: Option<String>,
-    pub options_from: Option<String>,
-    pub csv_toggle: Option<String>,
-    pub help: Option<String>,
-    pub item_option_spec: Option<ItemOptionSpec>,
-}
-
-/// One catalog card: register metadata plus the `./…` import path of the
-/// script file to read on Start.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RegistryCard {
-    pub name: String,
-    pub rel_path: String,
-    pub description: String,
-    pub category: String,
-    pub tags: Vec<String>,
-    pub version: String,
-    pub settings_schema: Vec<SettingDef>,
-    pub kind: ScriptKind,
-    pub source: ScriptSource,
-}
 
 /// Named import binding: local alias maps to module path and exported const name.
 #[derive(Debug, Clone)]
@@ -146,13 +80,13 @@ pub fn parse_registry_card_with_sources(
 /// Parsed registry index retained while a bounded catalogue refresh prepares
 /// each changed card without rescanning the registry for every candidate.
 #[derive(Debug)]
-pub(crate) struct RegistryIndex {
+pub struct RegistryIndex {
     imports: HashMap<String, ImportBinding>,
     registers: Vec<RegisterInfo>,
 }
 
 impl RegistryIndex {
-    pub(crate) fn parse(index_ts: &str) -> Result<Self, String> {
+    pub fn parse(index_ts: &str) -> Result<Self, String> {
         let imports = scan_imports(index_ts);
         let registers = scan_registers(index_ts);
         if registers.is_empty() {
@@ -162,7 +96,7 @@ impl RegistryIndex {
     }
 
     #[cfg(feature = "load")]
-    pub(crate) fn registrations(&self) -> Result<Vec<RegistryCard>, String> {
+    pub fn registrations(&self) -> Result<Vec<RegistryCard>, String> {
         self.cards_with_sources(&HashMap::new())
     }
 
@@ -191,7 +125,7 @@ impl RegistryIndex {
     }
 
     #[cfg(any(feature = "load", test))]
-    pub(crate) fn card_with_sources_bounded(
+    pub fn card_with_sources_bounded(
         &self,
         sources: &HashMap<String, String>,
         name: &str,
@@ -335,7 +269,7 @@ fn settings_blob_bounded(
 
 #[cfg(feature = "load")]
 /// `import … from './Logic.js'` next to `./Folder/Script.js` → `./Folder/Logic.js`.
-pub(crate) fn same_dir_import_rel(script_rel: &str, import_rel: &str) -> Option<String> {
+pub fn same_dir_import_rel(script_rel: &str, import_rel: &str) -> Option<String> {
     let import = import_rel.strip_prefix("./")?;
     if import.contains('/') || import.contains('\\') || import.contains("..") {
         return None;
@@ -363,7 +297,7 @@ fn scan_imports(src: &str) -> HashMap<String, ImportBinding> {
 }
 
 #[cfg(feature = "load")]
-pub(crate) fn same_dir_import_rels(script_rel: &str, src: &str) -> Vec<String> {
+pub fn same_dir_import_rels(script_rel: &str, src: &str) -> Vec<String> {
     let mut out = Vec::new();
     for binding in scan_imports(src).into_values() {
         if let Some(sib) = same_dir_import_rel(script_rel, &binding.rel_path) {

@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Tests for `run_nightly.py`: the disk guard, the stable tree path, receipts,
-the revision defaults and the cells file.
+the revision defaults, the cells file and the latency lane (settings, the
+classifier, proxy-stats aggregation, the pass against a fake cell runner with
+a real proxy subprocess, and the summary shape with the lane on and off).
 
 The guard stops the Windows nightly from filling its disk: a Cargo target
 folder over `NIGHTLY_TARGET_CAP_GB` is removed before the lanes and before
@@ -21,14 +23,17 @@ Run on Linux or Windows with the standard library only:
 """
 
 import json
+import hashlib
 import gc
 import os
 import shutil
+import socket
 import stat
 import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
 import warnings
 from pathlib import Path
@@ -39,6 +44,67 @@ sys.path.insert(0, str(HERE))
 os.environ.setdefault("NIGHTLY_ROOT", str(Path(tempfile.gettempdir()) / "run-nightly-test-root"))
 
 import run_nightly as rn
+
+
+_THROWAWAY_ROOT = Path(tempfile.gettempdir()).resolve()
+_real_maybe_self_update = rn.maybe_self_update
+
+
+def _throwaway_only_maybe_self_update(repo, *args, **kwargs):
+    """The test-only self-update gate: only throwaway repos may be updated.
+
+    Every `repo` below is a directory the test itself created under the
+    system temp dir. The real checkout (`rn.RUNNER_REPO`) is never updated:
+    `maybe_self_update` force-checks out `origin/dev`, which would discard
+    uncommitted work. Any other caller fails loudly before git runs.
+    """
+    if not Path(repo).resolve().is_relative_to(_THROWAWAY_ROOT):
+        raise AssertionError(
+            f"refusing to self-update {repo}: tests only update throwaway repos "
+            f"they create under {_THROWAWAY_ROOT}")
+    return _real_maybe_self_update(repo, *args, **kwargs)
+
+
+rn.maybe_self_update = _throwaway_only_maybe_self_update
+
+
+def _record_real_checkout_state():
+    """HEAD, branch and worktree state of the real checkout, if any.
+
+    `None` when this file does not run from a git checkout (the self-check
+    runs the candidate copy from a bare temporary directory).
+    """
+    repo = HERE.parent.parent
+    try:
+        head = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"],
+                              capture_output=True, text=True, check=True).stdout.strip()
+        branch = subprocess.run(["git", "-C", str(repo), "branch", "--show-current"],
+                                capture_output=True, text=True, check=True).stdout.strip()
+        porcelain = subprocess.run(["git", "-C", str(repo), "status", "--porcelain"],
+                                   capture_output=True, text=True, check=True).stdout
+    except (subprocess.SubprocessError, OSError):
+        return None
+    return (head, branch, porcelain)
+
+
+_REAL_CHECKOUT_STATE = _record_real_checkout_state()
+
+
+def tearDownModule():
+    """No test may touch the real checkout this file runs from.
+
+    A test that reaches `maybe_self_update` (or `main()`) with the real
+    `HERE`/runner path force-checks out `origin/dev` and discards uncommitted
+    edits (NIGHTLY-FROM-GITHUB-1026 finding 1). The gate above makes that
+    impossible; this teardown fails the suite if it ever happens anyway.
+    """
+    if _REAL_CHECKOUT_STATE is None:
+        return
+    after = _record_real_checkout_state()
+    if after != _REAL_CHECKOUT_STATE:
+        raise AssertionError(
+            f"a test touched the real checkout {HERE.parent.parent}: "
+            f"before={_REAL_CHECKOUT_STATE!r} after={after!r}")
 
 
 def make_target(root: Path, name: str, size: int) -> Path:
@@ -681,6 +747,14 @@ class CatchUpTests(unittest.TestCase):
                 mock.patch.object(rn, "update_tree", fake_update_tree),
                 mock.patch.object(rn, "guard_disk", guard),
                 mock.patch.object(rn, "log", lambda _message: None),
+                # main() self-updates the runner checkout before anything else.
+                # The catch-up path under test never reaches the network: run
+                # the test with the update disabled, whatever the ambient
+                # environment opts into, so the real checkout is untouched.
+                mock.patch.object(rn, "maybe_self_update",
+                                  lambda *args, **kwargs: {"status": "disabled", "from": "test",
+                                                           "to": "test",
+                                                           "detail": "self-update disabled in tests"}),
                 mock.patch.object(sys, "argv", ["run_nightly.py", "--catch-up", "--branch", "dev"]),
             ]
             for patch in patches:
@@ -714,15 +788,94 @@ class CatchUpTests(unittest.TestCase):
 
 
 class LaneEnvironmentTests(unittest.TestCase):
-    def test_content_test_lanes_receive_nav_and_engine_paths(self):
-        expected = {
-            "NAV_PACK": str(rn.NAV_FIXTURE),
-            "ENGINE_DIR": str(rn.ENGINE_RUN / "engine"),
-        }
-        lanes = {name: extra for name, _args, extra in rn.lane_list(None)}
-        for name in ("test-workspace", "test-script-load", "test-script-no-default"):
+    def asset_env(self, root: Path, *, snapshot: bool, baseline: bool) -> dict:
+        nav_snapshot = root / "nav-snapshot"
+        if snapshot:
+            snap_dir = nav_snapshot / "0123456789abcdef"
+            snap_dir.mkdir(parents=True)
+            (snap_dir / "versionlist").write_bytes(b"v")
+        baseline_path = root / "inspect.fb"
+        if baseline:
+            baseline_path.write_bytes(b"capture")
+        with mock.patch.object(rn, "NAV_SNAPSHOT", nav_snapshot), \
+                mock.patch.object(rn, "INSPECT_BASELINE", baseline_path):
+            return rn.lane_asset_env()
+
+    def test_every_test_lane_receives_the_asset_paths(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            expected = self.asset_env(Path(tmp), snapshot=True, baseline=True)
+        pack = str(rn.NAV_FIXTURE)
+        self.assertEqual(expected["NAV_PACK"], pack)
+        self.assertEqual(expected["WORLD_NAV_PACK"], pack)
+        self.assertEqual(expected["NAV_ARRIVAL_PACK"], pack)
+        self.assertEqual(expected["ENGINE_DIR"], str(rn.ENGINE_PRISTINE / "engine"))
+        self.assertEqual(expected["WORLD_ENGINE_DIR"], str(rn.ENGINE_PRISTINE / "engine"))
+        self.assertIn("BOT_NAV_SNAPSHOT_ROOT", expected)
+        self.assertIn("T5W_INSPECT_CAPTURE_BASELINE", expected)
+        with mock.patch.object(rn, "lane_asset_env", return_value=dict(expected)):
+            lanes = {name: extra for name, _args, extra in rn.lane_list(None)}
+        for name, extra in lanes.items():
             with self.subTest(lane=name):
-                self.assertEqual(lanes[name], expected)
+                if name.startswith("test-"):
+                    self.assertEqual(extra, expected)
+                else:
+                    self.assertEqual(extra, {})
+
+    def test_missing_snapshot_and_baseline_stay_unset(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            env = self.asset_env(Path(tmp), snapshot=False, baseline=False)
+        self.assertNotIn("BOT_NAV_SNAPSHOT_ROOT", env)
+        self.assertNotIn("T5W_INSPECT_CAPTURE_BASELINE", env)
+        self.assertEqual(env["NAV_PACK"], str(rn.NAV_FIXTURE))
+
+
+class SeedLaneHomeTests(unittest.TestCase):
+    def make_snapshot(self, root: Path, name: str) -> Path:
+        snap = root / name
+        snap.mkdir(parents=True)
+        (snap / "versionlist").write_bytes(b"v")
+        (snap / "config").write_bytes(b"c")
+        return snap
+
+    def test_seeds_from_the_nightly_snapshot_folder(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.make_snapshot(root / "nav-snapshot", "0123456789abcdef")
+            home = root / "home"
+            copied = rn.seed_lane_home(home, root / "nav-snapshot", root / "no-fallback")
+            self.assertEqual(copied, 1)
+            seeded = home / ".274bot" / "unpack" / "0123456789abcdef" / "versionlist"
+            self.assertTrue(seeded.is_file())
+
+    def test_falls_back_to_the_runner_users_unpack_289(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.make_snapshot(root / "unpack-289", "37214163f1e6ceca")
+            (root / "unpack-289" / "not-a-snapshot").mkdir(parents=True)
+            home = root / "home"
+            copied = rn.seed_lane_home(home, root / "empty", root / "unpack-289")
+            self.assertEqual(copied, 1)
+            seeded = home / ".274bot" / "unpack" / "37214163f1e6ceca" / "config"
+            self.assertTrue(seeded.is_file())
+            self.assertFalse((home / ".274bot" / "unpack" / "not-a-snapshot").exists())
+
+
+class CellCapTests(unittest.TestCase):
+    def test_long_cells_keep_a_cap_above_their_proven_walls(self):
+        # 2026-10-21 summary.json walls: jive_kbd 2543.0 s (Linux verdict),
+        # quester_queue 1987.9 s (Linux pass).
+        self.assertGreater(rn.cell_cap_s("jive_kbd"), 2543)
+        self.assertGreater(rn.cell_cap_s("quester_queue"), 1988)
+        self.assertEqual(rn.cell_cap_s("walk"), rn.CELL_CAP_S)
+
+    def test_parse_cell_caps_overrides_and_refuses_bad_entries(self):
+        caps = rn.parse_cell_caps("jive_kbd=4000, other=900", {"jive_kbd": 3600})
+        self.assertEqual(caps, {"jive_kbd": 4000, "other": 900})
+        self.assertEqual(rn.parse_cell_caps("", {"a": 1}), {"a": 1})
+        for bad in ("jive_kbd", "jive_kbd=soon", "jive_kbd=0", "=10"):
+            with self.subTest(entry=bad):
+                with self.assertRaises(ValueError):
+                    rn.parse_cell_caps(bad, {})
 
 
 class ReceiptTests(unittest.TestCase):
@@ -766,9 +919,115 @@ class ReceiptTests(unittest.TestCase):
         self.assertEqual(result.ticks, 58)
         self.assertEqual(result.receipt, receipt)
 
+    def apply_outcome(self, frontend: str, stderr_text: str, *, timed_out: bool = False) -> rn.CellResult:
+        result = rn.CellResult(
+            cell="cell",
+            result="ERROR",
+            branch="dev",
+            commit="e9b575",
+            platform="windows",
+            frontend=frontend,
+        )
+        rn.apply_cell_outcome(result, "cell", frontend, stderr_text, stderr_text, "",
+                              timed_out, False, 1200)
+        return result
+
+    def test_unavailable_line_wins_over_the_fail_verdict_in_each_frontend(self):
+        # The lines each frontend prints for a missing engine patch, with
+        # the JSON record damaged so only the fallback can read them.
+        message = "UNAVAILABLE: engine patch tools/x.patch is not installed"
+        for frontend, live_name in (("tui", "cell"), ("panel", "script_cell")):
+            with self.subTest(frontend=frontend):
+                stderr_text = (f"FAIL: live {live_name} {{\"scenario\":\"cell\",\"outcome\":\"UNAVAILABLE\"\n"
+                               f"FAIL: {message}\n")
+                result = self.apply_outcome(frontend, stderr_text)
+                self.assertEqual(result.result, "UNAVAILABLE")
+                self.assertEqual(result.reason, message)
+                self.assertIsNone(result.first_failure)
+
+    def test_panel_verdict_line_keeps_its_fail_without_a_receipt(self):
+        result = self.apply_outcome("panel", "FAIL: live script_cell {damaged\n")
+        self.assertEqual(result.result, "FAIL")
+        self.assertEqual(result.reason, "verdict line without a parsable JSON record")
+        self.assertIn("FAIL: live script_cell", result.first_failure)
+
+    def test_timeout_names_the_cap_that_ran(self):
+        result = self.apply_outcome("tui", "289bot: still working\n", timed_out=True)
+        self.assertEqual(result.result, "TIMEOUT")
+        self.assertIn("runner cap 1200s reached", result.first_failure)
+
+
+class EnginePreflightTests(unittest.TestCase):
+    EXPECTED = "5f8a00094e8eb02dd00d703e99a073071d0349a8731f43dffa0bdaae36fa6c69"
+    RESPONSE = bytes.fromhex(
+        "00000000de5b33456026f8fe075503099a13636eca2717bd368f17921b1fb6b2a7129379cbff3b0d"
+    )
+
+    def run_check(self, *, body=None, error=None):
+        opener = mock.Mock()
+        if error is None:
+            response = mock.MagicMock()
+            response.__enter__.return_value = response
+            response.read.return_value = body
+            opener.open.return_value = response
+        else:
+            opener.open.side_effect = error
+
+        with mock.patch.object(rn.urllib.request, "build_opener", return_value=opener), \
+                mock.patch.object(rn.socket, "create_connection") as create_connection, \
+                mock.patch.object(rn, "ENGINE_HOST", "127.0.0.1"), \
+                mock.patch.object(rn, "GAME_PORT", 47594), \
+                mock.patch.object(rn, "HTTP_PORT", 3080), \
+                mock.patch.object(rn, "ENGINE_LABEL", "Engine B"), \
+                mock.patch.object(rn, "ENGINE_CRC_SHA256", self.EXPECTED):
+            game_socket = mock.Mock()
+            create_connection.return_value = game_socket
+            result = rn.engine_check()
+        return result + (create_connection, game_socket, opener)
+
+    def test_approved_engine_b_identity_passes(self):
+        self.assertEqual(hashlib.sha256(self.RESPONSE).hexdigest(), self.EXPECTED)
+        ok, detail, connect, game_socket, opener = self.run_check(body=self.RESPONSE)
+        self.assertTrue(ok)
+        self.assertIn("Engine B at 127.0.0.1:47594/3080", detail)
+        self.assertIn("sha256 5f8a00094e8eb02d", detail)
+        opener.open.assert_called_once_with("http://127.0.0.1:3080/crc", timeout=15)
+        connect.assert_called_once_with(("127.0.0.1", 47594), timeout=15)
+        game_socket.close.assert_called_once()
+
+    def test_wrong_digest_is_an_identity_mismatch(self):
+        body = self.RESPONSE[:-1] + bytes((self.RESPONSE[-1] ^ 1,))
+        ok, detail, connect, _game_socket, _opener = self.run_check(body=body)
+        self.assertFalse(ok)
+        self.assertIn("identity mismatch", detail)
+        with mock.patch.object(rn, "ENGINE_LABEL", "Engine B"):
+            reason = rn.remote_engine_failure(detail)
+        self.assertIn("Engine B identity mismatch", reason)
+        self.assertNotIn("not reachable", reason)
+        connect.assert_not_called()
+
+    def test_wrong_length_is_an_identity_mismatch(self):
+        ok, detail, connect, _game_socket, _opener = self.run_check(body=self.RESPONSE[:-1])
+        self.assertFalse(ok)
+        self.assertIn("identity mismatch", detail)
+        self.assertIn("39 bytes", detail)
+        connect.assert_not_called()
+
+    def test_connection_failure_is_not_an_identity_mismatch(self):
+        ok, detail, connect, _game_socket, _opener = self.run_check(
+            error=OSError("connection refused")
+        )
+        self.assertFalse(ok)
+        self.assertIn("connection refused", detail)
+        self.assertNotIn("identity mismatch", detail)
+        with mock.patch.object(rn, "ENGINE_LABEL", "Engine B"):
+            reason = rn.remote_engine_failure(detail)
+        self.assertEqual(reason, f"Engine B not reachable: {detail}")
+        connect.assert_not_called()
+
 
 class RevisionDefaultsTests(unittest.TestCase):
-    def test_289_defaults_are_the_values_the_script_always_used(self):
+    def test_289_defaults_keep_non_windows_identity_and_pin_windows_engine_b(self):
         linux = rn.revision_defaults("289", False)
         self.assertEqual(linux["profile"], "local-289")
         self.assertEqual(linux["unpack_dir"], "unpack-289")
@@ -776,7 +1035,17 @@ class RevisionDefaultsTests(unittest.TestCase):
         self.assertEqual(
             linux["engine_crc_sha256"],
             "687190c8ef08bb94a1422f4262d62bb7a76a55dfe0634ea43f0e63e0235dc623")
-        self.assertEqual(rn.revision_defaults("289", True)["run_suffix"], "-windows")
+        windows = rn.revision_defaults("289", True)
+        self.assertEqual(windows["run_suffix"], "-windows")
+        self.assertEqual(
+            windows["engine_crc_sha256"],
+            "5f8a00094e8eb02dd00d703e99a073071d0349a8731f43dffa0bdaae36fa6c69")
+        for job in ("main", "quest"):
+            with self.subTest(job=job):
+                settings = rn.job_defaults(job, True, "289", Path("C:/nightly"))
+                self.assertEqual(settings["label"], "Engine B")
+                self.assertEqual(settings["game_port"], 47594)
+                self.assertEqual(settings["http_port"], 3080)
 
     def test_274_defaults_select_the_274_lane(self):
         linux = rn.revision_defaults("274", False)
@@ -795,8 +1064,8 @@ class RevisionBuildOverlayTests(unittest.TestCase):
     def test_274_uses_the_runner_inventory_for_its_build_tree(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            source = root / "runner" / "crates" / "nav" / "src" / "required-content-274.tsv"
-            target = root / "tree" / "crates" / "nav" / "src" / "required-content-274.tsv"
+            source = root / "runner" / "crates" / "nav-planner" / "src" / "required-content-274.tsv"
+            target = root / "tree" / "crates" / "nav-planner" / "src" / "required-content-274.tsv"
             source.parent.mkdir(parents=True)
             target.parent.mkdir(parents=True)
             source.write_text("pinned content inventory\n", encoding="utf-8")
@@ -810,7 +1079,7 @@ class RevisionBuildOverlayTests(unittest.TestCase):
     def test_289_does_not_require_or_apply_the_274_inventory(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            target = root / "tree" / "crates" / "nav" / "src" / "required-content-274.tsv"
+            target = root / "tree" / "crates" / "nav-planner" / "src" / "required-content-274.tsv"
             target.parent.mkdir(parents=True)
             target.write_text("dev inventory\n", encoding="utf-8")
             with mock.patch.object(rn, "REVISION", "289"), \
@@ -822,7 +1091,7 @@ class RevisionBuildOverlayTests(unittest.TestCase):
     def test_274_fails_closed_when_its_inventory_is_missing(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            target = root / "tree" / "crates" / "nav" / "src" / "required-content-274.tsv"
+            target = root / "tree" / "crates" / "nav-planner" / "src" / "required-content-274.tsv"
             target.parent.mkdir(parents=True)
             target.write_text("dev inventory\n", encoding="utf-8")
             with mock.patch.object(rn, "REVISION", "274"), \
@@ -942,6 +1211,18 @@ class QuestJobTests(unittest.TestCase):
         quest = rn.job_defaults("quest", True, "289", Path(tempfile.gettempdir()))
         self.assertEqual((quest["game_port"], quest["http_port"], quest["label"]), (47594, 3080, "Engine B"))
         self.assertEqual(quest["tick_ms"], None)
+
+    def test_isolated_cells_keep_the_configured_guest_root_without_other_host_environment(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            with mock.patch.object(rn, "ISOHOME", "/tmp/isohome"), \
+                    mock.patch.dict(os.environ, {"ISOHOME_ROOT": str(root / "isohome"),
+                                                 "UNRELATED_SECRET": "not-for-the-cell"}):
+                env = rn.cell_env(root / "home", root / "tmp", root / "evidence", "walk", "nm")
+
+            self.assertEqual(env["ISOHOME_ROOT"], str(root / "isohome"))
+            self.assertEqual(env["ISOHOME_DIR"], str(root / "home"))
+            self.assertNotIn("UNRELATED_SECRET", env)
 
     def test_only_the_non_windows_quest_cell_environment_gets_300_ms(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1168,145 +1449,77 @@ class MacQuietLockTests(unittest.TestCase):
 
 @unittest.skipUnless(os.name == "posix" and Path("/bin/bash").is_file(),
                      "the Mac nightly launcher requires Bash")
-class NightlyMacEnvironmentTests(unittest.TestCase):
-    @staticmethod
-    def make_source(root: Path) -> Path:
-        source = root / "source"
-        source.mkdir()
-        subprocess.run(["git", "init", "-q", str(source)], check=True)
-        git("symbolic-ref", "HEAD", "refs/heads/dev", cwd=source)
-        (source / "source.txt").write_text("first\n", encoding="utf-8")
-        git("add", ".", cwd=source)
-        git("-c", "user.name=test", "-c", "user.email=test@example.invalid",
-            "commit", "-qm", "first", cwd=source)
-        return source
-
-    def test_launcher_adds_cargo_home_to_launchd_path(self):
+class NightlyMacLauncherTests(unittest.TestCase):
+    def test_launcher_runs_guest_controller(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            source = self.make_source(root)
             home = root / "home"
-            cargo_home = home / ".cargo"
-            cargo_bin = cargo_home / "bin"
-            cargo_bin.mkdir(parents=True)
-            cargo = cargo_bin / "cargo"
-            cargo.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-            cargo.chmod(0o755)
-
             config = home / ".config" / "274bot-nightly" / "mac-nightly.env"
             config.parent.mkdir(parents=True)
-            capture = root / "environment.txt"
+            runner = root / "runner"
             python = root / "capture-python"
+            vm_tool = root / "mac_vm.py"
+            capture = root / "arguments.txt"
+            vm_tool.write_text("# test helper\n", encoding="utf-8")
             python.write_text(
                 "#!/bin/sh\n"
-                "printf '%s\\t%s\\t%s\\t%s\\n' \"$NIGHTLY_JOB\" \"$CARGO_HOME\" "
-                "\"$PATH\" \"$(command -v cargo)\" >> \"$MAC_CAPTURE\"\n",
+                "printf '%s\\n' \"$@\" > \"$MAC_CAPTURE\"\n"
+                "printf '%s\\n' \"$NIGHTLY_MAC_VM_TOOL\" \"$NIGHTLY_MAC_BASE\" >> \"$MAC_CAPTURE\"\n",
                 encoding="utf-8",
             )
             python.chmod(0o755)
-            values = {
-                "NIGHTLY_MAC_RUNNER": root / "runner",
-                "NIGHTLY_MAC_ROOT": root / "nightly-root",
-                "NIGHTLY_MAC_RUNS": root / "runs",
-                "NIGHTLY_MAC_STATUS": root / "status",
-                "NIGHTLY_MAC_CATALOG": root / "catalog",
-                "NIGHTLY_MAC_ENGINE_A": root / "engine-a",
-                "NIGHTLY_MAC_ENGINE_Q": root / "engine-q",
-                "NIGHTLY_MAC_QUIET_LOCK": root / "MAC-QUIET.lock",
-                "NIGHTLY_MAC_ISOHOME": root / "isohome",
-                "NIGHTLY_MAC_PYTHON": python,
-                "NIGHTLY_MAC_SOURCE_REPO": source,
-            }
             config.write_text(
-                "".join(f"{name}={value}\n" for name, value in values.items()),
+                f"NIGHTLY_MAC_RUNNER={runner}\n"
+                f"NIGHTLY_MAC_PYTHON={python}\n"
+                f"NIGHTLY_MAC_VM_TOOL={vm_tool}\n"
+                "NIGHTLY_MAC_BASE=274bot-mac-base\n",
                 encoding="utf-8",
             )
-            launchd_path = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+
+            result = subprocess.run(
+                ["/bin/bash", str(HERE / "nightly-mac.sh"), "--branch", "dev"],
+                capture_output=True,
+                check=False,
+                env={"HOME": str(home), "MAC_CAPTURE": str(capture), "PATH": "/usr/bin:/bin"},
+                text=True,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            arguments = capture.read_text(encoding="utf-8").splitlines()
+            self.assertEqual(
+                arguments,
+                [
+                    "-u",
+                    str(runner / "tools/nightly/nightly-mac-guest.py"),
+                    "--branch",
+                    "dev",
+                    str(vm_tool),
+                    "274bot-mac-base",
+                ],
+            )
+
+    def test_launcher_requires_vm_tool_configuration(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            home = root / "home"
+            config = home / ".config" / "274bot-nightly" / "mac-nightly.env"
+            config.parent.mkdir(parents=True)
+            config.write_text(
+                f"NIGHTLY_MAC_RUNNER={root / 'runner'}\n"
+                f"NIGHTLY_MAC_PYTHON={root / 'python'}\n",
+                encoding="utf-8",
+            )
+
             result = subprocess.run(
                 ["/bin/bash", str(HERE / "nightly-mac.sh")],
                 capture_output=True,
                 check=False,
-                env={
-                    "HOME": str(home),
-                    "MAC_CAPTURE": str(capture),
-                    "PATH": launchd_path,
-                },
+                env={"HOME": str(home), "PATH": "/usr/bin:/bin"},
                 text=True,
             )
-            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            rows = [line.split("\t") for line in capture.read_text(encoding="utf-8").splitlines()]
 
-            self.assertEqual([row[0] for row in rows], ["main", "quest"])
-            for row in rows:
-                self.assertEqual(row[1], str(cargo_home))
-                self.assertTrue(row[2].startswith(f"{cargo_bin}{os.pathsep}"))
-                self.assertEqual(row[3], str(cargo))
-
-    def test_launcher_pins_one_fetched_dev_commit_for_both_jobs(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            source = self.make_source(root)
-            first = git("rev-parse", "HEAD", cwd=source)
-            (source / "source.txt").write_text("second\n", encoding="utf-8")
-            git("add", ".", cwd=source)
-            git("-c", "user.name=test", "-c", "user.email=test@example.invalid",
-                "commit", "-qm", "second", cwd=source)
-            second = git("rev-parse", "HEAD", cwd=source)
-            git("update-ref", "refs/heads/dev", first, cwd=source)
-
-            home = root / "home"
-            config = home / ".config" / "274bot-nightly" / "mac-nightly.env"
-            config.parent.mkdir(parents=True)
-            capture = root / "pinned-jobs.txt"
-            python = root / "capture-python"
-            python.write_text(
-                "#!/bin/sh\n"
-                "repo_head=$(git -C \"$NIGHTLY_REPO\" rev-parse refs/heads/dev)\n"
-                "printf '%s\\t%s\\t%s\\t%s\\t%s\\n' \"$NIGHTLY_JOB\" \"$NIGHTLY_REPO\" "
-                "\"$NIGHTLY_PINNED_COMMIT\" \"$repo_head\" \"$*\" >> \"$MAC_CAPTURE\"\n"
-                "if [ \"$NIGHTLY_JOB\" = main ]; then\n"
-                "  git -C \"$NIGHTLY_MAC_SOURCE_REPO\" update-ref refs/heads/dev \"$MAC_NEXT_COMMIT\"\n"
-                "fi\n",
-                encoding="utf-8",
-            )
-            python.chmod(0o755)
-            values = {
-                "NIGHTLY_MAC_RUNNER": root / "runner",
-                "NIGHTLY_MAC_ROOT": root / "nightly-root",
-                "NIGHTLY_MAC_RUNS": root / "runs",
-                "NIGHTLY_MAC_STATUS": root / "status",
-                "NIGHTLY_MAC_CATALOG": root / "catalog",
-                "NIGHTLY_MAC_ENGINE_A": root / "engine-a",
-                "NIGHTLY_MAC_ENGINE_Q": root / "engine-q",
-                "NIGHTLY_MAC_QUIET_LOCK": root / "MAC-QUIET.lock",
-                "NIGHTLY_MAC_ISOHOME": root / "isohome",
-                "NIGHTLY_MAC_PYTHON": python,
-                "NIGHTLY_MAC_SOURCE_REPO": source,
-            }
-            config.write_text(
-                "".join(f"{name}={value}\n" for name, value in values.items()),
-                encoding="utf-8",
-            )
-            result = subprocess.run(
-                ["/bin/bash", str(HERE / "nightly-mac.sh")],
-                capture_output=True,
-                check=False,
-                env={
-                    "HOME": str(home),
-                    "MAC_CAPTURE": str(capture),
-                    "MAC_NEXT_COMMIT": second,
-                    "PATH": "/usr/local/bin:/usr/bin:/bin",
-                },
-                text=True,
-            )
-            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            rows = [line.split("\t") for line in capture.read_text(encoding="utf-8").splitlines()]
-            self.assertEqual([row[0] for row in rows], ["main", "quest"])
-            self.assertEqual([row[2] for row in rows], [first, first])
-            self.assertEqual([row[3] for row in rows], [first, first])
-            self.assertEqual(rows[0][1], rows[1][1])
-            self.assertTrue(all("--branch dev" in row[4] for row in rows))
-            self.assertEqual(git("rev-parse", "refs/heads/dev", cwd=source), second)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("NIGHTLY_MAC_VM_TOOL", result.stderr)
 
 
 class SourceManifestTests(unittest.TestCase):
@@ -1478,6 +1691,1014 @@ class SystemdQuestGateTests(unittest.TestCase):
             self.assertIn("refusing quest job", unsafe_zinfandel.stderr)
             self.assertEqual(len(capture.read_text(encoding="utf-8").splitlines()), 1)
 
+
+class LatencySettingsTests(unittest.TestCase):
+    def test_parse_latency_bands(self):
+        self.assertEqual(rn.parse_latency_bands(""), [])
+        self.assertEqual(rn.parse_latency_bands("50,100,150"), [50, 100, 150])
+        self.assertEqual(rn.parse_latency_bands(" 50 , 100 "), [50, 100])
+        for bad in ("abc", "0", "-5", "1000", "50,50", "50.5"):
+            with self.assertRaises(ValueError, msg=bad):
+                rn.parse_latency_bands(bad)
+
+    def test_latency_prefix_stays_inside_the_mint_limit(self):
+        # play_bootstrap.rs parse_live_name_prefix accepts 1 to 4 characters.
+        self.assertEqual(rn.latency_prefix("nt", 50), "nt50")
+        self.assertEqual(rn.latency_prefix("nt", 100), "n100")
+        self.assertEqual(rn.latency_prefix("nw", 150), "n150")
+        self.assertEqual(rn.latency_prefix("nq", 5), "nq5")
+        for rtt in (5, 50, 100, 150, 999):
+            self.assertLessEqual(len(rn.latency_prefix("nt", rtt)), 4)
+        with self.assertRaises(ValueError):
+            rn.latency_prefix("", 50)
+
+    def test_classify_latency_covers_each_table_row(self):
+        cases = [
+            # (zero, band, proxy_unavailable, expected)
+            ("PASS", "PASS", False, "pass"),
+            ("PASS", "FAIL", False, "latency-defect"),
+            ("PASS", "TIMEOUT", False, "latency-defect"),
+            ("PASS", "ERROR", False, "latency-defect"),
+            ("PASS", "NOT_RUN", False, "not-run"),
+            ("PASS", "UNAVAILABLE", False, "unavailable"),
+            ("FAIL", "PASS", False, "also-fails-at-0"),
+            ("FAIL", "FAIL", False, "also-fails-at-0"),
+            ("TIMEOUT", "FAIL", False, "also-fails-at-0"),
+            ("ERROR", "FAIL", False, "also-fails-at-0"),
+            ("UNAVAILABLE", "FAIL", False, "no-baseline"),
+            ("NOT_RUN", "FAIL", False, "no-baseline"),
+            ("SKIP", "PASS", False, "no-baseline"),
+            (None, "FAIL", False, "no-baseline"),
+            ("PASS", "FAIL", True, "proxy-unavailable"),
+            ("PASS", "UNAVAILABLE", True, "proxy-unavailable"),
+            (None, "UNAVAILABLE", True, "proxy-unavailable"),
+        ]
+        for zero, band, proxy, expected in cases:
+            self.assertEqual(rn.classify_latency(zero, band, proxy_unavailable=proxy), expected,
+                             f"zero={zero} band={band} proxy={proxy}")
+
+    def test_cell_row_omits_latency_keys_on_zero_rows_only(self):
+        zero = rn.CellResult(cell="walk", result="PASS", branch="dev", commit="c", platform="p")
+        self.assertNotIn("latency_band", rn.cell_row(zero))
+        band = rn.CellResult(cell="walk", result="PASS", branch="dev", commit="c", platform="p",
+                             latency_band="rtt50", latency_rtt_ms=50, latency_class="pass")
+        row = rn.cell_row(band)
+        self.assertEqual((row["latency_band"], row["latency_rtt_ms"], row["latency_class"]),
+                         ("rtt50", 50, "pass"))
+
+    def test_aggregate_proxy_stats_filters_window_and_direct_records(self):
+        def record(opened, first_byte, path, p50, samples, login=None):
+            summary = {"p50": p50, "p95": p50 + 5, "samples": samples} if p50 is not None else None
+            return {"opened_at_epoch": opened, "first_byte": first_byte, "path": path,
+                    "bytes_client_to_server": 10, "bytes_server_to_client": 20,
+                    "queue_delay_ms_client_to_server": summary,
+                    "queue_delay_ms_server_to_client": summary,
+                    "login_first_response_ms": login}
+
+        records = [
+            record(100.0, 14, "delayed", 25.0, 10, login=55.0),
+            record(101.0, 14, "delayed", 27.0, 30, login=65.0),
+            record(102.0, 15, "direct", 0.1, 99),
+            record(103.0, None, "none", None, 0),
+            record(500.0, 14, "delayed", 75.0, 10, login=999.0),
+        ]
+        out = rn.aggregate_proxy_stats(records, 99.0, 200.0)
+        self.assertEqual(out["records"], 4)
+        self.assertEqual(out["connections"], {"game_14": 2, "ondemand_15": 1, "other": 0, "none": 1})
+        self.assertEqual(out["bytes_client_to_server"], 40)
+        # Sample-weighted median of (25 x10, 27 x30): the direct record never counts.
+        self.assertEqual(out["client_to_server"], {"p50_ms": 27.0, "p95_ms": 32.0, "samples": 40})
+        self.assertEqual(out["login_first_response_ms"], 60.0)
+        empty = rn.aggregate_proxy_stats([])
+        self.assertIsNone(empty["client_to_server"]["p50_ms"])
+        self.assertEqual(empty["records"], 0)
+
+    def test_remote_flags_point_the_game_port_at_the_proxy_only(self):
+        with mock.patch.object(rn, "ENGINE_MODE", "remote"), \
+                mock.patch.object(rn, "ENGINE_HOST", "127.0.0.1"), \
+                mock.patch.object(rn, "GAME_PORT", 44594), \
+                mock.patch.object(rn, "HTTP_PORT", 1080):
+            self.assertEqual(rn.engine_flags(),
+                             ["--host", "127.0.0.1", "--port", "44594",
+                              "--asset-host", "127.0.0.1", "--http-port", "1080"])
+            self.assertEqual(rn.engine_flags(49999),
+                             ["--host", "127.0.0.1", "--port", "49999",
+                              "--asset-host", "127.0.0.1", "--http-port", "1080"])
+            cmd = rn.tui_cmd(Path("tui-play"), "walk", game_port=49999)
+            self.assertIn("49999", cmd)
+            self.assertNotIn("44594", cmd)
+        with mock.patch.object(rn, "ENGINE_MODE", "local"):
+            self.assertEqual(rn.engine_flags(49999), [])
+
+    def test_local_mode_latency_profile_points_the_world_at_the_proxy(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            home = root / "home"
+            home.mkdir()
+            with mock.patch.object(rn, "ENGINE_MODE", "local"), \
+                    mock.patch.object(rn, "JOB", "main"), \
+                    mock.patch.object(rn, "PROFILE", "local-289"), \
+                    mock.patch.object(rn, "REVISION", "289"), \
+                    mock.patch.object(rn, "ENGINE_HOST", "127.0.0.1"), \
+                    mock.patch.object(rn, "GAME_PORT", 44594), \
+                    mock.patch.object(rn, "HTTP_PORT", 1080):
+                rn.cell_env(home, root / "tmp", root / "evidence", "walk", "nt50", game_port=49999)
+            profile = json.loads((home / ".274bot" / "servers.json").read_text(encoding="utf-8"))
+            server = profile["servers"][0]
+            self.assertEqual(server["name"], "local-289")
+            self.assertEqual(server["vault"], "vault-289")
+            self.assertEqual(server["worlds"], [{
+                "number": 289, "host": "127.0.0.1", "port": 49999, "node_id": 289,
+                "asset_host": "127.0.0.1", "asset_port": 1080}])
+
+    def test_local_mode_without_a_latency_port_writes_no_profile(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            home = root / "home"
+            home.mkdir()
+            with mock.patch.object(rn, "ENGINE_MODE", "local"), \
+                    mock.patch.object(rn, "JOB", "main"), \
+                    mock.patch.object(rn, "PROFILE", "local-289"):
+                rn.cell_env(home, root / "tmp", root / "evidence", "walk", "nt")
+            self.assertFalse((home / ".274bot" / "servers.json").exists())
+
+
+class LatencyMatrixTests(unittest.TestCase):
+    @staticmethod
+    def row(cell, result, *, ticks=None, band=None, rtt=None, cls=None):
+        return rn.CellResult(cell=cell, result=result, branch="dev", commit="c", platform="p",
+                             ticks=ticks, latency_band=band, latency_rtt_ms=rtt, latency_class=cls)
+
+    def test_matrix_sorts_defects_first_and_shows_tick_delta(self):
+        zero = [self.row("walk", "PASS", ticks=10), self.row("cook", "FAIL", ticks=3),
+                self.row("alcher", "PASS", ticks=7)]
+        latency = [
+            self.row("walk", "PASS", ticks=10, band="rtt50", rtt=50, cls="pass"),
+            self.row("walk", "FAIL", ticks=12, band="rtt150", rtt=150, cls="latency-defect"),
+            self.row("cook", "FAIL", ticks=3, band="rtt50", rtt=50, cls="also-fails-at-0"),
+            self.row("cook", "FAIL", ticks=4, band="rtt150", rtt=150, cls="also-fails-at-0"),
+            self.row("alcher", "PASS", ticks=7, band="rtt50", rtt=50, cls="pass"),
+            self.row("alcher", "PASS", ticks=7, band="rtt150", rtt=150, cls="pass"),
+        ]
+        md = rn.md_latency_matrix(zero, latency)
+        self.assertEqual(md[0], "| Cell | rtt0 | rtt50 | rtt150 | Class | Ticks 0→150 |")
+        body = [line for line in md if line.startswith("| `")]
+        self.assertEqual([line.split("`")[1] for line in body], ["walk", "cook", "alcher"])
+        self.assertIn("latency-defect", body[0])
+        self.assertIn("10→12", body[0])
+        self.assertIn("also-fails-at-0", body[1])
+
+
+def _start_echo_server() -> tuple[socket.socket, int, threading.Thread, threading.Event]:
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(64)
+    listener.settimeout(0.25)
+    stopping = threading.Event()
+
+    def echo(conn: socket.socket) -> None:
+        try:
+            while True:
+                data = conn.recv(65536)
+                if not data:
+                    return
+                conn.sendall(data)
+        except OSError:
+            return
+        finally:
+            conn.close()
+
+    def accept() -> None:
+        while not stopping.is_set():
+            try:
+                conn, _addr = listener.accept()
+            except socket.timeout:
+                continue
+            except OSError:
+                return
+            threading.Thread(target=echo, args=(conn,), daemon=True).start()
+
+    thread = threading.Thread(target=accept, daemon=True)
+    thread.start()
+    return listener, listener.getsockname()[1], thread, stopping
+
+
+class LatencyPassTests(unittest.TestCase):
+    """The pass against a fake cell runner and a real proxy subprocess."""
+
+    def run_pass(self, root: Path, upstream_port: int, outcomes: dict, *,
+                 traffic: bool = True, stats_p50_override: float | None = None):
+        run_dir = root / "run"
+        run_dir.mkdir(parents=True)
+        binary = root / "tui-play"
+        binary.write_bytes(b"fake-frontend")
+        base = rn.CellResult(cell="", result="NOT_RUN", branch="dev", commit="c" * 9, platform="test")
+
+        def fake_run_cell(cell, frontend, _binary, cell_run_dir, _work, cell_base, _deadline,
+                          game_port=None, name_prefix=None, root_name=None, step=None):
+            started = time.monotonic()
+            result = rn.CellResult(**{**rn.asdict(cell_base), "cell": cell, "frontend": frontend,
+                                      "renderer": "cpu", "started": rn.now_iso()})
+            if traffic:
+                with socket.create_connection(("127.0.0.1", game_port), timeout=10) as sock:
+                    sock.sendall(bytes([14]) + b"ping")
+                    echoed = b""
+                    while len(echoed) < 5:
+                        echoed += sock.recv(5 - len(echoed))
+            result.result, result.ticks = outcomes[cell]
+            result.wall_s = round(time.monotonic() - started, 3)
+            cell_dir = cell_run_dir / root_name / cell
+            cell_dir.mkdir(parents=True, exist_ok=True)
+            return rn.write_cell(cell_dir, result)
+
+        zero = {
+            "walk": rn.CellResult(cell="walk", result="PASS", branch="dev", commit="c" * 9,
+                                  platform="test", ticks=10),
+            "cook": rn.CellResult(cell="cook", result="PASS", branch="dev", commit="c" * 9,
+                                  platform="test", ticks=4),
+            "bank": rn.CellResult(cell="bank", result="FAIL", branch="dev", commit="c" * 9,
+                                  platform="test", ticks=1),
+        }
+        patches = [
+            mock.patch.object(rn, "ENGINE_HOST", "127.0.0.1"),
+            mock.patch.object(rn, "GAME_PORT", upstream_port),
+            mock.patch.object(rn, "ENGINE_MODE", "remote"),
+            mock.patch.object(rn, "REQUIRE_CONSOLE", False),
+            mock.patch.object(rn, "NAME_PREFIX", "nt"),
+            mock.patch.object(rn, "engine_start", lambda _run_dir: (True, "fake engine")),
+            mock.patch.object(rn, "engine_stop", lambda _run_dir: None),
+            mock.patch.object(rn, "run_cell", fake_run_cell),
+            mock.patch.object(rn, "log", lambda _message: None),
+        ]
+        if stats_p50_override is not None:
+            real_read = rn.read_proxy_stats
+
+            def off_band(path):
+                rows = real_read(path)
+                for row in rows:
+                    for field in ("queue_delay_ms_client_to_server",
+                                  "queue_delay_ms_server_to_client"):
+                        if row.get(field):
+                            row[field] = {**row[field], "p50": stats_p50_override}
+                return rows
+
+            patches.append(mock.patch.object(rn, "read_proxy_stats", off_band))
+        for patch in patches:
+            patch.start()
+        try:
+            rows, meta = rn.run_latency_pass("dev", binary, list(outcomes), [50], run_dir,
+                                             root / "work", base, {}, 2, zero, None, True)
+        finally:
+            for patch in patches:
+                patch.stop()
+        return rows, meta, run_dir
+
+    def test_fake_engine_run_writes_sidecars_classes_and_rows(self):
+        listener, echo_port, thread, stopping = _start_echo_server()
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                rows, meta, run_dir = self.run_pass(
+                    Path(tmp), echo_port,
+                    {"walk": ("PASS", 10), "cook": ("FAIL", 4), "bank": ("FAIL", 1)})
+                by_cell = {row.cell: row for row in rows}
+                self.assertEqual(by_cell["walk"].latency_class, "pass")
+                self.assertEqual(by_cell["cook"].latency_class, "latency-defect")
+                self.assertEqual(by_cell["bank"].latency_class, "also-fails-at-0")
+                for row in rows:
+                    cell_dir = run_dir / "cells-latency" / "rtt50" / row.cell
+                    doc = json.loads((cell_dir / "latency.json").read_text(encoding="utf-8"))
+                    self.assertEqual(doc["band"], "rtt50")
+                    self.assertEqual(doc["configured_rtt_ms"], 50)
+                    self.assertEqual(doc["configured_one_way_ms"], 25.0)
+                    self.assertEqual(doc["account_prefix"], "nt50")
+                    self.assertEqual(doc["latency_class"], row.latency_class)
+                    self.assertIsNotNone(doc["frontend_sha256"])
+                    p50 = doc["measured"]["client_to_server"]["p50_ms"]
+                    self.assertLessEqual(abs(p50 - 25.0), 10.0)
+                    self.assertIsNotNone(doc["login_first_response_ms"])
+                    saved = json.loads((cell_dir / "result.json").read_text(encoding="utf-8"))
+                    self.assertEqual(saved["latency_band"], "rtt50")
+                    self.assertEqual(saved["latency_rtt_ms"], 50)
+                    self.assertEqual(saved["latency_class"], row.latency_class)
+                stats = run_dir / "latency" / "rtt50" / "proxy-stats.jsonl"
+                self.assertGreaterEqual(len(rn.read_proxy_stats(stats)), 3)
+                self.assertEqual(meta["bands"][0]["band"], "rtt50")
+                self.assertTrue(meta["report_only"])
+        finally:
+            stopping.set()
+            listener.close()
+            thread.join(timeout=5)
+
+    def test_dead_upstream_yields_proxy_unavailable_rows_and_no_cells_start(self):
+        dead = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        dead.bind(("127.0.0.1", 0))
+        dead_port = dead.getsockname()[1]
+        dead.close()
+        with tempfile.TemporaryDirectory() as tmp:
+            rows, _meta, run_dir = self.run_pass(
+                Path(tmp), dead_port, {"walk": ("PASS", 1)}, traffic=False)
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0].result, "UNAVAILABLE")
+            self.assertEqual(rows[0].latency_class, "proxy-unavailable")
+            self.assertIn("latency proxy unavailable", rows[0].reason or "")
+            doc = json.loads((run_dir / "cells-latency" / "rtt50" / "walk" / "latency.json")
+                             .read_text(encoding="utf-8"))
+            self.assertEqual(doc["measured"]["records"], 0)
+
+    def test_a_pass_without_delayed_traffic_fails_the_health_rule(self):
+        listener, echo_port, thread, stopping = _start_echo_server()
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                rows, _meta, _run_dir = self.run_pass(
+                    Path(tmp), echo_port, {"walk": ("PASS", 1)}, traffic=False)
+                self.assertEqual(rows[0].result, "UNAVAILABLE")
+                self.assertEqual(rows[0].latency_class, "proxy-unavailable")
+                self.assertIn("no delayed connection", rows[0].reason or "")
+        finally:
+            stopping.set()
+            listener.close()
+            thread.join(timeout=5)
+
+    def test_an_off_band_measured_delay_fails_the_health_rule(self):
+        listener, echo_port, thread, stopping = _start_echo_server()
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                # Real traffic through the real proxy, with every measured
+                # p50 rewritten to 90 ms against a 25 ms one-way band.
+                rows, _meta, _run_dir = self.run_pass(
+                    Path(tmp), echo_port, {"walk": ("PASS", 1)}, stats_p50_override=90.0)
+                self.assertEqual(rows[0].result, "UNAVAILABLE")
+                self.assertEqual(rows[0].latency_class, "proxy-unavailable")
+                self.assertIn("measured queue delay p50", rows[0].reason or "")
+        finally:
+            stopping.set()
+            listener.close()
+            thread.join(timeout=5)
+
+
+class LatencyRunBranchTests(unittest.TestCase):
+    def run_unavailable_branch(self, *, latency_bands, latency_cells):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+
+        def fake_update_tree(_branch, tree, _build_log):
+            catalog = tree / rn.CATALOG_RS
+            catalog.parent.mkdir(parents=True)
+            catalog.write_text(
+                'const REGISTRY: &[Entry] = &[\n    Entry::new("walk"),\n'
+                '    Entry::new("cook_bot"),\n    Entry::new("quester_path"),\n];\n',
+                encoding="utf-8")
+            return "b" * 40, "b" * 9
+
+        patches = [
+            mock.patch.object(rn, "ROOT", root),
+            mock.patch.object(rn, "CATALOG", root / "rs2b0t"),
+            mock.patch.object(rn, "update_tree", fake_update_tree),
+            mock.patch.object(rn, "log", lambda _message: None),
+        ]
+        for patch in patches:
+            patch.start()
+        try:
+            run_dir = rn.run_branch("dev", 1, None, None, unavailable="test night off",
+                                    latency_bands=latency_bands, latency_cells=latency_cells)
+        finally:
+            for patch in patches:
+                patch.stop()
+        return run_dir, json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
+
+    def test_lane_off_adds_no_latency_keys_anywhere(self):
+        run_dir, summary = self.run_unavailable_branch(latency_bands=[], latency_cells=["walk"])
+        self.assertNotIn("latency", summary)
+        self.assertNotIn("latency_counts", summary)
+        self.assertNotIn("latency_cells", summary)
+        for row in summary["cells"]:
+            self.assertNotIn("latency_band", row)
+        self.assertNotIn("Latency lane", (run_dir / "summary.md").read_text(encoding="utf-8"))
+        self.assertFalse((run_dir / "cells-latency").exists())
+        self.assertTrue((run_dir / "DONE").is_file())
+
+    def test_lane_on_an_unavailable_night_writes_matrix_and_sidecars(self):
+        run_dir, summary = self.run_unavailable_branch(latency_bands=[50], latency_cells=["walk"])
+        self.assertEqual(len(summary["latency_cells"]), 1)
+        row = summary["latency_cells"][0]
+        self.assertEqual((row["cell"], row["result"], row["latency_band"], row["latency_class"]),
+                         ("walk", "UNAVAILABLE", "rtt50", "no-baseline"))
+        self.assertEqual(summary["latency_counts"]["no-baseline"], 1)
+        # The main counts still describe the zero run only.
+        self.assertEqual(sum(summary["counts"].values()), len(summary["cells"]))
+        self.assertTrue(summary["latency"]["report_only"])
+        md = (run_dir / "summary.md").read_text(encoding="utf-8")
+        self.assertIn("## Latency lane (tui, dev only, report-only)", md)
+        self.assertIn("| `walk` | UNAVAILABLE | UNAVAILABLE | no-baseline |", md)
+        doc = json.loads((run_dir / "cells-latency" / "rtt50" / "walk" / "latency.json")
+                         .read_text(encoding="utf-8"))
+        self.assertEqual(doc["configured_one_way_ms"], 25.0)
+        self.assertIsNone(doc["proxy"]["listen_port"])
+        self.assertTrue((run_dir / "DONE").is_file())
+
+    def test_a_latency_name_outside_the_catalog_fails_the_run(self):
+        _run_dir, summary = self.run_unavailable_branch(latency_bands=[50], latency_cells=["nope"])
+        self.assertIn("latency cell list: names not in the catalog: nope", summary["build"]["error"])
+
+    def test_a_quest_cell_in_the_latency_list_fails_the_run(self):
+        _run_dir, summary = self.run_unavailable_branch(
+            latency_bands=[50], latency_cells=["quester_path"])
+        self.assertIn("quest cells stay out of the latency lane: quester_path",
+                      summary["build"]["error"])
+
+
+@unittest.skipUnless(shutil.which("git"), "git is not installed")
+class Rs2b0tApiDriftTests(unittest.TestCase):
+    """The rs2b0t API drift check: freeze from the tree, diff from the catalog.
+
+    A temporary git repository stands in for upstream rs2b0t, so no test
+    touches the network. The catalog checkout plays the object store: the
+    check fetches upstream `main` into `refs/nightly/upstream-main` and
+    never moves the catalog's checked-out commit.
+    """
+
+    def setUp(self):
+        rn._api_upstream.clear()
+        self.addCleanup(rn._api_upstream.clear)
+
+    @staticmethod
+    def write_api(repo: Path, marker: str) -> None:
+        package = repo / "packages" / "rs2b0t-api"
+        package.mkdir(parents=True, exist_ok=True)
+        (package / "index.d.ts").write_text(
+            f"export declare const marker: string; // {marker}\n", encoding="utf-8")
+        (package / "index.js").write_text(
+            f"module.exports = {{ marker: '{marker}' }};\n", encoding="utf-8")
+
+    def commit_api(self, repo: Path, message: str, marker: str) -> str:
+        self.write_api(repo, marker)
+        git("add", ".", cwd=repo)
+        git("-c", "user.name=test", "-c", "user.email=test@example.invalid",
+            "commit", "-qm", message, cwd=repo)
+        return git("rev-parse", "HEAD", cwd=repo)
+
+    def make_repo(self, root: Path, name: str, *, branch: str = "main") -> Path:
+        repo = root / name
+        repo.mkdir()
+        git("init", "-q", cwd=repo)
+        git("symbolic-ref", "HEAD", f"refs/heads/{branch}", cwd=repo)
+        return repo
+
+    def make_tree(self, root: Path, repository: str, revision: str) -> Path:
+        tree = root / "tree"
+        contract = tree / "crates" / "script" / "compat-js"
+        contract.mkdir(parents=True)
+        (contract / "abi-contract.json").write_text(json.dumps({
+            "frozen_source": {
+                "repository": repository,
+                "revision": revision,
+                "runtime_declarations": "packages/rs2b0t-api/index.js",
+                "typed_declarations": "packages/rs2b0t-api/index.d.ts",
+            },
+        }), encoding="utf-8")
+        return tree
+
+    def test_unchanged_names_both_shorts(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            upstream = self.make_repo(root, "upstream")
+            frozen = self.commit_api(upstream, "api v1", "v1")
+            catalog = self.make_repo(root, "catalog")
+            self.commit_api(catalog, "catalog seed", "seed")
+            tree = self.make_tree(root, str(upstream), frozen)
+
+            info = rn.check_rs2b0t_api_drift(tree, catalog)
+
+            self.assertEqual(info["status"], "unchanged")
+            self.assertEqual(info["freeze_revision"], frozen)
+            self.assertEqual(info["upstream_revision"], frozen)
+            self.assertEqual(info["files"], {})
+            self.assertEqual(info["commit_count"], 0)
+            self.assertEqual(rn.api_drift_md_line(info),
+                             f"rs2b0t API: unchanged since {frozen[:8]} (upstream main {frozen[:8]})")
+
+    def test_changed_reports_file_stats_and_commits(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            upstream = self.make_repo(root, "upstream")
+            frozen = self.commit_api(upstream, "api v1", "v1")
+            tip = self.commit_api(upstream, "api v2", "v2")
+            catalog = self.make_repo(root, "catalog")
+            self.commit_api(catalog, "catalog seed", "seed")
+            tree = self.make_tree(root, str(upstream), frozen)
+
+            info = rn.check_rs2b0t_api_drift(tree, catalog)
+
+            self.assertEqual(info["status"], "changed")
+            self.assertEqual(info["freeze_revision"], frozen)
+            self.assertEqual(info["upstream_revision"], tip)
+            self.assertEqual(info["files"], {
+                "packages/rs2b0t-api/index.d.ts": {"added": 1, "deleted": 1},
+                "packages/rs2b0t-api/index.js": {"added": 1, "deleted": 1},
+            })
+            self.assertEqual(info["commits"], [{"sha": tip[:8], "subject": "api v2"}])
+            self.assertEqual(info["commit_count"], 1)
+            line = rn.api_drift_md_line(info)
+            self.assertIn(f"rs2b0t API: CHANGED since freeze {frozen[:8]} (upstream main {tip[:8]})", line)
+            self.assertIn("index.d.ts +1 -1", line)
+            self.assertIn("index.js +1 -1", line)
+            self.assertIn(f"commits: {tip[:8]} api v2", line)
+
+    def test_commit_list_caps_at_ten(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            upstream = self.make_repo(root, "upstream")
+            frozen = self.commit_api(upstream, "api v1", "v1")
+            tip = frozen
+            for seq in range(12):
+                tip = self.commit_api(upstream, f"api change {seq}", f"v{seq}")
+            catalog = self.make_repo(root, "catalog")
+            self.commit_api(catalog, "catalog seed", "seed")
+            tree = self.make_tree(root, str(upstream), frozen)
+
+            info = rn.check_rs2b0t_api_drift(tree, catalog)
+
+            self.assertEqual(info["status"], "changed")
+            self.assertEqual(info["commit_count"], 12)
+            self.assertEqual(len(info["commits"]), 10)
+            line = rn.api_drift_md_line(info)
+            self.assertIn("(+2 more)", line)
+            self.assertNotIn("api change 0", line)
+
+    def test_fetch_failure_is_unavailable(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            catalog = self.make_repo(root, "catalog")
+            self.commit_api(catalog, "catalog seed", "seed")
+            tree = self.make_tree(root, str(root / "no-such-upstream"), "0" * 40)
+
+            info = rn.check_rs2b0t_api_drift(tree, catalog)
+
+            self.assertEqual(info["status"], "unavailable")
+            self.assertIsNone(info["upstream_revision"])
+            self.assertTrue(info["reason"])
+            line = rn.api_drift_md_line(info)
+            self.assertTrue(line.startswith("rs2b0t API: UNAVAILABLE ("))
+            self.assertNotIn("unchanged", line)
+
+    def test_catalog_checkout_is_unchanged(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            upstream = self.make_repo(root, "upstream")
+            frozen = self.commit_api(upstream, "api v1", "v1")
+            tip = self.commit_api(upstream, "api v2", "v2")
+            catalog = self.make_repo(root, "catalog")
+            self.commit_api(catalog, "catalog seed", "seed")
+            head_before = git("rev-parse", "HEAD", cwd=catalog)
+            tree = self.make_tree(root, str(upstream), frozen)
+
+            info = rn.check_rs2b0t_api_drift(tree, catalog)
+
+            self.assertEqual(info["status"], "changed")
+            self.assertEqual(git("rev-parse", "HEAD", cwd=catalog), head_before)
+            self.assertEqual(
+                git("rev-parse", rn.RS2B0T_UPSTREAM_REF, cwd=catalog), tip)
+
+    def test_freeze_revision_comes_from_the_tree(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            upstream = self.make_repo(root, "upstream")
+            old = self.commit_api(upstream, "api v1", "v1")
+            tip = self.commit_api(upstream, "api v2", "v2")
+            catalog = self.make_repo(root, "catalog")
+            self.commit_api(catalog, "catalog seed", "seed")
+
+            old_info = rn.check_rs2b0t_api_drift(self.make_tree(root, str(upstream), old), catalog)
+            rn._api_upstream.clear()
+            new_tree = root / "tree"
+            contract = new_tree / "crates" / "script" / "compat-js" / "abi-contract.json"
+            contract.write_text(json.dumps({"frozen_source": {"repository": str(upstream),
+                                                              "revision": tip}}), encoding="utf-8")
+            new_info = rn.check_rs2b0t_api_drift(new_tree, catalog)
+
+            self.assertEqual(old_info["freeze_revision"], old)
+            self.assertEqual(old_info["status"], "changed")
+            self.assertEqual(new_info["freeze_revision"], tip)
+            self.assertEqual(new_info["status"], "unchanged")
+
+    def test_missing_contract_checks_nothing_and_reports_unavailable(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            upstream = self.make_repo(root, "upstream")
+            self.commit_api(upstream, "api v1", "v1")
+            catalog = self.make_repo(root, "catalog")
+            self.commit_api(catalog, "catalog seed", "seed")
+            tree = root / "tree"
+            tree.mkdir()
+
+            info = rn.check_rs2b0t_api_drift(tree, catalog)
+
+            self.assertEqual(info["status"], "unavailable")
+            self.assertIn("abi-contract", info["reason"])
+            fetched = subprocess.run(
+                ["git", "rev-parse", rn.RS2B0T_UPSTREAM_REF], cwd=catalog,
+                capture_output=True, text=True)
+            self.assertNotEqual(fetched.returncode, 0)
+
+    def test_missing_tree_is_unavailable_never_unchanged(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            catalog = self.make_repo(root, "catalog")
+            self.commit_api(catalog, "catalog seed", "seed")
+
+            info = rn.check_rs2b0t_api_drift(None, catalog)
+
+            self.assertEqual(info["status"], "unavailable")
+            self.assertNotEqual(info["status"], "unchanged")
+
+    def test_quiet_lock_before_fetch_is_unavailable_and_starts_no_fetch(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            upstream = self.make_repo(root, "upstream")
+            frozen = self.commit_api(upstream, "api v1", "v1")
+            catalog = self.make_repo(root, "catalog")
+            self.commit_api(catalog, "catalog seed", "seed")
+            tree = self.make_tree(root, str(upstream), frozen)
+            lock = root / "MAC-QUIET.lock"
+            lock.write_text("quiet\n", encoding="utf-8")
+            old_lock = rn.QUIET_LOCK
+            old_reason = rn._quiet_lock_reason
+            rn.QUIET_LOCK = lock
+            rn._quiet_lock_reason = None
+            try:
+                with mock.patch.object(rn, "log", lambda _message: None):
+                    info = rn.check_rs2b0t_api_drift(tree, catalog)
+            finally:
+                rn.QUIET_LOCK = old_lock
+                rn._quiet_lock_reason = old_reason
+            self.assertEqual(info["status"], "unavailable")
+            self.assertIn("quiet lock held", info.get("reason") or "")
+            self.assertNotIn("unchanged", rn.api_drift_md_line(info))
+            fetched = subprocess.run(
+                ["git", "rev-parse", rn.RS2B0T_UPSTREAM_REF], cwd=catalog,
+                capture_output=True, text=True)
+            self.assertNotEqual(fetched.returncode, 0)
+
+    @unittest.skipIf(os.name == "nt", "the fake git uses a POSIX shell and sleep")
+    def test_fetch_timeout_kills_the_process_tree(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            upstream = self.make_repo(root, "upstream")
+            self.commit_api(upstream, "api v1", "v1")
+            catalog = self.make_repo(root, "catalog")
+            self.commit_api(catalog, "catalog seed", "seed")
+            real_git = shutil.which("git")
+            self.assertTrue(real_git)
+            pid_file = root / "grandchild.pid"
+            if pid_file.exists():
+                pid_file.unlink()
+            fake_bin = root / "fakebin"
+            fake_bin.mkdir()
+            fake_git = fake_bin / "git"
+            fake_git.write_text(
+                "#!/bin/sh\n"
+                'for a in "$@"; do if [ "$a" = "fetch" ]; then\n'
+                f'  sleep 60 &\n  echo $! > "{pid_file}"\n  wait\n  exit 0\nfi; done\n'
+                f'exec "{real_git}" "$@"\n',
+                encoding="utf-8")
+            fake_git.chmod(0o755)
+            old_path = os.environ.get("PATH", "")
+            os.environ["PATH"] = f"{fake_bin}{os.pathsep}{old_path}"
+            try:
+                with self.assertRaises(RuntimeError) as ctx:
+                    rn.fetch_upstream_main(catalog, str(upstream), timeout=2)
+            finally:
+                os.environ["PATH"] = old_path
+            self.assertIn("timed out", str(ctx.exception))
+            grandchild = int(pid_file.read_text(encoding="utf-8").strip())
+            time.sleep(0.5)
+            try:
+                with self.assertRaises(OSError):
+                    os.kill(grandchild, 0)
+            finally:
+                try:
+                    os.kill(grandchild, 9)
+                except OSError:
+                    pass
+
+    def test_git_log_failure_is_unavailable(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            upstream = self.make_repo(root, "upstream")
+            frozen = self.commit_api(upstream, "api v1", "v1")
+            self.commit_api(upstream, "api v2", "v2")
+            catalog = self.make_repo(root, "catalog")
+            self.commit_api(catalog, "catalog seed", "seed")
+            tree = self.make_tree(root, str(upstream), frozen)
+            real_git = shutil.which("git")
+            self.assertTrue(real_git)
+            # A Python fake routed through `git_cmd`, not a PATH shell
+            # script: Windows never runs an extensionless `git` file
+            # (process creation appends .exe only), so the old shell fake
+            # never intercepted there and the real `log` succeeded. The
+            # fake still fails a real subprocess with the real exit code
+            # and stderr, and delegates every other git call to real git.
+            fake_py = root / "fake_git.py"
+            fake_py.write_text(
+                "import subprocess, sys\n"
+                "real, args = sys.argv[1], sys.argv[2:]\n"
+                "if 'log' in args:\n"
+                "    sys.stderr.write('fake log failure: boom\\n')\n"
+                "    sys.exit(9)\n"
+                "sys.exit(subprocess.run([real, *args]).returncode)\n",
+                encoding="utf-8")
+
+            def fake_git_cmd(*args: str) -> list[str]:
+                return [sys.executable, str(fake_py), real_git, *args]
+
+            with mock.patch.object(rn, "git_cmd", side_effect=fake_git_cmd):
+                info = rn.check_rs2b0t_api_drift(tree, catalog)
+            self.assertEqual(info["status"], "unavailable")
+            self.assertIn("9", info.get("reason") or "")
+            self.assertIn("boom", info.get("reason") or "")
+            line = rn.api_drift_md_line(info)
+            self.assertTrue(line.startswith("rs2b0t API: UNAVAILABLE ("))
+            self.assertNotIn("CHANGED", line)
+
+    def test_run_branch_summary_carries_the_drift_line(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+
+            def fake_update_tree(_branch, tree, _build_log):
+                catalog = tree / rn.CATALOG_RS
+                catalog.parent.mkdir(parents=True)
+                catalog.write_text(
+                    'const REGISTRY: &[Entry] = &[\n    Entry::new("walk"),\n];\n',
+                    encoding="utf-8")
+                return "b" * 40, "b" * 9
+
+            patches = [
+                mock.patch.object(rn, "ROOT", root),
+                mock.patch.object(rn, "CATALOG", root / "rs2b0t"),
+                mock.patch.object(rn, "update_tree", fake_update_tree),
+                mock.patch.object(rn, "log", lambda _message: None),
+            ]
+            for patch in patches:
+                patch.start()
+            try:
+                run_dir = rn.run_branch("dev", 1, None, None, unavailable="test night off")
+            finally:
+                for patch in reversed(patches):
+                    patch.stop()
+            summary = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
+            # The fake tree has no abi-contract.json, so no fetch runs.
+            self.assertEqual(summary["rs2b0t_api"]["status"], "unavailable")
+            md = (run_dir / "summary.md").read_text(encoding="utf-8")
+            self.assertIn("- rs2b0t API: UNAVAILABLE (", md)
+
+
+def make_branch_repo(root: Path, name: str, *, branch: str = "dev",
+                     files: dict | None = None) -> Path:
+    """A git repo with `files` committed on `branch` (branch-list test helper)."""
+    repo = root / name
+    repo.mkdir(parents=True)
+    git("init", "-q", cwd=repo)
+    git("symbolic-ref", "HEAD", f"refs/heads/{branch}", cwd=repo)
+    for relative, text in (files or {"seed.txt": "seed\n"}).items():
+        path = repo / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+    git("add", ".", cwd=repo)
+    git("-c", "user.name=test", "-c", "user.email=test@example.invalid",
+        "commit", "-qm", "init", cwd=repo)
+    return repo
+
+
+@unittest.skipUnless(shutil.which("git"), "git is not installed")
+class BranchListTests(unittest.TestCase):
+    def test_github_list_is_used_when_the_fetch_works(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            origin = make_branch_repo(root, "origin", branch="dev", files={
+                "tools/nightly/branches.conf": "scratch-fix\ndev\n"})
+            tip = git("rev-parse", "HEAD", cwd=origin)
+            runner = root / "runner"
+            subprocess.run(["git", "clone", "-q", str(origin), str(runner)], check=True)
+            local = root / "branches.conf"
+            local.write_text("stale-branch\n", encoding="utf-8")
+            with mock.patch.dict(os.environ):
+                os.environ.pop("NIGHTLY_BRANCHES", None)
+                branches, info = rn.resolve_branch_list(None, runner, local)
+            self.assertEqual(branches, ["scratch-fix", "dev"])
+            self.assertEqual(info["source"], "github")
+            self.assertEqual(info["commit"], tip)
+
+    def test_local_list_and_a_summary_note_when_the_fetch_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            # No origin remote: the fetch must fail.
+            runner = make_branch_repo(root, "runner", branch="dev")
+            local = root / "branches.conf"
+            local.write_text("# local list\nfix-line\ndev\n", encoding="utf-8")
+            with mock.patch.dict(os.environ):
+                os.environ.pop("NIGHTLY_BRANCHES", None)
+                branches, info = rn.resolve_branch_list(None, runner, local)
+            self.assertEqual(branches, ["fix-line", "dev"])
+            self.assertEqual(info["source"], "local")
+            self.assertIn("fetch", info["note"])
+
+    def test_explicit_branch_wins_without_a_fetch(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            runner = make_branch_repo(Path(tmp), "runner", branch="dev")
+            with mock.patch.dict(os.environ):
+                os.environ.pop("NIGHTLY_BRANCHES", None)
+                with mock.patch.object(rn, "read_remote_branches",
+                                       side_effect=AssertionError("must not fetch")):
+                    branches, info = rn.resolve_branch_list(["dev"], runner)
+            self.assertEqual(branches, ["dev"])
+            self.assertEqual(info["source"], "cli")
+
+    def test_env_branches_win_without_a_fetch(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            runner = make_branch_repo(Path(tmp), "runner", branch="dev")
+            with mock.patch.dict(os.environ, {"NIGHTLY_BRANCHES": "release/0.2.6 dev"}):
+                with mock.patch.object(rn, "read_remote_branches",
+                                       side_effect=AssertionError("must not fetch")):
+                    branches, info = rn.resolve_branch_list(None, runner)
+            self.assertEqual(branches, ["release/0.2.6", "dev"])
+            self.assertEqual(info["source"], "env")
+
+
+@unittest.skipUnless(shutil.which("git"), "git is not installed")
+class SelfUpdateTests(unittest.TestCase):
+    def setUp(self):
+        if os.environ.get("NIGHTLY_SELF_CHECK_ACTIVE"):
+            self.skipTest("the self-check does not re-test the updater")
+
+    def enable_update_env(self):
+        """Opt into the update path: NIGHTLY_SELF_UPDATE=1, no re-exec state."""
+        patcher = mock.patch.dict(os.environ)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        for key in ("NIGHTLY_SELF_UPDATE_DONE", "NIGHTLY_SELF_UPDATE_FROM"):
+            os.environ.pop(key, None)
+        os.environ["NIGHTLY_SELF_UPDATE"] = "1"
+
+    def test_update_is_off_unless_opted_in(self):
+        off_values = [None, "0", "", "false", "no", "off"]
+        for off in off_values:
+            with self.subTest(opt_in=off):
+                with tempfile.TemporaryDirectory() as tmp:
+                    root = Path(tmp)
+                    origin = make_branch_repo(root, "origin", branch="dev", files={
+                        "tools/nightly/run_nightly.py": "# new\n"})
+                    runner = root / "runner"
+                    subprocess.run(["git", "clone", "-q", str(origin), str(runner)], check=True)
+                    script = runner / "tools/nightly/run_nightly.py"
+                    before = script.read_text(encoding="utf-8")
+                    # A broken remote proves no fetch is attempted while off.
+                    subprocess.run(["git", "remote", "set-url", "origin", str(root / "missing.git")],
+                                   cwd=runner, check=True)
+                    calls: list = []
+                    with mock.patch.dict(os.environ):
+                        os.environ.pop("NIGHTLY_SELF_UPDATE_DONE", None)
+                        os.environ.pop("NIGHTLY_SELF_UPDATE_FROM", None)
+                        if off is None:
+                            os.environ.pop("NIGHTLY_SELF_UPDATE", None)
+                        else:
+                            os.environ["NIGHTLY_SELF_UPDATE"] = off
+                        info = rn.maybe_self_update(runner, script, ["--branch", "dev"],
+                                                    _exec=lambda *args: calls.append(args))
+                    self.assertEqual(info["status"], "disabled")
+                    self.assertEqual(script.read_text(encoding="utf-8"), before)
+                    self.assertEqual(calls, [])
+
+    def test_a_failed_self_check_keeps_the_old_code(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            origin = make_branch_repo(root, "origin", branch="dev", files={
+                "tools/nightly/run_nightly.py": "# old runner\n"})
+            runner = root / "runner"
+            subprocess.run(["git", "clone", "-q", str(origin), str(runner)], check=True)
+            old_head = git("rev-parse", "HEAD", cwd=runner)
+            (origin / "tools/nightly/run_nightly.py").write_text("def broken(:\n", encoding="utf-8")
+            git("add", ".", cwd=origin)
+            git("-c", "user.name=test", "-c", "user.email=test@example.invalid",
+                "commit", "-qm", "broken", cwd=origin)
+            tip = git("rev-parse", "HEAD", cwd=origin)
+            self.assertNotEqual(tip, old_head)
+            script = runner / "tools/nightly/run_nightly.py"
+            calls: list = []
+            self.enable_update_env()
+            info = rn.maybe_self_update(runner, script, ["--branch", "dev"],
+                                        _exec=lambda *args: calls.append(args))
+            self.assertEqual(info["status"], "check-failed")
+            self.assertEqual(info["to"], tip)
+            self.assertEqual(script.read_text(encoding="utf-8"), "# old runner\n")
+            self.assertEqual(git("rev-parse", "HEAD", cwd=runner), old_head)
+            self.assertEqual(calls, [])
+
+    def test_a_passing_self_check_updates_and_reexecs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            staged = root / "staged"
+            shutil.copytree(HERE, staged / "tools/nightly",
+                            ignore=shutil.ignore_patterns("__pycache__"))
+            origin = root / "origin"
+            origin.mkdir()
+            git("init", "-q", cwd=origin)
+            git("symbolic-ref", "HEAD", "refs/heads/dev", cwd=origin)
+            shutil.copytree(staged / "tools", origin / "tools")
+            git("add", ".", cwd=origin)
+            git("-c", "user.name=test", "-c", "user.email=test@example.invalid",
+                "commit", "-qm", "runner", cwd=origin)
+            runner = root / "runner"
+            subprocess.run(["git", "clone", "-q", str(origin), str(runner)], check=True)
+            probe = "# nightly self-update probe\n"
+            with (origin / "tools/nightly/run_nightly.py").open("a", encoding="utf-8") as handle:
+                handle.write(probe)
+            git("add", ".", cwd=origin)
+            git("-c", "user.name=test", "-c", "user.email=test@example.invalid",
+                "commit", "-qm", "probe", cwd=origin)
+            tip = git("rev-parse", "HEAD", cwd=origin)
+            script = runner / "tools/nightly/run_nightly.py"
+            calls: list = []
+            self.enable_update_env()
+            info = rn.maybe_self_update(runner, script, ["--branch", "dev"],
+                                        _exec=lambda *args: calls.append(args))
+            self.assertIsNone(info)
+            self.assertEqual(len(calls), 1)
+            executable, argv, _env = calls[0]
+            self.assertEqual(executable, sys.executable)
+            self.assertEqual(argv[:2], [sys.executable, str(script)])
+            self.assertEqual(argv[2:], ["--branch", "dev"])
+            self.assertIn(probe, script.read_text(encoding="utf-8"))
+            self.assertEqual(git("rev-parse", "HEAD", cwd=runner), tip)
+
+
+class ReexecTests(unittest.TestCase):
+    def test_windows_reexec_waits_for_the_child_exit_code(self):
+        seen: list = []
+
+        def fake_run(args, env):
+            seen.append((list(args), dict(env)))
+            return subprocess.CompletedProcess(args, 42)
+
+        with mock.patch.object(os, "name", "nt"):
+            with mock.patch.object(subprocess, "run", side_effect=fake_run):
+                with self.assertRaises(SystemExit) as exited:
+                    rn.reexec(sys.executable, [sys.executable, "run_nightly.py"], {"K": "V"})
+        self.assertEqual(exited.exception.code, 42)
+        self.assertEqual(seen, [([sys.executable, "run_nightly.py"], {"K": "V"})])
+
+    def test_posix_reexec_replaces_the_process(self):
+        with mock.patch.object(os, "name", "posix"):
+            with mock.patch.object(os, "execvpe", create=True) as execvpe:
+                with mock.patch.object(subprocess, "run",
+                                       side_effect=AssertionError("must not spawn")):
+                    rn.reexec(sys.executable, [sys.executable, "run_nightly.py"], {"K": "V"})
+        execvpe.assert_called_once_with(sys.executable, [sys.executable, "run_nightly.py"],
+                                        {"K": "V"})
+
+
+class BranchListSummaryTests(unittest.TestCase):
+    def test_run_branch_summary_records_branch_list_and_self_update(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+
+            def fake_update_tree(_branch, tree, _build_log):
+                catalog = tree / rn.CATALOG_RS
+                catalog.parent.mkdir(parents=True)
+                catalog.write_text(
+                    'const REGISTRY: &[Entry] = &[\n    Entry::new("walk"),\n];\n',
+                    encoding="utf-8")
+                return "c" * 40, "c" * 9
+
+            branch_list = {"source": "github", "commit": "a" * 40,
+                           "note": "from origin/dev at " + "a" * 40}
+            self_update = {"status": "check-failed", "from": "o" * 40, "to": "n" * 40,
+                           "detail": "candidate origin/dev failed the self-check; running old code"}
+            patches = [
+                mock.patch.object(rn, "ROOT", root),
+                mock.patch.object(rn, "STEPS", ["tui"]),
+                mock.patch.object(rn, "FRESH_TREES", False),
+                mock.patch.object(rn, "REQUIRE_CONSOLE", False),
+                mock.patch.object(rn, "ENGINE_MODE", "remote"),
+                mock.patch.object(rn, "update_tree", fake_update_tree),
+                mock.patch.object(rn, "log", lambda _message: None),
+            ]
+            for patch in patches:
+                patch.start()
+            try:
+                run_dir = rn.run_branch("dev", 1, None, None, unavailable="probe reason",
+                                        summary_only=True, branch_list=branch_list,
+                                        self_update=self_update)
+            finally:
+                for patch in patches:
+                    patch.stop()
+            summary = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
+            self.assertEqual(summary["branch_list"], branch_list)
+            self.assertEqual(summary["self_update"], self_update)
+            md = (run_dir / "summary.md").read_text(encoding="utf-8")
+            self.assertIn("origin/dev", md)
+            self.assertIn("Runner self-update", md)
+            self.assertTrue((run_dir / "DONE").is_file())
 
 if __name__ == "__main__":
     unittest.main()

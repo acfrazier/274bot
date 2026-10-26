@@ -87,6 +87,7 @@ mod script_api_live_probe;
 mod script_channels;
 mod script_runtime;
 mod slot_bank_memory;
+mod slot_condition;
 mod transport_health;
 mod walk_arm;
 mod walk_permissions;
@@ -109,6 +110,11 @@ pub use walk_arm::{
 pub use walk_permissions::{DangerLevel, WalkGlobals, NET_AVAILABLE};
 mod play_scripts;
 pub use play_scripts::{PreparedScriptConfig, ScriptNavPaint, ScriptStartHandle};
+
+#[cfg(feature = "test-support")]
+pub use play_scripts::{
+    register_guard_action_observer_for_test, GuardActionObserver, GuardDrinkAction,
+};
 mod play_slots;
 #[cfg(test)]
 use api::snapshot::{GameSnapshot, WorldTile};
@@ -122,14 +128,14 @@ pub use instance_lock::{
     InstancePermit, InstancePermitOutcome,
 };
 #[cfg(test)]
-use nav::bank_fetch::BankStep;
+use nav_executor::Traveller;
 #[cfg(test)]
-use nav::router::{find_with, FindOptions, Route};
+use nav_planner::bank_fetch::BankStep;
 #[cfg(test)]
-use nav::traveller::Traveller;
-use nav::world::NavWorld;
+use nav_planner::router::{find_with, FindOptions, Route};
+use nav_planner::world::NavWorld;
 #[cfg(test)]
-use nav::WorldState;
+use nav_planner::WorldState;
 #[cfg(test)]
 use play_bootstrap::bot_client_config;
 use play_bootstrap::PlayConnection;
@@ -173,8 +179,7 @@ use play_wires::dispatch_wires;
 pub use play_wires::{CheatRefusal, WireCmd};
 pub use resource_view::{
     background_bot_count, background_bots_ack_error, background_bots_acked,
-    begin_persist_background_bots_ack, clear_background_bots_ack_error,
-    persist_background_bots_ack, LiveSlot,
+    begin_persist_background_bots_ack, clear_background_bots_ack_error, LiveSlot,
 };
 pub use rss::{count_tcp_to, current_resident_bytes, parse_lsof_established, sample_process};
 pub use scatter::{scatter_tile_for, tele_args};
@@ -254,7 +259,9 @@ pub struct Play {
     queue: SharedLoginQueue,
     per_frame: SlotFrame,
     #[cfg(any(test, feature = "test-support"))]
-    post_native_player_info: Option<play_slots::PostNativePlayerInfo>,
+    post_native_player_info: Option<play_slots::PostFrameObserver>,
+    #[cfg(feature = "test-support")]
+    post_host_frame: Option<play_slots::PostFrameObserver>,
     spawned: HashSet<String>,
     arms: HashMap<String, Arc<SlotArm>>,
     /// Vault profiles keyed by username (a later spawn/reconnect looks up
@@ -374,8 +381,7 @@ impl Play {
         *self.walk_globals.lock().unwrap() = globals;
     }
 
-    /// Bind the shared preferences every admission reads the globals from,
-    /// so a write by either frontend (or a peer process) applies.
+    /// Bind the cached preferences view shared by every walk admission.
     pub fn set_walk_globals_store(&mut self, preferences: local_state::Preferences) {
         for bot in self.navs.lock().unwrap().values_mut() {
             bot.walk_globals_store = Some(preferences.clone());
@@ -383,11 +389,14 @@ impl Play {
         self.walk_globals_store = Some(preferences);
     }
 
+    /// Return the cached worker-built walk preferences, or fail closed if cold or refused.
     pub fn walk_globals(&self) -> WalkGlobals {
         self.walk_globals_store.as_ref().map_or_else(
             || *self.walk_globals.lock().unwrap(),
             |preferences| {
-                WalkGlobals::read(preferences).unwrap_or_else(|_| WalkGlobals::fail_closed())
+                preferences
+                    .walk_globals()
+                    .unwrap_or_else(|_| WalkGlobals::fail_closed())
             },
         )
     }
@@ -441,7 +450,7 @@ impl Play {
     /// `name` is the typed username, looked up by the login identity it
     /// decodes to ([`slot_bank_memory::memory_key`]). `Unknown` with no
     /// rows for a never-observed or unknown account.
-    pub fn bank_rows(&self, name: &str) -> nav::bank_fetch::BankRows {
+    pub fn bank_rows(&self, name: &str) -> nav_planner::bank_fetch::BankRows {
         slot_bank_memory::planner_rows(
             self.bank_memories
                 .get(slot_bank_memory::memory_key(name).as_ref())
@@ -647,6 +656,9 @@ mod combat_proof;
 #[path = "combat_live_proof_tests.rs"]
 mod combat_live_proof_tests;
 
+#[cfg(all(test, feature = "live-harness", feature = "test-support"))]
+mod manual_takeover_compat_live_tests;
+
 #[cfg(test)]
 #[path = "walk_guard_live_tests.rs"]
 mod walk_guard_live_tests;
@@ -669,9 +681,15 @@ mod bank_fetch_closed_live;
 mod bank_memory_live;
 #[cfg(any(test, all(feature = "live-harness", feature = "test-support")))]
 pub mod bank_npc_live;
+#[cfg(test)]
+mod slot_condition_live_tests;
+#[cfg(test)]
+mod survival_eat_live_tests;
 
 #[cfg(all(target_os = "linux", feature = "test-support"))]
 pub use script_runtime::measures_captured_native_bank_pick_cpu;
+#[cfg(feature = "test-support")]
+pub use script_runtime::resolve_script_cross_zones_for_live_test;
 #[cfg(test)]
 mod gather_bait_live;
 #[cfg(test)]

@@ -382,6 +382,9 @@ impl CookFixture {
                         },
                     );
                 }
+                HostEffect::ServerOrdered(_) => {
+                    panic!("Cook bank fixture must use ordinary interactions")
+                }
             }
         }
     }

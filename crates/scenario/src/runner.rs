@@ -10,11 +10,11 @@ use api::interact::{cheat, logout, Interactions, SendResult};
 use api::obj_names::ObjNames;
 use api::snapshot::{GameSnapshot, WorldTile};
 use client::client::Client;
-use nav::router::{FindOptions, Route};
-use nav::traveller::{TravelOptions, TravelOutcome, Traveller};
-use nav::world::NavWorld;
+use nav_executor::{TravelOptions, TravelOutcome, Traveller};
+use nav_planner::router::{FindOptions, Route};
+use nav_planner::world::NavWorld;
 
-use crate::evidence::{Evidence, GroundGuardEvidence, GroundGuardItem};
+use crate::evidence::{Evidence, GroundGuardEvidence, GroundGuardItem, SeedDepositEvidence};
 use crate::proof::Proof;
 use crate::random_episode::{Frame, RandomEventEpisode, Verdict};
 #[cfg(test)]
@@ -409,6 +409,9 @@ pub struct ScenarioRunner {
     total_game_ticks: u32,
     started: Instant,
     deadline: Duration,
+    /// True when the whole-run deadline ended the run (see
+    /// [`ScenarioRunner::deadline_exceeded`]).
+    deadline_exceeded: bool,
     /// Wall-clock settle before a step can start: the scene must have
     /// held `scene_state == 2` for this long. A cheat tele's rebuild
     /// drops the scene to 1, and sending the next step before it
@@ -442,16 +445,25 @@ pub struct ScenarioRunner {
     speed_chat_baseline: Option<i32>,
     evidence: Option<Evidence>,
     ground_guard: Option<GroundGuardEvidence>,
+    seed_deposits: Vec<SeedDepositEvidence>,
     /// Cumulative skill XP baselines: captured at StartScript for its later
     /// watches, otherwise when the first XP watch for that skill begins.
     xp_baselines: Vec<(i32, i32)>,
     /// Baseline for the current [`Proof::FreshStatXpGain`] step only. Cleared
     /// at every step and session boundary so prior work cannot satisfy it.
     fresh_xp_baseline: Option<(i32, i32)>,
-    /// Chat-sequence baseline for the current FreshTutorial, FreshChat, or
-    /// FreshQuestCompletion wait. Latched when the step begins and cleared at
-    /// every step and session boundary, so a stale line cannot satisfy it.
+    /// Chat-sequence baseline for the current FreshTutorial, FreshChat,
+    /// FreshChatSincePreviousStep, or FreshQuestCompletion wait. Latched
+    /// when the step begins (the previous step for
+    /// FreshChatSincePreviousStep) and cleared at every step and session
+    /// boundary, so a stale line cannot satisfy it.
     fresh_chat_baseline: Option<i32>,
+    /// Chat-sequence baseline for the *next* step when its arm is
+    /// [`Proof::FreshChatSincePreviousStep`]. Latched when the current
+    /// step begins and handed to [`Self::fresh_chat_baseline`] unchanged
+    /// when the run advances into that step, so a line sent while the
+    /// previous watch ran stays in scope but older history does not.
+    next_fresh_chat_baseline: Option<i32>,
     /// Latched per step for [`Proof::VisitedWithin`]: the first snapshot
     /// that shows the player inside the proof rectangle sets it. Cleared
     /// at every step and session boundary, like the chat baseline above.
@@ -561,6 +573,7 @@ impl ScenarioRunner {
             total_game_ticks: 0,
             started: Instant::now(),
             deadline,
+            deadline_exceeded: false,
             scene_settle: Duration::from_secs(2),
             scene2_since: None,
             seed_ready_observed: false,
@@ -576,9 +589,11 @@ impl ScenarioRunner {
             engine_speed_sent: false,
             evidence: None,
             ground_guard: None,
+            seed_deposits: Vec::new(),
             xp_baselines: Vec::new(),
             fresh_xp_baseline: None,
             fresh_chat_baseline: None,
+            next_fresh_chat_baseline: None,
             visited_within: false,
             lamp_episode: None,
             maze_episode: None,
@@ -671,6 +686,14 @@ impl ScenarioRunner {
     /// overridden by [`ScenarioRunner::set_deadline`]).
     pub fn deadline(&self) -> Duration {
         self.deadline
+    }
+
+    /// True when the whole-run deadline ended the run. A step, proof, or
+    /// other failure leaves it false, even if a caller reads the status
+    /// after the deadline. The `Failed` text alone does not tell the
+    /// causes apart.
+    pub fn deadline_exceeded(&self) -> bool {
+        self.deadline_exceeded
     }
 
     /// Per-run minted usernames replacing `seed.profiles` (live boots mint
@@ -922,6 +945,7 @@ impl ScenarioRunner {
         if !self.snapshot.ingame() {
             self.fresh_xp_baseline = None;
             self.fresh_chat_baseline = None;
+            self.next_fresh_chat_baseline = None;
             self.visited_within = false;
             self.lamp_episode = None;
             self.maze_episode = None;
@@ -995,13 +1019,18 @@ impl ScenarioRunner {
             if dirty && !hold {
                 self.step_route(client);
             }
-            // A `Repeat` step sends at most once per observed game tick
-            // (one `PLAYER_INFO`). Frontend polls run at the client-cycle
-            // rate, so an unguarded repeat floods the engine's per-tick
-            // input budget and delays the next step's command behind the
-            // repeats. The first send of a step goes out at once
+            // A `Repeat` step (and the native seed deposit, which
+            // re-attempts the same way) sends at most once per
+            // observed game tick (one `PLAYER_INFO`). Frontend polls
+            // run at the client-cycle rate, so an unguarded repeat
+            // floods the engine's per-tick input budget and delays
+            // the next step's command behind the repeats. The first
+            // send of a step goes out at once
             // (`repeat_sent_game_tick` is `None`).
-            let repeat = matches!(self.current_step().kind, StepKind::Repeat { .. });
+            let repeat = matches!(
+                self.current_step().kind,
+                StepKind::Repeat { .. } | StepKind::NativeSeedDeposit { .. }
+            );
             let repeat_ready = !repeat || self.repeat_sent_game_tick != Some(self.snapshot.tick());
             if !self.step_sent && repeat_ready {
                 self.fire_nav_step_sustains(client);
@@ -1021,9 +1050,12 @@ impl ScenarioRunner {
                 // prompts) and closes the quest-scroll modals until its
                 // arm holds, so the send stays armed — and the step's
                 // game-tick budget keeps counting.
-                self.step_sent = !matches!(
+                self.step_sent |= !matches!(
                     self.current_step().kind,
-                    StepKind::DrainDialogs { .. } | StepKind::Relog | StepKind::Repeat { .. }
+                    StepKind::DrainDialogs { .. }
+                        | StepKind::Relog
+                        | StepKind::Repeat { .. }
+                        | StepKind::NativeSeedDeposit { .. }
                 );
                 if self.step_sent {
                     self.game_ticks_waited = 0;
@@ -1145,6 +1177,9 @@ impl ScenarioRunner {
                     _ => true,
                 };
                 if nav_done {
+                    if matches!(self.current_step().kind, StepKind::NativeSeedDeposit { .. }) {
+                        self.trace_seed_deposit("ProofObserved");
+                    }
                     let shot_label = match &self.current_step().kind {
                         StepKind::Shot { label } => Some(*label),
                         _ => None,
@@ -1219,6 +1254,7 @@ impl ScenarioRunner {
         if !matches!(self.phase, Phase::Done | Phase::Cleaning)
             && self.started.elapsed() > self.deadline
         {
+            self.deadline_exceeded = true;
             self.finish_fail(&format!(
                 "{}: deadline {:?} exceeded",
                 self.scenario.name, self.deadline
@@ -1275,8 +1311,18 @@ impl ScenarioRunner {
         self.route = None;
         self.fresh_xp_baseline = None;
         self.fresh_chat_baseline = None;
+        if matches!(
+            self.current_step().wait.arm,
+            Proof::FreshChatSincePreviousStep { .. }
+        ) {
+            // Hand over the baseline latched when the previous step began;
+            // the capture below fills it from this step's own start when
+            // there is none (first step, or a session boundary between).
+            self.fresh_chat_baseline = self.next_fresh_chat_baseline.take();
+        }
         self.visited_within = false;
         self.capture_chat_baseline(self.current_step().wait.arm);
+        self.capture_next_chat_baseline();
         if matches!(
             self.current_step().wait.arm,
             Proof::GroundItemIdsAbsentNear { .. }
@@ -1387,12 +1433,14 @@ impl ScenarioRunner {
                 Some(baseline) => crate::tutorial::tutorial_confirmed(&self.snapshot, baseline),
                 None => false,
             },
-            Proof::FreshChat { needle } => match self.fresh_chat_baseline {
-                Some(baseline) => {
-                    crate::proof::fresh_chat_contains(&self.snapshot, baseline, needle)
+            Proof::FreshChat { needle } | Proof::FreshChatSincePreviousStep { needle } => {
+                match self.fresh_chat_baseline {
+                    Some(baseline) => {
+                        crate::proof::fresh_chat_contains(&self.snapshot, baseline, needle)
+                    }
+                    None => false,
                 }
-                None => false,
-            },
+            }
             Proof::FreshQuestCompletion {
                 chat_needle,
                 main_root_component_id,
@@ -1744,13 +1792,17 @@ impl ScenarioRunner {
         }
     }
 
-    /// Latch the step-start chat baseline for FreshTutorial, FreshChat and
-    /// FreshQuestCompletion. A stale line at or below this sequence cannot
-    /// satisfy the wait.
+    /// Latch the step-start chat baseline for FreshTutorial, FreshChat,
+    /// FreshQuestCompletion, and (when no previous-step baseline was handed
+    /// over) FreshChatSincePreviousStep. A stale line at or below this
+    /// sequence cannot satisfy the wait.
     fn capture_chat_baseline(&mut self, proof: Proof) {
         if !matches!(
             proof,
-            Proof::FreshTutorial | Proof::FreshChat { .. } | Proof::FreshQuestCompletion { .. }
+            Proof::FreshTutorial
+                | Proof::FreshChat { .. }
+                | Proof::FreshChatSincePreviousStep { .. }
+                | Proof::FreshQuestCompletion { .. }
         ) {
             return;
         }
@@ -1758,6 +1810,23 @@ impl ScenarioRunner {
             return;
         }
         self.fresh_chat_baseline = Some(crate::tutorial::chat_baseline(&self.snapshot));
+    }
+
+    /// Latch the baseline the next step will use when its arm is
+    /// [`Proof::FreshChatSincePreviousStep`]: the newest chat sequence at
+    /// the moment the current (previous) step begins. A burst sent while
+    /// this step runs stays above the baseline; history from before this
+    /// step does not.
+    fn capture_next_chat_baseline(&mut self) {
+        if self.next_fresh_chat_baseline.is_some() {
+            return;
+        }
+        let Some(next) = self.scenario.steps.get(self.step + 1) else {
+            return;
+        };
+        if matches!(next.wait.arm, Proof::FreshChatSincePreviousStep { .. }) {
+            self.next_fresh_chat_baseline = Some(crate::tutorial::chat_baseline(&self.snapshot));
+        }
     }
 
     /// Latch [`Proof::VisitedWithin`] when a dirty snapshot first shows the
@@ -1791,6 +1860,7 @@ impl ScenarioRunner {
             return;
         }
         self.capture_chat_baseline(self.current_step().wait.arm);
+        self.capture_next_chat_baseline();
     }
 
     fn fire_poll_sustains(&self, client: &mut Client) {
@@ -1836,6 +1906,37 @@ impl ScenarioRunner {
         }
     }
 
+    fn trace_seed_deposit(&mut self, result: &'static str) {
+        let StepKind::NativeSeedDeposit {
+            unnoted_id,
+            note_id,
+            ..
+        } = self.current_step().kind
+        else {
+            return;
+        };
+        let count = |rows: &[api::snapshot::ItemView], id| {
+            rows.iter()
+                .filter(|row| row.def.id == id)
+                .map(|row| row.count)
+                .sum::<i32>()
+        };
+        let inv_id = note_id.unwrap_or(unnoted_id);
+        self.seed_deposits.push(SeedDepositEvidence {
+            step: self.step,
+            tick: self.snapshot.tick(),
+            inv_id,
+            result,
+            proof: self.holds(self.current_step().wait.arm),
+            pack: count(self.snapshot.inventory(), inv_id),
+            side: count(self.snapshot.bank_side(), inv_id),
+            bank: count(self.snapshot.bank(), unnoted_id),
+            main_generation: self.snapshot.bank_snapshot_generation(),
+            pack_generation: self.snapshot.inventory_packet_generation(),
+            side_generation: self.snapshot.bank_side_packet_generation(),
+        });
+    }
+
     /// Send the current step's action once. `Perform` runs its closure;
     /// `Walk` and `Follow` arm the whole-world route (`find_with` over the
     /// collision + transport graph) and drive `Traveller::follow`.
@@ -1850,6 +1951,39 @@ impl ScenarioRunner {
                     Ok(())
                 } else {
                     Err("driver rejected the send".into())
+                }
+            }
+            StepKind::NativeSeedDeposit {
+                unnoted_id,
+                quantity,
+                note_id,
+            } => {
+                let result = crate::native_seed_deposit_attempt(
+                    client,
+                    &self.snapshot,
+                    *unnoted_id,
+                    *quantity,
+                    *note_id,
+                );
+                let outcome = match result {
+                    Ok(crate::SeedDepositProgress::DepositSent) => "DepositSent",
+                    Ok(crate::SeedDepositProgress::AlreadyDeposited) => "AlreadyDeposited",
+                    Ok(crate::SeedDepositProgress::BankPending) => "BankPending",
+                    Err(crate::SeedDepositFailure::MissingRow { .. }) => "MissingRow",
+                    Err(crate::SeedDepositFailure::MissingOperation { .. }) => "MissingOperation",
+                    Err(crate::SeedDepositFailure::SendRefused { .. }) => "SendRefused",
+                };
+                self.trace_seed_deposit(outcome);
+                match result {
+                    Ok(
+                        crate::SeedDepositProgress::DepositSent
+                        | crate::SeedDepositProgress::AlreadyDeposited,
+                    ) => {
+                        self.step_sent = true;
+                        Ok(())
+                    }
+                    Ok(crate::SeedDepositProgress::BankPending) => Ok(()),
+                    Err(failure) => Err(failure.to_string()),
                 }
             }
             StepKind::DrainDialogs { choice } => {
@@ -1917,15 +2051,15 @@ impl ScenarioRunner {
             allow_teleports: force_teleports || n.allow_teleports,
             allow_wilderness: n.allow_wilderness,
             zones: if n.allow_danger_zones {
-                nav::zones::ZoneExempt::all()
+                nav_planner::zones::ZoneExempt::all()
             } else {
-                nav::zones::ZoneExempt::NONE
+                nav_planner::zones::ZoneExempt::NONE
             },
             ..FindOptions::default()
         }
     }
 
-    /// Arm a whole-world route: `nav::router::find` over the packed
+    /// Arm a whole-world route: `nav_planner::router::find` over the packed
     /// collision + transport graph loaded into [`NavWorld`] (the same
     /// surface the route is then walked on — the pack is baked from the
     /// maps, so it matches the live world). The origin is the observed
@@ -1947,13 +2081,20 @@ impl ScenarioRunner {
         // cannot pay / has not earned is not relaxed. The traveller's
         // latched essence-mine session lets a route from inside the mine
         // use the exit portal's return hop to the entry wizard.
-        let state =
-            nav::WorldState::from_snapshot(&self.snapshot).with_map_members(self.map_members);
+        let state = nav_planner::WorldState::from_snapshot(&self.snapshot)
+            .with_map_members(self.map_members);
         let opts = FindOptions {
             essence: self.traveller.essence(),
             ..opts
         };
-        match nav::router::find_with(&world.collision, &world.graph, from, dest, opts, &state) {
+        match nav_planner::router::find_with(
+            &world.collision,
+            &world.graph,
+            from,
+            dest,
+            opts,
+            &state,
+        ) {
             Ok(route) => {
                 self.route = Some(route);
                 Ok(())
@@ -2218,6 +2359,27 @@ impl ScenarioRunner {
         }
     }
 
+    /// The read-only terminal summary of the most recent Await step
+    /// among the first `reached` steps, if that step carried one.
+    /// On a pass every step was reached. On a failure the steps up
+    /// to and including the failing step were reached. The summary
+    /// rides the receipt either way, so a failure names its unmet
+    /// witness terms and a pass still records the summary's
+    /// observation values. An empty summary records nothing.
+    fn reached_terminal_summary(&self, reached: usize) -> Option<String> {
+        self.scenario.steps[..reached.min(self.scenario.steps.len())]
+            .iter()
+            .rev()
+            .find_map(|step| match &step.kind {
+                StepKind::Await {
+                    summary: Some(summary),
+                    ..
+                } => Some(summary()),
+                _ => None,
+            })
+            .filter(|summary| !summary.is_empty())
+    }
+
     fn record_pass(&mut self) {
         self.phase = Phase::Done;
         self.fire_terminal_shot();
@@ -2225,7 +2387,7 @@ impl ScenarioRunner {
             self.scenario.name,
             "PASS",
             self.scenario.proof.name(),
-            None,
+            self.reached_terminal_summary(self.scenario.steps.len()),
             self.total_game_ticks,
             &self.snapshot,
             self.obj_names.as_deref(),
@@ -2238,6 +2400,7 @@ impl ScenarioRunner {
             .map(ProtectWindowObservation::evidence);
         evidence.random_event = self.random_event.as_ref().map(RandomEventEpisode::receipt);
         evidence.ground_guard = self.ground_guard.take();
+        evidence.seed_deposits = std::mem::take(&mut self.seed_deposits);
         self.evidence = Some(evidence);
     }
 
@@ -2248,11 +2411,19 @@ impl ScenarioRunner {
     fn record_terminal(&mut self, outcome: &'static str, msg: &str) {
         self.phase = Phase::Done;
         self.fire_terminal_shot();
+        // The most recent reached Await may carry a read-only
+        // terminal summary of what it still waits for. Append it so
+        // the receipt names the unmet terms on budget, deadline and
+        // later-step failures alike.
+        let msg = match self.reached_terminal_summary(self.step + 1) {
+            Some(summary) => format!("{msg} [{summary}]"),
+            None => msg.to_string(),
+        };
         let mut evidence = Evidence::terminal(
             self.scenario.name,
             outcome,
             self.current_predicate_name(),
-            Some(msg.to_string()),
+            Some(msg),
             self.total_game_ticks,
             &self.snapshot,
             self.obj_names.as_deref(),
@@ -2265,6 +2436,7 @@ impl ScenarioRunner {
             .map(ProtectWindowObservation::evidence);
         evidence.random_event = self.random_event.as_ref().map(RandomEventEpisode::receipt);
         evidence.ground_guard = self.ground_guard.take();
+        evidence.seed_deposits = std::mem::take(&mut self.seed_deposits);
         self.evidence = Some(evidence);
     }
 }

@@ -139,6 +139,26 @@
     ],
     "engine": [
       {
+        "path": "data/pack/client/interface",
+        "bytes": 112178,
+        "sha256": "b729204fefd8e31a2da8186a8ec0dfec68a0bb6a3be066a1d79165b1ee2f6050"
+      },
+      {
+        "path": "data/pack/client/title",
+        "bytes": 56251,
+        "sha256": "6f4af4b7247d4478b3389f7897e55b95fa0c909248439bda66235b0dd5f3753c"
+      },
+      {
+        "path": "data/pack/server/interface.dat",
+        "bytes": 293998,
+        "sha256": "fb0d6e4b7c1463d47d9a24557b8ff6745a096e7bf47a6759821bb1e6b5700d05"
+      },
+      {
+        "path": "data/pack/server/mesanim.dat",
+        "bytes": 397,
+        "sha256": "52eaf7b6010df4bcb871e8a5b8f231d1b84eee06fe4991855e0cd06e4f5258d9"
+      },
+      {
         "path": "data/pack/server/obj.dat",
         "bytes": 178468,
         "sha256": "e3a388ecb8c4eeeca10596d32ca204fe5775a8937c72741534fccfdef256a243"

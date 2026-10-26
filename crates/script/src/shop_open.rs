@@ -53,7 +53,7 @@ pub const OPEN_CAP_TICKS: u64 = 104 + OPEN_SLACK_TICKS;
 
 /// Frozen `CANT_REACH` (`/^i can't reach that/i`): the engine's
 /// `Player.ts:1293-1296` verdict that an interaction cannot path.
-pub(crate) fn is_cant_reach(text: &str) -> bool {
+pub fn is_cant_reach(text: &str) -> bool {
     const PREFIX: &[u8] = b"i can't reach that";
     let bytes = text.as_bytes();
     bytes.len() >= PREFIX.len() && bytes[..PREFIX.len()].eq_ignore_ascii_case(PREFIX)
@@ -74,14 +74,20 @@ pub(crate) fn open_deadline_ticks(route: KeeperRoute) -> u64 {
 /// One observed session. A Trade sent in another session is gone with it
 /// on the server.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub(crate) struct Session {
-    pub epoch: u64,
-    pub login: u64,
+pub struct Session {
+    pub(crate) epoch: u64,
+    pub(crate) login: u64,
+}
+
+impl Session {
+    pub const fn new(epoch: u64, login: u64) -> Self {
+        Self { epoch, login }
+    }
 }
 
 /// How the keeper stands from the player.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum KeeperRoute {
+pub enum KeeperRoute {
     /// A stand beside the keeper is reachable now, this many steps away.
     Steps(u32),
     /// No stand is reachable inside the NPC view box.
@@ -94,25 +100,67 @@ pub(crate) enum KeeperRoute {
 
 /// The keeper a call trades with.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Keeper {
-    pub name: String,
-    pub action: String,
-    pub index: i32,
+pub struct Keeper {
+    pub(crate) name: String,
+    pub(crate) action: String,
+    pub(crate) index: i32,
     /// The keeper's network south-west tile (the client's `route_x[0]`,
     /// `client.rs:3988-3998`).
-    pub tile: WorldTile,
-    pub route: KeeperRoute,
+    pub(crate) tile: WorldTile,
+    pub(crate) route: KeeperRoute,
+}
+
+impl Keeper {
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn into_name(self) -> String {
+        self.name
+    }
+
+    pub fn action(&self) -> &str {
+        &self.action
+    }
+
+    pub const fn index(&self) -> i32 {
+        self.index
+    }
+
+    pub const fn route(&self) -> KeeperRoute {
+        self.route
+    }
 }
 
 /// One posted NPC row, as either adapter reads it.
-pub(crate) struct Candidate<'a> {
-    pub name: &'a str,
+pub struct Candidate<'a> {
+    pub(crate) name: &'a str,
     /// The row's Trade op, if it has one.
-    pub action: Option<&'a str>,
-    pub index: i32,
-    pub tile: WorldTile,
-    pub size: i32,
-    pub distance: i32,
+    pub(crate) action: Option<&'a str>,
+    pub(crate) index: i32,
+    pub(crate) tile: WorldTile,
+    pub(crate) size: i32,
+    pub(crate) distance: i32,
+}
+
+impl<'a> Candidate<'a> {
+    pub fn new(
+        name: &'a str,
+        action: Option<&'a str>,
+        index: i32,
+        tile: WorldTile,
+        size: i32,
+        distance: i32,
+    ) -> Self {
+        Self {
+            name,
+            action,
+            index,
+            tile,
+            size,
+            distance,
+        }
+    }
 }
 
 /// Whether `op` opens a shop: frozen `Shop.open` presses `Trade`. Some
@@ -124,7 +172,7 @@ pub(crate) fn is_trade_op(op: &str) -> bool {
 /// The candidate with a Trade op to trade with: the reachable one with the
 /// shortest walk first; without a live reach view, the nearest. `view` is
 /// the live reach view and the player's tile ([`reach_route::live`]).
-pub(crate) fn choose_keeper<'a>(
+pub fn choose_keeper<'a>(
     candidates: impl IntoIterator<Item = Candidate<'a>>,
     view: Option<(&ReachQueryView, WorldTile)>,
 ) -> Option<Keeper> {
@@ -168,18 +216,38 @@ pub(crate) fn choose_keeper<'a>(
 
 /// What the adapter observed this tick.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct Facts {
+pub struct Facts {
     /// The game tick, `None` before the session's first tick or on a logout post.
-    pub tick: Option<u64>,
-    pub session: Session,
+    pub(crate) tick: Option<u64>,
+    pub(crate) session: Session,
     /// Highest chat line seq this session (a Trade's mark).
-    pub chat_seq: i32,
+    pub(crate) chat_seq: i32,
     /// Highest seq of an "I can't reach that!" line this session.
-    pub cant_reach_seq: i32,
+    pub(crate) cant_reach_seq: i32,
     /// The shop modal is open with a posted, non-empty stock page.
-    pub usable: bool,
+    pub(crate) usable: bool,
     /// Another caller already sent a Trade on this tick.
-    pub trade_taken: bool,
+    pub(crate) trade_taken: bool,
+}
+
+impl Facts {
+    pub const fn new(
+        tick: Option<u64>,
+        session: Session,
+        chat_seq: i32,
+        cant_reach_seq: i32,
+        usable: bool,
+        trade_taken: bool,
+    ) -> Self {
+        Self {
+            tick,
+            session,
+            chat_seq,
+            cant_reach_seq,
+            usable,
+            trade_taken,
+        }
+    }
 }
 
 /// One outstanding Trade.
@@ -223,7 +291,7 @@ enum State {
 
 /// What the adapter does next.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum Decision {
+pub enum Decision {
     Wait,
     /// The shop is open with a usable page: settle.
     Opened,
@@ -238,7 +306,7 @@ pub(crate) enum Decision {
 
 /// The shop-open state of one call.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct OpenCore {
+pub struct OpenCore {
     state: State,
     attempts_left: u32,
     walked: bool,
@@ -256,7 +324,7 @@ impl Default for OpenCore {
 
 impl OpenCore {
     /// Start with the modal already open but its page not usable.
-    pub(crate) fn awaiting_page(facts: &Facts) -> Self {
+    pub fn awaiting_page(facts: &Facts) -> Self {
         Self {
             state: State::Page {
                 until: facts.tick.unwrap_or(0) + 1,
@@ -274,7 +342,7 @@ impl OpenCore {
     /// A usable page on a tick later than this call's Trade, on a tick no
     /// other Trade went out. A snapshot may settle on this. Trades and
     /// expiry belong to real ticks ([`Self::tick`]).
-    pub(crate) fn ready(&self, facts: &Facts) -> bool {
+    pub fn ready(&self, facts: &Facts) -> bool {
         let Some(tick) = facts.tick else {
             return false;
         };
@@ -290,11 +358,7 @@ impl OpenCore {
     /// One real tick. `keeper` is read only when a Trade or walk is due.
     /// While walking this waits; the adapter polls its walk and reports with
     /// [`Self::walked`].
-    pub(crate) fn tick(
-        &mut self,
-        facts: &Facts,
-        keeper: impl FnOnce() -> Option<Keeper>,
-    ) -> Decision {
+    pub fn tick(&mut self, facts: &Facts, keeper: impl FnOnce() -> Option<Keeper>) -> Decision {
         let Some(tick) = facts.tick else {
             return Decision::Wait;
         };
@@ -345,7 +409,7 @@ impl OpenCore {
     }
 
     /// The adapter sent `keeper`'s Trade on `facts.tick`.
-    pub(crate) fn traded(&mut self, facts: &Facts, keeper: &Keeper) {
+    pub fn traded(&mut self, facts: &Facts, keeper: &Keeper) {
         let Some(tick) = facts.tick else {
             return;
         };
@@ -359,8 +423,7 @@ impl OpenCore {
 
     /// The deadline of the outstanding Trade, if any (for traces). Only the
     /// compat `Shop.open` adapter (`load`) and tests read it.
-    #[cfg(any(test, feature = "load"))]
-    pub(crate) fn deadline(&self) -> Option<u64> {
+    pub fn deadline(&self) -> Option<u64> {
         match self.state {
             State::Trade(attempt) => Some(attempt.deadline),
             _ => None,
@@ -369,11 +432,7 @@ impl OpenCore {
 
     /// The adapter's walk to the keeper ended. An arrival continues on the
     /// same tick with a fresh keeper read. A failed walk fails the open.
-    pub(crate) fn walked(
-        &mut self,
-        arrived: bool,
-        keeper: impl FnOnce() -> Option<Keeper>,
-    ) -> Decision {
+    pub fn walked(&mut self, arrived: bool, keeper: impl FnOnce() -> Option<Keeper>) -> Decision {
         if !arrived {
             return Decision::Failed("the walk to the unreachable keeper failed");
         }

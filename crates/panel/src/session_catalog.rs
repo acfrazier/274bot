@@ -44,6 +44,10 @@ impl Session {
         command: OperatorCommand,
         targets: Targets<'_>,
     ) -> Option<frontend_core::Submitted> {
+        let previous_validation_banner = self
+            .error
+            .as_deref()
+            .is_some_and(|error| self.scripts.has_parameter_draft_error(error));
         let submitted = self.submit(command, targets)?;
         let error = submitted
             .operation()
@@ -53,8 +57,13 @@ impl Session {
                     .command_failure(submitted.request())
                     .map(str::to_owned)
             });
+        if previous_validation_banner {
+            self.error = None;
+        }
         if let Some(error) = error {
-            self.error = Some(error);
+            if !self.scripts.has_parameter_draft_error(&error) {
+                self.error = Some(error);
+            }
         }
         Some(submitted)
     }
@@ -78,7 +87,12 @@ impl Session {
                 );
                 self.submit_script_command(OperatorCommand::ImportCatalog, Targets::Application);
             }
-            Err(error) => self.error = Some(format!("server profile: {error}")),
+            Err(error) => self.refuse_command(
+                OperatorCommand::ImportCatalog,
+                &[],
+                None,
+                &format!("server profile: {error}"),
+            ),
         }
     }
 
@@ -99,7 +113,12 @@ impl Session {
         let selected = match self.catalog_root() {
             Ok(selected) => selected,
             Err(error) => {
-                self.error = Some(format!("server profile: {error}"));
+                self.refuse_command(
+                    OperatorCommand::ImportCatalog,
+                    &[],
+                    None,
+                    &format!("server profile: {error}"),
+                );
                 return;
             }
         };
@@ -144,10 +163,12 @@ impl Session {
     /// the picker closes and the root is persisted when the result settles.
     pub fn import_rs2b0t_catalog(&mut self, root: &Path) -> Result<(), String> {
         if !crate::script_picker::rs2b0t_root_has_index(root) {
-            return Err(format!(
+            let reason = format!(
                 "no catalog at {}",
                 paths::registry_index_path(root).display()
-            ));
+            );
+            self.refuse_command(OperatorCommand::ImportCatalog, &[], None, &reason);
+            return Err(reason);
         }
         self.scripts.stage_catalog_action(
             CatalogActionKind::Import,
@@ -216,7 +237,8 @@ impl Session {
     /// remember the parent directory. Errors set [`Session::error`].
     pub fn load_js(&mut self, path: &Path) {
         if !path.is_file() {
-            self.error = Some(format!("script: not a file: {}", path.display()));
+            let reason = format!("script: not a file: {}", path.display());
+            self.refuse_command(OperatorCommand::LoadScriptFile, &[], None, &reason);
             return;
         }
         self.scripts.stage_load_file(path.to_path_buf());
@@ -240,10 +262,8 @@ impl Session {
             );
         }
         if let Some(parent) = path.parent() {
+            let _ = self.persist_panel_serializable(&["script_load_last_dir"], parent);
             self.ui.script_load_last_dir = Some(parent.to_path_buf());
-            if self.persist_ui {
-                crate::ui_state::save(&self.preferences, &self.ui);
-            }
         }
         self.script_load_open = false;
     }

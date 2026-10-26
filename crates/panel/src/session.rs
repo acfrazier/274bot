@@ -34,6 +34,7 @@ use frontend_core::launch::{
     ProfileEnv, ProfileError, ProfileLauncher, ProfilePreparation, ProfileTemplate, UnlockStage,
     ValidatedProfile,
 };
+use frontend_core::prefs::{PreferencePatch, UiPreferences, Update};
 use frontend_core::scripts::{
     CardSource, LoadoutForm, PaintFrame, SchemaRef, ScriptChoice, ScriptRunState,
 };
@@ -43,21 +44,24 @@ use frontend_core::walk_map::{
     WalkRoutePath, WalkRouteSource, WalkSlotStatus, WalkSourceStatus,
 };
 use frontend_core::MapBakeChoice;
-use frontend_core::{GuardianEdit, GuardianPolicy, UiPreferences};
+use frontend_core::{CurePoison, SurvivalEdit};
 #[cfg(test)]
 use host_play::SlotStatus;
-use nav::paint::{
+use nav_planner::paint::{
     collision_at_with, hop_captions, hull_targets, reached, remaining_path_tiles, remaining_trail,
     select_draw_indices, trail_tones, HopCaption, HullTarget, PathTile, TrailTone,
 };
-use nav::router::{FindOptions, Route};
-use nav::tile::Tile;
-use nav::world::NavWorld;
+use nav_planner::router::{FindOptions, Route};
+use nav_planner::tile::Tile;
+use nav_planner::world::NavWorld;
 
 use crate::focus::{draw_for_slot, full_rate_for};
 use crate::nav_settings::{from_scenario, parse_html_color, NavSettings};
 use crate::wall::Wall;
-use frontend_core::{OperatorCommand, OperatorSession, SlotAttach, SlotSurface, Targets};
+use frontend_core::{
+    GuardianEdit, GuardianPolicy, OperatorCommand, OperatorSession, SlotAttach, SlotSurface,
+    Targets,
+};
 
 /// Scatter / mainland hop only on a cold world, not after a `lostCon`
 /// reconnect (that would tele the re-handshaked slot on every DC).
@@ -453,7 +457,9 @@ impl SceneRoutePaint {
         hops: bool,
     ) -> Self {
         let route = match route {
-            Some(WalkRoutePath::Legacy(route)) => nav::producer::route_view(world, route).ok(),
+            Some(WalkRoutePath::Legacy(route)) => {
+                nav_planner::producer::route_view(world, route).ok()
+            }
             Some(WalkRoutePath::Compact(route)) => Some(route),
             None => None,
         };
@@ -748,15 +754,15 @@ fn apply_path_camera(client: &mut Client, tiles: &[PathTile], here: Option<World
     }
     let world: Vec<_> = tiles.iter().map(|p| p.tile).collect();
     let hops: Vec<_> = tiles.iter().map(|p| p.transport).collect();
-    let Some(sampled) = nav::camera::path_facing_yaw(here, &world, &hops, 12) else {
+    let Some(sampled) = nav_planner::camera::path_facing_yaw(here, &world, &hops, 12) else {
         return;
     };
     let mut hold = PATH_CAM.lock().unwrap();
-    hold.desired = Some(nav::camera::hold_desired(hold.desired, sampled));
+    hold.desired = Some(nav_planner::camera::hold_desired(hold.desired, sampled));
     let Some(target) = hold.desired else {
         return;
     };
-    let (yaw, v) = nav::camera::ease_yaw(client.orbit_camera_yaw, target, hold.vel);
+    let (yaw, v) = nav_planner::camera::ease_yaw(client.orbit_camera_yaw, target, hold.vel);
     hold.vel = v;
     client.orbit_camera_yaw = yaw;
     // Keycam must not also integrate our ease velocity.
@@ -860,6 +866,32 @@ impl WalkSendState {
         }
     }
 }
+struct PanelPreferenceMember {
+    path: Vec<String>,
+    value: Option<serde_json::Value>,
+}
+
+struct PanelPreferenceWrite {
+    update: Update,
+    members: Vec<PanelPreferenceMember>,
+}
+
+enum StartupFocus {
+    Restore,
+    SavedProfile(String),
+}
+
+/// What a refusal on the banner waits for: the action that supplies it
+/// clears the message at once ([`Session::clear_resolved_error`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ErrorNeed {
+    /// A bot has the focus.
+    FocusedBot,
+    /// The focused bot has a script card.
+    FocusedBotCard,
+    /// The first save of the profile called this has finished.
+    ProfileSaved(String),
+}
 
 pub struct Session {
     /// Shared focus policy; slot threads read it every frame (observe) to
@@ -872,6 +904,8 @@ pub struct Session {
     pub core: OperatorSession<SlotIo>,
     /// Last vault/connection error shown in the banner.
     pub error: Option<String>,
+    /// The banner message's expiry clock ([`Self::expire_error`]).
+    error_expiry: frontend_core::ErrorExpiry<ErrorNeed>,
     /// BOT_MAINLAND=1 / host-play --mainland; not a panel checkbox.
     pub mainland: Arc<AtomicBool>,
     /// The log section's filtered view and controls over the shared
@@ -907,9 +941,26 @@ pub struct Session {
     /// local-state service this session opened: the one handle every reader
     /// and writer of the panel's preferences goes through.
     pub(crate) preferences: UiPreferences,
+    /// Whether the process writer has published the first readable cache.
+    preferences_ready: bool,
+    /// Automatic unlock or saved-profile focus deferred to a preference poll
+    /// after cache adoption. Explicit selection cancels it.
+    startup_focus_pending: Option<StartupFocus>,
+    /// Service-owned writes remain watched by the panel even when the
+    /// settings surface that submitted them is closed.
+    panel_preference_writes: Vec<PanelPreferenceWrite>,
+    /// Latest panel edits kept over a cold-to-ready cache adoption.
+    pending_panel_members: HashMap<Vec<String>, Option<serde_json::Value>>,
+    /// Shared Nav values changed by an accepted command but not yet durable.
+    pending_nav_members: HashMap<&'static str, bool>,
+    /// A failed write remains visible until a later write to that member
+    /// succeeds.
+    preference_write_error: Option<(Vec<String>, String)>,
     /// Shared Quester Paths settings and reload lifecycle.
     pub(crate) quester_paths: frontend_core::QuesterPathsController,
     pub(crate) quester_paths_folder_edit: String,
+    /// Preserve uncommitted text while the durable controller is adopted.
+    pub(crate) quester_paths_folder_dirty: bool,
     /// Separate Fleet window open.
     pub fleet_open: bool,
     /// The one fleet model (rows, marks, filter, order) the Fleet window,
@@ -1057,6 +1108,8 @@ pub struct Session {
     /// Retained copy of the selected card's schema the parameter editors
     /// walk while they change the session (copied only when it changes).
     pub(crate) script_param_schema: frontend_core::scripts::OwnedSchema,
+    /// Reused range and draft-detail text, so warm prefs frames do not allocate it.
+    pub(crate) script_parameter_label: String,
     /// Loadouts CRUD window (non-modal).
     pub loadouts_open: bool,
     /// Item search box for the active slot or supply row.
@@ -1344,15 +1397,111 @@ impl frontend_core::frames::FrameHook for PanelFrameHook {
     }
 }
 
-fn apply_walk_permissions_to_nav(nav: &mut NavSettings, view: frontend_core::WalkGlobalsView) {
+fn apply_walk_permissions_to_nav(
+    nav: &mut NavSettings,
+    view: frontend_core::WalkGlobalsView,
+    pending: &mut HashMap<&'static str, bool>,
+) {
     let globals = view.globals();
-    nav.allow_teleports = globals.allow_teleports();
-    nav.allow_wilderness = globals.allow_wilderness();
-    nav.allow_bank_fetch = globals.allow_bank_fetch();
-    nav.allow_danger_zones = globals.allow_danger_zones();
-    nav.survivable_routing = globals.survivable_routing();
-    nav.script_scope_notice_ack = view.script_scope_notice_ack();
-    nav.survivable_routing_notice_ack = view.survivable_routing_notice_ack();
+    apply_walk_permission(nav, "allow_teleports", globals.allow_teleports(), pending);
+    apply_walk_permission(nav, "allow_wilderness", globals.allow_wilderness(), pending);
+    apply_walk_permission(nav, "allow_bank_fetch", globals.allow_bank_fetch(), pending);
+    apply_walk_permission(
+        nav,
+        "allow_danger_zones",
+        globals.allow_danger_zones(),
+        pending,
+    );
+    apply_walk_permission(
+        nav,
+        "survivable_routing",
+        globals.survivable_routing(),
+        pending,
+    );
+    apply_walk_permission(
+        nav,
+        "script_scope_notice_ack",
+        view.script_scope_notice_ack(),
+        pending,
+    );
+    apply_walk_permission(
+        nav,
+        "survivable_routing_notice_ack",
+        view.survivable_routing_notice_ack(),
+        pending,
+    );
+}
+
+fn apply_walk_permission(
+    nav: &mut NavSettings,
+    key: &'static str,
+    durable: bool,
+    pending: &mut HashMap<&'static str, bool>,
+) {
+    let value = match pending.get(key).copied() {
+        Some(value) if value == durable => {
+            pending.remove(key);
+            durable
+        }
+        Some(value) => value,
+        None => durable,
+    };
+    *nav_member_mut(nav, key) = value;
+}
+
+fn nav_member_mut<'a>(nav: &'a mut NavSettings, key: &'static str) -> &'a mut bool {
+    match key {
+        "allow_teleports" => &mut nav.allow_teleports,
+        "allow_wilderness" => &mut nav.allow_wilderness,
+        "allow_bank_fetch" => &mut nav.allow_bank_fetch,
+        "allow_danger_zones" => &mut nav.allow_danger_zones,
+        "survivable_routing" => &mut nav.survivable_routing,
+        "script_scope_notice_ack" => &mut nav.script_scope_notice_ack,
+        "survivable_routing_notice_ack" => &mut nav.survivable_routing_notice_ack,
+        _ => unreachable!("only shared Nav members are refreshed"),
+    }
+}
+
+fn apply_pending_nav_members(nav: &mut NavSettings, pending: &HashMap<&'static str, bool>) {
+    for (key, value) in pending {
+        match *key {
+            "allow_teleports" => nav.allow_teleports = *value,
+            "allow_wilderness" => nav.allow_wilderness = *value,
+            "allow_bank_fetch" => nav.allow_bank_fetch = *value,
+            "allow_danger_zones" => nav.allow_danger_zones = *value,
+            "survivable_routing" => nav.survivable_routing = *value,
+            "script_scope_notice_ack" => nav.script_scope_notice_ack = *value,
+            "survivable_routing_notice_ack" => nav.survivable_routing_notice_ack = *value,
+            "show_special_areas" => nav.show_special_areas = *value,
+            "pause_script_on_manual_walk_abort" => {
+                nav.pause_script_on_manual_walk_abort = *value;
+            }
+            _ => unreachable!("only shared Nav members are retained"),
+        }
+    }
+}
+
+fn json_member_matches(
+    document: &serde_json::Map<String, serde_json::Value>,
+    path: &[String],
+    expected: &Option<serde_json::Value>,
+) -> bool {
+    let mut object = document;
+    let mut value = None;
+    for (index, key) in path.iter().enumerate() {
+        value = object.get(key);
+        if index + 1 < path.len() {
+            let Some(next) = value.and_then(serde_json::Value::as_object) else {
+                return expected.is_none();
+            };
+            object = next;
+        }
+    }
+    match (value, expected) {
+        (None, None) => true,
+        (Some(value), Some(expected)) => value == expected,
+        _ => false,
+    }
 }
 
 #[cfg(test)]
@@ -1388,6 +1537,7 @@ impl Session {
         let preferences = core
             .preferences()
             .expect("the session's local state was bound just now");
+        let preferences_ready = preferences.ready();
         let mut ui = crate::ui_state::load(&preferences);
         let walk_permissions = core.adopt_operator_preferences();
         let mut quester_paths = frontend_core::QuesterPathsController::default();
@@ -1397,7 +1547,8 @@ impl Session {
             .folder()
             .to_string_lossy()
             .into_owned();
-        apply_walk_permissions_to_nav(&mut ui.nav, walk_permissions);
+        let mut pending_nav_members = HashMap::new();
+        apply_walk_permissions_to_nav(&mut ui.nav, walk_permissions, &mut pending_nav_members);
         let capture_pref = ui.capture;
         let (sidecar_50_pref, focused_50_pref) = (ui.sidecar_50, ui.focused_50);
         let map_desk = frontend_core::MapDesk::new(ui.map_bake);
@@ -1428,6 +1579,7 @@ impl Session {
             })),
             core,
             error: None,
+            error_expiry: frontend_core::ErrorExpiry::default(),
             mainland: Arc::new(AtomicBool::new(
                 env::var("BOT_MAINLAND").as_deref() == Ok("1"),
             )),
@@ -1460,8 +1612,15 @@ impl Session {
             route_through_zones: false,
             walk_permissions,
             preferences,
+            preferences_ready,
+            startup_focus_pending: None,
+            panel_preference_writes: Vec::new(),
+            pending_panel_members: HashMap::new(),
+            pending_nav_members,
+            preference_write_error: None,
             quester_paths,
             quester_paths_folder_edit,
+            quester_paths_folder_dirty: false,
             map_desk,
             map_model: frontend_core::walk_map::WalkMap::new(),
             map_catalogue: None,
@@ -1509,6 +1668,7 @@ impl Session {
             script_parameter_filter: String::new(),
             script_parameter_filter_id: None,
             script_param_schema: frontend_core::scripts::OwnedSchema::default(),
+            script_parameter_label: String::new(),
             loadouts_open: false,
             loadouts_search: String::new(),
             loadouts_search_slot: None,
@@ -1542,12 +1702,257 @@ impl Session {
 
     /// Refresh the durable policy before rendering or admitting a manual walk.
     pub(crate) fn refresh_walk_permissions(&mut self) {
-        // Cheap per frame: the preferences re-read their file at most once a
-        // second and answer from what they hold otherwise.
+        self.adopt_panel_preferences_if_ready();
         self.walk_permissions = self.core.refresh_walk_globals();
-        let view = self.walk_permissions;
-        apply_walk_permissions_to_nav(&mut self.ui.nav, view);
-        self.route_through_zones = view.danger_this_walk(self.route_through_zones);
+        apply_walk_permissions_to_nav(
+            &mut self.ui.nav,
+            self.walk_permissions,
+            &mut self.pending_nav_members,
+        );
+        self.route_through_zones = self
+            .walk_permissions
+            .danger_this_walk(self.route_through_zones);
+    }
+
+    /// Poll accepted panel writes and adopt the first cached snapshot.
+    pub(crate) fn poll_panel_preferences(&mut self) {
+        let mut index = 0;
+        while index < self.panel_preference_writes.len() {
+            let outcome = match &mut self.panel_preference_writes[index].update {
+                Update::Durable => Some(Ok(())),
+                Update::Queued(update) => update.poll(),
+            };
+            let Some(outcome) = outcome else {
+                index += 1;
+                continue;
+            };
+            let write = self.panel_preference_writes.swap_remove(index);
+            match outcome {
+                Ok(()) => self.clear_succeeded_panel_members(&write.members),
+                Err(error) => {
+                    self.set_preference_write_error(write.members.first(), error.to_string())
+                }
+            }
+        }
+
+        if let Ok(document) = self.preferences.document() {
+            self.clear_cached_panel_members(&document);
+            self.clear_cached_nav_members(&document);
+            self.adopt_panel_preferences(&document);
+            // Startup selection is a between-command effect. Lazy policy
+            // reads may adopt preferences, but must not replace a command's
+            // captured profile or map context.
+            if self.startup_focus_pending.is_some() && self.core.prepare_startup() {
+                if let Some(focus) = self.startup_focus_pending.take() {
+                    self.apply_startup_focus(focus);
+                }
+            }
+        }
+    }
+
+    pub(crate) fn panel_preferences_ready(&self) -> bool {
+        self.preferences_ready
+    }
+
+    #[cfg(test)]
+    pub(crate) fn panel_preference_writes_pending(&self) -> usize {
+        self.panel_preference_writes.len()
+    }
+
+    /// Whether a core-owned or panel-owned preference write is still pending.
+    pub(crate) fn preferences_pending(&self) -> bool {
+        self.core.preferences_pending() || !self.panel_preference_writes.is_empty()
+    }
+
+    pub(crate) fn panel_preference_write_error(&self) -> Option<&str> {
+        self.preference_write_error
+            .as_ref()
+            .map(|(_, message)| message.as_str())
+    }
+
+    /// Submit one exact panel-owned preference member without waiting.
+    pub(crate) fn persist_panel_member(
+        &mut self,
+        path: &[&str],
+        value: Option<serde_json::Value>,
+    ) -> Result<(), String> {
+        if !self.persist_ui {
+            return Ok(());
+        }
+        let member = PanelPreferenceMember {
+            path: path.iter().map(|part| (*part).to_owned()).collect(),
+            value: value.clone(),
+        };
+        self.pending_panel_members
+            .insert(member.path.clone(), value.clone());
+        let patch = match PreferencePatch::member(path, value) {
+            Ok(patch) => patch,
+            Err(error) => {
+                let message = error.to_string();
+                self.set_preference_write_error(Some(&member), message.clone());
+                return Err(message);
+            }
+        };
+        if patch.is_empty() {
+            self.pending_panel_members.remove(&member.path);
+            return Ok(());
+        }
+        match self.preferences.begin_patch(patch) {
+            Ok(Update::Durable) => {
+                self.clear_succeeded_panel_members(&[member]);
+                Ok(())
+            }
+            Ok(update @ Update::Queued(_)) => {
+                self.panel_preference_writes.push(PanelPreferenceWrite {
+                    update,
+                    members: vec![member],
+                });
+                Ok(())
+            }
+            Err(error) => {
+                let message = error.to_string();
+                self.set_preference_write_error(Some(&member), message.clone());
+                Err(message)
+            }
+        }
+    }
+    pub(crate) fn persist_panel_serializable<T: serde::Serialize + ?Sized>(
+        &mut self,
+        path: &[&str],
+        value: &T,
+    ) -> Result<(), String> {
+        match serde_json::to_value(value) {
+            Ok(value) => self.persist_panel_member(path, Some(value)),
+            Err(error) => {
+                let member = PanelPreferenceMember {
+                    path: path.iter().map(|part| (*part).to_owned()).collect(),
+                    value: None,
+                };
+                let message = error.to_string();
+                self.set_preference_write_error(Some(&member), message.clone());
+                Err(message)
+            }
+        }
+    }
+
+    /// Retain a shared Nav command's value over refreshes until its durable
+    /// view catches up. The panel does not save these core-owned members.
+    pub(crate) fn remember_nav_preference(&mut self, key: &'static str, value: bool) {
+        self.pending_nav_members.insert(key, value);
+    }
+
+    fn adopt_panel_preferences_if_ready(&mut self) {
+        if self.preferences_ready {
+            return;
+        }
+        let Ok(document) = self.preferences.document() else {
+            return;
+        };
+        self.adopt_panel_preferences(&document);
+    }
+
+    fn adopt_panel_preferences(&mut self, document: &serde_json::Map<String, serde_json::Value>) {
+        if self.preferences_ready {
+            return;
+        }
+        self.ui = crate::ui_state::apply_pending_members(
+            crate::ui_state::load_snapshot(document),
+            &self.pending_panel_members,
+        );
+        apply_pending_nav_members(&mut self.ui.nav, &self.pending_nav_members);
+        self.preferences_ready = true;
+
+        let preserve_folder_draft = self.quester_paths_folder_dirty;
+        self.quester_paths.restore(&self.preferences);
+        if !preserve_folder_draft {
+            self.quester_paths_folder_edit = self
+                .quester_paths
+                .settings()
+                .folder()
+                .to_string_lossy()
+                .into_owned();
+        }
+        self.draw = frontend_core::DrawPolicy::restore(&self.preferences, self.persist_ui);
+        {
+            let mut focus = self
+                .focus
+                .lock()
+                .expect("panel focus mutex is not poisoned");
+            focus.capture = self.draw.capture();
+            focus.sidecar_50 = self.draw.sidecar_50();
+            focus.focused_50 = self.draw.focused_50();
+        }
+        self.ui.capture = self.draw.capture();
+        self.ui.sidecar_50 = self.draw.sidecar_50();
+        self.ui.focused_50 = self.draw.focused_50();
+        self.map_desk
+            .adopt_bake_choice(frontend_core::load_map_bake_choice(&self.preferences));
+        self.script_load_dir =
+            crate::script_picker::default_load_browse_dir(self.ui.script_load_last_dir.as_deref());
+        self.rs2b0t_catalog_dir = crate::script_picker::default_load_browse_dir(
+            self.ui.script_catalog_last_dir.as_deref(),
+        );
+        crate::log_pane::apply_session_log_pref(self);
+
+        self.clear_cached_panel_members(document);
+        self.clear_cached_nav_members(document);
+    }
+
+    fn clear_succeeded_panel_members(&mut self, members: &[PanelPreferenceMember]) {
+        for member in members {
+            if self.pending_panel_members.get(&member.path) == Some(&member.value) {
+                self.pending_panel_members.remove(&member.path);
+                #[cfg(test)]
+                crate::ui_state::commit_test_member(&member.path, &member.value);
+            }
+            if self
+                .preference_write_error
+                .as_ref()
+                .is_some_and(|(path, _)| path == &member.path)
+            {
+                self.preference_write_error = None;
+            }
+        }
+    }
+
+    fn set_preference_write_error(
+        &mut self,
+        member: Option<&PanelPreferenceMember>,
+        error: String,
+    ) {
+        let path = member.map_or_else(Vec::new, |member| member.path.clone());
+        self.preference_write_error = Some((path, format!("Preferences not saved: {error}")));
+    }
+
+    fn clear_cached_panel_members(
+        &mut self,
+        document: &serde_json::Map<String, serde_json::Value>,
+    ) {
+        self.pending_panel_members.retain(|path, value| {
+            let stored = json_member_matches(document, path, value);
+            #[cfg(test)]
+            if stored {
+                crate::ui_state::commit_test_member(path, value);
+            }
+            !stored
+        });
+    }
+
+    fn clear_cached_nav_members(&mut self, document: &serde_json::Map<String, serde_json::Value>) {
+        for key in ["show_special_areas", "pause_script_on_manual_walk_abort"] {
+            let stored = document
+                .get("nav")
+                .and_then(serde_json::Value::as_object)
+                .and_then(|nav| nav.get(key))
+                .and_then(serde_json::Value::as_bool);
+            if self
+                .pending_nav_members
+                .get(key)
+                .is_some_and(|pending| Some(*pending) == stored)
+            {
+                self.pending_nav_members.remove(key);
+            }
+        }
     }
 
     /// Enable full-core proof only for the dedicated catalog_watch entry.
@@ -1749,7 +2154,7 @@ impl Session {
         }
         self.ui.server_revision = revision;
         self.launcher.bump_generation();
-        crate::ui_state::save(&self.preferences, &self.ui);
+        let _ = self.persist_panel_serializable(&["server_revision"], &revision);
         Ok(())
     }
 
@@ -1784,11 +2189,18 @@ impl Session {
     }
 
     /// Unlock (or first-run create) the default vault and start the play.
+    /// A vault path that cannot be resolved refuses the Create the prompt
+    /// then offers (`vault_unlock_prompt` treats it as no vault file).
     pub fn unlock(&mut self, pass: &str) -> bool {
         let path = match self.vault_path() {
             Ok(path) => path,
             Err(error) => {
-                self.error = Some(format!("server profile: {error}"));
+                self.refuse_command(
+                    OperatorCommand::CreateVault,
+                    &[],
+                    None,
+                    &format!("server profile: {error}"),
+                );
                 return false;
             }
         };
@@ -1800,7 +2212,7 @@ impl Session {
     /// parked until selected (select keeps a slot once it has run).
     pub fn unlock_at(&mut self, path: &Path, pass: &str) -> bool {
         if self.start_vault(path, pass) {
-            self.focus_first_profile();
+            self.startup_focus_pending = Some(StartupFocus::Restore);
             true
         } else {
             false
@@ -1816,7 +2228,12 @@ impl Session {
     /// session cannot clobber the file. Forgotten-password recovery.
     pub fn reset_vault_at(&mut self, path: &Path) -> bool {
         if self.core.vault_open() {
-            self.error = Some("reset vault: unlock / close the session first".into());
+            self.refuse_command(
+                OperatorCommand::ResetVault,
+                &[],
+                None,
+                "reset vault: unlock / close the session first",
+            );
             return false;
         }
         self.core.stage_vault_reset(path.to_path_buf());
@@ -1841,7 +2258,12 @@ impl Session {
         let path = match self.vault_path() {
             Ok(path) => path,
             Err(error) => {
-                self.error = Some(format!("server profile: {error}"));
+                self.refuse_command(
+                    OperatorCommand::ResetVault,
+                    &[],
+                    None,
+                    &format!("server profile: {error}"),
+                );
                 return false;
             }
         };
@@ -1856,7 +2278,12 @@ impl Session {
             .ensure_profile_bound()
             .and_then(|()| self.require_bot_operation())
         {
-            self.error = Some(msg.to_string());
+            let command = if path.is_file() {
+                OperatorCommand::UnlockVault
+            } else {
+                OperatorCommand::CreateVault
+            };
+            self.refuse_command(command, &[], None, &msg.to_string());
             return false;
         }
         match self.start_play(path, pass) {
@@ -2343,21 +2770,81 @@ impl Session {
         Ok(())
     }
 
-    /// After unlock/`spawn_all`: restore `last_focus` when it is still a
-    /// vault/slot name; otherwise focus the first so the combo and renderer
-    /// are not stuck on `None`. Mode-aware like a chooser row pick: with
-    /// MultiBox already on, the profile joins the rail ([`Self::load`]).
+    /// A durable profile save can select immediately once shared startup is ready.
+    fn focus_when_ready(&mut self, focus: StartupFocus) {
+        if self.preferences_ready && self.core.prepare_startup() {
+            self.apply_startup_focus(focus);
+        } else {
+            self.startup_focus_pending = Some(focus);
+        }
+    }
+
+    fn apply_startup_focus(&mut self, focus: StartupFocus) {
+        match focus {
+            StartupFocus::Restore => self.focus_first_profile(),
+            StartupFocus::SavedProfile(name) => self.select(&name),
+        }
+    }
+
+    /// Restore the saved focus when it still exists, or use the first profile.
+    /// MultiBox restores it onto the rail through the usual chooser path.
     fn focus_first_profile(&mut self) {
         let names = self.profile_names();
-        let last = crate::ui_state::load(&self.preferences).last_focus;
-        if let Some(name) = frontend_core::pick_focus(&names, last.as_deref()) {
+        if let Some(name) = frontend_core::pick_focus(&names, self.ui.last_focus.as_deref()) {
             self.pick_profile(&name);
         }
+    }
+
+    /// Clear the banner message once it has stood for
+    /// [`frontend_core::ERROR_MESSAGE_TIMEOUT`] with nothing resolving or
+    /// replacing it (the same rule as the terminal app's message line).
+    pub(crate) fn expire_error(&mut self, now: Instant) {
+        self.error_expiry
+            .observe(&mut self.error, self.core.refusals(), now);
+    }
+
+    /// Refuse `command` before the panel can submit it (no focused bot, a bot
+    /// with no card). The refusal logs at the shared command boundary like
+    /// every other refused command, shows on the banner, and the banner clears
+    /// when the action that supplies `need` happens
+    /// ([`Self::clear_resolved_error`]).
+    pub(crate) fn refuse_command(
+        &mut self,
+        command: OperatorCommand,
+        bots: &[&str],
+        need: Option<ErrorNeed>,
+        reason: &str,
+    ) {
+        self.core.refuse_unsubmitted(command, bots, reason);
+        self.error = Some(reason.to_owned());
+        if let Some(need) = need {
+            self.error_expiry.waits_for(need, reason);
+        }
+    }
+
+    /// Clear the banner message when the need it waits for now holds: the
+    /// action that resolves a message clears it at once, whichever action it
+    /// was (a focus change, a focused bot's card, a finished save).
+    /// Called after a focus change and once per frame.
+    pub(crate) fn clear_resolved_error(&mut self) {
+        let Some(need) = self.error_expiry.waiting_need() else {
+            return;
+        };
+        let met = match need {
+            ErrorNeed::FocusedBot => self.focused_name().is_some(),
+            ErrorNeed::FocusedBotCard => self
+                .focused_name()
+                .is_some_and(|name| self.scripts.heading(&self.core, &name).is_some()),
+            ErrorNeed::ProfileSaved(name) => !self.core.profile_saving(name),
+        };
+        self.error_expiry.resolve(&mut self.error, |_| met);
     }
 
     /// Poll slot statuses and append log lines for transitions (slot up,
     /// login errors, ingame, scene changes). Call once per UI frame.
     pub fn pump_status(&mut self) {
+        self.expire_error(Instant::now());
+        self.clear_resolved_error();
         self.core.advance_removals(Instant::now());
         // The fleet model follows the core's rows and the vault at this
         // sync, whether or not a fleet surface is drawn (two integer
@@ -2470,15 +2957,15 @@ impl Session {
     }
 
     /// Queue a host-owned rail cheat on the focused slot through the
-    /// `DebugCommand` row. No-op without play/focus; these controls are not
-    /// Debug-tab reply probes.
+    /// `DebugCommand` row; these controls are not Debug-tab reply probes. The
+    /// rail draws every cheat button disabled while
+    /// [`Self::debug_send_target`] has no bot to give (no focus, no play
+    /// session), so a click always gets one and the early return is not
+    /// reachable by a click.
     pub fn cheat_focused(&mut self, cmd: &str) {
-        let Some(name) = self.focused_name() else {
+        let Ok(name) = self.debug_send_target().map(str::to_owned) else {
             return;
         };
-        if !self.core.has_play() {
-            return;
-        }
         self.map_desk.stage_internal_debug_command(cmd);
         self.submit(OperatorCommand::DebugCommand, Targets::Profile(&name));
     }
@@ -2527,15 +3014,14 @@ impl Session {
 
     /// Send one Debug command to the displayed focused bot. Marked sends use
     /// [`send_debug_command_marked_snapshot`] so every shared mark is counted.
-    /// The host queue and client encoder retain final cheat admission.
+    /// The host queue and client encoder retain final cheat admission. The
+    /// Debug panel draws Send disabled with the reason
+    /// [`Self::debug_send_target`] gives, so a click never gets an `Err` here.
     pub fn send_debug_command(&mut self, cmd: &str) -> Result<(), String> {
-        if !self.debug_ui() {
-            return Err("Debug commands require a Local profile".into());
-        }
-        let name = self.focused_name().ok_or("Pick a focused bot")?;
-        if !self.core.has_play() {
-            return Err("No active play session".into());
-        }
+        let name = self
+            .debug_send_target()
+            .map(str::to_owned)
+            .map_err(String::from)?;
         self.map_desk.stage_debug_command(cmd, None);
         let submitted = self
             .submit(OperatorCommand::DebugCommand, Targets::Profile(&name))
@@ -2587,6 +3073,25 @@ impl Session {
     pub fn debug_ui(&self) -> bool {
         self.profile_class() == ProfileClass::Local
     }
+
+    /// The focused bot a Debug command goes to, or why it has none: a Local
+    /// profile, a focused bot and a play session. The Debug controls draw
+    /// disabled with that reason (the rail's TutSkip, Lumbridge and Teles
+    /// destinations, the Debug panel's Send and the maxme button), and their
+    /// handlers ([`Self::cheat_focused`], [`Self::send_debug_command`]) take
+    /// the bot from this same answer, so a click never reaches their early
+    /// exits.
+    pub(crate) fn debug_send_target(&self) -> Result<&str, &'static str> {
+        if !self.debug_ui() {
+            return Err("Debug commands require a Local profile");
+        }
+        let name = self.core.selected().ok_or("Pick a focused bot")?;
+        if !self.core.has_play() {
+            return Err("No active play session");
+        }
+        Ok(name)
+    }
+
     /// WalkTo Teleport uses the host's Local+loopback rule on this session's
     /// play connection when present, otherwise the bound target and play host.
     pub fn map_teleport_authorized(&self) -> bool {
@@ -2612,7 +3117,10 @@ impl Session {
         self.core.profile(&name).and_then(|p| p.tutorial_skipped())
     }
 
-    /// Persist TutSkip on the focused vault profile (debugprefs).
+    /// Persist TutSkip on the focused vault profile (debugprefs). The button
+    /// is drawn only for a focused profile ([`Self::focused_tutorial_skipped`]
+    /// reads `Some(false)` only with one), so a click always has one and the
+    /// early return is not reachable by a click.
     pub fn mark_tutorial_skipped(&mut self) {
         let Some(name) = self.focused_name() else {
             return;
@@ -2787,6 +3295,7 @@ impl Session {
             return Err(format!("pair capture actor {name} is not a live slot"));
         }
         self.apply_focus(name);
+        self.clear_resolved_error();
         Ok(())
     }
 
@@ -2801,7 +3310,7 @@ impl Session {
     /// that slot's `FrameBuf`. No socket is swapped (the channel-head baton
     /// is gone); every slot keeps running.
     pub fn select(&mut self, name: &str) {
-        if self.refuse_saving(name) {
+        if self.refuse_saving(OperatorCommand::Select, name) {
             return;
         }
         self.core.stage_select_opens_slot();
@@ -2812,6 +3321,7 @@ impl Session {
         }
         self.apply_focus(name);
         self.restore_script_heading(name);
+        self.clear_resolved_error();
         if !self.multibox {
             self.maybe_offer_background_ack();
         }
@@ -2865,13 +3375,30 @@ impl Session {
         self.background_ack_open = false;
     }
 
-    fn apply_focus(&mut self, name: &str) {
+    fn cancel_startup_focus(&mut self) {
+        self.startup_focus_pending = None;
+    }
+
+    fn cancel_startup_focus_for_removed_profile(&mut self, name: &str) {
+        // Before hydration, Restore can still resolve to any vault profile.
+        // A named save only depends on that one profile.
+        if self.startup_focus_pending.as_ref().is_some_and(|focus| {
+            matches!(focus, StartupFocus::Restore)
+                || matches!(focus, StartupFocus::SavedProfile(target) if target == name)
+        }) {
+            self.cancel_startup_focus();
+        }
+    }
+
+    pub(crate) fn apply_focus(&mut self, name: &str) {
+        // Every profile-selection path converges here, including a repeated
+        // selection of the current bot. Operator intent supersedes startup.
+        self.cancel_startup_focus();
         if self.persist_ui {
-            // Reload so an injected/disk collapsed map is not clobbered.
-            let mut ui = crate::ui_state::load(&self.preferences);
-            ui.last_focus = Some(name.to_string());
-            crate::ui_state::save(&self.preferences, &ui);
-            self.ui = ui;
+            let focus = name.to_string();
+            self.ui.last_focus = Some(focus.clone());
+            let _ =
+                self.persist_panel_member(&["last_focus"], Some(serde_json::Value::String(focus)));
         }
         // The core owns the selection (and mirrors it onto the play, waking
         // the outgoing and incoming slots); `focus.focused` is the render
@@ -3111,10 +3638,15 @@ impl Session {
 
     /// A profile whose first save is still being written cannot be focused
     /// or started yet; say so instead of acting on staged credentials.
-    fn refuse_saving(&mut self, name: &str) -> bool {
+    fn refuse_saving(&mut self, command: OperatorCommand, name: &str) -> bool {
         let saving = self.core.profile_saving(name);
         if saving {
-            self.error = Some(format!("{name}: profile is still saving"));
+            self.refuse_command(
+                command,
+                &[name],
+                Some(ErrorNeed::ProfileSaved(name.to_owned())),
+                &format!("{name}: profile is still saving"),
+            );
         }
         saving
     }
@@ -3207,7 +3739,7 @@ impl Session {
         self.select(name);
     }
 
-    /// Log out one member (the credentials Logout button): latch it so
+    /// Log out one member (the credentials Log out button): latch it so
     /// auto-login is blocked until [`Session::login_all`], then arm a clean
     /// IF logout. The slot stays up and focused; only the login intent
     /// changes.
@@ -3282,6 +3814,17 @@ impl Session {
         self.apply_result(result)
     }
 
+    /// Persist the focused profile's Cure poison setting to the vault
+    /// and mirror it onto a running slot's arm once the write is
+    /// durable, so the slot sees the change within one frame. Never
+    /// spawns or stops a slot.
+    pub fn set_survival(&mut self, name: &str, cure_poison: CurePoison) -> bool {
+        self.core
+            .stage_survival(SurvivalEdit::cure_poison(cure_poison));
+        let result = self.submit_profile_write(OperatorCommand::SetSurvival, name);
+        self.apply_result(result)
+    }
+
     /// Queued mode for the focused bot's next login, including a session override.
     pub fn focused_lowmem(&self) -> bool {
         self.focused_name()
@@ -3296,14 +3839,14 @@ impl Session {
     }
 
     fn persist_game_render_prefs(&mut self) {
+        let raster = self.ui.raster;
         if self.persist_ui {
-            crate::ui_state::save(&self.preferences, &self.ui);
+            let _ = self.persist_panel_serializable(&["raster"], &raster);
         }
         let Some(name) = self.focused_name() else {
             return;
         };
-        if let Err(e) = self.submit_profile_write(OperatorCommand::SetRaster(self.ui.raster), &name)
-        {
+        if let Err(e) = self.submit_profile_write(OperatorCommand::SetRaster(raster), &name) {
             self.error = Some(e);
         }
     }
@@ -3331,9 +3874,7 @@ impl Session {
 
     pub fn set_focused_lowmem(&mut self, lowmem: bool) -> bool {
         self.ui.lowmem = lowmem;
-        if self.persist_ui {
-            crate::ui_state::save(&self.preferences, &self.ui);
-        }
+        let _ = self.persist_panel_member(&["lowmem"], Some(serde_json::Value::Bool(lowmem)));
         self.error = None;
         let Some(name) = self.focused_name() else {
             return true;
@@ -3372,7 +3913,10 @@ impl Session {
     }
 
     /// Explicit Relog-now through the login FIFO. Running or queued script
-    /// work requires a second confirming click.
+    /// work requires a second confirming click. The button is drawn only for a
+    /// focused bot with a memory notice ([`Self::focused_memory_notice`]
+    /// needs the focus), so a click always has one and the early return is
+    /// not reachable by a click.
     pub fn request_focused_memory_relog(&mut self) -> bool {
         let Some(name) = self.focused_name() else {
             return false;
@@ -3431,7 +3975,7 @@ impl Session {
     /// spawned holding the title screen until [`Session::login_all`].
     /// Returns whether the name was newly added to the wall.
     pub fn load(&mut self, name: &str) -> bool {
-        if self.refuse_saving(name) {
+        if self.refuse_saving(OperatorCommand::Load, name) {
             return false;
         }
         let added = self
@@ -3525,12 +4069,14 @@ impl Session {
             | None
                 if submitted.operation().is_some() =>
             {
+                self.cancel_startup_focus_for_removed_profile(name);
                 self.error = None;
                 true
             }
             Some(api::identity::Settlement::Completed(
                 frontend_core::command::Completion::Done,
             )) => {
+                self.cancel_startup_focus_for_removed_profile(name);
                 self.error = None;
                 true
             }
@@ -3717,6 +4263,10 @@ impl Session {
             removal.reselected().map(str::to_string),
             removal.selection_cleared(),
         );
+        self.cancel_startup_focus_for_removed_profile(name);
+        if reselected.is_some() || cleared {
+            self.cancel_startup_focus();
+        }
         self.sync_wall_focus();
         if let Some(next) = reselected.as_deref() {
             self.select(next);
@@ -3918,11 +4468,11 @@ impl Session {
         self.observed_map_services = self.core.observed_walk_services(&name, context);
     }
 
-    pub fn map_nav_digest(&self) -> nav::map::identity::Digest {
+    pub fn map_nav_digest(&self) -> nav_planner::map::identity::Digest {
         self.map_nav_digest_for(None)
     }
 
-    fn map_nav_digest_for(&self, world: Option<&NavWorld>) -> nav::map::identity::Digest {
+    fn map_nav_digest_for(&self, world: Option<&NavWorld>) -> nav_planner::map::identity::Digest {
         self.server_profile()
             .and_then(BoundProfile::nav_identity)
             .or_else(|| {
@@ -3935,7 +4485,7 @@ impl Session {
                 })
             })
             .unwrap_or_else(|| {
-                nav::map::identity::Digest::of(&self.launcher.generation().to_be_bytes())
+                nav_planner::map::identity::Digest::of(&self.launcher.generation().to_be_bytes())
             })
     }
 
@@ -4004,8 +4554,8 @@ impl Session {
     /// Consume the pending map selection through the typed WalkTo row.
     pub fn confirm_picker_walk(&mut self, world: &NavWorld) -> bool {
         let context = self.picker_context(world);
-        let options = self.walk_find_options();
         let name = self.focused_name();
+        let options = self.walk_find_options();
         let origin = name
             .as_deref()
             .and_then(|name| self.core.walk_slot_status(name).origin());
@@ -4228,23 +4778,19 @@ impl Session {
         self.core.fleet_view().row(name).and_then(|row| row.queue())
     }
 
-    /// Whether the focused slot has an authenticated client session. Control
-    /// actions such as Logout use this rather than the game-action gate.
-    pub fn focused_connected(&self) -> bool {
-        let Some(name) = self.focused_name() else {
-            return false;
-        };
-        self.statuses.get(&name).is_some_and(|s| s.connected())
-    }
-
-    /// Whether the repeat guard parked the focused slot after repeated
-    /// unexpected exits. It is offline and unqueued but may still hold a
-    /// script's work, which a Logout ends.
-    pub fn focused_guard_parked(&self) -> bool {
-        let Some(name) = self.focused_name() else {
-            return false;
-        };
-        self.statuses.get(&name).is_some_and(|s| s.guard_parked())
+    /// Whether Log out acts on the focused slot: the shared projection's
+    /// answer, the same one Fleet Log out and the TUI use. `None` without a
+    /// focused slot.
+    pub fn focused_logout_eligibility(&self) -> Option<frontend_core::LogoutEligibility> {
+        let name = self.focused_name()?;
+        Some(
+            self.core
+                .fleet_view()
+                .row(&name)
+                .map_or(frontend_core::LogoutEligibility::NotLoggedIn, |row| {
+                    row.logout_eligibility()
+                }),
+        )
     }
 
     /// Whether the focused slot has a scene/player observation safe for game
@@ -4275,7 +4821,18 @@ impl Session {
         } else {
             self.quester_paths.settings().folder().to_path_buf()
         };
-        self.persist_quester_paths(frontend_core::QuesterPathsView::new(enabled, folder))
+        let result =
+            self.persist_quester_paths(frontend_core::QuesterPathsView::new(enabled, folder));
+        if result.is_ok() && folder_committed {
+            self.quester_paths_folder_dirty = false;
+            self.quester_paths_folder_edit = self
+                .quester_paths
+                .settings()
+                .folder()
+                .to_string_lossy()
+                .into_owned();
+        }
+        result
     }
 
     pub(crate) fn persist_quester_paths(
@@ -4291,7 +4848,7 @@ impl Session {
             },
             None => Err(self.error.clone().unwrap_or_default()),
         };
-        if result.is_ok() {
+        if result.is_ok() && !self.quester_paths_folder_dirty {
             self.quester_paths_folder_edit = self
                 .quester_paths
                 .settings()
@@ -4400,7 +4957,12 @@ impl Session {
     /// so this is the no-call backstop). Errors set [`Session::error`].
     pub fn script_start_selected(&mut self) {
         let Some(name) = self.focused_name() else {
-            self.error = Some("script: no focused profile".into());
+            self.refuse_command(
+                OperatorCommand::StartScript,
+                &[],
+                Some(ErrorNeed::FocusedBot),
+                "script: no focused profile",
+            );
             return;
         };
         match self.script_start_focused(&name) {
@@ -4410,7 +4972,11 @@ impl Session {
     }
 
     /// Pause the focused slot's script, or Resume when it is Paused (the
-    /// button label follows [`script_pause_enabled`]).
+    /// button label follows [`script_pause_enabled`]). The button is enabled
+    /// only for a state `script_pause_enabled` accepts, and
+    /// [`Self::focused_script_state`] is `Idle` with no focused bot or no play
+    /// session, so a click always has both and neither early exit is
+    /// reachable by a click.
     pub fn script_toggle_pause(&mut self) {
         let Some(name) = self.focused_name() else {
             return;
@@ -4425,7 +4991,11 @@ impl Session {
         }
     }
 
-    /// Stop the focused slot's script (teardown hook, instance dropped).
+    /// Stop the focused slot's script (teardown hook, instance dropped). The
+    /// Stop button is enabled for an active state (which needs a focused bot
+    /// and a play session) or for a Start still queued for the selected bot,
+    /// so a click always has a focused bot; without a play session the queued
+    /// Start is still cancelled.
     pub fn script_stop(&mut self) {
         let Some(name) = self.focused_name() else {
             return;
@@ -4442,7 +5012,11 @@ impl Session {
     /// slot. The core decides what it does: a script-local one-shot click,
     /// or a host Pause/Resume/Stop control bound to the profile and run the
     /// frame was read for (a control shown for another profile or an ended
-    /// run is refused, not retargeted).
+    /// run is refused, not retargeted). The paint is drawn only for the
+    /// focused bot, a button reports a hit only while it is enabled (the check
+    /// `PaintView::activate` repeats on the same frame), and the index comes
+    /// from that frame's own button list, so neither early return is
+    /// reachable by a click.
     pub fn script_paint_activate(&mut self, frame: &PaintFrame, index: usize) {
         let Some(name) = self.focused_name() else {
             return;
@@ -4454,7 +5028,8 @@ impl Session {
         self.submit(OperatorCommand::ScriptPaintInput, Targets::Profile(&name));
     }
 
-    /// Persistent strip/rail/tabs selection on the focused slot.
+    /// Persistent strip/rail/tabs selection on the focused slot. The paint is
+    /// drawn only for the focused bot, so a click always has one.
     pub fn script_paint_select(&mut self, key: &str, select_name: &str, generation: u64) {
         let Some(name) = self.focused_name() else {
             return;
@@ -4543,6 +5118,10 @@ pub use windows::PanelWindow;
 #[cfg(test)]
 #[path = "session_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "silent_exit_tests.rs"]
+mod silent_exit_tests;
 
 #[cfg(test)]
 mod fleet_hold_tests {

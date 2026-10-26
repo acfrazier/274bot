@@ -1,6 +1,8 @@
 use api::snapshot::GameSnapshot;
-use nav::map::poi::{classify_definition, CapabilityEvidence, Definition, EntityKind, PoiKind};
-use nav::tile::Tile;
+use nav_planner::map::poi::{
+    classify_definition, CapabilityEvidence, Definition, EntityKind, PoiKind,
+};
+use nav_planner::tile::Tile;
 
 use super::{ActionError, MapContext};
 

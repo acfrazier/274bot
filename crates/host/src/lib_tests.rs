@@ -641,7 +641,7 @@ fn session_change_same_drain_publishes_fresh_packet_families() {
     install_revision_snapshot_ifaces(&mut client);
 
     let mut pump = Pump::new();
-    pump.drain(client.gens);
+    pump.drain_client(&client);
     let mut snapshot = GameSnapshot::new();
 
     reconnect_grant(&mut client);
@@ -752,7 +752,7 @@ fn quiet_drain_refreshes_scene_ready_scalar_without_grid_rebuild() {
     client.gens.scene = 1;
     let mut pump = Pump::new();
     let mut snapshot = GameSnapshot::new();
-    publish_snapshot(&mut snapshot, &client, pump.drain(client.gens));
+    publish_snapshot(&mut snapshot, &client, pump.drain_client(&client));
     assert_eq!(snapshot.scene_state(), 1);
     assert!(
         !snapshot.scene().available,
@@ -764,7 +764,7 @@ fn quiet_drain_refreshes_scene_ready_scalar_without_grid_rebuild() {
     // drain; an unavailable grid is materialized once when the client
     // becomes scene-ready (retained collision after a session reset).
     client.scene_state = 2;
-    let quiet = pump.drain(client.gens);
+    let quiet = pump.drain_client(&client);
     assert!(!quiet.dirty.any());
     publish_snapshot(&mut snapshot, &client, quiet);
 
@@ -775,7 +775,7 @@ fn quiet_drain_refreshes_scene_ready_scalar_without_grid_rebuild() {
     );
     let flags_before = snapshot.scene().collision_flags.clone();
     client.collision[0].flags[0][0] ^= 1;
-    let quiet_again = pump.drain(client.gens);
+    let quiet_again = pump.drain_client(&client);
     assert!(!quiet_again.dirty.any());
     publish_snapshot(&mut snapshot, &client, quiet_again);
     assert_eq!(
@@ -1076,11 +1076,22 @@ fn client_frame_releases_held_keys_when_capture_disabled() {
 
 #[test]
 fn client_frame_preserves_pre_mainloop_menu_intent_and_human_minimap_packet() {
-    use client::client::MiniMenuAction;
-    for (x, y, expected) in [
-        (30, 51, Some(ManualMoveIntent::WorldMenu)),
-        (30, 20, None),
-        (648, 83, Some(ManualMoveIntent::Minimap)),
+    use client::client::{ClientNpc, MiniMenuAction};
+    for (x, y, action, expected) in [
+        (
+            30,
+            51,
+            MiniMenuAction::OP_NPC2,
+            Some(ManualMoveIntent::WorldMenu),
+        ),
+        (30, 51, MiniMenuAction::CANCEL, None),
+        (30, 20, MiniMenuAction::CANCEL, None),
+        (
+            648,
+            83,
+            MiniMenuAction::CANCEL,
+            Some(ManualMoveIntent::Minimap),
+        ),
     ] {
         let mut c = Client::new(cfg());
         ingame_scene2(&mut c);
@@ -1090,7 +1101,9 @@ fn client_frame_preserves_pre_mainloop_menu_intent_and_human_minimap_packet() {
         c.menu_y = 20;
         c.menu_width = 100;
         c.menu_num_entries = 1;
-        c.menu_action[0] = MiniMenuAction::CANCEL;
+        c.menu_action[0] = action;
+        c.menu_param_a[0] = 42;
+        c.npc[42] = Some(Box::new(ClientNpc::at(10, 10)));
         let input = SlotInput::new();
         input.set_enabled(true);
         let (tx, rx) = std::sync::mpsc::channel();
@@ -1121,6 +1134,24 @@ fn client_frame_preserves_pre_mainloop_menu_intent_and_human_minimap_packet() {
                         client.out.pos, 21,
                         "retain the real minimap packet and extras"
                     );
+                } else if expected == Some(ManualMoveIntent::WorldMenu) {
+                    assert_eq!(
+                        &client.out.data()[..10],
+                        &[
+                            ClientProt::MOVE_OPCLICK.id as u8,
+                            5,
+                            0,
+                            0,
+                            10,
+                            0,
+                            10,
+                            ClientProt::OPNPC2.id as u8,
+                            0,
+                            42,
+                        ],
+                        "retain the human NPC action and its zero-step approach"
+                    );
+                    assert_eq!(client.out.pos, 10);
                 } else {
                     assert_eq!(client.out.pos, 0, "menu Cancel/dismissal sends no walk");
                 }
@@ -1845,11 +1876,432 @@ fn observe_sees_packets_applied_in_the_same_frame() {
             false
         },
         |_| observed.load(Ordering::Relaxed),
-        |_| RandomClaim::Host,
+        |_: &DetectedRandom| RandomClaim::Host,
     );
     assert!(
         reboot > 0,
         "the first observer must see the arriving packet"
+    );
+}
+
+/// Replay the same remote-player update at the focused and parked cadences.
+/// The clock is explicit, so machine load cannot change the animation oracle.
+fn remote_animation_at_focus(period_ms: u64) -> Vec<i32> {
+    use client::client::{ClientNpc, ClientPlayer, ClientRevision};
+    use client::config::{SeqType, SpotType};
+    use client::io::ServerProt289;
+    use std::io::Write;
+
+    let sequence = || SeqType {
+        num_frames: 3,
+        frames: Some(vec![-1; 3]),
+        delay: Some(vec![4, 6, 5]),
+        loops: 3,
+        maxloops: 99,
+        ..Default::default()
+    };
+    let cache = Arc::new(Cache {
+        seqs: vec![sequence(), sequence()],
+        spots: vec![SpotType {
+            seq: Some(1),
+            ..Default::default()
+        }],
+        ..Default::default()
+    });
+    let mut c = Client::new_with_revision(cfg(), ClientRevision::R289);
+    c.cache = cache;
+    c.error_loading = false;
+    c.ingame = true;
+    c.scene_state = 2;
+    c.local_player = Some(ClientPlayer::at(50, 50));
+    c.local_player
+        .as_mut()
+        .unwrap()
+        .teleport(&c.cache, true, 50, 50);
+    let mut remote = ClientPlayer::at(51, 50);
+    remote.teleport(&c.cache, true, 51, 50);
+    remote.readyanim = 0;
+    remote.walkanim = 0;
+    remote.chat_timer = 20;
+    remote.chat_message = Some("old chat".into());
+    let mut npc = ClientNpc::at(52, 50);
+    npc.entity = remote.entity.clone();
+    npc.move_code(&c.cache, false, 4);
+    c.npc[7] = Some(Box::new(npc));
+    c.npc_count = 1;
+    c.npc_ids[0] = 7;
+    let local = c.local_player.as_mut().unwrap();
+    local.readyanim = 0;
+    local.walkanim = 0;
+    local.move_code(&c.cache, false, 4);
+    local.chat_timer = 20;
+    local.chat_message = Some("old chat".into());
+    c.players[3] = Some(Box::new(remote));
+    c.player_count = 1;
+    c.player_ids[0] = 3;
+    // No local movement, retained remote with ANIM and delayed SPOTANIM.
+    let mut initial = bit_packet(&[(1, 0), (8, 1), (1, 1), (2, 0), (11, 2047)]);
+    initial.extend([0x82, 1, 0, 0, 2, 0, 0, 0, 0, 0, 5]);
+    dispatch_packet(&mut c, ServerProt289::PLAYER_INFO, initial);
+    assert!(c.ingame);
+
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    c.stream =
+        Some(client::io::ClientStream::connect(&addr.ip().to_string(), addr.port()).unwrap());
+    let (mut server, _) = listener.accept().unwrap();
+    c.ptype = -1;
+    let t0 = Instant::now();
+    let mut slot = SlotLoop::new();
+    let mut sends = 0;
+    for elapsed in (0..=1200).step_by(period_ms as usize) {
+        if elapsed != 0 && elapsed % 600 == 0 {
+            let update = if elapsed == 600 {
+                // A new walk, primary sequence and delayed effect arrive
+                // after the old state must finish its missed cycles.
+                let mut packet =
+                    bit_packet(&[(1, 0), (8, 1), (1, 1), (2, 1), (3, 4), (1, 1), (11, 2047)]);
+                packet.extend([0x82, 1, 0, 1, 2, 0, 0, 0, 0, 0, 5]);
+                packet
+            } else {
+                bit_packet(&[(1, 0), (8, 1), (1, 0)])
+            };
+            let mut wire = vec![ServerProt289::PLAYER_INFO as u8, 0, update.len() as u8];
+            wire.extend(update);
+            server.write_all(&wire).unwrap();
+            let deadline = Instant::now() + Duration::from_secs(2);
+            while c.stream.as_mut().unwrap().available().unwrap() < wire.len() as i32 {
+                assert!(Instant::now() < deadline, "fixture packet did not arrive");
+                thread::yield_now();
+            }
+        }
+        slot.pacing_now = Some(t0 + Duration::from_millis(elapsed));
+        Host::client_frame(
+            &mut c,
+            &mut slot,
+            "focus-animation",
+            None,
+            None,
+            &mut sends,
+            None,
+        );
+    }
+    let mut state = Vec::new();
+    for e in [
+        &c.players[3].as_ref().unwrap().entity,
+        &c.local_player.as_ref().unwrap().entity,
+        &c.npc[7].as_ref().unwrap().entity,
+    ] {
+        state.extend([
+            e.x,
+            e.z,
+            e.route_length,
+            e.secondary_anim,
+            e.secondary_anim_frame,
+            e.secondary_anim_cycle,
+            e.primary_anim,
+            e.primary_anim_frame,
+            e.primary_anim_cycle,
+            e.primary_anim_delay,
+            e.primary_anim_loop,
+            e.spotanim_id,
+            e.spotanim_frame,
+            e.spotanim_cycle,
+            e.chat_timer,
+            i32::from(e.chat_message.is_some()),
+        ]);
+    }
+    state
+}
+
+#[test]
+fn parked_remote_animation_matches_twenty_ms_at_focus() {
+    let focused = remote_animation_at_focus(20);
+    let parked = remote_animation_at_focus(600);
+    assert_eq!(
+        parked, focused,
+        "remote secondary/primary/spot animation state must not depend on focus"
+    );
+}
+
+/// MAP_ANIM and projectiles use the same state as the zone decoder. Compare
+/// their state before first focus against a client that draws every 20 ms.
+fn scene_effects_at_focus(period_ms: u64, draw_each_frame: bool) -> Vec<u64> {
+    use client::config::{SeqType, SpotType};
+    use client::dash3d::{ClientProj, MapSpotAnim};
+
+    let mut c = Client::new(cfg());
+    c.cache = Arc::new(Cache {
+        seqs: [12, 120]
+            .into_iter()
+            .map(|num_frames| SeqType {
+                num_frames,
+                frames: Some(vec![-1; num_frames as usize]),
+                delay: Some(vec![4; num_frames as usize]),
+                ..Default::default()
+            })
+            .collect(),
+        spots: (0..2)
+            .map(|seq| SpotType {
+                seq: Some(seq),
+                ..Default::default()
+            })
+            .collect(),
+        ..Default::default()
+    });
+    c.error_loading = false;
+    c.ingame = true;
+    c.scene_state = 2;
+    c.set_draw(draw_each_frame);
+    let mut renderer = Renderer::new(false);
+    let mut slot = SlotLoop::new();
+    let t0 = Instant::now();
+    let mut sends = 0;
+    // The first effect models the twelve-frame smokepuff. The second
+    // remains active at focus and has a delayed start.
+    c.spotanims
+        .push(MapSpotAnim::new(0, 0, 6464, 6464, 0, 0, 0));
+    c.spotanims
+        .push(MapSpotAnim::new(1, 0, 6592, 6464, 0, 0, 15));
+    let mut projectile = ClientProj::new(1, 0, 6464, 0, 6464, 10, 100, 15, 0, 0, 0);
+    projectile.bind_seq(&c.cache);
+    projectile.set_target(6848.0, 0.0, 6464.0, 10);
+    c.projectiles.push(projectile);
+    for elapsed in (0..=1200).step_by(period_ms as usize) {
+        slot.pacing_now = Some(t0 + Duration::from_millis(elapsed));
+        Host::client_frame(
+            &mut c,
+            &mut slot,
+            "scene-clock",
+            None,
+            None,
+            &mut sends,
+            None,
+        );
+        if draw_each_frame {
+            renderer.mainredraw(&mut c);
+        }
+    }
+    let mut state = Vec::new();
+    c.spotanims.for_each(|spot| {
+        assert_ne!(
+            spot.spotanim, 0,
+            "the old map smoke must finish before focus"
+        );
+        state.extend([spot.anim_frame as u64, spot.anim_cycle as u64]);
+    });
+    assert_eq!(
+        state.len(),
+        2,
+        "the delayed long effect must still be active"
+    );
+    c.projectiles.for_each(|projectile| {
+        state.extend([
+            projectile.x.to_bits(),
+            projectile.y.to_bits(),
+            projectile.z.to_bits(),
+            projectile.anim_frame as u64,
+            projectile.anim_cycle as u64,
+        ]);
+    });
+    assert_eq!(state.len(), 7, "the in-flight projectile must remain");
+    // First draw must only present the recovered state, not age it twice.
+    c.set_draw(true);
+    renderer.mainredraw(&mut c);
+    let spot = c.spotanims.head().unwrap();
+    assert_eq!([spot.anim_frame as u64, spot.anim_cycle as u64], state[..2]);
+    let projectile = c.projectiles.head().unwrap();
+    assert_eq!(projectile.x.to_bits(), state[2]);
+    state
+}
+
+#[test]
+fn parked_map_smoke_and_projectile_match_twenty_ms_at_first_draw() {
+    let _cpu = force_cpu_backend();
+    assert_eq!(
+        scene_effects_at_focus(600, false),
+        scene_effects_at_focus(20, true),
+        "map effects and projectile flight must not depend on drawing"
+    );
+}
+
+/// Compare cutscene camera easing after a parked interval with the state from
+/// a client that ran and drew every 20 ms.
+fn cutscene_camera_at_focus(period_ms: u64, draw_each_frame: bool) -> [i32; 5] {
+    let mut c = Client::new(cfg());
+    c.error_loading = false;
+    c.ingame = true;
+    c.scene_state = 2;
+    c.set_draw(draw_each_frame);
+    c.cinema_cam = true;
+    c.cam_move_to_lx = 8;
+    c.cam_move_to_lz = 9;
+    c.cam_move_to_hei = 0;
+    c.cam_move_to_rate = 5;
+    c.cam_move_to_rate2 = 0;
+    c.cam_look_at_lx = 2;
+    c.cam_look_at_lz = 3;
+    c.cam_look_at_hei = 0;
+    c.cam_look_at_rate = 2;
+    c.cam_look_at_rate2 = 0;
+
+    let mut renderer = Renderer::new(false);
+    let mut slot = SlotLoop::new();
+    let t0 = Instant::now();
+    let mut sends = 0;
+    for elapsed in (0..=1200).step_by(period_ms as usize) {
+        slot.pacing_now = Some(t0 + Duration::from_millis(elapsed));
+        Host::client_frame(
+            &mut c,
+            &mut slot,
+            "cutscene-camera",
+            None,
+            None,
+            &mut sends,
+            None,
+        );
+        if draw_each_frame {
+            renderer.mainredraw(&mut c);
+        }
+    }
+
+    let before_first_draw = [c.cam_x, c.cam_y, c.cam_z, c.cam_pitch, c.cam_yaw];
+    c.set_draw(true);
+    renderer.mainredraw(&mut c);
+    let first_draw = [c.cam_x, c.cam_y, c.cam_z, c.cam_pitch, c.cam_yaw];
+    assert_eq!(
+        first_draw, before_first_draw,
+        "the first draw must only present the recovered camera state"
+    );
+    first_draw
+}
+
+#[test]
+fn parked_cutscene_camera_matches_twenty_ms_at_first_draw() {
+    let _cpu = force_cpu_backend();
+    let focused = cutscene_camera_at_focus(20, true);
+    let parked = cutscene_camera_at_focus(600, false);
+    assert_eq!(
+        parked, focused,
+        "cutscene camera state must not depend on drawing"
+    );
+}
+
+#[test]
+fn late_twenty_ms_frames_recover_elapsed_entity_cycles() {
+    let mut c = Client::new(cfg());
+    c.error_loading = false;
+    c.ingame = true;
+    let mut slot = SlotLoop::new();
+    let t0 = Instant::now();
+    let mut sends = 0;
+    for frame in 0..=100 {
+        slot.pacing_now = Some(t0 + Duration::from_millis(frame * 22));
+        Host::client_frame(
+            &mut c,
+            &mut slot,
+            "late-frame",
+            None,
+            None,
+            &mut sends,
+            None,
+        );
+    }
+    assert_eq!(c.loop_cycle, 111, "busy slots recover late frames too");
+}
+
+#[test]
+fn entity_catchup_retains_fractional_time_and_counts_early_wakes_once() {
+    let mut c = Client::new(cfg());
+    c.error_loading = false;
+    c.ingame = true;
+    let mut slot = SlotLoop::new();
+    let t0 = Instant::now();
+    let mut sends = 0;
+    for (elapsed, expected_cycle) in [
+        (0, 1),
+        (10, 2),
+        (20, 3),
+        (35, 4),
+        (600, 31),
+        (611, 32),
+        (1200, 61),
+    ] {
+        slot.pacing_now = Some(t0 + Duration::from_millis(elapsed));
+        Host::client_frame(&mut c, &mut slot, "clock", None, None, &mut sends, None);
+        assert_eq!(c.loop_cycle, expected_cycle, "elapsed={elapsed}");
+    }
+}
+
+#[test]
+fn entity_catchup_discards_long_stall_debt_and_resets_at_session_boundaries() {
+    let mut c = Client::new(cfg());
+    c.error_loading = false;
+    c.ingame = true;
+    let mut slot = SlotLoop::new();
+    let t0 = Instant::now();
+    let mut sends = 0;
+    for (elapsed, expected_cycle) in [(0, 1), (10_000, 52), (10_020, 53)] {
+        slot.pacing_now = Some(t0 + Duration::from_millis(elapsed));
+        Host::client_frame(&mut c, &mut slot, "clock", None, None, &mut sends, None);
+        assert_eq!(c.loop_cycle, expected_cycle);
+    }
+    c.gens.session = c.gens.session.wrapping_add(1);
+    slot.pacing_now = Some(t0 + Duration::from_secs(20));
+    Host::client_frame(&mut c, &mut slot, "clock", None, None, &mut sends, None);
+    assert_eq!(
+        c.loop_cycle, 54,
+        "a new session must not inherit old elapsed time"
+    );
+    c.ingame = false;
+    slot.pacing_now = Some(t0 + Duration::from_secs(30));
+    Host::client_frame(&mut c, &mut slot, "clock", None, None, &mut sends, None);
+    c.ingame = true;
+    slot.pacing_now = Some(t0 + Duration::from_secs(40));
+    Host::client_frame(&mut c, &mut slot, "clock", None, None, &mut sends, None);
+    assert_eq!(c.loop_cycle, 56, "title time must not age the next game");
+}
+
+#[test]
+fn entity_catchup_does_not_read_packets_write_wire_or_replay_nonentity_timers() {
+    use std::io::Write;
+    let mut c = Client::new(cfg());
+    c.error_loading = false;
+    c.ingame = true;
+    c.reboot_timer = 300;
+    c.logout_timer = 200;
+    c.shell.idle_cycles = 100;
+    assert!(c.encode_output(|out| out.p1(42)));
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    c.stream =
+        Some(client::io::ClientStream::connect(&addr.ip().to_string(), addr.port()).unwrap());
+    let (mut server, _) = listener.accept().unwrap();
+    server.write_all(&[89, 0, 10]).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while c.stream.as_mut().unwrap().available().unwrap() < 3 {
+        assert!(Instant::now() < deadline, "fixture packet did not arrive");
+        thread::yield_now();
+    }
+    let mut slot = SlotLoop::new();
+    let t0 = Instant::now();
+    slot.recover_entity_cycles(&mut c, t0);
+    slot.recover_entity_cycles(&mut c, t0 + Duration::from_millis(600));
+    assert_eq!(c.loop_cycle, 29);
+    assert_eq!(
+        (c.reboot_timer, c.logout_timer, c.shell.idle_cycles),
+        (300, 200, 100)
+    );
+    assert_eq!(c.out.pos, 1);
+    assert_eq!(c.stream.as_mut().unwrap().available().unwrap(), 3);
+    server.set_nonblocking(true).unwrap();
+    let mut byte = [0];
+    assert_eq!(
+        std::io::Read::read(&mut server, &mut byte)
+            .unwrap_err()
+            .kind(),
+        std::io::ErrorKind::WouldBlock,
+        "catch-up must not flush the queued outbound byte"
     );
 }
 
@@ -2543,7 +2995,7 @@ fn idle_slot_parks_between_packets_and_wakes_on_one() {
                 false
             },
             |_| stop2.load(Ordering::Relaxed),
-            |_| RandomClaim::Host,
+            |_: &DetectedRandom| RandomClaim::Host,
         );
         done_tx.send(()).unwrap();
     });
@@ -2615,7 +3067,7 @@ fn focused_slot_keeps_the_twenty_ms_cadence() {
                 false
             },
             |_| stop2.load(Ordering::Relaxed),
-            |_| RandomClaim::Host,
+            |_: &DetectedRandom| RandomClaim::Host,
         );
     });
     // Gate on the count, not a fixed sleep: a parked slot (600 ms
@@ -2676,7 +3128,7 @@ fn busy_observe_keeps_the_slot_on_the_frame_loop() {
                 true // script/cheat/nav work due: never park
             },
             |_| stop2.load(Ordering::Relaxed),
-            |_| RandomClaim::Host,
+            |_: &DetectedRandom| RandomClaim::Host,
         );
     });
     // Same gate as the focused test: ≥12 ticks in 5 s is unreachable
@@ -2728,12 +3180,12 @@ fn watch_only_sidecar_parks_wakes_once_per_second_and_paints() {
             Some(render),
             Some(Arc::new(park)),
             ScriptRunPolicy::default(),
-            |c, _, _, _, _| {
-                mirror.lock().unwrap().0 = c.loop_cycle;
+            |_, _, _, _, _| {
+                mirror.lock().unwrap().0 += 1;
                 false
             },
             |_| stop2.load(Ordering::Relaxed),
-            |_| RandomClaim::Host,
+            |_: &DetectedRandom| RandomClaim::Host,
         );
     });
     // The rising edge paints the first frame, then the slot parks.
@@ -2772,15 +3224,16 @@ fn watch_only_sidecar_parks_wakes_once_per_second_and_paints() {
         second.elapsed() >= Duration::from_millis(900),
         "watch-only repaint must wait a wall-clock second, not every tick"
     );
-    // Parking proof: a 20 ms loop would tick ~100× in 2.2 s; the 1 s
-    // park stays near 2–3 wakes.
-    let t1 = seen.lock().unwrap().0;
+    // Count ordinary observe calls, not the entity cycles recovered at wake.
+    // A 20 ms service loop would call observe ~100× in 2.2 s; the 1 s
+    // park stays near 2–3 calls.
+    let w1 = seen.lock().unwrap().0;
     thread::sleep(Duration::from_secs(2) + Duration::from_millis(200));
-    let t2 = seen.lock().unwrap().0;
-    let ticks = t2 - t1;
+    let w2 = seen.lock().unwrap().0;
+    let wakes = w2 - w1;
     assert!(
-        (1..=5).contains(&ticks),
-        "watch-only sidecar must wake ~1×/s, not 50×/s: ticks {t1} -> {t2} ({ticks} in 2.2 s)"
+        (1..=5).contains(&wakes),
+        "watch-only sidecar must wake ~1×/s, not 50×/s: wakes {w1} -> {w2} ({wakes} in 2.2 s)"
     );
     stop.store(true, Ordering::Relaxed);
     wake.wake();
@@ -2814,7 +3267,7 @@ fn stop_control_wakes_a_parked_slot_and_returns() {
             ScriptRunPolicy::default(),
             |_, _, _, _, _| false,
             |_| stop2.load(Ordering::Relaxed),
-            |_| RandomClaim::Host,
+            |_: &DetectedRandom| RandomClaim::Host,
         );
         done_tx.send(()).unwrap();
     });
@@ -2869,7 +3322,7 @@ fn draw_kick_wakes_a_parked_slot_into_the_frame_loop() {
                 false
             },
             |_| stop2.load(Ordering::Relaxed),
-            |_| RandomClaim::Host,
+            |_: &DetectedRandom| RandomClaim::Host,
         );
     });
     // Opening tick, then parked (draw off): a quiet window must not
@@ -2940,7 +3393,7 @@ fn spurious_kick_does_not_busy_loop_a_parked_slot() {
                 false // stays idle after the kick
             },
             |_| stop2.load(Ordering::Relaxed),
-            |_| RandomClaim::Host,
+            |_: &DetectedRandom| RandomClaim::Host,
         );
         done_tx.send(()).unwrap();
     });
@@ -3527,7 +3980,7 @@ fn measured_loop_with(
             }
             done
         },
-        |_| RandomClaim::Host,
+        |_: &DetectedRandom| RandomClaim::Host,
     );
     assert_eq!(
         monitor.recorded_delays(),

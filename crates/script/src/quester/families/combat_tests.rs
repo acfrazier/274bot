@@ -1,5 +1,5 @@
 use super::*;
-use crate::native::WalkEnd;
+use crate::native::{WalkCancelReason, WalkEnd};
 use crate::quester::compile::{
     compile_uncached_for_test, decode_args, CompileContext, PredicateContext, StepOutcome,
 };
@@ -923,7 +923,7 @@ fn combat_test_run(
         last_report: None,
         last_outcome: None,
         target_gone_restarts: 0,
-        walk_outcome_seq_at_begin: 0,
+        manual_takeover_watch: crate::native::ManualTakeoverWatch::default(),
         raised_prayers: crate::combat::RaisedPrayers::empty(),
         finish: None,
         finish_target_index: None,
@@ -937,6 +937,74 @@ pub(crate) fn policy_s2_run_for_runner(cx: &mut StepContext<'_, '_>) -> Box<dyn 
     let mut run = combat_test_run(imp_target(&data), None, None, Vec::new());
     run.begin_combat(cx).unwrap();
     Box::new(run)
+}
+
+/// The real `CombatPlan::begin`: it stamps the walk outcome sequence the step
+/// began at, so a takeover before the begin cannot end the step.
+pub(crate) fn imp_plan_run_for_runner(cx: &mut StepContext<'_, '_>) -> Box<dyn StepRun> {
+    let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let run = combat_test_run(imp_target(&data), None, None, Vec::new());
+    CombatPlan {
+        request: run.request,
+        tables: run.tables,
+        cross: run.cross,
+        protect: false,
+        until: None,
+        win: None,
+        loot: run.loot,
+        finish: None,
+    }
+    .begin(cx)
+    .unwrap()
+}
+
+#[test]
+fn manual_takeover_watch_ends_the_combat_step_after_begin() {
+    let mut snapshot = GameSnapshot::new();
+    snapshot.seed_ingame(2);
+    let mut ledger = None;
+    let at_begin = publish_walk_outcome(7, WalkCancelReason::None);
+    let mut run = with_step_context_at_walk_outcome(&snapshot, &mut ledger, 10, at_begin, |cx| {
+        imp_plan_run_for_runner(cx)
+    });
+    assert!(
+        with_step_context_at_walk_outcome(&snapshot, &mut ledger, 11, at_begin, |cx| run.poll(cx))
+            .is_pending(),
+        "no takeover yet"
+    );
+    // The machine's own walk already arrived: the host moves only the
+    // sequence and names the takeover's outcome UserInput.
+    let takeover = publish_walk_outcome(8, WalkCancelReason::UserInput);
+    let result =
+        with_step_context_at_walk_outcome(&snapshot, &mut ledger, 12, takeover, |cx| run.poll(cx));
+    assert!(matches!(result, Poll::Ready(Err(ActionError::UserInput))));
+}
+
+#[test]
+fn manual_takeover_watch_ignores_takeover_before_begin() {
+    let mut snapshot = GameSnapshot::new();
+    snapshot.seed_ingame(2);
+    let mut ledger = None;
+    // An earlier step's takeover is the latest observed outcome at begin.
+    let earlier = publish_walk_outcome(8, WalkCancelReason::UserInput);
+    let mut run = with_step_context_at_walk_outcome(&snapshot, &mut ledger, 10, earlier, |cx| {
+        imp_plan_run_for_runner(cx)
+    });
+    for tick in 11..=13 {
+        let result =
+            with_step_context_at_walk_outcome(&snapshot, &mut ledger, tick, earlier, |cx| {
+                run.poll(cx)
+            });
+        assert!(
+            !matches!(result, Poll::Ready(Err(ActionError::UserInput))),
+            "a stale takeover ended the step at tick {tick}"
+        );
+    }
+    // A later outcome that is not a takeover does not end it either.
+    let later = publish_walk_outcome(9, WalkCancelReason::None);
+    let result =
+        with_step_context_at_walk_outcome(&snapshot, &mut ledger, 14, later, |cx| run.poll(cx));
+    assert!(!matches!(result, Poll::Ready(Err(ActionError::UserInput))));
 }
 
 pub(crate) fn no_food_abort_run_for_runner(
@@ -1113,18 +1181,19 @@ fn with_step_context<R>(
     tick: u64,
     f: impl FnOnce(&mut StepContext<'_, '_>) -> R,
 ) -> R {
-    with_step_context_at_walk_seq(snapshot, ledger, tick, 0, f)
+    with_step_context_at_walk_outcome(snapshot, ledger, tick, WalkOutcomeFact::default(), f)
 }
 
-fn with_step_context_at_walk_seq<R>(
+fn with_step_context_at_walk_outcome<R>(
     snapshot: &GameSnapshot,
     ledger: &mut Option<Box<crate::native::ledger::Ledger>>,
     tick: u64,
-    walk_outcome_seq: u64,
+    outcome: WalkOutcomeFact,
     f: impl FnOnce(&mut StepContext<'_, '_>) -> R,
 ) -> R {
     super::super::tests::with_tick(snapshot, ledger, tick, |native| {
-        native.cx.observed_walk_outcome_seq = walk_outcome_seq;
+        native.cx.observed_walk_outcome_seq = outcome.seq;
+        native.cx.observed_walk_cancel_reason = outcome.cancel_reason;
         let quests = QuestCatalog::empty();
         let required_after = native.cx.evidence();
         let banks = Arc::new(api::named_banks::NamedBankFacts::empty());
@@ -1139,25 +1208,15 @@ fn with_step_context_at_walk_seq<R>(
     })
 }
 
-#[cfg(feature = "load")]
-fn publish_walk_outcome(seq: u64, cancel_reason: crate::isolate_fb::WalkCancelReason) {
-    crate::observed::replace(seq, true, |post| {
-        post.walk_outcome(crate::observed::WalkOutcome {
-            seq,
-            generation: 1,
-            request_id: 1,
-            failed: cancel_reason == crate::isolate_fb::WalkCancelReason::UserInput,
-            tile: crate::observed::Tile {
-                x: 3200,
-                z: 3200,
-                level: 0,
-            },
-            radius: 0,
-            allow_teleports: false,
-            blocked: false,
-        })
-        .walk_outcome_cancel_reason(cancel_reason);
-    });
+/// The host's walk outcome as the slot observes it (`observe_walk_outcome`).
+#[derive(Debug, Clone, Copy, Default)]
+struct WalkOutcomeFact {
+    seq: u64,
+    cancel_reason: WalkCancelReason,
+}
+
+fn publish_walk_outcome(seq: u64, cancel_reason: WalkCancelReason) -> WalkOutcomeFact {
+    WalkOutcomeFact { seq, cancel_reason }
 }
 
 #[test]
@@ -1463,7 +1522,11 @@ fn prep_abort_without_engaged_actor_uses_heaviest_live_threat_and_eats_as_hp_fal
     });
     let first = with_step_context(&snapshot, &mut ledger, 13, |cx| {
         let view = cx.tick.cx.snapshot();
-        let op = guard.tick(&view);
+        let op = guard.tick(
+            &view,
+            cx.tick.cx.condition(),
+            crate::survival::CurePoison::WhenNeeded,
+        );
         if let Some(op) = op.as_ref() {
             guard.admitted(op, &view);
         }
@@ -1501,7 +1564,11 @@ fn prep_abort_without_engaged_actor_uses_heaviest_live_threat_and_eats_as_hp_fal
         lobster.name.as_deref(),
     );
     let falling_hp = with_step_context(&snapshot, &mut ledger, 14, |cx| {
-        guard.tick(&cx.tick.cx.snapshot())
+        guard.tick(
+            &cx.tick.cx.snapshot(),
+            cx.tick.cx.condition(),
+            crate::survival::CurePoison::WhenNeeded,
+        )
     });
     assert!(matches!(falling_hp, Some(GuardOp::Eat { .. })));
 }
@@ -2457,9 +2524,8 @@ fn target_gone_walk_user_input_parks_without_reengaging() {
     assert!(run.action.is_none());
 }
 
-#[cfg(feature = "load")]
 #[test]
-fn manual_movement_baseline_covers_return_and_loot_sublegs() {
+fn manual_takeover_watch_covers_return_and_loot_sublegs() {
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let stand = api::WorldTile {
         x: 2632,
@@ -2483,23 +2549,25 @@ fn manual_movement_baseline_covers_return_and_loot_sublegs() {
             },
         ],
     );
-    run.walk_outcome_seq_at_begin = 40;
-    publish_walk_outcome(40, crate::isolate_fb::WalkCancelReason::None);
+    let outcome = publish_walk_outcome(40, WalkCancelReason::None);
 
     let mut snapshot = GameSnapshot::new();
     snapshot.seed_ingame(2);
     snapshot.seed_inventory(Vec::new(), 28);
     let mut ledger = None;
+    with_step_context_at_walk_outcome(&snapshot, &mut ledger, 11, outcome, |cx| {
+        run.manual_takeover_watch = crate::native::ManualTakeoverWatch::begin(&cx.tick.cx);
+    });
     assert!(
-        with_step_context_at_walk_seq(&snapshot, &mut ledger, 12, 40, |cx| {
+        with_step_context_at_walk_outcome(&snapshot, &mut ledger, 12, outcome, |cx| {
             run.on_combat_report(report(CombatEnd::TargetGone), cx)
         })
         .is_pending()
     );
 
-    publish_walk_outcome(41, crate::isolate_fb::WalkCancelReason::None);
+    let outcome = publish_walk_outcome(41, WalkCancelReason::None);
     assert!(
-        with_step_context_at_walk_seq(&snapshot, &mut ledger, 13, 41, |cx| {
+        with_step_context_at_walk_outcome(&snapshot, &mut ledger, 13, outcome, |cx| {
             run.on_return_walk(
                 WalkReceipt {
                     goal: None,
@@ -2520,20 +2588,23 @@ fn manual_movement_baseline_covers_return_and_loot_sublegs() {
     assert_eq!(run.target_gone_restarts, 1);
 
     assert!(
-        with_step_context_at_walk_seq(&snapshot, &mut ledger, 14, 41, |cx| {
+        with_step_context_at_walk_outcome(&snapshot, &mut ledger, 14, outcome, |cx| {
             run.on_combat_report(report(CombatEnd::Killed), cx)
         })
         .is_pending()
     );
     assert!(
-        with_step_context_at_walk_seq(&snapshot, &mut ledger, 15, 41, |cx| { run.poll(cx) })
-            .is_pending()
+        with_step_context_at_walk_outcome(&snapshot, &mut ledger, 15, outcome, |cx| {
+            run.poll(cx)
+        })
+        .is_pending()
     );
     assert_eq!(run.loot_index, 1);
     assert!(matches!(run.action.as_ref(), Some(Action::Loot(_))));
 
-    publish_walk_outcome(42, crate::isolate_fb::WalkCancelReason::UserInput);
-    let result = with_step_context_at_walk_seq(&snapshot, &mut ledger, 16, 42, |cx| run.poll(cx));
+    let outcome = publish_walk_outcome(42, WalkCancelReason::UserInput);
+    let result =
+        with_step_context_at_walk_outcome(&snapshot, &mut ledger, 16, outcome, |cx| run.poll(cx));
     assert!(matches!(result, Poll::Ready(Err(ActionError::UserInput))));
     assert_eq!(
         run.loot_index, 1,
@@ -3523,4 +3594,154 @@ fn combat_kit_carry_keeps_compiled_alias_ids() {
         &[(coins.id, 1000), (bones.id, 5)],
         "kit carry keeps the compiled alias identities, not the display-name picks"
     );
+}
+#[cfg(test)]
+mod abort_hold_cure_policy_tests {
+    use super::*;
+    use crate::native::HostEffect;
+    use crate::quester::families::tests::{def, local_player, with_tick};
+    use api::selected::ClientRevision;
+    use api::snapshot::{
+        GameSnapshot, HitmarkView, HitmarksView, ItemActionFamily, ItemContainer, ItemView,
+        StatView, VarpView, WorldStateView,
+    };
+    use std::sync::Arc;
+    use std::task::Poll;
+
+    fn held_item(id: i32, name: &str, action: &str, slot: i32) -> ItemView {
+        ItemView {
+            def: def(id, name),
+            container: ItemContainer::Inventory,
+            action_family: ItemActionFamily::Held,
+            slot,
+            count: 1,
+            actions: vec![Some(action.into())],
+            component_id: 3214,
+        }
+    }
+
+    fn snapshot_with_bite_and_cure(tables: &CombatTables) -> GameSnapshot {
+        let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+        let lobster = data.item_by_alias("lobster").unwrap();
+        let antipoison = tables
+            .potion(crate::combat::tables::PotionKind::Antipoison)
+            .unwrap();
+        let antipoison_id = antipoison.doses[0].unwrap().id;
+        let at = api::WorldTile {
+            x: 2600,
+            z: 3200,
+            level: 0,
+        };
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_world(WorldStateView {
+            map_base_x: 2560,
+            map_base_z: 3160,
+            members: true,
+            ..WorldStateView::default()
+        });
+        snapshot.seed_local_player(local_player(at));
+        snapshot.seed_stats(
+            (0..25)
+                .map(|index| StatView {
+                    index,
+                    name: String::new(),
+                    effective: if index == 3 {
+                        5
+                    } else if index == 5 {
+                        43
+                    } else {
+                        40
+                    },
+                    base: if index == 5 { 43 } else { 40 },
+                    xp: 0,
+                    used: api::snapshot::stat_used(index as usize),
+                })
+                .collect(),
+        );
+        snapshot.seed_varps(
+            data.prayers()
+                .iter()
+                .map(|row| VarpView {
+                    index: row.varp,
+                    value: 0,
+                })
+                .collect(),
+        );
+        snapshot.seed_inventory(
+            vec![
+                held_item(lobster.id, lobster.name.as_deref().unwrap(), "Eat", 0),
+                held_item(antipoison_id, "Antipoison", "Drink", 1),
+            ],
+            28,
+        );
+        snapshot.seed_equipment(Vec::new());
+        snapshot.seed_npcs(Vec::new());
+        snapshot.seed_players(Vec::new());
+        snapshot.seed_projectiles(Vec::new());
+        snapshot.seed_side_tabs(Vec::new(), 0);
+        snapshot.seed_hitmarks(HitmarksView {
+            marks: [HitmarkView {
+                value: 0,
+                kind: 0,
+                cycle: 0,
+            }; 4],
+            loop_cycle: 0,
+        });
+        snapshot
+    }
+
+    #[test]
+    fn abort_hold_respects_never_policy_when_antipoison_and_bite_are_due() {
+        let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+        let tables = Arc::new(CombatTables::build(Arc::clone(&data)).unwrap());
+        let snapshot = snapshot_with_bite_and_cure(&tables);
+        let mut ledger_state = None;
+        let handle = with_tick(&snapshot, &mut ledger_state, 0, |native| {
+            native
+                .actions
+                .begin::<AbortHold>(
+                    AbortHoldArgs {
+                        tables: Arc::clone(&tables),
+                        allow_prayer: false,
+                    },
+                    &mut native.cx,
+                )
+                .unwrap()
+        });
+
+        let outcome = with_tick(&snapshot, &mut ledger_state, 1, |native| {
+            native.cx.condition = Some(api::condition::BotCondition {
+                tick: 1,
+                session: api::condition::SessionMark::Live,
+                hp: 5,
+                hp_max: 40,
+                hp_known: true,
+                poison: api::condition::PoisonState::Onset {
+                    since: 1,
+                    q: Some(11),
+                    hit_since_line: false,
+                },
+                cures: api::condition::CureDoses {
+                    antipoison: 1,
+                    ..Default::default()
+                },
+                ..Default::default()
+            });
+            native.cx.cure_poison = crate::survival::CurePoison::Never;
+            native.actions.poll(&handle, &mut native.cx)
+        });
+        assert!(matches!(outcome, Poll::Pending));
+        let outbox = &ledger_state.as_ref().unwrap().outbox;
+        assert_eq!(outbox.len(), 1);
+        assert!(matches!(
+            &outbox[0].effect,
+            HostEffect::Interaction(InteractReq::Held { name, action, .. })
+                if name == "Lobster" && action == "Eat"
+        ));
+        assert!(outbox.iter().all(|entry| !matches!(
+            &entry.effect,
+            HostEffect::Interaction(InteractReq::Held { action, .. }) if action == "Drink"
+        )));
+    }
 }

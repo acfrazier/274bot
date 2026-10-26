@@ -24,13 +24,13 @@ use host::Pump;
 use host_play::{
     arm_walk_on, step_walk_arm_follow, ProfileOptions, SharedClientTemplate, WalkArms,
 };
-use nav::bank_fetch::BankRows;
-use nav::router::{FindOptions, Leg, Route};
-use nav::tile::Tile;
-use nav::transport::{DoorDir, TransportKind};
-use nav::traveller::{TravelOptions, TravelOutcome, Traveller};
-use nav::world::NavWorld;
-use nav::WorldState;
+use nav_executor::{TravelOptions, TravelOutcome, Traveller};
+use nav_planner::bank_fetch::BankRows;
+use nav_planner::router::{FindOptions, Leg, Route};
+use nav_planner::tile::Tile;
+use nav_planner::transport::{DoorDir, TransportKind};
+use nav_planner::world::NavWorld;
+use nav_planner::WorldState;
 use serde_json::json;
 
 const LUMBRIDGE: WorldTile = WorldTile {
@@ -466,8 +466,10 @@ fn toll_gate_live_refuses_without_coins() {
     drop(options);
     match &outcome {
         // The traveller's fare recheck names the consumed item and the fare.
-        TravelOutcome::Blocked { detail, .. }
-            if detail.contains(&format!("needs 10 of item {COINS} to pay the fare")) => {}
+        TravelOutcome::Blocked { why, .. }
+            if why
+                .to_string()
+                .contains(&format!("needs 10 of item {COINS} to pay the fare")) => {}
         other => panic!(
             "expected Blocked(coins) without paying, got {other:?}; tile={:?} options={:?}",
             snapshot.tile(),

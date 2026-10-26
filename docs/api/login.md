@@ -13,7 +13,7 @@ the head.
 
 A process binds one entry from `~/.274bot/servers.json` before sockets open.
 The built-ins are `local-274`, `local-289`, and `rs2b2t`; `public-289` is an
-alias. Profile defaults are documented in [README.md](../../README.md). This
+alias. Profile defaults are documented in [server-profiles.md](../reference/server-profiles.md). This
 page is the FIFO and handshake policy shared by every profile.
 
 ## Where the server stores this
@@ -153,7 +153,7 @@ New accounts spawn on Tutorial Island. Two different local-engine paths:
 
 `tele` / `setvar` / `setstat` have **no** tilde. Engine debugprocs are cheat bodies that **start with `~`** (`~home` from the panel Lumbridge button; type `::~name` in chat). Panel capture must pass colon, tilde, and comma.
 
-This does **not** relog. Side icons stay tutorial-locked. A clean logout is already wired: `api::interact::logout` presses the `CC_LOGOUT` iface (client code 205) through the doAction path, so client-code logout vetoes still apply ([interact.md](interact.md)). Cheat sends are admitted on local (loopback) profiles; remote profiles refuse them.
+This does **not** relog. Side icons stay tutorial-locked. A clean logout is already wired: `api::interact::logout` presses the `CC_LOGOUT` iface (client code 205) through the doAction path, so client-code logout vetoes still apply ([interact.md](../dev/interact.md)). Cheat sends are admitted on local (loopback) profiles; remote profiles refuse them.
 
 ## RSA (local engine)
 
@@ -252,7 +252,7 @@ reconnect storm; the slot status names the guard and the session log records
 its count and window. The window uses Rust's monotonic `Instant`; on macOS it
 counts awake time, so system sleep does not advance the ten minutes. The
 script's work remains held, and **Log in** clears the guard and resumes it.
-Operator **Logout**, Stop, and removal remain terminal and are never
+Operator **Log out**, Stop, and removal remain terminal and are never
 automatically resurrected.
 
 ## Relog now (memory mode)

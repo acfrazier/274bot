@@ -2,18 +2,19 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use api::bank_memory::BankMemory;
+use api::condition::BotCondition;
 use api::interact::{ActionSpec, Driver, Interactions, OpTarget, SendResult};
 use api::quest_progress::EvidenceStamp;
 use api::snapshot::{GameSnapshot, ReadContext, SnapshotView, WorldTile};
-use nav::arrival::ArrivalKind;
-use nav::bank_fetch::{bank_access_tiles, is_bank_access, BankStep, SAME_BANK};
-use nav::router::{
+use nav_executor::TravelOptions;
+use nav_planner::arrival::ArrivalKind;
+use nav_planner::bank_fetch::{bank_access_tiles, is_bank_access, BankStep, SAME_BANK};
+use nav_planner::router::{
     find_first_blocking_zones, find_first_with_avoid, find_with_avoid, FindOptions, Route,
     RouteError,
 };
-use nav::traveller::TravelOptions;
-use nav::world::NavWorld;
-use nav::WorldState;
+use nav_planner::world::NavWorld;
+use nav_planner::WorldState;
 use parking_lot::RwLock;
 use script::combat::guard::GUARD_PRAYER_WINDOW_TICKS;
 use script::combat::schedule::elapsed;
@@ -37,7 +38,7 @@ struct LiveRouteRefresh {
     request_id: u64,
     exclusions: Option<Arc<super::script_nav::ScriptRouteExclusions>>,
     authority: Option<script::native::HostAuthority>,
-    quest_evidence: Option<nav::quest_gates::QuestEvidence>,
+    quest_evidence: Option<nav_planner::quest_gates::QuestEvidence>,
     compat_tile_intent: bool,
 }
 
@@ -126,7 +127,7 @@ pub(crate) fn apply_guard_op(
             });
             (sent, "if-button", Some(*component))
         }
-        GuardOp::Drink { name } => {
+        GuardOp::Drink { name, .. } => {
             let sent = snapshot
                 .inventory()
                 .iter()
@@ -169,7 +170,17 @@ pub(crate) fn apply_guard_op(
     #[cfg(test)]
     if sent {
         if let Some(account) = account {
-            crate::combat_proof::record_guard(account, snapshot, kind, component);
+            let item = match op {
+                GuardOp::Eat { name } | GuardOp::Drink { name, .. } => Some(name.as_ref()),
+                _ => None,
+            };
+            crate::combat_proof::record_guard(account, snapshot, kind, component, item);
+        }
+    }
+    #[cfg(feature = "test-support")]
+    if sent {
+        if let Some(account) = account {
+            crate::play_scripts::notify_guard_action_for_test(account, snapshot, op);
         }
     }
     let _ = (kind, component);
@@ -497,11 +508,13 @@ pub(crate) fn tick_walk_guard<D: Driver>(
     driver: &mut D,
     snapshot: &GameSnapshot,
     guard: &mut Option<script::combat::WalkGuard>,
+    condition: Option<&BotCondition>,
     account: Option<&str>,
+    cure_policy: script::survival::CurePoison,
 ) -> Option<GuardOp> {
     let guard = guard.as_mut()?;
     let view = guard_view(snapshot);
-    let op = guard.tick(&view)?;
+    let op = guard.tick(&view, condition, cure_policy)?;
     if apply_guard_op(driver, snapshot, &op, account) {
         guard.admitted(&op, &view);
     }
@@ -529,9 +542,19 @@ pub(crate) fn take_manual_walk_ownership(
         && slot
             .as_ref()
             .is_some_and(|slot| slot.want_run && slot.state() == script::RunState::Running);
-    // A Gather or Combat API session is taken over even with no walk in
-    // flight; it learns the movement through `note_manual_walk_takeover`.
-    let live_work = eligible && slot.as_ref().is_some_and(|slot| slot.manual_input_owner());
+    let live_native_owner = slot.as_ref().is_some_and(|slot| slot.live_native_owner());
+    let live_walking_operation = slot
+        .as_ref()
+        .is_some_and(|slot| slot.live_walking_operation());
+    let api_session = slot
+        .as_ref()
+        .is_some_and(|slot| slot.api_session_takes_manual_input());
+    let load_active = slot.as_ref().is_some_and(|slot| slot.surface_active());
+    let live_work = eligible
+        && (api_session
+            || live_walking_operation
+            || live_native_owner
+            || (pause_owner && load_active));
     let mut all = navs.lock().unwrap();
     if !all.contains_key(name) {
         all.insert(name.to_owned(), NavBot::default());
@@ -542,14 +565,22 @@ pub(crate) fn take_manual_walk_ownership(
     bot.user_move_intent_seq = bot.user_move_intent_seq.saturating_add(count as u64);
     // Retained request metadata also deduplicates completed walks; it is
     // not evidence of active work. Route-less families keep their own owner.
-    let active_walk = bot.has_route()
-        || bot.route_work_pending()
-        || bot.bank_fetch.is_some()
-        || bot.carried_walk.is_some()
-        || bot.native_walk.as_ref().is_some_and(|owner| owner.live());
+    let walk_work_live = bot.walk_work_live();
+    let native_walk_live = bot.native_walk.as_ref().is_some_and(|owner| owner.live());
+    let active_walk = walk_work_live || native_walk_live;
     if !eligible || !(active_walk || live_work) {
         return false;
     }
+    let host_walk_facts = [
+        bot.route.is_some(),
+        bot.compact_route.is_some(),
+        bot.has_route(),
+        bot.pending_route.is_some(),
+        bot.route_ticket.is_some(),
+        bot.route_work_pending(),
+        bot.bank_fetch.is_some(),
+        bot.carried_walk.is_some(),
+    ];
     bot.cancel_for_manual_input();
     // End watchdog ownership before the ordinary Pause entry can defer it.
     if let Some(slot) = slot.as_mut() {
@@ -560,12 +591,30 @@ pub(crate) fn take_manual_walk_ownership(
         api::hostlog::Category::NavEvent,
         api::hostlog::Level::Info,
         slot = name,
-        "walk outcome=cancelled reason=UserInput request={} generation={} intent_seq={} source={:?} manual_steps={}",
+        "walk outcome=cancelled reason=UserInput request={} generation={} intent_seq={} source={:?} manual_steps={} tick={} live_work={} active_walk={} live_native_owner={} live_walking_operation={} api_session={} load_active={} pause_owner={} native_walk_live={} walk_work_live={} route={} compact_route={} has_route={} pending_route={} route_ticket={} route_work_pending={} bank_fetch={} carried_walk={}",
         bot.walk_outcome_request_id,
         bot.walk_outcome_generation,
         bot.user_move_intent_seq,
         frame.manual_move_intent,
         frame.manual_steps,
+        tick,
+        live_work,
+        active_walk,
+        live_native_owner,
+        live_walking_operation,
+        api_session,
+        load_active,
+        pause_owner,
+        native_walk_live,
+        walk_work_live,
+        host_walk_facts[0],
+        host_walk_facts[1],
+        host_walk_facts[2],
+        host_walk_facts[3],
+        host_walk_facts[4],
+        host_walk_facts[5],
+        host_walk_facts[6],
+        host_walk_facts[7],
     );
     drop(all);
     if pause_owner {
@@ -712,7 +761,7 @@ pub(crate) fn apply_watchdog_nav_action(
 }
 
 fn arrived_in_area(snapshot: &GameSnapshot, here: WorldTile, to: WorldTile, radius: i32) -> bool {
-    nav::arrival::arrived_in_area(here, to, radius, |tile| {
+    nav_planner::arrival::arrived_in_area(here, to, radius, |tile| {
         let scene = api::query::SceneQuery::new(snapshot.scene(), None);
         scene.contains(tile) && scene.walkable(tile)
     })
@@ -755,17 +804,17 @@ fn settle_route_end(bot: &mut NavBot, blocked: bool) {
 /// Only genuinely pending follow work (None) keeps the caller timeout.
 pub(crate) fn apply_nav_follow_outcome(
     bot: &mut NavBot,
-    outcome: Option<nav::traveller::TravelOutcome>,
+    outcome: Option<nav_executor::TravelOutcome>,
     walking_stand: bool,
 ) {
     match outcome {
-        Some(nav::traveller::TravelOutcome::Arrived { .. }) => settle_route_end(bot, false),
+        Some(nav_executor::TravelOutcome::Arrived { .. }) => settle_route_end(bot, false),
         // Frozen `walkResilient` treats EndBlocked as a completed route for
         // compatibility. A native owner also receives the typed Traveller
         // outcome so it can reject arrival without losing the hop diagnosis.
         Some(
-            failure @ nav::traveller::TravelOutcome::Stalled {
-                why: nav::traveller::HopFailure::EndBlocked,
+            failure @ nav_executor::TravelOutcome::Stalled {
+                why: nav_executor::HopFailure::EndBlocked,
                 ..
             },
         ) if bot.bank_fetch.is_none() => {
@@ -812,6 +861,36 @@ pub(crate) fn apply_nav_follow_outcome(
         }
         None => {}
     }
+}
+
+/// Publish a script walk's destination into `name`'s status row. The caller
+/// must still hold the navigation lock it read `destination` under, so that
+/// a Stop's `reset_script_nav` and the retirement that follows it cannot
+/// fall between the read and this write. Lock order stays script, then
+/// navigation, then statuses; nothing takes navigation while holding statuses.
+fn publish_script_walk(
+    statuses: &Arc<Mutex<Vec<SlotStatus>>>,
+    name: &str,
+    destination: Option<WorldTile>,
+) {
+    #[cfg(test)]
+    BEFORE_PUBLISH.with(|hook| {
+        if let Some(hook) = hook.borrow_mut().take() {
+            hook();
+        }
+    });
+    let mut rows = lock_statuses(statuses);
+    if let Some(s) = rows.iter_mut().find(|s| s.username == name) {
+        s.publish_script_walk(destination);
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    /// A test parks the publishing thread between its navigation read and the
+    /// status write, to interleave a Stop at that exact point.
+    pub(crate) static BEFORE_PUBLISH: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        const { std::cell::RefCell::new(None) };
 }
 
 /// One pump step of a uid's nav bot: advance a pending BankBudget session
@@ -906,23 +985,7 @@ pub(crate) fn step_nav_bot<D: Driver>(
                 // Close. Walk with a stand sub-route armed falls through
                 // to Traveller::follow — never final_route mid-session.
                 if bank_fetch_freezes_follow(bot) {
-                    let queued = bot.route_destination();
-                    drop(all);
-                    let mut rows = lock_statuses(statuses);
-                    if let Some(s) = rows.iter_mut().find(|s| s.username == name) {
-                        match queued {
-                            Some(d) => {
-                                s.walk_x = d.x;
-                                s.walk_z = d.z;
-                                s.walk_level = d.level;
-                            }
-                            None => {
-                                s.walk_x = -1;
-                                s.walk_z = -1;
-                                s.walk_level = -1;
-                            }
-                        }
-                    }
+                    publish_script_walk(statuses, name, bot.route_destination());
                     return;
                 }
             }
@@ -1057,7 +1120,7 @@ pub(crate) fn step_nav_bot<D: Driver>(
         );
     }
     let defer_estimated_end = estimated_endpoint;
-    let queued = {
+    {
         let mut all = navs.lock().unwrap();
         let Some(bot) = all.get_mut(name) else {
             return;
@@ -1083,10 +1146,21 @@ pub(crate) fn step_nav_bot<D: Driver>(
                                     && route.destination().level == *level
                         )
                     });
-                    // A later route may follow while the old off-click is
-                    // watched, but cannot raise a protect that debt could clear.
+                    // A later route may follow while the old off-click is watched,
+                    // but cannot raise a protect that debt could clear.
                     let guard_op = if bot.walk_guard_off.is_none() {
-                        tick_walk_guard(driver, snapshot, &mut bot.walk_guard, Some(name))
+                        let condition = bot
+                            .condition
+                            .current()
+                            .filter(|fact| fact.tick == snapshot.tick());
+                        tick_walk_guard(
+                            driver,
+                            snapshot,
+                            &mut bot.walk_guard,
+                            condition,
+                            Some(name),
+                            bot.cure_poison,
+                        )
                     } else {
                         None
                     };
@@ -1143,7 +1217,7 @@ pub(crate) fn step_nav_bot<D: Driver>(
                             && bot.route_request_id == bot.walk_request_id
                             && bot.bank_fetch.is_none();
                         let reached_endpoint = follow_outcome.as_ref().is_some_and(|outcome| {
-                            matches!(outcome, nav::traveller::TravelOutcome::Arrived { .. })
+                            matches!(outcome, nav_executor::TravelOutcome::Arrived { .. })
                         });
                         if reached_endpoint {
                             api::host_log!(
@@ -1165,22 +1239,10 @@ pub(crate) fn step_nav_bot<D: Driver>(
                 }
             }
         }
-        bot.route_destination()
-    };
-    let mut rows = lock_statuses(statuses);
-    if let Some(s) = rows.iter_mut().find(|s| s.username == name) {
-        match queued {
-            Some(d) => {
-                s.walk_x = d.x;
-                s.walk_z = d.z;
-                s.walk_level = d.level;
-            }
-            None => {
-                s.walk_x = -1;
-                s.walk_z = -1;
-                s.walk_level = -1;
-            }
-        }
+        // Publish while the navigation lock is still held: a Stop's reset
+        // and retirement then run wholly before or wholly after this
+        // read-and-publish, so a retired run's destination cannot return.
+        publish_script_walk(statuses, name, bot.route_destination());
     }
 }
 
@@ -1276,7 +1338,7 @@ pub(crate) fn step_bank_fetch_on_bot<D: Driver>(
             admission.input = crate::admission::capture(
                 snapshot,
                 map_members,
-                admission.input.poison,
+                bot.condition.current(),
                 bot.walk_guard_off.is_some(),
             );
             *bot.admission.as_deref_mut().expect("active admission") = admission;
@@ -1444,7 +1506,7 @@ fn step_walk(
             admission.input = crate::admission::capture(
                 snapshot,
                 map_members,
-                admission.input.poison,
+                bot.condition.current(),
                 bot.walk_guard_off.is_some(),
             );
             *bot.admission.as_deref_mut().expect("active admission") = admission;
@@ -1743,8 +1805,8 @@ fn arm_access_fallback(
     dest: WorldTile,
     opts: FindOptions,
     state: &WorldState,
-    avoid: &[nav::router::AvoidRect],
-) -> Result<Route, Option<Vec<nav::zones::ZoneKey>>> {
+    avoid: &[nav_planner::router::AvoidRect],
+) -> Result<Route, Option<Vec<nav_planner::zones::ZoneKey>>> {
     let mut targets: Vec<WorldTile> = world
         .banks()
         .iter()
@@ -1894,10 +1956,10 @@ fn wearing(snapshot: &GameSnapshot, id: i32) -> bool {
 #[cfg(test)]
 mod zone_diagnostic_tests {
     use super::*;
-    use nav::collision::{pack_walk, WorldCollision};
-    use nav::pack::{BankAccess, BankStand};
-    use nav::transport::TransportGraph;
-    use nav::zones::{Zone, ZoneClass, ZoneKey, ZoneKind, ZoneTable};
+    use nav_planner::collision::{pack_walk, WorldCollision};
+    use nav_planner::pack::{BankAccess, BankStand};
+    use nav_planner::transport::TransportGraph;
+    use nav_planner::zones::{Zone, ZoneClass, ZoneKey, ZoneKind, ZoneTable};
 
     fn world_with_bank_access_barrier() -> NavWorld {
         let origin = WorldTile {

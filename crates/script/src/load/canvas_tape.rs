@@ -155,7 +155,8 @@ fn replay(tape: &[f64], strs: &[String]) -> Result<(), String> {
             MOVE_TO => crate::canvas::move_to(args[0], args[1]),
             LINE_TO => crate::canvas::line_to(args[0], args[1]),
             QUAD_TO => crate::canvas::quadratic_curve_to(args[0], args[1], args[2], args[3]),
-            ARC => crate::canvas::arc(args[0], args[1], args[2], args[3], args[4], args[5] != 0.0)?,
+            ARC => crate::canvas::arc(args[0], args[1], args[2], args[3], args[4], args[5] != 0.0)
+                .map_err(|error| error.to_string())?,
             FILL => crate::canvas::fill(),
             STROKE => crate::canvas::stroke(),
             CLIP => crate::canvas::clip(),
@@ -163,12 +164,15 @@ fn replay(tape: &[f64], strs: &[String]) -> Result<(), String> {
             // so `addColorStop` and `fillStyle = gradient` reference them
             // without a return crossing.
             CREATE_LINEAR => {
-                crate::canvas::create_linear(args[0], args[1], args[2], args[3])?;
+                crate::canvas::create_linear(args[0], args[1], args[2], args[3])
+                    .map_err(|error| error.to_string())?;
             }
             CREATE_RADIAL => {
-                crate::canvas::create_radial(args[0], args[1], args[2], args[3], args[4], args[5])?;
+                crate::canvas::create_radial(args[0], args[1], args[2], args[3], args[4], args[5])
+                    .map_err(|error| error.to_string())?;
             }
-            ADD_STOP => crate::canvas::add_color_stop(args[0] as u32, args[1], s(args[2]))?,
+            ADD_STOP => crate::canvas::add_color_stop(args[0] as u32, args[1], s(args[2]))
+                .map_err(|error| error.to_string())?,
             _ => unreachable!("arity() admits only the codes above"),
         }
         i += 1 + n;

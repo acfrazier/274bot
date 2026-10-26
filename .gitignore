@@ -8,6 +8,7 @@ docs/superpowers/
 .DS_Store
 imgui.ini
 274bot-panel.ini
+__pycache__/
 
 # Local operator guidance, campaign evidence, and build exports
 /AGENTS.md
@@ -22,3 +23,4 @@ imgui.ini
 /.hash_overlay.py
 /tools/game-data/_review_check.mjs
 /.nav-verification/
+/tools/game-data/evidence/289-npc-transforms.json

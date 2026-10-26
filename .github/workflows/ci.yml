@@ -1,14 +1,14 @@
 name: CI
 
-# fmt (with the lint-suppression ratchet) and architecture also run on
-# development pushes (dev, release/**), so formatting, suppression-count and
-# crate-boundary drift shows up before a PR to main. The expensive clippy and
-# test lanes stay on main and PRs.
+# Every job runs on pushes to main, dev and release/**, and on pull requests
+# into main and dev. Outside contributors open pull requests against dev
+# (CONTRIBUTING.md), so a pull request gets the full fmt, clippy, test and
+# architecture checks before review.
 on:
   push:
     branches: [main, dev, "release/**"]
   pull_request:
-    branches: [main]
+    branches: [main, dev]
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -26,11 +26,11 @@ env:
   # outgrow the runner disk.
   CARGO_INCREMENTAL: "0"
   CARGO_PROFILE_DEV_DEBUG: "0"
-  # The gatherer's real-pack tests need the reviewed 289 nav pack (the Shantay
-  # R2 bake). The 0.2.0.2 Linux release ships that exact file, so lanes that
-  # load it fetch it from there once, verify the checksum, and cache it.
-  CI_NAV_PACK_RELEASE: "0.2.0.2"
-  CI_NAV_PACK_SHA256: 4270f02711447267e0ee639579d41532996a3d37f712d5d63cdb79051e45300f
+  # The reviewed v17 reference is published separately from application releases.
+  # Main and the operator publish these immutable assets before this CI cutover.
+  CI_NAV_PACK_RELEASE: "nav-reference-v17"
+  CI_NAV_PACK_SHA256: 4e8ab5af4694cf6722ed3836c3e1f42e9ac1be136d4d1127c7db698f4fc6500b
+  CI_NAV_FLAGS_SHA256: 67e4094dff06def5cf8abc172ce751f4ca8679532ba04c1ba15ab6bf668c7a4a
 
 # GitHub is a subset of local CI (see CONTRIBUTING.md): no LIVE=1, no GPU
 # adapter (SKIP_GPU=1). The cargo graph is the same as local — host workspace
@@ -90,6 +90,8 @@ jobs:
           workspaces: |
             . -> target
             vendor/fr-client-rust -> target
+      - name: Navigation action deny-list coverage
+        run: python3 -B tools/architecture/nav_clippy.py --check
       - name: Clippy
         run: |
           cargo clippy --workspace --all-targets --no-deps -- -D warnings
@@ -102,6 +104,8 @@ jobs:
           cargo clippy -p host-play --all-targets --no-deps --features memory-profile-no-alloc -- -D warnings
           cargo clippy -p tui --all-targets --no-deps --features memory-profile -- -D warnings
           cargo clippy -p script --no-default-features --all-targets --no-deps -- -D warnings
+          cargo clippy --manifest-path vendor/fr-client-rust/Cargo.toml --workspace --all-targets --no-deps --features render-test-hooks -- -D warnings
+          cargo clippy -p host --all-targets --no-deps --features render-test-hooks -- -D warnings
 
   architecture:
     name: architecture
@@ -255,6 +259,18 @@ jobs:
             cache_key: workspace
             save_cache: true
             command: "cargo test -p host-play --features memory-profile"
+          - lane: vendor-render-test-hooks
+            free_disk: false
+            cache_key: vendor
+            save_cache: true
+            os: ubuntu-24.04
+            command: "cargo test --manifest-path vendor/fr-client-rust/Cargo.toml --workspace --features render-test-hooks"
+          - lane: host-render-test-hooks
+            free_disk: false
+            cache_key: workspace
+            save_cache: false
+            os: ubuntu-24.04
+            command: "cargo test -p host --features render-test-hooks"
     runs-on: ${{ matrix.os }}
     env:
       SKIP_GPU: "1"
@@ -304,14 +320,16 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/nav-289"
           gh release download "$CI_NAV_PACK_RELEASE" -R "$GITHUB_REPOSITORY" \
-            -p "274bot-$CI_NAV_PACK_RELEASE-linux-x64.tar.gz" -O - \
-            | tar -xzOf - "274bot-$CI_NAV_PACK_RELEASE-linux-x64/nav/289/274bot.navpack" \
-            > "$RUNNER_TEMP/nav-289/274bot.navpack"
+            -p "274bot-289-v17.navpack" -p "274bot-289-v17.navflags" \
+            -D "$RUNNER_TEMP/nav-289"
       - name: Use the 289 nav pack
         if: ${{ matrix.real_nav_pack }}
         run: |
-          echo "$CI_NAV_PACK_SHA256  $RUNNER_TEMP/nav-289/274bot.navpack" | sha256sum -c -
-          echo "NAV_PACK=$RUNNER_TEMP/nav-289/274bot.navpack" >> "$GITHUB_ENV"
+          echo "$CI_NAV_PACK_SHA256  $RUNNER_TEMP/nav-289/274bot-289-v17.navpack" | sha256sum -c -
+          echo "$CI_NAV_FLAGS_SHA256  $RUNNER_TEMP/nav-289/274bot-289-v17.navflags" | sha256sum -c -
+          echo "NAV_PACK=$RUNNER_TEMP/nav-289/274bot-289-v17.navpack" >> "$GITHUB_ENV"
+          echo "WORLD_NAV_PACK=$RUNNER_TEMP/nav-289/274bot-289-v17.navpack" >> "$GITHUB_ENV"
+          echo "NAV_ARRIVAL_PACK=$RUNNER_TEMP/nav-289/274bot-289-v17.navpack" >> "$GITHUB_ENV"
       - name: Test ${{ matrix.lane }}
         run: ${{ matrix.command }}
 

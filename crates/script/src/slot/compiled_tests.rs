@@ -59,6 +59,105 @@ fn tick(slot: &mut SlotScript) {
 }
 
 #[test]
+fn resume_consumes_the_takeover_for_a_step_that_continues() {
+    struct InPlaceOwner;
+
+    impl crate::native::NativeMachine for InPlaceOwner {
+        type Args = ();
+        type Output = ();
+
+        fn begin(
+            _: (),
+            _: &mut crate::native::ActionContext<'_>,
+        ) -> Result<Self, crate::native::ActionError> {
+            Ok(Self)
+        }
+
+        fn poll(
+            &mut self,
+            _: &mut crate::native::ActionContext<'_>,
+        ) -> std::task::Poll<Result<(), crate::native::ActionError>> {
+            std::task::Poll::Pending
+        }
+    }
+
+    struct InPlaceStep {
+        watch: Option<crate::native::ManualTakeoverWatch>,
+        owner: Option<crate::native::ActionHandle<InPlaceOwner>>,
+        terminal_count: Arc<AtomicU64>,
+    }
+
+    impl Script for InPlaceStep {
+        fn tick(&mut self, tick: &mut NativeTick<'_>) -> Result<ScriptFlow, ScriptFailure> {
+            if self.watch.is_none() {
+                self.watch = Some(crate::native::ManualTakeoverWatch::begin(&tick.cx));
+            }
+            if self.owner.is_none() {
+                self.owner = Some(
+                    tick.actions
+                        .begin::<InPlaceOwner>((), &mut tick.cx)
+                        .unwrap(),
+                );
+            }
+            if self
+                .watch
+                .as_ref()
+                .expect("the step records its first frame")
+                .interrupted(&tick.cx)
+            {
+                self.terminal_count.fetch_add(1, Ordering::Relaxed);
+                Ok(ScriptFlow::Complete)
+            } else {
+                Ok(ScriptFlow::Continue)
+            }
+        }
+    }
+
+    let terminal_count = Arc::new(AtomicU64::new(0));
+    let mut slot = SlotScript::new();
+    slot.bind_incarnation(102_421);
+    slot.start_test_script(
+        Box::new(InPlaceStep {
+            watch: None,
+            owner: None,
+            terminal_count: Arc::clone(&terminal_count),
+        }),
+        Some(selected()),
+    )
+    .unwrap();
+
+    tick(&mut slot);
+    assert_eq!(slot.state(), RunState::Running);
+    assert!(
+        slot.live_native_owner(),
+        "the fixture owns a live native action"
+    );
+
+    assert!(slot.observe_walk_outcome(1, crate::native::WalkCancelReason::UserInput, None));
+    slot.pause();
+    assert_eq!(slot.state(), RunState::Paused);
+    slot.resume();
+    assert_eq!(slot.state(), RunState::Running);
+    tick(&mut slot);
+    assert_eq!(
+        terminal_count.load(Ordering::Relaxed),
+        0,
+        "Resume consumes the takeover before the continued step polls",
+    );
+
+    assert!(slot.observe_walk_outcome(2, crate::native::WalkCancelReason::UserInput, None));
+    tick(&mut slot);
+    assert_eq!(terminal_count.load(Ordering::Relaxed), 1);
+    assert_eq!(slot.state(), RunState::Idle);
+    tick(&mut slot);
+    assert_eq!(
+        terminal_count.load(Ordering::Relaxed),
+        1,
+        "the second takeover ends the step only once",
+    );
+}
+
+#[test]
 fn grinch_start_admits_one_compiled_gather_session_without_an_isolate() {
     let mut slot = SlotScript::new();
     slot.bind_incarnation(102_419);
@@ -241,13 +340,15 @@ fn invalid_settings_and_factory_type_leave_no_runnable_instance() {
     start(&mut slot, SettingsBag::new());
     assert_eq!(settle(&mut slot), StartOutcome::Ready);
     assert_eq!(slot.state(), RunState::Running);
-    assert!(slot.load.is_none());
+    assert!(slot.surface.is_none());
     assert!(slot
-        .start_load(
-            "export function tick() {}".into(),
-            LoadShape::NativeTick,
-            vec![]
-        )
+        .start_surface(crate::surface::SurfaceStart {
+            card: Arc::new(crate::surface::test_support::StubSurfaceCard),
+            settings_bag: None,
+            game_data: None,
+            named_banks: Arc::default(),
+            loadouts: Arc::default(),
+        })
         .is_err());
 }
 
@@ -873,7 +974,7 @@ impl Script for Relog {
                     candidate_goals: None,
                     loc_id: None,
                     radius: 0,
-                    arrival: nav::contract::ArrivalKind::Reach,
+                    arrival: nav_planner::contract::ArrivalKind::Reach,
                     options: crate::native::WalkOptions::default(),
                     required_after: first,
                     evidence: None,
@@ -1652,28 +1753,33 @@ fn gatherer_exclusive_heap_stays_inside_the_eight_kib_target() {
     drop(shared_slot);
 }
 
-#[cfg(feature = "load")]
 mod api_gather_seat {
     use super::*;
     use crate::api_gather::{GatherEnd, GatherPhase};
-    use crate::isolate_fb::{DecodedSeatBatch, SeatInteractDecoded, SeatStartArgs, SeatStartInput};
     use crate::native::request::NativeKind;
+    use crate::native::seat_rows::{
+        DecodedSeatBatch, SeatInteractDecoded, SeatStartArgs, SeatStartInput,
+    };
     use crate::shim::InteractReq;
     use api::identity::RequestId;
 
     fn load_slot(incarnation: u64, data: bool) -> SlotScript {
         let mut slot = SlotScript::new();
         slot.bind_incarnation(incarnation);
-        slot.start_load_with_settings_and_game_data(
-            "export function tick() {}".into(),
-            crate::load::LoadShape::NativeTick,
-            None,
-            vec![],
-            &[],
-            data.then(selected),
-            Arc::default(),
-        )
+        let factory = Arc::new(crate::surface::test_support::StubSurfaceFactory::new());
+        slot.bind_surface_factory(factory.clone());
+        slot.start_surface(crate::surface::SurfaceStart {
+            card: Arc::new(crate::surface::test_support::StubSurfaceCard),
+            settings_bag: None,
+            game_data: data.then(selected),
+            named_banks: Arc::default(),
+            loadouts: Arc::default(),
+        })
         .unwrap();
+        factory
+            .last_run()
+            .expect("stub surface run")
+            .set_readiness(crate::surface::SurfaceReady::Ready);
         assert_eq!(settle(&mut slot), StartOutcome::Ready);
         slot.on_is_up(true);
         slot
@@ -2322,13 +2428,13 @@ fn compiled_walk_decisions_keep_their_observed_epoch_across_later_ticks_and_rest
     slot.bind_incarnation(10);
     slot.start_test_script(Box::new(WalkingRows(0)), Some(selected()))
         .unwrap();
-    slot.observe_walk_outcome(10, None);
+    slot.observe_walk_outcome(10, crate::native::WalkCancelReason::None, None);
     tick(&mut slot);
-    slot.observe_walk_outcome(11, None);
+    slot.observe_walk_outcome(11, crate::native::WalkCancelReason::None, None);
     tick(&mut slot);
     let (_, older, _) = slot.drain_host_interacts();
 
-    slot.observe_walk_outcome(12, None);
+    slot.observe_walk_outcome(12, crate::native::WalkCancelReason::None, None);
     tick(&mut slot);
     slot.restore_host_interacts(older);
     let (_, rows, _) = slot.drain_host_interacts();
@@ -2779,10 +2885,7 @@ fn terminal_native_blocked_stops_cleans_up_and_preserves_reason() {
         .unwrap();
         slot.attach_source_identity("compiled:test");
         let control_generation = slot.control_generation;
-        #[cfg(feature = "load")]
-        {
-            slot.clue_stop_owed = false;
-        }
+        slot.card_stop_owed = false;
         let run = slot.native_run().unwrap();
         tick(&mut slot);
         assert_eq!(slot.state(), RunState::Idle);
@@ -2794,8 +2897,7 @@ fn terminal_native_blocked_stops_cleans_up_and_preserves_reason() {
             slot.source_identity().is_none(),
             "normal Stop clears identity"
         );
-        #[cfg(feature = "load")]
-        assert!(slot.clue_stop_owed, "normal Stop owes fresh clue cleanup");
+        assert!(slot.card_stop_owed, "normal Stop owes fresh card cleanup");
         assert!(slot.retained.is_none(), "Stop releases retained work");
         assert!(!slot.has_native_actions());
         assert!(slot.native_quiet_read(Instant::now()).is_none());

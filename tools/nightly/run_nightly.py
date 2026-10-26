@@ -23,6 +23,13 @@ The revision-274 lane uses this same script with `NIGHTLY_REVISION=274`, a
 single branch (`dev`) and its exact cell list. It reports only; it never gates
 a merge or release.
 
+The latency lane is off unless `NIGHTLY_LATENCY_BANDS` or `--latency-bands`
+names RTT bands (for example `50,100,150`). When it is on, after the tui
+step, the runner starts one `latency_proxy.py` per band, reruns the
+`cells-latency.conf` cells through it on the latency branch only, and
+classifies each band row against the same night's zero-latency result. It
+reports only; it never gates a merge or release.
+
 Standard library only (Python 3.10+); on Windows also `pywinpty` for ConPTY.
 """
 
@@ -40,8 +47,10 @@ import shutil
 import signal
 import socket
 import stat
+import statistics
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import urllib.request
@@ -71,18 +80,26 @@ DEFAULT_ROOT = r"C:\274bot-nightly" if IS_WINDOWS else (
 ROOT = Path(os.environ.get("NIGHTLY_ROOT", DEFAULT_ROOT))
 REPO_URL = os.environ.get("NIGHTLY_REPO", "https://github.com/acfrazier/274bot")
 RUNNER_REPO = HERE.parent.parent
-NAV_274_REQUIRED_CONTENT = RUNNER_REPO / "crates" / "nav" / "src" / "required-content-274.tsv"
+NAV_274_REQUIRED_CONTENT = RUNNER_REPO / "crates" / "nav-planner" / "src" / "required-content-274.tsv"
+
+
+# Engine A is the non-Windows revision-289 pack. Engine B has its own
+# verified revision-289 identity after content patch 0002.
+ENGINE_A_289_CRC_SHA256 = (
+    "687190c8ef08bb94a1422f4262d62bb7a76a55dfe0634ea43f0e63e0235dc623"
+)
+ENGINE_B_289_CRC_SHA256 = (
+    "5f8a00094e8eb02dd00d703e99a073071d0349a8731f43dffa0bdaae36fa6c69"
+)
 
 
 def revision_defaults(revision: str, windows: bool) -> dict:
     """The settings a game revision implies, before any specific override.
 
-    289 is the production revision: its defaults are the values this script
-    has always used. 274 (the zinfandel lane) differs in the built-in launch
-    profile, the folder under a cell HOME's `.274bot` that holds the decoded
-    cache (`unpack`, where 289 uses `unpack-289`), the run-folder suffix,
-    and the remote engine's /crc identity (the pinned hash is the 289
-    engine's, so a 274 remote engine is not compared against it).
+    289 is the production revision. Non-Windows jobs keep the established
+    289 pack identity. Windows jobs use Engine B's rebuilt identity. Revision
+    274 has a separate launch profile, cache directory (`unpack` instead of
+    `unpack-289`), and run-folder suffix. It has no pinned CRC identity.
     """
     if revision not in ("274", "289"):
         raise ValueError(f"revision must be 274 or 289, got {revision!r}")
@@ -93,8 +110,9 @@ def revision_defaults(revision: str, windows: bool) -> dict:
         "profile": f"local-{revision}",
         "unpack_dir": "unpack-289" if revision == "289" else "unpack",
         "run_suffix": suffix,
-        "engine_crc_sha256": ("687190c8ef08bb94a1422f4262d62bb7a76a55dfe0634ea43f0e63e0235dc623"
-                              if revision == "289" else ""),
+        "engine_crc_sha256": (
+            (ENGINE_B_289_CRC_SHA256 if windows else ENGINE_A_289_CRC_SHA256)
+            if revision == "289" else ""),
     }
 
 
@@ -178,6 +196,85 @@ KEEP_DAYS = int(os.environ.get("NIGHTLY_KEEP_DAYS", "14"))
 # Every cell enforces its own scenario deadline inside the frontend; this outer
 # cap only stops a process that never reaches a terminal state.
 CELL_CAP_S = int(os.environ.get("NIGHTLY_CELL_CAP_S", "3600"))
+# Two cells need more than the Windows host's 1200 s outer cap. The proven
+# walls come from the 2026-10-21 night (summary.json in each run folder).
+# jive_kbd reached a verdict at 2543.0 s on Linux and 2529.6 s on Mac TUI.
+# Its scenario deadline is 2700 s. quester_queue passed at 1987.9 s on Linux
+# and at 1022.0 s on Windows TUI. A cap of 3600 s covers each proven wall.
+# It also keeps the runner default for the other platforms.
+CELL_CAPS_DEFAULT_S = {"jive_kbd": 3600, "quester_queue": 3600}
+
+
+def parse_cell_caps(text: str, defaults: dict) -> dict:
+    """Parse a `cell=seconds,cell=seconds` override over the default caps."""
+    caps = dict(defaults)
+    for entry in text.split(","):
+        entry = entry.strip()
+        if not entry:
+            continue
+        name, sep, seconds = entry.partition("=")
+        if not sep or not name.strip():
+            raise ValueError(f"cell cap must be cell=seconds, got {entry!r}")
+        try:
+            value = int(seconds)
+        except ValueError:
+            raise ValueError(f"cell cap for {name.strip()!r} is not a whole number: {seconds!r}") from None
+        if value <= 0:
+            raise ValueError(f"cell cap for {name.strip()!r} must be positive, got {value}")
+        caps[name.strip()] = value
+    return caps
+
+
+try:
+    CELL_CAPS_S = parse_cell_caps(os.environ.get("NIGHTLY_CELL_CAPS_S", ""), CELL_CAPS_DEFAULT_S)
+except ValueError as error:
+    raise SystemExit(f"NIGHTLY_CELL_CAPS_S: {error}") from error
+
+
+def parse_latency_bands(text: str) -> list[int]:
+    """Parse a `50,100,150` list of RTT bands in ms. Empty text: lane off.
+
+    A band is a round-trip time. The proxy delays each direction by half
+    of it. The 999 ms cap keeps the band digits within the account-prefix
+    budget (`latency_prefix`).
+    """
+    bands: list[int] = []
+    for entry in text.split(","):
+        entry = entry.strip()
+        if not entry:
+            continue
+        try:
+            value = int(entry)
+        except ValueError:
+            raise ValueError(f"latency band is not a whole number of ms: {entry!r}") from None
+        if not 1 <= value <= 999:
+            raise ValueError(f"latency band must be between 1 and 999 ms, got {value}")
+        if value in bands:
+            raise ValueError(f"latency band listed twice: {value}")
+        bands.append(value)
+    return bands
+
+
+try:
+    LATENCY_BANDS = parse_latency_bands(os.environ.get("NIGHTLY_LATENCY_BANDS", ""))
+except ValueError as error:
+    raise SystemExit(f"NIGHTLY_LATENCY_BANDS: {error}") from error
+LATENCY_BRANCH = os.environ.get("NIGHTLY_LATENCY_BRANCH", "dev")
+LATENCY_CELLS_FILE = os.environ.get("NIGHTLY_LATENCY_CELLS_FILE", "cells-latency.conf")
+LATENCY_PROXY = HERE / "latency_proxy.py"
+# A started band cell whose measured median queue delay misses the
+# configured one-way delay by more than this is rewritten UNAVAILABLE:
+# the proxy, not the product, failed the band contract.
+LATENCY_HEALTH_TOLERANCE_MS = 10.0
+LATENCY_CLASS_ORDER = ["latency-defect", "proxy-unavailable", "also-fails-at-0",
+                       "no-baseline", "unavailable", "not-run", "pass"]
+
+
+def cell_cap_s(cell: str) -> int:
+    """The outer cap for one cell: its own cap, else the night's cap."""
+    return CELL_CAPS_S.get(cell, CELL_CAP_S)
+
+
 EXE = ".exe" if IS_WINDOWS else ""
 # Runs of one commit on two platforms and jobs must not collide on the archive.
 RUN_SUFFIX = os.environ.get("NIGHTLY_RUN_SUFFIX", JOB_DEFAULTS["run_suffix"])
@@ -212,6 +309,7 @@ STEP_DEADLINE_S = {
     "build": int(os.environ.get("NIGHTLY_BUILD_DEADLINE_S", "5400")),
     "panel": int(os.environ.get("NIGHTLY_PANEL_DEADLINE_S", "12600")),
     "tui": int(os.environ.get("NIGHTLY_TUI_DEADLINE_S", "21600")),
+    "latency": int(os.environ.get("NIGHTLY_LATENCY_DEADLINE_S", "3600")),
 }
 # The whole night: no step runs past it, so the summary and DONE are always written
 # before the scheduled task's own limit (11 h). 0 = no bound (the Linux VM).
@@ -236,7 +334,17 @@ ENGINE_PRISTINE = Path(os.environ.get("NIGHTLY_ENGINE_PRISTINE", str(JOB_DEFAULT
 ENGINE_RUN = Path(os.environ.get("NIGHTLY_ENGINE_RUN", str(JOB_DEFAULTS["run"])))
 CATALOG = Path(os.environ.get("NIGHTLY_CATALOG", str(ROOT / "rs2b0t")))
 NAV_SNAPSHOT = Path(os.environ.get("NIGHTLY_NAV_SNAPSHOT", str(ROOT / "nav-snapshot")))
-NAV_FIXTURE = Path(os.environ.get("NIGHTLY_NAV_FIXTURE", str(ROOT / "fixtures" / "bake-r2-a.navpack")))
+NAV_FIXTURE = Path(os.environ.get(
+    "NIGHTLY_NAV_FIXTURE",
+    str(ROOT / "fixtures" / "274bot-289-v17.navpack"),
+))
+# The old inspection capture the host-play route-inspect test compares
+# against. The test's built-in default path exists only on merlot, so each
+# other host keeps a copy with its read-only fixtures.
+INSPECT_BASELINE = Path(os.environ.get(
+    "NIGHTLY_INSPECT_BASELINE",
+    str(ROOT / "fixtures" / "inspect.fb"),
+))
 RUNS_ROOT_OVERRIDE = os.environ.get("NIGHTLY_RUNS_ROOT")
 def runs_root() -> Path:
     return Path(RUNS_ROOT_OVERRIDE) if RUNS_ROOT_OVERRIDE else ROOT / "runs"
@@ -676,6 +784,232 @@ def catalog_cells(tree: Path) -> list[str]:
     return names
 
 
+# ------------------------------------------------- branch list and self-update
+#
+# At the start of a night the runner takes its branch list from GitHub: it
+# fetches origin and reads tools/nightly/branches.conf from origin/dev. The
+# precedence stays: --branch, then NIGHTLY_BRANCHES, then the GitHub list. A
+# failed fetch falls back to the local file and says so in every summary.
+#
+# The runner also updates its own checkout (tools/nightly/ under RUNNER_REPO)
+# to origin/dev before a night and re-executes itself, after the candidate
+# passes a self-check (py_compile of the runner files plus its own unit tests,
+# about a minute at most). The update is opt-in: only NIGHTLY_SELF_UPDATE=1
+# (set on the runner machines) updates. Anything else, including unset, keeps
+# the old code. Only the runner checkout is ever touched: every git command
+# below runs with -C at `repo`, the candidate is extracted under a temporary
+# directory, and the re-exec runs the same script path again.
+BRANCHES_REF = "origin/dev"
+BRANCHES_REL = "tools/nightly/branches.conf"
+SELF_UPDATE_ENV = "NIGHTLY_SELF_UPDATE"
+SELF_UPDATE_DONE_ENV = "NIGHTLY_SELF_UPDATE_DONE"
+SELF_UPDATE_FROM_ENV = "NIGHTLY_SELF_UPDATE_FROM"
+# Set in the self-check subprocess: the updater's own tests skip when it is
+# present, so a check never re-tests the updater recursively.
+SELF_CHECK_ACTIVE_ENV = "NIGHTLY_SELF_CHECK_ACTIVE"
+# The whole guard (py_compile plus the runner's own unit tests) fits in about
+# a minute on Linux and macOS. On Windows the same suite takes over two
+# minutes (process and git spawn cost), so the Windows night allows five.
+# A slower or hung check keeps the old code instead of the night.
+SELF_UPDATE_TIMEOUT_S = 300 if IS_WINDOWS else 55
+FETCH_TIMEOUT_S = 120
+RUNNER_PY_FILES = ("run_nightly.py", "nightly-mac-guest.py", "latency_proxy.py")
+SELF_TEST_FILE = "test_run_nightly.py"
+
+
+def self_update_enabled() -> bool:
+    """NIGHTLY_SELF_UPDATE=1 opts in. Off by default: the update force-checks
+    out origin/dev in the runner checkout, so a hand run from a developer
+    checkout must never update unless the runner machines opted in."""
+    return os.environ.get(SELF_UPDATE_ENV, "0") in ("1", "true", "yes")
+
+
+def reexec(executable: str, args: list[str], env: dict) -> None:
+    """Replace this process with the updated runner.
+
+    On Windows os.execvpe starts a child and the waiting parent exits 0 at
+    once, so Task Scheduler would record success whatever the night did;
+    there the child runs to the end and its exit code becomes ours.
+    """
+    if os.name == "nt":
+        sys.exit(subprocess.run(args, env=env).returncode)
+    os.execvpe(executable, args, env)
+
+
+def runner_head(repo: Path) -> str:
+    """The runner checkout's HEAD, or "unknown" when it cannot be read."""
+    try:
+        return run(git_cmd("-C", str(repo), "rev-parse", "HEAD"), env=git_env()).stdout.strip()
+    except (subprocess.SubprocessError, OSError):
+        return "unknown"
+
+
+def fetch_branch_tip(repo: Path, timeout: float | None = FETCH_TIMEOUT_S) -> str:
+    """Fetch origin's dev into the runner checkout; return the tip SHA."""
+    run(git_cmd("-C", str(repo), "fetch", "--prune", "origin",
+                f"+refs/heads/dev:refs/remotes/{BRANCHES_REF}"),
+        env=git_env(), timeout=timeout)
+    return run(git_cmd("-C", str(repo), "rev-parse", BRANCHES_REF), env=git_env()).stdout.strip()
+
+
+def parse_branch_lines(text: str) -> list[str]:
+    """One branch per line; `#` starts a comment, like read_list."""
+    return [row for line in text.splitlines()
+            if (row := line.split("#", 1)[0].strip())]
+
+
+def read_remote_branches(repo: Path) -> tuple[list[str], str]:
+    """The branch list from origin/dev: fetch, then show the file. Return the
+    list and the tip SHA. Raise on a fetch failure or an empty list."""
+    tip = fetch_branch_tip(repo)
+    text = run(git_cmd("-C", str(repo), "show", f"{BRANCHES_REF}:{BRANCHES_REL}"),
+               env=git_env()).stdout
+    branches = parse_branch_lines(text)
+    if not branches:
+        raise RuntimeError(f"{BRANCHES_REL} on {BRANCHES_REF} names no branches")
+    return branches, tip
+
+
+def resolve_branch_list(requested: list[str] | None, repo: Path,
+                        local_path: Path | None = None) -> tuple[list[str], dict]:
+    """The night's branches and where they came from.
+
+    Precedence: --branch, then NIGHTLY_BRANCHES, then the GitHub list on
+    origin/dev. When the fetch fails, the local file is used and the note
+    says so, so a night is never lost to a fetch failure.
+    """
+    if requested:
+        return list(requested), {"source": "cli", "commit": "",
+                                 "note": "from --branch"}
+    env_branches = os.environ.get("NIGHTLY_BRANCHES", "").split()
+    if env_branches:
+        return env_branches, {"source": "env", "commit": "",
+                              "note": "from NIGHTLY_BRANCHES"}
+    local_path = local_path or HERE / "branches.conf"
+    try:
+        branches, tip = read_remote_branches(repo)
+    except (subprocess.SubprocessError, OSError, RuntimeError) as error:
+        branches = parse_branch_lines(rtext(local_path))
+        head = runner_head(repo)
+        return branches, {"source": "local", "commit": head,
+                          "note": (f"fetch of {BRANCHES_REF} failed "
+                                   f"({_short_line(error)}); using local {local_path.name}")}
+    return branches, {"source": "github", "commit": tip,
+                      "note": f"from {BRANCHES_REF} at {tip}"}
+
+
+def extract_runner_candidate(repo: Path, dest: Path, ref: str = BRANCHES_REF) -> None:
+    """Materialize origin/dev's tools/nightly/ under `dest` for the self-check.
+    The runner checkout itself is never touched here."""
+    names = run(git_cmd("-C", str(repo), "ls-tree", "-r", "--name-only", ref, "tools/nightly"),
+                env=git_env()).stdout.split()
+    for name in names:
+        parts = Path(name).parts
+        if not name.startswith("tools/nightly/") or ".." in parts or Path(name).is_absolute():
+            raise RuntimeError(f"refusing to extract unsafe path from {ref}: {name!r}")
+        target = dest / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        data = subprocess.run(git_cmd("-C", str(repo), "show", f"{ref}:{name}"),
+                              env=git_env(), check=True, stdout=subprocess.PIPE).stdout
+        target.write_bytes(data)
+
+
+def self_check_candidate(candidate: Path, test_file: str = SELF_TEST_FILE,
+                         timeout: float = SELF_UPDATE_TIMEOUT_S) -> tuple[bool, str]:
+    """py_compile the candidate runner files, then run its own unit tests.
+    Return (True, detail) or (False, reason)."""
+    nightly_dir = candidate / "tools" / "nightly"
+    sources = sorted(str(path) for name in RUNNER_PY_FILES if (path := nightly_dir / name).is_file())
+    if not sources:
+        return False, "candidate has no runner files"
+    compiled = subprocess.run([sys.executable, "-m", "py_compile", *sources],
+                              capture_output=True, text=True)
+    if compiled.returncode:
+        reason = (compiled.stderr or compiled.stdout).strip().splitlines()
+        return False, f"py_compile failed: {reason[-1][:300] if reason else 'unknown error'}"
+    test_path = nightly_dir / test_file
+    if not test_path.is_file():
+        return False, f"candidate has no {test_file}"
+    env = dict(os.environ, NIGHTLY_ROOT=str(candidate / "self-check-root"),
+               NIGHTLY_SELF_CHECK_ACTIVE="1")
+    try:
+        tested = subprocess.run([sys.executable, "-B", str(test_path)], cwd=str(candidate),
+                                env=env, capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return False, f"{test_file} did not finish within {timeout} s"
+    if tested.returncode:
+        tail = (tested.stderr or tested.stdout).strip().splitlines()
+        return False, f"{test_file} failed: {tail[-1][:300] if tail else 'unknown error'}"
+    return True, f"py_compile ok; {test_file} passed"
+
+
+def maybe_self_update(repo: Path, script: Path, argv: list[str] | None = None,
+                      _exec: Callable = reexec) -> dict | None:
+    """Update the runner checkout to origin/dev and re-execute, after the
+    candidate passes its self-check. Return the summary info, or None when
+    this process re-executes (the new process reports status "updated"). Only
+    the runner checkout (`git -C repo`) is ever touched."""
+    head = runner_head(repo)
+    if not self_update_enabled():
+        return {"status": "disabled", "from": head, "to": head,
+                "detail": f"{SELF_UPDATE_ENV} is not 1; running {head}"}
+    if os.environ.get(SELF_UPDATE_DONE_ENV):
+        previous = os.environ.get(SELF_UPDATE_FROM_ENV, "")
+        detail = f"re-executed after self-update to {head}"
+        if previous:
+            detail += f" (was {previous})"
+        return {"status": "updated", "from": previous or head, "to": head, "detail": detail}
+    try:
+        tip = fetch_branch_tip(repo)
+    except (subprocess.SubprocessError, OSError) as error:
+        return {"status": "fetch-failed", "from": head, "to": head,
+                "detail": f"fetch of {BRANCHES_REF} failed ({_short_line(error)}); running {head}"}
+    if tip == head:
+        return {"status": "current", "from": head, "to": tip,
+                "detail": f"already at {BRANCHES_REF} {tip}"}
+    with tempfile.TemporaryDirectory(prefix="nightly-self-update-") as tmp:
+        candidate = Path(tmp) / "candidate"
+        try:
+            extract_runner_candidate(repo, candidate)
+        except (subprocess.SubprocessError, OSError, RuntimeError) as error:
+            return {"status": "extract-failed", "from": head, "to": tip,
+                    "detail": (f"could not extract {BRANCHES_REF} {tip} "
+                               f"({_short_line(error)}); running {head}")}
+        ok, check_detail = self_check_candidate(candidate)
+    if not ok:
+        return {"status": "check-failed", "from": head, "to": tip,
+                "detail": f"candidate {BRANCHES_REF} {tip} failed the self-check "
+                          f"({check_detail}); running {head}"}
+    run(git_cmd("-C", str(repo), "checkout", "--force", "--detach", BRANCHES_REF),
+        env=git_env())
+    env = dict(os.environ, **{SELF_UPDATE_DONE_ENV: "1", SELF_UPDATE_FROM_ENV: head})
+    _exec(sys.executable, [sys.executable, str(script),
+                           *(argv if argv is not None else sys.argv[1:])], env)
+    return None
+
+
+def branch_list_text(info: dict) -> str:
+    """The one `summary.md` line for a resolve_branch_list info dict."""
+    source = info.get("source") or "unknown"
+    if source == "github":
+        return f"github {BRANCHES_REF} at {info.get('commit')}"
+    if source == "local":
+        return f"local branches.conf ({info.get('note')})"
+    if source == "cli":
+        return "command line (--branch)"
+    if source == "env":
+        return "NIGHTLY_BRANCHES"
+    return str(source)
+
+
+def self_update_text(info: dict) -> str:
+    """The one `summary.md` line for a maybe_self_update info dict."""
+    status = info.get("status") or "unknown"
+    detail = info.get("detail") or ""
+    if detail:
+        return f"{status}: {detail}"
+    return str(status)
+
 # ---------------------------------------------------------------- disk guard
 
 GB = 1024 ** 3
@@ -838,6 +1172,242 @@ def mirror_fetch(url: str, mirror: Path, refspecs: list[str], build_log: Path) -
 def has_commit(repo: Path, sha: str) -> bool:
     return run(git_cmd("-C", str(repo), "cat-file", "-e", f"{sha}^{{commit}}"), check=False).returncode == 0
 
+# ---------------------------------------------------------------- rs2b0t API drift
+
+
+# The compat contract is generated from upstream's rs2b0t-api package at the
+# frozen revision named in the tested tree's abi-contract.json. A change in
+# either file on upstream main is the signal that a refreeze is due. The
+# check is informational: it never changes a cell's outcome or the run's
+# exit status.
+RS2B0T_API_FILES = ("packages/rs2b0t-api/index.d.ts", "packages/rs2b0t-api/index.js")
+RS2B0T_UPSTREAM_REF = "refs/nightly/upstream-main"
+# One anonymous fetch of a single branch tip. 120 s bounds a stalled network
+# without consuming a step deadline; there is no retry. A miss reports
+# UNAVAILABLE and the next night tries again.
+RS2B0T_FETCH_TIMEOUT_S = 120
+RS2B0T_MAX_COMMITS = 10
+ABI_CONTRACT_REL = Path("crates/script/compat-js/abi-contract.json")
+# One fetch per nightly run, not per branch: branches in one process share
+# the fetched tip through this cache (success and failure alike).
+_api_upstream: dict[tuple[str, str], tuple[str | None, str]] = {}
+
+
+def read_api_freeze(tree: Path) -> tuple[str, str]:
+    """The frozen rs2b0t repository URL and revision from the tested tree.
+
+    Both come from the tree's `abi-contract.json`, never from a constant,
+    so the check follows the freeze the compat contract was built from.
+    """
+    try:
+        frozen = json.loads(rtext(tree / ABI_CONTRACT_REL))["frozen_source"]
+        return frozen["repository"], frozen["revision"]
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        raise RuntimeError(f"freeze revision not read from {ABI_CONTRACT_REL}: {error}") from error
+
+
+def _short_line(text: object, limit: int = 200) -> str:
+    """One line of at most `limit` characters for a summary reason."""
+    return " ".join(str(text).split())[:limit] or "unknown reason"
+
+
+def _run_fetch_group(cmd: list[str], env: dict | None, timeout: float | None) -> subprocess.CompletedProcess:
+    """Run one fetch in its own process group and capture its output.
+
+    POSIX (`start_new_session=True` in `popen_group`) puts the fetch in a new
+    session, so `kill_tree` (`killpg`) reaches `git-remote-https` and any other
+    child. This is safe because the new group holds only this fetch subtree;
+    the runner keeps its own group. Windows (`CREATE_NEW_PROCESS_GROUP` in
+    `popen_group`) isolates the fetch the same way and `kill_tree`
+    (`taskkill /T /F`) ends the fetch tree by PID, so only that subtree stops.
+    The caller polls `note_quiet_lock` (the runner's existing lock check)
+    while the fetch runs; a lock or the timeout kills the whole group.
+    """
+    proc = popen_group(cmd, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                       stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace")
+    track(proc.pid, lambda: kill_tree(proc.pid, proc))
+    started = time.monotonic()
+    out = ""
+    try:
+        while True:
+            remaining = None if timeout is None else timeout - (time.monotonic() - started)
+            if remaining is not None and remaining <= 0:
+                kill_tree(proc.pid, proc)
+                proc.wait()
+                out, _ = proc.communicate()
+                raise subprocess.TimeoutExpired(cmd, timeout, output=out)
+            wait_s = 5.0 if remaining is None else min(5.0, remaining)
+            try:
+                out, _ = proc.communicate(timeout=wait_s)
+                break
+            except subprocess.TimeoutExpired:
+                if note_quiet_lock():
+                    kill_tree(proc.pid, proc)
+                    proc.wait()
+                    out, _ = proc.communicate()
+                    raise QuietLockError(f"quiet lock held: {_quiet_lock_reason}") from None
+                if timeout is not None and time.monotonic() - started >= timeout:
+                    kill_tree(proc.pid, proc)
+                    proc.wait()
+                    out, _ = proc.communicate()
+                    raise subprocess.TimeoutExpired(cmd, timeout, output=out)
+    finally:
+        untrack(proc.pid)
+    return subprocess.CompletedProcess(cmd, proc.returncode, out, None)
+
+
+def fetch_upstream_main(catalog: Path, repository: str,
+                        timeout: float = RS2B0T_FETCH_TIMEOUT_S) -> str:
+    """Fetch upstream `main` into `refs/nightly/upstream-main`; return the tip.
+
+    The fetch moves no branch and no checkout: it only adds objects and that
+    one namespaced ref, so the catalog's checked-out commit never changes.
+    One fetch per process: later branches reuse the cached tip or failure.
+    A held quiet lock stops the fetch before it starts; the timeout and a lock
+    that appears during the fetch stop the whole process group.
+    """
+    key = (str(catalog), repository)
+    if key not in _api_upstream:
+        try:
+            locked = note_quiet_lock()
+            if locked:
+                raise QuietLockError(f"quiet lock held: {locked}")
+            fetched = _run_fetch_group(git_cmd("-C", str(catalog), "fetch", "--no-tags", repository,
+                                              f"+refs/heads/main:{RS2B0T_UPSTREAM_REF}"),
+                                      env=git_env(), timeout=timeout)
+            if fetched.returncode != 0:
+                detail = _short_line(fetched.stdout)
+                suffix = f": {detail}" if detail != "unknown reason" else ""
+                raise RuntimeError(f"fetch failed (exit {fetched.returncode}){suffix}")
+            tip = run(git_cmd("-C", str(catalog), "rev-parse", f"{RS2B0T_UPSTREAM_REF}^{{commit}}"),
+                      env=git_env(), check=False).stdout.strip()
+            if not tip:
+                raise RuntimeError("fetch ok but the upstream ref is empty")
+        except subprocess.TimeoutExpired:
+            _api_upstream[key] = (None, f"fetch timed out after {timeout:g} s")
+        except (OSError, RuntimeError) as error:
+            _api_upstream[key] = (None, _short_line(error))
+        else:
+            _api_upstream[key] = (tip, "")
+    tip, reason = _api_upstream[key]
+    if tip is None:
+        raise RuntimeError(reason)
+    return tip
+
+
+def _api_unavailable(repository: str | None, freeze_rev: str | None, reason: object) -> dict:
+    """The `rs2b0t_api` metadata for a check that did not run to a diff."""
+    return {
+        "status": "unavailable",
+        "repository": repository,
+        "freeze_revision": freeze_rev,
+        "freeze_short": (freeze_rev or "")[:8] or None,
+        "upstream_revision": None,
+        "upstream_short": None,
+        "files": {},
+        "commits": [],
+        "commit_count": 0,
+        "reason": _short_line(reason),
+    }
+
+
+def check_rs2b0t_api_drift(tree: Path | None, catalog: Path,
+                           timeout: float = RS2B0T_FETCH_TIMEOUT_S) -> dict:
+    """Compare the frozen rs2b0t API files against upstream `main`.
+
+    The freeze revision comes from the tested tree's `abi-contract.json`.
+    Upstream `main` is fetched once per process into the catalog checkout
+    (see `fetch_upstream_main`). The result feeds `summary.json`
+    (`rs2b0t_api`) and one `summary.md` line. It never raises: every
+    failure reports `unavailable`, never `unchanged`.
+    """
+    try:
+        return _check_rs2b0t_api_drift(tree, catalog, timeout)
+    except Exception as error:  # informational only; the night runs on
+        return _api_unavailable(None, None, f"check failed: {error}")
+
+
+def _check_rs2b0t_api_drift(tree: Path | None, catalog: Path, timeout: float) -> dict:
+    if tree is None:
+        return _api_unavailable(None, None, "no tested tree: the sources step did not produce one")
+    try:
+        repository, freeze_rev = read_api_freeze(tree)
+    except RuntimeError as error:
+        return _api_unavailable(None, None, str(error))
+    if not repository or not freeze_rev:
+        return _api_unavailable(repository or None, freeze_rev or None,
+                                "abi-contract.json names no frozen repository or revision")
+    try:
+        tip = fetch_upstream_main(catalog, repository, timeout)
+    except RuntimeError as error:
+        return _api_unavailable(repository, freeze_rev, str(error))
+    base = {
+        "repository": repository,
+        "freeze_revision": freeze_rev,
+        "freeze_short": freeze_rev[:8],
+        "upstream_revision": tip,
+        "upstream_short": tip[:8],
+    }
+    if not has_commit(catalog, freeze_rev):
+        return {**base, "status": "unavailable", "files": {}, "commits": [], "commit_count": 0,
+                "reason": f"freeze revision {freeze_rev[:8]} is not in the fetched history"}
+    diff = run(git_cmd("-C", str(catalog), "diff", "--numstat", freeze_rev, tip,
+                       "--", *RS2B0T_API_FILES), env=git_env(), check=False)
+    if diff.returncode != 0:
+        return {**base, "status": "unavailable", "files": {}, "commits": [], "commit_count": 0,
+                "reason": f"comparison failed (exit {diff.returncode})"}
+    files: dict[str, dict[str, int]] = {}
+    for line in diff.stdout.splitlines():
+        parts = line.split("\t")
+        if len(parts) != 3:
+            continue
+        try:
+            added = int(parts[0])
+        except ValueError:
+            added = 0
+        try:
+            deleted = int(parts[1])
+        except ValueError:
+            deleted = 0
+        files[parts[2]] = {"added": added, "deleted": deleted}
+    if not files:
+        return {**base, "status": "unchanged", "files": {}, "commits": [], "commit_count": 0}
+    logged = run(git_cmd("-C", str(catalog), "log", "--format=%H%x00%s", f"{freeze_rev}..{tip}",
+                         "--", *RS2B0T_API_FILES), env=git_env(), check=False)
+    if logged.returncode != 0:
+        detail = _short_line(logged.stdout)
+        suffix = f": {detail}" if detail != "unknown reason" else ""
+        return {**base, "status": "unavailable", "files": {}, "commits": [], "commit_count": 0,
+                "reason": f"commit list failed (exit {logged.returncode}){suffix}"}
+    entries = []
+    for line in logged.stdout.splitlines():
+        sha, _, subject = line.partition("\x00")
+        if sha:
+            entries.append({"sha": sha[:8], "subject": subject})
+    return {**base, "status": "changed", "files": files,
+            "commits": entries[:RS2B0T_MAX_COMMITS], "commit_count": len(entries)}
+
+
+def api_drift_md_line(info: dict) -> str:
+    """The one `summary.md` line for an `rs2b0t_api` metadata dict."""
+    if info.get("status") == "unchanged":
+        return (f"rs2b0t API: unchanged since {info['freeze_short']} "
+                f"(upstream main {info['upstream_short']})")
+    if info.get("status") == "changed":
+        stats = ", ".join(f"{Path(path).name} +{counts['added']} -{counts['deleted']}"
+                          for path, counts in info.get("files", {}).items())
+        line = (f"rs2b0t API: CHANGED since freeze {info['freeze_short']} "
+                f"(upstream main {info['upstream_short']}): {stats}")
+        commits = info.get("commits") or []
+        if commits:
+            listed = ", ".join(f"{entry['sha']} {entry['subject']}" for entry in commits)
+            extra = (info.get("commit_count") or len(commits)) - len(commits)
+            if extra > 0:
+                listed += f" (+{extra} more)"
+            line += f"; commits: {listed}"
+        return line
+    return f"rs2b0t API: UNAVAILABLE ({info.get('reason') or 'unknown reason'})"
+
 
 def fresh_tree(branch: str, build_log: Path) -> tuple[Path, str, str]:
     """Fetch the branch tip into the bare mirrors and clone it into the tree.
@@ -979,7 +1549,7 @@ def apply_274_inventory_overlay(tree: Path) -> None:
     """
     if REVISION != "274":
         return
-    target = tree / "crates" / "nav" / "src" / "required-content-274.tsv"
+    target = tree / "crates" / "nav-planner" / "src" / "required-content-274.tsv"
     if not NAV_274_REQUIRED_CONTENT.is_file():
         raise RuntimeError(f"revision-274 nav inventory missing: {NAV_274_REQUIRED_CONTENT}")
     if not target.is_file():
@@ -1042,12 +1612,20 @@ def engine_check() -> tuple[bool, str]:
         return False, f"{url}: {error}"
     digest = hashlib.sha256(body).hexdigest()
     if ENGINE_CRC_SHA256 and (len(body) != 40 or digest != ENGINE_CRC_SHA256):
-        return False, f"{url}: {len(body)} bytes, sha256 {digest}, expected 40 bytes {ENGINE_CRC_SHA256}"
+        return False, (f"identity mismatch: {url}: {len(body)} bytes, sha256 {digest}, "
+                       f"expected 40 bytes {ENGINE_CRC_SHA256}")
     try:
         socket.create_connection((ENGINE_HOST, GAME_PORT), timeout=15).close()
     except OSError as error:
         return False, f"{ENGINE_HOST}:{GAME_PORT}: {error}"
     return True, f"{ENGINE_LABEL} at {ENGINE_HOST}:{GAME_PORT}/{HTTP_PORT}, /crc sha256 {digest[:16]}"
+
+
+def remote_engine_failure(detail: str) -> str:
+    """Keep an answered HTTP identity mismatch separate from an unreachable engine."""
+    if detail.startswith("identity mismatch:"):
+        return f"{ENGINE_LABEL} {detail}"
+    return f"{ENGINE_LABEL} not reachable: {detail}"
 
 
 def copy_engine(run_dir: Path | None) -> None:
@@ -1146,6 +1724,9 @@ class CellResult:
     reason: str | None = None
     gate: str | None = None  # "--pair-core" when the cell ran under the pair witness
     started: str | None = None
+    latency_band: str | None = None  # "rtt50" on latency-lane rows, else None
+    latency_rtt_ms: int | None = None
+    latency_class: str | None = None  # script-computed; see classify_latency
     receipt: dict | None = field(default=None, repr=False)
 
 
@@ -1189,6 +1770,64 @@ def record_receipt(result: CellResult, receipt: dict) -> None:
         result.reason = (receipt.get("message") or receipt.get("predicate") or "")[:400]
 
 
+# A frontend with an UNAVAILABLE outcome still prints its plain FAIL line.
+# It also prints the outcome on its own line (`FAIL: UNAVAILABLE: ...`).
+# The JSON record is the authority. This line is the fallback when the
+# record does not parse, so the outcome stays UNAVAILABLE in each frontend.
+UNAVAILABLE_LINE = re.compile(r"^FAIL: (UNAVAILABLE: .+)$", re.M)
+
+
+def verdict_line(text: str, cell: str) -> re.Match | None:
+    """The plain PASS/FAIL verdict line for one cell.
+
+    The panel prints the live name with its `script_` prefix. The TUI
+    prints the bare cell name. Accept each form.
+    """
+    return re.search(rf"\b(PASS|FAIL): live (?:script_)?{re.escape(cell)}\b", text)
+
+
+def apply_cell_outcome(result: CellResult, cell: str, frontend: str, combined: str, stderr_text: str,
+                       out_text: str, timed_out: bool, cut_by_deadline: bool, cap_s: int) -> dict | None:
+    """Set one finished cell's result from its output. Return its receipt.
+
+    The parsed JSON record wins. Without it, a printed UNAVAILABLE line
+    wins over the plain FAIL verdict line. The other fallbacks keep the
+    runner's own states: TIMEOUT, NOT_RUN, the panel pair-gate
+    UNAVAILABLE, and ERROR when no witness printed at all.
+    """
+    receipt = find_receipt(combined, cell)
+    if receipt is not None:
+        record_receipt(result, receipt)
+        return receipt
+    unavailable = UNAVAILABLE_LINE.search(combined)
+    verdict = verdict_line(combined, cell)
+    if unavailable is not None:
+        result.result = "UNAVAILABLE"
+        result.reason = unavailable.group(1).strip()[:400]
+    elif verdict is not None:
+        # The verdict line printed but its JSON record did not parse.
+        result.result = verdict.group(1)
+        result.reason = "verdict line without a parsable JSON record"
+        if result.result == "FAIL":
+            result.first_failure = first_failure_line(stderr_text) or verdict.group(0)
+    elif timed_out:
+        result.result = "TIMEOUT"
+        bound = f"{frontend} step deadline reached" if cut_by_deadline else f"runner cap {cap_s}s reached"
+        result.first_failure = (f"{bound} without a PASS/FAIL receipt; "
+                                f"last: {first_failure_line(stderr_text) or '-'}")[:400]
+    elif _stop.is_set():
+        result.result, result.reason = "NOT_RUN", "run interrupted while this cell ran"
+    elif frontend == "panel" and PAIR_GATE_REFUSAL in stderr_text:
+        result.result = "UNAVAILABLE"
+        result.reason = ("paired proof: panel-play has no --pair-core gate; the tui step runs it under "
+                         "--pair-core")
+        result.first_failure = first_failure_line(stderr_text)
+    else:
+        result.result = "ERROR"
+        result.first_failure = first_failure_line(stderr_text) or first_failure_line(out_text)
+    return None
+
+
 def first_failure_line(text: str) -> str | None:
     for line in text.splitlines():
         line = line.strip()
@@ -1220,24 +1859,28 @@ def base_env() -> dict:
     return env
 
 
-def write_quest_server_profile(home: Path) -> None:
-    if IS_WINDOWS or JOB != "quest" or PROFILE != "local-289q":
-        return
+def write_server_profile(home: Path, *, name: str, host: str, game_port: int, vault: str) -> None:
+    """Write one private `servers.json` server into a cell HOME.
+
+    The world names `host` and `game_port` for the game connection. The
+    asset host and port stay on the real engine, so the HTTP cache path
+    stays direct.
+    """
     revision = int(REVISION)
     server = {
-        "name": PROFILE,
+        "name": name,
         "revision": revision,
         "transport": "tcp",
         "worlds": [{
             "number": revision,
-            "host": ENGINE_HOST,
-            "port": GAME_PORT,
+            "host": host,
+            "port": game_port,
             "node_id": revision,
             "asset_host": ENGINE_HOST,
             "asset_port": HTTP_PORT,
         }],
         "login_key": {"engine_dir": None},
-        "vault": "vault-289q",
+        "vault": vault,
         "members": None,
         "allow_plaintext_offhost": False,
     }
@@ -1246,10 +1889,34 @@ def write_quest_server_profile(home: Path) -> None:
     wtext(servers, json.dumps({"schema_version": 1, "servers": [server]}, indent=1) + "\n")
 
 
-def cell_env(home: Path, tmp: Path, evidence: Path, cell: str, prefix: str) -> dict:
+def write_quest_server_profile(home: Path) -> None:
+    if IS_WINDOWS or JOB != "quest" or PROFILE != "local-289q":
+        return
+    write_server_profile(home, name=PROFILE, host=ENGINE_HOST, game_port=GAME_PORT,
+                         vault="vault-289q")
+
+
+def write_latency_server_profile(home: Path, game_port: int) -> None:
+    """Local engine mode: point this HOME's profile at the latency proxy.
+
+    The proxy listens on loopback on this host, so the world host is
+    `127.0.0.1` and the world port is the proxy port. The vault matches
+    the built-in profile for the revision (`servers.rs`, `builtins()`):
+    `vault-289` for 289, `vault` for 274.
+    """
+    vault = "vault-289" if REVISION == "289" else "vault"
+    write_server_profile(home, name=PROFILE, host="127.0.0.1", game_port=game_port, vault=vault)
+
+
+def cell_env(home: Path, tmp: Path, evidence: Path, cell: str, prefix: str,
+             game_port: int | None = None) -> dict:
     env = base_env()
     env.update(private_dirs(home, tmp))
     write_quest_server_profile(home)
+    if game_port is not None and ENGINE_MODE != "remote":
+        # Local mode passes no endpoint flags, so the cell HOME's
+        # servers.json carries the proxy endpoint instead.
+        write_latency_server_profile(home, game_port)
     env.update({
         "TERM": "xterm-256color",
         "LANG": "C.UTF-8",
@@ -1263,20 +1930,30 @@ def cell_env(home: Path, tmp: Path, evidence: Path, cell: str, prefix: str) -> d
         env["QUESTER_TICK_MS"] = str(JOB_DEFAULTS["tick_ms"])
     if ISOHOME:
         env["ISOHOME_DIR"] = str(home)
+        if os.environ.get("ISOHOME_ROOT"):
+            env["ISOHOME_ROOT"] = os.environ["ISOHOME_ROOT"]
     if not GPU_CELLS.search(cell):
         env["BOT_CPU"] = "1"
     return env
 
 
-def engine_flags() -> list[str]:
+def engine_flags(game_port: int | None = None) -> list[str]:
     if ENGINE_MODE != "remote":
         return []
+    if game_port is not None:
+        # The latency proxy listens on loopback on this host. The asset
+        # endpoint stays on the real engine, so the HTTP cache path and
+        # the OnDemand HTTP fetch stay direct.
+        return ["--host", "127.0.0.1", "--port", str(game_port), "--asset-host", ENGINE_HOST,
+                "--http-port", str(HTTP_PORT)]
     return ["--host", ENGINE_HOST, "--port", str(GAME_PORT), "--asset-host", ENGINE_HOST,
             "--http-port", str(HTTP_PORT)]
 
 
-def tui_cmd(binary: Path, cell: str, gate: str | None = None) -> list[str]:
-    cmd = [str(binary), "--profile", PROFILE, *engine_flags(), "--engine", str(ENGINE_RUN / "engine"),
+def tui_cmd(binary: Path, cell: str, gate: str | None = None,
+            game_port: int | None = None) -> list[str]:
+    cmd = [str(binary), "--profile", PROFILE, *engine_flags(game_port),
+           "--engine", str(ENGINE_RUN / "engine"),
            "--catalog", str(CATALOG), "--live", f"script_{cell}"]
     return cmd + [gate] if gate else cmd
 
@@ -1394,8 +2071,9 @@ def run_tui_conpty(cmd: list[str], env: dict, cwd: Path, stderr_path: Path, cap_
     return (code if code is not None else -1), timed_out, tty_text, quiet_stopped
 
 
-def panel_cmd(binary: Path, cell: str) -> list[str]:
-    return [str(binary), "--profile", PROFILE, *engine_flags(), "--engine", str(ENGINE_RUN / "engine"),
+def panel_cmd(binary: Path, cell: str, game_port: int | None = None) -> list[str]:
+    return [str(binary), "--profile", PROFILE, *engine_flags(game_port),
+            "--engine", str(ENGINE_RUN / "engine"),
             "--catalog", str(CATALOG), "--live", f"script_{cell}"]
 
 
@@ -1439,22 +2117,23 @@ def cells_root(run_dir: Path, frontend: str) -> Path:
 
 
 def run_cell(cell: str, frontend: str, binary: Path, run_dir: Path, work: Path, base: CellResult,
-             deadline: float) -> CellResult:
+             deadline: float, game_port: int | None = None, name_prefix: str | None = None,
+             root_name: str | None = None, step: str | None = None) -> CellResult:
     result = CellResult(**{**asdict(base), "cell": cell, "frontend": frontend,
                            "renderer": "gpu" if GPU_CELLS.search(cell) else "cpu"})
-    cell_dir = cells_root(run_dir, frontend) / cell
+    cell_dir = (run_dir / root_name / cell) if root_name else cells_root(run_dir, frontend) / cell
     cell_dir.mkdir(parents=True, exist_ok=True)
     if note_quiet_lock():
         result.result, result.reason = "UNAVAILABLE", f"MAC-QUIET: {_quiet_lock_reason}"
         return write_cell(cell_dir, result)
     if time.monotonic() >= deadline:
         result.result = "NOT_RUN"
-        result.reason = f"{deadline_text(frontend)} reached before this cell started"
+        result.reason = f"{deadline_text(step or frontend)} reached before this cell started"
         return write_cell(cell_dir, result)
     scratch = work / frontend / cell
     home = scratch / "home"
     tmp = scratch / "tmp"
-    prefix = PANEL_NAME_PREFIX if frontend == "panel" else NAME_PREFIX
+    prefix = name_prefix or (PANEL_NAME_PREFIX if frontend == "panel" else NAME_PREFIX)
     started = time.monotonic()
     result.started = now_iso()
     gate = None
@@ -1464,16 +2143,16 @@ def run_cell(cell: str, frontend: str, binary: Path, run_dir: Path, work: Path, 
         rmtree(scratch)
         home.mkdir(parents=True)
         tmp.mkdir(parents=True)
-        cap = min(CELL_CAP_S, max(1.0, deadline - time.monotonic()))
-        cut_by_deadline = cap < CELL_CAP_S
-        env = cell_env(home, tmp, cell_dir / "evidence", cell, prefix)
+        cap = min(cell_cap_s(cell), max(1.0, deadline - time.monotonic()))
+        cut_by_deadline = cap < cell_cap_s(cell)
+        env = cell_env(home, tmp, cell_dir / "evidence", cell, prefix, game_port=game_port)
         if frontend == "tui":
-            cmd = isolated_command(tui_cmd(binary, cell, gate))
+            cmd = isolated_command(tui_cmd(binary, cell, gate, game_port=game_port))
             wtext(cell_dir / "command.txt", " ".join(cmd) + "\n")
             exit_code, timed_out, out_text, quiet_stopped = run_tui(
                 cmd, env, scratch, cell_dir / "stderr.log", cap)
         else:
-            cmd = isolated_command(panel_cmd(binary, cell))
+            cmd = isolated_command(panel_cmd(binary, cell, game_port=game_port))
             wtext(cell_dir / "command.txt", " ".join(cmd) + "\n")
             exit_code, timed_out, quiet_stopped = run_panel(
                 cmd, env, scratch, cell_dir / stdout_name, cell_dir / "stderr.log", cap)
@@ -1502,45 +2181,37 @@ def run_cell(cell: str, frontend: str, binary: Path, run_dir: Path, work: Path, 
     if quiet_stopped:
         result.result, result.reason = "UNAVAILABLE", f"MAC-QUIET: {_quiet_lock_reason}"
     else:
-        receipt = find_receipt(combined, cell)
-        verdict = re.search(rf"\b(PASS|FAIL): live {re.escape(cell)}\b", combined)
+        receipt = apply_cell_outcome(result, cell, frontend, combined, stderr_text, out_text,
+                                     timed_out, cut_by_deadline, cell_cap_s(cell))
         if receipt is not None:
-            record_receipt(result, receipt)
             wtext(cell_dir / "receipt.json", json.dumps(receipt, indent=1) + "\n")
-        elif verdict is not None:
-            # The verdict line printed but its JSON record did not parse.
-            result.result = verdict.group(1)
-            result.reason = "verdict line without a parsable JSON record"
-            if result.result == "FAIL":
-                result.first_failure = first_failure_line(stderr_text) or verdict.group(0)
-        elif timed_out:
-            result.result = "TIMEOUT"
-            bound = f"{frontend} step deadline reached" if cut_by_deadline else f"runner cap {CELL_CAP_S}s reached"
-            result.first_failure = (f"{bound} without a PASS/FAIL receipt; "
-                                    f"last: {first_failure_line(stderr_text) or '-'}")[:400]
-        elif _stop.is_set():
-            result.result, result.reason = "NOT_RUN", "run interrupted while this cell ran"
-        elif frontend == "panel" and PAIR_GATE_REFUSAL in stderr_text:
-            result.result = "UNAVAILABLE"
-            result.reason = ("paired proof: panel-play has no --pair-core gate; the tui step runs it under "
-                             "--pair-core")
-            result.first_failure = first_failure_line(stderr_text)
-        else:
-            result.result = "ERROR"
-            result.first_failure = first_failure_line(stderr_text) or first_failure_line(out_text)
     rmtree(scratch)
     return write_cell(cell_dir, result)
 
 
-def write_cell(cell_dir: Path, result: CellResult) -> CellResult:
+def cell_row(result: CellResult) -> dict:
+    """One cell row as JSON, without the receipt.
+
+    The latency fields join only on latency rows. A zero-latency row keeps
+    the exact keys it had before the lane existed, so a night with the lane
+    off writes the same summary files as the runner without the lane.
+    """
     row = asdict(result)
     row.pop("receipt")
-    wtext(cell_dir / "result.json", json.dumps(row, indent=1) + "\n")
+    if row["latency_band"] is None:
+        for key in ("latency_band", "latency_rtt_ms", "latency_class"):
+            row.pop(key)
+    return row
+
+
+def write_cell(cell_dir: Path, result: CellResult) -> CellResult:
+    wtext(cell_dir / "result.json", json.dumps(cell_row(result), indent=1) + "\n")
     return result
 
 
 def cell_rows(frontend: str, cells: list[str], run_dir: Path, base: CellResult, skips: dict[str, str],
-              unavailable: str | None, not_run: str | None) -> tuple[list[CellResult], list[str]]:
+              unavailable: str | None, not_run: str | None,
+              root_name: str | None = None) -> tuple[list[CellResult], list[str]]:
     """Rows for cells that do not start (skip, unavailable, not run) and the runnable rest."""
     rows, runnable = [], []
     for cell in cells:
@@ -1554,27 +2225,498 @@ def cell_rows(frontend: str, cells: list[str], run_dir: Path, base: CellResult, 
         else:
             runnable.append(cell)
             continue
-        cell_dir = cells_root(run_dir, frontend) / cell
+        cell_dir = (run_dir / root_name / cell) if root_name else cells_root(run_dir, frontend) / cell
         cell_dir.mkdir(parents=True, exist_ok=True)
         rows.append(write_cell(cell_dir, row))
     return rows, runnable
 
 
 def run_cells(frontend: str, binary: Path, cells: list[str], run_dir: Path, work: Path, base: CellResult,
-              parallel: int, deadline: float, branch: str) -> list[CellResult]:
+              parallel: int, deadline: float, branch: str, label: str | None = None,
+              game_port: int | None = None, name_prefix: str | None = None,
+              root_name: str | None = None, step: str | None = None) -> list[CellResult]:
     results = []
-    log(f"{branch}: {frontend}: running {len(cells)} cells, {parallel} in parallel")
+    label = label or frontend
+    log(f"{branch}: {label}: running {len(cells)} cells, {parallel} in parallel")
     with concurrent.futures.ThreadPoolExecutor(max_workers=parallel) as pool:
-        futures = {pool.submit(run_cell, cell, frontend, binary, run_dir, work, base, deadline): cell
+        futures = {pool.submit(run_cell, cell, frontend, binary, run_dir, work, base, deadline,
+                               game_port=game_port, name_prefix=name_prefix,
+                               root_name=root_name, step=step): cell
                    for cell in cells}
         for future in concurrent.futures.as_completed(futures):
             outcome = future.result()
             results.append(outcome)
-            log(f"{branch}: {frontend}: {outcome.cell} {outcome.result} ({fmt_s(outcome.wall_s)})")
+            log(f"{branch}: {label}: {outcome.cell} {outcome.result} ({fmt_s(outcome.wall_s)})")
     return results
 
 
+# ---------------------------------------------------------------- latency lane
+
+
+def band_name(rtt_ms: int) -> str:
+    return f"rtt{rtt_ms}"
+
+
+def latency_prefix(base: str, rtt_ms: int) -> str:
+    """The account name prefix for one band.
+
+    The mint accepts a prefix of 1 to 4 characters
+    (`crates/host-play/src/play_bootstrap.rs`, `parse_live_name_prefix`),
+    so the job prefix keeps only the characters the band digits leave:
+    `nt` at rtt50 gives `nt50`; `nt` at rtt100 gives `n100`.
+    """
+    suffix = str(rtt_ms)
+    keep = 4 - len(suffix)
+    if not base or keep < 1:
+        raise ValueError(f"cannot build a latency prefix from {base!r} and band {rtt_ms}")
+    return base[:keep] + suffix
+
+
+def classify_latency(zero: str | None, band: str, *, proxy_unavailable: bool = False) -> str:
+    """The script-computed class of one band row against its zero row.
+
+    `proxy_unavailable` wins over every other rule: the lane failed, not
+    the product. A latency defect needs a zero PASS on the same night,
+    commit, platform and frontend, and a band FAIL, TIMEOUT or ERROR.
+    """
+    if proxy_unavailable:
+        return "proxy-unavailable"
+    if zero is None or zero in ("UNAVAILABLE", "NOT_RUN", "SKIP"):
+        return "no-baseline"
+    if zero in ("FAIL", "TIMEOUT", "ERROR"):
+        return "also-fails-at-0"
+    if band == "PASS":
+        return "pass"
+    if band in ("FAIL", "TIMEOUT", "ERROR"):
+        return "latency-defect"
+    if band in ("NOT_RUN", "SKIP"):
+        return "not-run"
+    return "unavailable"  # band UNAVAILABLE for a non-proxy reason
+
+
+def read_proxy_stats(path: Path) -> list[dict]:
+    """Proxy stats records (JSON Lines). A torn last line is skipped."""
+    if not path.is_file():
+        return []
+    records = []
+    for line in rtext(path).splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            records.append(json.loads(line))
+        except ValueError:
+            continue
+    return records
+
+
+def _weighted_median(pairs: list[tuple[float, int]]) -> float | None:
+    ordered = sorted(pairs)
+    total = sum(weight for _value, weight in ordered)
+    if total <= 0:
+        return None
+    upto = 0
+    for value, weight in ordered:
+        upto += weight
+        if upto >= total / 2:
+            return value
+    return ordered[-1][0]
+
+
+def aggregate_proxy_stats(records: list[dict], start_epoch: float | None = None,
+                          end_epoch: float | None = None) -> dict:
+    """Aggregate the records that opened inside one time window.
+
+    Per-direction p50 and p95 are sample-weighted medians of the
+    per-connection values of delayed records only. Direct (byte 15)
+    records count toward connections and bytes, never toward queue
+    delay. The login value is the median of the byte-14 records.
+    """
+    selected = [record for record in records
+                if (start_epoch is None or record.get("opened_at_epoch", 0) >= start_epoch)
+                and (end_epoch is None or record.get("opened_at_epoch", 0) <= end_epoch)]
+    connections = {"game_14": 0, "ondemand_15": 0, "other": 0, "none": 0}
+    for record in selected:
+        first = record.get("first_byte")
+        key = "game_14" if first == 14 else "ondemand_15" if first == 15 \
+            else "none" if first is None else "other"
+        connections[key] += 1
+
+    def direction(field: str) -> dict:
+        p50_pairs, p95_pairs, samples = [], [], 0
+        for record in selected:
+            if record.get("path") != "delayed":
+                continue
+            summary = record.get(field)
+            if not summary:
+                continue
+            count = int(summary.get("samples", 0))
+            samples += count
+            p50_pairs.append((float(summary["p50"]), count))
+            p95_pairs.append((float(summary["p95"]), count))
+        p50, p95 = _weighted_median(p50_pairs), _weighted_median(p95_pairs)
+        return {"p50_ms": round(p50, 3) if p50 is not None else None,
+                "p95_ms": round(p95, 3) if p95 is not None else None,
+                "samples": samples}
+
+    logins = [record["login_first_response_ms"] for record in selected
+              if record.get("first_byte") == 14 and record.get("login_first_response_ms") is not None]
+    return {
+        "records": len(selected),
+        "connections": connections,
+        "bytes_client_to_server": sum(record.get("bytes_client_to_server", 0) for record in selected),
+        "bytes_server_to_client": sum(record.get("bytes_server_to_client", 0) for record in selected),
+        "client_to_server": direction("queue_delay_ms_client_to_server"),
+        "server_to_client": direction("queue_delay_ms_server_to_client"),
+        "login_first_response_ms": round(statistics.median(logins), 3) if logins else None,
+    }
+
+
+def _cell_window(result: CellResult) -> tuple[float, float] | None:
+    """The epoch window a started cell ran in.
+
+    `started` carries whole seconds, so the parsed start sits at or
+    before the true start. No start slack is needed. The end keeps one
+    second for a connection that opens in the cell's last second.
+    """
+    if result.started is None or result.wall_s is None:
+        return None
+    try:
+        start = dt.datetime.fromisoformat(result.started).timestamp()
+    except ValueError:
+        return None
+    return start, start + result.wall_s + 1.0
+
+
+def probe_latency_proxy(port: int, timeout: float = 5.0) -> tuple[bool, str]:
+    """One probe connection through the proxy, before any cell starts.
+
+    The probe sends the game first byte (14). The proxy then dials the
+    engine, which takes as long as its own upstream dial allows (10 s):
+    a refused loopback connect alone takes about 2 s on the Windows
+    host. A dead engine makes the proxy close the probe once that dial
+    fails. A live engine holds the connection while it waits for the
+    rest of the login, or answers bytes. Both prove the path works.
+    """
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=timeout) as sock:
+            sock.sendall(bytes([14]))
+            # Wait out the proxy's whole upstream dial. A short wait
+            # mistakes a dead upstream for a live engine that holds the
+            # connection: on Windows the refusal arrives after ~2 s,
+            # past a 1 s wait, so the dead band looked healthy and its
+            # cells started pointlessly before the health rule caught it.
+            sock.settimeout(10.0)
+            try:
+                data = sock.recv(1)
+            except socket.timeout:
+                return True, "the engine holds the probe connection"
+            if data == b"":
+                return False, "the proxy closed the probe connection; the upstream is unreachable"
+            return True, "the engine answered the probe connection"
+    except OSError as error:
+        return False, f"probe connection failed: {error}"
+
+
+def stop_latency_proxy(proc: subprocess.Popen) -> None:
+    """Stop one recorded proxy process: stdin close, then the tree kill."""
+    try:
+        if proc.stdin is not None:
+            proc.stdin.close()
+    except (OSError, ValueError):
+        pass
+    try:
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        kill_tree(proc.pid, proc)
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
+    untrack(proc.pid)
+
+
+def start_latency_proxy(band_dir: Path, one_way_ms: float
+                        ) -> tuple[subprocess.Popen | None, int | None, str | None]:
+    """Start one band proxy on a free loopback port.
+
+    Return `(process, listen port, error)`. On an error the process is
+    already stopped. Health rule part one: no ready file within 10 s, or
+    an exited process, means the band never starts a cell.
+    """
+    band_dir.mkdir(parents=True, exist_ok=True)
+    ready = band_dir / "proxy-ready.txt"
+    if ready.exists():
+        ready.unlink()
+    cmd = [sys.executable, str(LATENCY_PROXY), "--listen", "127.0.0.1:0",
+           "--upstream", f"{ENGINE_HOST}:{GAME_PORT}", "--delay-ms", str(one_way_ms),
+           "--stats", str(band_dir / "proxy-stats.jsonl"), "--ready-file", str(ready)]
+    with (band_dir / "proxy.log").open("wb") as proxy_log:
+        proc = popen_group(cmd, stdin=subprocess.PIPE, stdout=proxy_log, stderr=proxy_log)
+    track(proc.pid, lambda: kill_tree(proc.pid, proc))
+    deadline = time.monotonic() + 10.0
+    while time.monotonic() < deadline:
+        if proc.poll() is not None:
+            untrack(proc.pid)
+            return None, None, f"the proxy exited with code {proc.returncode}; see proxy.log"
+        if ready.is_file():
+            try:
+                return proc, int(rtext(ready).strip()), None
+            except ValueError:
+                pass  # a torn ready read; poll again
+        time.sleep(0.05)
+    stop_latency_proxy(proc)
+    return None, None, "the proxy ready file did not appear within 10 s"
+
+
+def write_latency_json(cell_dir: Path, result: CellResult, *, rtt_ms: int, proxy_info: dict,
+                       measured: dict, frontend_sha256: str | None, account_prefix: str) -> None:
+    doc = {
+        "cell": result.cell,
+        "band": result.latency_band,
+        "configured_rtt_ms": rtt_ms,
+        "configured_one_way_ms": rtt_ms / 2,
+        "result": result.result,
+        "latency_class": result.latency_class,
+        "ticks": result.ticks,
+        "proxy": proxy_info,
+        "measured": measured,
+        "login_first_response_ms": measured.get("login_first_response_ms"),
+        "connections": measured.get("connections"),
+        "frontend_sha256": frontend_sha256,
+        "account_prefix": account_prefix,
+    }
+    wtext(cell_dir / "latency.json", json.dumps(doc, indent=1) + "\n")
+
+
+def count_latency_classes(rows: list[CellResult]) -> dict:
+    counts = {name: 0 for name in LATENCY_CLASS_ORDER}
+    for row in rows:
+        counts[row.latency_class] = counts.get(row.latency_class, 0) + 1
+    return counts
+
+
+def latency_counts_text(counts: dict) -> str:
+    return ", ".join(f"{name} {counts[name]}" for name in LATENCY_CLASS_ORDER if counts.get(name))
+
+
+def run_latency_pass(branch: str, binary: Path | None, cells: list[str], bands: list[int],
+                     run_dir: Path, work: Path, base: CellResult, skips: dict[str, str],
+                     parallel: int, zero: dict[str, CellResult], unavailable: str | None,
+                     build_ok: bool) -> tuple[list[CellResult], dict]:
+    """Run the latency cells once per band through one proxy per band.
+
+    Return the band rows and the summary `latency` metadata. The pass
+    fails closed: a proxy that does not start, does not answer the probe,
+    dies during a band, or misses its measured delay band turns the
+    affected rows UNAVAILABLE with class `proxy-unavailable`. It never
+    turns a proxy failure into a product verdict.
+    """
+    deadline = step_deadline("latency", time.monotonic())
+    proxy_sha = sha256(LATENCY_PROXY) if LATENCY_PROXY.is_file() else None
+    frontend_sha = sha256(binary) if binary is not None and binary.is_file() else None
+    rows_all: list[CellResult] = []
+    band_meta: list[dict] = []
+
+    block_unavailable, block_not_run = unavailable, None
+    if note_quiet_lock():
+        block_unavailable = f"MAC-QUIET: {_quiet_lock_reason}"
+    if not block_unavailable and (not build_ok or binary is None):
+        block_not_run = "the build failed; see build.log"
+    if not block_unavailable and not block_not_run and REQUIRE_CONSOLE:
+        ok, detail, _facts = console_session()
+        if not ok:
+            block_unavailable = detail
+    engine_detail: str | None = None
+    engine_started = False
+    if not block_unavailable and not block_not_run:
+        try:
+            ok, detail = engine_start(run_dir)
+        except QuietLockError as error:
+            ok, detail = False, str(error)
+        engine_detail = detail
+        if ok:
+            engine_started = True
+        elif note_quiet_lock():
+            block_unavailable = f"MAC-QUIET: {_quiet_lock_reason}"
+        elif ENGINE_MODE == "remote":
+            block_unavailable = remote_engine_failure(detail)
+        else:
+            block_not_run = f"engine {detail}"
+
+    try:
+        for rtt_ms in bands:
+            band = band_name(rtt_ms)
+            one_way_ms = rtt_ms / 2
+            prefix = latency_prefix(NAME_PREFIX, rtt_ms)
+            band_base = CellResult(**{**asdict(base), "latency_band": band, "latency_rtt_ms": rtt_ms})
+            root_name = f"cells-latency/{band}"
+            band_dir = run_dir / "latency" / band
+            proxy_info: dict = {"file": LATENCY_PROXY.name, "sha256": proxy_sha,
+                                "listen_port": None, "upstream": f"{ENGINE_HOST}:{GAME_PORT}",
+                                "pid": None, "stats": f"latency/{band}/proxy-stats.jsonl"}
+            records: list[dict] = []
+            cells_started_epoch: float | None = None
+            proxy_failed_rows: set[str] = set()
+            band_unavailable, band_not_run = block_unavailable, block_not_run
+            if not band_unavailable and not band_not_run:
+                if note_quiet_lock():
+                    band_unavailable = f"MAC-QUIET: {_quiet_lock_reason}"
+                elif time.monotonic() >= deadline:
+                    band_not_run = f"{deadline_text('latency')} reached before this band started"
+            if band_unavailable or band_not_run:
+                rows, _runnable = cell_rows("tui", cells, run_dir, band_base, skips,
+                                            band_unavailable, band_not_run, root_name=root_name)
+            else:
+                log(f"{branch}: latency {band}: one-way {one_way_ms:g} ms, prefix {prefix}")
+                proc, port, error = start_latency_proxy(band_dir, one_way_ms)
+                if error is not None:
+                    reason = f"latency proxy unavailable: {error}"
+                    rows, _runnable = cell_rows("tui", cells, run_dir, band_base, skips,
+                                                reason, None, root_name=root_name)
+                    proxy_failed_rows = {row.cell for row in rows}
+                else:
+                    assert proc is not None and port is not None
+                    proxy_info.update(listen_port=port, pid=proc.pid)
+                    probe_ok, probe_detail = probe_latency_proxy(port)
+                    if not probe_ok:
+                        stop_latency_proxy(proc)
+                        reason = f"latency proxy unavailable: probe failed: {probe_detail}"
+                        rows, _runnable = cell_rows("tui", cells, run_dir, band_base, skips,
+                                                    reason, None, root_name=root_name)
+                        proxy_failed_rows = {row.cell for row in rows}
+                    else:
+                        assert binary is not None
+                        rows, runnable = cell_rows("tui", cells, run_dir, band_base, skips,
+                                                   None, None, root_name=root_name)
+                        # Records from this epoch on belong to cells. The
+                        # health probe record, opened before it, never
+                        # counts toward a cell's measured delay.
+                        cells_started_epoch = time.time()
+                        if runnable:
+                            rows += run_cells("tui", binary, runnable, run_dir,
+                                              work / "latency" / band, band_base, parallel,
+                                              deadline, branch, label=f"tui {band}",
+                                              game_port=port, name_prefix=prefix,
+                                              root_name=root_name, step="latency")
+                        proxy_died = proc.poll() is not None
+                        stop_latency_proxy(proc)
+                        records = read_proxy_stats(band_dir / "proxy-stats.jsonl")
+                        if proxy_died:
+                            for row in rows:
+                                if row.result in ("FAIL", "TIMEOUT", "ERROR"):
+                                    row.result = "UNAVAILABLE"
+                                    row.reason = ("latency proxy died during the band "
+                                                  f"(exit {proc.returncode})")
+                                    proxy_failed_rows.add(row.cell)
+            order = {cell: index for index, cell in enumerate(cells)}
+            rows.sort(key=lambda row: order.get(row.cell, len(order)))
+            for row in rows:
+                window = _cell_window(row)
+                if window is not None and cells_started_epoch is not None:
+                    window = (max(window[0], cells_started_epoch), window[1])
+                measured = (aggregate_proxy_stats(records, window[0], window[1])
+                            if window else aggregate_proxy_stats([]))
+                if row.started is not None and row.cell not in proxy_failed_rows:
+                    # Health rule part two: the measured median queue delay
+                    # must sit inside the band. A PASS with no delayed
+                    # connection at all cannot prove the band applied.
+                    samples = (measured["client_to_server"]["samples"]
+                               + measured["server_to_client"]["samples"])
+                    p50s = [measured[direction]["p50_ms"]
+                            for direction in ("client_to_server", "server_to_client")
+                            if measured[direction]["p50_ms"] is not None]
+                    off_band = [p50 for p50 in p50s
+                                if abs(p50 - one_way_ms) > LATENCY_HEALTH_TOLERANCE_MS]
+                    if off_band:
+                        row.result = "UNAVAILABLE"
+                        row.reason = (f"latency proxy health: measured queue delay p50 "
+                                      f"{off_band} ms, configured one-way {one_way_ms:g} ms")
+                        proxy_failed_rows.add(row.cell)
+                    elif row.result == "PASS" and samples == 0:
+                        row.result = "UNAVAILABLE"
+                        row.reason = ("latency proxy health: no delayed connection "
+                                      "was recorded for this cell")
+                        proxy_failed_rows.add(row.cell)
+                zero_row = zero.get(row.cell)
+                row.latency_class = classify_latency(
+                    zero_row.result if zero_row is not None else None, row.result,
+                    proxy_unavailable=row.cell in proxy_failed_rows)
+                cell_dir = run_dir / root_name / row.cell
+                cell_dir.mkdir(parents=True, exist_ok=True)
+                write_cell(cell_dir, row)
+                write_latency_json(cell_dir, row, rtt_ms=rtt_ms, proxy_info=proxy_info,
+                                   measured=measured, frontend_sha256=frontend_sha,
+                                   account_prefix=prefix)
+            rows_all += rows
+            band_meta.append({"band": band, "rtt_ms": rtt_ms, "one_way_ms": one_way_ms,
+                              "account_prefix": prefix, "proxy": proxy_info,
+                              "measured": aggregate_proxy_stats(records, cells_started_epoch)})
+            log(f"{branch}: latency {band}: "
+                + latency_counts_text(count_latency_classes(rows)))
+    finally:
+        if engine_started and ENGINE_MODE == "local":
+            engine_stop(run_dir)
+    meta = {"proxy": {"file": LATENCY_PROXY.name, "sha256": proxy_sha},
+            "branch": LATENCY_BRANCH, "cells_file": LATENCY_CELLS_FILE,
+            "report_only": True, "engine": engine_detail, "bands": band_meta}
+    return rows_all, meta
+
+
+
 # ---------------------------------------------------------------- CI lanes
+
+
+def lane_asset_env() -> dict:
+    """The local test inputs each test lane gets, as on Linux CI.
+
+    GitHub CI and the merge-check script set the three nav pack names to
+    the one v17 reference pack for every test lane. The engine content
+    comes from the pristine copy. It exists before the lanes step. The
+    per-step engine-run copy does not exist yet at that point. The
+    snapshot root and the inspection baseline join only when the host
+    holds them. A test then keeps its own loud failure on a host that
+    lacks the file, and it names the local path to supply.
+    """
+    pack = str(NAV_FIXTURE)
+    env = {
+        "NAV_PACK": pack,
+        "WORLD_NAV_PACK": pack,
+        "NAV_ARRIVAL_PACK": pack,
+        "ENGINE_DIR": str(ENGINE_PRISTINE / "engine"),
+        "WORLD_ENGINE_DIR": str(ENGINE_PRISTINE / "engine"),
+    }
+    if snapshot_ready():
+        env["BOT_NAV_SNAPSHOT_ROOT"] = str(NAV_SNAPSHOT)
+    if INSPECT_BASELINE.is_file():
+        env["T5W_INSPECT_CAPTURE_BASELINE"] = str(INSPECT_BASELINE)
+    return env
+
+
+def seed_lane_home(home: Path, snapshot_root: Path | None = None, fallback_root: Path | None = None) -> int:
+    """Copy decoded cache snapshots into one lane HOME. Return the count.
+
+    The client tests read `$HOME/.274bot/unpack/<cache hash>`. The first
+    source is the nightly snapshot folder. The build step creates that
+    folder after the lanes step on a new host. The fallback then copies
+    the 16-hex folders from the runner user's own `unpack-289`, as the
+    Linux merge-check script seeds its test homes. Each copy is private.
+    """
+    if snapshot_root is None:
+        snapshot_root = NAV_SNAPSHOT
+    if fallback_root is None:
+        fallback_root = Path.home() / ".274bot" / "unpack-289"
+    unpack = home / ".274bot" / "unpack"
+    copied = 0
+    for snapshot in sorted(snapshot_root.glob("*/versionlist")):
+        shutil.copytree(snapshot.parent, unpack / snapshot.parent.name)
+        copied += 1
+    if copied == 0 and fallback_root.is_dir():
+        for snapshot in sorted(fallback_root.iterdir()):
+            if snapshot.is_dir() and re.fullmatch(r"[0-9a-f]{16}", snapshot.name):
+                shutil.copytree(snapshot, unpack / snapshot.name)
+                copied += 1
+    return copied
 
 
 def lane_list(tree: Path | None) -> list[tuple[str, list[str], dict]]:
@@ -1585,32 +2727,30 @@ def lane_list(tree: Path | None) -> list[tuple[str, list[str], dict]]:
     `cargo fmt` runs per crate: a workspace-root fmt hits OS error 206 on Windows.
     """
     vendor = ["--manifest-path", "vendor/fr-client-rust/Cargo.toml"]
-    nav = {"NAV_PACK": str(NAV_FIXTURE)}
-    engine = {"ENGINE_DIR": str(ENGINE_RUN / "engine")}
-    nav_engine = {**nav, **engine}
+    assets = lane_asset_env()
     lanes = [
         ("build", ["build", "--locked", "--workspace", "--all-targets", "--features", GATE_FEATURES], {}),
         ("build-vendor", ["build", "--locked", *vendor, "--workspace"], {}),
         ("clippy", ["clippy", "--locked", "--workspace", "--all-targets", "--features", GATE_FEATURES,
                     "--", "-D", "warnings"], {}),
         ("clippy-vendor", ["clippy", "--locked", *vendor, "--workspace", "--all-targets", "--", "-D", "warnings"], {}),
-        ("test-workspace", ["test", "--locked", "--workspace", "--no-fail-fast"], nav_engine),
-        ("test-vendor", ["test", "--locked", *vendor, "--workspace", "--no-fail-fast"], engine),
+        ("test-workspace", ["test", "--locked", "--workspace", "--no-fail-fast"], assets),
+        ("test-vendor", ["test", "--locked", *vendor, "--workspace", "--no-fail-fast"], assets),
         ("test-script-load", ["test", "--locked", "-p", "script", "--features", "load", "--tests",
-                              "--no-fail-fast"], nav_engine),
+                              "--no-fail-fast"], assets),
         ("test-script-no-default", ["test", "--locked", "-p", "script", "--no-default-features",
-                                    "--no-fail-fast"], nav_engine),
+                                    "--no-fail-fast"], assets),
         ("test-host-play-memory", ["test", "--locked", "-p", "host-play", "--features", "memory-profile",
-                                   "--no-fail-fast"], {}),
+                                   "--no-fail-fast"], assets),
         ("test-host-play-memory-no-alloc", ["test", "--locked", "-p", "host-play", "--features",
-                                            "memory-profile-no-alloc", "--lib", "--no-fail-fast"], {}),
+                                            "memory-profile-no-alloc", "--lib", "--no-fail-fast"], assets),
         ("test-host-performance", ["test", "--locked", "-p", "host", "--features", "performance-profile",
-                                   "--no-fail-fast"], {}),
+                                   "--no-fail-fast"], assets),
         ("test-panel-memory", ["test", "--locked", "-p", "panel", "--features", "memory-profile",
-                               "--no-fail-fast"], {}),
+                               "--no-fail-fast"], assets),
         ("test-panel-render-diagnostics", ["test", "--locked", "-p", "panel", "--features",
-                                           "render-diagnostics", "--lib", "--no-fail-fast"], {}),
-        ("test-tui-memory", ["test", "--locked", "-p", "tui", "--features", "memory-profile", "--no-fail-fast"], {}),
+                                           "render-diagnostics", "--lib", "--no-fail-fast"], assets),
+        ("test-tui-memory", ["test", "--locked", "-p", "tui", "--features", "memory-profile", "--no-fail-fast"], assets),
     ]
     if tree is not None:
         for manifest in sorted(tree.glob("crates/*/Cargo.toml")):
@@ -1623,7 +2763,8 @@ def lane_list(tree: Path | None) -> list[tuple[str, list[str], dict]]:
 
 def lane_env(home: Path, tmp: Path, target: Path, extra: dict) -> dict:
     env = dict(os.environ)
-    for name in ("NAV_PACK", "ENGINE_DIR", "WORLD_ENGINE_DIR", "LIVE", "BOT_NAV_SNAPSHOT_ROOT", "SKIP_GPU",
+    for name in ("NAV_PACK", "WORLD_NAV_PACK", "NAV_ARRIVAL_PACK", "ENGINE_DIR", "WORLD_ENGINE_DIR", "LIVE",
+                 "BOT_NAV_SNAPSHOT_ROOT", "T5W_INSPECT_CAPTURE_BASELINE", "T5W_INSPECT_CAPTURE_OUT", "SKIP_GPU",
                  "BOT_CPU", "CARGO_TARGET_DIR", "QUESTER_TICK_MS", "ISOHOME_DIR"):
         env.pop(name, None)
     env.update(private_dirs(home, tmp))
@@ -1654,9 +2795,8 @@ def run_lane(name: str, args: list[str], extra: dict, tree: Path, target: Path, 
     rmtree(scratch)
     home, tmp = scratch / "home", scratch / "tmp"
     tmp.mkdir(parents=True)
-    # The decoded 289 snapshot the client tests unpack against, as a private copy.
-    for snapshot in NAV_SNAPSHOT.glob("*/versionlist"):
-        shutil.copytree(snapshot.parent, home / ".274bot" / "unpack" / snapshot.parent.name)
+    # The decoded snapshot the client tests unpack against, as a private copy.
+    seed_lane_home(home)
     home.mkdir(parents=True, exist_ok=True)
     cargo_log = lane_dir / "cargo.log"
     result.started = now_iso()
@@ -1745,17 +2885,61 @@ def md_cell_table(results: list[CellResult]) -> list[str]:
     return md
 
 
+def md_latency_matrix(results: list[CellResult], latency_rows: list[CellResult]) -> list[str]:
+    """The cell-by-band matrix for `summary.md`.
+
+    One row per cell. `rtt0` is the main run of the same night. The class
+    is the worst class across the bands, in `LATENCY_CLASS_ORDER`. Rows
+    sort with `latency-defect` first, then `also-fails-at-0`, then the
+    rest by cell name.
+    """
+    zero = {row.cell: row for row in results}
+    bands = sorted({row.latency_rtt_ms for row in latency_rows if row.latency_rtt_ms is not None})
+    by_cell: dict[str, dict[int, CellResult]] = {}
+    for row in latency_rows:
+        if row.latency_rtt_ms is not None:
+            by_cell.setdefault(row.cell, {})[row.latency_rtt_ms] = row
+
+    def worst_class(cell: str) -> str:
+        classes = [row.latency_class or "" for row in by_cell[cell].values()]
+        return min(classes, key=lambda name: LATENCY_CLASS_ORDER.index(name)
+                   if name in LATENCY_CLASS_ORDER else len(LATENCY_CLASS_ORDER))
+
+    def sort_key(cell: str) -> tuple[int, str]:
+        rank = {"latency-defect": 0, "also-fails-at-0": 1}.get(worst_class(cell), 2)
+        return rank, cell
+
+    top = bands[-1] if bands else 0
+    md = ["| Cell | rtt0 | " + " | ".join(f"rtt{band}" for band in bands)
+          + f" | Class | Ticks 0→{top} |",
+          "|---|---|" + "---|" * len(bands) + "---|---|"]
+    for cell in sorted(by_cell, key=sort_key):
+        zero_row = zero.get(cell)
+        top_row = by_cell[cell].get(top)
+        ticks = (f"{zero_row.ticks if zero_row is not None and zero_row.ticks is not None else '-'}"
+                 f"→{top_row.ticks if top_row is not None and top_row.ticks is not None else '-'}")
+        band_cells = " | ".join(by_cell[cell][band].result if band in by_cell[cell] else "-"
+                                 for band in bands)
+        md.append(f"| `{cell}` | {zero_row.result if zero_row is not None else '-'} | {band_cells} "
+                  f"| {worst_class(cell)} | {ticks} |")
+    return md
+
+
 def write_summary(run_dir: Path, meta: dict, lanes: list[LaneResult], panel: list[CellResult],
-                  results: list[CellResult]) -> None:
+                  results: list[CellResult], latency_rows: list[CellResult] | None = None) -> None:
     counts = count(results)
-    summary = dict(meta, counts=counts, cells=[{k: v for k, v in asdict(r).items() if k != "receipt"}
-                                                for r in results])
+    summary = dict(meta, counts=counts, cells=[cell_row(row) for row in results])
     if "lanes" in meta["steps"]:
         summary["lane_counts"] = count(lanes)
-        summary["lanes"] = [asdict(r) for r in lanes]
+        summary["lanes"] = [asdict(row) for row in lanes]
     if "panel" in meta["steps"]:
         summary["panel_counts"] = count(panel)
-        summary["panel_cells"] = [{k: v for k, v in asdict(r).items() if k != "receipt"} for r in panel]
+        summary["panel_cells"] = [cell_row(row) for row in panel]
+    if latency_rows:
+        # The main counts describe the zero run only. Band rows never
+        # join them, so night-to-night readers keep their comparison.
+        summary["latency_counts"] = count_latency_classes(latency_rows)
+        summary["latency_cells"] = [cell_row(row) for row in latency_rows]
     wtext(run_dir / "summary.json", json.dumps(summary, indent=1) + "\n")
 
     md = [
@@ -1772,6 +2956,10 @@ def write_summary(run_dir: Path, meta: dict, lanes: list[LaneResult], panel: lis
         f"- Engine: {meta['engine']['status']}; catalog `{meta['catalog_commit']}`; "
         f"{meta['parallel']} cells in parallel; outer cap {meta['cell_cap_s']} s",
     ]
+    md.append(f"- Branch list: {branch_list_text(meta.get('branch_list') or {})}")
+    md.append(f"- Runner self-update: {self_update_text(meta.get('self_update') or {})}")
+    md.append("- " + api_drift_md_line(
+        meta.get("rs2b0t_api") or {"status": "unavailable", "reason": "not checked"}))
     if meta.get("quiet_lock"):
         md.append(f"- Quiet lock stopped further work: `{meta['quiet_lock']}`")
     if meta.get("session"):
@@ -1785,7 +2973,10 @@ def write_summary(run_dir: Path, meta: dict, lanes: list[LaneResult], panel: lis
         md.append("- Lane counts: " + counts_text(summary["lane_counts"]))
     if "panel" in meta["steps"]:
         md.append("- Panel cell counts: " + counts_text(summary["panel_counts"]))
-    md += [("- Counts: " if len(meta["steps"]) == 1 else "- TUI cell counts: ") + counts_text(counts), ""]
+    md += [("- Counts: " if len(meta["steps"]) == 1 else "- TUI cell counts: ") + counts_text(counts)]
+    if latency_rows:
+        md.append("- Latency counts: " + latency_counts_text(summary["latency_counts"]))
+    md.append("")
     if meta.get("interrupted"):
         md += ["**Run interrupted** before every cell finished.", ""]
     if "lanes" in meta["steps"]:
@@ -1803,6 +2994,13 @@ def write_summary(run_dir: Path, meta: dict, lanes: list[LaneResult], panel: lis
     if len(meta["steps"]) > 1:
         md += ["## tui-play cells", ""]
     md += md_cell_table(results)
+    if latency_rows:
+        proxy_sha = (meta.get("latency") or {}).get("proxy", {}).get("sha256")
+        md += ["", "## Latency lane (tui, dev only, report-only)", "",
+               f"Proxy `latency_proxy.py` sha256 `{proxy_sha}`. Bands are RTT in ms. "
+               "Zero (`rtt0`) is the main run above. The class is the worst band class. "
+               "Per-cell detail sits in `cells-latency/<band>/<cell>/latency.json`.", ""]
+        md += md_latency_matrix(results, latency_rows)
     wtext(run_dir / "summary.md", "\n".join(md) + "\n")
 
 
@@ -1832,7 +3030,9 @@ def run_dir_for(branch: str, commit: str, date: dt.date | None = None) -> Path:
 def run_branch(branch: str, parallel: int, only: list[str] | None, only_lanes: list[str] | None,
                unavailable: str | None = None, date: dt.date | None = None,
                summary_only: bool = False, only_exact: bool = False,
-               cells_file: str | None = None) -> Path:
+               cells_file: str | None = None, latency_bands: list[int] | None = None,
+               latency_cells: list[str] | None = None,
+               branch_list: dict | None = None, self_update: dict | None = None) -> Path:
     """One branch: sources, the steps in order, summary, DONE.
 
     `unavailable` writes a complete run where every lane and cell is
@@ -1844,6 +3044,9 @@ def run_branch(branch: str, parallel: int, only: list[str] | None, only_lanes: l
     the catalog, instead of running the rest without a word: a committed
     cell list must not shrink silently when a cell is renamed or removed.
     `cells_file` only names that list in the summary.
+    `latency_bands` overrides `NIGHTLY_LATENCY_BANDS` for this call; an
+    explicit empty list turns the latency lane off. `latency_cells`
+    overrides the cells file (`NIGHTLY_LATENCY_CELLS_FILE`).
     """
     ident = platform_id()
     target = ROOT / "target" / slug(branch)
@@ -1908,6 +3111,41 @@ def run_branch(branch: str, parallel: int, only: list[str] | None, only_lanes: l
             build_error = (build_error or "") + (
                 f"; cell list: {cells_file or 'cells file'} names not in the catalog: "
                 + ", ".join(unknown))
+    bands_wanted = LATENCY_BANDS if latency_bands is None else latency_bands
+    latency_enabled = bool(bands_wanted) and branch == LATENCY_BRANCH and JOB == "main" and "tui" in STEPS
+    if bands_wanted and not latency_enabled:
+        log(f"{branch}: latency lane does not run here (branch {branch!r} vs {LATENCY_BRANCH!r}, "
+            f"job {JOB}, steps {STEPS}); bands {bands_wanted} ignored for this branch")
+    latency_names: list[str] = []
+    if latency_enabled:
+        if latency_cells is not None:
+            latency_names = list(latency_cells)
+        else:
+            latency_path = cells_file_path(None, LATENCY_CELLS_FILE) or (HERE / "cells-latency.conf")
+            try:
+                latency_names = read_list(latency_path)
+            except OSError as error:
+                build_ok = False
+                build_error = (build_error or "") + f"; latency cells file: {error}"
+        if cells and latency_names:
+            unknown = [cell for cell in latency_names if cell not in cells]
+            if unknown:
+                build_ok = False
+                build_error = (build_error or "") + (
+                    f"; latency cell list: names not in the catalog: " + ", ".join(unknown))
+            quest_names = [cell for cell in latency_names if cell.startswith("quester_")]
+            if quest_names:
+                build_ok = False
+                build_error = (build_error or "") + (
+                    f"; latency cell list: quest cells stay out of the latency lane: "
+                    + ", ".join(quest_names))
+        if only:
+            # A hand run with --cells narrows the latency set the same way,
+            # so the zero baseline and the band rows name the same cells.
+            latency_names = [cell for cell in latency_names if cell in only]
+    latency_active = latency_enabled and bool(latency_names)
+    if latency_enabled and not latency_names:
+        log(f"{branch}: latency lane names no cells for this run; it writes no band rows")
     cells = select_job_cells(cells, only, JOB)
     cell_base = CellResult(cell="", result="NOT_RUN", branch=branch, commit=commit, platform=ident["platform"])
     lane_base = LaneResult(lane="", result="NOT_RUN", branch=branch, commit=commit, platform=ident["platform"])
@@ -1997,7 +3235,7 @@ def run_branch(branch: str, parallel: int, only: list[str] | None, only_lanes: l
                 if note_quiet_lock():
                     reason_unavailable = f"MAC-QUIET: {_quiet_lock_reason}"
                 elif ENGINE_MODE == "remote":
-                    reason_unavailable = f"{ENGINE_LABEL} not reachable: {detail}"
+                    reason_unavailable = remote_engine_failure(detail)
                 else:
                     reason_not_run = f"engine {detail}"
         rows, runnable = cell_rows(frontend, cells, run_dir, cell_base, skips, reason_unavailable, reason_not_run)
@@ -2020,15 +3258,27 @@ def run_branch(branch: str, parallel: int, only: list[str] | None, only_lanes: l
         else:
             results = rows
         step["wall_s"] = round(time.monotonic() - step_start, 1)
+    latency_rows: list[CellResult] = []
+    latency_meta: dict | None = None
+    if latency_active:
+        step = steps["latency"] = {"status": "not started", "deadline_s": STEP_DEADLINE_S["latency"]}
+        step_start = time.monotonic()
+        latency_rows, latency_meta = run_latency_pass(
+            branch, binaries.get("tui-play"), latency_names, bands_wanted, run_dir, work,
+            cell_base, skips, parallel, {row.cell: row for row in results}, unavailable, build_ok)
+        step["status"] = "ran: " + latency_counts_text(count_latency_classes(latency_rows))
+        step["wall_s"] = round(time.monotonic() - step_start, 1)
     rmtree(work)
     if not build_ok and engine_status == "not started":
         engine_status = "not started (build failed)"
     meta = dict(
         job=JOB, run=run_dir.name, branch=branch, commit=commit, commit_full=commit_full, revision=int(REVISION),
         cells_file=cells_file,
+        branch_list=(branch_list or {"source": "unknown", "commit": "", "note": ""}),
+        self_update=(self_update or {"status": "unknown", "from": "", "to": "", "detail": ""}),
         **ident, started=started, finished=now_iso(),
         wall_s=round(time.monotonic() - started_wall, 1), parallel=parallel,
-        cell_cap_s=CELL_CAP_S, run_deadline_s=RUN_DEADLINE_S, profile=PROFILE,
+        cell_cap_s=CELL_CAP_S, cell_caps_s=CELL_CAPS_S, run_deadline_s=RUN_DEADLINE_S, profile=PROFILE,
         interrupted=_stop.is_set() or _quiet_lock_reason is not None, quiet_lock=_quiet_lock_reason,
         steps=steps, session=session, unavailable=unavailable,
         build=dict(ok=build_ok, ran=build_ran, wall_s=build_wall, error=build_error,
@@ -2041,7 +3291,12 @@ def run_branch(branch: str, parallel: int, only: list[str] | None, only_lanes: l
         catalog_commit=git_head(CATALOG), runner_commit=git_head(RUNNER_REPO),
         tree=str(tree) if tree else None,
     )
-    write_summary(run_dir, meta, lanes, panel, results)
+    # Informational only: a failed check reports UNAVAILABLE and never
+    # changes a cell's outcome or the run's exit status.
+    meta["rs2b0t_api"] = check_rs2b0t_api_drift(tree, CATALOG)
+    if latency_meta is not None:
+        meta["latency"] = latency_meta
+    write_summary(run_dir, meta, lanes, panel, results, latency_rows)
     write_source_manifest(run_dir)
     wtext(run_dir / "DONE", meta["finished"] + "\n")
     sections = {"lanes": lanes, "panel": panel, "tui": results}
@@ -2049,6 +3304,8 @@ def run_branch(branch: str, parallel: int, only: list[str] | None, only_lanes: l
         line = counts_text(count(results))
     else:
         line = "; ".join(f"{name} {counts_text(count(sections[name]))}" for name in STEPS if name in sections)
+    if latency_rows:
+        line += "; latency " + latency_counts_text(count_latency_classes(latency_rows))
     log(f"{branch}: summary {meta['run']}: {line}")
     return run_dir
 
@@ -2115,17 +3372,52 @@ def main() -> int:
                              "a relative path is read beside this script; --cells wins)")
     parser.add_argument("--lanes", help="comma-separated CI lane names (default: every lane)")
     parser.add_argument("--parallel", type=int, default=int(os.environ.get("NIGHTLY_PARALLEL", "4")))
+    parser.add_argument("--latency-bands",
+                        help="comma-separated RTT bands in ms for the latency lane, "
+                             "for example 50,100,150 (default NIGHTLY_LATENCY_BANDS; "
+                             "an empty value turns the lane off)")
     parser.add_argument("--list", action="store_true", help="print the cell list of a checked-out tree and exit")
     parser.add_argument("--tree", type=Path, help="tree for --list")
     parser.add_argument("--catch-up", action="store_true",
                         help="at logon: if the last scheduled night never started, write it as UNAVAILABLE")
     args = parser.parse_args()
+    latency_bands: list[int] | None = None
+    if args.latency_bands is not None:
+        try:
+            latency_bands = parse_latency_bands(args.latency_bands)
+        except ValueError as error:
+            parser.error(f"--latency-bands: {error}")
     if args.list:
         skips = read_skips(HERE / "skip.conf")
-        for cell in catalog_cells(args.tree or Path.cwd()):
+        listed = catalog_cells(args.tree or Path.cwd())
+        for cell in listed:
             print(f"{cell}\tSKIP: {skips[cell]}" if cell in skips else cell)
+        bands = LATENCY_BANDS if latency_bands is None else latency_bands
+        if bands:
+            latency_path = cells_file_path(None, LATENCY_CELLS_FILE) or (HERE / "cells-latency.conf")
+            try:
+                latency_names = read_list(latency_path)
+            except OSError as error:
+                print(f"# latency lane: cannot read {latency_path}: {error}")
+                return 1
+            unknown = [cell for cell in latency_names if cell not in listed]
+            if unknown:
+                print(f"# latency lane: names not in the catalog: {', '.join(unknown)}")
+                return 1
+            print(f"# latency lane: branch {LATENCY_BRANCH}, bands "
+                  f"{','.join(str(band) for band in bands)} ms RTT, {len(latency_names)} cells, "
+                  f"list {latency_path.name}")
+            for cell in latency_names:
+                for band in bands:
+                    print(f"# latency\t{cell}\t{band_name(band)}")
         return 0
-    branches = args.branch or os.environ.get("NIGHTLY_BRANCHES", "").split() or read_list(HERE / "branches.conf")
+    # The self-update re-executes this same script path, so it runs before the
+    # branch list is read: the new code decides the night's branches. --list
+    # stays a read-only query of a checked-out tree and never updates.
+    self_update_info = maybe_self_update(RUNNER_REPO, HERE / "run_nightly.py")
+    branches, branch_info = resolve_branch_list(args.branch, RUNNER_REPO)
+    log(f"branch list: {branch_list_text(branch_info)}")
+    log(f"self-update: {self_update_text(self_update_info)}")
     only = [c.strip() for c in args.cells.split(",") if c.strip()] if args.cells else None
     only_exact, cells_file = False, None
     if only is None:
@@ -2159,17 +3451,23 @@ def main() -> int:
         wtext(started_marker(night), moment.isoformat(timespec="seconds") + " catch-up\n")
         for branch in branches:
             run_branch(branch, args.parallel, only, only_lanes, unavailable=reason, date=night,
-                       summary_only=True, only_exact=only_exact, cells_file=cells_file)
+                       summary_only=True, only_exact=only_exact, cells_file=cells_file,
+                       latency_bands=latency_bands,
+                       branch_list=branch_info, self_update=self_update_info)
         return 0
     wtext(started_marker(night_of(moment)), moment.isoformat(timespec="seconds") + "\n")
     global _run_deadline
     if RUN_DEADLINE_S:
         _run_deadline = time.monotonic() + RUN_DEADLINE_S
-    log(f"nightly start: branches {branches}, steps {STEPS}, parallel {args.parallel}")
+    log(f"nightly start: branches {branches}, steps {STEPS}, parallel {args.parallel}"
+        + (f", latency bands {LATENCY_BANDS if latency_bands is None else latency_bands}"
+           if (LATENCY_BANDS if latency_bands is None else latency_bands) else ""))
     for branch in branches:
         if _stop.is_set() or note_quiet_lock():
             break
-        run_branch(branch, args.parallel, only, only_lanes, only_exact=only_exact, cells_file=cells_file)
+        run_branch(branch, args.parallel, only, only_lanes, only_exact=only_exact, cells_file=cells_file,
+                   latency_bands=latency_bands,
+                   branch_list=branch_info, self_update=self_update_info)
     if FRESH_TREES:
         prune_trees(branches)
     prune_local()

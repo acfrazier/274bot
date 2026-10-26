@@ -15,20 +15,101 @@ use vault::{Profile, ProfileSettings, Vault};
 use super::*;
 use crate::command::{CommandFailure, Completion, DrawSwitch, Pending, SkipReason, Subject};
 use crate::launch::InstancePermit;
+use crate::test_support::IsolatedStores;
 
-fn scratch(test: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("274bot-t33-driver-{}-{test}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("scratch dir");
-    dir
+/// A test's own scratch directory, holding an isolated bot home beside it
+/// for as long as the test keeps it. Every path a driver resolves under
+/// `~/.274bot` (session logs, the card library and its transpile cache, the
+/// saved card settings, the catalogue pointer) lands under this directory,
+/// never under the operator's home; the whole tree goes on drop.
+struct Scratch {
+    dir: PathBuf,
+    _iso: IsolatedStores,
 }
 
-/// A driver over the state root `state`. Opening restores the Quest Paths
+impl std::ops::Deref for Scratch {
+    type Target = Path;
+
+    fn deref(&self) -> &Path {
+        &self.dir
+    }
+}
+
+fn scratch(test: &str) -> Scratch {
+    let iso = IsolatedStores::enter(&format!("driver-{test}"));
+    let dir = iso.dir().join("scratch");
+    std::fs::create_dir_all(&dir).expect("scratch dir");
+    Scratch { dir, _iso: iso }
+}
+
+/// A driver over the state root `dir/state`. Opening restores the Quest Paths
 /// source into the process-wide registry, so it waits for a test that
-/// owns that source.
-fn open_driver(state: &Path) -> HeadlessDriver {
+/// owns that source. The guarded [`Scratch`] it takes keeps every
+/// home-relative write inside the test: no caller can pass a bare path and
+/// let the guard drop first.
+fn open_driver(dir: &Scratch) -> HeadlessDriver {
     let _source = crate::quester_paths::registry_source_test_lock();
-    HeadlessDriver::open(state, InstancePermit::skip())
+    let mut driver = HeadlessDriver::open(&dir.join("state"), InstancePermit::skip());
+    driver.session.preferences().unwrap().reload().unwrap();
+    driver.poll();
+    driver
+}
+
+#[test]
+fn cold_preferences_adopt_saved_startup_models_without_writing_defaults() {
+    let dir = scratch("cold-preferences-startup");
+    let mut driver = open_driver(&dir);
+    let _source = crate::quester_paths::registry_source_test_lock();
+    let state = dir.join("saved");
+    let path = state.join("panel-ui.json");
+    let saved = br#"{"capture":false,"sidecar_50":true,"focused_50":false,"map_bake":"always","quester_paths":{"enabled":false,"folder":"saved-source"},"nav":{"allow_teleports":true,"pause_script_on_manual_walk_abort":false}}"#;
+    vault::write_private_file(&path, saved).unwrap();
+    let (entered, entered_rx) = std::sync::mpsc::sync_channel(1);
+    let (release, release_rx) = std::sync::mpsc::channel();
+    let release_rx = std::sync::Mutex::new(release_rx);
+    let first = std::sync::atomic::AtomicBool::new(true);
+    let service = host_play::local_state::LocalStateService::open_process_with_read_stall_for_test(
+        host_play::local_state::StateRoot::new(state),
+        std::sync::Arc::new(move || {
+            if first.swap(false, std::sync::atomic::Ordering::SeqCst) {
+                let _ = entered.send(());
+                let _ = release_rx.lock().unwrap().recv();
+            }
+        }),
+    );
+    entered_rx
+        .recv_timeout(std::time::Duration::from_secs(10))
+        .unwrap();
+    driver.session.bind_local_state(service);
+    driver.preferences_adopted = false;
+    driver.models.walk_globals = driver.session.adopt_operator_preferences();
+    for _ in 0..4 {
+        driver.poll();
+        assert!(!driver.preferences_adopted);
+        assert!(!driver.models.walk_globals.globals().allow_teleports());
+        assert_eq!(std::fs::read(&path).unwrap(), saved);
+    }
+    release.send(()).unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !driver.preferences_adopted && std::time::Instant::now() < deadline {
+        driver.poll();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    assert!(driver.preferences_adopted);
+    assert!(driver.models.walk_globals.globals().allow_teleports());
+    assert!(!driver.session.running_pause_script_on_manual_walk_abort());
+    assert!(!driver.models.draw.capture());
+    assert!(driver.models.draw.sidecar_50());
+    assert!(!driver.models.draw.focused_50());
+    assert_eq!(
+        driver.models.map.bake_gate().choice(),
+        crate::MapBakeChoice::Always
+    );
+    assert_eq!(
+        driver.models.quester.settings().folder(),
+        Path::new("saved-source")
+    );
+    assert_eq!(std::fs::read(path).unwrap(), saved);
 }
 
 /// A real vault file at `dir/vault` holding `names`.
@@ -61,10 +142,11 @@ fn play() -> PlayConfig {
 }
 
 /// A driver composed like a front end (local state under `dir/state`),
-/// unlocked through `UnlockVault` over a vault holding `names`.
-fn driver_in(dir: &Path, names: &[&str]) -> HeadlessDriver {
+/// unlocked through `UnlockVault` over a vault holding `names`. The guarded
+/// [`Scratch`] it takes keeps every home-relative write inside the test.
+fn driver_in(dir: &Scratch, names: &[&str]) -> HeadlessDriver {
     let vault = vault_with(dir, names);
-    let mut d = open_driver(&dir.join("state"));
+    let mut d = open_driver(dir);
     d.session_mut().set_spawn_workers(false);
     let unlock = d
         .unlock(vault, PASSPHRASE, &play())
@@ -80,8 +162,35 @@ fn driver_in(dir: &Path, names: &[&str]) -> HeadlessDriver {
     d
 }
 
-fn driver(test: &str, names: &[&str]) -> HeadlessDriver {
-    driver_in(&scratch(test), names)
+/// A driver that owns its test's scratch and isolated home for the whole
+/// test: the guard drops (and removes the home) when the test does. It
+/// derefs to [`HeadlessDriver`], so a test drives it as before.
+struct TestDriver {
+    driver: HeadlessDriver,
+    _scratch: Scratch,
+}
+
+impl std::ops::Deref for TestDriver {
+    type Target = HeadlessDriver;
+
+    fn deref(&self) -> &HeadlessDriver {
+        &self.driver
+    }
+}
+
+impl std::ops::DerefMut for TestDriver {
+    fn deref_mut(&mut self) -> &mut HeadlessDriver {
+        &mut self.driver
+    }
+}
+
+fn driver(test: &str, names: &[&str]) -> TestDriver {
+    let scratch = scratch(test);
+    let driver = driver_in(&scratch, names);
+    TestDriver {
+        driver,
+        _scratch: scratch,
+    }
 }
 
 type Terminal = Settlement<Completion, CommandFailure>;
@@ -226,32 +335,47 @@ fn a_pending_owner_member_settles_on_a_later_poll() {
         .and_then(|report| report.member(subject))
         .and_then(|member| member.pending());
     assert!(matches!(pending, None | Some(Pending::Accepted)));
-    for _ in 0..200 {
-        d.poll();
-        if d.report(remove.request())
-            .is_some_and(|report| report.is_settled())
-        {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(5));
-    }
-    assert!(
-        d.report(remove.request())
-            .is_some_and(|report| report.is_settled()),
-        "remove settles once the slot retires"
+    wait_for_command(
+        &mut d,
+        remove.request(),
+        "the removed profile's slot to retire",
+        |d| {
+            d.report(remove.request())
+                .is_some_and(|report| report.is_settled())
+        },
     );
 }
 
-/// Poll until `request` settles (writes are durable off the UI thread).
-fn settle(d: &mut HeadlessDriver, request: RequestId) {
-    for _ in 0..400 {
+/// A loaded host took more than five seconds to settle a queued preference
+/// write. Use a 10-minute hang guard; it is not the success condition.
+const SETTLE_HANG_GUARD: std::time::Duration = std::time::Duration::from_secs(600);
+
+/// Poll the front-end driver until a product terminal signal appears.
+fn wait_for_command(
+    d: &mut HeadlessDriver,
+    request: RequestId,
+    waiting_for: &str,
+    mut settled: impl FnMut(&mut HeadlessDriver) -> bool,
+) {
+    let deadline = std::time::Instant::now() + SETTLE_HANG_GUARD;
+    loop {
         d.poll();
-        if d.report(request).is_some_and(|report| report.is_settled()) {
+        if settled(d) {
             return;
         }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "command {request:?} did not settle while waiting for {waiting_for}"
+        );
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
-    panic!("command {request:?} did not settle");
+}
+
+/// Poll the session until its report is terminal. Writes settle off the UI thread.
+fn settle(d: &mut HeadlessDriver, request: RequestId) {
+    wait_for_command(d, request, "its command report", |d| {
+        d.report(request).is_some_and(|report| report.is_settled())
+    });
 }
 
 #[test]
@@ -314,30 +438,15 @@ fn terminal_app(d: &HeadlessDriver, request: RequestId) -> Option<Terminal> {
         .cloned()
 }
 
-/// The application member's terminal once it settles, polling the session
-/// as a front end's frames do. A preference write the writer thread still
-/// holds when its bounded wait ends keeps the member pending until the
-/// write's own terminal (a busy disk delays it; nothing fails for that):
-/// this waits for that product signal. [`SETTLE_HANG_GUARD`] only ends a
-/// test whose writer hung; it is not the pass condition.
+/// Wait for the application's terminal product signal while polling the
+/// session as a front end's frames do.
 fn settled_app(d: &mut HeadlessDriver, request: RequestId) -> Option<Terminal> {
-    let start = std::time::Instant::now();
-    loop {
-        if let Some(terminal) = terminal_app(d, request) {
-            return Some(terminal);
-        }
-        d.report(request)?;
-        assert!(
-            start.elapsed() < SETTLE_HANG_GUARD,
-            "the command never settled: its writer hung"
-        );
-        d.poll();
-        std::thread::sleep(std::time::Duration::from_millis(5));
-    }
+    d.report(request)?;
+    wait_for_command(d, request, "the application member terminal", |d| {
+        terminal_app(d, request).is_some()
+    });
+    terminal_app(d, request)
 }
-
-/// See [`settled_app`]: far above any disk delay of a loaded host.
-const SETTLE_HANG_GUARD: std::time::Duration = std::time::Duration::from_secs(600);
 
 fn rejected(rejection: crate::command::Rejection) -> Terminal {
     Settlement::Failed(CommandFailure::Rejected(rejection))
@@ -361,7 +470,7 @@ fn preferences_file_now(d: &HeadlessDriver) -> Option<serde_json::Value> {
 fn unlock_with_a_wrong_passphrase_is_refused_and_keeps_the_vault() {
     let dir = scratch("unlock-wrong");
     let vault = vault_with(&dir, &["alice"]);
-    let mut d = open_driver(&dir.join("state"));
+    let mut d = open_driver(&dir);
     let wrong = d
         .unlock(vault.clone(), "not-the-passphrase", &play())
         .expect("admitted");
@@ -393,7 +502,7 @@ fn unlock_with_a_wrong_passphrase_is_refused_and_keeps_the_vault() {
 fn create_vault_makes_a_new_vault_file_that_a_new_session_unlocks() {
     let dir = scratch("create-vault");
     let vault = dir.join("new-vault");
-    let mut d = open_driver(&dir.join("state"));
+    let mut d = open_driver(&dir);
     let create = d
         .unlock(vault.clone(), PASSPHRASE, &play())
         .expect("admitted");
@@ -405,7 +514,7 @@ fn create_vault_makes_a_new_vault_file_that_a_new_session_unlocks() {
     assert!(vault.is_file(), "CreateVault wrote the vault file");
     drop(d);
 
-    let mut again = open_driver(&dir.join("state"));
+    let mut again = open_driver(&dir);
     let unlock = again.unlock(vault, PASSPHRASE, &play()).expect("admitted");
     assert_eq!(
         again.report(unlock.request()).map(CommandReport::command),
@@ -418,7 +527,7 @@ fn create_vault_makes_a_new_vault_file_that_a_new_session_unlocks() {
 fn reset_vault_deletes_the_locked_file_and_refuses_while_unlocked() {
     let dir = scratch("reset-vault");
     let vault = vault_with(&dir, &["alice"]);
-    let mut d = open_driver(&dir.join("state"));
+    let mut d = open_driver(&dir);
     d.session_mut().stage_vault_reset(vault.clone());
     let reset = d
         .submit(OperatorCommand::ResetVault, Targets::Application)
@@ -444,7 +553,7 @@ fn reset_vault_deletes_the_locked_file_and_refuses_while_unlocked() {
 #[test]
 fn a_vault_row_with_nothing_staged_is_refused_not_done() {
     let dir = scratch("vault-unstaged");
-    let mut d = open_driver(&dir.join("state"));
+    let mut d = open_driver(&dir);
     let unlock = d
         .submit(OperatorCommand::UnlockVault, Targets::Application)
         .expect("admitted");
@@ -499,7 +608,7 @@ fn preference_rows_write_the_file_and_a_new_session_reads_them_back() {
     assert_eq!(file["session_log_file"], serde_json::Value::Bool(true));
     assert_eq!(file["map_bake"], serde_json::Value::String("always".into()));
     // A new session over the same state root.
-    let again = open_driver(&dir.join("state"));
+    let again = open_driver(&dir);
     assert_eq!(
         again
             .session()
@@ -750,14 +859,17 @@ fn walk_to_without_a_confirmed_destination_is_refused_and_arms_nothing() {
     );
     // A staged walk over a map with no picked destination: the map
     // refuses it the same way, and no route is armed.
-    let context =
-        crate::walk_map::WalkMapContext::browsing(nav::map::identity::Digest([0; 32]), None, 1);
+    let context = crate::walk_map::WalkMapContext::browsing(
+        nav_planner::map::identity::Digest([0; 32]),
+        None,
+        1,
+    );
     let mut map = crate::walk_map::WalkMap::new();
     d.models_mut().map_mut().stage_walk_to(
         &mut map,
         context,
         None,
-        nav::router::FindOptions::default(),
+        nav_planner::router::FindOptions::default(),
     );
     let walk = d
         .submit(OperatorCommand::WalkTo, Targets::Profile("alice"))
@@ -1248,7 +1360,7 @@ fn the_order_follows_create_rename_delete_and_survives_a_restart() {
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
     drop(d);
-    let mut again = open_driver(&dir.join("state"));
+    let mut again = open_driver(&dir);
     again.session_mut().set_spawn_workers(false);
     again
         .unlock(dir.join("vault"), PASSPHRASE, &play())
@@ -1691,7 +1803,7 @@ fn a_600_profile_order_is_durable_and_restores_after_a_restart() {
     assert!(per_profile < 32.0, "{per_profile} bytes per profile");
     d.session_mut().flush_writes();
     drop(d);
-    let mut again = open_driver(&dir.join("state"));
+    let mut again = open_driver(&dir);
     again.session_mut().set_spawn_workers(false);
     again
         .unlock(dir.join("vault"), PASSPHRASE, &play())
@@ -1750,7 +1862,7 @@ fn a_held_or_failed_rename_keeps_the_saved_place() {
     assert_eq!(stored_order(&d), saved);
     d.session_mut().flush_writes();
     drop(d);
-    let mut again = open_driver(&dir.join("state"));
+    let mut again = open_driver(&dir);
     again.session_mut().set_spawn_workers(false);
     again
         .unlock(dir.join("vault"), PASSPHRASE, &play())
@@ -1834,21 +1946,19 @@ fn a_planned_start_or_copy_reports_only_through_its_result() {
     // Without a game data set the Starts fail: the result still settles,
     // with the failures (a failed Start is a terminal, never Pending).
     let command = d.session().fleet_plan().expect("plan").command();
-    d.submit(command, Targets::Plan).expect("run");
+    let run = d.submit(command, Targets::Plan).expect("run");
     let mut shown = Vec::new();
-    let drain = |d: &mut HeadlessDriver, shown: &mut Vec<String>| {
+    let take_notice = |d: &mut HeadlessDriver, shown: &mut Vec<String>| {
         if let Some(notice) = d.models_mut().scripts.take_notice() {
             shown.push(format!("{notice:?}"));
         }
-        d.poll();
     };
-    for _ in 0..400 {
-        drain(&mut d, &mut shown);
-        if d.session().fleet_result().is_some_and(|r| r.settled()) {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(5));
-    }
+    wait_for_command(&mut d, run.request(), "the fleet result", |d| {
+        take_notice(d, &mut shown);
+        d.session()
+            .fleet_result()
+            .is_some_and(|result| result.request() == Some(run.request()) && result.settled())
+    });
     let result = d.session().fleet_result().expect("result");
     assert!(result.settled(), "{} | shown {shown:?}", result.text());
     assert!(
@@ -1860,12 +1970,13 @@ fn a_planned_start_or_copy_reports_only_through_its_result() {
         .expect("unmark");
     assert_eq!(plan(&mut d, crate::FleetAction::CopySettings), Some(done()));
     let command = d.session().fleet_plan().expect("plan").command();
-    d.submit(command, Targets::Plan).expect("copy");
-    for _ in 0..5 {
-        drain(&mut d, &mut shown);
-        d.session_mut().flush_writes();
-    }
-    drain(&mut d, &mut shown);
+    let copy = d.submit(command, Targets::Plan).expect("copy");
+    wait_for_command(&mut d, copy.request(), "the fleet result", |d| {
+        take_notice(d, &mut shown);
+        d.session()
+            .fleet_result()
+            .is_some_and(|result| result.request() == Some(copy.request()) && result.settled())
+    });
     let result = d.session().fleet_result().expect("result");
     assert!(result.text().starts_with("Copy"), "{}", result.text());
     // An ordinary error (a Start that failed without a game) may show; a
@@ -2139,7 +2250,7 @@ const SETTINGS_CARD: &str = "export const SETTINGS = { target: { type: 'string',
 /// Load alice, bob and carol, give all a loaded JS card (its copy is a
 /// profile write, so it lands without a game data set), focus alice and
 /// plan a copy of her settings to bob and carol (marked).
-fn copy_plan(test: &str) -> HeadlessDriver {
+fn copy_plan(test: &str) -> TestDriver {
     let dir = scratch(test);
     let mut d = driver_in(&dir, &["alice", "bob", "carol"]);
     let path = dir.join("thiever.ts");
@@ -2163,7 +2274,10 @@ fn copy_plan(test: &str) -> HeadlessDriver {
         .expect("unmark");
     assert_eq!(plan(&mut d, crate::FleetAction::CopySettings), Some(done()));
     assert_eq!(plan_names(&d), ["bob", "carol"]);
-    d
+    TestDriver {
+        driver: d,
+        _scratch: dir,
+    }
 }
 
 /// Review F3-1: a profile deleted and recreated under the same name
@@ -2269,7 +2383,7 @@ fn a_copy_skips_a_target_whose_save_started_after_the_plan() {
 /// Load alice, give her a loaded JS card through a plan, then submit her
 /// own single Start with no frame after it: the card's preparation is
 /// pending (an untallied preparation). Returns the Start command.
-fn preparing_start(test: &str) -> (HeadlessDriver, RequestId) {
+fn preparing_start(test: &str) -> (TestDriver, RequestId) {
     let dir = scratch(test);
     let mut d = driver_in(&dir, &["alice", "bob"]);
     let path = dir.join("looping.ts");
@@ -2294,12 +2408,18 @@ fn preparing_start(test: &str) -> (HeadlessDriver, RequestId) {
         "the single Start waits on its card's preparation"
     );
     assert_eq!(terminal(&d, start, "alice"), None, "Pending");
-    (d, start)
+    (
+        TestDriver {
+            driver: d,
+            _scratch: dir,
+        },
+        start,
+    )
 }
 
 /// `count` bots on Gatherer, bot000 focused (the copy's source), every
 /// other bot marked and a planned native Copy settings waiting.
-fn copy_to_many(test: &str, count: usize) -> HeadlessDriver {
+fn copy_to_many(test: &str, count: usize) -> TestDriver {
     let names: Vec<String> = (0..count).map(|index| format!("bot{index:03}")).collect();
     let refs: Vec<&str> = names.iter().map(String::as_str).collect();
     let mut d = driver(test, &refs);
@@ -2324,20 +2444,13 @@ fn copy_to_many(test: &str, count: usize) -> HeadlessDriver {
     d
 }
 
-/// Poll as front-end frames do until the fleet result settles (a paced
-/// copy takes several rounds of saves).
-fn settle_result(d: &mut HeadlessDriver) {
-    let deadline = std::time::Instant::now() + SETTLE_HANG_GUARD;
-    while !d
-        .session()
-        .fleet_result()
-        .is_some_and(crate::FleetResult::settled)
-    {
-        assert!(std::time::Instant::now() < deadline, "the result hung");
-        d.session_mut().flush_writes();
-        d.poll();
-        std::thread::sleep(std::time::Duration::from_millis(2));
-    }
+/// Poll as front-end frames do until this request and its fleet result settle.
+fn settle_result(d: &mut HeadlessDriver, request: RequestId) {
+    wait_for_command(d, request, "the fleet result", |d| {
+        d.session()
+            .fleet_result()
+            .is_some_and(|result| result.request() == Some(request) && result.settled())
+    });
 }
 
 fn starts_held(d: &HeadlessDriver) -> bool {
@@ -2357,7 +2470,7 @@ fn a_native_copy_beyond_the_pending_save_bound_saves_every_bot() {
     for count in [67, 151] {
         let mut d = copy_to_many(&format!("f4-copy-{count}"), count);
         let command = d.session().fleet_plan().expect("plan").command();
-        d.submit(command, Targets::Plan).expect("run");
+        let run = d.submit(command, Targets::Plan).expect("run");
         assert!(starts_held(&d), "{count}: Starts wait for the copy");
         let queued = d
             .models()
@@ -2366,7 +2479,7 @@ fn a_native_copy_beyond_the_pending_save_bound_saves_every_bot() {
             .expect("copy report")
             .pending();
         assert_eq!(queued, count - 1, "{count}: every target waits its turn");
-        settle_result(&mut d);
+        settle_result(&mut d, run.request());
         let result = d.session().fleet_result().expect("result");
         assert_eq!(result.counts().done, count - 1, "{}", result.text());
         assert_eq!(result.counts().failed, 0, "{}", result.text());
@@ -2385,10 +2498,10 @@ fn a_native_copy_beyond_the_pending_save_bound_saves_every_bot() {
 fn cancelling_a_queued_copy_writes_no_waiting_bot_and_releases_starts() {
     let mut d = copy_to_many("f4-copy-cancel", 151);
     let command = d.session().fleet_plan().expect("plan").command();
-    d.submit(command, Targets::Plan).expect("run");
+    let run = d.submit(command, Targets::Plan).expect("run");
     d.submit(OperatorCommand::CancelSettingsSync, Targets::Application)
         .expect("cancel");
-    settle_result(&mut d);
+    settle_result(&mut d, run.request());
     let result = d.session().fleet_result().expect("result");
     let counts = result.counts();
     assert!(counts.skipped >= 150 - 48, "{}", result.text());
@@ -2595,7 +2708,7 @@ fn a_deleted_profiles_member_is_pruned_and_its_uid_never_reused() {
     assert_eq!(stored_uids_settled(&mut d).len(), 3);
     assert_eq!(stored_order(&d), ["alice", "bob", "dave"]);
     drop(d);
-    let mut again = open_driver(&dir.join("state"));
+    let mut again = open_driver(&dir);
     again.session_mut().set_spawn_workers(false);
     again
         .unlock(dir.join("vault"), PASSPHRASE, &play())
@@ -2674,7 +2787,7 @@ fn a_pending_or_failed_deletion_keeps_the_saved_place() {
         "the stored order never changed"
     );
     drop(d);
-    let mut again = open_driver(&dir.join("state"));
+    let mut again = open_driver(&dir);
     again.session_mut().set_spawn_workers(false);
     again
         .unlock(dir.join("vault"), PASSPHRASE, &play())
@@ -2748,7 +2861,7 @@ fn a_failed_large_marked_move_leaves_the_stored_order_exactly_as_before() {
     );
     d.session_mut().flush_writes();
     drop(d);
-    let mut again = open_driver(&dir.join("state"));
+    let mut again = open_driver(&dir);
     again.session_mut().set_spawn_workers(false);
     again
         .unlock(dir.join("vault"), PASSPHRASE, &play())
@@ -2806,7 +2919,7 @@ fn run_helper(d: &mut HeadlessDriver, name: &str, generation: u64) {
     d.poll();
 }
 
-fn paint_driver(test: &str, names: &[&str]) -> HeadlessDriver {
+fn paint_driver(test: &str, names: &[&str]) -> TestDriver {
     let mut d = driver(test, names);
     d.submit(OperatorCommand::Load, Targets::Everyone)
         .expect("load");
@@ -3042,6 +3155,119 @@ fn paint_controls_follow_the_lifecycle_state() {
     assert!(paint.frame().view().activate(0).is_none());
 }
 
+/// Publish a native paint frame on `name`'s status row, as the slot's
+/// observe does after a native script publishes it.
+fn publish_native_paint(
+    d: &HeadlessDriver,
+    name: &str,
+    paint: std::sync::Arc<script::shim::ScriptPaint>,
+) {
+    let play = d.session().play().expect("play");
+    let mut rows = play.statuses.lock().expect("status rows");
+    let row = rows
+        .iter_mut()
+        .find(|row| row.username == name)
+        .expect("status row");
+    row.script_paint = Some(paint);
+}
+
+/// Press Pause, Resume and Stop on one native paint frame (its two
+/// host controls are buttons 0 and 1) and check each press through
+/// the lifecycle rows, as the front ends submit them.
+fn native_paint_controls_case(test: &str, paint: std::sync::Arc<script::shim::ScriptPaint>) {
+    let mut d = paint_driver(test, &["alice"]);
+    publish_native_paint(&d, "alice", paint);
+    d.poll();
+    let running = shown(&d, "alice");
+    assert_eq!(
+        labels(&running),
+        vec![("Pause".to_string(), true), ("Stop".to_string(), true)],
+        "the native paint shows Pause and Stop"
+    );
+    let pause = activate(&mut d, &running, 0, "alice").expect("pause applies");
+    assert_eq!(command_of(&d, &pause), OperatorCommand::PauseScript);
+    settle(&mut d, pause.request());
+    assert_eq!(terminal(&d, pause.request(), "alice"), Some(done()));
+    assert_eq!(d.session().script_state("alice"), ScriptRunState::Paused);
+
+    let paused = shown(&d, "alice");
+    assert_eq!(
+        labels(&paused),
+        vec![("Resume".to_string(), true), ("Stop".to_string(), true)],
+        "the retained native paint shows Resume while paused"
+    );
+    let resume = activate(&mut d, &paused, 0, "alice").expect("resume applies");
+    assert_eq!(command_of(&d, &resume), OperatorCommand::ResumeScript);
+    settle(&mut d, resume.request());
+    assert_eq!(terminal(&d, resume.request(), "alice"), Some(done()));
+    assert_eq!(d.session().script_state("alice"), ScriptRunState::Running);
+
+    let again = shown(&d, "alice");
+    let stop = activate(&mut d, &again, 1, "alice").expect("stop applies");
+    assert_eq!(command_of(&d, &stop), OperatorCommand::StopScript);
+    settle(&mut d, stop.request());
+    assert_eq!(terminal(&d, stop.request(), "alice"), Some(done()));
+    wait_state(&mut d, "alice", ScriptRunState::Idle);
+    assert!(
+        d.session().script_paint("alice").is_none(),
+        "Stop clears the published native paint"
+    );
+}
+
+/// L5: the real native Gatherer paint frame, published on a running
+/// slot, pauses, resumes and stops that run through the lifecycle
+/// rows.
+#[test]
+fn native_gatherer_paint_controls_pause_resume_and_stop() {
+    use std::sync::Arc;
+    let data = script::gatherer::status::StatusData {
+        skill: "Woodcutting",
+        method: Arc::from("normal"),
+        phase: "gathering",
+        area: Arc::from("Start"),
+        target: Arc::from("Tree"),
+        tool: Arc::from("Bronze axe"),
+        bait: 0,
+        food: 0,
+        coins: 0,
+        yielded: 0,
+        dropped: 0,
+        deposited: 0,
+        trips: 0,
+        xp: 0,
+        xp_per_hour: None,
+        bank: Arc::from(""),
+        last_progress: 0,
+        deaths: 0,
+        recoveries: 0,
+        recovery_step: 0,
+        absent: 0,
+        zone_gated: 0,
+        excluded_targets: Arc::from(""),
+        last_event: Arc::from(""),
+    };
+    native_paint_controls_case(
+        "native-gatherer-paint",
+        script::gatherer::status::paint(&data),
+    );
+}
+
+/// L5: the frame the native Sherlock publishes (its card title, its
+/// status lines, the host controls, and the run number it stamps as
+/// the frame generation), published on a running slot, pauses,
+/// resumes and stops that run the same way.
+#[test]
+fn native_sherlock_paint_controls_pause_resume_and_stop() {
+    let paint = std::sync::Arc::new(script::shim::ScriptPaint {
+        title: Some("Sherlock".into()),
+        lines: vec!["Waiting for a clue".into(), "Clues solved: 0".into()],
+        buttons: script::shim::host_control_buttons(),
+        generation: 7,
+        ..Default::default()
+    });
+    native_paint_controls_case("native-sherlock-paint", paint);
+}
+
 /// Every place a Start can wait before its slot runs it.
 #[derive(Clone, Copy, Debug)]
 enum Waiting {
@@ -3221,13 +3447,9 @@ fn withdraw_case(waiting: Waiting, withdraw: Withdraw) {
         "{case}: nothing waits after the withdrawal"
     );
     drop(held);
-    for _ in 0..400 {
-        d.poll();
-        if terminal(&d, original, &target).is_some() {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(5));
-    }
+    wait_for_command(&mut d, original, "the cancelled member's terminal", |d| {
+        terminal(d, original, &target).is_some()
+    });
     assert_eq!(
         terminal(&d, original, &target),
         Some(operator_cancelled()),
@@ -3315,15 +3537,26 @@ fn log_in_on(d: &mut HeadlessDriver, name: &str, world: u16) {
 }
 
 /// A driver whose server lists public worlds 1-3, with `names` loaded and
-/// in game on world 1.
-fn world_driver(test: &str, names: &[&str]) -> HeadlessDriver {
-    let mut d = driver(test, names);
+/// in game on world 1, over a scratch the caller already holds.
+fn world_driver_in(dir: &Scratch, names: &[&str]) -> HeadlessDriver {
+    let mut d = driver_in(dir, names);
     d.session_mut().set_public_worlds_for_test(&[1, 2, 3]);
     load(&mut d, names);
     for name in names {
         log_in_on(&mut d, name, 1);
     }
     d
+}
+
+/// A driver whose server lists public worlds 1-3, with `names` loaded and
+/// in game on world 1, owning its scratch home for the whole test.
+fn world_driver(test: &str, names: &[&str]) -> TestDriver {
+    let scratch = scratch(test);
+    let driver = world_driver_in(&scratch, names);
+    TestDriver {
+        driver,
+        _scratch: scratch,
+    }
 }
 
 /// Plan Switch world (for `target` alone when given): the plan command's
@@ -3662,11 +3895,8 @@ fn a_mixed_switch_admits_ready_bots_and_names_each_refusal_once() {
 /// logs the bot out.
 #[test]
 fn a_failed_world_save_never_logs_the_bot_out() {
-    let dir = std::env::temp_dir().join(format!(
-        "274bot-t33-driver-{}-f4-failed-save",
-        std::process::id()
-    ));
-    let mut d = world_driver("f4-failed-save", &["alice"]);
+    let dir = scratch("f4-failed-save");
+    let mut d = world_driver_in(&dir, &["alice"]);
     let session = arm_of(&d, "alice").session_key();
     assert_eq!(plan_switch(&mut d, 3, Some("alice")).0, Some(done()));
     // A directory where the vault file was: the next write cannot publish.
@@ -3674,13 +3904,9 @@ fn a_failed_world_save_never_logs_the_bot_out() {
     std::fs::rename(&vault, dir.join("vault.aside")).expect("vault aside");
     std::fs::create_dir(&vault).expect("block");
     let run = confirm_switch(&mut d);
-    for _ in 0..400 {
-        land_saves(&mut d);
-        if terminal(&d, run, "alice").is_some() {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(5));
-    }
+    wait_for_command(&mut d, run, "the failed world-save terminal", |d| {
+        terminal(d, run, "alice").is_some()
+    });
     assert!(
         matches!(terminal(&d, run, "alice"), Some(Settlement::Failed(_))),
         "{:?}",
@@ -3913,4 +4139,558 @@ fn a_relog_elsewhere_or_a_refused_world_fails_the_member() {
     );
     assert_eq!(terminal(&d, run, "bob"), Some(rejected));
     assert_eq!(member_detail(&d, run, "bob"), "world 2 refused the login");
+}
+
+// ---- PANEL-STATE-GAP-1023: one projection of what each bot is doing ----
+
+const NINE: [&str; 9] = [
+    "alice", "bob", "carol", "dave", "erin", "frank", "grace", "heidi", "ivan",
+];
+
+/// Publish `names` as clients in game, the way their slot threads do.
+fn publish_in_game(d: &HeadlessDriver, names: &[&str]) {
+    let mut rows = d.session().play().expect("play").statuses.lock().unwrap();
+    for name in names {
+        rows.retain(|row| row.username != *name);
+        rows.push(host_play::SlotStatus {
+            username: (*name).into(),
+            connected: true,
+            ingame: true,
+            scene_state: 2,
+            ..host_play::SlotStatus::default()
+        });
+    }
+}
+
+/// Set (or clear) the published script-walk destination of `names`.
+fn publish_walks(d: &HeadlessDriver, names: &[&str], walk: Option<(i32, i32, i32)>) {
+    let (x, z, level) = walk.unwrap_or((-1, -1, -1));
+    let mut rows = d.session().play().expect("play").statuses.lock().unwrap();
+    for row in rows
+        .iter_mut()
+        .filter(|row| names.contains(&row.username.as_str()))
+    {
+        (row.walk_x, row.walk_z, row.walk_level) = (x, z, level);
+    }
+}
+
+fn start_loop_scripts(d: &mut HeadlessDriver, names: &[&str]) {
+    for name in names {
+        d.session()
+            .play()
+            .expect("play")
+            .script_start_load(
+                name,
+                "export function tick(api) {}".into(),
+                script::LoadShape::NativeTick,
+                None,
+                vec![],
+            )
+            .expect("start");
+    }
+    for name in names {
+        wait_state(d, name, ScriptRunState::Running);
+    }
+}
+
+/// Every row's `(name, label)` as the fleet model hands them to a front end.
+fn row_labels(d: &HeadlessDriver) -> Vec<(String, String)> {
+    d.models()
+        .fleet()
+        .rows()
+        .iter()
+        .map(|row| (row.name().to_owned(), row.brief().to_owned()))
+        .collect()
+}
+
+fn all_labels(label: &str) -> Vec<(String, String)> {
+    NINE.iter()
+        .map(|name| ((*name).to_owned(), label.to_owned()))
+        .collect()
+}
+
+/// A driver with the nine bots loaded, in game, each running a script, with
+/// script walks published on the first three and every bot marked.
+fn nine_running_with_three_walks(test: &str) -> TestDriver {
+    let mut d = driver(test, &NINE);
+    load(&mut d, &NINE);
+    publish_in_game(&d, &NINE);
+    start_loop_scripts(&mut d, &NINE);
+    publish_walks(&d, &NINE[..3], Some((2550, 3348, 0)));
+    d.poll();
+    mark(&mut d, &NINE);
+    d.poll();
+    d
+}
+
+/// PANEL-STATE-GAP-1023, acceptance 1-3: Stop on nine marked bots in game,
+/// three of them walking for their script, completes all nine, retires the
+/// three script-walk observations in the runtime's status rows (not only in
+/// the projection), keeps every client logged in, and leaves zero active
+/// scripts and zero script walks.
+#[test]
+fn stopping_nine_marked_bots_retires_the_three_script_walks() {
+    let mut d = nine_running_with_three_walks("psg-stop-nine");
+    assert_eq!(row_labels(&d), all_labels("running"));
+    let walking: Vec<_> = d
+        .models()
+        .fleet()
+        .rows()
+        .iter()
+        .filter(|row| row.script_walk())
+        .map(|row| row.name().to_owned())
+        .collect();
+    assert_eq!(walking, ["alice", "bob", "carol"]);
+    assert_eq!(d.models().fleet().counts().marked(), 9);
+
+    assert_eq!(plan(&mut d, crate::FleetAction::Stop), Some(done()));
+    assert_eq!(plan_names(&d), NINE);
+    let stop = run_plan(&mut d);
+    for name in NINE {
+        assert_eq!(terminal(&d, stop, name), Some(done()), "Stop {name}");
+        wait_state(&mut d, name, ScriptRunState::Idle);
+    }
+    d.poll();
+    let result = d.session().fleet_result().expect("result");
+    assert!(result.settled(), "{}", result.text());
+    assert_eq!(result.counts().done, 9, "{}", result.text());
+
+    // The runtime owner retired the destinations: the host rows say so.
+    for row in d
+        .session()
+        .play()
+        .expect("play")
+        .statuses
+        .lock()
+        .unwrap()
+        .iter()
+    {
+        assert_eq!(
+            row.script_walk(),
+            None,
+            "{} kept a walk target",
+            row.username
+        );
+    }
+    // The projection: every client still in game, no script, no script walk.
+    assert_eq!(row_labels(&d), all_labels("idle"));
+    for row in d.models().fleet().rows() {
+        assert_eq!(
+            (
+                row.script().is_live(),
+                row.script_walk(),
+                row.manual_walk(),
+                row.connected(),
+                row.phase()
+            ),
+            (false, false, false, true, crate::Phase::Ready),
+            "{}",
+            row.name()
+        );
+    }
+}
+
+/// PANEL-STATE-GAP-1023, acceptance 4: after that Stop, changing focus,
+/// marks, the filter and the displayed script choice never brings a walk
+/// label back: a label is a fact about the bot, not about a view of it.
+#[test]
+fn old_walk_labels_do_not_return_after_focus_mark_filter_or_choice_changes() {
+    use crate::{MarkOp, MarkPredicate};
+    let mut d = nine_running_with_three_walks("psg-views");
+    assert_eq!(plan(&mut d, crate::FleetAction::Stop), Some(done()));
+    run_plan(&mut d);
+    for name in NINE {
+        wait_state(&mut d, name, ScriptRunState::Idle);
+    }
+    d.poll();
+    let idle = all_labels("idle");
+    assert_eq!(row_labels(&d), idle);
+
+    // Focus: every bot in turn, the three that walked first.
+    for name in ["alice", "bob", "carol", "dave", "ivan"] {
+        d.submit(OperatorCommand::Select, Targets::Profile(name))
+            .expect("select");
+        d.poll();
+        assert_eq!(row_labels(&d), idle, "focus on {name}");
+        assert_eq!(
+            d.session()
+                .fleet_view()
+                .detail()
+                .map(|detail| detail.row().brief()),
+            Some("idle"),
+            "the focused detail agrees"
+        );
+    }
+
+    // Marks: clear, mark the three, mark by every status.
+    d.submit(OperatorCommand::ClearMarks, Targets::Application)
+        .expect("clear marks");
+    mark(&mut d, &NINE[..3]);
+    d.poll();
+    assert_eq!(row_labels(&d), idle, "marks");
+    for predicate in MarkPredicate::ALL {
+        d.submit(
+            OperatorCommand::MarkFleet(MarkOp::Where(predicate)),
+            Targets::Application,
+        )
+        .expect("mark by status");
+        d.poll();
+        assert_eq!(row_labels(&d), idle, "mark by {}", predicate.label());
+    }
+    d.submit(OperatorCommand::ClearMarks, Targets::Application)
+        .expect("clear marks");
+    d.submit(
+        OperatorCommand::MarkFleet(MarkOp::Where(MarkPredicate::Running)),
+        Targets::Application,
+    )
+    .expect("mark running");
+    assert_eq!(
+        d.models().fleet().counts().marked(),
+        0,
+        "nothing is running"
+    );
+
+    // Filters: by label text, by name.
+    for (text, shown) in [("running", 0), ("idle", 9), ("alice", 1), ("", 9)] {
+        let filter = d.models_mut().fleet_mut().staged_filter_mut();
+        filter.clear();
+        filter.push_str(text);
+        d.submit(OperatorCommand::SetFleetFilter, Targets::Application)
+            .expect("filter");
+        d.poll();
+        assert_eq!(d.models().fleet().shown().len(), shown, "filter {text:?}");
+        assert_eq!(row_labels(&d), idle, "filter {text:?}");
+    }
+
+    // The displayed script choice: a pending Browse pick on a bot that
+    // walked changes its heading and nothing about what it is doing.
+    d.models_mut()
+        .scripts_mut()
+        .set_pending_browse("alice", gatherer());
+    d.poll();
+    assert_eq!(row_labels(&d), idle, "script choice");
+    let alice = d
+        .session()
+        .bot_projection(Some(d.models().scripts()), "alice")
+        .expect("alice");
+    assert_eq!(alice.displayed_script(), Some("Gatherer"));
+    assert_eq!(alice.label(), "idle");
+}
+
+/// PANEL-STATE-GAP-1023, acceptance 6 and 7 (application half): a WalkTo
+/// walk is a separate fact that a script Stop leaves visible; the label, the
+/// Stop decision and the status filters all read the same row facts.
+#[test]
+fn a_manual_walk_stays_visible_after_stop_and_the_decisions_read_the_same_facts() {
+    use crate::{MarkOp, MarkPredicate};
+    let mut d = nine_running_with_three_walks("psg-manual");
+    let arm = std::sync::Arc::new(std::sync::Mutex::new(host_play::WalkArm::default()));
+    d.session()
+        .walk_arms()
+        .lock()
+        .unwrap()
+        .insert("ivan".to_owned(), std::sync::Arc::clone(&arm));
+    arm.lock().unwrap().route = Some(std::sync::Arc::new(nav_planner::router::Route {
+        legs: Vec::new(),
+        dest: api::snapshot::WorldTile {
+            x: 3220,
+            z: 3200,
+            level: 0,
+        },
+        ticks: 1.0,
+    }));
+    d.poll();
+
+    // Ivan's script goes first, so his walk is the only thing he is doing.
+    d.session().play().expect("play").script_stop("ivan");
+    wait_state(&mut d, "ivan", ScriptRunState::Idle);
+    d.poll();
+    {
+        let ivan = d
+            .session()
+            .bot_projection(Some(d.models().scripts()), "ivan")
+            .expect("ivan");
+        assert_eq!(
+            (
+                ivan.script(),
+                ivan.script_walk(),
+                ivan.manual_walk(),
+                ivan.label()
+            ),
+            (ScriptRunState::Idle, false, true, "running"),
+            "a walk alone reads as activity"
+        );
+        assert_eq!(
+            ivan.stop_eligibility(),
+            crate::StopEligibility::NoScript,
+            "a walk is not a script: Stop has nothing to stop"
+        );
+    }
+
+    // Stop the other eight, including the three with script walks.
+    d.submit(OperatorCommand::ClearMarks, Targets::Application)
+        .expect("clear marks");
+    mark(&mut d, &NINE[..8]);
+    assert_eq!(plan(&mut d, crate::FleetAction::Stop), Some(done()));
+    assert_eq!(plan_names(&d), &NINE[..8]);
+    run_plan(&mut d);
+    for name in &NINE[..8] {
+        wait_state(&mut d, name, ScriptRunState::Idle);
+    }
+    d.poll();
+    let mut want = all_labels("idle");
+    want[8].1 = "running".into();
+    assert_eq!(row_labels(&d), want, "only the manual walker is running");
+    assert!(
+        d.models().fleet().rows()[8].manual_walk(),
+        "the manual walk survived the Stop"
+    );
+    assert!(d.session().walk_route_armed("ivan"));
+
+    // The Mark-by-status predicates read the same facts as the label.
+    for (predicate, marked) in [
+        (MarkPredicate::Running, ["ivan"].as_slice()),
+        (MarkPredicate::Idle, &NINE[..8]),
+    ] {
+        d.submit(OperatorCommand::ClearMarks, Targets::Application)
+            .expect("clear marks");
+        d.submit(
+            OperatorCommand::MarkFleet(MarkOp::Where(predicate)),
+            Targets::Application,
+        )
+        .expect("mark by status");
+        let fleet = d.models().fleet();
+        let got: Vec<_> = fleet
+            .rows()
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| fleet.is_marked(*index))
+            .map(|(_, row)| row.name())
+            .collect();
+        assert_eq!(got, marked, "Mark by status > {}", predicate.label());
+    }
+
+    // Stop of the walker alone is refused for want of a script, and the
+    // refusal comes from the same fact the projection shows.
+    d.submit(OperatorCommand::ClearMarks, Targets::Application)
+        .expect("clear marks");
+    mark(&mut d, &["ivan"]);
+    let planned = d
+        .submit(
+            OperatorCommand::PlanFleetAction(crate::FleetAction::Stop),
+            Targets::Application,
+        )
+        .expect("plan admitted");
+    assert_eq!(
+        d.session().command_failure(planned.request()),
+        Some("Stop: no bot to act on (ivan: no script running)")
+    );
+    assert!(d.session().fleet_plan().is_none());
+    assert!(arm.lock().unwrap().route.is_some());
+
+    arm.lock().unwrap().route = None;
+    d.poll();
+    assert_eq!(row_labels(&d), all_labels("idle"));
+}
+
+/// PANEL-STATE-GAP-1023, acceptance 5: repeating Stop on bots that are
+/// already stopped is refused at the command boundary, and that refusal logs
+/// one `info` line naming the command, the bots and the reason. The first
+/// Stop, which ran, logs none. The bots have names of their own because the
+/// process log is shared by every test.
+#[test]
+fn a_repeated_stop_logs_one_refusal_line() {
+    use crate::log::{global, LogScope, LogView};
+    const BOTS: [&str; 3] = ["psg5-a", "psg5-b", "psg5-c"];
+    let mut d = driver("psg-refusal", &BOTS);
+    load(&mut d, &BOTS);
+    publish_in_game(&d, &BOTS);
+    start_loop_scripts(&mut d, &BOTS);
+    mark(&mut d, &BOTS);
+    d.poll();
+    let refusal_lines = |d: &HeadlessDriver| -> Vec<String> {
+        let _ = d;
+        let mut view = LogView::new(LogScope::Process);
+        view.edit_filter(|filter| filter.set_text("command refused"));
+        global().refresh(&mut view);
+        view.rows()
+            .iter()
+            .map(|row| row.message().to_owned())
+            .filter(|line| line.contains("psg5-"))
+            .collect()
+    };
+
+    assert_eq!(plan(&mut d, crate::FleetAction::Stop), Some(done()));
+    run_plan(&mut d);
+    for name in BOTS {
+        wait_state(&mut d, name, ScriptRunState::Idle);
+    }
+    d.poll();
+    assert_eq!(refusal_lines(&d), Vec::<String>::new(), "a Stop that ran");
+
+    let before = d.session().refusals();
+    let planned = d
+        .submit(
+            OperatorCommand::PlanFleetAction(crate::FleetAction::Stop),
+            Targets::Application,
+        )
+        .expect("plan admitted");
+    assert!(d.session().command_failure(planned.request()).is_some());
+    assert_eq!(d.session().refusals(), before + 1);
+    let lines = refusal_lines(&d);
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    let line = &lines[0];
+    for part in [
+        "PlanFleetAction(Stop)",
+        "no bot to act on",
+        "psg5-a: no script running",
+        "psg5-b: no script running",
+        "psg5-c: no script running",
+    ] {
+        assert!(line.contains(part), "{part:?} missing from {line:?}");
+    }
+}
+
+/// PANEL-STATE-GAP-1023: every refusal line holds the command, the bots and
+/// the reason. A refused submission names the bots the caller gave. A refused
+/// member that carries no text still names its typed reason.
+#[test]
+fn a_refusal_line_names_the_command_the_bots_and_the_reason() {
+    use crate::log::{global, LogScope, LogView};
+    const BOT: &str = "psg5r-bot";
+    let mut d = driver("psg-refusal-reason", &[BOT]);
+    load(&mut d, &[BOT]);
+    let lines_with = |needle: &str| -> Vec<String> {
+        let mut view = LogView::new(LogScope::Process);
+        view.edit_filter(|filter| filter.set_text("command refused: PrepareScriptCard"));
+        global().refresh(&mut view);
+        view.rows()
+            .iter()
+            .map(|row| row.message().to_owned())
+            .filter(|line| line.contains(needle))
+            .collect()
+    };
+
+    // A command for the application, given a bot: refused before it opens.
+    let before = d.session().refusals();
+    assert!(d
+        .submit(OperatorCommand::PrepareScriptCard, Targets::Profile(BOT))
+        .is_err());
+    assert_eq!(d.session().refusals(), before + 1);
+    let named = lines_with(BOT);
+    assert_eq!(named.len(), 1, "{named:?}");
+    for part in [
+        "PrepareScriptCard",
+        "on psg5r-bot",
+        "cannot take these targets",
+    ] {
+        assert!(
+            named[0].contains(part),
+            "{part:?} missing from {:?}",
+            named[0]
+        );
+    }
+
+    // A member refused with a typed reason and no text.
+    d.submit(OperatorCommand::PrepareScriptCard, Targets::Application)
+        .expect("opened");
+    assert_eq!(d.session().refusals(), before + 2);
+    let bare = lines_with("on application: NotStaged");
+    assert!(!bare.is_empty(), "the typed reason is in the line");
+}
+
+// ---- LOGOUT-RETRY-1025: Log out reaches a login that is still retrying ----
+
+/// Publish `name` as a bot whose login was refused and whose slot still
+/// wants the login, so the host retries it after its backoff.
+fn publish_refused_retry(d: &mut HeadlessDriver, name: &str) {
+    publish(d, name, |row| {
+        row.connected = false;
+        row.ingame = false;
+        row.startup_phase = host_play::StartupPhase::Error;
+        row.startup_phase_started = std::time::Instant::now();
+        row.error = Some("Error connecting to server. (connect: Connection refused)".into());
+    });
+}
+
+/// A bot whose login is refused and retried keeps retrying for ever unless
+/// Log out reaches it. Fleet Log out (one shared plan for panel and TUI)
+/// takes it, parks it so the slot makes no further login attempt, and
+/// refuses a bot that never logged in with the one reason it always had.
+#[test]
+fn logout_retry_fleet_takes_a_bot_whose_login_is_retrying_and_stops_the_retries() {
+    let mut d = driver("logout-retry-fleet", &["alice", "bob", "carol"]);
+    load(&mut d, &["alice", "bob", "carol"]);
+    d.submit(OperatorCommand::Login, Targets::Profile("bob"))
+        .expect("login");
+    publish_refused_retry(&mut d, "bob");
+    let bob = d.session().fleet_view().row("bob").expect("bob").snapshot();
+    assert_eq!(
+        (bob.phase(), bob.retrying()),
+        (crate::Phase::LoginError, true),
+        "bob is between retries"
+    );
+    let arm = arm_of(&d, "bob");
+    assert!(arm.wants_login(), "the slot would retry");
+
+    mark(&mut d, &["alice", "bob", "carol"]);
+    let planned = d
+        .submit(
+            OperatorCommand::PlanFleetAction(crate::FleetAction::Logout),
+            Targets::Application,
+        )
+        .expect("plan admitted");
+    assert_eq!(
+        d.session().command_failure(planned.request()),
+        None,
+        "bob has a login to cancel"
+    );
+    assert_eq!(plan_names(&d), ["bob"]);
+    let prompt = d.session().fleet_plan().expect("plan").prompt().to_owned();
+    assert!(
+        prompt.starts_with("Log out 3 marked bot")
+            || prompt.starts_with("Log out 1 marked bot: bob."),
+        "{prompt}"
+    );
+    assert!(
+        prompt.contains("alice: not logged in") && prompt.contains("carol: not logged in"),
+        "the bots that never logged in are skipped: {prompt}"
+    );
+    let run = run_plan(&mut d);
+    assert_eq!(terminal(&d, run, "bob"), Some(done()));
+    assert!(arm.login_latched(), "bob is parked logged out");
+    assert!(!arm.wants_login(), "the retry loop has nothing to retry");
+    for name in ["alice", "carol"] {
+        assert!(
+            !arm_of(&d, name).login_latched(),
+            "{name} was never logged out: it never logged in"
+        );
+    }
+    d.poll();
+    let bob = d.session().fleet_view().row("bob").expect("bob").snapshot();
+    assert_eq!(bob.phase(), crate::Phase::LoggedOut);
+    assert!(
+        !bob.logout_eligibility().eligible(),
+        "a parked bot has nothing more to cancel"
+    );
+}
+
+/// With only never-logged-in bots marked, Log out still has no bot to act
+/// on, and the refusal names each one.
+#[test]
+fn logout_retry_fleet_still_refuses_bots_that_never_logged_in() {
+    let mut d = driver("logout-retry-refusal", &["alice", "bob"]);
+    load(&mut d, &["alice", "bob"]);
+    mark(&mut d, &["alice", "bob"]);
+    let planned = d
+        .submit(
+            OperatorCommand::PlanFleetAction(crate::FleetAction::Logout),
+            Targets::Application,
+        )
+        .expect("plan admitted");
+    assert_eq!(
+        d.session().command_failure(planned.request()),
+        Some("Log out: no bot to act on (alice: not logged in, bob: not logged in)")
+    );
+    assert!(d.session().fleet_plan().is_none());
 }

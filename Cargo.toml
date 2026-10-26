@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/host", "crates/vault", "crates/api", "crates/client-adapter", "crates/host-play", "crates/frontend-core", "crates/e2e", "crates/panel", "crates/nav", "crates/script", "crates/scenario", "crates/tui", "tools/seat-model"]
+members = ["crates/host", "crates/vault", "crates/api", "crates/client-adapter", "crates/host-play", "crates/frontend-core", "crates/e2e", "crates/panel", "crates/nav-planner", "crates/nav-executor", "crates/nav-bake", "crates/script", "crates/scenario", "crates/tui", "tools/seat-model"]
 
 [workspace.lints.clippy]
 undocumented_unsafe_blocks = "warn"
@@ -8,8 +8,8 @@ unwrap_used = "warn"
 # Suppression hygiene: `allow_attributes` forces `#[expect]` (an expectation
 # that stops firing is an error), and `allow_attributes_without_reason`
 # requires every suppression to justify itself. The six approved lints below
-# are the current ratchet set. Only `vault` opts in (`[lints] workspace = true`
-# in its manifest); a crate opts in when a refactor reaches it.
+# are the current ratchet set. `vault`, `nav-planner`, and `nav-bake` opt in
+# (`[lints] workspace = true` in their manifests). A refactored crate stays opted in.
 # These denies apply to test code too: clippy 1.98 offers no per-lint
 # `allow-*-in-tests` knob for any of them (only `unwrap_used` is scoped to
 # non-test code, via `allow-unwrap-in-tests` in clippy.toml), so opted-in
@@ -24,7 +24,7 @@ large_types_passed_by_value = "deny"
 assigning_clones = "deny"
 
 [workspace.package]
-version = "0.2.4"
+version = "0.2.7"
 
 [workspace.dependencies]
 client = { path = "vendor/fr-client-rust/crates/client", default-features = false }
@@ -39,10 +39,14 @@ dear-imgui-wgpu = { path = "vendor/dear-imgui-wgpu-0.15.1" }
 opt-level = 3
 
 # Route searches over the real pack dominate nav and real-pack tests. At
-# opt-level 0 the full `cargo test -p nav` took a median 334 s; at 3 it took
+# opt-level 0 the full `cargo test -p nav-planner` took a median 334 s; at 3 it took
 # 30 s (release: 28 s). A nav edit then rebuilding `script` tests cost +4 s
 # (27 -> 31 s). Measured 2026-10-08, MEASURE-NAV-OPT.
-[profile.dev.package.nav]
+[profile.dev.package.nav-planner]
+opt-level = 3
+
+# The extracted producers retain the planner's dev optimization level.
+[profile.dev.package.nav-bake]
 opt-level = 3
 
 # Debug info is most of `target/` and link work. Our crates keep file:line
@@ -56,7 +60,7 @@ debug = "line-tables-only"
 debug = false
 opt-level = 1
 
-# host-play's build script bakes the navigation pack through the `nav` crate.
+# host-play's build script bakes navigation through the `nav-bake` crate.
 # Build scripts default to opt-level 0, which made a bake take about 46 s instead
 # of 9 s (measured 2026-10-05); the baked files are byte-identical either way.
 # Registry build deps in dev still get `package."*"` above, which takes precedence.

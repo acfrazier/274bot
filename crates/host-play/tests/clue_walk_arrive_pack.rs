@@ -1,9 +1,9 @@
 //! Optional real-pack companion to the clue machine/approach regressions.
 //! Run with WORLD_NAV_PACK pointing at the selected revision's pack.
 use api::WorldTile;
-use nav::router::{find_with, FindOptions, Leg, RouteError};
-use nav::world::NavWorld;
-use nav::WorldState;
+use nav_planner::router::{find_with, FindOptions, Leg, RouteError};
+use nav_planner::world::NavWorld;
+use nav_planner::WorldState;
 
 #[test]
 #[ignore = "requires explicit WORLD_NAV_PACK for revision 289"]

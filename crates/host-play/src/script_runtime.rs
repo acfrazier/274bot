@@ -35,6 +35,30 @@ pub(super) use script_nav::{
     ScriptRouteExclusions, ScriptWalkArm,
 };
 use script_nav::{log_walk_arm_bot, take_carried_walk};
+
+/// Resolve live-fixture crossing grants through the script walk product path.
+#[cfg(feature = "test-support")]
+pub fn resolve_script_cross_zones_for_live_test(
+    opts: nav_planner::router::FindOptions,
+    world: &nav_planner::world::NavWorld,
+    from: api::WorldTile,
+    to: api::WorldTile,
+    state: &nav_planner::WorldState,
+    cross: &[&str],
+) -> Result<nav_planner::router::FindOptions, String> {
+    script_nav::resolve_route_exclusions(
+        opts,
+        world,
+        from,
+        to,
+        state,
+        ScriptRouteExclusions {
+            cross: cross.iter().map(|name| Arc::from(*name)).collect(),
+            ..Default::default()
+        },
+    )
+    .map(|(opts, _)| opts)
+}
 #[path = "script_walk.rs"]
 mod script_walk;
 #[cfg(not(test))]
@@ -45,7 +69,7 @@ pub(super) use script_walk::{
 };
 #[cfg(test)]
 pub(super) use script_walk::{
-    apply_nav_follow_outcome, apply_watchdog_nav_action, owe_combat_prayers_off,
+    apply_nav_follow_outcome, apply_watchdog_nav_action, owe_combat_prayers_off, BEFORE_PUBLISH,
 };
 use script_walk::{recovery_walk_idle, resumed_walk};
 #[path = "script_snapshot.rs"]
@@ -57,8 +81,9 @@ pub(super) use script_snapshot::{slot_arrival_reach, with_script_snapshot_input_
 #[path = "script_interact.rs"]
 mod script_interact;
 pub(super) use script_interact::{
-    dispatch_native_bank_deposit, dispatch_script_interact_cached_scoped, BankDepositDispatch,
-    InteractContext,
+    dispatch_native_bank_deposit, dispatch_native_server_ordered,
+    dispatch_script_interact_cached_scoped, BankDepositDispatch, InteractContext,
+    OrderedDispatchContext,
 };
 #[cfg(test)]
 pub(super) use script_interact::{
@@ -82,15 +107,16 @@ pub(super) fn poll_inspection_for_test(navs: &Arc<Mutex<HashMap<String, NavBot>>
 
 #[path = "script_observe.rs"]
 mod script_observe;
+#[cfg(test)]
+pub(super) use script_observe::{
+    delay_ordered_drain_for_test, drain_observed_host_interacts, install_dispatch_barrier,
+    install_ordered_dispatch_hook, post_script_snapshot, script_observe, script_observe_cached,
+    script_observe_with_npc_boxes, take_script_interacts, DispatchBarrier,
+};
 pub(super) use script_observe::{
     deliver_channel_events, nav_world_state_for_observe, observe_script_inv,
     project_npc_boxes_for_isolate_snapshot, projected_npc_boxes,
     script_observe_cached_with_channels, ScriptObservation,
-};
-#[cfg(test)]
-pub(super) use script_observe::{
-    drain_observed_host_interacts, install_dispatch_barrier, post_script_snapshot, script_observe,
-    script_observe_cached, script_observe_with_npc_boxes, take_script_interacts, DispatchBarrier,
 };
 /// Per-uid script cell on the wall. Encode/post/drain take the slot lock
 /// only — the wall map lock is held briefly for lookup/insert.
@@ -118,9 +144,54 @@ pub(super) fn script_slot_or_insert(wall: &ScriptWall, name: &str) -> ScriptSlot
                 .expect("slot incarnation exhausted");
             let mut slot = SlotScript::new();
             slot.bind_incarnation(incarnation);
+            bind_js_surface_factory(&mut slot);
             Arc::new(Mutex::new(slot))
         })
         .clone()
+}
+
+fn shared_js_surface_factory() -> Arc<script::load::surface::JsSurfaceFactory> {
+    static FACTORY: std::sync::LazyLock<Arc<script::load::surface::JsSurfaceFactory>> =
+        std::sync::LazyLock::new(|| Arc::new(script::load::surface::JsSurfaceFactory::default()));
+    Arc::clone(&FACTORY)
+}
+
+fn bind_js_surface_factory(slot: &mut SlotScript) {
+    slot.bind_surface_factory(shared_js_surface_factory());
+}
+
+pub(super) fn js_start_card(
+    source: String,
+    shape: script::LoadShape,
+    siblings: Vec<(String, String)>,
+) -> Arc<script::load::surface::JsStartCard> {
+    let source = Arc::<str>::from(source);
+    let family = script::resolve_api_family(&source)
+        .ok()
+        .map(|(_, family)| family);
+    Arc::new(script::load::surface::JsStartCard {
+        source,
+        shape,
+        siblings: Arc::from(siblings),
+        family,
+    })
+}
+
+pub(super) fn js_surface_start(
+    card: Arc<script::load::surface::JsStartCard>,
+    settings_bag: Option<Arc<script::native::SettingsBag>>,
+    game_data: Option<Arc<api::game_data::SelectedGameData>>,
+    named_banks: Arc<api::named_banks::NamedBankFacts>,
+    loadouts: Arc<[api::loadout::Loadout]>,
+) -> script::surface::SurfaceStart {
+    let card: Arc<dyn script::surface::SurfaceCard> = card;
+    script::surface::SurfaceStart {
+        card,
+        settings_bag,
+        game_data,
+        named_banks,
+        loadouts,
+    }
 }
 
 /// Resolve `name`'s lifecycle and read its latest Start under one lock; a
@@ -219,7 +290,16 @@ impl SettledStart for SlotScript {
         shape: script::LoadShape,
         siblings: Vec<(String, String)>,
     ) -> Result<(), String> {
-        self.start_load(source, shape, siblings)?;
+        bind_js_surface_factory(self);
+        let start = js_surface_start(
+            js_start_card(source, shape, siblings),
+            None,
+            None,
+            Arc::new(api::named_banks::NamedBankFacts::default()),
+            Arc::from(Vec::<api::loadout::Loadout>::new()),
+        );
+        self.start_surface(start)
+            .map_err(|error| error.to_string())?;
         settle_start(self)
     }
 
@@ -230,7 +310,16 @@ impl SettledStart for SlotScript {
         siblings: Vec<(String, String)>,
         loadouts: &[api::loadout::Loadout],
     ) -> Result<(), String> {
-        self.start_load_with_loadouts(source, shape, siblings, loadouts)?;
+        bind_js_surface_factory(self);
+        let start = js_surface_start(
+            js_start_card(source, shape, siblings),
+            None,
+            None,
+            Arc::new(api::named_banks::NamedBankFacts::default()),
+            Arc::from(loadouts.to_vec()),
+        );
+        self.start_surface(start)
+            .map_err(|error| error.to_string())?;
         settle_start(self)
     }
 }

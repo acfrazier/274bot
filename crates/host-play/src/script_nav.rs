@@ -16,26 +16,26 @@ use api::work::{
     Checkpoint, CooperativeJob, InputRevision, RetainedState, StepContext, StepOutcome,
     SubmissionRefusal, WorkAdmission, WorkTicket,
 };
-use nav::arrival::ArrivalKind;
+use nav_executor::Traveller;
+use nav_planner::arrival::ArrivalKind;
 #[cfg(test)]
-use nav::bank_fetch::{plan_bank_fetch, planning_rows, BankFetchError};
-use nav::bank_fetch::{
+use nav_planner::bank_fetch::{plan_bank_fetch, planning_rows, BankFetchError};
+use nav_planner::bank_fetch::{
     BankFetchCursor, BankFetchPlan, BankRows, BankStep, FetchableEdgeCursor, FetchableStateCursor,
     PlanningRowsCursor,
 };
-use nav::contract::{NavLease, RoutePlanLease};
-use nav::producer::{lease as nav_lease, OwnerResultLedger, OwnerResultReservation};
+use nav_planner::contract::{NavLease, RoutePlanLease};
+use nav_planner::producer::{lease as nav_lease, OwnerResultLedger, OwnerResultReservation};
 #[cfg(test)]
-use nav::router::find_missing_item_reqs_with_avoid;
-use nav::router::{
+use nav_planner::router::find_missing_item_reqs_with_avoid;
+use nav_planner::router::{
     AvoidRect, BlockerDiagnosis, CompactFallbackRoute, CompactRoute, CursorStep, FindOptions,
     MissingReqView, MissingRequirements, Route, SearchCursor, SearchOutcome, SearchPreflight,
     SearchRequest, SearchRequestShape, NODE_BUDGET,
 };
-use nav::traveller::Traveller;
-use nav::world::NavWorld;
-use nav::zones::{ZoneExempt, ZoneFilterOwned, ZoneKey};
-use nav::WorldState;
+use nav_planner::world::NavWorld;
+use nav_planner::zones::{ZoneExempt, ZoneFilterOwned, ZoneKey};
+use nav_planner::WorldState;
 use script::work_admission::{cancellation::WorkCancellation, WorkService};
 
 use crate::walk_plan::{PendingBankFetch, RouteOutcome, RoutePath};
@@ -203,7 +203,7 @@ impl RouteWorkJob {
 impl CooperativeJob for RouteWorkJob {
     type Output = RouteStageResult;
     type Error = RouteJobError;
-    type Phase = nav::contract::RoutePhase;
+    type Phase = nav_planner::contract::RoutePhase;
 
     fn request_thread(&self) -> Option<api::work::RequestThread<'_>> {
         self.job
@@ -262,6 +262,7 @@ struct RoutePreflights {
     missing_route: SearchPreflight,
     blocking: SearchPreflight,
     unresolved: SearchPreflight,
+    entrance: SearchPreflight,
 }
 
 fn route_search_options(request: &ScriptRouteRequest) -> FindOptions {
@@ -391,6 +392,12 @@ impl RouteSubmission {
             avoid_capacity,
             max_settles,
         })?;
+        let entrance = preflight(SearchRequestShape::EntranceRequirements {
+            target_capacity: candidate_capacity,
+            options,
+            avoid_capacity,
+            max_settles,
+        })?;
         let preflights = RoutePreflights {
             single,
             post_bank_single,
@@ -400,6 +407,7 @@ impl RouteSubmission {
             missing_route,
             blocking,
             unresolved,
+            entrance,
         };
 
         let plan_item_rows = preflights
@@ -494,6 +502,13 @@ impl RouteSubmission {
             })
             .ok_or(RouteJobError::Budget)?;
         result_bytes = result_bytes.max(preflights.unresolved.reservation().result_bytes);
+        result_bytes = result_bytes.max(preflights.entrance.reservation().result_bytes);
+        result_bytes = result_bytes
+            .checked_add(state.quest_evidence.as_ref().map_or(
+                0,
+                nav_planner::quest_gates::QuestEvidence::owned_provider_bytes,
+            ))
+            .ok_or(RouteJobError::Budget)?;
 
         let mut peak = input_bytes
             .checked_add(result_bytes)
@@ -526,6 +541,7 @@ impl RouteSubmission {
             &preflights.missing_route,
             &preflights.blocking,
             &preflights.unresolved,
+            &preflights.entrance,
         ] {
             include_peak(
                 search
@@ -822,7 +838,7 @@ fn arrival_filter_needed(request: &ScriptRouteRequest) -> bool {
 }
 
 fn arrival_collision_flags(
-    collision: &nav::collision::WorldCollision,
+    collision: &nav_planner::collision::WorldCollision,
     tile: WorldTile,
 ) -> Option<i32> {
     crate::walk_permissions::packed_arrival_flags(collision, tile)
@@ -883,7 +899,7 @@ impl api::work::WorkFamilySpec for RouteWorkSpec {
     type Input = RouteSubmission;
     type Output = RouteStageResult;
     type Error = RouteJobError;
-    type Phase = nav::contract::RoutePhase;
+    type Phase = nav_planner::contract::RoutePhase;
 
     fn revision(input: &Self::Input) -> InputRevision {
         input.revision
@@ -971,6 +987,7 @@ enum RouteSearchPurpose {
     Blocking,
     Unresolved,
     MissingCarry,
+    Entrance,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -1728,6 +1745,19 @@ impl RouteJob {
                 self.preflights.unresolved,
             )
             .map_err(|_| RouteJobError::Search)?,
+            RouteSearchPurpose::Entrance => SearchCursor::new_preflighted(
+                SearchRequest::EntranceRequirements {
+                    from: self.request.from,
+                    targets: std::mem::take(&mut self.goal_copy).into_boxed_slice(),
+                    options,
+                    avoid,
+                    max_settles,
+                },
+                self.lease.clone(),
+                Arc::clone(&self.state),
+                self.preflights.entrance,
+            )
+            .map_err(|_| RouteJobError::Search)?,
         };
         #[cfg(test)]
         route_work_tests::record_search_event(&self.thread_name, self.search_purpose, true);
@@ -1933,6 +1963,13 @@ impl RouteJob {
             (RouteSearchPurpose::MissingCarry, SearchOutcome::MissingItemReqs(missing)) => {
                 self.missing_requirements = missing;
                 self.missing_diag_index = 0;
+                self.prepare_goal_copy(RouteGoalCopy::Diagnostics, RouteSearchPurpose::Entrance)?;
+            }
+            (RouteSearchPurpose::Entrance, SearchOutcome::EntranceRequirements(requirement)) => {
+                if let Some(requirement) = requirement {
+                    self.native_failure = Some(script::native::WalkEnd::Blocked);
+                    self.detail = Some(requirement.to_string());
+                }
                 self.stage = RouteJobStage::Diagnostics;
             }
             _ => return Err(RouteJobError::ResultShape),
@@ -2249,7 +2286,7 @@ impl RouteJob {
 impl CooperativeJob for RouteJob {
     type Output = RouteJobOutput;
     type Error = RouteJobError;
-    type Phase = nav::contract::RoutePhase;
+    type Phase = nav_planner::contract::RoutePhase;
 
     fn step(
         &mut self,
@@ -2763,7 +2800,7 @@ pub(crate) struct RouteJobOutput {
     basis_avoid: Arc<[AvoidRect]>,
     opts: FindOptions,
     compat_v1: bool,
-    quest_evidence: Option<nav::quest_gates::QuestEvidence>,
+    quest_evidence: Option<nav_planner::quest_gates::QuestEvidence>,
     outcome: RouteJobOutcome,
     assessment: Option<Arc<script::combat::risk::RouteAssessment>>,
     refusal: Option<script::native::WalkRefusal>,
@@ -2833,13 +2870,13 @@ async fn assess_route_outcome_cooperative(
     if admission.escape.is_some_and(crate::admission::escape_live) {
         return Ok((RouteJobOutcome::NoPath, None, false));
     }
-    let view =
-        nav::producer::compact_route_view(&lease, route).map_err(|_| RouteJobError::ResultShape)?;
+    let view = nav_planner::producer::compact_route_view(&lease, route)
+        .map_err(|_| RouteJobError::ResultShape)?;
     let mut yield_unit = crate::admission::route_yield_unit;
     let assessment =
         crate::admission::assess_view_cooperative(view, &world, &admission, &mut yield_unit).await;
-    let view =
-        nav::producer::compact_route_view(&lease, route).map_err(|_| RouteJobError::ResultShape)?;
+    let view = nav_planner::producer::compact_route_view(&lease, route)
+        .map_err(|_| RouteJobError::ResultShape)?;
     let permitted = crate::admission::permits_view_cooperative(
         view,
         &world,
@@ -2855,64 +2892,64 @@ enum RouteReservation {
     NotNeeded,
     Full,
     Failed(String),
-    Refused(nav::producer::OwnerResultRefusal),
+    Refused(nav_planner::producer::OwnerResultRefusal),
     Reserved(Option<OwnerResultReservation>),
 }
 
 fn route_output_retained_bytes(
     output: &RouteJobOutput,
-) -> Result<Option<usize>, nav::producer::OwnerResultRefusal> {
+) -> Result<Option<usize>, nav_planner::producer::OwnerResultRefusal> {
     if !matches!(&output.kind, RouteDemandKind::Walk { .. }) {
         return Ok(None);
     }
     let custody_bytes = OwnerResultLedger::owner_result_bytes::<RoutePlanLease>(0)
-        .ok_or(nav::producer::OwnerResultRefusal::SizeOverflow)?;
+        .ok_or(nav_planner::producer::OwnerResultRefusal::SizeOverflow)?;
     let basis_bytes = arc_slice_heap_bytes::<AvoidRect>(output.basis_avoid.len())
-        .ok_or(nav::producer::OwnerResultRefusal::SizeOverflow)?;
+        .ok_or(nav_planner::producer::OwnerResultRefusal::SizeOverflow)?;
     let route_basis_layout = std::alloc::Layout::new::<[std::sync::atomic::AtomicUsize; 2]>()
         .extend(std::alloc::Layout::new::<crate::admission::RouteBasis>())
-        .map_err(|_| nav::producer::OwnerResultRefusal::SizeOverflow)?
+        .map_err(|_| nav_planner::producer::OwnerResultRefusal::SizeOverflow)?
         .0
         .pad_to_align()
         .size();
     let retained = match &output.outcome {
         RouteJobOutcome::NoPath => return Ok(None),
-        RouteJobOutcome::Route(route) => nav::producer::compact_route_storage_bytes(route)
-            .ok_or(nav::producer::OwnerResultRefusal::SizeOverflow)?
+        RouteJobOutcome::Route(route) => nav_planner::producer::compact_route_storage_bytes(route)
+            .ok_or(nav_planner::producer::OwnerResultRefusal::SizeOverflow)?
             .checked_add(std::mem::size_of::<RoutePath>())
             .and_then(|bytes| bytes.checked_add(custody_bytes))
             .and_then(|bytes| bytes.checked_add(basis_bytes))
             .and_then(|bytes| bytes.checked_add(route_basis_layout))
-            .ok_or(nav::producer::OwnerResultRefusal::SizeOverflow)?,
+            .ok_or(nav_planner::producer::OwnerResultRefusal::SizeOverflow)?,
         RouteJobOutcome::Bank {
             steps,
             route,
             final_route,
         } => {
             let current = match route {
-                Some(route) => nav::producer::compact_route_storage_bytes(route)
-                    .ok_or(nav::producer::OwnerResultRefusal::SizeOverflow)?,
+                Some(route) => nav_planner::producer::compact_route_storage_bytes(route)
+                    .ok_or(nav_planner::producer::OwnerResultRefusal::SizeOverflow)?,
                 None => 0,
             };
-            let final_route = nav::producer::compact_route_storage_bytes(final_route)
-                .ok_or(nav::producer::OwnerResultRefusal::SizeOverflow)?;
+            let final_route = nav_planner::producer::compact_route_storage_bytes(final_route)
+                .ok_or(nav_planner::producer::OwnerResultRefusal::SizeOverflow)?;
             let shared_custody = if route.is_some() {
                 custody_bytes
                     .checked_mul(2)
                     .and_then(|bytes| bytes.checked_sub(OwnerResultReservation::storage_bytes()))
-                    .ok_or(nav::producer::OwnerResultRefusal::SizeOverflow)?
+                    .ok_or(nav_planner::producer::OwnerResultRefusal::SizeOverflow)?
             } else {
                 custody_bytes
             };
             let step_bytes = steps
                 .capacity()
                 .checked_mul(std::mem::size_of::<BankStep>())
-                .ok_or(nav::producer::OwnerResultRefusal::SizeOverflow)?;
+                .ok_or(nav_planner::producer::OwnerResultRefusal::SizeOverflow)?;
             let avoid_bytes = output
                 .bank_avoid_copy
                 .capacity()
                 .checked_mul(std::mem::size_of::<AvoidRect>())
-                .ok_or(nav::producer::OwnerResultRefusal::SizeOverflow)?;
+                .ok_or(nav_planner::producer::OwnerResultRefusal::SizeOverflow)?;
             current
                 .checked_add(final_route)
                 .and_then(|bytes| bytes.checked_add(std::mem::size_of::<RoutePath>()))
@@ -2922,7 +2959,7 @@ fn route_output_retained_bytes(
                 .and_then(|bytes| bytes.checked_add(shared_custody))
                 .and_then(|bytes| bytes.checked_add(basis_bytes))
                 .and_then(|bytes| bytes.checked_add(route_basis_layout))
-                .ok_or(nav::producer::OwnerResultRefusal::SizeOverflow)?
+                .ok_or(nav_planner::producer::OwnerResultRefusal::SizeOverflow)?
         }
     };
     Ok(Some(retained))
@@ -3075,7 +3112,7 @@ fn publish_unsubmitted_route_failure(
 }
 
 fn compact_route_ticks(lease: &NavLease, route: &CompactRoute) -> u32 {
-    nav::producer::compact_route_view(lease, route)
+    nav_planner::producer::compact_route_view(lease, route)
         .ok()
         .and_then(|view| script::combat::risk::RoutePath::new(view).ok())
         .and_then(|path| u32::try_from(path.ticks()).ok())
@@ -3355,17 +3392,17 @@ pub(crate) fn publish_route_owner_refusal(
     generation: u64,
     request_id: u64,
     kind: RouteDemandKind,
-    error: nav::producer::OwnerResultRefusal,
+    error: nav_planner::producer::OwnerResultRefusal,
 ) {
     let refusal = match &error {
-        nav::producer::OwnerResultRefusal::TooLarge { requested, maximum } => {
+        nav_planner::producer::OwnerResultRefusal::TooLarge { requested, maximum } => {
             Some(script::native::WalkRefusal::RouteTooLarge {
                 required_bytes: *requested,
                 maximum_bytes: *maximum,
             })
         }
-        nav::producer::OwnerResultRefusal::Full { .. }
-        | nav::producer::OwnerResultRefusal::SizeOverflow => None,
+        nav_planner::producer::OwnerResultRefusal::Full { .. }
+        | nav_planner::producer::OwnerResultRefusal::SizeOverflow => None,
     };
     let detail = refusal.map_or_else(|| error.to_string(), |refusal| refusal.to_string());
     publish_accepted_route_refusal(navs, name, generation, request_id, kind, &detail, refusal);
@@ -3378,8 +3415,13 @@ fn make_compact_route_path(
     revision: InputRevision,
     reservation: &OwnerResultReservation,
 ) -> (RoutePath, Arc<dyn std::any::Any + Send + Sync>) {
-    let plan =
-        nav::producer::publish_compact_route(lease, identity, revision, route, reservation.clone());
+    let plan = nav_planner::producer::publish_compact_route(
+        lease,
+        identity,
+        revision,
+        route,
+        reservation.clone(),
+    );
     let custody = Arc::new(reservation.clone().hold(plan.clone()));
     let custody_any: Arc<dyn std::any::Any + Send + Sync> = custody;
     (
@@ -3631,7 +3673,7 @@ fn apply_route_output(
 
 fn route_stage_retained_bytes(
     result: &RouteStageResult,
-) -> Result<Option<usize>, nav::producer::OwnerResultRefusal> {
+) -> Result<Option<usize>, nav_planner::producer::OwnerResultRefusal> {
     match result {
         RouteStageResult::Complete(output) => route_output_retained_bytes(output),
         RouteStageResult::Continue(job) => job
@@ -3639,7 +3681,7 @@ fn route_stage_retained_bytes(
             .and_then(|bytes| bytes.checked_add(std::mem::size_of::<RouteDemand>()))
             .and_then(|bytes| bytes.checked_add(OwnerResultReservation::storage_bytes()))
             .map(Some)
-            .ok_or(nav::producer::OwnerResultRefusal::SizeOverflow),
+            .ok_or(nav_planner::producer::OwnerResultRefusal::SizeOverflow),
     }
 }
 
@@ -3727,7 +3769,9 @@ fn harvest_route_terminal(
                 Ok(None) => RouteReservation::NotNeeded,
                 Ok(Some(bytes)) => match ledger.try_reserve_bytes(bytes) {
                     Ok(reservation) => RouteReservation::Reserved(Some(reservation)),
-                    Err(nav::producer::OwnerResultRefusal::Full { .. }) => RouteReservation::Full,
+                    Err(nav_planner::producer::OwnerResultRefusal::Full { .. }) => {
+                        RouteReservation::Full
+                    }
                     Err(error) => RouteReservation::Refused(error),
                 },
             },
@@ -3860,7 +3904,7 @@ pub(crate) struct PostedWalkOutcome {
     pub(crate) allow_teleports: bool,
     /// The settled route end is frozen `'blocked'`.
     pub(crate) blocked: bool,
-    pub(crate) cancel_reason: script::isolate_fb::WalkCancelReason,
+    pub(crate) cancel_reason: script::native::WalkCancelReason,
     pub(crate) user_move_intent_seq: u64,
 }
 
@@ -3888,6 +3932,101 @@ impl ScriptRouteExclusions {
     }
 }
 
+#[derive(Clone)]
+pub(crate) struct RouteQuestContext {
+    selected: Arc<api::game_data::SelectedGameData>,
+    stamp: EvidenceStamp,
+}
+
+/// Retain only immutable catalog ownership and the observation's actual
+/// causal stamp. Status rows are copied only when a route is requested.
+pub(crate) fn route_quest_context(
+    slot: &script::SlotScript,
+    tick: u64,
+) -> Option<RouteQuestContext> {
+    let api::identity::Scope::Slot(key) = slot.work_scope()? else {
+        return None;
+    };
+    let run = slot.native_run().unwrap_or(api::selected::RunKey {
+        slot: key.incarnation().get(),
+        run: slot.runtime_generation(),
+        session: slot.work_epoch(),
+    });
+    Some(RouteQuestContext {
+        selected: slot.compiled_game_data()?,
+        stamp: EvidenceStamp {
+            run,
+            tick,
+            sequence: tick,
+        },
+    })
+}
+
+struct RouteQuestProvider {
+    explicit: Option<Arc<dyn api::quest_progress::EvidenceProvider>>,
+    ordinary: api::quest_progress::QuestListEvidenceProvider,
+}
+
+impl api::quest_progress::EvidenceProvider for RouteQuestProvider {
+    fn test_gate(
+        &self,
+        gate: &api::selected::QuestGate,
+        required_after: EvidenceStamp,
+    ) -> api::selected::Truth {
+        if let Some(explicit) = self.explicit.as_ref() {
+            let truth = explicit.test_gate(gate, required_after);
+            if truth != api::selected::Truth::Unknown {
+                return truth;
+            }
+        }
+        self.ordinary.test_gate(gate, required_after)
+    }
+}
+
+fn captured_route_quests(
+    family: nav_planner::quest_gates::QuestFamilyId,
+    context: Option<&RouteQuestContext>,
+    snapshot: &GameSnapshot,
+    explicit: Option<Arc<dyn api::quest_progress::EvidenceProvider>>,
+    required_after: EvidenceStamp,
+) -> Option<nav_planner::quest_gates::QuestEvidence> {
+    let prepared = context.and_then(|context| {
+        let identity = context.selected.quest_family_identity()?;
+        if nav_planner::quest_gates::QuestFamilyId::new(identity.sha256, identity.schema) != family
+        {
+            return None;
+        }
+        let quests = context.selected.try_quests()?;
+        Some(
+            api::quest_progress::QuestListEvidenceProvider::from_snapshot(
+                &quests,
+                Some(identity),
+                Some(identity),
+                SnapshotView::new(Some(snapshot), context.stamp),
+            ),
+        )
+    });
+    if let Some(ordinary) = prepared {
+        let layout = std::alloc::Layout::new::<[std::sync::atomic::AtomicUsize; 2]>()
+            .extend(std::alloc::Layout::new::<RouteQuestProvider>())
+            .ok()?
+            .0
+            .pad_to_align();
+        let bytes = layout
+            .size()
+            .checked_add(ordinary.retained_status_bytes())?;
+        let provider = Arc::new(RouteQuestProvider { explicit, ordinary });
+        Some(
+            nav_planner::quest_gates::QuestEvidence::new(provider, family, required_after)
+                .with_owned_provider_bytes(bytes),
+        )
+    } else {
+        explicit.map(|provider| {
+            nav_planner::quest_gates::QuestEvidence::new(provider, family, required_after)
+        })
+    }
+}
+
 /// Per-uid nav state: the whole-world traveller plus the route it is
 /// following. `ctx.walk` stores the route, produced by the shared route-work
 /// service over [`NavWorld`]. The slot pump polls [`Traveller::follow`] with a
@@ -3896,8 +4035,17 @@ impl ScriptRouteExclusions {
 /// session freezes follow until its steps finish.
 #[derive(Default)]
 pub(crate) struct NavBot {
+    /// The slot-thread condition owner, also read by admission at arm time.
+    pub(crate) condition: super::slot_condition::SlotCondition,
+    /// The profile's Cure poison policy for this slot, copied from the
+    /// arm's mirror on every observed frame beside the condition fact.
+    /// Host consumers with no script context (the walk guard) read it
+    /// next to [`NavBot::condition`]; native machines read the same
+    /// value through `ActionContext::cure_poison`.
+    pub(crate) cure_poison: script::survival::CurePoison,
     /// Shared session globals, attached before a production slot starts.
     pub(crate) walk_globals: Option<Arc<Mutex<super::WalkGlobals>>>,
+    pub(crate) quest_context: Option<RouteQuestContext>,
     /// Actual compiled-slot identity. None is a fail-closed admission state.
     pub(crate) work_scope: Option<Scope>,
     /// The shared preferences each admission reads the globals from.
@@ -3935,7 +4083,7 @@ pub(crate) struct NavBot {
     pub(crate) native_end: Option<(script::native::HostAuthority, script::native::WalkEnd)>,
     pub(crate) native_end_risk: Option<Box<NativeEndRisk>>,
     /// Evidence retained with the published route, not a newer pending retarget.
-    pub(crate) route_quest_evidence: Option<nav::quest_gates::QuestEvidence>,
+    pub(crate) route_quest_evidence: Option<nav_planner::quest_gates::QuestEvidence>,
     /// Dest, radius, FindOptions bits, and the per-walk zone exemptions.
     pub(crate) requested_route: Option<(WorldTile, i32, bool, bool, bool, ZoneExempt)>,
     /// The current route came from a compat tile-destination walk.
@@ -3981,9 +4129,9 @@ pub(crate) struct NavBot {
     pub(crate) walk_outcome_radius: i32,
     pub(crate) walk_outcome_allow_teleports: bool,
     /// The published route end is frozen `'blocked'`
-    /// ([`nav::traveller::HopFailure::EndBlocked`]).
+    /// ([`nav_executor::HopFailure::EndBlocked`]).
     pub(crate) walk_outcome_blocked: bool,
-    pub(crate) walk_outcome_cancel_reason: script::isolate_fb::WalkCancelReason,
+    pub(crate) walk_outcome_cancel_reason: script::native::WalkCancelReason,
     /// UI-only cancellation detail, cleared by a subsequent arm or outcome.
     pub(crate) manual_walk_cancelled_detail: bool,
     /// Every qualifying human gesture, including when no route exists.
@@ -4047,7 +4195,7 @@ pub(crate) struct ScriptWalkArm {
     pub(crate) state: Option<WorldState>,
     /// The account's bank memory rows at arm time
     /// ([`super::slot_bank_memory::planner_rows`]): what a BankBudget
-    /// session is planned over ([`nav::bank_fetch::planning_rows`]).
+    /// session is planned over ([`nav_planner::bank_fetch::planning_rows`]).
     pub(crate) bank: BankRows,
 }
 
@@ -4093,14 +4241,17 @@ pub(super) fn log_walk_arm_bot(build: impl FnOnce() -> String) {
         build()
     );
 }
-fn format_zone_witness(table: &nav::zones::ZoneTable, keys: &[ZoneKey]) -> String {
+fn format_zone_witness(table: &nav_planner::zones::ZoneTable, keys: &[ZoneKey]) -> String {
     keys.iter()
         .map(|&key| format!("{} [{}]", table.label(key), table.name(key)))
         .collect::<Vec<_>>()
         .join(", ")
 }
 
-pub(crate) fn blocked_zone_detail(table: &nav::zones::ZoneTable, keys: &[ZoneKey]) -> String {
+pub(crate) fn blocked_zone_detail(
+    table: &nav_planner::zones::ZoneTable,
+    keys: &[ZoneKey],
+) -> String {
     format!(
         "blocked by danger zones: {}",
         format_zone_witness(table, keys)
@@ -4145,7 +4296,7 @@ pub(crate) fn resolve_route_exclusions(
                         "avoidZones: zone catalog unavailable for {id:?} (legacy grid pack)"
                     ));
                 };
-                if !nav::zones::AVOID_CATALOG_IDS.contains(&id.as_str()) {
+                if !nav_planner::zones::AVOID_CATALOG_IDS.contains(&id.as_str()) {
                     return Err(format!("avoidZones: unknown zone {id:?}"));
                 }
                 let Some(group) = table.resolve(id).and_then(|key| match key {
@@ -4288,15 +4439,24 @@ impl ScriptWalkArm {
             }
         }
         self.state = Some(route_world_state(snapshot, self.state.take()));
-        if let (Some(provider), Some(family)) = (request.evidence, world.graph.quest_family) {
-            self.state
-                .get_or_insert_with(Default::default)
-                .quest_evidence = Some(nav::quest_gates::QuestEvidence::new(
-                provider,
+        let context = self
+            .navs
+            .lock()
+            .unwrap()
+            .get(&self.name)
+            .and_then(|bot| bot.quest_context.clone());
+        self.state
+            .as_mut()
+            .expect("request state was captured")
+            .quest_evidence = world.graph.quest_family.and_then(|family| {
+            captured_route_quests(
                 family,
+                context.as_ref(),
+                snapshot,
+                request.evidence,
                 request.required_after,
-            ));
-        }
+            )
+        });
         let from = WorldTile { x, z, level };
         let radius = i32::from(request.radius);
         let (options, policy, enforce) = super::walk_permissions::native_admission(
@@ -4324,16 +4484,15 @@ impl ScriptWalkArm {
                 return;
             }
         };
-        let mut input = crate::admission::capture(
-            snapshot,
-            state.map_members,
-            script::combat::risk::PoisonState::default(),
-            false,
-        );
         let admission = {
             let navs = self.navs.lock().unwrap();
             let bot = navs.get(&self.name);
-            input.off_debt = bot.is_some_and(|bot| bot.walk_guard_off.is_some());
+            let input = crate::admission::capture(
+                snapshot,
+                state.map_members,
+                bot.and_then(|bot| bot.condition.current()),
+                bot.is_some_and(|bot| bot.walk_guard_off.is_some()),
+            );
             // A v1 card keeps frozen danger routing on the machine-owned
             // native walks too, as on its compiled walks (`compiled_options`).
             let compat_v1 = bot.is_some_and(|bot| bot.compat_v1);
@@ -4486,14 +4645,18 @@ impl ScriptWalkArm {
         );
         // A v1 card keeps frozen danger routing on the machine-owned native
         // walks too (Banking.open's stand walk), as on its compiled walks.
-        let (off_debt, compat_v1) = self
-            .navs
-            .lock()
-            .unwrap()
-            .get(&self.name)
-            .map_or((false, false), |bot| {
-                (bot.walk_guard_off.is_some(), bot.compat_v1)
-            });
+        let (off_debt, compat_v1, condition) =
+            self.navs
+                .lock()
+                .unwrap()
+                .get(&self.name)
+                .map_or((false, false, None), |bot| {
+                    (
+                        bot.walk_guard_off.is_some(),
+                        bot.compat_v1,
+                        bot.condition.current().copied(),
+                    )
+                });
         let admission = crate::admission::Admission {
             policy,
             enforce: enforce || !request.cross.is_empty(),
@@ -4502,27 +4665,35 @@ impl ScriptWalkArm {
             input: crate::admission::capture(
                 snapshot,
                 self.state.as_ref().is_some_and(|state| state.map_members),
-                script::combat::risk::PoisonState::default(),
+                condition.as_ref(),
                 off_debt,
             ),
             generation: 0,
             compat_v1,
             escape: None,
         };
-        if let (Some(provider), Some(family)) = (
-            request.evidence,
-            self.world
-                .as_ref()
-                .and_then(|world| world.graph.quest_family),
-        ) {
-            self.state
-                .get_or_insert_with(Default::default)
-                .quest_evidence = Some(nav::quest_gates::QuestEvidence::new(
-                provider,
-                family,
-                request.required_after,
-            ));
-        }
+        let context = self
+            .navs
+            .lock()
+            .unwrap()
+            .get(&self.name)
+            .and_then(|bot| bot.quest_context.clone());
+        self.state
+            .as_mut()
+            .expect("request state was captured")
+            .quest_evidence = self
+            .world
+            .as_ref()
+            .and_then(|world| world.graph.quest_family)
+            .and_then(|family| {
+                captured_route_quests(
+                    family,
+                    context.as_ref(),
+                    snapshot,
+                    request.evidence,
+                    request.required_after,
+                )
+            });
         let exclusions = ScriptRouteExclusions {
             cross: request.cross.to_vec(),
             ..Default::default()
@@ -5022,6 +5193,25 @@ impl ScriptWalkArm {
             })
         };
         let mut state = self.state.take();
+        if state
+            .as_ref()
+            .is_none_or(|state| state.quest_evidence.is_none())
+        {
+            if let (Some(snapshot), Some(family)) = (snapshot, world.graph.quest_family) {
+                let context = self
+                    .navs
+                    .lock()
+                    .unwrap()
+                    .get(&self.name)
+                    .and_then(|bot| bot.quest_context.clone());
+                if let Some(context) = context.as_ref() {
+                    state
+                        .get_or_insert_with(|| WorldState::from_snapshot(snapshot))
+                        .quest_evidence =
+                        captured_route_quests(family, Some(context), snapshot, None, context.stamp);
+                }
+            }
+        }
         let (mut opts, exclusions) = if let Some((basis, exclusions)) = frozen {
             let state = state.get_or_insert_with(WorldState::empty);
             state.quest_evidence = basis.quest_evidence.clone();
@@ -5084,7 +5274,12 @@ impl ScriptWalkArm {
                     crate::admission::capture(
                         snapshot,
                         state.as_ref().is_some_and(|state| state.map_members),
-                        Default::default(),
+                        self.navs
+                            .lock()
+                            .unwrap()
+                            .get(&self.name)
+                            .and_then(|bot| bot.condition.current().copied())
+                            .as_ref(),
                         false,
                     )
                 })
@@ -5786,7 +5981,7 @@ impl ScriptRouteRequest {
             self.live_geometry.as_ref().map_or(&[][..], |_| targets)
         };
         let direct = match route_blocker_diagnosis(self) {
-            BlockerDiagnosis::SingleTarget => nav::router::find_blocking_zones(
+            BlockerDiagnosis::SingleTarget => nav_planner::router::find_blocking_zones(
                 &self.world.collision,
                 &self.world.graph,
                 self.from,
@@ -5795,7 +5990,7 @@ impl ScriptRouteRequest {
                 state,
                 self.avoid(),
             ),
-            BlockerDiagnosis::FirstGoal => nav::router::find_first_blocking_zones(
+            BlockerDiagnosis::FirstGoal => nav_planner::router::find_first_blocking_zones(
                 &self.world.collision,
                 &self.world.graph,
                 self.from,
@@ -5847,7 +6042,7 @@ impl ScriptRouteRequest {
                 }
                 Err(_) => continue,
             };
-            if let Some(keys) = nav::router::find_blocking_zones(
+            if let Some(keys) = nav_planner::router::find_blocking_zones(
                 &self.world.collision,
                 &self.world.graph,
                 self.from,
@@ -6034,6 +6229,17 @@ impl NavBot {
         self.route_ticket.is_some() || self.pending_route.is_some()
     }
 
+    /// Host walking work still in progress: a route being followed (legacy
+    /// or compact), route work waiting for a pump turn or a worker, a bank
+    /// fetch, or a carried walk. A registered native walk owner is not part
+    /// of it, because the owner stays live after its route arrives.
+    pub(crate) fn walk_work_live(&self) -> bool {
+        self.has_route()
+            || self.route_work_pending()
+            || self.bank_fetch.is_some()
+            || self.carried_walk.is_some()
+    }
+
     #[cfg(test)]
     pub(crate) fn set_route_work_preparing_for_test(&mut self) {
         self.pending_route = Some(Box::new(RouteDemand::Preparing {
@@ -6115,7 +6321,7 @@ impl NavBot {
         route: RoutePath,
         pending: Option<PendingBankFetch>,
         custody: Arc<dyn std::any::Any + Send + Sync>,
-        quest_evidence: Option<nav::quest_gates::QuestEvidence>,
+        quest_evidence: Option<nav_planner::quest_gates::QuestEvidence>,
     ) -> bool {
         let Some(plan) = route.plan() else {
             return false;
@@ -6188,12 +6394,11 @@ impl NavBot {
         self.compact_route = None;
     }
 
+    /// A plain increment from 1. It never wraps in practice: see the 63-bit
+    /// lifetime note at `script::native::ledger::ObservedWalkOutcome`.
     fn bump_walk_outcome_seq(&mut self) {
         self.manual_walk_cancelled_detail = false;
-        self.walk_outcome_seq = self.walk_outcome_seq.wrapping_add(1);
-        if self.walk_outcome_seq == 0 {
-            self.walk_outcome_seq = 1;
-        }
+        self.walk_outcome_seq += 1;
     }
 
     pub(crate) fn ordinary_movement_owned(&self, tick: u16) -> bool {
@@ -6284,7 +6489,7 @@ impl NavBot {
     /// host send refusal is `Refused`, an unworkable leg is `Blocked`, and a
     /// crossing whose quest evidence was unproven at send time names the
     /// gates to acquire, or blocks honestly when evidence disproves them.
-    pub(crate) fn note_native_follow_failure(&mut self, outcome: &nav::traveller::TravelOutcome) {
+    pub(crate) fn note_native_follow_failure(&mut self, outcome: &nav_executor::TravelOutcome) {
         if self.walk_request_id == 0
             || self.route_request_id != self.walk_request_id
             || self.walk_outcome_request_id != self.walk_request_id
@@ -6294,7 +6499,7 @@ impl NavBot {
         }
         use api::selected::Truth;
         let end = match outcome {
-            nav::traveller::TravelOutcome::Stalled {
+            nav_executor::TravelOutcome::Stalled {
                 at,
                 aiming,
                 why,
@@ -6304,29 +6509,32 @@ impl NavBot {
                     at: *at,
                     aiming: *aiming,
                     why: match why {
-                        nav::traveller::HopFailure::Expired => {
+                        nav_executor::HopFailure::Expired => {
                             script::native::WalkStallReason::Expired
                         }
-                        nav::traveller::HopFailure::Dropped => {
+                        nav_executor::HopFailure::Dropped => {
                             script::native::WalkStallReason::Dropped
                         }
-                        nav::traveller::HopFailure::EndBlocked => {
+                        nav_executor::HopFailure::EndBlocked => {
                             script::native::WalkStallReason::EndBlocked
                         }
                     },
                     tries: *tries,
                 },
             ))),
-            nav::traveller::TravelOutcome::Refused { .. } => Some(script::native::WalkEnd::Refused),
-            nav::traveller::TravelOutcome::Blocked { .. } => Some(script::native::WalkEnd::Blocked),
-            nav::traveller::TravelOutcome::EvidenceUnproven {
+            nav_executor::TravelOutcome::Refused { .. } => Some(script::native::WalkEnd::Refused),
+            nav_executor::TravelOutcome::Blocked { .. }
+            | nav_executor::TravelOutcome::EntranceRefused { .. } => {
+                Some(script::native::WalkEnd::Blocked)
+            }
+            nav_executor::TravelOutcome::EvidenceUnproven {
                 verdict: Truth::Unknown,
                 unresolved,
                 ..
             } if !unresolved.is_empty() => Some(script::native::WalkEnd::NeedsEvidence(
                 Arc::clone(unresolved),
             )),
-            nav::traveller::TravelOutcome::EvidenceUnproven { .. } => {
+            nav_executor::TravelOutcome::EvidenceUnproven { .. } => {
                 Some(script::native::WalkEnd::Blocked)
             }
             _ => None,
@@ -6338,7 +6546,7 @@ impl NavBot {
             .is_some_and(|owner| owner.live() && owner.request_id().get() == self.walk_request_id)
         {
             self.walk_outcome_detail = match outcome {
-                nav::traveller::TravelOutcome::Stalled { .. } => None,
+                nav_executor::TravelOutcome::Stalled { .. } => None,
                 _ => Some(Arc::from(format!("native follow failed: {outcome:?}"))),
             };
         }
@@ -6396,7 +6604,7 @@ impl NavBot {
         self.walk_outcome_request_id = request_id;
         self.walk_outcome_failed = true;
         self.walk_outcome_blocked = false;
-        self.walk_outcome_cancel_reason = script::isolate_fb::WalkCancelReason::None;
+        self.walk_outcome_cancel_reason = script::native::WalkCancelReason::None;
         self.walk_outcome_x = to.x;
         self.walk_outcome_z = to.z;
         self.walk_outcome_level = to.level;
@@ -6441,7 +6649,7 @@ impl NavBot {
         self.walk_outcome_request_id = request_id;
         self.walk_outcome_failed = false;
         self.walk_outcome_blocked = blocked;
-        self.walk_outcome_cancel_reason = script::isolate_fb::WalkCancelReason::None;
+        self.walk_outcome_cancel_reason = script::native::WalkCancelReason::None;
         self.walk_outcome_x = to.x;
         self.walk_outcome_z = to.z;
         self.walk_outcome_level = to.level;
@@ -6458,7 +6666,7 @@ impl NavBot {
         // AbortWalk is a release of the current operation, not a script-run
         // boundary. Preserve its published UserInput terminal until an
         // isolate observes it.
-        if self.walk_outcome_cancel_reason == script::isolate_fb::WalkCancelReason::UserInput {
+        if self.walk_outcome_cancel_reason == script::native::WalkCancelReason::UserInput {
             return;
         }
         self.reset_walk_outcome();
@@ -6479,7 +6687,7 @@ impl NavBot {
         self.native_walk_blocked = None;
         self.walk_outcome_detail = None;
         self.walk_live_refusal_id = 0;
-        self.walk_outcome_cancel_reason = script::isolate_fb::WalkCancelReason::None;
+        self.walk_outcome_cancel_reason = script::native::WalkCancelReason::None;
         // The family posts a present empty vector: a routed outcome names no
         // short, and the clear is never omitted.
         self.walk_missing_carry.clear();
@@ -6487,6 +6695,24 @@ impl NavBot {
 
     pub(crate) fn walking_decision_is_current(&self, observed_seq: u64) -> bool {
         observed_seq >= self.manual_takeover_watermark
+    }
+
+    /// The cancel reason a compiled card observes for the latest walk
+    /// outcome. A manual takeover always moves the sequence, but it publishes
+    /// `UserInput` only for a correlated request (`cancel_for_manual_input`);
+    /// the takeover of a walk that already arrived leaves the posted reason
+    /// `None`. Its own outcome is still the watermark, so the compiled side
+    /// reads `UserInput` for it. The posted Load reason is unchanged.
+    pub(crate) fn compiled_walk_cancel_reason(&self) -> script::native::WalkCancelReason {
+        let takeover_outcome = self.manual_takeover_watermark != 0
+            && self.walk_outcome_seq == self.manual_takeover_watermark;
+        if takeover_outcome
+            || self.walk_outcome_cancel_reason == script::native::WalkCancelReason::UserInput
+        {
+            script::native::WalkCancelReason::UserInput
+        } else {
+            script::native::WalkCancelReason::None
+        }
     }
 
     /// Cancel active follow/work without sending anything over the human move.
@@ -6568,7 +6794,7 @@ impl NavBot {
             self.walk_outcome_request_id = request_id;
             self.walk_outcome_failed = true;
             self.walk_outcome_blocked = false;
-            self.walk_outcome_cancel_reason = script::isolate_fb::WalkCancelReason::UserInput;
+            self.walk_outcome_cancel_reason = script::native::WalkCancelReason::UserInput;
             self.walk_outcome_x = to.x;
             self.walk_outcome_z = to.z;
             self.walk_outcome_level = to.level;
@@ -6688,30 +6914,35 @@ impl NavBot {
 /// End the session's navigation: every route, find, bank-fetch session,
 /// inspect and bank pick of the slot, a walk a reconnect was carrying, and
 /// the duel offer its accept gate validated. When `terminal_generation` is
-/// present, the same lifecycle receipt resets this state only once.
+/// present, the same lifecycle receipt resets this state only once. Returns
+/// whether it reset the navigation, so the caller that owns the status rows
+/// can retire the published script walk of the same run.
 pub(crate) fn reset_script_nav(
     navs: &Arc<Mutex<HashMap<String, NavBot>>>,
     name: &str,
     terminal_generation: Option<u64>,
-) {
-    if let Some(nav) = navs.lock().unwrap().get_mut(name) {
-        if terminal_generation.is_some_and(|generation| {
-            nav.terminal_nav_reset_generation
-                .is_some_and(|last| last >= generation)
-        }) {
-            return;
-        }
-        end_route_follow(nav);
-        nav.runtime_gate_logged = false;
-        nav.reset_walk_outcome();
-        route_inspect::reset_inspect(nav);
-        nav.bank_pick.reset();
-        nav.carried_walk = None;
-        nav.duel_offer_partner = None;
-        if let Some(generation) = terminal_generation {
-            nav.terminal_nav_reset_generation = Some(generation);
-        }
+) -> bool {
+    let mut navs = navs.lock().unwrap();
+    let Some(nav) = navs.get_mut(name) else {
+        return false;
+    };
+    if terminal_generation.is_some_and(|generation| {
+        nav.terminal_nav_reset_generation
+            .is_some_and(|last| last >= generation)
+    }) {
+        return false;
     }
+    end_route_follow(nav);
+    nav.runtime_gate_logged = false;
+    nav.reset_walk_outcome();
+    route_inspect::reset_inspect(nav);
+    nav.bank_pick.reset();
+    nav.carried_walk = None;
+    nav.duel_offer_partner = None;
+    if let Some(generation) = terminal_generation {
+        nav.terminal_nav_reset_generation = Some(generation);
+    }
+    true
 }
 
 /// Keep the pending script receipt identity when watchdog nav replaces its route.
@@ -6913,7 +7144,7 @@ mod diagnostic_tests {
             level: 0,
         };
         let world = NavWorld::from_parts(
-            nav::collision::WorldCollision {
+            nav_planner::collision::WorldCollision {
                 origin,
                 width: 209,
                 height: 209,
@@ -6921,7 +7152,7 @@ mod diagnostic_tests {
                 blocked: vec![0; (209usize * 209).div_ceil(64)],
                 flags: None,
             },
-            nav::transport::TransportGraph::default(),
+            nav_planner::transport::TransportGraph::default(),
             Vec::new(),
         );
         let mut request = ScriptRouteRequest {
@@ -7032,7 +7263,7 @@ mod diagnostic_tests {
             level: 0,
         };
         stage_request(Arc::new(NavWorld::from_parts(
-            nav::collision::WorldCollision {
+            nav_planner::collision::WorldCollision {
                 origin,
                 width: 4,
                 height: 4,
@@ -7040,7 +7271,7 @@ mod diagnostic_tests {
                 blocked: vec![0; (4usize * 4 * 4).div_ceil(64)],
                 flags: None,
             },
-            nav::transport::TransportGraph::default(),
+            nav_planner::transport::TransportGraph::default(),
             Vec::new(),
         )))
     }
@@ -7049,7 +7280,7 @@ mod diagnostic_tests {
     fn candidate_search_keeps_reachable_components_without_per_goal_searches() {
         let tile = |x| WorldTile { x, z: 0, level: 0 };
         let world = Arc::new(NavWorld::from_parts(
-            nav::collision::WorldCollision {
+            nav_planner::collision::WorldCollision {
                 origin: tile(0),
                 width: 3,
                 height: 1,
@@ -7057,7 +7288,7 @@ mod diagnostic_tests {
                 blocked: vec![1 << 1],
                 flags: None,
             },
-            nav::transport::TransportGraph::default(),
+            nav_planner::transport::TransportGraph::default(),
             Vec::new(),
         ));
         let mut old = stage_request(Arc::clone(&world));
@@ -7096,7 +7327,7 @@ mod diagnostic_tests {
         let mut blocked = vec![0u64; (1024usize * 4).div_ceil(64)];
         blocked[1022 >> 6] |= 1 << (1022 & 63);
         let world = Arc::new(NavWorld::from_parts(
-            nav::collision::WorldCollision {
+            nav_planner::collision::WorldCollision {
                 origin: tile(0),
                 width: 1024,
                 height: 1,
@@ -7104,7 +7335,7 @@ mod diagnostic_tests {
                 blocked,
                 flags: None,
             },
-            nav::transport::TransportGraph::default(),
+            nav_planner::transport::TransportGraph::default(),
             Vec::new(),
         ));
         let mut request = stage_request(world);
@@ -7135,7 +7366,7 @@ mod diagnostic_tests {
         let preferred = [tile(3086, 3230), tile(3086, 3231)];
         let mut state = WorldState::empty().with_map_members(true);
         state.stats = (0..=20).map(|skill| (skill, 99)).collect();
-        let shared = nav::router::find_first_with_fallback(
+        let shared = nav_planner::router::find_first_with_fallback(
             &world.collision,
             &world.graph,
             bank,
@@ -7149,9 +7380,9 @@ mod diagnostic_tests {
             "safe fallback closes before own-zone completion"
         );
         assert!(
-            matches!(shared.fallback(), Some(nav::router::FallbackRoute::Routed(route)) if route.dest == bank)
+            matches!(shared.fallback(), Some(nav_planner::router::FallbackRoute::Routed(route)) if route.dest == bank)
         );
-        let old = nav::router::find_first_with(
+        let old = nav_planner::router::find_first_with(
             &world.collision,
             &world.graph,
             bank,
@@ -7200,7 +7431,7 @@ mod diagnostic_tests {
             level: 0,
         };
         let preferred = WorldTile { x: 1152, ..from };
-        let collision = nav::collision::WorldCollision {
+        let collision = nav_planner::collision::WorldCollision {
             origin: WorldTile {
                 x: 0,
                 z: 0,
@@ -7212,9 +7443,9 @@ mod diagnostic_tests {
             blocked,
             flags: None,
         };
-        let graph = nav::transport::TransportGraph::default();
+        let graph = nav_planner::transport::TransportGraph::default();
         let started = std::time::Instant::now();
-        let search = nav::router::find_first_with(
+        let search = nav_planner::router::find_first_with(
             &collision,
             &graph,
             from,
@@ -7225,11 +7456,11 @@ mod diagnostic_tests {
         let elapsed = started.elapsed();
         assert_eq!(
             search.route(),
-            Err(nav::router::RouteError::BudgetExhausted)
+            Err(nav_planner::router::RouteError::BudgetExhausted)
         );
-        assert_eq!(search.proof(), nav::router::ReverseProof::Abandoned);
-        assert!(search.settled() <= nav::router::FIRST_TARGET_BUDGET + 1);
-        let fallback = nav::router::find_first_with(
+        assert_eq!(search.proof(), nav_planner::router::ReverseProof::Abandoned);
+        assert!(search.settled() <= nav_planner::router::FIRST_TARGET_BUDGET + 1);
+        let fallback = nav_planner::router::find_first_with(
             &collision,
             &graph,
             from,
@@ -7244,7 +7475,7 @@ mod diagnostic_tests {
             "preferred_failure": "BudgetExhausted",
             "proof": "Abandoned",
             "forward_settles": search.settled(),
-            "unproven_settle_budget": nav::router::FIRST_TARGET_BUDGET,
+            "unproven_settle_budget": nav_planner::router::FIRST_TARGET_BUDGET,
             "elapsed_ms": elapsed.as_millis(),
             "fallback": fallback.dest,
             "fallback_ticks": fallback.ticks,
@@ -7518,7 +7749,7 @@ mod diagnostic_tests {
             ..WorldState::empty()
         };
         let legacy = FindOptions {
-            zones: nav::zones::ZoneExempt::all(),
+            zones: nav_planner::zones::ZoneExempt::all(),
             ..FindOptions::default()
         };
         let teleports = FindOptions {
@@ -7676,7 +7907,7 @@ mod diagnostic_tests {
             let all_goals = goals.len();
             let mut selected = if name.starts_with("radius_walk") && stride > 1 {
                 let mut selected: Vec<_> = goals.iter().step_by(stride).copied().collect();
-                let first = nav::router::find_first_with(
+                let first = nav_planner::router::find_first_with(
                     &world.collision,
                     &world.graph,
                     from,
@@ -7821,7 +8052,7 @@ mod diagnostic_tests {
                 let opts = request.opts;
                 let (outcome, _) = request.drive_route_job_for_test();
                 assert!(matches!(outcome, RouteOutcome::NoPath));
-                let missing = nav::router::find_missing_item_reqs_with_avoid(
+                let missing = nav_planner::router::find_missing_item_reqs_with_avoid(
                     &world.collision,
                     &world.graph,
                     from,
@@ -7833,10 +8064,10 @@ mod diagnostic_tests {
                 .unwrap();
                 assert_eq!(
                     missing,
-                    vec![nav::router::MissingReq::Carry { id: 946, count: 1 }],
+                    vec![nav_planner::router::MissingReq::Carry { id: 946, count: 1 }],
                 );
                 assert!(matches!(
-                    nav::bank_fetch::plan_bank_fetch(
+                    nav_planner::bank_fetch::plan_bank_fetch(
                         &missing,
                         &state,
                         &bank,
@@ -7847,7 +8078,7 @@ mod diagnostic_tests {
                         opts,
                         &[],
                     ),
-                    Err(nav::bank_fetch::BankFetchError::Unavailable),
+                    Err(nav_planner::bank_fetch::BankFetchError::Unavailable),
                 ));
                 records.push(serde_json::json!({
                     "case": case,
@@ -7892,6 +8123,7 @@ mod diagnostic_tests {
                     RouteSearchPurpose::Blocking => "Blocking",
                     RouteSearchPurpose::Unresolved => "Unresolved",
                     RouteSearchPurpose::MissingCarry => "MissingCarry",
+                    RouteSearchPurpose::Entrance => "Entrance",
                 };
                 saw_bank_access |= job.search_purpose == RouteSearchPurpose::BankAccess;
                 saw_post_bank |= job.search_purpose == RouteSearchPurpose::PostBank;
@@ -8000,5 +8232,287 @@ mod diagnostic_tests {
             .unwrap(),
         )
         .unwrap();
+    }
+}
+#[cfg(test)]
+mod route_quest_provider_tests {
+    use super::*;
+    use api::quest_progress::{EvidenceProvider, EvidenceStamp, QuestListEvidenceProvider};
+    use api::selected::{QuestGate, RunKey, Truth};
+    use api::snapshot::{QuestStatusView, SnapshotView};
+    use std::sync::LazyLock;
+
+    fn selected_r289() -> Arc<api::game_data::SelectedGameData> {
+        static SELECTED: LazyLock<Arc<api::game_data::SelectedGameData>> = LazyLock::new(|| {
+            let selected = api::game_data::for_revision(api::selected::ClientRevision::R289)
+                .expect("selected R289 game data");
+            let worker_data = Arc::clone(&selected);
+            let input =
+                script::preparation::PreparationInput::new(1, 0, 8 * 1024 * 1024, 2 * 1024 * 1024)
+                    .expect("quest preparation budget");
+            script::preparation::submit(
+                script::preparation::PreparationKind::Profile,
+                Scope::Process,
+                input,
+                move |worker| worker_data.prepare_quests(worker),
+            )
+            .expect("submit production quest preparation")
+            .join()
+            .expect("quest preparation worker")
+            .expect("prepare selected quest family");
+            selected
+        });
+        Arc::clone(&SELECTED)
+    }
+
+    fn selected_quest(
+        selected: &api::game_data::SelectedGameData,
+    ) -> (api::selected::FactKey, String) {
+        let catalog = selected.try_quests().expect("selected quest catalog");
+        let facts = catalog
+            .iter()
+            .next()
+            .expect("selected quest catalog has rows");
+        (facts.id.clone(), facts.display.to_string())
+    }
+
+    fn family(
+        selected: &api::game_data::SelectedGameData,
+    ) -> nav_planner::quest_gates::QuestFamilyId {
+        let identity = selected
+            .quest_family_identity()
+            .expect("selected quest family identity");
+        nav_planner::quest_gates::QuestFamilyId::new(identity.sha256, identity.schema)
+    }
+
+    fn run() -> RunKey {
+        RunKey {
+            slot: 1,
+            run: 1,
+            session: 1,
+        }
+    }
+
+    fn stamp(run: RunKey, tick: u64, sequence: u64) -> EvidenceStamp {
+        EvidenceStamp {
+            run,
+            tick,
+            sequence,
+        }
+    }
+
+    fn snapshot(name: &str, colour: i32, available: bool) -> GameSnapshot {
+        let mut snapshot = GameSnapshot::new();
+        snapshot.seed_ingame(2);
+        snapshot.seed_quest_statuses(
+            vec![QuestStatusView {
+                component_id: 1,
+                name: name.to_owned(),
+                colour,
+            }],
+            available,
+        );
+        snapshot
+    }
+
+    fn real_list_provider(
+        selected: &api::game_data::SelectedGameData,
+        name: &str,
+        colour: i32,
+        available: bool,
+        observed: EvidenceStamp,
+    ) -> Arc<dyn EvidenceProvider> {
+        let quests = selected.try_quests().expect("prepared quest catalog");
+        let identity = selected
+            .quest_family_identity()
+            .expect("selected quest family identity");
+        Arc::new(QuestListEvidenceProvider::from_snapshot(
+            &quests,
+            Some(identity),
+            Some(identity),
+            SnapshotView::new(Some(&snapshot(name, colour, available)), observed),
+        ))
+    }
+
+    fn context(
+        selected: Arc<api::game_data::SelectedGameData>,
+        stamp: EvidenceStamp,
+    ) -> RouteQuestContext {
+        RouteQuestContext { selected, stamp }
+    }
+
+    #[test]
+    fn explicit_real_evidence_wins_when_known_and_unknown_falls_back() {
+        let selected = selected_r289();
+        let (quest, name) = selected_quest(&selected);
+        let family = family(&selected);
+        let run = run();
+        let floor = stamp(run, 9, 9);
+        let complete = nav_planner::world_state::QUEST_COMPLETE_COLOUR;
+        let not_started = 0xF80000;
+        let gate = QuestGate::Complete(quest);
+        let context = context(Arc::clone(&selected), floor);
+
+        let explicit_false = real_list_provider(&selected, &name, not_started, true, floor);
+        let ordinary_true = snapshot(&name, complete, true);
+        let evidence = captured_route_quests(
+            family,
+            Some(&context),
+            &ordinary_true,
+            Some(explicit_false),
+            floor,
+        )
+        .expect("ordinary evidence and explicit provider");
+        assert_eq!(
+            evidence.test(&gate),
+            Truth::False,
+            "known explicit False must override ordinary Complete"
+        );
+
+        let explicit_true = real_list_provider(&selected, &name, complete, true, floor);
+        let ordinary_false = snapshot(&name, not_started, true);
+        let evidence = captured_route_quests(
+            family,
+            Some(&context),
+            &ordinary_false,
+            Some(explicit_true),
+            floor,
+        )
+        .expect("ordinary evidence and explicit provider");
+        assert_eq!(
+            evidence.test(&gate),
+            Truth::True,
+            "known explicit True must override ordinary NotStarted"
+        );
+
+        let explicit_unknown = real_list_provider(&selected, &name, complete, false, floor);
+        let evidence = captured_route_quests(
+            family,
+            Some(&context),
+            &ordinary_true,
+            Some(explicit_unknown),
+            floor,
+        )
+        .expect("ordinary evidence and explicit provider");
+        assert_eq!(
+            evidence.test(&gate),
+            Truth::True,
+            "Unknown explicit evidence must fall back to ordinary Complete"
+        );
+    }
+
+    #[test]
+    fn captured_rows_fail_closed_after_the_run_or_causal_floor_changes() {
+        let selected = selected_r289();
+        let (quest, name) = selected_quest(&selected);
+        let family = family(&selected);
+        let observed = stamp(run(), 5, 5);
+        let complete = snapshot(&name, nav_planner::world_state::QUEST_COMPLETE_COLOUR, true);
+        let gate = QuestGate::Complete(quest);
+
+        let later_floor = stamp(run(), 6, 6);
+        let context = context(Arc::clone(&selected), observed);
+        let evidence = captured_route_quests(family, Some(&context), &complete, None, later_floor)
+            .expect("matching-family ordinary provider");
+        assert_eq!(evidence.test(&gate), Truth::Unknown);
+
+        let changed_run = RunKey { run: 2, ..run() };
+        let changed_run_floor = stamp(changed_run, 5, 5);
+        let evidence =
+            captured_route_quests(family, Some(&context), &complete, None, changed_run_floor)
+                .expect("matching-family ordinary provider");
+        assert_eq!(evidence.test(&gate), Truth::Unknown);
+    }
+
+    fn tiny_world() -> Arc<NavWorld> {
+        let origin = WorldTile {
+            x: 0,
+            z: 0,
+            level: 0,
+        };
+        Arc::new(NavWorld::from_parts(
+            nav_planner::collision::WorldCollision {
+                origin,
+                width: 4,
+                height: 4,
+                walk: vec![0; 16],
+                blocked: vec![0; 1],
+                flags: None,
+            },
+            nav_planner::transport::TransportGraph::default(),
+            Vec::new(),
+        ))
+    }
+
+    fn request(world: Arc<NavWorld>) -> ScriptRouteRequest {
+        let (completion, _receiver) = RouteCompletion::channel();
+        let origin = world.collision.origin;
+        ScriptRouteRequest {
+            candidate_goals: None,
+            generation: 1,
+            request_id: 1,
+            world,
+            from: origin,
+            to: WorldTile {
+                x: origin.x + 1,
+                z: origin.z + 1,
+                level: origin.level,
+            },
+            radius: 0,
+            loc_id: None,
+            arrival: ArrivalKind::Reach,
+            opts: FindOptions::default(),
+            state: None,
+            admission: crate::admission::Admission::manual(
+                FindOptions::default(),
+                Default::default(),
+                1,
+                crate::WalkGlobals::default(),
+            ),
+            bank_origin: Origin::Unknown,
+            bank: Vec::new(),
+            live_geometry: None,
+            exclusions: None,
+            compat_tile_intent: false,
+            completion,
+        }
+    }
+
+    #[test]
+    fn ordinary_provider_bytes_are_charged_to_route_input_and_output() {
+        let selected = selected_r289();
+        let (quest, name) = selected_quest(&selected);
+        let family = family(&selected);
+        let stamp = stamp(run(), 12, 12);
+        let context = context(Arc::clone(&selected), stamp);
+        let snapshot = snapshot(&name, nav_planner::world_state::QUEST_COMPLETE_COLOUR, true);
+        let evidence = captured_route_quests(family, Some(&context), &snapshot, None, stamp)
+            .expect("real ordinary quest-list evidence");
+        assert_eq!(evidence.test(&QuestGate::Complete(quest)), Truth::True);
+        let owned_bytes = evidence.owned_provider_bytes();
+        assert!(
+            owned_bytes > 0,
+            "the provider owns its retained status table"
+        );
+
+        let world = tiny_world();
+        let request = request(Arc::clone(&world));
+        let lease = nav_lease(&world).expect("navigation lease");
+        let without_evidence = Arc::new(WorldState::default());
+        let with_evidence = Arc::new(WorldState::default().with_quest_evidence(evidence));
+        let base_state_bytes = without_evidence
+            .try_shared_retained_bytes()
+            .expect("baseline state byte bound");
+        let evidence_state_bytes = with_evidence
+            .try_shared_retained_bytes()
+            .expect("evidence state byte bound");
+        assert_eq!(evidence_state_bytes - base_state_bytes, owned_bytes);
+
+        let (baseline, _) = RouteSubmission::prepare(&request, &without_evidence, &lease, 0, 0)
+            .expect("baseline route budget");
+        let (charged, _) = RouteSubmission::prepare(&request, &with_evidence, &lease, 0, 0)
+            .expect("evidence route budget");
+        assert_eq!(charged.input_bytes - baseline.input_bytes, owned_bytes);
+        assert_eq!(charged.result_bytes - baseline.result_bytes, owned_bytes);
     }
 }
