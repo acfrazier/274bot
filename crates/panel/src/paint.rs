@@ -839,8 +839,11 @@ mod tests {
     use super::{
         chatbox_rect, paint_uniform_scale, ChromeHit, PaintFrameHit, PaintOverlay, CHATBOX,
     };
+    #[cfg(feature = "js")]
     use crate::test_support::headless_gpu;
-    use frontend_core::test_support::paint::{caption_raster, TestPaint};
+    #[cfg(feature = "js")]
+    use frontend_core::test_support::paint::caption_raster;
+    use frontend_core::test_support::paint::TestPaint;
 
     fn paint(title: Option<&str>, lines: &[&str]) -> TestPaint {
         TestPaint::new(title, lines)
@@ -1099,10 +1102,12 @@ mod tests {
         assert_eq!(overlay.button_labels, vec!["Go bank".to_string()]);
     }
 
+    #[cfg(feature = "js")]
     fn canvas_banner() -> TestPaint {
         paint(None, &[]).with_canvas_banner()
     }
 
+    #[cfg(feature = "js")]
     #[test]
     fn canvas_dirty_rect_maps_native_and_half_blit() {
         let _guard = crate::test_support::imgui_context_guard();
@@ -1144,6 +1149,7 @@ mod tests {
         assert!((dest[3] - 25.0).abs() < 0.01);
     }
 
+    #[cfg(feature = "js")]
     #[test]
     fn canvas_only_frame_does_not_populate_chatbox() {
         let _guard = crate::test_support::imgui_context_guard();
@@ -1168,6 +1174,7 @@ mod tests {
         assert!(overlay.canvas_dest.is_some());
     }
 
+    #[cfg(feature = "js")]
     #[test]
     fn structured_plus_canvas_keeps_chatbox_out_of_applet_dest() {
         let _guard = crate::test_support::imgui_context_guard();
@@ -1198,7 +1205,35 @@ mod tests {
             "canvas banner stays in applet space, not the chatbox ({dest:?} vs {chat:?})"
         );
     }
+    #[cfg(not(feature = "js"))]
+    #[test]
+    fn structured_paint_without_canvas_keeps_chatbox_rows() {
+        let _guard = crate::test_support::imgui_context_guard();
+        let mut ctx = crate::test_support::imgui_context();
+        let mut overlay = PaintOverlay::new();
+        let p = paint(Some("BoneBurier"), &["a row"]);
+        prepare_frame(&mut ctx);
+        {
+            let ui = ctx.frame();
+            let paint_frame = p.frame();
+            overlay.frame(
+                ui,
+                None,
+                Some(paint_frame.view()),
+                [10.0, 20.0],
+                [765.0, 503.0],
+            );
+        }
+        ctx.render();
+        assert_eq!(
+            overlay.lines,
+            vec!["BoneBurier".to_string(), "a row".to_string()]
+        );
+        assert!(overlay.canvas_dest.is_none());
+    }
 
+
+    #[cfg(feature = "js")]
     #[test]
     fn measured_fillrect_raster_covers_glyphs() {
         let text = "BoneBurier (external)  buried 0";
@@ -1218,6 +1253,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "js")]
     struct RecordingGpu {
         device: wgpu::Device,
         queue: wgpu::Queue,
@@ -1225,6 +1261,7 @@ mod tests {
         unregistered: Vec<u64>,
     }
 
+    #[cfg(feature = "js")]
     impl RecordingGpu {
         fn new(device: wgpu::Device, queue: wgpu::Queue) -> Self {
             Self {
@@ -1236,6 +1273,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "js")]
     impl crate::game_view::FrameGpu for RecordingGpu {
         fn device(&self) -> &wgpu::Device {
             &self.device
@@ -1257,6 +1295,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "js")]
     fn gpu_frame(
         ctx: &mut dear_imgui_rs::Context,
         overlay: &mut PaintOverlay,
@@ -1274,6 +1313,7 @@ mod tests {
         ctx.render();
     }
 
+    #[cfg(feature = "js")]
     #[test]
     fn canvas_gpu_cache_skips_unchanged_and_releases() {
         let Some((device, queue)) = headless_gpu() else {
@@ -1718,6 +1758,7 @@ mod tests {
         assert!(overlay.lines.is_empty());
     }
 
+    #[cfg(feature = "js")]
     #[test]
     fn path_op_frame_reuses_texture_on_identical_ops() {
         let Some((device, queue)) = headless_gpu() else {
@@ -1756,7 +1797,9 @@ mod tests {
 
     // --- Host controls on a helper-generated paint (PAINT-CONTROLS-025) ---
 
-    use frontend_core::scripts::{LoadShape, PaintFrame, ScriptRunState};
+    #[cfg(feature = "js")]
+    use frontend_core::scripts::LoadShape;
+    use frontend_core::scripts::{PaintFrame, ScriptRunState};
 
     /// One overlay frame over `frame` with the pointer at `mouse`.
     fn frame_click(
@@ -1803,6 +1846,7 @@ mod tests {
         pressed
     }
 
+    #[cfg(feature = "js")]
     /// A panel session over a real play whose `names` each run a real Load
     /// script and publish the paint-controls helper's frame.
     fn helper_session(names: &[&str]) -> crate::session::Session {
@@ -1842,6 +1886,77 @@ mod tests {
         s.core.poll();
         s
     }
+    #[cfg(not(feature = "js"))]
+    /// A panel session over real compiled Gatherer runs with TestPaint
+    /// frames that advertise the native host controls.
+    fn native_helper_session(
+        names: &[&str],
+    ) -> (crate::session::Session, crate::test_support::TestDir) {
+        use frontend_core::scripts::CompiledCardId;
+        use frontend_core::test_support::scripts::Assignment;
+
+        crate::test_support::IsolatedStores::ensure_thread();
+        let dir = crate::test_support::TestDir::new("panel-paint-native-controls");
+        let mut vault = crate::test_support::VaultFixture::create(
+            &dir.join("v.vault"),
+            "test-passphrase-01",
+        );
+        for (index, name) in names.iter().enumerate() {
+            vault.put(
+                crate::test_support::FixtureProfile::new(name, "pw").uid(index as i32 + 1),
+            );
+        }
+
+        let mut s = crate::session::Session::new();
+        frontend_core::test_support::session::install_vault(&mut s.core, vault);
+        s.persist_ui = false;
+        let mut play = frontend_core::test_support::empty_play(&host_play::PlayOptions {
+            host: "127.0.0.1".into(),
+            transport: client::Transport::Tcp,
+            port: 43594,
+            cache_dir: "/tmp".into(),
+            lowmem: true,
+            mainland: false,
+        });
+        for (uid, name) in names.iter().enumerate() {
+            play.attach_arm(name, host_play::SlotArm::new(uid as i32 + 1, false));
+            s.core.fleet_mut().add(name);
+        }
+        s.core.set_play(Some(play));
+        let data =
+            api::game_data::for_revision(api::selected::ClientRevision::R289).expect("R289 data");
+        s.core
+            .play_mut_for_test()
+            .expect("native play")
+            .bind_script_test_data(data);
+
+        let card = CompiledCardId::lookup("Gatherer").expect("compiled Gatherer card");
+        for name in names {
+            s.persist_successful_assignment(name, Assignment::compiled(card));
+        }
+        s.core.flush_writes();
+        for name in names {
+            s.script_start_profile(name)
+                .expect("compiled Gatherer Start");
+            let guard = std::time::Instant::now() + std::time::Duration::from_secs(120);
+            while s.core.script_state(name) != ScriptRunState::Running {
+                assert!(std::time::Instant::now() < guard, "{name} never ran");
+                s.core
+                    .play_for_test()
+                    .expect("native play")
+                    .pump_script_lifecycle(name);
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+        }
+        for (uid, name) in names.iter().enumerate() {
+            paint(Some("Helper"), &["status"])
+                .with_host_controls()
+                .with_generation(70 + uid as u64)
+                .publish(s.core.play_for_test().expect("native play"), name);
+        }
+        s.core.poll();
+        (s, dir)
+    }
 
     /// The overlay draws Pause and Stop from the displayed run, a click
     /// pauses that run through the command seam, the retained frame then
@@ -1852,7 +1967,10 @@ mod tests {
         let _guard = crate::test_support::imgui_context_guard();
         let mut ctx = crate::test_support::imgui_context();
         let mut overlay = PaintOverlay::new();
+        #[cfg(feature = "js")]
         let mut s = helper_session(&["alice"]);
+        #[cfg(not(feature = "js"))]
+        let (mut s, _dir) = native_helper_session(&["alice"]);
         s.select("alice");
 
         let frame = s.core.script_paint("alice").expect("paint");
@@ -2780,7 +2898,10 @@ mod tests {
     /// focus moved to bob before the click was applied.
     #[test]
     fn a_paint_control_captured_for_one_profile_never_controls_the_new_focus() {
+        #[cfg(feature = "js")]
         let mut s = helper_session(&["alice", "bob"]);
+        #[cfg(not(feature = "js"))]
+        let (mut s, _dir) = native_helper_session(&["alice", "bob"]);
         s.select("alice");
         let alice = s.core.script_paint("alice").expect("paint");
         s.select("bob");
