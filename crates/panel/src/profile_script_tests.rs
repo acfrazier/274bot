@@ -2583,7 +2583,11 @@ fn marked_compiled_start_keeps_assignments_across_focus_changes() {
         result.text()
     );
     assert_eq!(
-        (result.counts().done, result.counts().skipped, result.counts().failed),
+        (
+            result.counts().done,
+            result.counts().skipped,
+            result.counts().failed
+        ),
         (1, 1, 0),
         "{}",
         result.text()
