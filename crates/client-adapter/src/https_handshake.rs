@@ -154,9 +154,11 @@ impl HttpsLane {
                         .config
                         .as_ref()
                         .and_then(crate::soak_observer::observe_client_config_generation);
-                    #[cfg(not(feature = "test-support"))]
-                    let config_generation_id = None;
-                    worker_loop(worker_inner, config_generation_id)
+                    worker_loop(
+                        worker_inner,
+                        #[cfg(feature = "test-support")]
+                        config_generation_id,
+                    )
                 }))
                 .is_err()
                 {
@@ -527,13 +529,17 @@ fn is_nonfinal_connect(cell: &Cell) -> bool {
     )
 }
 
-fn worker_loop(inner: Arc<Inner>, config_generation_id: Option<u64>) {
+fn worker_loop(
+    inner: Arc<Inner>,
+    #[cfg(feature = "test-support")] config_generation_id: Option<u64>,
+) {
     while let Some(work) = next_work(&inner) {
         process_job(
             &inner,
             work.identity,
             work.job,
             work.connect_deadline,
+            #[cfg(feature = "test-support")]
             config_generation_id,
         );
     }
@@ -641,7 +647,7 @@ fn process_job(
     identity: u64,
     job: Job,
     first_deadline: Instant,
-    config_generation_id: Option<u64>,
+    #[cfg(feature = "test-support")] config_generation_id: Option<u64>,
 ) {
     let config = match &inner.config {
         Some(config) => Arc::clone(config),
@@ -727,6 +733,7 @@ fn process_job(
             &mut connection,
             connected_at,
             handshake_deadline,
+            #[cfg(feature = "test-support")]
             config_generation_id,
         ) {
             HandshakeResult::Complete => {
@@ -804,7 +811,7 @@ fn perform_handshake(
     connection: &mut ClientConnection,
     started: Instant,
     deadline: Instant,
-    config_generation_id: Option<u64>,
+    #[cfg(feature = "test-support")] config_generation_id: Option<u64>,
 ) -> HandshakeResult {
     let quiet_limit = {
         let state = lock_state(&inner.state);

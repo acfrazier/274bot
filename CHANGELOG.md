@@ -39,6 +39,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   its error kind and operating-system error number, to the login status and
   the session exit reason on Linux, macOS and Windows. Before, the reactor
   discarded the error and the bot saw a plain end of stream.
+- HTTPS configuration-generation observer arguments compile only with
+  `test-support`; feature-off builds contain no placeholder observer arguments.
 
 ### Combat
 
