@@ -75,10 +75,11 @@ impl SafeWalk {
 // at (2836,3495): content/maps/m44_54.jm2:5700, all.npc:3585-3605.
 // The eastern sentry at (2842,3450) has wander 3, hunt 2 and size 2:
 // content/maps/m44_53.jm2:5567, scripts/_unpack/225/all.npc:2405-2433.
+// The southern eastern edge stays eight tiles from that seven-tile envelope.
 const CATHERBY_SAFE_WALK: &[SafeWalk] = &[
     SafeWalk {
         min_x: 2788,
-        max_x: 2820,
+        max_x: 2834,
         min_z: 3436,
         max_z: 3468,
     },
@@ -106,13 +107,16 @@ fn catherby_safe_walk_accepts_worksites_and_bank_return_detour() {
     assert!(safe_walk_contains(CATHERBY_SAFE_WALK, (2809, 3441, 0)));
     // Baseline attempt 5, tick 4732: a valid return route east of the patches.
     assert!(safe_walk_contains(CATHERBY_SAFE_WALK, (2816, 3447, 0)));
+    // Baseline attempt 6, tick 4651: bank return outside the old fixture guard.
+    assert!(safe_walk_contains(CATHERBY_SAFE_WALK, (2821, 3449, 0)));
+    assert!(safe_walk_contains(CATHERBY_SAFE_WALK, (2834, 3450, 0)));
 }
 
 #[test]
 fn catherby_safe_walk_rejects_every_boundary_and_mountain_spawns() {
     for tile in [
         (2787, 3450, 0),
-        (2821, 3450, 0),
+        (2835, 3450, 0),
         (2800, 3435, 0),
         (2800, 3477, 0),
         (2800, 3450, 1),

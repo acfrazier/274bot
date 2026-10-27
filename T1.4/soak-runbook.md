@@ -41,14 +41,16 @@ The matched final normal-logs/maple infrastructure smoke is `smoke-comparison-28
 
 Baseline attempt 5 stopped after 2939 seconds at game tick 4732. Its account `soakwxg62_10` reached `(2816,3447,0)` during a bank return. The old east boundary, `x=2814`, excluded this town route. This was an oracle defect, not a transport failure. See `qual-1027/baseline-soak-qualification-attempt-5/artifacts/events.jsonl:547`.
 
+Baseline attempt 6 stopped at game tick 4651 at `(2821,3449,0)` after a bank deposit. The `x=2820` guard again excluded a safe bank return tile. The content audit of 25 nearby mountain hunters permits the southern rectangle through `x=2834`; `x=2835` touches the sentry's conservative envelope and stays excluded. See `qual-1027/baseline-soak-qualification-attempt-6/artifacts/events.jsonl:530` and `qual-1027/catherby-safe-corridor-attempt7.json`.
+
 The safety guard now admits the union of two ground-level rectangles:
 
-- Southern bank corridor: `x=2788..2820,z=3436..3468`.
+- Southern bank corridor: `x=2788..2834,z=3436..3468`.
 - Northern resource corridor: `x=2788..2810,z=3436..3476`.
 
-The northeastern corner remains excluded. Pack wolf `(2836,3495)` has wander 20, hunt 2 and size 2 (`m44_54.jm2:5700`, `all.npc:3585-3605`). Its minimum Chebyshev separation is 27 tiles from the southern rectangle and 26 from the northern rectangle. Both exceed the conservative sum of 24. The eastern sentry `(2842,3450)` remains at least 22 tiles away. Its corresponding sum is 7. The northern ice giant `(2804,3507)` remains at least 31 tiles away, also with sum 7.
+The northeastern corner remains excluded. Pack wolf `(2836,3495)` has wander 20, hunt 2 and size 2 (`m44_54.jm2:5700`, `all.npc:3585-3605`). Its minimum Chebyshev separation is 27 tiles from the southern rectangle and 26 from the northern rectangle. Both exceed the conservative sum of 24. The eastern sentry `(2842,3450)` remains at least eight tiles away. Its corresponding sum is seven. The northern ice giant `(2804,3507)` remains at least 31 tiles away, also with sum seven.
 
-Guard tests admit all radius-two work patches and the observed bank detour. They reject each outer boundary, the northeast corner and nearby hostile spawns. Both qualification arms must use the same corrected fixture. Attempt 5 does not count as a completed soak.
+Guard tests admit all radius-two work patches, both observed bank detours and the audited eastern edge. They reject each outer boundary, the northeast corner and nearby hostile spawns. Both qualification arms must use the same corrected fixture. Attempts 5 and 6 do not count as completed soaks.
 
 Each run preserves `effective-config.json`, `run-manifest.json`, `nav-identity.json`, `cohort.log`, `cohort-exit.json`, `pid.json`, external `process-samples.jsonl` (10-second `/proc` RSS, monotonic clock, task count and every task's `comm`), the Play test's per-slot events/summary, `proxy/ready.json`, `proxy/soak-start.json`, `proxy/connections.jsonl`, and `proxy.log`. Candidate additionally records `candidate-five-compartment-ledger.jsonl` at every ten-second sample and `candidate-wss-payloads.jsonl` SHA snapshots each minute and at shutdown. The ledger's **250,760 bytes are only five named logical reservations**: 16 KiB received plaintext, 128 KiB pending TLS output, 64 KiB handshake deframer, 5000-byte outbound ring and 32 KiB inbound ring. Known actual ring occupancy and accessible TLS bytes are separate fields; unavailable private rustls/tungstenite occupancy is null, never fabricated as zero. This is **not** an actual whole-connection allocation measurement. Compare whole-process RSS slope/final against baseline, and perform the separate G5-E deterministic scoped counting-allocator test for requested-layout bytes, high-water and unexplained deltas. Allocator requested bytes are not allocator usable bytes.
 
