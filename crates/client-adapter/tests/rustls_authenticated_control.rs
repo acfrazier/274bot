@@ -26,7 +26,6 @@ use std::net::{TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, SyncSender};
 use std::sync::Arc;
-#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 use std::sync::Mutex;
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 use std::sync::OnceLock;
@@ -65,8 +64,10 @@ use rustls::client::{
     Tls13ClientSessionValue,
 };
 use rustls::crypto::cipher::{
-    InboundOpaqueMessage, MessageDecrypter, MessageEncrypter, OutboundChunks, OutboundPlainMessage,
+    InboundOpaqueMessage, InboundPlainMessage, MessageDecrypter, MessageEncrypter, OutboundChunks,
+    OutboundPlainMessage,
 };
+use rustls::crypto::tls13::OkmBlock;
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 use rustls::pki_types::ServerName;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
@@ -968,9 +969,146 @@ impl RecordEncrypter {
     }
 }
 
+#[derive(Debug, Default)]
+struct ClientTrafficSecret(Mutex<Option<Vec<u8>>>);
+
+impl rustls::KeyLog for ClientTrafficSecret {
+    fn log(&self, label: &str, _client_random: &[u8], secret: &[u8]) {
+        if label == "CLIENT_TRAFFIC_SECRET_0" {
+            *self.0.lock().expect("local server traffic secret lock") = Some(secret.to_vec());
+        }
+    }
+
+    fn will_log(&self, label: &str) -> bool {
+        label == "CLIENT_TRAFFIC_SECRET_0"
+    }
+}
+
+struct ReceiveKeyUpdate {
+    suite: &'static rustls::Tls13CipherSuite,
+    secret: OkmBlock,
+}
+
+impl ReceiveKeyUpdate {
+    fn advance(&mut self) -> Box<dyn MessageDecrypter> {
+        // RFC 8446 sections 7.2 and 7.3: HKDF-Expand-Label with empty context.
+        let expander = self.suite.hkdf_provider.expander_for_okm(&self.secret);
+        let length = (expander.hash_len() as u16).to_be_bytes();
+        self.secret = expander.expand_block(&[&length, b"\x11tls13 traffic upd\x00"]);
+        let expander = self.suite.hkdf_provider.expander_for_okm(&self.secret);
+        let mut key = [0u8; 16];
+        let mut iv = [0u8; 12];
+        expander
+            .expand_slice(&[b"\x00\x10\x09tls13 key\x00"], &mut key)
+            .expect("AES-128 traffic key length");
+        expander
+            .expand_slice(&[b"\x00\x0c\x08tls13 iv\x00"], &mut iv)
+            .expect("TLS traffic IV length");
+        Box::new(UpdatedRecordDecrypter {
+            key: ring::aead::LessSafeKey::new(
+                ring::aead::UnboundKey::new(&ring::aead::AES_128_GCM, &key)
+                    .expect("AES-128 traffic key"),
+            ),
+            iv,
+        })
+    }
+}
+
+struct UpdatedRecordDecrypter {
+    key: ring::aead::LessSafeKey,
+    iv: [u8; 12],
+}
+
+impl MessageDecrypter for UpdatedRecordDecrypter {
+    fn decrypt<'a>(
+        &mut self,
+        mut message: InboundOpaqueMessage<'a>,
+        sequence: u64,
+    ) -> Result<InboundPlainMessage<'a>, rustls::Error> {
+        if message.typ != ContentType::ApplicationData
+            || message.version != ProtocolVersion::TLSv1_2
+        {
+            return Err(rustls::Error::DecryptError);
+        }
+        let mut nonce = self.iv;
+        for (byte, sequence_byte) in nonce[4..].iter_mut().zip(sequence.to_be_bytes()) {
+            *byte ^= sequence_byte;
+        }
+        let length = (message.payload.len() as u16).to_be_bytes();
+        let aad = [0x17, 0x03, 0x03, length[0], length[1]];
+        let plaintext_len = self
+            .key
+            .open_in_place(
+                ring::aead::Nonce::assume_unique_for_key(nonce),
+                ring::aead::Aad::from(aad),
+                &mut message.payload,
+            )
+            .map_err(|_| rustls::Error::DecryptError)?
+            .len();
+        message.payload.truncate(plaintext_len);
+        message.into_tls13_unpadded_message()
+    }
+}
+
+#[test]
+fn updated_record_decrypter_authenticates_sequence_and_tag() {
+    let make_key = || {
+        ring::aead::LessSafeKey::new(
+            ring::aead::UnboundKey::new(&ring::aead::AES_128_GCM, &[0x42; 16]).expect("test key"),
+        )
+    };
+    let iv = [0x31; 12];
+    let mut nonce = iv;
+    nonce[11] ^= 7;
+    let mut ciphertext = b"next-key\x17\x00\x00".to_vec();
+    let length = (ciphertext.len() + ring::aead::AES_128_GCM.tag_len()) as u16;
+    let [hi, lo] = length.to_be_bytes();
+    make_key()
+        .seal_in_place_append_tag(
+            ring::aead::Nonce::assume_unique_for_key(nonce),
+            ring::aead::Aad::from([0x17, 0x03, 0x03, hi, lo]),
+            &mut ciphertext,
+        )
+        .expect("encrypt authenticated next-key test record");
+    let mut decrypter = UpdatedRecordDecrypter {
+        key: make_key(),
+        iv,
+    };
+    let mut valid = ciphertext.clone();
+    let plaintext = decrypter
+        .decrypt(
+            InboundOpaqueMessage::new(
+                ContentType::ApplicationData,
+                ProtocolVersion::TLSv1_2,
+                &mut valid,
+            ),
+            7,
+        )
+        .expect("authenticate and remove TLS inner padding");
+    assert_eq!(plaintext.typ, ContentType::ApplicationData);
+    assert_eq!(plaintext.payload, b"next-key");
+    for (sequence, corrupt) in [(8, false), (7, true)] {
+        let mut invalid = ciphertext.clone();
+        if corrupt {
+            invalid[0] ^= 1;
+        }
+        assert!(decrypter
+            .decrypt(
+                InboundOpaqueMessage::new(
+                    ContentType::ApplicationData,
+                    ProtocolVersion::TLSv1_2,
+                    &mut invalid,
+                ),
+                sequence,
+            )
+            .is_err());
+    }
+}
+
 struct RecordDecrypter {
     sequence: u64,
     cipher: Box<dyn MessageDecrypter>,
+    key_update: Option<ReceiveKeyUpdate>,
 }
 
 impl RecordDecrypter {
@@ -997,7 +1135,11 @@ impl RecordDecrypter {
             ) => suite.aead_alg.decrypter(key, iv),
             _ => panic!("unexpected test cipher/traffic-secret combination"),
         };
-        Self { sequence, cipher }
+        Self {
+            sequence,
+            cipher,
+            key_update: None,
+        }
     }
 
     fn decrypt(&mut self, record: WireRecord) -> Result<ObservedRecord, String> {
@@ -1020,11 +1162,22 @@ impl RecordDecrypter {
             .sequence
             .checked_add(1)
             .ok_or_else(|| "TLS receive sequence overflowed".to_owned())?;
-        Ok(ObservedRecord {
+        let observed = ObservedRecord {
             outer_type,
             content_type: plaintext.typ,
             payload: plaintext.payload.to_vec(),
-        })
+        };
+        if observed.content_type == ContentType::Handshake
+            && matches!(observed.payload.as_slice(), [0x18, 0, 0, 1, 0 | 1])
+        {
+            let update = self
+                .key_update
+                .as_mut()
+                .ok_or_else(|| "TLS KeyUpdate has no receive traffic secret".to_owned())?;
+            self.cipher = update.advance();
+            self.sequence = 0;
+        }
+        Ok(observed)
     }
 }
 
@@ -1089,7 +1242,10 @@ fn serve_control_server(
     socket.set_nodelay(true)?;
 
     let send_tls13_tickets = config.send_tls13_tickets;
-    let mut connection = ServerConnection::new(config)
+    let traffic_secret = Arc::new(ClientTrafficSecret::default());
+    let mut config = (*config).clone();
+    config.key_log = traffic_secret.clone();
+    let mut connection = ServerConnection::new(Arc::new(config))
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
     let mut handshake_failure = None;
     while connection.is_handshaking() {
@@ -1149,6 +1305,18 @@ fn serve_control_server(
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
     let mut tx = RecordEncrypter::new(version, suite, secrets.tx);
     let mut rx = RecordDecrypter::new(version, suite, secrets.rx);
+    if let SupportedCipherSuite::Tls13(suite) = suite {
+        let secret = traffic_secret
+            .0
+            .lock()
+            .expect("local server traffic secret lock")
+            .take()
+            .expect("TLS 1.3 handshake logged its client traffic secret");
+        rx.key_update = Some(ReceiveKeyUpdate {
+            suite,
+            secret: OkmBlock::new(&secret),
+        });
+    }
 
     while let Ok(command) = commands.recv() {
         match command {
@@ -2607,12 +2775,18 @@ fn g5e_tls13_wss_keyupdate_backpressure_memory_receipt() {
         .sample_count
         .saturating_sub(recovery_ledger_samples_before);
     assert!(recovery_ledger_sample_count > 0);
-    assert!(
-        server
-            .read_client_record(Duration::from_millis(250))
-            .is_none(),
-        "exactly one KeyUpdate reply is emitted"
-    );
+    let drain_deadline = Instant::now() + IO_TIMEOUT;
+    while let Some(record) = server.read_client_record(Duration::from_millis(250)) {
+        assert_eq!(
+            record.content_type,
+            ContentType::ApplicationData,
+            "exactly one KeyUpdate reply is emitted; later records are queued game data"
+        );
+        assert!(
+            Instant::now() < drain_deadline,
+            "queued game records must drain within the fixture deadline"
+        );
+    }
     let (allocator_after_recovery, allocator_recovery_peak) = g5e_allocator_snapshot();
     let resources_after_recovery = g5e_process_resources();
 

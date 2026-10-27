@@ -682,6 +682,7 @@ dependencies = [
  "libc",
  "mio",
  "rcgen",
+ "ring",
  "rustls",
  "rustls-platform-verifier",
  "sha2",
