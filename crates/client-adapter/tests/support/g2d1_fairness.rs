@@ -19,7 +19,7 @@ struct ThirdHandshakeHold {
 
 impl ThirdHandshakeHold {
     fn release(&self) {
-        *self.released.lock().unwrap() = true;
+        *self.released.lock().expect("verifier release lock") = true;
         self.changed.notify_all();
     }
 }
@@ -35,12 +35,14 @@ impl ServerCertVerifier for ThirdHandshakeHold {
     ) -> Result<ServerCertVerified, RustlsError> {
         // The first two sessions are fully established before A starts.
         if self.verifier.audit.calls.load(Ordering::SeqCst) == 2 {
-            self.entered.send(Instant::now()).unwrap();
-            let released = self.released.lock().unwrap();
+            self.entered
+                .send(Instant::now())
+                .expect("publish verifier entry");
+            let released = self.released.lock().expect("verifier release lock");
             let (released, _) = self
                 .changed
                 .wait_timeout_while(released, Duration::from_secs(45), |released| !*released)
-                .unwrap();
+                .expect("wait for verifier release");
             assert!(*released, "G2-D1 verifier release barrier timed out");
         }
         self.verifier
@@ -88,19 +90,21 @@ struct ReactorPeer {
 impl ReactorPeer {
     fn start(service: &Arc<TransportService>, address: std::net::SocketAddr) -> Self {
         let park = Arc::new(Park::new());
-        let token = CancelSource::new(Arc::clone(&park)).child().unwrap();
+        let token = CancelSource::new(Arc::clone(&park))
+            .child()
+            .expect("fresh cancellation child");
         let retired = Arc::new(AttemptRetire::new(token.generation()));
         let deadline = Instant::now() + Duration::from_secs(30);
         let (binding, shared) = service
             .reserve(Arc::clone(&park), token.generation())
-            .unwrap();
+            .expect("reserve reactor peer");
         let ticket = service
             .game_tls_waiter(park, deadline, token.clone())
-            .unwrap();
+            .expect("reserve TLS waiter");
         assert_eq!(ticket.poll(Instant::now()), GameTlsWait::Ready);
         let release = Arc::new(QueueReleaseProof::new(
             binding,
-            service.tls_transfer_seq().unwrap(),
+            service.tls_transfer_seq().expect("TLS transfer sequence"),
         ));
         let mut addresses = ResolvedAddresses::new();
         assert!(addresses.push(address));
@@ -117,7 +121,7 @@ impl ReactorPeer {
                 queue_release: Some(release),
                 tls_ticket: Some(ticket),
             })
-            .unwrap();
+            .expect("submit reactor connection");
         Self {
             binding,
             shared,
@@ -168,7 +172,7 @@ impl ReactorPeer {
                 },
                 &service.bus(),
             )
-            .unwrap();
+            .expect("seal connected peer");
         self.wait(service, || self.shared.control.has_primary_reply());
         assert!(matches!(
             self.shared.control.take_primary_reply(),
@@ -190,7 +194,10 @@ impl ReactorPeer {
         } else {
             ServerCommand::SendBinary(payload.clone())
         };
-        server.commands.send(command).unwrap();
+        server
+            .commands
+            .send(command)
+            .expect("send server exchange command");
         let mut actual = Vec::new();
         while actual.len() < payload.len() {
             self.wait(service, || !self.shared.inbound.is_empty());
@@ -206,19 +213,25 @@ impl ReactorPeer {
                 expected: payload.clone(),
                 reply,
             })
-            .unwrap();
+            .expect("request server payload check");
         assert!(matches!(
             self.shared
                 .append_record(self.binding, &payload, &service.bus()),
             client_adapter::shared::AppendResult::Accepted
         ));
-        received.recv_timeout(IO_TIMEOUT).unwrap().unwrap();
+        received
+            .recv_timeout(IO_TIMEOUT)
+            .expect("receive payload check")
+            .expect("payload matches");
         let (reply, received) = mpsc::sync_channel(1);
         server
             .commands
             .send(ServerCommand::Ping { payload, reply })
-            .unwrap();
-        received.recv_timeout(IO_TIMEOUT).unwrap().unwrap();
+            .expect("request server Ping");
+        received
+            .recv_timeout(IO_TIMEOUT)
+            .expect("receive Ping result")
+            .expect("Ping succeeds");
         assert!(!self.shared.is_closed());
         assert!(service.maintain(Instant::now()).is_none());
     }
@@ -233,7 +246,7 @@ impl ReactorPeer {
                 },
                 &service.bus(),
             )
-            .unwrap();
+            .expect("post peer cancellation");
         self.wait(service, || self.shared.control.has_close_reply());
         assert_eq!(self.shared.control.take_closed(), Some(self.binding));
         assert!(self.shared.is_closed());

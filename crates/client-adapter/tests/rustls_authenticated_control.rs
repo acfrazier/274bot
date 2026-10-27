@@ -154,9 +154,7 @@ unsafe impl GlobalAlloc for G5eCountingAllocator {
     }
 
     unsafe fn dealloc(&self, pointer: *mut u8, layout: Layout) {
-        G5E_ALLOCATOR_LIVE_BYTES
-            .fetch_sub(layout.size(), Ordering::Relaxed)
-            .saturating_sub(layout.size());
+        G5E_ALLOCATOR_LIVE_BYTES.fetch_sub(layout.size(), Ordering::Relaxed);
         // SAFETY: the caller supplied the pointer and matching layout returned
         // by this allocator.
         unsafe { System.dealloc(pointer, layout) };
@@ -323,17 +321,17 @@ fn record_g5e_allocation_scope(event: AllocationScopeEvent) {
             };
             let inclusive_bytes =
                 G5E_SCOPED_ALLOCATOR_INCLUSIVE_BYTES[index].load(Ordering::Relaxed);
-            if let Some(sample) = G5E_SCOPE_SAMPLES
+            let mut samples = G5E_SCOPE_SAMPLES
                 .get()
                 .expect("allocation scope samples initialized")
                 .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())[index]
-                .as_mut()
-            {
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if let Some(sample) = samples[index].as_mut() {
                 sample.completed = true;
             } else {
                 G5E_SCOPE_OVERFLOW.store(true, Ordering::Relaxed);
             }
+            drop(samples);
             if parent != 0 {
                 if let Some(parent_index) = g5e_scope_index(parent) {
                     G5E_SCOPED_ALLOCATOR_INCLUSIVE_BYTES[parent_index]
@@ -1958,7 +1956,7 @@ fn g5e_macos_fd_count() -> Option<usize> {
     };
     if returned < 0
         || returned as usize >= buffer_size
-        || returned as usize % std::mem::size_of::<G5eProcFdInfo>() != 0
+        || !(returned as usize).is_multiple_of(std::mem::size_of::<G5eProcFdInfo>())
     {
         return None;
     }
