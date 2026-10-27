@@ -42,9 +42,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   follows it whoever turned it on, and a failure there leaves after 15 seconds.
   In the terminal app's settings popup, a selected setting whose reason is
   taller than the popup (a long path on an 80x24 terminal) says that more is
-  below, and Up and Down scroll through it; the bottom border says when not
-  every notice fits. A setting the save queue refuses outright (it is full) is
-  logged as a refused command. A failed automatic save of the Load order shows
+  below, and Up and Down scroll through it, also when the notices leave it
+  only two lines. Notices under the rows that do not fit say that more are
+  above or below, and PgUp and PgDn scroll through them, so a failed dismiss
+  can be read to its end on an 80x24 terminal. A setting the save queue
+  refuses outright (it is full) is logged as a refused command. A failed
+  automatic save of the Load order shows
   in the Fleet window (panel) and on the message line (terminal app), which
   also says "Load order: saving…" while it is written.
 
