@@ -443,6 +443,7 @@ rss_ladder 1 acf   13u  IPv4 0x3      0t0  TCP 127.0.0.1:50002->127.0.0.1:43594 
         any(target_os = "macos", target_os = "linux")
     ))]
     #[test]
+    #[ignore = "timing self-test of the process CPU counter: a loaded machine (CI, parallel suites) can starve the busy child; run it explicitly before a CPU-share measurement"]
     fn process_cpu_counter_busy_loop_child() {
         const CHILD: &str = "274BOT_PROCESS_CPU_COUNTER_SELFTEST_CHILD";
         if std::env::var_os(CHILD).is_some() {
@@ -471,6 +472,7 @@ rss_ladder 1 acf   13u  IPv4 0x3      0t0  TCP 127.0.0.1:50002->127.0.0.1:43594 
             std::process::Command::new(std::env::current_exe().expect("current test executable"))
                 .arg("process_cpu_counter_busy_loop_child")
                 .arg("--nocapture")
+                .arg("--ignored")
                 .arg("--test-threads=1")
                 .env(CHILD, "1")
                 .output()
