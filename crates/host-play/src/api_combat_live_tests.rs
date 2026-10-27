@@ -1569,7 +1569,7 @@ fn live_api_combat_native_lines_skip_zero_danger_and_hold_the_cow_food_line() {
         .script_start_load(
             &cell.account,
             PHASED_CONSUMER.to_string(),
-            script::LoadShape::NativeTick,
+            script_js::LoadShape::NativeTick,
             None,
             vec![],
         )
@@ -1579,6 +1579,9 @@ fn live_api_combat_native_lines_skip_zero_danger_and_hold_the_cow_food_line() {
         cell.play.script_state(&cell.account) == script::RunState::Running
     });
 
+    // The protection and food facts are judged over every attempt, so a
+    // discarded attempt cannot hide a violation (seen_on is cumulative).
+    let start = cell.snapshot();
     let mut zero = None;
     for (i, (x, z)) in CHICKEN_STANDS.iter().enumerate() {
         let stand = WorldTile {
@@ -1604,7 +1607,12 @@ fn live_api_combat_native_lines_skip_zero_danger_and_hold_the_cow_food_line() {
             break;
         }
     }
-    let zero = zero.expect("a chicken stand");
+    let mut zero = zero.expect("a chicken stand");
+    let end = cell.snapshot();
+    zero.facts.protect_raised = end.seen_on.contains(&protect) && !start.seen_on.contains(&protect);
+    zero.facts.food_before = start.shrimps;
+    zero.receipt["protect_raised"] = zero.facts.protect_raised.into();
+    zero.receipt["food_before"] = start.shrimps.into();
 
     cell.cheat_until("clear food", "~clearinv", |state| state.shrimps == 0);
     cell.seed_hitpoints(3, |_| true);
