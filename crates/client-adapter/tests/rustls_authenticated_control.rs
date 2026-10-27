@@ -12,14 +12,14 @@ mod g5e_stack;
 use std::alloc::{GlobalAlloc, Layout, System};
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 use std::cell::Cell;
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+use std::ffi::c_void;
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 use std::fmt::Write as FmtWrite;
 #[cfg(target_os = "linux")]
 use std::fs;
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 use std::fs::OpenOptions;
-#[cfg(any(target_os = "macos", target_os = "windows"))]
-use std::ffi::c_void;
 use std::io::{self, Read, Write};
 use std::net::{TcpListener, TcpStream};
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
@@ -1967,13 +1967,7 @@ fn g5e_macos_fd_count() -> Option<usize> {
 #[cfg(target_os = "macos")]
 #[link(name = "proc")]
 unsafe extern "C" {
-    fn proc_pidinfo(
-        pid: i32,
-        flavor: i32,
-        arg: u64,
-        buffer: *mut c_void,
-        buffersize: i32,
-    ) -> i32;
+    fn proc_pidinfo(pid: i32, flavor: i32, arg: u64, buffer: *mut c_void, buffersize: i32) -> i32;
 }
 
 #[cfg(target_os = "windows")]
@@ -2584,14 +2578,18 @@ fn g5e_tls13_wss_keyupdate_backpressure_memory_receipt() {
     let response = key_update_response.expect("authenticated KeyUpdate reply was observed");
     assert_eq!(response.outer_type, ContentType::ApplicationData);
     assert_eq!(response.content_type, ContentType::Handshake);
-    assert_eq!(response.payload.as_slice(), &[0x18, 0x00, 0x00, 0x01, 0x00][..]);
+    assert_eq!(
+        response.payload.as_slice(),
+        &[0x18, 0x00, 0x00, 0x01, 0x00][..]
+    );
     assert_eq!(attempt.shared.bytes_out(), bytes_out_before);
     assert_eq!(attempt.shared.bytes_in(), bytes_in_before);
     assert!(!endpoint.tls_output_blocked_for_test());
     let pending_after_recovery = sample_g5e_wss_ledger(&mut ledger, target_binding, 2);
     assert_eq!(pending_after_recovery, 0);
-    let recovery_ledger_sample_count =
-        ledger.sample_count.saturating_sub(recovery_ledger_samples_before);
+    let recovery_ledger_sample_count = ledger
+        .sample_count
+        .saturating_sub(recovery_ledger_samples_before);
     assert!(recovery_ledger_sample_count > 0);
     assert!(
         server
