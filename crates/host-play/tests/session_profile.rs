@@ -839,18 +839,21 @@ fn qualified_revision_289_accepts_an_unarmed_slot_and_script_loading() {
     server.join().unwrap();
     assert!(play.arm("fixture").is_some());
     assert!(play.login_queue_uids().is_empty());
-    // The loader/start handle accepts the user's script under revision 289.
-    // Runtime actions remain subject to the actual host/client capabilities.
-    play.script_start_handle()
-        .start_load(
-            "fixture",
-            "export function tick(api) {}".into(),
-            script_js::LoadShape::NativeTick,
-            None,
-            vec![],
-        )
-        .unwrap();
-    play.script_stop("fixture");
+    #[cfg(feature = "js")]
+    {
+        // The loader/start handle accepts the user's script under revision 289.
+        // Runtime actions remain subject to the actual host/client capabilities.
+        play.script_start_handle()
+            .start_load(
+                "fixture",
+                "export function tick(api) {}".into(),
+                script_js::LoadShape::NativeTick,
+                None,
+                vec![],
+            )
+            .unwrap();
+        play.script_stop("fixture");
+    }
     play.stop_slot("fixture");
     assert!(play.arm("fixture").is_none());
     assert!(!profile.vault_path().exists());

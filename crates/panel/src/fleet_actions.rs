@@ -20,6 +20,7 @@ impl Session {
     /// [`Self::confirm_fleet_plan`] or [`Self::cancel_fleet_plan`]. A new
     /// plan replaces a waiting one.
     pub(crate) fn plan_fleet_action(&mut self, action: FleetAction) {
+        #[cfg(feature = "js")]
         if matches!(
             action,
             FleetAction::Start | FleetAction::Assign | FleetAction::AssignRestart

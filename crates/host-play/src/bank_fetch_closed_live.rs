@@ -34,6 +34,9 @@
 //!    walk pump runs the one verifying trip (30 coins of the 40 banked) and
 //!    the walk ends beside the target.
 //!
+//! The two manual WalkTo cells also compile without JS. Only the
+//! solid-radius Load cell requires the `js` feature.
+//!
 //! Evidence (JSON receipt and CPU-rendered PNG) lands below
 //! `LIVE_EVIDENCE_DIR`. Deadline: 10 minutes after the seed is posted.
 //!
@@ -116,6 +119,7 @@ fn standable_near(world: &NavWorld, around: WorldTile) -> WorldTile {
         .expect("a standable tile near Musa Point")
 }
 
+#[cfg(feature = "js")]
 /// The solid tile nearest `around` that something can stand beside and
 /// reach: a radius walk-near there takes the host's solid-target search.
 fn solid_near(world: &NavWorld, around: WorldTile) -> WorldTile {
@@ -134,6 +138,7 @@ fn solid_near(world: &NavWorld, around: WorldTile) -> WorldTile {
         .expect("a solid tile with an arrival stand near Musa Point")
 }
 
+#[cfg(feature = "js")]
 /// The Load script of the solid-radius cell: one isolate `walk-near` with
 /// BankBudget on, then it only keeps the slot's script running.
 fn solid_walk_script(target: WorldTile) -> String {
@@ -161,6 +166,7 @@ export function tick(api) {{
     )
 }
 
+#[cfg(feature = "js")]
 /// The solid-radius cell's walk-near radius.
 const SOLID_RADIUS: i32 = 1;
 
@@ -170,6 +176,7 @@ enum Variant {
     Session,
     /// The memory is the edited hint file, loaded by this new process.
     StaleNegative,
+    #[cfg(feature = "js")]
     /// The edited hint again, and a script `walk-near` to a solid tile.
     StaleSolidRadius,
 }
@@ -356,6 +363,7 @@ enum Stage {
     Arm {
         settled: Option<Instant>,
     },
+    #[cfg(feature = "js")]
     /// The solid-radius cell: the script's walk-near is routing off-pump.
     AwaitPlan {
         since: Instant,
@@ -461,6 +469,7 @@ fn leg_lines(route: &nav_planner::router::Route) -> Vec<String> {
         .collect()
 }
 
+#[cfg(feature = "js")]
 /// The slot's script walk as the host's own pump holds it (the solid-radius
 /// cell): the session's remaining steps and post-session route, whether a
 /// route is followed, and whether the walk ended failed.
@@ -471,6 +480,7 @@ struct ScriptWalk {
     failed: bool,
 }
 
+#[cfg(feature = "js")]
 fn script_walk(play: &super::Play, account: &str) -> ScriptWalk {
     let navs = play.navs.lock().unwrap();
     let bot = navs.get(account);
@@ -586,7 +596,7 @@ fn run_cell(variant: Variant) {
     let home = std::env::var("HOME").expect("HOME is the throwaway isohome directory");
     let account = match variant {
         Variant::Session => super::mint_live_names(1).pop().expect("one live account"),
-        Variant::StaleNegative | Variant::StaleSolidRadius => std::env::var("S5_LIVE_ACCOUNT")
+        _ => std::env::var("S5_LIVE_ACCOUNT")
             .expect("S5_LIVE_ACCOUNT names the account the earlier cells left"),
     };
     let hint = hint_path(&account);
@@ -613,6 +623,7 @@ fn run_cell(variant: Variant) {
     let label = match variant {
         Variant::Session => "l-fetch-closed",
         Variant::StaleNegative => "l-fetch-closed-stale",
+        #[cfg(feature = "js")]
         Variant::StaleSolidRadius => "l-fetch-closed-solid",
     };
     let evidence_dir = root.join(format!("{label}_{account}_utc-{}Z", unix_now()));
@@ -640,7 +651,9 @@ fn run_cell(variant: Variant) {
     }
     let facts = Arc::clone(world.named_bank_facts().expect("named bank facts"));
     let karamja = standable_near(&world, KARAMJA);
+    #[cfg(feature = "js")]
     let solid = solid_near(&world, KARAMJA);
+    #[cfg(feature = "js")]
     if variant == Variant::StaleSolidRadius {
         assert!(
             !world.collision.standable(solid),
@@ -660,9 +673,10 @@ fn run_cell(variant: Variant) {
     );
     let seed: &'static [&'static str] = match variant {
         Variant::Session => SEED,
-        Variant::StaleNegative | Variant::StaleSolidRadius => &[],
+        _ => &[],
     };
     let request = match variant {
+        #[cfg(feature = "js")]
         Variant::StaleSolidRadius => serde_json::json!({
             "walk_near": [solid.x, solid.z, solid.level],
             "radius": SOLID_RADIUS,
@@ -744,16 +758,20 @@ fn run_cell(variant: Variant) {
     let mut stage = Stage::Prepare;
     // The solid-radius cell watches the slot's own script walk: the front
     // step it last traced, and whether a session was latched last poll.
+    #[cfg(feature = "js")]
     let mut script_front: Option<Option<BankStep>> = None;
+    #[cfg(feature = "js")]
     let mut script_session = false;
     // Where the walk must end: the exact Karamja tile, or (solid radius)
     // within the radius of the solid target on its level.
     let goal = match variant {
+        #[cfg(feature = "js")]
         Variant::StaleSolidRadius => solid,
         Variant::Session | Variant::StaleNegative => karamja,
     };
     let arrived = |tile: Option<[i32; 3]>| match (variant, tile) {
         (_, None) => false,
+        #[cfg(feature = "js")]
         (Variant::StaleSolidRadius, Some([x, z, level])) => {
             level == solid.level && (x - solid.x).abs().max((z - solid.z).abs()) <= SOLID_RADIUS
         }
@@ -822,7 +840,7 @@ fn run_cell(variant: Variant) {
                                     Err(error) => fail(format!("Play refused the script: {error}")),
                                 }
                             }
-                            Variant::StaleNegative | Variant::StaleSolidRadius => {
+                            _ => {
                                 let rows = play.bank_rows(&account);
                                 if rows.origin != Origin::Hint
                                     || rows.rows.iter().any(|&(id, _)| id == COINS)
@@ -906,6 +924,7 @@ fn run_cell(variant: Variant) {
                         ));
                         continue;
                     }
+                    #[cfg(feature = "js")]
                     if variant == Variant::StaleSolidRadius {
                         match play.script_start_load(
                             &account,
@@ -995,6 +1014,7 @@ fn run_cell(variant: Variant) {
                         since: Instant::now(),
                     };
                 }
+                #[cfg(feature = "js")]
                 Stage::AwaitPlan { since } => {
                     let walk = script_walk(&play, &account);
                     if let Some(steps) = walk.steps {
@@ -1024,6 +1044,7 @@ fn run_cell(variant: Variant) {
                     }
                 }
                 Stage::Walking { since } => {
+                    #[cfg(feature = "js")]
                     if variant == Variant::StaleSolidRadius {
                         let walk = script_walk(&play, &account);
                         let (tile, held, loaded) = {
@@ -1180,6 +1201,7 @@ fn live_fetch_closed_stale_negative_hint() {
     run_cell(Variant::StaleNegative);
 }
 
+#[cfg(feature = "js")]
 #[test]
 #[ignore = "requires LIVE=1, S5_LIVE_ACCOUNT after the stale cell under the same HOME, and a local 289 engine"]
 fn live_fetch_closed_stale_solid_radius() {

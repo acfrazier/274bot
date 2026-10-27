@@ -46,8 +46,10 @@ use std::panic::AssertUnwindSafe;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
-#[cfg(test)]
-use std::time::{Duration, Instant};
+#[cfg(all(test, feature = "js"))]
+use std::time::Duration;
+#[cfg(all(test, feature = "js"))]
+use std::time::Instant;
 
 #[cfg(test)]
 use api::interact::Driver;
@@ -83,6 +85,7 @@ mod rss;
 mod scatter;
 #[cfg(feature = "test-support")]
 mod script_api_live_probe;
+#[cfg(feature = "js")]
 mod script_channels;
 mod script_runtime;
 mod slot_bank_memory;
@@ -156,10 +159,10 @@ use play_login::{publish_queue_place, sync_profile_arm, SharedLoginQueue};
 pub use play_login::{LoginLatchReason, SlotArm};
 use play_slots::SlotFrame;
 pub use play_slots::SlotFrameInput;
+#[cfg(all(test, feature = "js"))]
+use play_slots::{end_slot_session, sync_script_login};
 #[cfg(test)]
-use play_slots::{
-    end_slot_session, observe_slot_catalog_and_paired, reset_slot_session_work, sync_script_login,
-};
+use play_slots::{observe_slot_catalog_and_paired, reset_slot_session_work};
 #[cfg(test)]
 use play_status::{
     apply_startup_phase, mark_login_started, publish_session_boundary_status,
@@ -275,6 +278,7 @@ pub struct Play {
     /// Shared by operator and slot-thread starts; the copy scope owns its token.
     script_start_hold: Arc<Mutex<std::sync::Weak<String>>>,
     /// Same-process, same-world BroadcastChannel broker for paired parties.
+    #[cfg(feature = "js")]
     channels: script_channels::ChannelBroker,
     /// Per-slot cheat commands the panel queued; each slot thread runs
     /// `api::interact::cheat` on its own Driver and flushes the socket.
@@ -598,7 +602,12 @@ mod combat_proof;
 #[path = "combat_live_proof_tests.rs"]
 mod combat_live_proof_tests;
 
-#[cfg(all(test, feature = "live-harness", feature = "test-support"))]
+#[cfg(all(
+    test,
+    feature = "js",
+    feature = "live-harness",
+    feature = "test-support"
+))]
 mod manual_takeover_compat_live_tests;
 
 #[cfg(test)]
@@ -609,11 +618,11 @@ mod walk_guard_live_tests;
 #[path = "lib_tests.rs"]
 mod tests;
 
-#[cfg(test)]
+#[cfg(all(test, feature = "js"))]
 mod api_combat_live_tests;
 #[cfg(test)]
 mod api_gather_live_tests;
-#[cfg(test)]
+#[cfg(all(test, feature = "js"))]
 mod api_gather_tests;
 #[cfg(test)]
 mod bank_core_live;

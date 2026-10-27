@@ -10,12 +10,13 @@ use std::path::{Path, PathBuf};
 use serde_json::{Map, Value};
 
 use super::VaultFixture;
-use crate::scripts::{
-    CardSource, CompiledCardId, LoadShape, SchemaRef, ScriptChoice, Scripts, StatusView,
-};
+use crate::scripts::{CardSource, CompiledCardId, SchemaRef, Scripts, StatusView};
+#[cfg(feature = "js")]
+use crate::scripts::{LoadShape, ScriptChoice};
 use crate::session::OperatorSession;
 use crate::views::SlotDetail;
 
+#[cfg(feature = "js")]
 /// Install the catalog-backed compiled cards without starting the V8 platform.
 pub fn install_catalog_cards() {
     script_js::install_cards().expect("install canonical Sherlock card for front-end fixtures");
@@ -105,6 +106,7 @@ impl Assignment {
     }
 }
 
+#[cfg(feature = "js")]
 /// A loaded card's owned facts: picker name, origin file, source, loader
 /// shape, texts and identities. Unlike the borrowed `LoadedCard` view, the
 /// snapshot stays usable across polls, Starts and reloads.
@@ -124,6 +126,7 @@ pub struct LoadedCardSnapshot {
     assignment: vault::ScriptAssignment,
 }
 
+#[cfg(feature = "js")]
 impl LoadedCardSnapshot {
     fn snapshot(card: &script_js::JsCard) -> Self {
         Self {
@@ -209,6 +212,7 @@ impl LoadedCardSnapshot {
 }
 
 impl Scripts {
+    #[cfg(feature = "js")]
     /// Load `path` and snapshot the owned card facts (tests).
     pub fn load_card(&mut self, path: &Path) -> Result<LoadedCardSnapshot, String> {
         self.js_mut()
@@ -216,6 +220,7 @@ impl Scripts {
             .map(|card| LoadedCardSnapshot::snapshot(&card))
     }
 
+    #[cfg(feature = "js")]
     /// Snapshot the library card `lookup` (tests).
     pub fn card_snapshot(&self, source: CardSource, lookup: &str) -> Option<LoadedCardSnapshot> {
         self.js()
@@ -223,21 +228,25 @@ impl Scripts {
             .map(LoadedCardSnapshot::snapshot)
     }
 
+    #[cfg(feature = "js")]
     /// Ensure the catalog or file card is prepared (tests).
     pub fn ensure_card(&mut self, source: CardSource, name: &str) -> Result<(), String> {
         self.js_mut().ensure_js(source.to_script(), name)
     }
 
+    #[cfg(feature = "js")]
     /// Whether the raw source changed since the card loaded (tests).
     pub fn raw_source_changed(&self, source: CardSource, name: &str) -> Result<bool, String> {
         self.js().raw_source_changed(source.to_script(), name)
     }
 
+    #[cfg(feature = "js")]
     /// Replace the legacy global per-card store with one at `path` (tests).
     pub fn set_legacy_store(&mut self, path: PathBuf) {
         self.set_legacy(script::ScriptSettingsStore::at(path));
     }
 
+    #[cfg(feature = "js")]
     /// Set one legacy override without saving, as an unsaved legacy edit
     /// (tests).
     pub fn set_legacy_str(&mut self, source: CardSource, name: &str, id: &str, value: &str) {
@@ -245,11 +254,13 @@ impl Scripts {
             .set_str(source.to_script(), name, id, value);
     }
 
+    #[cfg(feature = "js")]
     /// The persisted legacy overrides for one card (tests).
     pub fn legacy_overrides(&self, source: CardSource, name: &str) -> Map<String, Value> {
         self.legacy().overrides(source.to_script(), name)
     }
 
+    #[cfg(feature = "js")]
     /// A recorded load failure's content fingerprint (tests).
     pub fn load_failure_fingerprint(&self, identity_key: &str) -> Option<String> {
         self.js()
@@ -257,6 +268,7 @@ impl Scripts {
             .map(|failure| failure.fingerprint.clone())
     }
 
+    #[cfg(feature = "js")]
     /// A recorded load failure's API family (`unversioned`, `v1`, `v2`).
     pub fn load_failure_api_family(&self, identity_key: &str) -> Option<String> {
         self.js()
@@ -264,12 +276,14 @@ impl Scripts {
             .and_then(|failure| failure.api_family.map(|family| family.as_str().to_owned()))
     }
 
+    #[cfg(feature = "js")]
     /// Register the rs2b0t catalog at `root` (tests). Synchronous: the
     /// transpile tests must not settle async work.
     pub fn register_catalog(&mut self, root: &Path, path_file: &Path) -> Result<usize, String> {
         self.js_mut().register_rs2b0t(root, path_file)
     }
 
+    #[cfg(feature = "js")]
     /// Whether the transpile cache already holds `origin` (tests).
     pub fn is_transpile_cached(&self, origin: &str) -> bool {
         self.js().cache().is_cached(origin.as_bytes())
@@ -292,6 +306,7 @@ impl Scripts {
     }
 }
 
+#[cfg(feature = "js")]
 /// A standalone card library for tests that never open a session: same-stem
 /// files in different directories stay distinct and content changes are
 /// observable per file.
@@ -299,6 +314,7 @@ pub struct TestLibrary {
     library: script_js::JsLibrary,
 }
 
+#[cfg(feature = "js")]
 impl TestLibrary {
     /// An empty library stored at `store` with its transpile cache below
     /// `cache_root` (tests).
@@ -737,16 +753,19 @@ pub fn file_identity(path: &Path) -> String {
     script::file_identity(path)
 }
 
+#[cfg(feature = "js")]
 /// The in-tree live example `file_name`, if one is built in (tests).
 pub fn live_example_path(file_name: &str) -> Option<PathBuf> {
     script_js::live_example_path(file_name)
 }
 
+#[cfg(feature = "js")]
 /// The SHA-256 of raw origin bytes, as load failures record it (tests).
 pub fn raw_content_fingerprint(card_path: &Path, origin: &str) -> String {
     script_js::raw_content_fingerprint(card_path, origin)
 }
 
+#[cfg(feature = "js")]
 /// The banner a reload shows when nothing changed (tests).
 pub fn nothing_changed_reload_message() -> &'static str {
     script::NOTHING_CHANGED_RELOAD
@@ -757,6 +776,7 @@ pub fn compiled_identity_key(id: CompiledCardId) -> String {
     script::compiled_identity_key(id.to_script())
 }
 
+#[cfg(feature = "js")]
 /// Save the library card's assignment on `profile`: false when the card is
 /// missing or the write refuses (tests).
 pub fn assign_loaded<Io>(
@@ -783,6 +803,7 @@ pub fn assign_compiled<Io>(
     scripts.persist_assignment(core, profile, Assignment::compiled(id).into_assignment())
 }
 
+#[cfg(feature = "js")]
 /// Start `source` JS on `name`'s slot with a frontend loader shape (tests):
 /// the direct Play load the live walk tests drive.
 pub fn play_start_load<Io>(

@@ -671,6 +671,7 @@ fn real_unknown_poison_explicit_forbid_then_opt_in_and_default_escape() {
     );
 }
 
+#[cfg(feature = "js")]
 fn compat_corridor_fixture(
     world: &NavWorld,
     state: &WorldState,
@@ -727,6 +728,7 @@ fn compat_corridor_fixture(
     (origin, destination)
 }
 
+#[cfg(feature = "js")]
 struct CompatLive {
     snapshot: GameSnapshot,
     world: Arc<NavWorld>,
@@ -744,6 +746,7 @@ struct CompatLive {
     captured: bool,
 }
 
+#[cfg(feature = "js")]
 impl CompatLive {
     fn frame(&mut self, client: &mut Client) {
         self.snapshot.rebuild(client);
@@ -836,6 +839,7 @@ impl CompatLive {
     }
 }
 
+#[cfg(feature = "js")]
 fn compat_source(destination: WorldTile) -> String {
     format!(
         r#"
@@ -867,6 +871,7 @@ export default class S2bCompat extends LoopingBot {{
     )
 }
 
+#[cfg(feature = "js")]
 #[test]
 #[ignore = "requires LIVE=1, BOT_CPU=1, BOT_LIVE_NAME_PREFIX, WORLD_ENGINE_DIR, per-run BOT_CACHE_DIR/BOT_UNPACK_DIR and LIVE_EVIDENCE_DIR; Engine A 44594/1080"]
 fn real_compat_v1_crossing_and_own_sustain_at_45_and_14_hp() {
@@ -944,9 +949,10 @@ fn real_compat_v1_crossing_and_own_sustain_at_45_and_14_hp() {
             }
             std::thread::sleep(Duration::from_millis(20));
         };
+        let source = compat_source(destination);
         play.script_start_load(
             &name,
-            compat_source(destination),
+            source,
             script_js::LoadShape::CompatClass,
             None,
             vec![],

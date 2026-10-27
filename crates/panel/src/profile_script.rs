@@ -5,18 +5,24 @@
 //! Assignment, parameters, Start / Start all / Stop all, reload, catalog
 //! refresh and Apply to all are the coordinator's.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(feature = "js")]
+use std::path::PathBuf;
 
-#[cfg(test)]
+#[cfg(all(test, feature = "js"))]
 use frontend_core::scripts::ReloadOutcome;
+#[cfg(feature = "js")]
+use frontend_core::scripts::SchemaRef;
 #[cfg(test)]
 use frontend_core::test_support::scripts::Assignment;
 use frontend_core::{
     command::{CardKind, OperatorCommand},
-    scripts::{CardSource, CompiledCardId, SchemaRef, ScriptChoice},
+    scripts::{CardSource, CompiledCardId, ScriptChoice},
     Targets,
 };
-use serde_json::{Map, Value};
+#[cfg(feature = "js")]
+use serde_json::Map;
+use serde_json::Value;
 
 use crate::session::Session;
 
@@ -28,6 +34,7 @@ impl Session {
         }
     }
 
+    #[cfg(feature = "js")]
     /// The catalog root a Start may fill the catalog from; a server-profile
     /// error is shown and fills nothing.
     pub(crate) fn start_catalog_root(&mut self) -> Option<PathBuf> {
@@ -45,10 +52,12 @@ impl Session {
 
     pub fn restore_script_heading(&mut self, profile: &str) {
         let heading = self.scripts.heading(&self.core, profile);
+        #[cfg(feature = "js")]
         let needs_catalog = heading
             .as_ref()
             .is_some_and(|sel| sel.source() == CardSource::Catalog);
         self.script_sel = heading;
+        #[cfg(feature = "js")]
         if needs_catalog {
             self.fill_rs2b0t_cards_once();
         }
@@ -71,6 +80,7 @@ impl Session {
         self.apply_script_notice();
     }
 
+    #[cfg(feature = "js")]
     pub fn profile_overrides(
         &mut self,
         profile: &str,
@@ -84,6 +94,7 @@ impl Session {
         bag
     }
 
+    #[cfg(feature = "js")]
     pub fn merged_profile_bag(
         &mut self,
         profile: &str,
@@ -110,13 +121,19 @@ impl Session {
         id: &str,
         value: Value,
     ) -> bool {
-        let selection = CompiledCardId::lookup(name)
-            .map(ScriptChoice::compiled)
-            .unwrap_or_else(|| ScriptChoice::loaded(source, name));
-        let kind = if selection.compiled_id().is_some() {
-            CardKind::Native
-        } else {
-            CardKind::Script
+        let (selection, kind) = match CompiledCardId::lookup(name) {
+            Some(card) => (ScriptChoice::compiled(card), CardKind::Native),
+            None => {
+                #[cfg(feature = "js")]
+                {
+                    (ScriptChoice::loaded(source, name), CardKind::Script)
+                }
+                #[cfg(not(feature = "js"))]
+                {
+                    let _ = source;
+                    return false;
+                }
+            }
         };
         self.scripts
             .stage_setting(Some(profile), &selection, id, value);
@@ -133,7 +150,9 @@ impl Session {
 
     /// Start the given profile using its last successful assignment only.
     pub fn script_start_profile(&mut self, profile: &str) -> Result<(), String> {
+        #[cfg(feature = "js")]
         let root = self.start_catalog_root();
+        #[cfg(feature = "js")]
         self.scripts.stage_start_catalog_root(root);
         let submitted = self
             .submit_script_command(OperatorCommand::StartScript, Targets::Profile(profile))
@@ -157,43 +176,51 @@ impl Session {
     /// writes) once per UI frame, after the core poll.
     pub fn poll_scripts(&mut self) {
         self.scripts.poll(&mut self.core);
-        if let Some((root, result)) = self.scripts.take_catalog_import_update() {
-            match result {
-                Ok(_) => {
-                    let _ = frontend_core::scripts::paths::clear_rs2b0t_import_at(
-                        &frontend_core::scripts::paths::rs2b0t_import_file(),
-                    );
-                    let _ = self.persist_panel_serializable(&["script_catalog_last_dir"], &root);
-                    self.ui.script_catalog_last_dir = Some(root);
-                    self.rs2b0t_catalog_open = false;
-                    self.error = None;
+        #[cfg(feature = "js")]
+        {
+            if let Some((root, result)) = self.scripts.take_catalog_import_update() {
+                match result {
+                    Ok(_) => {
+                        let _ = frontend_core::scripts::paths::clear_rs2b0t_import_at(
+                            &frontend_core::scripts::paths::rs2b0t_import_file(),
+                        );
+                        let _ =
+                            self.persist_panel_serializable(&["script_catalog_last_dir"], &root);
+                        self.ui.script_catalog_last_dir = Some(root);
+                        self.rs2b0t_catalog_open = false;
+                        self.error = None;
+                    }
+                    Err(error) => self.error = Some(error),
                 }
-                Err(error) => self.error = Some(error),
             }
-        }
-        for (name, message) in self.scripts.take_start_failures() {
-            self.core
-                .live_runner()
-                .fail_external_loader_start(&name, message);
+            for (name, message) in self.scripts.take_start_failures() {
+                self.core
+                    .live_runner()
+                    .fail_external_loader_start(&name, message);
+            }
         }
         self.apply_script_notice();
     }
 
+    #[cfg(feature = "js")]
     pub fn reload_validation_pending(&self) -> bool {
         self.scripts.reload_validation_pending()
     }
 
+    #[cfg(feature = "js")]
     #[cfg(test)]
     pub(crate) fn take_reload_outcome(&mut self) -> Option<ReloadOutcome> {
         self.scripts.take_reload_outcome()
     }
 
+    #[cfg(feature = "js")]
     fn current_reload_target(&self) -> Option<(CardSource, String)> {
         let focused = self.focused_name();
         self.scripts
             .reload_target(&self.core, focused.as_deref(), self.script_sel.as_ref())
     }
 
+    #[cfg(feature = "js")]
     /// Product UI Reload click (or Confirm of a shown warning).
     pub fn begin_script_reload_clicked(&mut self) {
         let target = self.current_reload_target();
@@ -208,17 +235,20 @@ impl Session {
         self.apply_script_notice();
     }
 
+    #[cfg(feature = "js")]
     pub fn script_reload_confirmation_pending(&self) -> bool {
         self.scripts
             .reload_confirmation_pending(self.current_reload_target().as_ref())
     }
 
     /// Discard the prepared candidate without touching any execution.
+    #[cfg(feature = "js")]
     pub fn cancel_reload(&mut self) {
         self.submit_script_command(OperatorCommand::CancelReload, Targets::Application);
         self.apply_script_notice();
     }
 
+    #[cfg(feature = "js")]
     /// Product UI catalog refresh. With no catalog root to read, the refresh
     /// is refused at the shared command boundary, like every other refusal.
     pub fn begin_refresh_catalog(&mut self) {
@@ -230,6 +260,7 @@ impl Session {
         self.refuse_command(OperatorCommand::ImportCatalog, &[], None, &reason);
     }
 
+    #[cfg(feature = "js")]
     pub(crate) fn begin_refresh_catalog_at(&mut self, root: &Path) {
         self.scripts.stage_catalog_action(
             frontend_core::scripts::CatalogActionKind::Refresh,
@@ -241,7 +272,9 @@ impl Session {
     }
 
     pub fn restart_pending_settings(&mut self) {
+        #[cfg(feature = "js")]
         let root = self.start_catalog_root();
+        #[cfg(feature = "js")]
         self.scripts.stage_start_catalog_root(root);
         self.submit_script_command(OperatorCommand::RestartForSettings, Targets::Application);
         self.apply_script_notice();

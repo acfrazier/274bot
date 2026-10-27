@@ -12,8 +12,9 @@ nav-planner = { path = "../nav-planner" }
 nav-executor = { path = "../nav-executor" }
 scenario = { path = "../scenario", optional = true }
 script = { path = "../script" }
-script-js = { path = "../script-js" }
-serde_json = "=1.0.140"
+script-js = { path = "../script-js", optional = true }
+# Local-state preference edits preserve member order without the JS runtime too.
+serde_json = { version = "=1.0.140", features = ["preserve_order"] }
 serde = { version = "=1.0.219", features = ["derive"] }
 sha2 = "=0.10.9"
 thiserror = "=2.0.20"
@@ -63,7 +64,23 @@ required-features = ["live-harness", "test-support"]
 
 [[test]]
 name = "script_api_live"
-required-features = ["test-support"]
+required-features = ["test-support", "js"]
+
+[[test]]
+name = "t2_family_live"
+required-features = ["js"]
+
+[[test]]
+name = "two_slot_isolation_live"
+required-features = ["js"]
+
+[[test]]
+name = "loadout_provision_live"
+required-features = ["js"]
+
+[[test]]
+name = "paired_catalog_live"
+required-features = ["js"]
 
 [[test]]
 name = "nav_gated_entrances_live"
@@ -85,10 +102,12 @@ windows-sys = { version = "0.59", features = [
 ] }
 
 [features]
+default = ["js"]
+js = ["dep:script-js"]
 debug-catalog = ["api/debug-catalog"]
 # Opt-in memory benchmark harness. No effect unless BOT_MEMORY_N is set.
 # Frontend binaries install CountingAllocator (T3).
-memory-profile = ["script-js/memory-profile", "host/performance-profile", "dep:scenario"]
+memory-profile = ["js", "script-js/memory-profile", "host/performance-profile", "dep:scenario"]
 
 # CPU diagnostic: use System directly, report allocator metrics unavailable.
 memory-profile-no-alloc = ["memory-profile"]
@@ -99,7 +118,7 @@ live-harness = ["dep:scenario"]
 
 # Test-only Play fixtures. Enabled from frontend dev-dependencies, never
 # production builds.
-test-support = ["api/test-support", "script/test-hooks", "script-js/test-hooks", "nav-planner/test-support"]
+test-support = ["api/test-support", "script/test-hooks", "script-js?/test-hooks", "nav-planner/test-support"]
 
 # Read-only probe for the manual-click LIVE harnesses. Enabled from frontend
 # dev-dependencies, never production builds.

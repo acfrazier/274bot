@@ -10,6 +10,7 @@ use vault::{Profile, ProfileSettings, Vault};
 
 use super::*;
 use crate::command::OperatorCommand;
+#[cfg(feature = "js")]
 use crate::scripts::LoadShape;
 use crate::surface::{SlotAttach, SlotSurface};
 use crate::ArmMirror;
@@ -177,17 +178,71 @@ fn session(test: &str, profiles: &[(&str, i32, bool)]) -> OperatorSession<u32> {
     session
 }
 
+#[cfg(feature = "js")]
+fn test_scripts(dir: &std::path::Path) -> crate::scripts::Scripts {
+    crate::scripts::Scripts::new(
+        script_js::JsLibrary::with_cache(dir.join("js-scripts.json"), dir.join("js-cache")),
+        script::ScriptSettingsStore::at(dir.join("script-settings.json")),
+    )
+}
+
+#[cfg(not(feature = "js"))]
+fn test_scripts(_dir: &std::path::Path) -> crate::scripts::Scripts {
+    crate::scripts::Scripts::new()
+}
+
+#[cfg(not(feature = "js"))]
+fn wait_compiled_script_state(
+    session: &mut OperatorSession<u32>,
+    scripts: &mut crate::scripts::Scripts,
+    profile: &str,
+    expected: script::RunState,
+) {
+    let guard = Instant::now() + HANG_GUARD;
+    loop {
+        session.poll();
+        scripts.poll(session);
+        let state = session.play().unwrap().script_state(profile);
+        if state == expected {
+            return;
+        }
+        assert_ne!(
+            state,
+            script::RunState::Error,
+            "{profile} ended in {state:?}"
+        );
+        assert!(
+            Instant::now() < guard,
+            "{profile} never reached {expected:?}"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+#[cfg(not(feature = "js"))]
+fn start_compiled_script(
+    session: &mut OperatorSession<u32>,
+    scripts: &mut crate::scripts::Scripts,
+    profile: &str,
+) {
+    let data = api::game_data::for_revision(api::selected::ClientRevision::R289)
+        .expect("the selected script revision has game data");
+    session.play_mut().unwrap().bind_script_test_data(data);
+    assert!(scripts.persist_assignment(
+        session,
+        profile,
+        script::compiled_assignment(script::CompiledId("Gatherer")),
+    ));
+    session.flush_writes();
+    scripts.start_profile(session, profile, None).unwrap();
+    wait_compiled_script_state(session, scripts, profile, script::RunState::Running);
+}
+
 #[test]
 fn new_profile_form_refuses_an_empty_password() {
     let iso = crate::test_support::IsolatedStores::enter("profile-editor-empty-password");
     let mut core = session("profile-editor-empty-password", &[]);
-    let scripts = crate::scripts::Scripts::new(
-        script_js::JsLibrary::with_cache(
-            iso.dir().join("js-scripts.json"),
-            iso.dir().join("js-cache"),
-        ),
-        script::ScriptSettingsStore::at(iso.dir().join("script-settings.json")),
-    );
+    let scripts = test_scripts(iso.dir());
     let mut editor = crate::ProfileEditor::new();
     editor.open(&core, "");
     editor.username_mut().push_str("alice");
@@ -826,6 +881,7 @@ fn reloading_during_removal_cancels_it_and_keeps_the_same_lifetime() {
     assert!(!a.stop.load(Ordering::Relaxed));
 }
 
+#[cfg(feature = "js")]
 fn looping_bot(dir: &std::path::Path) -> (String, LoadShape) {
     let path = dir.join("looping.ts");
     std::fs::write(
@@ -838,6 +894,7 @@ fn looping_bot(dir: &std::path::Path) -> (String, LoadShape) {
     (card.js, LoadShape::from_script(card.shape))
 }
 
+#[cfg(feature = "js")]
 fn settle_start(s: &mut OperatorSession<u32>) -> Vec<StartSettled> {
     let mut settled = Vec::new();
     pump_until(s, "script Start did not settle", |s| {
@@ -847,6 +904,7 @@ fn settle_start(s: &mut OperatorSession<u32>) -> Vec<StartSettled> {
     settled
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn offline_start_and_stop_settle_through_poll() {
     let iso = script::IsolatedEnv::enter("frontend-core-offline-start");
@@ -909,6 +967,7 @@ fn offline_start_and_stop_settle_through_poll() {
     );
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn a_start_refused_by_the_host_is_an_error_not_an_operation() {
     let mut s = session("start-refused", &[]);
@@ -1257,6 +1316,7 @@ fn a_poll_moves_transitions_onto_each_slots_log() {
     );
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn script_lines_reach_the_slot_log_through_the_poll() {
     let iso = script::IsolatedEnv::enter("frontend-core-log-script");
@@ -1658,6 +1718,7 @@ fn a_failed_write_is_reported_restores_the_durable_value_and_leaves_the_arm() {
     assert_eq!(alice.random_events.load(Ordering::Relaxed), before);
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn stop_scripts_drops_a_start_queued_behind_a_reap() {
     let iso = script::IsolatedEnv::enter("frontend-core-stop-queued");
@@ -2753,6 +2814,7 @@ fn a_failed_memory_write_resets_the_armed_handshake() {
     );
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn memory_relog_warns_while_a_script_runs() {
     let iso = script::IsolatedEnv::enter("frontend-core-mem-warn");
@@ -2783,6 +2845,33 @@ fn memory_relog_warns_while_a_script_runs() {
     );
 
     let stop = s.stop_script("alice");
+    wait_operation_settled(&mut s, stop);
+    assert!(
+        !s.memory_relog_warning("alice"),
+        "a stopped script needs no warning"
+    );
+}
+
+#[cfg(not(feature = "js"))]
+#[test]
+fn memory_relog_warns_while_a_compiled_script_runs() {
+    let iso = script::IsolatedEnv::enter("frontend-core-mem-warn");
+    let mut s = session("mem-warn", &[("alice", 1, false)]);
+    let mut scripts = test_scripts(&iso.dir);
+    let mut surface = Recorder::default();
+    s.load("alice", &mut surface);
+    assert!(
+        !s.memory_relog_warning("alice"),
+        "no script: Relog-now needs no warning"
+    );
+    start_compiled_script(&mut s, &mut scripts, "alice");
+    assert!(
+        s.memory_relog_warning("alice"),
+        "a running script is interrupted by a relog"
+    );
+
+    let stop = s.stop_script("alice");
+    wait_compiled_script_state(&mut s, &mut scripts, "alice", script::RunState::Idle);
     wait_operation_settled(&mut s, stop);
     assert!(
         !s.memory_relog_warning("alice"),

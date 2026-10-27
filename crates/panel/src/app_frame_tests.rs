@@ -342,6 +342,7 @@ fn session_with_play(label: &str, names: &[&str]) -> (Session, TestDir) {
     session.core.set_spawn_workers(false);
     install_vault(&mut session.core, vault);
     session.persist_ui = false;
+    #[cfg(feature = "js")]
     session
         .scripts
         .use_library_at(dir.join("js-scripts.json"), dir.join("js-cache"));
@@ -581,11 +582,13 @@ fn frame_advances_a_pending_removal(drive: Drive) {
 
 scenario!(pending_removal, frame_advances_a_pending_removal);
 
+#[cfg(feature = "js")]
 const BOT_TS: &str = "export default class T extends LoopingBot { override loop() {} }\n";
 
 /// Property 2: script preparation, Start, reload validation and Stop settle
 /// through frames alone. Every wait is a count of real frames until the
 /// product's own state changes.
+#[cfg(feature = "js")]
 fn frames_settle_script_start_reload_and_stop(drive: Drive) {
     let (session, dir) = session_with_play("frame-scripts", &["alice"]);
     let Some(mut rig) = Rig::new(drive, session) else {
@@ -621,6 +624,7 @@ fn frames_settle_script_start_reload_and_stop(drive: Drive) {
     });
 }
 
+#[cfg(feature = "js")]
 scenario!(script_lifecycle, frames_settle_script_start_reload_and_stop);
 
 /// Property 3: a status published to the host is visible to the live
@@ -1550,8 +1554,18 @@ fn stopped_scripts_leave_no_walking_label_on_the_rail(drive: Drive) {
     let Some(mut rig) = Rig::new(drive, session) else {
         return;
     };
+    #[cfg(not(feature = "js"))]
+    {
+        let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+        rig.session()
+            .core
+            .play_mut_for_test()
+            .unwrap()
+            .bind_script_test_data(data);
+    }
     for name in NINE {
         publish_ingame(rig.session(), name);
+        #[cfg(feature = "js")]
         frontend_core::test_support::scripts::play_start_load(
             &rig.session().core,
             name,
@@ -1561,6 +1575,18 @@ fn stopped_scripts_leave_no_walking_label_on_the_rail(drive: Drive) {
             Vec::new(),
         )
         .unwrap();
+        #[cfg(not(feature = "js"))]
+        {
+            let card = CompiledCardId::lookup("Gatherer").expect("compiled Gatherer card");
+            rig.session().persist_successful_assignment(
+                name,
+                frontend_core::test_support::scripts::Assignment::compiled(card),
+            );
+            rig.session().core.flush_writes();
+            rig.session()
+                .script_start_profile(name)
+                .expect("compiled Start");
+        }
     }
     let wait = |rig: &mut Rig, want: ScriptRunState| {
         for name in NINE {
@@ -1596,13 +1622,30 @@ fn stopped_scripts_leave_no_walking_label_on_the_rail(drive: Drive) {
     let expect = |label: &str| -> Vec<String> {
         NINE.iter().map(|name| format!("{name}: {label}")).collect()
     };
-    assert_eq!(caps(&mut rig), expect("running"));
+    // The rail rows refresh from the core one frame after the script state
+    // changes (Session::pump_status runs before the core poll), so a native
+    // Start that is already Running needs frames before the labels follow.
+    let running = expect("running");
+    rig.frames_until("every rail label shows running", |rig| caps(rig) == running);
+    assert_eq!(caps(&mut rig), running);
 
-    for name in NINE {
+    let stops = NINE.map(|name| {
         rig.session()
-            .submit(OperatorCommand::StopScript, Targets::Profile(name));
-    }
+            .submit(OperatorCommand::StopScript, Targets::Profile(name))
+            .expect("Stop is admitted")
+            .request()
+    });
     wait(&mut rig, ScriptRunState::Idle);
+    // A native Stop can reach Idle during submit. Its command report still
+    // settles through frames, which ingest the ended run into the fleet model.
+    rig.frames_until("the Stop reports", |rig| {
+        let core = &rig.session().core;
+        stops.iter().all(|request| {
+            core.commands()
+                .report(*request)
+                .is_some_and(|report| report.is_settled())
+        })
+    });
     assert_eq!(caps(&mut rig), expect("idle"), "Stop left a walking label");
     if matches!(drive, Drive::UiFrame) {
         assert!(!rig.text.contains(": running"), "{}", rig.text);

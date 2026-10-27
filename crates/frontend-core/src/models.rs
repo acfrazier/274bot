@@ -17,6 +17,7 @@ use crate::fleet::FleetModel;
 use crate::profile_editor::ProfileEditor;
 use crate::profile_form::ProfileFormSave;
 use crate::quester_paths::QuesterPathsController;
+#[cfg(feature = "js")]
 use crate::rs2b0t_import::ProfileImport;
 use crate::scripts::{LoadoutForm, Scripts};
 use crate::selection::MarkedSelection;
@@ -31,6 +32,7 @@ pub struct Models<'a> {
     pub(crate) scripts: Option<&'a mut Scripts>,
     pub(crate) fleet: Option<&'a mut FleetModel>,
     pub(crate) editor: Option<&'a mut ProfileEditor>,
+    #[cfg(feature = "js")]
     pub(crate) import: Option<&'a mut ProfileImport>,
     pub(crate) form_save: Option<&'a mut ProfileFormSave>,
     pub(crate) loadouts: Option<&'a mut LoadoutForm>,
@@ -53,6 +55,7 @@ impl<'a> Models<'a> {
             scripts: self.scripts.as_deref_mut(),
             fleet: self.fleet.as_deref_mut(),
             editor: self.editor.as_deref_mut(),
+            #[cfg(feature = "js")]
             import: self.import.as_deref_mut(),
             form_save: self.form_save.as_deref_mut(),
             loadouts: self.loadouts.as_deref_mut(),
@@ -86,6 +89,7 @@ impl<'a> Models<'a> {
         self
     }
 
+    #[cfg(feature = "js")]
     /// Lend the rs2b0t profile import.
     pub fn with_import(mut self, import: &'a mut ProfileImport) -> Self {
         self.import = Some(import);

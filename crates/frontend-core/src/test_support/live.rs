@@ -1,6 +1,7 @@
 //! Front-end live-harness fixtures (see the parent module).
 
 use std::any::Any;
+#[cfg(feature = "js")]
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -30,6 +31,7 @@ pub fn scenario(name: &str) -> Option<Scenario> {
 }
 
 fn registered_scenario(name: &str) -> Option<scenario::Scenario> {
+    #[cfg(feature = "js")]
     super::scripts::install_catalog_cards();
     scenario::get(name)
 }
@@ -210,6 +212,7 @@ pub fn pair_watch_for_test(
     watch
 }
 
+#[cfg(feature = "js")]
 /// Create an external-loader witness configured for one source file.
 pub fn external_watch_for_test(
     account: &str,

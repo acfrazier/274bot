@@ -88,6 +88,36 @@ The panel only starts the **focused** vault profile; switching the combo starts 
 
 **Window:** `panel-play` is an OS window. It does **not** open the client’s `Present` applet. The Game pane blits the client frame (GPU texture or CpuPix3D), **never below 765×503**. Unfocused slots paint at the **1 fps** watch cadence only in a MultiBox wall with *Only render focused* off; otherwise they stay draw-off. The focused slot runs at **50 fps**. The real 765×503 applet is `vendor/fr-client-rust` `client-play --window` (bothost), for fidelity.
 
+## Builds with and without JavaScript
+
+`panel`, `tui`, `host-play` and `e2e` enable the `js` feature by default.
+These are the full builds, including catalog and external JavaScript/TypeScript
+scripts. The native `script` kernel has no JavaScript runtime dependency.
+
+Build each application separately to omit the JS runtime:
+
+```bash
+cargo build --release -p panel --bin panel-play --no-default-features
+cargo build --release -p tui --bin tui-play --no-default-features
+cargo build --release -p host-play --no-default-features
+```
+
+These builds keep Gatherer, Grinch and Quester, their settings, and native
+Start, Pause, Stop and paint controls. They omit Load, Reload, catalog and
+rs2b0t profile-import UI. Sherlock still requires a build with the JS runtime;
+it does not create an isolate itself.
+
+On Linux, panel keeps its existing Wayland window decorations. Their
+`winit` → `sctk-adwaita` path uses `tiny-skia` and `ab_glyph`, independently
+of the script runtime. Native builds do not enable the script canvas raster
+or its embedded Liberation fonts.
+
+Saved File and catalog assignments remain stored and readable. Start refuses
+them because no JS factory is available; it does not discard the assignment
+or start another card. Omit `--no-default-features`, or add `--features js`,
+to build with JavaScript again. `host-play`'s `memory-profile` feature also
+enables `js`, because that benchmark starts JS bots.
+
 ## Nav
 
 Application builds bake, stage and bundle the navigation world themselves: a

@@ -3890,6 +3890,7 @@ fn harvest_route_terminal(
         (_, RouteReservation::Full) => unreachable!("full owner results keep the terminal"),
     }
 }
+#[cfg(feature = "js")]
 /// Host-published walk outcome copied onto the isolate snapshot.
 #[derive(Clone, Copy, Default)]
 pub(crate) struct PostedWalkOutcome {
@@ -6558,6 +6559,7 @@ impl NavBot {
         self.walk_live_refusal_id == 0 || request_id == self.walk_live_refusal_id
     }
 
+    #[cfg(any(test, feature = "js"))]
     /// A snapshot carrying outcome `posted_seq` reached the isolate. The
     /// live refusal guard is released only when that was the latest
     /// published outcome; a newer one stays guarded until it is posted.
