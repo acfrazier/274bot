@@ -1096,7 +1096,10 @@ fn g7_actual_platform_verifier_https_hold_obeys_step_and_quiet_deadlines() {
             let returned = Instant::now();
             assert!(
                 returned <= until + Duration::from_millis(25),
-                "held OS verifier blocked the stepped caller"
+                "held OS verifier blocked the stepped caller: expires={expires} \
+                 pending_steps={pending_steps} overrun={:?} elapsed={:?} result={result:?}",
+                returned.saturating_duration_since(until),
+                started.elapsed()
             );
             match result {
                 Ok(None) => pending_steps += 1,
