@@ -78,7 +78,6 @@ use rustls::{
 };
 use tungstenite::handshake::derive_accept_key;
 
-const SOCKET_TOKEN: Token = Token(1);
 const WAKER_TOKEN: Token = Token(0);
 const IO_TIMEOUT: Duration = Duration::from_secs(4);
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(8);
@@ -1259,7 +1258,11 @@ impl LaneAttempt {
             .expect("make handshake socket nonblocking");
         let mut socket = mio::net::TcpStream::from_std(socket);
         poll.registry()
-            .register(&mut socket, SOCKET_TOKEN, Interest::READABLE)
+            .register(
+                &mut socket,
+                Token(binding.connection as usize),
+                Interest::READABLE,
+            )
             .expect("register handshake socket");
         let resource = GameTlsResource::new(socket, "localhost".to_owned(), None);
         lane.cell()
@@ -1305,7 +1308,7 @@ impl LaneAttempt {
                 .poll(&mut self.events, Some(remaining.min(POLL_SLICE)))
                 .expect("poll local handshake socket");
             for event in &self.events {
-                if event.token() == SOCKET_TOKEN && event.is_readable() {
+                if event.token() == Token(self.binding.connection as usize) && event.is_readable() {
                     self.lane
                         .cell()
                         .publish_ready(self.key, client_adapter::handoff::ReadyDirection::Read);
@@ -1336,7 +1339,7 @@ impl LaneAttempt {
             .registry()
             .reregister(
                 &mut resource.socket,
-                SOCKET_TOKEN,
+                Token(self.binding.connection as usize),
                 Interest::READABLE.add(Interest::WRITABLE),
             )
             .expect("retain registered socket across TLS transfer");
@@ -1444,7 +1447,7 @@ fn complete_wss_upgrade(attempt: &mut LaneAttempt, endpoint: &mut WssEndpoint) {
                 .poll(&mut attempt.events, Some(remaining.min(POLL_SLICE)))
                 .expect("poll local WSS upgrade");
             for event in &attempt.events {
-                if event.token() == SOCKET_TOKEN {
+                if event.token() == Token(attempt.binding.connection as usize) {
                     if let WssStep::Failed(error) =
                         endpoint.on_event(event.is_readable(), event.is_writable(), Instant::now())
                     {
@@ -1475,7 +1478,7 @@ fn next_readable_turn(
             .poll(&mut attempt.events, Some(remaining.min(POLL_SLICE)))?;
         let mut readable = false;
         for event in &attempt.events {
-            if event.token() == SOCKET_TOKEN && event.is_readable() {
+            if event.token() == Token(attempt.binding.connection as usize) && event.is_readable() {
                 endpoint.on_event(true, event.is_writable(), Instant::now());
                 readable = true;
             }
@@ -2241,7 +2244,7 @@ fn g2_m3_authenticated_requested_key_update_waits_for_real_writable_recovery() {
                         if event.token() == WAKER_TOKEN {
                             continue;
                         }
-                        assert_eq!(event.token(), SOCKET_TOKEN);
+                        assert_eq!(event.token(), Token(attempt.binding.connection as usize));
                         assert!(
                             event.is_writable(),
                             "backpressure recovery is writable-only"
@@ -2538,7 +2541,7 @@ fn g5e_tls13_wss_keyupdate_backpressure_memory_receipt() {
                         if event.token() == WAKER_TOKEN {
                             continue;
                         }
-                        assert_eq!(event.token(), SOCKET_TOKEN);
+                        assert_eq!(event.token(), Token(attempt.binding.connection as usize));
                         assert!(
                             event.is_writable(),
                             "backpressure recovery is writable-only"
