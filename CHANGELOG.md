@@ -29,7 +29,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   global setting **Start fights with players** allows it. The setting is off
   by default, is saved with the other preferences, and has a row in both the
   panel and the terminal app. Without either, the fight does not start and the
-  script gets the refusal `not opted in`. Bots still defend themselves
+  script gets the refusal `pvp-not-allowed`. Outside those places the refusal
+  names the place instead (for example `pvp-outside-wilderness`). Bots still defend themselves
   against players: a bot that a player attacks fights back whatever the
   request or the setting says. The attack uses the game's own label for the
   player (`Attack` in the Wilderness, `Fight` in a duel).

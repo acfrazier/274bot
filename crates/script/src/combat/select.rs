@@ -150,30 +150,30 @@ pub fn player_candidate(
     Ok(label)
 }
 
-/// The refusal `begin` reports for a request that starts a fight with `name`:
-/// the candidate check on the named row when it is on this frame, otherwise
-/// only the checks that depend on where WE stand (a row not yet seen is no
-/// refusal; the machine searches for it).
+/// The refusal `begin` reports for a request that starts a fight with `name`.
+/// Where WE stand comes first: outside every PvP zone the reason is the zone
+/// (a real player row there carries no attack op at all, and "no attack op"
+/// would hide why). Then the candidate check on the named row when it is on
+/// this frame; a row not yet seen is no refusal (the machine searches for it).
 pub fn begin_refusal(name: &str, frame: &Frame<'_>, tables: &CombatTables) -> Option<PvpRefusal> {
-    match frame
+    let level = frame.local.player.combat_level;
+    let here = zone_gate(
+        frame.here,
+        frame.here,
+        level,
+        level,
+        tables,
+        frame.wilderness,
+    )
+    .err();
+    if here.is_some() {
+        return here;
+    }
+    frame
         .players
         .iter()
         .find(|row| row.actor.name.as_deref() == Some(name))
-    {
-        Some(row) => player_candidate(row, frame, tables).err(),
-        None => {
-            let level = frame.local.player.combat_level;
-            zone_gate(
-                frame.here,
-                frame.here,
-                level,
-                level,
-                tables,
-                frame.wilderness,
-            )
-            .err()
-        }
-    }
+        .and_then(|row| player_candidate(row, frame, tables).err())
 }
 
 /// The eleven kill statements the server sends the killer

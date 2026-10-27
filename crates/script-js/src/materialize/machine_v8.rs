@@ -501,7 +501,7 @@ mod tests {
                 kept.set_index(&mut scope, index as u32, envelope);
             }
             let key = callback_v8::string(&mut scope, "__kept");
-            global.set(&mut scope, key.into(), kept.into());
+            global.set(&mut scope, key, kept.into());
         }
         let after = collected_used_heap(&mut runtime);
         let growth = after.saturating_sub(baseline);

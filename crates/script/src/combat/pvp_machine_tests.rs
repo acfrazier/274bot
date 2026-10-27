@@ -351,9 +351,9 @@ fn case1b_intrusion_self_defence_engages_a_labelled_player_without_any_opt_in() 
     request.pvp = false;
     let mut harness = Harness::new(&scene, request);
     // The first poll engages the imp; the intruder is taken on the next.
-    harness.poll(&scene.snapshot, 1);
+    let _ = harness.poll(&scene.snapshot, 1);
     harness.take();
-    harness.poll(&scene.snapshot, 2);
+    let _ = harness.poll(&scene.snapshot, 2);
     harness.take();
     assert_eq!(harness.machine.counters.intruders, 1);
     assert_eq!(
@@ -382,7 +382,7 @@ fn case1c_an_intruder_without_the_attack_label_stays_a_threat_and_is_not_engaged
     request.pvp = false;
     let mut harness = Harness::new(&scene, request);
     // One poll: the blocked intruder is counted once and never engaged.
-    harness.poll(&scene.snapshot, 1);
+    let _ = harness.poll(&scene.snapshot, 1);
     harness.take();
     assert_eq!(harness.machine.counters.intruders, 0);
     assert_eq!(
@@ -472,6 +472,17 @@ fn case4_outside_every_pvp_zone_the_zone_reason_is_reported() {
         refused(Harness::try_new(&scene, player_request(BOB, true), 0)),
         Some(PvpRefusal::OutsideWilderness)
     );
+    // Real content: a Lumbridge player row carries no attack op at all, and
+    // the refusal is still the zone, never "no attack op".
+    let mut scene = wilderness_scene(tile(3222, 3218));
+    scene
+        .players
+        .push(player(8, BOB, tile(3223, 3218), &[None, None], 60));
+    scene.refresh();
+    assert_eq!(
+        refused(Harness::try_new(&scene, player_request(BOB, true), 0)),
+        Some(PvpRefusal::OutsideWilderness)
+    );
     // The challenge area is its own refusal, never a pen.
     let mut scene = wilderness_scene(tile(3360, 3270));
     scene
@@ -539,7 +550,7 @@ fn case5_the_attack_verb_is_the_observed_label() {
     scene.players.push(threat);
     scene.refresh();
     let mut harness = Harness::new(&scene, self_defence_request());
-    harness.poll(&scene.snapshot, 1);
+    let _ = harness.poll(&scene.snapshot, 1);
     assert!(harness.take().is_none());
     assert!(harness.machine.engaged.is_none());
 }
@@ -792,7 +803,7 @@ fn case22_a_pen_opponent_24_tiles_away_stays_engaged_with_lost_radius_32() {
     request.lost_radius = 20;
     let mut scene = at(true);
     let mut harness = Harness::new(&scene, request);
-    harness.poll(&scene.snapshot, 1);
+    let _ = harness.poll(&scene.snapshot, 1);
     harness.take();
     scene.local.player.actor.target = Some(ActorTargetView {
         kind: ActorKind::Player,

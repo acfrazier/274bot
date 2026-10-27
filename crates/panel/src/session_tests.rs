@@ -3756,7 +3756,11 @@ fn start_fights_with_players_is_saved_through_its_command_and_follows_a_peer_wri
     let start = std::time::Instant::now();
     loop {
         session.refresh_walk_permissions();
-        if session.preferences.value("pvp") == Some(serde_json::json!({"start_fights": true})) {
+        // The row adopts the saved value on a refresh: wait for that, not
+        // for the document alone (the projection can trail it by a poll).
+        if !session.pvp_start_fights.pending()
+            && session.preferences.value("pvp") == Some(serde_json::json!({"start_fights": true}))
+        {
             break;
         }
         assert!(
