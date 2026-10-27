@@ -356,8 +356,25 @@ fn wait_all_scene2(play: &Play, n: usize) {
     }
 }
 
-#[test]
-#[ignore = "requires LIVE=1, Engine A, revision-289 template and throwaway HOME"]
+// This executable must initialize protected V8 on process main, before Play
+// creates any worker. A libtest worker cannot satisfy that production contract.
+fn main() {
+    if std::env::args().any(|arg| arg == "--list") {
+        println!("live_rss_ladder_headless: test");
+        println!("parse_rss_n_default_and_allowed: test");
+        println!("parse_rss_n_rejects_bad: test");
+        return;
+    }
+    parse_rss_n_default_and_allowed();
+    parse_rss_n_rejects_bad();
+    if live() {
+        script_js::bootstrap_v8_platform().expect("process-main V8 bootstrap");
+        live_rss_ladder_headless();
+    } else {
+        println!("PASS: rss_ladder argument checks; live measurement requires LIVE=1");
+    }
+}
+
 fn live_rss_ladder_headless() {
     if !live() {
         return;
@@ -591,9 +608,6 @@ fn live_rss_ladder_headless() {
     println!("PASS: rss_ladder n={n} load={load} rss={rss} current={current_s} ondemand={workers} tcp={tcp_s} tasks={tasks_s} fds={fds_s}");
 }
 
-// keep parse_rss unit tests from Task 3 below this
-
-#[test]
 fn parse_rss_n_default_and_allowed() {
     assert_eq!(parse_rss_n_from(None).unwrap(), 1);
     assert_eq!(parse_rss_n_from(Some("1")).unwrap(), 1);
@@ -602,7 +616,6 @@ fn parse_rss_n_default_and_allowed() {
     assert_eq!(parse_rss_n_from(Some("10")).unwrap(), 10);
 }
 
-#[test]
 fn parse_rss_n_rejects_bad() {
     let err = "rss_ladder: RSS_N must be 1, 2, 4, or 10";
     assert_eq!(parse_rss_n_from(Some("")).unwrap_err(), err);

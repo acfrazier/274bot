@@ -90,6 +90,10 @@ name = "wss_product_startup"
 required-features = ["test-support"]
 
 [[test]]
+name = "rss_ladder"
+harness = false
+
+[[test]]
 name = "t14_soak_live"
 required-features = ["live-harness", "test-support"]
 
