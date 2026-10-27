@@ -648,11 +648,21 @@ seconds. A failed "Don't show again" keeps its dialog open with the reason
 under the buttons. The state belongs to the session, so closing and reopening a
 window shows it again. A change another program copy saved reaches every
 control each time it saves (a control you are typing in, or one whose own save
-is still pending, keeps what you typed or chose until its save ends). Layout,
-colour, order, fold and remembered-folder choices show at once and go back to
-the saved value if their save fails; each shows **Saving…** and the reason at
-its own control (the section order, the category chips, the folds, the file
-dialogs, the Debug tab and the Fleet toolbar fold included). With the session
+is still pending, keeps what you typed or chose until its save ends). The
+raster and memory controls follow it while no bot is focused; with a bot
+focused they show that bot's own saved modes. The server revision follows it
+while no profile is bound; a bound session keeps the revision it bound with.
+A pending raster or memory
+choice, its **Saving…** and its reason belong to the bot it was made for:
+focus another bot and its controls show that bot's values, and a choice made
+there is that bot's own. When several saves of one setting end at once, the
+newest raster or memory choice takes effect, and an older save that landed
+never clears a newer one's failure. Layout, colour, order, fold and
+remembered-folder choices show at once and go back to the saved value if their
+save fails; each shows **Saving…** and the reason at its own control (the
+section order, the category chips, the folds, the rail and Grid preview folds
+inside their tile, the file dialogs, the Debug tab and the Fleet toolbar fold
+included). With the session
 log file on, the Log window also says if the file could not be opened or
 written, also after it had opened.
 
