@@ -1886,6 +1886,7 @@ struct G5eProcTaskInfo {
     _total_user: u64,
     _total_system: u64,
     _threads_user: u64,
+    _threads_system: u64,
     _policy: i32,
     _faults: i32,
     _pageins: i32,
@@ -1922,6 +1923,17 @@ fn g5e_macos_task_info() -> Option<G5eProcTaskInfo> {
     }
     // SAFETY: proc_pidinfo returned the exact proc_taskinfo size.
     Some(unsafe { information.assume_init() })
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn g5e_macos_process_census_matches_native_layout() {
+    // macOS SDK sys/proc_info.h: six uint64_t fields and twelve int32_t fields.
+    assert_eq!(std::mem::size_of::<G5eProcTaskInfo>(), 96);
+    let information = g5e_macos_task_info().expect("read native proc_taskinfo");
+    assert!(information.resident_size > 0);
+    assert!(information.thread_count > 0);
+    assert!(g5e_macos_fd_count().is_some_and(|count| count > 0));
 }
 
 #[cfg(target_os = "macos")]
