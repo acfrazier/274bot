@@ -25,6 +25,27 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   real max hit. A cow's max hit is 1, so a bot eats at 3 hitpoints and
   stops for lack of food at 2. Imps cannot damage the bot at all (max hit
   0), so the bot does not raise Protect from Melee against them.
+- When a quest fight cannot attack its attacker, the bot now asks the route
+  planner for a safe place to walk to. It offers the quest's own stand first,
+  then places beyond the attacker's chase range, then places that are only
+  farther away. The planner picks the nearest place it can reach. Before, the
+  bot could pick a spot it could not reach, stand still, eat all its food and
+  die. The static hostile tree near Draynor Manor is one such attacker. If a
+  route fails, the bot plans again from where it stands and prefers the next
+  kind of place. A route that neither arrives nor fails also ends: the bot
+  counts game ticks, and when the walk takes longer than the measured walk
+  distance plus a margin of 12 ticks, it gives up on that route and starts
+  the next. When the walk distance cannot be measured, the limit is the
+  planner's own limit on route length, and the walk machine's ten-minute
+  deadline ends the walk first. A pass makes one request for each kind of
+  place that has candidates, so up to three requests (two when the quest
+  names no stand). The places of different kinds can overlap. A second pass
+  can follow the first when the food runs out, so the bot makes at most six
+  requests. While food remains, the first pass keeps eating as it walks; the
+  second pass, after the food is gone, does not eat. The quest's own walk
+  starts only after the bot sees that the attacker is gone. If every route
+  fails, the quest stops with the last route failure. This does not promise
+  that an escape exists.
 
 ### Navigation
 
