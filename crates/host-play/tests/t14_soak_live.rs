@@ -37,20 +37,21 @@ const GATHERER_SITE_STEP: &str = "stand at the live Draynor normal tree before S
 const GATHERER_TREE_PROOF_STEP: &str = "confirm the selected-289 normal tree is live before Start";
 const GATHERER_RELOG_STEP: &str = "relog successfully so the inventory tab binds before Start";
 
-// Ten disjoint radius-one normal-tree patches in content/maps/m43_54.jm2.
-// Resource rows: 6833, 7027, 6999, 7147, 6787/6838, 6939, 7100, 6910,
-// 6840 and 7056. Each account retains its own Start anchor across bank trips.
+// Ten resource-disjoint radius-two patches in content/maps/m43_54.jm2.
+// Resource rows: 6765, 6883, 7027, 6833, 6999, 7147, 6838, 6968,
+// 6789 and 6939. Starts are outside the authored tree footprints.
+// Each account retains its own Start anchor across bank trips.
 const CATHERBY_STARTS: [(i32, i32); 10] = [
-    (2801, 3461),
+    (2799, 3459),
+    (2805, 3459),
     (2808, 3460),
+    (2802, 3463),
     (2807, 3463),
     (2813, 3464),
-    (2801, 3466),
-    (2805, 3468),
-    (2811, 3469),
-    (2806, 3472),
-    (2801, 3475),
-    (2809, 3474),
+    (2803, 3465),
+    (2809, 3466),
+    (2802, 3469),
+    (2805, 3469),
 ];
 
 #[derive(Clone, Copy)]
@@ -839,7 +840,7 @@ fn bank_settings(site: &BankSite) -> Map<String, Value> {
     settings.insert(
         "radius".into(),
         json!(if site.id == "woodcutting.catherby" {
-            1
+            2
         } else {
             12
         }),
@@ -1042,7 +1043,18 @@ fn make_actor(
     if script_start_budget_ticks != 50 {
         return Err("the soak requires the existing 50-game-tick compiled Start budget".into());
     }
-    let mut runner = ScenarioRunner::with_world(scenario, template.world());
+    let world = template.world();
+    if site.resource == "normal"
+        && !world
+            .as_ref()
+            .is_some_and(|world| world.collision.standable(site.start))
+    {
+        return Err(format!(
+            "normal-tree fixture Start is not standable: {:?}",
+            site.start
+        ));
+    }
+    let mut runner = ScenarioRunner::with_world(scenario, world);
     runner.set_deadline(run_duration);
     runner.set_live_names(std::slice::from_ref(&account));
     runner.set_map_members(false);
