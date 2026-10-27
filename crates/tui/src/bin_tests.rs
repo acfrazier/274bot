@@ -4313,6 +4313,64 @@ fn a_failed_deferred_start_fights_write_shows_the_saved_value_and_follows_a_peer
     let _iso = iso;
 }
 
+/// PVP-V1-R3 (review R6): a peer saves the click's value after the click and
+/// before the pump submits the command. The pump refreshes the walk globals
+/// first, and that adoption ends the click's wait before `submitted`. The
+/// click's own save still clears the failure line of the earlier attempt, as
+/// an ordinary retry does, and an unrelated error stays.
+#[test]
+fn a_peer_write_between_the_click_and_its_submission_still_clears_the_earlier_failure() {
+    let iso = IsolatedStores::enter("tui-pvp-start-fights-peer-before-submit");
+    let mut session = TuiSession::new(dummy_options());
+    session.preferences.reload().unwrap();
+    let mut app = TuiApp::new("tui");
+    Seam::restore_preferences(&mut app, session.preferences.share());
+    app.settings_state.open = true;
+    app.settings_state.row = 16;
+    assert!(!app.pvp_start_fights.shown(), "off by default");
+
+    // The failure line a first attempt left.
+    app.error = Some("settings: start fights with players: store I/O error".to_string());
+
+    // The retry turns it on. A peer saves `on` before the next pump.
+    app.on_key(settings_key(crossterm::event::KeyCode::Enter));
+    assert!(app.pvp_start_fights.shown(), "the retry shows at once");
+    std::fs::create_dir_all(session.preferences.path().parent().unwrap()).unwrap();
+    std::fs::write(
+        session.preferences.path(),
+        br#"{"pvp":{"start_fights":true}}"#,
+    )
+    .unwrap();
+    session.preferences.reload().unwrap();
+    settle_preferences(&mut session, &mut app);
+    assert!(!app.pvp_start_fights.pending(), "the retry never settled");
+    assert!(app.pvp_start_fights.shown());
+    assert!(frontend_core::pvp_start_fights(&session.preferences).unwrap());
+    assert_eq!(
+        app.error, None,
+        "the click's own save clears the failure it resolves"
+    );
+
+    // An unrelated error is not this save's to clear.
+    let other = "settings: walk permissions: the store is busy".to_string();
+    app.error = Some(other.clone());
+    app.on_key(settings_key(crossterm::event::KeyCode::Enter));
+    std::fs::write(
+        session.preferences.path(),
+        br#"{"pvp":{"start_fights":false}}"#,
+    )
+    .unwrap();
+    session.preferences.reload().unwrap();
+    settle_preferences(&mut session, &mut app);
+    for _ in 0..40 {
+        session.pump(&mut app);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(!app.pvp_start_fights.shown());
+    assert_eq!(app.error, Some(other), "an unrelated error stays");
+    let _iso = iso;
+}
+
 #[test]
 fn a_live_run_refuses_the_start_fights_row_without_writing() {
     let iso = IsolatedStores::enter("tui-pvp-start-fights-live");

@@ -862,6 +862,139 @@ fn the_pvp_setting_deferred_write_failure_shows_the_saved_value_and_a_peer_write
     );
 }
 
+/// The peer's write of `enabled` reaches the view between the click and the
+/// command's submission: a front end that refreshes its walk globals before it
+/// submits adopts the saved value there (the TUI pump does).
+fn peer_writes_pvp_before_submission(
+    d: &mut HeadlessDriver,
+    view: &mut crate::PvpSettingView,
+    enabled: bool,
+) {
+    let prefs = d.session().preferences().expect("bound");
+    let document = format!(r#"{{"pvp":{{"start_fights":{enabled}}}}}"#);
+    vault::write_private_file(&prefs.path(), document.as_bytes()).unwrap();
+    prefs.reload().unwrap();
+    d.poll();
+    view.adopt(crate::pvp_prefs::pvp_start_fights(&prefs).ok());
+}
+
+/// PVP-V1-R3 (review R6): a peer write that arrives after the click and before
+/// the command is submitted must not cut the click from its command. Whatever
+/// value the peer wrote, the click's own settlement is still reported, so a
+/// front end clears or sets the error exactly as for an ordinary retry.
+#[test]
+fn a_peer_write_before_submission_keeps_the_clicks_command_followed() {
+    use crate::{PvpSettingView, PvpWrite};
+    let _audit_lock = crate::pvp_prefs::TEST_AUDIT_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let dir = scratch("pvp-peer-before-submit");
+    let mut d = driver_in(&dir, &["pvp3-alice"]);
+    let mut view = PvpSettingView::new(false);
+
+    // The peer wrote the value the click asks for: the wait ends at once.
+    view.begin(true);
+    peer_writes_pvp_before_submission(&mut d, &mut view, true);
+    assert!(view.shown() && !view.pending(), "the saved value agrees");
+    let click = d
+        .submit(
+            OperatorCommand::SetPvpStartFights(true),
+            Targets::Application,
+        )
+        .expect("admitted");
+    view.submitted(click.request());
+    assert_eq!(settled_app(&mut d, click.request()), Some(done()));
+    assert_eq!(
+        view.follow(d.session()),
+        Some(PvpWrite::Saved),
+        "the click's own save is reported"
+    );
+    assert_eq!(view.follow(d.session()), None, "reported once");
+    assert!(view.shown() && !view.pending());
+
+    // The peer wrote the other value: the click keeps waiting and its save wins.
+    view.begin(false);
+    peer_writes_pvp_before_submission(&mut d, &mut view, true);
+    assert!(!view.shown() && view.pending(), "the saved value differs");
+    let click = d
+        .submit(
+            OperatorCommand::SetPvpStartFights(false),
+            Targets::Application,
+        )
+        .expect("admitted");
+    view.submitted(click.request());
+    assert_eq!(settled_app(&mut d, click.request()), Some(done()));
+    assert_eq!(view.follow(d.session()), Some(PvpWrite::Saved));
+    assert!(!view.shown() && !view.pending());
+
+    // A click that never became a command leaves nothing for a later submit.
+    view.begin(true);
+    peer_writes_pvp_before_submission(&mut d, &mut view, true);
+    view.refuse();
+    let stray = d
+        .submit(
+            OperatorCommand::SetPvpStartFights(true),
+            Targets::Application,
+        )
+        .expect("admitted");
+    view.submitted(stray.request());
+    assert_eq!(settled_app(&mut d, stray.request()), Some(done()));
+    assert_eq!(
+        view.follow(d.session()),
+        None,
+        "a refused click follows no command"
+    );
+}
+
+/// The same peer write, but the click's command fails: its failure is reported
+/// and the row shows the saved value, as for an ordinary click.
+#[cfg(unix)]
+#[test]
+fn a_peer_write_before_submission_still_reports_the_clicks_failure() {
+    use crate::{PvpSettingView, PvpWrite};
+    use std::os::unix::fs::PermissionsExt;
+    let _audit_lock = crate::pvp_prefs::TEST_AUDIT_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let dir = scratch("pvp-peer-before-submit-failure");
+    let mut d = driver_in(&dir, &["pvp4-alice"]);
+    let prefs = d.session().preferences().expect("bound");
+    let mut view = PvpSettingView::new(false);
+
+    let release = hold_first_write(&d);
+    view.begin(true);
+    peer_writes_pvp_before_submission(&mut d, &mut view, true);
+    let click = d
+        .submit(
+            OperatorCommand::SetPvpStartFights(true),
+            Targets::Application,
+        )
+        .expect("admitted");
+    view.submitted(click.request());
+    assert_eq!(
+        terminal_app(&d, click.request()),
+        None,
+        "queued, not failed"
+    );
+
+    let state_dir = prefs.path().parent().expect("a directory").to_path_buf();
+    let original = std::fs::metadata(&state_dir).unwrap().permissions();
+    std::fs::set_permissions(&state_dir, std::fs::Permissions::from_mode(0o500)).unwrap();
+    release.send(()).unwrap();
+    let terminal = settled_app(&mut d, click.request());
+    std::fs::set_permissions(&state_dir, original).unwrap();
+    assert!(
+        matches!(terminal, Some(Settlement::Failed(_))),
+        "the write fails: {terminal:?}"
+    );
+    assert_eq!(view.follow(d.session()), Some(PvpWrite::Failed));
+    assert!(
+        crate::is_start_fights_error(view.failure(d.session())),
+        "the owner's reason: {}",
+        view.failure(d.session())
+    );
+}
+
 /// T3.3 r5 (review finding 5): the newest command for a setting wins. An
 /// older write the disk held settles after a newer command for the same
 /// setting was accepted and made durable; the running session keeps the

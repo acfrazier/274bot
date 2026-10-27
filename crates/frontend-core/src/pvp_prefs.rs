@@ -76,6 +76,10 @@ pub struct PvpSettingView {
     /// settled: [`Self::follow`] still reports its settlement, whichever of
     /// [`Self::adopt`] and `follow` a front end calls first.
     unreported: Option<RequestId>,
+    /// A click whose saved value was adopted before its command was submitted
+    /// (a peer wrote that value between the click and the submission):
+    /// [`Self::submitted`] takes the command into `unreported`.
+    unsubmitted: bool,
     /// The click whose command last settled failed ([`Self::failure`]).
     failed: Option<RequestId>,
 }
@@ -96,6 +100,7 @@ impl PvpSettingView {
             saved: shown,
             pending: None,
             unreported: None,
+            unsubmitted: false,
             failed: None,
         }
     }
@@ -114,6 +119,7 @@ impl PvpSettingView {
     pub fn begin(&mut self, enabled: bool) {
         self.shown = enabled;
         self.unreported = None;
+        self.unsubmitted = false;
         self.pending = Some(Pending {
             value: enabled,
             request: None,
@@ -121,10 +127,13 @@ impl PvpSettingView {
     }
 
     /// The click's command was submitted as `request`: [`Self::follow`] ends
-    /// the wait when that command settles.
+    /// the wait when that command settles, also when [`Self::adopt`] ended the
+    /// wait before this call.
     pub fn submitted(&mut self, request: RequestId) {
         if let Some(pending) = self.pending.as_mut() {
             pending.request = Some(request);
+        } else if std::mem::take(&mut self.unsubmitted) {
+            self.unreported = Some(request);
         }
     }
 
@@ -133,13 +142,16 @@ impl PvpSettingView {
     pub fn refuse(&mut self) {
         self.pending = None;
         self.unreported = None;
+        self.unsubmitted = false;
         self.shown = self.saved;
     }
 
     /// Adopt the saved value read now (`None` while the store is not ready).
     /// A click whose value the file now holds stops waiting, but its command
     /// stays watched: [`Self::follow`] still reports how it settled, so the
-    /// error a failed attempt left goes when this save succeeds.
+    /// error a failed attempt left goes when this save succeeds. This holds
+    /// when the adoption comes before [`Self::submitted`]: that call then
+    /// takes the command.
     pub fn adopt(&mut self, saved: Option<bool>) {
         let Some(saved) = saved else {
             return;
@@ -147,6 +159,7 @@ impl PvpSettingView {
         self.saved = saved;
         if let Some(pending) = self.pending.filter(|pending| pending.value == saved) {
             self.unreported = pending.request;
+            self.unsubmitted = pending.request.is_none();
             self.pending = None;
         }
         if self.pending.is_none() {
