@@ -18,6 +18,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
 
 ### Combat
 
+- Bots now drink their boost potion before the first hit even when the target
+  starts out of reach.
 - Bots now know how hard common monsters such as cows, chickens, rats and
   imps hit. The eat line and the no-food stop line follow each monster's
   real max hit. A cow's max hit is 1, so a bot eats at 3 hitpoints and
