@@ -443,30 +443,48 @@ fn status_tile(play: &super::Play, account: &str) -> Option<(bool, [i32; 3])> {
         })
 }
 
-/// A route's legs for the trace: walk spans and transport hops.
-fn leg_lines(route: &nav_planner::router::Route) -> Vec<String> {
+/// A route's legs for the trace: walk spans and transport hops. The view is
+/// the shape-agnostic one the product reads a route through, so a compact plan
+/// (the shape the route service publishes for a bank session) traces exactly
+/// as a legacy route does.
+fn leg_lines(route: nav_planner::contract::RouteView<'_>) -> Vec<String> {
     route
-        .legs
-        .iter()
+        .legs()
         .map(|leg| match leg {
-            nav_planner::router::Leg::Walk { tiles } => format!(
+            nav_planner::contract::LegView::Walk(tiles) => format!(
                 "walk {} tiles {:?} -> {:?}",
                 tiles.len(),
                 tiles.first(),
                 tiles.last()
             ),
-            nav_planner::router::Leg::Transport { edge } => format!(
-                "{:?} loc={} at={:?} to={:?} item_req={:?} consumed_req={:?} quest_req={:?}",
-                edge.kind,
-                edge.loc_id,
-                edge.at,
-                edge.to,
-                edge.item_req,
-                edge.consumed_req,
-                edge.quest_req
+            nav_planner::contract::LegView::Transport(edge) => format!(
+                "{:?} loc={} at={:?} to={:?} item_req={:?} consumed_req={:?} quest_gate={}",
+                edge.kind(),
+                edge.loc_id(),
+                edge.anchor(),
+                edge.landing(),
+                edge.held(),
+                edge.consumed(),
+                edge.has_quest_gate()
             ),
         })
         .collect()
+}
+
+/// A bank session's post-session route for the trace, read through the
+/// accessor the product's final-route step assesses it with
+/// ([`crate::walk_plan::RoutePath::view_in`]): a legacy route borrows its own
+/// legs and a compact plan resolves them through its lease. A route whose view
+/// cannot be produced is traced as unreadable instead of aborting the cell;
+/// the walk itself reports that failure.
+pub(crate) fn final_route_lines(
+    route: &crate::walk_plan::RoutePath,
+    world: &NavWorld,
+) -> Vec<String> {
+    route.view_in(world).map_or_else(
+        || vec![format!("final route unreadable: {route:?}")],
+        leg_lines,
+    )
 }
 
 #[cfg(feature = "js")]
@@ -481,20 +499,13 @@ struct ScriptWalk {
 }
 
 #[cfg(feature = "js")]
-fn script_walk(play: &super::Play, account: &str) -> ScriptWalk {
+fn script_walk(play: &super::Play, account: &str, world: &NavWorld) -> ScriptWalk {
     let navs = play.navs.lock().unwrap();
     let bot = navs.get(account);
     let pending = bot.and_then(|bot| bot.bank_fetch.as_ref());
     ScriptWalk {
         steps: pending.map(|pending| pending.steps.iter().cloned().collect()),
-        final_route: pending.map(|pending| {
-            leg_lines(
-                pending
-                    .final_route
-                    .legacy_route()
-                    .expect("legacy bank plan owns a legacy final route"),
-            )
-        }),
+        final_route: pending.map(|pending| final_route_lines(&pending.final_route, world)),
         routed: bot.is_some_and(|bot| bot.has_route() || bot.route_work_pending()),
         failed: bot.is_some_and(|bot| bot.walk_outcome_failed),
     }
@@ -983,7 +994,12 @@ fn run_cell(variant: Variant) {
                             continue;
                         }
                     };
-                    trace.lock().route_legs = Some(leg_lines(&route));
+                    trace.lock().route_legs = Some(
+                        nav_planner::producer::route_view(world.as_ref(), &route).map_or_else(
+                            |error| vec![format!("route unreadable: {error}")],
+                            leg_lines,
+                        ),
+                    );
                     let steps: Vec<BankStep> = arms
                         .lock()
                         .unwrap()
@@ -1016,7 +1032,7 @@ fn run_cell(variant: Variant) {
                 }
                 #[cfg(feature = "js")]
                 Stage::AwaitPlan { since } => {
-                    let walk = script_walk(&play, &account);
+                    let walk = script_walk(&play, &account, &world);
                     if let Some(steps) = walk.steps {
                         let (trip, withdraw) = fare_trip(&steps);
                         {
@@ -1046,7 +1062,7 @@ fn run_cell(variant: Variant) {
                 Stage::Walking { since } => {
                     #[cfg(feature = "js")]
                     if variant == Variant::StaleSolidRadius {
-                        let walk = script_walk(&play, &account);
+                        let walk = script_walk(&play, &account, &world);
                         let (tile, held, loaded) = {
                             let guard = pump.lock();
                             (guard.tile, guard.held_coins, guard.bank_loaded)
