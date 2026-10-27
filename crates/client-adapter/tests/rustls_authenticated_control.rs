@@ -27,7 +27,8 @@ use client_adapter::tls_handshake::{
 use client_adapter::ws_endpoint::{WssEndpoint, WssStep};
 use mio::{Events, Interest, Poll, Token, Waker};
 use rcgen::{
-    BasicConstraints, CertificateParams, ExtendedKeyUsagePurpose, IsCa, KeyPair, KeyUsagePurpose,
+    BasicConstraints, CertificateParams, DistinguishedName, DnType, ExtendedKeyUsagePurpose, IsCa,
+    KeyPair, KeyUsagePurpose,
 };
 use rustls::crypto::cipher::{
     InboundOpaqueMessage, MessageDecrypter, MessageEncrypter, OutboundChunks, OutboundPlainMessage,
@@ -69,6 +70,12 @@ impl ServerIdentity {
     }
 }
 
+fn common_name(name: &str) -> DistinguishedName {
+    let mut subject = DistinguishedName::new();
+    subject.push(DnType::CommonName, name);
+    subject
+}
+
 struct TestPki {
     root: CertificateDer<'static>,
     identity: ServerIdentity,
@@ -79,6 +86,10 @@ impl TestPki {
         let root_key = KeyPair::generate().expect("generate test CA key");
         let mut root_params = CertificateParams::new(vec!["rustls-control-test-root".to_owned()])
             .expect("create test CA parameters");
+        // The CA and the leaf need different subject names. With rcgen's shared
+        // default subject, Windows CryptoAPI reads the leaf as self-signed and
+        // rejects the chain (CERT_E_SIGNATURE, os error -2146869244).
+        root_params.distinguished_name = common_name("rustls control test root");
         root_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
         root_params.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign];
         let root_certificate = root_params
@@ -89,6 +100,7 @@ impl TestPki {
         let identity_key = KeyPair::generate().expect("generate test server key");
         let mut identity_params = CertificateParams::new(vec!["localhost".to_owned()])
             .expect("create test server certificate parameters");
+        identity_params.distinguished_name = common_name("rustls control test server");
         identity_params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth];
         identity_params.key_usages = vec![KeyUsagePurpose::DigitalSignature];
         let identity_certificate = identity_params
@@ -741,7 +753,32 @@ fn connect_wss_with_send_buffer(
         endpoint.is_connected(),
         "the real WSS endpoint completes upgrade"
     );
+    drain_local_work_to_idle(&mut attempt, &mut endpoint);
     (attempt, endpoint, info)
+}
+
+/// Run the endpoint's local continuation until its socket read returns a real
+/// WouldBlock, as the product reactor does for every session that reports
+/// local work. mio simulates edge-triggered readiness on Windows by re-arming
+/// a socket only after an I/O call on it returns WouldBlock. A turn that stops
+/// at local work (the upgrade response, or the last game record read) leaves
+/// the socket disarmed there, so the next record the server sends raises no
+/// readable event. Callers run this only while no record under test is in
+/// flight, and every drain turn must read no game bytes, so it cannot consume
+/// or hide one.
+fn drain_local_work_to_idle(attempt: &mut LaneAttempt, endpoint: &mut WssEndpoint) {
+    for _ in 0..8 {
+        let turn = endpoint.drive().expect("drain local WSS work to idle");
+        endpoint
+            .apply_interest(attempt.poll.registry())
+            .expect("apply WSS interest after the idle drain");
+        assert_eq!(turn.read_bytes, 0, "the idle drain reads no game bytes");
+        if turn.stop != TcpStop::LocalWork {
+            assert_eq!(turn.stop, TcpStop::Quiescent);
+            return;
+        }
+    }
+    panic!("local WSS work did not reach idle");
 }
 
 fn complete_wss_upgrade(attempt: &mut LaneAttempt, endpoint: &mut WssEndpoint) {
@@ -822,6 +859,10 @@ fn take_game_payload(attempt: &mut LaneAttempt, endpoint: &mut WssEndpoint, expe
         next_readable_turn(attempt, endpoint)
             .unwrap_or_else(|error| panic!("established WSS drive failed: {error}"));
     }
+    // The last turn can end with local work still queued rather than at a real
+    // WouldBlock; finish it so the next server record raises a readable event
+    // on Windows too (see `drain_local_work_to_idle`).
+    drain_local_work_to_idle(attempt, endpoint);
     let mut received = vec![0; expected.len()];
     let count = attempt.shared.take_inbound(&mut received);
     assert_eq!(count, expected.len());

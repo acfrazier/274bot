@@ -1031,6 +1031,26 @@ mod tests {
     use std::thread;
 
     const STEP_BOUND: Duration = Duration::from_millis(100);
+    /// How long the silent peer in the cadence test holds its response.
+    const PEER_DELAY: Duration = Duration::from_millis(120);
+
+    /// How long `park_timeout(FETCH_STEP_BUDGET)` really takes on this host.
+    /// A blocked poll parks for at most `FETCH_STEP_BUDGET`, but the OS rounds
+    /// the wait up to its timer tick (about 15.6 ms on Windows, where the 8 ms
+    /// budget measures 15.1-18.9 ms), so the cadence the test can expect is
+    /// per real slice, not per nominal budget. Uses the median of several
+    /// parks and never reports less than the nominal budget.
+    fn observed_step_slice() -> Duration {
+        let mut parks: Vec<Duration> = (0..9)
+            .map(|_| {
+                let started = Instant::now();
+                thread::park_timeout(FETCH_STEP_BUDGET);
+                started.elapsed()
+            })
+            .collect();
+        parks.sort();
+        parks[parks.len() / 2].max(FETCH_STEP_BUDGET)
+    }
 
     fn test_health() -> Arc<ReactorHealth> {
         Arc::new(ReactorHealth::new(Instant::now()))
@@ -1124,13 +1144,14 @@ mod tests {
 
     #[test]
     fn plain_http_fetch_sends_request_returns_body_and_respects_steps() {
+        let observed_slice = observed_step_slice();
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         let (head_tx, head_rx) = mpsc::channel();
         let server = thread::spawn(move || {
             let (mut socket, _) = listener.accept().unwrap();
             head_tx.send(read_request_head(&mut socket)).unwrap();
-            thread::sleep(Duration::from_millis(120));
+            thread::sleep(PEER_DELAY);
             socket.write_all(&response(b"crc-body")).unwrap();
         });
 
@@ -1146,7 +1167,16 @@ mod tests {
             head_rx.recv().unwrap(),
             b"GET /crc HTTP/1.0\r\nHost: 127.0.0.1\r\n\r\n"
         );
-        assert!(polls > 10, "{polls} polls");
+        // A blocked poll must hand control back after one step slice. During
+        // the silent PEER_DELAY, a poll that waited for the peer instead (or
+        // used a slice many times the budget) returns only once or twice. The
+        // threshold is two thirds of the polls that fit in the delay at the
+        // measured slice: at an exact 8 ms slice that is the original ten.
+        let expected_polls = PEER_DELAY.as_secs_f64() / observed_slice.as_secs_f64();
+        assert!(
+            polls as f64 > expected_polls * (2.0 / 3.0),
+            "{polls} polls during a {PEER_DELAY:?} peer delay at a {observed_slice:?} step slice"
+        );
         assert!(longest < STEP_BOUND, "longest poll {longest:?}");
     }
 

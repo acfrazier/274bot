@@ -29,8 +29,8 @@ use client_adapter::tls_handshake::{
 use client_adapter::ws_endpoint::{WssEndpoint, WssStep};
 use mio::{Events, Interest, Poll, Token, Waker};
 use rcgen::{
-    BasicConstraints, Certificate, CertificateParams, ExtendedKeyUsagePurpose, IsCa, KeyPair,
-    KeyUsagePurpose,
+    BasicConstraints, Certificate, CertificateParams, DistinguishedName, DnType,
+    ExtendedKeyUsagePurpose, IsCa, KeyPair, KeyUsagePurpose,
 };
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::pki_types::{pem::PemObject, CertificateDer, PrivateKeyDer};
@@ -60,10 +60,20 @@ struct LocalPki {
     expired_identity: ServerIdentity,
 }
 
+fn subject(common_name: &str) -> DistinguishedName {
+    let mut subject = DistinguishedName::new();
+    subject.push(DnType::CommonName, common_name);
+    subject
+}
+
 fn make_ca(common_name: &str) -> (Certificate, KeyPair, CertificateDer<'static>) {
     let key = KeyPair::generate().expect("generate local CA key");
     let mut params =
         CertificateParams::new(vec![common_name.to_owned()]).expect("create local CA parameters");
+    // Each certificate needs its own subject name. With rcgen's shared default
+    // subject, Windows CryptoAPI reads a leaf as self-signed and rejects the
+    // chain (CERT_E_SIGNATURE, os error -2146869244).
+    params.distinguished_name = subject(common_name);
     params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
     params.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign];
     let certificate = params.self_signed(&key).expect("self-sign local CA");
@@ -75,6 +85,7 @@ fn issue_identity(issuer: &Certificate, issuer_key: &KeyPair, expired: bool) -> 
     let key = KeyPair::generate().expect("generate local server key");
     let mut params = CertificateParams::new(vec!["localhost".to_owned()])
         .expect("create local server certificate parameters");
+    params.distinguished_name = subject("rustls backend test server");
     params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth];
     params.key_usages = vec![KeyUsagePurpose::DigitalSignature];
     if expired {

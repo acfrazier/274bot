@@ -8,8 +8,8 @@
 //! These checks do not count verifier entry across transfer.
 
 use rcgen::{
-    BasicConstraints, Certificate, CertificateParams, ExtendedKeyUsagePurpose, IsCa, KeyPair,
-    KeyUsagePurpose,
+    BasicConstraints, Certificate, CertificateParams, DistinguishedName, DnType,
+    ExtendedKeyUsagePurpose, IsCa, KeyPair, KeyUsagePurpose,
 };
 use rustls::client::danger::ServerCertVerifier;
 use rustls::crypto::ring::default_provider;
@@ -17,9 +17,19 @@ use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 use rustls_platform_verifier::Verifier;
 use std::sync::Arc;
 
+fn subject(common_name: &str) -> DistinguishedName {
+    let mut subject = DistinguishedName::new();
+    subject.push(DnType::CommonName, common_name);
+    subject
+}
+
 fn ca(name: &str) -> (Certificate, KeyPair, CertificateDer<'static>) {
     let key = KeyPair::generate().expect("generate throwaway CA key");
     let mut params = CertificateParams::new(vec![name.to_owned()]).expect("create CA parameters");
+    // Each certificate needs its own subject name. With rcgen's shared default
+    // subject, Windows CryptoAPI reads a leaf as self-signed and rejects the
+    // chain (CERT_E_SIGNATURE, os error -2146869244).
+    params.distinguished_name = subject(name);
     params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
     params.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign];
     let cert = params.self_signed(&key).expect("self-sign throwaway CA");
@@ -31,6 +41,7 @@ fn leaf(issuer: &Certificate, issuer_key: &KeyPair, expired: bool) -> Certificat
     let key = KeyPair::generate().expect("generate leaf key");
     let mut params =
         CertificateParams::new(vec!["localhost".to_owned()]).expect("create leaf parameters");
+    params.distinguished_name = subject("platform trust test leaf");
     params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth];
     params.key_usages = vec![KeyUsagePurpose::DigitalSignature];
     if expired {
