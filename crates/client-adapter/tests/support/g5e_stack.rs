@@ -17,7 +17,7 @@ pub(crate) struct StackSample {
     pub(crate) reserved_bytes: Option<u64>,
     /// Bytes the OS identifies as committed; never substituted with residency.
     pub(crate) committed_bytes: Option<u64>,
-    /// Resident pages reported by `mincore`; not commit or ownership inference.
+    /// Bytes within the native interval whose pages `mincore` reports resident.
     pub(crate) resident_bytes: Option<u64>,
     /// OS-reported guard bytes; `None` when the current guard cannot be verified.
     pub(crate) guard_bytes: Option<u64>,
@@ -56,15 +56,12 @@ fn count_resident_bytes(stack_low: u64, stack_high: u64) -> Option<u64> {
     // SAFETY: sysconf is a read-only query and _SC_PAGESIZE is valid here.
     let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
     let page_size = u64::try_from(page_size).ok().filter(|size| *size != 0)?;
-    let first_page = stack_low.div_ceil(page_size).checked_mul(page_size)?;
-    let end_page = (stack_high / page_size).checked_mul(page_size)?;
-    if first_page >= end_page {
-        return Some(0);
-    }
+    let first_page = (stack_low / page_size).checked_mul(page_size)?;
+    let end_page = stack_high.div_ceil(page_size).checked_mul(page_size)?;
 
     let mut remaining_pages = (end_page - first_page) / page_size;
     let mut address = first_page;
-    let mut resident_pages = 0_u64;
+    let mut resident_bytes = 0_u64;
     let mut residency = [0 as libc::c_char; CHUNK_PAGES];
 
     while remaining_pages != 0 {
@@ -73,9 +70,9 @@ fn count_resident_bytes(stack_low: u64, stack_high: u64) -> Option<u64> {
         let byte_count = usize::try_from(byte_count).ok()?;
         let address_usize = usize::try_from(address).ok()?;
 
-        // SAFETY: the queried interval is page-aligned and contained in the
-        // native stack interval returned by the current-thread OS API. The
-        // buffer has one byte for every queried page.
+        // SAFETY: mincore requires page alignment. Query every page covering
+        // the OS stack interval; boundary pages are clipped when counted.
+        // The buffer has one byte for every queried page.
         let result = unsafe {
             libc::mincore(
                 address_usize as *mut c_void,
@@ -87,18 +84,19 @@ fn count_resident_bytes(stack_low: u64, stack_high: u64) -> Option<u64> {
             return None;
         }
 
-        resident_pages = resident_pages.checked_add(
-            residency
-                .iter()
-                .take(pages as usize)
-                .filter(|status| (**status as u8 & 1) != 0)
-                .count() as u64,
-        )?;
+        for (index, status) in residency.iter().take(pages as usize).enumerate() {
+            if *status as u8 & 1 != 0 {
+                let page_low = address.checked_add((index as u64).checked_mul(page_size)?)?;
+                let page_high = page_low.checked_add(page_size)?;
+                let covered = page_high.min(stack_high) - page_low.max(stack_low);
+                resident_bytes = resident_bytes.checked_add(covered)?;
+            }
+        }
         address = address.checked_add(byte_count as u64)?;
         remaining_pages -= pages;
     }
 
-    resident_pages.checked_mul(page_size)
+    Some(resident_bytes)
 }
 
 #[cfg(target_os = "linux")]
@@ -412,6 +410,12 @@ mod tests {
                 // SAFETY: the pointer addresses the live local for this scope.
                 unsafe { stack_local_pointer.write_volatile(0x5a) };
                 let local_address = stack_local_pointer as usize as u64;
+                #[cfg(any(target_os = "linux", target_os = "macos"))]
+                assert_eq!(
+                    super::count_resident_bytes(local_address, local_address + 1),
+                    Some(1),
+                    "a touched partial page contributes only its stack-interval bytes"
+                );
                 let sample = capture_current_thread_stack().expect("capture worker stack");
                 std::hint::black_box(stack_local);
                 (sample, local_address)
