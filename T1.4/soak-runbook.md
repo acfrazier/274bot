@@ -19,6 +19,8 @@ Live tests must start their process network before profile binding or template p
 
 Direct-client live fixtures retain one `host_play::DirectClientLogin` per client across login and relog. This context uses the production queue, preparation and attempt lifecycle, and returns `LoginError` without reducing it to a boolean. The interaction API no longer exposes login. The survivable-admission fixture retries only the engine's already-logged-in response (code 5) after its setup logout: its budget is 26 engine cycles of 600 ms, covering the engine's 15-second logout-flush retry plus one cycle. Other typed errors fail immediately. This fixture retry does not change production login policy.
 
+The live map covers the root interaction module with `host.api-gather-wire-shadow` and the bank test-support harness with `host.bank-fetch-session`; both keep their existing three-run requirement.
+
 
 Before running, start the fixed Engine A service listening on `127.0.0.1:1080`, with the 289 navigation pack referenced in the config available. Set a nonnegative common `SOAK_SEED` once and an evidence root outside either repository. Run the infrastructure smoke **for both builds**:
 
