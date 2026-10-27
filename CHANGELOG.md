@@ -17,6 +17,14 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   and per-connection byte and record capacities remain unchanged.
   Readiness and local-work queues retain their fixed buffers so new event
   peaks do not allocate on the reactor's I/O path.
+- WSS moves TLS and WebSocket state from native OpenSSL allocations to Rust.
+  The Linux qualification measured about 51 KB more Rust live memory per bot
+  by ladder slope. A separate paired four-bot heap capture measured about
+  75 KB more Rust and 114 KB less native memory per bot: about 38 KB less
+  combined heap. RSS stayed within the baseline spread at every fleet size.
+  V8 used and total memory are expected to stay unchanged. The raw memory
+  comparison remains FAIL; the acceptance decision and the isolated V8-used
+  N=2 result are recorded in `qual-1027/MAIN-RULING-MEMORY.md`.
 - A hosted login keeps its prepared endpoint, cancellation identity and
   queue retirement bound through the final session commit. Play starts the
   network composition and retains its maintenance driver for every frontend.
