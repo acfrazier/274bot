@@ -898,7 +898,14 @@ impl KqFleetWitness {
             want(slot.disappearances >= 2, "disappearances>=2");
             want(slot.safely_banked, "safely_banked");
             want(slot.survived, "survived");
-            if self.finish_started && !slot.finish_closed {
+            // The driven slot 0 is closed by the finish step itself: its
+            // pre-close observation still shows the bank open, and the
+            // companion finish never judges it by design (`finish_ready`
+            // checks only slots 1..). Listing it here flags that expected
+            // lag as missing, so the summary skips slot 0. The real state
+            // is judged by the close step's `BankClosed` arm and the
+            // scenario's terminal proof.
+            if self.finish_started && index != 0 && !slot.finish_closed {
                 missing.push("finish_bank_closed".to_string());
             }
             let (tile, bank) = match slot.last_tile {
@@ -3772,6 +3779,78 @@ mod kq_finish_tests {
                  bank1=absent entry2=absent kill2=absent bank2=absent safe=absent)"
             ),
             "{slot0}"
+        );
+    }
+
+    /// The driven slot 0 is closed by the finish step, not the
+    /// companion finish: its pre-close observation still shows the
+    /// bank open while the companions are already closed. The
+    /// summary must not list `finish_bank_closed` for slot 0, or a
+    /// passing run reads as missing (S3 round 2: `s0 ... bank=5382
+    /// missing=[finish_bank_closed]`, top-level PASS). Companions
+    /// still list an open bank after the finish.
+    #[test]
+    fn terminal_summary_skips_finish_bank_closed_for_driven_slot_zero() {
+        let mut witness = started_witness();
+        witness.begin_finish();
+        for slot in 1..4 {
+            witness.observe(slot, &at_bank(false));
+        }
+        witness.observe(0, &at_bank(true));
+        assert!(
+            witness.finish_ready(),
+            "every slot was observed and every companion bank is closed"
+        );
+        let summary = witness.terminal_summary();
+        let slot0 = summary
+            .split("s0<")
+            .nth(1)
+            .and_then(|rest| rest.split(" s1<").next())
+            .expect("slot 0 segment");
+        assert!(
+            !slot0.contains("finish_bank_closed"),
+            "driven slot 0 is closed by the finish step, not the companion finish: {slot0}"
+        );
+        for slot in 1..4 {
+            let marker = format!("s{slot}<");
+            let segment = summary
+                .split(&marker)
+                .nth(1)
+                .unwrap_or_else(|| panic!("slot {slot} segment: {summary}"));
+            let segment = if slot < 3 {
+                let next = format!(" s{}<", slot + 1);
+                segment.split(&next).next().expect("slot segment")
+            } else {
+                segment
+            };
+            assert!(
+                !segment.contains("finish_bank_closed"),
+                "closed companion slot {slot} lists nothing: {segment}"
+            );
+        }
+        witness.observe(1, &at_bank(true));
+        assert!(
+            !witness.finish_ready(),
+            "companion slot 1 reopened its bank after the finish"
+        );
+        let summary = witness.terminal_summary();
+        let slot1 = summary
+            .split("s1<")
+            .nth(1)
+            .and_then(|rest| rest.split(" s2<").next())
+            .expect("slot 1 segment");
+        assert!(
+            slot1.contains("finish_bank_closed"),
+            "an open companion bank still lists after the finish: {slot1}"
+        );
+        let slot0 = summary
+            .split("s0<")
+            .nth(1)
+            .and_then(|rest| rest.split(" s1<").next())
+            .expect("slot 0 segment");
+        assert!(
+            !slot0.contains("finish_bank_closed"),
+            "driven slot 0 never lists, even while a companion is open: {slot0}"
         );
     }
 }
