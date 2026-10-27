@@ -402,6 +402,7 @@ fn native_follow_failure_preserves_hop_detail_in_receipt() {
             },
             why,
             tries: 3,
+            last_refusal: None,
         };
         {
             let mut navs = rig.navs.lock().unwrap();
@@ -435,6 +436,58 @@ fn native_follow_failure_preserves_hop_detail_in_receipt() {
         assert!(detail.contains("aiming"), "{detail}");
     }
 }
+
+#[test]
+fn native_follow_failure_names_the_last_crossing_refusal_in_the_receipt() {
+    let mut rig = open_rig(false);
+    rig.observe(1);
+    rig.wait_routed();
+    let at = WorldTile {
+        x: 0,
+        z: 0,
+        level: 0,
+    };
+    let aiming = WorldTile {
+        x: 4,
+        z: 0,
+        level: 0,
+    };
+    {
+        let mut navs = rig.navs.lock().unwrap();
+        super::apply_nav_follow_outcome(
+            navs.get_mut("alice").unwrap(),
+            Some(nav_executor::TravelOutcome::Stalled {
+                at,
+                aiming,
+                why: nav_executor::HopFailure::Dropped,
+                tries: 7,
+                last_refusal: Some(nav_executor::TransportRefusal::Busy(
+                    "The ledge is being used",
+                )),
+            }),
+            false,
+        );
+    }
+    rig.observe(2);
+    let shared = rig.shared.lock();
+    let receipt = shared.result.as_ref().unwrap().as_ref().unwrap();
+    assert_eq!(
+        receipt.end,
+        WalkEnd::Stalled(Arc::new(script::native::WalkStall {
+            at,
+            aiming,
+            why: script::native::WalkStallReason::Dropped,
+            tries: 7,
+        }))
+    );
+    let detail = receipt
+        .failure_detail()
+        .expect("the stall detail is owed to the caller");
+    assert!(detail.contains("Dropped"), "{detail}");
+    assert!(detail.contains("tries: 7"), "{detail}");
+    assert!(detail.contains("The ledge is being used"), "{detail}");
+}
+
 #[test]
 fn native_end_blocked_follow_preserves_typed_stall_in_receipt() {
     let mut rig = open_rig(false);
@@ -459,6 +512,7 @@ fn native_end_blocked_follow_preserves_typed_stall_in_receipt() {
                 aiming,
                 why: nav_executor::HopFailure::EndBlocked,
                 tries: 0,
+                last_refusal: None,
             }),
             false,
         );
@@ -492,6 +546,7 @@ fn stale_and_legacy_follow_failures_do_not_acquire_native_detail() {
         },
         why: nav_executor::HopFailure::Dropped,
         tries: 3,
+        last_refusal: None,
     };
 
     let mut rig = open_rig(false);

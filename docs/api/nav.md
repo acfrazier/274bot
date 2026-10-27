@@ -827,6 +827,30 @@ Agility waits packed `edge.ticks` after land. A teleport hop that never
 lands (a server-refused wilderness cast) stalls after the hop budget;
 the spell or rub is not resent.
 
+An agility crossing that the server refuses because another player holds the
+obstacle is tried again. The refusal is the content's own text, seen while
+the player still stands on its send tile: the chat line "The ledge is being
+used" (`agility_dungeon.rs2:53-56`, loc 2303) or the "The rope swing is being
+used" page (`shortcuts.rs2:130-132`, locs 2322 to 2324). The hop waits the
+content's hold in observed game ticks (9 for the ledge, 5 for the rope swing:
+the shared reservation lasts at most `map_clock` + 8 and + 4), presses the
+page's continue button, and sends the interaction again. A hop that does not
+move for longer than its baked `edge.ticks`, and shows no such text, counts as
+dropped and is sent again at once. One hop clock runs from the hop's first
+send and a retry does not restart it. Refused tries, holds, the accepted try
+and the landing delay all draw on the original hop budget (60 ticks by
+default), so the retries are finite: a ledge that stays busy gets seven
+sends. A retry is sent only while the clock, including the ticks the
+current poll observed, is within the budget, so a poll that comes late never
+sends after the deadline. A crossing whose landing delay has not ended when
+the budget is spent stops there as `Stalled { why: Expired }`, even if it
+would have ended later. The final `Stalled` carries the real send count and
+`last_refusal` (`TransportRefusal::Busy(text)`, or `NotStarted` for a silent
+drop), also for a caller with no `on_event`. Every refusal reaches `on_event`
+as `TravelEvent::TransportBusy`. Transport, approach and landing clocks count
+observed game ticks, one per `PLAYER_INFO` packet: a snapshot rebuild that
+observed N packets adds N, a repeated read of one snapshot adds none.
+
 Absolute vertical same-coordinate Ladder/Stairs hops retain the footprint of
 the observed loc actually clicked. Arrival is on the destination plane within
 that footprint expanded by the hop's one-tile landing tolerance, rather

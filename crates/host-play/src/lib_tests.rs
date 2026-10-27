@@ -4719,6 +4719,7 @@ fn end_blocked_follow_settles_the_armed_walk_as_a_blocked_route_end() {
             aiming: dest,
             why: nav_executor::HopFailure::EndBlocked,
             tries: 0,
+            last_refusal: None,
         }),
         false,
     );
@@ -4751,6 +4752,7 @@ fn end_blocked_follow_settles_the_armed_walk_as_a_blocked_route_end() {
             aiming: dest,
             why: nav_executor::HopFailure::Dropped,
             tries: 1,
+            last_refusal: None,
         }),
         false,
     );

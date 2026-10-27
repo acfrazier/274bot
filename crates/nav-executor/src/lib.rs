@@ -3,8 +3,8 @@
 mod traveller;
 
 pub use traveller::{
-    BlockedWhy, HopFailure, LegPhase, NpcHopBlockReason, TravelEvent, TravelLegCallback,
-    TravelOptions, TravelOutcome, Traveller, WebCutFailure,
+    BlockedWhy, HopFailure, LegPhase, NpcHopBlockReason, TransportRefusal, TravelEvent,
+    TravelLegCallback, TravelOptions, TravelOutcome, Traveller, WebCutFailure,
 };
 
 #[cfg(test)]
