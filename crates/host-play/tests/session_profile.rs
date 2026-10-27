@@ -13,8 +13,7 @@ use host_play::{
     SharedClientTemplate,
 };
 
-#[path = "support/network_composition.rs"]
-mod network_composition;
+use upgrade_home::network_composition;
 
 #[path = "support/upgrade_home.rs"]
 mod upgrade_home;

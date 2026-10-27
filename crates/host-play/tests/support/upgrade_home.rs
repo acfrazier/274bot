@@ -16,7 +16,7 @@ use nav_planner::map::identity::Digest;
 use nav_planner::transport::TransportGraph;
 
 #[path = "network_composition.rs"]
-mod network_composition;
+pub(crate) mod network_composition;
 
 static NEXT: AtomicU64 = AtomicU64::new(0);
 
