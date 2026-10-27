@@ -1211,6 +1211,8 @@ impl LaneAttempt {
         config: Arc<ClientConfig>,
         send_buffer: Option<usize>,
     ) -> Self {
+        static NEXT_CONNECTION: std::sync::atomic::AtomicU64 =
+            std::sync::atomic::AtomicU64::new(1);
         let poll = Poll::new().expect("create local TLS poller");
         let waker =
             Arc::new(Waker::new(poll.registry(), WAKER_TOKEN).expect("create handoff waker"));
@@ -1219,7 +1221,7 @@ impl LaneAttempt {
         let token = source.child().expect("mint one TLS attempt token");
         let binding = BindingId {
             incarnation: 1,
-            connection: 1,
+            connection: NEXT_CONNECTION.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             binding: 1,
             attempt: token.generation(),
         };
@@ -2348,9 +2350,13 @@ fn g5e_tls13_wss_keyupdate_backpressure_memory_receipt() {
         0,
         "the first lane disables resumption and does not store server tickets"
     );
+    let target_binding = attempt.binding;
+    let mut ledger = G5eLedgerPeaks::default();
+    sample_g5e_wss_ledger(&mut ledger, target_binding, 1);
     let (sibling_attempt, sibling_endpoint, sibling_handshake) =
         connect_wss(&sibling_server, Arc::clone(&client_config));
     assert_negotiated(&sibling_handshake, ProtocolVersion::TLSv1_3, TLS13_SUITE);
+    assert_ne!(attempt.binding, sibling_attempt.binding);
     assert_eq!(
         ticket_metrics.inserted.load(Ordering::Acquire),
         0,
@@ -2391,9 +2397,6 @@ fn g5e_tls13_wss_keyupdate_backpressure_memory_receipt() {
         "test caller retains only its source config after worker clones are built"
     );
 
-    let target_binding = attempt.binding;
-    let mut ledger = G5eLedgerPeaks::default();
-    sample_g5e_wss_ledger(&mut ledger, target_binding, 1);
     sample_g5e_wss_ledger(&mut ledger, target_binding, 2);
     let (allocator_after_connect, allocator_connect_peak) = g5e_allocator_snapshot();
     let resources_after_connect = g5e_process_resources();
