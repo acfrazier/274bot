@@ -20808,9 +20808,6 @@ impl Driver for GuardRec {
     fn send_packet(&mut self, packet: &api::prot::Send) -> Result<(), api::prot::PacketError> {
         packet.write_for_revision(self.revision(), &mut self.sink)
     }
-    fn login(&mut self, _username: &str, _password: &str, _reconnect: bool) -> bool {
-        false
-    }
 }
 
 /// An attached ingame scene-2 client with a named local player at
@@ -26627,9 +26624,6 @@ impl Driver for NavRec {
     }
     fn send_packet(&mut self, packet: &api::prot::Send) -> Result<(), api::prot::PacketError> {
         packet.write_for_revision(self.revision(), &mut self.sink)
-    }
-    fn login(&mut self, _username: &str, _password: &str, _reconnect: bool) -> bool {
-        true
     }
 }
 

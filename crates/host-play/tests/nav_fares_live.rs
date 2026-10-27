@@ -147,8 +147,11 @@ fn live_manual_walk_two_fares_sixty_to_zero_and_thirty_refused() {
         let mut client = template.prepare_client(slot as i32 + 1, true).unwrap();
         client.draw = false;
         client.maininit();
+        let mut login = host_play::DirectClientLogin::new(&client);
         assert!(!client.error_loading);
-        assert!(interact::login(&mut client, account, account, false));
+        login
+            .login(&mut client, account, account, false)
+            .expect("hosted login failed");
         let mut snapshot = GameSnapshot::new();
         let mut pump = Pump::new();
         wait_for(&mut client, &mut snapshot, &mut pump, |s| {
@@ -164,7 +167,9 @@ fn live_manual_walk_two_fares_sixty_to_zero_and_thirty_refused() {
         let ifaces = Arc::clone(&client.ifaces);
         assert!(interact::logout(&mut client, &ifaces));
         wait_for(&mut client, &mut snapshot, &mut pump, |s| !s.ingame());
-        assert!(interact::login(&mut client, account, account, false));
+        login
+            .login(&mut client, account, account, false)
+            .expect("hosted login failed");
         wait_for(&mut client, &mut snapshot, &mut pump, |s| {
             s.ingame() && s.scene_state() == 2
         });
@@ -411,8 +416,11 @@ fn live_shilo_cart_ten_coins_to_zero() {
     let mut client = template.prepare_client(1, true).unwrap();
     client.draw = false;
     client.maininit();
+    let mut login = host_play::DirectClientLogin::new(&client);
     assert!(!client.error_loading);
-    assert!(interact::login(&mut client, &account, &account, false));
+    login
+        .login(&mut client, &account, &account, false)
+        .expect("hosted login failed");
     let mut snapshot = GameSnapshot::new();
     let mut pump = Pump::new();
     wait_for(&mut client, &mut snapshot, &mut pump, |s| {
@@ -428,7 +436,9 @@ fn live_shilo_cart_ten_coins_to_zero() {
     let ifaces = Arc::clone(&client.ifaces);
     assert!(interact::logout(&mut client, &ifaces));
     wait_for(&mut client, &mut snapshot, &mut pump, |s| !s.ingame());
-    assert!(interact::login(&mut client, &account, &account, false));
+    login
+        .login(&mut client, &account, &account, false)
+        .expect("hosted login failed");
     wait_for(&mut client, &mut snapshot, &mut pump, |s| {
         s.ingame() && s.attached() && s.scene_state() == 2
     });

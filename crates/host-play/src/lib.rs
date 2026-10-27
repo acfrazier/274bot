@@ -156,7 +156,7 @@ use play_login::{
     UNEXPECTED_LOGOUT_THRESHOLD, UNEXPECTED_LOGOUT_WINDOW,
 };
 use play_login::{publish_queue_place, sync_profile_arm, SharedLoginQueue};
-pub use play_login::{LoginLatchReason, SlotArm};
+pub use play_login::{DirectClientLogin, LoginLatchReason, SlotArm};
 use play_slots::SlotFrame;
 #[cfg(test)]
 use play_slots::{

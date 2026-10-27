@@ -105,8 +105,11 @@ fn live_walkto_from_ardougne_pocket_near_and_far() {
         .expect("client");
     client.draw = false;
     client.maininit();
+    let mut login = host_play::DirectClientLogin::new(&client);
     assert!(!client.error_loading);
-    assert!(interact::login(&mut client, &name, &name, false));
+    login
+        .login(&mut client, &name, &name, false)
+        .expect("hosted login failed");
     let mut snapshot = GameSnapshot::new();
     let mut pump = Pump::new();
     wait_for(&mut client, &mut snapshot, &mut pump, |s| {

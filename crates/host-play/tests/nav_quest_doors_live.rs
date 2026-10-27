@@ -382,11 +382,11 @@ fn live_fortress_disguise_and_secret_wall_use_content_navigation() {
         .expect("prepare CPU client");
     client.draw = false;
     client.maininit();
+    let mut login = host_play::DirectClientLogin::new(&client);
     assert!(!client.error_loading, "client failed to load");
-    assert!(
-        interact::login(&mut client, &account, &password, false),
-        "local login refused"
-    );
+    login
+        .login(&mut client, &account, &password, false)
+        .expect("local login refused");
     let mut snapshot = GameSnapshot::new();
     let mut pump = Pump::new();
     assert!(
@@ -413,10 +413,9 @@ fn live_fortress_disguise_and_secret_wall_use_content_navigation() {
         logout_and_wait(&mut client, &mut snapshot, &mut pump),
         "tutorial relog-out failed"
     );
-    assert!(
-        interact::login(&mut client, &account, &password, false),
-        "relogin refused"
-    );
+    login
+        .login(&mut client, &account, &password, false)
+        .expect("relogin refused");
     assert!(
         wait_for(&mut client, &mut snapshot, &mut pump, SETUP_TIMEOUT, |s| {
             s.ingame() && s.attached() && s.scene_state() == 2

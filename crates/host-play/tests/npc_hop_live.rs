@@ -327,16 +327,16 @@ fn npc_hop_live_boat_routes() {
         .expect("prepare disposable R289 client");
     client.set_draw(std::env::var_os("LIVE_EVIDENCE_DIR").is_some());
     client.maininit();
+    let mut login = host_play::DirectClientLogin::new(&client);
     assert!(
         !client.error_loading,
         "R289 client asset initialization failed"
     );
     let mut snapshot = GameSnapshot::new();
     let mut pump = Pump::new();
-    assert!(
-        interact::login(&mut client, &name, &name, false),
-        "login failed"
-    );
+    login
+        .login(&mut client, &name, &name, false)
+        .expect("login failed");
     wait_for(
         &mut client,
         &mut snapshot,

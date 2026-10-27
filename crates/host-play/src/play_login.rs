@@ -1,8 +1,9 @@
 use std::cell::Cell;
 use std::collections::{BTreeMap, VecDeque};
 
+use std::io;
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU8, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -14,7 +15,7 @@ use api::lifecycle::{
     LoginIntent, LoginLatch, MemoryMode, ParkReason, PostReceipt, QueueBlocker, SessionEndCause,
     SessionEventOut, SessionGate, TransportFailure, WorldChoice as IntentWorldChoice,
 };
-use client::client::{Client, LoginError};
+use client::client::{Client, LoginError, LoginStage, LoginTransportError};
 use client::config::IfType;
 use client::io::client_stream::LoginCancel;
 use client::io::host_network::{HostAttemptIdentity, SealReceipt};
@@ -26,13 +27,368 @@ use client_adapter::health::ReactorHealth;
 use client_adapter::host_network::{with_prepared_game_attempt, PreparedGameAttempt};
 use client_adapter::park::{Park, ParkOutcome};
 use client_adapter::tls_handshake::{GameTlsTicket, GameTlsWait, MIN_WSS_START_REMAINING};
-use host::login_queue::{AdmitBlocker, LoginBackoff, LoginQueue, Permit, QueueAttemptId, QueuePos};
+use host::login_queue::{
+    AdmitBlocker, LoginBackoff, LoginQueue, Permit, QueueAttemptId, QueuePos, HANDSHAKE_HOLD,
+};
 use parking_lot::Mutex as QueueMutex;
 use vault::{Profile, RandomEventPolicy};
 
 use super::{clear_startup_progress, lock_statuses, public_worlds, Play, SlotStatus, StartupPhase};
 
 pub(super) type SharedLoginQueue = Arc<QueueMutex<LoginQueue>>;
+static DIRECT_LOGIN_QUEUE: LazyLock<SharedLoginQueue> =
+    LazyLock::new(|| Arc::new(QueueMutex::new(LoginQueue::default())));
+
+fn direct_login_queue() -> SharedLoginQueue {
+    Arc::clone(&*DIRECT_LOGIN_QUEUE)
+}
+
+struct DirectPrequeueCancelGuard<'a> {
+    arm: &'a SlotArm,
+    token: CancelToken,
+}
+
+impl Drop for DirectPrequeueCancelGuard<'_> {
+    fn drop(&mut self) {
+        self.arm.clear_prequeue_cancel(&self.token);
+    }
+}
+
+/// Persistent host-login authority for one caller-owned [`Client`].
+///
+/// Construct one context per client and retain it across relogs. Each call to
+/// [`Self::login`] makes at most one client login attempt and returns server
+/// refusals unchanged; callers own any retry policy. The composition must
+/// start and maintain [`client_adapter::service::NetworkService`] first.
+///
+/// Invoke `login` only after the client's previous session has disconnected.
+/// The method consumes any pending client session-exit fact before admission,
+/// then applies the same clean-release pacing as a production slot. Dropping
+/// this context removes its FIFO owner but does not log out or close the
+/// caller-owned client.
+pub struct DirectClientLogin {
+    arm: Arc<SlotArm>,
+    queue: SharedLoginQueue,
+    statuses: Arc<Mutex<Vec<SlotStatus>>>,
+    backoff: LoginBackoff,
+}
+
+impl DirectClientLogin {
+    /// Create the persistent queue/session context for one client.
+    pub fn new(client: &Client) -> Self {
+        Self {
+            arm: SlotArm::new(client.login_uid, true),
+            queue: direct_login_queue(),
+            statuses: Arc::new(Mutex::new(Vec::new())),
+            backoff: LoginBackoff::new(),
+        }
+    }
+
+    /// Perform one host-admitted client login.
+    ///
+    /// The returned [`LoginError`] is the original typed client/server error
+    /// when the handshake reached the game server. This method never retries
+    /// a server refusal; a later explicit call uses the same slot identity,
+    /// queue budgets, clean-release state, and backoff.
+    pub fn login(
+        &mut self,
+        client: &mut Client,
+        username: &str,
+        password: &str,
+        reconnect: bool,
+    ) -> Result<(), LoginError> {
+        if client.ingame {
+            return Err(direct_login_error(
+                LoginStage::Connect,
+                io::ErrorKind::InvalidInput,
+                "client is still in game; disconnect its session before login",
+            ));
+        }
+
+        observe_client_session_exit(client, &self.arm);
+        self.arm.sync_login_identity(client.login_uid, password);
+        let Some((command, world_generation)) =
+            capture_login_authorization(&self.arm, client.ingame)
+        else {
+            return Err(direct_login_error(
+                LoginStage::Connect,
+                io::ErrorKind::Interrupted,
+                "login is not authorized by the current slot intent",
+            ));
+        };
+        let uid = self.arm.uid.load(Ordering::Acquire);
+        let token = self.arm.new_cancel_token().ok_or_else(|| {
+            direct_login_error(
+                LoginStage::Connect,
+                io::ErrorKind::Other,
+                "login cancellation generation exhausted",
+            )
+        })?;
+        if !self
+            .arm
+            .publish_prequeue_cancel(token.clone(), command, world_generation)
+        {
+            return Err(direct_login_error(
+                LoginStage::Connect,
+                io::ErrorKind::Interrupted,
+                "login was withdrawn before transport preparation",
+            ));
+        }
+        let _prequeue_cancel = DirectPrequeueCancelGuard {
+            arm: &self.arm,
+            token: token.clone(),
+        };
+        let _queue_place = QueuePlaceRetirement {
+            queue: &self.queue,
+            statuses: &self.statuses,
+            username,
+            arm: &self.arm,
+        };
+
+        let prepared = super::play_slots::prepare_game_transport(client, &self.arm, &token)
+            .map_err(|error| {
+                direct_login_error(
+                    LoginStage::Connect,
+                    io::ErrorKind::Other,
+                    format!("game transport preparation failed: {error}"),
+                )
+            })?;
+        if token.is_cancelled() || !self.arm.login_attempt_is_current(command, world_generation) {
+            return Err(direct_login_error(
+                LoginStage::Connect,
+                io::ErrorKind::Interrupted,
+                "login was cancelled during transport preparation",
+            ));
+        }
+        self.arm.prepared();
+
+        let mut tls_deadline = None;
+        let mut wss_health = None;
+        let wait = if prepared.needs_initial_tls() {
+            let network_health = prepared.network_health();
+            let deadline = Instant::now() + HANDSHAKE_HOLD;
+            tls_deadline = Some(deadline);
+            wss_health = Some(Arc::clone(&network_health));
+            let ticket = prepared
+                .game_tls_waiter(self.arm.park(), deadline)
+                .map_err(|error| {
+                    direct_login_error(
+                        LoginStage::Connect,
+                        error.kind(),
+                        format!("game TLS capacity: {error}"),
+                    )
+                })?;
+            let (host, port) = prepared.endpoint();
+            wait_for_wss_permit(
+                &self.queue,
+                &self.statuses,
+                username,
+                uid,
+                &self.arm,
+                command,
+                world_generation,
+                token.clone(),
+                ticket,
+                network_health,
+                || {
+                    self.arm
+                        .clean_release_admission_at(host, port, Instant::now())
+                },
+                &mut || Duration::from_millis(20),
+            )
+        } else {
+            enqueue_queue_place(&self.queue, &self.statuses, username, uid, &self.arm);
+            if let Some(until) = self.arm.clean_release_admission_at(
+                &client.config.host,
+                client.config.port,
+                Instant::now(),
+            ) {
+                self.queue
+                    .lock()
+                    .defer_owner_until(self.arm.queue_owner, until);
+            }
+            wait_for_permit_with_cancel(
+                &self.queue,
+                &self.statuses,
+                username,
+                uid,
+                &self.arm,
+                &token,
+                &mut || Duration::from_millis(20),
+            )
+        };
+        let mut permit = match wait {
+            PermitWait::Granted(permit) => permit,
+            PermitWait::Cancelled => {
+                return Err(direct_login_error(
+                    LoginStage::Connect,
+                    io::ErrorKind::Interrupted,
+                    "login was cancelled while waiting for admission",
+                ));
+            }
+            PermitWait::Deadline => {
+                self.arm.publish_handshake_aborted(
+                    AbortedAttempt::Deadline,
+                    command,
+                    world_generation,
+                    token.generation(),
+                );
+                return Err(direct_login_error(
+                    LoginStage::Connect,
+                    io::ErrorKind::TimedOut,
+                    "initial game TLS capacity deadline expired",
+                ));
+            }
+            PermitWait::Unavailable => {
+                self.arm.publish_handshake_aborted(
+                    AbortedAttempt::Transport(TransportFailure::Closed),
+                    command,
+                    world_generation,
+                    token.generation(),
+                );
+                return Err(direct_login_error(
+                    LoginStage::Connect,
+                    io::ErrorKind::NotConnected,
+                    "host game transport is unavailable",
+                ));
+            }
+        };
+
+        let generation = prepared.token().generation();
+        let result = {
+            let mut slot_login = SlotLogin {
+                client,
+                arm: &self.arm,
+                command,
+                world_generation,
+                username,
+                password,
+                reconnect,
+                backoff: &self.backoff,
+            };
+            slot_login.client.set_external_reconnect_owner(true);
+            let hold = Cell::new(None);
+            let Some(outcome) = permit.attempt(
+                prepared,
+                || {
+                    self.arm.uid.load(Ordering::Acquire) != uid
+                        || !self.arm.login_attempt_is_current(command, world_generation)
+                },
+                |cancel, generation| {
+                    self.arm.begin_attempt_with_generation(
+                        command,
+                        world_generation,
+                        cancel,
+                        generation,
+                    )
+                },
+                |deadline, cancel| {
+                    let (result, server_hold) = slot_login.run(deadline, cancel, |_| {});
+                    hold.set(server_hold);
+                    result
+                },
+                |_| hold.get(),
+            ) else {
+                self.arm.clear_unused_attempt(generation);
+                let error = if wss_health
+                    .as_ref()
+                    .is_some_and(|health| health.loss().is_some())
+                {
+                    self.arm.publish_handshake_aborted(
+                        AbortedAttempt::Transport(TransportFailure::Closed),
+                        command,
+                        world_generation,
+                        generation,
+                    );
+                    direct_login_error(
+                        LoginStage::Connect,
+                        io::ErrorKind::NotConnected,
+                        "host game transport became unavailable before login",
+                    )
+                } else if tls_deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+                    self.arm.publish_handshake_aborted(
+                        AbortedAttempt::Deadline,
+                        command,
+                        world_generation,
+                        generation,
+                    );
+                    direct_login_error(
+                        LoginStage::Connect,
+                        io::ErrorKind::TimedOut,
+                        "initial game TLS capacity deadline expired",
+                    )
+                } else {
+                    direct_login_error(
+                        LoginStage::Connect,
+                        io::ErrorKind::Interrupted,
+                        "login was cancelled before the handshake started",
+                    )
+                };
+                return Err(error);
+            };
+
+            let result = slot_login.finish_after_q(outcome);
+            if let Err(error) = &result {
+                let _ = self.arm.defer_clean_release_at(
+                    error,
+                    command,
+                    &slot_login.client.config.host,
+                    slot_login.client.config.port,
+                    Instant::now(),
+                );
+            }
+            result
+        };
+
+        match result {
+            Ok(SlotLoginOutcome::Promoted) => {
+                self.backoff.reset();
+                Ok(())
+            }
+            Ok(SlotLoginOutcome::Aborted(reason)) => Err(direct_login_error(
+                LoginStage::Connect,
+                if reason == AbortedAttempt::Deadline {
+                    io::ErrorKind::TimedOut
+                } else {
+                    io::ErrorKind::Interrupted
+                },
+                format!("login attempt aborted: {reason:?}"),
+            )),
+            Ok(SlotLoginOutcome::CommittedSessionExit(cause)) => Err(direct_login_error(
+                LoginStage::Connect,
+                io::ErrorKind::ConnectionAborted,
+                format!("host login commit ended the session: {cause:?}"),
+            )),
+            Err(error) => {
+                if error.code == 16 {
+                    let _ = self.backoff.throttle_delay();
+                }
+                Err(error)
+            }
+        }
+    }
+}
+
+impl Drop for DirectClientLogin {
+    fn drop(&mut self) {
+        self.queue.lock().leave_owner(self.arm.queue_owner);
+    }
+}
+
+fn direct_login_error(
+    stage: LoginStage,
+    kind: io::ErrorKind,
+    detail: impl Into<String>,
+) -> LoginError {
+    let error = io::Error::new(kind, detail.into());
+    LoginError {
+        code: -1,
+        mes1: String::new(),
+        mes2: error.to_string(),
+        retry_after: None,
+        transport: Some(LoginTransportError::from_io(stage, &error)),
+    }
+}
 
 /// Title frames a slot owner runs while it waits outside its client pump
 /// (queue, retry backoff, transfer countdown). Each call runs the frame that

@@ -181,6 +181,122 @@ fn accept_local_with_timeout(
         }
     }
 }
+
+fn spawn_local_login_server(
+    listener: std::net::TcpListener,
+    response: u8,
+    release: std::sync::mpsc::Receiver<()>,
+) -> thread::JoinHandle<()> {
+    thread::spawn(move || {
+        use std::io::{Read, Write};
+
+        let (mut socket, _) = accept_local_with_timeout(&listener).expect("accept login client");
+        socket
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let mut hello = [0; 2];
+        socket.read_exact(&mut hello).unwrap();
+        assert_eq!(hello[0], 14, "client sent the login-server hello");
+        socket.write_all(&[0; 9]).unwrap();
+        socket.write_all(&[0; 8]).unwrap();
+
+        let mut login_header = [0; 2];
+        socket.read_exact(&mut login_header).unwrap();
+        assert_eq!(login_header[0], 16, "fresh login uses opcode 16");
+        socket.write_all(&[response]).unwrap();
+        if response == 2 {
+            socket.write_all(&[0, 0]).unwrap();
+        }
+        release
+            .recv_timeout(Duration::from_secs(5))
+            .expect("test releases accepted client socket");
+    })
+}
+
+#[test]
+fn direct_client_login_uses_production_admission_and_commit() {
+    if run_hosted_test_in_child(
+        "release_tests::direct_client_login_uses_production_admission_and_commit",
+        "HOST_PLAY_DIRECT_LOGIN_CHILD",
+    ) {
+        return;
+    }
+    let _network = HostedNetworkFixture::start();
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    let server = spawn_local_login_server(listener, 2, release_rx);
+    let mut client = tcp_client(port);
+    let mut login = DirectClientLogin::new(&client);
+
+    login
+        .login(&mut client, "alice", "secret", false)
+        .expect("hosted direct login succeeds");
+    assert!(client.ingame, "accepted hosted login commits the session");
+    assert!(
+        client.has_stream(),
+        "committed client retains its hosted stream"
+    );
+
+    release_tx.send(()).unwrap();
+    server.join().unwrap();
+}
+
+#[test]
+fn direct_client_login_preserves_typed_server_refusal() {
+    if run_hosted_test_in_child(
+        "release_tests::direct_client_login_preserves_typed_server_refusal",
+        "HOST_PLAY_DIRECT_LOGIN_CHILD",
+    ) {
+        return;
+    }
+    let _network = HostedNetworkFixture::start();
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    let server = spawn_local_login_server(listener, 5, release_rx);
+    let mut client = tcp_client(port);
+    let mut login = DirectClientLogin::new(&client);
+
+    let error = login
+        .login(&mut client, "alice", "secret", false)
+        .expect_err("server refusal remains an error");
+    assert_eq!(error.code, 5);
+    assert!(error.transport.is_none(), "the server response stays typed");
+
+    release_tx.send(()).unwrap();
+    server.join().unwrap();
+}
+
+#[test]
+fn direct_client_login_refuses_unprepared_hosted_client_call() {
+    if run_hosted_test_in_child(
+        "release_tests::direct_client_login_refuses_unprepared_hosted_client_call",
+        "HOST_PLAY_DIRECT_LOGIN_CHILD",
+    ) {
+        return;
+    }
+    let _network = HostedNetworkFixture::start();
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let mut client = tcp_client(port);
+
+    let error = client
+        .login("alice", "secret", false)
+        .expect_err("installed host network refuses a login with no attempt identity");
+    let transport = error.transport.expect("host login failure is typed");
+    assert_eq!(error.code, -1);
+    assert_eq!(transport.stage, client::client::LoginStage::Connect);
+    assert_eq!(transport.kind, std::io::ErrorKind::NotConnected);
+    assert!(
+        transport
+            .detail
+            .contains("hosted login requires an attempt identity"),
+        "unexpected diagnostic: {}",
+        transport.detail
+    );
+}
+
 fn granted_for_arm(queue: &SharedLoginQueue, arm: &SlotArm, uid: i32) -> GrantedReservation {
     let mut q = queue.lock();
     q.enqueue_owner(arm.queue_owner, uid);

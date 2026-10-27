@@ -15,7 +15,6 @@
       "api::interact::Driver::handle_chat_input",
       "api::interact::Driver::loc_typecode",
       "api::interact::Driver::local_route",
-      "api::interact::Driver::login",
       "api::interact::Driver::note_input_activity",
       "api::interact::Driver::packet_checkpoint",
       "api::interact::Driver::packet_commit_count",
@@ -37,7 +36,6 @@
       "api::interact::Interactions::continue_dialog",
       "api::interact::Interactions::if_button",
       "api::interact::Interactions::interact",
-      "api::interact::Interactions::login",
       "api::interact::Interactions::new",
       "api::interact::Interactions::open_booth_at",
       "api::interact::Interactions::open_named_booth_at",
@@ -74,7 +72,6 @@
       "api::interact::driver::Driver::handle_chat_input",
       "api::interact::driver::Driver::loc_typecode",
       "api::interact::driver::Driver::local_route",
-      "api::interact::driver::Driver::login",
       "api::interact::driver::Driver::note_input_activity",
       "api::interact::driver::Driver::packet_checkpoint",
       "api::interact::driver::Driver::packet_commit_count",
@@ -93,7 +90,6 @@
       "api::interact::driver::cheat_allowed",
       "api::interact::driver::close_modal",
       "api::interact::driver::interact",
-      "api::interact::driver::login",
       "api::interact::driver::logout",
       "api::interact::driver::logout_iface_id",
       "api::interact::driver::mainland_hop",
@@ -105,7 +101,6 @@
       "api::interact::driver::walk",
       "api::interact::driver::walk_nearest",
       "api::interact::interact",
-      "api::interact::login",
       "api::interact::logout",
       "api::interact::logout_iface_id",
       "api::interact::mainland_hop",
@@ -1231,11 +1226,6 @@
     },
     {
       "kind": "method",
-      "path": "api::interact::login",
-      "target": "api::interact::driver::login"
-    },
-    {
-      "kind": "method",
       "path": "api::interact::logout",
       "target": "api::interact::driver::logout"
     },
@@ -1803,12 +1793,6 @@
     {
       "kind": "method",
       "lint": "method",
-      "path": "api::interact::Driver::login",
-      "rustdoc_kind": "function"
-    },
-    {
-      "kind": "method",
-      "lint": "method",
       "path": "api::interact::Driver::note_input_activity",
       "rustdoc_kind": "function"
     },
@@ -1936,12 +1920,6 @@
       "kind": "method",
       "lint": "method",
       "path": "api::interact::Interactions::interact",
-      "rustdoc_kind": "function"
-    },
-    {
-      "kind": "method",
-      "lint": "method",
-      "path": "api::interact::Interactions::login",
       "rustdoc_kind": "function"
     },
     {
@@ -2216,12 +2194,6 @@
     {
       "kind": "variant",
       "lint": "inventory_only",
-      "path": "api::interact::SendReason::AlreadyIngame",
-      "rustdoc_kind": "variant"
-    },
-    {
-      "kind": "variant",
-      "lint": "inventory_only",
       "path": "api::interact::SendReason::ClientSideOnly",
       "rustdoc_kind": "variant"
     },
@@ -2462,24 +2434,6 @@
     {
       "kind": "variant",
       "lint": "inventory_only",
-      "path": "api::interact::WireCommand::Login",
-      "rustdoc_kind": "variant"
-    },
-    {
-      "kind": "field",
-      "lint": "inventory_only",
-      "path": "api::interact::WireCommand::Login::password",
-      "rustdoc_kind": "struct_field"
-    },
-    {
-      "kind": "field",
-      "lint": "inventory_only",
-      "path": "api::interact::WireCommand::Login::username",
-      "rustdoc_kind": "struct_field"
-    },
-    {
-      "kind": "variant",
-      "lint": "inventory_only",
       "path": "api::interact::WireCommand::Op",
       "rustdoc_kind": "variant"
     },
@@ -2693,12 +2647,6 @@
     {
       "kind": "method",
       "lint": "method",
-      "path": "api::interact::driver::Driver::login",
-      "rustdoc_kind": "function"
-    },
-    {
-      "kind": "method",
-      "lint": "method",
       "path": "api::interact::driver::Driver::note_input_activity",
       "rustdoc_kind": "function"
     },
@@ -2869,12 +2817,6 @@
     {
       "kind": "method",
       "lint": "method",
-      "path": "api::interact::driver::login",
-      "rustdoc_kind": "function"
-    },
-    {
-      "kind": "method",
-      "lint": "method",
       "path": "api::interact::driver::logout",
       "rustdoc_kind": "function"
     },
@@ -2936,12 +2878,6 @@
       "kind": "method",
       "lint": "method",
       "path": "api::interact::interact",
-      "rustdoc_kind": "function"
-    },
-    {
-      "kind": "method",
-      "lint": "method",
-      "path": "api::interact::login",
       "rustdoc_kind": "function"
     },
     {
@@ -23698,11 +23634,11 @@
   "source_files": [
     {
       "path": "crates/api/src/interact.rs",
-      "sha256": "a9b620c3f3fd7049864738ea9ac23509bced3c33d6d6c281e1cc748ee4870f2b"
+      "sha256": "5e56da1ab256203d2cb33ac52d0666cb979727b2753e299e4c74c0e44b760cfc"
     },
     {
       "path": "crates/api/src/interact/driver.rs",
-      "sha256": "23ca3d4299b293a2db32895c6f2d3bfb8a02cb6b0b9dee0355a58461c007605d"
+      "sha256": "c635e601b20073f5551dcab170eefdc8c3443d915d1b09da784bfa9482e8dd75"
     },
     {
       "path": "crates/api/src/interact/server_ordered.rs",
@@ -23775,7 +23711,7 @@
         "crates/api/src/interact/server_ordered.rs"
       ],
       "path": "crates/api/src/interact",
-      "sha256": "18e8684781742a9c1eceef3089bd999872640be1ce13ac75238605a67ba0fbee"
+      "sha256": "f18a2344bc0bcc31b6eecf7a530e20e251f5dd08ec7b186cb41f1ba9de6f8261"
     },
     {
       "files": [

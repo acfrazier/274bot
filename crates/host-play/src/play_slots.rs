@@ -963,7 +963,7 @@ fn capacity_service_class(
 /// DNS and the exact transport binding are prepared before queue entry, not
 /// inside K1's charged start. The slot publishes cancellation before DNS and
 /// rechecks captured authorization before queue entry and K4 start.
-fn prepare_game_transport(
+pub(super) fn prepare_game_transport(
     client: &Client,
     arm: &SlotArm,
     token: &CancelToken,

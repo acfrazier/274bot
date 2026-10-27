@@ -138,9 +138,6 @@ impl Driver for NullDriver {
     fn send_packet(&mut self, packet: &api::prot::Send) -> Result<(), api::prot::PacketError> {
         packet.write_for_revision(self.revision(), &mut self.out)
     }
-    fn login(&mut self, _username: &str, _password: &str, _reconnect: bool) -> bool {
-        true
-    }
 }
 
 #[derive(Default)]

@@ -118,13 +118,13 @@ fn live_tutorial_reseed_wields_bow() {
         .prepare_client(uid, true)
         .expect("prepare disposable R289 client");
     client.maininit();
+    let mut login = host_play::DirectClientLogin::new(&client);
     assert!(!client.error_loading, "R289 client asset init failed");
     let mut snapshot = GameSnapshot::new();
     let mut pump = Pump::new();
-    assert!(
-        interact::login(&mut client, &username, &username, false),
-        "fresh-account login failed"
-    );
+    login
+        .login(&mut client, &username, &username, false)
+        .expect("fresh-account login failed");
     wait_for(
         &mut client,
         &mut snapshot,
@@ -157,10 +157,9 @@ fn live_tutorial_reseed_wields_bow() {
         "tutorial-skip logout",
         |s| !s.ingame(),
     );
-    assert!(
-        interact::login(&mut client, &username, &username, false),
-        "cold login after tutorial skip"
-    );
+    login
+        .login(&mut client, &username, &username, false)
+        .expect("cold login after tutorial skip");
     wait_for(
         &mut client,
         &mut snapshot,

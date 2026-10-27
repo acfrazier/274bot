@@ -212,11 +212,18 @@ acknowledged on success, error, or unwind. A grant whose lease ran out before
 its attempt started cannot start; the slot queues again. Host-play keeps
 transient response 1 in Connecting rather than publishing phase Error.
 
+Direct-client fixtures use `host_play::DirectClientLogin` after starting the
+network composition. Keep one context for each client across login and relog.
+Its `login` method returns the full `LoginError`. Direct contexts share one
+process-wide queue, separate from a Play instance's queue, with production
+admission policy, transport preparation and cancellation identity. Login is
+not an in-game interaction: `api::interact` no longer exposes a login method.
+
 
 ## Panel: Log in vs auto-login
 
-The panel arms logins through `SlotArm` flags (host-play), not
-`api::interact::login` directly. Two intents differ:
+The panel arms logins through `SlotArm` flags in host-play. The interaction API
+does not own login admission or attempt identities. Two intents differ:
 
 - **Log in** (the focused bot's button, or the fleet toolbar's **Log in** over
   the marked or shown bots) is a **one-shot**: it clears the member's logout

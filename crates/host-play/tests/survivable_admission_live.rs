@@ -308,8 +308,11 @@ fn real_unknown_poison_explicit_forbid_then_opt_in_and_default_escape() {
         .expect("prepare actual client");
     client.draw = false;
     client.maininit();
+    let mut login = host_play::DirectClientLogin::new(&client);
     assert!(!client.error_loading);
-    assert!(interact::login(&mut client, &name, &name, false));
+    login
+        .login(&mut client, &name, &name, false)
+        .expect("hosted login failed");
     let mut snapshot = GameSnapshot::new();
     let mut pump = Pump::new();
     wait_for(&mut client, &mut snapshot, &mut pump, |s| {
@@ -325,12 +328,26 @@ fn real_unknown_poison_explicit_forbid_then_opt_in_and_default_escape() {
     });
     let mut relogger = mainland_relog_runner();
     let mut login_sent = false;
+    // World.ts flushPlayer queues logout; the next 600 ms world cycle sends it
+    // to the worker. A failed flush is retried after 15 seconds. Allow that
+    // retry plus one cycle (26 cycles total), and retry only response code 5.
+    const ENGINE_CYCLE: Duration = Duration::from_millis(600);
+    const LOGOUT_FLUSH_CYCLES: u32 = 26;
+    let mut login_retry_deadline = None;
+    let mut next_login_attempt = Instant::now();
     let relog_deadline = Instant::now() + Duration::from_secs(90);
     loop {
         pump_once(&mut client, &mut snapshot, &mut pump);
-        if !snapshot.ingame() && !login_sent {
-            assert!(interact::login(&mut client, &name, &name, false));
-            login_sent = true;
+        if !snapshot.ingame() && !login_sent && Instant::now() >= next_login_attempt {
+            let retry_deadline = *login_retry_deadline
+                .get_or_insert_with(|| Instant::now() + ENGINE_CYCLE * LOGOUT_FLUSH_CYCLES);
+            match login.login(&mut client, &name, &name, false) {
+                Ok(()) => login_sent = true,
+                Err(error) if error.code == 5 && Instant::now() < retry_deadline => {
+                    next_login_attempt = Instant::now() + ENGINE_CYCLE;
+                }
+                Err(error) => panic!("clean relog as {name} failed: {error:?}"),
+            }
         }
         relogger.tick(&mut client);
         match relogger.status() {

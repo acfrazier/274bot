@@ -111,6 +111,7 @@ fn wait_for(
 
 fn logout_and_relogin(
     client: &mut Client,
+    login: &mut host_play::DirectClientLogin,
     snapshot: &mut GameSnapshot,
     pump: &mut Pump,
     name: &str,
@@ -128,7 +129,9 @@ fn logout_and_relogin(
         "logout",
         |s| !s.ingame(),
     );
-    assert!(interact::login(client, name, name, false), "relogin failed");
+    login
+        .login(client, name, name, false)
+        .expect("relogin failed");
     wait_for(
         client,
         snapshot,
@@ -139,11 +142,19 @@ fn logout_and_relogin(
     );
 }
 
-fn prepare_mainland(client: &mut Client, snapshot: &mut GameSnapshot, pump: &mut Pump, name: &str) {
+fn prepare_mainland(
+    client: &mut Client,
+    login: &mut host_play::DirectClientLogin,
+    snapshot: &mut GameSnapshot,
+    pump: &mut Pump,
+    name: &str,
+) {
     client.draw = false;
     client.maininit();
     assert!(!client.error_loading, "asset initialization failed");
-    assert!(interact::login(client, name, name, false), "login failed");
+    login
+        .login(client, name, name, false)
+        .expect("login failed");
     wait_for(
         client,
         snapshot,
@@ -161,7 +172,7 @@ fn prepare_mainland(client: &mut Client, snapshot: &mut GameSnapshot, pump: &mut
         "mainland-seed",
         |s| s.ingame() && s.scene_state() == 2 && s.tile() == Some(MAINLAND),
     );
-    logout_and_relogin(client, snapshot, pump, name);
+    logout_and_relogin(client, login, snapshot, pump, name);
     assert_eq!(
         snapshot.tile(),
         Some(MAINLAND),
@@ -238,7 +249,8 @@ fn run_nav(
         .expect("prepare selected client");
     let mut snapshot = GameSnapshot::new();
     let mut pump = Pump::new();
-    prepare_mainland(&mut client, &mut snapshot, &mut pump, &name);
+    let mut login = host_play::DirectClientLogin::new(&client);
+    prepare_mainland(&mut client, &mut login, &mut snapshot, &mut pump, &name);
 
     let mut scenario = scenario::get(case).expect("registered navigation scenario");
     scenario.settings.require_mainland_base = true;
@@ -458,7 +470,8 @@ fn run_bank_return(template: Arc<SharedClientTemplate>, profile: Arc<host_play::
         .expect("selected client");
     let mut snapshot = GameSnapshot::new();
     let mut pump = Pump::new();
-    prepare_mainland(&mut client, &mut snapshot, &mut pump, &name);
+    let mut login = host_play::DirectClientLogin::new(&client);
+    prepare_mainland(&mut client, &mut login, &mut snapshot, &mut pump, &name);
     assert!(interact::cheat(&mut client, "givebank lobster 20").is_sent());
     assert!(interact::cheat(&mut client, "give coins 100").is_sent());
     assert!(interact::cheat(&mut client, "tele 0,43,53,61,44").is_sent());
@@ -581,7 +594,8 @@ fn run_guardian(template: Arc<SharedClientTemplate>, profile: Arc<host_play::Ser
         .expect("prepare selected client");
     let mut snapshot = GameSnapshot::new();
     let mut pump = Pump::new();
-    prepare_mainland(&mut client, &mut snapshot, &mut pump, &name);
+    let mut login = host_play::DirectClientLogin::new(&client);
+    prepare_mainland(&mut client, &mut login, &mut snapshot, &mut pump, &name);
     assert!(
         interact::cheat(&mut client, "give macro_genilamp").is_sent(),
         "local give command refused"
@@ -691,7 +705,8 @@ fn run_guardian_lamp_pair(
         .expect("prepare selected client");
     let mut snapshot = GameSnapshot::new();
     let mut pump = Pump::new();
-    prepare_mainland(&mut client, &mut snapshot, &mut pump, &name);
+    let mut login = host_play::DirectClientLogin::new(&client);
+    prepare_mainland(&mut client, &mut login, &mut snapshot, &mut pump, &name);
     assert!(
         interact::cheat(&mut client, "give macro_genilamp 2").is_sent(),
         "local give command refused"
@@ -776,7 +791,8 @@ fn run_guardian_maze(template: Arc<SharedClientTemplate>, profile: Arc<host_play
         .expect("prepare selected client");
     let mut snapshot = GameSnapshot::new();
     let mut pump = Pump::new();
-    prepare_mainland(&mut client, &mut snapshot, &mut pump, &name);
+    let mut login = host_play::DirectClientLogin::new(&client);
+    prepare_mainland(&mut client, &mut login, &mut snapshot, &mut pump, &name);
     // The content's own `[debugproc,maze]`: the same teleport, reward and
     // briefing as `start_macro_maze`, without waiting for the RNG.
     assert!(

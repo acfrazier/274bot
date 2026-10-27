@@ -117,8 +117,11 @@ fn live_mage_arena_webs_cellar_and_gundai_arrive() {
         .unwrap();
     client.draw = false;
     client.maininit();
+    let mut login = host_play::DirectClientLogin::new(&client);
     assert!(!client.error_loading);
-    assert!(interact::login(&mut client, &name, &name, false));
+    login
+        .login(&mut client, &name, &name, false)
+        .expect("hosted login failed");
     let mut snapshot = GameSnapshot::new();
     let mut pump = Pump::new();
     wait_for(&mut client, &mut snapshot, &mut pump, |s| {
@@ -134,7 +137,9 @@ fn live_mage_arena_webs_cellar_and_gundai_arrive() {
     let ifaces = Arc::clone(&client.ifaces);
     assert!(interact::logout(&mut client, &ifaces));
     wait_for(&mut client, &mut snapshot, &mut pump, |s| !s.ingame());
-    assert!(interact::login(&mut client, &name, &name, false));
+    login
+        .login(&mut client, &name, &name, false)
+        .expect("hosted login failed");
     wait_for(&mut client, &mut snapshot, &mut pump, |s| {
         s.ingame() && s.scene_state() == 2
     });
@@ -377,8 +382,11 @@ fn live_viking_seer_ladder_uses_player_relative_landing() {
         .unwrap();
     client.draw = false;
     client.maininit();
+    let mut login = host_play::DirectClientLogin::new(&client);
     assert!(!client.error_loading);
-    assert!(interact::login(&mut client, &name, &name, false));
+    login
+        .login(&mut client, &name, &name, false)
+        .expect("hosted login failed");
     let mut snapshot = GameSnapshot::new();
     let mut pump = Pump::new();
     wait_for(&mut client, &mut snapshot, &mut pump, |s| {
@@ -596,8 +604,11 @@ fn live_karamja_gangplank_2084_uses_player_relative_landing() {
         .unwrap();
     client.draw = false;
     client.maininit();
+    let mut login = host_play::DirectClientLogin::new(&client);
     assert!(!client.error_loading);
-    assert!(interact::login(&mut client, &name, &name, false));
+    login
+        .login(&mut client, &name, &name, false)
+        .expect("hosted login failed");
     let mut snapshot = GameSnapshot::new();
     let mut pump = Pump::new();
     wait_for(&mut client, &mut snapshot, &mut pump, |s| {

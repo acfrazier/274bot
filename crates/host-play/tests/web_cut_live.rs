@@ -146,16 +146,16 @@ fn login_fresh(
         .expect("prepare disposable R289 client");
     client.set_draw(std::env::var_os("LIVE_EVIDENCE_DIR").is_some());
     client.maininit();
+    let mut login = host_play::DirectClientLogin::new(&client);
     assert!(
         !client.error_loading,
         "R289 client asset initialization failed"
     );
     let mut snapshot = GameSnapshot::new();
     let mut pump = Pump::new();
-    assert!(
-        interact::login(&mut client, username, username, false),
-        "fresh-account login failed"
-    );
+    login
+        .login(&mut client, username, username, false)
+        .expect("fresh-account login failed");
     wait_for(
         &mut client,
         &mut snapshot,
@@ -198,10 +198,9 @@ fn login_fresh(
         "tutorial-skip logout",
         |s| !s.ingame(),
     );
-    assert!(
-        interact::login(&mut client, username, username, false),
-        "cold login after tutorial skip"
-    );
+    login
+        .login(&mut client, username, username, false)
+        .expect("cold login after tutorial skip");
     wait_for(
         &mut client,
         &mut snapshot,

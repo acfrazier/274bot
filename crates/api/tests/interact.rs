@@ -5,10 +5,10 @@
 // `client/tests/gens.rs` — no network).
 
 use api::interact::{
-    answer_count, cheat, cheat_allowed, close_modal, create_interactions, interact, login,
-    mainland_hop, offers_operation, op_loc, operation_of, press, seed_at, set_run, still_present,
-    tele_args, walk, ActionSpec, Driver, Interactions, OpTarget, SendReason, SendResult,
-    WireCommand, MAX_OPERATIONS, OFF_ISLAND_TELE, RUN_ORB_IFACE, RUN_ORB_OFF, SCENE_READY,
+    answer_count, cheat, cheat_allowed, close_modal, create_interactions, interact, mainland_hop,
+    offers_operation, op_loc, operation_of, press, seed_at, set_run, still_present, tele_args,
+    walk, ActionSpec, Driver, Interactions, OpTarget, SendReason, SendResult, WireCommand,
+    MAX_OPERATIONS, OFF_ISLAND_TELE, RUN_ORB_IFACE, RUN_ORB_OFF, SCENE_READY,
 };
 use api::obj_names::ItemDefView;
 use api::prot::{
@@ -368,7 +368,6 @@ struct Recorder {
     actions: Vec<i32>,
     moves: Vec<WalkMove>,
     out: OutSink,
-    logins: usize,
     route: Option<(i32, i32)>,
     base: (i32, i32),
     /// Packed scene typecode at the loc tile; `None` falls back to loc id.
@@ -458,10 +457,6 @@ impl Driver for Recorder {
 
     fn send_packet(&mut self, packet: &api::prot::Send) -> Result<(), api::prot::PacketError> {
         packet.write_for_revision(self.revision(), &mut self.out)
-    }
-    fn login(&mut self, _username: &str, _password: &str, _reconnect: bool) -> bool {
-        self.logins += 1;
-        true
     }
 
     fn click_side_tab(&mut self, tab: i32) -> bool {
@@ -1813,14 +1808,6 @@ fn answer_count_writes_count_dialog() {
     );
 }
 
-/// `login` routes through the driver's login handshake.
-#[test]
-fn login_dispatches_driver_login() {
-    let mut r = Recorder::default();
-    assert!(login(&mut r, "bot", "hunter2", false));
-    assert_eq!(r.logins, 1);
-}
-
 /// The real `Client` driver: `set_run` reaches the client's `doAction`
 /// IF_BUTTON arm and writes the opcode + child through `out` (no raw
 /// opcode inject that skips ISAAC).
@@ -2127,10 +2114,6 @@ fn wire_command_kinds_and_reasons_compile_and_match() {
         WireCommand::Walk { tile },
         WireCommand::WalkNearest { tile },
         WireCommand::SideTab { tab: 17 },
-        WireCommand::Login {
-            username: "u".into(),
-            password: "p".into(),
-        },
         WireCommand::ClearLocalModal { component_id: 18 },
     ];
     let distinct = commands.iter().map(discriminant).collect::<HashSet<_>>();
@@ -2160,7 +2143,6 @@ fn wire_command_kinds_and_reasons_compile_and_match() {
         SendReason::NoChoice,
         SendReason::Unreachable,
         SendReason::InvalidTab,
-        SendReason::AlreadyIngame,
         SendReason::DriverRejected,
     ];
     for r in reasons {
@@ -2184,7 +2166,6 @@ fn wire_command_kinds_and_reasons_compile_and_match() {
             SendReason::NoChoice => "NoChoice",
             SendReason::Unreachable => "Unreachable",
             SendReason::InvalidTab => "InvalidTab",
-            SendReason::AlreadyIngame => "AlreadyIngame",
             SendReason::DriverRejected => "DriverRejected",
         };
         assert!(!label.is_empty());
@@ -4013,45 +3994,6 @@ fn click_side_tab_dispatches_driver_hook_and_refuses_unavailable_tab() {
     }
     assert_eq!(rec.side_tabs, vec![3]);
     assert!(rec.out.0.is_empty(), "no wire send for a local flip");
-}
-
-/// `login` refuses while ingame and routes the handshake through
-/// `Driver::login` once logged out.
-#[test]
-fn login_refuses_when_ingame_and_sends_when_logged_out() {
-    let mut s = scene();
-    let snap = rebuild(&mut s.client);
-    let mut rec = Recorder::default();
-    {
-        let mut ix = Interactions::new(&snap, &mut rec);
-        assert!(matches!(
-            ix.login("bot", "hunter2"),
-            SendResult::Refused {
-                reason: SendReason::AlreadyIngame,
-                ..
-            }
-        ));
-    }
-    assert_eq!(rec.logins, 0);
-
-    let mut s = scene();
-    s.client.ingame = false;
-    let snap = rebuild(&mut s.client);
-    let mut rec = Recorder::default();
-    {
-        let mut ix = Interactions::new(&snap, &mut rec);
-        match ix.login("bot", "hunter2") {
-            SendResult::Sent { tick, command } => {
-                assert_eq!(tick, snap.tick() as u64);
-                assert!(matches!(
-                    command,
-                    WireCommand::Login { ref username, .. } if username == "bot"
-                ));
-            }
-            SendResult::Refused { reason, .. } => panic!("refused: {reason:?}"),
-        }
-    }
-    assert_eq!(rec.logins, 1);
 }
 
 /// `clear_local_modal` refuses when the named component is not an open

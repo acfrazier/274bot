@@ -139,11 +139,11 @@ fn live_lumbridge_stairs_walk_arm_reaches_operable_stand() {
         .expect("prepare client");
     client.draw = false;
     client.maininit();
+    let mut login = host_play::DirectClientLogin::new(&client);
     assert!(!client.error_loading, "client failed to load");
-    assert!(
-        interact::login(&mut client, &name, &name, false),
-        "local login refused"
-    );
+    login
+        .login(&mut client, &name, &name, false)
+        .expect("local login refused");
     let mut snapshot = GameSnapshot::new();
     let mut pump = Pump::new();
     wait_for(&mut client, &mut snapshot, &mut pump, |s| {

@@ -1165,11 +1165,11 @@ fn run_case(case: EntranceCase) {
         .expect("prepare CPU client");
     client.draw = false;
     client.maininit();
+    let mut login = host_play::DirectClientLogin::new(&client);
     assert!(!client.error_loading, "client failed to load");
-    assert!(
-        interact::login(&mut client, &account, &password, false),
-        "local login refused"
-    );
+    login
+        .login(&mut client, &account, &password, false)
+        .expect("local login refused");
     let mut snapshot = GameSnapshot::new();
     let mut pump = Pump::new();
     assert!(

@@ -62,9 +62,6 @@ impl Driver for NoopDriver {
         None
     }
     fn send_packet(&mut self, packet: &api::prot::Send) -> Result<(), api::prot::PacketError> { packet.write_for_revision(self.revision(), &mut self.out) }
-    fn login(&mut self, _: &str, _: &str, _: bool) -> bool {
-        false
-    }
 }
 
 /// A test-only outer script publishes the normal per-account settings while

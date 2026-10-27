@@ -72,16 +72,14 @@ fn accepted(result: SendResult<'_>, phase: &str) -> Result<(), String> {
 
 fn login_scene(
     client: &mut Client,
+    login: &mut host_play::DirectClientLogin,
     snapshot: &mut GameSnapshot,
     pump: &mut Pump,
     username: &str,
 ) -> Result<(), String> {
-    if !interact::login(client, username, "test", false) {
-        return Err(format!(
-            "login failed: {} {}",
-            client.login_mes1, client.login_mes2
-        ));
-    }
+    login
+        .login(client, username, "test", false)
+        .map_err(|error| format!("login failed: {error:?}"))?;
     wait_for(
         client,
         snapshot,
@@ -179,6 +177,7 @@ fn run() -> Result<(), String> {
     let mut client = template.prepare_client((serial % 1_000_000_000) as i32, false)?;
     client.draw = false;
     client.maininit();
+    let mut login = host_play::DirectClientLogin::new(&client);
     if client.error_loading {
         return Err(format!(
             "asset initialization failed: {}",
@@ -199,7 +198,7 @@ fn run() -> Result<(), String> {
     );
 
     let result = (|| {
-        login_scene(&mut client, &mut snapshot, &mut pump, &username)?;
+        login_scene(&mut client, &mut login, &mut snapshot, &mut pump, &username)?;
         record("initial-scene2", &snapshot, json!({}));
 
         // Fixture preparation only. Establish all action baselines after this
@@ -214,7 +213,7 @@ fn run() -> Result<(), String> {
             |s| s.ingame() && s.scene_state() == 2 && s.tile() == Some((3220, 3212, 0)),
         )?;
         logout(&mut client, &mut snapshot, &mut pump)?;
-        login_scene(&mut client, &mut snapshot, &mut pump, &username)?;
+        login_scene(&mut client, &mut login, &mut snapshot, &mut pump, &username)?;
         if snapshot.tile() != Some((3220, 3212, 0)) {
             return Err("relog did not retain acknowledged mainland seed".into());
         }

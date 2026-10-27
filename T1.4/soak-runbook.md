@@ -17,6 +17,8 @@ The paired measurement fixtures require `soak-observers` for candidate runs. Tha
 
 Live tests must start their process network before profile binding or template preparation. Shared selection helpers own this startup when more than one test calls them. `support/network_composition.rs` retains the process composition in a `LazyLock`. The survivable-admission, toll-gate and web-cut selectors use that helper. The quest-door fixture starts it before profile binding, not before the later client initialization.
 
+Direct-client live fixtures retain one `host_play::DirectClientLogin` per client across login and relog. This context uses the production queue, preparation and attempt lifecycle, and returns `LoginError` without reducing it to a boolean. The interaction API no longer exposes login. The survivable-admission fixture retries only the engine's already-logged-in response (code 5) after its setup logout: its budget is 26 engine cycles of 600 ms, covering the engine's 15-second logout-flush retry plus one cycle. Other typed errors fail immediately. This fixture retry does not change production login policy.
+
 
 Before running, start the fixed Engine A service listening on `127.0.0.1:1080`, with the 289 navigation pack referenced in the config available. Set a nonnegative common `SOAK_SEED` once and an evidence root outside either repository. Run the infrastructure smoke **for both builds**:
 

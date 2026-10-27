@@ -15,6 +15,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
 - A hosted login keeps its prepared endpoint, cancellation identity and
   queue retirement bound through the final session commit. Play starts the
   network composition and retains its maintenance driver for every frontend.
+- Direct client fixtures use a persistent host-owned login context. They share
+  a direct-client queue with production admission policy, prepared endpoints
+  and cancellation identities, and return the full typed login error. The old
+  interaction login API is removed; login is not an in-game interaction.
 - A fast TCP login refusal remains a current queue result even if the reactor
   closes the socket before the slot returns; clean-logout code 5 still follows
   the five-second release cadence.

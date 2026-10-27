@@ -111,8 +111,6 @@ pub trait Driver {
     /// Dismiss the local amount prompt after a successful count submission,
     /// matching the client's keyboard path. Recorders may have no local UI.
     fn count_dialog_submitted(&mut self) {}
-    /// Queue a login handshake. Returns true iff the driver accepted it.
-    fn login(&mut self, username: &str, password: &str, reconnect: bool) -> bool;
     /// Switch the active side tab locally, the client's
     /// `handle_tab_clicks` behavior (flip `active_icon` + redraw flags).
     /// Returns false when `tab` is not a bound side icon. Defaults to
@@ -299,10 +297,6 @@ impl Driver for Client {
     fn count_dialog_submitted(&mut self) {
         self.dialog_input_open = false;
         self.redraw_chat = true;
-    }
-
-    fn login(&mut self, username: &str, password: &str, reconnect: bool) -> bool {
-        Client::login(self, username, password, reconnect).is_ok()
     }
 
     fn click_side_tab(&mut self, tab: i32) -> bool {
@@ -517,16 +511,6 @@ pub fn tele_args(level: i32, x: i32, z: i32) -> String {
 pub fn seed_at<D: Driver + ?Sized>(driver: &mut D, level: i32, x: i32, z: i32) {
     cheat(driver, "setvar tutorial 1000");
     cheat(driver, &tele_args(level, x, z));
-}
-
-/// Queue a login through the driver's handshake.
-pub fn login<D: Driver + ?Sized>(
-    driver: &mut D,
-    username: &str,
-    password: &str,
-    reconnect: bool,
-) -> bool {
-    driver.login(username, password, reconnect)
 }
 
 /// The logout button's client code (`IfType.client_code == 205`); the

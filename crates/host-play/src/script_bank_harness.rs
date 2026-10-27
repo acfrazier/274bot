@@ -40,9 +40,6 @@ impl Driver for HeldDriver {
     fn send_packet(&mut self, _: &api::prot::Send) -> Result<(), api::prot::PacketError> {
         panic!("held bank walk wrote a packet");
     }
-    fn login(&mut self, _: &str, _: &str, _: bool) -> bool {
-        panic!("held bank walk attempted login");
-    }
 }
 pub(super) fn native_pick_action(
     banks: Vec<NamedBank>,

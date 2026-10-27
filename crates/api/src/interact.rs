@@ -1,4 +1,4 @@
-//! Kernel interaction: menu presses, walks, login/close/answer sends. The
+//! Kernel interaction: menu presses, walks, close/answer sends. The
 //! kernel talks to the send-side through [`Driver`] so tests can record
 //! calls; the real driver maps to `Client::doAction`/`tryMove`/`out` and
 //! never injects a raw opcode that skips ISAAC. A `true` return means the
@@ -37,8 +37,7 @@ pub enum OpTarget<'a> {
 
 /// One resolved wire interaction, ready to dispatch through [`Driver`].
 /// `Walk` tiles are absolute world tiles (the `tryMove` path translates
-/// through [`Driver::build_base`]); `Login` carries the full credential
-/// pair so the command is self-contained.
+/// through [`Driver::build_base`]).
 #[derive(Debug, Clone)]
 pub enum WireCommand<'a> {
     Op {
@@ -77,10 +76,6 @@ pub enum WireCommand<'a> {
     SideTab {
         tab: i32,
     },
-    Login {
-        username: String,
-        password: String,
-    },
     ClearLocalModal {
         component_id: i32,
     },
@@ -110,7 +105,6 @@ pub enum SendReason {
     NoChoice,
     Unreachable,
     InvalidTab,
-    AlreadyIngame,
     DriverRejected,
 }
 
@@ -998,23 +992,6 @@ impl<'a> Interactions<'a> {
         self.dispatch(WireCommand::SideTab { tab }, snapshot.tick() as u64)
     }
 
-    pub fn login<'t>(&mut self, username: &str, password: &str) -> SendResult<'t> {
-        let snapshot = self.snapshot;
-        if !snapshot.attached() {
-            return refuse(snapshot, SendReason::NotAttached);
-        }
-        if snapshot.ingame() {
-            return refuse(snapshot, SendReason::AlreadyIngame);
-        }
-        self.dispatch(
-            WireCommand::Login {
-                username: username.to_string(),
-                password: password.to_string(),
-            },
-            snapshot.tick() as u64,
-        )
-    }
-
     pub fn clear_local_modal<'t>(&mut self, component_id: i32) -> SendResult<'t> {
         let snapshot = self.snapshot;
         if !snapshot.attached() {
@@ -1155,8 +1132,8 @@ impl<'a> Interactions<'a> {
     /// Translate one `WireCommand` into `Driver` calls (the m8aq
     /// `LiveInteractionDriver.dispatch`): op/use/button arms through
     /// `set_menu`/`do_action`, walk through `try_move`, close/side-tab
-    /// through the client-local `doAction`/`click_side_tab` arms, count/
-    /// login through the `Send`/`Driver` primitives.
+    /// through the client-local `doAction`/`click_side_tab` arms, count
+    /// through the `Send` primitive.
     fn send_command(&mut self, command: &WireCommand<'_>) -> bool {
         match command {
             WireCommand::Op { target, operation } => {
@@ -1220,9 +1197,6 @@ impl<'a> Interactions<'a> {
                 .and_then(|send| self.driver.send_packet(&send))
                 .is_ok(),
             WireCommand::SideTab { tab } => self.driver.click_side_tab(*tab),
-            WireCommand::Login { username, password } => {
-                login(&mut *self.driver, username, password, false)
-            }
         }
     }
 
@@ -1296,7 +1270,7 @@ fn refuse<'t>(snapshot: &GameSnapshot, reason: SendReason) -> SendResult<'t> {
 }
 
 /// Packet-class user events (OPNPC/walk/button/close/count/etc). Local tab
-/// flips, login handshakes, cheats, keepalives, and refused sends are not.
+/// flips, cheats, keepalives, and refused sends are not.
 fn counts_as_input_activity(command: &WireCommand<'_>) -> bool {
     match command {
         WireCommand::Op { .. }
@@ -1310,7 +1284,7 @@ fn counts_as_input_activity(command: &WireCommand<'_>) -> bool {
         | WireCommand::Walk { .. }
         | WireCommand::WalkNearest { .. }
         | WireCommand::DoorStep { .. } => true,
-        WireCommand::SideTab { .. } | WireCommand::Login { .. } => false,
+        WireCommand::SideTab { .. } => false,
     }
 }
 
