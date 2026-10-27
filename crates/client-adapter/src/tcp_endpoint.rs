@@ -707,7 +707,10 @@ mod tests {
                 Interest::READABLE.add(Interest::WRITABLE),
             )?;
             let mut events = mio::Events::with_capacity(4);
-            barrier.poll(&mut events, Some(Duration::from_secs(2)))?;
+            // Windows loopback refusal took 2.039–2.057 s in three direct probes:
+            // qual-1027/platforms/windows-refusal-probe-2.log. This fixture bound
+            // allows completion margin; it does not change product timing.
+            barrier.poll(&mut events, Some(Duration::from_secs(10)))?;
             assert!(!events.is_empty(), "refused socket must become ready");
             barrier.registry().deregister(&mut socket)?;
             Ok(socket)
