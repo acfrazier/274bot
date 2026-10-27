@@ -2767,6 +2767,16 @@ def lane_list(tree: Path | None) -> list[tuple[str, list[str], dict]]:
     """
     vendor = ["--manifest-path", "vendor/fr-client-rust/Cargo.toml"]
     assets = lane_asset_env()
+    # The runner follows dev, but a night also tests release branches
+    # that predate the S1 script-js split. The script-load lane must
+    # name the crate the tested tree has: script-js after S1, or
+    # script with its load feature before it. No tree (rows for a
+    # night that never got sources) keeps the current layout.
+    if tree is None or (tree / "crates" / "script-js" / "Cargo.toml").is_file():
+        script_load = ["test", "--locked", "-p", "script-js", "--tests", "--no-fail-fast"]
+    else:
+        script_load = ["test", "--locked", "-p", "script", "--features", "load", "--tests",
+                       "--no-fail-fast"]
     lanes = [
         ("build", ["build", "--locked", "--workspace", "--all-targets", "--features", GATE_FEATURES], {}),
         ("build-vendor", ["build", "--locked", *vendor, "--workspace"], {}),
@@ -2775,8 +2785,7 @@ def lane_list(tree: Path | None) -> list[tuple[str, list[str], dict]]:
         ("clippy-vendor", ["clippy", "--locked", *vendor, "--workspace", "--all-targets", "--", "-D", "warnings"], {}),
         ("test-workspace", ["test", "--locked", "--workspace", "--no-fail-fast"], assets),
         ("test-vendor", ["test", "--locked", *vendor, "--workspace", "--no-fail-fast"], assets),
-        ("test-script-load", ["test", "--locked", "-p", "script-js", "--tests",
-                              "--no-fail-fast"], assets),
+        ("test-script-load", script_load, assets),
         ("test-script-no-default", ["test", "--locked", "-p", "script", "--no-default-features",
                                     "--no-fail-fast"], assets),
         ("test-host-play-memory", ["test", "--locked", "-p", "host-play", "--features", "memory-profile",
