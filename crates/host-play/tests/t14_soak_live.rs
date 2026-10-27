@@ -37,6 +37,22 @@ const GATHERER_SITE_STEP: &str = "stand at the live Draynor normal tree before S
 const GATHERER_TREE_PROOF_STEP: &str = "confirm the selected-289 normal tree is live before Start";
 const GATHERER_RELOG_STEP: &str = "relog successfully so the inventory tab binds before Start";
 
+// Ten disjoint radius-one normal-tree patches in content/maps/m43_54.jm2.
+// Resource rows: 6833, 7027, 6999, 7147, 6787/6838, 6939, 7100, 6910,
+// 6840 and 7056. Each account retains its own Start anchor across bank trips.
+const CATHERBY_STARTS: [(i32, i32); 10] = [
+    (2801, 3461),
+    (2808, 3460),
+    (2807, 3463),
+    (2813, 3464),
+    (2801, 3466),
+    (2805, 3468),
+    (2811, 3469),
+    (2806, 3472),
+    (2801, 3475),
+    (2809, 3474),
+];
+
 #[derive(Clone, Copy)]
 struct SafeWalk {
     min_x: i32,
@@ -493,23 +509,22 @@ fn make_site(site: &GatherSiteOption, resource: &'static str) -> Result<BankSite
         match (site.id.as_str(), resource) {
             ("woodcutting.catherby", "normal") => (
                 WorldTile {
-                    x: 2802,
-                    z: 3462,
+                    x: CATHERBY_STARTS[0].0,
+                    z: CATHERBY_STARTS[0].1,
                     level: 0,
                 },
                 NORMAL_LOG_ID,
                 1,
                 "Catherby",
                 "Catherby; Reachable;",
-                // Engine m43_54: accessible normal trees cluster around
-                // (2802,3463); a radius of three excludes the separated
-                // western oak/tree route that the real router cannot reach.
-                // The bank is (2809,3441), inside the non-aggressive corridor.
+                // Independent eastern patches avoid the separated western
+                // route and give each normal-tree account its own resource.
+                // The bank is (2809,3441), south of the resource patches.
                 Some(SafeWalk {
                     min_x: 2788,
                     max_x: 2814,
                     min_z: 3436,
-                    max_z: 3468,
+                    max_z: 3476,
                 }),
             ),
             ("woodcutting.seers", "maple") => (
@@ -748,11 +763,13 @@ fn scenario_for(site: &BankSite, duration: Duration) -> Result<Scenario, String>
         .iter_mut()
         .find(|step| step.name == GATHERER_PREP_STEP)
         .ok_or("Gatherer scenario has no existing account/tool seed step")?;
-    prep.name = "prepare the selected Woodcutting level and a real bronze axe before Start";
+    prep.name =
+        "prepare the selected Woodcutting level, a bronze axe and banked spare axes before Start";
     prep.kind = StepKind::Perform {
         send: Box::new(move |client, _| {
             cheat(client, &format!("setstat woodcutting {skill_level}")).is_sent()
                 && cheat(client, "give bronze_axe 1").is_sent()
+                && cheat(client, "givebank bronze_axe 64").is_sent()
         }),
     };
 
@@ -780,7 +797,7 @@ fn scenario_for(site: &BankSite, duration: Duration) -> Result<Scenario, String>
         .steps
         .iter()
         .position(|step| {
-            step.name == "prepare the selected Woodcutting level and a real bronze axe before Start"
+            step.name == "prepare the selected Woodcutting level, a bronze axe and banked spare axes before Start"
         })
         .ok_or("updated Gatherer preparation step disappeared")?;
     scenario.steps.insert(
@@ -810,12 +827,19 @@ fn bank_settings(site: &BankSite) -> Map<String, Value> {
     settings.insert("skill".into(), json!("Woodcutting"));
     settings.insert("woodcuttingResources".into(), json!([site.resource]));
     settings.insert("targetPreference".into(), json!("Nearest"));
-    settings.insert("location".into(), json!("Site"));
+    settings.insert(
+        "location".into(),
+        json!(if site.resource == "normal" {
+            "Start"
+        } else {
+            "Site"
+        }),
+    );
     settings.insert("site".into(), json!(site.id));
     settings.insert(
         "radius".into(),
         json!(if site.id == "woodcutting.catherby" {
-            3
+            1
         } else {
             12
         }),
@@ -901,6 +925,7 @@ fn event_base(event: &str, actor: &Actor, started: Instant, wall_ms: u128) -> Va
         "account": actor.account,
         "site_id": actor.site.id,
         "resource": actor.site.resource,
+        "worksite_start": [actor.site.start.x, actor.site.start.z, actor.site.start.level],
         "process_elapsed_seconds": started.elapsed().as_secs(),
         "event_monotonic_ns": monotonic_now_ns().ok(),
         "wall_clock_unix_ms": wall_ms,
@@ -1213,6 +1238,7 @@ fn slot_sample_json(
     json!({
         "account": actor.account,
         "site_id": actor.site.id,
+        "worksite_start": [actor.site.start.x, actor.site.start.z, actor.site.start.level],
         "connected": slot.is_some_and(|status| status.connected),
         "stream_epoch": slot.map(|status| status.stream_epoch),
         "ingame": slot.is_some_and(|status| status.ingame),
@@ -1270,6 +1296,7 @@ fn actor_summaries(
                 "account": account,
                 "site_id": actor.site.id,
                 "resource": actor.site.resource,
+                "worksite_start": [actor.site.start.x, actor.site.start.z, actor.site.start.level],
                 "product_id": actor.site.product_id,
                 "level": actor.site.level,
                 "expected_bank_prefix": actor.site.bank_prefix,
@@ -1499,7 +1526,11 @@ fn run_live(config_path: &Path, output: &Path) -> Result<(), String> {
     let run_started = Instant::now();
     let mut actors = BTreeMap::new();
     for (index, account) in names.iter().enumerate() {
-        let site = config.sites[index % config.sites.len()].clone();
+        let mut site = config.sites[index % config.sites.len()].clone();
+        if site.resource == "normal" {
+            let (x, z) = CATHERBY_STARTS[index / config.sites.len()];
+            site.start = WorldTile { x, z, level: 0 };
+        }
         let actor = make_actor(
             account.clone(),
             site,
