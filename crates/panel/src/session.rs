@@ -1783,7 +1783,9 @@ impl Session {
     /// banner, and clear that line when a later save succeeds.
     pub(crate) fn follow_pvp_start_fights(&mut self) {
         match self.pvp_start_fights.follow(&self.core) {
-            Some(frontend_core::PvpWrite::Failed(reason)) => self.error = Some(reason),
+            Some(frontend_core::PvpWrite::Failed) => {
+                self.error = Some(self.pvp_start_fights.failure(&self.core).to_owned());
+            }
             Some(frontend_core::PvpWrite::Saved)
                 if self
                     .error

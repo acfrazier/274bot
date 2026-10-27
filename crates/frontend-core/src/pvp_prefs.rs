@@ -42,16 +42,18 @@ pub(crate) fn write_pvp_start_fights(
 /// The prefix of every error line this setting's save leaves.
 const START_FIGHTS_ERROR: &str = "start fights with players";
 
-/// What a front end shows for a settled click: the failure text for its error
-/// line, or the success so the line a failure left can go.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// How a click's command settled, as [`PvpSettingView::follow`] reports it once.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PvpWrite {
-    /// The save failed or was refused; the row shows the saved value again.
-    /// The text is the command owner's reason (`start fights with players: …`).
-    Failed(String),
-    /// The save settled `Done`.
+    /// The save failed or was refused; the row shows the saved value again and
+    /// [`PvpSettingView::failure`] gives the command owner's reason.
+    Failed,
+    /// The save settled `Done`: a failure line it left can go.
     Saved,
 }
+
+/// The reason shown when a refused save carries no text of its own.
+const REFUSED_TEXT: &str = "start fights with players: the save was refused";
 
 /// Whether `message` is the error line a failed save of this setting left.
 pub fn is_start_fights_error(message: &str) -> bool {
@@ -70,6 +72,8 @@ pub struct PvpSettingView {
     /// The last saved value this view adopted: what a failed click shows again.
     saved: bool,
     pending: Option<Pending>,
+    /// The click whose command last settled failed ([`Self::failure`]).
+    failed: Option<RequestId>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -87,6 +91,7 @@ impl PvpSettingView {
             shown,
             saved: shown,
             pending: None,
+            failed: None,
         }
     }
 
@@ -155,10 +160,8 @@ impl PvpSettingView {
                             .iter()
                             .any(|member| matches!(member.terminal(), Some(Settlement::Failed(_))));
                         Some(if failed {
-                            PvpWrite::Failed(core.command_failure(request).map_or_else(
-                                || format!("{START_FIGHTS_ERROR}: the save was refused"),
-                                str::to_owned,
-                            ))
+                            self.failed = Some(request);
+                            PvpWrite::Failed
                         } else {
                             PvpWrite::Saved
                         })
@@ -169,11 +172,19 @@ impl PvpSettingView {
             self.pending = None;
         }
         self.adopt(core.pvp_start_fights());
-        if matches!(outcome, Some(PvpWrite::Failed(_))) {
+        if outcome == Some(PvpWrite::Failed) {
             // A cold store gave nothing to adopt: the failed value still goes.
             self.shown = self.saved;
         }
         outcome
+    }
+
+    /// The reason the click that last failed gave (`start fights with players:
+    /// …`), for the front end's error line.
+    pub fn failure<'a, Io>(&self, core: &'a OperatorSession<Io>) -> &'a str {
+        self.failed
+            .and_then(|request| core.command_failure(request))
+            .unwrap_or(REFUSED_TEXT)
     }
 }
 

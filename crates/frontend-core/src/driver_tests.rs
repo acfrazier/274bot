@@ -838,11 +838,11 @@ fn the_pvp_setting_deferred_write_failure_shows_the_saved_value_and_a_peer_write
         "the deferred write fails: {terminal:?}"
     );
 
-    let outcome = view.follow(d.session());
+    assert_eq!(view.follow(d.session()), Some(PvpWrite::Failed));
     assert!(
-        matches!(&outcome, Some(PvpWrite::Failed(reason))
-            if crate::is_start_fights_error(reason)),
-        "{outcome:?}"
+        crate::is_start_fights_error(view.failure(d.session())),
+        "the owner's reason: {}",
+        view.failure(d.session())
     );
     assert!(
         view.shown() && !view.pending(),

@@ -3263,8 +3263,11 @@ impl TuiSession {
             }
         }
         match app.pvp_start_fights.follow(&self.core) {
-            Some(frontend_core::PvpWrite::Failed(reason)) => {
-                app.error = Some(format!("settings: {reason}"));
+            Some(frontend_core::PvpWrite::Failed) => {
+                app.error = Some(format!(
+                    "settings: {}",
+                    app.pvp_start_fights.failure(&self.core)
+                ));
             }
             Some(frontend_core::PvpWrite::Saved)
                 if app
