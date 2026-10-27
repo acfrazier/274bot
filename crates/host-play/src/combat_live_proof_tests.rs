@@ -5564,6 +5564,24 @@ fn m1_completed(capture: &CombatCapture) -> bool {
         })
 }
 
+/// The quest completion scroll identity the selected data declares for the
+/// main modal (`quests.rs2:42-47` opens it after the hand-in).
+fn completion_scroll_root() -> i32 {
+    api::game_data::for_revision(ClientRevision::R289)
+        .expect("the selected R289 data ships dialogue UI identities")
+        .dialogue_ui()
+        .expect("the selected R289 data declares dialogue UI identities")
+        .quest_scroll_root
+}
+
+/// True only while the snapshot shows the quest completion scroll as the open
+/// main modal. The Quester emits `CloseModal` only for a scroll main modal
+/// (`dialogue.rs:760-766,1043-1044`), so any other open main (including none)
+/// cannot witness the content's completion scroll.
+fn completion_scroll_open(action: &Value) -> bool {
+    action["snapshot"]["roots"]["main"].as_i64() == Some(i64::from(completion_scroll_root()))
+}
+
 // This proves only the production hand-in, never natural bead acquisition.
 // wizard_mizgog.rs2:3-19,39-52 requires quest start then a second talk.
 fn m1_hand_in_ready(capture: &CombatCapture) -> bool {
@@ -5576,22 +5594,37 @@ fn m1_hand_in_ready(capture: &CombatCapture) -> bool {
             && action["request"]["action"] == "Talk-to"
             && action_wire_valid(action)
     });
-    let dialogue = talks
-        .next()
-        .zip(talks.next())
-        .is_some_and(|((first, _), (second, _))| {
-            let start = &capture.actions[first + 1..second];
-            let hand_in = &capture.actions[second + 1..];
-            start.iter().any(|row| {
-                chat_continue_debug(row["request"]["debug"].as_str().unwrap_or_default())
-            }) && start
-                .iter()
-                .any(|row| row["request"]["debug"] == "Answer { option: 1 }")
-                && hand_in.iter().any(|row| {
-                    chat_continue_debug(row["request"]["debug"].as_str().unwrap_or_default())
-                })
-        });
+    let Some((first, second)) = talks.next().zip(talks.next()) else {
+        return false;
+    };
+    let (first, second) = (first.0, second.0);
+    let start = &capture.actions[first + 1..second];
+    let hand_in = &capture.actions[second + 1..];
+    let dialogue = start
+        .iter()
+        .any(|row| chat_continue_debug(row["request"]["debug"].as_str().unwrap_or_default()))
+        && start
+            .iter()
+            .any(|row| row["request"]["debug"] == "Answer { option: 1 }")
+        && hand_in
+            .iter()
+            .any(|row| chat_continue_debug(row["request"]["debug"].as_str().unwrap_or_default()));
+    // quests.rs2:42-47 opens the completion scroll only after the hand-in, and
+    // the Quester closes only that scroll (dialogue.rs:760-766,1043-1044). A
+    // close before the final talk, or while another main modal is open, does
+    // not witness the completion scroll.
+    let closes = capture
+        .actions
+        .iter()
+        .enumerate()
+        .filter(|(_, action)| action["request"]["debug"] == "CloseModal")
+        .collect::<Vec<_>>();
+    let completion_close = !closes.is_empty()
+        && closes
+            .iter()
+            .all(|(index, action)| *index > second && completion_scroll_open(action));
     dialogue
+        && completion_close
         && native_interactions_wire_valid(capture)
         && capture
             .start_baseline
@@ -6531,8 +6564,12 @@ fn action_wire_valid(action: &Value) -> bool {
             {
                 actual == [opcode(ClientProt289::IF_BUTTON)]
             } else if debug == "CloseModal" {
-                // api/interact.rs:1209-1212 clears the modal and sends only CLOSE_MODAL.
-                actual == [opcode(ClientProt289::CLOSE_MODAL)]
+                // api/interact.rs:1209-1212 clears the modal and sends only
+                // CLOSE_MODAL. The Quester emits that close only for a scroll
+                // main modal (dialogue.rs:760-766,1043-1044), and
+                // quests.rs2:42-47 opens the quest completion scroll, so any
+                // other open main is not this completion close.
+                actual == [opcode(ClientProt289::CLOSE_MODAL)] && completion_scroll_open(action)
             } else {
                 legacy_caller_opcode(&action["request"]).is_some_and(|expected| {
                     if expected == opcode(ClientProt289::OPLOC2) {
@@ -8521,8 +8558,10 @@ fn live_combat_m1_staged_hand_in() {
     run_case(Case::M1HandIn);
 }
 
-#[test]
-fn staged_hand_in_requires_durable_completion_and_observed_green_quest() {
+/// The correct staged hand-in receipt: both Wizard Mizgog talks, dialogue
+/// between and after them, and the completion scroll close after the hand-in.
+fn staged_hand_in_capture() -> CombatCapture {
+    let close_root = completion_scroll_root();
     let mut capture = CombatCapture::default();
     capture.started = true;
     capture.start_baseline = Some(json!({
@@ -8535,18 +8574,23 @@ fn staged_hand_in_requires_durable_completion_and_observed_green_quest() {
         "request": {"op": "npc", "name": "Wizard Mizgog", "action": "Talk-to", "index": 8},
         "snapshot": {"nearby_npcs": [{
             "index": 8, "name": "Wizard Mizgog", "actions": ["Talk-to"]
-        }]}
+        }], "roots": {"main": -1, "chat": -1}}
     });
     let dialogue = |debug, opcode| {
         json!({
             "kind": "interaction", "accepted": true, "wire_decoded": true,
-            "wire_opcodes": [opcode], "request": {"debug": debug}
+            "wire_opcodes": [opcode], "request": {"debug": debug},
+            "snapshot": {"roots": {"main": -1, "chat": -1}}
         })
     };
     let resume = dialogue(
         "ContinueDialog { component_id: None }",
         client::io::ClientProt289::RESUME_PAUSEBUTTON.id,
     );
+    // quests.rs2:42-47: the completed quest's scroll is the open main modal
+    // the Quester closes (dialogue.rs:760-766,1043-1044).
+    let mut close = dialogue("CloseModal", client::io::ClientProt289::CLOSE_MODAL.id);
+    close["snapshot"]["roots"]["main"] = json!(close_root);
     capture.actions = vec![
         talk.clone(),
         resume.clone(),
@@ -8556,16 +8600,33 @@ fn staged_hand_in_requires_durable_completion_and_observed_green_quest() {
         ),
         talk,
         resume,
-        dialogue("CloseModal", client::io::ClientProt289::CLOSE_MODAL.id),
+        close,
     ];
     capture.statuses.push(json!({
         "fields": {"stage": "imp:1", "action_state": "talking"}
     }));
-    let completed = json!({
+    capture.m1_completion = Some(json!({
         "runtime_generation": 1, "state": "Completed", "quest": "imp",
         "quest_colour": "Complete"
-    });
-    capture.m1_completion = Some(completed.clone());
+    }));
+    capture
+}
+
+fn staged_hand_in_close(capture: &CombatCapture) -> usize {
+    capture
+        .actions
+        .iter()
+        .position(|action| action["request"]["debug"] == "CloseModal")
+        .expect("staged hand-in receipt has one completion close")
+}
+
+#[test]
+fn staged_hand_in_requires_durable_completion_and_observed_green_quest() {
+    let mut capture = staged_hand_in_capture();
+    let completed = capture
+        .m1_completion
+        .clone()
+        .expect("fixture retained completion");
     assert!(
         m1_hand_in_ready(&capture),
         "valid hand-in survives teardown and closes the completion scroll"
@@ -8593,6 +8654,55 @@ fn staged_hand_in_requires_durable_completion_and_observed_green_quest() {
     capture.started = true;
     capture.m1_completion = None;
     assert!(!m1_hand_in_ready(&capture));
+}
+
+#[test]
+fn staged_hand_in_rejects_a_close_without_the_completion_scroll_open() {
+    // The only CloseModal must happen while the quest completion scroll is the
+    // open main modal (quests.rs2:42-47; dialogue.rs:760-766,1043-1044).
+    let root = completion_scroll_root();
+    let mut capture = staged_hand_in_capture();
+    let close = staged_hand_in_close(&capture);
+    for main in [-1, 777, 8134] {
+        capture.actions[close]["snapshot"]["roots"]["main"] = json!(main);
+        assert!(
+            !action_wire_valid(&capture.actions[close]),
+            "close with main root {main} passed the wire check"
+        );
+        assert!(
+            !m1_hand_in_ready(&capture),
+            "close with main root {main} passed the oracle"
+        );
+    }
+    capture.actions[close]["snapshot"]["roots"]["main"] = json!(root);
+    assert!(action_wire_valid(&capture.actions[close]));
+    assert!(
+        m1_hand_in_ready(&capture),
+        "control: the completion scroll close passes"
+    );
+}
+
+#[test]
+fn staged_hand_in_rejects_a_close_before_the_final_talk() {
+    // wizard_mizgog.rs2:1-19,39-52: the completion scroll opens after the
+    // second talk, so a close before it cannot be the hand-in's receipt.
+    let mut capture = staged_hand_in_capture();
+    let close = capture.actions.pop().expect("fixture completion close");
+    capture.actions.insert(0, close);
+    assert!(
+        action_wire_valid(&capture.actions[0]),
+        "the early close is still a well-formed completion-scroll packet"
+    );
+    assert!(
+        !m1_hand_in_ready(&capture),
+        "a close before the first talk passed the oracle"
+    );
+    let close = capture.actions.remove(0);
+    capture.actions.push(close);
+    assert!(
+        m1_hand_in_ready(&capture),
+        "control: the same close after the hand-in passes"
+    );
 }
 
 #[test]
@@ -10726,10 +10836,12 @@ fn legacy_caller_wire_rejects_unknown_debug_and_wrong_packets() {
 #[test]
 fn modal_close_wire_requires_exact_operation_and_packet() {
     use client::io::ClientProt289;
+    let root = completion_scroll_root();
     let mut action = json!({
         "accepted": true, "wire_decoded": true,
         "wire_opcodes": [ClientProt289::CLOSE_MODAL.id],
-        "request": {"debug": "CloseModal"}
+        "request": {"debug": "CloseModal"},
+        "snapshot": {"roots": {"main": root}}
     });
     assert!(action_wire_valid(&action));
     action["wire_opcodes"] = json!([ClientProt289::RESUME_PAUSEBUTTON.id]);

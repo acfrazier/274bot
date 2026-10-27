@@ -47,8 +47,10 @@ and the actual green Imp quest row. Its receipt stores both in `m1_completion`.
 The slot removes the native run during completion, so later status polling
 cannot require a transient `imp:2` status. The cell still requires both wizard
 talks, valid dialogue packets, four seeded beads, and removal of those beads.
-The dialogue packet check accepts only `CLOSE_MODAL` for `CloseModal` when the
-Quester closes the completion scroll. Unknown operations and extra packets fail.
+The dialogue packet check accepts only `CLOSE_MODAL` for `CloseModal`, and
+only when the action snapshot shows the selected quest completion scroll as the
+open main modal and the close follows the final hand-in talk. Unknown
+operations and extra packets fail.
 
 The Sheep bank-loop cell proves withdrawal from the loaded bank, matching
 bank generation, empty stock, and exact received items. It accepts `Ready`
