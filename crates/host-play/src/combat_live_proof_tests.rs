@@ -809,6 +809,7 @@ impl EvidenceWriter {
             "started": capture.started,
             "invalid_reason": capture.invalid_reason,
             "start_baseline": capture.start_baseline,
+            "m1_completion": capture.m1_completion,
             "magic_setup": capture.magic_setup,
             "statuses": capture.statuses,
             "actions": capture.actions,
@@ -5525,6 +5526,44 @@ fn m0_record_host_log(account: &str, capture: &Arc<Mutex<CombatCapture>>, instal
     }
 }
 
+fn record_m1_completion(
+    capture: &mut CombatCapture,
+    lifecycle: &script::ScriptLifecycleReceipt,
+    snapshot: &GameSnapshot,
+    quests: &QuestCatalog,
+) {
+    if !capture.started {
+        return;
+    }
+    let quest = quests.quest("imp").expect("selected Imp quest");
+    let row = snapshot
+        .quest_statuses()
+        .iter()
+        .find(|row| row.name.eq_ignore_ascii_case(&quest.display));
+    capture.m1_completion = Some(json!({
+        "runtime_generation": lifecycle.runtime_generation,
+        "state": format!("{:?}", lifecycle.state),
+        "tick": lifecycle.tick,
+        "reason": lifecycle.reason,
+        "quest": "imp",
+        "quest_component_id": row.map(|row| row.component_id),
+        "quest_colour": row.map(|row| format!("{:?}", row.status())),
+        "snapshot_tick": snapshot.tick(),
+    }));
+}
+
+fn m1_completed(capture: &CombatCapture) -> bool {
+    capture.started
+        && capture.m1_completion.as_ref().is_some_and(|completion| {
+            completion["state"] == "Completed"
+                && completion["runtime_generation"]
+                    .as_u64()
+                    .is_some_and(|generation| generation > 0)
+                && completion["quest"] == "imp"
+                && completion["quest_colour"] == "Complete"
+        })
+}
+
 // This proves only the production hand-in, never natural bead acquisition.
 // wizard_mizgog.rs2:3-19,39-52 requires quest start then a second talk.
 fn m1_hand_in_ready(capture: &CombatCapture) -> bool {
@@ -5558,10 +5597,7 @@ fn m1_hand_in_ready(capture: &CombatCapture) -> bool {
             .start_baseline
             .as_ref()
             .is_some_and(|baseline| IMP_BEADS.iter().all(|id| item_count(baseline, *id) == 1))
-        && capture
-            .statuses
-            .iter()
-            .any(|status| status["fields"]["stage"] == json!("imp:2"))
+        && m1_completed(capture)
         && capture
             .frames
             .last()
@@ -6494,6 +6530,9 @@ fn action_wire_valid(action: &Value) -> bool {
                 .is_some_and(|option| option > 0)
             {
                 actual == [opcode(ClientProt289::IF_BUTTON)]
+            } else if debug == "CloseModal" {
+                // api/interact.rs:1209-1212 clears the modal and sends only CLOSE_MODAL.
+                actual == [opcode(ClientProt289::CLOSE_MODAL)]
             } else {
                 legacy_caller_opcode(&action["request"]).is_some_and(|expected| {
                     if expected == opcode(ClientProt289::OPLOC2) {
@@ -8202,6 +8241,13 @@ fn run_case(case: Case) {
         if let Some(status) = play.script_native_status(&account) {
             combat_proof::record_status(&account, &status, None);
         }
+        if case == Case::M1HandIn {
+            if let Some(lifecycle) = play.script_lifecycle_receipt(&account) {
+                let live = state.lock().unwrap_or_else(|e| e.into_inner());
+                let mut proof = capture.lock().unwrap_or_else(|e| e.into_inner());
+                record_m1_completion(&mut proof, &lifecycle, &live.snapshot, &live.quests);
+            }
+        }
         if case.is_manual_cell() {
             m0_record_host_log(&account, &capture, m0_sink);
             if let Err((outcome, reason)) = m0.step(case, &play, &account, &capture) {
@@ -8473,6 +8519,80 @@ fn live_combat_m1_production_imp_four_beads() {
 #[ignore = "requires LIVE=1 and the isolated local R289 engine"]
 fn live_combat_m1_staged_hand_in() {
     run_case(Case::M1HandIn);
+}
+
+#[test]
+fn staged_hand_in_requires_durable_completion_and_observed_green_quest() {
+    let mut capture = CombatCapture::default();
+    capture.started = true;
+    capture.start_baseline = Some(json!({
+        "inventory": IMP_BEADS.map(|id| json!({"id": id, "count": 1}))
+    }));
+    capture.frames.push(json!({"inventory": []}));
+    let talk = json!({
+        "kind": "interaction", "accepted": true, "wire_decoded": true,
+        "wire_opcodes": [client::io::ClientProt289::OPNPC1.id],
+        "request": {"op": "npc", "name": "Wizard Mizgog", "action": "Talk-to", "index": 8},
+        "snapshot": {"nearby_npcs": [{
+            "index": 8, "name": "Wizard Mizgog", "actions": ["Talk-to"]
+        }]}
+    });
+    let dialogue = |debug, opcode| {
+        json!({
+            "kind": "interaction", "accepted": true, "wire_decoded": true,
+            "wire_opcodes": [opcode], "request": {"debug": debug}
+        })
+    };
+    let resume = dialogue(
+        "ContinueDialog { component_id: None }",
+        client::io::ClientProt289::RESUME_PAUSEBUTTON.id,
+    );
+    capture.actions = vec![
+        talk.clone(),
+        resume.clone(),
+        dialogue(
+            "Answer { option: 1 }",
+            client::io::ClientProt289::IF_BUTTON.id,
+        ),
+        talk,
+        resume,
+        dialogue("CloseModal", client::io::ClientProt289::CLOSE_MODAL.id),
+    ];
+    capture.statuses.push(json!({
+        "fields": {"stage": "imp:1", "action_state": "talking"}
+    }));
+    let completed = json!({
+        "runtime_generation": 1, "state": "Completed", "quest": "imp",
+        "quest_colour": "Complete"
+    });
+    capture.m1_completion = Some(completed.clone());
+    assert!(
+        m1_hand_in_ready(&capture),
+        "valid hand-in survives teardown and closes the completion scroll"
+    );
+    for (key, value) in [
+        ("state", json!("Stopped")),
+        ("state", json!("Failed")),
+        ("state", json!("Cancelled")),
+        ("runtime_generation", json!(0)),
+        ("quest", json!("sheep")),
+        ("quest_colour", json!("InProgress")),
+        ("quest_colour", Value::Null),
+    ] {
+        let mut invalid = completed.clone();
+        invalid[key] = value;
+        capture.m1_completion = Some(invalid);
+        assert!(
+            !m1_hand_in_ready(&capture),
+            "accepted invalid completion {key}"
+        );
+    }
+    capture.m1_completion = Some(completed);
+    capture.started = false;
+    assert!(!m1_hand_in_ready(&capture));
+    capture.started = true;
+    capture.m1_completion = None;
+    assert!(!m1_hand_in_ready(&capture));
 }
 
 #[test]
@@ -10600,6 +10720,30 @@ fn legacy_caller_wire_rejects_unknown_debug_and_wrong_packets() {
     action["wire_opcodes"] = json!([ClientProt289::MOVE_OPCLICK.id, ClientProt289::OPLOC2.id]);
     assert!(action_wire_valid(&action));
     action["request"]["debug"] = json!("arbitrary OpenStand Take");
+    assert!(!action_wire_valid(&action));
+}
+
+#[test]
+fn modal_close_wire_requires_exact_operation_and_packet() {
+    use client::io::ClientProt289;
+    let mut action = json!({
+        "accepted": true, "wire_decoded": true,
+        "wire_opcodes": [ClientProt289::CLOSE_MODAL.id],
+        "request": {"debug": "CloseModal"}
+    });
+    assert!(action_wire_valid(&action));
+    action["wire_opcodes"] = json!([ClientProt289::RESUME_PAUSEBUTTON.id]);
+    assert!(!action_wire_valid(&action));
+    action["wire_opcodes"] = json!([
+        ClientProt289::CLOSE_MODAL.id,
+        ClientProt289::RESUME_PAUSEBUTTON.id
+    ]);
+    assert!(!action_wire_valid(&action));
+    action["wire_opcodes"] = json!([ClientProt289::CLOSE_MODAL.id]);
+    action["request"]["debug"] = json!("arbitrary CloseModal");
+    assert!(!action_wire_valid(&action));
+    action["request"]["debug"] = json!("CloseModal");
+    action["accepted"] = json!(false);
     assert!(!action_wire_valid(&action));
 }
 
