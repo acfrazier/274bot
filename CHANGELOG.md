@@ -24,6 +24,13 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   stops for lack of food at 2. Imps cannot damage the bot at all (max hit
   0), so the bot does not raise Protect from Melee against them.
 
+### Scripting
+
+- The script API documentation now states that moving the bot by hand during a
+  fight ends `api.combat.fight` as `aborted` with reason `user-input`. The host
+  has settled it that way since 0.2.4; the declarations and pages still
+  described an `interrupted` result.
+
 ## [0.2.7] — 2026-10-26 — Beta 2
 
 ### Panel and terminal app

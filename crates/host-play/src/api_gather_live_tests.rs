@@ -1089,6 +1089,15 @@ export async function tick(api) {
     let paths = slot_probe(&play, &account, "globalThis.__paths");
     let terminal = slot_probe(&play, &account, "globalThis.__progress");
     assert_eq!(paths["ok"], true);
+    // `questPaths()` emits `card::released_paths()`
+    // (`crates/script-js/src/materialize/progress_methods_v8.rs`), so the
+    // expectation is that same product catalog, not a frozen sample: it
+    // follows the release index as paths are added, and a narrowed, reordered
+    // or otherwise partial result still fails here.
+    let expected_paths = script::quester::card::released_paths()
+        .iter()
+        .map(|row| &*row.id)
+        .collect::<Vec<&str>>();
     assert_eq!(
         paths["value"]["rows"]
             .as_array()
@@ -1096,7 +1105,7 @@ export async function tick(api) {
             .iter()
             .map(|row| row["id"].as_str().unwrap())
             .collect::<Vec<_>>(),
-        ["cook", "sheep", "runemysteries", "romeojuliet"]
+        expected_paths
     );
     assert_eq!(terminal["kind"], "done");
     assert_eq!(terminal["value"]["end"], "done");

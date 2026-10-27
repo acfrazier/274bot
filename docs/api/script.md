@@ -1781,10 +1781,11 @@ A Load script's live `api.gather` or `api.combat` session and a built-in
 script's live native action are owned work even with no walk in flight.
 Manual movement reaches these owners through `note_manual_walk_takeover`
 (`SlotScript::manual_input_owner`). A Gatherer API session gathering in place
-blocks `manual-movement`; Combat settles `interrupted` / `user-input` after
-its scoped prayer clear. Browse-started native cards also receive takeover
-while a native action is live. With Pause off, other in-place native families
-can continue unless they handle takeover, as Quester fights do.
+blocks `manual-movement`; Combat's promise settles `aborted` with reason
+`user-input` after its scoped prayer clear. Browse-started native cards also
+receive takeover while a native action is live. With Pause off, other in-place
+native families can continue unless they handle takeover, as Quester fights
+do.
 
 The owner-pause preference is `nav.pause_script_on_manual_walk_abort`,
 displayed as “Pause script on manual movement,” and defaults to ON. With it
