@@ -119,6 +119,15 @@ impl TcpEndpoint {
     /// A failing address keeps the exact attempt/capacity charge until the
     /// reactor calls this method again or closes the endpoint.
     pub fn begin_step(&mut self, registry: &Registry, now: Instant) -> TcpStep {
+        self.begin_step_with_connector(registry, now, TcpStream::connect)
+    }
+
+    fn begin_step_with_connector(
+        &mut self,
+        registry: &Registry,
+        now: Instant,
+        connect: impl FnOnce(std::net::SocketAddr) -> io::Result<TcpStream>,
+    ) -> TcpStep {
         if let Some(error) = self.revoked(now) {
             return TcpStep::Failed(error);
         }
@@ -135,11 +144,8 @@ impl TcpEndpoint {
             }));
         };
         self.next_address += 1;
-        match TcpStream::connect(address) {
+        match connect(address) {
             Ok(mut socket) => {
-                if let Err(error) = socket.set_nodelay(true) {
-                    return self.address_failure(error);
-                }
                 let token = Token(self.binding.connection as usize);
                 match registry.register(
                     &mut socket,
@@ -210,6 +216,12 @@ impl TcpEndpoint {
             Err(error) => Some(error),
         };
         if let Some(error) = error {
+            self.drop_socket(registry);
+            return self.address_failure(error);
+        }
+        // A failed nonblocking connect can make setsockopt return EINVAL on
+        // macOS. Preserve SO_ERROR above before configuring a connected socket.
+        if let Err(error) = socket.inner().set_nodelay(true) {
             self.drop_socket(registry);
             return self.address_failure(error);
         }
@@ -658,6 +670,53 @@ mod tests {
         assert!(!retire.acknowledged());
         endpoint.close(poll.registry());
         assert!(retire.acknowledged());
+    }
+
+    #[test]
+    fn completed_refusal_keeps_socket_error_before_setting_options() {
+        let no_listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = no_listener.local_addr().unwrap();
+        drop(no_listener);
+        let mut addresses = ResolvedAddresses::new();
+        assert!(addresses.push(address));
+        let park = Arc::new(Park::new());
+        let source = CancelSource::new(Arc::clone(&park));
+        let token = source.child().unwrap();
+        let retire = Arc::new(AttemptRetire::new(token.generation()));
+        let shared = SharedConnection::new(1, park);
+        let binding = BindingId {
+            incarnation: 1,
+            connection: 1,
+            binding: 1,
+            attempt: 1,
+        };
+        let mut endpoint =
+            TcpEndpoint::new(binding, addresses, shared, token, None, retire).unwrap();
+        let poll = mio::Poll::new().unwrap();
+        let step = endpoint.begin_step_with_connector(poll.registry(), Instant::now(), |address| {
+            let mut socket = TcpStream::connect(address)?;
+            // Hold only the connector return until the real refusal is ready.
+            // Do not consume SO_ERROR: the production endpoint must read it.
+            let mut barrier = mio::Poll::new()?;
+            barrier.registry().register(
+                &mut socket,
+                Token(1),
+                Interest::READABLE.add(Interest::WRITABLE),
+            )?;
+            let mut events = mio::Events::with_capacity(4);
+            barrier.poll(&mut events, Some(Duration::from_secs(2)))?;
+            assert!(!events.is_empty(), "refused socket must become ready");
+            barrier.registry().deregister(&mut socket)?;
+            Ok(socket)
+        });
+        assert!(matches!(step, TcpStep::Connecting), "{step:?}");
+        let step = endpoint.on_event(poll.registry(), true, true, Instant::now());
+        let TcpStep::Failed(error) = step else {
+            panic!("refused connect must fail: {step:?}");
+        };
+        assert_eq!(error.kind(), io::ErrorKind::ConnectionRefused);
+        assert!(error.raw_os_error().is_some());
+        assert!(endpoint.socket.is_none());
     }
 
     #[test]

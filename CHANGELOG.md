@@ -211,6 +211,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
 
 ### Fixed during development
 
+- A refused game connection on macOS keeps its connection-refused error.
+  The new transport sets TCP_NODELAY only after the connection succeeds,
+  so a socket-option error cannot replace the connection failure.
+
 - Startup waits for saved preferences before it chooses and loads a profile.
   Saving a new profile during that wait keeps the terminal app's original boot
   load and login. Renaming the boot profile keeps its pending load attached to
