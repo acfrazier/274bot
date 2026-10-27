@@ -1716,10 +1716,14 @@ fn run_live(config_path: &Path, output: &Path) -> Result<(), String> {
                     let mut actor = actor_ref.lock().map_err(|_| "actor state poisoned")?;
                     if let Some(status) = statuses.get(account) {
                         if status.connected {
-                            if actor.connected_ever
-                                && actor
-                                    .last_stream_epoch
-                                    .is_some_and(|previous| previous != status.stream_epoch)
+                            // The first sampled status can be the logout gap.
+                            // A connected return after an observed exit does not
+                            // require a sampled pre-logout stream epoch.
+                            if (actor.setup_relog_exit_observed && !actor.setup_relog_returned
+                                || actor.connected_ever
+                                    && actor
+                                        .last_stream_epoch
+                                        .is_some_and(|previous| previous != status.stream_epoch))
                                 && !actor.exit_recorded
                             {
                                 if published_start.is_none()
