@@ -1949,7 +1949,8 @@ fn melee_weapon_tier_matches_the_wield_gates() {
     // is set, never a plain tier (§4.2). Strength comes from
     // `levelrequire_attack_and_strength`
     // (`scripts/levelrequire/scripts/levelrequire.rs2:186-192`; halberds
-    // `tier30.rs2:17` and `tier60.rs2:10` need attack 60 and strength 30).
+    // `tier30.rs2:17` needs attack 30 and strength 15, `tier60.rs2:10`
+    // needs attack 60 and strength 30).
     let data = pvp_289();
     let tier = |id: i32| data.melee_weapon_tier(id).expect("melee weapon");
     assert_eq!(
@@ -2679,9 +2680,7 @@ fn rule_button_is_none_on_revision_274() {
     // Revision 274 predates PvP V0: its generated `rule_buttons` default to
     // zeros, and `rule_button` reports `None` instead of component 0.
     let data = for_revision(ClientRevision::R274).unwrap();
-    let Some(controls) = data.duel_controls() else {
-        return;
-    };
+    let controls = data.duel_controls().expect("274 has duel controls");
     for bit in 0..14u8 {
         assert_eq!(controls.rule_button(bit), None, "274 rule_button({bit})");
     }
