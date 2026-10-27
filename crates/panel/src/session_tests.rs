@@ -10630,7 +10630,10 @@ fn settings_feedback_completed_launch_writes_take_effect_in_request_order() {
     let durable = s.preferences.document().unwrap()["raster"].clone();
     assert_eq!(durable, "gpu");
     assert_eq!(
-        (s.focused_raster(), s.core.profile("alice").unwrap().raster()),
+        (
+            s.focused_raster(),
+            s.core.profile("alice").unwrap().raster()
+        ),
         (RasterMode::Gpu, RasterMode::Gpu),
         "all writes completed before one panel poll; durable raster={durable}"
     );
@@ -10638,8 +10641,9 @@ fn settings_feedback_completed_launch_writes_take_effect_in_request_order() {
 }
 
 /// A second process's later saved values reach every panel-owned control, not
-/// only the first read: the palette, layout, folds, remembered folders and
-/// order members follow each new durable version.
+/// only the first read: the palette, layout, folds, remembered folders,
+/// order members and, while no bot is focused, the remembered raster and
+/// memory mode follow each new durable version.
 #[test]
 fn settings_feedback_a_second_process_version_reaches_every_panel_control_after_hydration() {
     let _iso = IsolatedStores::enter("panel-s3-second-process-panel");
@@ -10690,6 +10694,24 @@ fn settings_feedback_a_second_process_version_reaches_every_panel_control_after_
     assert!(s.ui.show_parameters_rail);
     assert!(s.ui.nav.show_nav_path);
     assert_eq!(s.ui.nav.color_path, "#0A0B0C");
+
+    // The remembered launch choices follow too: no bot is focused, so the
+    // raster and memory controls show the saved choice.
+    use frontend_core::command::RasterMode;
+    assert_eq!(
+        (s.focused_raster(), s.focused_lowmem()),
+        (RasterMode::Gpu, true)
+    );
+    peer_set("raster", serde_json::json!("cpu"));
+    peer_set("lowmem", serde_json::Value::Bool(false));
+    refresh(&mut s);
+    assert_eq!(
+        (s.focused_raster(), s.focused_lowmem()),
+        (RasterMode::Cpu, false),
+        "later durable document: raster={} lowmem={}",
+        s.preferences.document().unwrap()["raster"],
+        s.preferences.document().unwrap()["lowmem"]
+    );
 
     // A later version of the palette arrives too, and this panel's own
     // pending request keeps previewing until its result.
@@ -10930,7 +10952,10 @@ fn settings_feedback_a_pending_launch_choice_stays_with_its_profile() {
     vault_upsert(&mut s.core, profile("bob", "pw", 43));
     hydrate_panel_preferences(&mut s);
     s.select("alice");
-    assert_eq!((s.focused_raster(), s.focused_lowmem()), (RasterMode::Gpu, true));
+    assert_eq!(
+        (s.focused_raster(), s.focused_lowmem()),
+        (RasterMode::Gpu, true)
+    );
     let disk = PanelDisk::install(&s);
     s.request_focused_raster(RasterMode::Cpu);
     s.request_focused_lowmem(false);
