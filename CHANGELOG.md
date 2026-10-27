@@ -13,6 +13,17 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   stops for lack of food at 2. Imps cannot damage the bot at all (max hit
   0), so the bot does not raise Protect from Melee against them.
 
+### Navigation
+
+- Bots now wait and try again when another player is using a shortcut,
+  instead of giving up. The Yanille dungeon ledge ("The ledge is being
+  used") stays held for at most 9 game ticks after a refusal, so the bot
+  waits that long and crosses again. A busy rope swing works the same way
+  with a wait of 5 game ticks. The bot stops after about 60 game ticks of
+  refused tries, and the failure then reports how many times it tried.
+  Transport time limits now count game ticks instead of polls, so a burst
+  of polls inside one tick no longer ends a crossing early.
+
 ## [0.2.7] — 2026-10-26 — Beta 2
 
 ### Panel and terminal app

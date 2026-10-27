@@ -71,8 +71,9 @@ const SCENE_SETTLE_TICKS: u32 = 2;
 /// Why a [`Traveller::follow`] hop failed: the per-hop tick budget lapsed
 /// while the player was making progress (`Expired`), the player never
 /// left the tile the hop was sent from (`Dropped` — the walk or transport
-/// interaction was dropped by the game), or the route's end is blocked
-/// live next to the player (`EndBlocked`).
+/// interaction was dropped by the game; an agility crossing the server
+/// kept refusing as in use ends here once its retries are spent), or the
+/// route's end is blocked live next to the player (`EndBlocked`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HopFailure {
     Expired,
@@ -336,6 +337,21 @@ pub enum TravelEvent {
         target: WorldTile,
         option: i32,
         refusal: Option<SendReason>,
+    },
+    /// An agility crossing was refused because another player holds the
+    /// obstacle, or never began. `message` is the content's refusal line
+    /// (`None`: the player never left its send tile within the crossing time).
+    /// `resume_tick` is the observed tick of the next interaction, or `None`
+    /// when the retry budget is spent and the hop ends. `tries` counts the
+    /// sends so far.
+    TransportBusy {
+        tick: u32,
+        kind: TransportKind,
+        loc_id: i32,
+        at: WorldTile,
+        message: Option<&'static str>,
+        resume_tick: Option<u32>,
+        tries: u32,
     },
     StunDeferred {
         observed_tick: u32,
@@ -895,7 +911,7 @@ impl FollowRun {
                                 self.transport = Some(TransportHop {
                                     leg,
                                     to,
-                                    ticks_waited: 0,
+                                    ticks_waited: TickCount::sent_at(snapshot.tick()),
                                     sent_tile: Some(here),
                                     arrival_footprint: None,
                                     tries: 0,
@@ -904,6 +920,7 @@ impl FollowRun {
                                     npc_recovery: NpcRecovery::default(),
                                     open_sent_tick: None,
                                     door_retry: DoorRetry::default(),
+                                    occupied: OccupiedRetry::default(),
                                     chat_seq: chat_seq(snapshot),
                                     dialog_page: None,
                                     approach: None,
@@ -953,7 +970,7 @@ impl FollowRun {
                                 self.transport = Some(TransportHop {
                                     leg,
                                     to,
-                                    ticks_waited: 0,
+                                    ticks_waited: TickCount::sent_at(snapshot.tick()),
                                     sent_tile: Some(here),
                                     arrival_footprint: None,
                                     tries: 0,
@@ -962,6 +979,7 @@ impl FollowRun {
                                     npc_recovery: NpcRecovery::default(),
                                     open_sent_tick: None,
                                     door_retry: DoorRetry::default(),
+                                    occupied: OccupiedRetry::default(),
                                     chat_seq: chat_seq(snapshot),
                                     dialog_page: None,
                                     approach: None,
@@ -1087,13 +1105,14 @@ impl FollowRun {
                                 self.transport = Some(TransportHop {
                                     leg,
                                     to,
-                                    ticks_waited: 0,
+                                    ticks_waited: TickCount::sent_at(snapshot.tick()),
                                     sent_tile: Some(here),
                                     arrival_footprint: None,
                                     tries: 0,
                                     troll: false,
                                     open_sent_tick: None,
                                     door_retry: DoorRetry::default(),
+                                    occupied: OccupiedRetry::default(),
                                     chat_seq: chat_seq(snapshot),
                                     npc_index: selected_npc_index,
                                     npc_recovery,
@@ -1102,7 +1121,7 @@ impl FollowRun {
                                         tile: approach,
                                         at: approach_at,
                                         sent_tick: snapshot.tick(),
-                                        ticks_waited: 0,
+                                        ticks_waited: TickCount::sent_at(snapshot.tick()),
                                         retry_pending: false,
                                     }),
                                 });
@@ -1192,7 +1211,7 @@ impl FollowRun {
                                     self.transport = Some(TransportHop {
                                         leg,
                                         to,
-                                        ticks_waited: 0,
+                                        ticks_waited: TickCount::sent_at(snapshot.tick()),
                                         sent_tile: Some(here),
                                         arrival_footprint,
                                         tries,
@@ -1201,6 +1220,7 @@ impl FollowRun {
                                         npc_recovery,
                                         open_sent_tick,
                                         door_retry: DoorRetry::opened_at(open_sent_tick),
+                                        occupied: OccupiedRetry::default(),
                                         chat_seq: chat_seq_at_send,
                                         dialog_page: None,
                                         approach: None,
@@ -1377,7 +1397,8 @@ impl WalkHop {
 struct TransportHop {
     leg: Leg,
     to: WorldTile,
-    ticks_waited: u32,
+    /// Distinct observed game ticks since the latest send (see [`TickCount`]).
+    ticks_waited: TickCount,
     sent_tile: Option<WorldTile>,
     /// Live loc footprint captured at click time; survives the plane rebuild.
     arrival_footprint: Option<(WorldTile, i32, i32)>,
@@ -1397,6 +1418,9 @@ struct TransportHop {
     open_sent_tick: Option<u32>,
     /// Door recovery's re-Open pacing (see [`DoorRetry`]).
     door_retry: DoorRetry,
+    /// Recovery from a refusal that says another player holds the transport
+    /// (see [`OccupiedRetry`]).
+    occupied: OccupiedRetry,
     chat_seq: i32,
     /// The chat option-page last answered (joined option texts). A new
     /// page (spirit-tree dest list after "Where can I go?") is answered;
@@ -1415,7 +1439,7 @@ struct TransportHop {
 /// against, its per-arm loc/door budget, and the send state.
 struct ApproachHop {
     sent_tick: u32,
-    ticks_waited: u32,
+    ticks_waited: TickCount,
     retry_pending: bool,
     tile: WorldTile,
     at: WorldTile,

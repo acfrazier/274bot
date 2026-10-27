@@ -246,7 +246,7 @@ impl FollowRun {
                         tile: stand,
                         at: npc.network,
                         sent_tick: snapshot.tick(),
-                        ticks_waited: 0,
+                        ticks_waited: TickCount::sent_at(snapshot.tick()),
                         retry_pending: false,
                     };
                     hop.sent_tile = Some(here);
@@ -322,7 +322,7 @@ impl FollowRun {
             tile: here(snapshot),
             at: here(snapshot),
             sent_tick: snapshot.tick(),
-            ticks_waited: 0,
+            ticks_waited: TickCount::sent_at(snapshot.tick()),
             retry_pending: true,
         });
         self.poll_npc_approach(d, snapshot, hop, options)

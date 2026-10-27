@@ -184,6 +184,107 @@ fn observed_web_cut_failure(snapshot: &GameSnapshot, after: i32) -> bool {
         .any(|line| line.sequence > after && line.text == WEB_CUT_FAILURE_MESSAGE)
 }
 
+/// Distinct observed game ticks, one per `PLAYER_INFO` (`snapshot.tick()`),
+/// however many times polls read the same snapshot. Transport clocks use it
+/// as the walk's stall idle count does ([`WALK_STALL_RECOVER_IDLE_TICKS`]):
+/// a burst of polls inside one game tick cannot lapse a hop budget.
+#[derive(Clone, Copy, Debug, Default)]
+pub(super) struct TickCount {
+    count: u32,
+    last: Option<u32>,
+}
+
+impl TickCount {
+    /// A count that starts after `tick`, the tick an interaction was sent on.
+    pub(super) fn sent_at(tick: u32) -> Self {
+        Self {
+            count: 0,
+            last: Some(tick),
+        }
+    }
+
+    /// Credit `tick` once and return the ticks counted so far.
+    pub(super) fn observe(&mut self, tick: u32) -> u32 {
+        if self.last != Some(tick) {
+            self.last = Some(tick);
+            self.count = self.count.saturating_add(1);
+        }
+        self.count
+    }
+
+    pub(super) fn get(self) -> u32 {
+        self.count
+    }
+}
+
+/// A content line that refuses a crossing because another player holds the
+/// obstacle, and how long the content keeps it held.
+struct OccupiedMessage {
+    text: &'static str,
+    /// Observed ticks after the refusal by which the hold has lapsed, so
+    /// an interaction sent then reaches a free obstacle.
+    hold: u32,
+    /// The line is a `~mesbox` page (chat modal text), not a chat line.
+    boxed: bool,
+}
+
+/// The "in use" refusals on the transports the router takes (`AgilityShortcut`
+/// edges in the reference pack: loc 2303 and locs 2322 to 2324). Both
+/// scripts refuse while a shared varp is `>= map_clock`, so an obstacle
+/// refusing at tick `T` was reserved at some tick `t0 <= T` to a value
+/// `<= t0 + span`, and a crossing processed from tick `T + span + 1` is accepted.
+const OCCUPIED_MESSAGES: [OccupiedMessage; 2] = [
+    // `agility_dungeon.rs2:53-57,75`: `%yanille_ledge_used` is `map_clock + 5`
+    // on accept and `map_clock + 4` after the first forced steps. Those steps
+    // take 3 ticks from the north stand and 4 from the south stand
+    // (`agility.rs2:18-43`: one tick per tile, `p_delay(0)` = 1 tick), so the
+    // reservation ends at most 8 ticks after accept.
+    OccupiedMessage {
+        text: "The ledge is being used",
+        hold: 9,
+        boxed: false,
+    },
+    // `shortcuts.rs2:130-135`: `~set_island_rope_var(map_clock + 4)` on
+    // accept, never refreshed; the refusal is a `~mesbox` page.
+    OccupiedMessage {
+        text: "The rope swing is being used",
+        hold: 5,
+        boxed: true,
+    },
+];
+
+/// The refusal text newer than `after` (chat line) or shown now (mesbox page).
+fn observed_occupied_refusal(
+    snapshot: &GameSnapshot,
+    after: i32,
+) -> Option<&'static OccupiedMessage> {
+    OCCUPIED_MESSAGES.iter().find(|message| {
+        if message.boxed {
+            snapshot
+                .chat_modal_texts()
+                .iter()
+                .any(|text| text == message.text)
+        } else {
+            snapshot
+                .chat_lines()
+                .iter()
+                .any(|line| line.sequence > after && line.text == message.text)
+        }
+    })
+}
+
+/// Recovery state for an agility crossing the server refused because another
+/// player holds the obstacle (see [`FollowRun::recover_occupied`]).
+#[derive(Debug, Default)]
+pub(super) struct OccupiedRetry {
+    /// Observed ticks that refused attempts and their holds have used; the
+    /// hop budget bounds it, so the retries are finite.
+    spent: u32,
+    /// The tick from which the interaction may be sent again, while a hold
+    /// is being waited out.
+    resume_tick: Option<u32>,
+}
+
 /// Re-evaluate both packed web actions against the snapshot at the moment
 /// the interaction is sent. The route may have been planned with a different
 /// loadout while its approach walk was in progress.
@@ -387,7 +488,7 @@ impl FollowRun {
                 waited: if npc_backed(edge) {
                     hop.npc_recovery.waited
                 } else {
-                    hop.ticks_waited
+                    hop.ticks_waited.get()
                 },
                 loc_wait: self.loc_wait,
                 budget: self.budget,
@@ -476,7 +577,7 @@ impl FollowRun {
                             ) {
                                 SendResult::Sent { .. } => {
                                     hop.tries = 1;
-                                    hop.ticks_waited = 0;
+                                    hop.ticks_waited = TickCount::sent_at(snapshot.tick());
                                     hop.sent_tile = Some(here);
                                     hop.arrival_footprint = arrival_footprint;
                                     self.loc_wait = 0;
@@ -533,32 +634,20 @@ impl FollowRun {
                         ));
                     }
                 };
-                let chat_seq_at_send = chat_seq(snapshot);
-                let arrival_footprint = target.footprint();
-                let mut ix = Interactions::new(snapshot, d);
-                return match interact_transport(
-                    snapshot,
-                    &mut ix,
-                    target,
-                    action,
-                    &mut options.on_event,
-                ) {
-                    SendResult::Sent { .. } => {
-                        hop.chat_seq = chat_seq_at_send;
-                        hop.ticks_waited = 0;
-                        hop.sent_tile = Some(here);
-                        hop.arrival_footprint = arrival_footprint;
-                        hop.tries = hop.tries.saturating_add(1);
-                        hop.open_sent_tick = Some(snapshot.tick());
-                        self.loc_wait = 0;
-                        self.transport = Some(hop);
-                        Poll::Watching
-                    }
-                    SendResult::Refused { reason, .. } => {
-                        fire_leg(options, &hop.leg, LegPhase::Failed);
-                        Poll::Terminal(TravelOutcome::Refused { at: here, reason })
-                    }
-                };
+                hop.open_sent_tick = Some(snapshot.tick());
+                let poll = self.resend_transport(d, snapshot, &mut hop, options, target, action);
+                if matches!(poll, Poll::Watching) {
+                    self.transport = Some(hop);
+                }
+                return poll;
+            }
+        }
+        if hop.approach.is_none() {
+            if let Some(poll) = self.recover_occupied(d, snapshot, &mut hop, options) {
+                if matches!(poll, Poll::Watching) {
+                    self.transport = Some(hop);
+                }
+                return poll;
             }
         }
         // Loc-backed pre-interact approach; NPC approaches are driven above.
@@ -602,8 +691,10 @@ impl FollowRun {
                     } else {
                         &edge
                     };
-                    let chat_seq_at_send =
-                        (npc_backed(&edge) || is_slashable_web(&edge)).then(|| chat_seq(snapshot));
+                    let chat_seq_at_send = (npc_backed(&edge)
+                        || is_slashable_web(&edge)
+                        || edge.kind == TransportKind::AgilityShortcut)
+                        .then(|| chat_seq(snapshot));
                     let arrival_footprint = target.footprint();
                     let mut ix = Interactions::new(snapshot, d);
                     match interact_transport(
@@ -615,7 +706,7 @@ impl FollowRun {
                     ) {
                         SendResult::Sent { .. } => {
                             self.loc_wait = 0;
-                            hop.ticks_waited = 0;
+                            hop.ticks_waited = TickCount::sent_at(snapshot.tick());
                             hop.sent_tile = Some(here);
                             hop.arrival_footprint = arrival_footprint;
                             if let Some(seq) = chat_seq_at_send {
@@ -684,7 +775,7 @@ impl FollowRun {
                 "transport here={here:?} to={:?} troll={} ticks_waited={} loc_id={} open={}",
                 hop.to,
                 hop.troll,
-                hop.ticks_waited,
+                hop.ticks_waited.get(),
                 edge.loc_id,
                 edge_loc_open(snapshot, &edge),
             );
@@ -964,10 +1055,9 @@ impl FollowRun {
                         // Dropped the next walk).
                         if hop.sent_tile.is_some() {
                             hop.sent_tile = None;
-                            hop.ticks_waited = 0;
+                            hop.ticks_waited = TickCount::default();
                         }
-                        hop.ticks_waited += 1;
-                        if hop.ticks_waited < delay {
+                        if hop.ticks_waited.observe(snapshot.tick()) < delay {
                             self.transport = Some(hop);
                             return Poll::Watching;
                         }
@@ -1012,13 +1102,13 @@ impl FollowRun {
             }
             None => {
                 if !npc_hop {
-                    hop.ticks_waited += 1;
+                    hop.ticks_waited.observe(snapshot.tick());
                 }
                 if npc_hop && hop.npc_recovery.waited > self.budget {
                     fire_leg(options, &hop.leg, LegPhase::Failed);
                     return Poll::Terminal(self.npc_expired(snapshot, &hop));
                 }
-                if hop.ticks_waited > self.budget {
+                if hop.ticks_waited.get() > self.budget {
                     let why = if hop.sent_tile == Some(here) {
                         HopFailure::Dropped
                     } else {
@@ -1037,6 +1127,128 @@ impl FollowRun {
                 }
             }
         }
+    }
+
+    /// Send the hop's loc interaction again on `target`: the tail the
+    /// web-cut and occupied-transport retries share. Each send restarts the
+    /// hop clock and counts as a try.
+    fn resend_transport<'s, D: Driver>(
+        &mut self,
+        d: &mut D,
+        snapshot: &'s GameSnapshot,
+        hop: &mut TransportHop,
+        options: &mut TravelOptions<'_>,
+        target: TransportTarget<'s>,
+        action: &TransportEdge,
+    ) -> Poll {
+        let here = here(snapshot);
+        let chat_seq_at_send = chat_seq(snapshot);
+        let arrival_footprint = target.footprint();
+        let mut ix = Interactions::new(snapshot, d);
+        match interact_transport(snapshot, &mut ix, target, action, &mut options.on_event) {
+            SendResult::Sent { .. } => {
+                hop.chat_seq = chat_seq_at_send;
+                hop.ticks_waited = TickCount::sent_at(snapshot.tick());
+                hop.sent_tile = Some(here);
+                hop.arrival_footprint = arrival_footprint;
+                hop.tries = hop.tries.saturating_add(1);
+                self.loc_wait = 0;
+                Poll::Watching
+            }
+            SendResult::Refused { reason, .. } => {
+                fire_leg(options, &hop.leg, LegPhase::Failed);
+                Poll::Terminal(TravelOutcome::Refused { at: here, reason })
+            }
+        }
+    }
+
+    /// Recover an agility crossing the server refused because another
+    /// player holds the obstacle. A refusal is the content's own line
+    /// ([`OCCUPIED_MESSAGES`]) with the player still on its send tile, or no
+    /// move at all within the edge's whole baked crossing time. A line waits
+    /// out its content hold in observed ticks; a silent drop is sent again
+    /// at once. Then the interaction goes out again. Every refused attempt
+    /// and hold draws on the hop budget, so the retries are finite. After
+    /// the budget is spent the outcome is the terminal `Dropped` stall,
+    /// whose `tries` is the real send count and whose last refusal reaches
+    /// `on_event` as [`TravelEvent::TransportBusy`]. `None`: nothing to
+    /// recover on this poll.
+    fn recover_occupied<D: Driver>(
+        &mut self,
+        d: &mut D,
+        snapshot: &GameSnapshot,
+        hop: &mut TransportHop,
+        options: &mut TravelOptions<'_>,
+    ) -> Option<Poll> {
+        let (kind, loc_id, crossing_ticks) = match &hop.leg {
+            Leg::Transport { edge } if edge.kind == TransportKind::AgilityShortcut => {
+                (edge.kind, edge.loc_id, edge.ticks.max(1) as u32)
+            }
+            _ => return None,
+        };
+        let here = here(snapshot);
+        let tick = snapshot.tick();
+        if hop.occupied.resume_tick.is_none() {
+            // A refused crossing never moves the player.
+            if hop.sent_tile != Some(here) {
+                return None;
+            }
+            let message = observed_occupied_refusal(snapshot, hop.chat_seq);
+            let attempt = hop.ticks_waited.get();
+            if message.is_none() && attempt <= crossing_ticks {
+                return None;
+            }
+            let hold = message.map_or(0, |message| message.hold);
+            hop.tries = hop.tries.max(1);
+            let spent = hop
+                .occupied
+                .spent
+                .saturating_add(attempt)
+                .saturating_add(hold);
+            let retry = spent <= self.budget;
+            let resume_tick = tick.saturating_add(hold);
+            if let Some(cb) = options.on_event.as_mut() {
+                cb(TravelEvent::TransportBusy {
+                    tick,
+                    kind,
+                    loc_id,
+                    at: here,
+                    message: message.map(|message| message.text),
+                    resume_tick: retry.then_some(resume_tick),
+                    tries: hop.tries,
+                });
+            }
+            if !retry {
+                fire_leg(options, &hop.leg, LegPhase::Failed);
+                return Some(Poll::Terminal(TravelOutcome::Stalled {
+                    at: here,
+                    aiming: hop.to,
+                    why: HopFailure::Dropped,
+                    tries: hop.tries,
+                }));
+            }
+            hop.occupied.spent = spent;
+            hop.occupied.resume_tick = Some(resume_tick);
+            if message.is_some_and(|message| message.boxed)
+                && snapshot.chat_continue_component_id() != -1
+            {
+                // The page's continue button lets the refused script return.
+                let mut ix = Interactions::new(snapshot, d);
+                let _ = ix.continue_dialog(None);
+            }
+        }
+        if tick < hop.occupied.resume_tick? {
+            return None;
+        }
+        let edge = match &hop.leg {
+            Leg::Transport { edge } => edge.clone(),
+            Leg::Walk { .. } => return None,
+        };
+        // A target out of the scene keeps the hop waiting; the hop clock
+        // bounds that wait.
+        let target = find_transport_target_instance(snapshot, &edge, hop.npc_index)?;
+        hop.occupied.resume_tick = None;
+        Some(self.resend_transport(d, snapshot, hop, options, target, &edge))
     }
 
     /// Loc-backed approach settle: adjacency or per-arm budget expiry.
@@ -1068,7 +1280,7 @@ impl FollowRun {
             match result {
                 SendResult::Sent { .. } => {
                     approach.retry_pending = false;
-                    approach.ticks_waited = 0;
+                    approach.ticks_waited = TickCount::sent_at(snapshot.tick());
                     approach.sent_tick = snapshot.tick();
                     hop.sent_tile = Some(here);
                     hop.approach = Some(approach);
@@ -1121,8 +1333,7 @@ impl FollowRun {
                 Poll::Watching
             }
             None => {
-                approach.ticks_waited += 1;
-                if approach.ticks_waited > self.budget {
+                if approach.ticks_waited.observe(snapshot.tick()) > self.budget {
                     let why = if hop.sent_tile == Some(here) {
                         HopFailure::Dropped
                     } else {
@@ -1162,7 +1373,7 @@ impl FollowRun {
         let here = here(snapshot);
         // Arrival is still polled below, but a lapsed hop must not send an
         // Open that has no remaining observation window.
-        if hop.ticks_waited >= self.budget {
+        if hop.ticks_waited.get() >= self.budget {
             return None;
         }
         let tile = door_tile(edge);
@@ -1172,7 +1383,7 @@ impl FollowRun {
                 Level::Debug,
                 "troll here={here:?} at={tile:?} cheb={} ticks_waited={} loc_wait={}",
                 cheb(here, edge.at),
-                hop.ticks_waited,
+                hop.ticks_waited.get(),
                 self.loc_wait
             );
         }
