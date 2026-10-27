@@ -1,21 +1,21 @@
 //! The `api.combat.fight` summary the script receives (PVP-DESIGN-1026 §9.6).
 //!
 //! The `fought` terminal is the host's `CombatSummary` turned into one JSON
-//! value and handed to V8 by the shared `Outcome::Done` path (`serde_v8`), the
-//! same path every machine family uses. V1 added `pvpSource` to it, so this
-//! pins two properties the lab memory A/B relies on:
+//! value and handed to V8 by the shared `Outcome::Done` path
+//! (`materialize::machine_v8::value_to_v8`), the same path every machine family
+//! uses. V1 added `pvpSource` to it, so this pins the properties the lab memory
+//! A/B relies on:
 //!
 //! 1. every summary has the same own keys in the same order, whether
 //!    `pvpSource` is `null` or a source (the field is never added
-//!    conditionally), and the envelope the script sees has fast properties;
-//! 2. (The V8 used-heap bound for 1 000 retained summaries is the unit test
+//!    conditionally);
+//! 2. the envelope, the `value` and the `report` the script sees all have fast
+//!    properties and `Object.prototype`, with no script-side shape preparation
+//!    (AGENTS.md: "built from a cached shape, never relying on a JS path to
+//!    warm one"): the objects are built from a cached template, so a
+//!    dictionary-mode object fails here;
+//! 3. (The V8 used-heap bound for 1 000 retained summaries is the unit test
 //!    `materialize::machine_v8::tests`, which measures one isolate directly.)
-//!
-//! Design/code difference: §9.6 expects the summary to be "built from a cached
-//! shape" with fast properties. The shared path builds `value` and `report` as
-//! null-prototype dictionary-mode objects (printed below as `dictionary`), for
-//! every family. This test therefore does not require fast properties on
-//! them; see the V1 report.
 //!
 //! This is a `harness = false` executable so `--allow-natives-syntax` can be set before any V8 platform exists.
 
@@ -173,23 +173,16 @@ fn main() {
         .map(|key| serde_json::Value::from(*key))
         .collect();
     for (index, row) in facts.iter().enumerate() {
-        assert!(
-            row["envelope"]["fast"].as_bool().unwrap_or(false),
-            "summary {index} envelope must have fast properties: {row}"
-        );
-        assert!(
-            row["envelope"]["prototype"].as_bool().unwrap_or(false),
-            "summary {index} envelope must keep Object.prototype: {row}"
-        );
-        // Every summary is built the same way, so every one has the same mode.
-        assert_eq!(
-            (&row["report"]["fast"], &row["report"]["prototype"]),
-            (
-                &facts[0]["report"]["fast"],
-                &facts[0]["report"]["prototype"]
-            ),
-            "summary {index} report is built unlike the first"
-        );
+        for part in ["envelope", "value", "report"] {
+            assert!(
+                row[part]["fast"].as_bool().unwrap_or(false),
+                "summary {index} {part} must have fast properties: {row}"
+            );
+            assert!(
+                row[part]["prototype"].as_bool().unwrap_or(false),
+                "summary {index} {part} must keep Object.prototype: {row}"
+            );
+        }
         assert_eq!(
             row["report"]["keys"].as_array().expect("keys"),
             &expected,
@@ -205,14 +198,8 @@ fn main() {
         );
     }
     println!(
-        "combat summary objects: report fast={} object-prototype={} ({})",
-        facts[0]["report"]["fast"],
-        facts[0]["report"]["prototype"],
-        if facts[0]["report"]["fast"] == true {
-            "fast"
-        } else {
-            "dictionary"
-        }
+        "combat summary objects: envelope fast={} value fast={} report fast={}",
+        facts[0]["envelope"]["fast"], facts[0]["value"]["fast"], facts[0]["report"]["fast"]
     );
     assert!(facts[0]["pvpSource"].is_null());
     assert_eq!(facts[1]["pvpSource"], "request");

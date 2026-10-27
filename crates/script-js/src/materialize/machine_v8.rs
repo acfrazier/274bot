@@ -23,8 +23,16 @@ use rustyscript::deno_core::error::JsError;
 use rustyscript::deno_core::serde_v8;
 use rustyscript::{json_args, Runtime};
 use serde_json::Value;
+use std::cell::RefCell;
+use std::rc::Rc;
 
 pub(super) fn install(runtime: &mut Runtime) -> Result<(), String> {
+    // An existing cache stays; it holds shapes only, never a materialized
+    // value.
+    runtime
+        .deno_runtime()
+        .v8_isolate()
+        .set_slot(Rc::new(RefCell::new(ValueShapes::default())));
     callback_v8::install(runtime, "__rs2b0t_machine_start", start_callback)?;
     callback_v8::install(runtime, "__rs2b0t_machine_take", take_callback)
 }
@@ -150,7 +158,7 @@ fn outcome_envelope<'s>(
 ) -> callback_v8::JsResult<'s, v8::Local<'s, v8::Value>> {
     match outcome {
         Outcome::Done(value) => {
-            let value = serde_v8::to_v8(scope, &value)
+            let value = value_to_v8(scope, &value, 0)
                 .map_err(|e| callback_v8::type_error(scope, &format!("machine value: {e}")))?;
             envelope(scope, "done", "value", value)
         }
@@ -185,6 +193,126 @@ fn envelope<'s>(
 ) -> callback_v8::JsResult<'s, v8::Local<'s, v8::Value>> {
     let kind = callback_v8::string(scope, kind);
     callback_v8::object(scope, &[("kind", kind), (field, value)])
+}
+
+/// Most distinct object shapes one isolate caches for machine values.
+const MAX_VALUE_SHAPES: usize = 64;
+/// Most keys an object may have to get a cached shape.
+const MAX_SHAPE_KEYS: usize = 32;
+/// Deepest nesting built natively; a deeper value goes through `serde_v8`.
+const MAX_VALUE_DEPTH: usize = 8;
+
+/// Per-isolate templates that give a machine's `Done` value objects fast
+/// properties.
+///
+/// `serde_v8` builds every JSON object with a null prototype, which V8 keeps in
+/// dictionary mode. A template installs the object's complete key list once;
+/// V8 migrates the cached instantiation to fast properties and copies that
+/// layout into every instance, so writing the values afterwards updates
+/// existing fields and never adds one (the same layout rule as the entity
+/// rows). The cache holds the templates only: no materialized value, bounded
+/// by [`MAX_VALUE_SHAPES`], dropped with the isolate.
+#[derive(Default)]
+struct ValueShapes {
+    shapes: Vec<ValueShape>,
+}
+
+struct ValueShape {
+    keys: Box<[Box<str>]>,
+    template: v8::Global<v8::ObjectTemplate>,
+}
+
+impl ValueShapes {
+    fn find(&self, map: &serde_json::Map<String, Value>) -> Option<&ValueShape> {
+        self.shapes.iter().find(|shape| {
+            shape.keys.len() == map.len()
+                && shape.keys.iter().zip(map.keys()).all(|(a, b)| **a == **b)
+        })
+    }
+}
+
+/// The template for `map`'s ordered key list, built on first use. `None` when
+/// the object has no shape worth caching (empty, too many keys) or the cache
+/// is full: the caller then builds it without one.
+fn shape_template<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    map: &serde_json::Map<String, Value>,
+) -> Option<v8::Local<'s, v8::ObjectTemplate>> {
+    if map.is_empty() || map.len() > MAX_SHAPE_KEYS {
+        return None;
+    }
+    let shapes = scope.get_slot::<Rc<RefCell<ValueShapes>>>()?.clone();
+    if let Some(shape) = shapes.borrow().find(map) {
+        return Some(v8::Local::new(scope, &shape.template));
+    }
+    if shapes.borrow().shapes.len() >= MAX_VALUE_SHAPES {
+        return None;
+    }
+    let template = v8::ObjectTemplate::new(scope);
+    let placeholder: v8::Local<v8::Data> = v8::undefined(scope).into();
+    for key in map.keys() {
+        let name =
+            v8::String::new_from_utf8(scope, key.as_bytes(), v8::NewStringType::Internalized)?;
+        template.set(name.into(), placeholder);
+    }
+    shapes.borrow_mut().shapes.push(ValueShape {
+        keys: map.keys().map(|key| key.as_str().into()).collect(),
+        template: v8::Global::new(scope, template),
+    });
+    Some(template)
+}
+
+/// `value` as a V8 value, the same data `serde_v8::to_v8` builds but with
+/// objects that carry fast properties (see [`ValueShapes`]) and
+/// `Object.prototype`. Numbers outside `i32`, objects without a cached shape
+/// and values nested deeper than [`MAX_VALUE_DEPTH`] go through `serde_v8`.
+fn value_to_v8<'s>(
+    scope: &mut v8::HandleScope<'s>,
+    value: &Value,
+    depth: usize,
+) -> Result<v8::Local<'s, v8::Value>, String> {
+    let fallback =
+        |scope: &mut v8::HandleScope<'s>| serde_v8::to_v8(scope, value).map_err(|e| e.to_string());
+    Ok(match value {
+        Value::Null => v8::null(scope).into(),
+        Value::Bool(on) => v8::Boolean::new(scope, *on).into(),
+        Value::Number(number) => match number.as_i64().and_then(|n| i32::try_from(n).ok()) {
+            Some(n) => v8::Integer::new(scope, n).into(),
+            None => return fallback(scope),
+        },
+        Value::String(text) => match v8::String::new(scope, text) {
+            Some(text) => text.into(),
+            None => return fallback(scope),
+        },
+        _ if depth >= MAX_VALUE_DEPTH => return fallback(scope),
+        Value::Array(items) => {
+            let mut elements = Vec::with_capacity(items.len());
+            for item in items {
+                elements.push(value_to_v8(scope, item, depth + 1)?);
+            }
+            v8::Array::new_with_elements(scope, &elements).into()
+        }
+        Value::Object(map) if map.is_empty() => v8::Object::new(scope).into(),
+        Value::Object(map) => {
+            let Some(template) = shape_template(scope, map) else {
+                return fallback(scope);
+            };
+            let object = template
+                .new_instance(scope)
+                .ok_or_else(|| "object instantiation failed".to_string())?;
+            for (key, item) in map {
+                let name = v8::String::new_from_utf8(
+                    scope,
+                    key.as_bytes(),
+                    v8::NewStringType::Internalized,
+                )
+                .ok_or_else(|| "key allocation failed".to_string())?;
+                let item = value_to_v8(scope, item, depth + 1)?;
+                object.create_data_property(scope, name.into(), item);
+            }
+            object.into()
+        }
+    })
 }
 
 /// Length of `__rs2b0t_host.interact`: where machine ops sit in the tick
@@ -477,9 +605,11 @@ mod tests {
     #[test]
     fn a_thousand_combat_summaries_bound_the_collected_v8_heap() {
         const SUMMARIES: u64 = 1_000;
-        // Measured: about 1.3 MiB (each summary is three dictionary-mode objects
-        // from the shared `serde_v8` path); the bound is 1.5x of that.
-        const HEAP_GROWTH_LIMIT: usize = 2 * 1024 * 1024;
+        // Measured: 359 424 bytes (about 351 KiB; each summary is three
+        // fast-property objects built from cached templates), down from
+        // 1 341 024 bytes when the shared `serde_v8` path built them in
+        // dictionary mode; the bound is 1.5x of the measure.
+        const HEAP_GROWTH_LIMIT: usize = 512 * 1024;
         crate::platform::bootstrap_test_v8_platform();
         let mut runtime = Runtime::new(RuntimeOptions::default()).unwrap();
         callback_v8::install_ops(&mut runtime).unwrap();
@@ -527,5 +657,63 @@ mod tests {
             all_keys,
             "every summary has all thirteen report fields in order"
         );
+    }
+
+    /// `value_to_v8` hands the script the same data `serde_v8::to_v8` would
+    /// (scalars, nested arrays and objects, key order, numbers outside `i32`,
+    /// empty containers, objects beyond the shape limits and past the shape
+    /// cache), and keeps the cache bounded.
+    #[test]
+    fn shaped_values_equal_the_serde_values_and_the_cache_stays_bounded() {
+        crate::platform::bootstrap_test_v8_platform();
+        let mut runtime = Runtime::new(RuntimeOptions::default()).unwrap();
+        callback_v8::install_ops(&mut runtime).unwrap();
+        install(&mut runtime).unwrap();
+        let wide: serde_json::Map<String, Value> = (0..=MAX_SHAPE_KEYS)
+            .map(|index| (format!("k{index}"), Value::from(index)))
+            .collect();
+        let mut deep = Value::from(1);
+        for _ in 0..MAX_VALUE_DEPTH + 2 {
+            deep = serde_json::json!({ "inner": deep });
+        }
+        let mut values = vec![
+            Value::Null,
+            Value::from(true),
+            Value::from(-7),
+            Value::from(0.25),
+            Value::from(4_294_967_296_u64),
+            Value::from("héllo ✓"),
+            serde_json::json!([]),
+            serde_json::json!({}),
+            serde_json::json!({ "z": 1, "a": [1, "two", null, { "b": false }], "m": { "x": 1.5 } }),
+            serde_json::json!({ "z": 2, "a": [], "m": { "x": 2.5 } }),
+            Value::Object(wide),
+            deep,
+        ];
+        // More distinct shapes than the cache holds.
+        for index in 0..MAX_VALUE_SHAPES + 8 {
+            values.push(serde_json::json!({ format!("shape{index}"): index }));
+        }
+        {
+            let mut scope = runtime.deno_runtime().handle_scope();
+            for value in &values {
+                let shaped = value_to_v8(&mut scope, value, 0).expect("shaped value");
+                let serde = serde_v8::to_v8(&mut scope, value).expect("serde value");
+                let shaped: Value = serde_v8::from_v8(&mut scope, shaped).unwrap();
+                let serde: Value = serde_v8::from_v8(&mut scope, serde).unwrap();
+                assert_eq!(shaped, serde, "{value}");
+                // Same key order as the input object, which `from_v8` keeps.
+                assert_eq!(shaped.to_string(), serde.to_string(), "{value}");
+            }
+        }
+        let cached = runtime
+            .deno_runtime()
+            .v8_isolate()
+            .get_slot::<Rc<RefCell<ValueShapes>>>()
+            .expect("installed")
+            .borrow()
+            .shapes
+            .len();
+        assert_eq!(cached, MAX_VALUE_SHAPES, "the cache is full and stays full");
     }
 }
