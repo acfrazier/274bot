@@ -485,6 +485,23 @@ pub(super) fn door_dir_none_arrived(
     }
 }
 
+/// The terminal outcome of a transport hop whose budget is spent: the player
+/// never left the send tile (`Dropped`) or has not finished the crossing
+/// (`Expired`). It carries the real send count and the last refusal.
+fn hop_stalled(here: WorldTile, hop: &TransportHop) -> TravelOutcome {
+    TravelOutcome::Stalled {
+        at: here,
+        aiming: hop.to,
+        why: if hop.sent_tile == Some(here) {
+            HopFailure::Dropped
+        } else {
+            HopFailure::Expired
+        },
+        tries: hop.tries.max(1),
+        last_refusal: hop.occupied.last_refusal(),
+    }
+}
+
 impl FollowRun {
     /// One transport-hop settle step: match the positional `arrived(edge.to)`
     /// arm (level + proximity, so a level-changing transport completes only
@@ -1107,6 +1124,13 @@ impl FollowRun {
                             .observe(tick)
                             .saturating_sub(hop.occupied.mark);
                         if landed < delay {
+                            // The landing delay is part of the hop: a
+                            // crossing still settling when the hop budget
+                            // is spent ends here, as an unlanded hop does.
+                            if hop.ticks_waited.get() > self.budget {
+                                fire_leg(options, &hop.leg, LegPhase::Failed);
+                                return Poll::Terminal(hop_stalled(here, &hop));
+                            }
                             self.transport = Some(hop);
                             return Poll::Watching;
                         }
@@ -1132,17 +1156,7 @@ impl FollowRun {
             }
             Some(Outcome::Expired { .. }) => {
                 fire_leg(options, &hop.leg, LegPhase::Failed);
-                Poll::Terminal(TravelOutcome::Stalled {
-                    at: here,
-                    aiming: hop.to,
-                    why: if hop.sent_tile == Some(here) {
-                        HopFailure::Dropped
-                    } else {
-                        HopFailure::Expired
-                    },
-                    tries: hop.tries.max(1),
-                    last_refusal: hop.occupied.last_refusal(),
-                })
+                Poll::Terminal(hop_stalled(here, &hop))
             }
             // `poll` never produces `Refused` (only `Interactions` does);
             // keep watching defensively.
@@ -1159,19 +1173,8 @@ impl FollowRun {
                     return Poll::Terminal(self.npc_expired(snapshot, &hop));
                 }
                 if hop.ticks_waited.get() > self.budget {
-                    let why = if hop.sent_tile == Some(here) {
-                        HopFailure::Dropped
-                    } else {
-                        HopFailure::Expired
-                    };
                     fire_leg(options, &hop.leg, LegPhase::Failed);
-                    Poll::Terminal(TravelOutcome::Stalled {
-                        at: here,
-                        aiming: hop.to,
-                        why,
-                        tries: hop.tries.max(1),
-                        last_refusal: hop.occupied.last_refusal(),
-                    })
+                    Poll::Terminal(hop_stalled(here, &hop))
                 } else {
                     self.transport = Some(hop);
                     Poll::Watching
@@ -1220,7 +1223,9 @@ impl FollowRun {
     /// out its content hold in observed ticks; a silent drop is sent again
     /// at once. Then the interaction goes out again. The hop clock runs from
     /// the first send and a retry does not restart it: the hold has to fit
-    /// in what the budget has left, so the retries are finite. After the
+    /// in what the budget has left, and a send is admitted only while the
+    /// clock, including this poll's ticks, is within the budget, so the
+    /// retries are finite and none goes out after the deadline. After the
     /// budget is spent the outcome is the terminal `Dropped` stall, whose
     /// `tries` is the real send count and whose `last_refusal` is the last
     /// refusal; the refusal also reaches `on_event` as
@@ -1241,6 +1246,11 @@ impl FollowRun {
         };
         let here = here(snapshot);
         let tick = snapshot.tick();
+        // The silent-drop test reads the clock up to the previous poll. The
+        // budget decisions also count this poll's packets: a poll that comes
+        // after several game ticks must not send on the previous poll's clock.
+        let counted = hop.ticks_waited.get();
+        let spent = hop.ticks_waited.observe(tick);
         if hop.occupied.resume_tick.is_none() {
             // A refused crossing never moves the player.
             if hop.sent_tile != Some(here) {
@@ -1248,10 +1258,7 @@ impl FollowRun {
             }
             let refusal = observed_occupied_refusal(snapshot, hop.chat_seq);
             let message = refusal.and_then(|index| OCCUPIED_MESSAGES.get(index));
-            // The clock counts up to the previous poll: this poll credits
-            // its tick after recovery.
-            let spent = hop.ticks_waited.get();
-            let attempt = spent.saturating_sub(hop.occupied.mark);
+            let attempt = counted.saturating_sub(hop.occupied.mark);
             if message.is_none() && attempt <= crossing_ticks {
                 return None;
             }
@@ -1276,13 +1283,7 @@ impl FollowRun {
             }
             if !retry {
                 fire_leg(options, &hop.leg, LegPhase::Failed);
-                return Some(Poll::Terminal(TravelOutcome::Stalled {
-                    at: here,
-                    aiming: hop.to,
-                    why: HopFailure::Dropped,
-                    tries: hop.tries,
-                    last_refusal: hop.occupied.last_refusal(),
-                }));
+                return Some(Poll::Terminal(hop_stalled(here, hop)));
             }
             hop.occupied.resume_tick = Some(resume_tick);
             if message.is_some_and(|message| message.boxed)
@@ -1296,6 +1297,11 @@ impl FollowRun {
         if tick < hop.occupied.resume_tick? {
             return None;
         }
+        if spent > self.budget {
+            // The hold ended after the deadline: no send is admitted.
+            fire_leg(options, &hop.leg, LegPhase::Failed);
+            return Some(Poll::Terminal(hop_stalled(here, hop)));
+        }
         let edge = match &hop.leg {
             Leg::Transport { edge } => edge.clone(),
             Leg::Walk { .. } => return None,
@@ -1307,7 +1313,7 @@ impl FollowRun {
         let poll = self.resend_transport(d, snapshot, hop, options, target, &edge);
         if matches!(poll, Poll::Watching) {
             // The new attempt starts at this tick; the clock goes on.
-            hop.occupied.mark = hop.ticks_waited.observe(tick);
+            hop.occupied.mark = spent;
         }
         Some(poll)
     }

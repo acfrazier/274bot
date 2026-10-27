@@ -550,3 +550,124 @@ fn a_crossing_that_never_began_is_reported_as_such_when_its_retries_end() {
         "{outcome:?}"
     );
 }
+
+#[test]
+fn a_landing_still_settling_at_the_hop_deadline_ends_the_hop() {
+    // Five refusals, then the sixth send is accepted and the player lands
+    // 58 ticks in. The ledge's 9-tick landing delay would end after the
+    // 60-tick hop budget, so the hop stalls at the deadline instead of
+    // reporting the crossing it would have finished later.
+    let mut options = TravelOptions::default();
+    let mut x = Crossing::new(crossing_edge(9));
+    let mut seen = 0;
+    let mut ticks = 0;
+    let outcome = loop {
+        if ticks == 58 {
+            plant_player(&mut x.c, 10, 4);
+        }
+        if let Some(outcome) = x.poll(&mut options) {
+            break outcome;
+        }
+        if x.rec.loc_ops > seen {
+            seen = x.rec.loc_ops;
+            if seen < 6 {
+                x.c.add_chat(0, LEDGE_BUSY, "");
+            } else {
+                plant_player(&mut x.c, 6, 4);
+            }
+        }
+        x.tick();
+        ticks += 1;
+        assert!(ticks < 100, "the hop must end");
+    };
+    assert_eq!(x.rec.loc_ops, 6, "five refused sends and the accepted one");
+    assert_eq!(
+        (ticks, outcome),
+        (
+            61,
+            TravelOutcome::Stalled {
+                at: crossing_edge(9).to,
+                aiming: crossing_edge(9).to,
+                why: HopFailure::Expired,
+                tries: 6,
+                last_refusal: Some(TransportRefusal::Busy(LEDGE_BUSY)),
+            }
+        ),
+        "the landing delay draws on the shared 60-tick hop budget"
+    );
+}
+
+#[test]
+fn a_hold_that_ends_after_the_hop_deadline_sends_nothing() {
+    let mut options = TravelOptions {
+        budget_ticks_per_hop: 12,
+        ..TravelOptions::default()
+    };
+    let mut x = Crossing::new(crossing_edge(9));
+    assert!(x.poll(&mut options).is_none(), "the first send");
+    x.c.add_chat(0, LEDGE_BUSY, "");
+    assert!(
+        x.next_poll(&mut options).is_none(),
+        "the refusal starts the 9-tick hold"
+    );
+    assert_eq!(x.rec.loc_ops, 1);
+    // The follower next polls 20 game ticks later: the hold has ended, and
+    // so has the 12-tick hop budget.
+    x.tick_batch(20);
+    let outcome = x.poll(&mut options);
+    assert_eq!(x.rec.loc_ops, 1, "no send after the hop deadline");
+    assert_eq!(
+        outcome,
+        Some(TravelOutcome::Stalled {
+            at: WorldTile {
+                x: 3202,
+                z: 3204,
+                level: 0
+            },
+            aiming: crossing_edge(9).to,
+            why: HopFailure::Dropped,
+            tries: 1,
+            last_refusal: Some(TransportRefusal::Busy(LEDGE_BUSY)),
+        })
+    );
+}
+
+#[test]
+fn a_refusal_read_late_counts_the_ticks_of_its_poll_against_the_deadline() {
+    let resumes = Rc::new(RefCell::new(Vec::new()));
+    let sink = Rc::clone(&resumes);
+    let mut options = TravelOptions {
+        budget_ticks_per_hop: 12,
+        on_event: Some(Box::new(move |event| {
+            if let TravelEvent::TransportBusy { resume_tick, .. } = event {
+                sink.borrow_mut().push(resume_tick);
+            }
+        })),
+        ..TravelOptions::default()
+    };
+    let mut x = Crossing::new(crossing_edge(9));
+    assert!(x.poll(&mut options).is_none(), "the first send");
+    // The refusal is read on a poll 4 game ticks after the send: 4 ticks
+    // and the 9-tick hold do not fit in the 12-tick budget.
+    x.c.add_chat(0, LEDGE_BUSY, "");
+    x.tick_batch(4);
+    let outcome = x.poll(&mut options);
+    assert_eq!(
+        *resumes.borrow(),
+        vec![None],
+        "no retry is announced past the deadline"
+    );
+    assert!(
+        matches!(
+            outcome,
+            Some(TravelOutcome::Stalled {
+                why: HopFailure::Dropped,
+                tries: 1,
+                last_refusal: Some(TransportRefusal::Busy(LEDGE_BUSY)),
+                ..
+            })
+        ),
+        "{outcome:?}"
+    );
+    assert_eq!(x.rec.loc_ops, 1, "no send after the hop deadline");
+}

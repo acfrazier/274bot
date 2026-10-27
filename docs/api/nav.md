@@ -840,7 +840,11 @@ dropped and is sent again at once. One hop clock runs from the hop's first
 send and a retry does not restart it. Refused tries, holds, the accepted try
 and the landing delay all draw on the original hop budget (60 ticks by
 default), so the retries are finite: a ledge that stays busy gets seven
-sends. The final `Stalled { why: Dropped }` carries the real send count and
+sends. A retry is sent only while the clock, including the ticks the
+current poll observed, is within the budget, so a poll that comes late never
+sends after the deadline. A crossing whose landing delay has not ended when
+the budget is spent stops there as `Stalled { why: Expired }`, even if it
+would have ended later. The final `Stalled` carries the real send count and
 `last_refusal` (`TransportRefusal::Busy(text)`, or `NotStarted` for a silent
 drop), also for a caller with no `on_event`. Every refusal reaches `on_event`
 as `TravelEvent::TransportBusy`. Transport, approach and landing clocks count
