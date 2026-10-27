@@ -965,16 +965,15 @@ one for each `PLAYER_INFO`, never wall-clock time. The budget is the walking
 depth in steps to the nearest goal of the preferred tier in the live reach
 flood (of the fallback tier when no preferred goal is in the flood), plus 12
 ticks. The 12 ticks cover the engine's tick order and one dropped click that
-the nav executor re-sends after 5 idle ticks, twice. When no goal is in the
-flood (a route that needs a transport, or no live flood), the budget is the
-largest route length plus the same 12 ticks. The largest route length is
-4,000,000 steps, the router's limit of settled nodes for one search
-(`NODE_BUDGET`). The reach flood has no depth limit of its own. A route of `n`
-steps passes through `n + 1` settled nodes, and a player moves at least one
-tile per game tick (`engine/src/engine/entity/PathingEntity.ts:144-149`). This
-bound covers walking only. A route that waits on a transport has no tick bound
-from it. In practice the ten-minute active-clock deadline of the walk machine
-ends such a walk first. When the budget is spent, the step cancels the walk
+the nav executor re-sends after 5 idle ticks, twice. A walk to a goal moves
+at least one tile per game tick
+(`engine/src/engine/entity/PathingEntity.ts:144-149`), so the depth bounds
+its walking. The reach flood has no depth limit of its own, and the `script`
+crate reaches nav only through `nav_planner::contract`, so it has no router
+search bound to use. When no goal is in the flood (a route that needs a
+transport, or no live flood), the walk has no tick budget and no clock. It
+ends by its walk receipt or by the existing ten-minute active-clock deadline
+of the walk machine. When the budget is spent, the step cancels the walk
 and plans the next tier from the observed position, the same as for a failed
 route. An abort walk that arrives while an
 attacker remains, or a pass that spends its tiers, transfers into a guarded

@@ -2779,6 +2779,39 @@
       "reason": "Survival replay-versus-guard oracle retains its exact synthetic route while comparing the two real decisions.",
       "removal_endpoint": "T5.1",
       "classification": "qualified_path"
+    },
+    {
+      "id": "test_nav_implementation_import|crates/script/src/quester/families/combat_tests.rs|cfg(test)::module:tests|nav_planner::collision::WorldCollision|qualified_path",
+      "category": "test_nav_implementation_import",
+      "path": "crates/script/src/quester/families/combat_tests.rs",
+      "symbol": "nav_planner::collision::WorldCollision",
+      "cfg_or_target": "cfg(test)::module:tests",
+      "owner": "T5",
+      "reason": "The reference-pack escape tests need the real baked collision to prove a reachable exit; no contract accessor builds this fixture.",
+      "removal_endpoint": "T5.1",
+      "classification": "qualified_path"
+    },
+    {
+      "id": "test_nav_implementation_import|crates/script/src/quester/families/combat_tests.rs|cfg(test)::module:tests|nav_planner::collision::pack_walk|qualified_path",
+      "category": "test_nav_implementation_import",
+      "path": "crates/script/src/quester/families/combat_tests.rs",
+      "symbol": "nav_planner::collision::pack_walk",
+      "cfg_or_target": "cfg(test)::module:tests",
+      "owner": "T5",
+      "reason": "The reference-pack escape tests need the real baked collision to prove a reachable exit; no contract accessor builds this fixture.",
+      "removal_endpoint": "T5.1",
+      "classification": "qualified_path"
+    },
+    {
+      "id": "test_nav_implementation_import|crates/script/src/quester/families/combat_tests.rs|cfg(test)::module:tests|nav_planner::paint::flood_components|qualified_path",
+      "category": "test_nav_implementation_import",
+      "path": "crates/script/src/quester/families/combat_tests.rs",
+      "symbol": "nav_planner::paint::flood_components",
+      "cfg_or_target": "cfg(test)::module:tests",
+      "owner": "T5",
+      "reason": "The reference-pack escape tests need the real baked collision to prove a reachable exit; no contract accessor builds this fixture.",
+      "removal_endpoint": "T5.1",
+      "classification": "qualified_path"
     }
   ],
   "test_exceptions": [
