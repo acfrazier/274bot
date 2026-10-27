@@ -3051,11 +3051,10 @@ fn browse_window_body(ui: &Ui, session: &mut Session) {
             present.push(cat);
         }
     }
+    // The chips show the saved order with every other present category after
+    // it. Only a drop (`category_chip_dnd`) saves an order: a frame never
+    // does, so a failed save is never written again without a new drop.
     let order = resolve_category_order(&session.ui.script_category_order, &present);
-    if order != session.ui.script_category_order {
-        session.ui.script_category_order = order.clone();
-        let _ = session.persist_panel_serializable(&["script_category_order"], &order);
-    }
     if !order.is_empty() {
         script_category_chips(ui, session, &order);
         ui.spacing();

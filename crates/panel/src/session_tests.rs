@@ -10253,6 +10253,86 @@ fn settings_feedback_a_failed_dont_show_again_stays_at_the_notice_until_retried(
     assert_eq!(s.core.setting_failure(notice), None);
 }
 
+/// Headed defect 3 (2026-10-27): "Don't show again" in the render-all
+/// warning renders every wall member only once its save is durable. While
+/// another program holds the real preferences lock, the box and the render
+/// policy stay at "only render focused"; after the failure, and after the
+/// lock is released, they still do, and nothing the panel reported as not
+/// saved (this acknowledgement and the background-bots one) is written
+/// later without a new action.
+#[test]
+fn settings_feedback_render_all_waits_for_a_durable_dont_show_again_and_a_failure_changes_nothing()
+{
+    use frontend_core::{OperatorNotice, Setting, SettingStatus};
+    let (mut s, _iso) = two_live_session("panel-s3-r5-render-all");
+    s.select("bob");
+    assert!(s.background_ack_open);
+    assert!(s.focus.lock().unwrap().only_render_selected);
+    let lock = crate::test_support::hold_preferences_lock(&s.preferences);
+    s.ack_background_bots();
+    s.wall.render_all_warn_open = true;
+    s.wall.render_all_understood = true;
+    s.confirm_render_all(true);
+    let notices = [
+        Setting::Notice(OperatorNotice::BackgroundBots),
+        Setting::Notice(OperatorNotice::RenderAllWarning),
+    ];
+    for _ in 0..3 {
+        s.pump_status();
+        s.poll_panel_preferences();
+        assert!(matches!(
+            s.core.setting_status(notices[1]),
+            SettingStatus::Pending
+        ));
+        assert!(
+            s.focus.lock().unwrap().only_render_selected,
+            "nothing renders all while the save is pending"
+        );
+    }
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while notices
+        .iter()
+        .any(|notice| s.core.setting_failure(*notice).is_none())
+    {
+        s.pump_status();
+        s.poll_panel_preferences();
+        assert!(Instant::now() < deadline, "the held writes never failed");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(
+        s.focus.lock().unwrap().only_render_selected,
+        "after the failure the box and the rendering stay at only render focused"
+    );
+    assert!(
+        s.wall.render_all_warn_open,
+        "the warning stays open with its failure"
+    );
+
+    drop(lock);
+    let until = Instant::now() + Duration::from_secs(2);
+    while Instant::now() < until || s.preferences_pending() {
+        s.pump_status();
+        s.poll_panel_preferences();
+        assert!(
+            Instant::now() < until + Duration::from_secs(30),
+            "a write never ended"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(
+        s.focus.lock().unwrap().only_render_selected,
+        "the released lock changes nothing without a new action"
+    );
+    let saved = crate::test_support::preferences_on_disk(&s.preferences);
+    for key in ["render_all_warning_ack", "background_bots_ack"] {
+        assert_eq!(
+            saved.get(key),
+            None,
+            "{key} was written after the lock was released, without a user action"
+        );
+    }
+}
+
 /// Panel-owned presentation choices (palette, layout): the preview shows at
 /// once, and a failed write drops only that preview, shows the durable value
 /// again, and reports at the setting. The remembered launch choices are not

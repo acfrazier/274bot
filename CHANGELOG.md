@@ -49,7 +49,15 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   refuses outright (it is full) is logged as a refused command. A failed
   automatic save of the Load order shows
   in the Fleet window (panel) and on the message line (terminal app), which
-  also says "Load order: saving…" while it is written.
+  also says "Load order: saving…" while it is written. A failed save is final:
+  nothing saves it again by itself, also not after the other program releases
+  the preferences file; only a new change of that setting starts a new save.
+  Before, the panel's Browse window saved the category order again in each
+  frame after a failure, so its category chips and the General config's
+  Global section said "Saving…" without end, and the order was written later
+  without a new action. "Don't show again" in the panel's render-all warning
+  now renders every wall member only when the acknowledgement is saved; if
+  the save fails, **only render focused** stays on.
 
 ## [0.2.7] — 2026-10-26 — Beta 2
 
