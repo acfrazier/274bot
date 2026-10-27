@@ -316,6 +316,17 @@ fn g2_d1_real_reactor_keeps_established_wss_live_during_6s_and_35s_verifier_hold
                 !held.retired.acknowledged(),
                 "held verifier still owns its socket"
             );
+            if seconds == 35 {
+                assert_eq!(
+                    held.shared.control.take_primary_reply(),
+                    Some(PrimaryReply::ConnectFailed {
+                        binding: held.binding,
+                        kind: io::ErrorKind::TimedOut,
+                        errno: None,
+                    }),
+                    "initial TLS must report its deadline before verifier return"
+                );
+            }
             let released_at = entered_at.elapsed();
             verifier.release();
             if seconds == 6 {
@@ -327,9 +338,7 @@ fn g2_d1_real_reactor_keeps_established_wss_live_during_6s_and_35s_verifier_hold
                 held.exchange(&service, &held_server, 0, false);
                 held.cancel(&service);
             } else {
-                held.wait(&service, || {
-                    held.retired.acknowledged() && held.shared.is_closed()
-                });
+                held.wait(&service, || held.retired.acknowledged());
             }
             healthy.exchange(&service, &healthy_server, sequence + 1, false);
             audit.assert_game_worker_calls(3);
