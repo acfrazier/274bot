@@ -55,10 +55,10 @@ pub struct CompiledTick<'a> {
     /// Lazy, read-only danger admission for compiled target selection.
     /// Missing navigation data is not permission to start a new walk.
     pub walk_danger: Option<&'a dyn crate::native::WalkDangerQuery>,
-    /// The selected pack's wilderness zones and level formula, borrowed from
-    /// the host's nav world. `None` in a bare ctx or when the host has no nav
-    /// pack; the combat zone gate then reads every tile as outside.
-    pub wilderness: Option<&'a nav_planner::transport::WildernessRules>,
+    /// The Wilderness levels of the selected pack, borrowed from the host's
+    /// nav world. `None` in a bare ctx or when the host has no nav pack; the
+    /// combat zone gate then reads every tile as outside.
+    pub wilderness: Option<&'a dyn crate::native::WildernessLevels>,
     /// The operator's global PvP setting, read from the host's cached
     /// preferences. `None` when the host has no ready preferences.
     pub pvp_globals: Option<crate::native::PvpGlobals>,

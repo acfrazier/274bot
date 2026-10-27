@@ -714,6 +714,11 @@ fn a_held_preference_write_stays_pending_and_settles_done_when_it_lands() {
 #[test]
 fn the_pvp_setting_writes_one_member_logs_one_audit_line_and_a_refusal_logs_one_line() {
     use crate::log::{global, LogScope, LogView};
+    // The audit lines go to the process-wide log: no other test may write the
+    // setting while this one counts.
+    let _audit_lock = crate::pvp_prefs::TEST_AUDIT_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let dir = scratch("pvp-setting");
     let mut d = driver_in(&dir, &["pvp1-alice"]);
     let lines_with = |filter: &str, needle: &str| -> Vec<String> {
@@ -731,6 +736,7 @@ fn the_pvp_setting_writes_one_member_logs_one_audit_line_and_a_refusal_logs_one_
         Some(false),
         "off until the operator turns it on"
     );
+    let audit_before = lines_with("pvp.start_fights", "pvp.start_fights").len();
 
     let on = d
         .submit(
@@ -744,8 +750,15 @@ fn the_pvp_setting_writes_one_member_logs_one_audit_line_and_a_refusal_logs_one_
         serde_json::Value::Bool(true)
     );
     let audit = lines_with("pvp.start_fights", "pvp.start_fights");
-    assert_eq!(audit.len(), 1, "one write, one audit line: {audit:?}");
-    assert!(audit[0].contains("true"), "{audit:?}");
+    assert_eq!(
+        audit.len() - audit_before,
+        1,
+        "one write, one audit line: {audit:?}"
+    );
+    assert!(
+        audit.last().is_some_and(|line| line.contains("true")),
+        "{audit:?}"
+    );
     assert!(
         crate::pvp_prefs::pvp_start_fights(&d.session().preferences().expect("bound"))
             .expect("the projection is ready"),

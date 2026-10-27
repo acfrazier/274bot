@@ -432,17 +432,25 @@ impl Pair {
         self.observed[index].lock().expect("observed lock").clone()
     }
 
-    /// The name account `index` shows to the other, as the other's frame sees it.
+    /// The name account `index` shows to the other, as the other's frame sees
+    /// it. A pen teleport or a fresh login takes a few frames to show the row,
+    /// so this waits for it (bounded).
     fn display_name(&self, index: usize) -> String {
         let wanted = client::util::JString::to_screen_name(&self.accounts[index]);
         let wanted = wanted.as_str().to_owned();
-        let seen = self.snapshot(1 - index);
-        assert!(
-            seen.players.iter().any(|row| row.name == wanted),
-            "the other account does not see {wanted:?}: {:?}",
-            seen.players.iter().map(|row| &row.name).collect::<Vec<_>>()
-        );
-        wanted
+        let deadline = Instant::now() + Duration::from_secs(15);
+        loop {
+            let seen = self.snapshot(1 - index);
+            if seen.players.iter().any(|row| row.name == wanted) {
+                return wanted;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "the other account does not see {wanted:?}: {:?}",
+                seen.players.iter().map(|row| &row.name).collect::<Vec<_>>()
+            );
+            thread::sleep(Duration::from_millis(50));
+        }
     }
 
     /// Load the phased consumer on account `index` and wait until it runs.

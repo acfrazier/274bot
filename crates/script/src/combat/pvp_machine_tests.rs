@@ -2,18 +2,17 @@
 //! opt-in to start a fight with a player, the candidate check, the zone gate,
 //! the attack label, the typed refusals and the server-line table.
 use super::*;
-use crate::native::PvpGlobals;
+use crate::native::{PvpGlobals, WildernessLevels};
 use api::snapshot::ChatLineView;
-use nav_planner::transport::{WildernessRules, WildernessZone};
 use select::PvpSource;
 
 /// `areas/area_wilderness/configs/wilderness_zones.dbrow` (the main zone,
 /// levels 0-3, and the Edgeville dungeon zone) with the level formula of
 /// `wilderness_levels.rs2:4-16`: one level per 8 tiles from the zone's south edge.
-fn content_wilderness() -> WildernessRules {
-    WildernessRules {
+fn content_wilderness() -> TestWilderness {
+    TestWilderness {
         zones: vec![
-            WildernessZone {
+            TestZone {
                 x1: 2944,
                 z1: 3520,
                 x2: 3391,
@@ -22,7 +21,7 @@ fn content_wilderness() -> WildernessRules {
                 level2: 3,
                 origin_z: 3520,
             },
-            WildernessZone {
+            TestZone {
                 x1: 2944,
                 z1: 9920,
                 x2: 3391,
@@ -32,8 +31,6 @@ fn content_wilderness() -> WildernessRules {
                 origin_z: 9920,
             },
         ],
-        divisor: 8,
-        offset: 1,
     }
 }
 

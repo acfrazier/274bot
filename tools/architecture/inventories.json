@@ -2744,6 +2744,14 @@
       "classification": "scalar",
       "owner": "T3",
       "reason": "F0-5 frontend seam; register in the introducing commit, no allowance."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/pvp_prefs.rs|PvpSettingView",
+      "path": "crates/frontend-core/src/pvp_prefs.rs",
+      "symbol": "PvpSettingView",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "PVP-V1-R1: the shown value of the global start-fights row (two small flags) shared by the panel and the TUI; register in the introducing commit, no allowance."
     }
   ],
   "violations": [

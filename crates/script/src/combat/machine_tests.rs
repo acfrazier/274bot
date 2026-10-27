@@ -13,6 +13,43 @@ use api::snapshot::{
 };
 use std::time::Instant;
 
+/// One zone of a synthetic Wilderness (the shape of a `wilderness_zones` pair).
+#[derive(Debug, Clone, Copy)]
+pub(super) struct TestZone {
+    pub(super) x1: i32,
+    pub(super) z1: i32,
+    pub(super) x2: i32,
+    pub(super) z2: i32,
+    pub(super) level1: i32,
+    pub(super) level2: i32,
+    pub(super) origin_z: i32,
+}
+
+/// A synthetic Wilderness the unit tests lend the machine: the content's level
+/// formula (`wilderness_levels.rs2:4-16`, one level per 8 tiles from the
+/// zone's south edge, starting at 1) over a list of zones. The script crate
+/// reads no navigation implementation type; the host adapts the real pack.
+#[derive(Debug, Clone, Default)]
+pub(super) struct TestWilderness {
+    pub(super) zones: Vec<TestZone>,
+}
+
+impl crate::native::WildernessLevels for TestWilderness {
+    fn level(&self, tile: api::WorldTile) -> i32 {
+        self.zones
+            .iter()
+            .find(|zone| {
+                tile.x >= zone.x1
+                    && tile.x <= zone.x2
+                    && tile.z >= zone.z1
+                    && tile.z <= zone.z2
+                    && tile.level >= zone.level1
+                    && tile.level <= zone.level2
+            })
+            .map_or(0, |zone| (tile.z - zone.origin_z) / 8 + 1)
+    }
+}
+
 struct Lease;
 impl NativeMachine for Lease {
     type Args = ();
@@ -37,7 +74,7 @@ struct Runtime {
     condition: Option<api::condition::BotCondition>,
     poison_unknown_pulse: u8,
     cure_poison: crate::survival::CurePoison,
-    wilderness: Option<nav_planner::transport::WildernessRules>,
+    wilderness: Option<TestWilderness>,
 }
 impl Runtime {
     fn context<R>(
@@ -71,7 +108,10 @@ impl Runtime {
             evidence,
             pin: &self.pin,
             snapshot: SnapshotView::new(Some(snapshot), evidence).with_reach(self.reach.as_ref()),
-            wilderness: self.wilderness.as_ref(),
+            wilderness: self
+                .wilderness
+                .as_ref()
+                .map(|levels| levels as &dyn crate::native::WildernessLevels),
             retained: &mut self.retained,
             action_id,
             active_now: Duration::from_millis(tick * 600),
@@ -282,7 +322,7 @@ struct Scene {
     varps: Vec<VarpView>,
     inventory: Vec<ItemView>,
     equipment: Vec<ItemView>,
-    wilderness: Option<nav_planner::transport::WildernessRules>,
+    wilderness: Option<TestWilderness>,
     globals: crate::native::PvpGlobals,
 }
 fn tile(x: i32, z: i32) -> api::WorldTile {
@@ -1021,8 +1061,8 @@ fn attacker_player_slot_reuse_cannot_retarget_an_existing_engagement() {
     attacker.actor.in_combat = true;
     scene.snapshot.seed_players(vec![attacker.clone()]);
     // The fight is in a (synthetic) Wilderness: players are attackable only there.
-    scene.wilderness = Some(nav_planner::transport::WildernessRules {
-        zones: vec![nav_planner::transport::WildernessZone {
+    scene.wilderness = Some(TestWilderness {
+        zones: vec![TestZone {
             x1: 2500,
             z1: 3150,
             x2: 2700,
@@ -1031,8 +1071,6 @@ fn attacker_player_slot_reuse_cannot_retarget_an_existing_engagement() {
             level2: 3,
             origin_z: 3150,
         }],
-        divisor: 8,
-        offset: 1,
     });
     let mut request = scene.request();
     request.target = Target::Attacker {

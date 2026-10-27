@@ -91,6 +91,11 @@ impl PvpSettingView {
     }
 }
 
+/// Serializes the tests that write the setting and count its audit lines in
+/// the process-wide log: another test's write would otherwise add a line.
+#[cfg(test)]
+pub(crate) static TEST_AUDIT_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -112,6 +117,9 @@ mod tests {
 
     #[test]
     fn the_setting_is_off_by_default_and_a_write_keeps_other_members() {
+        let _audit = TEST_AUDIT_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let (dir, prefs) = scratch("roundtrip");
         vault::write_private_file(
             &prefs.path(),

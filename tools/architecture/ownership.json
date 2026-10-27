@@ -7605,6 +7605,22 @@
     {
       "path": "crates/script-js/tests/slot_slot_tests.rs",
       "owner": "T1"
+    },
+    {
+      "path": "crates/frontend-core/src/pvp_prefs.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/host-play/src/api_pvp_live_tests.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/script-js/tests/combat_summary_shape.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/src/combat/pvp_machine_tests.rs",
+      "owner": "T2"
     }
   ]
 }

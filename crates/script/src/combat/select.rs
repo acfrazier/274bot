@@ -3,11 +3,10 @@ use super::frame::Frame;
 use super::request::{ActorKind, ActorRef, CombatRequest, Pick, PvpRefusal, Target};
 use super::tables::{CombatTables, PrayerRole, StyleMask};
 use super::threats::{StyleObs, Threat, ThreatSet};
-use crate::native::PvpGlobals;
+use crate::native::{PvpGlobals, WildernessLevels};
 use api::game_data::{DragonfireKind, NpcAttackKind, NpcNameRow, PrayerFact};
 use api::gather_methods::SceneRegionInput;
 use api::snapshot::{NpcView, PlayerView, WorldTile};
-use nav_planner::transport::WildernessRules;
 
 /// Which source authorised STARTING a fight with a player. Reported on the
 /// combat report, never re-derived (PVP-DESIGN-1026 §2.8).
@@ -90,7 +89,7 @@ pub fn zone_gate(
     my_combat_level: i32,
     their_combat_level: i32,
     tables: &CombatTables,
-    wilderness: Option<&WildernessRules>,
+    wilderness: Option<&dyn WildernessLevels>,
 ) -> Result<(), PvpRefusal> {
     if let Some(zones) = tables.selected().duel_zones() {
         if here.level == 0 {
@@ -110,7 +109,7 @@ pub fn zone_gate(
             }
         }
     }
-    let level = |tile: WorldTile| wilderness.map_or(0, |rules| rules.level(tile));
+    let level = |tile: WorldTile| wilderness.map_or(0, |levels| levels.level(tile));
     let ours = level(here);
     if ours < 1 {
         return Err(PvpRefusal::OutsideWilderness);

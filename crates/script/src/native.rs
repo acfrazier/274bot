@@ -162,6 +162,14 @@ pub enum WalkDanger<'a> {
     Unavailable,
 }
 
+/// The Wilderness level of a tile (content `~wilderness_level(coord)`: 0
+/// outside every zone, `areas/area_wilderness/scripts/wilderness_levels.rs2`),
+/// lent by the host from the selected nav pack. The script crate owns this
+/// shape so the combat machine reads no navigation implementation type.
+pub trait WildernessLevels: std::fmt::Debug {
+    fn level(&self, tile: WorldTile) -> i32;
+}
+
 /// A tick-borrowed query over the host's effective native walk permissions.
 /// Implementations resolve settings lazily and retain no state between ticks.
 pub trait WalkDangerQuery {
@@ -814,10 +822,10 @@ pub struct ActionContext<'a> {
     pub(crate) observed_walk_outcome_seq: u64,
     /// The host's cancel reason for `observed_walk_outcome_seq`.
     pub(crate) observed_walk_cancel_reason: WalkCancelReason,
-    /// The selected pack's wilderness zones and level formula, borrowed from the
-    /// host for this frame; `None` when the host has no nav pack. The combat
-    /// machine's zone gate treats `None` as "outside the wilderness".
-    pub(crate) wilderness: Option<&'a nav_planner::transport::WildernessRules>,
+    /// The Wilderness levels the host lends for this frame; `None` when the
+    /// host has no nav pack. The combat machine's zone gate treats `None` as
+    /// "outside the wilderness".
+    pub(crate) wilderness: Option<&'a dyn WildernessLevels>,
 }
 /// Track manual takeover outcomes relative to one native step's begin.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -1252,9 +1260,9 @@ impl<'a> ActionContext<'a> {
     pub fn snapshot(&self) -> SnapshotView<'a> {
         self.snapshot
     }
-    /// The selected pack's wilderness rules for this frame, when the host has
-    /// a nav pack.
-    pub fn wilderness(&self) -> Option<&'a nav_planner::transport::WildernessRules> {
+    /// The Wilderness levels the host lends for this frame, when it has a nav
+    /// pack.
+    pub fn wilderness(&self) -> Option<&'a dyn WildernessLevels> {
         self.wilderness
     }
     /// The host's complete live condition, checked against the frame at entry.
