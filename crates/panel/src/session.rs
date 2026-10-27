@@ -910,6 +910,21 @@ enum LaunchEffect {
     ServerRevision(u16),
 }
 
+impl LaunchEffect {
+    /// Whether this (newer) durable choice replaces `older`: the same
+    /// setting for the same bot.
+    fn supersedes(&self, older: &Self) -> bool {
+        match (self, older) {
+            (Self::Raster { profile, .. }, Self::Raster { profile: other, .. })
+            | (Self::Lowmem { profile, .. }, Self::Lowmem { profile: other, .. }) => {
+                profile == other
+            }
+            (Self::ServerRevision(_), Self::ServerRevision(_)) => true,
+            _ => false,
+        }
+    }
+}
+
 /// What the launch controls show while their save is pending: the latest
 /// request's choice (its identity, so a result ends only its own preview).
 #[derive(Debug, Default, Clone, Copy)]
@@ -948,9 +963,11 @@ impl LaunchPreviews {
     }
 }
 
-/// A failed panel-owned write kept at its setting.
+/// A failed panel-owned write kept at its setting: the request that failed
+/// (a later request's success ends it, an older one's never does).
 struct PanelWriteError {
     path: Vec<String>,
+    request: u64,
     text: String,
     since: Instant,
 }
@@ -1999,6 +2016,10 @@ impl Session {
     pub(crate) fn poll_panel_preferences(&mut self) {
         self.follow_core_preferences();
         self.expire_panel_write_errors(Instant::now());
+        // Completed writes end in request order (the order the writer made
+        // them durable), whatever order their results are read in. Only the
+        // newest durable choice of each launch setting takes effect.
+        let mut durable_effects = Vec::new();
         let mut index = 0;
         while index < self.panel_preference_writes.len() {
             let outcome = match &mut self.panel_preference_writes[index].update {
@@ -2009,16 +2030,20 @@ impl Session {
                 index += 1;
                 continue;
             };
-            let write = self.panel_preference_writes.swap_remove(index);
+            let write = self.panel_preference_writes.remove(index);
             match outcome {
                 Ok(()) => {
                     self.clear_succeeded_panel_members(&write.members);
                     if let Some(effect) = write.effect {
-                        self.apply_launch_effect(effect);
+                        durable_effects.retain(|older: &LaunchEffect| !effect.supersedes(older));
+                        durable_effects.push(effect);
                     }
                 }
                 Err(error) => self.fail_panel_members(&write.members, &error.to_string()),
             }
+        }
+        for effect in durable_effects {
+            self.apply_launch_effect(effect);
         }
 
         if let Ok(document) = self.preferences.document() {
@@ -2217,7 +2242,7 @@ impl Session {
                     value: None,
                 };
                 let message = error.to_string();
-                self.set_preference_write_error(Some(&member), &message, Instant::now());
+                self.set_preference_write_error(&member, &message, Instant::now());
                 Err(message)
             }
         }
@@ -2331,8 +2356,9 @@ impl Session {
 
     /// A panel-owned write became durable: its request ends (the document
     /// holds its value, and a newer request of the same member keeps
-    /// previewing its own) and the failure shown at the setting is resolved.
-    /// Requests are matched by identity, never by the value they carry.
+    /// previewing its own) and an older request's failure shown at the
+    /// setting is resolved; a newer request's failure stays. Requests are
+    /// matched by identity, never by the value they carry.
     fn clear_succeeded_panel_members(&mut self, members: &[PanelPreferenceMember]) {
         for member in members {
             self.launch_previews.settle(member.request);
@@ -2341,7 +2367,7 @@ impl Session {
             #[cfg(test)]
             crate::ui_state::commit_test_member(&member.path, &member.value);
             self.preference_write_errors
-                .retain(|error| error.path != member.path);
+                .retain(|error| error.path != member.path || error.request > member.request);
         }
         self.rebase_panel_members();
     }
@@ -2357,7 +2383,7 @@ impl Session {
             self.launch_previews.settle(member.request);
             self.pending_panel_members
                 .retain(|pending| pending.request != member.request);
-            self.set_preference_write_error(Some(member), error, now);
+            self.set_preference_write_error(member, error, now);
         }
         self.rebase_panel_members();
     }
@@ -2401,23 +2427,27 @@ impl Session {
 
     fn set_preference_write_error(
         &mut self,
-        member: Option<&PanelPreferenceMember>,
+        member: &PanelPreferenceMember,
         error: &str,
         now: Instant,
     ) {
-        let path = member.map_or_else(Vec::new, |member| member.path.clone());
+        let request = member.request;
         let text = format!("Preferences not saved: {error}");
         match self
             .preference_write_errors
             .iter_mut()
-            .find(|shown| shown.path == path)
+            .find(|shown| shown.path == member.path)
         {
+            // A newer request's failure already shows: it stays.
+            Some(shown) if shown.request > request => {}
             Some(shown) => {
+                shown.request = request;
                 shown.text = text;
                 shown.since = now;
             }
             None => self.preference_write_errors.push(PanelWriteError {
-                path,
+                path: member.path.clone(),
+                request,
                 text,
                 since: now,
             }),

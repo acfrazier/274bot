@@ -10547,6 +10547,92 @@ fn settings_feedback_panel_requests_own_their_preview_and_failure_by_identity() 
         s.panel_member_error(&["chrome"]).is_some(),
         "the second request failed and says so"
     );
+
+    // Three requests end before one poll sees them: A and B land, the newest
+    // (C) fails. The control shows B's durable value, and an older success
+    // never ends C's failure, whatever order the poll meets them in.
+    s.expire_panel_write_errors(Instant::now() + frontend_core::ERROR_MESSAGE_TIMEOUT);
+    assert_eq!(s.panel_member_error(&["chrome"]), None);
+    disk.fail_after(6);
+    for accent in ["#0A0A0A", "#0B0B0B", "#0C0C0C"] {
+        s.persist_panel_serializable(&["chrome", "accent"], accent)
+            .unwrap();
+        s.ui.chrome.accent = accent.into();
+    }
+    for _ in 0..3 {
+        disk.release_one();
+    }
+    await_panel_terminals(&s);
+    s.poll_panel_preferences();
+    assert_eq!(s.panel_preference_writes_pending(), 0);
+    assert_eq!(
+        s.preferences.document().unwrap()["chrome"]["accent"],
+        "#0B0B0B"
+    );
+    assert_eq!(s.ui.chrome.accent, "#0B0B0B", "B's durable value shows");
+    assert!(
+        s.panel_member_error(&["chrome"])
+            .is_some_and(|text| text.starts_with("Preferences not saved: ")),
+        "the newest request failed; an older success must not clear its error"
+    );
+}
+
+/// Wait at the service, without polling the panel, until every queued panel
+/// write has its terminal result, so that the next poll meets them all
+/// completed at once.
+fn await_panel_terminals(s: &Session) {
+    let service = s
+        .core
+        .local_state_for_test()
+        .expect("the panel owns its process state service");
+    for write in &s.panel_preference_writes {
+        if let frontend_core::prefs::Update::Queued(update) = &write.update {
+            assert_ne!(
+                service.wait_request(update.request_id(), Duration::from_secs(30)),
+                host_play::local_state::RequestState::Pending,
+                "a held write never ended"
+            );
+        }
+    }
+}
+
+/// Three remembered raster choices (CPU, Off, GPU) end before one poll sees
+/// them: what takes effect (the panel's applied raster and the profile's
+/// saved raster) is the newest durable choice, GPU, as the document holds.
+#[test]
+fn settings_feedback_completed_launch_writes_take_effect_in_request_order() {
+    use frontend_core::command::RasterMode;
+    let _iso = IsolatedStores::enter("panel-s3-r3-launch-order");
+    let path = tmp_vault("launch-order.vault");
+    let mut s = Session::new();
+    install_vault(
+        &mut s.core,
+        VaultFixture::create(&path, "test-passphrase-01"),
+    );
+    vault_upsert(&mut s.core, profile("alice", "pw", 42));
+    hydrate_panel_preferences(&mut s);
+    s.select("alice");
+    assert_eq!(s.focused_raster(), RasterMode::Gpu);
+    let disk = SeqDisk::install(&s);
+    for raster in [RasterMode::Cpu, RasterMode::Off, RasterMode::Gpu] {
+        assert!(s.set_focused_raster(raster));
+    }
+    for _ in 0..3 {
+        disk.release_one();
+    }
+    await_panel_terminals(&s);
+    s.poll_panel_preferences();
+    // Later writes (the profile's raster) run unheld.
+    drop(disk);
+    s.core.flush_writes();
+    let durable = s.preferences.document().unwrap()["raster"].clone();
+    assert_eq!(durable, "gpu");
+    assert_eq!(
+        (s.focused_raster(), s.core.profile("alice").unwrap().raster()),
+        (RasterMode::Gpu, RasterMode::Gpu),
+        "all writes completed before one panel poll; durable raster={durable}"
+    );
+    assert_eq!(s.ui.raster, RasterMode::Gpu);
 }
 
 /// A second process's later saved values reach every panel-owned control, not
