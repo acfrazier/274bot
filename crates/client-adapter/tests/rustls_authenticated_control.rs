@@ -1211,8 +1211,7 @@ impl LaneAttempt {
         config: Arc<ClientConfig>,
         send_buffer: Option<usize>,
     ) -> Self {
-        static NEXT_CONNECTION: std::sync::atomic::AtomicU64 =
-            std::sync::atomic::AtomicU64::new(1);
+        static NEXT_CONNECTION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
         let poll = Poll::new().expect("create local TLS poller");
         let waker =
             Arc::new(Waker::new(poll.registry(), WAKER_TOKEN).expect("create handoff waker"));
