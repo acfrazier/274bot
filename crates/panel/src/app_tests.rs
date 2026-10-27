@@ -7129,6 +7129,68 @@ fn settings_feedback_saving_preferences_settles_after_a_failed_save() {
     drop(lock);
 }
 
+/// Headed defect 3, the visible state: with the real preferences lock held
+/// by another program, "Don't show again" in the render-all warning leaves
+/// the rail's "only render focused" box ticked (and the focused-only render
+/// policy it draws) while the save is pending, after it failed, and after
+/// the lock is released without a new action.
+#[test]
+fn settings_feedback_only_render_focused_stays_ticked_until_dont_show_again_is_durable() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let _iso = frontend_core::test_support::IsolatedStores::enter("panel-s3-r5-render-gate");
+    let mut ctx = dock_host_context();
+    super::amber_style(&mut ctx);
+    let mut session = crate::session::Session::new();
+    hydrate_panel_preferences(&mut session);
+    let notice = frontend_core::Setting::Notice(frontend_core::OperatorNotice::RenderAllWarning);
+    let gate = |ui: &dear_imgui_rs::Ui, s: &mut crate::session::Session| {
+        super::render_gate(ui, s);
+    };
+    let ticked = |shown: &str| shown.contains("[x]") && !shown.contains("[ ]");
+    assert!(ticked(&drawn_text(&mut ctx, &mut session, &gate)));
+    let lock = crate::test_support::hold_preferences_lock(&session.preferences);
+    let [understood, _ok, _cancel, dont_show] = open_render_all_warning(&mut ctx, &mut session);
+    render_all_click(&mut ctx, &mut session, understood);
+    render_all_click(&mut ctx, &mut session, dont_show);
+    let shown = preference_frame(&mut ctx, &mut session, &gate);
+    assert!(
+        matches!(
+            session.core.setting_status(notice),
+            frontend_core::SettingStatus::Pending
+        ),
+        "the held acknowledgement is pending"
+    );
+    assert!(
+        ticked(&shown),
+        "pending: the box stays ticked and nothing renders all: {shown}"
+    );
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while session.core.setting_failure(notice).is_none() {
+        let shown = preference_frame(&mut ctx, &mut session, &gate);
+        assert!(ticked(&shown), "pending: {shown}");
+        assert!(Instant::now() < deadline, "the held write never failed");
+        thread::sleep(Duration::from_millis(5));
+    }
+    let shown = preference_frame(&mut ctx, &mut session, &gate);
+    assert!(
+        ticked(&shown),
+        "failed: the box shows the saved value: {shown}"
+    );
+    assert!(session.focus.lock().unwrap().only_render_selected);
+
+    drop(lock);
+    let until = Instant::now() + Duration::from_secs(2);
+    while Instant::now() < until {
+        let shown = preference_frame(&mut ctx, &mut session, &gate);
+        assert!(
+            ticked(&shown),
+            "released: nothing changed by itself: {shown}"
+        );
+        thread::sleep(Duration::from_millis(20));
+    }
+    assert!(session.focus.lock().unwrap().only_render_selected);
+}
+
 /// OK alone keeps today's behaviour: it applies for this launch, saves
 /// nothing, and the next launch asks again.
 #[test]
