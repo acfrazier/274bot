@@ -115,7 +115,7 @@ impl Session {
     pub fn set_profile_setting(
         &mut self,
         profile: &str,
-        _source: CardSource,
+        source: CardSource,
         name: &str,
         _path: &Path,
         id: &str,
@@ -126,10 +126,11 @@ impl Session {
             None => {
                 #[cfg(feature = "js")]
                 {
-                    (ScriptChoice::loaded(_source, name), CardKind::Script)
+                    (ScriptChoice::loaded(source, name), CardKind::Script)
                 }
                 #[cfg(not(feature = "js"))]
                 {
+                    let _ = source;
                     return false;
                 }
             }

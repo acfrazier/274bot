@@ -8427,6 +8427,23 @@ fn the_message_line_shows_and_expires_refusals_at_both_sizes() {
     let _iso = iso;
 }
 
+/// The `p` toggle needs a script paint to toggle: with none the command is
+/// unavailable and its refusal says what is missing. The key must not toggle
+/// game chat with nothing to toggle.
+#[test]
+fn toggle_game_chat_refuses_without_a_script_paint() {
+    let mut app = crate::test_support::fleet_app(&["alice"]);
+    app.chat_data.script_paint = None;
+    assert_eq!(
+        crate::commands::Command::ToggleGameChat.availability(&app),
+        Err(crate::commands::Unavailable::NoScriptPaint)
+    );
+    assert_eq!(
+        crate::commands::Unavailable::NoScriptPaint.text(),
+        "no script paint to toggle"
+    );
+}
+
 /// Whether the process log holds a refusal line containing `line`. The log
 /// redacts every registered password (the short ones other tests register
 /// too, such as "test"), wherever it appears: so a line that holds a path is

@@ -539,6 +539,7 @@ impl Command {
             Command::ScriptReload => &[NoReloadCard],
             #[cfg(feature = "js")]
             Command::ScriptReloadCancel => &[NoReloadWaiting],
+            Command::ToggleGameChat => &[NoScriptPaint],
             Command::MapSearch
             | Command::MapRecenter
             | Command::MapGroup
