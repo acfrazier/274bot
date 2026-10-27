@@ -74,6 +74,29 @@ fn victim_ready(snapshot: &api::snapshot::GameSnapshot) -> bool {
         .any(|stat| stat.index == 3 && stat.base == 20 && stat.effective == 3)
 }
 
+/// The pen fight's attacker: far stronger than its opponent (attack and
+/// strength 60, hitpoints 60 against 20), so that the chance of our own loss
+/// is negligible and "until `Killed`" does not depend on a coin flip between
+/// equals. A pen has no level range, so unequal levels do not matter there.
+fn pen_attacker_seed() -> Vec<String> {
+    [
+        ("attack", 60),
+        ("strength", 60),
+        ("defence", 20),
+        ("hitpoints", 60),
+    ]
+    .into_iter()
+    .map(|(skill, level)| format!("setstat {skill} {level}"))
+    .collect()
+}
+
+fn pen_attacker_ready(snapshot: &api::snapshot::GameSnapshot) -> bool {
+    snapshot
+        .stats()
+        .iter()
+        .any(|stat| stat.index == 3 && stat.base == 60 && stat.effective >= 58)
+}
+
 struct Pair {
     play: Play,
     accounts: [String; 2],
@@ -127,8 +150,16 @@ fn start_pair(
         names[0].clone(),
         Seat {
             observed: Arc::clone(&observed[0]),
-            cheats: healthy_seed(),
-            ready: Box::new(healthy_ready),
+            cheats: if duel {
+                pen_attacker_seed()
+            } else {
+                healthy_seed()
+            },
+            ready: if duel {
+                Box::new(pen_attacker_ready)
+            } else {
+                Box::new(healthy_ready)
+            },
             drive: duel.then(|| Arc::clone(&drives[0])),
             partner: screen(&names[1]),
         },
@@ -462,8 +493,17 @@ impl Pair {
             }
             assert!(
                 Instant::now() < deadline,
-                "the other account does not see {wanted:?}: {:?}",
-                seen.players.iter().map(|row| &row.name).collect::<Vec<_>>()
+                "the other account does not see {wanted:?}: rows {:?}; it stands at {:?} (ready {}), the target at {:?} (ready {}); duel drives {:?}",
+                seen.players.iter().map(|row| &row.name).collect::<Vec<_>>(),
+                seen.tile,
+                seen.ready,
+                self.snapshot(index).tile,
+                self.snapshot(index).ready,
+                json!(self
+                    .drives
+                    .iter()
+                    .map(|drive| drive.lock().expect("duel drive lock").clone())
+                    .collect::<Vec<_>>())
             );
             thread::sleep(Duration::from_millis(50));
         }
