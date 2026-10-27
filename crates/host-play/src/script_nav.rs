@@ -6504,6 +6504,7 @@ impl NavBot {
                 aiming,
                 why,
                 tries,
+                ..
             } => Some(script::native::WalkEnd::Stalled(Arc::new(
                 script::native::WalkStall {
                     at: *at,
@@ -6546,6 +6547,19 @@ impl NavBot {
             .is_some_and(|owner| owner.live() && owner.request_id().get() == self.walk_request_id)
         {
             self.walk_outcome_detail = match outcome {
+                // The typed stall keeps its fields in the receipt. An agility
+                // crossing that was refused names that refusal in the detail,
+                // which the receipt prefers to the stall's own text.
+                nav_executor::TravelOutcome::Stalled {
+                    at,
+                    aiming,
+                    why,
+                    tries,
+                    last_refusal: Some(refusal),
+                } => Some(Arc::from(format!(
+                    "walk stalled ({why:?}) at {at:?}, aiming at {aiming:?}, tries: {tries}, \
+                     last refusal: {refusal}"
+                ))),
                 nav_executor::TravelOutcome::Stalled { .. } => None,
                 _ => Some(Arc::from(format!("native follow failed: {outcome:?}"))),
             };

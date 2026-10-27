@@ -7909,6 +7909,7 @@ fn follow_ends_blocked_when_the_adjacent_route_end_refuses_every_click() {
             },
             why: HopFailure::EndBlocked,
             tries: 0,
+            last_refusal: None,
         }),
         "the fifth distinct refused tick ends the follow"
     );

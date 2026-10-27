@@ -19,10 +19,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   instead of giving up. The Yanille dungeon ledge ("The ledge is being
   used") stays held for at most 9 game ticks after a refusal, so the bot
   waits that long and crosses again. A busy rope swing works the same way
-  with a wait of 5 game ticks. The bot stops after about 60 game ticks of
-  refused tries, and the failure then reports how many times it tried.
+  with a wait of 5 game ticks. The bot stops after about 60 game ticks in
+  total for one crossing (refused tries, waits and the crossing itself), and
+  the failure then reports how many times it tried and the last refusal.
   Transport time limits now count game ticks instead of polls, so a burst
-  of polls inside one tick no longer ends a crossing early.
+  of polls inside one tick no longer ends a crossing early, and a slow
+  poll that misses several ticks no longer extends it.
 
 ## [0.2.7] — 2026-10-26 — Beta 2
 
