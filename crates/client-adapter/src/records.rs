@@ -7,6 +7,9 @@
 use std::cell::UnsafeCell;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+/// Preserve 64 outstanding complete-record boundaries (128 payload bytes).
+/// Each u16 holds the full 5000-byte output-ring extent; fewer slots would
+/// backpressure bursts of small records before the byte ring fills.
 pub const RECORD_SLOTS: usize = 64;
 
 #[derive(Debug)]

@@ -227,3 +227,25 @@ impl SharedConnection {
         std::mem::size_of::<Self>() + std::mem::size_of::<ControlCells>()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn connection_storage_has_bounded_headroom() {
+        // Observed Arc allocations: 38,040 shared + 616 control bytes.
+        // Allow 256 extra bytes; this inline bound also leaves Arc-header room.
+        const CEILING: usize = 38_656 + 256;
+        assert!(
+            SharedConnection::known_struct_bytes() <= CEILING,
+            "connection storage {} exceeds {CEILING}",
+            SharedConnection::known_struct_bytes()
+        );
+        // Preserve two maximum inbound messages, one complete outbound
+        // record and 64 record boundaries without steady-state allocation.
+        assert_eq!(IN_RING_BYTES, 2 * super::super::ring::WS_MESSAGE_LIMIT);
+        assert_eq!(OUT_RING_BYTES, 5000);
+        assert_eq!(super::super::records::RECORD_SLOTS, 64);
+    }
+}

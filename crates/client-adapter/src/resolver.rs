@@ -2,8 +2,9 @@
 //!
 //! The caller supplies its slot identity and Park wake. Name resolution itself
 //! runs only on the single `dns-resolver` worker. Pending state, cache entries,
-//! and result cells all use fixed-capacity representations; a blocked native
-//! lookup retains its active request until it actually returns.
+//! and result cells use bounded representations. Waiter and cache storage grow
+//! only as requests and answers arrive; a blocked native lookup retains its
+//! active request until it actually returns.
 
 use std::net::{SocketAddr, ToSocketAddrs};
 use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -184,8 +185,7 @@ pub enum ResolverAdmissionError {
     Unavailable(ResolverUnavailable),
 }
 
-/// Construction errors are limited to invalid configured client capacity or
-/// failure to allocate the bounded waiter table.
+/// Configuration errors reported by resolver construction.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ResolverConfigError {
     NoSlots,
@@ -402,11 +402,6 @@ impl Resolver {
         if max_slots > MAX_CONFIGURED_SLOTS {
             return Err(ResolverConfigError::TooManySlots);
         }
-        let mut waiters = Vec::new();
-        waiters
-            .try_reserve_exact(max_slots)
-            .map_err(|_| ResolverConfigError::AllocationFailed)?;
-        waiters.resize_with(max_slots, || None);
         let policy = configuration
             .qualified_threshold()
             .map_or(ResolverHealthPolicy::Unqualified, |threshold| {
@@ -418,7 +413,7 @@ impl Resolver {
                 queue: [0; MAX_PENDING_KEYS],
                 queue_head: 0,
                 queue_len: 0,
-                waiters,
+                waiters: Vec::new(),
                 active: None,
                 active_index: None,
                 shutdown: false,
@@ -426,7 +421,7 @@ impl Resolver {
                 policy,
                 cache_epoch: 0,
                 epoch_exhausted: false,
-                cache: [None; MAX_CACHE_ENTRIES],
+                cache: Vec::new(),
                 cache_bytes: 0,
                 cache_order: 0,
                 buffer_reserved: false,
@@ -434,6 +429,7 @@ impl Resolver {
             changed: Condvar::new(),
             backend,
             clock,
+            waiter_limit: max_slots,
             pending_bytes: Arc::new(AtomicUsize::new(0)),
         });
         let resolver = Arc::new(Self {
@@ -516,11 +512,16 @@ impl Resolver {
                 .position(Option::is_none)
                 .ok_or(ResolverAdmissionError::Busy)?,
         };
-        let waiter_index = state
-            .waiters
-            .iter()
-            .position(Option::is_none)
-            .ok_or(ResolverAdmissionError::Busy)?;
+        let waiter_index = if let Some(index) = state.waiters.iter().position(Option::is_none) {
+            index
+        } else {
+            if !reserve_bounded_slot(&mut state.waiters, self.inner.waiter_limit) {
+                return Err(ResolverAdmissionError::Busy);
+            }
+            let index = state.waiters.len();
+            state.waiters.push(None);
+            index
+        };
         let request_charge = if new_request { REQUEST_CHARGE } else { 0 };
         let add_buffer_charge =
             new_request && state.active.is_none() && state.queue_len == 0 && !state.buffer_reserved;
@@ -701,6 +702,7 @@ struct ResolverInner {
     changed: Condvar,
     backend: Arc<dyn ResolverBackend>,
     clock: Arc<dyn MonotonicClock>,
+    waiter_limit: usize,
     pending_bytes: Arc<AtomicUsize>,
 }
 
@@ -740,7 +742,7 @@ struct ResolverState {
     policy: ResolverHealthPolicy,
     cache_epoch: u64,
     epoch_exhausted: bool,
-    cache: [Option<CacheEntry>; MAX_CACHE_ENTRIES],
+    cache: Vec<Option<CacheEntry>>,
     cache_bytes: usize,
     cache_order: u128,
     buffer_reserved: bool,
@@ -976,6 +978,22 @@ fn reserve_pending(ledger: &AtomicUsize, bytes: usize) -> bool {
                 .filter(|next| *next <= MAX_PENDING_BYTES)
         })
         .is_ok()
+}
+
+fn reserve_bounded_slot<T>(entries: &mut Vec<T>, limit: usize) -> bool {
+    if entries.len() >= limit {
+        return false;
+    }
+    if entries.len() == entries.capacity() {
+        let next_capacity = entries.capacity().saturating_mul(2).max(1).min(limit);
+        if entries
+            .try_reserve_exact(next_capacity - entries.len())
+            .is_err()
+        {
+            return false;
+        }
+    }
+    true
 }
 
 fn release_pending(ledger: &AtomicUsize, bytes: usize) {
@@ -1305,7 +1323,7 @@ fn policy_threshold(policy: ResolverHealthPolicy) -> Duration {
 
 #[expect(
     clippy::large_types_passed_by_value,
-    reason = "Worker transfers its owned request and result into the cache without allocation"
+    reason = "The worker transfers its bounded result without boxing or cloning"
 )]
 fn finish_work(
     inner: &ResolverInner,
@@ -1430,7 +1448,7 @@ fn cache_lookup(
 
 #[expect(
     clippy::large_types_passed_by_value,
-    reason = "The owned resolver result moves into its bounded cache slot"
+    reason = "The owned resolver result moves into bounded cache storage"
 )]
 fn cache_insert(
     state: &mut ResolverState,
@@ -1468,8 +1486,15 @@ fn cache_insert(
         state.cache[index] = None;
         state.cache_bytes = state.cache_bytes.saturating_sub(CACHE_ENTRY_CHARGE);
     }
-    let Some(index) = state.cache.iter().position(Option::is_none) else {
-        return;
+    let index = if let Some(index) = state.cache.iter().position(Option::is_none) {
+        index
+    } else {
+        if !reserve_bounded_slot(&mut state.cache, MAX_CACHE_ENTRIES) {
+            return;
+        }
+        let index = state.cache.len();
+        state.cache.push(None);
+        index
     };
     state.cache_order = state.cache_order.saturating_add(1);
     let insertion_order = state.cache_order;
@@ -1485,7 +1510,7 @@ fn cache_insert(
 }
 
 fn clear_cache(state: &mut ResolverState) {
-    state.cache = [None; MAX_CACHE_ENTRIES];
+    state.cache.fill(None);
     state.cache_bytes = 0;
 }
 
@@ -1770,6 +1795,93 @@ mod tests {
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             drop(state);
         }
+    }
+
+    #[test]
+    fn idle_resolver_has_no_waiter_or_cache_payload_reservation() {
+        // The 24 KiB cap leaves about 4 KiB beyond the fixed request and queue
+        // tables on supported 64-bit targets; variable payloads start in empty Vecs.
+        const MAX_INLINE_STATE_BYTES: usize = 24 * 1024;
+
+        let (resolver, _, _) = immediate(MAX_CONFIGURED_SLOTS);
+        let state = mutex_lock(&resolver.inner.state);
+        assert!(
+            std::mem::size_of::<ResolverState>() <= MAX_INLINE_STATE_BYTES,
+            "ResolverState grew beyond its 24 KiB inline-state budget"
+        );
+        assert!(state.waiters.is_empty());
+        assert_eq!(state.waiters.capacity(), 0);
+        assert!(state.cache.is_empty());
+        assert_eq!(state.cache.capacity(), 0);
+    }
+
+    #[test]
+    fn lazy_waiter_growth_reuse_and_cache_preserve_cancellation() {
+        let context = gated(MAX_CONFIGURED_SLOTS, ResolverConfiguration::unprofiled());
+        let (first_wake, _first_wakes) = wake_channel();
+        let first = ticket(&context.resolver, 1, 1, "lazy-cache", &first_wake).unwrap();
+        let call = context
+            .entered
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap();
+        let first_capacity = {
+            let state = mutex_lock(&context.resolver.inner.state);
+            assert_eq!(state.waiters.len(), 1);
+            assert_eq!(state.waiters.capacity(), 1);
+            assert!(state.cache.is_empty());
+            assert_eq!(state.cache.capacity(), 0);
+            state.waiters.capacity()
+        };
+
+        let (second_wake, second_wakes) = wake_channel();
+        let second = ticket(&context.resolver, 2, 1, "lazy-cache", &second_wake).unwrap();
+        let grown_capacity = {
+            let state = mutex_lock(&context.resolver.inner.state);
+            assert_eq!(state.waiters.len(), 2);
+            assert_eq!(state.waiters.capacity(), 2);
+            state.waiters.capacity()
+        };
+        assert!(grown_capacity > first_capacity);
+
+        assert!(first.cancel());
+        assert_eq!(
+            first.poll(),
+            ResolvePoll::Ready(Err(ResolverFailure::Cancelled))
+        );
+        drop(first);
+
+        let (replacement_wake, replacement_wakes) = wake_channel();
+        let replacement = ticket(&context.resolver, 1, 2, "lazy-cache", &replacement_wake).unwrap();
+        {
+            let state = mutex_lock(&context.resolver.inner.state);
+            assert_eq!(state.waiters.len(), 2);
+            assert_eq!(state.waiters.capacity(), grown_capacity);
+            assert_eq!(state.requests.iter().flatten().count(), 1);
+        }
+
+        call.result.send(Ok(address_list())).unwrap();
+        assert!(wait_ready(&second, &second_wakes).is_ok());
+        assert!(wait_ready(&replacement, &replacement_wakes).is_ok());
+        wait_until_idle(&context.resolver);
+        drop((second, replacement));
+        assert_eq!(context.resolver.pending_bytes(), 0);
+        {
+            let state = mutex_lock(&context.resolver.inner.state);
+            assert_eq!(state.cache.iter().flatten().count(), 1);
+            assert_eq!(state.cache.capacity(), 1);
+            assert_eq!(state.cache_bytes, CACHE_ENTRY_CHARGE);
+        }
+
+        let (cache_wake, _cache_wakes) = wake_channel();
+        let cached = ticket(&context.resolver, 3, 1, "lazy-cache", &cache_wake).unwrap();
+        assert!(matches!(cached.poll(), ResolvePoll::Ready(Ok(_))));
+        assert_eq!(cached.backend_timing(), None);
+        assert!(matches!(
+            context.entered.try_recv(),
+            Err(mpsc::TryRecvError::Empty)
+        ));
+        drop(cached);
+        assert_eq!(context.resolver.pending_bytes(), 0);
     }
 
     #[test]

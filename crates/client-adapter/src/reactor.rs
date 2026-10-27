@@ -1,7 +1,7 @@
 //! One owner of registered game sockets, control cells and fair local turns.
 //! Slot threads hold rings and identity-scoped handles, never native sockets.
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::io;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
@@ -71,28 +71,28 @@ impl Registration {
 }
 
 struct Registered {
-    entries: Vec<Option<Arc<Registration>>>,
+    // Sparse modulo-slot storage preserves identity checks without empty entries.
+    entries: HashMap<usize, Arc<Registration>>,
 }
 
 impl Registered {
     fn new() -> Self {
-        let mut entries = Vec::with_capacity(MAX_CONNECTIONS);
-        entries.resize_with(MAX_CONNECTIONS, || None);
-        Self { entries }
+        Self {
+            entries: HashMap::new(),
+        }
     }
 
     fn get(&self, id: u64) -> Option<Arc<Registration>> {
         self.entries
-            .get(index(id))?
-            .as_ref()
+            .get(&index(id))
             .filter(|entry| entry.id == id)
             .cloned()
     }
 
     fn remove(&mut self, id: u64) -> Option<Arc<Registration>> {
-        let slot = self.entries.get_mut(index(id))?;
-        if slot.as_ref().is_some_and(|entry| entry.id == id) {
-            slot.take()
+        let slot = index(id);
+        if self.entries.get(&slot).is_some_and(|entry| entry.id == id) {
+            self.entries.remove(&slot)
         } else {
             None
         }
@@ -205,18 +205,16 @@ impl TransportService {
     pub fn maintain(&self, now: Instant) -> Option<ReactorLoss> {
         let loss = self.health.maintain(now)?;
         if !self.loss_notified.swap(true, Ordering::AcqRel) {
-            for slot in 0..MAX_CONNECTIONS {
-                let park = {
-                    self.registry
-                        .lock()
-                        .expect("connection registry mutex is not poisoned")
-                        .entries[slot]
-                        .as_ref()
-                        .map(|entry| Arc::clone(&entry.shared.control.park))
-                };
-                if let Some(park) = park {
-                    park.publish();
-                }
+            let parks = self
+                .registry
+                .lock()
+                .expect("connection registry mutex is not poisoned")
+                .entries
+                .values()
+                .map(|entry| Arc::clone(&entry.shared.control.park))
+                .collect::<Vec<_>>();
+            for park in parks {
+                park.publish();
             }
         }
         Some(loss)
@@ -332,8 +330,8 @@ impl TransportService {
             if usize::try_from(id).is_err() {
                 return Err(io::Error::other("game connection identity exhausted"));
             }
-            let slot = &mut registry.entries[index(id)];
-            if slot.is_some() {
+            let slot = index(id);
+            if registry.entries.contains_key(&slot) {
                 continue;
             }
             let shared = SharedConnection::new(id, park);
@@ -343,13 +341,16 @@ impl TransportService {
                 binding: 1,
                 attempt: attempt_generation,
             };
-            *slot = Some(Arc::new(Registration {
-                id,
-                initial: binding,
-                shared: Arc::clone(&shared),
-                submitted: AtomicBool::new(false),
-                charge: Mutex::new(Some(charge)),
-            }));
+            registry.entries.insert(
+                slot,
+                Arc::new(Registration {
+                    id,
+                    initial: binding,
+                    shared: Arc::clone(&shared),
+                    submitted: AtomicBool::new(false),
+                    charge: Mutex::new(Some(charge)),
+                }),
+            );
             return Ok((binding, shared));
         }
         Err(io::Error::new(
@@ -725,7 +726,8 @@ struct Reactor {
     health: Arc<ReactorHealth>,
     shutdown: Arc<AtomicBool>,
     tls_lane: Arc<Mutex<Option<Arc<GameTlsLane>>>>,
-    live: Vec<Option<Live>>,
+    // Sparse modulo-slot storage keeps token lookup compatible with ID reuse.
+    live: HashMap<usize, Live>,
     active: Vec<u64>,
     local: VecDeque<u64>,
 }
@@ -740,21 +742,19 @@ impl Reactor {
         shutdown: Arc<AtomicBool>,
         tls_lane: Arc<Mutex<Option<Arc<GameTlsLane>>>>,
     ) -> Self {
-        let mut live = Vec::with_capacity(MAX_CONNECTIONS);
-        live.resize_with(MAX_CONNECTIONS, || None);
         Self {
             poll,
             events: Events::with_capacity(MAX_CONNECTIONS + 1),
-            ready: Vec::with_capacity(MAX_CONNECTIONS),
+            ready: Vec::new(),
             registry,
             bus,
             ledger,
             health,
             shutdown,
             tls_lane,
-            live,
-            active: Vec::with_capacity(MAX_CONNECTIONS),
-            local: VecDeque::with_capacity(MAX_CONNECTIONS),
+            live: HashMap::new(),
+            active: Vec::new(),
+            local: VecDeque::new(),
         }
     }
 
@@ -946,7 +946,7 @@ impl Reactor {
         }
         for pos in 0..self.active.len() {
             let id = self.active[pos];
-            if self.live[index(id)].as_ref().is_some_and(|live| {
+            if self.live.get(&index(id)).is_some_and(|live| {
                 live.registration.id == id && matches!(&live.endpoint, Endpoint::InitialTls(_))
             }) {
                 self.enqueue(id);
@@ -991,7 +991,7 @@ impl Reactor {
             }
             for pos in 0..self.ready.len() {
                 let (id, readable, writable) = self.ready[pos];
-                let Some(live) = self.live.get_mut(index(id)).and_then(Option::as_mut) else {
+                let Some(live) = self.live.get_mut(&index(id)) else {
                     continue;
                 };
                 if live.registration.id != id {
@@ -1097,8 +1097,9 @@ impl Reactor {
             let resume = control.take_resume_read();
             let output = control.take_output_kick();
             let mut schedule = false;
-            if let Some(live) = self.live[index(id)]
-                .as_mut()
+            if let Some(live) = self
+                .live
+                .get_mut(&index(id))
                 .filter(|live| live.registration.id == id)
             {
                 if resume == live.endpoint.binding().binding && live.graceful_by.is_none() {
@@ -1111,8 +1112,9 @@ impl Reactor {
                 }
             }
             if schedule {
-                let interest_failed = self.live[index(id)]
-                    .as_mut()
+                let interest_failed = self
+                    .live
+                    .get_mut(&index(id))
                     .filter(|live| live.registration.id == id)
                     .and_then(|live| match &mut live.endpoint {
                         Endpoint::Wss(endpoint) => {
@@ -1134,7 +1136,7 @@ impl Reactor {
         let id = registration.id;
         match command {
             PrimaryCommand::Connect(connect) => {
-                if self.live[index(id)].is_some() || connect.binding.connection != id {
+                if self.live.contains_key(&index(id)) || connect.binding.connection != id {
                     Self::reject_command(
                         &registration.shared,
                         PrimaryCommand::Connect(connect),
@@ -1195,16 +1197,19 @@ impl Reactor {
                 ) {
                     Ok(endpoint) => {
                         self.active.push(id);
-                        self.live[index(id)] = Some(Live {
-                            registration,
-                            endpoint: Endpoint::Tcp(endpoint),
-                            connected_reply: false,
-                            queued: false,
-                            rebind: None,
-                            graceful_by: None,
-                            close_ack: None,
-                            tls,
-                        });
+                        self.live.insert(
+                            index(id),
+                            Live {
+                                registration,
+                                endpoint: Endpoint::Tcp(endpoint),
+                                connected_reply: false,
+                                queued: false,
+                                rebind: None,
+                                graceful_by: None,
+                                close_ack: None,
+                                tls,
+                            },
+                        );
                         self.enqueue(id);
                     }
                     Err(error) => {
@@ -1228,8 +1233,9 @@ impl Reactor {
                 }
             }
             PrimaryCommand::Seal { binding } => {
-                let Some(live) = self.live[index(id)]
-                    .as_mut()
+                let Some(live) = self
+                    .live
+                    .get_mut(&index(id))
                     .filter(|live| live.registration.id == id)
                 else {
                     registration
@@ -1257,8 +1263,9 @@ impl Reactor {
                 cancel,
                 retire,
             } => {
-                let Some(live) = self.live[index(id)]
-                    .as_mut()
+                let Some(live) = self
+                    .live
+                    .get_mut(&index(id))
                     .filter(|live| live.registration.id == id)
                 else {
                     retire.ack();
@@ -1325,16 +1332,17 @@ impl Reactor {
         else {
             return false;
         };
-        let current = self.live[index(id)]
-            .as_ref()
+        let current = self
+            .live
+            .get(&index(id))
             .filter(|live| live.registration.id == id)
             .is_some_and(|live| live.endpoint.binding() == command.binding);
-        if !current && self.live[index(id)].is_some() {
+        if !current && self.live.contains_key(&index(id)) {
             return false;
         }
         if let CloseReason::GracefulSession { by } = command.reason {
             if current {
-                if let Some(live) = self.live[index(id)].as_mut() {
+                if let Some(live) = self.live.get_mut(&index(id)) {
                     live.graceful_by = Some(by);
                     live.close_ack = Some(command.binding);
                     registration.shared.disable_for_rebind();
@@ -1353,11 +1361,16 @@ impl Reactor {
         if let Some(pos) = self.active.iter().position(|&active| active == id) {
             self.active.swap_remove(pos);
         }
-        let live = self.live[index(id)]
-            .as_ref()
+        let slot = index(id);
+        let live = if self
+            .live
+            .get(&slot)
             .is_some_and(|live| live.registration.id == id)
-            .then(|| self.live[index(id)].take())
-            .flatten();
+        {
+            self.live.remove(&slot)
+        } else {
+            None
+        };
         if let Some(mut live) = live {
             if live.queued {
                 self.local.retain(|queued| *queued != id);
@@ -1428,8 +1441,10 @@ impl Reactor {
         let mut pos = 0;
         while pos < self.active.len() {
             let id = self.active[pos];
-            let live = self.live[index(id)]
-                .as_ref()
+            let live = self
+                .live
+                .get(&index(id))
+                .filter(|live| live.registration.id == id)
                 .expect("active ID has a connection");
             let attempt_failure = live.endpoint.attempt_failure(now).or_else(|| {
                 live.tls.as_ref().and_then(|flight| {
@@ -1480,8 +1495,9 @@ impl Reactor {
                 break;
             };
             self.ledger.dequeue_local_work();
-            let Some(live) = self.live[index(id)]
-                .as_mut()
+            let Some(live) = self
+                .live
+                .get_mut(&index(id))
                 .filter(|live| live.registration.id == id)
             else {
                 continue;
@@ -1631,8 +1647,9 @@ impl Reactor {
     }
 
     fn enqueue(&mut self, id: u64) {
-        let Some(live) = self.live[index(id)]
-            .as_mut()
+        let Some(live) = self
+            .live
+            .get_mut(&index(id))
             .filter(|live| live.registration.id == id)
         else {
             return;
@@ -1671,89 +1688,81 @@ impl Drop for Reactor {
         // A panicking reactor still owns its live sockets until this drop.
         // Return physical custody before publishing failure and releasing
         // charges; the owner health turn latches Panicked after unwind.
-        for slot in 0..MAX_CONNECTIONS {
-            if let Some(mut live) = self.live[slot].take() {
-                let binding = live.endpoint.binding();
-                let shared = Arc::clone(&live.registration.shared);
-                let pending_connect = !live.connected_reply;
-                let rebind = live.rebind.take();
-                let close_ack = live.close_ack;
-                let lane = self
-                    .tls_lane
+        for (slot, mut live) in self.live.drain() {
+            let binding = live.endpoint.binding();
+            let shared = Arc::clone(&live.registration.shared);
+            let pending_connect = !live.connected_reply;
+            let rebind = live.rebind.take();
+            let close_ack = live.close_ack;
+            let lane = self
+                .tls_lane
+                .lock()
+                .expect("game TLS lane mutex is not poisoned")
+                .clone();
+            live.endpoint.close(
+                self.poll.registry(),
+                lane.as_deref(),
+                RevocationReason::Shutdown,
+            );
+            let registration = {
+                self.registry
                     .lock()
-                    .expect("game TLS lane mutex is not poisoned")
-                    .clone();
-                live.endpoint.close(
-                    self.poll.registry(),
-                    lane.as_deref(),
-                    RevocationReason::Shutdown,
-                );
-                let registration = {
-                    self.registry
-                        .lock()
-                        .expect("connection registry mutex is not poisoned")
-                        .entries[slot]
-                        .take()
-                };
-                if let Some(registration) = registration {
-                    if let Some(command) = shared.control.take_primary() {
-                        Self::reject_command(&shared, command, RejectedCommand::Unavailable);
-                    }
-                    registration.release_charge();
+                    .expect("connection registry mutex is not poisoned")
+                    .entries
+                    .remove(&slot)
+            };
+            if let Some(registration) = registration {
+                if let Some(command) = shared.control.take_primary() {
+                    Self::reject_command(&shared, command, RejectedCommand::Unavailable);
                 }
-                if let Some(rebind) = rebind {
-                    rebind.retire.ack();
-                    shared.control.publish_primary(PrimaryReply::Rejected {
-                        binding: rebind.next,
-                        reason: RejectedCommand::Unavailable,
-                    });
-                } else if pending_connect && !shared.control.has_primary_reply() {
-                    shared.control.publish_primary(PrimaryReply::Rejected {
-                        binding,
-                        reason: RejectedCommand::Unavailable,
-                    });
-                }
-                let close_ack = close_ack.or_else(|| {
-                    shared
-                        .control
-                        .take_close()
-                        .filter(|close| close.binding == binding)
-                        .map(|close| close.binding)
+                registration.release_charge();
+            }
+            if let Some(rebind) = rebind {
+                rebind.retire.ack();
+                shared.control.publish_primary(PrimaryReply::Rejected {
+                    binding: rebind.next,
+                    reason: RejectedCommand::Unavailable,
                 });
-                if let Some(close_ack) = close_ack {
-                    if !shared.control.has_close_reply() {
-                        shared.control.publish_closed(close_ack);
-                    }
+            } else if pending_connect && !shared.control.has_primary_reply() {
+                shared.control.publish_primary(PrimaryReply::Rejected {
+                    binding,
+                    reason: RejectedCommand::Unavailable,
+                });
+            }
+            let close_ack = close_ack.or_else(|| {
+                shared
+                    .control
+                    .take_close()
+                    .filter(|close| close.binding == binding)
+                    .map(|close| close.binding)
+            });
+            if let Some(close_ack) = close_ack {
+                if !shared.control.has_close_reply() {
+                    shared.control.publish_closed(close_ack);
                 }
             }
         }
         while self.local.pop_front().is_some() {
             self.ledger.dequeue_local_work();
         }
-        for slot in 0..MAX_CONNECTIONS {
-            let registration = {
-                self.registry
-                    .lock()
-                    .expect("connection registry mutex is not poisoned")
-                    .entries[slot]
-                    .take()
-            };
-            if let Some(registration) = registration {
-                if let Some(command) = registration.shared.control.take_primary() {
-                    Self::reject_command(
-                        &registration.shared,
-                        command,
-                        RejectedCommand::Unavailable,
-                    );
-                }
-                registration.release_charge();
-                registration.shared.publish_closed();
-                if let Some(close) = registration.shared.control.take_close() {
-                    if close.binding == registration.initial
-                        && !registration.shared.control.has_close_reply()
-                    {
-                        registration.shared.control.publish_closed(close.binding);
-                    }
+        let registrations = {
+            let mut registry = self
+                .registry
+                .lock()
+                .expect("connection registry mutex is not poisoned");
+            std::mem::take(&mut registry.entries)
+        };
+        for registration in registrations.into_values() {
+            if let Some(command) = registration.shared.control.take_primary() {
+                Self::reject_command(&registration.shared, command, RejectedCommand::Unavailable);
+            }
+            registration.release_charge();
+            registration.shared.publish_closed();
+            if let Some(close) = registration.shared.control.take_close() {
+                if close.binding == registration.initial
+                    && !registration.shared.control.has_close_reply()
+                {
+                    registration.shared.control.publish_closed(close.binding);
                 }
             }
         }
@@ -1765,7 +1774,270 @@ mod tests {
     use super::super::cancel::CancelSource;
     use super::super::park::ParkOutcome;
     use super::*;
+    use std::alloc::{GlobalAlloc, Layout, System};
+    use std::cell::Cell;
     use std::net::TcpListener;
+
+    // Allows Mio event storage and platform bootstrap but excludes the observed 761,856-byte empty Live allocation.
+    const STARTUP_ALLOCATION_LIMIT_BYTES: usize = 256 * 1024;
+    // More than 3× the four measured 38,040-byte shared states, while excluding the former full-capacity table.
+    const FOUR_ADMISSION_ALLOCATION_LIMIT_BYTES: usize = 512 * 1024;
+    // 4 KiB leaves inline-layout headroom while rejecting a capacity-sized field embedded in Reactor.
+    const INLINE_REACTOR_SIZE_LIMIT_BYTES: usize = 4 * 1024;
+    // 16 KiB gives roughly 3× headroom over four live/registration buckets and their queue entries.
+    const FOUR_CONNECTION_STORAGE_LIMIT_BYTES: usize = 16 * 1024;
+    // Allow twice the four-entry occupancy for standard-container capacity rounding.
+    const FOUR_CONNECTION_ENTRY_CAPACITY_LIMIT: usize = 8;
+
+    struct ReactorTestAllocator;
+
+    #[global_allocator]
+    static REACTOR_TEST_ALLOCATOR: ReactorTestAllocator = ReactorTestAllocator;
+
+    // Reactor construction and reservation allocate their owner state synchronously on this test thread.
+    thread_local! {
+        static TRACKED_ALLOCATIONS: Cell<(bool, usize)> = const { Cell::new((false, 0)) };
+    }
+
+    fn record_requested_allocation(bytes: usize) {
+        let _ = TRACKED_ALLOCATIONS.try_with(|tracked| {
+            let (enabled, total) = tracked.get();
+            if enabled {
+                tracked.set((enabled, total.saturating_add(bytes)));
+            }
+        });
+    }
+
+    // SAFETY: every operation forwards the caller's exact layout and pointer to System.
+    unsafe impl GlobalAlloc for ReactorTestAllocator {
+        unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+            // SAFETY: `layout` is the allocator request supplied by the caller.
+            let pointer = unsafe { System.alloc(layout) };
+            if !pointer.is_null() {
+                record_requested_allocation(layout.size());
+            }
+            pointer
+        }
+
+        unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
+            // SAFETY: `layout` is the allocator request supplied by the caller.
+            let pointer = unsafe { System.alloc_zeroed(layout) };
+            if !pointer.is_null() {
+                record_requested_allocation(layout.size());
+            }
+            pointer
+        }
+
+        unsafe fn realloc(&self, pointer: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+            // SAFETY: the caller supplied the allocation and original layout for this reallocation.
+            let replacement = unsafe { System.realloc(pointer, layout, new_size) };
+            if !replacement.is_null() {
+                record_requested_allocation(new_size);
+            }
+            replacement
+        }
+
+        unsafe fn dealloc(&self, pointer: *mut u8, layout: Layout) {
+            // SAFETY: the caller supplied the allocation and matching layout.
+            unsafe { System.dealloc(pointer, layout) };
+        }
+    }
+
+    struct AllocationTracker;
+
+    impl AllocationTracker {
+        fn start() -> Self {
+            TRACKED_ALLOCATIONS.with(|tracked| tracked.set((true, 0)));
+            Self
+        }
+
+        fn requested_bytes(&self) -> usize {
+            TRACKED_ALLOCATIONS.with(|tracked| tracked.get().1)
+        }
+    }
+
+    impl Drop for AllocationTracker {
+        fn drop(&mut self) {
+            TRACKED_ALLOCATIONS.with(|tracked| tracked.set((false, 0)));
+        }
+    }
+
+    fn estimated_reactor_storage_bytes(service: &TransportService, reactor: &Reactor) -> usize {
+        let registration_capacity = service
+            .registry
+            .lock()
+            .expect("connection registry mutex is not poisoned")
+            .entries
+            .capacity();
+        registration_capacity * std::mem::size_of::<(usize, Arc<Registration>)>()
+            + reactor.live.capacity() * std::mem::size_of::<(usize, Live)>()
+            + reactor.ready.capacity() * std::mem::size_of::<(u64, bool, bool)>()
+            + reactor.active.capacity() * std::mem::size_of::<u64>()
+            + reactor.local.capacity() * std::mem::size_of::<u64>()
+    }
+
+    fn submit_unconnected_tcp(
+        service: &TransportService,
+        park: Arc<Park>,
+    ) -> (BindingId, Arc<SharedConnection>, Arc<AttemptRetire>) {
+        let source = CancelSource::new(Arc::clone(&park));
+        let token = source.child().unwrap();
+        let (binding, shared) = service.reserve(park, token.generation()).unwrap();
+        let retire = Arc::new(AttemptRetire::new(token.generation()));
+        let mut addresses = super::super::resolver::ResolvedAddresses::new();
+        assert!(addresses.push("127.0.0.1:9".parse().unwrap()));
+        service
+            .submit_connect(ConnectCommand {
+                binding,
+                transport: Transport::Tcp,
+                host: String::new(),
+                port: 9,
+                addresses,
+                deadline: Some(Instant::now() + Duration::from_secs(10)),
+                cancel: token,
+                retire: Arc::clone(&retire),
+                queue_release: None,
+                tls_ticket: None,
+            })
+            .unwrap();
+        (binding, shared, retire)
+    }
+
+    #[test]
+    fn startup_and_four_admissions_stay_within_allocation_tripwires() {
+        let parks: [Arc<Park>; 4] = std::array::from_fn(|_| Arc::new(Park::new()));
+        let tracker = AllocationTracker::start();
+        let service = TransportService::start().unwrap();
+        let startup_bytes = tracker.requested_bytes();
+        assert!(
+            startup_bytes <= STARTUP_ALLOCATION_LIMIT_BYTES,
+            "empty transport startup requested {startup_bytes} bytes"
+        );
+
+        for park in parks {
+            service.reserve(park, 1).unwrap();
+        }
+        let four_admissions_bytes = tracker.requested_bytes();
+        assert!(
+            four_admissions_bytes <= FOUR_ADMISSION_ALLOCATION_LIMIT_BYTES,
+            "startup plus four admitted connections requested {four_admissions_bytes} bytes"
+        );
+        let registry = service
+            .registry
+            .lock()
+            .expect("connection registry mutex is not poisoned");
+        assert_eq!(registry.entries.len(), 4);
+        assert!(
+            registry.entries.capacity() <= FOUR_CONNECTION_ENTRY_CAPACITY_LIMIT,
+            "four registrations should reserve at most twice their occupied entries"
+        );
+        drop(registry);
+        drop(tracker);
+        service.shutdown();
+    }
+
+    #[test]
+    fn sparse_reactor_storage_handles_high_reused_ids_and_cleans_up() {
+        let poll = Poll::new().unwrap();
+        let registry = Arc::new(Mutex::new(Registered::new()));
+        let bus = Arc::new(CommandBus::new(Arc::new(
+            Waker::new(poll.registry(), WAKE_TOKEN).unwrap(),
+        )));
+        let ledger = ResourceLedger::new();
+        let health = Arc::new(ReactorHealth::new(Instant::now()));
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let tls_lane = Arc::new(Mutex::new(None));
+        let mut reactor = Reactor::new(
+            poll,
+            Arc::clone(&registry),
+            Arc::clone(&bus),
+            Arc::clone(&ledger),
+            Arc::clone(&health),
+            Arc::clone(&shutdown),
+            Arc::clone(&tls_lane),
+        );
+        let service = TransportService {
+            incarnation: 81,
+            registry,
+            bus,
+            ledger,
+            health,
+            loss_notified: AtomicBool::new(false),
+            next_id: AtomicU64::new(1),
+            shutdown,
+            tls_lane,
+            worker: Mutex::new(None),
+        };
+
+        assert!(
+            std::mem::size_of::<Reactor>() <= INLINE_REACTOR_SIZE_LIMIT_BYTES,
+            "the reactor owner must remain small and must not embed capacity-sized slots"
+        );
+        assert_eq!(estimated_reactor_storage_bytes(&service, &reactor), 0);
+        assert_eq!(reactor.live.capacity(), 0);
+        assert_eq!(reactor.ready.capacity(), 0);
+        assert_eq!(reactor.active.capacity(), 0);
+        assert_eq!(reactor.local.capacity(), 0);
+
+        let high_id = (1_u64 << (usize::BITS - 2)) + 1;
+        service.next_id.store(high_id, Ordering::Relaxed);
+        let admitted: Vec<_> = (0..4)
+            .map(|_| submit_unconnected_tcp(&service, Arc::new(Park::new())))
+            .collect();
+        reactor.process_commands();
+        assert_eq!(reactor.live.len(), 4);
+        assert_eq!(reactor.active.len(), 4);
+        assert_eq!(reactor.local.len(), 4);
+        assert!(reactor.ready.is_empty());
+        assert!(
+            reactor.live.capacity() <= FOUR_CONNECTION_ENTRY_CAPACITY_LIMIT,
+            "four live endpoints should reserve at most twice their occupied entries"
+        );
+        assert!(
+            reactor.active.capacity() <= FOUR_CONNECTION_ENTRY_CAPACITY_LIMIT
+                && reactor.local.capacity() <= FOUR_CONNECTION_ENTRY_CAPACITY_LIMIT,
+            "active and local queues should reserve at most twice their occupied entries"
+        );
+        assert!(
+            estimated_reactor_storage_bytes(&service, &reactor)
+                <= FOUR_CONNECTION_STORAGE_LIMIT_BYTES,
+            "four admitted connections exceeded the estimated sparse reactor storage bound"
+        );
+        for (position, (binding, _, _)) in admitted.iter().enumerate() {
+            assert_eq!(binding.connection, high_id + position as u64);
+            assert!(reactor
+                .live
+                .get(&index(binding.connection))
+                .is_some_and(|live| live.registration.id == binding.connection));
+        }
+
+        for (binding, shared, retire) in admitted {
+            reactor.close(binding.connection, None);
+            assert!(shared.is_closed());
+            assert_eq!(retire.ack_count(), 1);
+        }
+        assert!(reactor.live.is_empty());
+        assert!(reactor.active.is_empty());
+        assert!(reactor.local.is_empty());
+        assert_eq!(service.ledger().snapshot().connections, 0);
+
+        let reused_id = high_id + MAX_CONNECTIONS as u64;
+        service.next_id.store(reused_id, Ordering::Relaxed);
+        let (binding, shared, retire) = submit_unconnected_tcp(&service, Arc::new(Park::new()));
+        assert_eq!(binding.connection, reused_id);
+        assert_eq!(index(binding.connection), index(high_id));
+        reactor.process_commands();
+        assert_eq!(reactor.live.len(), 1);
+        assert!(reactor
+            .live
+            .get(&index(reused_id))
+            .is_some_and(|live| live.registration.id == reused_id));
+        reactor.close(reused_id, None);
+        assert!(shared.is_closed());
+        assert_eq!(retire.ack_count(), 1);
+        assert!(reactor.live.is_empty());
+        assert_eq!(service.ledger().snapshot().connections, 0);
+    }
 
     #[test]
     fn unused_reservation_releases_connection_charge_without_a_socket() {

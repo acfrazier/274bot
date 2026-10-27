@@ -116,6 +116,9 @@ pub(super) struct TlsIo {
 }
 
 impl TlsIo {
+    // rustls owns its input deframer and allocates its initial 4 KiB on read.
+    // It grows to accept complete TLS records (up to 16 KiB plaintext plus
+    // record overhead); this is not an eager per-service reservation.
     fn new(socket: TcpStream, mut conn: ClientConnection) -> Self {
         conn.set_buffer_limit(Some(TLS_OUTPUT_PAUSE));
         Self {
@@ -1752,6 +1755,11 @@ fn verify_upgrade_response(response: &Response, expected_accept: &str) -> io::Re
     Ok(())
 }
 
+// tungstenite 0.24 retains the upgrade's input Vec as frame input storage
+// and uses a separate 4 KiB read chunk. Both are dependency-private. Keep
+// them: reducing read chunks changes I/O throughput, and discarding an
+// upgrade tail can lose the first game frame. The 16 KiB message/frame bounds
+// below are protocol limits, not substitutes for TLS record buffering.
 fn websocket_config() -> WebSocketConfig {
     WebSocketConfig {
         write_buffer_size: WS_WRITE_BUFFER_SIZE,

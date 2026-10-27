@@ -7,9 +7,11 @@
 use std::cell::UnsafeCell;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-/// The physical output allocation; at least the 5000-byte packet extent.
+/// Hold one complete 5000-byte game record: publication must never split it.
+/// Keep storage inline to avoid allocating on established output turns.
 pub const OUT_RING_BYTES: usize = 5000;
-/// The physical input allocation, enough for two maximal WS messages.
+/// Hold two maximal admitted WS messages without waiting for slot consumption.
+/// Reducing this changes receive backpressure; lazy storage saves no warmed bytes.
 pub const IN_RING_BYTES: usize = 32 * 1024;
 /// A single accepted WS binary message cannot exceed this logical size.
 pub const WS_MESSAGE_LIMIT: usize = 16 * 1024;

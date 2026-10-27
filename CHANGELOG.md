@@ -12,6 +12,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   authenticated socket to the reactor for WebSocket upgrade and session I/O.
   HTTPS asset and public-world key fetches use a separate fixed TLS worker;
   cancellation and deadlines no longer wait for an OS certificate verifier.
+- Reactor connection storage and resolver waiter/cache storage grow with use
+  instead of reserving their maximum payloads at startup. Admission limits
+  and per-connection byte and record capacities remain unchanged.
 - A hosted login keeps its prepared endpoint, cancellation identity and
   queue retirement bound through the final session commit. Play starts the
   network composition and retains its maintenance driver for every frontend.
