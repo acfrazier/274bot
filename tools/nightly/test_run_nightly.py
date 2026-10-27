@@ -831,6 +831,23 @@ class LaneEnvironmentTests(unittest.TestCase):
                 else:
                     self.assertEqual(extra, {})
 
+    def test_the_script_load_lane_follows_the_tree_layout(self):
+        def lane_args(tree):
+            return {name: args for name, args, _extra in rn.lane_list(tree)}["test-script-load"]
+
+        post_s1 = ["test", "--locked", "-p", "script-js", "--tests", "--no-fail-fast"]
+        pre_s1 = ["test", "--locked", "-p", "script", "--features", "load", "--tests",
+                  "--no-fail-fast"]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for name, crate in (("post", "script-js"), ("pre", "script")):
+                manifest = root / name / "crates" / crate / "Cargo.toml"
+                manifest.parent.mkdir(parents=True)
+                manifest.write_text("[package]\nname = \"x\"\n", encoding="utf-8")
+            self.assertEqual(lane_args(root / "post"), post_s1)
+            self.assertEqual(lane_args(root / "pre"), pre_s1)
+        self.assertEqual(lane_args(None), post_s1)
+
     def test_missing_snapshot_and_baseline_stay_unset(self):
         with tempfile.TemporaryDirectory() as tmp:
             env = self.asset_env(Path(tmp), snapshot=False, baseline=False)
