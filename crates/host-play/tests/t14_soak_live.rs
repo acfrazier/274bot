@@ -62,6 +62,70 @@ struct SafeWalk {
     max_z: i32,
 }
 
+impl SafeWalk {
+    fn contains(self, tile: (i32, i32, i32)) -> bool {
+        tile.2 == 0
+            && (self.min_x..=self.max_x).contains(&tile.0)
+            && (self.min_z..=self.max_z).contains(&tile.1)
+    }
+}
+
+// The bank detour uses the southern rectangle. The northern patches use the
+// western rectangle, outside the pack wolf's wander + hunt + size envelope
+// at (2836,3495): content/maps/m44_54.jm2:5700, all.npc:3585-3605.
+// The eastern sentry at (2842,3450) has wander 3, hunt 2 and size 2:
+// content/maps/m44_53.jm2:5567, scripts/_unpack/225/all.npc:2405-2433.
+const CATHERBY_SAFE_WALK: &[SafeWalk] = &[
+    SafeWalk {
+        min_x: 2788,
+        max_x: 2820,
+        min_z: 3436,
+        max_z: 3468,
+    },
+    SafeWalk {
+        min_x: 2788,
+        max_x: 2810,
+        min_z: 3436,
+        max_z: 3476,
+    },
+];
+
+fn safe_walk_contains(areas: &[SafeWalk], tile: (i32, i32, i32)) -> bool {
+    areas.iter().any(|area| area.contains(tile))
+}
+
+#[test]
+fn catherby_safe_walk_accepts_worksites_and_bank_return_detour() {
+    for (x, z) in CATHERBY_STARTS {
+        for dx in -2..=2 {
+            for dz in -2..=2 {
+                assert!(safe_walk_contains(CATHERBY_SAFE_WALK, (x + dx, z + dz, 0)));
+            }
+        }
+    }
+    assert!(safe_walk_contains(CATHERBY_SAFE_WALK, (2809, 3441, 0)));
+    // Baseline attempt 5, tick 4732: a valid return route east of the patches.
+    assert!(safe_walk_contains(CATHERBY_SAFE_WALK, (2816, 3447, 0)));
+}
+
+#[test]
+fn catherby_safe_walk_rejects_every_boundary_and_mountain_spawns() {
+    for tile in [
+        (2787, 3450, 0),
+        (2821, 3450, 0),
+        (2800, 3435, 0),
+        (2800, 3477, 0),
+        (2800, 3450, 1),
+        (2811, 3469, 0),
+        (2820, 3476, 0),
+        (2842, 3450, 0),
+        (2846, 3477, 0),
+        (2804, 3507, 0),
+    ] {
+        assert!(!safe_walk_contains(CATHERBY_SAFE_WALK, tile), "{tile:?}");
+    }
+}
+
 #[derive(Clone)]
 struct BankSite {
     id: String,
@@ -71,7 +135,7 @@ struct BankSite {
     bank: &'static str,
     bank_prefix: &'static str,
     start: WorldTile,
-    safe_walk: Option<SafeWalk>,
+    safe_walk: Option<&'static [SafeWalk]>,
 }
 
 struct RunConfig {
@@ -521,12 +585,7 @@ fn make_site(site: &GatherSiteOption, resource: &'static str) -> Result<BankSite
                 // Independent eastern patches avoid the separated western
                 // route and give each normal-tree account its own resource.
                 // The bank is (2809,3441), south of the resource patches.
-                Some(SafeWalk {
-                    min_x: 2788,
-                    max_x: 2814,
-                    min_z: 3436,
-                    max_z: 3476,
-                }),
+                Some(CATHERBY_SAFE_WALK),
             ),
             ("woodcutting.seers", "maple") => (
                 WorldTile {
@@ -1141,13 +1200,10 @@ fn drive_frame(
         }
         actor.last_tile = Some(tile);
         if actor.script_started_at.is_some()
-            && actor.site.safe_walk.is_some_and(|area| {
-                tile.2 != 0
-                    || tile.0 < area.min_x
-                    || tile.0 > area.max_x
-                    || tile.1 < area.min_z
-                    || tile.1 > area.max_z
-            })
+            && actor
+                .site
+                .safe_walk
+                .is_some_and(|areas| !safe_walk_contains(areas, tile))
         {
             fail_actor(
                 actor,
