@@ -1784,12 +1784,16 @@ mod tests {
     use std::net::TcpListener;
 
     // macOS arm64 measured N=0 at 66,631 bytes, including the fixed 24 KiB
-    // ready/local buffers. Allow 8 KiB for platform bootstrap differences;
-    // Mio's kqueue event storage is larger than epoll's.
-    const STARTUP_ALLOCATION_LIMIT_BYTES: usize = 66_631 + 8 * 1024;
+    // ready/local buffers. Windows measured 83,055 bytes: Mio's two event
+    // buffers add 16,400 bytes over kqueue, plus 24 bytes of bootstrap state.
+    // Account for that fixed difference, then allow 8 KiB bootstrap headroom.
+    const WINDOWS_STARTUP_EXTRA_BYTES: usize = if cfg!(windows) { 16_424 } else { 0 };
+    const STARTUP_ALLOCATION_LIMIT_BYTES: usize = 66_631 + WINDOWS_STARTUP_EXTRA_BYTES + 8 * 1024;
     // macOS arm64 measured N=4 at 222,179 bytes including those fixed buffers.
-    // The same 8 KiB headroom covers startup variation, not per-bot growth.
-    const FOUR_ADMISSION_ALLOCATION_LIMIT_BYTES: usize = 222_179 + 8 * 1024;
+    // Windows has the same fixed startup increment. The 8 KiB headroom covers
+    // startup variation, not per-bot growth; the admission delta is separate.
+    const FOUR_ADMISSION_ALLOCATION_LIMIT_BYTES: usize =
+        222_179 + WINDOWS_STARTUP_EXTRA_BYTES + 8 * 1024;
     // Measured admission delta is 38,887 bytes per connection. 40 KiB allows
     // 2,073 bytes of headroom, but rejects a new tens-of-KiB payload per bot.
     const PER_ADMISSION_ALLOCATION_LIMIT_BYTES: usize = 40 * 1024;
