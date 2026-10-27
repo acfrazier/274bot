@@ -3266,15 +3266,15 @@ impl TuiSession {
             Some(frontend_core::PvpWrite::Failed(reason)) => {
                 app.error = Some(format!("settings: {reason}"));
             }
-            Some(frontend_core::PvpWrite::Saved) => {
+            Some(frontend_core::PvpWrite::Saved)
                 if app
                     .error
                     .as_deref()
-                    .is_some_and(frontend_core::is_start_fights_error)
-                {
-                    app.error = None;
-                }
+                    .is_some_and(frontend_core::is_start_fights_error) =>
+            {
+                app.error = None;
             }
+            Some(frontend_core::PvpWrite::Saved) => {}
             None => {}
         }
     }

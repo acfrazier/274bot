@@ -1784,15 +1784,15 @@ impl Session {
     pub(crate) fn follow_pvp_start_fights(&mut self) {
         match self.pvp_start_fights.follow(&self.core) {
             Some(frontend_core::PvpWrite::Failed(reason)) => self.error = Some(reason),
-            Some(frontend_core::PvpWrite::Saved) => {
+            Some(frontend_core::PvpWrite::Saved)
                 if self
                     .error
                     .as_deref()
-                    .is_some_and(frontend_core::is_start_fights_error)
-                {
-                    self.error = None;
-                }
+                    .is_some_and(frontend_core::is_start_fights_error) =>
+            {
+                self.error = None;
             }
+            Some(frontend_core::PvpWrite::Saved) => {}
             None => {}
         }
     }
