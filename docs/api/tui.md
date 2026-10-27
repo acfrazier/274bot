@@ -117,8 +117,14 @@ notice) takes effect only after its save has reached the disk. While it is
 pending the row shows your choice followed by `— saving…`. If the save fails the
 row shows the saved value again followed by the reason, for example
 `— Not saved: …`. The reason leaves when you act on that row again, or after 15
-seconds. A failed **Got it** keeps the background-bots notice on screen with the
-reason after it. The saved Load order has no row: its message line says
+seconds. When the selected row with its reason is taller than the popup (a long
+path on an 80x24 terminal), the popup shows part of that row and its last line
+says more is below or above: Up and Down then scroll through the row before
+they move to the next one. When the notices under the rows need more lines
+than the terminal leaves them, the bottom border says **not every notice
+fits: make the terminal taller**. A failed **Got it** keeps the background-bots
+notice on screen with the reason after it. The saved Load order has no row: its
+message line says
 `Load order: saving…` while a reorder is written, and a failed save shows its
 reason there. The Logs status line follows the session file whoever changed
 it (you, an earlier run that left it on, or another program copy): it says

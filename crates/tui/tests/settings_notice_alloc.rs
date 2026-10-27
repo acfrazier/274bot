@@ -108,7 +108,8 @@ fn a_notice_adds_no_allocation_to_a_drawn_frame() {
 }
 
 /// Allocation events of one draw of the open popup with the saved
-/// settings' `feedback` beside their rows and both dismiss lines showing.
+/// settings' `feedback` beside their rows and both dismiss lines showing,
+/// with the teleport row selected.
 fn draw_feedback(feedback: &[(Setting, SettingFeedback)], area: Rect) -> (usize, Buffer) {
     let settings = SettingsDraft::default();
     let mut nav = WalkGlobals::default();
@@ -117,6 +118,7 @@ fn draw_feedback(feedback: &[(Setting, SettingFeedback)], area: Rect) -> (usize,
     let mut survivable_ack = false;
     let mut state = SettingsState {
         open: true,
+        row: 5,
         ..Default::default()
     };
     let mut pane = SettingsPane::new(&settings, &mut nav, &mut bake, &mut state);
@@ -131,11 +133,13 @@ fn draw_feedback(feedback: &[(Setting, SettingFeedback)], area: Rect) -> (usize,
 
 /// A saved setting that is pending or failed adds no allocation to a drawn
 /// frame: its state is drawn from the retained feedback in place, after the
-/// row's text and after a notice's dismiss line, however long it is.
+/// row's text and after a notice's dismiss line, however long it is. The
+/// selected setting's failure is drawn to its end, or the frame says that
+/// more of it is below (Down scrolls to it).
 #[test]
 fn a_pending_or_failed_setting_adds_no_allocation_to_a_drawn_frame() {
     let long = format!(
-        "Not saved: preferences at /home/someone/.274bot/preferences.json: {}",
+        "Not saved: preferences at /home/someone/.274bot/preferences.json: {}(end)",
         "the store is busy; try again later ".repeat(5)
     );
     let teleports = Setting::Nav(NavPreference::AllowTeleports);
@@ -150,7 +154,10 @@ fn a_pending_or_failed_setting_adds_no_allocation_to_a_drawn_frame() {
         (survivable, SettingFeedback::Pending),
     ];
     let failed = vec![
-        (teleports, SettingFeedback::Failed(long.clone())),
+        (
+            teleports,
+            SettingFeedback::Failed(long.replace("(end)", "(teleports end)")),
+        ),
         (bake, SettingFeedback::Failed("Not saved: busy".into())),
         (scope, SettingFeedback::Failed(long.clone())),
         (survivable, SettingFeedback::Failed(long)),
@@ -165,10 +172,15 @@ fn a_pending_or_failed_setting_adds_no_allocation_to_a_drawn_frame() {
             for _ in 0..3 {
                 let (with, drawn) = draw_feedback(feedback, area);
                 let shown = screen(&drawn);
-                assert!(
-                    shown.contains("saving…") || shown.contains("Not saved:"),
-                    "{w}x{h}: {label} is drawn: {shown}"
-                );
+                match label {
+                    "pending" => assert!(shown.contains("saving…"), "{w}x{h}: {shown}"),
+                    _ => assert!(
+                        shown.contains("Not saved:")
+                            && (shown.contains("(teleports end)")
+                                || shown.contains("more of this setting below (Down)")),
+                        "{w}x{h}: the failure is drawn to its end or says more is below: {shown}"
+                    ),
+                }
                 assert_eq!(
                     with, baseline,
                     "{w}x{h}: {label} feedback costs the frame allocations"
