@@ -36,6 +36,10 @@ struct Seat {
     observed: Arc<Mutex<Observed>>,
     cheats: Vec<String>,
     ready: Box<dyn Fn(&api::snapshot::GameSnapshot) -> bool + Send + Sync>,
+    /// Set for the duel cell: the handshake this account drives after ready.
+    drive: Option<Arc<Mutex<DuelDrive>>>,
+    /// The other account's name as the game shows it.
+    partner: String,
 }
 
 /// Equal levels for both accounts (attack, strength, defence and hitpoints 20:
@@ -74,6 +78,7 @@ struct Pair {
     play: Play,
     accounts: [String; 2],
     observed: [Arc<Mutex<Observed>>; 2],
+    drives: [Arc<Mutex<DuelDrive>>; 2],
     evidence: PathBuf,
     started: Instant,
 }
@@ -81,7 +86,14 @@ struct Pair {
 /// Two fresh accounts teleported to `dest`. `global` writes the shared
 /// preference `pvp.start_fights = true` through the service before either
 /// account is spawned; otherwise the document is absent and the setting is off.
-fn start_pair(label: &str, uids: [i32; 2], dest: WorldTile, victim: bool, global: bool) -> Pair {
+fn start_pair(
+    label: &str,
+    uids: [i32; 2],
+    dest: WorldTile,
+    victim: bool,
+    global: bool,
+    duel: bool,
+) -> Pair {
     assert!(
         std::env::var("LIVE").is_ok_and(|value| value == "1"),
         "run this ignored live cell only with LIVE=1"
@@ -101,6 +113,15 @@ fn start_pair(label: &str, uids: [i32; 2], dest: WorldTile, victim: bool, global
         Arc::new(Mutex::new(Observed::default())),
         Arc::new(Mutex::new(Observed::default())),
     ];
+    let drives = [
+        Arc::new(Mutex::new(DuelDrive::default())),
+        Arc::new(Mutex::new(DuelDrive::default())),
+    ];
+    let screen = |name: &str| {
+        client::util::JString::to_screen_name(name)
+            .as_str()
+            .to_owned()
+    };
     let mut seats = std::collections::HashMap::new();
     seats.insert(
         names[0].clone(),
@@ -108,6 +129,8 @@ fn start_pair(label: &str, uids: [i32; 2], dest: WorldTile, victim: bool, global
             observed: Arc::clone(&observed[0]),
             cheats: healthy_seed(),
             ready: Box::new(healthy_ready),
+            drive: duel.then(|| Arc::clone(&drives[0])),
+            partner: screen(&names[1]),
         },
     );
     seats.insert(
@@ -124,6 +147,8 @@ fn start_pair(label: &str, uids: [i32; 2], dest: WorldTile, victim: bool, global
             } else {
                 Box::new(healthy_ready)
             },
+            drive: duel.then(|| Arc::clone(&drives[1])),
+            partner: screen(&names[0]),
         },
     );
     let mut play = run_with_template(
@@ -140,6 +165,15 @@ fn start_pair(label: &str, uids: [i32; 2], dest: WorldTile, victim: bool, global
             };
             let mut state = seat.observed.lock().expect("observed lock");
             frame(client, &mut state, &seat.cheats, &[], &*seat.ready, dest);
+            if state.ready {
+                if let Some(drive) = &seat.drive {
+                    duel_step(
+                        client,
+                        &mut drive.lock().expect("duel drive lock"),
+                        &seat.partner,
+                    );
+                }
+            }
         },
     )
     .expect("start live Play");
@@ -182,6 +216,7 @@ fn start_pair(label: &str, uids: [i32; 2], dest: WorldTile, victim: bool, global
         play,
         accounts: [names[0].clone(), names[1].clone()],
         observed,
+        drives,
         evidence,
         started,
     };
@@ -194,6 +229,202 @@ fn start_pair(label: &str, uids: [i32; 2], dest: WorldTile, victim: bool, global
         })
     });
     pair
+}
+
+/// The Duel Arena handshake one account drives, from the challenge area to the
+/// pen (`minigames/game_duelarena/scripts/duel_arena.rs2:8-20,68-108,141-201,
+/// 250-269`, `duel_arena_start.rs2`): both accounts offer the other, accept the
+/// rules page (default rules, no stake) and the confirm page, and the server
+/// teleports both into a pen and counts down to `FIGHT!`. This is the
+/// fixture's own use of the game's interface, not the V5 trainer.
+#[derive(Default, Clone, serde::Serialize)]
+struct DuelDrive {
+    last_challenge: Option<u32>,
+    challenges: u32,
+    accept1_at: Option<u32>,
+    accept2_at: Option<u32>,
+    saw_select: bool,
+    saw_confirm: bool,
+    saw_pen: bool,
+    fight_seen: bool,
+    refusals: Vec<String>,
+}
+
+fn duel_step(client: &mut client::client::Client, drive: &mut DuelDrive, partner: &str) {
+    use crate::paired_core::{
+        fight_pen, DUEL_CONFIRM_ACCEPT, DUEL_CONFIRM_MODAL, DUEL_SELECT_ACCEPT, DUEL_SELECT_MODAL,
+    };
+    use api::interact::{ActionSpec, Interactions, OpTarget, SendResult};
+    let mut snapshot = api::snapshot::GameSnapshot::new();
+    snapshot.rebuild(client);
+    if !(client.ingame && client.scene_state == 2) {
+        return;
+    }
+    let tick = snapshot.tick();
+    let main = snapshot.modals().main;
+    if fight_pen(snapshot.tile()).is_some() {
+        drive.saw_pen = true;
+        let shout = snapshot
+            .local_player()
+            .and_then(|local| local.player.actor.overhead_text.as_deref());
+        if shout == Some("FIGHT!") {
+            drive.fight_seen = true;
+        }
+        return;
+    }
+    fn press(
+        client: &mut client::client::Client,
+        snapshot: &api::snapshot::GameSnapshot,
+        id: i32,
+        at: &mut Option<u32>,
+        refusals: &mut Vec<String>,
+    ) {
+        let tick = snapshot.tick();
+        if at.is_some_and(|at| tick.wrapping_sub(at) < 30) {
+            return;
+        }
+        if let Some(widget) = snapshot.widgets().iter().find(|w| w.component_id == id) {
+            if let SendResult::Refused { reason, .. } =
+                Interactions::new(snapshot, client).if_button(widget)
+            {
+                refusals.push(format!("button {id}: {reason:?}"));
+            }
+            *at = Some(tick);
+        }
+    }
+    if main == DUEL_SELECT_MODAL {
+        drive.saw_select = true;
+        let DuelDrive {
+            accept1_at,
+            refusals,
+            ..
+        } = drive;
+        press(client, &snapshot, DUEL_SELECT_ACCEPT, accept1_at, refusals);
+        return;
+    }
+    if main == DUEL_CONFIRM_MODAL {
+        drive.saw_confirm = true;
+        let DuelDrive {
+            accept2_at,
+            refusals,
+            ..
+        } = drive;
+        press(client, &snapshot, DUEL_CONFIRM_ACCEPT, accept2_at, refusals);
+        return;
+    }
+    if main > 0
+        || drive
+            .last_challenge
+            .is_some_and(|at| tick.wrapping_sub(at) < 10)
+    {
+        return;
+    }
+    let Some(row) = snapshot
+        .players()
+        .iter()
+        .find(|row| row.actor.name.as_deref() == Some(partner))
+    else {
+        return;
+    };
+    if !row
+        .actor
+        .actions
+        .iter()
+        .flatten()
+        .any(|op| op == "Challenge")
+    {
+        return;
+    }
+    drive.last_challenge = Some(tick);
+    drive.challenges += 1;
+    if let SendResult::Refused { reason, .. } = Interactions::new(&snapshot, client)
+        .interact(OpTarget::Player(row), ActionSpec::Label("Challenge".into()))
+    {
+        drive.refusals.push(format!("challenge: {reason:?}"));
+    }
+}
+
+/// The same fight in a Duel Arena pen: the server gives the row `Fight`, the
+/// machine uses that label.
+#[test]
+#[ignore = "requires LIVE=1 and the shared local R289 engine"]
+fn live_pvp_a_duel_pen_fight_uses_the_fight_op() {
+    let anchor = WorldTile {
+        x: crate::paired_core::DUEL_CHALLENGE_ANCHOR.0,
+        z: crate::paired_core::DUEL_CHALLENGE_ANCHOR.1,
+        level: 0,
+    };
+    let pair = start_pair(
+        "duel",
+        [274_279_409, 274_279_410],
+        anchor,
+        false,
+        false,
+        true,
+    );
+    wait_until(
+        "the duel reaches FIGHT!",
+        Instant::now() + Duration::from_secs(180),
+        || {
+            pair.drives
+                .iter()
+                .all(|drive| drive.lock().expect("duel drive lock").fight_seen)
+        },
+    );
+    let victim = pair.display_name(1);
+    pair.load(0);
+    pair.arm(
+        0,
+        &format!(
+            "{{ target: {{ player: {} }}, pvp: true, meleeMode: 'aggressive', budgetTicks: 100 }}",
+            js_name(&victim)
+        ),
+    );
+    let mut attack_op_seen = false;
+    let mut fight_op_seen = false;
+    let mut in_combat_seen = false;
+    let outcome = pair.outcome(0, "duel", |ours, _| {
+        for row in ours.players.iter().filter(|row| row.name == victim) {
+            attack_op_seen |= row.ops.iter().any(|op| op == "Attack");
+            fight_op_seen |= row.ops.iter().any(|op| op == "Fight");
+        }
+        in_combat_seen |= ours.local_in_combat;
+    });
+    let drives: Vec<DuelDrive> = pair
+        .drives
+        .iter()
+        .map(|drive| drive.lock().expect("duel drive lock").clone())
+        .collect();
+    pair.receipt(
+        "api-pvp-duel-receipt.json",
+        json!({
+            "cell": "duel",
+            "accounts": pair.accounts,
+            "victim_name": victim,
+            "outcome": outcome,
+            "phases": pair.phases(0),
+            "victim_row_had_attack_op": attack_op_seen,
+            "victim_row_had_fight_op": fight_op_seen,
+            "attacker_in_combat_seen": in_combat_seen,
+            "handshake": drives,
+            "attacker": pair.snapshot(0),
+        }),
+    );
+    assert_eq!(outcome["kind"], "done", "{outcome}");
+    assert_eq!(outcome["value"]["end"], "fought", "{outcome}");
+    assert_eq!(
+        outcome["value"]["report"]["pvpSource"], "request",
+        "{outcome}"
+    );
+    assert!(
+        outcome["value"]["report"]["swings"].as_u64().unwrap_or(0) > 0,
+        "{outcome}"
+    );
+    assert!(
+        fight_op_seen && !attack_op_seen,
+        "a duel gives the row the Fight op (fight {fight_op_seen}, attack {attack_op_seen})"
+    );
+    assert!(in_combat_seen, "the attacker was never in combat");
 }
 
 impl Pair {
@@ -294,7 +525,7 @@ fn js_name(name: &str) -> String {
 /// The fight with a player that the opt-in authorises: Attack in the
 /// Wilderness, killed, with the source the report names.
 fn opt_in_cell(label: &str, uids: [i32; 2], global: bool, source: &str) {
-    let pair = start_pair(label, uids, WILDERNESS, true, global);
+    let pair = start_pair(label, uids, WILDERNESS, true, global, false);
     let victim = pair.display_name(1);
     pair.load(0);
     let pvp = if global { "" } else { "pvp: true, " };
@@ -373,6 +604,7 @@ fn live_pvp_without_the_opt_in_refuses_not_opted_in_and_still_fights_back() {
         "no-opt-in",
         [274_279_405, 274_279_406],
         WILDERNESS,
+        false,
         false,
         false,
     );
@@ -469,7 +701,14 @@ fn live_pvp_without_the_opt_in_refuses_not_opted_in_and_still_fights_back() {
 #[test]
 #[ignore = "requires LIVE=1 and the shared local R289 engine"]
 fn live_pvp_outside_a_pvp_zone_refuses_with_the_zone_reason() {
-    let pair = start_pair("zone", [274_279_407, 274_279_408], LUMBRIDGE, false, false);
+    let pair = start_pair(
+        "zone",
+        [274_279_407, 274_279_408],
+        LUMBRIDGE,
+        false,
+        false,
+        false,
+    );
     let them = pair.display_name(1);
     pair.load(0);
     // Even with the script's own opt-in the game does not allow it here.
