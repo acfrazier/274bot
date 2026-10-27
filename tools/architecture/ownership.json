@@ -6059,6 +6059,10 @@
       "owner": "T2"
     },
     {
+      "path": "tools/game-data/extractors/duel.ts",
+      "owner": "T2"
+    },
+    {
       "path": "tools/game-data/extractors/common.ts",
       "owner": "T2"
     },
