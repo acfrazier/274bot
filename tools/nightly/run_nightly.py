@@ -930,7 +930,14 @@ def self_check_candidate(candidate: Path, test_file: str = SELF_TEST_FILE,
     test_path = nightly_dir / test_file
     if not test_path.is_file():
         return False, f"candidate has no {test_file}"
-    env = dict(os.environ, NIGHTLY_ROOT=str(candidate / "self-check-root"),
+    # The candidate's tests judge its code, not this host's service
+    # settings: NIGHTLY_* values from the unit's environment (latency
+    # bands, a cells file, the 274 revision) change what the runner
+    # constants and run_branch do at import and would fail tests that
+    # assume the defaults. Run the tests with the defaults, plus only
+    # the two variables the check itself sets.
+    env = {key: value for key, value in os.environ.items() if not key.startswith("NIGHTLY_")}
+    env.update(NIGHTLY_ROOT=str(candidate / "self-check-root"),
                NIGHTLY_SELF_CHECK_ACTIVE="1")
     proc = popen_group([sys.executable, "-B", str(test_path)], cwd=str(candidate),
                        env=env, stdin=subprocess.DEVNULL,
@@ -963,7 +970,15 @@ def self_check_candidate(candidate: Path, test_file: str = SELF_TEST_FILE,
         untrack(proc.pid)
     if proc.returncode:
         tail = (stderr or stdout).strip().splitlines()
-        return False, f"{test_file} failed: {tail[-1][:300] if tail else 'unknown error'}"
+        summary_line = tail[-1][:300] if tail else "unknown error"
+        # Name the failing tests ("FAIL: test_x (module.Class)"), not
+        # only unittest's count line: this detail is all the summary
+        # keeps, and a count alone cannot be diagnosed after the fact.
+        failing = [line.split(":", 1)[1].split(" (", 1)[0].strip()[:120]
+                   for line in tail if line.startswith(("FAIL:", "ERROR:"))]
+        if failing:
+            return False, f"{test_file} failed: {', '.join(failing[:3])} ({summary_line})"
+        return False, f"{test_file} failed: {summary_line}"
     return True, f"py_compile ok; {test_file} passed"
 
 
@@ -3245,6 +3260,14 @@ def run_branch(branch: str, parallel: int, only: list[str] | None, only_lanes: l
         binary = binaries.get(f"{frontend}-play")
         if note_quiet_lock():
             reason_unavailable = f"MAC-QUIET: {_quiet_lock_reason}"
+        if binary is None and not reason_unavailable and not reason_not_run:
+            # The build failed or did not run, so there is no binary to run
+            # cells with. Mark the cells NOT_RUN with the build reason and
+            # do not start the engine: the run still writes its summary and
+            # DONE (the latency pass does the same, see run_latency_pass).
+            build_detail = (build_error or "").strip().lstrip(";").strip()
+            reason_not_run = (f"build failed: {build_detail}" if build_detail
+                              else "the build did not run; see build.log")
         if not reason_unavailable and not reason_not_run and REQUIRE_CONSOLE:
             ok, detail, _ = console_session()
             if not ok:
