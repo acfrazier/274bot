@@ -408,6 +408,16 @@ impl<'a> WildernessView<'a> {
         Self { rules }
     }
 
+    /// Borrowed wilderness rules of the selected pack.
+    ///
+    /// Added for PvP V0 (PVP-DESIGN-1026 §3.2): the combat tables copy the
+    /// rules once per process instead of baking a second wilderness table.
+    /// Content: `areas/area_wilderness/configs/wilderness_zones.dbrow`,
+    /// formula `areas/area_wilderness/scripts/wilderness_levels.rs2:4-16`.
+    pub fn rules(self) -> &'a WildernessRules {
+        self.rules
+    }
+
     /// Inclusive `inzone` membership.
     pub fn contains(self, tile: WorldTile) -> bool {
         self.rules.contains(tile)

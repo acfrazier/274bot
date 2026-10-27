@@ -856,6 +856,74 @@ fn wilderness_view_has_no_grid_and_reports_membership() {
 }
 
 #[test]
+fn wilderness_view_rules_accessor_matches_pack_values() {
+    // PvP V0 (PVP-DESIGN-1026 §3.2): the accessor exposes the pack's own
+    // rules for the one-per-process combat copy; no second bake. The zones
+    // below reuse the packed constants from
+    // `areas/area_wilderness/configs/wilderness_zones.dbrow` and the formula
+    // `areas/area_wilderness/scripts/wilderness_levels.rs2:4-16` in a
+    // synthetic graph, so this test locks the pass-through only; the real
+    // baked pack values are covered by the existing nav-bake tests.
+    // Main `x in [2944, 3391], z in [3520, 6399]`, edgeville-dungeon
+    // `x in [2944, 3391], z in [9920, 12799]` level 0, level `(z - 3520) /
+    // 8 + 1` and `(z - 9920) / 8 + 1` respectively.
+    let graph = TransportGraph {
+        wilderness: WildernessRules {
+            zones: vec![
+                WildernessZone {
+                    x1: 2944,
+                    z1: 3520,
+                    x2: 3391,
+                    z2: 6399,
+                    level1: 0,
+                    level2: 3,
+                    origin_z: 3520,
+                },
+                WildernessZone {
+                    x1: 2944,
+                    z1: 9920,
+                    x2: 3391,
+                    z2: 12799,
+                    level1: 0,
+                    level2: 0,
+                    origin_z: 9920,
+                },
+            ],
+            divisor: 8,
+            offset: 1,
+        },
+        ..TransportGraph::default()
+    };
+    let lease = NavLease::wrap(
+        Arc::new(NavWorld::from_parts(
+            grid(tile(3200, 3200, 0), 1, 1, vec![0]),
+            graph,
+            Vec::new(),
+        )),
+        digest(b"wild"),
+    )
+    .unwrap();
+    let wild = lease.wilderness();
+    let rules = wild.rules();
+    assert_eq!(rules.zones.len(), 2);
+    assert_eq!((rules.divisor, rules.offset), (8, 1));
+    assert_eq!(rules.level(tile(3100, 3523, 0)), 1);
+    assert_eq!(rules.level(tile(3100, 3519, 0)), 0);
+    assert_eq!(rules.level(tile(3100, 9925, 0)), 1);
+    assert_eq!(rules.level(tile(3100, 3600, 1)), 11);
+    assert_eq!(rules.level(tile(2943, 3523, 0)), 0);
+    for t in [
+        tile(3100, 3523, 0),
+        tile(3100, 9925, 0),
+        tile(3100, 3519, 0),
+        tile(3100, 3600, 1),
+    ] {
+        assert_eq!(wild.contains(t), rules.contains(t), "contains {t:?}");
+        assert_eq!(wild.level(t), rules.level(t), "level {t:?}");
+    }
+}
+
+#[test]
 fn route_request_defaults_to_reach_without_wilderness() {
     let req = RouteRequest::new(tile(1, 1, 0), tile(2, 2, 0));
     assert_eq!(req.arrival(), ArrivalSpec::REACH);
