@@ -11,6 +11,8 @@ fn capture(value: &Value) -> CombatCapture {
     capture.prayer_facts = rows("prayer_facts");
     capture.start_baseline =
         (!value["start_baseline"].is_null()).then(|| value["start_baseline"].clone());
+    capture.m1_completion =
+        (!value["m1_completion"].is_null()).then(|| value["m1_completion"].clone());
     capture.started = value["started"] == json!(true);
     capture.magic_setup = (!value["magic_setup"].is_null()).then(|| value["magic_setup"].clone());
     capture.magic_npc_events = value["magic"]["raw_npc_mask_and_landing_events"]
@@ -797,7 +799,9 @@ fn replay_all_retained_combat_receipts() {
                 assert!(!action_wire_valid(&wrong_packet));
                 leaves["dialogue_wrong_packet_and_actor_mutants_rejected"] = json!(true);
             }
-            if row["request"]["debug"] == "ContinueDialog" && action_wire_valid(row) {
+            if chat_continue_debug(row["request"]["debug"].as_str().unwrap_or_default())
+                && action_wire_valid(row)
+            {
                 let mut wrong_packet = row.clone();
                 wrong_packet["wire_opcodes"] = json!([86]);
                 assert!(!action_wire_valid(&wrong_packet));
@@ -843,7 +847,15 @@ fn replay_all_retained_combat_receipts() {
                         .as_array_mut()
                         .unwrap()
                         .iter_mut()
-                        .find(|row| row["request"]["action"] == op || row["request"]["debug"] == op)
+                        .find(|row| {
+                            if op == "ContinueDialog" {
+                                chat_continue_debug(
+                                    row["request"]["debug"].as_str().unwrap_or_default(),
+                                )
+                            } else {
+                                row["request"]["action"] == op || row["request"]["debug"] == op
+                            }
+                        })
                         .unwrap();
                     row["wire_opcodes"] = json!([0]);
                     assert!(!case_ready(case, &capture(&mutant)));

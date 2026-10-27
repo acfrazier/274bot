@@ -902,7 +902,7 @@ impl SheepGameplayProof {
         }
         if self.bank_loaded.is_some()
             && self.provisioning_withdrawal.is_none()
-            && frame.provision.as_deref() == Some("Withdrawing")
+            && matches!(frame.provision.as_deref(), Some("Withdrawing" | "Ready"))
             && frame.at_bank
             && frame.bank_open
             && frame.bank_loaded
@@ -1105,6 +1105,11 @@ fn observe_sheep(
             lifecycle,
         )?;
         if !proof.qualifies() {
+            if proof.durable_completion.is_some() && proof.green.is_some() {
+                return Err(format!(
+                    "Sheep completed without the full gameplay witness: {proof:?}"
+                ));
+            }
             return Ok(None);
         }
         let bank_seed = bank_seed
@@ -1181,10 +1186,12 @@ fn validate_live_receipt(receipt: &Value) -> Result<(), String> {
             .pointer("/bank_loading/bank/wool")
             .and_then(Value::as_i64)
             != Some(i64::from(WOOL_QTY))
-        || family
-            .pointer("/provisioning_withdrawal/provision")
-            .and_then(Value::as_str)
-            != Some("Withdrawing")
+        || !matches!(
+            family
+                .pointer("/provisioning_withdrawal/provision")
+                .and_then(Value::as_str),
+            Some("Withdrawing" | "Ready")
+        )
         || family
             .pointer("/provisioning_withdrawal/inventory/shears")
             .and_then(Value::as_i64)
@@ -1540,6 +1547,42 @@ mod tests {
             .observe(&complete, Some(&completed_lifecycle()))
             .unwrap();
         assert!(proof.qualifies());
+    }
+
+    #[test]
+    fn withdrawal_postcondition_survives_ready_status_on_the_same_frame() {
+        let mut proof = SheepGameplayProof::default();
+        let mut bank = frame("sheep:0", "start");
+        bank.provision = Some("Scanning".to_owned());
+        bank.at_bank = true;
+        bank.bank_open = true;
+        bank.bank_loaded = true;
+        bank.bank_generation = Some(2);
+        bank.bank_snapshot_generation = Some(3);
+        bank.bank_shears = SHEARS_QTY;
+        bank.bank_wool = WOOL_QTY;
+        proof.observe(&bank, None).unwrap();
+
+        let mut withdrawn = frame("sheep:0", "start");
+        withdrawn.provision = Some("Ready".to_owned());
+        withdrawn.at_bank = true;
+        withdrawn.bank_open = true;
+        withdrawn.bank_loaded = true;
+        withdrawn.bank_generation = Some(2);
+        withdrawn.inventory_shears = SHEARS_QTY;
+        withdrawn.inventory_wool = WOOL_QTY - 1;
+        proof.observe(&withdrawn, None).unwrap();
+        assert!(proof.provisioning_withdrawal.is_none());
+        withdrawn.inventory_wool = WOOL_QTY;
+        withdrawn.bank_loaded = false;
+        proof.observe(&withdrawn, None).unwrap();
+        assert!(proof.provisioning_withdrawal.is_none());
+        withdrawn.bank_loaded = true;
+        proof.observe(&withdrawn, None).unwrap();
+        assert_eq!(
+            proof.provisioning_withdrawal.as_ref().unwrap()["provision"],
+            "Ready"
+        );
     }
 
     #[test]

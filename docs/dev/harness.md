@@ -42,6 +42,20 @@ Cells behind Cargo features do not build without them. `quester_dev_paths_live`,
 other `*_live*` modules) run under `cargo test`. Each cell file's header lists
 its own environment.
 
+The staged Imp hand-in cell requires a retained `Completed` lifecycle receipt
+and the actual green Imp quest row. Its receipt stores both in `m1_completion`.
+The slot removes the native run during completion, so later status polling
+cannot require a transient `imp:2` status. The cell still requires both wizard
+talks, valid dialogue packets, four seeded beads, and removal of those beads.
+The dialogue packet check accepts only `CLOSE_MODAL` for `CloseModal` when the
+Quester closes the completion scroll. Unknown operations and extra packets fail.
+
+The Sheep bank-loop cell proves withdrawal from the loaded bank, matching
+bank generation, empty stock, and exact received items. It accepts `Ready`
+as well as `Withdrawing` because the provisioner can finish before observation.
+The cell still requires spinning, twenty balls of wool, hand-in, green progress,
+and the retained `Completed` lifecycle receipt.
+
 The Quester Path smoke runs one content quest id from the embedded release
 index (or from `QUESTER_PATH_DIR`) under a fixed 45-minute deadline:
 
