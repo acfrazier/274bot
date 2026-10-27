@@ -10,6 +10,8 @@ globs = [
   "crates/host-play/src/**",
   "crates/client-adapter/src/**",
   "crates/host-play/tests/survivable_admission_live.rs",
+  "crates/host-play/examples/map_footprint.rs",
+  "crates/host-play/examples/profile_check.rs",
   "crates/frontend-core/src/**",
   "crates/panel/src/**",
   "crates/panel/assets/**",
@@ -550,4 +552,18 @@ globs = ["crates/client-adapter/src/**", "crates/client-adapter/Cargo.toml", "Ca
 cells = [
   "transport.rustls-backend-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p client-adapter --features test-support --test rustls_backend_real -- --nocapture --test-threads=1",
   "transport.authenticated-control-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p client-adapter --features test-support --test rustls_authenticated_control -- --nocapture --test-threads=1",
+]
+
+# These examples prepare real assets without starting a gameplay slot.
+# Their explicit composition startup still needs the real asset endpoint.
+[[cover]]
+globs = ["crates/host-play/examples/profile_check.rs"]
+cells = [
+  "host.profile-check-initialize|BOT_CPU=1 BOT_NAV_BUILD=skip BOT_CACHE_DIR=${BOT_CACHE_DIR:?} ${ISOHOME:?} nice -n 10 cargo run --release -p host-play --example profile_check -- --profile local-289 --revision 289 --host 127.0.0.1 --port 44594 --asset-host 127.0.0.1 --http-port 1080 --engine ${ENGINE_A_DIR:?} --nav-pack ${NAV_PACK_289:?} --nav-flags ${NAV_FLAGS_289:?} --initialize|--locked -p host-play --test session_profile both_revisions_reach_real_shared_client_constructor_and_keep_the_binding",
+]
+
+[[cover]]
+globs = ["crates/host-play/examples/map_footprint.rs"]
+cells = [
+  "host.map-footprint-catalogue|BOT_CPU=1 BOT_NAV_BUILD=skip BOT_CACHE_DIR=${BOT_CACHE_DIR:?} ${ISOHOME:?} nice -n 10 cargo run --release -p host-play --example map_footprint -- --profile local-289 --revision 289 --host 127.0.0.1 --port 44594 --asset-host 127.0.0.1 --http-port 1080 --engine ${ENGINE_A_DIR:?} --nav-pack ${NAV_PACK_289:?} --nav-flags ${NAV_FLAGS_289:?} --cache-root ${LIVE_EVIDENCE_DIR:?}/map-cache --catalogue --cycles 1|--locked -p host-play --test runtime_bind",
 ]
