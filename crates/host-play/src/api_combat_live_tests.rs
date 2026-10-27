@@ -26,6 +26,11 @@ const COW_FIELD: WorldTile = WorldTile {
 };
 /// The field's cow spawns (3243..3261, 3258..3295) with a margin.
 const COW_AREA: &str = "{ min_x: 3240, min_z: 3254, max_x: 3266, max_z: 3299, level: 0 }";
+/// Inside the Lumbridge pen, north of the south fence. The gate tile
+/// 3235,3295 can see a chicken across that fence, and the machine keeps
+/// clicking it.
+const CHICKEN_AREA: &str = "{ min_x: 3226, min_z: 3296, max_x: 3238, max_z: 3302, level: 0 }";
+const CHICKEN_STANDS: [(i32, i32); 3] = [(3231, 3298), (3233, 3298), (3232, 3299)];
 /// Thick Skin, the user's own prayer (varp `prayer0`).
 const THICK_SKIN_VARP: i32 = 83;
 const SHRIMP_ID: i32 = 315;
@@ -72,7 +77,16 @@ struct Observed {
     tile: Option<(i32, i32, i32)>,
     xp: Vec<(i32, i32)>,
     hitpoints: i32,
+    hitpoints_base: i32,
     shrimps: i32,
+    /// An NPC is in combat and targets this account.
+    npc_on_us: bool,
+    /// Varp 172. Zero is auto-retaliate on.
+    retaliate: i32,
+    /// The frame hook presses the retaliate-off toggle until varp 172 is 1.
+    want_retaliate_off: bool,
+    /// The local player's current animation, or -1 when unknown.
+    local_animation: i32,
     /// Varp values of the watched prayer varps, latest frame.
     prayers: Vec<(i32, i32)>,
     /// Every watched prayer varp seen on at least once after `ready`.
@@ -113,11 +127,22 @@ fn frame(
         .iter()
         .map(|stat| (stat.index, stat.xp))
         .collect();
-    state.hitpoints = snapshot
-        .stats()
-        .iter()
-        .find(|stat| stat.index == 3)
-        .map_or(0, |stat| stat.effective);
+    let hitpoints = snapshot.stats().iter().find(|stat| stat.index == 3);
+    state.hitpoints = hitpoints.map_or(0, |stat| stat.effective);
+    state.hitpoints_base = hitpoints.map_or(0, |stat| stat.base);
+    state.npc_on_us = snapshot.local_player().is_some_and(|local| {
+        let index = local.player.index;
+        snapshot.npcs().iter().any(|npc| {
+            npc.in_combat
+                && npc.target.is_some_and(|target| {
+                    target.kind == api::snapshot::ActorKind::Player && target.index == index
+                })
+        })
+    });
+    state.retaliate = varp(&snapshot, AUTO_RETALIATE_VARP);
+    state.local_animation = snapshot
+        .local_player()
+        .map_or(-1, |local| local.player.actor.animation);
     state.shrimps = snapshot
         .inventory()
         .iter()
@@ -143,6 +168,9 @@ fn frame(
             if value != 0 && !state.seen_on.contains(&index) {
                 state.seen_on.push(index);
             }
+        }
+        if state.want_retaliate_off && state.retaliate != 1 {
+            let _ = api::interact::Interactions::new(&snapshot, client).set_retaliate(false);
         }
         return;
     }
@@ -455,6 +483,70 @@ impl Cell {
             self.started.elapsed().as_secs_f64(),
             path.display()
         );
+    }
+
+    fn snapshot(&self) -> Observed {
+        self.observed.lock().expect("observed lock").clone()
+    }
+
+    fn cheat_until(&self, label: &str, command: &str, ready: impl Fn(&Observed) -> bool) {
+        self.play
+            .cheat(&self.account, command)
+            .unwrap_or_else(|error| panic!("{label}: cheat {command} refused: {error}"));
+        let deadline = Instant::now() + Duration::from_secs(20);
+        wait_until(label, deadline, || ready(&self.snapshot()));
+    }
+
+    /// `setstat` restores both numbers. One drain then sets effective HP.
+    /// The next cheat waits until that pair has landed, so a stale reading
+    /// cannot queue a second drain on top of the first. `also` is the extra
+    /// ready check. A hit in the window retries the whole pair.
+    fn seed_hitpoints(&self, effective: i32, also: impl Fn(&Observed) -> bool) {
+        for _ in 0..3 {
+            self.play
+                .cheat(&self.account, "setstat hitpoints 40")
+                .expect("restore hitpoints");
+            let restored = Instant::now() + Duration::from_secs(8);
+            while Instant::now() < restored {
+                let state = self.snapshot();
+                if state.hitpoints_base == 40 && state.hitpoints == 40 {
+                    break;
+                }
+                thread::sleep(Duration::from_millis(50));
+            }
+            if self.snapshot().hitpoints != 40 || self.snapshot().hitpoints_base != 40 {
+                continue;
+            }
+            if effective != 40 {
+                self.play
+                    .cheat(
+                        &self.account,
+                        &format!("~stat_drain hitpoints {} 0", 40 - effective),
+                    )
+                    .expect("drain hitpoints");
+            }
+            let landed = Instant::now() + Duration::from_secs(8);
+            while Instant::now() < landed {
+                let state = self.snapshot();
+                if state.hitpoints_base == 40 && state.hitpoints == effective && also(&state) {
+                    return;
+                }
+                thread::sleep(Duration::from_millis(50));
+            }
+        }
+        let state = self.snapshot();
+        panic!(
+            "hitpoints did not settle at {effective}/40 (have {}/{}, npc_on_us {})",
+            state.hitpoints, state.hitpoints_base, state.npc_on_us
+        );
+    }
+
+    fn near(tile: WorldTile) -> impl Fn(&Observed) -> bool {
+        move |state| {
+            state.tile.is_some_and(|(x, z, level)| {
+                level == tile.level && x.abs_diff(tile.x) <= 6 && z.abs_diff(tile.z) <= 6
+            })
+        }
     }
 }
 
@@ -849,6 +941,67 @@ fn count_before(line: &str, label: &str) -> i64 {
         .unwrap_or(-1)
 }
 
+/// Cow eat line: `2 × danger + 1` with danger 1 (`select.rs`, js-api-v2).
+const COW_EAT_LINE: i64 = 3;
+/// One shrimp heals 3. An eat at the line therefore finishes at 6 or below.
+const SHRIMP_HEAL: i64 = 3;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EatVerdict {
+    /// The fight started at or below the eat line, the bot ate, and
+    /// hitpoints finished above the line but not above one shrimp.
+    AteAtLine,
+    /// The fight started above the eat line and the bot did not eat.
+    NoEatAboveLine,
+}
+
+/// Hitpoints in a showcase line (`HP 3/40` → 3). `-1` when the line has none.
+fn hp_of(line: &str) -> i64 {
+    line.split("HP ")
+        .nth(1)
+        .and_then(|rest| rest.split('/').next())
+        .and_then(|digits| digits.trim().parse().ok())
+        .unwrap_or(-1)
+}
+
+/// The documented eat rule for one showcase phase.
+///
+/// `eat_line` is `2 × danger + 1`. A receipt passes when the fight started
+/// at or below that line, the bot ate at least once, and hitpoints finished
+/// above the line and at or below one shrimp over it. It fails when the bot
+/// never ate at or below the line, when the end line has no `ate` count,
+/// when hitpoints did not finish above the line, when they finished above
+/// one shrimp, or when the bot ate while already above the line.
+fn showcase_eat_verdict(
+    start_line: &str,
+    end_line: &str,
+    eat_line: i64,
+) -> Result<EatVerdict, &'static str> {
+    let start_hp = hp_of(start_line);
+    let end_hp = hp_of(end_line);
+    let ate = count_after(end_line, "ate");
+    if start_hp < 0 || end_hp < 0 || ate < 0 {
+        return Err("eat receipt is missing ate or hitpoints");
+    }
+    if start_hp > eat_line {
+        return if ate == 0 {
+            Ok(EatVerdict::NoEatAboveLine)
+        } else {
+            Err("ate while above the eat line")
+        };
+    }
+    if ate < 1 {
+        return Err("never ate at or below the eat line");
+    }
+    if end_hp <= eat_line {
+        return Err("end hitpoints are not above the eat line");
+    }
+    if end_hp > eat_line + SHRIMP_HEAL {
+        return Err("end hitpoints are above one shrimp");
+    }
+    Ok(EatVerdict::AteAtLine)
+}
+
 /// The external-path showcase (`examples/combat_showcase_v2.ts`) end to end,
 /// seeded exactly as its header says.
 #[test]
@@ -880,7 +1033,7 @@ fn live_api_combat_showcase_script_runs_every_phase() {
             "give shrimp 20",
             "give 3doseprayerrestore 2",
             "setvar prayer0 1",
-            "~stat_drain hitpoints 36 0",
+            "~stat_drain hitpoints 37 0",
             "~stat_drain prayer 17 0",
         ]
         .into_iter()
@@ -889,7 +1042,7 @@ fn live_api_combat_showcase_script_runs_every_phase() {
         vec![THICK_SKIN_VARP],
         |snapshot| {
             let stat = |index: i32| snapshot.stats().iter().find(|stat| stat.index == index);
-            stat(3).is_some_and(|stat| stat.base == 40 && stat.effective <= 4)
+            stat(3).is_some_and(|stat| stat.base == 40 && stat.effective == 3)
                 && stat(5).is_some_and(|stat| stat.base == 43 && stat.effective <= 26)
                 && snapshot
                     .inventory()
@@ -953,8 +1106,17 @@ fn live_api_combat_showcase_script_runs_every_phase() {
             .cloned()
             .unwrap_or_else(|| panic!("no {phase} end line: {lines:#?}"))
     };
+    let eat_start = lines
+        .iter()
+        .rfind(|line| line.contains("[showcase] eat start:"))
+        .cloned()
+        .unwrap_or_else(|| panic!("no eat start line: {lines:#?}"));
     let eat = end("eat");
-    assert!(count_after(&eat, "ate") >= 1, "{eat}");
+    assert_eq!(
+        showcase_eat_verdict(&eat_start, &eat, COW_EAT_LINE),
+        Ok(EatVerdict::AteAtLine),
+        "start={eat_start} end={eat}"
+    );
     let prayer = end("prayer");
     assert!(count_after(&prayer, "protect switches") >= 1, "{prayer}");
     assert!(count_after(&prayer, "prayer doses") >= 1, "{prayer}");
@@ -1160,4 +1322,597 @@ fn showcase_line_counts_read_the_logged_numbers() {
     assert_eq!(count_after(none, "ate"), 0);
     assert_eq!(count_before("[showcase] stop end: stopped", "casts"), -1);
     assert_eq!(count_after("[showcase] stop end: stopped", "ate"), -1);
+}
+
+fn eat_lines(start_hp: i64, end_hp: i64, ate: i64) -> (String, String) {
+    (
+        format!("[showcase] eat start: HP {start_hp}/40; Thick Skin on"),
+        format!(
+            "[showcase] eat end: fought → killed: 12 ticks, 4 swings, 0 casts, \
+             0 damage taken, ate {ate}, prayer doses 0, protect switches 0; HP {end_hp}/40"
+        ),
+    )
+}
+
+#[test]
+fn showcase_eat_oracle_accepts_an_eat_at_the_line() {
+    let (start, end) = eat_lines(COW_EAT_LINE, 6, 1);
+    assert_eq!(
+        showcase_eat_verdict(&start, &end, COW_EAT_LINE),
+        Ok(EatVerdict::AteAtLine)
+    );
+}
+
+#[test]
+fn showcase_eat_oracle_rejects_a_receipt_that_never_eats_below_the_line() {
+    let (start, end) = eat_lines(2, 2, 0);
+    assert_eq!(
+        showcase_eat_verdict(&start, &end, COW_EAT_LINE),
+        Err("never ate at or below the eat line")
+    );
+    let (at_line, still) = eat_lines(COW_EAT_LINE, COW_EAT_LINE, 0);
+    assert_eq!(
+        showcase_eat_verdict(&at_line, &still, COW_EAT_LINE),
+        Err("never ate at or below the eat line")
+    );
+}
+
+#[test]
+fn showcase_eat_oracle_rejects_an_eat_above_the_line_and_a_missing_count() {
+    let (start, end) = eat_lines(4, 7, 1);
+    assert_eq!(
+        showcase_eat_verdict(&start, &end, COW_EAT_LINE),
+        Err("ate while above the eat line")
+    );
+    let (above, stayed) = eat_lines(4, 4, 0);
+    assert_eq!(
+        showcase_eat_verdict(&above, &stayed, COW_EAT_LINE),
+        Ok(EatVerdict::NoEatAboveLine)
+    );
+    let (low, unfinished) = eat_lines(COW_EAT_LINE, COW_EAT_LINE, 1);
+    assert_eq!(
+        showcase_eat_verdict(&low, &unfinished, COW_EAT_LINE),
+        Err("end hitpoints are not above the eat line")
+    );
+    let missing = "[showcase] eat end: fought → killed: 12 ticks; HP 6/40";
+    assert_eq!(
+        showcase_eat_verdict(&start, missing, COW_EAT_LINE),
+        Err("eat receipt is missing ate or hitpoints")
+    );
+    // The old half-max line ate six shrimps from 3 HP and finished at 21.
+    let (low, over_ate) = eat_lines(COW_EAT_LINE, 21, 6);
+    assert_eq!(
+        showcase_eat_verdict(&low, &over_ate, COW_EAT_LINE),
+        Err("end hitpoints are above one shrimp")
+    );
+}
+
+/// Cow emergency line: danger 1 + 1. The old unknown-danger line for 40 HP is 20.
+const COW_EMERGENCY: i32 = 2;
+/// Classic varp 172: 0 is auto-retaliate on, 1 is off.
+const AUTO_RETALIATE_VARP: i32 = 172;
+/// The old half-max line `lines(None, 40)` used before these stats were known.
+const OLD_UNKNOWN_LINE: i32 = 20;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NativeCase {
+    /// Chicken, max hit 0. Food and Protect from Melee stay unused. The fight gains XP.
+    ZeroDanger,
+    /// Cow, no food, 3/40. The old line was 20, so that rule aborts at the start.
+    NoFoodOpen,
+    /// Cow, no food, 2/40. The fight aborts for no food before it attacks.
+    NoFoodStop,
+}
+
+/// Facts the live cell reads off one fight. Unit tests fill the old-rule cases.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct NativeReceipt {
+    start_hp: i32,
+    food_before: i32,
+    food_after: i32,
+    protect_raised: bool,
+    xp_gained: bool,
+    killed: bool,
+    swings: u32,
+    aborted_no_food: bool,
+}
+
+/// The three changed decisions. A correct receipt passes. Each old-rule receipt fails.
+fn native_line_verdict(case: NativeCase, receipt: &NativeReceipt) -> Result<(), &'static str> {
+    match case {
+        NativeCase::ZeroDanger => {
+            if receipt.start_hp > COW_EAT_LINE as i32 {
+                return Err("zero-danger seed is above 3 hitpoints");
+            }
+            if receipt.food_before < 1 {
+                return Err("zero-danger seed has no food");
+            }
+            if receipt.food_after < receipt.food_before {
+                return Err("ate during a max-hit-0 fight");
+            }
+            if receipt.protect_raised {
+                return Err("raised Protect from Melee during a max-hit-0 fight");
+            }
+            if receipt.aborted_no_food {
+                return Err("aborted a max-hit-0 fight for lack of food");
+            }
+            if !receipt.xp_gained {
+                return Err("max-hit-0 fight did not gain XP");
+            }
+            Ok(())
+        }
+        NativeCase::NoFoodOpen => {
+            if receipt.start_hp != COW_EAT_LINE as i32 {
+                return Err("open-line seed is not 3 hitpoints");
+            }
+            if receipt.food_before != 0 || receipt.food_after != 0 {
+                return Err("open-line seed is not empty of food");
+            }
+            if receipt.aborted_no_food && receipt.swings == 0 {
+                return Err("aborted for lack of food at the start");
+            }
+            if !receipt.xp_gained && !receipt.killed {
+                return Err("open-line fight gave neither XP nor a kill");
+            }
+            Ok(())
+        }
+        NativeCase::NoFoodStop => {
+            if receipt.start_hp != COW_EMERGENCY {
+                return Err("stop seed is not the cow emergency line");
+            }
+            if receipt.food_before != 0 {
+                return Err("stop seed is not empty of food");
+            }
+            if !receipt.aborted_no_food {
+                return Err("did not stop for lack of food");
+            }
+            if receipt.swings != 0 {
+                return Err("attacked before the no-food stop");
+            }
+            if receipt.xp_gained || receipt.killed {
+                return Err("the stopped fight still gained XP or a kill");
+            }
+            Ok(())
+        }
+    }
+}
+
+/// The product's no-food predicate. `None` is the old unknown danger.
+fn stops_for_no_food(danger: Option<i32>, hp: i32, hp_max: i32, food: bool) -> bool {
+    let emergency = script::combat::select::lines(danger, hp_max).emergency;
+    danger != Some(0) && hp <= emergency && !food
+}
+
+/// One Load script, several fights. The test arms `__request` and reads `__outcome`.
+const PHASED_CONSUMER: &str = r#"export const apiVersion = 2;
+export function tick(api) {
+  const page = api.snapshot.combat;
+  const label = page ? `${page.phase}:${page.status ? page.status.stage : '-'}` : 'idle';
+  if (label !== globalThis.__last) {
+    globalThis.__last = label;
+    (globalThis.__phases ||= []).push(label);
+  }
+  if (globalThis.__stopNow && globalThis.__fight && !globalThis.__stopSent) {
+    globalThis.__stopSent = true;
+    api.combat.stop();
+  }
+  if (!globalThis.__fight && globalThis.__request) {
+    const request = globalThis.__request;
+    globalThis.__request = null;
+    globalThis.__fight = api.combat.fight(request);
+    globalThis.__fight.then((value) => {
+      globalThis.__outcome = value;
+      globalThis.__fight = null;
+    });
+  }
+}
+"#;
+
+fn combat_xp(before: &Observed, after: &Observed) -> i32 {
+    [0, 1, 2, 3]
+        .into_iter()
+        .map(|index| xp(after, index) - xp(before, index))
+        .sum()
+}
+
+fn report_flag(outcome: &serde_json::Value, field: &str) -> u64 {
+    outcome["value"]["report"][field].as_u64().unwrap_or(0)
+}
+
+fn aborted_no_food(outcome: &serde_json::Value) -> bool {
+    outcome["kind"] == "done"
+        && outcome["value"]["end"] == "fought"
+        && outcome["value"]["report"]["end"] == "aborted"
+        && outcome["value"]["report"]["reason"] == "no-food"
+}
+
+fn killed_report(outcome: &serde_json::Value) -> bool {
+    outcome["kind"] == "done"
+        && outcome["value"]["end"] == "fought"
+        && outcome["value"]["report"]["end"] == "killed"
+}
+
+/// Chickens at 3/40 with food, then a cow at 3/40 with none, then a cow at
+/// 2/40 with none. Real NPCs. Only this account's stats, food and position
+/// are seeded.
+#[test]
+#[ignore = "requires LIVE=1 and the shared local R289 engine"]
+fn live_api_combat_native_lines_skip_zero_danger_and_hold_the_cow_food_line() {
+    let protect = protect_from_melee();
+    let cell = start_cell(
+        "native-lines",
+        274_279_219,
+        vec![
+            "setstat attack 40".into(),
+            "setstat strength 40".into(),
+            "setstat defence 40".into(),
+            "setstat prayer 43".into(),
+            "setstat hitpoints 40".into(),
+            "give shrimp 5".into(),
+            "~stat_drain hitpoints 37 0".into(),
+        ],
+        vec![protect],
+        |snapshot| {
+            let hitpoints = snapshot.stats().iter().find(|stat| stat.index == 3);
+            hitpoints.is_some_and(|stat| stat.base == 40 && stat.effective == 3)
+                && snapshot
+                    .stats()
+                    .iter()
+                    .any(|stat| stat.index == 5 && stat.base >= 43)
+                && snapshot
+                    .inventory()
+                    .iter()
+                    .any(|item| item.def.id == SHRIMP_ID)
+        },
+    );
+    cell.play
+        .script_start_load(
+            &cell.account,
+            PHASED_CONSUMER.to_string(),
+            script::LoadShape::NativeTick,
+            None,
+            vec![],
+        )
+        .expect("start the phased combat consumer");
+    let deadline = Instant::now() + FIGHT_DEADLINE;
+    wait_until("phased consumer running", deadline, || {
+        cell.play.script_state(&cell.account) == script::RunState::Running
+    });
+
+    let mut zero = None;
+    for (i, (x, z)) in CHICKEN_STANDS.iter().enumerate() {
+        let stand = WorldTile {
+            x: *x,
+            z: *z,
+            level: 0,
+        };
+        cell.cheat_until(
+            "tele inside the chicken pen",
+            &api::interact::tele_args(stand.level, stand.x, stand.z),
+            Cell::near(stand),
+        );
+        let proof = cell.phase(
+            "zero-danger",
+            &format!(
+                "{{ target: {{ npc: 'Chicken' }}, area: {CHICKEN_AREA}, meleeMode: 'aggressive', prayer: true, food: true, budgetTicks: 80 }}"
+            ),
+            protect,
+        );
+        let hit = proof.facts.xp_gained || proof.facts.killed;
+        zero = Some(proof);
+        if hit || i + 1 == CHICKEN_STANDS.len() {
+            break;
+        }
+    }
+    let zero = zero.expect("a chicken stand");
+
+    cell.cheat_until("clear food", "~clearinv", |state| state.shrimps == 0);
+    cell.seed_hitpoints(3, |_| true);
+    cell.cheat_until(
+        "tele to the cow field",
+        &api::interact::tele_args(COW_FIELD.level, COW_FIELD.x, COW_FIELD.z),
+        Cell::near(COW_FIELD),
+    );
+    let open = cell.phase(
+        "no-food-open",
+        &format!(
+            "{{ target: {{ npc: 'Cow' }}, area: {COW_AREA}, meleeMode: 'aggressive', prayer: true, food: true, budgetTicks: 300 }}"
+        ),
+        protect,
+    );
+
+    // The measured stop must see the cow as a threat before its own attack.
+    // A short fight makes a real cow retaliate. Stop that fight, then start
+    // the measured one while the cow is still on us.
+    cell.seed_hitpoints(40, |_| true);
+    let aggro_request = format!(
+        "{{ target: {{ npc: 'Cow' }}, area: {COW_AREA}, meleeMode: 'aggressive', food: true, budgetTicks: 80 }}"
+    );
+    cell.arm(&aggro_request);
+    let aggro_deadline = Instant::now() + Duration::from_secs(90);
+    wait_until("cow attacks us", aggro_deadline, || {
+        let settled = probe(&cell.play, &cell.account, "globalThis.__outcome || null");
+        assert!(
+            settled.is_null(),
+            "the aggro fight settled before a cow attacked: {settled}"
+        );
+        cell.snapshot().npc_on_us
+    });
+    probe(
+        &cell.play,
+        &cell.account,
+        "globalThis.__stopNow = true; true",
+    );
+    let stop_deadline = Instant::now() + Duration::from_secs(30);
+    wait_until("aggro fight stopped", stop_deadline, || {
+        !probe(&cell.play, &cell.account, "globalThis.__outcome || null").is_null()
+    });
+    // A new machine counts a playing attack animation as its own swing, and
+    // auto-retaliate starts another in the gap. Turn retaliate off while the
+    // cow is still on us, wait for that swing to end, then drain and arm.
+    cell.observed
+        .lock()
+        .expect("observed lock")
+        .want_retaliate_off = true;
+    let attack_anims: Vec<i32> = api::game_data::for_revision(api::selected::ClientRevision::R289)
+        .unwrap()
+        .style_seqs()
+        .iter()
+        .map(|row| row.seq_id)
+        .collect();
+    let quiet = Instant::now() + Duration::from_secs(12);
+    wait_until("retaliate off and the setup swing ended", quiet, || {
+        let state = cell.snapshot();
+        state.npc_on_us && state.retaliate == 1 && !attack_anims.contains(&state.local_animation)
+    });
+    let hp = cell.snapshot().hitpoints;
+    assert!(hp >= 2, "hitpoints {hp} are already below the stop line");
+    if hp != 2 {
+        cell.cheat_until(
+            "drain to the cow emergency line",
+            &format!("~stat_drain hitpoints {} 0", hp - 2),
+            |state| state.hitpoints_base == 40 && state.hitpoints == 2 && state.npc_on_us,
+        );
+    }
+    let quiet_again = Instant::now() + Duration::from_secs(8);
+    wait_until("stop seed is quiet at 2 hitpoints", quiet_again, || {
+        let state = cell.snapshot();
+        state.hitpoints == 2
+            && state.hitpoints_base == 40
+            && state.npc_on_us
+            && state.retaliate == 1
+            && !attack_anims.contains(&state.local_animation)
+    });
+    let stop = cell.phase(
+        "no-food-stop",
+        &format!(
+            "{{ target: {{ npc: 'Cow' }}, area: {COW_AREA}, prayer: true, food: true, retaliate: false, budgetTicks: 40 }}"
+        ),
+        protect,
+    );
+
+    cell.receipt(
+        "api-combat-native-lines-receipt.json",
+        serde_json::json!({
+            "cell": "live_api_combat_native_lines_skip_zero_danger_and_hold_the_cow_food_line",
+            "account": cell.account,
+            "protect_from_melee_varp": protect,
+            "zero_danger": zero.receipt,
+            "no_food_open": open.receipt,
+            "no_food_stop": stop.receipt,
+        }),
+    );
+    assert_eq!(
+        native_line_verdict(NativeCase::ZeroDanger, &zero.facts),
+        Ok(()),
+        "{:?}",
+        zero.facts
+    );
+    assert_eq!(
+        native_line_verdict(NativeCase::NoFoodOpen, &open.facts),
+        Ok(()),
+        "{:?}",
+        open.facts
+    );
+    assert_eq!(
+        native_line_verdict(NativeCase::NoFoodStop, &stop.facts),
+        Ok(()),
+        "{:?}",
+        stop.facts
+    );
+}
+
+struct PhaseProof {
+    facts: NativeReceipt,
+    receipt: serde_json::Value,
+}
+
+impl Cell {
+    fn arm(&self, request: &str) {
+        let expr = format!(
+            "globalThis.__outcome = null; globalThis.__phases = []; globalThis.__last = null; \
+             globalThis.__stopNow = false; globalThis.__stopSent = false; \
+             globalThis.__fight = null; globalThis.__request = {request}; true"
+        );
+        let armed = probe(&self.play, &self.account, &expr);
+        assert_eq!(armed, true, "arm probe failed: {armed}");
+    }
+
+    fn phase(&self, label: &str, request: &str, protect: i32) -> PhaseProof {
+        let before = self.snapshot();
+        self.arm(request);
+        let deadline = Instant::now() + FIGHT_DEADLINE;
+        wait_until(&format!("{label} outcome"), deadline, || {
+            !probe(&self.play, &self.account, "globalThis.__outcome || null").is_null()
+        });
+        let settle = Instant::now() + Duration::from_secs(2);
+        wait_until(&format!("{label} frames"), deadline, || {
+            Instant::now() >= settle
+        });
+        let outcome = probe(&self.play, &self.account, "globalThis.__outcome");
+        let phases = probe(&self.play, &self.account, "globalThis.__phases || []");
+        let after = self.snapshot();
+        let xp_gained = combat_xp(&before, &after) > 0;
+        let facts = NativeReceipt {
+            start_hp: before.hitpoints,
+            food_before: before.shrimps,
+            food_after: after.shrimps,
+            protect_raised: after.seen_on.contains(&protect) && !before.seen_on.contains(&protect),
+            xp_gained,
+            killed: killed_report(&outcome),
+            swings: u32::try_from(report_flag(&outcome, "swings")).unwrap_or(u32::MAX),
+            aborted_no_food: aborted_no_food(&outcome),
+        };
+        PhaseProof {
+            facts,
+            receipt: serde_json::json!({
+                "label": label,
+                "outcome": outcome,
+                "phases": phases,
+                "start_hp": facts.start_hp,
+                "start_base": before.hitpoints_base,
+                "food_before": facts.food_before,
+                "food_after": facts.food_after,
+                "protect_raised": facts.protect_raised,
+                "xp_gained": xp_gained,
+                "npc_on_us_before": before.npc_on_us,
+                "npc_on_us_after": after.npc_on_us,
+            }),
+        }
+    }
+}
+
+#[test]
+fn native_line_oracle_accepts_the_new_rules() {
+    assert_eq!(
+        native_line_verdict(
+            NativeCase::ZeroDanger,
+            &NativeReceipt {
+                start_hp: 3,
+                food_before: 5,
+                food_after: 5,
+                protect_raised: false,
+                xp_gained: true,
+                killed: true,
+                swings: 2,
+                aborted_no_food: false,
+            }
+        ),
+        Ok(())
+    );
+    assert_eq!(
+        native_line_verdict(
+            NativeCase::NoFoodOpen,
+            &NativeReceipt {
+                start_hp: 3,
+                food_before: 0,
+                food_after: 0,
+                protect_raised: false,
+                xp_gained: true,
+                killed: false,
+                swings: 2,
+                aborted_no_food: false,
+            }
+        ),
+        Ok(())
+    );
+    assert_eq!(
+        native_line_verdict(
+            NativeCase::NoFoodStop,
+            &NativeReceipt {
+                start_hp: 2,
+                food_before: 0,
+                food_after: 0,
+                protect_raised: false,
+                xp_gained: false,
+                killed: false,
+                swings: 0,
+                aborted_no_food: true,
+            }
+        ),
+        Ok(())
+    );
+}
+
+#[test]
+fn native_line_oracle_rejects_the_old_unknown_danger_rule() {
+    assert_eq!(
+        script::combat::select::lines(None, 40).emergency,
+        OLD_UNKNOWN_LINE
+    );
+    assert_eq!(
+        script::combat::select::lines(Some(1), 40).emergency,
+        COW_EMERGENCY
+    );
+    assert_eq!(script::combat::select::lines(Some(0), 40).eat, 1);
+    assert!(stops_for_no_food(None, 3, 40, false));
+    assert!(!stops_for_no_food(Some(1), 3, 40, false));
+    assert!(stops_for_no_food(Some(1), 2, 40, false));
+    assert!(!stops_for_no_food(Some(0), 3, 40, false));
+    assert!(!stops_for_no_food(Some(1), OLD_UNKNOWN_LINE, 40, false));
+
+    assert_eq!(
+        native_line_verdict(
+            NativeCase::ZeroDanger,
+            &NativeReceipt {
+                start_hp: 3,
+                food_before: 5,
+                food_after: 4,
+                protect_raised: true,
+                xp_gained: true,
+                killed: false,
+                swings: 1,
+                aborted_no_food: false,
+            }
+        ),
+        Err("ate during a max-hit-0 fight")
+    );
+    assert_eq!(
+        native_line_verdict(
+            NativeCase::ZeroDanger,
+            &NativeReceipt {
+                start_hp: 3,
+                food_before: 5,
+                food_after: 5,
+                protect_raised: true,
+                xp_gained: true,
+                killed: false,
+                swings: 1,
+                aborted_no_food: false,
+            }
+        ),
+        Err("raised Protect from Melee during a max-hit-0 fight")
+    );
+    assert_eq!(
+        native_line_verdict(
+            NativeCase::NoFoodOpen,
+            &NativeReceipt {
+                start_hp: 3,
+                food_before: 0,
+                food_after: 0,
+                protect_raised: false,
+                xp_gained: false,
+                killed: false,
+                swings: 0,
+                aborted_no_food: true,
+            }
+        ),
+        Err("aborted for lack of food at the start")
+    );
+    assert_eq!(
+        native_line_verdict(
+            NativeCase::NoFoodStop,
+            &NativeReceipt {
+                start_hp: OLD_UNKNOWN_LINE,
+                food_before: 0,
+                food_after: 0,
+                protect_raised: false,
+                xp_gained: false,
+                killed: false,
+                swings: 0,
+                aborted_no_food: true,
+            }
+        ),
+        Err("stop seed is not the cow emergency line")
+    );
 }

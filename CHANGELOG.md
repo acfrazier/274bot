@@ -5,6 +5,14 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
 
 ## Unreleased
 
+### Combat
+
+- Bots now know how hard common monsters such as cows, chickens, rats and
+  imps hit. The eat line and the no-food stop line follow each monster's
+  real max hit. A cow's max hit is 1, so a bot eats at 3 hitpoints and
+  stops for lack of food at 2. Imps cannot damage the bot at all (max hit
+  0), so the bot does not raise Protect from Melee against them.
+
 ## [0.2.7] — 2026-10-26 — Beta 2
 
 ### Panel and terminal app

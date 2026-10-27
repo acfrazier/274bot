@@ -50,6 +50,15 @@ function parseParamInt(raw: string | undefined, label: string): number | null {
     return parseCombatInt(raw, label);
 }
 
+/**
+ * Engine default for every NPC combat stat, including strength and ranged.
+ * 289 `NpcType.ts:106` (`stats = [1, 1, 1, 1, 1, 1]`); 274 `NpcType.ts:107`.
+ * A present `strength=` / `ranged=` line overrides it, including 0
+ * (289 opcodes 76 and 78 at `NpcType.ts:184` and `:188`; 274 at `:173` and `:177`).
+ * A pack row with no `.npc` block stays absent (`missing_main_stat`).
+ */
+const ENGINE_NPC_STAT_DEFAULT = 1;
+
 export function parseNpcFiles(content: string, revision: 274 | 289) {
     const definitions = parseParamDefinitions(requireGatherText(content, 'scripts/skill_combat/configs/combat.param'));
     const defaultMaxrange = revision === 274 ? 7 : -1;
@@ -94,8 +103,8 @@ export function parseNpcFiles(content: string, revision: 274 | 289) {
                     hitpoints: 0,
                     damagetype: null,
                     category: null,
-                    strength: null,
-                    ranged: null,
+                    strength: ENGINE_NPC_STAT_DEFAULT,
+                    ranged: ENGINE_NPC_STAT_DEFAULT,
                     strengthbonus,
                     rangebonus,
                     undead: null,
