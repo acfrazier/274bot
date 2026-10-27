@@ -6422,8 +6422,9 @@ fn open_render_all_warning(
 }
 
 /// "Don't show again" is disabled until "I understand" is ticked, and then
-/// does what OK does and saves the acknowledgement: the next launch applies
-/// an unchecked "only render focused" at once, with no dialog.
+/// saves the acknowledgement and, once that is durable, does what OK does:
+/// the next launch applies an unchecked "only render focused" at once, with
+/// no dialog.
 #[test]
 fn render_all_dont_show_again_needs_understood_then_saves_the_ack() {
     let _guard = crate::test_support::imgui_context_guard();
@@ -6453,8 +6454,8 @@ fn render_all_dont_show_again_needs_understood_then_saves_the_ack() {
         "the dialog stays until the acknowledgement is durable"
     );
     assert!(
-        !session.focus.lock().unwrap().only_render_selected,
-        "it does what OK does"
+        session.focus.lock().unwrap().only_render_selected,
+        "nothing renders all before the acknowledgement is durable"
     );
     await_preference(
         &mut session,
@@ -6465,6 +6466,10 @@ fn render_all_dont_show_again_needs_understood_then_saves_the_ack() {
     assert!(
         !session.wall.render_all_warn_open,
         "the durable acknowledgement closes the dialog"
+    );
+    assert!(
+        !session.focus.lock().unwrap().only_render_selected,
+        "the durable acknowledgement does what OK does"
     );
     assert!(
         crate::ui_state::load(&session.preferences).render_all_warning_ack,
@@ -6949,6 +6954,179 @@ fn settings_feedback_render_all_dont_show_again_failure_shows_in_the_dialog_unti
     assert_eq!(session.core.setting_failure(notice), None);
     assert!(session.ui.render_all_warning_ack);
     assert!(crate::ui_state::load(&session.preferences).render_all_warning_ack);
+}
+
+/// One panel frame: the session pumps and polls its preference writes, then
+/// `draw` runs. Returns the drawn text.
+fn preference_frame(
+    ctx: &mut dear_imgui_rs::Context,
+    session: &mut crate::session::Session,
+    draw: &dyn Fn(&dear_imgui_rs::Ui, &mut crate::session::Session),
+) -> String {
+    session.pump_status();
+    session.poll_panel_preferences();
+    drawn_text(ctx, session, draw)
+}
+
+/// The Browse window as the operator sees it, with the General config's
+/// Global section beside it (where "Saving preferences…" shows).
+fn browse_and_global(ui: &dear_imgui_rs::Ui, session: &mut crate::session::Session) {
+    super::browse_window_body(ui, session);
+    super::global_config_section(ui, session);
+}
+
+/// A fresh panel with the Browse window open and the preferences lock held
+/// by another program. The operator drops one category chip on another (the
+/// user action), and the held write fails. Returns the lock, the order the
+/// operator chose and the text of the first frame after the failure.
+fn failed_category_drop(
+    ctx: &mut dear_imgui_rs::Context,
+    session: &mut crate::session::Session,
+) -> (std::fs::File, Vec<String>, String) {
+    hydrate_panel_preferences(session);
+    let mut present: Vec<String> = Vec::new();
+    for card in session.scripts.browse_cards() {
+        let category = crate::script_picker::display_category(card.category()).to_owned();
+        if !present.contains(&category) {
+            present.push(category);
+        }
+    }
+    assert!(present.len() > 1, "the registry has several categories");
+    let lock = crate::test_support::hold_preferences_lock(&session.preferences);
+    preference_frame(ctx, session, &browse_and_global);
+    // The drop: what `category_chip_dnd` does on delivery.
+    let mut order = present;
+    order.reverse();
+    let _ = session.persist_panel_serializable(&["script_category_order"], &order);
+    session.ui.script_category_order = order.clone();
+    assert!(session.preferences_pending(), "the drop is saving");
+    // The writer's lock wait ends and every held write fails busy.
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while session.preferences_pending() {
+        session.pump_status();
+        session.poll_panel_preferences();
+        assert!(Instant::now() < deadline, "the held writes never ended");
+        thread::sleep(Duration::from_millis(5));
+    }
+    assert!(
+        session
+            .panel_member_error(&["script_category_order"])
+            .is_some_and(|text| text.contains("busy")),
+        "the drop failed busy: {:?}",
+        session.panel_member_error(&["script_category_order"])
+    );
+    let shown = preference_frame(ctx, session, &browse_and_global);
+    (lock, order, shown)
+}
+
+/// Headed defect 1 (2026-10-27): a failed preference save is final. With
+/// the lock still held, the Browse window draws on for longer than the
+/// writer's lock wait, and no preference write starts: the failed order is
+/// not tried again by itself, and the saved file has no order written by a
+/// frame.
+#[test]
+fn settings_feedback_a_failed_category_order_is_not_saved_again_by_the_browse_window() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let _iso = frontend_core::test_support::IsolatedStores::enter("panel-s3-r5-no-retry");
+    let mut ctx = dock_host_context();
+    super::amber_style(&mut ctx);
+    let mut session = crate::session::Session::new();
+    let (lock, _order, _) = failed_category_drop(&mut ctx, &mut session);
+    let until = Instant::now() + Duration::from_secs(6);
+    let mut frames = 0;
+    while Instant::now() < until {
+        preference_frame(&mut ctx, &mut session, &browse_and_global);
+        frames += 1;
+        assert!(
+            !session.preferences_pending(),
+            "frame {frames}: a preference write started without a user action"
+        );
+        thread::sleep(Duration::from_millis(20));
+    }
+    drop(lock);
+}
+
+/// Headed defect 2: a preference the panel reported as not saved is not
+/// written later. After the failure the other program releases the lock;
+/// the Browse window draws on and nothing writes the failed (or any other)
+/// category order to the real preferences file.
+#[test]
+fn settings_feedback_a_failed_category_order_is_not_written_after_the_lock_is_released() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let _iso = frontend_core::test_support::IsolatedStores::enter("panel-s3-r5-no-late-write");
+    let mut ctx = dock_host_context();
+    super::amber_style(&mut ctx);
+    let mut session = crate::session::Session::new();
+    let (lock, _order, _) = failed_category_drop(&mut ctx, &mut session);
+    drop(lock);
+    let until = Instant::now() + Duration::from_secs(3);
+    while Instant::now() < until || session.preferences_pending() {
+        preference_frame(&mut ctx, &mut session, &browse_and_global);
+        thread::sleep(Duration::from_millis(20));
+        assert!(
+            Instant::now() < until + Duration::from_secs(30),
+            "a write never ended"
+        );
+    }
+    let saved = crate::test_support::preferences_on_disk(&session.preferences);
+    assert_eq!(
+        saved.get("script_category_order"),
+        None,
+        "the failed order was written after the lock was released, without a user action"
+    );
+}
+
+/// Headed defect 4: the Browse window's category chips show the failure of
+/// the order the operator dropped (not "Saving…"), like the other panel
+/// controls, and it clears at the shared error timeout.
+#[test]
+fn settings_feedback_the_category_chips_show_a_failed_order_until_the_timeout() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let _iso = frontend_core::test_support::IsolatedStores::enter("panel-s3-r5-chips");
+    let mut ctx = dock_host_context();
+    super::amber_style(&mut ctx);
+    let mut session = crate::session::Session::new();
+    let (lock, _order, first) = failed_category_drop(&mut ctx, &mut session);
+    let chips = |ui: &dear_imgui_rs::Ui, s: &mut crate::session::Session| {
+        super::browse_window_body(ui, s);
+    };
+    let mut shown = first;
+    for frame in 0..30 {
+        assert!(
+            shown.contains("Preferences not saved") && !shown.contains("Saving…"),
+            "frame {frame}: the chips show the failure: {shown}"
+        );
+        shown = preference_frame(&mut ctx, &mut session, &chips);
+    }
+    session.expire_panel_write_errors(Instant::now() + frontend_core::ERROR_MESSAGE_TIMEOUT);
+    let shown = preference_frame(&mut ctx, &mut session, &chips);
+    assert!(
+        !shown.contains("Preferences not saved") && !shown.contains("Saving…"),
+        "the failure cleared at the timeout: {shown}"
+    );
+    drop(lock);
+}
+
+/// Headed defect 5: "Saving preferences…" in the General config's Global
+/// section settles. Once the held writes failed it is gone and stays gone
+/// while the panel draws on with the Browse window open.
+#[test]
+fn settings_feedback_saving_preferences_settles_after_a_failed_save() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let _iso = frontend_core::test_support::IsolatedStores::enter("panel-s3-r5-settles");
+    let mut ctx = dock_host_context();
+    super::amber_style(&mut ctx);
+    let mut session = crate::session::Session::new();
+    let (lock, _order, mut shown) = failed_category_drop(&mut ctx, &mut session);
+    for frame in 0..30 {
+        assert!(
+            !shown.contains("Saving preferences…"),
+            "frame {frame}: Global still says it is saving: {shown}"
+        );
+        shown = preference_frame(&mut ctx, &mut session, &browse_and_global);
+        thread::sleep(Duration::from_millis(10));
+    }
+    drop(lock);
 }
 
 /// OK alone keeps today's behaviour: it applies for this launch, saves

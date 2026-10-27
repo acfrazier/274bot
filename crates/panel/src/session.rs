@@ -2005,7 +2005,9 @@ impl Session {
 
     /// A notice window that waits for its durable acknowledgement closes
     /// when the saved value holds it; a failed write leaves it open with
-    /// the failure beside "Don't show again" / "Got it".
+    /// the failure beside "Don't show again" / "Got it". The render-all
+    /// warning's "Don't show again" renders every wall member only then: a
+    /// pending or failed acknowledgement changes nothing.
     fn settle_notice_windows(&mut self) {
         use frontend_core::{OperatorNotice, Setting, SettingStatus};
         if self.background_ack_open
@@ -2028,6 +2030,7 @@ impl Session {
             self.wall.render_all_confirming = false;
             if self.ui.render_all_warning_ack {
                 self.wall.render_all_warn_open = false;
+                self.set_render_all(true);
             }
         }
     }
@@ -2518,7 +2521,7 @@ impl Session {
     }
 
     /// Drop every panel-write failure that has stood for the error timeout.
-    fn expire_panel_write_errors(&mut self, now: Instant) {
+    pub(crate) fn expire_panel_write_errors(&mut self, now: Instant) {
         self.preference_write_errors.retain(|error| {
             now.saturating_duration_since(error.since) < frontend_core::ERROR_MESSAGE_TIMEOUT
         });
@@ -4097,15 +4100,16 @@ impl Session {
         }
     }
 
-    /// Confirm the render-all warning: wall members draw from now on (this
-    /// launch). With `remember`, also submit "Don't show again", after
+    /// Confirm the render-all warning. Without `remember` (OK), wall members
+    /// draw from now on (this launch only) and the confirm closes. With
+    /// `remember` ("Don't show again"), submit the acknowledgement, after
     /// which unchecking "only render focused" applies at once. That is
-    /// durable-only: the confirm stays open saying "Saving…" or the failure
-    /// beside the button, and closes when the saved acknowledgement holds
-    /// it ([`Self::settle_notice_windows`]). Without `remember` the choice
-    /// lasts this launch only and the confirm closes.
+    /// durable-only, and so is its effect: the confirm stays open saying
+    /// "Saving…" or the failure beside the button, the box and the render
+    /// policy stay at "only render focused", and only when the saved
+    /// acknowledgement holds it do the members draw and the confirm close
+    /// ([`Self::settle_notice_windows`]).
     pub fn confirm_render_all(&mut self, remember: bool) {
-        self.set_render_all(true);
         if remember && self.persist_ui {
             self.core
                 .stage_notice(frontend_core::OperatorNotice::RenderAllWarning);
@@ -4113,6 +4117,7 @@ impl Session {
             self.wall.render_all_confirming = true;
             self.settle_notice_windows();
         } else {
+            self.set_render_all(true);
             self.wall.render_all_warn_open = false;
             self.core
                 .dismiss_setting_failure(frontend_core::Setting::Notice(

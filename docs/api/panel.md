@@ -245,9 +245,12 @@ then FIFO-queue **warn**, else grey. **only render focused** mirrors
 `Focus.only_render_selected`: when off, unfocused wall members also
 `set_draw` (the tile body shows their raster); when on, only the focused
 member paints. Unchecking it opens a **Render all wall members?** confirm:
-**OK** (once **I understand** is ticked) applies for this launch, and **Don't
-show again** does the same and saves `render_all_warning_ack` in
-`panel-ui.json`, after which unchecking applies at once. The box starts
+**OK** (once **I understand** is ticked) applies for this launch. **Don't
+show again** saves `render_all_warning_ack` in `panel-ui.json` and renders
+all only when that save lands: while it is pending the box stays checked and
+only the focused member paints, and if it fails the dialog shows the reason
+and nothing changes. After the saved acknowledgement, unchecking applies at
+once. The box starts
 checked on every launch and is never saved. The mark checkbox's tooltip says
 "Fleet and Debug actions" on servers that allow Debug and "Fleet actions"
 elsewhere. The Game pane always follows **focus** — a rail-Off
@@ -664,7 +667,11 @@ remembered-folder choices show at once and go back to the saved value if their
 save fails; each shows **Saving…** and the reason at its own control (the
 section order, the category chips, the folds, the rail and Grid preview folds
 inside their tile, the file dialogs, the Debug tab and the Fleet toolbar fold
-included). With the session
+included). A failed save is final: the panel never tries it again by itself,
+also not after the other program releases the file. Only a new change of
+that setting starts a new save. The Browse window saves the category order
+only when you drop a chip; a category that the saved order does not name
+shows after the named ones and is not saved. With the session
 log file on, the Log window also says if the file could not be opened or
 written, also after it had opened.
 
