@@ -1549,9 +1549,11 @@ fn pvp_289() -> Arc<SelectedGameData> {
 fn special_facts_match_scripts() {
     let data = pvp_289();
     assert_eq!(data.special_weapons().len(), 14);
-    // (obj, energy, tab, style). Tabs follow the `combat_tabs` roots
-    // (C`player_attackstyles.rs2`); style is the `weapon_styles` bit
-    // (1 melee, 2 ranged).
+    // Every field of every row against the §6.1 effect table. Tabs follow
+    // the `combat_tabs` roots (C`player_attackstyles.rs2`); style is the
+    // `weapon_styles` bit (1 melee, 2 ranged). Energy is the `sa_energy`
+    // param or the 1000 default (C`combat.param:183-185`). Attribution ids
+    // resolve through `pack/seq.pack` and `pack/spotanim.pack`.
     let dagger = data.special_weapon(1215).expect("dragon dagger");
     assert_eq!((dagger.energy, dagger.tab, dagger.style), (250, 9, 1));
     assert!(matches!(
@@ -1568,8 +1570,43 @@ fn special_facts_match_scripts() {
         }
     ));
     assert_eq!(dagger.needs.ammo, 0);
-    assert_eq!(dagger.attribution.projectile, None);
+    assert_eq!(
+        (
+            dagger.attribution.anim,
+            dagger.attribution.spotanim,
+            dagger.attribution.projectile
+        ),
+        (Some(1062), Some(252), None)
+    );
+    let dagger_p = data.special_weapon(1231).expect("dragon dagger (p)");
+    assert_eq!((dagger_p.energy, dagger_p.tab, dagger_p.style), (250, 9, 1));
+    assert!(matches!(
+        dagger_p.effect,
+        SpecialEffect::Damage {
+            hits: 2,
+            max: MaxFormula::MeleeScaled { num: 115, den: 100 },
+            accuracy: AccuracyRule::MeleeScaled {
+                num: 115,
+                den: 100,
+                side_targets: None
+            },
+            delay: ExtraDelay::SecondHitNextTick,
+        }
+    ));
+    assert_eq!(dagger_p.needs.ammo, 0);
+    assert_eq!(
+        (
+            dagger_p.attribution.anim,
+            dagger_p.attribution.spotanim,
+            dagger_p.attribution.projectile
+        ),
+        (Some(1062), Some(252), None)
+    );
     let longsword = data.special_weapon(1305).expect("dragon longsword");
+    assert_eq!(
+        (longsword.energy, longsword.tab, longsword.style),
+        (250, 6, 1)
+    );
     assert!(matches!(
         longsword.effect,
         SpecialEffect::Damage {
@@ -1583,7 +1620,17 @@ fn special_facts_match_scripts() {
             delay: ExtraDelay::None,
         }
     ));
+    assert_eq!(longsword.needs.ammo, 0);
+    assert_eq!(
+        (
+            longsword.attribution.anim,
+            longsword.attribution.spotanim,
+            longsword.attribution.projectile
+        ),
+        (Some(1058), Some(248), None)
+    );
     let mace = data.special_weapon(1434).expect("dragon mace");
+    assert_eq!((mace.energy, mace.tab, mace.style), (250, 8, 1));
     assert!(matches!(
         mace.effect,
         SpecialEffect::Damage {
@@ -1597,8 +1644,17 @@ fn special_facts_match_scripts() {
             delay: ExtraDelay::None,
         }
     ));
+    assert_eq!(mace.needs.ammo, 0);
+    assert_eq!(
+        (
+            mace.attribution.anim,
+            mace.attribution.spotanim,
+            mace.attribution.projectile
+        ),
+        (Some(1060), Some(251), None)
+    );
     let halberd = data.special_weapon(3204).expect("dragon halberd");
-    assert_eq!((halberd.energy, halberd.tab), (300, 11));
+    assert_eq!((halberd.energy, halberd.tab, halberd.style), (300, 11, 1));
     assert!(matches!(
         halberd.effect,
         SpecialEffect::Damage {
@@ -1612,13 +1668,19 @@ fn special_facts_match_scripts() {
             delay: ExtraDelay::None,
         }
     ));
+    assert_eq!(halberd.needs.ammo, 0);
     // The halberd's map spotanims are not attributed (C`pvp_dragon_halberd.rs2:9-21).
     assert_eq!(
-        (halberd.attribution.spotanim, halberd.attribution.projectile),
-        (None, None)
+        (
+            halberd.attribution.anim,
+            halberd.attribution.spotanim,
+            halberd.attribution.projectile
+        ),
+        (Some(1203), None, None)
     );
     for id in [1249, 1263, 3176] {
         let spear = data.special_weapon(id).expect("dragon spear");
+        assert_eq!((spear.energy, spear.tab, spear.style), (250, 7, 1));
         assert!(matches!(
             spear.effect,
             SpecialEffect::Shove {
@@ -1626,9 +1688,18 @@ fn special_facts_match_scripts() {
                 clears_interaction: true
             }
         ));
-        assert_eq!(spear.energy, 250);
+        assert_eq!(spear.needs.ammo, 0);
+        assert_eq!(
+            (
+                spear.attribution.anim,
+                spear.attribution.spotanim,
+                spear.attribution.projectile
+            ),
+            (Some(1064), Some(253), None)
+        );
     }
     let claws = data.special_weapon(3101).expect("rune claws");
+    assert_eq!((claws.energy, claws.tab, claws.style), (250, 10, 1));
     assert!(matches!(
         claws.effect,
         SpecialEffect::Damage {
@@ -1642,6 +1713,15 @@ fn special_facts_match_scripts() {
             delay: ExtraDelay::NextDecisionPlusOne,
         }
     ));
+    assert_eq!(claws.needs.ammo, 0);
+    assert_eq!(
+        (
+            claws.attribution.anim,
+            claws.attribution.spotanim,
+            claws.attribution.projectile
+        ),
+        (Some(923), Some(274), None)
+    );
     let thrownaxe = data.special_weapon(805).expect("rune thrownaxe");
     assert_eq!(
         (
@@ -1661,8 +1741,24 @@ fn special_facts_match_scripts() {
             delay: ExtraDelay::None,
         }
     ));
+    assert_eq!(
+        (
+            thrownaxe.attribution.anim,
+            thrownaxe.attribution.spotanim,
+            thrownaxe.attribution.projectile
+        ),
+        (Some(1068), Some(257), Some(258))
+    );
     let shortbow = data.special_weapon(861).expect("magic shortbow");
-    assert_eq!((shortbow.energy, shortbow.needs.ammo), (350, 2));
+    assert_eq!(
+        (
+            shortbow.energy,
+            shortbow.tab,
+            shortbow.style,
+            shortbow.needs.ammo
+        ),
+        (350, 12, 2, 2)
+    );
     assert!(matches!(
         shortbow.effect,
         SpecialEffect::Damage {
@@ -1672,22 +1768,81 @@ fn special_facts_match_scripts() {
             delay: ExtraDelay::None,
         }
     ));
+    assert_eq!(
+        (
+            shortbow.attribution.anim,
+            shortbow.attribution.spotanim,
+            shortbow.attribution.projectile
+        ),
+        (Some(1074), Some(256), Some(249))
+    );
+    let longbow = data.special_weapon(859).expect("magic longbow");
+    assert_eq!(
+        (
+            longbow.energy,
+            longbow.tab,
+            longbow.style,
+            longbow.needs.ammo
+        ),
+        (350, 12, 2, 1)
+    );
+    assert!(matches!(
+        longbow.effect,
+        SpecialEffect::Damage {
+            hits: 1,
+            max: MaxFormula::RangedSpecialBasis { level_plus: 10 },
+            accuracy: AccuracyRule::AlwaysHits,
+            delay: ExtraDelay::None,
+        }
+    ));
+    assert_eq!(
+        (
+            longbow.attribution.anim,
+            longbow.attribution.spotanim,
+            longbow.attribution.projectile
+        ),
+        (None, Some(250), Some(249))
+    );
     let battleaxe = data.special_weapon(1377).expect("dragon battleaxe");
-    assert_eq!(battleaxe.energy, 1000);
+    assert_eq!(
+        (battleaxe.energy, battleaxe.tab, battleaxe.style),
+        (1000, 2, 1)
+    );
     assert!(matches!(
         battleaxe.effect,
         SpecialEffect::Instant {
             effect: InstantEffect::DragonBattleaxe
         }
     ));
+    assert_eq!(battleaxe.needs.ammo, 0);
+    assert_eq!(
+        (
+            battleaxe.attribution.anim,
+            battleaxe.attribution.spotanim,
+            battleaxe.attribution.projectile
+        ),
+        (Some(1056), Some(246), None)
+    );
     let excalibur = data.special_weapon(35).expect("excalibur");
-    assert_eq!(excalibur.energy, 1000);
+    assert_eq!(
+        (excalibur.energy, excalibur.tab, excalibur.style),
+        (1000, 6, 1)
+    );
     assert!(matches!(
         excalibur.effect,
         SpecialEffect::Instant {
             effect: InstantEffect::Excalibur
         }
     ));
+    assert_eq!(excalibur.needs.ammo, 0);
+    assert_eq!(
+        (
+            excalibur.attribution.anim,
+            excalibur.attribution.spotanim,
+            excalibur.attribution.projectile
+        ),
+        (Some(1057), Some(247), None)
+    );
     assert!(
         data.special_weapon(1333).is_none(),
         "rune scimitar has no special"
@@ -1721,8 +1876,14 @@ fn special_fact_longbow_always_hits() {
     ));
     // The longbow's launch anim is the current attack anim, so no fixed anim
     // is attributed; the projectile is the glow-arrow travel spotanim.
-    assert_eq!(longbow.attribution.anim, None);
-    assert!(longbow.attribution.spotanim.is_some() && longbow.attribution.projectile.is_some());
+    assert_eq!(
+        (
+            longbow.attribution.anim,
+            longbow.attribution.spotanim,
+            longbow.attribution.projectile
+        ),
+        (None, Some(250), Some(249))
+    );
 }
 
 #[test]
@@ -1730,27 +1891,28 @@ fn special_button_resolves_one_component_per_tab() {
     // Content: one `[if_button,combat_<tab>:specbar]` per tab
     // (C`specwep.rs2:51-115`). The staff (15) and scythe (5) tabs have none.
     let data = pvp_289();
-    let expected: [(u8, i32); 16] = [
-        (0, 7737),
-        (1, 7687),
-        (2, 7487),
-        (3, 7462),
-        (4, 7712),
-        (5, -1),
-        (6, 7587),
-        (7, 7662),
-        (8, 7612),
-        (9, 7562),
-        (10, 7788),
-        (11, 8481),
-        (12, 7537),
-        (13, 7512),
-        (14, 7637),
-        (15, -1),
+    let expected: [(u8, Option<i32>); 16] = [
+        (0, Some(7737)),
+        (1, Some(7687)),
+        (2, Some(7487)),
+        (3, Some(7462)),
+        (4, Some(7712)),
+        (5, None),
+        (6, Some(7587)),
+        (7, Some(7662)),
+        (8, Some(7612)),
+        (9, Some(7562)),
+        (10, Some(7788)),
+        (11, Some(8481)),
+        (12, Some(7537)),
+        (13, Some(7512)),
+        (14, Some(7637)),
+        (15, None),
     ];
     for (tab, component) in expected {
         assert_eq!(data.special_button(tab), component, "special_button({tab})");
     }
+    assert_eq!(data.special_button(16), None);
 }
 
 #[test]
@@ -1784,37 +1946,226 @@ fn melee_weapon_tier_matches_the_wield_gates() {
     // Content: the `opheld2` rows of `scripts/levelrequire/scripts/tier*.rs2`
     // (for example `tier1.rs2:8`, `tier5.rs2:8`, `tier40.rs2:8`,
     // `tier60.rs2:2-9`). Quest-gated rows are unusable unless the quest varp
-    // is set, never a plain tier (§4.2).
+    // is set, never a plain tier (§4.2). Strength comes from
+    // `levelrequire_attack_and_strength`
+    // (`scripts/levelrequire/scripts/levelrequire.rs2:186-192`; halberds
+    // `tier30.rs2:17` and `tier60.rs2:10` need attack 60 and strength 30).
     let data = pvp_289();
     let tier = |id: i32| data.melee_weapon_tier(id).expect("melee weapon");
-    assert_eq!(tier(1333).tier, 40);
-    assert!(!tier(1333).quest_gated);
-    assert_eq!((tier(1321).tier, tier(1321).quest_gated), (1, false));
-    assert_eq!((tier(1215).tier, tier(1215).quest_gated), (60, true));
-    assert_eq!((tier(1231).tier, tier(1231).quest_gated), (60, true));
+    assert_eq!(
+        (tier(1333).tier, tier(1333).quest_gated, tier(1333).strength),
+        (40, false, 0)
+    );
+    assert_eq!(
+        (tier(1321).tier, tier(1321).quest_gated, tier(1321).strength),
+        (1, false, 0)
+    );
+    assert_eq!(
+        (tier(1215).tier, tier(1215).quest_gated, tier(1215).strength),
+        (60, true, 0)
+    );
+    assert_eq!(
+        (tier(1231).tier, tier(1231).quest_gated, tier(1231).strength),
+        (60, true, 0)
+    );
     assert_eq!(
         (tier(1305).quest_gated, tier(1434).quest_gated),
         (true, true)
     );
     assert_eq!(
-        (tier(3204).quest_gated, tier(1377).quest_gated),
-        (true, true)
+        (tier(3204).tier, tier(3204).quest_gated, tier(3204).strength),
+        (60, true, 30)
     );
-    assert_eq!((tier(1249).tier, tier(1249).quest_gated), (60, false));
-    assert_eq!((tier(35).tier, tier(35).quest_gated), (20, false));
-    assert_eq!((tier(3757).tier, tier(3757).quest_gated), (30, true));
+    assert_eq!((tier(3200).tier, tier(3200).strength), (30, 15));
+    assert_eq!((tier(3202).tier, tier(3202).strength), (40, 20));
+    assert_eq!((tier(3190).tier, tier(3190).strength), (1, 1));
+    assert_eq!(
+        (tier(1249).tier, tier(1249).quest_gated, tier(1249).strength),
+        (60, false, 0)
+    );
+    assert_eq!(
+        (tier(35).tier, tier(35).quest_gated, tier(35).strength),
+        (20, false, 0)
+    );
+    assert_eq!(
+        (tier(3757).tier, tier(3757).quest_gated, tier(3757).strength),
+        (30, true, 0)
+    );
     // An obj with no tier script is tier 0 (C`combat.param:81-83`), never excluded.
-    assert_eq!((tier(278).tier, tier(278).quest_gated), (0, false));
+    assert_eq!(
+        (tier(278).tier, tier(278).quest_gated, tier(278).strength),
+        (0, false, 0)
+    );
     // Ranged weapons tier through the ranged gate, not the melee one.
     assert!(data.melee_weapon_tier(861).is_none());
+    assert!(data.melee_weapon_tier(805).is_none());
     assert_eq!(data.melee_weapon_tier_rows().len(), 148);
+    // Every field of every row: a wrong tier, gate or strength fails here.
+    let expected: [(i32, u8, bool, u8); 148] = [
+        (35, 20, false, 0),
+        (278, 0, false, 0),
+        (466, 0, false, 0),
+        (468, 0, false, 0),
+        (470, 0, false, 0),
+        (472, 0, false, 0),
+        (474, 0, false, 0),
+        (476, 0, false, 0),
+        (478, 0, false, 0),
+        (492, 0, false, 0),
+        (494, 0, false, 0),
+        (496, 0, false, 0),
+        (498, 0, false, 0),
+        (500, 0, false, 0),
+        (502, 0, false, 0),
+        (504, 0, false, 0),
+        (506, 0, false, 0),
+        (667, 0, false, 0),
+        (746, 0, false, 0),
+        (747, 0, false, 0),
+        (975, 0, false, 0),
+        (1203, 1, false, 0),
+        (1205, 1, false, 0),
+        (1207, 5, false, 0),
+        (1209, 20, false, 0),
+        (1211, 30, false, 0),
+        (1213, 40, false, 0),
+        (1215, 60, true, 0),
+        (1217, 10, false, 0),
+        (1219, 1, false, 0),
+        (1221, 1, false, 0),
+        (1223, 5, false, 0),
+        (1225, 20, false, 0),
+        (1227, 30, false, 0),
+        (1229, 40, false, 0),
+        (1231, 60, true, 0),
+        (1233, 10, false, 0),
+        (1235, 0, false, 0),
+        (1237, 1, false, 0),
+        (1239, 1, false, 0),
+        (1241, 5, false, 0),
+        (1243, 20, false, 0),
+        (1245, 30, false, 0),
+        (1247, 40, false, 0),
+        (1249, 60, false, 0),
+        (1251, 1, false, 0),
+        (1253, 1, false, 0),
+        (1255, 5, false, 0),
+        (1257, 20, false, 0),
+        (1259, 30, false, 0),
+        (1261, 40, false, 0),
+        (1263, 60, false, 0),
+        (1265, 1, false, 0),
+        (1267, 1, false, 0),
+        (1269, 5, false, 0),
+        (1271, 30, false, 0),
+        (1273, 20, false, 0),
+        (1275, 40, false, 0),
+        (1277, 1, false, 0),
+        (1279, 1, false, 0),
+        (1281, 5, false, 0),
+        (1283, 10, false, 0),
+        (1285, 20, false, 0),
+        (1287, 30, false, 0),
+        (1289, 40, false, 0),
+        (1291, 1, false, 0),
+        (1293, 1, false, 0),
+        (1295, 5, false, 0),
+        (1297, 10, false, 0),
+        (1299, 20, false, 0),
+        (1301, 30, false, 0),
+        (1303, 40, false, 0),
+        (1305, 60, true, 0),
+        (1307, 1, false, 0),
+        (1309, 1, false, 0),
+        (1311, 5, false, 0),
+        (1313, 10, false, 0),
+        (1315, 20, false, 0),
+        (1317, 30, false, 0),
+        (1319, 40, false, 0),
+        (1321, 1, false, 0),
+        (1323, 1, false, 0),
+        (1325, 5, false, 0),
+        (1327, 10, false, 0),
+        (1329, 20, false, 0),
+        (1331, 30, false, 0),
+        (1333, 40, false, 0),
+        (1335, 1, false, 0),
+        (1337, 1, false, 0),
+        (1339, 5, false, 0),
+        (1341, 10, false, 0),
+        (1343, 20, false, 0),
+        (1345, 30, false, 0),
+        (1347, 40, false, 0),
+        (1349, 1, false, 0),
+        (1351, 1, false, 0),
+        (1353, 5, false, 0),
+        (1355, 20, false, 0),
+        (1357, 30, false, 0),
+        (1359, 40, false, 0),
+        (1361, 10, false, 0),
+        (1363, 1, false, 0),
+        (1365, 5, false, 0),
+        (1367, 10, false, 0),
+        (1369, 20, false, 0),
+        (1371, 30, false, 0),
+        (1373, 40, false, 0),
+        (1375, 1, false, 0),
+        (1377, 60, true, 0),
+        (1419, 0, false, 0),
+        (1420, 1, false, 0),
+        (1422, 1, false, 0),
+        (1424, 5, false, 0),
+        (1426, 10, false, 0),
+        (1428, 20, false, 0),
+        (1430, 30, false, 0),
+        (1432, 40, false, 0),
+        (1434, 60, true, 0),
+        (2402, 0, false, 0),
+        (2952, 0, false, 0),
+        (2961, 0, false, 0),
+        (2963, 0, false, 0),
+        (3095, 1, false, 0),
+        (3096, 1, false, 0),
+        (3097, 5, false, 0),
+        (3098, 10, false, 0),
+        (3099, 20, false, 0),
+        (3100, 30, false, 0),
+        (3101, 40, false, 0),
+        (3170, 1, false, 0),
+        (3171, 1, false, 0),
+        (3172, 5, false, 0),
+        (3173, 20, false, 0),
+        (3174, 30, false, 0),
+        (3175, 40, false, 0),
+        (3176, 60, false, 0),
+        (3190, 1, false, 1),
+        (3192, 1, false, 1),
+        (3194, 5, false, 1),
+        (3196, 10, false, 5),
+        (3198, 20, false, 10),
+        (3200, 30, false, 15),
+        (3202, 40, false, 20),
+        (3204, 60, true, 30),
+        (3757, 30, true, 0),
+        (3899, 0, false, 0),
+        (4037, 0, false, 0),
+        (4039, 0, false, 0),
+    ];
+    let actual: Vec<(i32, u8, bool, u8)> = data
+        .melee_weapon_tier_rows()
+        .iter()
+        .map(|row| (row.obj_id, row.tier, row.quest_gated, row.strength))
+        .collect();
+    assert_eq!(actual, expected);
 }
 
 #[test]
 fn item_combat_bonus_matches_the_obj_params() {
     // Content: the `strengthbonus` / `rangebonus` params (for example the
     // dragon dagger's `strengthbonus` of 40 at
-    // C`skill_combat/configs/melee/daggers.obj:240`).
+    // C`skill_combat/configs/melee/daggers.obj:240`, the rune thrownaxe
+    // `rangebonus` of 36 at C`thrownaxes.obj:187`, the steel arrow
+    // `rangebonus` of 16 at C`arrows.obj:123,126-127`).
     let data = pvp_289();
     let dagger = data.item_combat_bonus(1215).expect("dragon dagger");
     assert_eq!((dagger.strengthbonus, dagger.rangebonus), (40, 0));
@@ -1822,11 +2173,293 @@ fn item_combat_bonus_matches_the_obj_params() {
     assert_eq!((axe.strengthbonus, axe.rangebonus), (0, 36));
     let scimitar = data.item_combat_bonus(1333).expect("rune scimitar");
     assert_eq!((scimitar.strengthbonus, scimitar.rangebonus), (44, 0));
+    let steel_arrow = data.item_combat_bonus(886).expect("steel arrow");
+    assert_eq!((steel_arrow.strengthbonus, steel_arrow.rangebonus), (0, 16));
+    let halberd = data.item_combat_bonus(3204).expect("dragon halberd");
+    assert_eq!((halberd.strengthbonus, halberd.rangebonus), (89, 0));
     assert!(
         data.item_combat_bonus(861).is_none(),
         "magic shortbow carries neither bonus param"
     );
     assert_eq!(data.item_combat_bonus_rows().len(), 269);
+    // Every field of every row: a wrong bonus fails here.
+    let expected: [(i32, i32, i32); 269] = [
+        (35, 25, 0),
+        (78, 0, 16),
+        (278, 3, 0),
+        (468, 2, 0),
+        (470, 3, 0),
+        (472, 5, 0),
+        (474, 8, 0),
+        (476, 11, 0),
+        (478, 18, 0),
+        (494, 2, 0),
+        (496, 3, 0),
+        (498, 5, 0),
+        (500, 7, 0),
+        (502, 8, 0),
+        (504, 11, 0),
+        (506, 18, 0),
+        (598, 0, 7),
+        (616, 1, 0),
+        (667, 10, 0),
+        (732, 0, 12),
+        (772, 10, 0),
+        (775, 2, 0),
+        (776, 2, 0),
+        (777, 2, 0),
+        (778, 2, 0),
+        (800, 0, 5),
+        (801, 0, 7),
+        (802, 0, 11),
+        (803, 0, 16),
+        (804, 0, 23),
+        (805, 0, 36),
+        (806, 0, 1),
+        (807, 0, 3),
+        (808, 0, 4),
+        (809, 0, 7),
+        (810, 0, 10),
+        (811, 0, 14),
+        (812, 0, 1),
+        (813, 0, 3),
+        (814, 0, 4),
+        (815, 0, 7),
+        (816, 0, 10),
+        (817, 0, 14),
+        (825, 0, 6),
+        (826, 0, 10),
+        (827, 0, 12),
+        (828, 0, 18),
+        (829, 0, 28),
+        (830, 0, 42),
+        (831, 0, 6),
+        (832, 0, 10),
+        (833, 0, 12),
+        (834, 0, 18),
+        (835, 0, 28),
+        (836, 0, 42),
+        (863, 0, 4),
+        (864, 0, 3),
+        (865, 0, 7),
+        (866, 0, 10),
+        (867, 0, 14),
+        (868, 0, 24),
+        (869, 0, 8),
+        (870, 0, 3),
+        (871, 0, 4),
+        (872, 0, 7),
+        (873, 0, 10),
+        (874, 0, 8),
+        (875, 0, 14),
+        (876, 0, 24),
+        (877, 0, 10),
+        (878, 0, 10),
+        (879, 0, 28),
+        (880, 0, 19),
+        (881, 0, 46),
+        (882, 0, 7),
+        (883, 0, 7),
+        (884, 0, 10),
+        (885, 0, 10),
+        (886, 0, 16),
+        (887, 0, 16),
+        (888, 0, 22),
+        (889, 0, 22),
+        (890, 0, 31),
+        (891, 0, 31),
+        (892, 0, 49),
+        (893, 0, 49),
+        (942, 0, 7),
+        (975, 5, 0),
+        (1203, 4, 0),
+        (1205, 3, 0),
+        (1207, 7, 0),
+        (1209, 10, 0),
+        (1211, 14, 0),
+        (1213, 24, 0),
+        (1215, 40, 0),
+        (1217, 7, 0),
+        (1219, 4, 0),
+        (1221, 3, 0),
+        (1223, 7, 0),
+        (1225, 10, 0),
+        (1227, 14, 0),
+        (1229, 24, 0),
+        (1231, 40, 0),
+        (1233, 7, 0),
+        (1235, 255, 255),
+        (1237, 6, 0),
+        (1239, 10, 0),
+        (1241, 12, 0),
+        (1243, 18, 0),
+        (1245, 28, 0),
+        (1247, 42, 0),
+        (1249, 60, 0),
+        (1251, 6, 0),
+        (1253, 10, 0),
+        (1255, 12, 0),
+        (1257, 18, 0),
+        (1259, 28, 0),
+        (1261, 42, 0),
+        (1263, 60, 0),
+        (1265, 5, 0),
+        (1267, 7, 0),
+        (1269, 9, 0),
+        (1271, 19, 0),
+        (1273, 13, 0),
+        (1275, 29, 0),
+        (1277, 5, 0),
+        (1279, 7, 0),
+        (1281, 12, 0),
+        (1283, 12, 0),
+        (1285, 17, 0),
+        (1287, 24, 0),
+        (1289, 39, 0),
+        (1291, 7, 0),
+        (1293, 10, 0),
+        (1295, 16, 0),
+        (1297, 16, 0),
+        (1299, 22, 0),
+        (1301, 31, 0),
+        (1303, 49, 0),
+        (1305, 71, 0),
+        (1307, 10, 0),
+        (1309, 14, 0),
+        (1311, 22, 0),
+        (1313, 26, 0),
+        (1315, 31, 0),
+        (1317, 44, 0),
+        (1319, 70, 0),
+        (1321, 6, 0),
+        (1323, 9, 0),
+        (1325, 14, 0),
+        (1327, 14, 0),
+        (1329, 20, 0),
+        (1331, 28, 0),
+        (1333, 44, 0),
+        (1335, 9, 0),
+        (1337, 8, 0),
+        (1339, 16, 0),
+        (1341, 19, 0),
+        (1343, 20, 0),
+        (1345, 31, 0),
+        (1347, 48, 0),
+        (1349, 7, 0),
+        (1351, 5, 0),
+        (1353, 9, 0),
+        (1355, 13, 0),
+        (1357, 19, 0),
+        (1359, 29, 0),
+        (1361, 12, 0),
+        (1363, 13, 0),
+        (1365, 20, 0),
+        (1367, 24, 0),
+        (1369, 29, 0),
+        (1371, 41, 0),
+        (1373, 64, 0),
+        (1375, 9, 0),
+        (1377, 85, 0),
+        (1379, 3, 0),
+        (1381, 3, 0),
+        (1383, 3, 0),
+        (1385, 5, 0),
+        (1387, 6, 0),
+        (1389, 7, 0),
+        (1391, 32, 0),
+        (1393, 35, 0),
+        (1395, 35, 0),
+        (1397, 35, 0),
+        (1399, 35, 0),
+        (1401, 50, 0),
+        (1403, 50, 0),
+        (1405, 50, 0),
+        (1407, 50, 0),
+        (1409, 50, 0),
+        (1411, 3, 0),
+        (1419, 10, 0),
+        (1420, 7, 0),
+        (1422, 5, 0),
+        (1424, 11, 0),
+        (1426, 13, 0),
+        (1428, 16, 0),
+        (1430, 23, 0),
+        (1432, 36, 0),
+        (1434, 55, 0),
+        (1495, 2, 0),
+        (1704, 6, 0),
+        (1706, 6, 0),
+        (1708, 6, 0),
+        (1710, 6, 0),
+        (1712, 6, 0),
+        (1725, 10, 0),
+        (1731, 6, 0),
+        (2402, 12, 0),
+        (2415, 2, 0),
+        (2416, 2, 0),
+        (2417, 2, 0),
+        (2460, -10, 0),
+        (2462, -10, 0),
+        (2464, -10, 0),
+        (2466, -10, 0),
+        (2468, -10, 0),
+        (2470, -10, 0),
+        (2472, -10, 0),
+        (2474, -10, 0),
+        (2476, -10, 0),
+        (2532, 0, 10),
+        (2533, 0, 10),
+        (2534, 0, 16),
+        (2535, 0, 16),
+        (2536, 0, 22),
+        (2537, 0, 22),
+        (2538, 0, 31),
+        (2539, 0, 31),
+        (2540, 0, 49),
+        (2541, 0, 49),
+        (2866, 0, 22),
+        (2952, 10, 0),
+        (2961, 1, 0),
+        (2963, 1, 0),
+        (3053, 35, 0),
+        (3054, 50, 0),
+        (3093, 0, 6),
+        (3094, 0, 6),
+        (3095, 5, 0),
+        (3096, 7, 0),
+        (3097, 12, 0),
+        (3098, 14, 0),
+        (3099, 17, 0),
+        (3100, 24, 0),
+        (3101, 39, 0),
+        (3105, 2, 0),
+        (3170, 6, 0),
+        (3171, 10, 0),
+        (3172, 12, 0),
+        (3173, 18, 0),
+        (3174, 28, 0),
+        (3175, 42, 0),
+        (3176, 60, 0),
+        (3190, 8, 0),
+        (3192, 12, 0),
+        (3194, 20, 0),
+        (3196, 20, 0),
+        (3198, 29, 0),
+        (3200, 42, 0),
+        (3202, 68, 0),
+        (3204, 89, 0),
+        (3751, 3, 0),
+        (3757, 28, 0),
+        (3899, 1, 0),
+        (4068, 16, 0),
+        (4086, -10, 0),
+    ];
+    let actual: Vec<(i32, i32, i32)> = data
+        .item_combat_bonus_rows()
+        .iter()
+        .map(|row| (row.obj_id, row.strengthbonus, row.rangebonus))
+        .collect();
+    assert_eq!(actual, expected);
 }
 
 #[test]
@@ -1836,31 +2469,50 @@ fn destroy_death_is_true_on_exactly_the_flagged_rows() {
     // C`quests/quest_viking/configs/viking.obj` and 1 in
     // C`quests/quest_desertrescue/configs/desertrescue.obj`.
     let data = pvp_289();
-    let flagged: Vec<&str> = data
+    let mut flagged: Vec<&str> = data
         .items()
         .iter()
         .filter(|item| item.destroy_death)
         .map(|item| item.alias.as_deref().unwrap_or("<unnamed>"))
         .collect();
-    assert_eq!(flagged.len(), 19);
-    for alias in [
-        "viking_airtight_vase",
-        "viking_jug_empty",
-        "viking_key",
-        "viking_red_herring",
-        "viking_uncoloured_wooden_coin",
-    ] {
-        assert!(flagged.contains(&alias), "{alias} keeps destroy_death");
-    }
+    flagged.sort_unstable();
+    // Every flagged alias: a swap with an unflagged row keeps the count at
+    // 19, so the test names all 19.
+    assert_eq!(
+        flagged,
+        [
+            "thanainabarrel",
+            "viking_airtight_vase",
+            "viking_airtight_vase_frozen",
+            "viking_airtight_vase_water",
+            "viking_airtight_vase_with_lid",
+            "viking_airtight_vase_with_lid_frozen",
+            "viking_airtight_vase_with_lid_water",
+            "viking_jug_1",
+            "viking_jug_2",
+            "viking_jug_3",
+            "viking_jug_empty",
+            "viking_jug_frozen",
+            "viking_key",
+            "viking_key_in_ice",
+            "viking_red_herring",
+            "viking_red_splat",
+            "viking_red_wooden_coin",
+            "viking_uncoloured_wooden_coin",
+            "viking_vase_lid",
+        ]
+    );
     assert!(!data.item_by_alias("dragon_dagger").unwrap().destroy_death);
     assert!(!data.item_by_alias("rune_scimitar").unwrap().destroy_death);
+    assert!(!data.item_by_alias("steel_arrow").unwrap().destroy_death);
 }
 
 #[test]
 fn style_spotanims_carry_the_special_attacks() {
     // Content: the special visuals of §3.3 (for example
     // C`pvp_dragon_dagger.rs2:4`, C`pvp_magic_shortbow.rs2:21,24-25`,
-    // C`pvp_rune_thrownaxe.rs2:4,86`).
+    // C`pvp_rune_thrownaxe.rs2:4,86`). The halberd map spotanims 282-285
+    // (C`pvp_dragon_halberd.rs2:9-21`) are not attributed.
     let data = pvp_289();
     let where_is = |id: i32| {
         data.style_spotanims()
@@ -1881,6 +2533,13 @@ fn style_spotanims_carry_the_special_attacks() {
         (258, 2, "projectile"),
     ] {
         assert_eq!(where_is(id), Some((style, location)), "spotanim {id}");
+    }
+    for id in [282, 283, 284, 285] {
+        assert_eq!(
+            where_is(id),
+            None,
+            "halberd map spotanim {id} is not attributed"
+        );
     }
 }
 
@@ -1940,4 +2599,106 @@ fn pvp_varp_ids_come_from_the_transmit_pack() {
         data.duel_controls().expect("duel controls").options_varp,
         286
     );
+}
+
+#[test]
+fn special_fact_formulas_match_content() {
+    // Pure fact formula values from §10.1: the content procs
+    // `combat_stat(effective, bonus) = effective * (bonus + 64)` and
+    // `combat_maxhit(stat) = (stat + 320) / 640`
+    // (C`skill_combat/scripts/combat.rs2:7-12`). Machine use stays in V4.
+    fn combat_stat(effective: i32, bonus: i32) -> i32 {
+        effective * (bonus + 64)
+    }
+    fn combat_maxhit(stat: i32) -> i32 {
+        (stat + 320) / 640
+    }
+    let data = pvp_289();
+    // Longbow at ranged 40 with steel arrows: `RangedSpecialBasis` adds 10
+    // (C`pvp_magic_longbow.rs2:20-21`), steel arrow `rangebonus` is 16.
+    let longbow = data.special_weapon(859).expect("magic longbow");
+    assert!(matches!(
+        longbow.effect,
+        SpecialEffect::Damage {
+            max: MaxFormula::RangedSpecialBasis { level_plus: 10 },
+            accuracy: AccuracyRule::AlwaysHits,
+            ..
+        }
+    ));
+    let steel = data.item_combat_bonus(886).expect("steel arrow");
+    assert_eq!(steel.rangebonus, 16);
+    assert_eq!(combat_stat(50, steel.rangebonus), 4000);
+    assert_eq!(combat_maxhit(4000), 6);
+    // The ordinary ranged max at 40 without the special basis is lower.
+    assert_eq!(combat_maxhit(combat_stat(40, steel.rangebonus)), 5);
+    // Shortbow shares the basis with 10/7 accuracy (C`pvp_magic_shortbow.rs2:36-38).
+    let shortbow = data.special_weapon(861).expect("magic shortbow");
+    assert!(matches!(
+        shortbow.effect,
+        SpecialEffect::Damage {
+            max: MaxFormula::RangedSpecialBasis { level_plus: 10 },
+            accuracy: AccuracyRule::RangedScaled { num: 10, den: 7 },
+            ..
+        }
+    ));
+    // Halberd side targets scale the attack roll by 75/100 at the same max
+    // (C`pvp_dragon_halberd.rs2:43-49,60-62`).
+    let halberd = data.special_weapon(3204).expect("dragon halberd");
+    assert!(matches!(
+        halberd.effect,
+        SpecialEffect::Damage {
+            max: MaxFormula::MeleeScaled { num: 110, den: 100 },
+            accuracy: AccuracyRule::MeleeScaled {
+                num: 100,
+                den: 100,
+                side_targets: Some(SideRoll { num: 75, den: 100 }),
+            },
+            ..
+        }
+    ));
+    assert_eq!(1000 * 75 / 100, 750);
+    // Spear shove and instant specials carry no max-hit value.
+    for id in [1249, 1263, 3176] {
+        assert!(matches!(
+            data.special_weapon(id).expect("dragon spear").effect,
+            SpecialEffect::Shove { .. }
+        ));
+    }
+    assert!(matches!(
+        data.special_weapon(1377).expect("dragon battleaxe").effect,
+        SpecialEffect::Instant { .. }
+    ));
+    assert!(matches!(
+        data.special_weapon(35).expect("excalibur").effect,
+        SpecialEffect::Instant { .. }
+    ));
+}
+
+#[test]
+fn rule_button_is_none_on_revision_274() {
+    // Revision 274 predates PvP V0: its generated `rule_buttons` default to
+    // zeros, and `rule_button` reports `None` instead of component 0.
+    let data = for_revision(ClientRevision::R274).unwrap();
+    let Some(controls) = data.duel_controls() else {
+        return;
+    };
+    for bit in 0..14u8 {
+        assert_eq!(controls.rule_button(bit), None, "274 rule_button({bit})");
+    }
+}
+
+#[test]
+fn pvp_shared_facts_have_bounded_layout() {
+    // Once-per-process facts carry size tripwires only (no lab A/B for V0).
+    // Measured `SpecialWeaponFact` is 52 bytes; the bound allows headroom.
+    assert!(std::mem::size_of::<SpecialWeaponFact>() <= 56);
+    assert!(std::mem::size_of::<ItemCombatBonus>() <= 16);
+    assert!(std::mem::size_of::<MeleeWeaponTier>() <= 8);
+    assert!(std::mem::size_of::<DuelAreaRect>() <= 16);
+    assert!(std::mem::size_of::<DuelPenFact>() <= 24);
+    assert!(std::mem::size_of::<Attribution>() <= 24);
+    assert!(std::mem::size_of::<Needs>() <= 4);
+    assert!(std::mem::size_of::<SideRoll>() <= 8);
+    // `for_revision` shares one `Arc` per process, not one copy per bot.
+    assert!(std::sync::Arc::ptr_eq(&pvp_289(), &pvp_289()));
 }

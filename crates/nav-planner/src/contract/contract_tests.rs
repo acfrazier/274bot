@@ -858,10 +858,13 @@ fn wilderness_view_has_no_grid_and_reports_membership() {
 #[test]
 fn wilderness_view_rules_accessor_matches_pack_values() {
     // PvP V0 (PVP-DESIGN-1026 §3.2): the accessor exposes the pack's own
-    // rules for the one-per-process combat copy; no second bake. Zones and
-    // formula from `areas/area_wilderness/configs/wilderness_zones.dbrow`
-    // and `areas/area_wilderness/scripts/wilderness_levels.rs2:4-16`:
-    // main `x in [2944, 3391], z in [3520, 6399]`, edgeville-dungeon
+    // rules for the one-per-process combat copy; no second bake. The zones
+    // below reuse the packed constants from
+    // `areas/area_wilderness/configs/wilderness_zones.dbrow` and the formula
+    // `areas/area_wilderness/scripts/wilderness_levels.rs2:4-16` in a
+    // synthetic graph, so this test locks the pass-through only; the real
+    // baked pack values are covered by the existing nav-bake tests.
+    // Main `x in [2944, 3391], z in [3520, 6399]`, edgeville-dungeon
     // `x in [2944, 3391], z in [9920, 12799]` level 0, level `(z - 3520) /
     // 8 + 1` and `(z - 9920) / 8 + 1` respectively.
     let graph = TransportGraph {

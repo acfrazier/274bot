@@ -37,3 +37,25 @@ pub fn pen_at(x: i32, z: i32, level: i32) -> Option<usize> {
         x >= min_x && x <= max_x && z >= min_z && z <= max_z
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::PENS;
+    use api::game_data::for_revision;
+    use api::selected::ClientRevision;
+
+    #[test]
+    fn pens_match_generated_duel_zones() {
+        // The six generated `duel_zones.pens` in dbrow order (fights first,
+        // then obstacles) equal the frozen `PENS` table used by `pen_at`.
+        // Content: `duelarena.dbrow:1-11` and `duel_arena_finish.rs2:75`.
+        let data = for_revision(ClientRevision::R289).unwrap();
+        let zones = data.duel_zones().expect("duel zones");
+        let generated: Vec<(i32, i32, i32, i32)> = zones
+            .pens
+            .iter()
+            .map(|pen| (pen.x1, pen.x2, pen.z1, pen.z2))
+            .collect();
+        assert_eq!(generated, PENS.to_vec());
+    }
+}
