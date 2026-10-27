@@ -120,10 +120,14 @@ row shows the saved value again followed by the reason, for example
 seconds. When the selected row with its reason is taller than the popup (a long
 path on an 80x24 terminal), the popup shows part of that row and its last line
 says more is below or above: Up and Down then scroll through the row before
-they move to the next one. When the notices under the rows need more lines
-than the terminal leaves them, the bottom border says **not every notice
-fits: make the terminal taller**. A failed **Got it** keeps the background-bots
-notice on screen with the reason after it. The saved Load order has no row: its
+they move to the next one. The popup always keeps two lines for the selected
+row, so that sign always has a line. When the notices under the rows (with the
+reason of a failed dismiss) need more lines than the popup leaves them, the
+notice area shows the last notices and its first line says
+`↑ more notices above (PgUp)`, `↓ more notices below (PgDn)` or both: PgUp and
+PgDn scroll through every notice line without moving the row. A failed
+**Got it** keeps the background-bots notice on screen with the reason after
+it. The saved Load order has no row: its
 message line says
 `Load order: saving…` while a reorder is written, and a failed save shows its
 reason there. The Logs status line follows the session file whoever changed
