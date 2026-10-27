@@ -13,7 +13,8 @@ import { extractQuestStartFacts } from './extractors/quest-starts.ts';
 import type { TrioGiverFacts, TalkKeyFacts } from './generate.ts';
 import { QUESTS_SCHEMA, categoryName, extractQuestsFamily, familyBytes, familyInputs, generateSelected, revisions, requestedRevisions, runtimeNpcOperations, npcEvidenceBytes, type SelectedBuild } from './generate.ts';
 import { sha256, sourceFile } from './extractors/common.ts';
-import { extractCombatStyleFacts, parseCombatScripts } from './extractors/combat.ts';
+import { extractCombatStyleFacts, parseCombatScripts, extractSpecialWeaponFacts, extractItemCombatBonus, extractMeleeWeaponTiers } from './extractors/combat.ts';
+import { extractDuelRuleButtons, extractDuelZones } from './extractors/duel.ts';
 import { extractNpcNamesFacts } from './extractors/npc-names.ts';
 import './dialogue-ui.test.ts';
 import './server-ordered.test.ts';
@@ -397,6 +398,12 @@ fs.writeFileSync(path.join(pack, 'spotanim.pack'), [
     '5=spell_target', '6=failedspell_impact', '7=firebreath_attack',
     '8=fireblast_travel', '9=fireblast_impact',
     '10=fire_impact', '11=crumble_test_impact',
+    // PvP V0 special-attack spotanims (PVP-DESIGN-1026 §3.3).
+    '20=sp_attack_glow_arrow_travel', '21=sp_attack_chainhit_travel_spotanim',
+    '22=sp_attack_puncture_spotanim', '23=sp_attack_cleave_spotanim',
+    '24=sp_attack_shatter_spotanim', '25=sp_attack_impale_spotanim',
+    '26=sp_attack_shove_spotanim', '27=sp_attack_snapshot_spotanim',
+    '28=sp_attack_glow_arrow_launch', '29=sp_attack_chainhit_launch_spotanim',
 ].join('\n') + '\n');
 fs.writeFileSync(path.join(pack, 'category.pack'), '4=food\n5=potion\n10=weapon_bow\n11=weapon_staff\n12=weapon_sword\n13=weapon_2h_sword\n14=weapon_slash\n15=weapon_stab\n16=weapon_unknown\n17=weapon_unclassified\n18=weapon_crossbow\n19=weapon_thrown\n20=weapon_javelin\n21=weapon_axe\n22=arrows\n');
 fs.writeFileSync(npcSource, `[test_npc]
@@ -3971,6 +3978,52 @@ const noOverrides: readonly SiteOverride[] = [];
 {
     assert.equal(new Set(SITE_OVERRIDES.map((row) => row.id)).size, SITE_OVERRIDES.length, 'each override id is listed once');
     for (const row of SITE_OVERRIDES) assert.match(row.cite, /\.(?:rs2|enum|loc|jm2):\d/, `${row.id} cites content lines`);
+}
+
+// PvP V0 facts (PVP-DESIGN-1026 §10.1, §11 row V0): fail-closed extraction
+// from the pinned 289 content plus fixture fault injection. Counts pin the
+// §6.1 table and the dbrow rows; the Rust suite pins every field value.
+{
+    const root289 = pinContentRoot(289);
+    const ruleButtons = extractDuelRuleButtons(root289);
+    assert.equal(ruleButtons.length, 14);
+    assert.deepEqual(ruleButtons.map((row) => row.bit), [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]);
+    assert.equal(ruleButtons.find((row) => row.bit === 13)?.component, 7816);
+    const zones = extractDuelZones(root289);
+    assert.equal(zones.pens.length, 6);
+    assert.deepEqual([zones.pens[0]?.x1, zones.pens[0]?.z1, zones.pens[0]?.x2, zones.pens[0]?.z2], [3333, 3244, 3357, 3258]);
+    assert.deepEqual([zones.challenge.x1, zones.challenge.z1, zones.challenge.x2, zones.challenge.z2], [3328, 3203, 3393, 3325]);
+    assert.deepEqual([zones.lobby.x1, zones.lobby.z1, zones.lobby.x2, zones.lobby.z2], [3355, 3267, 3379, 3279]);
+    // An unknown specwep obj (no §6.1 row) fails closed instead of emitting
+    // an untyped fact.
+    const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'pvp-facts-fixture-'));
+    for (const [name, bytes] of [
+        ['pack/param.pack', '136=specwep\n137=sa_energy\n138=strengthbonus\n139=rangebonus\n'],
+        ['pack/seq.pack', '1=puncture\n'],
+        ['pack/spotanim.pack', '2=sp_attack_puncture_spotanim\n'],
+        ['scripts/skill_combat/configs/combat.param', '[specwep]\ntype=int\ndefault=0\n\n[sa_energy]\ntype=int\ndefault=1000\n'],
+    ] as const) {
+        fs.mkdirSync(path.join(fixture, path.dirname(name)), { recursive: true });
+        fs.writeFileSync(path.join(fixture, name), bytes);
+    }
+    const specIds = parsePack(fs.readFileSync(path.join(fixture, 'pack/param.pack'), 'utf8'));
+    const mystery = [{ id: 9999, params: new Map([[specIds.get('specwep')!, 1]]) }];
+    assert.throws(
+        () => extractSpecialWeaponFacts(fixture, mystery, [{ obj_id: 9999, style: 1, tab: 9 }], new Map([['mystery_sword', 9999]])),
+        /no §6\.1 effect row/,
+        'a specwep obj without a typed §6.1 row throws',
+    );
+    // A missing combat tab fails closed instead of emitting tab null.
+    assert.throws(
+        () => extractSpecialWeaponFacts(fixture, mystery, [{ obj_id: 9999, style: 1, tab: null }], new Map([['dragon_dagger', 9999]])),
+        /has no combat tab/,
+        'a specwep obj without a combat tab throws',
+    );
+    const bonus = extractItemCombatBonus(fixture, [
+        { id: 1, params: new Map([[specIds.get('sa_energy')!, 40]]) },
+        { id: 2, params: new Map() },
+    ]);
+    assert.deepEqual(bonus, [], 'sa_energy is not a worn combat bonus');
 }
 
 console.log('generate fixture passed');

@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { parsePack, parseRows, requireGatherText, walkContentFiles } from './common.ts';
+import { parsePack, parseParamDefinitions, parseRows, requireGatherText, walkContentFiles } from './common.ts';
 
 export const STYLE = {
     MELEE: 0x01,
@@ -760,6 +760,35 @@ export function extractCombatStyleFacts(content: string, objects: readonly Comba
         addSpot(spotId(row.values.spotanim_proj?.[0]?.[0], `${row.name} spotanim_proj`), STYLE.MAGIC, 'projectile', row.name);
         addSpot(spotId(row.values.spotanim_target?.[0]?.[0], `${row.name} spotanim_target`), STYLE.MAGIC, 'on_us', row.name);
     }
+    // PvP V0 special-attack spotanims (PVP-DESIGN-1026 §3.3): every special
+    // visual. Entries that an NPC already emits (the glow-arrow pair from
+    // `quest_regicide.npc:57-58`) merge with the same style and location.
+    // The halberd's `spotanim_282..285` are map spotanims, not attributed;
+    // the halberd attack is attributed by its animation through `style_seq`.
+    for (const [name, style, where] of [
+        // C`skill_combat/scripts/pvp/specs/scripts/pvp_rune_thrownaxe.rs2:86`.
+        ['sp_attack_chainhit_travel_spotanim', STYLE.RANGED, 'projectile'],
+        // C`pvp_dragon_dagger.rs2:4`.
+        ['sp_attack_puncture_spotanim', STYLE.MELEE, 'attacker'],
+        // C`pvp_dragon_longsword.rs2:18`.
+        ['sp_attack_cleave_spotanim', STYLE.MELEE, 'attacker'],
+        // C`pvp_dragon_mace.rs2:18`.
+        ['sp_attack_shatter_spotanim', STYLE.MELEE, 'attacker'],
+        // C`pvp_rune_claws.rs2:17`.
+        ['sp_attack_impale_spotanim', STYLE.MELEE, 'attacker'],
+        // C`pvp_dragon_spear.rs2:5`.
+        ['sp_attack_shove_spotanim', STYLE.MELEE, 'attacker'],
+        // C`pvp_magic_shortbow.rs2:21`.
+        ['sp_attack_snapshot_spotanim', STYLE.RANGED, 'attacker'],
+        // C`pvp_magic_longbow.rs2:14`.
+        ['sp_attack_glow_arrow_launch', STYLE.RANGED, 'attacker'],
+        // C`pvp_rune_thrownaxe.rs2:4`.
+        ['sp_attack_chainhit_launch_spotanim', STYLE.RANGED, 'attacker'],
+        // C`pvp_magic_shortbow.rs2:24-25`; C`pvp_magic_longbow.rs2:17`.
+        ['sp_attack_glow_arrow_travel', STYLE.RANGED, 'projectile'],
+    ] as const) {
+        addSpot(spotId(name, `pvp special ${name}`), style, where, name);
+    }
     for (const [name, where] of [
         ['failedspell_impact', 'on_us'],
         ['firebreath_attack', 'attacker'],
@@ -790,4 +819,366 @@ export function extractCombatStyleFacts(content: string, objects: readonly Comba
 
 export function buildSpellMaxHits(content: string) {
     return spellMaxHits(content);
+}
+
+// ---- PvP V0 facts (PVP-DESIGN-1026 §3.3, §6.1) ----
+//
+// One row per obj with `param=specwep,^true` in the typed schema of §3.3.
+// Costs and the battleaxe/Excalibur default come from the obj params and
+// `skill_combat/configs/combat.param:183-185`; tabs and styles reuse
+// `extractCombatStyleFacts` (no second bake); attribution ids resolve
+// through the seq/spotanim packs; the §6.1 effect distinctions are encoded
+// once here with per-row content citations.
+
+export type SpecialEffectWire =
+    | {
+        kind: 'damage';
+        hits: number;
+        max: { kind: 'melee_scaled'; num: number; den: number } | { kind: 'ranged_special_basis'; level_plus: number };
+        accuracy:
+            | { kind: 'melee_scaled'; num: number; den: number; side_targets: { num: number; den: number } | null }
+            | { kind: 'ranged_scaled'; num: number; den: number }
+            | { kind: 'ranged' }
+            | { kind: 'always_hits' };
+        delay: { kind: 'none' } | { kind: 'next_decision_plus_one' } | { kind: 'second_hit_next_tick' };
+    }
+    | { kind: 'shove'; lock_ticks: number; clears_interaction: boolean }
+    | { kind: 'instant'; effect: 'dragon_battleaxe' | 'excalibur' };
+
+export type SpecialWeaponFactWire = {
+    obj_id: number;
+    energy: number;
+    tab: number;
+    style: number;
+    effect: SpecialEffectWire;
+    needs: { ammo: number };
+    attribution: { anim: number | null; spotanim: number | null; projectile: number | null };
+};
+
+type SpecialSpec = {
+    effect: SpecialEffectWire;
+    // Accepted ammo units consumed from the quiver (0 for melee).
+    ammo: number;
+    // Attribution names resolved through the packs; absent means the script
+    // shows none in that slot.
+    anim?: string;
+    spotanim?: string;
+    projectile?: string;
+};
+
+// Effect table of §6.1. Each row cites the per-weapon script it encodes.
+const SPECIAL_SPECS: Record<string, SpecialSpec> = {
+    // C`skill_combat/scripts/pvp/specs/scripts/pvp_dragon_dagger.rs2:4-5,10-12,21-23`.
+    dragon_dagger: {
+        effect: {
+            kind: 'damage', hits: 2, max: { kind: 'melee_scaled', num: 115, den: 100 },
+            accuracy: { kind: 'melee_scaled', num: 115, den: 100, side_targets: null },
+            delay: { kind: 'second_hit_next_tick' },
+        },
+        ammo: 0, anim: 'puncture', spotanim: 'sp_attack_puncture_spotanim',
+    },
+    // Poison variant shares the special (dispatched by obj id in
+    // C`skill_combat/scripts/pvp/pvp_special_attack.rs2`).
+    dragon_dagger_p: {
+        effect: {
+            kind: 'damage', hits: 2, max: { kind: 'melee_scaled', num: 115, den: 100 },
+            accuracy: { kind: 'melee_scaled', num: 115, den: 100, side_targets: null },
+            delay: { kind: 'second_hit_next_tick' },
+        },
+        ammo: 0, anim: 'puncture', spotanim: 'sp_attack_puncture_spotanim',
+    },
+    // C`pvp_dragon_longsword.rs2:5-7,16-18`.
+    dragon_longsword: {
+        effect: {
+            kind: 'damage', hits: 1, max: { kind: 'melee_scaled', num: 125, den: 100 },
+            accuracy: { kind: 'melee_scaled', num: 100, den: 100, side_targets: null },
+            delay: { kind: 'none' },
+        },
+        ammo: 0, anim: 'cleave', spotanim: 'sp_attack_cleave_spotanim',
+    },
+    // C`pvp_dragon_mace.rs2:5-7,16-18`.
+    dragon_mace: {
+        effect: {
+            kind: 'damage', hits: 1, max: { kind: 'melee_scaled', num: 150, den: 100 },
+            accuracy: { kind: 'melee_scaled', num: 125, den: 100, side_targets: null },
+            delay: { kind: 'none' },
+        },
+        ammo: 0, anim: 'shatter', spotanim: 'sp_attack_shatter_spotanim',
+    },
+    // C`pvp_dragon_halberd.rs2:25,31,43-49,60-62`. Side targets roll the
+    // attack at 75/100 in multi-way combat only; the map spotanims
+    // (`spotanim_282..285`, `:9,13,17,21`) are not attributed.
+    dragon_halberd: {
+        effect: {
+            kind: 'damage', hits: 1, max: { kind: 'melee_scaled', num: 110, den: 100 },
+            accuracy: { kind: 'melee_scaled', num: 100, den: 100, side_targets: { num: 75, den: 100 } },
+            delay: { kind: 'none' },
+        },
+        ammo: 0, anim: 'dragon_halberd_special_attack',
+    },
+    // C`pvp_dragon_spear.rs2:1-8,21-30`.
+    dragon_spear: {
+        effect: { kind: 'shove', lock_ticks: 4, clears_interaction: true },
+        ammo: 0, anim: 'shove', spotanim: 'sp_attack_shove_spotanim',
+    },
+    dragon_spear_p: {
+        effect: { kind: 'shove', lock_ticks: 4, clears_interaction: true },
+        ammo: 0, anim: 'shove', spotanim: 'sp_attack_shove_spotanim',
+    },
+    tbwt_dragon_spear_kp: {
+        effect: { kind: 'shove', lock_ticks: 4, clears_interaction: true },
+        ammo: 0, anim: 'shove', spotanim: 'sp_attack_shove_spotanim',
+    },
+    // C`pvp_rune_claws.rs2:5-9,14-17`.
+    rune_claws: {
+        effect: {
+            kind: 'damage', hits: 1, max: { kind: 'melee_scaled', num: 110, den: 100 },
+            accuracy: { kind: 'melee_scaled', num: 100, den: 100, side_targets: null },
+            delay: { kind: 'next_decision_plus_one' },
+        },
+        ammo: 0, anim: 'impale', spotanim: 'sp_attack_impale_spotanim',
+    },
+    // C`pvp_rune_thrownaxe.rs2:3-4,83-86`.
+    rune_thrownaxe: {
+        effect: {
+            kind: 'damage', hits: 1, max: { kind: 'ranged_special_basis', level_plus: 10 },
+            accuracy: { kind: 'ranged' }, delay: { kind: 'none' },
+        },
+        ammo: 1, anim: 'chainhit', spotanim: 'sp_attack_chainhit_launch_spotanim', projectile: 'sp_attack_chainhit_travel_spotanim',
+    },
+    // C`pvp_magic_shortbow.rs2:4-8,9-15,17,21,24-25,36-38`.
+    magic_shortbow: {
+        effect: {
+            kind: 'damage', hits: 2, max: { kind: 'ranged_special_basis', level_plus: 10 },
+            accuracy: { kind: 'ranged_scaled', num: 10, den: 7 }, delay: { kind: 'none' },
+        },
+        ammo: 2, anim: 'snapshot', spotanim: 'sp_attack_snapshot_spotanim', projectile: 'sp_attack_glow_arrow_travel',
+    },
+    // C`pvp_magic_longbow.rs2:3-8,10,14,17,20-25`. No hit roll; the launch
+    // anim is the current attack anim, so no fixed anim is attributed.
+    magic_longbow: {
+        effect: {
+            kind: 'damage', hits: 1, max: { kind: 'ranged_special_basis', level_plus: 10 },
+            accuracy: { kind: 'always_hits' }, delay: { kind: 'none' },
+        },
+        ammo: 1, spotanim: 'sp_attack_glow_arrow_launch', projectile: 'sp_attack_glow_arrow_travel',
+    },
+    // C`skill_combat/scripts/player/specwep.rs2:61-79`. No `sa_energy`
+    // param: the 1000 default applies.
+    dragon_battleaxe: {
+        effect: { kind: 'instant', effect: 'dragon_battleaxe' },
+        ammo: 0, anim: 'rampage', spotanim: 'sp_attackglow_red',
+    },
+    // C`skill_combat/scripts/player/specwep.rs2:89-105`. No `sa_energy`
+    // param: the 1000 default applies.
+    excalibur: {
+        effect: { kind: 'instant', effect: 'excalibur' },
+        ammo: 0, anim: 'sanctuary', spotanim: 'sp_attackglow_blue',
+    },
+};
+
+export function extractSpecialWeaponFacts(
+    content: string,
+    objects: readonly CombatObject[],
+    weaponStyles: readonly { obj_id: number; style: number; tab: number | null }[],
+    aliasToId: ReadonlyMap<string, number>,
+): SpecialWeaponFactWire[] {
+    const paramIds = packParameterIds(content);
+    const seqPack = parsePack(requireGatherText(content, 'pack/seq.pack'));
+    const spotanimPack = parsePack(requireGatherText(content, 'pack/spotanim.pack'));
+    const animId = (name: string | undefined, label: string): number | null => {
+        if (name === undefined) return null;
+        return sourceValueId(name, seqPack, `${label} anim`);
+    };
+    const spotId = (name: string | undefined, label: string): number | null => {
+        if (name === undefined) return null;
+        return sourceValueId(name, spotanimPack, `${label} spotanim`);
+    };
+    // `sa_energy` default of `combat.param:183-185` for specwep rows without
+    // the param (dragon battleaxe, Excalibur).
+    const paramDefaults = parseParamDefinitions(requireGatherText(content, 'scripts/skill_combat/configs/combat.param'));
+    const defaultEnergy = Number(paramDefaults.get('sa_energy')?.default);
+    if (!Number.isInteger(defaultEnergy) || defaultEnergy <= 0 || defaultEnergy > 1000) {
+        throw new Error(`special facts: bad sa_energy default ${paramDefaults.get('sa_energy')?.default}`);
+    }
+    const byId = new Map(objects.map((object) => [object.id, object]));
+    const styleById = new Map(weaponStyles.map((row) => [row.obj_id, row]));
+    const rows: SpecialWeaponFactWire[] = [];
+    for (const [alias, id] of [...aliasToId.entries()].sort((a, b) => a[1] - b[1])) {
+        const object = byId.get(id);
+        if (!object) continue;
+        const specwep = parameterValue(object.params, paramIds, 'specwep');
+        if (specwep !== 1 && specwep !== '1') continue;
+        const spec = SPECIAL_SPECS[alias];
+        if (!spec) throw new Error(`special facts: specwep obj ${alias} (${id}) has no §6.1 effect row`);
+        const style = styleById.get(id);
+        if (!style) throw new Error(`special facts: specwep obj ${alias} (${id}) has no weapon_styles row`);
+        if (style.tab === null || style.tab === undefined) {
+            throw new Error(`special facts: specwep obj ${alias} (${id}) has no combat tab`);
+        }
+        const rawEnergy = parameterValue(object.params, paramIds, 'sa_energy');
+        const energy = rawEnergy === undefined ? defaultEnergy : Number(rawEnergy);
+        if (!Number.isInteger(energy) || energy <= 0 || energy > 1000) {
+            throw new Error(`special facts: obj ${alias} (${id}) has bad sa_energy ${rawEnergy}`);
+        }
+        rows.push({
+            obj_id: id, energy, tab: style.tab, style: style.style, effect: spec.effect,
+            needs: { ammo: spec.ammo },
+            attribution: {
+                anim: animId(spec.anim, alias), spotanim: spotId(spec.spotanim, alias),
+                projectile: spotId(spec.projectile, alias),
+            },
+        });
+    }
+    const tableAliases = new Set(Object.keys(SPECIAL_SPECS));
+    for (const alias of tableAliases) {
+        if (!rows.some((row) => aliasToId.get(alias) === row.obj_id)) {
+            throw new Error(`special facts: §6.1 row ${alias} matches no specwep obj`);
+        }
+    }
+    return rows.sort((a, b) => a.obj_id - b.obj_id);
+}
+
+export type ItemCombatBonusWire = { obj_id: number; strengthbonus: number; rangebonus: number };
+
+export function extractItemCombatBonus(
+    content: string,
+    objects: readonly CombatObject[],
+): ItemCombatBonusWire[] {
+    const paramIds = packParameterIds(content);
+    const rows: ItemCombatBonusWire[] = [];
+    for (const object of objects) {
+        const strength = parameterValue(object.params, paramIds, 'strengthbonus');
+        const range = parameterValue(object.params, paramIds, 'rangebonus');
+        if (strength === undefined && range === undefined) continue;
+        const strengthbonus = strength === undefined ? 0 : Number(strength);
+        const rangebonus = range === undefined ? 0 : Number(range);
+        if (!Number.isInteger(strengthbonus) || !Number.isInteger(rangebonus)) {
+            throw new Error(`combat bonus: obj ${object.id} has non-integer bonus ${strength}/${range}`);
+        }
+        rows.push({ obj_id: object.id, strengthbonus, rangebonus });
+    }
+    return rows.sort((a, b) => a.obj_id - b.obj_id);
+}
+
+export type MeleeWeaponTierWire = { obj_id: number; tier: number; quest_gated: boolean };
+
+const MELEE_TIER_FILES = [
+    'scripts/levelrequire/scripts/tier1.rs2',
+    'scripts/levelrequire/scripts/tier5.rs2',
+    'scripts/levelrequire/scripts/tier10.rs2',
+    'scripts/levelrequire/scripts/tier20.rs2',
+    'scripts/levelrequire/scripts/tier30.rs2',
+    'scripts/levelrequire/scripts/tier40.rs2',
+    'scripts/levelrequire/scripts/tier45.rs2',
+    'scripts/levelrequire/scripts/tier50.rs2',
+    'scripts/levelrequire/scripts/tier60.rs2',
+    'scripts/levelrequire/scripts/tier70.rs2',
+] as const;
+
+// Handlers that gate the attack level plainly (message wording aside).
+const PLAIN_ATTACK_HANDLERS = new Set(['levelrequire_attack', 'levelrequire_attack_caps']);
+// Handlers that add a quest varp in front of the same attack level.
+const QUEST_ATTACK_HANDLERS = new Set([
+    'levelrequire_zanaris_quest_attack',
+    'levelrequire_heroes_quest_attack',
+    'levelrequire_regicide_quest_attack_strength',
+]);
+
+function meleeTierGate(handler: string, args: string): { tier: number; quest_gated: boolean } {
+    const level = Number(args.split(',')[0]?.trim());
+    if (!Number.isInteger(level) || level < 0 || level > 255) {
+        throw new Error(`melee tier: handler @${handler}(${args}) has a bad attack level`);
+    }
+    if (PLAIN_ATTACK_HANDLERS.has(handler)) return { tier: level, quest_gated: false };
+    if (QUEST_ATTACK_HANDLERS.has(handler)) return { tier: level, quest_gated: true };
+    if (handler === 'levelrequire_attack_and_strength') return { tier: level, quest_gated: false };
+    throw new Error(`melee tier: unexpected attack handler @${handler}(${args})`);
+}
+
+export function extractMeleeWeaponTiers(
+    content: string,
+    weaponStyles: readonly { obj_id: number; category: number }[],
+    idToAlias: ReadonlyMap<number, string>,
+): MeleeWeaponTierWire[] {
+    // `weapon_styles` category 0 is melee; bows, crossbows, thrown, javelins
+    // and staves tier through the ranged, magic and defence gates instead.
+    // Only aliases of melee weapons are gated here; every other wield row
+    // (armour, staves, ammo) is out of scope and ignored, while an
+    // unexpected attack gate on a melee weapon fails closed.
+    const meleeAliases = new Set<string>();
+    for (const weapon of weaponStyles) {
+        if (weapon.category !== 0) continue;
+        const alias = idToAlias.get(weapon.obj_id);
+        if (alias !== undefined) meleeAliases.add(alias);
+    }
+    // Wield blocks: `[opheld2,alias]` either carries its `@handler(args);`
+    // on the same line or opens a multi-line quest block (the viking rows of
+    // `tier30.rs2:18-45`) whose final attack call is the tier and whose
+    // `%varp < ^varp_complete` check is the quest gate.
+    type WieldBlock = { alias: string; file: string; calls: { handler: string; args: string }[]; questVarp: boolean };
+    const parseBlocks = (file: string, text: string): WieldBlock[] => {
+        const blocks: WieldBlock[] = [];
+        let current: WieldBlock | null = null;
+        for (const raw of text.split(/\r?\n/)) {
+            const line = raw.trim();
+            const header = /^\[opheld2,([A-Za-z][A-Za-z0-9_]*)\]/.exec(line);
+            if (header) {
+                current = { alias: header[1]!, file, calls: [], questVarp: false };
+                blocks.push(current);
+            }
+            if (!current) continue;
+            if (/%\w+\s*<\s*\^\w+_complete/.test(line)) current.questVarp = true;
+            for (const call of line.matchAll(/@([A-Za-z][A-Za-z0-9_]*)\(([^)]*)\)\s*;/g)) {
+                current.calls.push({ handler: call[1]!, args: call[2]! });
+            }
+        }
+        return blocks;
+    };
+    const gates = new Map<string, { tier: number; quest_gated: boolean }>();
+    for (const file of MELEE_TIER_FILES) {
+        const text = requireGatherText(content, file);
+        for (const block of parseBlocks(file, text)) {
+            if (!meleeAliases.has(block.alias)) continue;
+            if (block.calls.some((call) => call.handler === 'tutorial_island_equip')) {
+                // The tutorial-only guard ends in the post-tutorial attack
+                // minimum (`tutorial.rs2:267-283`); wield it as that tier.
+                const tutorialText = requireGatherText(content, 'scripts/tutorial/scripts/tutorial.rs2');
+                const label = tutorialText.slice(tutorialText.indexOf('[label,tutorial_island_equip]'));
+                const levels = [...label.matchAll(/@levelrequire_attack\((\d+),/g)].map((m) => Number(m[1]));
+                if (levels.length === 0) throw new Error('melee tier: tutorial_island_equip has no attack level');
+                const prior = gates.get(block.alias);
+                const gate = { tier: levels[levels.length - 1]!, quest_gated: false };
+                if (prior && (prior.tier !== gate.tier || prior.quest_gated !== gate.quest_gated)) {
+                    throw new Error(`melee tier: conflicting wield gates for ${block.alias}`);
+                }
+                gates.set(block.alias, gate);
+                continue;
+            }
+            const attackCalls = block.calls.filter((call) =>
+                PLAIN_ATTACK_HANDLERS.has(call.handler) || QUEST_ATTACK_HANDLERS.has(call.handler) ||
+                call.handler === 'levelrequire_attack_and_strength',
+            );
+            if (attackCalls.length === 0) {
+                throw new Error(`melee tier: melee weapon ${block.alias} (${block.file}) has no attack gate`);
+            }
+            const last = attackCalls[attackCalls.length - 1]!;
+            const gate = meleeTierGate(last.handler, last.args);
+            const questGated = gate.quest_gated || block.questVarp;
+            const prior = gates.get(block.alias);
+            if (prior && (prior.tier !== gate.tier || prior.quest_gated !== questGated)) {
+                throw new Error(`melee tier: conflicting wield gates for ${block.alias}`);
+            }
+            gates.set(block.alias, { tier: gate.tier, quest_gated: questGated });
+        }
+    }
+    const rows: MeleeWeaponTierWire[] = [];
+    for (const weapon of weaponStyles) {
+        if (weapon.category !== 0) continue;
+        const alias = idToAlias.get(weapon.obj_id);
+        const gate = alias === undefined ? undefined : gates.get(alias);
+        // No tier script is tier 0 (`combat.param:81-83`), never excluded.
+        rows.push({ obj_id: weapon.obj_id, tier: gate?.tier ?? 0, quest_gated: gate?.quest_gated ?? false });
+    }
+    return rows.sort((a, b) => a.obj_id - b.obj_id);
 }

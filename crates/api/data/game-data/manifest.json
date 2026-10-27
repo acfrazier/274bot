@@ -8573,7 +8573,23 @@
         "confirm_mine": 6507,
         "confirm_theirs": 6508,
         "obstacles": 6732,
-        "options_varp": 286
+        "options_varp": 286,
+        "rule_buttons": [
+          6721,
+          6722,
+          6723,
+          6724,
+          6725,
+          6726,
+          6727,
+          6728,
+          6729,
+          6730,
+          6732,
+          671,
+          670,
+          7816
+        ]
       },
       "special": {
         "energy_varp": 300,
@@ -8614,8 +8630,8 @@
         "npc_configs": 3,
         "digest": "61fad0df0a3449eb85e52902d83668c8ef56fe4e61337ff0fdc98b528c9ab9d1"
       },
-      "bytes": 6322263,
-      "sha256": "c8c51062640fa63ea4ab995ff3cd72e6874fb78bd8c1a8f92e6a422c84118018",
+      "bytes": 6488673,
+      "sha256": "cebd4a24745d81a7242fd1e25bd5e719191013e0baf89321c6bdb91ea0fd7316",
       "engine_commit": "cc359656b4acd216ca452495874b6beba9a0ac75",
       "content_commit": "92649430fcbc83538d8c4367ecb96cee1a67a944",
       "inputs": [
@@ -12522,6 +12538,16 @@
           "sha256": "270a26b715ee4e5cd44e7ad32bf0b941f6d65f08f77b35d80c7158724001db13"
         },
         {
+          "path": "scripts/minigames/game_duelarena/configs/duelarena.constant",
+          "bytes": 642,
+          "sha256": "11769b7c64b95906c65ec63738423453ac5cb925632d7e87a1722819350889bd"
+        },
+        {
+          "path": "scripts/minigames/game_duelarena/configs/duelarena.dbrow",
+          "bytes": 449,
+          "sha256": "0fc4ab2f8a54605c7795cc6c510e954ac7ba7dcf6f3a8be291a0a0638c2fca7f"
+        },
+        {
           "path": "scripts/minigames/game_duelarena/configs/duelarena.npc",
           "bytes": 8615,
           "sha256": "a0ea8b63c7eb1e0a859f30f57b9e15ef7ca23320d0614342cfddefcd8b487f4a"
@@ -13095,6 +13121,11 @@
           "path": "scripts/player/configs/consumption/consume_normal.dbrow",
           "bytes": 5825,
           "sha256": "86a28c697072eb8c2321b8f86a1321a7ab3a2cc000c2905905a588eb39c5a5da"
+        },
+        {
+          "path": "scripts/player/configs/death.param",
+          "bytes": 70,
+          "sha256": "2d4eca8d916696393419feea6f884b6acdf979e2c3620af1b34fdeffcf7c9104"
         },
         {
           "path": "scripts/player/interfaces/questlist.if",
