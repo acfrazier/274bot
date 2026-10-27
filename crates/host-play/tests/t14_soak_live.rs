@@ -835,6 +835,7 @@ fn scenario_for(site: &BankSite, duration: Duration) -> Result<Scenario, String>
                 && cheat(client, "givebank rune_axe 64").is_sent()
         }),
     };
+    prep.wait.arm = Proof::ItemId { id: 1359, count: 1 };
 
     let tele = scenario
         .steps
@@ -879,10 +880,51 @@ fn scenario_for(site: &BankSite, duration: Duration) -> Result<Scenario, String>
             },
         },
     );
-    scenario
-        .steps
-        .retain(|step| step.name != GATHERER_TREE_PROOF_STEP);
+    // The rune axe works from inventory. The inherited bronze-only equip step
+    // would require an absent item; equipping rune would require an unrelated
+    // Attack seed. Keep the inventory and skill proofs instead.
+    scenario.steps.retain(|step| {
+        step.name != GATHERER_TREE_PROOF_STEP
+            && step.name != "equip the observed bronze axe before Start"
+    });
     Ok(scenario)
+}
+
+#[test]
+fn soak_seed_proves_rune_axe_without_inherited_bronze_equipment() {
+    let sites = select_sites(&json!({
+        "workload": {"site_names": ["woodcutting.catherby", "woodcutting.seers"]}
+    }))
+    .expect("selected content sites");
+    for site in sites {
+        let scenario = scenario_for(&site, Duration::from_secs(7200)).expect("soak scenario");
+        let prep = scenario
+            .steps
+            .iter()
+            .find(|step| {
+                step.name == "prepare Woodcutting 99, a rune axe and banked spare axes before Start"
+            })
+            .expect("soak seed step");
+        assert!(matches!(
+            prep.wait.arm,
+            Proof::ItemId { id: 1359, count: 1 }
+        ));
+        assert_eq!(prep.wait.budget_ticks, 120);
+        assert!(!scenario.steps.iter().any(|step| {
+            step.name == "equip the observed bronze axe before Start"
+                || matches!(step.wait.arm, Proof::ItemId { id: 1351, .. })
+                || matches!(step.wait.arm, Proof::EquipmentId { id: 1351 })
+        }));
+        assert!(scenario.steps.iter().any(|step| {
+            matches!(
+                step.wait.arm,
+                Proof::Stat {
+                    id: WOODCUTTING_STAT_ID,
+                    min: 99
+                }
+            ) && step.wait.budget_ticks == 120
+        }));
+    }
 }
 
 fn bank_settings(site: &BankSite) -> Map<String, Value> {
