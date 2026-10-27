@@ -1843,6 +1843,7 @@ fn g5e_process_resources() -> G5eProcessResources {
     }
     #[cfg(target_os = "macos")]
     {
+        let task_info = g5e_macos_task_info().expect("read macOS process task information");
         let file_descriptors = g5e_macos_fd_count();
         G5eProcessResources {
             rss_bytes: task_info.resident_size,
@@ -2337,7 +2338,7 @@ fn g5e_tls13_wss_keyupdate_backpressure_memory_receipt() {
         0,
         "the first lane disables resumption and does not store server tickets"
     );
-    let (mut sibling_attempt, mut sibling_endpoint, sibling_handshake) =
+    let (sibling_attempt, sibling_endpoint, sibling_handshake) =
         connect_wss(&sibling_server, Arc::clone(&client_config));
     assert_negotiated(&sibling_handshake, ProtocolVersion::TLSv1_3, TLS13_SUITE);
     assert_eq!(
@@ -2612,8 +2613,6 @@ fn g5e_tls13_wss_keyupdate_backpressure_memory_receipt() {
     reset_g5e_allocator_peak();
     endpoint.close(attempt.poll.registry());
     sibling_endpoint.close(sibling_attempt.poll.registry());
-    drop(endpoint);
-    drop(sibling_endpoint);
     drop(attempt);
     drop(sibling_attempt);
     server.stop();
