@@ -48,6 +48,12 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   stops for lack of food at 2. Imps cannot damage the bot at all (max hit
   0), so the bot does not raise Protect from Melee against them.
 
+### Fixed during development
+
+- A refused game connection on macOS keeps its connection-refused error.
+  The new transport sets TCP_NODELAY only after the connection succeeds,
+  so a socket-option error cannot replace the connection failure.
+
 ## [0.2.7] — 2026-10-26 — Beta 2
 
 ### Panel and terminal app
@@ -210,10 +216,6 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   own page for script authors.
 
 ### Fixed during development
-
-- A refused game connection on macOS keeps its connection-refused error.
-  The new transport sets TCP_NODELAY only after the connection succeeds,
-  so a socket-option error cannot replace the connection failure.
 
 - Startup waits for saved preferences before it chooses and loads a profile.
   Saving a new profile during that wait keeps the terminal app's original boot

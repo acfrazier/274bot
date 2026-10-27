@@ -222,6 +222,9 @@ impl TcpEndpoint {
         // A failed nonblocking connect can make setsockopt return EINVAL on
         // macOS. Preserve SO_ERROR above before configuring a connected socket.
         if let Err(error) = socket.inner().set_nodelay(true) {
+            // A reset can arrive after peer_addr succeeded. Prefer that socket
+            // error to an option error from configuring the now-failed socket.
+            let error = socket.inner().take_error().ok().flatten().unwrap_or(error);
             self.drop_socket(registry);
             return self.address_failure(error);
         }
