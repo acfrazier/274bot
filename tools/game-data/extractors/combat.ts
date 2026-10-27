@@ -1092,7 +1092,10 @@ function meleeTierGate(handler: string, args: string): { tier: number; quest_gat
         throw new Error(`melee tier: handler @${handler}(${args}) has a bad attack level`);
     }
     const strengthArg = (name: string): number => {
-        const value = parts[1] ?? 0;
+        const value = parts[1];
+        if (value === undefined) {
+            throw new Error(`melee tier: handler @${name}(${args}) is missing the strength level`);
+        }
         if (!Number.isInteger(value) || value < 0 || value > 255) {
             throw new Error(`melee tier: handler @${name}(${args}) has a bad strength level`);
         }
@@ -1105,7 +1108,6 @@ function meleeTierGate(handler: string, args: string): { tier: number; quest_gat
     if (handler === 'levelrequire_regicide_quest_attack_strength') {
         return { tier: level as number, quest_gated: true, strength: strengthArg(handler) };
     }
-    if (QUEST_ATTACK_HANDLERS.has(handler)) return { tier: level as number, quest_gated: true, strength: 0 };
     if (handler === 'levelrequire_attack_and_strength') {
         return { tier: level as number, quest_gated: false, strength: strengthArg(handler) };
     }

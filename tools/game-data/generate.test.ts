@@ -3994,6 +3994,42 @@ const noOverrides: readonly SiteOverride[] = [];
     assert.deepEqual([zones.pens[0]?.x1, zones.pens[0]?.z1, zones.pens[0]?.x2, zones.pens[0]?.z2], [3333, 3244, 3357, 3258]);
     assert.deepEqual([zones.challenge.x1, zones.challenge.z1, zones.challenge.x2, zones.challenge.z2], [3328, 3203, 3393, 3325]);
     assert.deepEqual([zones.lobby.x1, zones.lobby.z1, zones.lobby.x2, zones.lobby.z2], [3355, 3267, 3379, 3279]);
+    // The halberd strength parse reads the second gate argument against the
+    // tier scripts; dropping it (strength 0 everywhere) fails these rows.
+    const halberdTiers = extractMeleeWeaponTiers(root289, [
+        { obj_id: 3190, category: 0 },
+        { obj_id: 3200, category: 0 },
+        { obj_id: 3202, category: 0 },
+        { obj_id: 3204, category: 0 },
+    ], new Map([
+        [3190, 'bronze_halberd'],
+        [3200, 'adamant_halberd'],
+        [3202, 'rune_halberd'],
+        [3204, 'dragon_halberd'],
+    ]));
+    const halberdStrength = (id: number) => halberdTiers.find((row) => row.obj_id === id)?.strength;
+    assert.equal(halberdStrength(3190), 1, 'bronze halberd tier1.rs2:17 gates strength 1');
+    assert.equal(halberdStrength(3200), 15, 'adamant halberd tier30.rs2:17 gates strength 15');
+    assert.equal(halberdStrength(3202), 20, 'rune halberd tier40.rs2:17 gates strength 20');
+    assert.deepEqual(
+        halberdTiers.find((row) => row.obj_id === 3204),
+        { obj_id: 3204, tier: 60, quest_gated: true, strength: 30 },
+        'dragon halberd tier60.rs2:10 gates attack 60 and strength 30 behind the quest',
+    );
+    // A strength-gated row without its second argument fails closed instead
+    // of recording strength 0.
+    const strengthFixture = fs.mkdtempSync(path.join(os.tmpdir(), 'melee-tier-fixture-'));
+    fs.mkdirSync(path.join(strengthFixture, 'scripts/levelrequire/scripts'), { recursive: true });
+    for (const file of ['tier1', 'tier5', 'tier10', 'tier20', 'tier30', 'tier40', 'tier45', 'tier50', 'tier60', 'tier70']) {
+        fs.writeFileSync(path.join(strengthFixture, `scripts/levelrequire/scripts/${file}.rs2`), file === 'tier30'
+            ? '[opheld2,test_halberd] @levelrequire_attack_and_strength(30);\n'
+            : '// no test_halberd wield row in this tier\n');
+    }
+    assert.throws(
+        () => extractMeleeWeaponTiers(strengthFixture, [{ obj_id: 1, category: 0 }], new Map([[1, 'test_halberd']])),
+        /missing the strength level/,
+        'a one-argument strength gate throws',
+    );
     // An unknown specwep obj (no §6.1 row) fails closed instead of emitting
     // an untyped fact.
     const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'pvp-facts-fixture-'));
