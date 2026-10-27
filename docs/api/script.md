@@ -962,16 +962,21 @@ number of destination tiers that the content defines. It does not count compass
 directions. A request ends with its walk receipt. If no receipt comes, it ends
 when its observed-tick budget is spent. The step counts distinct game ticks,
 one for each `PLAYER_INFO`, never wall-clock time. The budget is the walking
-depth in steps to the nearest goal in the live reach flood, plus 12 ticks. The
-12 ticks cover the engine's tick order and one dropped click that the nav
-executor re-sends after 5 idle ticks, twice. The budget never exceeds 128 ticks,
-and it is 128 ticks when no goal is in the flood (a route that needs a
-transport, or no live flood). The 128 is policy: it is twice the 64-tile ring
-that limits the beyond and away goals, and it is not an engine bound. A stand
-farther than that is given up for a nearer tier. When the budget is spent, the
-step cancels the walk and plans the next tier from the observed position, the
-same as for a failed route. The walk machine's ten-minute active-clock
-deadline stays only as the outer backstop. An abort walk that arrives while an
+depth in steps to the nearest goal of the preferred tier in the live reach
+flood (of the fallback tier when no preferred goal is in the flood), plus 12
+ticks. The 12 ticks cover the engine's tick order and one dropped click that
+the nav executor re-sends after 5 idle ticks, twice. When no goal is in the
+flood (a route that needs a transport, or no live flood), the budget is the
+largest route length plus the same 12 ticks. The largest route length is
+4,000,000 steps, the router's limit of settled nodes for one search
+(`NODE_BUDGET`). The reach flood has no depth limit of its own. A route of `n`
+steps passes through `n + 1` settled nodes, and a player moves at least one
+tile per game tick (`engine/src/engine/entity/PathingEntity.ts:144-149`). This
+bound covers walking only. A route that waits on a transport has no tick bound
+from it. In practice the ten-minute active-clock deadline of the walk machine
+ends such a walk first. When the budget is spent, the step cancels the walk
+and plans the next tier from the observed position, the same as for a failed
+route. An abort walk that arrives while an
 attacker remains, or a pass that spends its tiers, transfers into a guarded
 hold. The hold continues eating and permitted protection even at high HP, and
 ends only after three consecutive
