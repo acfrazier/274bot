@@ -727,6 +727,9 @@ struct Reactor {
     shutdown: Arc<AtomicBool>,
     tls_lane: Arc<Mutex<Option<Arc<GameTlsLane>>>>,
     // Sparse modulo-slot storage keeps token lookup compatible with ID reuse.
+    // This saves the empty 744-byte-per-slot table at small occupancies. Hash
+    // lookups and rehash copies cost more than indexing; at roughly 449 live
+    // connections bucket rounding can exceed the old table's retained bytes.
     live: HashMap<usize, Live>,
     active: Vec<u64>,
     local: VecDeque<u64>,
@@ -745,7 +748,8 @@ impl Reactor {
         Self {
             poll,
             events: Events::with_capacity(MAX_CONNECTIONS + 1),
-            ready: Vec::new(),
+            // Reserve once: collecting a new readiness peak must not allocate.
+            ready: Vec::with_capacity(MAX_CONNECTIONS),
             registry,
             bus,
             ledger,
@@ -754,7 +758,8 @@ impl Reactor {
             tls_lane,
             live: HashMap::new(),
             active: Vec::new(),
-            local: VecDeque::new(),
+            // Reserve once: I/O, deadlines and TLS returns enqueue on the hot path.
+            local: VecDeque::with_capacity(MAX_CONNECTIONS),
         }
     }
 
@@ -1778,14 +1783,22 @@ mod tests {
     use std::cell::Cell;
     use std::net::TcpListener;
 
-    // Allows Mio event storage and platform bootstrap but excludes the observed 761,856-byte empty Live allocation.
-    const STARTUP_ALLOCATION_LIMIT_BYTES: usize = 256 * 1024;
-    // More than 3× the four measured 38,040-byte shared states, while excluding the former full-capacity table.
-    const FOUR_ADMISSION_ALLOCATION_LIMIT_BYTES: usize = 512 * 1024;
+    // macOS arm64 measured N=0 at 66,631 bytes, including the fixed 24 KiB
+    // ready/local buffers. Allow 8 KiB for platform bootstrap differences;
+    // Mio's kqueue event storage is larger than epoll's.
+    const STARTUP_ALLOCATION_LIMIT_BYTES: usize = 66_631 + 8 * 1024;
+    // macOS arm64 measured N=4 at 222,179 bytes including those fixed buffers.
+    // The same 8 KiB headroom covers startup variation, not per-bot growth.
+    const FOUR_ADMISSION_ALLOCATION_LIMIT_BYTES: usize = 222_179 + 8 * 1024;
+    // Measured admission delta is 38,887 bytes per connection. 40 KiB allows
+    // 2,073 bytes of headroom, but rejects a new tens-of-KiB payload per bot.
+    const PER_ADMISSION_ALLOCATION_LIMIT_BYTES: usize = 40 * 1024;
+    const FIXED_HOT_PATH_STORAGE_BYTES: usize =
+        MAX_CONNECTIONS * (std::mem::size_of::<(u64, bool, bool)>() + std::mem::size_of::<u64>());
     // 4 KiB leaves inline-layout headroom while rejecting a capacity-sized field embedded in Reactor.
     const INLINE_REACTOR_SIZE_LIMIT_BYTES: usize = 4 * 1024;
-    // 16 KiB gives roughly 3× headroom over four live/registration buckets and their queue entries.
-    const FOUR_CONNECTION_STORAGE_LIMIT_BYTES: usize = 16 * 1024;
+    // 16 KiB of sparse storage headroom, in addition to the fixed hot-path queues.
+    const FOUR_CONNECTION_STORAGE_LIMIT_BYTES: usize = FIXED_HOT_PATH_STORAGE_BYTES + 16 * 1024;
     // Allow twice the four-entry occupancy for standard-container capacity rounding.
     const FOUR_CONNECTION_ENTRY_CAPACITY_LIMIT: usize = 8;
 
@@ -1922,6 +1935,11 @@ mod tests {
             four_admissions_bytes <= FOUR_ADMISSION_ALLOCATION_LIMIT_BYTES,
             "startup plus four admitted connections requested {four_admissions_bytes} bytes"
         );
+        let admission_bytes = four_admissions_bytes - startup_bytes;
+        assert!(
+            admission_bytes <= 4 * PER_ADMISSION_ALLOCATION_LIMIT_BYTES,
+            "four admissions requested {admission_bytes} bytes beyond startup"
+        );
         let registry = service
             .registry
             .lock()
@@ -1933,6 +1951,9 @@ mod tests {
         );
         drop(registry);
         drop(tracker);
+        println!(
+            "REACTOR_ALLOCATION_RECEIPT n0={startup_bytes} n4={four_admissions_bytes} admission_total={admission_bytes}"
+        );
         service.shutdown();
     }
 
@@ -1973,11 +1994,14 @@ mod tests {
             std::mem::size_of::<Reactor>() <= INLINE_REACTOR_SIZE_LIMIT_BYTES,
             "the reactor owner must remain small and must not embed capacity-sized slots"
         );
-        assert_eq!(estimated_reactor_storage_bytes(&service, &reactor), 0);
+        assert_eq!(
+            estimated_reactor_storage_bytes(&service, &reactor),
+            FIXED_HOT_PATH_STORAGE_BYTES
+        );
         assert_eq!(reactor.live.capacity(), 0);
-        assert_eq!(reactor.ready.capacity(), 0);
+        assert_eq!(reactor.ready.capacity(), MAX_CONNECTIONS);
         assert_eq!(reactor.active.capacity(), 0);
-        assert_eq!(reactor.local.capacity(), 0);
+        assert_eq!(reactor.local.capacity(), MAX_CONNECTIONS);
 
         let high_id = (1_u64 << (usize::BITS - 2)) + 1;
         service.next_id.store(high_id, Ordering::Relaxed);
@@ -1994,9 +2018,8 @@ mod tests {
             "four live endpoints should reserve at most twice their occupied entries"
         );
         assert!(
-            reactor.active.capacity() <= FOUR_CONNECTION_ENTRY_CAPACITY_LIMIT
-                && reactor.local.capacity() <= FOUR_CONNECTION_ENTRY_CAPACITY_LIMIT,
-            "active and local queues should reserve at most twice their occupied entries"
+            reactor.active.capacity() <= FOUR_CONNECTION_ENTRY_CAPACITY_LIMIT,
+            "active IDs should reserve at most twice their occupied entries"
         );
         assert!(
             estimated_reactor_storage_bytes(&service, &reactor)
@@ -2010,6 +2033,25 @@ mod tests {
                 .get(&index(binding.connection))
                 .is_some_and(|live| live.registration.id == binding.connection));
         }
+
+        // Exercise the poll-loop buffers and actual enqueue path with growing
+        // peaks after admission. Neither path may request an allocation.
+        let tracker = AllocationTracker::start();
+        for peak in [1, 2, 4] {
+            reactor.ready.clear();
+            while let Some(id) = reactor.local.pop_front() {
+                reactor.ledger.dequeue_local_work();
+                reactor.live.get_mut(&index(id)).unwrap().queued = false;
+            }
+            for (binding, _, _) in admitted.iter().take(peak) {
+                reactor.ready.push((binding.connection, true, true));
+                reactor.enqueue(binding.connection);
+            }
+            assert_eq!(reactor.ready.len(), peak);
+            assert_eq!(reactor.local.len(), peak);
+        }
+        assert_eq!(tracker.requested_bytes(), 0);
+        drop(tracker);
 
         for (binding, shared, retire) in admitted {
             reactor.close(binding.connection, None);

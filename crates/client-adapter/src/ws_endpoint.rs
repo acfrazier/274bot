@@ -1759,7 +1759,7 @@ fn verify_upgrade_response(response: &Response, expected_accept: &str) -> io::Re
 // and uses a separate 4 KiB read chunk. Both are dependency-private. Keep
 // them: reducing read chunks changes I/O throughput, and discarding an
 // upgrade tail can lose the first game frame. The 16 KiB message/frame bounds
-// below are protocol limits, not substitutes for TLS record buffering.
+// below are adapter admission bounds, not substitutes for TLS record buffering.
 fn websocket_config() -> WebSocketConfig {
     WebSocketConfig {
         write_buffer_size: WS_WRITE_BUFFER_SIZE,

@@ -350,6 +350,7 @@ pub struct CommandBus {
 impl CommandBus {
     pub fn new(waker: Arc<Waker>) -> Self {
         Self {
+            // Slot threads schedule under K3; reserve 8 KiB once so they never allocate.
             queue: Mutex::new(VecDeque::with_capacity(MAX_CONNECTIONS)),
             waker,
         }

@@ -190,7 +190,6 @@ pub enum ResolverAdmissionError {
 pub enum ResolverConfigError {
     NoSlots,
     TooManySlots,
-    AllocationFailed,
 }
 
 /// Ticket for one slot generation. Clones refer to the same single waiter;

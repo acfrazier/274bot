@@ -15,6 +15,8 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
 - Reactor connection storage and resolver waiter/cache storage grow with use
   instead of reserving their maximum payloads at startup. Admission limits
   and per-connection byte and record capacities remain unchanged.
+  Readiness and local-work queues retain their fixed buffers so new event
+  peaks do not allocate on the reactor's I/O path.
 - A hosted login keeps its prepared endpoint, cancellation identity and
   queue retirement bound through the final session commit. Play starts the
   network composition and retains its maintenance driver for every frontend.
