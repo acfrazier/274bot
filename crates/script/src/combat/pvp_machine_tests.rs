@@ -647,6 +647,90 @@ fn case6_the_single_way_line_holds_the_attack_for_exactly_eight_ticks() {
     assert!(harness.machine.end.is_none(), "the engagement is kept");
 }
 
+/// A pen fight cast by hand (`Style::Mage` with an ordered spell list, so the
+/// machine casts instead of attacking): the first cast is issued at tick 1.
+fn installed_manual_cast_pen_fight() -> (Scene, Harness) {
+    use super::magic_tests::{magic_scene, refresh_magic, spend};
+    let mut scene = magic_scene(Some("staff_of_fire"), 60);
+    scene.wilderness = Some(content_wilderness());
+    place_local(&mut scene, tile(3340, 3250));
+    scene
+        .players
+        .push(player(8, BOB, tile(3341, 3250), &fight_ops(), 60));
+    refresh_magic(&mut scene, 3, false);
+    let request = CombatRequest {
+        style: Style::Mage,
+        spells: Some(
+            [SpellRef {
+                alias: Arc::from("fire_bolt"),
+            }]
+            .into_iter()
+            .collect::<Vec<_>>()
+            .into(),
+        ),
+        retaliate: false,
+        ..player_request(BOB, true)
+    };
+    let mut harness = Harness::new(&scene, request);
+    assert!(
+        is_player_cast(&harness.pending(&scene, 1)),
+        "the first manual cast is issued at the player"
+    );
+    spend(&mut scene, "fire_bolt");
+    scene.local.player.actor.target = Some(ActorTargetView {
+        kind: ActorKind::Player,
+        index: 8,
+    });
+    scene.local.player.actor.in_combat = true;
+    refresh_magic(&mut scene, 3, false);
+    assert!(harness.pending(&scene, 2).is_none());
+    (scene, harness)
+}
+
+fn is_player_cast(effect: &Option<HostEffect>) -> bool {
+    matches!(effect, Some(HostEffect::Interaction(InteractReq::UseWidgetOn { kind, .. })) if kind.as_ref() as &str == "player")
+}
+
+#[test]
+fn case6_the_single_way_line_holds_a_manual_cast_for_exactly_eight_ticks() {
+    use super::magic_tests::refresh_magic;
+    let (mut scene, mut harness) = installed_manual_cast_pen_fight();
+    say(&mut scene, 1, "I'm already under attack.");
+    // The line is read at tick 3: no cast on ticks 3..=10.
+    for tick in 3..=10 {
+        let effect = harness.pending(&scene, tick);
+        assert!(
+            !is_player_cast(&effect),
+            "a manual cast inside the hold at tick {tick}"
+        );
+        refresh_magic(&mut scene, 3, false);
+    }
+    assert!(
+        is_player_cast(&harness.pending(&scene, 11)),
+        "the cast is re-issued when the hold ends"
+    );
+    assert!(harness.machine.end.is_none(), "the engagement is kept");
+}
+
+#[test]
+fn case6_the_duel_not_started_line_holds_a_manual_cast_for_one_tick() {
+    use super::magic_tests::refresh_magic;
+    let (mut scene, mut harness) = installed_manual_cast_pen_fight();
+    // Cast spacing has passed by tick 8, so only the hold can stop a cast.
+    refresh_magic(&mut scene, 3, false);
+    assert!(harness.pending(&scene, 3).is_none());
+    say(&mut scene, 1, "The duel has not started yet!");
+    assert!(
+        !is_player_cast(&harness.pending(&scene, 8)),
+        "a manual cast on the tick that read the line"
+    );
+    refresh_magic(&mut scene, 3, false);
+    assert!(
+        is_player_cast(&harness.pending(&scene, 9)),
+        "the cast is re-issued one tick later"
+    );
+}
+
 #[test]
 fn case6_someone_else_fighting_the_opponent_ends_the_run_after_three_lines() {
     let (mut scene, mut harness) = installed_pen_fight(true);

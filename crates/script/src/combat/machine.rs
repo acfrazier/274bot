@@ -1124,9 +1124,12 @@ impl Combat {
             }
         }
     }
+    /// A manual cast is an attack too: it waits out the PvP hold (a single-way
+    /// or duel-start line) exactly as an attack row does.
     fn manual_cast(&self, plan: &mut TickPlan, _frame: &Frame<'_>, tick: u16) {
         if !plan.closed(&self.tables)
             && self.engaged.is_some()
+            && self.flags2 & PVP_HOLD == 0
             && !self.pending_row(RowKind::Cast)
             && self.schedule.ready(OpKind::Cast, tick)
             && (!self.schedule.cycle.known || reached(tick, self.schedule.cycle.deadline))
