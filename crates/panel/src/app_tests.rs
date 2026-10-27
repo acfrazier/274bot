@@ -6539,7 +6539,7 @@ fn hold_writes(
 /// of it is the action that resolves the failure (it shows "Saving…" again,
 /// not the old failure). The raster, memory and revision controls, both order
 /// controls, the folds, the remembered folders, the debug panel's saved
-/// commands and the Fleet toolbar fold.
+/// commands, the Fleet toolbar fold and the rail tile's preview fold.
 #[test]
 fn settings_feedback_every_panel_owned_control_shows_saving_then_the_failure_until_retried() {
     use std::sync::atomic::Ordering;
@@ -6637,6 +6637,16 @@ fn settings_feedback_every_panel_owned_control_shows_saving_then_the_failure_unt
             draw: |ui, s| {
                 crate::fleet_toolbar::header(ui, s, "fleet");
             },
+        },
+        Surface {
+            name: "rail preview fold",
+            write: |s| {
+                let _ = s.persist_panel_member(
+                    &["rail_preview", "alice"],
+                    Some(serde_json::Value::Bool(false)),
+                );
+            },
+            draw: |ui, s| super::rail_preview_feedback_line(ui, s, "alice", 0.0, 400.0),
         },
     ];
     let _guard = crate::test_support::imgui_context_guard();
