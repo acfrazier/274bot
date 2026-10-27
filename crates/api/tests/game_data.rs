@@ -36,6 +36,47 @@ fn generated_revision_data_is_static_distinct_and_fail_closed() {
             .is_some()
     );
 }
+/// A strength-null attackable row publishes the engine default. A bespoke row
+/// keeps the inputs that leave it unknown (`select.rs:91-93` returns before
+/// strength) while still publishing that default. An explicit 0 stays 0.
+/// `NpcType.ts:106`.
+#[test]
+fn strength_null_attackable_row_resolves_with_engine_default_strength() {
+    let data = for_revision(ClientRevision::R289).expect("revision 289 data");
+    let crab = data
+        .npc_by_config("horror_rockcrab")
+        .expect("active rock crab");
+    assert!(crab.ops.iter().any(|op| op == "Attack"));
+    assert!(!crab.bespoke);
+    assert_eq!(crab.attack_kind, None);
+    assert_eq!(crab.strength, Some(1));
+    assert_eq!(crab.ranged, Some(1));
+
+    let man = data.npc_by_config("man").expect("man");
+    assert!(man.ops.iter().any(|op| op == "Attack"));
+    assert!(!man.bespoke);
+    assert_eq!(man.strength, Some(1));
+}
+
+#[test]
+fn bespoke_row_stays_bespoke_when_strength_takes_the_engine_default() {
+    let data = for_revision(ClientRevision::R289).expect("revision 289 data");
+    let dormant = data
+        .npc_by_config("horror_rockcrab_inactive")
+        .expect("dormant rock crab");
+    assert!(dormant.bespoke);
+    assert!(dormant.ops.is_empty());
+    assert_eq!(dormant.attack_kind, None);
+    assert_eq!(dormant.forced_max_hit, None);
+    assert_eq!(dormant.strength, Some(1));
+    assert_eq!(dormant.ranged, Some(1));
+
+    let zero = data
+        .npc_by_config("death_archer1")
+        .expect("explicit strength 0");
+    assert_eq!(zero.strength, Some(0));
+}
+
 #[test]
 fn generated_npc_headicons_come_from_selected_content() {
     let data = for_revision(ClientRevision::R289).expect("revision 289 data");

@@ -1166,7 +1166,6 @@ fn u2_unknown_classes_fail_closed_through_the_real_assessment() {
         ("trail_hard2", false, UnknownKind::CounterProtect),
         ("ikov_firewarrior", false, UnknownKind::Magic),
         ("wizard", false, UnknownKind::Mixed),
-        ("man", false, UnknownKind::MissingStat),
         ("poisonspider", true, UnknownKind::Poison),
     ] {
         let npc = tables.selected().npc_by_config(config).unwrap();
@@ -1206,6 +1205,17 @@ fn u2_unknown_classes_fail_closed_through_the_real_assessment() {
             "{config}"
         );
     }
+
+    // No strength= line: the engine default is 1 (NpcType.ts:106). Max hit 1
+    // is select.rs:204 at strength 1 and strengthbonus 0. No packed 289 row
+    // still lacks the stat after that default, so this test no longer has a
+    // real-table MissingStat row.
+    let man = tables.selected().npc_by_config("man").unwrap();
+    assert_eq!(man.strength, Some(1));
+    let man_risk = KindRisk::from_npc(man, &tables);
+    assert_eq!(man_risk.unknown, UnknownKind::Known);
+    assert_eq!(man_risk.max_hit, 1);
+    assert_eq!(crate::combat::select::facts::npc_max_hit(man), Some(1));
 }
 
 /// T5.1 representation closure: risk reads each zone's facts through that
@@ -2904,50 +2914,10 @@ fn u9_cold_shared_tables_and_kind_build_measurement() {
     }
 }
 
-#[cfg(feature = "load")]
 #[test]
 #[ignore = "isolated cold construction-count probe; run explicitly"]
-fn u9_normal_slot_start_does_not_construct_risk_tables() {
+fn u9_risk_assessment_reuses_one_immutable_table() {
     assert_eq!(facts::build_count_for_test(), 0);
-    use std::sync::Arc;
-
-    let mut slot = crate::SlotScript::new();
-    let source: Arc<str> = "export function tick() {}".into();
-    let family = crate::resolve_api_family(&source)
-        .ok()
-        .map(|(_, family)| family);
-    slot.bind_surface_factory(Arc::new(crate::load::surface::JsSurfaceFactory::default()));
-    slot.start_surface(crate::surface::SurfaceStart {
-        card: Arc::new(crate::load::surface::JsStartCard {
-            source,
-            shape: crate::load::LoadShape::NativeTick,
-            siblings: Arc::default(),
-            family,
-        }),
-        settings_bag: None,
-        game_data: None,
-        named_banks: Arc::default(),
-        loadouts: Arc::default(),
-    })
-    .unwrap();
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-    while slot.state() != crate::slot::RunState::Running && std::time::Instant::now() < deadline {
-        slot.observe_lifecycle();
-        std::thread::sleep(std::time::Duration::from_millis(5));
-    }
-    assert_eq!(slot.state(), crate::slot::RunState::Running);
-    assert_eq!(
-        facts::build_count_for_test(),
-        0,
-        "ordinary slot startup must not initialize risk"
-    );
-    slot.stop();
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-    while slot.state() != crate::slot::RunState::Idle && std::time::Instant::now() < deadline {
-        slot.observe_lifecycle();
-        std::thread::sleep(std::time::Duration::from_millis(5));
-    }
-    assert_eq!(slot.state(), crate::slot::RunState::Idle);
     let tables = tables();
     let fx = Fixture::new(one_zone(&tables, 100, 1), WildernessRules::default());
     let risk = RiskTables::build(&tables);

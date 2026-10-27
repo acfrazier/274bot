@@ -37,7 +37,7 @@ headings to jump to the part you need.
 | Write a script and look up the script API | [JS API v2](api/js-api-v2.md) |
 | See which rs2b0t scripts and calls run | [Scripts](api/script.md) |
 | Write or load a quest guide for the Quester | [Quest guides](scripting/quest-guides.md) |
-| Copy a working example | [Example scripts](../crates/script/examples/) |
+| Copy a working example | [Example scripts](../crates/script-js/examples/) |
 | Test a script against a local game server | [Reusable live harness](dev/harness.md) |
 
 ## I want to work on 274bot

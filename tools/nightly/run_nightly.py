@@ -932,13 +932,37 @@ def self_check_candidate(candidate: Path, test_file: str = SELF_TEST_FILE,
         return False, f"candidate has no {test_file}"
     env = dict(os.environ, NIGHTLY_ROOT=str(candidate / "self-check-root"),
                NIGHTLY_SELF_CHECK_ACTIVE="1")
+    proc = popen_group([sys.executable, "-B", str(test_path)], cwd=str(candidate),
+                       env=env, stdin=subprocess.DEVNULL,
+                       stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    track(proc.pid, lambda: kill_tree(proc.pid, proc))
     try:
-        tested = subprocess.run([sys.executable, "-B", str(test_path)], cwd=str(candidate),
-                                env=env, capture_output=True, text=True, timeout=timeout)
-    except subprocess.TimeoutExpired:
-        return False, f"{test_file} did not finish within {timeout} s"
-    if tested.returncode:
-        tail = (tested.stderr or tested.stdout).strip().splitlines()
+        try:
+            stdout, stderr = proc.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            kill_tree(proc.pid, proc)
+            try:
+                stdout, stderr = proc.communicate(timeout=15)
+            except subprocess.TimeoutExpired:
+                try:
+                    kill_tree(proc.pid, proc)
+                finally:
+                    try:
+                        if proc.stdout is not None:
+                            proc.stdout.close()
+                        if proc.stderr is not None:
+                            proc.stderr.close()
+                    finally:
+                        try:
+                            proc.wait(timeout=5)
+                        except Exception:
+                            pass
+                return False, f"{test_file} did not finish within {timeout} s"
+            return False, f"{test_file} did not finish within {timeout} s"
+    finally:
+        untrack(proc.pid)
+    if proc.returncode:
+        tail = (stderr or stdout).strip().splitlines()
         return False, f"{test_file} failed: {tail[-1][:300] if tail else 'unknown error'}"
     return True, f"py_compile ok; {test_file} passed"
 
@@ -1187,7 +1211,7 @@ RS2B0T_UPSTREAM_REF = "refs/nightly/upstream-main"
 # UNAVAILABLE and the next night tries again.
 RS2B0T_FETCH_TIMEOUT_S = 120
 RS2B0T_MAX_COMMITS = 10
-ABI_CONTRACT_REL = Path("crates/script/compat-js/abi-contract.json")
+ABI_CONTRACT_REL = Path("crates/script-js/compat-js/abi-contract.json")
 # One fetch per nightly run, not per branch: branches in one process share
 # the fetched tip through this cache (success and failure alike).
 _api_upstream: dict[tuple[str, str], tuple[str | None, str]] = {}
@@ -2736,7 +2760,7 @@ def lane_list(tree: Path | None) -> list[tuple[str, list[str], dict]]:
         ("clippy-vendor", ["clippy", "--locked", *vendor, "--workspace", "--all-targets", "--", "-D", "warnings"], {}),
         ("test-workspace", ["test", "--locked", "--workspace", "--no-fail-fast"], assets),
         ("test-vendor", ["test", "--locked", *vendor, "--workspace", "--no-fail-fast"], assets),
-        ("test-script-load", ["test", "--locked", "-p", "script", "--features", "load", "--tests",
+        ("test-script-load", ["test", "--locked", "-p", "script-js", "--tests",
                               "--no-fail-fast"], assets),
         ("test-script-no-default", ["test", "--locked", "-p", "script", "--no-default-features",
                                     "--no-fail-fast"], assets),

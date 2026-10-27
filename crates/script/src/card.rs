@@ -84,3 +84,180 @@ impl ScriptSel {
         }
     }
 }
+
+/// Frozen-source equipment / drop tables that W1 must publish. The host
+/// must not invent names here; empty options are the honest schema.
+pub fn is_revision_fact_option_ident(ident: &str) -> bool {
+    matches!(
+        ident,
+        "STAFFS"
+            | "BOWS"
+            | "CROSSBOWS"
+            | "DARTS"
+            | "ARROWS"
+            | "BOLTS"
+            | "AXES"
+            | "MELEE_WEAPONS"
+            | "ROCK_CRAB_RANGED_WEAPONS"
+            | "FOOD_OPTIONS"
+            | "DROP_DB"
+    )
+}
+
+/// W1c `equipment_names` families backing a frozen settings `options` /
+/// `optionsFrom` ident. `RANGED_WEAPONS` and `ROCK_CRAB_RANGED_WEAPONS` mirror
+/// `.superpowers/release-0.1.9/reference/rs2b0t-00d39a17e0/src/bot/api/combat/ranged.ts`
+/// (`[...BOWS, ...DARTS]`). `AXES` and `DROP_DB` stay outside W1c.
+pub fn w1c_equipment_option_families(ident: &str) -> Option<&'static [&'static str]> {
+    Some(match ident {
+        "STAFFS" => &["staffs"],
+        "BOWS" => &["bows"],
+        "CROSSBOWS" => &["crossbows"],
+        "DARTS" => &["darts"],
+        "ARROWS" => &["arrows"],
+        "BOLTS" => &["bolts"],
+        "MELEE_WEAPONS" => &["melee_weapons"],
+        "RANGED_WEAPONS" | "ROCK_CRAB_RANGED_WEAPONS" => &["bows", "darts"],
+        _ => return None,
+    })
+}
+
+/// Host-owned finite option tables for imported / parent-dir identifiers
+/// whose bodies are not in the same-directory settings blob. Values are
+/// copied from the frozen rs2b0t pin; this is not a JS evaluator.
+///
+/// `BANK_LOCATIONS` / `BANK_LOCATION_OPTIONS` are the exception: a bank name
+/// is drawn from the same frozen roster as runtime `BANK_LOCATIONS`, including
+/// gated entries (eligibility is evaluated when selecting a destination).
+pub fn catalog_option_table(ident: &str) -> Option<&'static [&'static str]> {
+    Some(match ident {
+        "COOK_LOCATION_OPTIONS" => &[
+            "Auto",
+            "Varrock East",
+            "Varrock West",
+            "Al Kharid",
+            "Draynor",
+            "Falador East",
+            "Falador West",
+            "Edgeville",
+            "Seers",
+            "Catherby",
+            "Yanille",
+            "Ardougne West",
+            "Ardougne East",
+            "Canifis",
+            "Shilo Village",
+            "Fishing Guild",
+            "Shantay Pass",
+            "Mage Arena",
+            "Grand Tree",
+            "Duel Arena",
+            "Custom",
+        ],
+        "LOG_LEVELS" => &[
+            "Logs",
+            "Oak logs",
+            "Willow logs",
+            "Maple logs",
+            "Yew logs",
+            "Magic logs",
+        ],
+        "FIRE_SPOTS" => &["Varrock East", "Varrock West", "Draynor", "Seers"],
+        "HERB_OPTIONS" => &[
+            "Guam leaf",
+            "Marrentill",
+            "Tarromin",
+            "Harralander",
+            "Ranarr weed",
+            "Toadflax",
+            "Irit leaf",
+            "Avantoe",
+            "Kwuarm",
+            "Snapdragon",
+            "Cadantine",
+            "Lantadyme",
+            "Dwarf weed",
+            "Torstol",
+            "Snake weed",
+            "Ardrigal",
+            "Sito foil",
+            "Volencia moss",
+            "Rogues purse",
+        ],
+        "RUNE_OPTIONS" => &[
+            "Air rune",
+            "Mind rune",
+            "Water rune",
+            "Earth rune",
+            "Fire rune",
+            "Body rune",
+            "Cosmic rune",
+            "Chaos rune",
+            "Nature rune",
+            "Law rune",
+            "Death rune",
+        ],
+        "BANK_LOCATIONS" | "BANK_LOCATION_OPTIONS" => bank_location_names(ident),
+        "PRODUCT_OPTIONS" => &[
+            "Gold ring",
+            "Sapphire ring",
+            "Emerald ring",
+            "Ruby ring",
+            "Diamond ring",
+            "Dragonstone ring",
+            "Gold necklace",
+            "Sapphire necklace",
+            "Emerald necklace",
+            "Ruby necklace",
+            "Diamond necklace",
+            "Dragonstone necklace",
+            "Gold amulet",
+            "Sapphire amulet",
+            "Emerald amulet",
+            "Ruby amulet",
+            "Diamond amulet",
+            "Dragonstone amulet",
+        ],
+        "JEWEL_OPTIONS" => &[
+            "Sapphire ring",
+            "Sapphire necklace",
+            "Sapphire amulet",
+            "Emerald ring",
+            "Emerald amulet",
+            "Ruby ring",
+            "Ruby amulet",
+            "Diamond ring",
+            "Diamond amulet",
+            "Dragonstone ring",
+            "Dragonstone amulet",
+        ],
+        _ => return None,
+    })
+}
+
+fn bank_location_names(ident: &str) -> &'static [&'static str] {
+    /// The complete frozen roster, in the runtime payload's stable order.
+    const BANKS: [&str; api::named_banks::BANK_CATALOG.len()] = {
+        let mut names = [""; api::named_banks::BANK_CATALOG.len()];
+        let mut i = 0;
+        while i < names.len() {
+            names[i] = api::named_banks::BANK_CATALOG[i].name;
+            i += 1;
+        }
+        names
+    };
+    const WITH_NEAREST: [&str; api::named_banks::BANK_CATALOG.len() + 1] = {
+        let mut names = ["Nearest"; api::named_banks::BANK_CATALOG.len() + 1];
+        let mut i = 0;
+        while i < api::named_banks::BANK_CATALOG.len() {
+            names[i + 1] = api::named_banks::BANK_CATALOG[i].name;
+            i += 1;
+        }
+        names
+    };
+    if ident == "BANK_LOCATION_OPTIONS" {
+        &WITH_NEAREST
+    } else {
+        &BANKS
+    }
+}

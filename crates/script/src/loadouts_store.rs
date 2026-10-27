@@ -483,7 +483,7 @@ impl ResolvedSettingOptions {
 /// `gather_resources` slice and `named-banks` from the frozen `BANK_CATALOG`.
 /// `gatherer-teleports` combines a literal `Off` with available selected spell facts.
 pub fn resolve_setting_options(
-    def: &crate::rs2b0t_registry::SettingDef,
+    def: &crate::card::SettingDef,
     loadouts: &LoadoutsStore,
     game_data: Option<&api::game_data::SelectedGameData>,
 ) -> Vec<String> {
@@ -492,14 +492,14 @@ pub fn resolve_setting_options(
 
 /// Like [`resolve_setting_options`], with parallel identity labels for UI.
 pub fn resolve_setting_options_with_labels(
-    def: &crate::rs2b0t_registry::SettingDef,
+    def: &crate::card::SettingDef,
     loadouts: &LoadoutsStore,
     game_data: Option<&api::game_data::SelectedGameData>,
 ) -> ResolvedSettingOptions {
     let mixed_equipment_options = def.options.last().is_some_and(|s| s == "Other")
         && def.options_from.as_deref().is_some_and(|from| {
             from.split(',')
-                .all(|ident| crate::rs2b0t_registry::w1c_equipment_option_families(ident).is_some())
+                .all(|ident| crate::card::w1c_equipment_option_families(ident).is_some())
         });
     if !def.options.is_empty()
         && !mixed_equipment_options
@@ -519,7 +519,7 @@ pub fn resolve_setting_options_with_labels(
     if let Some(from) = def.options_from.as_deref() {
         if from
             .split(',')
-            .all(|ident| crate::rs2b0t_registry::w1c_equipment_option_families(ident).is_some())
+            .all(|ident| crate::card::w1c_equipment_option_families(ident).is_some())
         {
             let mut resolved = ResolvedSettingOptions::default();
             for family in from.split(',') {
@@ -539,7 +539,7 @@ pub fn resolve_setting_options_with_labels(
         if from == "gatherer-food" {
             return resolve_gatherer_food_options(game_data);
         }
-        if crate::rs2b0t_registry::is_revision_fact_option_ident(from) {
+        if crate::card::is_revision_fact_option_ident(from) {
             return resolve_w1c_equipment_options(from, game_data);
         }
         if from == "gather:sites" {
@@ -572,7 +572,7 @@ pub fn resolve_setting_options_with_labels(
             }
             return ResolvedSettingOptions::from_values(values);
         }
-        if let Some(table) = crate::rs2b0t_registry::catalog_option_table(from) {
+        if let Some(table) = crate::card::catalog_option_table(from) {
             return ResolvedSettingOptions::from_values(
                 table.iter().map(|s| (*s).to_string()).collect(),
             );
@@ -581,7 +581,7 @@ pub fn resolve_setting_options_with_labels(
     ResolvedSettingOptions::default()
 }
 
-fn inline_setting_options(def: &crate::rs2b0t_registry::SettingDef) -> ResolvedSettingOptions {
+fn inline_setting_options(def: &crate::card::SettingDef) -> ResolvedSettingOptions {
     ResolvedSettingOptions {
         values: def.options.clone(),
         labels: if def.option_labels.len() == def.options.len() {
@@ -634,7 +634,7 @@ fn resolve_w1c_equipment_options(
     ident: &str,
     game_data: Option<&api::game_data::SelectedGameData>,
 ) -> ResolvedSettingOptions {
-    let Some(families) = crate::rs2b0t_registry::w1c_equipment_option_families(ident) else {
+    let Some(families) = crate::card::w1c_equipment_option_families(ident) else {
         return ResolvedSettingOptions::default();
     };
     let Some(data) = game_data else {
@@ -695,7 +695,7 @@ fn resolve_gather_options(
 }
 
 fn resolve_item_option_spec(
-    spec: &crate::rs2b0t_registry::ItemOptionSpec,
+    spec: &crate::card::ItemOptionSpec,
     game_data: Option<&api::game_data::SelectedGameData>,
 ) -> ResolvedSettingOptions {
     let mut values = spec.prefix.clone();
@@ -945,7 +945,7 @@ mod tests {
     use std::sync::Mutex;
 
     use super::*;
-    use crate::rs2b0t_registry::{ItemOptionCandidate, ItemOptionSpec, SettingDef};
+    use crate::card::{ItemOptionCandidate, ItemOptionSpec, SettingDef};
 
     /// A store held in memory: rows at a version, applying each typed edit
     /// the way the service does (an upsert replaces by name or appends, a

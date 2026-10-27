@@ -699,7 +699,7 @@ pub trait ImportCatalog {
     fn card(&self, name: &str) -> Option<CatalogCard<'_>>;
 }
 
-impl ImportCatalog for script::JsLibrary {
+impl ImportCatalog for script_js::JsLibrary {
     fn loaded(&self) -> bool {
         self.cards()
             .iter()

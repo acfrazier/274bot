@@ -18,7 +18,7 @@ use crate::ScriptStartHandle;
 pub struct PendingCatalogStart {
     pub slot: String,
     pub js: String,
-    pub shape: script::LoadShape,
+    pub shape: script_js::LoadShape,
     pub bag: Option<Map<String, Value>>,
     pub siblings: Vec<(String, String)>,
     /// Scenario-owned loadouts for harness Start; empty uses operator store.
@@ -41,7 +41,7 @@ impl PendingCatalogStart {
     pub fn load(
         slot: impl Into<String>,
         js: String,
-        shape: script::LoadShape,
+        shape: script_js::LoadShape,
         bag: Option<Map<String, Value>>,
         siblings: Vec<(String, String)>,
         loadouts: Vec<api::loadout::Loadout>,
@@ -78,7 +78,7 @@ impl PendingCatalogStart {
         Self {
             slot: slot.into(),
             js: String::new(),
-            shape: script::LoadShape::Reject,
+            shape: script_js::LoadShape::Reject,
             bag: Some(bag),
             siblings: Vec::new(),
             loadouts: Vec::new(),
@@ -123,14 +123,14 @@ impl PendingCatalogStart {
 
 /// The same-folder sibling modules a card's isolate resolves at Start.
 pub fn card_siblings(
-    library: &script::JsLibrary,
-    card: &script::JsCard,
+    library: &script_js::JsLibrary,
+    card: &script_js::JsCard,
 ) -> Result<Vec<(String, String)>, String> {
-    script::resolve_sibling_modules(
+    script_js::resolve_sibling_modules(
         &card.path,
         &card.origin,
         library.cache(),
-        script::CacheMeta {
+        script_js::CacheMeta {
             kind: card.kind,
             source: card.source,
             shape: None,
@@ -149,7 +149,7 @@ pub fn card_siblings(
 pub fn fleet_catalog_starts(
     fleet: scenario::FleetStart,
     names: &[String],
-    library: &mut script::JsLibrary,
+    library: &mut script_js::JsLibrary,
     settings: &script::ScriptSettingsStore,
     inject: Option<&Map<String, Value>>,
     loadouts: &[api::loadout::Loadout],
@@ -453,7 +453,7 @@ pub fn pair_starts(
     names: &[String],
     case: PairCase,
     js: String,
-    shape: script::LoadShape,
+    shape: script_js::LoadShape,
     schema: &[script::SettingDef],
     siblings: Vec<(String, String)>,
     watch: &PairWatch,

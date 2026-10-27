@@ -1186,7 +1186,7 @@ impl RunnerHandle {
         handle.start_load(
             name,
             source,
-            script::LoadShape::NativeTick,
+            script_js::LoadShape::NativeTick,
             settings_bag,
             Vec::new(),
         )
@@ -2012,8 +2012,8 @@ pub fn screen_name(input: &str) -> String {
 /// Resolve a registered checked-in live file fixture and its identity stem.
 pub fn live_file_fixture(name: &str) -> Option<(PathBuf, String)> {
     Some((
-        script::live_file_fixture_path(name)?,
-        script::live_file_fixture_stem(name)?.to_string(),
+        script_js::live_file_fixture_path(name)?,
+        script_js::live_file_fixture_stem(name)?.to_string(),
     ))
 }
 /// Mint live account names without exposing the host-play helper crate.
@@ -2346,7 +2346,7 @@ mod tests {
             host_play::live_start::PendingCatalogStart::load(
                 "runner",
                 String::new(),
-                script::LoadShape::Reject,
+                script_js::LoadShape::Reject,
                 None,
                 Vec::new(),
                 Vec::new(),
@@ -2354,7 +2354,7 @@ mod tests {
             host_play::live_start::PendingCatalogStart::load(
                 "spinner",
                 String::new(),
-                script::LoadShape::Reject,
+                script_js::LoadShape::Reject,
                 None,
                 Vec::new(),
                 Vec::new(),

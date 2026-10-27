@@ -3,12 +3,12 @@
 use super::*;
 use api::snapshot::WorldTile;
 use script::api_gather::{GatherPage, GatherPhase};
-use script::isolate_fb::{IsolateBuf, NativeFactsInput};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use vault::{Profile, ProfileSettings};
+use {script_js::wire::IsolateBuf, script_js::wire::NativeFactsInput};
 
 const LIVE_SOURCE: &str = r#"
 const channel = new BroadcastChannel(__GATHER_CHANNEL__);
@@ -693,7 +693,7 @@ fn live_gather_api_receipt_tracks_memory_reconnect_and_wire_shadow() {
     play.script_start_load(
         &receiver_account,
         receiver_source,
-        script::LoadShape::NativeTick,
+        script_js::LoadShape::NativeTick,
         None,
         vec![],
     )
@@ -706,7 +706,7 @@ fn live_gather_api_receipt_tracks_memory_reconnect_and_wire_shadow() {
     play.script_start_load(
         &account,
         live_source,
-        script::LoadShape::NativeTick,
+        script_js::LoadShape::NativeTick,
         None,
         vec![],
     )
@@ -1075,7 +1075,7 @@ export async function tick(api) {
   globalThis.__progress = await api.questProgress({quest:'cook'});
 }"#
         .into(),
-        script::LoadShape::NativeTick,
+        script_js::LoadShape::NativeTick,
         None,
         vec![],
     )

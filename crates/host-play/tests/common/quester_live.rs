@@ -1054,6 +1054,7 @@ fn run_cells(
     mut observe_tick: Option<ObserveTick>,
     quester_path: bool,
 ) -> Result<Value, String> {
+    script_js::install_cards().map_err(|error| error.to_string())?;
     if cells.len() != if mode.is_pair() { 2 } else { 1 } {
         return Err("Quester live run has the wrong number of roles".into());
     }

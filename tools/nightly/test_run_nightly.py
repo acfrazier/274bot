@@ -2147,7 +2147,7 @@ class Rs2b0tApiDriftTests(unittest.TestCase):
 
     def make_tree(self, root: Path, repository: str, revision: str) -> Path:
         tree = root / "tree"
-        contract = tree / "crates" / "script" / "compat-js"
+        contract = tree / "crates" / "script-js" / "compat-js"
         contract.mkdir(parents=True)
         (contract / "abi-contract.json").write_text(json.dumps({
             "frozen_source": {
@@ -2272,7 +2272,7 @@ class Rs2b0tApiDriftTests(unittest.TestCase):
             old_info = rn.check_rs2b0t_api_drift(self.make_tree(root, str(upstream), old), catalog)
             rn._api_upstream.clear()
             new_tree = root / "tree"
-            contract = new_tree / "crates" / "script" / "compat-js" / "abi-contract.json"
+            contract = new_tree / "crates" / "script-js" / "compat-js" / "abi-contract.json"
             contract.write_text(json.dumps({"frozen_source": {"repository": str(upstream),
                                                               "revision": tip}}), encoding="utf-8")
             new_info = rn.check_rs2b0t_api_drift(new_tree, catalog)
@@ -2630,6 +2630,61 @@ class SelfUpdateTests(unittest.TestCase):
             self.assertEqual(argv[2:], ["--branch", "dev"])
             self.assertIn(probe, script.read_text(encoding="utf-8"))
             self.assertEqual(git("rev-parse", "HEAD", cwd=runner), tip)
+
+    def test_self_check_timeout_kills_the_process_tree(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            candidate = root / "candidate"
+            nightly = candidate / "tools" / "nightly"
+            nightly.mkdir(parents=True)
+            for name in ("run_nightly.py", "nightly-mac-guest.py", "latency_proxy.py"):
+                (nightly / name).write_text("x = 1\n", encoding="utf-8")
+            pid_file = root / "grandchild.pid"
+            hang = nightly / "test_hang_grandchild.py"
+            hang.write_text(
+                "import os, subprocess, sys, time\n"
+                "pid_file = os.environ.get('HANG_PID_FILE', '')\n"
+                "grandchild = subprocess.Popen(\n"
+                "    [sys.executable, '-c', 'import time; time.sleep(60)'],\n"
+                ")\n"
+                "if pid_file:\n"
+                "    open(pid_file, 'w').write(str(grandchild.pid))\n"
+                "time.sleep(60)\n",
+                encoding="utf-8",
+            )
+            env_patch = mock.patch.dict(os.environ, {"HANG_PID_FILE": str(pid_file)})
+            env_patch.start()
+            self.addCleanup(env_patch.stop)
+            started = time.monotonic()
+            ok, detail = rn.self_check_candidate(
+                candidate, test_file="test_hang_grandchild.py", timeout=2
+            )
+            elapsed = time.monotonic() - started
+            self.assertFalse(ok)
+            self.assertIn("did not finish within", detail)
+            self.assertLess(
+                elapsed, 30,
+                f"the post-kill wait must stay bounded on every host: {elapsed:.1f}s",
+            )
+            self.assertTrue(pid_file.is_file(), "the hanging test must record its grandchild")
+            grandchild = int(pid_file.read_text(encoding="utf-8").strip())
+            time.sleep(0.5)
+            try:
+                with self.assertRaises(OSError):
+                    os.kill(grandchild, 0)
+            finally:
+                try:
+                    if os.name == "nt":
+                        subprocess.run(
+                            ["taskkill", "/F", "/PID", str(grandchild)],
+                            stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL,
+                            check=False,
+                        )
+                    else:
+                        os.kill(grandchild, 9)
+                except OSError:
+                    pass
 
 
 class ReexecTests(unittest.TestCase):

@@ -12,7 +12,8 @@ host = { path = "../host" }
 nav-planner = { path = "../nav-planner" }
 nav-executor = { path = "../nav-executor" }
 scenario = { path = "../scenario", optional = true }
-script = { path = "../script", features = ["load"] }
+script = { path = "../script" }
+script-js = { path = "../script-js" }
 serde_json = "=1.0.140"
 serde = { version = "=1.0.219", features = ["derive"] }
 sha2 = "=0.10.9"
@@ -52,6 +53,7 @@ tungstenite = { version = "=0.24.0", default-features = false, features = ["hand
 client-adapter = { path = "../client-adapter", features = ["test-support"] }
 client = { workspace = true, features = ["test-support"] }
 script = { path = "../script", features = ["test-hooks"] }
+script-js = { path = "../script-js", features = ["test-hooks"] }
 scenario = { path = "../scenario" }
 
 # These harnesses use the optional scenario runner even for their offline tests.
@@ -102,7 +104,7 @@ windows-sys = { version = "0.59", features = [
 debug-catalog = ["api/debug-catalog"]
 # Opt-in memory benchmark harness. No effect unless BOT_MEMORY_N is set.
 # Frontend binaries install CountingAllocator (T3).
-memory-profile = ["script/memory-profile", "host/performance-profile", "dep:scenario"]
+memory-profile = ["script-js/memory-profile", "host/performance-profile", "dep:scenario"]
 
 # CPU diagnostic: use System directly, report allocator metrics unavailable.
 memory-profile-no-alloc = ["memory-profile"]
@@ -113,7 +115,7 @@ live-harness = ["dep:scenario"]
 
 # Test-only Play fixtures. Enabled from frontend dev-dependencies, never
 # production builds.
-test-support = ["api/test-support", "script/test-hooks", "nav-planner/test-support"]
+test-support = ["api/test-support", "script/test-hooks", "script-js/test-hooks", "nav-planner/test-support"]
 # Candidate-only LIVE observation; the shared Play soak test also builds on
 # dev without this feature or the test-support adapter.
 soak-observers = ["client-adapter/test-support"]

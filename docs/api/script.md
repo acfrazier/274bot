@@ -1,11 +1,13 @@
-# Scripts (`crates/script`)
+ # Scripts (`crates/script`, `crates/script-js`)
 
-Script **kernel** for the bot host. Compiled cards are rust-first on 274bot
-`api`. Catalog and external TypeScript/JavaScript bots load through a thin
-compatibility shim; **behavior, configuration, and fail-closed helpers are
-owned in Rust**. The shim does coercion and marshaling only. The only
-JS ↔ Rust isolate wire is **FlatBuffers** — there is no extra JSON host wire
-and no foreign JS policy runtime in-tree.
+ Script **kernel** (Core, `crates/script`) plus the **JS runtime** (`crates/script-js`)
+ for the bot host. Compiled cards are rust-first on 274bot
+ `api`. Catalog and external TypeScript/JavaScript bots load through a thin
+ compatibility shim in `script-js`; **behavior, configuration, and fail-closed helpers are
+ owned in Rust**. The shim does coercion and marshaling only. The only
+ JS ↔ Rust isolate wire is **FlatBuffers** (codec in `script-js` as
+ `src/wire/isolate_fb.rs`, schema at `crates/script-js/schema/isolate.fbs`) — there is no extra JSON host wire
+ and no foreign JS policy runtime in-tree.
 
 WalkTo is **host nav** (panel picker / TUI map), not a script card.
 `native::Script::on_random` is a rising-edge knock (`RandomClaim::Host` default).
@@ -34,8 +36,8 @@ and `requestRepath`, `EntityQuery.inside` and `nearestPreferLocal`, script
 events (`events.on`/`off`, `registerScript`), the task-tree classes
 (`AcquireTask`, `BranchTask`, `LeafTask`) and several
 gathering, fishing and banking data helpers. The generated
-`crates/script/src/shim/declared_surface.js` and
-`crates/script/compat-js/overlay-not-impl.json` list the unconditional ones. A
+ `crates/script-js/src/shim/declared_surface.js` and
+ `crates/script-js/compat-js/overlay-not-impl.json` list the unconditional ones. A
 helper that refuses one request at run time (for example `Traversal.walkTo`
 given `pathFollow`) raises the same `not impl` error with the reason.
 
@@ -46,6 +48,16 @@ Compiled cards and the slot use `script::native::Script` exclusively. Each
 schema, per-account bulk-copy exclusions, typed preparer and Rust factory.
 Browse, scenario Starts and Start handles all use that registry; there is no
 second parameter-default table or crate-root `Script` trait.
+The descriptor also defines its native request kind and optional lifecycle hooks.
+
+ The built-in Core registry contains Gatherer, Grinch and Quester. Hosts install Sherlock
+ with `script_js::install_cards()` before reading the
+ registry. Sherlock is available only in builds with the JS runtime. Sherlock was meant
+ to be native. In practice it became a port of the compatibility clue machine, so it needs
+ the JS runtime build until the native clue rewrite replaces that machine. Sherlock itself
+ never creates a V8 isolate. Reinstalling that canonical slice is idempotent. Duplicate card IDs
+ reject the complete new slice. Each slot refreshes its cached slice on the first
+ frame after a publication.
 
 Start prepares settings and selected resources on a `FamilyPreparation`
 worker, then installs only if the captured slot/control generation is current.
@@ -94,10 +106,10 @@ Gather, Combat and progress own the foreground. Hunt does not.
 
 `native::divergence::DIVERGENCES` records every approved Q5 row and the open
 row 8a. Hunt activation waits for T2/T1 to extend and review its model rule.
-F0 changes neither current dispatch nor the isolate schema. T1.3 and I-family
-activation retain the real lifecycle, promise, encoder and family proof duties.
-The no-default-feature script dependency closure still includes `deno_ast`.
-Removing that dependency is the named early-T2 native-product build ratchet.
+ F0 changes neither current dispatch nor the isolate schema. T1.3 and I-family
+ activation retain the real lifecycle, promise, encoder and family proof duties.
+ Core `script` carries no JS dependencies (`deno_ast`, the V8 and isolate crates and the
+ FlatBuffer wire live in `script-js`).
 
 A native `ScriptFlow::Blocked` is terminal. So is a published
 `NativePhase::Blocked` carrying a failure, even if the tick returns `Continue`.
@@ -140,11 +152,13 @@ Not every begin is wrapped: a non-emitting begin can still exhaust the
 transition allowance unless its caller handles that error. Root Quester begin
 handles `BudgetExhausted` without counting an attempt. Dialogue gap rearms also
 spend their finite allowance at most once per observed tick, not once per drain.
-`ActionError::Unavailable` is a per-request refusal (for example a disposal
-that requires a slot-exact Drop). Sherlock retains its existing clue
-queue/dispatch behavior through one crate-private borrowed host frame (no raw
-driver). It remains `load`-gated for the existing clue implementation, but never
-creates a V8 isolate.
+ `ActionError::Unavailable` is a per-request refusal (for example a disposal
+ that requires a slot-exact Drop). Sherlock retains its existing clue
+ queue/dispatch behavior through one crate-private borrowed host frame (no raw
+ driver). Sherlock lives in `script-js` and is available only in builds with the JS
+ runtime. Sherlock was meant to be native. In practice it became a port of the
+ compatibility clue machine, so it needs the JS runtime build until the native clue
+ rewrite replaces that machine. Sherlock itself never creates a V8 isolate.
 
 Compat machines opt in to evidence-only snapshot passes individually. The bank
 open and select families, `Bank.close`, `withdrawLoad`, the single-transfer bank
@@ -190,14 +204,14 @@ value applies; omission is not proof of no requirement.
 Idle = no isolate. Stop tears down V8. Pause / not `is_up` keeps the
 instance; `want_run` distinguishes operator Pause from offline.
 
-The process root calls `script::bootstrap_v8_platform()` on its main thread
+ The process root calls `script_js::bootstrap_v8_platform()` on its main thread
 before creating any V8-using worker. A worker cannot bootstrap the protected
 platform after that point. One Tokio runtime bridges the per-bot isolate
 threads; one supervisor owns execution/hook deadlines and physical retirement.
 Dropping a Load handle does not release its process isolate reservation until
 the V8 thread exits. A bounded quarantine retains over-deadline threads; when
 all four credits are occupied, new JS is refused instead of silently detaching
-another worker. `script::load::isolate_capacity_status()` reports active
+ another worker. `script_js::isolate_capacity_status()` reports active
 isolate reservations, unjoined retiring gameplay and validation rows, credited
 quarantine (including validators), and uncredited raw-drop rows. Retiring rows
 remain charged to their original admission until joined or credited transfer;
@@ -216,7 +230,7 @@ already-entered healthy work to finish, except when no independent deadline
 could be registered; an unbounded execution is never allowed to continue.
 Catalog refresh validation uses one serialized process seat with a bounded
 16-job queue (at most 256 cards / 16 MiB per batch). The product entry point
-is `LoadIsolate::validate_prepared_batch`, which returns an owning
+ is `script_js::LoadIsolate::validate_prepared_batch`, which returns an owning
 `ValidationBatch` receipt. When that queue is full, the refresh owner retains
 its one pending batch on the receipt and retries non-blockingly on later
 polls (`ValidationBatch::try_recv`) instead of failing Reload; dropping the
@@ -250,7 +264,7 @@ owns the slot, not saved for replay after it ends: an old route must not regain
 foreground authority after a native session. The carried host walk is not counted as a
 dropped script row. When the session ends ordinary game dispatch resumes.
 The Load-slot seat's worked example is
-`crates/script/examples/gather_quest_v2.ts` (authoritative) beside
+`crates/script-js/examples/gather_quest_v2.ts` (authoritative) beside
 `gather_quest_v2.js` (checked-in plain-JS form): one Power-mode gather session
 to a drop quota, then one read-only `questProgress` check, with no script game
 actions. See [js-api-v2.md](js-api-v2.md) "Worked example: GatherQuest v2".
@@ -1297,14 +1311,18 @@ unchanged.
 - **Load** registers a picker card tagged **File** from an absolute/relative
   path (`~/.274bot/js-scripts.json` remembers `{name, path}`). Same path
   overwrites; different paths stay distinct even when stems match.
-- Compiled registry cards are also in Browse: Gatherer (Gathering), Quester
-  (Quests), and, in `load` builds, Sherlock, grouped under **Treasure Trails**
-  and tagged **Compiled**. Sherlock's schema version 1 carries only the three
-  walk-permission opt-ins (`allow_teleports`, `allow_wilderness`,
-  `allow_danger_zones`), distinct from unavailable metadata or an unsupported
-  saved schema. Compiled names remain reserved. Native v2 scripts use the
-  typed declarations in `crates/script/host-js/index.d.ts`
-  ([js-api-v2.md](js-api-v2.md)).
+ - Compiled registry cards are also in Browse: Gatherer (Gathering), Quester
+   (Quests), and, in builds with the JS runtime, Sherlock, grouped under **Treasure Trails**
+   and tagged **Compiled**. Sherlock is available only in builds with the JS runtime.
+   Sherlock was meant to be native. In practice it became a port of the compatibility
+   clue machine, so it needs the JS runtime build until the native clue rewrite replaces
+   that machine. Sherlock itself never creates a V8 isolate. Sherlock's schema version 1
+   carries only the three
+   walk-permission opt-ins (`allow_teleports`, `allow_wilderness`,
+   `allow_danger_zones`), distinct from unavailable metadata or an unsupported
+   saved schema. Compiled names remain reserved. Native v2 scripts use the
+   typed declarations in `crates/script-js/host-js/index.d.ts`
+   ([js-api-v2.md](js-api-v2.md)).
 - Catalog cards are **Catalog** source: static parse of
   `src/bot/scripts/index.ts` (no V8 at registration). Browse fills both
   panel and TUI pickers.
