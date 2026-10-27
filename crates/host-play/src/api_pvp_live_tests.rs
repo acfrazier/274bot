@@ -344,24 +344,21 @@ fn duel_step(client: &mut client::client::Client, drive: &mut DuelDrive, partner
     }
 }
 
+/// Ticks the pen fight may run before `api.combat.fight` ends it as a budget
+/// result; a pen fight that is not `Killed` by then fails the cell.
+const PEN_BUDGET_TICKS: u64 = 1_000;
+
 /// The same fight in a Duel Arena pen: the server gives the row `Fight`, the
-/// machine uses that label.
-#[test]
-#[ignore = "requires LIVE=1 and the shared local R289 engine"]
-fn live_pvp_a_duel_pen_fight_uses_the_fight_op() {
+/// machine uses that label, and the fight runs until `Killed` (design §11). A
+/// budget or any other end fails the cell. `global` turns the shared setting on
+/// and leaves the request field out, so only the global source authorises it.
+fn duel_cell(label: &str, uids: [i32; 2], global: bool, source: &str) {
     let anchor = WorldTile {
         x: crate::paired_core::DUEL_CHALLENGE_ANCHOR.0,
         z: crate::paired_core::DUEL_CHALLENGE_ANCHOR.1,
         level: 0,
     };
-    let pair = start_pair(
-        "duel",
-        [274_279_409, 274_279_410],
-        anchor,
-        false,
-        false,
-        true,
-    );
+    let pair = start_pair(label, uids, anchor, false, global, true);
     wait_until(
         "the duel reaches FIGHT!",
         Instant::now() + Duration::from_secs(180),
@@ -373,17 +370,20 @@ fn live_pvp_a_duel_pen_fight_uses_the_fight_op() {
     );
     let victim = pair.display_name(1);
     pair.load(0);
+    let pvp = if global { "" } else { "pvp: true, " };
     pair.arm(
         0,
         &format!(
-            "{{ target: {{ player: {} }}, pvp: true, meleeMode: 'aggressive', budgetTicks: 100 }}",
+            "{{ target: {{ player: {} }}, {pvp}meleeMode: 'aggressive', budgetTicks: {PEN_BUDGET_TICKS} }}",
             js_name(&victim)
         ),
     );
     let mut attack_op_seen = false;
     let mut fight_op_seen = false;
     let mut in_combat_seen = false;
-    let outcome = pair.outcome(0, "duel", |ours, _| {
+    // 1 000 ticks of 600 ms, and a minute for the pen handshake's slack.
+    let limit = Duration::from_millis(PEN_BUDGET_TICKS * 600) + Duration::from_secs(60);
+    let outcome = pair.outcome_within(0, label, limit, |ours, _| {
         for row in ours.players.iter().filter(|row| row.name == victim) {
             attack_op_seen |= row.ops.iter().any(|op| op == "Attack");
             fight_op_seen |= row.ops.iter().any(|op| op == "Fight");
@@ -396,11 +396,13 @@ fn live_pvp_a_duel_pen_fight_uses_the_fight_op() {
         .map(|drive| drive.lock().expect("duel drive lock").clone())
         .collect();
     pair.receipt(
-        "api-pvp-duel-receipt.json",
+        &format!("api-pvp-{label}-receipt.json"),
         json!({
-            "cell": "duel",
+            "cell": label,
             "accounts": pair.accounts,
             "victim_name": victim,
+            "global_setting": global,
+            "budget_ticks": PEN_BUDGET_TICKS,
             "outcome": outcome,
             "phases": pair.phases(0),
             "victim_row_had_attack_op": attack_op_seen,
@@ -413,9 +415,10 @@ fn live_pvp_a_duel_pen_fight_uses_the_fight_op() {
     assert_eq!(outcome["kind"], "done", "{outcome}");
     assert_eq!(outcome["value"]["end"], "fought", "{outcome}");
     assert_eq!(
-        outcome["value"]["report"]["pvpSource"], "request",
-        "{outcome}"
+        outcome["value"]["report"]["end"], "killed",
+        "the pen fight must end Killed, not budget or any other end: {outcome}"
     );
+    assert_eq!(outcome["value"]["report"]["pvpSource"], source, "{outcome}");
     assert!(
         outcome["value"]["report"]["swings"].as_u64().unwrap_or(0) > 0,
         "{outcome}"
@@ -425,6 +428,19 @@ fn live_pvp_a_duel_pen_fight_uses_the_fight_op() {
         "a duel gives the row the Fight op (fight {fight_op_seen}, attack {attack_op_seen})"
     );
     assert!(in_combat_seen, "the attacker was never in combat");
+}
+
+#[test]
+#[ignore = "requires LIVE=1 and the shared local R289 engine"]
+fn live_pvp_a_duel_pen_fight_uses_the_fight_op() {
+    duel_cell("duel", [274_279_409, 274_279_410], false, "request");
+}
+
+/// The same pen fight with only the global setting on and no request field.
+#[test]
+#[ignore = "requires LIVE=1 and the shared local R289 engine"]
+fn live_pvp_the_global_setting_starts_the_pen_fight_with_the_fight_op() {
+    duel_cell("duel-global", [274_279_411, 274_279_412], true, "global");
 }
 
 impl Pair {
@@ -485,9 +501,20 @@ impl Pair {
         &self,
         index: usize,
         label: &str,
+        sample: impl FnMut(&Observed, &Observed),
+    ) -> Value {
+        self.outcome_within(index, label, FIGHT_DEADLINE, sample)
+    }
+
+    /// [`Self::outcome`] with its own wall-clock limit.
+    fn outcome_within(
+        &self,
+        index: usize,
+        label: &str,
+        limit: Duration,
         mut sample: impl FnMut(&Observed, &Observed),
     ) -> Value {
-        let deadline = Instant::now() + FIGHT_DEADLINE;
+        let deadline = Instant::now() + limit;
         loop {
             sample(&self.snapshot(0), &self.snapshot(1));
             let outcome = probe(
