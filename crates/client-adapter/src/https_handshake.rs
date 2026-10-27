@@ -143,8 +143,20 @@ impl HttpsLane {
             .name("net-https-handshake".to_owned())
             .stack_size(WORKER_STACK_BYTES)
             .spawn(move || {
+                #[cfg(feature = "test-support")]
+                crate::soak_observer::observe_worker(
+                    crate::soak_observer::NetworkWorkerKind::HttpsTls,
+                    crate::soak_observer::WorkerObservationPoint::Started,
+                );
                 if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    worker_loop(worker_inner)
+                    #[cfg(feature = "test-support")]
+                    let config_generation_id = worker_inner
+                        .config
+                        .as_ref()
+                        .and_then(crate::soak_observer::observe_client_config_generation);
+                    #[cfg(not(feature = "test-support"))]
+                    let config_generation_id = None;
+                    worker_loop(worker_inner, config_generation_id)
                 }))
                 .is_err()
                 {
@@ -515,9 +527,15 @@ fn is_nonfinal_connect(cell: &Cell) -> bool {
     )
 }
 
-fn worker_loop(inner: Arc<Inner>) {
+fn worker_loop(inner: Arc<Inner>, config_generation_id: Option<u64>) {
     while let Some(work) = next_work(&inner) {
-        process_job(&inner, work.identity, work.job, work.connect_deadline);
+        process_job(
+            &inner,
+            work.identity,
+            work.job,
+            work.connect_deadline,
+            config_generation_id,
+        );
     }
 }
 
@@ -618,7 +636,13 @@ fn next_work(inner: &Inner) -> Option<Work> {
     }
 }
 
-fn process_job(inner: &Inner, identity: u64, job: Job, first_deadline: Instant) {
+fn process_job(
+    inner: &Inner,
+    identity: u64,
+    job: Job,
+    first_deadline: Instant,
+    config_generation_id: Option<u64>,
+) {
     let config = match &inner.config {
         Some(config) => Arc::clone(config),
         None => {
@@ -678,12 +702,21 @@ fn process_job(inner: &Inner, identity: u64, job: Job, first_deadline: Instant) 
                 return;
             }
         };
-        let mut connection = match ClientConnection::new(Arc::clone(&config), server_name.clone()) {
-            Ok(connection) => connection,
-            Err(_) => {
-                close_socket(socket);
-                finish_active(inner, identity, false);
-                return;
+        let mut connection = {
+            #[cfg(feature = "test-support")]
+            let _allocation_scope = crate::soak_observer::begin_allocation_scope(
+                crate::soak_observer::AllocationScopeKind::HttpsTlsConnection,
+                None,
+                None,
+                config_generation_id,
+            );
+            match ClientConnection::new(Arc::clone(&config), server_name.clone()) {
+                Ok(connection) => connection,
+                Err(_) => {
+                    close_socket(socket);
+                    finish_active(inner, identity, false);
+                    return;
+                }
             }
         };
         connection.set_buffer_limit(Some(64 * 1024));
@@ -694,6 +727,7 @@ fn process_job(inner: &Inner, identity: u64, job: Job, first_deadline: Instant) 
             &mut connection,
             connected_at,
             handshake_deadline,
+            config_generation_id,
         ) {
             HandshakeResult::Complete => {
                 publish_success(
@@ -770,6 +804,7 @@ fn perform_handshake(
     connection: &mut ClientConnection,
     started: Instant,
     deadline: Instant,
+    config_generation_id: Option<u64>,
 ) -> HandshakeResult {
     let quiet_limit = {
         let state = lock_state(&inner.state);
@@ -838,7 +873,27 @@ fn perform_handshake(
                 if !worker_still_owns(inner, identity) {
                     return HandshakeResult::Revoked;
                 }
-                if connection.process_new_packets().is_err() {
+                #[cfg(feature = "test-support")]
+                crate::soak_observer::observe_worker(
+                    crate::soak_observer::NetworkWorkerKind::HttpsTls,
+                    crate::soak_observer::WorkerObservationPoint::BeforeVerify,
+                );
+                let packet_result = {
+                    #[cfg(feature = "test-support")]
+                    let _allocation_scope = crate::soak_observer::begin_allocation_scope(
+                        crate::soak_observer::AllocationScopeKind::HttpsTlsVerification,
+                        None,
+                        None,
+                        config_generation_id,
+                    );
+                    connection.process_new_packets()
+                };
+                #[cfg(feature = "test-support")]
+                crate::soak_observer::observe_worker(
+                    crate::soak_observer::NetworkWorkerKind::HttpsTls,
+                    crate::soak_observer::WorkerObservationPoint::AfterVerify,
+                );
+                if packet_result.is_err() {
                     return HandshakeResult::Failed;
                 }
                 if Instant::now() >= deadline {

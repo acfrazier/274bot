@@ -166,6 +166,11 @@ impl TransportService {
         match thread::Builder::new()
             .name("net-reactor".to_owned())
             .spawn(move || {
+                #[cfg(feature = "test-support")]
+                super::soak_observer::observe_worker(
+                    super::soak_observer::NetworkWorkerKind::Reactor,
+                    super::soak_observer::WorkerObservationPoint::Started,
+                );
                 let outcome =
                     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| reactor.run()));
                 if outcome.is_err() {

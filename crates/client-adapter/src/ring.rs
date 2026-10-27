@@ -50,6 +50,12 @@ impl<const N: usize> Ring<N> {
         }
     }
 
+    /// Return the exact inline layout reported by the test-support ledger.
+    #[cfg(feature = "test-support")]
+    pub fn inline_layout_bytes(&self) -> usize {
+        std::mem::size_of::<Self>()
+    }
+
     /// Observe committed unread bytes from either owner.
     pub fn len(&self) -> usize {
         loop {

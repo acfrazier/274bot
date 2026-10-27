@@ -5,6 +5,17 @@
 //! extracted from its completed rustls connection; it never mutates plaintext
 //! socket bytes or substitutes a test verifier.
 
+#[path = "support/g5e_stack.rs"]
+mod g5e_stack;
+
+#[cfg(target_os = "linux")]
+use std::cell::Cell;
+#[cfg(target_os = "linux")]
+use std::fmt::Write as FmtWrite;
+#[cfg(target_os = "linux")]
+use std::sync::Mutex;
+#[cfg(target_os = "linux")]
+use std::sync::OnceLock;
 #[cfg(target_os = "linux")]
 use std::alloc::{GlobalAlloc, Layout, System};
 #[cfg(target_os = "linux")]
@@ -12,7 +23,7 @@ use std::fs::{self, OpenOptions};
 use std::io::{self, Read, Write};
 use std::net::{TcpListener, TcpStream};
 #[cfg(target_os = "linux")]
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, SyncSender};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
@@ -28,6 +39,12 @@ use client_adapter::park::Park;
 use client_adapter::shared::SharedConnection;
 #[cfg(target_os = "linux")]
 use client_adapter::soak_observer::wss_ledger_samples;
+#[cfg(target_os = "linux")]
+use client_adapter::soak_observer::{
+    self, AllocationScopeEvent, AllocationScopePhase, AllocationScopeKind,
+    ClientConfigGenerationEvent, ClientConfigGenerationEventKind, NetworkWorkerKind,
+    WorkerObservationPoint,
+};
 use client_adapter::tcp::TcpStop;
 use client_adapter::tls_handshake::{
     build_test_client_config_with_roots, GameTlsLane, GameTlsResource,
@@ -90,6 +107,7 @@ unsafe impl GlobalAlloc for G5eCountingAllocator {
         // SAFETY: the caller supplied the layout required by GlobalAlloc.
         let pointer = unsafe { System.alloc(layout) };
         if !pointer.is_null() {
+            record_g5e_scoped_allocation_request(layout.size());
             let live = G5E_ALLOCATOR_LIVE_BYTES
                 .fetch_add(layout.size(), Ordering::Relaxed)
                 .wrapping_add(layout.size());
@@ -102,6 +120,7 @@ unsafe impl GlobalAlloc for G5eCountingAllocator {
         // SAFETY: the caller supplied the layout required by GlobalAlloc.
         let pointer = unsafe { System.alloc_zeroed(layout) };
         if !pointer.is_null() {
+            record_g5e_scoped_allocation_request(layout.size());
             let live = G5E_ALLOCATOR_LIVE_BYTES
                 .fetch_add(layout.size(), Ordering::Relaxed)
                 .wrapping_add(layout.size());
@@ -115,6 +134,7 @@ unsafe impl GlobalAlloc for G5eCountingAllocator {
         // System preserves GlobalAlloc's realloc contract.
         let replacement = unsafe { System.realloc(pointer, layout, new_size) };
         if !replacement.is_null() {
+            record_g5e_scoped_allocation_request(new_size);
             let live = if new_size >= layout.size() {
                 G5E_ALLOCATOR_LIVE_BYTES
                     .fetch_add(new_size - layout.size(), Ordering::Relaxed)
@@ -157,6 +177,427 @@ fn g5e_allocator_snapshot() -> (usize, usize) {
         G5E_ALLOCATOR_LIVE_BYTES.load(Ordering::Acquire),
         G5E_ALLOCATOR_PEAK_BYTES.load(Ordering::Acquire),
     )
+}
+#[cfg(target_os = "linux")]
+const G5E_MAX_ALLOCATION_SCOPES: usize = 4096;
+#[cfg(target_os = "linux")]
+const G5E_MAX_SCOPE_DEPTH: usize = 16;
+#[cfg(target_os = "linux")]
+const G5E_MAX_STACK_SAMPLES: usize = 64;
+#[cfg(target_os = "linux")]
+const G5E_MAX_CONFIG_GENERATION_EVENTS: usize = 16;
+
+#[cfg(target_os = "linux")]
+#[derive(Clone, Copy, Debug)]
+struct G5eScopeSample {
+    event: AllocationScopeEvent,
+    completed: bool,
+}
+
+#[cfg(target_os = "linux")]
+#[derive(Clone, Copy, Debug)]
+struct G5eWorkerStackSample {
+    kind: NetworkWorkerKind,
+    point: WorkerObservationPoint,
+    sample: g5e_stack::StackSample,
+}
+
+#[cfg(target_os = "linux")]
+static G5E_SCOPED_ALLOCATOR_EXCLUSIVE_BYTES: [AtomicUsize; G5E_MAX_ALLOCATION_SCOPES] =
+    [const { AtomicUsize::new(0) }; G5E_MAX_ALLOCATION_SCOPES];
+#[cfg(target_os = "linux")]
+static G5E_SCOPED_ALLOCATOR_INCLUSIVE_BYTES: [AtomicUsize; G5E_MAX_ALLOCATION_SCOPES] =
+    [const { AtomicUsize::new(0) }; G5E_MAX_ALLOCATION_SCOPES];
+#[cfg(target_os = "linux")]
+static G5E_SCOPE_SAMPLES: OnceLock<Mutex<Vec<Option<G5eScopeSample>>>> = OnceLock::new();
+#[cfg(target_os = "linux")]
+static G5E_CONFIG_GENERATION_EVENTS: OnceLock<Mutex<Vec<ClientConfigGenerationEvent>>> =
+    OnceLock::new();
+#[cfg(target_os = "linux")]
+static G5E_WORKER_STACK_SAMPLES: OnceLock<Mutex<Vec<G5eWorkerStackSample>>> = OnceLock::new();
+#[cfg(target_os = "linux")]
+static G5E_SCOPE_OVERFLOW: AtomicBool = AtomicBool::new(false);
+#[cfg(target_os = "linux")]
+static G5E_CONFIG_GENERATION_OVERFLOW: AtomicBool = AtomicBool::new(false);
+#[cfg(target_os = "linux")]
+static G5E_WORKER_STACK_OVERFLOW: AtomicBool = AtomicBool::new(false);
+#[cfg(target_os = "linux")]
+static G5E_WORKER_STACK_CAPTURE_FAILURES: AtomicUsize = AtomicUsize::new(0);
+#[cfg(target_os = "linux")]
+static G5E_OBSERVERS_INSTALLED: OnceLock<()> = OnceLock::new();
+
+#[cfg(target_os = "linux")]
+std::thread_local! {
+    static G5E_ACTIVE_SCOPE_ID: Cell<u64> = const { Cell::new(0) };
+    static G5E_ACTIVE_SCOPE_DEPTH: Cell<usize> = const { Cell::new(0) };
+    static G5E_SCOPE_PARENTS: Cell<[u64; G5E_MAX_SCOPE_DEPTH]> =
+        const { Cell::new([0; G5E_MAX_SCOPE_DEPTH]) };
+}
+
+#[cfg(target_os = "linux")]
+fn g5e_scope_index(scope_id: u64) -> Option<usize> {
+    usize::try_from(scope_id)
+        .ok()?
+        .checked_sub(1)
+        .filter(|index| *index < G5E_MAX_ALLOCATION_SCOPES)
+}
+
+#[cfg(target_os = "linux")]
+fn record_g5e_scoped_allocation_request(bytes: usize) {
+    if bytes == 0 {
+        return;
+    }
+    let scope_id = G5E_ACTIVE_SCOPE_ID
+        .try_with(Cell::get)
+        .unwrap_or_default();
+    if scope_id == 0 {
+        return;
+    }
+    let Some(index) = g5e_scope_index(scope_id) else {
+        G5E_SCOPE_OVERFLOW.store(true, Ordering::Relaxed);
+        return;
+    };
+    G5E_SCOPED_ALLOCATOR_EXCLUSIVE_BYTES[index].fetch_add(bytes, Ordering::Relaxed);
+    G5E_SCOPED_ALLOCATOR_INCLUSIVE_BYTES[index].fetch_add(bytes, Ordering::Relaxed);
+}
+
+#[cfg(target_os = "linux")]
+fn record_g5e_allocation_scope(event: AllocationScopeEvent) {
+    match event.phase {
+        AllocationScopePhase::Begin => {
+            if let Some(index) = g5e_scope_index(event.scope_id) {
+                G5E_SCOPED_ALLOCATOR_EXCLUSIVE_BYTES[index].store(0, Ordering::Relaxed);
+                G5E_SCOPED_ALLOCATOR_INCLUSIVE_BYTES[index].store(0, Ordering::Relaxed);
+                G5E_SCOPE_SAMPLES
+                    .get()
+                    .expect("allocation scope samples initialized")
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())[index] =
+                    Some(G5eScopeSample {
+                        event,
+                        completed: false,
+                    });
+            } else {
+                G5E_SCOPE_OVERFLOW.store(true, Ordering::Relaxed);
+            }
+
+            let depth = G5E_ACTIVE_SCOPE_DEPTH.with(Cell::get);
+            if depth >= G5E_MAX_SCOPE_DEPTH {
+                G5E_SCOPE_OVERFLOW.store(true, Ordering::Relaxed);
+                return;
+            }
+            let parent = G5E_ACTIVE_SCOPE_ID.with(Cell::get);
+            G5E_SCOPE_PARENTS.with(|parents| {
+                let mut stack = parents.get();
+                stack[depth] = parent;
+                parents.set(stack);
+            });
+            G5E_ACTIVE_SCOPE_DEPTH.with(|active_depth| active_depth.set(depth + 1));
+            G5E_ACTIVE_SCOPE_ID.with(|active_scope| active_scope.set(event.scope_id));
+        }
+        AllocationScopePhase::End => {
+            let active_scope = G5E_ACTIVE_SCOPE_ID.with(Cell::get);
+            if active_scope != event.scope_id {
+                G5E_SCOPE_OVERFLOW.store(true, Ordering::Relaxed);
+            }
+            let depth = G5E_ACTIVE_SCOPE_DEPTH.with(Cell::get);
+            if depth == 0 {
+                G5E_SCOPE_OVERFLOW.store(true, Ordering::Relaxed);
+                return;
+            }
+            let parent = G5E_SCOPE_PARENTS.with(|parents| {
+                let mut stack = parents.get();
+                let parent = stack[depth - 1];
+                stack[depth - 1] = 0;
+                parents.set(stack);
+                parent
+            });
+            G5E_ACTIVE_SCOPE_DEPTH.with(|active_depth| active_depth.set(depth - 1));
+            G5E_ACTIVE_SCOPE_ID.with(|active_id| active_id.set(parent));
+
+            let Some(index) = g5e_scope_index(event.scope_id) else {
+                G5E_SCOPE_OVERFLOW.store(true, Ordering::Relaxed);
+                return;
+            };
+            let inclusive_bytes =
+                G5E_SCOPED_ALLOCATOR_INCLUSIVE_BYTES[index].load(Ordering::Relaxed);
+            if let Some(sample) = G5E_SCOPE_SAMPLES
+                .get()
+                .expect("allocation scope samples initialized")
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())[index]
+                .as_mut()
+            {
+                sample.completed = true;
+            } else {
+                G5E_SCOPE_OVERFLOW.store(true, Ordering::Relaxed);
+            }
+            if parent != 0 {
+                if let Some(parent_index) = g5e_scope_index(parent) {
+                    G5E_SCOPED_ALLOCATOR_INCLUSIVE_BYTES[parent_index]
+                        .fetch_add(inclusive_bytes, Ordering::Relaxed);
+                } else {
+                    G5E_SCOPE_OVERFLOW.store(true, Ordering::Relaxed);
+                }
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn record_g5e_config_generation(event: ClientConfigGenerationEvent) {
+    let mut events = G5E_CONFIG_GENERATION_EVENTS
+        .get()
+        .expect("config generation events initialized")
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if events.len() < events.capacity() {
+        events.push(event);
+    } else {
+        G5E_CONFIG_GENERATION_OVERFLOW.store(true, Ordering::Relaxed);
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn record_g5e_worker_stack(kind: NetworkWorkerKind, point: WorkerObservationPoint) {
+    match g5e_stack::capture_current_thread_stack() {
+        Ok(sample) => {
+            let mut samples = G5E_WORKER_STACK_SAMPLES
+                .get()
+                .expect("worker stack samples initialized")
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if samples.len() < samples.capacity() {
+                samples.push(G5eWorkerStackSample {
+                    kind,
+                    point,
+                    sample,
+                });
+            } else {
+                G5E_WORKER_STACK_OVERFLOW.store(true, Ordering::Relaxed);
+            }
+        }
+        Err(_) => {
+            G5E_WORKER_STACK_CAPTURE_FAILURES.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn install_g5e_observers() {
+    G5E_OBSERVERS_INSTALLED.get_or_init(|| {
+        G5E_SCOPE_SAMPLES
+            .set(Mutex::new(vec![None; G5E_MAX_ALLOCATION_SCOPES]))
+            .expect("initialize bounded allocation-scope sample slots once");
+        G5E_CONFIG_GENERATION_EVENTS
+            .set(Mutex::new(Vec::with_capacity(
+                G5E_MAX_CONFIG_GENERATION_EVENTS,
+            )))
+            .expect("initialize bounded config-generation events once");
+        G5E_WORKER_STACK_SAMPLES
+            .set(Mutex::new(Vec::with_capacity(G5E_MAX_STACK_SAMPLES)))
+            .expect("initialize bounded worker-stack sample slots once");
+        soak_observer::install_allocation_scope_observer(record_g5e_allocation_scope)
+            .expect("install bounded G5-E allocation-scope recorder once");
+        soak_observer::install_client_config_generation_observer(record_g5e_config_generation)
+            .expect("install bounded G5-E config-generation recorder once");
+        soak_observer::install_worker_observer(record_g5e_worker_stack)
+            .expect("install native stack capture on transport workers once");
+    });
+}
+#[cfg(target_os = "linux")]
+fn prove_g5e_scope_allocator_observes_known_allocation() -> usize {
+    const KNOWN_BYTES: usize = 32 * 1024;
+    let layout = Layout::from_size_align(KNOWN_BYTES, 64).expect("valid known allocation layout");
+    let scope_id;
+    {
+        let scope = soak_observer::begin_allocation_scope(
+            AllocationScopeKind::TestKnownAllocation,
+            None,
+            None,
+            None,
+        );
+        scope_id = scope
+            .scope_id()
+            .expect("allocation observer assigns the known scope ID");
+        // SAFETY: `layout` is nonzero and valid; this pointer is deallocated
+        // below with the same layout before the scope ends.
+        let pointer = unsafe { std::alloc::alloc(layout) };
+        assert!(!pointer.is_null(), "known allocation must succeed");
+        // SAFETY: the allocation contains exactly `layout.size()` writable bytes.
+        unsafe { pointer.write_bytes(0, layout.size()) };
+        std::hint::black_box(pointer);
+        // SAFETY: `pointer` came from the global allocator with this layout.
+        unsafe { std::alloc::dealloc(pointer, layout) };
+    }
+    let index = g5e_scope_index(scope_id).expect("known scope fits the bounded recorder");
+    let requested = G5E_SCOPED_ALLOCATOR_EXCLUSIVE_BYTES[index].load(Ordering::Acquire);
+    let samples = G5E_SCOPE_SAMPLES
+        .get()
+        .expect("allocation scope samples initialized")
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let sample = samples[index]
+        .as_ref()
+        .expect("known allocation scope has an observed begin event");
+    assert_eq!(sample.event.kind, AllocationScopeKind::TestKnownAllocation);
+    assert!(sample.completed, "known allocation scope has an end event");
+    let inclusive =
+        G5E_SCOPED_ALLOCATOR_INCLUSIVE_BYTES[index].load(Ordering::Acquire);
+    assert_eq!(inclusive, KNOWN_BYTES);
+    assert_eq!(requested, KNOWN_BYTES);
+    requested
+}
+
+
+#[cfg(target_os = "linux")]
+fn optional_u64_json(output: &mut String, value: Option<u64>) {
+    if let Some(value) = value {
+        write!(output, "{value}").expect("write optional JSON integer");
+    } else {
+        output.push_str("null");
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn g5e_allocation_scope_samples_json() -> String {
+    let mut output = String::from("[");
+    let mut first = true;
+    let samples = G5E_SCOPE_SAMPLES
+        .get()
+        .expect("allocation scope samples initialized")
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .iter()
+        .flatten()
+        .copied()
+        .collect::<Vec<_>>();
+    for sample in samples.iter() {
+        let index = g5e_scope_index(sample.event.scope_id)
+            .expect("every recorded allocation scope is in the bounded table");
+        if !first {
+            output.push(',');
+        }
+        first = false;
+        let event = sample.event;
+        write!(
+            output,
+            "{{\"scope_id\":{},\"kind\":\"{:?}\",\"connection_id\":",
+            event.scope_id, event.kind
+        )
+        .expect("write allocation scope identity");
+        optional_u64_json(&mut output, event.connection_id);
+        output.push_str(",\"binding\":");
+        if let Some(binding) = event.binding {
+            write!(
+                output,
+                "{{\"incarnation\":{},\"connection\":{},\"binding\":{},\"attempt\":{}}}",
+                binding.incarnation, binding.connection, binding.binding, binding.attempt
+            )
+            .expect("write WSS binding identity");
+        } else {
+            output.push_str("null");
+        }
+        output.push_str(",\"config_generation_id\":");
+        optional_u64_json(&mut output, event.config_generation_id);
+        write!(
+            output,
+            ",\"requested_allocator_bytes_exclusive\":{},\"requested_allocator_bytes_inclusive\":{},\"completed\":{}}}",
+            G5E_SCOPED_ALLOCATOR_EXCLUSIVE_BYTES[index].load(Ordering::Relaxed),
+            G5E_SCOPED_ALLOCATOR_INCLUSIVE_BYTES[index].load(Ordering::Relaxed),
+            sample.completed
+        )
+        .expect("write allocation scope byte counts");
+    }
+    output.push(']');
+    output
+}
+
+#[cfg(target_os = "linux")]
+fn g5e_config_generation_events_json() -> String {
+    let mut output = String::from("[");
+    let events = G5E_CONFIG_GENERATION_EVENTS
+        .get()
+        .expect("config generation events initialized")
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone();
+    for (index, event) in events.iter().enumerate() {
+        if index != 0 {
+            output.push(',');
+        }
+        write!(
+            output,
+            "{{\"generation_id\":{},\"kind\":\"{:?}\",\"strong_count\":{}}}",
+            event.generation_id, event.kind, event.strong_count
+        )
+        .expect("write config generation event");
+    }
+    output.push(']');
+    output
+}
+
+#[cfg(target_os = "linux")]
+fn g5e_config_generation_samples_json() -> String {
+    let mut output = String::from("[");
+    let samples = soak_observer::client_config_generation_samples();
+    for (index, sample) in samples.iter().enumerate() {
+        if index != 0 {
+            output.push(',');
+        }
+        write!(
+            output,
+            "{{\"generation_id\":{},\"observation_count\":{},\"alive\":{},\"strong_count\":{}}}",
+            sample.generation_id, sample.observation_count, sample.alive, sample.strong_count
+        )
+        .expect("write client config generation sample");
+    }
+    output.push(']');
+    output
+}
+
+#[cfg(target_os = "linux")]
+fn g5e_worker_stack_samples_json() -> String {
+    let mut output = String::from("[");
+    let mut first = true;
+    let samples = G5E_WORKER_STACK_SAMPLES
+        .get()
+        .expect("worker stack samples initialized")
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone();
+    for sample in samples.iter() {
+        if !first {
+            output.push(',');
+        }
+        first = false;
+        let stack = sample.sample;
+        write!(
+            output,
+            "{{\"worker\":\"{:?}\",\"point\":\"{:?}\",\"tid\":{},\"stack_low_address\":",
+            sample.kind, sample.point, stack.tid
+        )
+        .expect("write native worker stack identity");
+        optional_u64_json(&mut output, stack.stack_low_address);
+        output.push_str(",\"stack_high_address_exclusive\":");
+        optional_u64_json(&mut output, stack.stack_high_address_exclusive);
+        output.push_str(",\"reserved_bytes\":");
+        optional_u64_json(&mut output, stack.reserved_bytes);
+        output.push_str(",\"committed_bytes\":");
+        optional_u64_json(&mut output, stack.committed_bytes);
+        output.push_str(",\"resident_bytes\":");
+        optional_u64_json(&mut output, stack.resident_bytes);
+        output.push_str(",\"guard_bytes\":");
+        optional_u64_json(&mut output, stack.guard_bytes);
+        write!(
+            output,
+            ",\"measurement_source\":\"{}\"}}",
+            stack.measurement_source
+        )
+        .expect("write native stack measurement semantics");
+    }
+    output.push(']');
+    output
 }
 struct ServerIdentity {
     certificate: CertificateDer<'static>,
@@ -1609,6 +2050,8 @@ fn g5e_tls13_wss_keyupdate_backpressure_memory_receipt() {
     const EMPTY_BINARY_TURNS: usize = 32;
     const QUEUED_BACKPRESSURE_RECORDS: usize = 8;
 
+    install_g5e_observers();
+    let known_allocation_scope_bytes = prove_g5e_scope_allocator_observes_known_allocation();
     let output_path = std::env::var_os("BOT_T14_G5E_ADAPTER_OUTPUT")
         .expect("set a disjoint BOT_T14_G5E_ADAPTER_OUTPUT receipt path");
     let pki = TestPki::new();
@@ -1630,31 +2073,51 @@ fn g5e_tls13_wss_keyupdate_backpressure_memory_receipt() {
     assert_negotiated(&handshake, ProtocolVersion::TLSv1_3, TLS13_SUITE);
     assert_eq!(
         ticket_metrics.inserted.load(Ordering::Acquire),
-        2,
-        "the first TLS 1.3 connection receives both configured tickets"
+        0,
+        "the first lane disables resumption and does not store server tickets"
     );
     let (mut sibling_attempt, mut sibling_endpoint, sibling_handshake) =
         connect_wss(&sibling_server, Arc::clone(&client_config));
     assert_negotiated(&sibling_handshake, ProtocolVersion::TLSv1_3, TLS13_SUITE);
     assert_eq!(
         ticket_metrics.inserted.load(Ordering::Acquire),
-        4,
-        "both TLS 1.3 connections retain their configured tickets"
+        0,
+        "the sibling lane also disables resumption and stores no tickets"
     );
 
     let lane_config = attempt
         .lane
         .config()
-        .expect("first real TLS lane retains the shared client config");
+        .expect("first real TLS lane retains its worker config generation");
     let sibling_lane_config = sibling_attempt
         .lane
         .config()
-        .expect("sibling real TLS lane retains the shared client config");
-    assert!(Arc::ptr_eq(&client_config, &lane_config));
-    assert!(Arc::ptr_eq(&client_config, &sibling_lane_config));
+        .expect("sibling real TLS lane retains its worker config generation");
+    assert!(!Arc::ptr_eq(&client_config, &lane_config));
+    assert!(!Arc::ptr_eq(&client_config, &sibling_lane_config));
+    assert!(
+        !Arc::ptr_eq(&lane_config, &sibling_lane_config),
+        "each start_with_test_config lane builds a distinct Arc generation"
+    );
+    let lane_config_generation_id = soak_observer::client_config_generation_id(&lane_config)
+        .expect("first worker config generation was observed");
+    let sibling_config_generation_id =
+        soak_observer::client_config_generation_id(&sibling_lane_config)
+            .expect("sibling worker config generation was observed");
+    assert_ne!(lane_config_generation_id, sibling_config_generation_id);
+    let config_generation_samples = soak_observer::client_config_generation_samples();
+    assert_eq!(config_generation_samples.len(), 2);
+    assert!(config_generation_samples.iter().all(|sample| {
+        sample.observation_count == 1 && sample.alive && sample.strong_count > 0
+    }));
+    let config_generation_samples_after_connect = g5e_config_generation_samples_json();
     drop(lane_config);
     drop(sibling_lane_config);
-    let shared_config_strong_count = Arc::strong_count(&client_config);
+    let input_config_strong_count = Arc::strong_count(&client_config);
+    assert_eq!(
+        input_config_strong_count, 1,
+        "test caller retains only its source config after worker clones are built"
+    );
 
     let target_binding = attempt.binding;
     let mut ledger = G5eLedgerPeaks::default();
@@ -1788,16 +2251,122 @@ fn g5e_tls13_wss_keyupdate_backpressure_memory_receipt() {
         active_connections_after_cleanup, 0,
         "test teardown retires both WSS ledger registrations"
     );
+    assert_eq!(tickets_inserted, 0);
+    assert_eq!(tickets_taken, 0);
+    assert_eq!(ticket_live_high_water, 0);
+    assert_eq!(ticket_growth_high_water, 0);
+
+    let allocation_scope_samples = G5E_SCOPE_SAMPLES
+        .get()
+        .expect("allocation scope samples initialized")
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .iter()
+        .flatten()
+        .copied()
+        .collect::<Vec<_>>();
+    assert!(!allocation_scope_samples.is_empty());
+    assert!(allocation_scope_samples.iter().all(|sample| sample.completed));
+    let game_tls_connection_scopes = allocation_scope_samples
+        .iter()
+        .filter(|sample| sample.event.kind == AllocationScopeKind::GameTlsConnection)
+        .collect::<Vec<_>>();
+    assert_eq!(game_tls_connection_scopes.len(), 2);
+    assert!(game_tls_connection_scopes.iter().all(|sample| {
+        matches!(
+            sample.event.config_generation_id,
+            Some(id) if id == lane_config_generation_id || id == sibling_config_generation_id
+        )
+    }));
+    let game_tls_verification_scopes = allocation_scope_samples
+        .iter()
+        .filter(|sample| sample.event.kind == AllocationScopeKind::GameTlsVerification)
+        .collect::<Vec<_>>();
+    assert!(game_tls_verification_scopes.len() >= 2);
+    assert!(game_tls_verification_scopes.iter().all(|sample| {
+        matches!(
+            sample.event.config_generation_id,
+            Some(id) if id == lane_config_generation_id || id == sibling_config_generation_id
+        )
+    }));
+    assert!(!G5E_SCOPE_OVERFLOW.load(Ordering::Acquire));
+
+    let config_generation_events = G5E_CONFIG_GENERATION_EVENTS
+        .get()
+        .expect("config generation events initialized")
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone();
+    assert_eq!(config_generation_events.len(), 2);
+    assert!(config_generation_events.iter().all(|event| {
+        event.kind == ClientConfigGenerationEventKind::Created && event.strong_count == 1
+    }));
+    assert!(config_generation_events
+        .iter()
+        .any(|event| event.generation_id == lane_config_generation_id));
+    assert!(config_generation_events
+        .iter()
+        .any(|event| event.generation_id == sibling_config_generation_id));
+    assert!(!G5E_CONFIG_GENERATION_OVERFLOW.load(Ordering::Acquire));
+
+    let worker_stack_samples = G5E_WORKER_STACK_SAMPLES
+        .get()
+        .expect("worker stack samples initialized")
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone();
+    let game_tls_worker_tids = worker_stack_samples
+        .iter()
+        .filter(|sample| {
+            sample.kind == NetworkWorkerKind::GameTls
+                && sample.point == WorkerObservationPoint::Started
+        })
+        .map(|sample| sample.sample.tid)
+        .collect::<Vec<_>>();
+    assert_eq!(game_tls_worker_tids.len(), 2);
+    for tid in game_tls_worker_tids {
+        assert!(worker_stack_samples.iter().any(|sample| {
+            sample.kind == NetworkWorkerKind::GameTls
+                && sample.point == WorkerObservationPoint::BeforeVerify
+                && sample.sample.tid == tid
+        }));
+        assert!(worker_stack_samples.iter().any(|sample| {
+            sample.kind == NetworkWorkerKind::GameTls
+                && sample.point == WorkerObservationPoint::AfterVerify
+                && sample.sample.tid == tid
+        }));
+    }
+    assert!(worker_stack_samples.iter().all(|sample| {
+        sample.sample.reserved_bytes.is_some() && sample.sample.guard_bytes.is_some()
+    }));
+    assert!(!G5E_WORKER_STACK_OVERFLOW.load(Ordering::Acquire));
+    assert_eq!(
+        G5E_WORKER_STACK_CAPTURE_FAILURES.load(Ordering::Acquire),
+        0
+    );
+
+    let allocation_scope_samples_json = g5e_allocation_scope_samples_json();
+    let config_generation_events_json = g5e_config_generation_events_json();
+    let config_generation_samples_after_cleanup_json = g5e_config_generation_samples_json();
+    let worker_stack_samples_json = g5e_worker_stack_samples_json();
+    let allocation_scope_sample_count = allocation_scope_samples.len();
+    let config_generation_event_count = config_generation_events.len();
+    let worker_stack_sample_count = worker_stack_samples.len();
+
 
     let receipt = format!(
         concat!(
-            "{{\"schema\":\"t1.4-g5e-rustls-adapter-receipt-v1\",",
+            "{{\"schema\":\"t1.4-g5e-rustls-adapter-receipt-v2\",",
             "\"target_os\":\"{}\",\"target_arch\":\"{}\",",
             "\"measurement_subject\":\"actual client-adapter GameTlsLane and WssEndpoint with local TLS 1.3 fixture\",",
             "\"client_verifier\":\"platform verifier with generated fixture CA root\",",
-            "\"connection_count\":2,\"client_config_identity_count\":1,",
+            "\"connection_count\":2,\"client_config_identity_count\":{config_identity_count},",
             "\"initial_backpressure_records\":{},\"stable_backpressure_settle_rounds\":{},",
-            "\"client_config_generation_count\":1,\"shared_config_strong_count_after_connect\":{},",
+            "\"client_config_generation_count\":{config_generation_count},\"source_config_strong_count_after_connect\":{},",
+            "\"client_config_generation_ids\":[{lane_config_generation_id},{sibling_config_generation_id}],",
+            "\"client_config_generation_events\":{config_generation_events_json},",
+            "\"client_config_generation_samples_after_connect\":{config_generation_samples_after_connect},",
+            "\"client_config_generation_samples_after_cleanup\":{config_generation_samples_after_cleanup_json},",
             "\"tls13_tickets_configured_per_connection\":2,\"tls13_tickets_inserted\":{},",
             "\"tls13_tickets_taken_for_resumption\":{},",
             "\"allocator_live_after_ticket_insert_high_water_bytes\":{},",
@@ -1830,15 +2399,27 @@ fn g5e_tls13_wss_keyupdate_backpressure_memory_receipt() {
             "\"key_update_request_processed_while_blocked\":true,",
             "\"key_update_response_recovery_observed\":false,",
             "\"active_connections_after_cleanup\":{},",
+            "\"allocation_scope_sample_count\":{allocation_scope_sample_count},",
+            "\"allocator_scope_known_request_bytes\":{known_allocation_scope_bytes},",
+            "\"allocation_scope_observer_overflow\":{allocation_scope_overflow},",
+            "\"allocation_scope_samples\":{allocation_scope_samples_json},",
+            "\"client_config_generation_event_count\":{config_generation_event_count},",
+            "\"client_config_generation_observer_overflow\":{config_generation_overflow},",
+            "\"worker_stack_sample_count\":{worker_stack_sample_count},",
+            "\"worker_stack_observer_overflow\":{worker_stack_overflow},",
+            "\"worker_stack_capture_failures\":{worker_stack_capture_failures},",
+            "\"worker_stack_samples\":{worker_stack_samples_json},",
+            "\"stack_measurement\":\"current GameTls worker OS-reported stack interval; Linux committed bytes unavailable; mincore resident only; pthread guard-size attribute reported\",",
+            "\"scope_measurement\":\"gross successful alloc, alloc_zeroed, and realloc request bytes while an operation scope is active; exclusive direct and inclusive nested; not retained-by-scope live bytes\",",
             "\"v8_metrics\":\"not_applicable_in_client_adapter_test_process\",",
-            "\"allocation_measurement\":\"global requested bytes include test harness, fixture, and observer allocations; not usable capacity\",",
-            "\"configuration_scope\":\"one test-provided Arc<ClientConfig> shared by two GameTlsLane instances; no rotation\"}}\n"
+            "\"allocation_measurement\":\"global requested live/peak includes the whole test process; scoped requests are not allocation ownership or usable capacity\",",
+            "\"configuration_scope\":\"caller config cloned into two distinct GameTlsLane worker generations; lane resumption disabled; server tickets are neither stored nor resumed\"}}\n"
         ),
         std::env::consts::OS,
         std::env::consts::ARCH,
         filled,
         settle_rounds,
-        shared_config_strong_count,
+        input_config_strong_count,
         tickets_inserted,
         tickets_taken,
         ticket_live_high_water,
@@ -1877,6 +2458,23 @@ fn g5e_tls13_wss_keyupdate_backpressure_memory_receipt() {
         ledger.inbound_ring_high_water_bytes,
         EMPTY_BINARY_TURNS,
         active_connections_after_cleanup,
+        config_identity_count = config_generation_samples.len(),
+        config_generation_count = config_generation_samples.len(),
+        lane_config_generation_id = lane_config_generation_id,
+        sibling_config_generation_id = sibling_config_generation_id,
+        config_generation_events_json = config_generation_events_json,
+        config_generation_samples_after_connect = config_generation_samples_after_connect,
+        config_generation_samples_after_cleanup_json = config_generation_samples_after_cleanup_json,
+        allocation_scope_sample_count = allocation_scope_sample_count,
+        allocation_scope_overflow = G5E_SCOPE_OVERFLOW.load(Ordering::Acquire),
+        allocation_scope_samples_json = allocation_scope_samples_json,
+        config_generation_event_count = config_generation_event_count,
+        config_generation_overflow = G5E_CONFIG_GENERATION_OVERFLOW.load(Ordering::Acquire),
+        worker_stack_sample_count = worker_stack_sample_count,
+        worker_stack_overflow = G5E_WORKER_STACK_OVERFLOW.load(Ordering::Acquire),
+        worker_stack_capture_failures = G5E_WORKER_STACK_CAPTURE_FAILURES.load(Ordering::Acquire),
+        worker_stack_samples_json = worker_stack_samples_json,
+        known_allocation_scope_bytes = known_allocation_scope_bytes,
     );
     let mut receipt_file = OpenOptions::new()
         .write(true)

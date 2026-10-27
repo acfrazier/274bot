@@ -62,6 +62,13 @@ pub struct SharedConnection {
 
 impl SharedConnection {
     pub fn new(id: u64, park: Arc<Park>) -> Arc<Self> {
+        #[cfg(feature = "test-support")]
+        let _allocation_scope = super::soak_observer::begin_allocation_scope(
+            super::soak_observer::AllocationScopeKind::SharedConnection,
+            Some(id),
+            None,
+            None,
+        );
         Arc::new(Self {
             inbound: Ring::new(),
             outbound: Ring::new(),

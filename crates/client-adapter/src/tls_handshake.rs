@@ -266,6 +266,13 @@ impl GameTlsLane {
         config: Arc<ClientConfig>,
     ) -> io::Result<Arc<Self>> {
         Self::start_with_builder(reactor_waker, health, move || {
+            #[cfg(feature = "test-support")]
+            let _allocation_scope = super::soak_observer::begin_allocation_scope(
+                super::soak_observer::AllocationScopeKind::TlsClientConfigClone,
+                None,
+                None,
+                None,
+            );
             let mut config = (*config).clone();
             config.resumption = rustls::client::Resumption::disabled();
             Ok(Arc::new(config))
@@ -303,10 +310,21 @@ impl GameTlsLane {
             .name(WORKER_NAME.to_owned())
             .stack_size(WORKER_STACK_BYTES)
             .spawn(move || {
+                #[cfg(feature = "test-support")]
+                super::soak_observer::observe_worker(
+                    super::soak_observer::NetworkWorkerKind::GameTls,
+                    super::soak_observer::WorkerObservationPoint::Started,
+                );
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     let config = build_config().ok();
+                    #[cfg(feature = "test-support")]
+                    let config_generation_id = config
+                        .as_ref()
+                        .and_then(super::soak_observer::observe_client_config_generation);
+                    #[cfg(not(feature = "test-support"))]
+                    let config_generation_id = None;
                     worker_startup.publish(config.as_ref().map(Arc::clone).ok_or(()));
-                    handshake_worker(worker_cell, config);
+                    handshake_worker(worker_cell, config, config_generation_id);
                 }));
                 if result.is_err() {
                     health.latch(ReactorLoss::Panicked);
@@ -489,12 +507,28 @@ impl Drop for GameTlsLane {
 }
 
 fn build_platform_client_config() -> Result<Arc<ClientConfig>, TlsError> {
+    #[cfg(feature = "test-support")]
+    let _allocation_scope = super::soak_observer::begin_allocation_scope(
+        super::soak_observer::AllocationScopeKind::TlsClientConfigBuild,
+        None,
+        None,
+        None,
+    );
     let provider = Arc::new(rustls::crypto::ring::default_provider());
     let versions = [&rustls::version::TLS13, &rustls::version::TLS12];
-    let config = ClientConfig::builder_with_provider(provider)
-        .with_protocol_versions(&versions)?
-        .with_platform_verifier()?
-        .with_no_client_auth();
+    let builder =
+        ClientConfig::builder_with_provider(provider).with_protocol_versions(&versions)?;
+    let builder = {
+        #[cfg(feature = "test-support")]
+        let _allocation_scope = super::soak_observer::begin_allocation_scope(
+            super::soak_observer::AllocationScopeKind::PlatformVerifierBuild,
+            None,
+            None,
+            None,
+        );
+        builder.with_platform_verifier()?
+    };
+    let config = builder.with_no_client_auth();
     Ok(Arc::new(apply_client_config_policy(config)))
 }
 
@@ -502,6 +536,12 @@ fn build_platform_client_config() -> Result<Arc<ClientConfig>, TlsError> {
 pub fn build_test_client_config_with_verifier(
     verifier: Arc<dyn rustls::client::danger::ServerCertVerifier>,
 ) -> Result<Arc<ClientConfig>, TlsError> {
+    let _allocation_scope = super::soak_observer::begin_allocation_scope(
+        super::soak_observer::AllocationScopeKind::TlsClientConfigBuild,
+        None,
+        None,
+        None,
+    );
     let provider = Arc::new(rustls::crypto::ring::default_provider());
     let versions = [&rustls::version::TLS13, &rustls::version::TLS12];
     let config = ClientConfig::builder_with_provider(provider)
@@ -517,12 +557,26 @@ pub fn build_test_client_config_with_verifier(
 pub fn build_test_client_config_with_roots(
     roots: &[rustls::pki_types::CertificateDer<'static>],
 ) -> Result<Arc<ClientConfig>, TlsError> {
+    let _allocation_scope = super::soak_observer::begin_allocation_scope(
+        super::soak_observer::AllocationScopeKind::TlsClientConfigBuild,
+        None,
+        None,
+        None,
+    );
     let provider = Arc::new(rustls::crypto::ring::default_provider());
     let versions = [&rustls::version::TLS13, &rustls::version::TLS12];
-    let verifier = rustls_platform_verifier::Verifier::new_with_extra_roots(
-        roots.iter().cloned(),
-        Arc::clone(&provider),
-    )?;
+    let verifier = {
+        let _allocation_scope = super::soak_observer::begin_allocation_scope(
+            super::soak_observer::AllocationScopeKind::PlatformVerifierBuild,
+            None,
+            None,
+            None,
+        );
+        rustls_platform_verifier::Verifier::new_with_extra_roots(
+            roots.iter().cloned(),
+            Arc::clone(&provider),
+        )?
+    };
     let config = ClientConfig::builder_with_provider(provider)
         .with_protocol_versions(&versions)?
         .dangerous()
@@ -545,7 +599,11 @@ enum DriveResult {
     Continue,
 }
 
-fn handshake_worker(cell: Arc<HandoffCell<GameTlsResource>>, config: Option<Arc<ClientConfig>>) {
+fn handshake_worker(
+    cell: Arc<HandoffCell<GameTlsResource>>,
+    config: Option<Arc<ClientConfig>>,
+    config_generation_id: Option<u64>,
+) {
     let mut deferred_failure = None;
     while let Some(mut work) = cell.worker_claim() {
         if let Some(failure) = deferred_failure.take() {
@@ -557,12 +615,18 @@ fn handshake_worker(cell: Arc<HandoffCell<GameTlsResource>>, config: Option<Arc<
             let _ = cell.worker_failure(work, WorkerFailure::Verification);
             continue;
         };
-        if let Err(failure) = initialize_connection(work.resource_mut(), config) {
+        let binding = work.key().identity.binding;
+        if let Err(failure) = initialize_connection(
+            work.resource_mut(),
+            config,
+            binding,
+            config_generation_id,
+        ) {
             let _ = cell.worker_failure(work, failure);
             continue;
         }
 
-        match drive_handshake(&cell, &mut work) {
+        match drive_handshake(&cell, &mut work, config_generation_id) {
             DriveResult::Complete => {
                 let _ = cell.worker_success(work);
             }
@@ -582,10 +646,20 @@ fn handshake_worker(cell: Arc<HandoffCell<GameTlsResource>>, config: Option<Arc<
 fn initialize_connection(
     resource: &mut GameTlsResource,
     config: &Arc<ClientConfig>,
+    _binding: super::control::BindingId,
+    _config_generation_id: Option<u64>,
 ) -> Result<(), WorkerFailure> {
     if resource.connection.is_some() {
         return Ok(());
     }
+
+    #[cfg(feature = "test-support")]
+    let _allocation_scope = super::soak_observer::begin_allocation_scope(
+        super::soak_observer::AllocationScopeKind::GameTlsConnection,
+        Some(_binding.connection),
+        Some(_binding),
+        _config_generation_id,
+    );
 
     let server_name =
         ServerName::try_from(resource.host.clone()).map_err(|_| WorkerFailure::Verification)?;
@@ -603,10 +677,13 @@ fn initialize_connection(
 fn drive_handshake(
     cell: &HandoffCell<GameTlsResource>,
     work: &mut WorkerWork<'_, GameTlsResource>,
+    _config_generation_id: Option<u64>,
 ) -> DriveResult {
     let mut input_bytes = 0;
     let mut output_bytes = 0;
     let mut operations = 0;
+    #[cfg(feature = "test-support")]
+    let binding = work.key().identity.binding;
 
     loop {
         let (handshaking, wants_write) = {
@@ -684,8 +761,28 @@ fn drive_handshake(
             let mut packet_failure = None;
             let mut packet_operations = 0;
             if matches!(&result, Ok(bytes) if *bytes > 0) {
-                packet_operations += 1;
-                if let Err(error) = connection.process_new_packets() {
+                packet_operations = 1;
+                #[cfg(feature = "test-support")]
+                super::soak_observer::observe_worker(
+                    super::soak_observer::NetworkWorkerKind::GameTls,
+                    super::soak_observer::WorkerObservationPoint::BeforeVerify,
+                );
+                let packet_result = {
+                    #[cfg(feature = "test-support")]
+                    let _allocation_scope = super::soak_observer::begin_allocation_scope(
+                        super::soak_observer::AllocationScopeKind::GameTlsVerification,
+                        Some(binding.connection),
+                        Some(binding),
+                        _config_generation_id,
+                    );
+                    connection.process_new_packets()
+                };
+                #[cfg(feature = "test-support")]
+                super::soak_observer::observe_worker(
+                    super::soak_observer::NetworkWorkerKind::GameTls,
+                    super::soak_observer::WorkerObservationPoint::AfterVerify,
+                );
+                if let Err(error) = packet_result {
                     packet_failure = Some(classify_tls_error(&error));
                 }
             }

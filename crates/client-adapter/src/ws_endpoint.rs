@@ -445,6 +445,13 @@ impl WssEndpoint {
         retire: Arc<AttemptRetire>,
     ) -> io::Result<Self> {
         #[cfg(feature = "test-support")]
+        let allocation_scope = soak_observer::begin_allocation_scope(
+            soak_observer::AllocationScopeKind::WssEndpoint,
+            Some(binding.connection),
+            Some(binding),
+            None,
+        );
+        #[cfg(feature = "test-support")]
         let local_port = socket.local_addr().ok().map(|address| address.port());
         let mut endpoint = Self {
             binding,
@@ -522,6 +529,8 @@ impl WssEndpoint {
             Err(error) => endpoint.setup_error = Some(error),
         }
         #[cfg(feature = "test-support")]
+        drop(allocation_scope);
+        #[cfg(feature = "test-support")]
         if let Some(tls) = endpoint.io.as_ref() {
             soak_observer::register_wss_ledger(binding, endpoint.local_port, tls, &endpoint.shared);
         }
@@ -530,6 +539,19 @@ impl WssEndpoint {
 
     pub fn binding(&self) -> BindingId {
         self.binding
+    }
+
+    #[cfg(feature = "test-support")]
+    fn allocation_scope(
+        &self,
+        kind: soak_observer::AllocationScopeKind,
+    ) -> soak_observer::AllocationScopeGuard {
+        soak_observer::begin_allocation_scope(
+            kind,
+            Some(self.binding.connection),
+            Some(self.binding),
+            None,
+        )
     }
 
     /// Connected is published only after the 101 response and binary protocol
@@ -705,7 +727,13 @@ impl WssEndpoint {
         }
 
         if may_read {
-            let result = self.websocket.as_mut().expect("connected WSS").read();
+            let result = {
+                #[cfg(feature = "test-support")]
+                let _allocation_scope = self.allocation_scope(
+                    soak_observer::AllocationScopeKind::WssMessageStaging,
+                );
+                self.websocket.as_mut().expect("connected WSS").read()
+            };
             match result {
                 Ok(message) => {
                     #[cfg(feature = "test-support")]
@@ -825,11 +853,16 @@ impl WssEndpoint {
                     SoakDirection::Outbound,
                     &bytes,
                 );
-                let result = self
-                    .websocket
-                    .as_mut()
-                    .expect("connected WSS")
-                    .write(Message::Binary(bytes));
+                let result = {
+                    #[cfg(feature = "test-support")]
+                    let _allocation_scope = self.allocation_scope(
+                        soak_observer::AllocationScopeKind::WssMessageStaging,
+                    );
+                    self.websocket
+                        .as_mut()
+                        .expect("connected WSS")
+                        .write(Message::Binary(bytes))
+                };
                 match result {
                     Ok(()) => {
                         self.shared.records.pop_front();
@@ -985,7 +1018,14 @@ impl WssEndpoint {
 
         self.with_tls_mut(TlsIo::reset_turn);
         if !self.graceful_ws_started {
-            match self.websocket.as_mut().expect("connected WSS").close(None) {
+            let close_result = {
+                #[cfg(feature = "test-support")]
+                let _allocation_scope = self.allocation_scope(
+                    soak_observer::AllocationScopeKind::WssMessageStaging,
+                );
+                self.websocket.as_mut().expect("connected WSS").close(None)
+            };
+            match close_result {
                 Ok(()) => self.graceful_ws_started = true,
                 Err(WsError::Io(error)) if error.kind() == io::ErrorKind::WouldBlock => {
                     self.graceful_ws_started = true;
@@ -1010,7 +1050,14 @@ impl WssEndpoint {
                 Err(error) => return Err(error),
             }
         }
-        match self.websocket.as_mut().expect("connected WSS").flush() {
+        let flush_result = {
+            #[cfg(feature = "test-support")]
+            let _allocation_scope = self.allocation_scope(
+                soak_observer::AllocationScopeKind::WssMessageStaging,
+            );
+            self.websocket.as_mut().expect("connected WSS").flush()
+        };
+        match flush_result {
             Ok(()) => self.ws_write_pending = false,
             Err(WsError::Io(error)) if error.kind() == io::ErrorKind::WouldBlock => {
                 self.ws_write_pending = true;
@@ -1142,7 +1189,13 @@ impl WssEndpoint {
         self.with_tls_mut(TlsIo::reset_turn);
         let before_plain = self.with_tls(|tls| tls.budget.plaintext_read);
         let before_wire = self.with_tls(|tls| tls.socket.budget().read_bytes());
-        let result = self.websocket.as_mut().expect("connected WSS").read();
+        let result = {
+            #[cfg(feature = "test-support")]
+            let _allocation_scope = self.allocation_scope(
+                soak_observer::AllocationScopeKind::WssMessageStaging,
+            );
+            self.websocket.as_mut().expect("connected WSS").read()
+        };
         if matches!(&result, Ok(Message::Ping(_)) | Ok(Message::Close(_))) {
             self.ws_write_pending = true;
         }
@@ -1365,12 +1418,18 @@ impl WssEndpoint {
                         WssStep::Failed(error)
                     } else {
                         let tail_dirty = !tail.is_empty();
-                        let websocket = WebSocket::from_partially_read(
-                            stream,
-                            tail,
-                            Role::Client,
-                            Some(websocket_config()),
-                        );
+                        let websocket = {
+                            #[cfg(feature = "test-support")]
+                            let _allocation_scope = self.allocation_scope(
+                                soak_observer::AllocationScopeKind::WssEndpoint,
+                            );
+                            WebSocket::from_partially_read(
+                                stream,
+                                tail,
+                                Role::Client,
+                                Some(websocket_config()),
+                            )
+                        };
                         self.websocket = Some(websocket);
                         self.upgrade = None;
                         self.expected_accept = None;
@@ -1556,7 +1615,14 @@ impl WssEndpoint {
             }
         }
         if self.with_tls(|tls| tls.pending_output()) < TLS_OUTPUT_PAUSE {
-            match self.websocket.as_mut().expect("connected WSS").flush() {
+            let flush_result = {
+                #[cfg(feature = "test-support")]
+                let _allocation_scope = self.allocation_scope(
+                    soak_observer::AllocationScopeKind::WssMessageStaging,
+                );
+                self.websocket.as_mut().expect("connected WSS").flush()
+            };
+            match flush_result {
                 Ok(()) => self.ws_write_pending = false,
                 Err(WsError::Io(error)) if error.kind() == io::ErrorKind::WouldBlock => {
                     self.ws_write_pending = true;
