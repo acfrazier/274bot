@@ -5860,6 +5860,9 @@ fn s2b_admission_per_bot_layouts() {
     // S0c moves the platform-specific isolate mutexes into the surface run.
     // The shared 64-bit slot layout no longer contains those mutexes.
     // S0d adds a 16 B per-slot generation cache for lock-free compiled-card reads.
+    // NAV-BUSY-TRANSPORT adds 32 B to Traveller (busy-refusal retry state and
+    // the distinct-tick transport clock): NavBot is 3816 B. Lab memory A/B on
+    // the branch head passed (NAV-BUSY-TRANSPORT/mem-ab-r3).
     #[cfg(all(
         target_os = "macos",
         target_arch = "aarch64",
@@ -5872,7 +5875,7 @@ fn s2b_admission_per_bot_layouts() {
             std::mem::size_of::<script::combat::Combat>(),
             std::mem::size_of::<script::combat::WalkGuard>()
         ),
-        (3784, 1624, 512, 264)
+        (3816, 1624, 512, 264)
     );
     #[cfg(all(
         target_os = "linux",
@@ -5887,7 +5890,7 @@ fn s2b_admission_per_bot_layouts() {
             std::mem::size_of::<script::combat::Combat>(),
             std::mem::size_of::<script::combat::WalkGuard>()
         ),
-        (3784, 1624, 512, 264)
+        (3816, 1624, 512, 264)
     );
     assert!(std::mem::size_of::<script::combat::Combat>() <= 512);
     assert!(std::mem::size_of::<script::combat::WalkGuard>() <= 264);

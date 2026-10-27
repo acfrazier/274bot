@@ -1471,6 +1471,10 @@
       "owner": "T1"
     },
     {
+      "path": "crates/host-play/tests/nav_busy_transport_live.rs",
+      "owner": "T1"
+    },
+    {
       "path": "crates/host-play/tests/nav_origin_live.rs",
       "owner": "T1"
     },
@@ -1756,6 +1760,10 @@
     },
     {
       "path": "crates/nav-executor/src/traveller/npc_hop_tests.rs",
+      "owner": "T5"
+    },
+    {
+      "path": "crates/nav-executor/src/traveller/occupied_tests.rs",
       "owner": "T5"
     },
     {
