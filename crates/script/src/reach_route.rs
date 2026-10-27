@@ -106,6 +106,17 @@ pub(crate) fn route_steps(view: &ReachQueryView, fp: Footprint) -> Option<(u32, 
     route_stand(view, fp).map(|stand| (stand.steps, stand.rank))
 }
 
+/// Walking depth, in steps, of the nearest of `goals` in the posted flood.
+/// It reads the flood without a second search. `None` when no goal lies in
+/// the flood: off the posted window, walled off, or on another level.
+pub(crate) fn nearest_depth(view: &ReachQueryView, goals: &[WorldTile]) -> Option<u32> {
+    let (rank, tile) = goals
+        .iter()
+        .filter_map(|&goal| Some((exact_rank_at(view, goal)?, goal)))
+        .min_by_key(|(rank, _)| *rank)?;
+    Some(flood_depth(view, tile, rank).unwrap_or(u32::from(rank)))
+}
+
 /// The tile whose exact rank produced `rank`: the tile itself or one of its
 /// orthogonal neighbours.
 fn stand_for(view: &ReachQueryView, tile: WorldTile, rank: u16) -> WorldTile {
@@ -341,6 +352,22 @@ mod tests {
         let found = bounded_steps(&view, here, npc(48, 40), NPC_VIEW_DISTANCE);
         assert_eq!(found.steps, None);
         assert!(found.farthest <= NPC_VIEW_DISTANCE);
+    }
+
+    /// The flood ranks one corridor along z = 0 from the player at x = 10:
+    /// the walking depth is the step count to the nearest goal in it, and a
+    /// goal outside the flood has no depth.
+    #[test]
+    fn the_nearest_goal_depth_reads_the_posted_flood() {
+        let mut view = field();
+        view.exact_rank.fill(u16::MAX);
+        for x in 10..40 {
+            view.exact_rank[(x * SIDE) as usize] = (x - 10) as u16;
+        }
+        let goals = [tile(30, 0), tile(25, 0), tile(35, 5), tile(70, 0)];
+        assert_eq!(nearest_depth(&view, &goals), Some(15));
+        assert_eq!(nearest_depth(&view, &goals[2..]), None);
+        assert_eq!(nearest_depth(&view, &[]), None);
     }
 
     // Client collision flags (`dash3d/collision_flag.rs`).

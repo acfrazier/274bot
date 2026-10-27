@@ -14,6 +14,8 @@
 //! detour outside any local window needs no code here.
 use super::tile_distance;
 use crate::native::WalkGoals;
+use crate::reach_route;
+use api::query::ReachQueryView;
 use api::WorldTile;
 use nav_planner::contract::CollisionView;
 
@@ -29,12 +31,15 @@ const STAND: usize = 0;
 const BEYOND: usize = 1;
 const AWAY: usize = 2;
 
-/// Walk requests one escape pass may make: one per tier. A request names its
-/// preferred tier and the next non-empty tier as the router's fallback, and
-/// the next request of the pass starts one tier lower, so no request repeats
-/// an earlier one. Each request is a fresh plan from the observed position.
-/// A request ends with its walk receipt, which the walk machine's existing
-/// deadline bounds. This module adds no timer.
+/// Walk requests one escape pass may make: one per non-empty tier. A request
+/// names its preferred tier and the next non-empty tier as the router's
+/// fallback, and the next request of the pass starts one tier lower. The
+/// tiers may share tiles (the stand's neighbours can also lie beyond the
+/// envelope), so two requests can overlap, but the request count cannot pass
+/// this. Each request is a fresh plan from the observed position. A request
+/// ends with its walk receipt or, when none comes, with its observed-tick
+/// budget ([`ESCAPE_SLACK_TICKS`], [`ESCAPE_CAP_TICKS`]). The walk machine's
+/// ten-minute active-clock deadline stays as the outer backstop.
 pub(super) const ESCAPE_PASS_ATTEMPTS: usize = 3;
 
 /// Chebyshev margin around the authored stand that still counts as standing
@@ -50,11 +55,43 @@ const MAX_RING: i32 = 64;
 /// tiers always fits.
 const TIER_CAP: usize = WalkGoals::MAX / 2;
 
-/// Escape state of one abort: where the next request of the pass starts, and
-/// the last walk failure. A new pass keeps the failure, so an exhausted
-/// recovery can report it.
+/// Observed ticks, beyond the measured walking depth, that one escape walk
+/// may stay unsettled before it is abandoned and the next tier starts. The
+/// same 12 as `shop_open::OPEN_SLACK_TICKS`, split here as:
+/// - 1 (engine tick order): the click is read in one cycle and the player
+///   moves in a later one;
+/// - 1 (engine input budget): a cycle can defer the click's packet;
+/// - 10 (host recovery): the nav executor re-sends a click it saw dropped
+///   after 5 idle ticks (`nav-executor/src/traveller/walk.rs:8`,
+///   `WALK_STALL_RECOVER_IDLE_TICKS`), and this allows two such windows.
+///
+/// The slack does not model the chase. A walk that the attacker slows or
+/// blocks is the stall this budget exists to end.
+pub(super) const ESCAPE_SLACK_TICKS: u64 = 12;
+
+/// Largest observed-tick budget of one escape walk, and the budget when the
+/// route is not measured (no live flood, or no goal in it, as when the route
+/// needs a transport). The goals of the beyond and away tiers lie within
+/// [`MAX_RING`] tiles of the attacker, so a straight walk to one takes about
+/// that many ticks at walk speed. Twice that leaves room for a detour. A
+/// stand farther than this is abandoned for the nearer tiers: under attack a
+/// walk that long is no escape. It is policy, not an engine bound.
+pub(super) const ESCAPE_CAP_TICKS: u64 = 2 * MAX_RING as u64;
+
+/// Observed-tick clock of the escape walk in flight. It counts distinct game
+/// ticks, one per `PLAYER_INFO` (`api/src/snapshot/decode.rs:101-104`), never
+/// wall time.
+struct WalkClock {
+    last_tick: u64,
+    remaining: u64,
+}
+
+/// Escape state of one abort: where the next request of the pass starts, the
+/// clock of the walk in flight, and the last walk failure. A new pass keeps
+/// the failure, so an exhausted recovery can report it.
 pub(super) struct AbortEscape {
     next_tier: usize,
+    walk: Option<WalkClock>,
     last_failure: Option<crate::native::ActionError>,
 }
 
@@ -62,6 +99,7 @@ impl AbortEscape {
     pub(super) fn new() -> Self {
         Self {
             next_tier: 0,
+            walk: None,
             last_failure: None,
         }
     }
@@ -80,11 +118,13 @@ impl AbortEscape {
     }
 
     /// The next request of the pass, planned from the observed `geometry`.
-    /// `None` when every tier from the current one down is empty.
+    /// `None` when every tier from the current one down is empty. `reach` is
+    /// the live posted flood, when there is one; it measures the walk.
     pub(super) fn next_goals(
         &mut self,
         geometry: &EscapeGeometry,
         collision: Option<CollisionView<'_>>,
+        reach: Option<&ReachQueryView>,
     ) -> Option<EscapeGoals> {
         let tiers = tier_tiles(geometry, collision);
         let preferred =
@@ -100,6 +140,13 @@ impl AbortEscape {
             .iter()
             .copied()
             .min_by_key(|tile| (tile_distance(focus, *tile), squared_gap(focus, *tile)))?;
+        // The router takes the nearest reachable goal of the preferred tier
+        // and the fallback tier only when no preferred goal is reachable.
+        let depth = reach.and_then(|view| {
+            reach_route::nearest_depth(view, &tiers[preferred]).or_else(|| {
+                fallback.and_then(|tier| reach_route::nearest_depth(view, &tiers[tier]))
+            })
+        });
         let fallback_tiles = fallback.map_or_else(Vec::new, |tier| tiers[tier].clone());
         // Each tier holds at most `TIER_CAP` tiles, so the union fits the cap
         // and construction cannot fail.
@@ -109,8 +156,49 @@ impl AbortEscape {
             WalkGoals::with_preferred(fallback_tiles, &tiers[preferred])
         }
         .ok()?;
-        Some(EscapeGoals { target, goals })
+        Some(EscapeGoals {
+            target,
+            goals,
+            budget_ticks: walk_budget_ticks(depth),
+        })
     }
+
+    /// Start counting the observed ticks of a new escape walk.
+    pub(super) fn start_walk(&mut self, tick: u64, budget_ticks: u64) {
+        self.walk = Some(WalkClock {
+            last_tick: tick,
+            remaining: budget_ticks,
+        });
+    }
+
+    /// Count the distinct ticks observed since the last call against the
+    /// budget of the running walk. `true` once the budget is spent. The clock
+    /// is then cleared, so one walk expires once.
+    pub(super) fn walk_expired(&mut self, tick: u64) -> bool {
+        let Some(clock) = self.walk.as_mut() else {
+            return false;
+        };
+        let elapsed = tick.saturating_sub(clock.last_tick);
+        clock.last_tick = clock.last_tick.max(tick);
+        clock.remaining = clock.remaining.saturating_sub(elapsed);
+        if clock.remaining == 0 {
+            self.walk = None;
+            return true;
+        }
+        false
+    }
+}
+
+/// Walk speed is one tile per observed tick, as the engine moves a player at
+/// most one tile per cycle at walk speed (`shop_open::OPEN_SLACK_TICKS` cites
+/// `PathingEntity.ts:144-149`, `Player.ts:729-731`). Running only arrives
+/// sooner. The router's route is not visible to the script, so the budget is
+/// the measured flood depth to the nearest goal plus [`ESCAPE_SLACK_TICKS`],
+/// capped at [`ESCAPE_CAP_TICKS`]. Without a measured depth it is the cap.
+fn walk_budget_ticks(depth: Option<u32>) -> u64 {
+    depth.map_or(ESCAPE_CAP_TICKS, |steps| {
+        (u64::from(steps) + ESCAPE_SLACK_TICKS).min(ESCAPE_CAP_TICKS)
+    })
 }
 
 /// What the planner knows about the fight.
@@ -125,11 +213,13 @@ pub(super) struct EscapeGeometry {
     pub(super) chase_range: i32,
 }
 
-/// One escape request: the tile that stands for it in logs, and the exact
-/// goals the router chooses among.
+/// One escape request: the tile that stands for it in logs, the exact goals
+/// the router chooses among, and the observed ticks its walk may stay
+/// unsettled.
 pub(super) struct EscapeGoals {
     pub(super) target: WorldTile,
     pub(super) goals: WalkGoals,
+    pub(super) budget_ticks: u64,
 }
 
 fn squared_gap(a: WorldTile, b: WorldTile) -> i64 {
