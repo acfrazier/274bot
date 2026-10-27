@@ -1033,23 +1033,27 @@ mod tests {
     const STEP_BOUND: Duration = Duration::from_millis(100);
     /// How long the silent peer in the cadence test holds its response.
     const PEER_DELAY: Duration = Duration::from_millis(120);
+    /// The step budget the cadence test holds the product to. It is fixed here,
+    /// not read from `FETCH_STEP_BUDGET`, so that raising the product budget
+    /// lowers the poll count and fails the test instead of moving the bound.
+    const EXPECTED_STEP_BUDGET: Duration = Duration::from_millis(8);
 
-    /// How long `park_timeout(FETCH_STEP_BUDGET)` really takes on this host.
-    /// A blocked poll parks for at most `FETCH_STEP_BUDGET`, but the OS rounds
-    /// the wait up to its timer tick (about 15.6 ms on Windows, where the 8 ms
-    /// budget measures 15.1-18.9 ms), so the cadence the test can expect is
-    /// per real slice, not per nominal budget. Uses the median of several
-    /// parks and never reports less than the nominal budget.
+    /// How long a park of `EXPECTED_STEP_BUDGET` really takes on this host.
+    /// A blocked poll parks for at most one step budget, but the OS rounds the
+    /// wait up to its timer tick (about 15.6 ms on Windows, where an 8 ms park
+    /// measures 15.1-18.9 ms), so the cadence the test can expect is per real
+    /// slice, not per nominal budget. Uses the median of several parks and
+    /// never reports less than the nominal budget.
     fn observed_step_slice() -> Duration {
         let mut parks: Vec<Duration> = (0..9)
             .map(|_| {
                 let started = Instant::now();
-                thread::park_timeout(FETCH_STEP_BUDGET);
+                thread::park_timeout(EXPECTED_STEP_BUDGET);
                 started.elapsed()
             })
             .collect();
         parks.sort();
-        parks[parks.len() / 2].max(FETCH_STEP_BUDGET)
+        parks[parks.len() / 2].max(EXPECTED_STEP_BUDGET)
     }
 
     fn test_health() -> Arc<ReactorHealth> {
