@@ -20,7 +20,7 @@ import type { CombatOutcome, CombatRequest, NativeApi } from '../host-js/index.d
  *   ::give airrune 300       ::give mindrune 300      ::give shrimp 20
  *   ::give 3doseprayerrestore 2
  *   ::setvar prayer0 1       (the user's own Thick Skin; it must stay on throughout)
- *   ::~stat_drain hitpoints 36 0   (4/40 HP, so the first fight eats)
+ *   ::~stat_drain hitpoints 37 0   (3/40 HP, the cow eat line, so the first fight eats)
  *   ::~stat_drain prayer 17 0      (26/43 points, at the prayer-potion line)
  *   ::tele 0,50,51,55,14     (tile 3255,3278, inside the cow field)
  *
@@ -28,7 +28,7 @@ import type { CombatOutcome, CombatRequest, NativeApi } from '../host-js/index.d
  * shortbow and arrows; magic casts Wind Strike with the carried runes).
  *
  * Phases, each logged as `[showcase] <phase> ...`:
- *  1. eat       — melee at low HP, prayers off: the bot eats when the cow hits back
+ *  1. eat       — melee at the cow eat line (3 HP), prayers off: the bot eats
  *  2. prayer    — the bot raises Protect from Melee, sips a prayer potion at the
  *                 potion line, and clears only its own prayer at the end; Thick Skin
  *                 (the user's) stays on
@@ -64,7 +64,7 @@ interface Phase {
 const PHASES: Phase[] = [
     {
         name: 'eat',
-        say: 'melee at low HP with prayers off: watch the bot eat a shrimp',
+        say: 'melee at the cow eat line (3 HP) with prayers off: watch the bot eat a shrimp',
         request: { ...FIELD, prayer: false, potions: false, food: true },
     },
     {

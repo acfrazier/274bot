@@ -6123,6 +6123,14 @@
       "owner": "T2"
     },
     {
+      "path": "tools/game-data/npc-stat-census.py",
+      "owner": "T2"
+    },
+    {
+      "path": "tools/game-data/npc-stat-default.test.ts",
+      "owner": "T2"
+    },
+    {
       "path": "tools/game-data/npc-transforms.test.ts",
       "owner": "T2"
     },
