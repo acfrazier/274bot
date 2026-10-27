@@ -1,7 +1,9 @@
 //! G2-D1: real reactor progress during an actual platform-verifier hold.
 
 use super::*;
-use client_adapter::control::{CloseCommand, CloseReason, ConnectCommand, PrimaryReply};
+use client_adapter::control::{
+    CloseCommand, CloseReason, ConnectCommand, PrimaryCommand, PrimaryReply,
+};
 use client_adapter::park::ParkOutcome;
 use client_adapter::reactor::TransportService;
 use client_adapter::resolver::ResolvedAddresses;
@@ -158,6 +160,20 @@ impl ReactorPeer {
                 binding: self.binding
             })
         );
+        self.shared
+            .control
+            .post_primary(
+                PrimaryCommand::Seal {
+                    binding: self.binding,
+                },
+                &service.bus(),
+            )
+            .unwrap();
+        self.wait(service, || self.shared.control.has_primary_reply());
+        assert!(matches!(
+            self.shared.control.take_primary_reply(),
+            Some(PrimaryReply::Sealed { binding, .. }) if binding == self.binding
+        ));
         assert!(self.shared.commit_session(self.binding));
     }
 
@@ -252,7 +268,6 @@ fn g2_d1_real_reactor_keeps_established_wss_live_during_6s_and_35s_verifier_hold
                 released: Mutex::new(false),
                 changed: Condvar::new(),
             });
-            let release = ReleaseHold(Arc::clone(&verifier));
             let config = build_test_client_config_with_verifier(verifier.clone()).unwrap();
             let service = TransportService::start().unwrap();
             let lane = GameTlsLane::start_with_test_config(
@@ -279,6 +294,7 @@ fn g2_d1_real_reactor_keeps_established_wss_live_during_6s_and_35s_verifier_hold
             let held_server =
                 LocalServer::spawn_with_timeout(server_config, Duration::from_secs(40));
             let held = ReactorPeer::start(&service, held_server.address);
+            let release = ReleaseHold(Arc::clone(&verifier));
             let entered_at = entry.recv_timeout(IO_TIMEOUT).unwrap();
             let mut cancelled_at = None;
             let mut sequence = 0;
