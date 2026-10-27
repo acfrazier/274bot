@@ -3788,6 +3788,97 @@ fn start_fights_with_players_is_saved_through_its_command_and_follows_a_peer_wri
     );
 }
 
+/// PVP-V1-R1 (review R3): turning the setting off queues behind a busy disk
+/// and later fails. The row shows the click at once, then the saved value
+/// again with the failure reason, and a peer write stays visible afterwards.
+#[cfg(unix)]
+#[test]
+fn a_failed_deferred_start_fights_write_shows_the_saved_value_and_follows_a_peer() {
+    use std::os::unix::fs::PermissionsExt;
+    let _isolated = IsolatedStores::enter("pvp-start-fights-deferred-failure");
+    let mut session = Session::new();
+    session.preferences.reload().unwrap();
+    session.refresh_walk_permissions();
+    let wait = |session: &mut Session, what: &str, done: &dyn Fn(&Session) -> bool| {
+        let start = std::time::Instant::now();
+        loop {
+            session.pump_status();
+            session.refresh_walk_permissions();
+            if done(session) {
+                return;
+            }
+            assert!(
+                start.elapsed() < std::time::Duration::from_secs(30),
+                "{what}"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    };
+
+    session.set_pvp_start_fights(true);
+    wait(&mut session, "the first save never settled", &|session| {
+        !session.pvp_start_fights.pending()
+    });
+    assert!(session.pvp_start_fights.shown());
+    assert_eq!(session.error, None);
+
+    // The disk is busy: the write that turns it off stays queued.
+    let (entered, entered_rx) = std::sync::mpsc::sync_channel(1);
+    let (release, release_rx) = std::sync::mpsc::channel::<()>();
+    let release_rx = std::sync::Mutex::new(release_rx);
+    session
+        .core
+        .local_state_for_test()
+        .expect("the panel owns its process state service")
+        .set_write_stall_for_test(std::sync::Arc::new(move || {
+            let _ = entered.send(());
+            let _ = release_rx.lock().unwrap().recv();
+        }));
+    session.set_pvp_start_fights(false);
+    entered_rx
+        .recv_timeout(std::time::Duration::from_secs(10))
+        .expect("the write reached the writer");
+    assert!(!session.pvp_start_fights.shown(), "the click shows at once");
+    session.pump_status();
+    session.refresh_walk_permissions();
+    assert!(
+        !session.pvp_start_fights.shown() && session.pvp_start_fights.pending(),
+        "still waiting for the save"
+    );
+
+    // The state directory refuses the write once the disk answers.
+    let state_dir = session.preferences.path().parent().unwrap().to_path_buf();
+    let original = std::fs::metadata(&state_dir).unwrap().permissions();
+    std::fs::set_permissions(&state_dir, std::fs::Permissions::from_mode(0o500)).unwrap();
+    release.send(()).unwrap();
+    wait(&mut session, "the failed write never settled", &|session| {
+        !session.pvp_start_fights.pending()
+    });
+    std::fs::set_permissions(&state_dir, original).unwrap();
+    assert!(
+        session.pvp_start_fights.shown(),
+        "the failed write shows the saved value (on), not the attempted off"
+    );
+    assert!(
+        session
+            .error
+            .as_deref()
+            .is_some_and(|error| error.contains("start fights with players")),
+        "{:?}",
+        session.error
+    );
+
+    // A peer turns it off: the row follows after the failure.
+    let peer = thread_preferences();
+    set_patiently(&peer, "pvp", serde_json::json!({"start_fights": false}));
+    session.preferences.reload().unwrap();
+    session.refresh_walk_permissions();
+    assert!(
+        !session.pvp_start_fights.shown(),
+        "a peer write stays visible after the failure"
+    );
+}
+
 #[test]
 fn walk_permissions_projection_follows_a_peer_write() {
     let _isolated = IsolatedStores::enter("walk-permissions-peer-refresh");

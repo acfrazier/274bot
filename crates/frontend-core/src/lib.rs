@@ -103,7 +103,10 @@ pub use profile_form::{
 };
 pub use profile_order::{Placement, ProfileOrder, ReorderOp, PROFILE_ORDER_KEY};
 pub use profile_saves::{SaveRecord, SaveResult, SaveSettled, WriteFailure};
-pub use pvp_prefs::{pvp_start_fights, PvpSettingView, START_FIGHTS_LABEL, START_FIGHTS_NOTE};
+pub use pvp_prefs::{
+    is_start_fights_error, pvp_start_fights, PvpSettingView, PvpWrite, START_FIGHTS_LABEL,
+    START_FIGHTS_NOTE,
+};
 pub use quester_paths::{
     QuesterPathsController, QuesterPathsView, LOAD_PATHS_LABEL, QUESTER_HEADING,
     QUEST_PATHS_HEADING, RELOAD_PATHS_LABEL,

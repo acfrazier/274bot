@@ -4180,6 +4180,88 @@ fn start_fights_with_players_in_the_settings_popup_is_saved_through_its_command(
     let _iso = iso;
 }
 
+/// PVP-V1-R1 (review R3): turning the setting off queues behind a busy disk
+/// and later fails. The row shows the click at once, then the saved value
+/// again with the failure reason, and a peer write stays visible afterwards.
+#[cfg(unix)]
+#[test]
+fn a_failed_deferred_start_fights_write_shows_the_saved_value_and_follows_a_peer() {
+    use std::os::unix::fs::PermissionsExt;
+    let iso = IsolatedStores::enter("tui-pvp-start-fights-deferred-failure");
+    let mut session = TuiSession::new(dummy_options());
+    session.preferences.reload().unwrap();
+    let mut app = TuiApp::new("tui");
+    Seam::restore_preferences(&mut app, session.preferences.share());
+    app.settings_state.open = true;
+    app.settings_state.row = 16;
+
+    app.on_key(settings_key(crossterm::event::KeyCode::Enter));
+    settle_preferences(&mut session, &mut app);
+    assert!(app.pvp_start_fights.shown() && !app.pvp_start_fights.pending());
+    assert_eq!(app.error, None);
+
+    // The disk is busy: the write that turns it off stays queued.
+    let (entered, entered_rx) = std::sync::mpsc::sync_channel(1);
+    let (release, release_rx) = std::sync::mpsc::channel::<()>();
+    let release_rx = std::sync::Mutex::new(release_rx);
+    session
+        .core
+        .local_state_for_test()
+        .unwrap()
+        .set_write_stall_for_test(Arc::new(move || {
+            let _ = entered.send(());
+            let _ = release_rx.lock().unwrap().recv();
+        }));
+    app.on_key(settings_key(crossterm::event::KeyCode::Enter));
+    assert!(!app.pvp_start_fights.shown(), "the click shows at once");
+    session.pump(&mut app);
+    entered_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+    session.pump(&mut app);
+    assert!(
+        !app.pvp_start_fights.shown() && app.pvp_start_fights.pending(),
+        "still waiting for the save"
+    );
+
+    // The state directory refuses the write once the disk answers.
+    let state_dir = session.preferences.path().parent().unwrap().to_path_buf();
+    let original = std::fs::metadata(&state_dir).unwrap().permissions();
+    std::fs::set_permissions(&state_dir, std::fs::Permissions::from_mode(0o500)).unwrap();
+    release.send(()).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while app.pvp_start_fights.pending() && Instant::now() < deadline {
+        session.pump(&mut app);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    std::fs::set_permissions(&state_dir, original).unwrap();
+    assert!(!app.pvp_start_fights.pending(), "the write never settled");
+    assert!(
+        app.pvp_start_fights.shown(),
+        "the failed write shows the saved value (on), not the attempted off"
+    );
+    assert!(
+        app.error
+            .as_deref()
+            .is_some_and(|error| error.starts_with("settings: start fights with players:")),
+        "{:?}",
+        app.error
+    );
+
+    // A peer turns it off: the row follows after the failure.
+    std::fs::write(
+        session.preferences.path(),
+        br#"{"pvp":{"start_fights":false}}"#,
+    )
+    .unwrap();
+    session.preferences.reload().unwrap();
+    session.pump(&mut app);
+    session.pump(&mut app);
+    assert!(
+        !app.pvp_start_fights.shown(),
+        "a peer write stays visible after the failure"
+    );
+    let _iso = iso;
+}
+
 #[test]
 fn a_live_run_refuses_the_start_fights_row_without_writing() {
     let iso = IsolatedStores::enter("tui-pvp-start-fights-live");

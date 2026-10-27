@@ -5057,9 +5057,7 @@ fn config_section(ui: &Ui, session: &mut Session, id: &str, body: impl FnOnce(&U
 /// (`pvp.start_fights`), shared with the TUI. It is off by default; bots always
 /// fight back when a player attacks them.
 fn pvp_start_fights_row(ui: &Ui, session: &mut Session) {
-    session
-        .pvp_start_fights
-        .adopt(session.core.pvp_start_fights());
+    session.follow_pvp_start_fights();
     let mut on = session.pvp_start_fights.shown();
     if ui.checkbox(frontend_core::START_FIGHTS_LABEL, &mut on) {
         session.set_pvp_start_fights(on);

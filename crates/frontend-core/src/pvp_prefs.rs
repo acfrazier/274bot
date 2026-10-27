@@ -5,9 +5,11 @@
 //! The process service projects the member for the host (`pvp_globals`); the
 //! `SetPvpStartFights` command writes it. Both front ends show the same row.
 
+use api::identity::{RequestId, Settlement};
 use host_play::local_state::Update;
 
 use crate::prefs::{PreferenceError, PreferencePatch, UiPreferences};
+use crate::OperatorSession;
 
 /// The row label both front ends show.
 pub const START_FIGHTS_LABEL: &str = "Start fights with players";
@@ -37,13 +39,45 @@ pub(crate) fn write_pvp_start_fights(
     )?)
 }
 
+/// The prefix of every error line this setting's save leaves.
+const START_FIGHTS_ERROR: &str = "start fights with players";
+
+/// What a front end shows for a settled click: the failure text for its error
+/// line, or the success so the line a failure left can go.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PvpWrite {
+    /// The save failed or was refused; the row shows the saved value again.
+    /// The text is the command owner's reason (`start fights with players: …`).
+    Failed(String),
+    /// The save settled `Done`.
+    Saved,
+}
+
+/// Whether `message` is the error line a failed save of this setting left.
+pub fn is_start_fights_error(message: &str) -> bool {
+    message.contains(START_FIGHTS_ERROR)
+}
+
 /// The value a front end shows for the row. A click shows its new value at
-/// once; the view keeps it until the saved value agrees, so a slow write does
-/// not flip the row back.
+/// once; the view keeps it until the saved value agrees or the click's own
+/// command settles, so a slow write does not flip the row back and a failed
+/// one never leaves the attempted value on screen. Panel and TUI use this one
+/// rule: [`Self::begin`] at the click, [`Self::submitted`] once the command has
+/// its request, [`Self::follow`] once per frame.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct PvpSettingView {
     shown: bool,
-    pending: Option<bool>,
+    /// The last saved value this view adopted: what a failed click shows again.
+    saved: bool,
+    pending: Option<Pending>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Pending {
+    value: bool,
+    /// The `SetPvpStartFights` command of the click; `None` between the click
+    /// and its submission.
+    request: Option<RequestId>,
 }
 
 impl PvpSettingView {
@@ -51,6 +85,7 @@ impl PvpSettingView {
     pub const fn new(shown: bool) -> Self {
         Self {
             shown,
+            saved: shown,
             pending: None,
         }
     }
@@ -68,13 +103,25 @@ impl PvpSettingView {
     /// The operator set the row to `enabled`: show it now and wait for the save.
     pub fn begin(&mut self, enabled: bool) {
         self.shown = enabled;
-        self.pending = Some(enabled);
+        self.pending = Some(Pending {
+            value: enabled,
+            request: None,
+        });
     }
 
-    /// The operator's click was refused or its write failed: show the saved
-    /// value again on the next [`Self::adopt`].
+    /// The click's command was submitted as `request`: [`Self::follow`] ends
+    /// the wait when that command settles.
+    pub fn submitted(&mut self, request: RequestId) {
+        if let Some(pending) = self.pending.as_mut() {
+            pending.request = Some(request);
+        }
+    }
+
+    /// The operator's click never became a command: show the saved value
+    /// again at once.
     pub fn refuse(&mut self) {
         self.pending = None;
+        self.shown = self.saved;
     }
 
     /// Adopt the saved value read now (`None` while the store is not ready).
@@ -82,12 +129,51 @@ impl PvpSettingView {
         let Some(saved) = saved else {
             return;
         };
-        if self.pending == Some(saved) {
+        self.saved = saved;
+        if self.pending.is_some_and(|pending| pending.value == saved) {
             self.pending = None;
         }
         if self.pending.is_none() {
             self.shown = saved;
         }
+    }
+
+    /// Once per frame: end the wait of a click whose command has settled, then
+    /// adopt the saved value. A failed command shows the saved value again at
+    /// once (the failed value is never kept); a settled save that the file no
+    /// longer holds (a peer wrote after it) shows the file's value. A report the
+    /// history no longer holds counts as settled.
+    pub fn follow<Io>(&mut self, core: &OperatorSession<Io>) -> Option<PvpWrite> {
+        let outcome =
+            self.pending
+                .and_then(|pending| pending.request)
+                .and_then(|request| match core.commands().report(request) {
+                    Some(report) if !report.is_settled() => None,
+                    Some(report) => {
+                        let failed = report
+                            .members()
+                            .iter()
+                            .any(|member| matches!(member.terminal(), Some(Settlement::Failed(_))));
+                        Some(if failed {
+                            PvpWrite::Failed(core.command_failure(request).map_or_else(
+                                || format!("{START_FIGHTS_ERROR}: the save was refused"),
+                                str::to_owned,
+                            ))
+                        } else {
+                            PvpWrite::Saved
+                        })
+                    }
+                    None => Some(PvpWrite::Saved),
+                });
+        if outcome.is_some() {
+            self.pending = None;
+        }
+        self.adopt(core.pvp_start_fights());
+        if matches!(outcome, Some(PvpWrite::Failed(_))) {
+            // A cold store gave nothing to adopt: the failed value still goes.
+            self.shown = self.saved;
+        }
+        outcome
     }
 }
 
@@ -167,9 +253,12 @@ mod tests {
         assert!(view.shown() && view.pending());
         view.adopt(Some(true));
         assert!(view.shown() && !view.pending());
-        // A refused click shows the saved value again.
+        // A click that never became a command shows the saved value at once,
+        // even while the store is cold (nothing to adopt).
         view.begin(false);
+        assert!(!view.shown());
         view.refuse();
+        assert!(view.shown() && !view.pending());
         view.adopt(Some(true));
         assert!(view.shown() && !view.pending());
         // A cold store keeps what is shown.

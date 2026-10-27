@@ -1750,7 +1750,7 @@ impl Session {
     pub(crate) fn refresh_walk_permissions(&mut self) {
         self.adopt_panel_preferences_if_ready();
         self.walk_permissions = self.core.refresh_walk_globals();
-        self.pvp_start_fights.adopt(self.core.pvp_start_fights());
+        self.follow_pvp_start_fights();
         apply_walk_permissions_to_nav(
             &mut self.ui.nav,
             self.walk_permissions,
@@ -1763,7 +1763,8 @@ impl Session {
 
     /// The global "Start fights with players" setting, through
     /// `SetPvpStartFights`. The row shows the new value at once; a refused
-    /// command or failed save shows its reason and the saved value again.
+    /// command or a failed save (at once or later) shows its reason and the
+    /// saved value again ([`Self::follow_pvp_start_fights`]).
     pub(crate) fn set_pvp_start_fights(&mut self, on: bool) {
         self.pvp_start_fights.begin(on);
         let Some(submitted) = self.submit(
@@ -1773,9 +1774,26 @@ impl Session {
             self.pvp_start_fights.refuse();
             return;
         };
-        if let Some(error) = self.core.command_failure(submitted.request()) {
-            self.error = Some(error.to_string());
-            self.pvp_start_fights.refuse();
+        self.pvp_start_fights.submitted(submitted.request());
+        self.follow_pvp_start_fights();
+    }
+
+    /// Once per frame: settle the click's command in the shared view rule
+    /// ([`frontend_core::PvpSettingView::follow`]), show a failure on the
+    /// banner, and clear that line when a later save succeeds.
+    pub(crate) fn follow_pvp_start_fights(&mut self) {
+        match self.pvp_start_fights.follow(&self.core) {
+            Some(frontend_core::PvpWrite::Failed(reason)) => self.error = Some(reason),
+            Some(frontend_core::PvpWrite::Saved) => {
+                if self
+                    .error
+                    .as_deref()
+                    .is_some_and(frontend_core::is_start_fights_error)
+                {
+                    self.error = None;
+                }
+            }
+            None => {}
         }
     }
 

@@ -781,6 +781,87 @@ fn the_pvp_setting_writes_one_member_logs_one_audit_line_and_a_refusal_logs_one_
     assert_eq!(refusal.len(), 1, "{refusal:?}");
 }
 
+/// PVP-V1-R1 (review R3): a click that turns the setting off queues behind a
+/// busy disk and later fails. The view that showed the click at once shows the
+/// saved value (on) again when the command settles, with the owner's reason,
+/// and a peer's write after that stays visible. Panel and TUI call the same
+/// `PvpSettingView::follow`.
+#[cfg(unix)]
+#[test]
+fn the_pvp_setting_deferred_write_failure_shows_the_saved_value_and_a_peer_write_follows() {
+    use crate::{PvpSettingView, PvpWrite};
+    use std::os::unix::fs::PermissionsExt;
+    let _audit_lock = crate::pvp_prefs::TEST_AUDIT_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let dir = scratch("pvp-deferred-failure");
+    let mut d = driver_in(&dir, &["pvp2-alice"]);
+    let prefs = d.session().preferences().expect("bound");
+    let mut view = PvpSettingView::new(false);
+
+    // Saved on.
+    view.begin(true);
+    let on = d
+        .submit(
+            OperatorCommand::SetPvpStartFights(true),
+            Targets::Application,
+        )
+        .expect("admitted");
+    view.submitted(on.request());
+    assert_eq!(settled_app(&mut d, on.request()), Some(done()));
+    assert_eq!(view.follow(d.session()), Some(PvpWrite::Saved));
+    assert!(view.shown() && !view.pending());
+
+    // Off: the disk is busy, so the write stays queued; the row shows off.
+    let release = hold_first_write(&d);
+    view.begin(false);
+    let off = d
+        .submit(
+            OperatorCommand::SetPvpStartFights(false),
+            Targets::Application,
+        )
+        .expect("admitted");
+    view.submitted(off.request());
+    assert_eq!(terminal_app(&d, off.request()), None, "queued, not failed");
+    assert_eq!(view.follow(d.session()), None, "still waiting");
+    assert!(!view.shown() && view.pending());
+
+    // The state directory refuses the write once the disk answers.
+    let state_dir = prefs.path().parent().expect("a directory").to_path_buf();
+    let original = std::fs::metadata(&state_dir).unwrap().permissions();
+    std::fs::set_permissions(&state_dir, std::fs::Permissions::from_mode(0o500)).unwrap();
+    release.send(()).unwrap();
+    let terminal = settled_app(&mut d, off.request());
+    std::fs::set_permissions(&state_dir, original).unwrap();
+    assert!(
+        matches!(terminal, Some(Settlement::Failed(_))),
+        "the deferred write fails: {terminal:?}"
+    );
+
+    let outcome = view.follow(d.session());
+    assert!(
+        matches!(&outcome, Some(PvpWrite::Failed(reason))
+            if crate::is_start_fights_error(reason)),
+        "{outcome:?}"
+    );
+    assert!(
+        view.shown() && !view.pending(),
+        "the saved value (on) is shown, not the attempted off"
+    );
+    assert_eq!(view.follow(d.session()), None, "reported once");
+    assert!(view.shown());
+
+    // A peer turns it off in the file: the row follows it after the failure.
+    vault::write_private_file(&prefs.path(), br#"{"pvp":{"start_fights":false}}"#).unwrap();
+    prefs.reload().unwrap();
+    d.poll();
+    assert_eq!(view.follow(d.session()), None);
+    assert!(
+        !view.shown(),
+        "a peer write stays visible after the failure"
+    );
+}
+
 /// T3.3 r5 (review finding 5): the newest command for a setting wins. An
 /// older write the disk held settles after a newer command for the same
 /// setting was accepted and made durable; the running session keeps the

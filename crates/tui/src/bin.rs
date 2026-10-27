@@ -3235,40 +3235,47 @@ impl TuiSession {
     }
 
     /// Submit the global "Start fights with players" setting
-    /// (`SetPvpStartFights`) the popup changed. A refused or failed save shows
-    /// its reason, and the row shows the saved value again.
+    /// (`SetPvpStartFights`) the popup changed, then settle it in the shared
+    /// view rule. A refused or failed save (at once or later) shows its reason,
+    /// and the row shows the saved value again.
     fn project_pvp_start_fights(&mut self, app: &mut TuiApp) {
-        let Some(on) = app.pvp_start_fights_request.take() else {
-            return;
-        };
-        if !self.persist_ui {
-            // A `--live` run keeps its settings ephemeral: say so, once, at
-            // the shared command boundary, and show the saved value again.
-            const REASON: &str = "settings are not saved in a --live run";
-            self.core
-                .refuse_unsubmitted(OperatorCommand::SetPvpStartFights(on), &[], REASON);
-            app.error = Some(format!("settings: start fights with players: {REASON}"));
-            app.pvp_start_fights.refuse();
-            return;
+        if let Some(on) = app.pvp_start_fights_request.take() {
+            if !self.persist_ui {
+                // A `--live` run keeps its settings ephemeral: say so, once, at
+                // the shared command boundary, and show the saved value again.
+                const REASON: &str = "settings are not saved in a --live run";
+                self.core
+                    .refuse_unsubmitted(OperatorCommand::SetPvpStartFights(on), &[], REASON);
+                app.error = Some(format!("settings: start fights with players: {REASON}"));
+                app.pvp_start_fights.refuse();
+            } else {
+                match self.submit_raw_with(
+                    app,
+                    OperatorCommand::SetPvpStartFights(on),
+                    Targets::Application,
+                ) {
+                    Ok(submitted) => app.pvp_start_fights.submitted(submitted.request()),
+                    Err(error) => {
+                        app.error = Some(format!("settings: start fights with players: {error}"));
+                        app.pvp_start_fights.refuse();
+                    }
+                }
+            }
         }
-        match self.submit_with(
-            app,
-            OperatorCommand::SetPvpStartFights(on),
-            Targets::Application,
-        ) {
-            Ok(_) => {
+        match app.pvp_start_fights.follow(&self.core) {
+            Some(frontend_core::PvpWrite::Failed(reason)) => {
+                app.error = Some(format!("settings: {reason}"));
+            }
+            Some(frontend_core::PvpWrite::Saved) => {
                 if app
                     .error
                     .as_deref()
-                    .is_some_and(|error| error.starts_with("settings: start fights with players:"))
+                    .is_some_and(frontend_core::is_start_fights_error)
                 {
                     app.error = None;
                 }
             }
-            Err(error) => {
-                app.error = Some(format!("settings: start fights with players: {error}"));
-                app.pvp_start_fights.refuse();
-            }
+            None => {}
         }
     }
 
