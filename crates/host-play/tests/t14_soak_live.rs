@@ -208,6 +208,10 @@ struct StatusSample {
     yielded: Option<u64>,
     deaths: Option<u64>,
     bank: Option<String>,
+    target: Option<String>,
+    excluded_targets: Option<String>,
+    absent: Option<u64>,
+    last_event: Option<String>,
     failure_code: Option<String>,
     failure_message: Option<String>,
 }
@@ -941,6 +945,10 @@ fn status_sample(status: &ScriptStatus) -> StatusSample {
         yielded: field_integer(status, "yielded"),
         deaths: field_integer(status, "deaths"),
         bank: field_text(status, "bank"),
+        target: field_text(status, "target"),
+        excluded_targets: field_text(status, "excluded_targets"),
+        absent: field_integer(status, "absent"),
+        last_event: field_text(status, "last_event"),
         failure_code: status
             .failure
             .as_ref()
@@ -961,6 +969,10 @@ fn status_json(sample: Option<&StatusSample>) -> Value {
             "yielded": sample.yielded,
             "deaths": sample.deaths,
             "bank": sample.bank,
+            "target": sample.target,
+            "excluded_targets": sample.excluded_targets,
+            "absent": sample.absent,
+            "last_event": sample.last_event,
             "failure_code": sample.failure_code,
             "failure_message": sample.failure_message,
         }),
