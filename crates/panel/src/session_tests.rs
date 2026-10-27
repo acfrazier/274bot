@@ -10613,17 +10613,19 @@ fn settings_feedback_completed_launch_writes_take_effect_in_request_order() {
     hydrate_panel_preferences(&mut s);
     s.select("alice");
     assert_eq!(s.focused_raster(), RasterMode::Gpu);
+    // The selection's own saves end before the disk holds writes, so that
+    // each release below lets one raster write go.
+    settle_panel_writes(&mut s);
+    s.core.flush_writes();
     let disk = SeqDisk::install(&s);
     for raster in [RasterMode::Cpu, RasterMode::Off, RasterMode::Gpu] {
         assert!(s.set_focused_raster(raster));
     }
-    for _ in 0..3 {
-        disk.release_one();
-    }
+    // All three run (and every later write runs unheld); the panel does not
+    // poll until each has its result.
+    drop(disk);
     await_panel_terminals(&s);
     s.poll_panel_preferences();
-    // Later writes (the profile's raster) run unheld.
-    drop(disk);
     s.core.flush_writes();
     let durable = s.preferences.document().unwrap()["raster"].clone();
     assert_eq!(durable, "gpu");
@@ -10904,5 +10906,92 @@ fn settings_feedback_a_held_server_revision_binds_the_durable_revision_and_shows
     assert!(
         s.set_server_revision(289).is_err(),
         "a bound session refuses"
+    );
+}
+
+// --- T5.3-S3 round 3: a pending launch choice belongs to its profile ---
+
+/// A pending raster or memory choice belongs to the bot that was focused
+/// when it was made. Another focused bot's controls show that bot's own
+/// values, say nothing about the first bot's save, and accept a choice of
+/// their own. The first bot's controls show its pending choice again when
+/// it is focused again, and each failure shows at the bot it belongs to.
+#[test]
+fn settings_feedback_a_pending_launch_choice_stays_with_its_profile() {
+    use frontend_core::command::RasterMode;
+    let _iso = IsolatedStores::enter("panel-s3-r3-launch-owner");
+    let path = tmp_vault("launch-owner.vault");
+    let mut s = Session::new();
+    install_vault(
+        &mut s.core,
+        VaultFixture::create(&path, "test-passphrase-01"),
+    );
+    vault_upsert(&mut s.core, profile("alice", "pw", 42));
+    vault_upsert(&mut s.core, profile("bob", "pw", 43));
+    hydrate_panel_preferences(&mut s);
+    s.select("alice");
+    assert_eq!((s.focused_raster(), s.focused_lowmem()), (RasterMode::Gpu, true));
+    let disk = PanelDisk::install(&s);
+    s.request_focused_raster(RasterMode::Cpu);
+    s.request_focused_lowmem(false);
+    assert_eq!(
+        (s.focused_raster(), s.focused_lowmem()),
+        (RasterMode::Cpu, false)
+    );
+    assert!(s.panel_member_pending(&["raster"]) && s.panel_member_pending(&["lowmem"]));
+
+    s.select("bob");
+    assert_eq!(
+        (s.focused_raster(), s.core.profile("bob").unwrap().raster()),
+        (RasterMode::Gpu, RasterMode::Gpu),
+        "Alice owns the pending CPU choice, not Bob"
+    );
+    assert!(s.focused_lowmem(), "Alice owns the pending memory choice");
+    assert!(
+        !s.panel_member_pending(&["raster"]) && !s.panel_member_pending(&["lowmem"]),
+        "Bob's controls are not saving"
+    );
+    // A choice for Bob is a choice of its own: it is submitted.
+    let before = s.panel_preference_writes_pending();
+    s.request_focused_raster(RasterMode::Cpu);
+    assert_eq!(
+        s.panel_preference_writes_pending(),
+        before + 1,
+        "Bob's choice is submitted"
+    );
+    assert_eq!(s.focused_raster(), RasterMode::Cpu);
+    assert!(s.panel_member_pending(&["raster"]));
+    assert!(!s.panel_member_pending(&["lowmem"]));
+
+    s.select("alice");
+    assert_eq!(
+        (s.focused_raster(), s.focused_lowmem()),
+        (RasterMode::Cpu, false),
+        "Alice's pending choices show again"
+    );
+    assert!(s.panel_member_pending(&["raster"]) && s.panel_member_pending(&["lowmem"]));
+
+    // Every held write fails: each failure shows at the bot it belongs to.
+    disk.release();
+    settle_panel_writes(&mut s);
+    assert_eq!(
+        (s.focused_raster(), s.focused_lowmem()),
+        (RasterMode::Gpu, true)
+    );
+    assert!(s.panel_member_error(&["raster"]).is_some());
+    assert!(s.panel_member_error(&["lowmem"]).is_some());
+    s.select("bob");
+    assert_eq!(
+        (s.focused_raster(), s.focused_lowmem()),
+        (RasterMode::Gpu, true)
+    );
+    assert!(
+        s.panel_member_error(&["raster"]).is_some(),
+        "Bob's own raster choice failed"
+    );
+    assert_eq!(
+        s.panel_member_error(&["lowmem"]),
+        None,
+        "Alice's memory failure is not Bob's"
     );
 }
