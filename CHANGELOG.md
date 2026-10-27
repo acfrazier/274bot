@@ -23,14 +23,17 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   real max hit. A cow's max hit is 1, so a bot eats at 3 hitpoints and
   stops for lack of food at 2. Imps cannot damage the bot at all (max hit
   0), so the bot does not raise Protect from Melee against them.
-- When a quest fight cannot attack its attacker, the bot now walks out to a
-  reachable safe spot and tries other routes before it gives up. Before, it
-  could pick a spot it could not reach, stand still, eat all its food and
-  die. The static hostile tree near Draynor Manor is one such attacker. The
-  bot now picks only spots that the map shows it can reach. It tries each of
-  the eight compass directions at most once, keeps eating while it walks,
-  and starts the quest's own walk after a safe escape. If every route fails,
-  the quest stops with the last route failure.
+- When a quest fight cannot attack its attacker, the bot now asks the route
+  planner for a safe place to walk to. It offers the quest's own stand first,
+  then places beyond the attacker's chase range, then places that are only
+  farther away. The planner picks the nearest place it can reach. Before, the
+  bot could pick a spot it could not reach, stand still, eat all its food and
+  die. The static hostile tree near Draynor Manor is one such attacker. If a
+  route fails, the bot plans again from where it stands and prefers the next
+  kind of place, for up to three requests (two when the quest names no stand).
+  It keeps eating while it walks. The quest's own walk starts only after the
+  bot sees that the attacker is gone. If every route fails, the quest stops
+  with the last route failure. This does not promise that an escape exists.
 
 ## [0.2.7] — 2026-10-26 — Beta 2
 

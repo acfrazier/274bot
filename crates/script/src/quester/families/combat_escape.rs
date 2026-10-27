@@ -1,103 +1,115 @@
-//! Escape-destination planning for an aborted Quester fight.
+//! Escape-goal planning for an aborted Quester fight.
 //!
 //! The adapter used to pick one tile at the chase-range distance and check
 //! only world-coordinate bounds. A tile inside a tree footprint has no legal
 //! Reach arrival goal, so the host refused the route and the bot stood still.
-//! This module chooses among destinations that the baked collision proves
-//! reachable from the observed tile, and it never repeats a destination the
-//! caller already tried.
+//!
+//! This module does not decide what is reachable. It names exact candidate
+//! tiles in three tiers and hands them to the host router as a [`WalkGoals`]
+//! request. The router owns reachability: it searches the baked collision and
+//! transports, applies the account's own restrictions, and takes the cheapest
+//! reachable goal of the preferred tier before any goal of the fallback tier.
+//! The Gatherer's observation walks use the same interface. A candidate the
+//! router cannot reach costs nothing, and an unreachable pocket, a door or a
+//! detour outside any local window needs no code here.
 use super::tile_distance;
-use crate::native::ActionError;
+use crate::native::WalkGoals;
 use api::WorldTile;
-use nav_planner::contract::{ArrivalSpec, CollisionView};
+use nav_planner::contract::CollisionView;
 
-/// The eight movement directions of the engine
-/// (`engine/src/engine/routefinder/flags.ts:54-63`: `DirectionFlag`).
-const ESCAPE_COMPASS: [(i32, i32); 8] = [
-    (1, 0),
-    (-1, 0),
-    (0, 1),
-    (0, -1),
-    (1, 1),
-    (-1, 1),
-    (1, -1),
-    (-1, -1),
-];
+/// The destination tiers, best first. Each is a fact of the content:
+/// - `Stand`: the Path's authored stand, outside the attacker's chase envelope.
+/// - `Beyond`: tiles outside the chase envelope. The engine drops a melee
+///   target once the player is more than `maxrange + 1` from the NPC's spawn,
+///   and the NPC itself may stand `maxrange` from it, so the envelope measured
+///   from the NPC's tile is `2 * maxrange + attackrange` (`Npc.ts:652-667`).
+/// - `Away`: tiles inside the envelope that are still farther from the
+///   attacker than the player is, better than standing in its reach.
+const STAND: usize = 0;
+const BEYOND: usize = 1;
+const AWAY: usize = 2;
 
-/// Destinations one escape pass may request. A pass tries each of the eight
-/// engine directions at most once, so the retry budget has the same bound as
-/// the engine's own movement choices. Each failed route is observed as a walk
-/// receipt, in the same game tick or the next one. A retry therefore needs no
-/// wait and spends no more game ticks than the receipts take to arrive.
-pub(super) const ESCAPE_PASS_ATTEMPTS: usize = ESCAPE_COMPASS.len();
+/// Walk requests one escape pass may make: one per tier. A request names its
+/// preferred tier and the next non-empty tier as the router's fallback, and
+/// the next request of the pass starts one tier lower, so no request repeats
+/// an earlier one. Each request is a fresh plan from the observed position.
+/// A request ends with its walk receipt, which the walk machine's existing
+/// deadline bounds. This module adds no timer.
+pub(super) const ESCAPE_PASS_ATTEMPTS: usize = 3;
 
-/// Chebyshev arrival margin of every escape walk. The legality check below
-/// uses the same value as the walk request.
-pub(super) const ESCAPE_ARRIVAL_RADIUS: u16 = 1;
+/// Chebyshev margin around the authored stand that still counts as standing
+/// at it. It is the radius the stand walk used before goal tiers.
+const STAND_RADIUS: i32 = 1;
 
-/// Largest retreat distance, and so the radius of the reachability window.
-const WINDOW_RADIUS: i32 = 32;
-const WINDOW_SPAN: usize = (WINDOW_RADIUS as usize) * 2 + 1;
+/// Largest ring radius around the attacker. A ring of this radius has 512
+/// tiles, which is a whole tier.
+const MAX_RING: i32 = 64;
 
-const STEPS: [(i32, i32); 8] = [
-    (0, 1),
-    (0, -1),
-    (1, 0),
-    (-1, 0),
-    (-1, -1),
-    (1, -1),
-    (-1, 1),
-    (1, 1),
-];
+/// Goals one tier may name. The router's cap applies to the union of both
+/// tiers of a request, so each tier gets half of it and the union of any two
+/// tiers always fits.
+const TIER_CAP: usize = WalkGoals::MAX / 2;
 
-/// Escape state of one abort: the destinations of the current pass and the
-/// last walk failure. A new pass keeps the failure, so an exhausted recovery
-/// can report it.
+/// Escape state of one abort: where the next request of the pass starts, and
+/// the last walk failure. A new pass keeps the failure, so an exhausted
+/// recovery can report it.
 pub(super) struct AbortEscape {
-    tried: [WorldTile; ESCAPE_PASS_ATTEMPTS],
-    len: usize,
-    last_failure: Option<ActionError>,
+    next_tier: usize,
+    last_failure: Option<crate::native::ActionError>,
 }
 
 impl AbortEscape {
     pub(super) fn new() -> Self {
         Self {
-            tried: [WorldTile {
-                x: 0,
-                z: 0,
-                level: 0,
-            }; ESCAPE_PASS_ATTEMPTS],
-            len: 0,
+            next_tier: 0,
             last_failure: None,
         }
     }
 
     /// Start a fresh pass from a newly observed position.
     pub(super) fn begin_pass(&mut self) {
-        self.len = 0;
+        self.next_tier = 0;
     }
 
-    pub(super) fn tried(&self) -> &[WorldTile] {
-        &self.tried[..self.len]
-    }
-
-    pub(super) fn spent(&self) -> bool {
-        self.len >= ESCAPE_PASS_ATTEMPTS
-    }
-
-    pub(super) fn record_attempt(&mut self, destination: WorldTile) {
-        if self.len < ESCAPE_PASS_ATTEMPTS {
-            self.tried[self.len] = destination;
-            self.len += 1;
-        }
-    }
-
-    pub(super) fn record_failure(&mut self, error: ActionError) {
+    pub(super) fn record_failure(&mut self, error: crate::native::ActionError) {
         self.last_failure = Some(error);
     }
 
-    pub(super) fn last_failure(&self) -> Option<&ActionError> {
+    pub(super) fn last_failure(&self) -> Option<&crate::native::ActionError> {
         self.last_failure.as_ref()
+    }
+
+    /// The next request of the pass, planned from the observed `geometry`.
+    /// `None` when every tier from the current one down is empty.
+    pub(super) fn next_goals(
+        &mut self,
+        geometry: &EscapeGeometry,
+        collision: Option<CollisionView<'_>>,
+    ) -> Option<EscapeGoals> {
+        let tiers = tier_tiles(geometry, collision);
+        let preferred =
+            (self.next_tier..ESCAPE_PASS_ATTEMPTS).find(|&tier| !tiers[tier].is_empty())?;
+        self.next_tier = preferred + 1;
+        let fallback = (preferred + 1..ESCAPE_PASS_ATTEMPTS).find(|&tier| !tiers[tier].is_empty());
+        let focus = if preferred == STAND {
+            geometry.stand.unwrap_or(geometry.here)
+        } else {
+            geometry.here
+        };
+        let target = tiers[preferred]
+            .iter()
+            .copied()
+            .min_by_key(|tile| (tile_distance(focus, *tile), squared_gap(focus, *tile)))?;
+        let fallback_tiles = fallback.map_or_else(Vec::new, |tier| tiers[tier].clone());
+        // Each tier holds at most `TIER_CAP` tiles, so the union fits the cap
+        // and construction cannot fail.
+        let goals = if fallback_tiles.is_empty() {
+            WalkGoals::new(tiers[preferred].clone())
+        } else {
+            WalkGoals::with_preferred(fallback_tiles, &tiers[preferred])
+        }
+        .ok()?;
+        Some(EscapeGoals { target, goals })
     }
 }
 
@@ -105,199 +117,111 @@ impl AbortEscape {
 pub(super) struct EscapeGeometry {
     /// The player's packet-time tile.
     pub(super) here: WorldTile,
-    /// The attacker's packet-time tile.
-    pub(super) threat: WorldTile,
-    /// The step's authored stand, when it is out of the attacker's reach.
+    /// The attacker's packet-time tile, when the report names one.
+    pub(super) threat: Option<WorldTile>,
+    /// The step's authored stand.
     pub(super) stand: Option<WorldTile>,
     /// Chase envelope of the attacker, in tiles.
     pub(super) chase_range: i32,
 }
 
-/// Tiles reachable from the player over the baked collision, inside a
-/// Chebyshev window. The flood uses the bake's own step rule, so it holds
-/// the reachability the router starts from. It adds no second rule.
-pub(super) struct ReachWindow {
-    here: WorldTile,
-    radius: i32,
-    cells: [[bool; WINDOW_SPAN]; WINDOW_SPAN],
+/// One escape request: the tile that stands for it in logs, and the exact
+/// goals the router chooses among.
+pub(super) struct EscapeGoals {
+    pub(super) target: WorldTile,
+    pub(super) goals: WalkGoals,
 }
 
-impl ReachWindow {
-    fn flood(collision: CollisionView<'_>, here: WorldTile, radius: i32) -> Self {
-        let mut window = Self {
-            here,
-            radius: radius.clamp(0, WINDOW_RADIUS),
-            cells: [[false; WINDOW_SPAN]; WINDOW_SPAN],
-        };
-        let mut queue = [(0i8, 0i8); WINDOW_SPAN * WINDOW_SPAN];
-        let (mut head, mut tail) = (0usize, 1usize);
-        window.mark(0, 0);
-        while head < tail {
-            let (ox, oz) = queue[head];
-            let (ox, oz) = (i32::from(ox), i32::from(oz));
-            head += 1;
-            let current = window.tile(ox, oz);
-            for (step_x, step_z) in STEPS {
-                let (nx, nz) = (ox + step_x, oz + step_z);
-                if nx.abs() > window.radius || nz.abs() > window.radius {
-                    continue;
-                }
-                if window.cell(nx, nz) || !collision.step_ok(current, window.tile(nx, nz)) {
-                    continue;
-                }
-                window.mark(nx, nz);
-                // The offsets are at most `WINDOW_RADIUS` (32), so they fit.
-                queue[tail] = (nx as i8, nz as i8);
-                tail += 1;
-            }
-        }
-        window
-    }
-
-    fn tile(&self, ox: i32, oz: i32) -> WorldTile {
-        WorldTile {
-            x: self.here.x.saturating_add(ox),
-            z: self.here.z.saturating_add(oz),
-            level: self.here.level,
-        }
-    }
-
-    fn slot(ox: i32, oz: i32) -> Option<(usize, usize)> {
-        Some((
-            usize::try_from(ox.checked_add(WINDOW_RADIUS)?).ok()?,
-            usize::try_from(oz.checked_add(WINDOW_RADIUS)?).ok()?,
-        ))
-    }
-
-    fn mark(&mut self, ox: i32, oz: i32) {
-        if let Some((ix, iz)) = Self::slot(ox, oz) {
-            if let Some(cell) = self.cells.get_mut(ix).and_then(|row| row.get_mut(iz)) {
-                *cell = true;
-            }
-        }
-    }
-
-    fn cell(&self, ox: i32, oz: i32) -> bool {
-        Self::slot(ox, oz)
-            .and_then(|(ix, iz)| self.cells.get(ix).and_then(|row| row.get(iz)))
-            .copied()
-            .unwrap_or(false)
-    }
-
-    fn contains(&self, tile: WorldTile) -> bool {
-        tile.level == self.here.level
-            && (tile.x - self.here.x).abs() <= self.radius
-            && (tile.z - self.here.z).abs() <= self.radius
-            && self.cell(tile.x - self.here.x, tile.z - self.here.z)
-    }
+fn squared_gap(a: WorldTile, b: WorldTile) -> i64 {
+    let (dx, dz) = (i64::from(a.x - b.x), i64::from(a.z - b.z));
+    dx * dx + dz * dz
 }
 
-/// Whether `destination` has a legal Reach arrival goal at the walk's radius:
-/// a standable tile that production `is_arrived` accepts for it, and that the
-/// player can reach when a window is known. This is the filter the host applies
-/// to packed route goals, so a destination that fails it cannot route.
-pub(super) fn has_legal_reach_goal(
-    collision: Option<CollisionView<'_>>,
-    window: Option<&ReachWindow>,
-    destination: WorldTile,
-) -> bool {
-    let Some(collision) = collision else {
-        // Without a nav pack the host cannot route either; keep the in-bounds
-        // geometric tile, as the Gatherer's hazard retreat does.
-        return (0..=16_383).contains(&destination.x) && (0..=16_383).contains(&destination.z);
-    };
-    let radius = i32::from(ESCAPE_ARRIVAL_RADIUS);
-    let spec = ArrivalSpec::reach(ESCAPE_ARRIVAL_RADIUS);
-    (-radius..=radius).any(|dx| {
-        (-radius..=radius).any(|dz| {
-            let goal = WorldTile {
-                x: destination.x.saturating_add(dx),
-                z: destination.z.saturating_add(dz),
-                level: destination.level,
-            };
-            collision.standable(goal)
-                && window.is_none_or(|window| window.contains(goal))
-                && collision.arrived(goal, destination, spec) == Ok(true)
-        })
-    })
-}
-
-/// Directions to try, those that lead away from the attacker first. The score
-/// of a direction is its dot product with the direction from the attacker to
-/// the player, so a ray that runs past the attacker comes last. Equal scores
-/// keep the fixed compass order.
-fn direction_order(here: WorldTile, threat: WorldTile) -> [(i32, i32); 8] {
-    let away_x = (here.x - threat.x).signum();
-    let away_z = (here.z - threat.z).signum();
-    let mut order = ESCAPE_COMPASS;
-    order.sort_by_key(|&(dx, dz)| std::cmp::Reverse(dx * away_x + dz * away_z));
-    order
-}
-
-/// The next destination to try: reachable from `here`, with a legal Reach
-/// arrival goal, and not in `tried`. `None` when no such destination is left.
-pub(super) fn next_destination(
+/// The tiles of each tier. A tile is a candidate when the world has it and,
+/// with a baked collision view, it is standable. Without a nav pack the host
+/// cannot route either, so every in-bounds tile stays a candidate, as in the
+/// Gatherer's hazard retreat.
+fn tier_tiles(
     geometry: &EscapeGeometry,
     collision: Option<CollisionView<'_>>,
-    tried: &[WorldTile],
-) -> Option<WorldTile> {
-    let envelope = geometry.chase_range.saturating_add(1);
+) -> [Vec<WorldTile>; ESCAPE_PASS_ATTEMPTS] {
+    let usable = |tile: WorldTile| {
+        (0..=16_383).contains(&tile.x)
+            && (0..=16_383).contains(&tile.z)
+            && collision.is_none_or(|collision| collision.standable(tile))
+    };
+    let mut tiers: [Vec<WorldTile>; ESCAPE_PASS_ATTEMPTS] = Default::default();
+    let envelope = geometry.chase_range.max(0).saturating_add(1);
+
     if let Some(stand) = geometry.stand {
-        if tile_distance(stand, geometry.threat) > envelope
-            && !tried.contains(&stand)
-            && has_legal_reach_goal(collision, None, stand)
-        {
-            return Some(stand);
+        let outside = geometry
+            .threat
+            .is_none_or(|threat| tile_distance(stand, threat) > envelope);
+        if outside {
+            for dx in -STAND_RADIUS..=STAND_RADIUS {
+                for dz in -STAND_RADIUS..=STAND_RADIUS {
+                    let tile = WorldTile {
+                        x: stand.x.saturating_add(dx),
+                        z: stand.z.saturating_add(dz),
+                        level: stand.level,
+                    };
+                    if usable(tile) {
+                        tiers[STAND].push(tile);
+                    }
+                }
+            }
         }
     }
 
-    let retreat = geometry
-        .chase_range
-        .saturating_add(3)
-        .clamp(2, WINDOW_RADIUS);
-    let window = collision.map(|collision| ReachWindow::flood(collision, geometry.here, retreat));
-    let here_distance = tile_distance(geometry.here, geometry.threat);
-    let order = direction_order(geometry.here, geometry.threat);
-    // A direction whose ray already carries a tried destination likely fails
-    // for the same reason again, so untried directions come first.
-    let on_ray = |tile: WorldTile, (dx, dz): (i32, i32)| {
-        let (ox, oz) = (tile.x - geometry.here.x, tile.z - geometry.here.z);
-        tile.level == geometry.here.level && ox * dz == oz * dx && ox * dx + oz * dz > 0
+    if let Some(threat) = geometry.threat {
+        let level = geometry.here.level;
+        let here_gap = tile_distance(geometry.here, threat);
+        // Beyond the envelope, and farther than the player already is.
+        let first = envelope.max(here_gap).saturating_add(1);
+        for radius in first..=MAX_RING {
+            if !push_ring(&mut tiers[BEYOND], threat, level, radius, &usable) {
+                break;
+            }
+        }
+        // Inside the envelope, outermost ring first.
+        for radius in (here_gap.saturating_add(1)..=envelope).rev() {
+            if !push_ring(&mut tiers[AWAY], threat, level, radius, &usable) {
+                break;
+            }
+        }
+    }
+    tiers
+}
+
+/// Append the usable tiles of the Chebyshev ring of `radius` around `center`
+/// on `level`. `false` when the ring does not fit the tier cap, in which case
+/// nothing of it is kept.
+fn push_ring(
+    tier: &mut Vec<WorldTile>,
+    center: WorldTile,
+    level: i32,
+    radius: i32,
+    usable: &impl Fn(WorldTile) -> bool,
+) -> bool {
+    if radius < 1 {
+        return true;
+    }
+    let before = tier.len();
+    let at = |dx: i32, dz: i32| WorldTile {
+        x: center.x.saturating_add(dx),
+        z: center.z.saturating_add(dz),
+        level,
     };
-    // First choose a tile outside the attacker's chase envelope. When none is
-    // reachable, any reachable tile that is farther from the attacker beats
-    // standing in its reach.
-    [(false, true), (true, true), (false, false), (true, false)]
-        .into_iter()
-        .find_map(|(relaxed, untried_only)| {
-            order.iter().find_map(|&direction| {
-                if untried_only && tried.iter().any(|&tile| on_ray(tile, direction)) {
-                    return None;
-                }
-                (2..=retreat).rev().find_map(|distance| {
-                    let destination = WorldTile {
-                        x: geometry
-                            .here
-                            .x
-                            .saturating_add(direction.0.saturating_mul(distance)),
-                        z: geometry
-                            .here
-                            .z
-                            .saturating_add(direction.1.saturating_mul(distance)),
-                        level: geometry.here.level,
-                    };
-                    let away = tile_distance(destination, geometry.threat);
-                    let outside = if relaxed {
-                        away > here_distance
-                    } else {
-                        away > envelope
-                    };
-                    (outside
-                        && !tried.contains(&destination)
-                        && collision.is_none_or(|collision| collision.standable(destination))
-                        && has_legal_reach_goal(collision, window.as_ref(), destination))
-                    .then_some(destination)
-                })
-            })
-        })
+    let edge = (-radius..=radius).flat_map(|d| [at(d, -radius), at(d, radius)]);
+    let sides = (1 - radius..radius).flat_map(|d| [at(-radius, d), at(radius, d)]);
+    for tile in edge.chain(sides) {
+        if usable(tile) {
+            tier.push(tile);
+        }
+    }
+    if tier.len() > TIER_CAP {
+        tier.truncate(before);
+        return false;
+    }
+    true
 }
