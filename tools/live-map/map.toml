@@ -8,6 +8,7 @@ globs = [
   "crates/api/data/**",
   "crates/host/src/**",
   "crates/host-play/src/**",
+  "crates/client-adapter/src/**",
   "crates/host-play/tests/survivable_admission_live.rs",
   "crates/frontend-core/src/**",
   "crates/panel/src/**",
@@ -35,6 +36,12 @@ globs = [
 [not_live]
 globs = [
   "docs/**",
+  # Archived fork receipts are data, not code loaded by the client.
+  "vendor/fr-client-rust/docs/**",
+  # This test fixture and observer qualify through the separate T1.4 WSS soak.
+  # Neither is enabled in a shipped product. The soak remains mandatory.
+  "T1.4/soak-config.json",
+  "crates/client-adapter/src/soak_observer.rs",
   ".github/**",
   "tools/**",
   "crates/e2e/**",
@@ -102,7 +109,7 @@ cells = [
 # refused endpoint 127.0.0.1:1 on the wall clock; the headless cells drive
 # controlled host rows. See README.md "Login notice".
 [[cover]]
-globs = ["crates/frontend-core/src/login_notice.rs", "crates/frontend-core/src/session.rs", "crates/tui/src/status.rs"]
+globs = ["crates/frontend-core/src/login_notice.rs", "crates/frontend-core/src/session.rs", "crates/tui/src/status.rs", "crates/client-adapter/src/**", "crates/host-play/src/play_login.rs", "crates/host-play/src/transport_health.rs"]
 cells = [
   "frontend-core.login-notice-refused|${ISOHOME:?} nice -n 10 cargo test --locked -p frontend-core --test login_notice_refused -- --ignored --nocapture",
   "frontend-core.login-notice-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p frontend-core --lib login_notice",
@@ -253,13 +260,13 @@ cells = [
 ]
 
 [[cover]]
-globs = ["crates/nav-planner/src/arrival.rs", "crates/nav-planner/src/arrival/**"]
+globs = ["crates/nav-planner/src/arrival.rs", "crates/nav-planner/src/arrival/**", "crates/client-adapter/src/**", "crates/api/src/prot.rs", "vendor/fr-client-rust/crates/client/src/client/outbound_289.rs"]
 cells = [
   "host.nav-arrival-live|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 BOT_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} NAV_ARRIVAL_PACK=${NAV_PACK_289:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored --exact nav_arrival_live_tests::live_native_walk_arrival_retains_arrived_receipt --nocapture --test-threads=1",
 ]
 
 [[cover]]
-globs = ["crates/nav-planner/src/bank_fetch.rs", "crates/nav-planner/src/bank_fetch/**", "crates/script/src/native_bank.rs", "crates/script/src/bank/**", "crates/api/data/game-data/bank-catalog.rs"]
+globs = ["crates/nav-planner/src/bank_fetch.rs", "crates/nav-planner/src/bank_fetch/**", "crates/script/src/native_bank.rs", "crates/script/src/bank/**", "crates/api/data/game-data/bank-catalog.rs", "crates/client-adapter/src/**", "crates/host-play/src/slot_bank_memory.rs"]
 cells = [
   "host.bank-fetch-session|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip GATHERER_GAME_PORT=44594 GATHERER_HTTP_PORT=1080 GATHERER_NAV_PACK=${NAV_PACK_289:?} GATHERER_NAV_FLAGS=${NAV_FLAGS_289:?} GATHERER_ENGINE_DIR=${ENGINE_A_DIR:?} GATHERER_CATALOG_ROOT=${CATALOG_ROOT:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} CLIENT_UNPACK_DIR=${CLIENT_UNPACK_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored live_fetch_closed_session_port_sarim_to_karamja --nocapture --test-threads=1",
 ]
@@ -273,7 +280,7 @@ cells = [
 ]
 
 [[cover]]
-globs = ["crates/api/src/interact/**", "crates/api/src/lifecycle.rs", "crates/api/src/snapshot.rs", "crates/api/src/snapshot/**", "crates/host-play/src/script_interact.rs", "crates/script/src/slot/api.rs", "crates/script/src/native/actions.rs", "crates/script/src/native/ledger.rs", "crates/script/src/native/seat_rows.rs"]
+globs = ["crates/api/src/interact/**", "crates/api/src/lifecycle.rs", "crates/api/src/snapshot.rs", "crates/api/src/snapshot/**", "crates/host-play/src/script_interact.rs", "crates/script/src/slot/api.rs", "crates/script/src/native/actions.rs", "crates/script/src/native/ledger.rs", "crates/script/src/native/seat_rows.rs", "crates/host-play/src/memory.rs", "crates/host-play/src/resource_view.rs", "crates/script/src/work_admission.rs"]
 cells = [
   "host.api-gather-wire-shadow|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 GATHERER_NAV_PACK=${NAV_PACK_289:?} GATHERER_NAV_FLAGS=${NAV_FLAGS_289:?} GATHERER_ENGINE_DIR=${ENGINE_A_DIR:?} GATHERER_WC_TILE=3197,3209,0 BOT_CACHE_DIR=${BOT_CACHE_DIR:?} BOT_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe,memory-profile --lib -- --ignored --exact api_gather_live_tests::live_gather_api_receipt_tracks_memory_reconnect_and_wire_shadow --nocapture --test-threads=1",
 ]
@@ -451,7 +458,34 @@ cells = [
 ]
 
 [[cover]]
-globs = ["crates/host/src/slot_io.rs", "crates/host/src/login_queue.rs", "vendor/fr-client-rust/crates/client/src/io/**", "vendor/fr-client-rust/crates/client/src/client/client.rs"]
+# Real login and reconnect exercise transport admission, ownership and teardown.
+# Walking and banking above exercise accepted records on established sessions.
+# TLS-only branches also require the local rustls cells below and the WSS soak.
+globs = [
+  "crates/host/src/slot_io.rs", "crates/host/src/login_queue.rs",
+  "crates/client-adapter/src/**",
+  "crates/frontend-core/src/launch.rs",
+  "crates/frontend-core/src/session/native_settings.rs",
+  "crates/host-play/src/cache.rs", "crates/host-play/src/lib.rs",
+  "crates/host-play/src/main.rs", "crates/host-play/src/play_bootstrap.rs",
+  "crates/host-play/src/play_login.rs", "crates/host-play/src/profile_binding.rs",
+  "crates/host-play/src/public_worlds.rs", "crates/host-play/src/transport_health.rs",
+  "vendor/fr-client-rust/crates/client/src/io/**",
+  "vendor/fr-client-rust/crates/client/src/client/client.rs",
+  "vendor/fr-client-rust/crates/client/src/lib.rs",
+  "vendor/fr-client-rust/crates/client/src/unpack/http.rs",
+  "vendor/fr-client-rust/crates/client/src/unpack/mod.rs",
+  "vendor/fr-client-rust/crates/client/src/unpack/runtime.rs",
+  "vendor/fr-client-rust/crates/client/src/wordfilter/word_pack.rs",
+  # These dependency edges build the same transport in each product graph.
+  # Per-product release graphs and linkage scans remain separate qualifications.
+  "Cargo.toml", "Cargo.lock", "crates/api/Cargo.toml",
+  "crates/client-adapter/Cargo.toml", "crates/frontend-core/Cargo.toml",
+  "crates/host-play/Cargo.toml", "crates/host/Cargo.toml",
+  "crates/nav-bake/Cargo.toml", "crates/panel/Cargo.toml",
+  "crates/scenario/Cargo.toml", "crates/script-js/Cargo.toml",
+  "crates/script/Cargo.toml", "crates/tui/Cargo.toml",
+]
 cells = [
   "host.transport-relog|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip RELOG_GAME_PORT=44594 RELOG_HTTP_PORT=1080 RELOG_ENGINE_DIR=${ENGINE_A_DIR:?} RELOG_CACHE_DIR=${BOT_CACHE_DIR:?} RELOG_UNPACK_DIR=${CLIENT_UNPACK_DIR:?} RELOG_NAV_PACK=${NAV_PACK_289:?} BOT_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored --exact relog_live_tests::live_protocol_error_relogs_fresh_into_a_world --nocapture --test-threads=1",
   "host.transport-dead-server|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip RELOG_GAME_PORT=44594 RELOG_HTTP_PORT=1080 RELOG_ENGINE_DIR=${ENGINE_A_DIR:?} RELOG_CACHE_DIR=${BOT_CACHE_DIR:?} RELOG_UNPACK_DIR=${CLIENT_UNPACK_DIR:?} RELOG_NAV_PACK=${NAV_PACK_289:?} BOT_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored --exact relog_live_tests::live_dead_server_deadline_reconnects_into_a_world --nocapture --test-threads=1",
@@ -506,4 +540,14 @@ cells = [
   "scenario.auto-fighter-live|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} RS2B0T=${CATALOG_ROOT:?} CATALOG_ROOT=${CATALOG_ROOT:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo run --release -p tui --bin tui-play -- --profile local-289 --revision 289 --host 127.0.0.1 --port 44594 --asset-host 127.0.0.1 --http-port 1080 --engine ${ENGINE_A_DIR:?} --nav-pack ${NAV_PACK_289:?} --nav-flags ${NAV_FLAGS_289:?} --catalog ${CATALOG_ROOT:?} --live script_auto_fighter|--locked -p scenario --lib runner::tests::auto_fighter_bank_clean_floor_allows_start_and_records_zero_wait",
   "scenario.chicken-killer-live|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 ENGINE_DIR=${ENGINE_A_DIR:?} NAV_PACK=${NAV_PACK_289:?} NAV_FLAGS=${NAV_FLAGS_289:?} WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} RS2B0T=${CATALOG_ROOT:?} CATALOG_ROOT=${CATALOG_ROOT:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo run --release -p tui --bin tui-play -- --profile local-289 --revision 289 --host 127.0.0.1 --port 44594 --asset-host 127.0.0.1 --http-port 1080 --engine ${ENGINE_A_DIR:?} --nav-pack ${NAV_PACK_289:?} --nav-flags ${NAV_FLAGS_289:?} --catalog ${CATALOG_ROOT:?} --live script_chicken_killer|--locked -p scenario --lib gold_scripts_start_the_catalog_after_the_last_seed_wait",
   "host.api-combat-native-lines|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 BOT_NAV_PACK=${NAV_PACK_289:?} BOT_ENGINE_DIR=${ENGINE_A_DIR:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} CLIENT_UNPACK_DIR=${CLIENT_UNPACK_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored --exact api_combat_live_tests::live_api_combat_native_lines_skip_zero_danger_and_hold_the_cow_food_line --nocapture --test-threads=1",
+]
+
+# These local servers negotiate real TLS and authenticated control records.
+# They cover WSS branches that Engine A's plain-TCP cells cannot exercise.
+# They do not replace OS-specific trust/resource fixtures or the two-hour soak.
+[[cover]]
+globs = ["crates/client-adapter/src/**", "crates/client-adapter/Cargo.toml", "Cargo.lock"]
+cells = [
+  "transport.rustls-backend-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p client-adapter --features test-support --test rustls_backend_real -- --nocapture --test-threads=1",
+  "transport.authenticated-control-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p client-adapter --features test-support --test rustls_authenticated_control -- --nocapture --test-threads=1",
 ]
