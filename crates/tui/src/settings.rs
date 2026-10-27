@@ -1795,7 +1795,7 @@ mod tests {
     /// every line of it to the end of the remedy before it moves to the next
     /// row. Up scrolls back before it moves the row.
     #[test]
-    fn a_long_failure_at_the_selected_setting_is_readable_to_its_end() {
+    fn settings_feedback_a_long_failure_at_the_selected_setting_is_readable_to_its_end() {
         use crate::app::SettingFeedback;
         let folders: String = (0..42).map(|i| format!("/directory-{i:02}")).collect();
         let file = format!("/home/alice{folders}/panel-ui.json");
@@ -1866,7 +1866,7 @@ mod tests {
     /// are never cut silently: the bottom border says so. When they fit it
     /// says nothing.
     #[test]
-    fn notices_that_do_not_fit_are_announced_on_the_border() {
+    fn settings_feedback_notices_that_do_not_fit_are_announced_on_the_border() {
         use crate::app::SettingFeedback;
         use frontend_core::Setting;
         let long = format!("Not saved: {}", "the disk is full; free space ".repeat(12));
