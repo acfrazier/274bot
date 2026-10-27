@@ -2014,7 +2014,7 @@ fn exhausted_m4_escape_that_never_loses_the_attacker_ends_with_the_unsafe_arriva
 }
 
 #[test]
-fn escape_goals_never_exceed_the_router_cap_and_each_request_differs() {
+fn escape_goals_never_exceed_the_router_cap_and_each_request_prefers_a_new_tier() {
     let far_stand = api::WorldTile {
         x: 3109,
         z: 3200,
@@ -2028,10 +2028,13 @@ fn escape_goals_never_exceed_the_router_cap_and_each_request_differs() {
     };
     let mut pass = escape::AbortEscape::new();
     let mut preferred_tiers: Vec<Vec<api::WorldTile>> = Vec::new();
-    while let Some(next) = pass.next_goals(&geometry, None) {
+    while let Some(next) = pass.next_goals(&geometry, None, None) {
         assert!(next.goals.as_slice().len() <= crate::native::WalkGoals::MAX);
         let preferred = next.goals.preferred().to_vec();
-        assert!(!preferred_tiers.contains(&preferred), "a request repeats");
+        assert!(
+            !preferred_tiers.contains(&preferred),
+            "a pass names each tier as preferred once"
+        );
         preferred_tiers.push(preferred);
     }
     assert_eq!(preferred_tiers.len(), escape::ESCAPE_PASS_ATTEMPTS);
@@ -2056,12 +2059,14 @@ fn escape_without_a_named_attacker_offers_only_the_authored_stand() {
     };
     let mut pass = escape::AbortEscape::new();
     let next = pass
-        .next_goals(&geometry(Some(stand)), None)
+        .next_goals(&geometry(Some(stand)), None, None)
         .expect("the stand is the only candidate");
     assert!(next.goals.as_slice().contains(&stand) && next.goals.fallback().is_empty());
-    assert!(pass.next_goals(&geometry(Some(stand)), None).is_none());
+    assert!(pass
+        .next_goals(&geometry(Some(stand)), None, None)
+        .is_none());
     assert!(escape::AbortEscape::new()
-        .next_goals(&geometry(None), None)
+        .next_goals(&geometry(None), None, None)
         .is_none());
 }
 
@@ -2078,7 +2083,7 @@ fn escape_stand_inside_the_chase_envelope_is_not_the_first_preference() {
         chase_range: 14,
     };
     let first = escape::AbortEscape::new()
-        .next_goals(&geometry, None)
+        .next_goals(&geometry, None, None)
         .expect("tiers beyond the envelope remain");
     for goal in first.goals.preferred() {
         assert!(tile_distance(*goal, M4_TREE) > M4_ENVELOPE);
@@ -2103,7 +2108,7 @@ fn escape_goals_on_the_reference_pack_exclude_the_dead_tree_thicket() {
         chase_range: 14,
     };
     let first = escape::AbortEscape::new()
-        .next_goals(&geometry, Some(lease.collision()))
+        .next_goals(&geometry, Some(lease.collision()), None)
         .expect("the reference pack leaves standable tiles around the tree");
     assert!(!first.goals.as_slice().contains(&M4_THICKET));
     for goal in first.goals.as_slice() {
@@ -3119,7 +3124,7 @@ fn failed_escape_recovery_is_bounded_and_preserves_the_last_failure() {
             for (index, tier) in preferred.iter().enumerate() {
                 assert!(
                     !preferred[..index].contains(tier),
-                    "a pass never repeats a request"
+                    "a pass names each tier as preferred once"
                 );
             }
             assert_eq!(
@@ -3138,6 +3143,246 @@ fn failed_escape_recovery_is_bounded_and_preserves_the_last_failure() {
         );
         assert!(ledger.as_ref().unwrap().outbox.is_empty());
     }
+}
+
+/// An open posted flood of `radius` tiles around `here`: every step is clear
+/// and a tile's rank is its Chebyshev distance from `here`, so its walking
+/// depth equals its rank.
+fn open_flood(here: api::WorldTile, radius: i32) -> api::query::ReachQueryView {
+    let side = 2 * radius + 1;
+    let n = (side * side) as usize;
+    let mut exact_rank = vec![0u16; n];
+    for lx in 0..side {
+        for lz in 0..side {
+            exact_rank[(lx * side + lz) as usize] =
+                (lx - radius).abs().max((lz - radius).abs()) as u16;
+        }
+    }
+    api::query::ReachQueryView {
+        available: true,
+        base_x: here.x - radius,
+        base_z: here.z - radius,
+        level: here.level,
+        width: side,
+        height: side,
+        walkable: vec![u32::MAX; n.div_ceil(32)],
+        reachable: vec![u32::MAX; n.div_ceil(32)],
+        reachable_adj: vec![u32::MAX; n.div_ceil(32)],
+        exact_rank,
+        adjacent_rank: vec![0; n],
+        step: vec![u8::MAX; n],
+        canlight: Vec::new(),
+    }
+}
+
+fn with_step_context_reach<R>(
+    snapshot: &GameSnapshot,
+    reach: &api::query::ReachQueryView,
+    ledger: &mut TestLedger,
+    tick: u64,
+    f: impl FnOnce(&mut StepContext<'_, '_>) -> R,
+) -> R {
+    super::super::tests::with_tick_reach(snapshot, reach, ledger, tick, |native| {
+        let quests = QuestCatalog::empty();
+        let required_after = native.cx.evidence();
+        let banks = Arc::new(api::named_banks::NamedBankFacts::empty());
+        f(&mut StepContext {
+            tick: native,
+            quests: &quests,
+            progress: &[],
+            required_after,
+            banks: &banks,
+            choices: &crate::quester::choices::QuestChoices::default(),
+        })
+    })
+}
+
+/// The host never posts a terminal receipt for any escape walk, so only the
+/// observed-tick budget can end one. Each walk is abandoned after its budget
+/// (no live flood here, so the cap), the next tier starts while the attacker
+/// is live, and the whole recovery ends within the budgets of its requests.
+#[test]
+fn escape_walks_that_never_settle_end_on_their_observed_tick_budget() {
+    let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let warlord = data.npc_by_config("khazard_warlord").unwrap();
+    let here = api::WorldTile {
+        x: 3000,
+        z: 3000,
+        level: 0,
+    };
+    let far_stand = api::WorldTile {
+        x: 3000,
+        z: 3200,
+        level: 0,
+    };
+    for (stand, pass) in [(Some(far_stand), 3), (None, 2)] {
+        let mut run = combat_test_run(
+            imp_target(&data),
+            stand,
+            Some(Arc::new(NeverStop)),
+            Vec::new(),
+        );
+        let mut attacker = aborting_npc(
+            7,
+            warlord.id,
+            api::WorldTile {
+                x: here.x + 1,
+                ..here
+            },
+        );
+        attacker.animation = live_attack_animation(&run);
+        let mut snapshot = GameSnapshot::new();
+        seed_abort_scene(&mut snapshot, here, 1, vec![attacker], None, None);
+        let mut ledger = None;
+        assert!(with_step_context(&snapshot, &mut ledger, 12, |cx| {
+            run.on_combat_report(
+                report(CombatEnd::Aborted(AbortReason::PrepFailed(
+                    crate::combat::PrepItem::Ammo,
+                ))),
+                cx,
+            )
+        })
+        .is_pending());
+
+        // Each entry is the tick a walk was requested and the walk.
+        let mut walks = vec![(12, last_walk(&ledger))];
+        let mut tick = 12;
+        let bound = 12 + 2 * pass as u64 * escape::ESCAPE_CAP_TICKS + 20;
+        let result = loop {
+            tick += 1;
+            if let Poll::Ready(result) =
+                with_step_context(&snapshot, &mut ledger, tick, |cx| run.poll(cx))
+            {
+                break result;
+            }
+            if let Some(walk) = pending_walk(&ledger) {
+                if walk.request_id != walks.last().unwrap().1.request_id {
+                    walks.push((tick, walk));
+                }
+            }
+            assert!(
+                tick <= bound,
+                "stand={stand:?}: the recovery must end by tick {bound}, with {} walks",
+                walks.len()
+            );
+        };
+
+        assert_eq!(
+            walks.len(),
+            2 * pass,
+            "stand={stand:?}: one guarded pass and one exhausted pass"
+        );
+        for chunk in walks.chunks(pass) {
+            for pair in chunk.windows(2) {
+                assert_eq!(
+                    pair[1].0 - pair[0].0,
+                    escape::ESCAPE_CAP_TICKS,
+                    "an unmeasured walk is abandoned after exactly the cap in observed ticks"
+                );
+            }
+            let preferred = chunk
+                .iter()
+                .map(|(_, walk)| goals_of(walk).preferred().to_vec())
+                .collect::<Vec<_>>();
+            for (index, tier) in preferred.iter().enumerate() {
+                assert!(
+                    !preferred[..index].contains(tier),
+                    "each stalled walk is followed by a request for the next tier"
+                );
+            }
+        }
+        for (index, (_, walk)) in walks.iter().enumerate() {
+            assert_eq!(walk.food_guard, index < pass, "walk {index}");
+        }
+        assert!(
+            matches!(
+                &result,
+                Err(ActionError::Blocked(reason)) if reason.as_ref() == ABORT_ESCAPE_STALLED_REASON
+            ),
+            "the step ends with the stalled-walk failure: {}",
+            describe_poll(&Poll::Ready(result))
+        );
+    }
+}
+
+/// With a live flood, the budget is the walking depth to the nearest goal of
+/// the preferred tier plus the slack, far below the cap.
+#[test]
+fn a_measured_escape_walk_is_abandoned_after_its_flood_depth_plus_the_slack() {
+    let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let warlord = data.npc_by_config("khazard_warlord").unwrap();
+    let here = api::WorldTile {
+        x: 3000,
+        z: 3000,
+        level: 0,
+    };
+    let mut run = combat_test_run(
+        imp_target(&data),
+        None,
+        Some(Arc::new(NeverStop)),
+        Vec::new(),
+    );
+    let mut attacker = aborting_npc(
+        7,
+        warlord.id,
+        api::WorldTile {
+            x: here.x + 1,
+            ..here
+        },
+    );
+    attacker.animation = live_attack_animation(&run);
+    let mut snapshot = GameSnapshot::new();
+    seed_abort_scene(&mut snapshot, here, 1, vec![attacker], None, None);
+    let reach = open_flood(here, 70);
+    let mut ledger = None;
+    assert!(
+        with_step_context_reach(&snapshot, &reach, &mut ledger, 12, |cx| {
+            run.on_combat_report(
+                report(CombatEnd::Aborted(AbortReason::PrepFailed(
+                    crate::combat::PrepItem::Ammo,
+                ))),
+                cx,
+            )
+        })
+        .is_pending()
+    );
+    let first = last_walk(&ledger);
+    let depth = goals_of(&first)
+        .preferred()
+        .iter()
+        .map(|goal| tile_distance(here, *goal))
+        .min()
+        .expect("the first tier has goals") as u64;
+    let budget = depth + escape::ESCAPE_SLACK_TICKS;
+    assert!(budget < escape::ESCAPE_CAP_TICKS, "the budget is measured");
+
+    let mut tick = 12;
+    loop {
+        tick += 1;
+        assert!(
+            with_step_context_reach(&snapshot, &reach, &mut ledger, tick, |cx| run.poll(cx))
+                .is_pending()
+        );
+        if last_walk(&ledger).request_id != first.request_id {
+            break;
+        }
+        assert!(
+            tick <= 12 + escape::ESCAPE_CAP_TICKS,
+            "the walk must expire"
+        );
+    }
+    assert_eq!(
+        tick,
+        12 + budget,
+        "the walk is abandoned after its flood depth plus the slack"
+    );
+    let second = last_walk(&ledger);
+    assert_eq!(
+        goals_of(&second).preferred(),
+        goals_of(&first).fallback(),
+        "the next request prefers the tier the first held back"
+    );
+    assert!(second.food_guard, "the food guard continues");
 }
 
 /// Abort with the engaged Warlord live, then fail the abort walk so the hold

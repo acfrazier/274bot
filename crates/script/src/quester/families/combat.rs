@@ -46,6 +46,10 @@ pub const ABORT_HOLD_ESCAPED_REASON: &str =
 /// attacker is still live or cannot be observed, so the bot is not proved safe.
 pub const ABORT_ESCAPE_UNSAFE_REASON: &str =
     "combat abort escape walk arrived without proof that the attacker is gone";
+/// Blocked reason when an escape walk reaches no terminal receipt within its
+/// observed-tick budget, so it is abandoned and the next tier starts.
+pub const ABORT_ESCAPE_STALLED_REASON: &str =
+    "combat abort escape walk made no settled progress within its tick budget";
 
 static ABORTED_COMBAT_STEP: std::sync::LazyLock<Arc<str>> =
     std::sync::LazyLock::new(|| Arc::from(ABORTED_COMBAT_STEP_REASON));
@@ -63,6 +67,8 @@ static ABORT_HOLD_ESCAPED: std::sync::LazyLock<Arc<str>> =
     std::sync::LazyLock::new(|| Arc::from(ABORT_HOLD_ESCAPED_REASON));
 static ABORT_ESCAPE_UNSAFE: std::sync::LazyLock<Arc<str>> =
     std::sync::LazyLock::new(|| Arc::from(ABORT_ESCAPE_UNSAFE_REASON));
+static ABORT_ESCAPE_STALLED: std::sync::LazyLock<Arc<str>> =
+    std::sync::LazyLock::new(|| Arc::from(ABORT_ESCAPE_STALLED_REASON));
 
 fn tile_distance(a: api::WorldTile, b: api::WorldTile) -> i32 {
     if a.level != b.level {
@@ -1389,8 +1395,9 @@ impl CombatRun {
             stand: self.request.stand,
             chase_range,
         };
+        let reach = crate::reach_route::live(snapshot.reach().map(|reach| reach.value), Some(here));
         self.abort_escape
-            .next_goals(&geometry, cx.tick.frame.compiled.collision)
+            .next_goals(&geometry, cx.tick.frame.compiled.collision, reach)
     }
 
     /// The escape walk for `goals`: exact Area goals, which the router
@@ -1428,6 +1435,7 @@ impl CombatRun {
         let goals = self
             .abort_walk_goals(report, cx)
             .ok_or_else(|| ActionError::Blocked(Arc::clone(&ABORT_WALK_FAILED)))?;
+        let budget_ticks = goals.budget_ticks;
         let mut request = self.escape_walk_request(goals, cx);
         let snapshot = cx.tick.cx.snapshot();
         let allow_prayer = self.abort_protection_allowed(&snapshot);
@@ -1439,6 +1447,8 @@ impl CombatRun {
             escape: true,
         };
         let handle = cx.tick.actions.begin::<Walk>(request, &mut cx.tick.cx)?;
+        self.abort_escape
+            .start_walk(cx.tick.cx.evidence().tick, budget_ticks);
         self.phase = Phase::WalkingOutAfterAbort;
         self.action = Some(Action::Walk(handle));
         Ok(())
@@ -1499,6 +1509,7 @@ impl CombatRun {
         let Some(goals) = self.abort_walk_goals(report, cx) else {
             return Poll::Ready(Err(self.abort_failure(&ABORT_WALK_FAILED)));
         };
+        let budget_ticks = goals.budget_ticks;
         let mut request = self.escape_walk_request(goals, cx);
         request.protect = false;
         request.allow = WalkAllow {
@@ -1510,6 +1521,8 @@ impl CombatRun {
             Ok(handle) => handle,
             Err(error) => return Poll::Ready(Err(error)),
         };
+        self.abort_escape
+            .start_walk(cx.tick.cx.evidence().tick, budget_ticks);
         self.phase = Phase::EscapingAfterAbortHold;
         self.action = Some(Action::Walk(handle));
         Poll::Pending
@@ -1545,6 +1558,41 @@ impl CombatRun {
         self.action = None;
         receipt.into_arrival()?;
         self.rebegin_combat(cx, true)
+    }
+
+    /// Ends an escape walk that stays unsettled past its observed-tick
+    /// budget. Dropping the handle revokes the host request, so the router
+    /// stops following it. The walk then ends as a failed receipt, and the
+    /// handlers of a failed walk start the next tier from the observed
+    /// position, as for a failure the host reported.
+    fn expire_escape_walk(
+        &mut self,
+        cx: &mut StepContext<'_, '_>,
+    ) -> Poll<Result<StepOutcome, ActionError>> {
+        let tracked = matches!(
+            self.phase,
+            Phase::WalkingOutAfterAbort | Phase::EscapingAfterAbortHold
+        ) && matches!(self.action, Some(Action::Walk(_)));
+        if !tracked || !self.abort_escape.walk_expired(cx.tick.cx.evidence().tick) {
+            return Poll::Pending;
+        }
+        self.action = None;
+        let receipt = WalkReceipt {
+            goal: None,
+            request_id: 0,
+            evidence: cx.tick.cx.evidence(),
+            end: crate::native::WalkEnd::Failed,
+            blocked: None,
+            detail: Some(Arc::clone(&ABORT_ESCAPE_STALLED)),
+            refusal: None,
+            assessment: None,
+            escape: None,
+        };
+        if matches!(self.phase, Phase::WalkingOutAfterAbort) {
+            self.on_abort_walk(receipt, cx)
+        } else {
+            self.on_abort_escape_walk(receipt, cx)
+        }
     }
 
     fn on_abort_walk(
@@ -1985,7 +2033,7 @@ impl StepRun for CombatRun {
             },
         };
         match polled {
-            ActionPoll::Pending => Poll::Pending,
+            ActionPoll::Pending => self.expire_escape_walk(cx),
             ActionPoll::Failed(error) if matches!(&self.phase, Phase::WalkingOutAfterAbort) => {
                 if matches!(&error, ActionError::UserInput | ActionError::Cancelled) {
                     Poll::Ready(Err(error))

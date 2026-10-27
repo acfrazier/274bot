@@ -954,14 +954,27 @@ A request names its first non-empty tier as preferred and the next non-empty
 tier as fallback. An abort walk that fails while an attacker is live is a
 failed route, not an end. The step plans again from the observed position, and
 the new request prefers the next tier down, under the same guard, so food
-upkeep continues. A pass makes at most three requests, or two when the Path
-names no stand, and no two requests of a pass are equal. Three is the number of
-destination tiers that the content defines. It does not count compass
-directions. A request ends with its walk receipt. This adds no timer: the walk
-machine's existing ten-minute active-clock deadline bounds a walk that does not
-end. An abort walk that arrives while an attacker remains, or a pass that
-spends its tiers, transfers into a guarded hold. The hold continues eating and
-permitted protection even at high HP, and ends only after three consecutive
+upkeep continues. A pass makes one request for each non-empty tier: at most
+three requests, or two when the Path names no stand. The tiers can share tiles
+(a tile next to the stand can also lie beyond the chase envelope), so two
+requests of a pass can overlap. The count limit holds regardless. Three is the
+number of destination tiers that the content defines. It does not count compass
+directions. A request ends with its walk receipt. If no receipt comes, it ends
+when its observed-tick budget is spent. The step counts distinct game ticks,
+one for each `PLAYER_INFO`, never wall-clock time. The budget is the walking
+depth in steps to the nearest goal in the live reach flood, plus 12 ticks. The
+12 ticks cover the engine's tick order and one dropped click that the nav
+executor re-sends after 5 idle ticks, twice. The budget never exceeds 128 ticks,
+and it is 128 ticks when no goal is in the flood (a route that needs a
+transport, or no live flood). The 128 is policy: it is twice the 64-tile ring
+that limits the beyond and away goals, and it is not an engine bound. A stand
+farther than that is given up for a nearer tier. When the budget is spent, the
+step cancels the walk and plans the next tier from the observed position, the
+same as for a failed route. The walk machine's ten-minute active-clock
+deadline stays only as the outer backstop. An abort walk that arrives while an
+attacker remains, or a pass that spends its tiers, transfers into a guarded
+hold. The hold continues eating and permitted protection even at high HP, and
+ends only after three consecutive
 ticks without threat evidence. There is no tick-based hold timeout. If no food
 remains, protection is unavailable or disallowed, and an attacker is still
 live, the hold instead starts one more pass of unguarded escape requests,

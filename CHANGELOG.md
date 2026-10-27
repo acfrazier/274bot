@@ -30,10 +30,16 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   bot could pick a spot it could not reach, stand still, eat all its food and
   die. The static hostile tree near Draynor Manor is one such attacker. If a
   route fails, the bot plans again from where it stands and prefers the next
-  kind of place, for up to three requests (two when the quest names no stand).
-  It keeps eating while it walks. The quest's own walk starts only after the
-  bot sees that the attacker is gone. If every route fails, the quest stops
-  with the last route failure. This does not promise that an escape exists.
+  kind of place. A route that neither arrives nor fails also ends: the bot
+  counts game ticks, and when the walk takes longer than the measured walk
+  distance plus a margin (at most 128 ticks), it gives up on that route and
+  starts the next. A pass makes one request for each kind of place that has
+  candidates, so up to three requests (two when the quest names no stand). The
+  places of different kinds can overlap. A second pass can follow the first
+  when the food runs out, so the bot makes at most six requests. It keeps
+  eating while it walks. The quest's own walk starts only after the bot sees
+  that the attacker is gone. If every route fails, the quest stops with the
+  last route failure. This does not promise that an escape exists.
 
 ## [0.2.7] — 2026-10-26 — Beta 2
 
