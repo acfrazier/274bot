@@ -1133,19 +1133,19 @@ export interface CombatReport {
   protectSwitches: number;
 }
 
-/** How a session ended (the `value` of a `done` outcome). `fought`: Combat settled and reported. `interrupted`: the fight ended before Combat settled it (the bot first cleared only the prayers it raised; death needs no clearing). `refused`: the host refused the request after admission (a name it could not resolve, `busy`, the machine refusing to begin) and nothing was fought. `failed`: a machine error or card panic. */
+/** How a session ended (the `value` of a `done` outcome). `fought`: Combat settled and reported. `interrupted`: a Pause, a death or a reconnect ended the fight before Combat settled it (the bot first cleared only the prayers it raised; death needs no clearing). `refused`: the host refused the request after admission (a name it could not resolve, `busy`, the machine refusing to begin) and nothing was fought. `failed`: a machine error or card panic. Moving the bot by hand mid-fight is never `done`: the seat revokes the session after the same scoped prayer clear, and the promise settles `{ kind: 'aborted', reason: 'user-input' }`. */
 export type CombatEnd =
   | { end: 'fought'; token: number; report: CombatReport }
   | { end: 'stopped'; token: number }
-  | { end: 'interrupted'; token: number; cause: 'pause' | 'user-input' | 'died' | 'reconnect' }
+  | { end: 'interrupted'; token: number; cause: 'pause' | 'died' | 'reconnect' }
   | { end: 'refused'; token: number; reason: string }
   | { end: 'failed'; token: number; reason: string };
 
-/** A top-level `refused` is a synchronous refusal before any session (`invalid-args`, `invalid-settings`, `invalid-setting:<field>:<code>`, `busy`); `done` with `end: 'refused'` is a host refusal after the session was admitted. */
+/** A top-level `refused` is a synchronous refusal before any session (`invalid-args`, `invalid-settings`, `invalid-setting:<field>:<code>`, `busy`); `done` with `end: 'refused'` is a host refusal after the session was admitted. `aborted` with reason `user-input` is a manual move that ended a live fight (and `reset`, `superseded`, `terminated` or `unknown` for the session-level aborts). */
 export type CombatOutcome =
   | { kind: 'done'; value: CombatEnd }
   | { kind: 'refused'; reason: string }
-  | { kind: 'aborted'; reason: 'reset' | 'superseded' | 'terminated' | 'unknown' };
+  | { kind: 'aborted'; reason: 'reset' | 'superseded' | 'terminated' | 'user-input' | 'unknown' };
 
 /** One released quest path from the Quester release index; stages and journal availability come from its Path document, draft status from the release index. */
 export interface QuestPathRow {
