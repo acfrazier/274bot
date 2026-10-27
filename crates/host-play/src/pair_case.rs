@@ -72,6 +72,13 @@ pub const EXPECTED_DUEL_CONTROLS: DuelControls = DuelControls {
     confirm_theirs: 6508,
     obstacles: 6732,
     options_varp: 286,
+    // Bits of `minigames/game_duelarena/configs/duelarena.constant:1-14`:
+    // 0 no_forfeit, 1 no_movement, 2 no_weapons, 3 no_armour, 4 no_ranged,
+    // 5 no_melee, 6 no_magic, 7 no_potions, 8 no_food, 9 no_prayer,
+    // 10 obstacles, 11 no_jewelry, 12 flower_power, 13 no_specs.
+    rule_buttons: [
+        6721, 6722, 6723, 6724, 6725, 6726, 6727, 6728, 6729, 6730, 671, 670, 6732, 7816,
+    ],
 };
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]

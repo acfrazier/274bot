@@ -1517,6 +1517,7 @@ fn duplicate_display_names_preserve_selected_order_and_exact_aliases_win() {
             tradeable: true,
             stack_variant: false,
             category: None,
+            destroy_death: false,
         }
     }
     let mut data =
@@ -1533,4 +1534,410 @@ fn duplicate_display_names_preserve_selected_order_and_exact_aliases_win() {
     assert_eq!(data.resolve_item_name("DUPLICATE").unwrap().id, 20);
     assert_eq!(data.resolve_item_name("Collision").unwrap().id, 30);
     assert_eq!(data.resolve_item_name("collision").unwrap().id, 1);
+}
+
+// PvP V0 facts (PVP-DESIGN-1026 §10.1, §11 row V0). Every value below is
+// revision-289 content; each cites the content line the generator read.
+// These tests fail when a fact is wrong: they assert the generated values,
+// not the generator's source text.
+
+fn pvp_289() -> Arc<SelectedGameData> {
+    for_revision(ClientRevision::R289).unwrap()
+}
+
+#[test]
+fn special_facts_match_scripts() {
+    let data = pvp_289();
+    assert_eq!(data.special_weapons().len(), 14);
+    // (obj, energy, tab, style). Tabs follow the `combat_tabs` roots
+    // (C`player_attackstyles.rs2`); style is the `weapon_styles` bit
+    // (1 melee, 2 ranged).
+    let dagger = data.special_weapon(1215).expect("dragon dagger");
+    assert_eq!((dagger.energy, dagger.tab, dagger.style), (250, 9, 1));
+    assert!(matches!(
+        dagger.effect,
+        SpecialEffect::Damage {
+            hits: 2,
+            max: MaxFormula::MeleeScaled { num: 115, den: 100 },
+            accuracy: AccuracyRule::MeleeScaled {
+                num: 115,
+                den: 100,
+                side_targets: None
+            },
+            delay: ExtraDelay::SecondHitNextTick,
+        }
+    ));
+    assert_eq!(dagger.needs.ammo, 0);
+    assert_eq!(dagger.attribution.projectile, None);
+    let longsword = data.special_weapon(1305).expect("dragon longsword");
+    assert!(matches!(
+        longsword.effect,
+        SpecialEffect::Damage {
+            hits: 1,
+            max: MaxFormula::MeleeScaled { num: 125, den: 100 },
+            accuracy: AccuracyRule::MeleeScaled {
+                num: 100,
+                den: 100,
+                side_targets: None
+            },
+            delay: ExtraDelay::None,
+        }
+    ));
+    let mace = data.special_weapon(1434).expect("dragon mace");
+    assert!(matches!(
+        mace.effect,
+        SpecialEffect::Damage {
+            hits: 1,
+            max: MaxFormula::MeleeScaled { num: 150, den: 100 },
+            accuracy: AccuracyRule::MeleeScaled {
+                num: 125,
+                den: 100,
+                side_targets: None
+            },
+            delay: ExtraDelay::None,
+        }
+    ));
+    let halberd = data.special_weapon(3204).expect("dragon halberd");
+    assert_eq!((halberd.energy, halberd.tab), (300, 11));
+    assert!(matches!(
+        halberd.effect,
+        SpecialEffect::Damage {
+            hits: 1,
+            max: MaxFormula::MeleeScaled { num: 110, den: 100 },
+            accuracy: AccuracyRule::MeleeScaled {
+                num: 100,
+                den: 100,
+                side_targets: Some(SideRoll { num: 75, den: 100 }),
+            },
+            delay: ExtraDelay::None,
+        }
+    ));
+    // The halberd's map spotanims are not attributed (C`pvp_dragon_halberd.rs2:9-21).
+    assert_eq!(
+        (halberd.attribution.spotanim, halberd.attribution.projectile),
+        (None, None)
+    );
+    for id in [1249, 1263, 3176] {
+        let spear = data.special_weapon(id).expect("dragon spear");
+        assert!(matches!(
+            spear.effect,
+            SpecialEffect::Shove {
+                lock_ticks: 4,
+                clears_interaction: true
+            }
+        ));
+        assert_eq!(spear.energy, 250);
+    }
+    let claws = data.special_weapon(3101).expect("rune claws");
+    assert!(matches!(
+        claws.effect,
+        SpecialEffect::Damage {
+            hits: 1,
+            max: MaxFormula::MeleeScaled { num: 110, den: 100 },
+            accuracy: AccuracyRule::MeleeScaled {
+                num: 100,
+                den: 100,
+                side_targets: None
+            },
+            delay: ExtraDelay::NextDecisionPlusOne,
+        }
+    ));
+    let thrownaxe = data.special_weapon(805).expect("rune thrownaxe");
+    assert_eq!(
+        (
+            thrownaxe.energy,
+            thrownaxe.tab,
+            thrownaxe.style,
+            thrownaxe.needs.ammo
+        ),
+        (100, 14, 2, 1)
+    );
+    assert!(matches!(
+        thrownaxe.effect,
+        SpecialEffect::Damage {
+            hits: 1,
+            max: MaxFormula::RangedSpecialBasis { level_plus: 10 },
+            accuracy: AccuracyRule::Ranged,
+            delay: ExtraDelay::None,
+        }
+    ));
+    let shortbow = data.special_weapon(861).expect("magic shortbow");
+    assert_eq!((shortbow.energy, shortbow.needs.ammo), (350, 2));
+    assert!(matches!(
+        shortbow.effect,
+        SpecialEffect::Damage {
+            hits: 2,
+            max: MaxFormula::RangedSpecialBasis { level_plus: 10 },
+            accuracy: AccuracyRule::RangedScaled { num: 10, den: 7 },
+            delay: ExtraDelay::None,
+        }
+    ));
+    let battleaxe = data.special_weapon(1377).expect("dragon battleaxe");
+    assert_eq!(battleaxe.energy, 1000);
+    assert!(matches!(
+        battleaxe.effect,
+        SpecialEffect::Instant {
+            effect: InstantEffect::DragonBattleaxe
+        }
+    ));
+    let excalibur = data.special_weapon(35).expect("excalibur");
+    assert_eq!(excalibur.energy, 1000);
+    assert!(matches!(
+        excalibur.effect,
+        SpecialEffect::Instant {
+            effect: InstantEffect::Excalibur
+        }
+    ));
+    assert!(
+        data.special_weapon(1333).is_none(),
+        "rune scimitar has no special"
+    );
+}
+
+#[test]
+fn special_fact_longbow_always_hits() {
+    // The named failure-mode row of §10.1: the magic longbow has no hit
+    // roll (C`pvp_magic_longbow.rs2:20-25). A generator that emits a
+    // percentage field or an ordinary `Ranged` accuracy here fails.
+    let data = pvp_289();
+    let longbow = data.special_weapon(859).expect("magic longbow");
+    assert_eq!(
+        (
+            longbow.energy,
+            longbow.tab,
+            longbow.style,
+            longbow.needs.ammo
+        ),
+        (350, 12, 2, 1)
+    );
+    assert!(matches!(
+        longbow.effect,
+        SpecialEffect::Damage {
+            hits: 1,
+            max: MaxFormula::RangedSpecialBasis { level_plus: 10 },
+            accuracy: AccuracyRule::AlwaysHits,
+            delay: ExtraDelay::None,
+        }
+    ));
+    // The longbow's launch anim is the current attack anim, so no fixed anim
+    // is attributed; the projectile is the glow-arrow travel spotanim.
+    assert_eq!(longbow.attribution.anim, None);
+    assert!(longbow.attribution.spotanim.is_some() && longbow.attribution.projectile.is_some());
+}
+
+#[test]
+fn special_button_resolves_one_component_per_tab() {
+    // Content: one `[if_button,combat_<tab>:specbar]` per tab
+    // (C`specwep.rs2:51-115`). The staff (15) and scythe (5) tabs have none.
+    let data = pvp_289();
+    let expected: [(u8, i32); 16] = [
+        (0, 7737),
+        (1, 7687),
+        (2, 7487),
+        (3, 7462),
+        (4, 7712),
+        (5, -1),
+        (6, 7587),
+        (7, 7662),
+        (8, 7612),
+        (9, 7562),
+        (10, 7788),
+        (11, 8481),
+        (12, 7537),
+        (13, 7512),
+        (14, 7637),
+        (15, -1),
+    ];
+    for (tab, component) in expected {
+        assert_eq!(data.special_button(tab), component, "special_button({tab})");
+    }
+}
+
+#[test]
+fn duel_rule_buttons_equal_the_select_type_components() {
+    // Content: the 14 `[if_button,duel_select_type:<rule>]` toggles of
+    // C`duel_arena_settings.rs2:1-85`, indexed by the bits of
+    // C`duelarena.constant:1-14` (NoForfeit = 0 through NoSpecs = 13).
+    let data = pvp_289();
+    let controls = data.duel_controls().expect("duel controls");
+    assert_eq!(
+        controls.rule_buttons,
+        [6721, 6722, 6723, 6724, 6725, 6726, 6727, 6728, 6729, 6730, 6732, 671, 670, 7816],
+    );
+    for (bit, component) in controls.rule_buttons.iter().enumerate() {
+        assert_eq!(
+            controls.rule_button(bit as u8),
+            Some(*component),
+            "rule_button({bit})"
+        );
+    }
+    assert_eq!(controls.rule_button(14), None);
+    assert_eq!(
+        data.duel_controls()
+            .and_then(|controls| controls.rule_button(13)),
+        Some(7816)
+    );
+}
+
+#[test]
+fn melee_weapon_tier_matches_the_wield_gates() {
+    // Content: the `opheld2` rows of `scripts/levelrequire/scripts/tier*.rs2`
+    // (for example `tier1.rs2:8`, `tier5.rs2:8`, `tier40.rs2:8`,
+    // `tier60.rs2:2-9`). Quest-gated rows are unusable unless the quest varp
+    // is set, never a plain tier (§4.2).
+    let data = pvp_289();
+    let tier = |id: i32| data.melee_weapon_tier(id).expect("melee weapon");
+    assert_eq!(tier(1333).tier, 40);
+    assert!(!tier(1333).quest_gated);
+    assert_eq!((tier(1321).tier, tier(1321).quest_gated), (1, false));
+    assert_eq!((tier(1215).tier, tier(1215).quest_gated), (60, true));
+    assert_eq!((tier(1231).tier, tier(1231).quest_gated), (60, true));
+    assert_eq!(
+        (tier(1305).quest_gated, tier(1434).quest_gated),
+        (true, true)
+    );
+    assert_eq!(
+        (tier(3204).quest_gated, tier(1377).quest_gated),
+        (true, true)
+    );
+    assert_eq!((tier(1249).tier, tier(1249).quest_gated), (60, false));
+    assert_eq!((tier(35).tier, tier(35).quest_gated), (20, false));
+    assert_eq!((tier(3757).tier, tier(3757).quest_gated), (30, true));
+    // An obj with no tier script is tier 0 (C`combat.param:81-83`), never excluded.
+    assert_eq!((tier(278).tier, tier(278).quest_gated), (0, false));
+    // Ranged weapons tier through the ranged gate, not the melee one.
+    assert!(data.melee_weapon_tier(861).is_none());
+    assert_eq!(data.melee_weapon_tier_rows().len(), 148);
+}
+
+#[test]
+fn item_combat_bonus_matches_the_obj_params() {
+    // Content: the `strengthbonus` / `rangebonus` params (for example the
+    // dragon dagger's `strengthbonus` of 40 at
+    // C`skill_combat/configs/melee/daggers.obj:240`).
+    let data = pvp_289();
+    let dagger = data.item_combat_bonus(1215).expect("dragon dagger");
+    assert_eq!((dagger.strengthbonus, dagger.rangebonus), (40, 0));
+    let axe = data.item_combat_bonus(805).expect("rune thrownaxe");
+    assert_eq!((axe.strengthbonus, axe.rangebonus), (0, 36));
+    let scimitar = data.item_combat_bonus(1333).expect("rune scimitar");
+    assert_eq!((scimitar.strengthbonus, scimitar.rangebonus), (44, 0));
+    assert!(
+        data.item_combat_bonus(861).is_none(),
+        "magic shortbow carries neither bonus param"
+    );
+    assert_eq!(data.item_combat_bonus_rows().len(), 269);
+}
+
+#[test]
+fn destroy_death_is_true_on_exactly_the_flagged_rows() {
+    // Content: `param=destroy_death,^true` with `type=int, default=0`
+    // (C`player/configs/death.param:1-3`); 18 rows in
+    // C`quests/quest_viking/configs/viking.obj` and 1 in
+    // C`quests/quest_desertrescue/configs/desertrescue.obj`.
+    let data = pvp_289();
+    let flagged: Vec<&str> = data
+        .items()
+        .iter()
+        .filter(|item| item.destroy_death)
+        .map(|item| item.alias.as_deref().unwrap_or("<unnamed>"))
+        .collect();
+    assert_eq!(flagged.len(), 19);
+    for alias in [
+        "viking_airtight_vase",
+        "viking_jug_empty",
+        "viking_key",
+        "viking_red_herring",
+        "viking_uncoloured_wooden_coin",
+    ] {
+        assert!(flagged.contains(&alias), "{alias} keeps destroy_death");
+    }
+    assert!(!data.item_by_alias("dragon_dagger").unwrap().destroy_death);
+    assert!(!data.item_by_alias("rune_scimitar").unwrap().destroy_death);
+}
+
+#[test]
+fn style_spotanims_carry_the_special_attacks() {
+    // Content: the special visuals of §3.3 (for example
+    // C`pvp_dragon_dagger.rs2:4`, C`pvp_magic_shortbow.rs2:21,24-25`,
+    // C`pvp_rune_thrownaxe.rs2:4,86`).
+    let data = pvp_289();
+    let where_is = |id: i32| {
+        data.style_spotanims()
+            .iter()
+            .find(|row| row.spotanim_id == id)
+            .map(|row| (row.style, row.location.as_str()))
+    };
+    for (id, style, location) in [
+        (252, 1, "attacker"),
+        (248, 1, "attacker"),
+        (251, 1, "attacker"),
+        (274, 1, "attacker"),
+        (253, 1, "attacker"),
+        (256, 2, "attacker"),
+        (250, 2, "attacker"),
+        (257, 2, "attacker"),
+        (249, 2, "projectile"),
+        (258, 2, "projectile"),
+    ] {
+        assert_eq!(where_is(id), Some((style, location)), "spotanim {id}");
+    }
+}
+
+#[test]
+fn duel_zones_match_the_dbrow_bounds() {
+    // Content: the six `coord_pair` rows of
+    // C`minigames/game_duelarena/configs/duelarena.dbrow:1-11`, the challenge
+    // row `:13-15`, and the lobby telejump of
+    // C`minigames/game_duelarena/scripts/duel_arena_finish.rs2:75`.
+    let data = pvp_289();
+    let zones = data.duel_zones().expect("duel zones");
+    assert_eq!(
+        zones
+            .pens
+            .iter()
+            .map(|pen| (pen.x1, pen.z1, pen.x2, pen.z2, pen.obstacles))
+            .collect::<Vec<_>>(),
+        [
+            (3333, 3244, 3357, 3258, false),
+            (3364, 3225, 3388, 3239, false),
+            (3333, 3206, 3357, 3220, false),
+            (3364, 3244, 3388, 3258, true),
+            (3333, 3225, 3357, 3239, true),
+            (3364, 3206, 3388, 3220, true),
+        ],
+    );
+    assert_eq!(
+        (
+            zones.challenge.x1,
+            zones.challenge.z1,
+            zones.challenge.x2,
+            zones.challenge.z2
+        ),
+        (3328, 3203, 3393, 3325)
+    );
+    assert_eq!(
+        (
+            zones.lobby.x1,
+            zones.lobby.z1,
+            zones.lobby.x2,
+            zones.lobby.z2
+        ),
+        (3355, 3267, 3379, 3279)
+    );
+}
+
+#[test]
+fn pvp_varp_ids_come_from_the_transmit_pack() {
+    // Content: `transmit=yes` varps (`pack/varp.pack:286,300-301`).
+    let data = pvp_289();
+    let special = data.special_controls().expect("special controls");
+    assert_eq!(
+        (special.energy_varp, special.armed_varp, special.max_energy),
+        (300, 301, 1000)
+    );
+    assert_eq!(
+        data.duel_controls().expect("duel controls").options_varp,
+        286
+    );
 }
