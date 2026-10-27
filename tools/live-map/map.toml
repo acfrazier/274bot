@@ -226,10 +226,11 @@ cells = [
 ]
 
 [[cover]]
-globs = ["crates/nav-planner/src/transport.rs", "crates/nav-planner/src/transport/**", "crates/nav-executor/src/traveller/transport_hop.rs"]
+globs = ["crates/nav-planner/src/transport.rs", "crates/nav-planner/src/transport/**", "crates/nav-executor/src/traveller.rs", "crates/nav-executor/src/traveller/transport_hop.rs"]
 cells = [
   "nav.toll-gate-roundtrip|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip WORLD_GAME_PORT=44594 WORLD_HTTP_PORT=1080 WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_CACHE_DIR=${BOT_CACHE_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} WORLD_NAV_FLAGS=${NAV_FLAGS_289:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test toll_gate_live -- --ignored --exact toll_gate_live_walk_both_ways --nocapture --test-threads=1",
   "nav.toll-refuses-without-coins|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip WORLD_GAME_PORT=44594 WORLD_HTTP_PORT=1080 WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_CACHE_DIR=${BOT_CACHE_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} WORLD_NAV_FLAGS=${NAV_FLAGS_289:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test toll_gate_live -- --ignored --exact toll_gate_live_refuses_without_coins --nocapture --test-threads=1",
+  "host.nav-busy-transport-two-bots|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip WORLD_ENGINE_DIR=${ENGINE_A_DIR:?} WORLD_CACHE_DIR=${BOT_CACHE_DIR:?} WORLD_NAV_PACK=${NAV_PACK_289:?} WORLD_NAV_FLAGS=${NAV_FLAGS_289:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --test nav_busy_transport_live -- --ignored --exact nav_busy_transport_two_bots_cross_the_same_ledge --nocapture --test-threads=1",
 ]
 
 [[cover]]
