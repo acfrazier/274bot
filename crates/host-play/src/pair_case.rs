@@ -77,7 +77,7 @@ pub const EXPECTED_DUEL_CONTROLS: DuelControls = DuelControls {
     // 5 no_melee, 6 no_magic, 7 no_potions, 8 no_food, 9 no_prayer,
     // 10 obstacles, 11 no_jewelry, 12 flower_power, 13 no_specs.
     rule_buttons: [
-        6721, 6722, 6723, 6724, 6725, 6726, 6727, 6728, 6729, 6730, 671, 670, 6732, 7816,
+        6721, 6722, 6723, 6724, 6725, 6726, 6727, 6728, 6729, 6730, 6732, 671, 670, 7816,
     ],
 };
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]

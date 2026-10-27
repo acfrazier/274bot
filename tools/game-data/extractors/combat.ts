@@ -1061,7 +1061,7 @@ export function extractItemCombatBonus(
     return rows.sort((a, b) => a.obj_id - b.obj_id);
 }
 
-export type MeleeWeaponTierWire = { obj_id: number; tier: number; quest_gated: boolean };
+export type MeleeWeaponTierWire = { obj_id: number; tier: number; quest_gated: boolean; strength: number };
 
 const MELEE_TIER_FILES = [
     'scripts/levelrequire/scripts/tier1.rs2',
@@ -1085,14 +1085,30 @@ const QUEST_ATTACK_HANDLERS = new Set([
     'levelrequire_regicide_quest_attack_strength',
 ]);
 
-function meleeTierGate(handler: string, args: string): { tier: number; quest_gated: boolean } {
-    const level = Number(args.split(',')[0]?.trim());
-    if (!Number.isInteger(level) || level < 0 || level > 255) {
+function meleeTierGate(handler: string, args: string): { tier: number; quest_gated: boolean; strength: number } {
+    const parts = args.split(',').map((part) => Number(part.trim()));
+    const level = parts[0];
+    if (!Number.isInteger(level) || (level as number) < 0 || (level as number) > 255) {
         throw new Error(`melee tier: handler @${handler}(${args}) has a bad attack level`);
     }
-    if (PLAIN_ATTACK_HANDLERS.has(handler)) return { tier: level, quest_gated: false };
-    if (QUEST_ATTACK_HANDLERS.has(handler)) return { tier: level, quest_gated: true };
-    if (handler === 'levelrequire_attack_and_strength') return { tier: level, quest_gated: false };
+    const strengthArg = (name: string): number => {
+        const value = parts[1] ?? 0;
+        if (!Number.isInteger(value) || value < 0 || value > 255) {
+            throw new Error(`melee tier: handler @${name}(${args}) has a bad strength level`);
+        }
+        return value;
+    };
+    if (PLAIN_ATTACK_HANDLERS.has(handler)) return { tier: level as number, quest_gated: false, strength: 0 };
+    if (handler === 'levelrequire_zanaris_quest_attack' || handler === 'levelrequire_heroes_quest_attack') {
+        return { tier: level as number, quest_gated: true, strength: 0 };
+    }
+    if (handler === 'levelrequire_regicide_quest_attack_strength') {
+        return { tier: level as number, quest_gated: true, strength: strengthArg(handler) };
+    }
+    if (QUEST_ATTACK_HANDLERS.has(handler)) return { tier: level as number, quest_gated: true, strength: 0 };
+    if (handler === 'levelrequire_attack_and_strength') {
+        return { tier: level as number, quest_gated: false, strength: strengthArg(handler) };
+    }
     throw new Error(`melee tier: unexpected attack handler @${handler}(${args})`);
 }
 
@@ -1135,7 +1151,7 @@ export function extractMeleeWeaponTiers(
         }
         return blocks;
     };
-    const gates = new Map<string, { tier: number; quest_gated: boolean }>();
+    const gates = new Map<string, { tier: number; quest_gated: boolean; strength: number }>();
     for (const file of MELEE_TIER_FILES) {
         const text = requireGatherText(content, file);
         for (const block of parseBlocks(file, text)) {
@@ -1148,8 +1164,8 @@ export function extractMeleeWeaponTiers(
                 const levels = [...label.matchAll(/@levelrequire_attack\((\d+),/g)].map((m) => Number(m[1]));
                 if (levels.length === 0) throw new Error('melee tier: tutorial_island_equip has no attack level');
                 const prior = gates.get(block.alias);
-                const gate = { tier: levels[levels.length - 1]!, quest_gated: false };
-                if (prior && (prior.tier !== gate.tier || prior.quest_gated !== gate.quest_gated)) {
+                const gate = { tier: levels[levels.length - 1]!, quest_gated: false, strength: 0 };
+                if (prior && (prior.tier !== gate.tier || prior.quest_gated !== gate.quest_gated || prior.strength !== gate.strength)) {
                     throw new Error(`melee tier: conflicting wield gates for ${block.alias}`);
                 }
                 gates.set(block.alias, gate);
@@ -1166,10 +1182,10 @@ export function extractMeleeWeaponTiers(
             const gate = meleeTierGate(last.handler, last.args);
             const questGated = gate.quest_gated || block.questVarp;
             const prior = gates.get(block.alias);
-            if (prior && (prior.tier !== gate.tier || prior.quest_gated !== questGated)) {
+            if (prior && (prior.tier !== gate.tier || prior.quest_gated !== questGated || prior.strength !== gate.strength)) {
                 throw new Error(`melee tier: conflicting wield gates for ${block.alias}`);
             }
-            gates.set(block.alias, { tier: gate.tier, quest_gated: questGated });
+            gates.set(block.alias, { tier: gate.tier, quest_gated: questGated, strength: gate.strength });
         }
     }
     const rows: MeleeWeaponTierWire[] = [];
@@ -1178,7 +1194,7 @@ export function extractMeleeWeaponTiers(
         const alias = idToAlias.get(weapon.obj_id);
         const gate = alias === undefined ? undefined : gates.get(alias);
         // No tier script is tier 0 (`combat.param:81-83`), never excluded.
-        rows.push({ obj_id: weapon.obj_id, tier: gate?.tier ?? 0, quest_gated: gate?.quest_gated ?? false });
+        rows.push({ obj_id: weapon.obj_id, tier: gate?.tier ?? 0, quest_gated: gate?.quest_gated ?? false, strength: gate?.strength ?? 0 });
     }
     return rows.sort((a, b) => a.obj_id - b.obj_id);
 }

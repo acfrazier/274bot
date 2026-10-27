@@ -305,7 +305,7 @@ impl DuelControls {
         self.rule_buttons
             .get(usize::from(bit))
             .copied()
-            .filter(|id| *id >= 0)
+            .filter(|id| *id > 0)
     }
 }
 
@@ -580,7 +580,10 @@ pub struct ItemCombatBonus {
 /// (`skill_combat/configs/combat.param:81-83`), never excluded. A quest-gated
 /// row (`levelrequire_zanaris_quest_attack`, `levelrequire_heroes_quest_attack`,
 /// `levelrequire_regicide_quest_attack_strength`) is `quest_gated` and is
-/// unusable unless the quest varp is set, never a plain tier.
+/// unusable unless the quest varp is set, never a plain tier. Halberds also
+/// gate Strength via `levelrequire_attack_and_strength`
+/// (`scripts/levelrequire/scripts/levelrequire.rs2:186-192`, for example
+/// `tier60.rs2:10` needs attack 60 and strength 30); V2 reads `strength`.
 #[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
 pub struct MeleeWeaponTier {
     /// Selected obj id.
@@ -589,6 +592,10 @@ pub struct MeleeWeaponTier {
     pub tier: u8,
     /// True when the wield gate needs a quest varp besides the level.
     pub quest_gated: bool,
+    /// Required Strength level from `levelrequire_attack_and_strength`
+    /// (0 when the gate checks Attack only).
+    #[serde(default)]
+    pub strength: u8,
 }
 
 /// One inclusive duel-area rectangle on level 0 (PVP-DESIGN-1026 §3.2, V0).
@@ -626,7 +633,7 @@ pub struct DuelPenFact {
 /// `duel_arena_fight_zones`, three `duel_arena_obstacle_fight_zones`),
 /// the challenge row `:13-15`, and the lobby telejump of
 /// `minigames/game_duelarena/scripts/duel_arena_finish.rs2:75`.
-#[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
+#[derive(Debug, Deserialize, PartialEq, Eq)]
 pub struct DuelZoneFacts {
     /// Six pens in dbrow order (fights first, then obstacles).
     pub pens: Vec<DuelPenFact>,
@@ -2404,24 +2411,22 @@ impl SelectedGameData {
     }
 
     /// PvP V0 `special_button(tab)`: the `specbar` component of one combat
-    /// tab (codes 0-15 per `combat_tabs`), or -1 when the tab has no bar.
+    /// tab (codes 0-15 per `combat_tabs`), or `None` when the tab has no bar.
     ///
     /// Content: one `[if_button,combat_<tab>:specbar] @toggle_sa;` per tab
     /// (`skill_combat/scripts/player/specwep.rs2:51-115`). Joins
     /// `combat_tabs` (tab to interface root) with `special.bars`
     /// (root to bar); the staff and scythe tabs have no bar.
-    pub fn special_button(&self, tab: u8) -> i32 {
+    pub fn special_button(&self, tab: u8) -> Option<i32> {
         let root = self
             .combat_tabs
             .iter()
             .find(|row| row.tab == tab)
-            .map(|row| row.root_id);
-        let Some(root) = root else {
-            return -1;
-        };
-        self.special_controls()
-            .map(|controls| controls.bar_for_root(root))
-            .unwrap_or(-1)
+            .map(|row| row.root_id)?;
+        let bar = self
+            .special_controls()
+            .map(|controls| controls.bar_for_root(root))?;
+        (bar >= 0).then_some(bar)
     }
 
     /// PvP V0 special-attack facts, one row per `specwep` obj (§3.3, §6.1).

@@ -114144,742 +114144,890 @@
     {
       "obj_id": 35,
       "tier": 20,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 278,
       "tier": 0,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 466,
       "tier": 0,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 468,
       "tier": 0,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 470,
       "tier": 0,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 472,
       "tier": 0,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 474,
       "tier": 0,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 476,
       "tier": 0,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 478,
       "tier": 0,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 492,
       "tier": 0,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 494,
       "tier": 0,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 496,
       "tier": 0,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 498,
       "tier": 0,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 500,
       "tier": 0,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 502,
       "tier": 0,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 504,
       "tier": 0,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 506,
       "tier": 0,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 667,
       "tier": 0,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 746,
       "tier": 0,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 747,
       "tier": 0,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 975,
       "tier": 0,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 1203,
       "tier": 1,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 1205,
       "tier": 1,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 1207,
       "tier": 5,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 1209,
       "tier": 20,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 1211,
       "tier": 30,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 1213,
       "tier": 40,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 1215,
       "tier": 60,
-      "quest_gated": true
+      "quest_gated": true,
+      "strength": 0
     },
     {
       "obj_id": 1217,
       "tier": 10,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 1219,
       "tier": 1,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 1221,
       "tier": 1,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 1223,
       "tier": 5,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 1225,
       "tier": 20,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 1227,
       "tier": 30,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 1229,
       "tier": 40,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 1231,
       "tier": 60,
-      "quest_gated": true
+      "quest_gated": true,
+      "strength": 0
     },
     {
       "obj_id": 1233,
       "tier": 10,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 1235,
       "tier": 0,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 1237,
       "tier": 1,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 1239,
       "tier": 1,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 1241,
       "tier": 5,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 1243,
       "tier": 20,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 1245,
       "tier": 30,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 1247,
       "tier": 40,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 1249,
       "tier": 60,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 1251,
       "tier": 1,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 1253,
       "tier": 1,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 1255,
       "tier": 5,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 1257,
       "tier": 20,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 1259,
       "tier": 30,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 1261,
       "tier": 40,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 1263,
       "tier": 60,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 1265,
       "tier": 1,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 1267,
       "tier": 1,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 1269,
       "tier": 5,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 1271,
       "tier": 30,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 1273,
       "tier": 20,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 1275,
       "tier": 40,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 1277,
       "tier": 1,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 1279,
       "tier": 1,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 1281,
       "tier": 5,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 1283,
       "tier": 10,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 1285,
       "tier": 20,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 1287,
       "tier": 30,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 1289,
       "tier": 40,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 1291,
       "tier": 1,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 1293,
       "tier": 1,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 1295,
       "tier": 5,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 1297,
       "tier": 10,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 1299,
       "tier": 20,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 1301,
       "tier": 30,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 1303,
       "tier": 40,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 1305,
       "tier": 60,
-      "quest_gated": true
+      "quest_gated": true,
+      "strength": 0
     },
     {
       "obj_id": 1307,
       "tier": 1,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 1309,
       "tier": 1,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 1311,
       "tier": 5,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 1313,
       "tier": 10,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 1315,
       "tier": 20,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 1317,
       "tier": 30,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 1319,
       "tier": 40,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 1321,
       "tier": 1,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 1323,
       "tier": 1,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 1325,
       "tier": 5,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 1327,
       "tier": 10,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 1329,
       "tier": 20,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 1331,
       "tier": 30,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 1333,
       "tier": 40,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 1335,
       "tier": 1,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 1337,
       "tier": 1,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 1339,
       "tier": 5,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 1341,
       "tier": 10,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 1343,
       "tier": 20,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 1345,
       "tier": 30,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 1347,
       "tier": 40,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 1349,
       "tier": 1,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 1351,
       "tier": 1,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 1353,
       "tier": 5,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 1355,
       "tier": 20,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 1357,
       "tier": 30,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 1359,
       "tier": 40,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 1361,
       "tier": 10,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 1363,
       "tier": 1,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 1365,
       "tier": 5,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 1367,
       "tier": 10,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 1369,
       "tier": 20,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 1371,
       "tier": 30,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 1373,
       "tier": 40,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 1375,
       "tier": 1,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 1377,
       "tier": 60,
-      "quest_gated": true
+      "quest_gated": true,
+      "strength": 0
     },
     {
       "obj_id": 1419,
       "tier": 0,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 1420,
       "tier": 1,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 1422,
       "tier": 1,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 1424,
       "tier": 5,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 1426,
       "tier": 10,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 1428,
       "tier": 20,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 1430,
       "tier": 30,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 1432,
       "tier": 40,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 1434,
       "tier": 60,
-      "quest_gated": true
+      "quest_gated": true,
+      "strength": 0
     },
     {
       "obj_id": 2402,
       "tier": 0,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 2952,
       "tier": 0,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 2961,
       "tier": 0,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 2963,
       "tier": 0,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 3095,
       "tier": 1,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 3096,
       "tier": 1,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 3097,
       "tier": 5,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 3098,
       "tier": 10,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 3099,
       "tier": 20,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 3100,
       "tier": 30,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 3101,
       "tier": 40,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 3170,
       "tier": 1,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 3171,
       "tier": 1,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 3172,
       "tier": 5,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 3173,
       "tier": 20,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 3174,
       "tier": 30,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 3175,
       "tier": 40,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 3176,
       "tier": 60,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 3190,
       "tier": 1,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 1
     },
     {
       "obj_id": 3192,
       "tier": 1,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 1
     },
     {
       "obj_id": 3194,
       "tier": 5,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 1
     },
     {
       "obj_id": 3196,
       "tier": 10,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 5
     },
     {
       "obj_id": 3198,
       "tier": 20,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 10
     },
     {
       "obj_id": 3200,
       "tier": 30,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 15
     },
     {
       "obj_id": 3202,
       "tier": 40,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 20
     },
     {
       "obj_id": 3204,
       "tier": 60,
-      "quest_gated": true
+      "quest_gated": true,
+      "strength": 30
     },
     {
       "obj_id": 3757,
       "tier": 30,
-      "quest_gated": true
+      "quest_gated": true,
+      "strength": 0
     },
     {
       "obj_id": 3899,
       "tier": 0,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 4037,
       "tier": 0,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     },
     {
       "obj_id": 4039,
       "tier": 0,
-      "quest_gated": false
+      "quest_gated": false,
+      "strength": 0
     }
   ],
   "duel_zones": {
