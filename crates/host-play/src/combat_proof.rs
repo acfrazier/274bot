@@ -31,6 +31,7 @@ pub(crate) struct CombatCapture {
     pub(crate) magic_setup: Option<Value>,
     pub(crate) magic_npc_events: Vec<Value>,
     pub(crate) start_baseline: Option<Value>,
+    pub(crate) m1_completion: Option<Value>,
     pub(crate) invalid_reason: Option<String>,
     pub(crate) inject_maze_after_imp_attack: bool,
     pub(crate) maze_pending: bool,
