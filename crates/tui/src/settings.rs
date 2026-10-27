@@ -29,6 +29,15 @@ pub const TITLE: &str = "settings";
 const EVENT_POLICY_UNAVAILABLE: &str =
     "Fight and Ignore are unavailable; the Guardian treats saved choices as Flee.";
 
+/// The last line of a selected setting taller than the viewport: which of
+/// its lines are hidden and the key that shows them.
+const MORE_BELOW: &str = "↓ more of this setting below (Down)";
+const MORE_ABOVE: &str = "↑ more of this setting above (Up)";
+const MORE_ABOVE_AND_BELOW: &str = "↕ more of this setting above (Up) and below (Down)";
+/// Drawn on the popup's bottom border when the notices under the rows need
+/// more lines than the terminal leaves them.
+const NOTICES_CUT: &str = " not every notice fits: make the terminal taller ";
+
 /// Lamp skills the popup cycles, in display order.
 pub const LAMP_SKILLS: [&str; 7] = [
     "attack",
@@ -60,6 +69,15 @@ pub struct SettingsState {
     pub preferences_pending: bool,
     /// Hit targets from the last drawn viewport, including wrapped rows.
     pub row_areas: [Rect; 16],
+    /// The row whose own lines [`Self::detail_scroll`] scrolls.
+    pub detail_row: usize,
+    /// Lines of the selected setting scrolled out above the viewport when
+    /// the setting (with its saved state or failure) is taller than the
+    /// viewport. Up and Down scroll these lines before they move the row.
+    pub detail_scroll: u16,
+    /// The largest [`Self::detail_scroll`] the last drawn viewport allowed
+    /// (0 when the selected setting fits).
+    pub detail_max: u16,
 }
 
 impl SettingsState {
@@ -193,11 +211,12 @@ impl<'a> SettingsPane<'a> {
         self
     }
 
-    /// One key while the popup is open. Up/Down move the row; Enter/Space
-    /// toggles settings, `d` dismisses the script-scope notice, and `n`
-    /// dismisses the independent survivable-routing notice; `r` relogs the
-    /// bound member only while its login mode differs and no relog is queued.
-    /// Esc closes.
+    /// One key while the popup is open. Up/Down move the row; when the
+    /// selected setting (with its saved state or failure) is taller than the
+    /// viewport they scroll its own lines first. Enter/Space toggles
+    /// settings, `d` dismisses the script-scope notice, and `n` dismisses the
+    /// independent survivable-routing notice; `r` relogs the bound member
+    /// only while its login mode differs and no relog is queued. Esc closes.
     pub fn on_key(&mut self, key: KeyEvent) -> SettingsKey {
         if self.state.folder_editing {
             return self.folder_key(key);
@@ -224,11 +243,23 @@ impl<'a> SettingsPane<'a> {
                 SettingsKey::SurvivableRoutingNoticeAck
             }
             KeyCode::Up | KeyCode::Char('k') => {
-                self.state.row = self.state.row.saturating_sub(1);
+                if self.state.detail_row == self.state.row && self.state.detail_scroll > 0 {
+                    self.state.detail_scroll -= 1;
+                } else {
+                    self.state.row = self.state.row.saturating_sub(1);
+                    self.reset_detail();
+                }
                 SettingsKey::Consumed
             }
             KeyCode::Down | KeyCode::Char('j') => {
-                self.state.row = (self.state.row + 1).min(15);
+                if self.state.detail_row == self.state.row
+                    && self.state.detail_scroll < self.state.detail_max
+                {
+                    self.state.detail_scroll += 1;
+                } else {
+                    self.state.row = (self.state.row + 1).min(15);
+                    self.reset_detail();
+                }
                 SettingsKey::Consumed
             }
             KeyCode::Enter => self.activate(),
@@ -240,6 +271,13 @@ impl<'a> SettingsPane<'a> {
             }
             _ => SettingsKey::Ignored,
         }
+    }
+
+    /// The selected row changed: its own lines start at its top.
+    fn reset_detail(&mut self) {
+        self.state.detail_row = self.state.row;
+        self.state.detail_scroll = 0;
+        self.state.detail_max = 0;
     }
 
     fn folder_key(&mut self, key: KeyEvent) -> SettingsKey {
@@ -637,6 +675,26 @@ impl Widget for SettingsPane<'_> {
         }
         let inner = block.inner(popup);
         block.render(popup, buf);
+        // The notices below the rows share the popup with at least one row of
+        // the selected setting. When they need more lines than that leaves,
+        // the bottom border says so: the cut is never silent.
+        let footer_need = memory_height
+            + help_height
+            + migration_notice_height
+            + scope_height
+            + notice_height
+            + path_notice_height;
+        if footer_need > inner.height.saturating_sub(1) && popup.height > 0 {
+            let marker = Span::raw(NOTICES_CUT).width();
+            let marker = u16::try_from(marker).unwrap_or(u16::MAX);
+            buf.set_stringn(
+                popup.x + popup.width.saturating_sub(marker.saturating_add(1)).max(1),
+                popup.bottom() - 1,
+                NOTICES_CUT,
+                usize::from(popup.width.saturating_sub(2)),
+                Style::default().fg(Color::Yellow),
+            );
+        }
 
         // Preserve one row for the selected setting while keeping feedback
         // visible when the terminal is too small for every notice.
@@ -659,43 +717,94 @@ impl Widget for SettingsPane<'_> {
             - help_height
             - migration_notice_height
             - scope_height;
-        let mut first = 0;
-        let mut through_selected = block_heights[..=selected].iter().sum::<u16>();
-        while first < selected && through_selected > rows_height {
-            through_selected -= block_heights[first];
-            first += 1;
-        }
         let rows_bottom = inner.y + rows_height;
-        let mut y = inner.y;
-        for (index, text) in rows.iter().enumerate().skip(first) {
-            if y >= rows_bottom {
-                break;
-            }
-            if let Some((header, style)) = headers[index] {
-                y = draw_wrapped(buf, inner, y, rows_bottom, header, style);
-                if y >= rows_bottom {
-                    break;
-                }
-            }
-            let bottom = (y + row_heights[index]).min(rows_bottom);
-            self.state.row_areas[index] = Rect::new(inner.x, y, inner.width, bottom - y);
-            let row_style = if index == 8 && danger_level == frontend_core::DangerLevel::Always {
+        let row_style = |index: usize| {
+            if index == 8 && danger_level == frontend_core::DangerLevel::Always {
                 Style::default().fg(Color::Red)
             } else {
                 Style::default()
-            };
-            y = draw_wrapped_parts(
+            }
+        };
+        if self.state.detail_row != selected {
+            self.state.detail_row = selected;
+            self.state.detail_scroll = 0;
+        }
+        let selected_height = block_heights[selected];
+        if selected_height > rows_height {
+            // The selected setting (a long failure on a small terminal) is
+            // taller than the viewport. The viewport shows a window of its
+            // own lines, Up and Down scroll that window before they move the
+            // row, and the last line says which part is hidden, so nothing
+            // of the setting is lost without a sign.
+            let marker = rows_height >= 2;
+            let window = rows_height - u16::from(marker);
+            let max_scroll = selected_height - window;
+            let scroll = self.state.detail_scroll.min(max_scroll);
+            self.state.detail_scroll = scroll;
+            self.state.detail_max = max_scroll;
+            self.state.row_areas[selected] = Rect::new(inner.x, inner.y, inner.width, window);
+            draw_scrolled_block(
                 buf,
                 inner,
-                y,
-                bottom,
+                inner.y + window,
+                headers[selected],
                 [
-                    text.as_str(),
-                    row_feedback[index][0],
-                    row_feedback[index][1],
+                    rows[selected].as_str(),
+                    row_feedback[selected][0],
+                    row_feedback[selected][1],
                 ],
-                row_style,
+                row_style(selected),
+                scroll,
             );
+            if marker {
+                let hint = match (scroll > 0, scroll < max_scroll) {
+                    (true, true) => MORE_ABOVE_AND_BELOW,
+                    (true, false) => MORE_ABOVE,
+                    (false, _) => MORE_BELOW,
+                };
+                buf.set_stringn(
+                    inner.x,
+                    rows_bottom - 1,
+                    hint,
+                    usize::from(inner.width),
+                    Style::default().fg(Color::DarkGray),
+                );
+            }
+        } else {
+            self.state.detail_scroll = 0;
+            self.state.detail_max = 0;
+            let mut first = 0;
+            let mut through_selected = block_heights[..=selected].iter().sum::<u16>();
+            while first < selected && through_selected > rows_height {
+                through_selected -= block_heights[first];
+                first += 1;
+            }
+            let mut y = inner.y;
+            for (index, text) in rows.iter().enumerate().skip(first) {
+                if y >= rows_bottom {
+                    break;
+                }
+                if let Some((header, style)) = headers[index] {
+                    y = draw_wrapped(buf, inner, y, rows_bottom, header, style);
+                    if y >= rows_bottom {
+                        break;
+                    }
+                }
+                let bottom = (y + row_heights[index]).min(rows_bottom);
+                self.state.row_areas[index] = Rect::new(inner.x, y, inner.width, bottom - y);
+                y = draw_wrapped_parts(
+                    buf,
+                    inner,
+                    y,
+                    bottom,
+                    [
+                        text.as_str(),
+                        row_feedback[index][0],
+                        row_feedback[index][1],
+                    ],
+                    row_style(index),
+                );
+            }
         }
 
         let yellow = Style::default().fg(Color::Yellow);
@@ -924,20 +1033,69 @@ fn draw_wrapped_parts<const N: usize>(
     let width = usize::from(inner.width).max(1);
     for row in wrapped_parts(parts, width) {
         if y < bottom {
-            let mut x = inner.x;
-            let mut left = width;
-            for slice in row {
-                if slice.is_empty() || left == 0 {
-                    continue;
-                }
-                let (next, _) = buf.set_stringn(x, y, slice, left, style);
-                left = left.saturating_sub(usize::from(next.saturating_sub(x)));
-                x = next;
-            }
+            draw_slices(buf, inner.x, y, width, row, style);
         }
         y += 1;
     }
     y
+}
+
+/// Draw the slices of one wrapped row one after the other from `x`, at
+/// most `width` columns.
+fn draw_slices<const N: usize>(
+    buf: &mut Buffer,
+    mut x: u16,
+    y: u16,
+    width: usize,
+    row: [&str; N],
+    style: Style,
+) {
+    let mut left = width;
+    for slice in row {
+        if slice.is_empty() || left == 0 {
+            continue;
+        }
+        let (next, _) = buf.set_stringn(x, y, slice, left, style);
+        left = left.saturating_sub(usize::from(next.saturating_sub(x)));
+        x = next;
+    }
+}
+
+/// Draw one setting's block (its lead-in `header`, then its row text and
+/// feedback `parts`) from the top of `inner` to `bottom`, with its first
+/// `skip` wrapped lines scrolled out above. Allocates nothing.
+fn draw_scrolled_block(
+    buf: &mut Buffer,
+    inner: Rect,
+    bottom: u16,
+    header: Option<(&str, Style)>,
+    parts: [&str; 3],
+    style: Style,
+    skip: u16,
+) {
+    let width = usize::from(inner.width).max(1);
+    let mut skip = usize::from(skip);
+    let mut y = inner.y;
+    if let Some((text, header_style)) = header {
+        for line in wrapped_lines(text, width) {
+            if skip > 0 {
+                skip -= 1;
+                continue;
+            }
+            if y >= bottom {
+                return;
+            }
+            buf.set_stringn(inner.x, y, line, width, header_style);
+            y += 1;
+        }
+    }
+    for row in wrapped_parts(parts, width).skip(skip) {
+        if y >= bottom {
+            return;
+        }
+        draw_slices(buf, inner.x, y, width, row, style);
+        y += 1;
+    }
 }
 
 /// Draw `text` into `buf` inside `inner` from row `y`, wrapped at the
@@ -1598,5 +1756,144 @@ mod tests {
         };
         assert_eq!(back, SettingsKey::MapBake);
         assert_eq!(bake, MapBakeChoice::Ask);
+    }
+
+    /// One drawn frame of the popup with the scope and routing notices up
+    /// and `feedback` beside its settings, one string per terminal line.
+    fn draw_with_notices(
+        state: &mut SettingsState,
+        feedback: &[(frontend_core::Setting, crate::app::SettingFeedback)],
+        w: u16,
+        h: u16,
+    ) -> Vec<String> {
+        let settings = SettingsDraft::default();
+        let mut nav = WalkGlobals::default();
+        let mut bake = MapBakeChoice::Ask;
+        let mut scope_ack = false;
+        let mut survivable_ack = false;
+        let mut pane = SettingsPane::new(&settings, &mut nav, &mut bake, state)
+            .script_scope_notice_ack(&mut scope_ack)
+            .survivable_routing_notice_ack(&mut survivable_ack);
+        pane.feedback = feedback;
+        render_lines(pane, w, h)
+            .lines()
+            .map(|line| line.trim_matches(|c| c == '│' || c == ' ').to_string())
+            .collect()
+    }
+
+    fn press(state: &mut SettingsState, code: KeyCode) -> SettingsKey {
+        let settings = SettingsDraft::default();
+        let mut nav = WalkGlobals::default();
+        let mut bake = MapBakeChoice::Ask;
+        SettingsPane::new(&settings, &mut nav, &mut bake, state).on_key(key(code))
+    }
+
+    /// The selected setting's whole failure can be read at 80x24 and
+    /// 120x40. A permission failure with a long path and its remedy is
+    /// taller than the compact viewport: the viewport shows a window of the
+    /// setting and a line that says more is hidden, and Down scrolls through
+    /// every line of it to the end of the remedy before it moves to the next
+    /// row. Up scrolls back before it moves the row.
+    #[test]
+    fn a_long_failure_at_the_selected_setting_is_readable_to_its_end() {
+        use crate::app::SettingFeedback;
+        let folders: String = (0..42).map(|i| format!("/directory-{i:02}")).collect();
+        let file = format!("/home/alice{folders}/panel-ui.json");
+        assert!(file.len() < 1024);
+        let failure = format!(
+            "Not saved: {file}: Permission denied (os error 13). Make the file writable: \
+             chmod 600 {file} END-OF-DIAGNOSTIC"
+        );
+        let feedback = [(
+            frontend_core::Setting::Nav(NavPreference::AllowTeleports),
+            SettingFeedback::Failed(failure.clone()),
+        )];
+        let row_text = format!("> {}: false", frontend_core::GLOBAL_PERMISSION_LABELS[0].1);
+        for (w, h) in [(80u16, 24u16), (120, 40)] {
+            let columns = usize::from(w.min(100) - 2);
+            let expected: Vec<String> =
+                super::wrapped_parts([row_text.as_str(), " — ", failure.as_str()], columns)
+                    .map(|[a, b, c]| format!("{a}{b}{c}").trim_end().to_string())
+                    .collect();
+            let mut state = SettingsState {
+                open: true,
+                row: 5,
+                ..Default::default()
+            };
+            let mut seen: Vec<String> = Vec::new();
+            let mut screens = 0;
+            loop {
+                let screen = draw_with_notices(&mut state, &feedback, w, h);
+                if screens == 0 && w == 80 {
+                    assert!(
+                        screen.iter().any(|line| line == super::MORE_BELOW),
+                        "{w}x{h}: the hidden part is announced:\n{}",
+                        screen.join("\n")
+                    );
+                }
+                let at_end = screen.iter().any(|line| line.contains("END-OF-DIAGNOSTIC"));
+                seen.extend(screen);
+                screens += 1;
+                if at_end {
+                    break;
+                }
+                assert!(screens < 80, "{w}x{h}: the end of the failure never showed");
+                assert_eq!(press(&mut state, KeyCode::Down), SettingsKey::Consumed);
+                assert_eq!(state.row, 5, "{w}x{h}: Down scrolls the setting first");
+            }
+            for line in &expected {
+                assert!(
+                    seen.iter().any(|shown| shown == line),
+                    "{w}x{h}: the line {line:?} of the setting never showed"
+                );
+            }
+            if w == 80 {
+                assert!(screens > 1, "80x24 needs the scroll");
+                let last = draw_with_notices(&mut state, &feedback, w, h);
+                assert!(last.iter().any(|line| line == super::MORE_ABOVE));
+                assert_eq!(press(&mut state, KeyCode::Up), SettingsKey::Consumed);
+                assert_eq!(state.row, 5, "Up scrolls back first");
+                let back = draw_with_notices(&mut state, &feedback, w, h);
+                assert!(back.iter().any(|line| line == super::MORE_ABOVE_AND_BELOW));
+                assert_eq!(press(&mut state, KeyCode::Down), SettingsKey::Consumed);
+            }
+            press(&mut state, KeyCode::Down);
+            assert_eq!(state.row, 6, "{w}x{h}: past the end, Down moves the row");
+        }
+    }
+
+    /// Notices under the rows that need more lines than the terminal leaves
+    /// are never cut silently: the bottom border says so. When they fit it
+    /// says nothing.
+    #[test]
+    fn notices_that_do_not_fit_are_announced_on_the_border() {
+        use crate::app::SettingFeedback;
+        use frontend_core::Setting;
+        let long = format!("Not saved: {}", "the disk is full; free space ".repeat(12));
+        let failed = [
+            (
+                Setting::Nav(NavPreference::ScriptScopeNoticeAck),
+                SettingFeedback::Failed(long.clone()),
+            ),
+            (
+                Setting::Nav(NavPreference::SurvivableRoutingNoticeAck),
+                SettingFeedback::Failed(long),
+            ),
+        ];
+        let cut = |screen: &[String]| {
+            screen
+                .iter()
+                .any(|line| line.contains(super::NOTICES_CUT.trim()))
+        };
+        let mut state = SettingsState {
+            open: true,
+            ..Default::default()
+        };
+        let small = draw_with_notices(&mut state, &failed, 80, 18);
+        assert!(cut(&small), "80x18:\n{}", small.join("\n"));
+        for (w, h) in [(80u16, 24u16), (120, 40)] {
+            let fits = draw_with_notices(&mut state, &[], w, h);
+            assert!(!cut(&fits), "{w}x{h}:\n{}", fits.join("\n"));
+        }
     }
 }
