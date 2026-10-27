@@ -930,19 +930,40 @@ If no engaged actor was recorded, or the engaged actor is no longer observed,
 retreat geometry uses the heaviest observed live attacker (the same shared
 threat predicate). Retreat direction compares packet-time network tiles (the
 player's and the attacker's), not interpolated rendered poses.
-An abort walk that fails or arrives while an attacker remains transfers into
+Escape destinations come from the baked collision, not from coordinate bounds.
+A destination is requested only when it is standable, reachable from the
+player's network tile over legal steps inside the retreat window, and has a
+legal Reach arrival goal at the walk's radius. This is the filter the host
+applies to packed route goals, so the host never receives a goal it cannot
+route. Without a nav pack the in-bounds geometric tile stays the destination.
+The step's authored `stand` is requested first when it lies outside the
+attacker's chase envelope and passes the same arrival check.
+An abort walk that fails while an attacker is live is a failed route, not an
+end: the step plans afresh from the observed position and requests another
+destination under the same guard, so food upkeep continues. One pass requests
+each of the eight engine movement directions at most once
+(`engine/src/engine/routefinder/flags.ts:54-63`). A retry waits for nothing:
+the failed walk receipt is its signal. An abort walk that arrives, or a pass
+that spends its destinations, while an attacker remains transfers into
 a guarded hold. The hold continues eating and permitted protection even at high
 HP, and ends only after three consecutive ticks without threat evidence.
 There is no tick-based hold timeout. If no food remains, protection is
 unavailable or disallowed, and an attacker is still live, the hold instead
-makes one unguarded escape walk away from that attacker before parking, when a
-destination can be formed. Without a live attacker it parks after the
-threat-free horizon instead. It does not retry that escape indefinitely.
+starts one more pass of unguarded escape walks, planned from the position the
+hold observed, before parking. Without a live attacker it parks after the
+threat-free horizon instead. A pass never repeats a destination, and the step
+never retries after the second pass. When every attempt fails, the step ends
+with the last walk failure.
+A combat step whose target is `attacker` and whose report is
+`Aborted(Unattackable)` completes once the bot is safe: when an escape walk
+arrives with no live attacker, or the hold ends threat-free. The step keeps its
+combat receipt, so `combat_end: aborted_unattackable` selects the caller's walk
+that follows. Every other abort still ends the step as a failure.
 Cancellation releases protection owned by the hold.
 
-**Known limit (retreat destination).** The retreat tile is a fixed distance
-away from the attacker. It does not avoid other aggressive NPCs, so an abort
-walk can end beside a new attacker (the guarded hold then handles it).
+**Known limit (retreat destination).** The retreat tile lies about one chase
+envelope away from the attacker. It does not avoid other aggressive NPCs, so an
+abort walk can end beside a new attacker (the guarded hold then handles it).
 Choosing destinations away from aggressive NPCs is not implemented.
 
 **Known limit (WindDown gap).** Every `Aborted` combat end first enters
@@ -959,7 +980,7 @@ live attacker to the abort walk or hold instead of sweeping them.
 Abort qualification records the step's prayer permission independently of the
 player's Prayer level. A protected hold must prevent HP loss; a food-only hold
 may take damage, but must keep HP positive and eat at the guard's food line while
-food remains. Exhaustion requires the single escape attempt, not an unguarded
+food remains. Exhaustion requires an escape pass, not an unguarded
 park under a live attacker. A safe hold terminal requires observed disengagement,
 and a verified no-threat abort is a separate outcome that does not qualify the
 live-threat cell.

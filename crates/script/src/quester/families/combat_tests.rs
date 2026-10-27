@@ -930,6 +930,7 @@ fn combat_test_run(
         finish_ticks_elapsed: 0,
         finish_last_tick: None,
         trace_event: None,
+        abort_escape: AbortEscape::new(),
     }
 }
 pub(crate) fn policy_s2_run_for_runner(cx: &mut StepContext<'_, '_>) -> Box<dyn StepRun> {
@@ -1262,6 +1263,586 @@ fn boss_abort_blocks_but_m4_unattackable_report_completes_for_walkout() {
         receipt.report.end,
         CombatEnd::Aborted(AbortReason::Unattackable)
     );
+}
+
+type TestLedger = Option<Box<crate::native::ledger::Ledger>>;
+
+/// The recorded M4 geometry (DIAG-M4-1027): the player at (3109,3346) one tile
+/// east of the static hostile tree at (3108,3346).
+const M4_HERE: api::WorldTile = api::WorldTile {
+    x: 3109,
+    z: 3346,
+    level: 0,
+};
+const M4_TREE: api::WorldTile = api::WorldTile {
+    x: 3108,
+    z: 3346,
+    level: 0,
+};
+/// The tile 17 tiles east of the player, which the old escape chose. A dead
+/// tree thicket leaves it no legal Reach arrival goal.
+const M4_THICKET: api::WorldTile = api::WorldTile {
+    x: 3126,
+    z: 3346,
+    level: 0,
+};
+
+/// Open ground around the recorded tiles. The thicket blocks every tile of
+/// (3125..=3127, 3345..=3347) except the diagonal (3127,3347), the only
+/// standable tile of the 3-by-3 area around the old destination.
+fn m4_collision() -> nav_planner::collision::WorldCollision {
+    let origin = api::WorldTile {
+        x: 3069,
+        z: 3306,
+        level: 0,
+    };
+    let size = 81usize;
+    let mut flags = vec![0u32; 4 * size * size];
+    let block = client::dash3d::CollisionFlag::SQ_BLOCKED as u32;
+    for x in 3125..=3127 {
+        for z in 3345..=3347 {
+            if (x, z) != (3127, 3347) {
+                let (dx, dz) = (
+                    usize::try_from(x - origin.x).unwrap(),
+                    usize::try_from(z - origin.z).unwrap(),
+                );
+                flags[dz * size + dx] = block;
+            }
+        }
+    }
+    let (walk, packed) = nav_planner::collision::pack_walk(&flags);
+    nav_planner::collision::WorldCollision {
+        origin,
+        width: size,
+        height: size,
+        walk,
+        blocked: packed,
+        flags: None,
+    }
+}
+
+fn with_step_context_collision<R>(
+    snapshot: &GameSnapshot,
+    collision: nav_planner::contract::CollisionView<'_>,
+    ledger: &mut TestLedger,
+    tick: u64,
+    f: impl FnOnce(&mut StepContext<'_, '_>) -> R,
+) -> R {
+    super::super::tests::with_tick_collision(snapshot, collision, ledger, tick, |native| {
+        let quests = QuestCatalog::empty();
+        let required_after = native.cx.evidence();
+        let banks = Arc::new(api::named_banks::NamedBankFacts::empty());
+        f(&mut StepContext {
+            tick: native,
+            quests: &quests,
+            progress: &[],
+            required_after,
+            banks: &banks,
+            choices: &crate::quester::choices::QuestChoices::default(),
+        })
+    })
+}
+
+struct WalkOut {
+    request_id: u64,
+    target: api::WorldTile,
+    food_guard: bool,
+}
+
+fn last_walk(ledger: &TestLedger) -> WalkOut {
+    let action = ledger.as_ref().unwrap().outbox.last().unwrap();
+    let crate::native::HostEffect::Walk(request) = &action.effect else {
+        panic!("the abort must have requested a native walk");
+    };
+    WalkOut {
+        request_id: action.request_id.get(),
+        target: request.target,
+        food_guard: request.food_guard,
+    }
+}
+
+/// The host's terminal receipt for the walk the run requested last.
+fn post_walk_end(ledger: &mut TestLedger, tick: u64, end: WalkEnd, detail: Option<&str>) {
+    let request_id = last_walk(ledger).request_id;
+    let ledger = ledger.as_mut().unwrap();
+    ledger.outbox.clear();
+    ledger.walk = Some(WalkReceipt {
+        goal: None,
+        request_id,
+        evidence: EvidenceStamp {
+            run: RunKey {
+                slot: 1,
+                run: 1,
+                session: 1,
+            },
+            tick,
+            sequence: tick,
+        },
+        end,
+        blocked: None,
+        detail: detail.map(Arc::from),
+        refusal: None,
+        assessment: None,
+        escape: None,
+    });
+}
+
+/// Fail every escape walk the run requests at `tick`, as the router does for
+/// a destination it cannot route. The pass spends its attempts, and then the
+/// guarded hold begins.
+fn fail_escape_walks_until_hold(
+    run: &mut CombatRun,
+    snapshot: &GameSnapshot,
+    ledger: &mut TestLedger,
+    tick: u64,
+) {
+    for _ in 0..=escape::ESCAPE_PASS_ATTEMPTS {
+        let walking = matches!(
+            ledger
+                .as_ref()
+                .unwrap()
+                .outbox
+                .last()
+                .map(|action| &action.effect),
+            Some(crate::native::HostEffect::Walk(_))
+        );
+        if !walking {
+            return;
+        }
+        post_walk_end(ledger, tick, WalkEnd::Failed, Some("route fixture failure"));
+        assert!(with_step_context(snapshot, ledger, tick, |cx| run.poll(cx)).is_pending());
+    }
+    panic!("the escape pass must end in the guarded hold");
+}
+
+fn m4_run() -> CombatRun {
+    combat_test_run(
+        Target::Attacker {
+            npcs: true,
+            players: false,
+        },
+        None,
+        Some(Arc::new(NeverStop)),
+        Vec::new(),
+    )
+}
+
+fn m4_report(data: &SelectedGameData) -> CombatReport {
+    let mut aborted = report(CombatEnd::Aborted(AbortReason::Unattackable));
+    aborted.engaged = Some(crate::combat::ActorRef {
+        kind: api::snapshot::ActorKind::Npc,
+        index: 4328,
+    });
+    aborted.engaged_npc_type = data.npc_by_config("nasty_tree").unwrap().id;
+    aborted
+}
+
+/// HP 8, low Prayer, lobsters, and the static tree (type 152, no operations)
+/// attacking when `attacked`.
+fn seed_m4_scene(
+    snapshot: &mut GameSnapshot,
+    here: api::WorldTile,
+    attacked: bool,
+    attack_animation: i32,
+) {
+    let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let tree = data.npc_by_config("nasty_tree").unwrap();
+    let lobster = data.item_by_alias("lobster").unwrap();
+    let mut attackers = Vec::new();
+    if attacked {
+        let mut npc = aborting_npc(4328, tree.id, M4_TREE);
+        npc.actions = Vec::new();
+        npc.animation = attack_animation;
+        attackers.push(npc);
+    }
+    seed_abort_scene(
+        snapshot,
+        here,
+        8,
+        attackers,
+        Some(lobster.id),
+        Some("Lobster"),
+    );
+    snapshot.seed_stats(
+        (0..25)
+            .map(|index| api::snapshot::StatView {
+                index,
+                name: String::new(),
+                effective: if index == 3 { 8 } else { 40 },
+                base: match index {
+                    3 => 40,
+                    5 => 1,
+                    _ => 40,
+                },
+                xp: 0,
+                used: api::snapshot::stat_used(index as usize),
+            })
+            .collect(),
+    );
+}
+
+/// The destination is on the player's baked component, is standable with a
+/// legal Reach arrival goal at the walk's radius, and lies outside the tree's
+/// chase envelope (`2 * maxrange + attackrange` = 14, plus one).
+fn assert_reachable_escape(
+    collision: &nav_planner::collision::WorldCollision,
+    lease: &nav_planner::contract::NavLease,
+    destination: api::WorldTile,
+) {
+    assert_ne!(
+        destination, M4_THICKET,
+        "the dead-tree thicket tile has no legal Reach arrival goal"
+    );
+    assert_eq!(
+        nav_planner::paint::flood_component_id(collision, &[M4_HERE], destination),
+        Some(0),
+        "{destination:?} must be reachable from the player's tile"
+    );
+    assert!(lease.collision().standable(destination));
+    assert_eq!(
+        lease.collision().arrived(
+            destination,
+            destination,
+            nav_planner::contract::ArrivalSpec::reach(1)
+        ),
+        Ok(true)
+    );
+    assert!(
+        tile_distance(destination, M4_TREE) > 15,
+        "{destination:?} must lie outside the tree's chase envelope"
+    );
+}
+
+#[test]
+fn m4_failed_escape_walk_retries_another_reachable_goal_before_food_runs_out() {
+    let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let collision = m4_collision();
+    let lease = crate::gatherer::select::tests::test_nav_lease_for_collision(&collision);
+    let mut run = m4_run();
+    let mut snapshot = GameSnapshot::new();
+    seed_m4_scene(&mut snapshot, M4_HERE, true, live_attack_animation(&run));
+    let mut ledger = None;
+
+    assert!(
+        with_step_context_collision(&snapshot, lease.collision(), &mut ledger, 12, |cx| {
+            run.on_combat_report(m4_report(&data), cx)
+        })
+        .is_pending()
+    );
+    let first = last_walk(&ledger);
+    assert_reachable_escape(&collision, &lease, first.target);
+    assert!(
+        first.food_guard,
+        "low Prayer: the escape runs under the food guard"
+    );
+
+    post_walk_end(
+        &mut ledger,
+        13,
+        WalkEnd::Failed,
+        Some("route fixture failure"),
+    );
+    assert!(
+        with_step_context_collision(&snapshot, lease.collision(), &mut ledger, 13, |cx| {
+            run.poll(cx)
+        })
+        .is_pending()
+    );
+    assert!(
+        matches!(&run.phase, Phase::WalkingOutAfterAbort),
+        "a failed first walk starts another guarded escape, not a hold that eats in place"
+    );
+    let second = last_walk(&ledger);
+    assert_ne!(second.target, first.target, "the same goal cannot succeed");
+    assert_reachable_escape(&collision, &lease, second.target);
+    assert!(
+        second.food_guard,
+        "food protection continues on the retry while food remains"
+    );
+}
+
+#[test]
+fn m4_safe_escape_completes_with_the_unattackable_receipt_and_selects_the_caller_walk() {
+    let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let collision = m4_collision();
+    let lease = crate::gatherer::select::tests::test_nav_lease_for_collision(&collision);
+    let mut run = m4_run();
+    let attack_animation = live_attack_animation(&run);
+    let mut snapshot = GameSnapshot::new();
+    seed_m4_scene(&mut snapshot, M4_HERE, true, attack_animation);
+    let mut ledger = None;
+    assert!(
+        with_step_context_collision(&snapshot, lease.collision(), &mut ledger, 12, |cx| {
+            run.on_combat_report(m4_report(&data), cx)
+        })
+        .is_pending()
+    );
+    let escape = last_walk(&ledger).target;
+
+    // The walk arrives and no attacker remains in view.
+    post_walk_end(&mut ledger, 13, WalkEnd::Arrived, None);
+    let mut safe = GameSnapshot::new();
+    seed_m4_scene(&mut safe, escape, false, attack_animation);
+    let result =
+        with_step_context_collision(&safe, lease.collision(), &mut ledger, 13, |cx| run.poll(cx));
+    let Poll::Ready(Ok(outcome)) = result else {
+        panic!(
+            "a proved safe escape must complete the M4 step, got {}",
+            describe_poll(&result)
+        );
+    };
+    let receipt = outcome
+        .receipt
+        .as_ref()
+        .and_then(|receipt| receipt.as_any().downcast_ref::<CombatReceipt>())
+        .expect("the completed step retains its Combat receipt");
+    assert_eq!(
+        receipt.report.end,
+        CombatEnd::Aborted(AbortReason::Unattackable)
+    );
+    assert_caller_walk_out_selected(&outcome, escape);
+}
+
+#[test]
+fn m4_escape_that_still_sees_the_attacker_holds_then_completes_when_it_is_gone() {
+    let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let collision = m4_collision();
+    let lease = crate::gatherer::select::tests::test_nav_lease_for_collision(&collision);
+    let mut run = m4_run();
+    let attack_animation = live_attack_animation(&run);
+    let mut snapshot = GameSnapshot::new();
+    seed_m4_scene(&mut snapshot, M4_HERE, true, attack_animation);
+    let mut ledger = None;
+    assert!(
+        with_step_context_collision(&snapshot, lease.collision(), &mut ledger, 12, |cx| {
+            run.on_combat_report(m4_report(&data), cx)
+        })
+        .is_pending()
+    );
+    // The walk arrives while the tree's last attack animation is still live.
+    post_walk_end(&mut ledger, 13, WalkEnd::Arrived, None);
+    assert!(with_step_context(&snapshot, &mut ledger, 13, |cx| run.poll(cx)).is_pending());
+    assert!(matches!(&run.phase, Phase::HoldingAfterAbort));
+
+    let mut safe = GameSnapshot::new();
+    seed_m4_scene(&mut safe, M4_HERE, false, attack_animation);
+    let mut finished = None;
+    for tick in 14..=20 {
+        if let Poll::Ready(result) = with_step_context(&safe, &mut ledger, tick, |cx| run.poll(cx))
+        {
+            finished = Some(result);
+            break;
+        }
+    }
+    let Some(Ok(outcome)) = finished else {
+        panic!(
+            "the threat-free hold must complete the M4 step, got {}",
+            describe_poll(&finished.map_or(Poll::Pending, Poll::Ready))
+        );
+    };
+    assert!(outcome.receipt.is_some_and(|receipt| {
+        receipt
+            .as_any()
+            .downcast_ref::<CombatReceipt>()
+            .is_some_and(|receipt| {
+                receipt.report.end == CombatEnd::Aborted(AbortReason::Unattackable)
+            })
+    }));
+}
+
+fn describe_poll(poll: &Poll<Result<StepOutcome, ActionError>>) -> String {
+    match poll {
+        Poll::Pending => "still pending".to_owned(),
+        Poll::Ready(Ok(_)) => "a completed step".to_owned(),
+        Poll::Ready(Err(error)) => format!("the error {error:?}"),
+    }
+}
+
+#[test]
+fn escape_planner_offers_each_reachable_direction_once_and_never_the_thicket() {
+    let collision = m4_collision();
+    let lease = crate::gatherer::select::tests::test_nav_lease_for_collision(&collision);
+    assert!(
+        !escape::has_legal_reach_goal(Some(lease.collision()), None, M4_THICKET),
+        "the fixture reproduces the old destination: no standable Reach goal"
+    );
+    let geometry = escape::EscapeGeometry {
+        here: M4_HERE,
+        threat: M4_TREE,
+        stand: None,
+        chase_range: 14,
+    };
+    let mut tried = Vec::new();
+    while let Some(destination) =
+        escape::next_destination(&geometry, Some(lease.collision()), &tried)
+    {
+        assert!(!tried.contains(&destination), "no destination repeats");
+        if tried.len() < escape::ESCAPE_PASS_ATTEMPTS {
+            assert_reachable_escape(&collision, &lease, destination);
+        } else {
+            // Past the envelope tiles, only tiles farther than the player's
+            // own distance from the attacker remain.
+            assert_ne!(destination, M4_THICKET);
+            assert_eq!(
+                nav_planner::paint::flood_component_id(&collision, &[M4_HERE], destination),
+                Some(0)
+            );
+            assert!(tile_distance(destination, M4_TREE) > tile_distance(M4_HERE, M4_TREE));
+        }
+        tried.push(destination);
+        assert!(tried.len() < 1_000, "the planner must run out of tiles");
+    }
+    assert!(tried.len() >= escape::ESCAPE_PASS_ATTEMPTS);
+    let directions = tried[..escape::ESCAPE_PASS_ATTEMPTS]
+        .iter()
+        .map(|tile| ((tile.x - M4_HERE.x).signum(), (tile.z - M4_HERE.z).signum()))
+        .collect::<std::collections::HashSet<_>>();
+    assert_eq!(
+        directions.len(),
+        escape::ESCAPE_PASS_ATTEMPTS,
+        "a pass tries each of the eight engine directions once"
+    );
+}
+
+#[test]
+fn escape_planner_takes_the_authored_stand_only_with_a_legal_reach_goal() {
+    let collision = m4_collision();
+    let lease = crate::gatherer::select::tests::test_nav_lease_for_collision(&collision);
+    let open_stand = api::WorldTile {
+        x: 3109,
+        z: 3329,
+        ..M4_HERE
+    };
+    let geometry = |stand| escape::EscapeGeometry {
+        here: M4_HERE,
+        threat: M4_TREE,
+        stand: Some(stand),
+        chase_range: 14,
+    };
+    assert_eq!(
+        escape::next_destination(&geometry(open_stand), Some(lease.collision()), &[]),
+        Some(open_stand)
+    );
+    let next = escape::next_destination(
+        &geometry(open_stand),
+        Some(lease.collision()),
+        &[open_stand],
+    );
+    assert_ne!(
+        next,
+        Some(open_stand),
+        "a tried stand is not requested again"
+    );
+    assert!(next.is_some());
+    let thicket = escape::next_destination(&geometry(M4_THICKET), Some(lease.collision()), &[]);
+    assert_ne!(
+        thicket,
+        Some(M4_THICKET),
+        "a stand with no legal goal is skipped"
+    );
+    assert!(thicket.is_some());
+}
+
+#[test]
+fn escape_planner_without_a_nav_pack_keeps_the_in_bounds_geometric_tile() {
+    let geometry = escape::EscapeGeometry {
+        here: M4_HERE,
+        threat: M4_TREE,
+        stand: None,
+        chase_range: 14,
+    };
+    assert_eq!(
+        escape::next_destination(&geometry, None, &[]),
+        Some(api::WorldTile {
+            x: M4_HERE.x + 17,
+            ..M4_HERE
+        })
+    );
+}
+
+#[test]
+fn escape_planner_on_the_reference_pack_avoids_the_dead_tree_thicket() {
+    let Some(_pack) =
+        crate::ctx::test_support::local_asset_path("NAV_PACK", "", "real 289 nav pack")
+    else {
+        return;
+    };
+    let world = crate::gatherer::select::test_real_nav_world();
+    let lease = crate::gatherer::select::tests::test_real_nav_lease();
+    assert!(
+        !escape::has_legal_reach_goal(Some(lease.collision()), None, M4_THICKET),
+        "DIAG-M4-1027: no standable goal satisfies Reach arrival within radius 1"
+    );
+    let reachable = nav_planner::paint::flood_components(&world.collision, &[M4_HERE]);
+    let geometry = escape::EscapeGeometry {
+        here: M4_HERE,
+        threat: M4_TREE,
+        stand: None,
+        chase_range: 14,
+    };
+    let mut tried = Vec::new();
+    for attempt in 0..escape::ESCAPE_PASS_ATTEMPTS {
+        let destination = escape::next_destination(&geometry, Some(lease.collision()), &tried)
+            .expect("the reference pack leaves reachable escapes around the tree");
+        assert_ne!(destination, M4_THICKET);
+        assert!(reachable[0].contains(&destination), "{destination:?}");
+        assert!(lease.collision().standable(destination));
+        // The first choice lies outside the chase envelope; later ones need
+        // only be farther from the tree than the player is.
+        let minimum = if attempt == 0 {
+            15
+        } else {
+            tile_distance(M4_HERE, M4_TREE)
+        };
+        assert!(tile_distance(destination, M4_TREE) > minimum);
+        tried.push(destination);
+    }
+}
+
+/// The Path's `walk-out-after-unattackable` step is the next step selected
+/// from the completed step's outcome.
+fn assert_caller_walk_out_selected(outcome: &StepOutcome, here: api::WorldTile) {
+    let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let quests = QuestCatalog::from_identity(data.quest_identity()).unwrap();
+    let path = compile_uncached_for_test(
+        &serde_json::from_slice(include_bytes!(
+            "../../../paths/289/fixtures/combat_unattackable.json"
+        ))
+        .unwrap(),
+        &data,
+        &quests,
+    )
+    .unwrap();
+    let mut snapshot = GameSnapshot::new();
+    snapshot.seed_ingame(2);
+    snapshot.seed_players(Vec::new());
+    super::super::tests::seed_dialogue_combat(&mut snapshot, false);
+    let mut local = snapshot.local_player().unwrap().clone();
+    local.player.actor.tile = here;
+    local.player.network = here;
+    snapshot.seed_local_player(local);
+    let mut ledger = None;
+    super::super::tests::with_tick(&snapshot, &mut ledger, 40, |tick| {
+        let context = PredicateContext {
+            cx: &tick.cx,
+            pairs: tick.pairs,
+            quests: &quests,
+            progress: &[],
+            required_after: tick.cx.evidence(),
+            chat_since: 0,
+            outcome: Some(outcome),
+        };
+        let crate::quester::select::SelectionDecision::Selected(selected) =
+            crate::quester::select::select(&path, 0, 0, &context)
+        else {
+            panic!("the completed step must select the Path walk-out step");
+        };
+        assert_eq!(
+            selected.step.id.0.as_ref(),
+            "walk-out-after-unattackable",
+            "the caller-owned walk runs after the safe escape"
+        );
+    });
 }
 
 #[test]
@@ -1934,35 +2515,7 @@ fn failed_abort_walk_holds_protection_at_high_hp_while_attacker_is_live() {
         )
     })
     .is_pending());
-    let request_id = ledger
-        .as_ref()
-        .unwrap()
-        .outbox
-        .last()
-        .unwrap()
-        .request_id
-        .get();
-    ledger.as_mut().unwrap().outbox.clear();
-    ledger.as_mut().unwrap().walk = Some(WalkReceipt {
-        goal: None,
-        request_id,
-        evidence: EvidenceStamp {
-            run: RunKey {
-                slot: 1,
-                run: 1,
-                session: 1,
-            },
-            tick: 13,
-            sequence: 13,
-        },
-        end: WalkEnd::Failed,
-        blocked: None,
-        detail: Some(Arc::from("route fixture failure")),
-        refusal: None,
-        assessment: None,
-        escape: None,
-    });
-    assert!(with_step_context(&snapshot, &mut ledger, 13, |cx| run.poll(cx)).is_pending());
+    fail_escape_walks_until_hold(&mut run, &snapshot, &mut ledger, 13);
 
     let (protect_varp, protect_button_com) = run
         .tables
@@ -2106,35 +2659,7 @@ fn failed_abort_walk_escapes_once_when_food_is_exhausted() {
         )
     })
     .is_pending());
-    let failed_walk = ledger
-        .as_ref()
-        .unwrap()
-        .outbox
-        .last()
-        .unwrap()
-        .request_id
-        .get();
-    ledger.as_mut().unwrap().outbox.clear();
-    ledger.as_mut().unwrap().walk = Some(WalkReceipt {
-        goal: None,
-        request_id: failed_walk,
-        evidence: EvidenceStamp {
-            run: RunKey {
-                slot: 1,
-                run: 1,
-                session: 1,
-            },
-            tick: 13,
-            sequence: 13,
-        },
-        end: WalkEnd::Failed,
-        blocked: None,
-        detail: Some(Arc::from("route fixture failure")),
-        refusal: None,
-        assessment: None,
-        escape: None,
-    });
-    assert!(with_step_context(&snapshot, &mut ledger, 13, |cx| run.poll(cx)).is_pending());
+    fail_escape_walks_until_hold(&mut run, &snapshot, &mut ledger, 13);
     assert!(with_step_context(&snapshot, &mut ledger, 14, |cx| run.poll(cx)).is_pending());
     assert!(with_step_context(&snapshot, &mut ledger, 15, |cx| run.poll(cx)).is_pending());
 
@@ -2179,6 +2704,106 @@ fn failed_abort_walk_escapes_once_when_food_is_exhausted() {
         with_step_context(&snapshot, &mut ledger, 16, |cx| run.poll(cx)),
         Poll::Ready(Err(ActionError::Blocked(reason))) if reason.contains("escape")
     ));
+    assert!(ledger.as_ref().unwrap().outbox.is_empty());
+}
+
+/// Every escape walk fails. The pass tries each destination once, the hold
+/// runs until the food is gone, a fresh pass tries again, and the step then
+/// ends with the last walk failure instead of retrying without end.
+#[test]
+fn failed_escape_recovery_is_bounded_and_preserves_the_last_failure() {
+    let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let warlord = data.npc_by_config("khazard_warlord").unwrap();
+    let here = api::WorldTile {
+        x: 3000,
+        z: 3000,
+        level: 0,
+    };
+    let mut run = combat_test_run(
+        imp_target(&data),
+        None,
+        Some(Arc::new(NeverStop)),
+        Vec::new(),
+    );
+    let mut attacker = aborting_npc(
+        7,
+        warlord.id,
+        api::WorldTile {
+            x: here.x + 1,
+            ..here
+        },
+    );
+    attacker.animation = live_attack_animation(&run);
+    let mut snapshot = GameSnapshot::new();
+    seed_abort_scene(&mut snapshot, here, 1, vec![attacker], None, None);
+    let mut ledger = None;
+    assert!(with_step_context(&snapshot, &mut ledger, 12, |cx| {
+        run.on_combat_report(
+            report(CombatEnd::Aborted(AbortReason::PrepFailed(
+                crate::combat::PrepItem::Ammo,
+            ))),
+            cx,
+        )
+    })
+    .is_pending());
+
+    let mut walks = Vec::new();
+    let mut tick = 13;
+    let result = loop {
+        let walking = matches!(
+            ledger
+                .as_ref()
+                .unwrap()
+                .outbox
+                .last()
+                .map(|action| &action.effect),
+            Some(crate::native::HostEffect::Walk(_))
+        );
+        if walking {
+            walks.push(last_walk(&ledger));
+            let detail = format!("route fixture failure {}", walks.len());
+            post_walk_end(&mut ledger, tick, WalkEnd::Failed, Some(&detail));
+        } else {
+            // The guarded hold runs on until the food is gone.
+            tick += 1;
+        }
+        if let Poll::Ready(result) =
+            with_step_context(&snapshot, &mut ledger, tick, |cx| run.poll(cx))
+        {
+            break result;
+        }
+        assert!(
+            walks.len() <= 2 * escape::ESCAPE_PASS_ATTEMPTS && tick < 100,
+            "the recovery must end: {} walks by tick {tick}",
+            walks.len()
+        );
+    };
+
+    let pass = escape::ESCAPE_PASS_ATTEMPTS;
+    assert_eq!(
+        walks.len(),
+        2 * pass,
+        "one guarded pass and one exhausted pass"
+    );
+    for (index, walk) in walks.iter().enumerate() {
+        assert_eq!(
+            walk.food_guard,
+            index < pass,
+            "walk {index}: only the first pass runs under the food guard"
+        );
+    }
+    for chunk in walks.chunks(pass) {
+        let targets = chunk
+            .iter()
+            .map(|walk| walk.target)
+            .collect::<std::collections::HashSet<_>>();
+        assert_eq!(targets.len(), pass, "a pass never repeats a destination");
+    }
+    let last = format!("route fixture failure {}", 2 * pass);
+    assert!(
+        matches!(&result, Err(ActionError::Blocked(reason)) if reason.as_ref() == last),
+        "the step must end with the last walk failure"
+    );
     assert!(ledger.as_ref().unwrap().outbox.is_empty());
 }
 
@@ -2228,35 +2853,7 @@ fn engaged_abort_hold_after_failed_walk(
         run.on_combat_report(aborted, cx)
     })
     .is_pending());
-    let failed_walk = ledger
-        .as_ref()
-        .unwrap()
-        .outbox
-        .last()
-        .unwrap()
-        .request_id
-        .get();
-    ledger.as_mut().unwrap().outbox.clear();
-    ledger.as_mut().unwrap().walk = Some(WalkReceipt {
-        goal: None,
-        request_id: failed_walk,
-        evidence: EvidenceStamp {
-            run: RunKey {
-                slot: 1,
-                run: 1,
-                session: 1,
-            },
-            tick: 13,
-            sequence: 13,
-        },
-        end: WalkEnd::Failed,
-        blocked: None,
-        detail: Some(Arc::from("route fixture failure")),
-        refusal: None,
-        assessment: None,
-        escape: None,
-    });
-    assert!(with_step_context(snapshot, &mut ledger, 13, |cx| run.poll(cx)).is_pending());
+    fail_escape_walks_until_hold(&mut run, snapshot, &mut ledger, 13);
     seed_abort_scene(snapshot, here, 1, after_walk, None, None);
     (run, ledger, here)
 }
