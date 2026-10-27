@@ -61,9 +61,9 @@
     "http_port": null,
     "ca_pem": null,
     "cache_dir": null,
-    "engine_dir": "/srv/dev/experiments/lostcity-289/engine",
-    "nav_pack": "/srv/dev/scratch/274bot-evidence/NAV-SHANTAY-EDGE/nav/289/bake-r2-a.navpack",
-    "nav_flags": "/srv/dev/scratch/274bot-evidence/NAV-SHANTAY-EDGE/nav/289/bake-r2-a.navflags"
+    "engine_dir": "/Users/acfrazier/experiments/lostcity-289/engine",
+    "nav_pack": "/Volumes/dev-scratch/274bot-evidence/NAV-GATED-ENTRANCES/reference-v17/274bot-289-v17.navpack",
+    "nav_flags": "/Volumes/dev-scratch/274bot-evidence/NAV-GATED-ENTRANCES/reference-v17/274bot-289-v17.navflags"
   },
   "proxy": {
     "listen_host": "127.0.0.1",
