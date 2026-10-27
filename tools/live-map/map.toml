@@ -567,3 +567,13 @@ globs = ["crates/host-play/examples/map_footprint.rs"]
 cells = [
   "host.map-footprint-catalogue|BOT_CPU=1 BOT_NAV_BUILD=skip BOT_CACHE_DIR=${BOT_CACHE_DIR:?} ${ISOHOME:?} nice -n 10 cargo run --release -p host-play --example map_footprint -- --profile local-289 --revision 289 --host 127.0.0.1 --port 44594 --asset-host 127.0.0.1 --http-port 1080 --engine ${ENGINE_A_DIR:?} --nav-pack ${NAV_PACK_289:?} --nav-flags ${NAV_FLAGS_289:?} --cache-root ${LIVE_EVIDENCE_DIR:?}/map-cache --catalogue --cycles 1|--locked -p host-play --test runtime_bind",
 ]
+
+# The first two fixtures use the existing Engine B forward at 45594/2080.
+# Each invocation needs its own HOME, account prefix and evidence directory.
+[[cover]]
+globs = ["crates/host-play/src/bank_npc_live.rs"]
+cells = [
+  "host.bank-npc-street-fetch|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip BOT_GAME_PORT=45594 BOT_HTTP_PORT=2080 BOT_ENGINE_DIR=${ENGINE_A_DIR:?} BOT_CACHE_DIR=${BOT_CACHE_DIR:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored --exact bank_npc_live::live_bankbudget_fetch_from_the_street --nocapture --test-threads=1",
+  "host.bank-npc-mage-teller|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip GATHERER_GAME_PORT=45594 GATHERER_HTTP_PORT=2080 GATHERER_NAV_PACK=${NAV_PACK_289:?} GATHERER_ENGINE_DIR=${ENGINE_A_DIR:?} GATHERER_CATALOG_ROOT=${CATALOG_ROOT:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored --exact bank_npc_live::live_mage_teller_native_real_play_receipt --nocapture --test-threads=1",
+  "host.bank-npc-ten-guest|LIVE=1 BOT_LIVE_NAME_PREFIX=${BOT_LIVE_NAME_PREFIX:?} BOT_CPU=1 BOT_NAV_BUILD=skip GATHERER_GAME_PORT=44594 GATHERER_HTTP_PORT=1080 GATHERER_NAV_PACK=${NAV_PACK_289:?} GATHERER_ENGINE_DIR=${ENGINE_A_DIR:?} GATHERER_CATALOG_ROOT=${CATALOG_ROOT:?} LIVE_EVIDENCE_DIR=${LIVE_EVIDENCE_DIR:?} ${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --features live-harness,test-support,live-probe --lib -- --ignored --exact bank_npc_live::live_ten_guest_shared_bank_pick_full_retry_burst --nocapture --test-threads=1",
+]
