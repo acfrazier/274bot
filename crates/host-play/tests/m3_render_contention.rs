@@ -32,6 +32,9 @@
 //! `M3_HTTP_PORT` (1080).
 #![cfg(feature = "memory-profile")]
 
+#[path = "support/network_composition.rs"]
+mod network_composition;
+
 use std::collections::HashMap;
 use std::io::Write as _;
 use std::path::PathBuf;
@@ -516,6 +519,8 @@ fn live_m3_render_contention() {
         nav_pack: Some(required("NAV_PACK").into()),
         ..ProfileOptions::default()
     };
+    let _network_driver = network_composition::ensure_started();
+
     let bound = options
         .resolve(None)
         .expect("resolve")

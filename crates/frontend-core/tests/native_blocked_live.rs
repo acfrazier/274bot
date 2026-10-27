@@ -90,6 +90,8 @@ fn gatherer_blocked_stops_with_shared_status() {
     let root = required_path("BLOCKED_EVIDENCE_DIR");
     std::fs::create_dir_all(&root).unwrap();
     global();
+    let _composition =
+        host_play::PlayComposition::start().expect("start blocked fixture composition");
     let profile = ProfileOptions {
         profile: Some("local-289".into()),
         revision: Some("289".into()),

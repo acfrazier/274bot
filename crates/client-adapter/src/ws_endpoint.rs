@@ -729,9 +729,8 @@ impl WssEndpoint {
         if may_read {
             let result = {
                 #[cfg(feature = "test-support")]
-                let _allocation_scope = self.allocation_scope(
-                    soak_observer::AllocationScopeKind::WssMessageStaging,
-                );
+                let _allocation_scope =
+                    self.allocation_scope(soak_observer::AllocationScopeKind::WssMessageStaging);
                 self.websocket.as_mut().expect("connected WSS").read()
             };
             match result {
@@ -855,9 +854,8 @@ impl WssEndpoint {
                 );
                 let result = {
                     #[cfg(feature = "test-support")]
-                    let _allocation_scope = self.allocation_scope(
-                        soak_observer::AllocationScopeKind::WssMessageStaging,
-                    );
+                    let _allocation_scope = self
+                        .allocation_scope(soak_observer::AllocationScopeKind::WssMessageStaging);
                     self.websocket
                         .as_mut()
                         .expect("connected WSS")
@@ -1020,9 +1018,8 @@ impl WssEndpoint {
         if !self.graceful_ws_started {
             let close_result = {
                 #[cfg(feature = "test-support")]
-                let _allocation_scope = self.allocation_scope(
-                    soak_observer::AllocationScopeKind::WssMessageStaging,
-                );
+                let _allocation_scope =
+                    self.allocation_scope(soak_observer::AllocationScopeKind::WssMessageStaging);
                 self.websocket.as_mut().expect("connected WSS").close(None)
             };
             match close_result {
@@ -1052,9 +1049,8 @@ impl WssEndpoint {
         }
         let flush_result = {
             #[cfg(feature = "test-support")]
-            let _allocation_scope = self.allocation_scope(
-                soak_observer::AllocationScopeKind::WssMessageStaging,
-            );
+            let _allocation_scope =
+                self.allocation_scope(soak_observer::AllocationScopeKind::WssMessageStaging);
             self.websocket.as_mut().expect("connected WSS").flush()
         };
         match flush_result {
@@ -1191,9 +1187,8 @@ impl WssEndpoint {
         let before_wire = self.with_tls(|tls| tls.socket.budget().read_bytes());
         let result = {
             #[cfg(feature = "test-support")]
-            let _allocation_scope = self.allocation_scope(
-                soak_observer::AllocationScopeKind::WssMessageStaging,
-            );
+            let _allocation_scope =
+                self.allocation_scope(soak_observer::AllocationScopeKind::WssMessageStaging);
             self.websocket.as_mut().expect("connected WSS").read()
         };
         if matches!(&result, Ok(Message::Ping(_)) | Ok(Message::Close(_))) {
@@ -1420,9 +1415,8 @@ impl WssEndpoint {
                         let tail_dirty = !tail.is_empty();
                         let websocket = {
                             #[cfg(feature = "test-support")]
-                            let _allocation_scope = self.allocation_scope(
-                                soak_observer::AllocationScopeKind::WssEndpoint,
-                            );
+                            let _allocation_scope = self
+                                .allocation_scope(soak_observer::AllocationScopeKind::WssEndpoint);
                             WebSocket::from_partially_read(
                                 stream,
                                 tail,
@@ -1617,9 +1611,8 @@ impl WssEndpoint {
         if self.with_tls(|tls| tls.pending_output()) < TLS_OUTPUT_PAUSE {
             let flush_result = {
                 #[cfg(feature = "test-support")]
-                let _allocation_scope = self.allocation_scope(
-                    soak_observer::AllocationScopeKind::WssMessageStaging,
-                );
+                let _allocation_scope =
+                    self.allocation_scope(soak_observer::AllocationScopeKind::WssMessageStaging);
                 self.websocket.as_mut().expect("connected WSS").flush()
             };
             match flush_result {

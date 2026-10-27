@@ -217,6 +217,8 @@ fn live_gatherer_disabled_events_strange_boxes_engine_a() {
     let evidence_dir = root.join(format!("gatherer-held-{account}-{epoch}"));
     let scratch = evidence_dir.join("scratch");
     std::fs::create_dir_all(&scratch).unwrap();
+    let _composition =
+        crate::PlayComposition::start().expect("start gather-held fixture network composition");
     let profile = live_profile(&scratch)
         .unwrap()
         .resolve(None)

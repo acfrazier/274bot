@@ -341,6 +341,8 @@ fn run_cell(variant: Variant) {
     ));
     let scratch = evidence_dir.join("scratch");
     std::fs::create_dir_all(&scratch).expect("create evidence scratch");
+    let _composition =
+        crate::PlayComposition::start().expect("start gather-bait fixture network composition");
     let options = live_profile(&scratch).expect("live profile options");
     let profile = options
         .resolve(None)

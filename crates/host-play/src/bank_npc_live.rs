@@ -928,6 +928,8 @@ pub fn live_bankbudget_fetch_from_the_street() {
         full.banks().len(),
         booths.banks().len()
     );
+    let _composition =
+        crate::PlayComposition::start().expect("start bank-budget fixture network composition");
     let profile = options
         .resolve(None)
         .expect("live profile resolve")
@@ -1974,6 +1976,8 @@ pub fn live_mage_teller_native_real_play_receipt() {
         "live_mage_teller_native_real_play_receipt requires LIVE=1"
     );
     let home = install_throwaway_home();
+    let _composition =
+        crate::PlayComposition::start().expect("start Mage Arena network composition");
     let (_profile, template, selected, facts) =
         live_teller_profile(&home.path).expect("load selected local 289 teller facts");
     let account = super::mint_live_names(1)
@@ -3460,6 +3464,8 @@ pub fn live_ten_guest_shared_bank_pick_full_retry_burst() {
     );
     std::fs::create_dir_all(&evidence_root).expect("create ten-guest evidence root");
     let home = install_throwaway_home();
+    let _composition =
+        crate::PlayComposition::start().expect("start bank-pick network composition");
     let (_profile, template, selected, facts) =
         live_teller_profile(&home.path).expect("load selected local 289 bank-pick facts");
     let world = template

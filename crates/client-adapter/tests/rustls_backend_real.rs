@@ -5,11 +5,14 @@
 //! production platform verifier with only test CA roots added; they never
 //! install a permissive verifier or alter the machine trust store.
 
+#[path = "support/g2d1_fairness.rs"]
+mod g2d1_fairness;
+
 use std::io::{self, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, SyncSender};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
@@ -161,6 +164,7 @@ impl VerifierAudit {
 struct CountingPlatformVerifier {
     delegate: Verifier,
     audit: Arc<VerifierAudit>,
+    hold: Option<Arc<PlatformVerifierHold>>,
 }
 
 impl ServerCertVerifier for CountingPlatformVerifier {
@@ -173,6 +177,17 @@ impl ServerCertVerifier for CountingPlatformVerifier {
         now: rustls::pki_types::UnixTime,
     ) -> Result<ServerCertVerified, RustlsError> {
         self.audit.record_call();
+        if let Some(hold) = &self.hold {
+            hold.entered
+                .send(())
+                .expect("report platform verifier entry");
+            let released = hold.released.lock().expect("lock verifier release");
+            let (released, timeout) = hold
+                .changed
+                .wait_timeout_while(released, Duration::from_secs(15), |released| !*released)
+                .expect("wait for platform verifier release");
+            assert!(*released && !timeout.timed_out(), "verifier hold timed out");
+        }
         self.delegate
             .verify_server_cert(end_entity, intermediates, server_name, ocsp_response, now)
     }
@@ -210,6 +225,7 @@ fn config_with_counting_platform_verifier(
     let counting_verifier = Arc::new(CountingPlatformVerifier {
         delegate,
         audit: Arc::clone(&audit),
+        hold: None,
     });
     let verifier: Arc<dyn ServerCertVerifier> = counting_verifier;
     let config = build_test_client_config_with_verifier(verifier)
@@ -265,6 +281,10 @@ enum ServerCommand {
         expected: Vec<u8>,
         reply: SyncSender<Result<(), String>>,
     },
+    Ping {
+        payload: Vec<u8>,
+        reply: SyncSender<Result<(), String>>,
+    },
     Stop,
 }
 
@@ -277,12 +297,17 @@ struct LocalServer {
 
 impl LocalServer {
     fn spawn(config: Arc<ServerConfig>) -> Self {
+        Self::spawn_with_timeout(config, IO_TIMEOUT)
+    }
+
+    fn spawn_with_timeout(config: Arc<ServerConfig>, timeout: Duration) -> Self {
         let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind local TLS server");
         let address = listener.local_addr().expect("read local TLS address");
         let (command_tx, command_rx) = mpsc::channel();
         let (handshake_tx, handshake_rx) = mpsc::sync_channel(1);
-        let server =
-            thread::spawn(move || serve_local_wss(listener, config, command_rx, handshake_tx));
+        let server = thread::spawn(move || {
+            serve_local_wss(listener, config, command_rx, handshake_tx, timeout)
+        });
         Self {
             address,
             commands: command_tx,
@@ -322,10 +347,11 @@ fn serve_local_wss(
     config: Arc<ServerConfig>,
     commands: Receiver<ServerCommand>,
     handshake_tx: SyncSender<ServerHandshake>,
+    timeout: Duration,
 ) -> io::Result<()> {
     let (mut socket, _) = listener.accept()?;
-    socket.set_read_timeout(Some(IO_TIMEOUT))?;
-    socket.set_write_timeout(Some(IO_TIMEOUT))?;
+    socket.set_read_timeout(Some(timeout))?;
+    socket.set_write_timeout(Some(timeout))?;
     socket.set_nodelay(true)?;
 
     let mut connection = ServerConnection::new(config)
@@ -398,6 +424,17 @@ fn serve_local_wss(
                     Ok(Message::Binary(actual)) if actual == expected => Ok(()),
                     Ok(message) => Err(format!("unexpected client WSS message: {message:?}")),
                     Err(error) => Err(format!("read client WSS message: {error}")),
+                };
+                let _ = reply.send(result);
+            }
+            ServerCommand::Ping { payload, reply } => {
+                websocket
+                    .send(Message::Ping(payload.clone()))
+                    .map_err(ws_io_error)?;
+                let result = match websocket.read() {
+                    Ok(Message::Pong(actual)) if actual == payload => Ok(()),
+                    Ok(message) => Err(format!("unexpected Ping response: {message:?}")),
+                    Err(error) => Err(format!("read Pong response: {error}")),
                 };
                 let _ = reply.send(result);
             }
@@ -941,4 +978,175 @@ fn g2_m1_m3_m4_m7_real_worker_and_wss_endpoint_negotiate_and_exchange_tls_record
     verifier_audit.assert_game_worker_calls(2);
     tls13_server.stop();
     drop(tls13_endpoint);
+}
+
+#[derive(Debug)]
+struct PlatformVerifierHold {
+    entered: Sender<()>,
+    released: Mutex<bool>,
+    changed: Condvar,
+}
+
+impl PlatformVerifierHold {
+    fn release(&self) {
+        *self.released.lock().expect("lock verifier release") = true;
+        self.changed.notify_all();
+    }
+}
+
+struct ReleasePlatformVerifier(Arc<PlatformVerifierHold>);
+
+impl Drop for ReleasePlatformVerifier {
+    fn drop(&mut self) {
+        self.0.release();
+    }
+}
+
+#[test]
+fn g7_actual_platform_verifier_https_hold_obeys_step_and_quiet_deadlines() {
+    use client::client::client::AssetFetchError;
+    use client_adapter::http::start_fetch;
+    use client_adapter::https_handshake::HttpsLane;
+
+    for expires in [false, true] {
+        let pki = LocalPki::new();
+        let server_config = server_config(
+            pki.valid_identity,
+            ProtocolVersion::TLSv1_3,
+            CipherSuite::TLS13_AES_128_GCM_SHA256,
+        );
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind HTTPS fixture");
+        let address = listener.local_addr().unwrap();
+        let server = thread::spawn(move || {
+            let (socket, _) = listener.accept().expect("accept HTTPS fixture");
+            socket
+                .set_read_timeout(Some(Duration::from_secs(15)))
+                .unwrap();
+            socket
+                .set_write_timeout(Some(Duration::from_secs(15)))
+                .unwrap();
+            let tls = ServerConnection::new(server_config).unwrap();
+            let mut stream = rustls::StreamOwned::new(tls, socket);
+            let request = read_http_head(&mut stream);
+            if expires {
+                let error = request.expect_err("expired fetch must not send an HTTP request");
+                assert!(
+                    matches!(
+                        error.kind(),
+                        io::ErrorKind::UnexpectedEof
+                            | io::ErrorKind::ConnectionReset
+                            | io::ErrorKind::ConnectionAborted
+                            | io::ErrorKind::BrokenPipe
+                    ),
+                    "late handshake must close physically, not time out: {error}"
+                );
+            } else {
+                assert_eq!(
+                    request.unwrap(),
+                    b"GET /held-verifier HTTP/1.0\r\nHost: localhost\r\n\r\n"
+                );
+                stream
+                    .write_all(b"HTTP/1.0 200 OK\r\nContent-Length: 4\r\n\r\nheld")
+                    .unwrap();
+                stream.flush().unwrap();
+                stream.conn.send_close_notify();
+                stream.flush().unwrap();
+            }
+        });
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let hold = Arc::new(PlatformVerifierHold {
+            entered: entered_tx,
+            released: Mutex::new(false),
+            changed: Condvar::new(),
+        });
+        let release_guard = ReleasePlatformVerifier(Arc::clone(&hold));
+        let audit = Arc::new(VerifierAudit::default());
+        let delegate = Verifier::new_with_extra_roots(
+            [pki.trusted_root],
+            Arc::new(rustls::crypto::ring::default_provider()),
+        )
+        .expect("construct actual platform verifier");
+        let config = build_test_client_config_with_verifier(Arc::new(CountingPlatformVerifier {
+            delegate,
+            audit: Arc::clone(&audit),
+            hold: Some(Arc::clone(&hold)),
+        }))
+        .unwrap();
+        let weak_config = Arc::downgrade(&config);
+        let lane =
+            HttpsLane::start(Some(config), Arc::new(ReactorHealth::new(Instant::now()))).unwrap();
+        let started = Instant::now();
+        let mut fetch = start_fetch(
+            client::Transport::Wss,
+            "localhost",
+            &[address],
+            "/held-verifier",
+            &lane,
+        )
+        .unwrap();
+        entered_rx
+            .recv_timeout(Duration::from_secs(4))
+            .expect("actual HTTPS platform-verifier entry");
+        assert_eq!(audit.calls.load(Ordering::SeqCst), 1);
+        assert_eq!(*audit.worker_names.lock().unwrap(), ["net-https-handshake"]);
+        let mut pending_steps = 0;
+        loop {
+            let until = Instant::now() + Duration::from_millis(8);
+            let result = fetch.poll(until);
+            let returned = Instant::now();
+            assert!(
+                returned <= until + Duration::from_millis(25),
+                "held OS verifier blocked the stepped caller"
+            );
+            match result {
+                Ok(None) => pending_steps += 1,
+                Err(AssetFetchError::Connection) if expires => {
+                    assert!(started.elapsed() >= Duration::from_secs(8));
+                    assert!(started.elapsed() < Duration::from_secs(9));
+                    break;
+                }
+                other => panic!("unexpected held-verifier result: {other:?}"),
+            }
+            if !expires && pending_steps >= 20 {
+                break;
+            }
+            assert!(started.elapsed() < Duration::from_secs(10));
+        }
+        assert!(pending_steps >= 20);
+        hold.release();
+        if expires {
+            assert!(matches!(
+                fetch.poll(Instant::now() + Duration::from_millis(8)),
+                Err(AssetFetchError::Connection)
+            ));
+        } else {
+            loop {
+                match fetch.poll(Instant::now() + Duration::from_millis(8)) {
+                    Ok(Some(body)) => {
+                        assert_eq!(body, b"held");
+                        break;
+                    }
+                    Ok(None) => assert!(started.elapsed() < Duration::from_secs(8)),
+                    other => panic!("released platform verifier must succeed: {other:?}"),
+                }
+            }
+        }
+        drop(fetch);
+        lane.shutdown();
+        drop(lane);
+        server.join().expect("HTTPS fixture thread");
+        let cleanup_deadline = Instant::now() + Duration::from_secs(4);
+        while weak_config.upgrade().is_some() {
+            assert!(
+                Instant::now() < cleanup_deadline,
+                "HTTPS worker retained its config"
+            );
+            thread::yield_now();
+        }
+        drop(release_guard);
+        println!(
+            "G7 actual-platform-verifier expires={expires} pending_steps={pending_steps} elapsed_ms={} physical_cleanup=true",
+            started.elapsed().as_millis()
+        );
+    }
 }

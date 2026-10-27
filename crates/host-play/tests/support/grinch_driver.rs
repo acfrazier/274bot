@@ -28,6 +28,8 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use vault::{Profile, ProfileSettings};
 
+use super::network_composition;
+
 use super::grinch_oracle as oracle;
 use oracle::*;
 
@@ -3061,6 +3063,8 @@ fn selected_profile(
         vault_path: Some(temp.join("vault")),
         ..ProfileOptions::default()
     };
+    let _network_driver = network_composition::ensure_started();
+
     let profile = options.resolve(None)?.bind()?;
     if profile.profile_class() != host_play::ProfileClass::Local
         || profile.client().game_host() != "127.0.0.1"

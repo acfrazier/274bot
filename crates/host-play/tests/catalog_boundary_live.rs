@@ -4,6 +4,9 @@
 //! scenario has completed all preparation waits. The production slot thread
 //! remains the sole owner of gameplay actions; this harness observes snapshots.
 
+#[path = "support/network_composition.rs"]
+mod network_composition;
+
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -416,6 +419,8 @@ fn selected_profile(
     catalog_root: PathBuf,
     temp: &Path,
 ) -> Result<(Arc<host_play::ServerProfile>, Arc<SharedClientTemplate>), String> {
+    let _network_driver = network_composition::ensure_started();
+
     let options = ProfileOptions {
         profile: Some(format!("local-{revision}")),
         revision: Some(revision.to_string()),

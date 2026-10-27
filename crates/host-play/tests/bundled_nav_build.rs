@@ -10,6 +10,9 @@
 //! for that build. The test is `#[ignore]`d because the cached cargo test
 //! binary for the same target profile is what it reads.
 
+#[path = "support/network_composition.rs"]
+mod network_composition;
+
 use std::path::{Path, PathBuf};
 
 use host_play::profile::{CacheManifest, NavAvailability, ProfileEnvironment, ProfileOptions};
@@ -46,6 +49,8 @@ fn staged_bundle_selects_the_install_layout_without_runtime_hashing() {
         .expect("test binary lives in the cargo profile directory")
         .to_path_buf();
     let known = known_identities();
+
+    let _network_driver = network_composition::ensure_started();
 
     for row in table {
         let engine = engine_dir();

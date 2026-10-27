@@ -834,6 +834,8 @@ fn live_bank_core_exact_withdraw_at_draynor() {
     let evidence_dir = root.join(format!("l-withdraw_{account}_utc-{epoch}Z"));
     let scratch = evidence_dir.join("scratch");
     std::fs::create_dir_all(&scratch).expect("create evidence scratch");
+    let _composition =
+        crate::PlayComposition::start().expect("start bank core fixture network composition");
     let options = live_profile(&scratch).expect("live profile options");
     let profile = options
         .resolve(None)
@@ -1044,6 +1046,8 @@ fn run_compat_cell(spec: &CompatSpec) {
     let evidence_dir = root.join(format!("{}_{account}_utc-{epoch}Z", spec.label));
     let scratch = evidence_dir.join("scratch");
     std::fs::create_dir_all(&scratch).expect("create evidence scratch");
+    let _composition =
+        crate::PlayComposition::start().expect("start bank core fixture network composition");
     let options = live_profile(&scratch).expect("live profile options");
     let profile = options
         .resolve(None)

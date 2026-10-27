@@ -439,6 +439,14 @@
       "owner": "T1"
     },
     {
+      "path": "crates/client-adapter/tests/support/g2d1_fairness.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/client-adapter/tests/support/g5e_stack.rs",
+      "owner": "T1"
+    },
+    {
       "path": "crates/client-adapter/tests/wss_g5e_allocator.rs",
       "owner": "T1"
     },
@@ -1732,6 +1740,10 @@
     },
     {
       "path": "crates/host-play/tests/support/map_fixture.rs",
+      "owner": "T1"
+    },
+    {
+      "path": "crates/host-play/tests/support/network_composition.rs",
       "owner": "T1"
     },
     {

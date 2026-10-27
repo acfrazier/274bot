@@ -1,6 +1,9 @@
 //! Read-only, explicit qualification against the operator's retained assets.
 //! Run with --ignored; no connection is opened and no source is changed.
 //! NAV_VERIFY_ROOT selects artifacts produced by the ordinary application build.
+#[path = "support/network_composition.rs"]
+mod network_composition;
+
 use host_play::profile::ProfileEnvironment;
 use host_play::{ProfileOptions, SharedClientTemplate};
 use std::path::PathBuf;
@@ -92,6 +95,8 @@ fn rebuilt_artifacts_bind_decoded_inputs_and_actual_baker_sources() {
 #[test]
 #[ignore = "requires the retained 274 and 289 engine caches"]
 fn custom_endpoint_template_does_not_inherit_supported_server_facts() {
+    let _network_driver = network_composition::ensure_started();
+
     let home = PathBuf::from(std::env::var_os("HOME").expect("HOME"));
     for (revision, engine) in [
         ("274", "experiments/Server/engine"),

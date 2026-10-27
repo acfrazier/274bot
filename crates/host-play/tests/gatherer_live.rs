@@ -42,6 +42,9 @@
 //! products and incidental gifts must reach the bank, leaving only next-run
 //! tools/supplies. Initial tool-fetch visits do not count as deposit receipts.
 
+#[path = "support/network_composition.rs"]
+mod network_composition;
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -5935,6 +5938,8 @@ fn selected_profile(
         catalog_root: Some(catalog_root),
         ..ProfileOptions::default()
     };
+    let _network_driver = network_composition::ensure_started();
+
     let profile = options.resolve(None)?.bind()?;
     if profile.profile_class() != host_play::ProfileClass::Local
         || profile.client().game_host() != "127.0.0.1"

@@ -7,13 +7,13 @@ fn check() -> Result<serde_json::Value, String> {
     if rest.iter().any(|arg| arg != "--initialize") {
         return Err("profile_check accepts shared profile flags and optional --initialize".into());
     }
+    let _composition = host_play::PlayComposition::start()
+        .map_err(|error| format!("network composition startup: {error}"))?;
     let profile = options.resolve(None)?.bind()?;
     let template = host_play::SharedClientTemplate::load(Arc::clone(&profile))?;
     let mut client = template.prepare_client(0, false)?;
     let initialize = rest.iter().any(|arg| arg == "--initialize");
     if initialize {
-        let _composition = host_play::PlayComposition::start()
-            .map_err(|error| format!("network composition startup: {error}"))?;
         client.maininit();
         if client.error_loading {
             return Err(format!(

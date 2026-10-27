@@ -15,6 +15,9 @@ use nav_planner::collision::{pack_walk, WorldCollision};
 use nav_planner::map::identity::Digest;
 use nav_planner::transport::TransportGraph;
 
+#[path = "network_composition.rs"]
+mod network_composition;
+
 static NEXT: AtomicU64 = AtomicU64::new(0);
 
 /// The real 0.1.9.x pack: written by the `274V10` encoder (see
@@ -140,6 +143,7 @@ impl UpgradeHome {
     /// Bind revision 289 against the upgraded home. `nav_pack` is the
     /// `--nav-pack` / `NAV_PACK` override; `None` is the default launch.
     pub fn bind(&self, nav_pack: Option<PathBuf>) -> Arc<ServerProfile> {
+        let _network_driver = network_composition::ensure_started();
         ProfileOptions {
             profile: Some("local-289".into()),
             cache_dir: Some(self.root.join("cache")),

@@ -616,12 +616,9 @@ fn handshake_worker(
             continue;
         };
         let binding = work.key().identity.binding;
-        if let Err(failure) = initialize_connection(
-            work.resource_mut(),
-            config,
-            binding,
-            config_generation_id,
-        ) {
+        if let Err(failure) =
+            initialize_connection(work.resource_mut(), config, binding, config_generation_id)
+        {
             let _ = cell.worker_failure(work, failure);
             continue;
         }

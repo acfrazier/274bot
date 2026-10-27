@@ -9,15 +9,11 @@
 mod g5e_stack;
 
 #[cfg(target_os = "linux")]
+use std::alloc::{GlobalAlloc, Layout, System};
+#[cfg(target_os = "linux")]
 use std::cell::Cell;
 #[cfg(target_os = "linux")]
 use std::fmt::Write as FmtWrite;
-#[cfg(target_os = "linux")]
-use std::sync::Mutex;
-#[cfg(target_os = "linux")]
-use std::sync::OnceLock;
-#[cfg(target_os = "linux")]
-use std::alloc::{GlobalAlloc, Layout, System};
 #[cfg(target_os = "linux")]
 use std::fs::{self, OpenOptions};
 use std::io::{self, Read, Write};
@@ -26,6 +22,10 @@ use std::net::{TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, SyncSender};
 use std::sync::Arc;
+#[cfg(target_os = "linux")]
+use std::sync::Mutex;
+#[cfg(target_os = "linux")]
+use std::sync::OnceLock;
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
@@ -41,7 +41,7 @@ use client_adapter::shared::SharedConnection;
 use client_adapter::soak_observer::wss_ledger_samples;
 #[cfg(target_os = "linux")]
 use client_adapter::soak_observer::{
-    self, AllocationScopeEvent, AllocationScopePhase, AllocationScopeKind,
+    self, AllocationScopeEvent, AllocationScopeKind, AllocationScopePhase,
     ClientConfigGenerationEvent, ClientConfigGenerationEventKind, NetworkWorkerKind,
     WorkerObservationPoint,
 };
@@ -247,9 +247,7 @@ fn record_g5e_scoped_allocation_request(bytes: usize) {
     if bytes == 0 {
         return;
     }
-    let scope_id = G5E_ACTIVE_SCOPE_ID
-        .try_with(Cell::get)
-        .unwrap_or_default();
+    let scope_id = G5E_ACTIVE_SCOPE_ID.try_with(Cell::get).unwrap_or_default();
     if scope_id == 0 {
         return;
     }
@@ -442,13 +440,11 @@ fn prove_g5e_scope_allocator_observes_known_allocation() -> usize {
         .expect("known allocation scope has an observed begin event");
     assert_eq!(sample.event.kind, AllocationScopeKind::TestKnownAllocation);
     assert!(sample.completed, "known allocation scope has an end event");
-    let inclusive =
-        G5E_SCOPED_ALLOCATOR_INCLUSIVE_BYTES[index].load(Ordering::Acquire);
+    let inclusive = G5E_SCOPED_ALLOCATOR_INCLUSIVE_BYTES[index].load(Ordering::Acquire);
     assert_eq!(inclusive, KNOWN_BYTES);
     assert_eq!(requested, KNOWN_BYTES);
     requested
 }
-
 
 #[cfg(target_os = "linux")]
 fn optional_u64_json(output: &mut String, value: Option<u64>) {
@@ -2266,7 +2262,9 @@ fn g5e_tls13_wss_keyupdate_backpressure_memory_receipt() {
         .copied()
         .collect::<Vec<_>>();
     assert!(!allocation_scope_samples.is_empty());
-    assert!(allocation_scope_samples.iter().all(|sample| sample.completed));
+    assert!(allocation_scope_samples
+        .iter()
+        .all(|sample| sample.completed));
     let game_tls_connection_scopes = allocation_scope_samples
         .iter()
         .filter(|sample| sample.event.kind == AllocationScopeKind::GameTlsConnection)
@@ -2340,10 +2338,7 @@ fn g5e_tls13_wss_keyupdate_backpressure_memory_receipt() {
         sample.sample.reserved_bytes.is_some() && sample.sample.guard_bytes.is_some()
     }));
     assert!(!G5E_WORKER_STACK_OVERFLOW.load(Ordering::Acquire));
-    assert_eq!(
-        G5E_WORKER_STACK_CAPTURE_FAILURES.load(Ordering::Acquire),
-        0
-    );
+    assert_eq!(G5E_WORKER_STACK_CAPTURE_FAILURES.load(Ordering::Acquire), 0);
 
     let allocation_scope_samples_json = g5e_allocation_scope_samples_json();
     let config_generation_events_json = g5e_config_generation_events_json();
@@ -2352,7 +2347,6 @@ fn g5e_tls13_wss_keyupdate_backpressure_memory_receipt() {
     let allocation_scope_sample_count = allocation_scope_samples.len();
     let config_generation_event_count = config_generation_events.len();
     let worker_stack_sample_count = worker_stack_samples.len();
-
 
     let receipt = format!(
         concat!(

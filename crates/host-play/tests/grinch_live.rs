@@ -4,6 +4,9 @@
 //! `GRINCH-1020/design.md` section 6. They never start or stop an engine. Each
 //! run records its typed trace and oracle receipt below `LIVE_EVIDENCE_DIR`.
 
+#[path = "support/network_composition.rs"]
+mod network_composition;
+
 #[path = "support/grinch_driver.rs"]
 mod grinch_driver;
 #[path = "support/grinch_oracle.rs"]
@@ -362,6 +365,8 @@ mod return_boundary {
             vault_path: Some(root.join("vault")),
             ..Default::default()
         };
+        let _network_driver = super::network_composition::ensure_started();
+
         let profile = options
             .resolve(None)
             .and_then(|profile| profile.bind())

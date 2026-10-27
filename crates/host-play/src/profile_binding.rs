@@ -245,7 +245,9 @@ impl ProfileSelection {
         require_bot_operation(self.revision())
     }
 
-    /// Validate and freeze identities without network traffic or filesystem writes.
+    /// Validate and freeze identities, preparing missing cache assets when needed.
+    /// Cache preparation can fetch missing assets. The caller must retain a
+    /// started [`crate::PlayComposition`] before this call, even for a warm cache.
     pub fn bind(&self) -> Result<Arc<ServerProfile>, String> {
         self.bind_with_progress(&ProfileProgressObserver::default())
     }
@@ -277,8 +279,8 @@ impl ProfileSelection {
     }
 
     /// Negotiate the selected endpoint before freezing a complete owned cache.
-    /// Unlike `bind`, this is the application preparation path and may use the
-    /// selected update server. All bots must share the resulting profile.
+    /// The caller must retain a started [`crate::PlayComposition`] throughout
+    /// preparation. All bots must share the resulting profile.
     pub fn bind_runtime(&self) -> Result<Arc<ServerProfile>, String> {
         self.bind_runtime_with_progress(&ProfileProgressObserver::default())
     }

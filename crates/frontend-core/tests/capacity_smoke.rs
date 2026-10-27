@@ -211,6 +211,8 @@ fn live_host_capacity_warning_appears_under_real_load_and_clears() {
         nav_pack: Some(pack.into()),
         ..ProfileOptions::default()
     };
+    let _composition =
+        host_play::PlayComposition::start().expect("start capacity smoke network composition");
     let bound = options
         .resolve(None)
         .expect("resolve")

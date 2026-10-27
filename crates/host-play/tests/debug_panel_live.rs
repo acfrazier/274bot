@@ -1,5 +1,8 @@
 //! Explicit local-only proof of the Debug catalog's existing host cheat path.
 #![cfg(feature = "debug-catalog")]
+#[path = "support/network_composition.rs"]
+mod network_composition;
+
 use std::path::PathBuf;
 use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -75,6 +78,8 @@ fn debug_catalog_commands_and_host_reply_log() {
         content_dir: Some(engine.parent().unwrap().join("content")),
         ..ProfileOptions::default()
     };
+    let _network_driver = network_composition::ensure_started();
+
     let profile = options.resolve(None).unwrap().bind().unwrap();
     assert_eq!(profile.profile_class(), ProfileClass::Local);
     assert!(

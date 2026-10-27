@@ -106,6 +106,8 @@ fn live_draynor_small_net_waits_out_exclusion_then_catches() {
     let evidence_dir = root.join(format!("l-gather-return_{account}_utc-{epoch}Z"));
     let scratch = evidence_dir.join("scratch");
     std::fs::create_dir_all(&scratch).expect("create evidence scratch");
+    let _composition =
+        crate::PlayComposition::start().expect("start gather-return fixture network composition");
     let options = live_profile(&scratch).expect("live profile options");
     let profile = options
         .resolve(None)

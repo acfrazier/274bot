@@ -7,6 +7,9 @@
 #[path = "support/paired_catalog.rs"]
 mod paired_catalog;
 
+#[path = "support/network_composition.rs"]
+mod network_composition;
+
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -920,6 +923,8 @@ fn selected_profile(
         catalog_root: Some(catalog_root),
         ..ProfileOptions::default()
     };
+    let _network_driver = network_composition::ensure_started();
+
     let profile = options.resolve(None)?.bind()?;
     if profile.profile_class() != host_play::ProfileClass::Local
         || profile.client().game_host() != "127.0.0.1"

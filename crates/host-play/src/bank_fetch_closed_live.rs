@@ -618,6 +618,8 @@ fn run_cell(variant: Variant) {
     let evidence_dir = root.join(format!("{label}_{account}_utc-{}Z", unix_now()));
     let scratch = evidence_dir.join("scratch");
     std::fs::create_dir_all(&scratch).expect("create evidence scratch");
+    let _composition =
+        crate::PlayComposition::start().expect("start bank fetch fixture network composition");
     let options = live_profile(&scratch).expect("live profile options");
     let profile = options
         .resolve(None)

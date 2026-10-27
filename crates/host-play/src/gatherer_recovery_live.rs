@@ -949,6 +949,7 @@ fn run_live(mode: Mode) {
 
     let scratch = evidence_dir.join("scratch");
     std::fs::create_dir_all(&scratch).expect("create profile scratch");
+    let _composition = crate::PlayComposition::start().expect("start recovery network composition");
     let options = live_profile(&scratch).expect("live local-289 profile options");
     let profile = options
         .resolve(None)

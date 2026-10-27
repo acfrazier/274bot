@@ -336,8 +336,7 @@ pub enum WorkerObservationPoint {
     AfterVerify,
 }
 
-type WorkerObserver =
-    dyn Fn(NetworkWorkerKind, WorkerObservationPoint) + Send + Sync + 'static;
+type WorkerObserver = dyn Fn(NetworkWorkerKind, WorkerObservationPoint) + Send + Sync + 'static;
 
 static WORKER_OBSERVER: OnceLock<Box<WorkerObserver>> = OnceLock::new();
 
@@ -390,8 +389,7 @@ pub struct ClientConfigGenerationSample {
     pub strong_count: usize,
 }
 
-type ClientConfigGenerationObserver =
-    dyn Fn(ClientConfigGenerationEvent) + Send + Sync + 'static;
+type ClientConfigGenerationObserver = dyn Fn(ClientConfigGenerationEvent) + Send + Sync + 'static;
 
 struct ClientConfigGenerationRecord {
     generation_id: u64,
@@ -434,8 +432,7 @@ pub(super) fn observe_client_config_generation(config: &Arc<ClientConfig>) -> Op
                 Arc::strong_count(config),
             )
         } else {
-            let generation_id =
-                NEXT_CLIENT_CONFIG_GENERATION_ID.fetch_add(1, Ordering::Relaxed);
+            let generation_id = NEXT_CLIENT_CONFIG_GENERATION_ID.fetch_add(1, Ordering::Relaxed);
             generations.push(ClientConfigGenerationRecord {
                 generation_id,
                 config: Arc::downgrade(config),
@@ -492,4 +489,3 @@ pub fn client_config_generation_samples() -> Vec<ClientConfigGenerationSample> {
         })
         .collect()
 }
-
