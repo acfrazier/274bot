@@ -13,6 +13,10 @@ The runner binds the **production runtime WSS profile** rather than a static met
 
 The separate `rss_ladder` memory fixture runs as a `harness = false` executable. It initializes protected V8 on process main before Play creates workers, as the product does. Stable libtest's worker entry cannot satisfy this contract in release builds. Both comparator and candidate must use this entry, the same generated navigation inputs, and the same workload. Without `LIVE=1`, the executable checks its argument parser but does not run a memory measurement.
 
+The paired measurement fixtures require `soak-observers` for candidate runs. That feature enables explicit `PlayComposition` startup before cache preparation and installs isolated TLS trust. The native-TLS comparator has no explicit composition API: its existing cache and client initialization create their network resources before the observation window. Keep the shared fixture source byte-identical between both arms. Do not interpret a candidate run without `soak-observers` as qualification evidence.
+
+Live tests must start their process network before profile binding or template preparation. Shared selection helpers own this startup when more than one test calls them. `support/network_composition.rs` retains the process composition in a `LazyLock`. The survivable-admission, toll-gate and web-cut selectors use that helper. The quest-door fixture starts it before profile binding, not before the later client initialization.
+
 
 Before running, start the fixed Engine A service listening on `127.0.0.1:1080`, with the 289 navigation pack referenced in the config available. Set a nonnegative common `SOAK_SEED` once and an evidence root outside either repository. Run the infrastructure smoke **for both builds**:
 

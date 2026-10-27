@@ -80,6 +80,8 @@ fn env_port(name: &str, default: u16) -> u16 {
 }
 
 fn selected() -> (Arc<host_play::ServerProfile>, Arc<SharedClientTemplate>) {
+    let _network_driver = network_composition::ensure_started();
+
     let nav_pack = PathBuf::from(
         std::env::var("WORLD_NAV_PACK")
             .expect("WORLD_NAV_PACK must point at the local R289 navigation pack"),
@@ -175,8 +177,6 @@ fn login_fresh(
     template: &SharedClientTemplate,
     prefix: &str,
 ) -> (String, client::client::Client, GameSnapshot, Pump) {
-    let _network_driver = network_composition::ensure_started();
-
     let serial = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("clock")

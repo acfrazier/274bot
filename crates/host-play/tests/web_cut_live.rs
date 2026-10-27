@@ -45,6 +45,8 @@ const WEB_TARGETS: [(i32, i32); 2] = [(3095, 3957), (3093, 3957)];
 const WEB_FAILURE: &str = "You fail to cut through it.";
 
 fn selected() -> (Arc<ServerProfile>, Arc<SharedClientTemplate>) {
+    let _network_driver = network_composition::ensure_started();
+
     let options = ProfileOptions {
         profile: Some("local-289".into()),
         revision: Some("289".into()),
@@ -139,8 +141,6 @@ fn login_fresh(
     username: &str,
     uid: i32,
 ) -> (client::client::Client, GameSnapshot, Pump) {
-    let _network_driver = network_composition::ensure_started();
-
     let mut client = template
         .prepare_client(uid, true)
         .expect("prepare disposable R289 client");

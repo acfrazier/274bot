@@ -330,6 +330,8 @@ fn live_fortress_disguise_and_secret_wall_use_content_navigation() {
     });
     write_receipt(&receipt_path, &receipt);
 
+    let _network_driver = network_composition::ensure_started();
+
     let profile = live_profile_options()
         .resolve(None)
         .expect("resolve Engine A R289 profile")
@@ -374,8 +376,6 @@ fn live_fortress_disguise_and_secret_wall_use_content_navigation() {
         "secret_wall": {"config": secret_wall.config, "id": secret_wall.id},
     });
     write_receipt(&receipt_path, &receipt);
-
-    let _network_driver = network_composition::ensure_started();
 
     let mut client = template
         .prepare_client((serial % i32::MAX as u128) as i32, true)

@@ -253,6 +253,7 @@ fn capture(client: &mut Client, directory: &Path, label: &str, receipt: &Value) 
 }
 
 fn selected_template() -> (Arc<host_play::ServerProfile>, Arc<SharedClientTemplate>) {
+    let _network_driver = network_composition::ensure_started();
     let options = ProfileOptions {
         profile: Some("local-289".into()),
         revision: Some("289".into()),
@@ -287,7 +288,6 @@ fn real_unknown_poison_explicit_forbid_then_opt_in_and_default_escape() {
     assert_eq!(std::env::var("LIVE").as_deref(), Ok("1"));
     assert_eq!(std::env::var("BOT_CPU").as_deref(), Ok("1"));
     install_nav_logs();
-    let _network_driver = network_composition::ensure_started();
 
     let prefix = std::env::var("BOT_LIVE_NAME_PREFIX").expect("owned account prefix");
     assert!(!prefix.is_empty() && prefix.len() <= 4);
