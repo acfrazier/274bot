@@ -72,6 +72,10 @@ pub struct PvpSettingView {
     /// The last saved value this view adopted: what a failed click shows again.
     saved: bool,
     pending: Option<Pending>,
+    /// The command of a click whose saved value was adopted before the command
+    /// settled: [`Self::follow`] still reports its settlement, whichever of
+    /// [`Self::adopt`] and `follow` a front end calls first.
+    unreported: Option<RequestId>,
     /// The click whose command last settled failed ([`Self::failure`]).
     failed: Option<RequestId>,
 }
@@ -91,6 +95,7 @@ impl PvpSettingView {
             shown,
             saved: shown,
             pending: None,
+            unreported: None,
             failed: None,
         }
     }
@@ -108,6 +113,7 @@ impl PvpSettingView {
     /// The operator set the row to `enabled`: show it now and wait for the save.
     pub fn begin(&mut self, enabled: bool) {
         self.shown = enabled;
+        self.unreported = None;
         self.pending = Some(Pending {
             value: enabled,
             request: None,
@@ -126,16 +132,21 @@ impl PvpSettingView {
     /// again at once.
     pub fn refuse(&mut self) {
         self.pending = None;
+        self.unreported = None;
         self.shown = self.saved;
     }
 
     /// Adopt the saved value read now (`None` while the store is not ready).
+    /// A click whose value the file now holds stops waiting, but its command
+    /// stays watched: [`Self::follow`] still reports how it settled, so the
+    /// error a failed attempt left goes when this save succeeds.
     pub fn adopt(&mut self, saved: Option<bool>) {
         let Some(saved) = saved else {
             return;
         };
         self.saved = saved;
-        if self.pending.is_some_and(|pending| pending.value == saved) {
+        if let Some(pending) = self.pending.filter(|pending| pending.value == saved) {
+            self.unreported = pending.request;
             self.pending = None;
         }
         if self.pending.is_none() {
@@ -149,27 +160,29 @@ impl PvpSettingView {
     /// longer holds (a peer wrote after it) shows the file's value. A report the
     /// history no longer holds counts as settled.
     pub fn follow<Io>(&mut self, core: &OperatorSession<Io>) -> Option<PvpWrite> {
-        let outcome =
-            self.pending
-                .and_then(|pending| pending.request)
-                .and_then(|request| match core.commands().report(request) {
-                    Some(report) if !report.is_settled() => None,
-                    Some(report) => {
-                        let failed = report
-                            .members()
-                            .iter()
-                            .any(|member| matches!(member.terminal(), Some(Settlement::Failed(_))));
-                        Some(if failed {
-                            self.failed = Some(request);
-                            PvpWrite::Failed
-                        } else {
-                            PvpWrite::Saved
-                        })
-                    }
-                    None => Some(PvpWrite::Saved),
-                });
+        let watched = match self.pending {
+            Some(pending) => pending.request,
+            None => self.unreported,
+        };
+        let outcome = watched.and_then(|request| match core.commands().report(request) {
+            Some(report) if !report.is_settled() => None,
+            Some(report) => {
+                let failed = report
+                    .members()
+                    .iter()
+                    .any(|member| matches!(member.terminal(), Some(Settlement::Failed(_))));
+                Some(if failed {
+                    self.failed = Some(request);
+                    PvpWrite::Failed
+                } else {
+                    PvpWrite::Saved
+                })
+            }
+            None => Some(PvpWrite::Saved),
+        });
         if outcome.is_some() {
             self.pending = None;
+            self.unreported = None;
         }
         self.adopt(core.pvp_start_fights());
         if outcome == Some(PvpWrite::Failed) {

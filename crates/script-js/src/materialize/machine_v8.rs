@@ -233,7 +233,8 @@ impl ValueShapes {
 
 /// The template for `map`'s ordered key list, built on first use. `None` when
 /// the object has no shape worth caching (empty, too many keys) or the cache
-/// is full: the caller then builds it without one.
+/// is full: the caller then builds the object from `v8::Object::new`, which
+/// still has fast properties and `Object.prototype`.
 fn shape_template<'s>(
     scope: &mut v8::HandleScope<'s>,
     map: &serde_json::Map<String, Value>,
@@ -264,8 +265,9 @@ fn shape_template<'s>(
 
 /// `value` as a V8 value, the same data `serde_v8::to_v8` builds but with
 /// objects that carry fast properties (see [`ValueShapes`]) and
-/// `Object.prototype`. Numbers outside `i32`, objects without a cached shape
-/// and values nested deeper than [`MAX_VALUE_DEPTH`] go through `serde_v8`.
+/// `Object.prototype`, also when the shape cache is full or the object is
+/// wide. Numbers outside `i32`, and values nested deeper than
+/// [`MAX_VALUE_DEPTH`], go through `serde_v8`.
 fn value_to_v8<'s>(
     scope: &mut v8::HandleScope<'s>,
     value: &Value,
@@ -294,12 +296,12 @@ fn value_to_v8<'s>(
         }
         Value::Object(map) if map.is_empty() => v8::Object::new(scope).into(),
         Value::Object(map) => {
-            let Some(template) = shape_template(scope, map) else {
-                return fallback(scope);
+            let object = match shape_template(scope, map) {
+                Some(template) => template
+                    .new_instance(scope)
+                    .ok_or_else(|| "object instantiation failed".to_string())?,
+                None => v8::Object::new(scope),
             };
-            let object = template
-                .new_instance(scope)
-                .ok_or_else(|| "object instantiation failed".to_string())?;
             for (key, item) in map {
                 let name = v8::String::new_from_utf8(
                     scope,
@@ -659,12 +661,42 @@ mod tests {
         );
     }
 
+    const CAPACITY_TEST_NAME: &str =
+        "machine_v8::tests::shaped_values_equal_the_serde_values_and_the_cache_stays_bounded";
+    const CAPACITY_CHILD_ENV: &str = "SCRIPT_MACHINE_VALUE_SHAPE_TEST_CHILD";
+
     /// `value_to_v8` hands the script the same data `serde_v8::to_v8` would
     /// (scalars, nested arrays and objects, key order, numbers outside `i32`,
     /// empty containers, objects beyond the shape limits and past the shape
-    /// cache), and keeps the cache bounded.
+    /// cache), keeps the cache bounded, and, with the cache full, still builds
+    /// every object with fast properties and `Object.prototype` (AGENTS.md: a
+    /// script-facing object is never in dictionary mode). `%HasFastProperties`
+    /// needs `--allow-natives-syntax` before V8 starts, so the body runs in a
+    /// child process (as `bank_result_shapes_cover_callbacks_and_bound_v8_heap`).
     #[test]
     fn shaped_values_equal_the_serde_values_and_the_cache_stays_bounded() {
+        if std::env::var_os(CAPACITY_CHILD_ENV).is_none() {
+            let output = std::process::Command::new(
+                std::env::current_exe().expect("unit-test executable path"),
+            )
+            .args(["--exact", CAPACITY_TEST_NAME, "--nocapture"])
+            .env(CAPACITY_CHILD_ENV, "1")
+            .output()
+            .expect("run isolated V8-native-syntax test");
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(
+                output.status.success(),
+                "isolated V8 shape test failed\nstdout: {stdout}\nstderr: {stderr}"
+            );
+            assert!(
+                stdout.contains(&format!("test {CAPACITY_TEST_NAME} ... ok"))
+                    && stdout.contains("1 passed"),
+                "isolated test did not run exactly once\nstdout: {stdout}\nstderr: {stderr}"
+            );
+            return;
+        }
+        v8::V8::set_flags_from_string("--allow-natives-syntax");
         crate::platform::bootstrap_test_v8_platform();
         let mut runtime = Runtime::new(RuntimeOptions::default()).unwrap();
         callback_v8::install_ops(&mut runtime).unwrap();
@@ -715,5 +747,57 @@ mod tests {
             .shapes
             .len();
         assert_eq!(cached, MAX_VALUE_SHAPES, "the cache is full and stays full");
+
+        // With the cache full: a summary (three objects), a wide object and
+        // a shape never seen before.
+        {
+            let context = runtime.deno_runtime().main_context();
+            let mut scope = runtime.deno_runtime().handle_scope();
+            let global = context.open(&mut scope).global(&mut scope);
+            let end = CombatEnd::Fought {
+                token: 1,
+                report: summary(0),
+            };
+            let envelope = outcome_envelope(&mut scope, Outcome::Done(Value::from(end)))
+                .unwrap_or_else(|_| panic!("summary materializes"));
+            let wide: serde_json::Map<String, Value> = (0..=MAX_SHAPE_KEYS)
+                .map(|index| (format!("w{index}"), Value::from(index)))
+                .collect();
+            let wide = value_to_v8(&mut scope, &Value::Object(wide), 0).unwrap();
+            let unseen = value_to_v8(&mut scope, &serde_json::json!({ "unseen": 1 }), 0).unwrap();
+            for (name, value) in [
+                ("__envelope", envelope),
+                ("__wide", wide),
+                ("__unseen", unseen),
+            ] {
+                let key = callback_v8::string(&mut scope, name);
+                global.set(&mut scope, key, value);
+            }
+        }
+        let facts = runtime
+            .eval::<Value>(
+                r#"(() => {
+                    const fast = new Function('o', 'return %HasFastProperties(o)');
+                    const check = (o) => ({
+                        fast: fast(o),
+                        prototype: Object.getPrototypeOf(o) === Object.prototype,
+                    });
+                    return {
+                        envelope: check(__envelope),
+                        value: check(__envelope.value),
+                        report: check(__envelope.value.report),
+                        wide: check(__wide),
+                        unseen: check(__unseen),
+                    };
+                })()"#,
+            )
+            .unwrap();
+        let good = serde_json::json!({ "fast": true, "prototype": true });
+        for name in ["envelope", "value", "report", "wide", "unseen"] {
+            assert_eq!(
+                facts[name], good,
+                "{name} must keep fast properties and Object.prototype with the shape cache full"
+            );
+        }
     }
 }

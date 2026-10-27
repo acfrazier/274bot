@@ -4180,9 +4180,10 @@ fn start_fights_with_players_in_the_settings_popup_is_saved_through_its_command(
     let _iso = iso;
 }
 
-/// PVP-V1-R1 (review R3): turning the setting off queues behind a busy disk
-/// and later fails. The row shows the click at once, then the saved value
-/// again with the failure reason, and a peer write stays visible afterwards.
+/// PVP-V1-R1 (review R3, R6): turning the setting off queues behind a busy
+/// disk and later fails. The row shows the click at once, then the saved value
+/// again with the failure reason, and a peer write stays visible afterwards. A
+/// later successful retry clears exactly that failure line.
 #[cfg(unix)]
 #[test]
 fn a_failed_deferred_start_fights_write_shows_the_saved_value_and_follows_a_peer() {
@@ -4259,6 +4260,56 @@ fn a_failed_deferred_start_fights_write_shows_the_saved_value_and_follows_a_peer
         !app.pvp_start_fights.shown(),
         "a peer write stays visible after the failure"
     );
+
+    // The retry turns it on again: the disk is busy once more, so the retry
+    // stays queued. The failure stays visible until the save resolves it.
+    app.on_key(settings_key(crossterm::event::KeyCode::Enter));
+    assert!(app.pvp_start_fights.shown(), "the retry shows at once");
+    session.pump(&mut app);
+    entered_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+    session.pump(&mut app);
+    assert!(app.pvp_start_fights.pending(), "waiting for the retry");
+    assert!(
+        app.error
+            .as_deref()
+            .is_some_and(frontend_core::is_start_fights_error),
+        "the failure stays until the retry succeeds: {:?}",
+        app.error
+    );
+    release.send(()).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while (app.pvp_start_fights.pending() || app.error.is_some()) && Instant::now() < deadline {
+        session.pump(&mut app);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(!app.pvp_start_fights.pending(), "the retry never settled");
+    assert!(
+        frontend_core::pvp_start_fights(&session.preferences).unwrap(),
+        "the retry was saved"
+    );
+    assert!(app.pvp_start_fights.shown());
+    assert_eq!(
+        app.error, None,
+        "a successful save clears the failure it resolves"
+    );
+
+    // Another setting's error is not this save's to clear.
+    let other = "settings: walk permissions: the store is busy".to_string();
+    app.error = Some(other.clone());
+    release.send(()).unwrap();
+    app.on_key(settings_key(crossterm::event::KeyCode::Enter));
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while app.pvp_start_fights.pending() && Instant::now() < deadline {
+        session.pump(&mut app);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    // Let the save's settlement reach the view before looking at the error.
+    for _ in 0..40 {
+        session.pump(&mut app);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(!app.pvp_start_fights.shown(), "the second save settled off");
+    assert_eq!(app.error, Some(other), "an unrelated error stays");
     let _iso = iso;
 }
 
