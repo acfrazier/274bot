@@ -820,20 +820,19 @@ fn scenario_for(site: &BankSite, duration: Duration) -> Result<Scenario, String>
     scenario.settings.nav.engine_speed_ms = None;
     scenario.settings.script_settings_inject = None;
 
-    let skill_level = site.level;
+    let skill_level = 99;
     let site_start = site.start;
     let prep = scenario
         .steps
         .iter_mut()
         .find(|step| step.name == GATHERER_PREP_STEP)
         .ok_or("Gatherer scenario has no existing account/tool seed step")?;
-    prep.name =
-        "prepare the selected Woodcutting level, a bronze axe and banked spare axes before Start";
+    prep.name = "prepare Woodcutting 99, a rune axe and banked spare axes before Start";
     prep.kind = StepKind::Perform {
         send: Box::new(move |client, _| {
             cheat(client, &format!("setstat woodcutting {skill_level}")).is_sent()
-                && cheat(client, "give bronze_axe 1").is_sent()
-                && cheat(client, "givebank bronze_axe 64").is_sent()
+                && cheat(client, "give rune_axe 1").is_sent()
+                && cheat(client, "givebank rune_axe 64").is_sent()
         }),
     };
 
@@ -861,7 +860,7 @@ fn scenario_for(site: &BankSite, duration: Duration) -> Result<Scenario, String>
         .steps
         .iter()
         .position(|step| {
-            step.name == "prepare the selected Woodcutting level, a bronze axe and banked spare axes before Start"
+            step.name == "prepare Woodcutting 99, a rune axe and banked spare axes before Start"
         })
         .ok_or("updated Gatherer preparation step disappeared")?;
     scenario.steps.insert(
