@@ -930,7 +930,14 @@ def self_check_candidate(candidate: Path, test_file: str = SELF_TEST_FILE,
     test_path = nightly_dir / test_file
     if not test_path.is_file():
         return False, f"candidate has no {test_file}"
-    env = dict(os.environ, NIGHTLY_ROOT=str(candidate / "self-check-root"),
+    # The candidate's tests judge its code, not this host's service
+    # settings: NIGHTLY_* values from the unit's environment (latency
+    # bands, a cells file, the 274 revision) change what the runner
+    # constants and run_branch do at import and would fail tests that
+    # assume the defaults. Run the tests with the defaults, plus only
+    # the two variables the check itself sets.
+    env = {key: value for key, value in os.environ.items() if not key.startswith("NIGHTLY_")}
+    env.update(NIGHTLY_ROOT=str(candidate / "self-check-root"),
                NIGHTLY_SELF_CHECK_ACTIVE="1")
     proc = popen_group([sys.executable, "-B", str(test_path)], cwd=str(candidate),
                        env=env, stdin=subprocess.DEVNULL,
@@ -963,7 +970,15 @@ def self_check_candidate(candidate: Path, test_file: str = SELF_TEST_FILE,
         untrack(proc.pid)
     if proc.returncode:
         tail = (stderr or stdout).strip().splitlines()
-        return False, f"{test_file} failed: {tail[-1][:300] if tail else 'unknown error'}"
+        summary_line = tail[-1][:300] if tail else "unknown error"
+        # Name the failing tests ("FAIL: test_x (module.Class)"), not
+        # only unittest's count line: this detail is all the summary
+        # keeps, and a count alone cannot be diagnosed after the fact.
+        failing = [line.split(":", 1)[1].split(" (", 1)[0].strip()[:120]
+                   for line in tail if line.startswith(("FAIL:", "ERROR:"))]
+        if failing:
+            return False, f"{test_file} failed: {', '.join(failing[:3])} ({summary_line})"
+        return False, f"{test_file} failed: {summary_line}"
     return True, f"py_compile ok; {test_file} passed"
 
 
@@ -2752,6 +2767,16 @@ def lane_list(tree: Path | None) -> list[tuple[str, list[str], dict]]:
     """
     vendor = ["--manifest-path", "vendor/fr-client-rust/Cargo.toml"]
     assets = lane_asset_env()
+    # The runner follows dev, but a night also tests release branches
+    # that predate the S1 script-js split. The script-load lane must
+    # name the crate the tested tree has: script-js after S1, or
+    # script with its load feature before it. No tree (rows for a
+    # night that never got sources) keeps the current layout.
+    if tree is None or (tree / "crates" / "script-js" / "Cargo.toml").is_file():
+        script_load = ["test", "--locked", "-p", "script-js", "--tests", "--no-fail-fast"]
+    else:
+        script_load = ["test", "--locked", "-p", "script", "--features", "load", "--tests",
+                       "--no-fail-fast"]
     lanes = [
         ("build", ["build", "--locked", "--workspace", "--all-targets", "--features", GATE_FEATURES], {}),
         ("build-vendor", ["build", "--locked", *vendor, "--workspace"], {}),
@@ -2760,8 +2785,7 @@ def lane_list(tree: Path | None) -> list[tuple[str, list[str], dict]]:
         ("clippy-vendor", ["clippy", "--locked", *vendor, "--workspace", "--all-targets", "--", "-D", "warnings"], {}),
         ("test-workspace", ["test", "--locked", "--workspace", "--no-fail-fast"], assets),
         ("test-vendor", ["test", "--locked", *vendor, "--workspace", "--no-fail-fast"], assets),
-        ("test-script-load", ["test", "--locked", "-p", "script-js", "--tests",
-                              "--no-fail-fast"], assets),
+        ("test-script-load", script_load, assets),
         ("test-script-no-default", ["test", "--locked", "-p", "script", "--no-default-features",
                                     "--no-fail-fast"], assets),
         ("test-host-play-memory", ["test", "--locked", "-p", "host-play", "--features", "memory-profile",
@@ -3245,6 +3269,14 @@ def run_branch(branch: str, parallel: int, only: list[str] | None, only_lanes: l
         binary = binaries.get(f"{frontend}-play")
         if note_quiet_lock():
             reason_unavailable = f"MAC-QUIET: {_quiet_lock_reason}"
+        if binary is None and not reason_unavailable and not reason_not_run:
+            # The build failed or did not run, so there is no binary to run
+            # cells with. Mark the cells NOT_RUN with the build reason and
+            # do not start the engine: the run still writes its summary and
+            # DONE (the latency pass does the same, see run_latency_pass).
+            build_detail = (build_error or "").strip().lstrip(";").strip()
+            reason_not_run = (f"build failed: {build_detail}" if build_detail
+                              else "the build did not run; see build.log")
         if not reason_unavailable and not reason_not_run and REQUIRE_CONSOLE:
             ok, detail, _ = console_session()
             if not ok:
