@@ -1414,7 +1414,9 @@ impl WalkHop {
 struct TransportHop {
     leg: Leg,
     to: WorldTile,
-    /// Distinct observed game ticks since the latest send (see [`TickCount`]).
+    /// Observed game ticks since the hop's first send (see [`TickCount`]):
+    /// busy retries and the landing delay keep it running, a web-cut retry
+    /// restarts it.
     ticks_waited: TickCount,
     sent_tile: Option<WorldTile>,
     /// Live loc footprint captured at click time; survives the plane rebuild.
