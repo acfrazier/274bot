@@ -56,11 +56,13 @@ Baseline attempt 6 stopped at game tick 4651 at `(2821,3449,0)` after a bank dep
 The safety guard now admits the union of two ground-level rectangles:
 
 - Southern bank corridor: `x=2788..2834,z=3436..3468`.
-- Northern resource corridor: `x=2788..2810,z=3436..3476`.
+- Northern resource corridor: `x=2788..2811,z=3436..3476`.
 
-The northeastern corner remains excluded. Pack wolf `(2836,3495)` has wander 20, hunt 2 and size 2 (`m44_54.jm2:5700`, `all.npc:3585-3605`). Its minimum Chebyshev separation is 27 tiles from the southern rectangle and 26 from the northern rectangle. Both exceed the conservative sum of 24. The eastern sentry `(2842,3450)` remains at least eight tiles away. Its corresponding sum is seven. The northern ice giant `(2804,3507)` remains at least 31 tiles away, also with sum seven.
+The northeastern corner remains excluded. Pack wolf `(2836,3495)` has wander 20, hunt 2 and size 2 (`m44_54.jm2:5700`, `all.npc:3585-3605`). Its minimum Chebyshev separation is 27 tiles from the southern rectangle and 25 from the northern rectangle. Both exceed the conservative sum of 24. The eastern sentry `(2842,3450)` remains at least eight tiles away. Its corresponding sum is seven. The northern ice giant `(2804,3507)` remains at least 31 tiles away, also with sum seven.
 
-Guard tests admit all radius-two work patches, both observed bank detours and the audited eastern edge. They reject each outer boundary, the northeast corner and nearby hostile spawns. Both qualification arms must use the same corrected fixture. Attempts 5 and 6 do not count as completed soaks.
+Candidate attempt 1 stopped at tick 6197 when the normal-tree account anchored at `(2802,3469,0)` reached `(2811,3473,0)`. This northern work route lies outside the former x=2810 guard but beyond the wolf envelope. The corrected eastern bound is derived as `2836 - (20 + 2 + 2) - 1 = 2811`. The next column, x=2812 at z=3473, touches the envelope and stays excluded. The other bounds retain the audited resource patches and bank corridor. See `qual-1027/candidate-soak-qualification-attempt-1/events.jsonl:676`, `finding.json`, and `qual-1027/catherby-safe-corridor-candidate2.json`.
+
+Guard tests admit all radius-two work patches, the observed bank detours, the northern work-route tile and the audited eastern edge. They reject each outer boundary, the northeast corner and nearby hostile spawns. Both qualification arms must use the same corrected fixture. Main requires both arms to run again after the shutdown window. Baseline attempt 11 remains historical evidence; it does not form a matched pair with this corrected fixture. Candidate attempt 1 and baseline attempts 5 and 6 do not count as completed soaks.
 
 Baseline attempt 7 stopped at game tick 258 because one maple account gained no fresh XP within 240 ticks. All ten maple accounts shared the same final tile; the other nine gained logs. The retained finding is `qual-1027/baseline-soak-qualification-attempt-7/finding.md`. Main approved the level-99/rune-axe account seed to reduce chance variance under this contention. No deadline, target, bank route, two-hour duration or transport oracle changed.
 

@@ -76,6 +76,9 @@ impl SafeWalk {
 // The eastern sentry at (2842,3450) has wander 3, hunt 2 and size 2:
 // content/maps/m44_53.jm2:5567, scripts/_unpack/225/all.npc:2405-2433.
 // The southern eastern edge stays eight tiles from that seven-tile envelope.
+// The northern work route reached (2811,3473) at candidate soak tick 6197.
+// x=2811 is the last column beyond the pack wolf's envelope: 2836-24-1.
+// x=2812 touches that envelope and remains excluded above the bank corridor.
 const CATHERBY_SAFE_WALK: &[SafeWalk] = &[
     SafeWalk {
         min_x: 2788,
@@ -85,7 +88,7 @@ const CATHERBY_SAFE_WALK: &[SafeWalk] = &[
     },
     SafeWalk {
         min_x: 2788,
-        max_x: 2810,
+        max_x: 2811,
         min_z: 3436,
         max_z: 3476,
     },
@@ -128,6 +131,8 @@ fn catherby_safe_walk_accepts_worksites_and_bank_return_detour() {
     // Baseline attempt 6, tick 4651: bank return outside the old fixture guard.
     assert!(safe_walk_contains(CATHERBY_SAFE_WALK, (2821, 3449, 0)));
     assert!(safe_walk_contains(CATHERBY_SAFE_WALK, (2834, 3450, 0)));
+    // Candidate attempt 1, tick 6197: northern work route, outside wolf reach.
+    assert!(safe_walk_contains(CATHERBY_SAFE_WALK, (2811, 3473, 0)));
 }
 
 #[test]
@@ -138,7 +143,7 @@ fn catherby_safe_walk_rejects_every_boundary_and_mountain_spawns() {
         (2800, 3435, 0),
         (2800, 3477, 0),
         (2800, 3450, 1),
-        (2811, 3469, 0),
+        (2812, 3473, 0),
         (2820, 3476, 0),
         (2842, 3450, 0),
         (2846, 3477, 0),
