@@ -77,7 +77,7 @@ impl RoutePath {
         }
     }
 
-    /// The shape-agnostic view every route consumer reads: a legacy route
+    /// A route view for either plan shape: a legacy route
     /// borrows its own legs under `world`'s pack identity, and a compact plan
     /// resolves theirs through its lease. The bank final-route step assesses
     /// the route this way (`crate::admission::assess_route_path`).
