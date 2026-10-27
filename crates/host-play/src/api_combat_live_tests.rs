@@ -663,7 +663,8 @@ fn live_api_combat_pause_mid_fight_settles_interrupted_and_clears_only_the_bot_p
 /// Manual movement mid-fight with no walk in flight, with “Pause script on
 /// manual movement” off so nothing but the movement can end the fight: one
 /// TUI Manual step (the real host intent path) cancels it, the bot clears
-/// only its raise and the session settles `interrupted` / `user-input`.
+/// only its raise, and the promise settles `aborted` with reason `user-input`
+/// (the seat revokes the Combat entry; `434376ff05`).
 #[test]
 #[ignore = "requires LIVE=1 and the shared local R289 engine"]
 fn live_api_combat_manual_movement_mid_fight_settles_interrupted_user_input() {
@@ -732,9 +733,15 @@ fn live_api_combat_manual_movement_mid_fight_settles_interrupted_user_input() {
         1,
         "the bot's raise was on at the step"
     );
-    assert_eq!(outcome["kind"], "done", "{outcome}");
-    assert_eq!(outcome["value"]["end"], "interrupted", "{outcome}");
-    assert_eq!(outcome["value"]["cause"], "user-input", "{outcome}");
+    // The accepted seat contract settles a manual combat takeover as
+    // `Aborted(UserInput)` (`ARCH-CONTRACT/synthesis/28-seat-sg.md:44`,
+    // "Manual combat takeover"), and §25 exposes that locally as
+    // `{aborted, user-input}` (`25-seat-r5.md:411,417`, where `UserInput`
+    // names only the Combat session itself). `434376ff05` integrated that
+    // bounded seat, so the seat's revocation, not the internal combat end
+    // `Interrupted(UserInput)`, is what the public promise carries.
+    assert_eq!(outcome["kind"], "aborted", "{outcome}");
+    assert_eq!(outcome["reason"], "user-input", "{outcome}");
     assert_eq!(
         state,
         script::RunState::Running,
