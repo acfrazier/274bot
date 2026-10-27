@@ -2,6 +2,7 @@
 //! obstacle, and the transport clock that counts observed game ticks.
 
 use super::*;
+use crate::TransportRefusal;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -64,6 +65,16 @@ impl Crossing {
     /// Observe the next game tick.
     fn tick(&mut self) {
         bump_rebuild(&mut self.c, &mut self.snap);
+    }
+
+    /// Observe the next `packets` game ticks in one snapshot rebuild: a
+    /// follower that polls less often than the game ticks.
+    fn tick_batch(&mut self, packets: u32) {
+        self.c.bump_gens(ServerProt::REBUILD_NORMAL);
+        for _ in 0..packets {
+            self.c.bump_gens(ServerProt::PLAYER_INFO);
+        }
+        self.snap.rebuild(&self.c);
     }
 
     /// Observe the next game tick, then poll once.
@@ -196,6 +207,7 @@ fn busy_ledge_past_the_budget_ends_with_the_actual_try_count_and_last_refusal() 
             aiming: edge.to,
             why: HopFailure::Dropped,
             tries: 7,
+            last_refusal: Some(TransportRefusal::Busy(LEDGE_BUSY)),
         }
     );
     assert_eq!(x.rec.loc_ops, 7);
@@ -328,4 +340,213 @@ fn transport_budget_counts_game_ticks_not_polls() {
             "lapses on the fourth distinct tick after the send"
         );
     }
+}
+
+#[test]
+fn tick_count_credits_each_packet_and_nothing_for_a_repeated_read() {
+    use crate::traveller::TickCount;
+    let mut clock = TickCount::sent_at(10);
+    assert_eq!(clock.observe(10), 0, "the send's own tick is not counted");
+    assert_eq!(clock.observe(11), 1);
+    assert_eq!(clock.observe(11), 1, "a repeated read adds nothing");
+    assert_eq!(clock.observe(14), 4, "a rebuild that saw 3 packets adds 3");
+    assert_eq!(clock.observe(14), 4);
+    assert_eq!(clock.observe(15), 5);
+    let mut first = TickCount::default();
+    assert_eq!(first.observe(40), 1, "the first read counts one tick");
+    assert_eq!(
+        first.observe(2),
+        2,
+        "a tick that moved backwards counts one"
+    );
+    let mut wrapped = TickCount::sent_at(u32::MAX);
+    assert_eq!(wrapped.observe(1), 2, "the snapshot clock wraps");
+}
+
+#[test]
+fn transport_budget_counts_every_packet_of_a_batched_rebuild() {
+    let ladder = TransportEdge {
+        kind: TransportKind::Ladder,
+        ..crossing_edge(2)
+    };
+    // A follower slower than the game: each rebuild saw `packets` ticks.
+    for packets in [2, 3] {
+        for edge in [crossing_edge(9), ladder.clone()] {
+            let mut x = Crossing::new(edge);
+            let mut options = TravelOptions {
+                budget_ticks_per_hop: 3,
+                ..TravelOptions::default()
+            };
+            assert!(x.poll(&mut options).is_none(), "send");
+            x.tick_batch(packets);
+            assert!(
+                x.poll(&mut options).is_none(),
+                "{packets} ticks of the 3-tick budget are spent"
+            );
+            x.tick_batch(packets);
+            assert!(
+                matches!(x.poll(&mut options), Some(TravelOutcome::Stalled { .. })),
+                "{} observed ticks lapse the 3-tick budget",
+                2 * packets
+            );
+        }
+    }
+}
+
+#[test]
+fn loc_approach_budget_counts_every_packet_of_a_batched_rebuild() {
+    let mut x = Crossing::at(crossing_edge(9), (0, 0));
+    let mut options = TravelOptions {
+        budget_ticks_per_hop: 3,
+        ..TravelOptions::default()
+    };
+    assert!(x.poll(&mut options).is_none(), "the approach walk is sent");
+    assert_eq!(x.rec.loc_ops, 0);
+    x.tick_batch(3);
+    assert!(x.poll(&mut options).is_none(), "3 of 3 ticks are spent");
+    x.tick_batch(3);
+    assert!(
+        matches!(x.poll(&mut options), Some(TravelOutcome::Stalled { .. })),
+        "6 observed ticks lapse the 3-tick approach budget"
+    );
+}
+
+#[test]
+fn landing_delay_counts_every_packet_of_a_batched_rebuild() {
+    let mut x = Crossing::new(crossing_edge(4));
+    let mut options = TravelOptions::default();
+    assert!(x.poll(&mut options).is_none(), "send");
+    plant_player(&mut x.c, 10, 4);
+    x.tick_batch(2);
+    // The landing poll is the delay's first tick; two more rebuilds of two
+    // packets each carry it past the 4 packed ticks.
+    assert!(x.poll(&mut options).is_none(), "landing poll: 1 of 4");
+    x.tick_batch(2);
+    assert!(x.poll(&mut options).is_none(), "3 of 4");
+    x.tick_batch(2);
+    assert!(
+        matches!(x.poll(&mut options), Some(TravelOutcome::Arrived { .. })),
+        "5 observed ticks end the 4-tick landing delay"
+    );
+}
+
+#[test]
+fn a_late_accepted_retry_shares_the_hop_budget() {
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let sink = Rc::clone(&events);
+    let mut options = TravelOptions {
+        on_event: Some(Box::new(move |event| {
+            if let TravelEvent::TransportBusy { tries, .. } = event {
+                sink.borrow_mut().push(tries);
+            }
+        })),
+        ..TravelOptions::default()
+    };
+    let mut x = Crossing::new(crossing_edge(9));
+    let mut seen = 0;
+    let mut ticks = 0;
+    let outcome = loop {
+        if let Some(outcome) = x.poll(&mut options) {
+            break outcome;
+        }
+        if x.rec.loc_ops > seen {
+            seen = x.rec.loc_ops;
+            if seen < 6 {
+                x.c.add_chat(0, LEDGE_BUSY, "");
+            } else {
+                // The sixth send, 50 ticks in, is accepted: the player
+                // starts across and then stops short of the landing.
+                plant_player(&mut x.c, 6, 4);
+            }
+        }
+        x.tick();
+        ticks += 1;
+        assert!(ticks < 400, "the hop must end");
+    };
+    assert_eq!(
+        ticks, 61,
+        "refused attempts, holds, the accepted attempt and the landing share the 60-tick budget; a resend does not renew it"
+    );
+    assert_eq!(
+        outcome,
+        TravelOutcome::Stalled {
+            at: WorldTile {
+                x: 3206,
+                z: 3204,
+                level: 0
+            },
+            aiming: crossing_edge(9).to,
+            why: HopFailure::Expired,
+            tries: 6,
+            last_refusal: Some(TransportRefusal::Busy(LEDGE_BUSY)),
+        }
+    );
+    assert_eq!(events.borrow().len(), 5, "five refusals were retried");
+}
+
+#[test]
+fn default_callers_get_the_send_count_and_last_refusal_in_the_terminal_outcome() {
+    // No `on_event` subscriber: the outcome alone carries the detail.
+    let mut options = TravelOptions::default();
+    let mut x = Crossing::new(crossing_edge(9));
+    let mut seen = 0;
+    let mut ticks = 0;
+    let outcome = loop {
+        if let Some(outcome) = x.poll(&mut options) {
+            break outcome;
+        }
+        if x.rec.loc_ops > seen {
+            seen = x.rec.loc_ops;
+            x.c.add_chat(0, LEDGE_BUSY, "");
+        }
+        x.tick();
+        ticks += 1;
+        assert!(ticks < 400, "the retries must be finite");
+    };
+    assert!(
+        matches!(
+            outcome,
+            TravelOutcome::Stalled {
+                why: HopFailure::Dropped,
+                tries: 7,
+                last_refusal: Some(TransportRefusal::Busy(LEDGE_BUSY)),
+                ..
+            }
+        ),
+        "{outcome:?}"
+    );
+    assert!(
+        format!("{outcome:?}").contains(LEDGE_BUSY),
+        "a caller that prints the outcome sees the refusal: {outcome:?}"
+    );
+}
+
+#[test]
+fn a_crossing_that_never_began_is_reported_as_such_when_its_retries_end() {
+    let mut options = TravelOptions {
+        budget_ticks_per_hop: 5,
+        ..TravelOptions::default()
+    };
+    let mut x = Crossing::new(crossing_edge(2));
+    let mut ticks = 0;
+    let outcome = loop {
+        if let Some(outcome) = x.poll(&mut options) {
+            break outcome;
+        }
+        x.tick();
+        ticks += 1;
+        assert!(ticks < 100, "the retries must be finite");
+    };
+    assert!(
+        matches!(
+            outcome,
+            TravelOutcome::Stalled {
+                why: HopFailure::Dropped,
+                tries: 2,
+                last_refusal: Some(TransportRefusal::NotStarted),
+                ..
+            }
+        ),
+        "{outcome:?}"
+    );
 }

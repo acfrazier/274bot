@@ -836,12 +836,16 @@ content's hold in observed game ticks (9 for the ledge, 5 for the rope swing:
 the shared reservation lasts at most `map_clock` + 8 and + 4), presses the
 page's continue button, and sends the interaction again. A hop that does not
 move for longer than its baked `edge.ticks`, and shows no such text, counts as
-dropped and is sent again at once. Refused tries and holds share the original
-hop budget (60 ticks by default), so the retries are finite: a ledge that
-stays busy gets seven sends. The final `Stalled { why: Dropped }` carries the
-real send count, and every refusal reaches `on_event` as
-`TravelEvent::TransportBusy`. Transport and approach clocks count distinct
-observed game ticks (one per `PLAYER_INFO`), never polls.
+dropped and is sent again at once. One hop clock runs from the hop's first
+send and a retry does not restart it. Refused tries, holds, the accepted try
+and the landing delay all draw on the original hop budget (60 ticks by
+default), so the retries are finite: a ledge that stays busy gets seven
+sends. The final `Stalled { why: Dropped }` carries the real send count and
+`last_refusal` (`TransportRefusal::Busy(text)`, or `NotStarted` for a silent
+drop), also for a caller with no `on_event`. Every refusal reaches `on_event`
+as `TravelEvent::TransportBusy`. Transport, approach and landing clocks count
+observed game ticks, one per `PLAYER_INFO` packet: a snapshot rebuild that
+observed N packets adds N, a repeated read of one snapshot adds none.
 
 Absolute vertical same-coordinate Ladder/Stairs hops retain the footprint of
 the observed loc actually clicked. Arrival is on the destination plane within

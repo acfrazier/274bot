@@ -184,10 +184,13 @@ fn observed_web_cut_failure(snapshot: &GameSnapshot, after: i32) -> bool {
         .any(|line| line.sequence > after && line.text == WEB_CUT_FAILURE_MESSAGE)
 }
 
-/// Distinct observed game ticks, one per `PLAYER_INFO` (`snapshot.tick()`),
-/// however many times polls read the same snapshot. Transport clocks use it
-/// as the walk's stall idle count does ([`WALK_STALL_RECOVER_IDLE_TICKS`]):
-/// a burst of polls inside one game tick cannot lapse a hop budget.
+/// Observed game ticks, one per `PLAYER_INFO` packet. The snapshot clock
+/// (`snapshot.tick()`) advances by the number of packets one rebuild
+/// observed, so a follower that polls less often than the game ticks still
+/// counts every tick, and polls that read one snapshot again count none.
+/// Transport clocks use it as the walk's stall idle count does
+/// ([`WALK_STALL_RECOVER_IDLE_TICKS`]): a burst of polls inside one game
+/// tick cannot lapse a hop budget.
 #[derive(Clone, Copy, Debug, Default)]
 pub(super) struct TickCount {
     count: u32,
@@ -203,12 +206,25 @@ impl TickCount {
         }
     }
 
-    /// Credit `tick` once and return the ticks counted so far.
+    /// Credit the packets observed since the last read and return the
+    /// ticks counted so far. The first read credits one tick, as does a
+    /// tick that moved backwards (a replaced snapshot), so the count
+    /// always advances.
     pub(super) fn observe(&mut self, tick: u32) -> u32 {
-        if self.last != Some(tick) {
-            self.last = Some(tick);
-            self.count = self.count.saturating_add(1);
-        }
+        let credit = match self.last {
+            Some(last) if last == tick => 0,
+            Some(last) => {
+                let ahead = tick.wrapping_sub(last);
+                if ahead < (1u32 << 31) {
+                    ahead
+                } else {
+                    1
+                }
+            }
+            None => 1,
+        };
+        self.last = Some(tick);
+        self.count = self.count.saturating_add(credit);
         self.count
     }
 
@@ -253,12 +269,10 @@ const OCCUPIED_MESSAGES: [OccupiedMessage; 2] = [
     },
 ];
 
-/// The refusal text newer than `after` (chat line) or shown now (mesbox page).
-fn observed_occupied_refusal(
-    snapshot: &GameSnapshot,
-    after: i32,
-) -> Option<&'static OccupiedMessage> {
-    OCCUPIED_MESSAGES.iter().find(|message| {
+/// The index in [`OCCUPIED_MESSAGES`] of the refusal text newer than
+/// `after` (chat line) or shown now (mesbox page).
+fn observed_occupied_refusal(snapshot: &GameSnapshot, after: i32) -> Option<usize> {
+    OCCUPIED_MESSAGES.iter().position(|message| {
         if message.boxed {
             snapshot
                 .chat_modal_texts()
@@ -273,16 +287,41 @@ fn observed_occupied_refusal(
     })
 }
 
+/// The latest refusal an agility crossing met, kept small: the busy
+/// text is an index into [`OCCUPIED_MESSAGES`].
+#[derive(Clone, Copy, Debug)]
+enum LastRefusal {
+    Busy(u8),
+    NotStarted,
+}
+
 /// Recovery state for an agility crossing the server refused because another
 /// player holds the obstacle (see [`FollowRun::recover_occupied`]).
 #[derive(Debug, Default)]
 pub(super) struct OccupiedRetry {
-    /// Observed ticks that refused attempts and their holds have used; the
-    /// hop budget bounds it, so the retries are finite.
-    spent: u32,
+    /// The hop clock's reading when the latest send, or the landing delay,
+    /// began. The clock itself runs from the hop's first send and is never
+    /// restarted by a retry, so refused attempts, holds, the accepted
+    /// attempt and the landing delay all draw on one hop budget and the
+    /// retries are finite.
+    mark: u32,
     /// The tick from which the interaction may be sent again, while a hold
     /// is being waited out.
     resume_tick: Option<u32>,
+    /// The latest refusal, reported by the terminal outcome.
+    last: Option<LastRefusal>,
+}
+
+impl OccupiedRetry {
+    /// The latest refusal as the terminal outcome reports it.
+    pub(super) fn last_refusal(&self) -> Option<TransportRefusal> {
+        match self.last? {
+            LastRefusal::NotStarted => Some(TransportRefusal::NotStarted),
+            LastRefusal::Busy(index) => OCCUPIED_MESSAGES
+                .get(usize::from(index))
+                .map(|message| TransportRefusal::Busy(message.text)),
+        }
+    }
 }
 
 /// Re-evaluate both packed web actions against the snapshot at the moment
@@ -637,6 +676,8 @@ impl FollowRun {
                 hop.open_sent_tick = Some(snapshot.tick());
                 let poll = self.resend_transport(d, snapshot, &mut hop, options, target, action);
                 if matches!(poll, Poll::Watching) {
+                    // A web cut is a fresh interaction: its clock restarts.
+                    hop.ticks_waited = TickCount::sent_at(snapshot.tick());
                     self.transport = Some(hop);
                 }
                 return poll;
@@ -1052,12 +1093,20 @@ impl FollowRun {
                         // Count packed ticks from the first landed poll, not
                         // from the interact — the forcemove can land on `to`
                         // while the player is still locked (live ledge
-                        // Dropped the next walk).
+                        // Dropped the next walk). The hop clock keeps
+                        // running: the landing delay draws on the hop
+                        // budget too.
+                        let tick = snapshot.tick();
                         if hop.sent_tile.is_some() {
                             hop.sent_tile = None;
-                            hop.ticks_waited = TickCount::default();
+                            // The landing poll is the delay's first tick.
+                            hop.occupied.mark = hop.ticks_waited.observe(tick).saturating_sub(1);
                         }
-                        if hop.ticks_waited.observe(snapshot.tick()) < delay {
+                        let landed = hop
+                            .ticks_waited
+                            .observe(tick)
+                            .saturating_sub(hop.occupied.mark);
+                        if landed < delay {
                             self.transport = Some(hop);
                             return Poll::Watching;
                         }
@@ -1092,6 +1141,7 @@ impl FollowRun {
                         HopFailure::Expired
                     },
                     tries: hop.tries.max(1),
+                    last_refusal: hop.occupied.last_refusal(),
                 })
             }
             // `poll` never produces `Refused` (only `Interactions` does);
@@ -1120,6 +1170,7 @@ impl FollowRun {
                         aiming: hop.to,
                         why,
                         tries: hop.tries.max(1),
+                        last_refusal: hop.occupied.last_refusal(),
                     })
                 } else {
                     self.transport = Some(hop);
@@ -1130,8 +1181,9 @@ impl FollowRun {
     }
 
     /// Send the hop's loc interaction again on `target`: the tail the
-    /// web-cut and occupied-transport retries share. Each send restarts the
-    /// hop clock and counts as a try.
+    /// web-cut and occupied-transport retries share. Each send counts as a
+    /// try. The hop clock is the caller's: the web-cut retry restarts it,
+    /// the occupied-transport retry keeps it running.
     fn resend_transport<'s, D: Driver>(
         &mut self,
         d: &mut D,
@@ -1148,7 +1200,6 @@ impl FollowRun {
         match interact_transport(snapshot, &mut ix, target, action, &mut options.on_event) {
             SendResult::Sent { .. } => {
                 hop.chat_seq = chat_seq_at_send;
-                hop.ticks_waited = TickCount::sent_at(snapshot.tick());
                 hop.sent_tile = Some(here);
                 hop.arrival_footprint = arrival_footprint;
                 hop.tries = hop.tries.saturating_add(1);
@@ -1167,12 +1218,14 @@ impl FollowRun {
     /// ([`OCCUPIED_MESSAGES`]) with the player still on its send tile, or no
     /// move at all within the edge's whole baked crossing time. A line waits
     /// out its content hold in observed ticks; a silent drop is sent again
-    /// at once. Then the interaction goes out again. Every refused attempt
-    /// and hold draws on the hop budget, so the retries are finite. After
-    /// the budget is spent the outcome is the terminal `Dropped` stall,
-    /// whose `tries` is the real send count and whose last refusal reaches
-    /// `on_event` as [`TravelEvent::TransportBusy`]. `None`: nothing to
-    /// recover on this poll.
+    /// at once. Then the interaction goes out again. The hop clock runs from
+    /// the first send and a retry does not restart it: the hold has to fit
+    /// in what the budget has left, so the retries are finite. After the
+    /// budget is spent the outcome is the terminal `Dropped` stall, whose
+    /// `tries` is the real send count and whose `last_refusal` is the last
+    /// refusal; the refusal also reaches `on_event` as
+    /// [`TravelEvent::TransportBusy`]. `None`: nothing to recover on this
+    /// poll.
     fn recover_occupied<D: Driver>(
         &mut self,
         d: &mut D,
@@ -1193,19 +1246,22 @@ impl FollowRun {
             if hop.sent_tile != Some(here) {
                 return None;
             }
-            let message = observed_occupied_refusal(snapshot, hop.chat_seq);
-            let attempt = hop.ticks_waited.get();
+            let refusal = observed_occupied_refusal(snapshot, hop.chat_seq);
+            let message = refusal.and_then(|index| OCCUPIED_MESSAGES.get(index));
+            // The clock counts up to the previous poll: this poll credits
+            // its tick after recovery.
+            let spent = hop.ticks_waited.get();
+            let attempt = spent.saturating_sub(hop.occupied.mark);
             if message.is_none() && attempt <= crossing_ticks {
                 return None;
             }
             let hold = message.map_or(0, |message| message.hold);
             hop.tries = hop.tries.max(1);
-            let spent = hop
-                .occupied
-                .spent
-                .saturating_add(attempt)
-                .saturating_add(hold);
-            let retry = spent <= self.budget;
+            hop.occupied.last = Some(match refusal {
+                Some(index) => LastRefusal::Busy(index as u8),
+                None => LastRefusal::NotStarted,
+            });
+            let retry = spent.saturating_add(hold) <= self.budget;
             let resume_tick = tick.saturating_add(hold);
             if let Some(cb) = options.on_event.as_mut() {
                 cb(TravelEvent::TransportBusy {
@@ -1225,9 +1281,9 @@ impl FollowRun {
                     aiming: hop.to,
                     why: HopFailure::Dropped,
                     tries: hop.tries,
+                    last_refusal: hop.occupied.last_refusal(),
                 }));
             }
-            hop.occupied.spent = spent;
             hop.occupied.resume_tick = Some(resume_tick);
             if message.is_some_and(|message| message.boxed)
                 && snapshot.chat_continue_component_id() != -1
@@ -1248,7 +1304,12 @@ impl FollowRun {
         // bounds that wait.
         let target = find_transport_target_instance(snapshot, &edge, hop.npc_index)?;
         hop.occupied.resume_tick = None;
-        Some(self.resend_transport(d, snapshot, hop, options, target, &edge))
+        let poll = self.resend_transport(d, snapshot, hop, options, target, &edge);
+        if matches!(poll, Poll::Watching) {
+            // The new attempt starts at this tick; the clock goes on.
+            hop.occupied.mark = hop.ticks_waited.observe(tick);
+        }
+        Some(poll)
     }
 
     /// Loc-backed approach settle: adjacency or per-arm budget expiry.
@@ -1324,6 +1385,7 @@ impl FollowRun {
                         HopFailure::Expired
                     },
                     tries: hop.tries.max(1),
+                    last_refusal: None,
                 })
             }
             // `poll` never produces `Refused` (only `Interactions` does);
@@ -1345,6 +1407,7 @@ impl FollowRun {
                         aiming: approach.tile,
                         why,
                         tries: hop.tries.max(1),
+                        last_refusal: None,
                     })
                 } else {
                     hop.approach = Some(approach);

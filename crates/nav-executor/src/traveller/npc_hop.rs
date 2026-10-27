@@ -184,6 +184,7 @@ impl FollowRun {
                     HopFailure::Expired
                 },
                 tries: hop.tries,
+                last_refusal: None,
             }
         }
     }

@@ -87,6 +87,20 @@ pub enum HopFailure {
     EndBlocked,
 }
 
+/// The latest refusal an agility crossing met before its hop ended, kept in
+/// the terminal outcome so a caller without an event subscriber still sees
+/// it ([`TravelOutcome::Stalled::last_refusal`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+pub enum TransportRefusal {
+    /// Another player held the obstacle; the content refused with this line.
+    #[error("the crossing was refused: \"{0}\"")]
+    Busy(&'static str),
+    /// The player never left the send tile within the crossing time and
+    /// the content said nothing.
+    #[error("the crossing never began within its baked time")]
+    NotStarted,
+}
+
 /// A transport-specific failure that prevents a web cut from being sent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
 pub enum WebCutFailure {
@@ -262,12 +276,15 @@ pub enum TravelOutcome {
     /// Every leg completed; the player is at `at`.
     Arrived { at: WorldTile },
     /// A hop exhausted its budget without arriving: `Expired` while
-    /// creeping, `Dropped` while stuck on the send tile.
+    /// creeping, `Dropped` while stuck on the send tile. `tries` is the
+    /// number of interactions sent. `last_refusal` is the latest refusal
+    /// of an agility crossing that was retried or ended on one, else `None`.
     Stalled {
         at: WorldTile,
         aiming: WorldTile,
         why: HopFailure,
         tries: u32,
+        last_refusal: Option<TransportRefusal>,
     },
     /// An `Interactions` send was refused (precondition, off-scene, or
     /// the driver rejected it).

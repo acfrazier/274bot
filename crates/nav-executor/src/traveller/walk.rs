@@ -163,6 +163,7 @@ impl FollowRun {
                     aiming: hop.aim,
                     why: HopFailure::Dropped,
                     tries: hop.tries.max(1),
+                    last_refusal: None,
                 })
             }
             // `poll` never produces `Refused` (only `Interactions` does);
@@ -187,6 +188,7 @@ impl FollowRun {
                         aiming: hop.aim,
                         why,
                         tries: hop.tries.max(1),
+                        last_refusal: None,
                     })
                 } else if self.should_recover_stalled_walk(&hop, snapshot, here) {
                     self.recover_stalled_walk(d, snapshot, options, hop, here)
@@ -438,6 +440,7 @@ impl FollowRun {
                         aiming: aim,
                         why: HopFailure::EndBlocked,
                         tries: hop.tries,
+                        last_refusal: None,
                     });
                 }
                 SendResult::Refused {

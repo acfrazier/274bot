@@ -102,7 +102,7 @@ fn walk_stall_writes_one_info_nav_line_with_hop_facts() {
                             HopFailure::Expired
                         };
                         let end = WorldTile { x: 3200 + if moved { 2 } else { 0 }, ..start };
-                        assert_eq!(outcome, Some(TravelOutcome::Stalled { at: end, aiming: aim, why, tries: 2 }));
+                        assert_eq!(outcome, Some(TravelOutcome::Stalled { at: end, aiming: aim, why, tries: 2, last_refusal: None }));
                         let logs = stall_logs(&slot);
                         assert_eq!(logs.len(), 1);
                         assert_eq!(logs[0].1, api::hostlog::Source::Nav);
