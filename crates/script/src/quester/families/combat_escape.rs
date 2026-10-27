@@ -18,6 +18,7 @@ use crate::reach_route;
 use api::query::ReachQueryView;
 use api::WorldTile;
 use nav_planner::contract::CollisionView;
+use nav_planner::router::NODE_BUDGET;
 
 /// The destination tiers, best first. Each is a fact of the content:
 /// - `Stand`: the Path's authored stand, outside the attacker's chase envelope.
@@ -38,16 +39,17 @@ const AWAY: usize = 2;
 /// envelope), so two requests can overlap, but the request count cannot pass
 /// this. Each request is a fresh plan from the observed position. A request
 /// ends with its walk receipt or, when none comes, with its observed-tick
-/// budget ([`ESCAPE_SLACK_TICKS`], [`ESCAPE_CAP_TICKS`]). The walk machine's
-/// ten-minute active-clock deadline stays as the outer backstop.
+/// budget ([`ESCAPE_SLACK_TICKS`], [`ESCAPE_MAX_WALK_STEPS`]). The walk
+/// machine's ten-minute active-clock deadline stays as the outer backstop.
 pub(super) const ESCAPE_PASS_ATTEMPTS: usize = 3;
 
 /// Chebyshev margin around the authored stand that still counts as standing
 /// at it. It is the radius the stand walk used before goal tiers.
 const STAND_RADIUS: i32 = 1;
 
-/// Largest ring radius around the attacker. A ring of this radius has 512
-/// tiles, which is a whole tier.
+/// Largest ring radius of the beyond tier around the attacker. A ring of this
+/// radius has 512 tiles, which is a whole tier. The away tier does not use
+/// it: its rings lie inside the chase envelope.
 const MAX_RING: i32 = 64;
 
 /// Goals one tier may name. The router's cap applies to the union of both
@@ -69,14 +71,22 @@ const TIER_CAP: usize = WalkGoals::MAX / 2;
 /// blocks is the stall this budget exists to end.
 pub(super) const ESCAPE_SLACK_TICKS: u64 = 12;
 
-/// Largest observed-tick budget of one escape walk, and the budget when the
-/// route is not measured (no live flood, or no goal in it, as when the route
-/// needs a transport). The goals of the beyond and away tiers lie within
-/// [`MAX_RING`] tiles of the attacker, so a straight walk to one takes about
-/// that many ticks at walk speed. Twice that leaves room for a detour. A
-/// stand farther than this is abandoned for the nearer tiers: under attack a
-/// walk that long is no escape. It is policy, not an engine bound.
-pub(super) const ESCAPE_CAP_TICKS: u64 = 2 * MAX_RING as u64;
+/// Largest number of steps a route can have, and so the largest number of
+/// observed ticks that a walk to a reachable goal can need at walk speed.
+/// The reach flood has no depth limit of its own (`SceneQuery::flood_reach`,
+/// `api/src/query/reach.rs:612-614`: "No 400-step cap"), so the bound is the
+/// router's: it settles at most [`NODE_BUDGET`] nodes in one search
+/// (`nav-planner/src/router.rs:4035-4038`, used for the script's walk
+/// requests at `host-play/src/script_nav.rs:323`), and a route of `n` steps
+/// passes through `n + 1` settled nodes, so `n` stays below it. A player
+/// moves one tile per game tick at walk speed and two at run speed
+/// (`PathingEntity.ts:144-149`, with `Player.ts:729-731` choosing walk or
+/// run), so the walk takes at most one tick per step. A walk whose depth is
+/// not measured (no live flood, or no goal in it) gets this bound plus
+/// [`ESCAPE_SLACK_TICKS`]: no walk to a reachable goal needs more. The bound
+/// covers walking only. A route that waits on a transport has no tick bound
+/// from it.
+pub(super) const ESCAPE_MAX_WALK_STEPS: u64 = NODE_BUDGET as u64;
 
 /// Observed-tick clock of the escape walk in flight. It counts distinct game
 /// ticks, one per `PLAYER_INFO` (`api/src/snapshot/decode.rs:101-104`), never
@@ -189,16 +199,14 @@ impl AbortEscape {
     }
 }
 
-/// Walk speed is one tile per observed tick, as the engine moves a player at
-/// most one tile per cycle at walk speed (`shop_open::OPEN_SLACK_TICKS` cites
-/// `PathingEntity.ts:144-149`, `Player.ts:729-731`). Running only arrives
-/// sooner. The router's route is not visible to the script, so the budget is
-/// the measured flood depth to the nearest goal plus [`ESCAPE_SLACK_TICKS`],
-/// capped at [`ESCAPE_CAP_TICKS`]. Without a measured depth it is the cap.
+/// Walk speed is at least one tile per observed tick (see
+/// [`ESCAPE_MAX_WALK_STEPS`]). The router's route is not visible to the
+/// script, so a measured budget is the flood depth to the nearest goal of the
+/// preferred tier (of the fallback tier when no preferred goal is in the
+/// flood) plus [`ESCAPE_SLACK_TICKS`]. Without a measured depth it is
+/// [`ESCAPE_MAX_WALK_STEPS`] plus the slack.
 fn walk_budget_ticks(depth: Option<u32>) -> u64 {
-    depth.map_or(ESCAPE_CAP_TICKS, |steps| {
-        (u64::from(steps) + ESCAPE_SLACK_TICKS).min(ESCAPE_CAP_TICKS)
-    })
+    depth.map_or(ESCAPE_MAX_WALK_STEPS, u64::from) + ESCAPE_SLACK_TICKS
 }
 
 /// What the planner knows about the fight.

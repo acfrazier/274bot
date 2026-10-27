@@ -3197,12 +3197,24 @@ fn with_step_context_reach<R>(
     })
 }
 
+/// The walking depth of an escape walk in an [`open_flood`] around `here`:
+/// the Chebyshev distance to the nearest goal of its preferred tier.
+fn open_flood_depth(here: api::WorldTile, walk: &WalkOut) -> u64 {
+    goals_of(walk)
+        .preferred()
+        .iter()
+        .map(|goal| tile_distance(here, *goal))
+        .min()
+        .expect("a tier has goals") as u64
+}
+
 /// The host never posts a terminal receipt for any escape walk, so only the
-/// observed-tick budget can end one. Each walk is abandoned after its budget
-/// (no live flood here, so the cap), the next tier starts while the attacker
-/// is live, and the whole recovery ends within the budgets of its requests.
+/// observed-tick budget can end one. Each walk is abandoned after its flood
+/// depth plus the slack, the next tier starts while the attacker is live, and
+/// the whole recovery ends within the budgets of its requests.
 #[test]
 fn escape_walks_that_never_settle_end_on_their_observed_tick_budget() {
+    const FLOOD_RADIUS: i32 = 70;
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let warlord = data.npc_by_config("khazard_warlord").unwrap();
     let here = api::WorldTile {
@@ -3212,9 +3224,10 @@ fn escape_walks_that_never_settle_end_on_their_observed_tick_budget() {
     };
     let far_stand = api::WorldTile {
         x: 3000,
-        z: 3200,
+        z: 3060,
         level: 0,
     };
+    let reach = open_flood(here, FLOOD_RADIUS);
     for (stand, pass) in [(Some(far_stand), 3), (None, 2)] {
         let mut run = combat_test_run(
             imp_target(&data),
@@ -3234,24 +3247,26 @@ fn escape_walks_that_never_settle_end_on_their_observed_tick_budget() {
         let mut snapshot = GameSnapshot::new();
         seed_abort_scene(&mut snapshot, here, 1, vec![attacker], None, None);
         let mut ledger = None;
-        assert!(with_step_context(&snapshot, &mut ledger, 12, |cx| {
-            run.on_combat_report(
-                report(CombatEnd::Aborted(AbortReason::PrepFailed(
-                    crate::combat::PrepItem::Ammo,
-                ))),
-                cx,
-            )
-        })
-        .is_pending());
+        assert!(
+            with_step_context_reach(&snapshot, &reach, &mut ledger, 12, |cx| {
+                run.on_combat_report(
+                    report(CombatEnd::Aborted(AbortReason::PrepFailed(
+                        crate::combat::PrepItem::Ammo,
+                    ))),
+                    cx,
+                )
+            })
+            .is_pending()
+        );
 
         // Each entry is the tick a walk was requested and the walk.
         let mut walks = vec![(12, last_walk(&ledger))];
         let mut tick = 12;
-        let bound = 12 + 2 * pass as u64 * escape::ESCAPE_CAP_TICKS + 20;
+        let bound = 12 + 2 * pass as u64 * (FLOOD_RADIUS as u64 + escape::ESCAPE_SLACK_TICKS) + 20;
         let result = loop {
             tick += 1;
             if let Poll::Ready(result) =
-                with_step_context(&snapshot, &mut ledger, tick, |cx| run.poll(cx))
+                with_step_context_reach(&snapshot, &reach, &mut ledger, tick, |cx| run.poll(cx))
             {
                 break result;
             }
@@ -3276,8 +3291,8 @@ fn escape_walks_that_never_settle_end_on_their_observed_tick_budget() {
             for pair in chunk.windows(2) {
                 assert_eq!(
                     pair[1].0 - pair[0].0,
-                    escape::ESCAPE_CAP_TICKS,
-                    "an unmeasured walk is abandoned after exactly the cap in observed ticks"
+                    open_flood_depth(here, &pair[0].1) + escape::ESCAPE_SLACK_TICKS,
+                    "a walk is abandoned after its flood depth plus the slack, in observed ticks"
                 );
             }
             let preferred = chunk
@@ -3305,8 +3320,206 @@ fn escape_walks_that_never_settle_end_on_their_observed_tick_budget() {
     }
 }
 
+/// Without a measured depth (no flood, or none of the goals in it) the budget
+/// is the router's largest route length plus the slack, the bound that no
+/// walk to a reachable goal passes.
+#[test]
+fn an_unmeasured_escape_walk_gets_the_router_bound_plus_the_slack() {
+    let geometry = escape::EscapeGeometry {
+        here: M4_HERE,
+        threat: Some(M4_TREE),
+        stand: None,
+        chase_range: 14,
+    };
+    let bound = nav_planner::router::NODE_BUDGET as u64 + escape::ESCAPE_SLACK_TICKS;
+    assert_eq!(escape::ESCAPE_MAX_WALK_STEPS, 4_000_000);
+    let no_flood = escape::AbortEscape::new()
+        .next_goals(&geometry, None, None)
+        .expect("tiers beyond the envelope remain");
+    assert_eq!(no_flood.budget_ticks, bound);
+    let small = open_flood(M4_HERE, 1);
+    let no_goal_in_flood = escape::AbortEscape::new()
+        .next_goals(&geometry, None, Some(&small))
+        .expect("tiers beyond the envelope remain");
+    assert_eq!(no_goal_in_flood.budget_ticks, bound);
+}
+
+/// A guarded escape walk that never settles, with food in the pack and the
+/// hitpoints above the eat line when it starts. The attacker keeps hitting,
+/// the walk guard keeps eating while the walk waits, the observed-tick budget
+/// ends the walk with food and hitpoints left, the next tier is requested
+/// under the same guard, and the whole first pass stays inside the sum of its
+/// budgets, after which the hold takes over.
+#[test]
+fn a_stalled_guarded_escape_walk_keeps_eating_and_ends_with_supplies_left() {
+    use crate::combat::{facts, GuardOp, WalkGuard};
+    use crate::survival::CurePoison;
+
+    /// An attack lands every this many ticks.
+    const ATTACK_TICKS: u64 = 4;
+    const FULL_HP: i32 = 40;
+    const FLOOD_RADIUS: i32 = 70;
+
+    let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
+    let warlord = data.npc_by_config("khazard_warlord").unwrap();
+    let lobster = data.item_by_alias("lobster").unwrap();
+    let lobster_name = lobster.name.clone().expect("lobster has a name");
+    let hit = i32::from(facts::npc_max_hit(warlord).expect("the warlord's max hit is known"));
+    let here = api::WorldTile {
+        x: 3000,
+        z: 3000,
+        level: 0,
+    };
+    let mut run = combat_test_run(
+        imp_target(&data),
+        None,
+        Some(Arc::new(NeverStop)),
+        Vec::new(),
+    );
+    let heal = run.tables.food(lobster.id).expect("lobster is food").heal;
+    let attack_animation = live_attack_animation(&run);
+    let reach = open_flood(here, FLOOD_RADIUS);
+    let scene = |snapshot: &mut GameSnapshot, hp: i32, food: i32| {
+        let mut attacker = aborting_npc(
+            7,
+            warlord.id,
+            api::WorldTile {
+                x: here.x + 1,
+                ..here
+            },
+        );
+        attacker.animation = attack_animation;
+        seed_abort_scene(snapshot, here, hp, vec![attacker], None, None);
+        snapshot.seed_inventory(
+            if food > 0 {
+                vec![inventory_item(lobster.id, &lobster_name, food)]
+            } else {
+                Vec::new()
+            },
+            28,
+        );
+    };
+
+    let (mut hp, mut food, mut eats) = (FULL_HP, 28, 0u32);
+    let mut snapshot = GameSnapshot::new();
+    scene(&mut snapshot, hp, food);
+    let mut ledger = None;
+    assert!(
+        with_step_context_reach(&snapshot, &reach, &mut ledger, 12, |cx| {
+            run.on_combat_report(
+                report(CombatEnd::Aborted(AbortReason::PrepFailed(
+                    crate::combat::PrepItem::Ammo,
+                ))),
+                cx,
+            )
+        })
+        .is_pending()
+    );
+    let guard_for_last_walk =
+        |run: &CombatRun, snapshot: &GameSnapshot, ledger: &mut TestLedger, tick: u64| {
+            let request = guard_request_from_outbox(ledger);
+            assert!(request.food_guard && !request.protect, "a food-only guard");
+            with_step_context_reach(snapshot, &reach, ledger, tick, |cx| {
+                WalkGuard::begin_food_only_with(
+                    &request,
+                    &cx.tick.cx.snapshot(),
+                    Arc::clone(&run.tables),
+                )
+                .expect("the escape walk admits the food guard")
+            })
+        };
+    let mut guard = guard_for_last_walk(&run, &snapshot, &mut ledger, 12);
+
+    // Each entry: tick requested, the walk, meals eaten so far, food left.
+    let mut walks = vec![(12u64, last_walk(&ledger), eats, food)];
+    let mut tick = 12u64;
+    let budget_sum = |walks: &[(u64, WalkOut, u32, i32)]| {
+        walks
+            .iter()
+            .map(|(_, walk, _, _)| open_flood_depth(here, walk) + escape::ESCAPE_SLACK_TICKS)
+            .sum::<u64>()
+    };
+    let handoff = loop {
+        tick += 1;
+        if tick.is_multiple_of(ATTACK_TICKS) {
+            hp -= hit;
+        }
+        assert!(hp > 0, "the bot dies at tick {tick} with {food} food left");
+        scene(&mut snapshot, hp, food);
+        let op = with_step_context_reach(&snapshot, &reach, &mut ledger, tick, |cx| {
+            let view = cx.tick.cx.snapshot();
+            let op = guard.tick(&view, cx.tick.cx.condition(), CurePoison::WhenNeeded);
+            if let Some(op) = op.as_ref() {
+                guard.admitted(op, &view);
+            }
+            op
+        });
+        if tick == 13 {
+            assert!(op.is_none(), "the first tick is above the eat line: {op:?}");
+        }
+        if matches!(op, Some(GuardOp::Eat { .. })) {
+            eats += 1;
+            food -= 1;
+            hp = (hp + heal).min(FULL_HP);
+        }
+        let polled =
+            with_step_context_reach(&snapshot, &reach, &mut ledger, tick, |cx| run.poll(cx));
+        assert!(
+            polled.is_pending(),
+            "tick {tick}: {}",
+            describe_poll(&polled)
+        );
+        if matches!(run.phase, Phase::HoldingAfterAbort) {
+            break tick;
+        }
+        if let Some(walk) = pending_walk(&ledger) {
+            if walk.request_id != walks.last().unwrap().1.request_id {
+                walks.push((tick, walk, eats, food));
+                guard = guard_for_last_walk(&run, &snapshot, &mut ledger, tick);
+            }
+        }
+        assert!(
+            tick <= 12 + budget_sum(&walks) + 40,
+            "the first pass must end within its budgets: {} walks at tick {tick}",
+            walks.len()
+        );
+    };
+
+    assert_eq!(walks.len(), 2, "one request for each tier without a stand");
+    let (first_tick, first, _, _) = &walks[0];
+    let (second_tick, second, eats_at_switch, food_at_switch) = &walks[1];
+    assert_eq!(
+        second_tick - first_tick,
+        open_flood_depth(here, first) + escape::ESCAPE_SLACK_TICKS,
+        "the stalled walk ends on its observed-tick budget"
+    );
+    assert!(
+        *eats_at_switch >= 2,
+        "the guard keeps eating while the walk waits: {eats_at_switch} meals"
+    );
+    assert!(
+        *food_at_switch > 0,
+        "the next tier starts while food remains"
+    );
+    assert!(
+        first.food_guard && second.food_guard,
+        "both walks are guarded"
+    );
+    assert_eq!(
+        goals_of(second).preferred(),
+        goals_of(first).fallback(),
+        "the next request prefers the tier the first held back"
+    );
+    assert_eq!(
+        handoff,
+        12 + budget_sum(&walks),
+        "the pass ends on the sum of its observed-tick budgets, then the hold starts"
+    );
+    assert!(hp > 0 && food > 0, "supplies remain at the hand-off");
+}
+
 /// With a live flood, the budget is the walking depth to the nearest goal of
-/// the preferred tier plus the slack, far below the cap.
+/// the preferred tier plus the slack, far below the router's bound.
 #[test]
 fn a_measured_escape_walk_is_abandoned_after_its_flood_depth_plus_the_slack() {
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
@@ -3347,14 +3560,9 @@ fn a_measured_escape_walk_is_abandoned_after_its_flood_depth_plus_the_slack() {
         .is_pending()
     );
     let first = last_walk(&ledger);
-    let depth = goals_of(&first)
-        .preferred()
-        .iter()
-        .map(|goal| tile_distance(here, *goal))
-        .min()
-        .expect("the first tier has goals") as u64;
+    let depth = open_flood_depth(here, &first);
     let budget = depth + escape::ESCAPE_SLACK_TICKS;
-    assert!(budget < escape::ESCAPE_CAP_TICKS, "the budget is measured");
+    assert!(depth > 0, "the budget is measured");
 
     let mut tick = 12;
     loop {
@@ -3366,10 +3574,7 @@ fn a_measured_escape_walk_is_abandoned_after_its_flood_depth_plus_the_slack() {
         if last_walk(&ledger).request_id != first.request_id {
             break;
         }
-        assert!(
-            tick <= 12 + escape::ESCAPE_CAP_TICKS,
-            "the walk must expire"
-        );
+        assert!(tick <= 12 + budget, "the walk must expire");
     }
     assert_eq!(
         tick,
