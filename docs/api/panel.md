@@ -650,7 +650,9 @@ window shows it again. A change another program copy saved reaches every
 control each time it saves (a control you are typing in, or one whose own save
 is still pending, keeps what you typed or chose until its save ends). The
 raster and memory controls follow it while no bot is focused; with a bot
-focused they show that bot's own saved modes. The server revision follows it
+focused they show that bot's own saved modes. When focus ends (for example
+you remove the last focused bot), they show the saved value at once, also a
+value another copy saved while the bot was focused. The server revision follows it
 while no profile is bound; a bound session keeps the revision it bound with.
 A pending raster or memory
 choice, its **Saving…** and its reason belong to the bot it was made for:
