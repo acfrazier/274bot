@@ -15,7 +15,7 @@ impl Scripts {
     pub(crate) fn assignment_for(
         &mut self,
         sel: &script::ScriptSel,
-        _catalog_root: Option<&Path>,
+        catalog_root: Option<&Path>,
     ) -> Result<Option<ScriptAssignment>, String> {
         match sel {
             script::ScriptSel::Compiled(id) => script::compiled_card(*id)
@@ -28,7 +28,7 @@ impl Scripts {
                         return Ok(None);
                     }
                     if !self.catalog_filled() || self.catalog_scan_root().is_none() {
-                        let root = _catalog_root
+                        let root = catalog_root
                             .ok_or_else(|| "catalog root is not available".to_string())?;
                         self.request_catalog_fill(root, &script_js::default_rs2b0t_path_file())
                             .map_err(|error| error.to_string())?;
@@ -44,10 +44,13 @@ impl Scripts {
                 }
             }
             #[cfg(not(feature = "js"))]
-            script::ScriptSel::Loaded(..) => Err(script::surface::SurfaceError::NoFactory(
-                script::surface::SurfaceKind::Js,
-            )
-            .to_string()),
+            script::ScriptSel::Loaded(..) => {
+                let _ = catalog_root;
+                Err(
+                    script::surface::SurfaceError::NoFactory(script::surface::SurfaceKind::Js)
+                        .to_string(),
+                )
+            }
         }
     }
 

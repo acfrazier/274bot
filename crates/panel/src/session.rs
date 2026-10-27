@@ -63,6 +63,14 @@ use frontend_core::{
     Targets,
 };
 
+/// The refusal a native panel gives for a card that only the JavaScript
+/// runtime can run: the core's own text, so the panel and the core refuse in
+/// the same words. It is exactly what
+/// `script::surface::SurfaceError::NoFactory(SurfaceKind::Js)` displays; the
+/// command census refuses a new public frontend-core helper for it.
+#[cfg(not(feature = "js"))]
+const JS_SURFACE_REFUSAL: &str = "no surface factory for Js";
+
 /// Scatter / mainland hop only on a cold world, not after a `lostCon`
 /// reconnect (that would tele the re-handshaked slot on every DC).
 fn seed_on_first_world(last_login_reconnect: Option<bool>) -> bool {
@@ -2559,7 +2567,7 @@ impl Session {
                 .as_deref()
                 .is_some_and(|name| frontend_core::scripts::CompiledCardId::lookup(name).is_none())
         {
-            return Err("JavaScript runtime unavailable".into());
+            return Err(JS_SURFACE_REFUSAL.into());
         }
 
         let profiles = match self.fixture_mode {
@@ -2598,14 +2606,16 @@ impl Session {
                 "external loader watch is mutually exclusive with catalog/pair core".into(),
             );
         }
-        let _live_core = self.core.resolve_live_core(
+        let live_core = self.core.resolve_live_core(
             &scenario_name,
             names.len(),
             self.catalog_core_enabled,
             self.pair_core_enabled,
         )?;
+        #[cfg(not(feature = "js"))]
+        let _ = live_core;
         #[cfg(feature = "js")]
-        if _live_core != frontend_core::live::LiveCoreMode::Pair {
+        if live_core != frontend_core::live::LiveCoreMode::Pair {
             if let Some(key) = inject_companion_as.as_deref() {
                 if names.len() > 1 {
                     inject.get_or_insert_with(serde_json::Map::new).insert(
@@ -2686,7 +2696,7 @@ impl Session {
             #[cfg(not(feature = "js"))]
             {
                 let _ = fleet;
-                return Err("JavaScript runtime unavailable".into());
+                return Err(JS_SURFACE_REFUSAL.into());
             }
         } else if let Some(file_name) = start_file.as_deref() {
             #[cfg(feature = "js")]
@@ -2711,7 +2721,7 @@ impl Session {
             #[cfg(not(feature = "js"))]
             {
                 let _ = file_name;
-                return Err("JavaScript runtime unavailable".into());
+                return Err(JS_SURFACE_REFUSAL.into());
             }
         } else if let Some(card_name) = start_script.as_deref() {
             if let Some(card) = frontend_core::scripts::CompiledCardId::lookup(card_name) {
@@ -2782,7 +2792,7 @@ impl Session {
                 }
                 #[cfg(not(feature = "js"))]
                 {
-                    return Err("JavaScript runtime unavailable".into());
+                    return Err(JS_SURFACE_REFUSAL.into());
                 }
             }
         }
