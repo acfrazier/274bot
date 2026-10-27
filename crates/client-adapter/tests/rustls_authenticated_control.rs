@@ -8,23 +8,27 @@
 #[path = "support/g5e_stack.rs"]
 mod g5e_stack;
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 use std::alloc::{GlobalAlloc, Layout, System};
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 use std::cell::Cell;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 use std::fmt::Write as FmtWrite;
 #[cfg(target_os = "linux")]
-use std::fs::{self, OpenOptions};
+use std::fs;
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+use std::fs::OpenOptions;
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+use std::ffi::c_void;
 use std::io::{self, Read, Write};
 use std::net::{TcpListener, TcpStream};
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, SyncSender};
 use std::sync::Arc;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 use std::sync::Mutex;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 use std::sync::OnceLock;
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
@@ -37,9 +41,9 @@ use client_adapter::handoff::{
 use client_adapter::health::ReactorHealth;
 use client_adapter::park::Park;
 use client_adapter::shared::SharedConnection;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 use client_adapter::soak_observer::wss_ledger_samples;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 use client_adapter::soak_observer::{
     self, AllocationScopeEvent, AllocationScopeKind, AllocationScopePhase,
     ClientConfigGenerationEvent, ClientConfigGenerationEventKind, NetworkWorkerKind,
@@ -55,7 +59,7 @@ use rcgen::{
     BasicConstraints, CertificateParams, DistinguishedName, DnType, ExtendedKeyUsagePurpose, IsCa,
     KeyPair, KeyUsagePurpose,
 };
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 use rustls::client::{
     ClientSessionMemoryCache, ClientSessionStore, Resumption, Tls12ClientSessionValue,
     Tls13ClientSessionValue,
@@ -63,10 +67,10 @@ use rustls::client::{
 use rustls::crypto::cipher::{
     InboundOpaqueMessage, MessageDecrypter, MessageEncrypter, OutboundChunks, OutboundPlainMessage,
 };
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 use rustls::pki_types::ServerName;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 use rustls::NamedGroup;
 use rustls::{
     CipherSuite, ClientConfig, ConnectionTrafficSecrets, ContentType, ProtocolVersion,
@@ -91,15 +95,15 @@ const KEY_UPDATE_REQUESTED: [u8; 5] = [0x18, 0x00, 0x00, 0x01, 0x01];
 const KEY_UPDATE_NOT_REQUESTED: [u8; 5] = [0x18, 0x00, 0x00, 0x01, 0x00];
 const TLS_CLOSE_NOTIFY: [u8; 2] = [0x01, 0x00];
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 static G5E_ALLOCATOR_LIVE_BYTES: AtomicUsize = AtomicUsize::new(0);
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 static G5E_ALLOCATOR_PEAK_BYTES: AtomicUsize = AtomicUsize::new(0);
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 struct G5eCountingAllocator;
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 // SAFETY: every allocator operation forwards its original pointer/layout to
 // System; the atomics only account requested bytes and never allocate.
 unsafe impl GlobalAlloc for G5eCountingAllocator {
@@ -159,11 +163,11 @@ unsafe impl GlobalAlloc for G5eCountingAllocator {
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 #[global_allocator]
 static G5E_ALLOCATOR: G5eCountingAllocator = G5eCountingAllocator;
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 fn reset_g5e_allocator_peak() {
     G5E_ALLOCATOR_PEAK_BYTES.store(
         G5E_ALLOCATOR_LIVE_BYTES.load(Ordering::Acquire),
@@ -171,30 +175,30 @@ fn reset_g5e_allocator_peak() {
     );
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 fn g5e_allocator_snapshot() -> (usize, usize) {
     (
         G5E_ALLOCATOR_LIVE_BYTES.load(Ordering::Acquire),
         G5E_ALLOCATOR_PEAK_BYTES.load(Ordering::Acquire),
     )
 }
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 const G5E_MAX_ALLOCATION_SCOPES: usize = 4096;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 const G5E_MAX_SCOPE_DEPTH: usize = 16;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 const G5E_MAX_STACK_SAMPLES: usize = 64;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 const G5E_MAX_CONFIG_GENERATION_EVENTS: usize = 16;
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 #[derive(Clone, Copy, Debug)]
 struct G5eScopeSample {
     event: AllocationScopeEvent,
     completed: bool,
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 #[derive(Clone, Copy, Debug)]
 struct G5eWorkerStackSample {
     kind: NetworkWorkerKind,
@@ -202,31 +206,31 @@ struct G5eWorkerStackSample {
     sample: g5e_stack::StackSample,
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 static G5E_SCOPED_ALLOCATOR_EXCLUSIVE_BYTES: [AtomicUsize; G5E_MAX_ALLOCATION_SCOPES] =
     [const { AtomicUsize::new(0) }; G5E_MAX_ALLOCATION_SCOPES];
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 static G5E_SCOPED_ALLOCATOR_INCLUSIVE_BYTES: [AtomicUsize; G5E_MAX_ALLOCATION_SCOPES] =
     [const { AtomicUsize::new(0) }; G5E_MAX_ALLOCATION_SCOPES];
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 static G5E_SCOPE_SAMPLES: OnceLock<Mutex<Vec<Option<G5eScopeSample>>>> = OnceLock::new();
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 static G5E_CONFIG_GENERATION_EVENTS: OnceLock<Mutex<Vec<ClientConfigGenerationEvent>>> =
     OnceLock::new();
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 static G5E_WORKER_STACK_SAMPLES: OnceLock<Mutex<Vec<G5eWorkerStackSample>>> = OnceLock::new();
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 static G5E_SCOPE_OVERFLOW: AtomicBool = AtomicBool::new(false);
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 static G5E_CONFIG_GENERATION_OVERFLOW: AtomicBool = AtomicBool::new(false);
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 static G5E_WORKER_STACK_OVERFLOW: AtomicBool = AtomicBool::new(false);
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 static G5E_WORKER_STACK_CAPTURE_FAILURES: AtomicUsize = AtomicUsize::new(0);
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 static G5E_OBSERVERS_INSTALLED: OnceLock<()> = OnceLock::new();
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 std::thread_local! {
     static G5E_ACTIVE_SCOPE_ID: Cell<u64> = const { Cell::new(0) };
     static G5E_ACTIVE_SCOPE_DEPTH: Cell<usize> = const { Cell::new(0) };
@@ -234,7 +238,7 @@ std::thread_local! {
         const { Cell::new([0; G5E_MAX_SCOPE_DEPTH]) };
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 fn g5e_scope_index(scope_id: u64) -> Option<usize> {
     usize::try_from(scope_id)
         .ok()?
@@ -242,7 +246,7 @@ fn g5e_scope_index(scope_id: u64) -> Option<usize> {
         .filter(|index| *index < G5E_MAX_ALLOCATION_SCOPES)
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 fn record_g5e_scoped_allocation_request(bytes: usize) {
     if bytes == 0 {
         return;
@@ -259,7 +263,7 @@ fn record_g5e_scoped_allocation_request(bytes: usize) {
     G5E_SCOPED_ALLOCATOR_INCLUSIVE_BYTES[index].fetch_add(bytes, Ordering::Relaxed);
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 fn record_g5e_allocation_scope(event: AllocationScopeEvent) {
     match event.phase {
         AllocationScopePhase::Begin => {
@@ -342,7 +346,7 @@ fn record_g5e_allocation_scope(event: AllocationScopeEvent) {
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 fn record_g5e_config_generation(event: ClientConfigGenerationEvent) {
     let mut events = G5E_CONFIG_GENERATION_EVENTS
         .get()
@@ -356,7 +360,7 @@ fn record_g5e_config_generation(event: ClientConfigGenerationEvent) {
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 fn record_g5e_worker_stack(kind: NetworkWorkerKind, point: WorkerObservationPoint) {
     match g5e_stack::capture_current_thread_stack() {
         Ok(sample) => {
@@ -381,7 +385,7 @@ fn record_g5e_worker_stack(kind: NetworkWorkerKind, point: WorkerObservationPoin
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 fn install_g5e_observers() {
     G5E_OBSERVERS_INSTALLED.get_or_init(|| {
         G5E_SCOPE_SAMPLES
@@ -403,7 +407,7 @@ fn install_g5e_observers() {
             .expect("install native stack capture on transport workers once");
     });
 }
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 fn prove_g5e_scope_allocator_observes_known_allocation() -> usize {
     const KNOWN_BYTES: usize = 32 * 1024;
     let layout = Layout::from_size_align(KNOWN_BYTES, 64).expect("valid known allocation layout");
@@ -446,7 +450,7 @@ fn prove_g5e_scope_allocator_observes_known_allocation() -> usize {
     requested
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 fn optional_u64_json(output: &mut String, value: Option<u64>) {
     if let Some(value) = value {
         write!(output, "{value}").expect("write optional JSON integer");
@@ -455,7 +459,12 @@ fn optional_u64_json(output: &mut String, value: Option<u64>) {
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+fn optional_usize_json(value: Option<usize>) -> String {
+    value.map_or_else(|| "null".to_owned(), |value| value.to_string())
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 fn g5e_allocation_scope_samples_json() -> String {
     let mut output = String::from("[");
     let mut first = true;
@@ -509,7 +518,7 @@ fn g5e_allocation_scope_samples_json() -> String {
     output
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 fn g5e_config_generation_events_json() -> String {
     let mut output = String::from("[");
     let events = G5E_CONFIG_GENERATION_EVENTS
@@ -533,7 +542,7 @@ fn g5e_config_generation_events_json() -> String {
     output
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 fn g5e_config_generation_samples_json() -> String {
     let mut output = String::from("[");
     let samples = soak_observer::client_config_generation_samples();
@@ -552,7 +561,7 @@ fn g5e_config_generation_samples_json() -> String {
     output
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 fn g5e_worker_stack_samples_json() -> String {
     let mut output = String::from("[");
     let mut first = true;
@@ -661,7 +670,7 @@ impl TestPki {
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 #[derive(Debug, Default)]
 struct TicketMetrics {
     inserted: AtomicUsize,
@@ -670,14 +679,14 @@ struct TicketMetrics {
     allocator_live_growth_per_insert_high_water_bytes: AtomicUsize,
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 #[derive(Debug)]
 struct TicketCountingStore {
     inner: ClientSessionMemoryCache,
     metrics: Arc<TicketMetrics>,
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 impl ClientSessionStore for TicketCountingStore {
     fn set_kx_hint(&self, server_name: ServerName<'static>, group: NamedGroup) {
         self.inner.set_kx_hint(server_name, group);
@@ -728,7 +737,7 @@ impl ClientSessionStore for TicketCountingStore {
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 fn client_config_with_ticket_metrics(
     pki: &TestPki,
     metrics: Arc<TicketMetrics>,
@@ -776,7 +785,7 @@ fn server_config(
     config.send_tls13_tickets = 0;
     Arc::new(config)
 }
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 fn configure_tls13_with_tickets(identity: ServerIdentity) -> Arc<ServerConfig> {
     let mut config = configure_tls13(identity);
     Arc::get_mut(&mut config)
@@ -1749,7 +1758,7 @@ fn fill_until_tls_blocked_observed(
     published
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 #[derive(Default)]
 struct G5eLedgerPeaks {
     sample_count: usize,
@@ -1761,7 +1770,7 @@ struct G5eLedgerPeaks {
     target_pending_tls_output_bytes: usize,
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 fn sample_g5e_wss_ledger(
     peaks: &mut G5eLedgerPeaks,
     target: BindingId,
@@ -1804,8 +1813,60 @@ fn sample_g5e_wss_ledger(
     target_pending
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+#[derive(Clone, Copy, Debug)]
+struct G5eProcessResources {
+    rss_bytes: u64,
+    task_count: usize,
+    file_descriptors: Option<usize>,
+    process_handles: Option<usize>,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+fn g5e_process_resources() -> G5eProcessResources {
+    #[cfg(target_os = "linux")]
+    {
+        let rss_bytes = g5e_linux_rss_bytes().expect("read Linux process RSS");
+        let task_count = fs::read_dir("/proc/self/task")
+            .expect("Linux procfs exposes this test process task directory")
+            .count();
+        let file_descriptors = fs::read_dir("/proc/self/fd")
+            .expect("Linux procfs exposes this test process fd directory")
+            .count()
+            .saturating_sub(1);
+        G5eProcessResources {
+            rss_bytes,
+            task_count,
+            file_descriptors: Some(file_descriptors),
+            process_handles: None,
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let file_descriptors = g5e_macos_fd_count();
+        G5eProcessResources {
+            rss_bytes: task_info.resident_size,
+            task_count: usize::try_from(task_info.thread_count)
+                .expect("macOS process thread count is nonnegative"),
+            file_descriptors,
+            process_handles: None,
+        }
+    }
+    #[cfg(target_os = "windows")]
+    {
+        G5eProcessResources {
+            rss_bytes: g5e_windows_rss_bytes().expect("read Windows process working set"),
+            task_count: g5e_windows_thread_count().expect("read Windows process thread count"),
+            file_descriptors: None,
+            process_handles: Some(
+                g5e_windows_handle_count().expect("read Windows process handle count"),
+            ),
+        }
+    }
+}
+
 #[cfg(target_os = "linux")]
-fn g5e_current_rss_bytes() -> Option<u64> {
+fn g5e_linux_rss_bytes() -> Option<u64> {
     let status = fs::read_to_string("/proc/self/status").ok()?;
     let resident_kib = status
         .lines()
@@ -1817,20 +1878,233 @@ fn g5e_current_rss_bytes() -> Option<u64> {
     resident_kib.checked_mul(1024)
 }
 
-#[cfg(target_os = "linux")]
-fn g5e_task_count() -> usize {
-    fs::read_dir("/proc/self/task")
-        .expect("Linux procfs exposes this test process task directory")
-        .count()
+#[cfg(target_os = "macos")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct G5eProcTaskInfo {
+    _virtual_size: u64,
+    resident_size: u64,
+    _total_user: u64,
+    _total_system: u64,
+    _threads_user: u64,
+    _policy: i32,
+    _faults: i32,
+    _pageins: i32,
+    _cow_faults: i32,
+    _messages_sent: i32,
+    _messages_received: i32,
+    _syscalls_mach: i32,
+    _syscalls_unix: i32,
+    _context_switches: i32,
+    thread_count: i32,
+    _running_count: i32,
+    _priority: i32,
 }
 
-#[cfg(target_os = "linux")]
-fn g5e_fd_count() -> usize {
-    fs::read_dir("/proc/self/fd")
-        .expect("Linux procfs exposes this test process fd directory")
-        .count()
-        .saturating_sub(1)
+#[cfg(target_os = "macos")]
+fn g5e_macos_task_info() -> Option<G5eProcTaskInfo> {
+    const PROC_PIDTASKINFO: i32 = 4;
+
+    let pid = i32::try_from(std::process::id()).ok()?;
+    let buffer_size = i32::try_from(std::mem::size_of::<G5eProcTaskInfo>()).ok()?;
+    let mut information = std::mem::MaybeUninit::<G5eProcTaskInfo>::zeroed();
+    // SAFETY: the buffer is writable and has the exact size of proc_taskinfo.
+    let returned = unsafe {
+        proc_pidinfo(
+            pid,
+            PROC_PIDTASKINFO,
+            0,
+            information.as_mut_ptr().cast(),
+            buffer_size,
+        )
+    };
+    if returned != buffer_size {
+        return None;
+    }
+    // SAFETY: proc_pidinfo returned the exact proc_taskinfo size.
+    Some(unsafe { information.assume_init() })
 }
+
+#[cfg(target_os = "macos")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct G5eProcFdInfo {
+    _descriptor: i32,
+    _kind: u32,
+}
+
+#[cfg(target_os = "macos")]
+fn g5e_macos_fd_count() -> Option<usize> {
+    const PROC_PIDLISTFDS: i32 = 2;
+    const MAX_PROCESS_FDS: usize = 4096;
+
+    let pid = i32::try_from(std::process::id()).ok()?;
+    let mut descriptors = [G5eProcFdInfo {
+        _descriptor: 0,
+        _kind: 0,
+    }; MAX_PROCESS_FDS];
+    let buffer_size = std::mem::size_of_val(&descriptors);
+    let buffer_size_i32 = i32::try_from(buffer_size).ok()?;
+    // SAFETY: `descriptors` is writable and the byte size matches its capacity.
+    let returned = unsafe {
+        proc_pidinfo(
+            pid,
+            PROC_PIDLISTFDS,
+            0,
+            descriptors.as_mut_ptr().cast(),
+            buffer_size_i32,
+        )
+    };
+    if returned < 0
+        || returned as usize >= buffer_size
+        || returned as usize % std::mem::size_of::<G5eProcFdInfo>() != 0
+    {
+        return None;
+    }
+    Some(returned as usize / std::mem::size_of::<G5eProcFdInfo>())
+}
+
+#[cfg(target_os = "macos")]
+#[link(name = "proc")]
+unsafe extern "C" {
+    fn proc_pidinfo(
+        pid: i32,
+        flavor: i32,
+        arg: u64,
+        buffer: *mut c_void,
+        buffersize: i32,
+    ) -> i32;
+}
+
+#[cfg(target_os = "windows")]
+#[repr(C)]
+struct G5eProcessMemoryCountersEx {
+    _size: u32,
+    _page_fault_count: u32,
+    _peak_working_set_size: usize,
+    working_set_size: usize,
+    _quota_peak_paged_pool_usage: usize,
+    _quota_paged_pool_usage: usize,
+    _quota_peak_non_paged_pool_usage: usize,
+    _quota_non_paged_pool_usage: usize,
+    _peak_pagefile_usage: usize,
+    _pagefile_usage: usize,
+    _private_usage: usize,
+}
+
+#[cfg(target_os = "windows")]
+fn g5e_windows_rss_bytes() -> Option<u64> {
+    let mut counters = std::mem::MaybeUninit::<G5eProcessMemoryCountersEx>::zeroed();
+    let size = u32::try_from(std::mem::size_of::<G5eProcessMemoryCountersEx>()).ok()?;
+    // SAFETY: `counters` points to writable storage for the declared structure.
+    unsafe { (*counters.as_mut_ptr())._size = size };
+    // SAFETY: GetCurrentProcess returns the current process pseudo-handle.
+    let process = unsafe { GetCurrentProcess() };
+    // SAFETY: `counters` is writable and its declared size matches the API buffer.
+    let success = unsafe { GetProcessMemoryInfo(process, counters.as_mut_ptr(), size) };
+    if success == 0 {
+        return None;
+    }
+    // SAFETY: GetProcessMemoryInfo succeeded and filled the complete structure.
+    let counters = unsafe { counters.assume_init() };
+    u64::try_from(counters.working_set_size).ok()
+}
+
+#[cfg(target_os = "windows")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct G5eThreadEntry32 {
+    _size: u32,
+    _usage: u32,
+    _thread_id: u32,
+    owner_process_id: u32,
+    _base_priority: i32,
+    _delta_priority: i32,
+    _flags: u32,
+}
+
+#[cfg(target_os = "windows")]
+fn g5e_windows_thread_count() -> Option<usize> {
+    const TH32CS_SNAPTHREAD: u32 = 0x0000_0004;
+    const ERROR_NO_MORE_FILES: u32 = 18;
+    let entry_size = u32::try_from(std::mem::size_of::<G5eThreadEntry32>()).ok()?;
+
+    // SAFETY: CreateToolhelp32Snapshot takes a valid thread-snapshot flag.
+    let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0) };
+    if snapshot.is_null() || snapshot as isize == -1 {
+        return None;
+    }
+    // SAFETY: GetCurrentProcessId is a read-only query of this process identity.
+    let process_id = unsafe { GetCurrentProcessId() };
+    let mut entry = std::mem::MaybeUninit::<G5eThreadEntry32>::zeroed();
+    // SAFETY: `entry` points to writable storage for the documented structure.
+    unsafe { (*entry.as_mut_ptr())._size = entry_size };
+    // SAFETY: snapshot is a valid thread snapshot and entry is writable.
+    let mut has_entry = unsafe { Thread32First(snapshot, entry.as_mut_ptr()) };
+    let mut count = 0usize;
+    while has_entry != 0 {
+        // SAFETY: Thread32First/Thread32Next succeeded for this iteration.
+        let owner_process_id = unsafe { entry.assume_init_ref().owner_process_id };
+        if owner_process_id == process_id {
+            count = count.saturating_add(1);
+        }
+        // SAFETY: `entry` remains writable and the API requires its size field.
+        unsafe { (*entry.as_mut_ptr())._size = entry_size };
+        // SAFETY: snapshot is valid and entry points to writable structure storage.
+        has_entry = unsafe { Thread32Next(snapshot, entry.as_mut_ptr()) };
+    }
+    // SAFETY: GetLastError reads the calling thread's last Win32 error.
+    let last_error = unsafe { GetLastError() };
+    // SAFETY: `snapshot` is the live handle returned by CreateToolhelp32Snapshot.
+    unsafe { CloseHandle(snapshot) };
+    if last_error != ERROR_NO_MORE_FILES {
+        return None;
+    }
+    Some(count)
+}
+
+#[cfg(target_os = "windows")]
+fn g5e_windows_handle_count() -> Option<usize> {
+    let mut count = 0u32;
+    // SAFETY: GetCurrentProcess returns this process's pseudo-handle and `count`
+    // is a writable DWORD output.
+    let process = unsafe { GetCurrentProcess() };
+    // SAFETY: `count` points to writable storage for one DWORD.
+    let success = unsafe { GetProcessHandleCount(process, &mut count) };
+    (success != 0).then_some(count as usize)
+}
+
+#[cfg(target_os = "windows")]
+#[link(name = "psapi")]
+unsafe extern "system" {
+    fn GetProcessMemoryInfo(
+        process: *mut c_void,
+        counters: *mut G5eProcessMemoryCountersEx,
+        size: u32,
+    ) -> i32;
+}
+
+#[cfg(target_os = "windows")]
+#[link(name = "kernel32")]
+unsafe extern "system" {
+    fn GetCurrentProcess() -> *mut c_void;
+    fn GetCurrentProcessId() -> u32;
+    fn GetProcessHandleCount(process: *mut c_void, count: *mut u32) -> i32;
+    fn CreateToolhelp32Snapshot(flags: u32, process_id: u32) -> *mut c_void;
+    fn Thread32First(snapshot: *mut c_void, entry: *mut G5eThreadEntry32) -> i32;
+    fn Thread32Next(snapshot: *mut c_void, entry: *mut G5eThreadEntry32) -> i32;
+    fn GetLastError() -> u32;
+    fn CloseHandle(handle: *mut c_void) -> i32;
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+const G5E_RESOURCE_SEMANTICS_JSON: &str = if cfg!(target_os = "linux") {
+    "{\"process_rss\":\"Linux /proc/self/status VmRSS\",\"process_threads\":\"Linux /proc/self/task entries\",\"file_descriptors\":\"Linux /proc/self/fd entries; excludes the directory opened for measurement\",\"process_handles\":\"not applicable\"}"
+} else if cfg!(target_os = "macos") {
+    "{\"process_rss\":\"macOS proc_pidinfo(PROC_PIDTASKINFO).pti_resident_size\",\"process_threads\":\"macOS proc_pidinfo(PROC_PIDTASKINFO).pti_threadnum\",\"file_descriptors\":\"macOS proc_pidinfo(PROC_PIDLISTFDS); null on query failure or when the bounded 4096-entry buffer may truncate\",\"process_handles\":\"not applicable\"}"
+} else {
+    "{\"process_rss\":\"Windows GetProcessMemoryInfo.WorkingSetSize\",\"process_threads\":\"Windows Toolhelp32 thread snapshot filtered by owner process ID\",\"file_descriptors\":\"unavailable on this fixture; Windows process handles are not file descriptors\",\"process_handles\":\"Windows GetProcessHandleCount; process handles, not file descriptors\"}"
+};
 
 #[test]
 fn g2_m3_authenticated_requested_key_update_waits_for_real_writable_recovery() {
@@ -2036,10 +2310,9 @@ fn g2_m3_authenticated_requested_key_update_waits_for_real_writable_recovery() {
 /// BOT_T14_G5E_ADAPTER_OUTPUT=/abs/path/receipt.json cargo test -p client-adapter --features test-support --test rustls_authenticated_control g5e_tls13_wss_keyupdate_backpressure_memory_receipt -- --ignored --test-threads=1
 /// ```
 ///
-/// The receipt covers two local adapter WSS lanes. The response is observed
-/// queued under backpressure; writable recovery remains covered by the G2-M3
-/// functional test above.
-#[cfg(target_os = "linux")]
+/// The receipt covers two local adapter WSS lanes, including the actual
+/// authenticated KeyUpdate response recovered from writable-only readiness.
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 #[test]
 #[ignore = "opt-in G5-E memory receipt for the actual adapter TLS/WSS path"]
 fn g5e_tls13_wss_keyupdate_backpressure_memory_receipt() {
@@ -2059,9 +2332,7 @@ fn g5e_tls13_wss_keyupdate_backpressure_memory_receipt() {
     let sibling_server = ControlServer::spawn(Arc::clone(&server_config));
 
     let allocator_before_connect = G5E_ALLOCATOR_LIVE_BYTES.load(Ordering::Acquire);
-    let rss_setup = g5e_current_rss_bytes().expect("read current Linux process RSS");
-    let tasks_setup = g5e_task_count();
-    let fds_setup = g5e_fd_count();
+    let resources_setup = g5e_process_resources();
     reset_g5e_allocator_peak();
 
     let (mut attempt, mut endpoint, handshake) =
@@ -2120,9 +2391,7 @@ fn g5e_tls13_wss_keyupdate_backpressure_memory_receipt() {
     sample_g5e_wss_ledger(&mut ledger, target_binding, 1);
     sample_g5e_wss_ledger(&mut ledger, target_binding, 2);
     let (allocator_after_connect, allocator_connect_peak) = g5e_allocator_snapshot();
-    let rss_after_connect = g5e_current_rss_bytes().expect("read connected Linux process RSS");
-    let tasks_after_connect = g5e_task_count();
-    let fds_after_connect = g5e_fd_count();
+    let resources_after_connect = g5e_process_resources();
 
     let allocator_before_backpressure = G5E_ALLOCATOR_LIVE_BYTES.load(Ordering::Acquire);
     reset_g5e_allocator_peak();
@@ -2193,9 +2462,7 @@ fn g5e_tls13_wss_keyupdate_backpressure_memory_receipt() {
         sample_g5e_wss_ledger(&mut ledger, target_binding, 2);
     }
     let (allocator_while_blocked, allocator_backpressure_peak) = g5e_allocator_snapshot();
-    let rss_while_blocked = g5e_current_rss_bytes().expect("read backpressured Linux process RSS");
-    let tasks_while_blocked = g5e_task_count();
-    let fds_while_blocked = g5e_fd_count();
+    let resources_while_blocked = g5e_process_resources();
 
     let allocator_before_key_update = G5E_ALLOCATOR_LIVE_BYTES.load(Ordering::Acquire);
     reset_g5e_allocator_peak();
@@ -2214,10 +2481,126 @@ fn g5e_tls13_wss_keyupdate_backpressure_memory_receipt() {
         "KeyUpdate response remains queued behind the real blocked TLS writer"
     );
     let (allocator_after_key_update, allocator_key_update_peak) = g5e_allocator_snapshot();
-    let rss_after_key_update =
-        g5e_current_rss_bytes().expect("read post-KeyUpdate Linux process RSS");
-    let tasks_after_key_update = g5e_task_count();
-    let fds_after_key_update = g5e_fd_count();
+    let resources_after_key_update = g5e_process_resources();
+    let recovery_ledger_samples_before = ledger.sample_count;
+    let allocator_before_recovery = G5E_ALLOCATOR_LIVE_BYTES.load(Ordering::Acquire);
+    reset_g5e_allocator_peak();
+    let deadline = Instant::now() + HANDSHAKE_TIMEOUT;
+    let mut recovered_game_records = 0usize;
+    let mut writable_recovery_events = 0usize;
+    let mut key_update_response = None;
+    while key_update_response.is_none() {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        assert!(
+            !remaining.is_zero(),
+            "timed out recovering KeyUpdate reply after {recovered_game_records} game records and {writable_recovery_events} writable events"
+        );
+        let pending_read = server.begin_read_client_record(remaining.min(IO_TIMEOUT));
+        let mut read_one_record = false;
+        while !read_one_record && key_update_response.is_none() {
+            match pending_read.recv_timeout(POLL_SLICE) {
+                Ok(Ok(Some(record))) => {
+                    if record.content_type == ContentType::Handshake {
+                        key_update_response = Some(record);
+                    } else {
+                        assert_eq!(
+                            record.content_type,
+                            ContentType::ApplicationData,
+                            "only prior game records precede the KeyUpdate reply"
+                        );
+                        recovered_game_records += 1;
+                    }
+                    read_one_record = true;
+                    sample_g5e_wss_ledger(&mut ledger, target_binding, 2);
+                }
+                Ok(Ok(None)) => {
+                    panic!("server timed out before receiving the recovered KeyUpdate reply")
+                }
+                Ok(Err(error)) => panic!(
+                    "server could not decrypt recovered client output: {error}; recovered game records {recovered_game_records}, writable events {writable_recovery_events}"
+                ),
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    panic!("server read task ended before the recovered KeyUpdate reply")
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    attempt
+                        .poll
+                        .poll(&mut attempt.events, Some(Duration::ZERO))
+                        .expect("poll for the real client writable recovery event");
+                    for event in &attempt.events {
+                        if event.token() == WAKER_TOKEN {
+                            continue;
+                        }
+                        assert_eq!(event.token(), SOCKET_TOKEN);
+                        assert!(
+                            event.is_writable(),
+                            "backpressure recovery is writable-only"
+                        );
+                        assert!(
+                            !event.is_readable(),
+                            "no further peer input is delivered during recovery"
+                        );
+                        assert!(matches!(
+                            endpoint.on_event(false, true, Instant::now()),
+                            WssStep::Ready
+                        ));
+                        let mut turn = endpoint
+                            .drive()
+                            .expect("flush queued TLS control output on writable readiness");
+                        endpoint
+                            .apply_interest(attempt.poll.registry())
+                            .expect("apply WSS interest after writable recovery");
+                        for _ in 0..8 {
+                            if turn.stop != TcpStop::LocalWork {
+                                break;
+                            }
+                            turn = endpoint
+                                .drive()
+                                .expect("finish locally runnable TLS ciphertext flush");
+                            endpoint
+                                .apply_interest(attempt.poll.registry())
+                                .expect("apply WSS interest after a local flush");
+                        }
+                        assert_ne!(
+                            turn.stop,
+                            TcpStop::LocalWork,
+                            "the bounded local TLS work must settle before another OS event"
+                        );
+                        assert_eq!(turn.read_bytes, 0);
+                        assert_eq!(attempt.shared.bytes_out(), bytes_out_before);
+                        assert_eq!(attempt.shared.bytes_in(), bytes_in_before);
+                        writable_recovery_events += 1;
+                    }
+                    sample_g5e_wss_ledger(&mut ledger, target_binding, 2);
+                }
+            }
+        }
+    }
+    assert!(recovered_game_records > 0);
+    assert!(
+        writable_recovery_events > 0,
+        "reply follows writable-only recovery"
+    );
+    let response = key_update_response.expect("authenticated KeyUpdate reply was observed");
+    assert_eq!(response.outer_type, ContentType::ApplicationData);
+    assert_eq!(response.content_type, ContentType::Handshake);
+    assert_eq!(response.payload.as_slice(), &[0x18, 0x00, 0x00, 0x01, 0x00][..]);
+    assert_eq!(attempt.shared.bytes_out(), bytes_out_before);
+    assert_eq!(attempt.shared.bytes_in(), bytes_in_before);
+    assert!(!endpoint.tls_output_blocked_for_test());
+    let pending_after_recovery = sample_g5e_wss_ledger(&mut ledger, target_binding, 2);
+    assert_eq!(pending_after_recovery, 0);
+    let recovery_ledger_sample_count =
+        ledger.sample_count.saturating_sub(recovery_ledger_samples_before);
+    assert!(recovery_ledger_sample_count > 0);
+    assert!(
+        server
+            .read_client_record(Duration::from_millis(250))
+            .is_none(),
+        "exactly one KeyUpdate reply is emitted"
+    );
+    let (allocator_after_recovery, allocator_recovery_peak) = g5e_allocator_snapshot();
+    let resources_after_recovery = g5e_process_resources();
 
     let tickets_inserted = ticket_metrics.inserted.load(Ordering::Relaxed);
     let tickets_taken = ticket_metrics.taken.load(Ordering::Relaxed);
@@ -2334,9 +2717,22 @@ fn g5e_tls13_wss_keyupdate_backpressure_memory_receipt() {
                 && sample.sample.tid == tid
         }));
     }
-    assert!(worker_stack_samples.iter().all(|sample| {
-        sample.sample.reserved_bytes.is_some() && sample.sample.guard_bytes.is_some()
-    }));
+    assert!(worker_stack_samples
+        .iter()
+        .all(|sample| sample.sample.reserved_bytes.is_some()));
+    if cfg!(target_os = "macos") {
+        assert!(worker_stack_samples.iter().all(|sample| {
+            sample.sample.guard_bytes.is_none()
+                && sample
+                    .sample
+                    .measurement_source
+                    .contains("guard-unavailable")
+        }));
+    } else {
+        assert!(worker_stack_samples
+            .iter()
+            .all(|sample| sample.sample.guard_bytes.is_some()));
+    }
     assert!(!G5E_WORKER_STACK_OVERFLOW.load(Ordering::Acquire));
     assert_eq!(G5E_WORKER_STACK_CAPTURE_FAILURES.load(Ordering::Acquire), 0);
 
@@ -2348,9 +2744,27 @@ fn g5e_tls13_wss_keyupdate_backpressure_memory_receipt() {
     let config_generation_event_count = config_generation_events.len();
     let worker_stack_sample_count = worker_stack_samples.len();
 
+    let file_descriptors_setup_json = optional_usize_json(resources_setup.file_descriptors);
+    let file_descriptors_after_connect_json =
+        optional_usize_json(resources_after_connect.file_descriptors);
+    let file_descriptors_while_blocked_json =
+        optional_usize_json(resources_while_blocked.file_descriptors);
+    let file_descriptors_after_key_update_json =
+        optional_usize_json(resources_after_key_update.file_descriptors);
+    let file_descriptors_after_recovery_json =
+        optional_usize_json(resources_after_recovery.file_descriptors);
+    let process_handles_setup_json = optional_usize_json(resources_setup.process_handles);
+    let process_handles_after_connect_json =
+        optional_usize_json(resources_after_connect.process_handles);
+    let process_handles_while_blocked_json =
+        optional_usize_json(resources_while_blocked.process_handles);
+    let process_handles_after_key_update_json =
+        optional_usize_json(resources_after_key_update.process_handles);
+    let process_handles_after_recovery_json =
+        optional_usize_json(resources_after_recovery.process_handles);
     let receipt = format!(
         concat!(
-            "{{\"schema\":\"t1.4-g5e-rustls-adapter-receipt-v2\",",
+            "{{\"schema\":\"t1.4-g5e-rustls-adapter-receipt-v3\",",
             "\"target_os\":\"{}\",\"target_arch\":\"{}\",",
             "\"measurement_subject\":\"actual client-adapter GameTlsLane and WssEndpoint with local TLS 1.3 fixture\",",
             "\"client_verifier\":\"platform verifier with generated fixture CA root\",",
@@ -2375,23 +2789,38 @@ fn g5e_tls13_wss_keyupdate_backpressure_memory_receipt() {
             "\"allocator_requested_live_after_key_update_bytes\":{},",
             "\"allocator_requested_peak_during_key_update_bytes\":{},",
             "\"allocator_peak_delta_during_key_update_bytes\":{},",
+            "\"allocator_requested_live_after_recovery_bytes\":{},",
+            "\"allocator_requested_peak_during_recovery_bytes\":{},",
+            "\"allocator_peak_delta_during_recovery_bytes\":{},",
             "\"allocator_requested_live_before_cleanup_bytes\":{},",
             "\"allocator_requested_live_after_cleanup_bytes\":{},",
             "\"allocator_peak_delta_during_cleanup_bytes\":{},",
             "\"rss_current_setup_bytes\":{},\"rss_current_after_connect_bytes\":{},",
             "\"rss_current_while_blocked_bytes\":{},\"rss_current_after_key_update_bytes\":{},",
+            "\"rss_current_after_recovery_bytes\":{},",
             "\"tasks_setup\":{},\"tasks_after_connect\":{},\"tasks_while_blocked\":{},",
-            "\"tasks_after_key_update\":{},\"fds_setup\":{},\"fds_after_connect\":{},",
-            "\"fds_while_blocked\":{},\"fds_after_key_update\":{},",
+            "\"tasks_after_key_update\":{},\"tasks_after_recovery\":{},",
+            "\"fds_setup\":{},\"fds_after_connect\":{},\"fds_while_blocked\":{},",
+            "\"fds_after_key_update\":{},\"fds_after_recovery\":{},",
+            "\"process_handles_setup\":{process_handles_setup_json},",
+            "\"process_handles_after_connect\":{process_handles_after_connect_json},",
+            "\"process_handles_while_blocked\":{process_handles_while_blocked_json},",
+            "\"process_handles_after_key_update\":{process_handles_after_key_update_json},",
+            "\"process_handles_after_recovery\":{process_handles_after_recovery_json},",
+            "\"resource_semantics\":{resource_semantics_json},",
             "\"wss_ledger_sample_count\":{},\"wss_ledger_active_connections\":{},",
             "\"wss_ledger_reserved_total_bytes\":{},",
             "\"wss_pending_tls_output_high_water_bytes\":{},",
             "\"wss_target_pending_tls_output_after_key_update_bytes\":{},",
+            "\"wss_target_pending_tls_output_after_recovery_bytes\":{},",
             "\"wss_outbound_ring_high_water_bytes\":{},",
             "\"wss_inbound_ring_high_water_bytes\":{},",
             "\"wss_ledger_overrun\":false,\"empty_binary_turns_while_blocked\":{},",
             "\"key_update_request_processed_while_blocked\":true,",
-            "\"key_update_response_recovery_observed\":false,",
+            "\"key_update_response_recovery_observed\":true,",
+            "\"key_update_recovery_game_records_observed\":{},",
+            "\"key_update_recovery_writable_events\":{},",
+            "\"wss_recovery_ledger_sample_count\":{},",
             "\"active_connections_after_cleanup\":{},",
             "\"allocation_scope_sample_count\":{allocation_scope_sample_count},",
             "\"allocator_scope_known_request_bytes\":{known_allocation_scope_bytes},",
@@ -2403,7 +2832,7 @@ fn g5e_tls13_wss_keyupdate_backpressure_memory_receipt() {
             "\"worker_stack_observer_overflow\":{worker_stack_overflow},",
             "\"worker_stack_capture_failures\":{worker_stack_capture_failures},",
             "\"worker_stack_samples\":{worker_stack_samples_json},",
-            "\"stack_measurement\":\"current GameTls worker OS-reported stack interval; Linux committed bytes unavailable; mincore resident only; pthread guard-size attribute reported\",",
+            "\"stack_measurement\":\"per-worker OS-reported stack interval; each measurement_source states reserved, committed, resident, and guard availability\",",
             "\"scope_measurement\":\"gross successful alloc, alloc_zeroed, and realloc request bytes while an operation scope is active; exclusive direct and inclusive nested; not retained-by-scope live bytes\",",
             "\"v8_metrics\":\"not_applicable_in_client_adapter_test_process\",",
             "\"allocation_measurement\":\"global requested live/peak includes the whole test process; scoped requests are not allocation ownership or usable capacity\",",
@@ -2428,29 +2857,39 @@ fn g5e_tls13_wss_keyupdate_backpressure_memory_receipt() {
         allocator_after_key_update,
         allocator_key_update_peak,
         allocator_key_update_peak.saturating_sub(allocator_before_key_update),
+        allocator_after_recovery,
+        allocator_recovery_peak,
+        allocator_recovery_peak.saturating_sub(allocator_before_recovery),
         allocator_before_cleanup,
         allocator_after_cleanup,
         allocator_cleanup_peak.saturating_sub(allocator_before_cleanup),
-        rss_setup,
-        rss_after_connect,
-        rss_while_blocked,
-        rss_after_key_update,
-        tasks_setup,
-        tasks_after_connect,
-        tasks_while_blocked,
-        tasks_after_key_update,
-        fds_setup,
-        fds_after_connect,
-        fds_while_blocked,
-        fds_after_key_update,
+        resources_setup.rss_bytes,
+        resources_after_connect.rss_bytes,
+        resources_while_blocked.rss_bytes,
+        resources_after_key_update.rss_bytes,
+        resources_after_recovery.rss_bytes,
+        resources_setup.task_count,
+        resources_after_connect.task_count,
+        resources_while_blocked.task_count,
+        resources_after_key_update.task_count,
+        resources_after_recovery.task_count,
+        file_descriptors_setup_json,
+        file_descriptors_after_connect_json,
+        file_descriptors_while_blocked_json,
+        file_descriptors_after_key_update_json,
+        file_descriptors_after_recovery_json,
         ledger.sample_count,
         ledger.connection_count,
         ledger.total_reserved_bytes,
         ledger.pending_tls_output_high_water_bytes,
         pending_after_key_update,
+        pending_after_recovery,
         ledger.outbound_ring_high_water_bytes,
         ledger.inbound_ring_high_water_bytes,
         EMPTY_BINARY_TURNS,
+        recovered_game_records,
+        writable_recovery_events,
+        recovery_ledger_sample_count,
         active_connections_after_cleanup,
         config_identity_count = config_generation_samples.len(),
         config_generation_count = config_generation_samples.len(),
@@ -2469,6 +2908,12 @@ fn g5e_tls13_wss_keyupdate_backpressure_memory_receipt() {
         worker_stack_capture_failures = G5E_WORKER_STACK_CAPTURE_FAILURES.load(Ordering::Acquire),
         worker_stack_samples_json = worker_stack_samples_json,
         known_allocation_scope_bytes = known_allocation_scope_bytes,
+        process_handles_setup_json = process_handles_setup_json,
+        process_handles_after_connect_json = process_handles_after_connect_json,
+        process_handles_while_blocked_json = process_handles_while_blocked_json,
+        process_handles_after_key_update_json = process_handles_after_key_update_json,
+        process_handles_after_recovery_json = process_handles_after_recovery_json,
+        resource_semantics_json = G5E_RESOURCE_SEMANTICS_JSON,
     );
     let mut receipt_file = OpenOptions::new()
         .write(true)
