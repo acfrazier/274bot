@@ -867,13 +867,47 @@ impl WalkSendState {
     }
 }
 /// One accepted panel-owned write: the request that carries it (its
-/// identity, unique in this session), the member it changes and the value it
-/// asks for (`None` removes the member).
+/// identity, unique in this session), the member it changes, the value it
+/// asks for (`None` removes the member) and the view its feedback belongs to.
 #[derive(Clone)]
 struct PanelPreferenceMember {
     request: u64,
     path: Vec<String>,
     value: Option<serde_json::Value>,
+    owner: FeedbackOwner,
+}
+
+/// The view where a panel-owned write shows its "Saving…" and its failure.
+#[derive(Clone, PartialEq, Eq)]
+enum FeedbackOwner {
+    /// Every view: a setting of the panel itself.
+    Panel,
+    /// The raster or memory choice made for this bot (`None`: no bot was
+    /// focused). Its feedback shows only while that bot is focused.
+    Bot(Option<String>),
+}
+
+impl FeedbackOwner {
+    fn of(effect: Option<&LaunchEffect>) -> Self {
+        match effect {
+            Some(LaunchEffect::Raster { profile, .. } | LaunchEffect::Lowmem { profile, .. }) => {
+                Self::Bot(profile.clone())
+            }
+            Some(LaunchEffect::ServerRevision(_)) | None => Self::Panel,
+        }
+    }
+
+    fn shows_for(&self, focused: Option<&str>) -> bool {
+        match self {
+            Self::Panel => true,
+            Self::Bot(bot) => bot.as_deref() == focused,
+        }
+    }
+}
+
+/// Whether the member at `path` lies under `prefix`.
+fn under_prefix(path: &[String], prefix: &[&str]) -> bool {
+    path.len() >= prefix.len() && path.iter().zip(prefix).all(|(a, b)| a == b)
 }
 
 struct PanelPreferenceWrite {
@@ -925,48 +959,58 @@ impl LaunchEffect {
     }
 }
 
-/// What the launch controls show while their save is pending: the latest
-/// request's choice (its identity, so a result ends only its own preview).
-#[derive(Debug, Default, Clone, Copy)]
-struct LaunchPreviews {
-    raster: Option<(u64, RasterMode)>,
-    lowmem: Option<(u64, bool)>,
-    server_revision: Option<(u64, u16)>,
-}
+/// What the launch controls show while their save is pending: each pending
+/// request's choice under its identity (a result ends only its own
+/// preview). A raster or memory choice shows only while the bot it was made
+/// for is focused; the newest one for that bot wins.
+#[derive(Default)]
+struct LaunchPreviews(Vec<(u64, LaunchEffect)>);
 
 impl LaunchPreviews {
-    fn show(&mut self, request: u64, effect: &LaunchEffect) {
-        match effect {
-            LaunchEffect::Raster { raster, .. } => self.raster = Some((request, *raster)),
-            LaunchEffect::Lowmem { lowmem, .. } => self.lowmem = Some((request, *lowmem)),
-            LaunchEffect::ServerRevision(revision) => {
-                self.server_revision = Some((request, *revision));
-            }
-        }
+    fn show(&mut self, request: u64, effect: LaunchEffect) {
+        self.0.push((request, effect));
     }
 
-    /// The request ended (durable or failed): its preview goes, unless a
-    /// newer request of the same choice replaced it.
+    /// The request ended (durable or failed): its preview goes.
     fn settle(&mut self, request: u64) {
-        if self.raster.is_some_and(|(shown, _)| shown == request) {
-            self.raster = None;
-        }
-        if self.lowmem.is_some_and(|(shown, _)| shown == request) {
-            self.lowmem = None;
-        }
-        if self
-            .server_revision
-            .is_some_and(|(shown, _)| shown == request)
-        {
-            self.server_revision = None;
-        }
+        self.0.retain(|(shown, _)| *shown != request);
+    }
+
+    /// The pending raster choice made for `focused`.
+    fn raster(&self, focused: Option<&str>) -> Option<RasterMode> {
+        self.0.iter().rev().find_map(|(_, effect)| match effect {
+            LaunchEffect::Raster { raster, profile } if profile.as_deref() == focused => {
+                Some(*raster)
+            }
+            _ => None,
+        })
+    }
+
+    /// The pending memory choice made for `focused`.
+    fn lowmem(&self, focused: Option<&str>) -> Option<bool> {
+        self.0.iter().rev().find_map(|(_, effect)| match effect {
+            LaunchEffect::Lowmem { lowmem, profile } if profile.as_deref() == focused => {
+                Some(*lowmem)
+            }
+            _ => None,
+        })
+    }
+
+    /// The pending server revision choice.
+    fn server_revision(&self) -> Option<u16> {
+        self.0.iter().rev().find_map(|(_, effect)| match effect {
+            LaunchEffect::ServerRevision(revision) => Some(*revision),
+            _ => None,
+        })
     }
 }
 
-/// A failed panel-owned write kept at its setting: the request that failed
-/// (a later request's success ends it, an older one's never does).
+/// A failed panel-owned write kept at its setting, in the view it belongs
+/// to: the request that failed (a later request's success ends it, an older
+/// one's never does).
 struct PanelWriteError {
     path: Vec<String>,
+    owner: FeedbackOwner,
     request: u64,
     text: String,
     since: Instant,
@@ -2088,32 +2132,37 @@ impl Session {
         self.core.preferences_pending() || !self.panel_preference_writes.is_empty()
     }
 
-    /// The newest panel-write failure (the global config shows it).
+    /// The newest panel-write failure of the focused view (the global config
+    /// shows it).
     pub(crate) fn panel_preference_write_error(&self) -> Option<&str> {
+        let focused = self.core.selected();
         self.preference_write_errors
-            .last()
+            .iter()
+            .rev()
+            .find(|error| error.owner.shows_for(focused))
             .map(|error| error.text.as_str())
     }
 
     /// The retained failure of the panel-owned setting whose members lie
-    /// under `prefix`, shown at that setting.
+    /// under `prefix`, shown at that setting (a bot's raster or memory
+    /// failure only while that bot is focused).
     pub(crate) fn panel_member_error(&self, prefix: &[&str]) -> Option<&str> {
+        let focused = self.core.selected();
         self.preference_write_errors
             .iter()
             .rev()
-            .find(|error| {
-                error.path.len() >= prefix.len()
-                    && error.path.iter().zip(prefix).all(|(a, b)| a == b)
-            })
+            .find(|error| error.owner.shows_for(focused) && under_prefix(&error.path, prefix))
             .map(|error| error.text.as_str())
     }
 
     /// Whether a panel-owned write of a member under `prefix` is accepted
-    /// and not yet settled: the setting's control says "Saving…".
+    /// and not yet settled: the setting's control says "Saving…" (a bot's
+    /// raster or memory choice only while that bot is focused).
     pub(crate) fn panel_member_pending(&self, prefix: &[&str]) -> bool {
-        self.pending_panel_members.iter().any(|member| {
-            member.path.len() >= prefix.len() && member.path.iter().zip(prefix).all(|(a, b)| a == b)
-        })
+        let focused = self.core.selected();
+        self.pending_panel_members
+            .iter()
+            .any(|member| member.owner.shows_for(focused) && under_prefix(&member.path, prefix))
     }
 
     /// Submit one exact panel-owned preference member without waiting.
@@ -2146,7 +2195,7 @@ impl Session {
         match self.submit_panel_member(path, value, Some(effect.clone())) {
             Ok(PanelSubmit::Done) => true,
             Ok(PanelSubmit::Pending(request)) => {
-                self.launch_previews.show(request, &effect);
+                self.launch_previews.show(request, effect);
                 true
             }
             Err(_) => false,
@@ -2182,10 +2231,11 @@ impl Session {
             request: self.panel_request_seq,
             path: path.iter().map(|part| (*part).to_owned()).collect(),
             value: value.clone(),
+            owner: FeedbackOwner::of(effect.as_ref()),
         };
         // A new write of the member is the action that resolves its failure.
         self.preference_write_errors
-            .retain(|error| error.path != member.path);
+            .retain(|error| error.path != member.path || error.owner != member.owner);
         self.pending_panel_members.push(member.clone());
         let patch = match PreferencePatch::member(path, value) {
             Ok(patch) => patch,
@@ -2240,6 +2290,7 @@ impl Session {
                     request: 0,
                     path: path.iter().map(|part| (*part).to_owned()).collect(),
                     value: None,
+                    owner: FeedbackOwner::Panel,
                 };
                 let message = error.to_string();
                 self.set_preference_write_error(&member, &message, Instant::now());
@@ -2366,8 +2417,11 @@ impl Session {
                 .retain(|pending| pending.request != member.request);
             #[cfg(test)]
             crate::ui_state::commit_test_member(&member.path, &member.value);
-            self.preference_write_errors
-                .retain(|error| error.path != member.path || error.request > member.request);
+            self.preference_write_errors.retain(|error| {
+                error.path != member.path
+                    || error.owner != member.owner
+                    || error.request > member.request
+            });
         }
         self.rebase_panel_members();
     }
@@ -2415,7 +2469,7 @@ impl Session {
             .and_then(|revision| u16::try_from(revision).ok())
             .filter(|revision| matches!(revision, 274 | 289));
         if let Some(durable) = durable {
-            if self.launch_previews.server_revision.is_none()
+            if self.launch_previews.server_revision().is_none()
                 && self.launcher.bound().is_none()
                 && durable != self.ui.server_revision
             {
@@ -2436,7 +2490,7 @@ impl Session {
         match self
             .preference_write_errors
             .iter_mut()
-            .find(|shown| shown.path == member.path)
+            .find(|shown| shown.path == member.path && shown.owner == member.owner)
         {
             // A newer request's failure already shows: it stays.
             Some(shown) if shown.request > request => {}
@@ -2447,6 +2501,7 @@ impl Session {
             }
             None => self.preference_write_errors.push(PanelWriteError {
                 path: member.path.clone(),
+                owner: member.owner.clone(),
                 request,
                 text,
                 since: now,
@@ -2710,8 +2765,8 @@ impl Session {
     pub fn revision_choice_label(&self) -> Result<String, ProfileError> {
         let shown = self
             .launch_previews
-            .server_revision
-            .map_or(self.ui.server_revision, |(_, revision)| revision);
+            .server_revision()
+            .unwrap_or(self.ui.server_revision);
         self.launcher.revision_label(shown)
     }
 
@@ -4365,29 +4420,29 @@ impl Session {
         self.apply_result(result)
     }
 
-    /// What the Game pane's memory control shows: the operator's choice while
-    /// its save is pending, else the queued mode for the focused bot's next
-    /// login (including a session override). The mode itself changes only when
-    /// the choice is durable ([`Self::apply_lowmem_choice`]).
+    /// What the Game pane's memory control shows: the operator's choice for
+    /// the focused bot while its save is pending, else the queued mode for
+    /// the focused bot's next login (including a session override). The mode
+    /// itself changes only when the choice is durable
+    /// ([`Self::apply_lowmem_choice`]). Another bot's pending choice never
+    /// shows here.
     pub fn focused_lowmem(&self) -> bool {
+        let focused = self.core.selected();
         self.launch_previews
-            .lowmem
-            .map(|(_, lowmem)| lowmem)
-            .or_else(|| {
-                self.focused_name()
-                    .and_then(|name| self.core.memory_mode(&name))
-            })
+            .lowmem(focused)
+            .or_else(|| focused.and_then(|name| self.core.memory_mode(name)))
             .unwrap_or(self.ui.lowmem)
     }
 
     /// What the Game-pane none/GPU/CPU control shows (General config): the
-    /// operator's choice while its save is pending, else the applied mode.
+    /// operator's choice for the focused bot while its save is pending, else
+    /// the applied mode. Another bot's pending choice never shows here.
     /// Rail members stay GPU (CPU/none only as fallback via `set_draw` /
     /// `prefer_cpu`).
     pub fn focused_raster(&self) -> RasterMode {
         self.launch_previews
-            .raster
-            .map_or(self.ui.raster, |(_, raster)| raster)
+            .raster(self.core.selected())
+            .unwrap_or(self.ui.raster)
     }
 
     /// Choose the Game-pane raster. A remembered launch choice takes effect
