@@ -95,6 +95,24 @@ fn safe_walk_contains(areas: &[SafeWalk], tile: (i32, i32, i32)) -> bool {
     areas.iter().any(|area| area.contains(tile))
 }
 
+fn work_route_escape(areas: &[SafeWalk], tile: (i32, i32, i32)) -> bool {
+    !safe_walk_contains(areas, tile) && api::random::trapped_area(tile.0, tile.1, tile.2).is_none()
+}
+
+#[test]
+fn work_route_guard_distinguishes_random_event_travel_from_escape() {
+    // Attempt 10, tick 8227: the server selected maze spawn 0.
+    // macro_events.enum:73–79 and macro_event_maze.rs2:14–22.
+    for tile in [(2891, 4597, 0), (31 * 64, 74 * 64, 0)] {
+        assert!(!safe_walk_contains(CATHERBY_SAFE_WALK, tile));
+        assert!(!work_route_escape(CATHERBY_SAFE_WALK, tile));
+        assert!(work_route_escape(CATHERBY_SAFE_WALK, (tile.0, tile.1, 1)));
+    }
+    assert!(!work_route_escape(CATHERBY_SAFE_WALK, (2809, 3441, 0)));
+    assert!(work_route_escape(CATHERBY_SAFE_WALK, (2842, 3450, 0)));
+    assert!(work_route_escape(CATHERBY_SAFE_WALK, (2804, 3507, 0)));
+}
+
 #[test]
 fn catherby_safe_walk_accepts_worksites_and_bank_return_detour() {
     for (x, z) in CATHERBY_STARTS {
@@ -1248,7 +1266,7 @@ fn drive_frame(
             && actor
                 .site
                 .safe_walk
-                .is_some_and(|areas| !safe_walk_contains(areas, tile))
+                .is_some_and(|areas| work_route_escape(areas, tile))
         {
             fail_actor(
                 actor,
@@ -1357,6 +1375,9 @@ fn slot_sample_json(
         "ingame": slot.is_some_and(|status| status.ingame),
         "scene_state": slot.map(|status| status.scene_state),
         "tile": slot.and_then(host_play::SlotStatus::ready_tile),
+        "trapped_random_event": actor.snapshot.tile()
+            .and_then(|(x, z, level)| api::random::trapped_area(x, z, level))
+            .map(|kind| format!("{kind:?}")),
         "script_state": format!("{script_state:?}"),
         "scenario_step": actor.runner.record_step(),
         "scenario_status": format!("{:?}", actor.runner.status()),
