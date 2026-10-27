@@ -315,8 +315,7 @@ pub(crate) fn apply_pending_members<'a>(
 /// Whether the member at `path` is a remembered launch choice: the server
 /// revision and the Game-pane raster and low-memory modes. Such a choice
 /// takes effect only when its own write is durable (its owner applies it
-/// then), so a preview never lays over it and a document read never
-/// replaces the value the panel applies.
+/// then), so a pending preview never lays over it.
 pub(crate) fn is_launch_choice(path: &[String]) -> bool {
     matches!(
         path.first().map(String::as_str),
@@ -330,12 +329,16 @@ pub(crate) fn is_launch_choice(path: &[String]) -> bool {
 /// not read from the document stays as `current` has it: the saved choices
 /// the core owns (draw switches, bake choice, notices, session file, walk
 /// grants, the special-areas overlay and the manual-walk pause) and the
-/// launch choices. A member this does not name follows the document, so a
-/// new panel-owned member is rebased by default.
+/// server revision (its owner follows it). The remembered raster and memory
+/// mode follow the document while no bot is focused (`bot_focused` false);
+/// with a bot focused the controls show that bot's own saved modes, so they
+/// stay. A member this does not name follows the document, so a new
+/// panel-owned member is rebased by default.
 pub(crate) fn rebased<'a>(
     current: &PanelUiState,
     document: &Map<String, Value>,
     pending: impl IntoIterator<Item = (&'a [String], &'a Option<Value>)>,
+    bot_focused: bool,
 ) -> PanelUiState {
     let next = apply_pending_members(
         load_snapshot(document),
@@ -355,6 +358,11 @@ pub(crate) fn rebased<'a>(
         pause_script_on_manual_walk_abort: current.nav.pause_script_on_manual_walk_abort,
         ..next.nav
     };
+    let (raster, lowmem) = if bot_focused {
+        (current.raster, current.lowmem)
+    } else {
+        (next.raster, next.lowmem)
+    };
     PanelUiState {
         capture: current.capture,
         sidecar_50: current.sidecar_50,
@@ -363,8 +371,8 @@ pub(crate) fn rebased<'a>(
         session_log_file: current.session_log_file,
         background_bots_ack: current.background_bots_ack,
         render_all_warning_ack: current.render_all_warning_ack,
-        raster: current.raster,
-        lowmem: current.lowmem,
+        raster,
+        lowmem,
         server_revision: current.server_revision,
         nav,
         ..next

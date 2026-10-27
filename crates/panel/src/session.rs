@@ -2459,6 +2459,7 @@ impl Session {
             self.pending_panel_members
                 .iter()
                 .map(|member| (member.path.as_slice(), &member.value)),
+            self.core.selected().is_some(),
         );
         // The server revision the next session binds with follows a durable
         // value another process saved (while this panel has no choice of its
