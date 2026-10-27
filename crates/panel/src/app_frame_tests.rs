@@ -1622,7 +1622,12 @@ fn stopped_scripts_leave_no_walking_label_on_the_rail(drive: Drive) {
     let expect = |label: &str| -> Vec<String> {
         NINE.iter().map(|name| format!("{name}: {label}")).collect()
     };
-    assert_eq!(caps(&mut rig), expect("running"));
+    // The rail rows refresh from the core one frame after the script state
+    // changes (Session::pump_status runs before the core poll), so a native
+    // Start that is already Running needs frames before the labels follow.
+    let running = expect("running");
+    rig.frames_until("every rail label shows running", |rig| caps(rig) == running);
+    assert_eq!(caps(&mut rig), running);
 
     let stops = NINE.map(|name| {
         rig.session()
