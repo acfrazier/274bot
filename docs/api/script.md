@@ -930,20 +930,82 @@ If no engaged actor was recorded, or the engaged actor is no longer observed,
 retreat geometry uses the heaviest observed live attacker (the same shared
 threat predicate). Retreat direction compares packet-time network tiles (the
 player's and the attacker's), not interpolated rendered poses.
-An abort walk that fails or arrives while an attacker remains transfers into
-a guarded hold. The hold continues eating and permitted protection even at high
-HP, and ends only after three consecutive ticks without threat evidence.
-There is no tick-based hold timeout. If no food remains, protection is
-unavailable or disallowed, and an attacker is still live, the hold instead
-makes one unguarded escape walk away from that attacker before parking, when a
-destination can be formed. Without a live attacker it parks after the
-threat-free horizon instead. It does not retry that escape indefinitely.
+An abort walk names its goals. It does not pick one destination. The request
+lists exact Area goal tiles in tiers, and the host router chooses among them.
+The router owns reachability: it reads the baked collision and transports,
+applies the account's own limits, and takes the nearest reachable goal of the
+preferred tier before any goal of the fallback tier. Gatherer observation walks
+use the same request type (`WalkGoals`). The adapter runs no reachability
+search of its own, and a goal that the router cannot reach costs nothing.
+The tiers, best first:
+
+1. The step's authored `stand` and the standable tiles within one tile of it,
+   when the stand lies outside the attacker's chase envelope.
+2. Standable tiles beyond the chase envelope.
+3. Standable tiles inside the envelope that are farther from the attacker than
+   the player is.
+
+The chase envelope is `2 * maxrange + attackrange` tiles from the attacker's
+tile (`engine/src/engine/entity/Npc.ts:652-667`). Without a nav pack, every
+in-bounds tile is a candidate. Without a named attacker, only tier 1 exists.
+Each tier holds at most 512 tiles, so the two tiers of one request fit the
+router's limit of 1024 goals.
+A request names its first non-empty tier as preferred and the next non-empty
+tier as fallback. An abort walk that fails while an attacker is live is a
+failed route, not an end. The step plans again from the observed position, and
+the new request prefers the next tier down, under the same guard, so food
+upkeep continues. A pass makes one request for each non-empty tier: at most
+three requests, or two when the Path names no stand. The tiers can share tiles
+(a tile next to the stand can also lie beyond the chase envelope), so two
+requests of a pass can overlap. The count limit holds regardless. Three is the
+number of destination tiers that the content defines. It does not count compass
+directions. A request ends with its walk receipt. If no receipt comes, it ends
+when its observed-tick budget is spent. The step counts distinct game ticks,
+one for each `PLAYER_INFO`, never wall-clock time. The budget is the walking
+depth in steps to the nearest goal of the preferred tier in the live reach
+flood (of the fallback tier when no preferred goal is in the flood), plus 12
+ticks. The 12 ticks cover the engine's tick order and one dropped click that
+the nav executor re-sends after 5 idle ticks, twice. When no goal is in the
+flood (a route that needs a transport, or no live flood), the budget is the
+largest route length plus the same 12 ticks. The largest route length is
+4,000,000 steps, the router's limit of settled nodes for one search
+(`NODE_BUDGET`). The reach flood has no depth limit of its own. A route of `n`
+steps passes through `n + 1` settled nodes, and a player moves at least one
+tile per game tick (`engine/src/engine/entity/PathingEntity.ts:144-149`). This
+bound covers walking only. A route that waits on a transport has no tick bound
+from it. In practice the ten-minute active-clock deadline of the walk machine
+ends such a walk first. When the budget is spent, the step cancels the walk
+and plans the next tier from the observed position, the same as for a failed
+route. An abort walk that arrives while an
+attacker remains, or a pass that spends its tiers, transfers into a guarded
+hold. The hold continues eating and permitted protection even at high HP, and
+ends only after three consecutive
+ticks without threat evidence. There is no tick-based hold timeout. If no food
+remains, protection is unavailable or disallowed, and an attacker is still
+live, the hold instead starts one more pass of unguarded escape requests,
+planned from the position the hold observed, before parking. Without a live
+attacker it parks after the threat-free horizon instead. The step never starts
+a third pass. An abort makes at most six requests with a stand and four
+without. When every request fails, the step ends with the last walk failure.
+No claim is made that a reachable escape exists. When no tier routes, the hold
+and its food are the last resort.
+A combat step whose target is `attacker` and whose report is
+`Aborted(Unattackable)` completes once the bot is safe: when a guarded escape
+walk arrives with no live attacker, when the hold ends threat-free, or when an
+unguarded escape walk arrives and the step observes that no attacker is live.
+The unguarded pass has neither prayer nor food, so arrival alone is not safety.
+If an attacker is live or unobserved on arrival, the step plans the next tier,
+and it ends with the failure "combat abort escape walk arrived without proof
+that the attacker is gone" when no tier is left. The step keeps its combat
+receipt, so `combat_end: aborted_unattackable` selects the caller's walk that
+follows. Every other abort still ends the step as a failure.
 Cancellation releases protection owned by the hold.
 
-**Known limit (retreat destination).** The retreat tile is a fixed distance
-away from the attacker. It does not avoid other aggressive NPCs, so an abort
-walk can end beside a new attacker (the guarded hold then handles it).
-Choosing destinations away from aggressive NPCs is not implemented.
+**Known limit (retreat destination).** The escape goals lie beyond one chase
+envelope of the attacker, or at least farther from it than the player is. They
+do not avoid other aggressive NPCs, so an abort walk can end beside a new
+attacker (the guarded hold then handles it). Choosing destinations away from
+aggressive NPCs is not implemented.
 
 **Known limit (WindDown gap).** Every `Aborted` combat end first enters
 WindDown, which turns all raised prayers off and reports only once they are
@@ -959,7 +1021,7 @@ live attacker to the abort walk or hold instead of sweeping them.
 Abort qualification records the step's prayer permission independently of the
 player's Prayer level. A protected hold must prevent HP loss; a food-only hold
 may take damage, but must keep HP positive and eat at the guard's food line while
-food remains. Exhaustion requires the single escape attempt, not an unguarded
+food remains. Exhaustion requires an escape pass, not an unguarded
 park under a live attacker. A safe hold terminal requires observed disengagement,
 and a verified no-threat abort is a separate outcome that does not qualify the
 live-threat cell.
