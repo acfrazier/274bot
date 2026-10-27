@@ -10743,6 +10743,60 @@ fn settings_feedback_a_second_process_version_reaches_every_panel_control_after_
     assert_eq!(s.ui.section_order, ["log", "status"], "nothing else moved");
 }
 
+/// When focus ends (here the last focused bot is removed), the raster and
+/// memory controls show the shared saved value at once, also a value another
+/// process saved while the bot was focused. No later saved-file version is
+/// necessary. While the bot is focused, they show its own saved modes.
+#[test]
+fn settings_feedback_focus_loss_shows_the_saved_launch_choices_without_a_new_version() {
+    use frontend_core::command::RasterMode;
+    let _iso = IsolatedStores::enter("panel-s3-r4-focus-loss");
+    let _reader = crate::ui_state::read_documents_for_test();
+    let path = tmp_vault("focus-loss.vault");
+    let mut s = Session::new();
+    install_vault(
+        &mut s.core,
+        VaultFixture::create(&path, "test-passphrase-01"),
+    );
+    vault_upsert(&mut s.core, profile("alice", "pw", 42));
+    hydrate_panel_preferences(&mut s);
+    s.load("alice");
+    assert_eq!(s.focused_name().as_deref(), Some("alice"));
+    settle_panel_writes(&mut s);
+    s.core.flush_writes();
+    assert_eq!(
+        (s.focused_raster(), s.focused_lowmem()),
+        (RasterMode::Gpu, true)
+    );
+
+    let peer = crate::test_support::thread_preferences();
+    crate::test_support::set_patiently(&peer, "raster", serde_json::json!("cpu"));
+    crate::test_support::set_patiently(&peer, "lowmem", serde_json::Value::Bool(false));
+    s.preferences.reload().unwrap();
+    s.pump_status();
+    s.poll_panel_preferences();
+    assert_eq!(
+        (s.focused_raster(), s.focused_lowmem()),
+        (RasterMode::Gpu, true),
+        "the focused bot's controls show its own saved modes"
+    );
+    let version = s.preferences.snapshot().unwrap().version();
+
+    s.rail_remove("alice");
+    assert!(s.focused_name().is_none());
+    // The next frame's poll; the saved file has no new version.
+    s.poll_panel_preferences();
+    assert_eq!(s.preferences.snapshot().unwrap().version(), version);
+    let document = s.preferences.document().unwrap();
+    assert_eq!(
+        (s.focused_raster(), s.focused_lowmem()),
+        (RasterMode::Cpu, false),
+        "no bot is focused: the controls show the saved file (raster={} lowmem={})",
+        document["raster"],
+        document["lowmem"]
+    );
+}
+
 /// The Quest Paths folder field follows another process's saved folder while
 /// it is clean, and keeps what the operator is typing.
 #[test]

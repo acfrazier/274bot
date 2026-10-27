@@ -1109,8 +1109,11 @@ pub struct Session {
     pending_panel_members: Vec<PanelPreferenceMember>,
     /// The last request identity handed out.
     panel_request_seq: u64,
-    /// The durable version the panel-owned members last followed.
-    panel_rebased: Option<api::local_state::StoreVersion>,
+    /// The durable version the panel-owned members last followed, and
+    /// whether a bot was focused then. The raster and memory controls show
+    /// the focused bot's modes or, with no bot focused, the saved document:
+    /// a change of either part rebases them.
+    panel_rebased: (Option<api::local_state::StoreVersion>, bool),
     /// What the launch controls show while their save is pending.
     launch_previews: LaunchPreviews,
     /// Shared Nav values changed by an accepted command but not yet durable.
@@ -1799,7 +1802,7 @@ impl Session {
             quester_paths_folder_edit,
             quester_paths_folder_dirty: false,
             quester_folder_submitted: None,
-            panel_rebased: None,
+            panel_rebased: (None, false),
             launch_previews: LaunchPreviews::default(),
             special_areas_dropped: false,
             nav_rebased: None,
@@ -2096,14 +2099,18 @@ impl Session {
             // Every later durable version (another process's save, or this
             // panel's own landing) rebases the panel-owned members over the
             // new document, keeping the previews of requests still pending.
+            // So does the end (or start) of focus: with no bot focused, the
+            // raster and memory controls show the saved document at once,
+            // without a later version.
             if self.preferences_ready {
                 let version = self
                     .preferences
                     .snapshot()
                     .ok()
                     .map(|snapshot| snapshot.version());
-                if version != self.panel_rebased {
-                    self.panel_rebased = version;
+                let context = (version, self.core.selected().is_some());
+                if context != self.panel_rebased {
+                    self.panel_rebased = context;
                     self.rebase_panel_members();
                 }
             }

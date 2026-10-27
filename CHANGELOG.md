@@ -24,8 +24,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   reopening a settings window, or the dialog, shows the same state. A change
   saved by another running copy of the program reaches every control, each time
   it saves. The Game pane's raster and memory controls follow it while no bot
-  is focused; with a bot focused they show that bot's own saved modes. The
-  server revision follows it while no session is bound. A
+  is focused; with a bot focused they show that bot's own saved modes. When
+  focus ends (for example you remove the last focused bot), they show the saved
+  value at once. The server revision follows it while no session is bound. A
   control you are typing in, or whose own save is still pending, keeps your
   entry until its save ends. A pending raster or memory choice, with its
   "Saving…" and its reason, belongs to the bot you made it for: when you focus
