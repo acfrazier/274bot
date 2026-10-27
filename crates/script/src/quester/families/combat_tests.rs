@@ -3320,28 +3320,33 @@ fn escape_walks_that_never_settle_end_on_their_observed_tick_budget() {
     }
 }
 
-/// Without a measured depth (no flood, or none of the goals in it) the budget
-/// is the router's largest route length plus the slack, the bound that no
-/// walk to a reachable goal passes.
+/// Without a measured depth (no flood, or none of the goals in it) the walk
+/// has no tick budget and no clock. It ends by its receipt or by the existing
+/// ten-minute walk deadline (`FIX-ABORT-ESCAPE/r4/MAIN-RULING.md`).
 #[test]
-fn an_unmeasured_escape_walk_gets_the_router_bound_plus_the_slack() {
+fn an_unmeasured_escape_walk_has_no_tick_budget() {
     let geometry = escape::EscapeGeometry {
         here: M4_HERE,
         threat: Some(M4_TREE),
         stand: None,
         chase_range: 14,
     };
-    let bound = nav_planner::router::NODE_BUDGET as u64 + escape::ESCAPE_SLACK_TICKS;
-    assert_eq!(escape::ESCAPE_MAX_WALK_STEPS, 4_000_000);
     let no_flood = escape::AbortEscape::new()
         .next_goals(&geometry, None, None)
         .expect("tiers beyond the envelope remain");
-    assert_eq!(no_flood.budget_ticks, bound);
+    assert_eq!(no_flood.budget_ticks, None);
     let small = open_flood(M4_HERE, 1);
     let no_goal_in_flood = escape::AbortEscape::new()
         .next_goals(&geometry, None, Some(&small))
         .expect("tiers beyond the envelope remain");
-    assert_eq!(no_goal_in_flood.budget_ticks, bound);
+    assert_eq!(no_goal_in_flood.budget_ticks, None);
+
+    let mut escape = escape::AbortEscape::new();
+    escape.start_walk(10, no_flood.budget_ticks);
+    assert!(
+        !escape.walk_expired(10 + 10_000_000),
+        "a walk with no tick budget never expires on observed ticks"
+    );
 }
 
 /// A guarded escape walk that never settles, with food in the pack and the
