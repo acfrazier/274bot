@@ -41,6 +41,16 @@ from unittest import mock
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
+# The tests judge the runner's defaults, not the calling host's service
+# settings. A runner machine's environment (latency bands, a cells file,
+# the 274 revision) changes run_nightly's import-time constants and
+# would fail tests that assume the defaults - which is how malbec's
+# self-check rejected good candidates when the installed checker still
+# inherited the service environment. Drop NIGHTLY_* here, in this test
+# process only, before importing the runner; keep the self-check guard.
+for _key in [key for key in os.environ if key.startswith("NIGHTLY_")]:
+    if _key != "NIGHTLY_SELF_CHECK_ACTIVE":
+        del os.environ[_key]
 os.environ.setdefault("NIGHTLY_ROOT", str(Path(tempfile.gettempdir()) / "run-nightly-test-root"))
 
 import run_nightly as rn
@@ -821,6 +831,23 @@ class LaneEnvironmentTests(unittest.TestCase):
                 else:
                     self.assertEqual(extra, {})
 
+    def test_the_script_load_lane_follows_the_tree_layout(self):
+        def lane_args(tree):
+            return {name: args for name, args, _extra in rn.lane_list(tree)}["test-script-load"]
+
+        post_s1 = ["test", "--locked", "-p", "script-js", "--tests", "--no-fail-fast"]
+        pre_s1 = ["test", "--locked", "-p", "script", "--features", "load", "--tests",
+                  "--no-fail-fast"]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for name, crate in (("post", "script-js"), ("pre", "script")):
+                manifest = root / name / "crates" / crate / "Cargo.toml"
+                manifest.parent.mkdir(parents=True)
+                manifest.write_text("[package]\nname = \"x\"\n", encoding="utf-8")
+            self.assertEqual(lane_args(root / "post"), post_s1)
+            self.assertEqual(lane_args(root / "pre"), pre_s1)
+        self.assertEqual(lane_args(None), post_s1)
+
     def test_missing_snapshot_and_baseline_stay_unset(self):
         with tempfile.TemporaryDirectory() as tmp:
             env = self.asset_env(Path(tmp), snapshot=False, baseline=False)
@@ -1131,6 +1158,18 @@ class RevisionImportTests(unittest.TestCase):
         self.assertNotEqual(out.returncode, 0)
         self.assertIn("NIGHTLY_REVISION", out.stderr)
 
+    def test_the_test_file_ignores_the_service_environment(self):
+        env = dict(os.environ)
+        env.update({"NIGHTLY_LATENCY_BANDS": "50,100,150",
+                    "NIGHTLY_REVISION": "274",
+                    "NIGHTLY_CELLS_FILE": "cells-274.conf"})
+        out = subprocess.run(
+            [sys.executable, "-c",
+             "import test_run_nightly as t; print(t.rn.LATENCY_BANDS, t.rn.REVISION)"],
+            cwd=HERE, env=env, capture_output=True, text=True)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertEqual(out.stdout.split(), ["[]", "289"])
+
 
 class CellsFileTests(unittest.TestCase):
     def test_a_relative_cells_file_is_read_beside_the_script(self):
@@ -1184,6 +1223,60 @@ class CellsFileTests(unittest.TestCase):
         self.assertIsNone(summary["build"]["error"])
         self.assertEqual([row["cell"] for row in summary["cells"]], ["walk"])
         self.assertIsNone(summary["cells_file"])
+
+
+class BuildFailureTests(unittest.TestCase):
+    def test_a_failed_build_writes_summary_and_done_without_starting_the_engine(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+
+        def fake_update_tree(_branch, tree, _build_log):
+            catalog = tree / rn.CATALOG_RS
+            catalog.parent.mkdir(parents=True)
+            catalog.write_text(
+                'const REGISTRY: &[Entry] = &[\n    Entry::new("walk"),\n'
+                '    Entry::new("cook_bot"),\n];\n', encoding="utf-8")
+            return "b" * 40, "b" * 9
+
+        def failing_build(_tree, _target, _run_dir, _build_log):
+            raise RuntimeError("tested tree's revision-274 nav inventory missing: "
+                               "crates/nav/src/required-content-274.tsv")
+
+        engine_starts: list = []
+        patches = [
+            mock.patch.object(rn, "ROOT", root),
+            mock.patch.object(rn, "CATALOG", root / "rs2b0t"),
+            mock.patch.object(rn, "STEPS", ["tui"]),
+            mock.patch.object(rn, "REQUIRE_CONSOLE", False),
+            mock.patch.object(rn, "update_tree", fake_update_tree),
+            mock.patch.object(rn, "build", failing_build),
+            mock.patch.object(rn, "guard_disk", lambda _branch, _primary: None),
+            mock.patch.object(rn, "engine_start",
+                              lambda run_dir: engine_starts.append(run_dir) or (True, "started")),
+            mock.patch.object(rn, "engine_stop", lambda _run_dir: None),
+            mock.patch.object(rn, "log", lambda _message: None),
+        ]
+        for patch in patches:
+            patch.start()
+        try:
+            run_dir = rn.run_branch("dev", 1, None, None, latency_bands=[])
+        finally:
+            for patch in patches:
+                patch.stop()
+        self.assertEqual(engine_starts, [])
+        self.assertTrue((run_dir / "DONE").is_file())
+        summary = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
+        self.assertFalse(summary["build"]["ok"])
+        self.assertTrue(summary["build"]["ran"])
+        self.assertIn("nav inventory missing", summary["build"]["error"])
+        self.assertEqual(summary["engine"]["status"], "not started (build failed)")
+        self.assertTrue(summary["steps"]["tui"]["status"].startswith("not run: "))
+        rows = {row["cell"]: row for row in summary["cells"]}
+        self.assertEqual(sorted(rows), ["cook_bot", "walk"])
+        for row in rows.values():
+            self.assertEqual(row["result"], "NOT_RUN")
+            self.assertIn("build failed", row["reason"])
 
 
 class QuestJobTests(unittest.TestCase):
@@ -2685,6 +2778,51 @@ class SelfUpdateTests(unittest.TestCase):
                         os.kill(grandchild, 9)
                 except OSError:
                     pass
+
+    def make_candidate(self, root: Path, test_name: str, test_text: str) -> Path:
+        candidate = root / "candidate"
+        nightly = candidate / "tools" / "nightly"
+        nightly.mkdir(parents=True)
+        for name in ("run_nightly.py", "nightly-mac-guest.py", "latency_proxy.py"):
+            (nightly / name).write_text("x = 1\n", encoding="utf-8")
+        (nightly / test_name).write_text(test_text, encoding="utf-8")
+        return candidate
+
+    def test_the_self_check_does_not_inherit_the_service_environment(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            candidate = self.make_candidate(
+                Path(tmp), "test_probe_env.py",
+                "import os, sys\n"
+                "leaked = [key for key in ('NIGHTLY_LATENCY_BANDS', 'NIGHTLY_CELLS_FILE',\n"
+                "                           'NIGHTLY_REVISION') if os.environ.get(key)]\n"
+                "if os.environ.get('NIGHTLY_SELF_CHECK_ACTIVE') != '1':\n"
+                "    sys.exit(2)\n"
+                "sys.exit(1 if leaked else 0)\n")
+            env_patch = mock.patch.dict(os.environ, {
+                "NIGHTLY_LATENCY_BANDS": "50,100,150",
+                "NIGHTLY_CELLS_FILE": "cells-274.conf",
+                "NIGHTLY_REVISION": "274",
+            })
+            env_patch.start()
+            self.addCleanup(env_patch.stop)
+            ok, detail = rn.self_check_candidate(
+                candidate, test_file="test_probe_env.py", timeout=30)
+            self.assertTrue(ok, detail)
+
+    def test_a_failed_self_check_names_the_failing_test(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            candidate = self.make_candidate(
+                Path(tmp), "test_probe_failure.py",
+                "import unittest\n\n\n"
+                "class ProbeTests(unittest.TestCase):\n"
+                "    def test_probe_failure_is_named(self):\n"
+                "        self.fail('probe')\n\n\n"
+                "if __name__ == '__main__':\n"
+                "    unittest.main()\n")
+            ok, detail = rn.self_check_candidate(
+                candidate, test_file="test_probe_failure.py", timeout=30)
+            self.assertFalse(ok)
+            self.assertIn("test_probe_failure_is_named", detail)
 
 
 class ReexecTests(unittest.TestCase):
