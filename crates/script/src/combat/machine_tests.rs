@@ -37,6 +37,7 @@ struct Runtime {
     condition: Option<api::condition::BotCondition>,
     poison_unknown_pulse: u8,
     cure_poison: crate::survival::CurePoison,
+    wilderness: Option<nav_planner::transport::WildernessRules>,
 }
 impl Runtime {
     fn context<R>(
@@ -70,6 +71,7 @@ impl Runtime {
             evidence,
             pin: &self.pin,
             snapshot: SnapshotView::new(Some(snapshot), evidence).with_reach(self.reach.as_ref()),
+            wilderness: self.wilderness.as_ref(),
             retained: &mut self.retained,
             action_id,
             active_now: Duration::from_millis(tick * 600),
@@ -141,6 +143,10 @@ impl Harness {
         Self::new_at(scene, request, 0)
     }
     fn new_at(scene: &Scene, request: CombatRequest, origin: u64) -> Self {
+        Self::try_new(scene, request, origin).unwrap()
+    }
+    /// Begin the machine, returning the refusal `begin` reports.
+    fn try_new(scene: &Scene, request: CombatRequest, origin: u64) -> Result<Self, ActionError> {
         let mut runtime = Runtime {
             pin: scene.data.selected_pin().unwrap(),
             retained: RetainedMemory::default(),
@@ -152,18 +158,22 @@ impl Harness {
             condition: None,
             poison_unknown_pulse: u8::MAX,
             cure_poison: crate::survival::CurePoison::WhenNeeded,
+            wilderness: scene.wilderness.clone(),
         };
-        let (machine, lease) = runtime.context(&scene.snapshot, origin, origin, |actions, cx| {
-            let lease = actions.begin::<Lease>((), cx).unwrap();
-            let machine =
-                Combat::begin((Arc::new(request), Arc::clone(&scene.tables)), cx).unwrap();
-            (machine, lease)
-        });
-        Self {
+        let (machine, lease) =
+            runtime.context(&scene.snapshot, origin, origin, |actions, cx| {
+                let lease = actions.begin::<Lease>((), cx).unwrap();
+                let machine = Combat::begin(
+                    (Arc::new(request), Arc::clone(&scene.tables), scene.globals),
+                    cx,
+                )?;
+                Ok::<_, ActionError>((machine, lease))
+            })?;
+        Ok(Self {
             machine,
             runtime,
             _lease: lease,
-        }
+        })
     }
     fn poll(
         &mut self,
@@ -272,6 +282,8 @@ struct Scene {
     varps: Vec<VarpView>,
     inventory: Vec<ItemView>,
     equipment: Vec<ItemView>,
+    wilderness: Option<nav_planner::transport::WildernessRules>,
+    globals: crate::native::PvpGlobals,
 }
 fn tile(x: i32, z: i32) -> api::WorldTile {
     api::WorldTile { x, z, level: 0 }
@@ -379,6 +391,8 @@ impl Scene {
             varps,
             inventory: Vec::new(),
             equipment: Vec::new(),
+            wilderness: None,
+            globals: crate::native::PvpGlobals::fail_closed(),
         };
         scene.refresh();
         scene
@@ -1006,6 +1020,20 @@ fn attacker_player_slot_reuse_cannot_retarget_an_existing_engagement() {
     attacker.actor.animation = scene.melee_seq();
     attacker.actor.in_combat = true;
     scene.snapshot.seed_players(vec![attacker.clone()]);
+    // The fight is in a (synthetic) Wilderness: players are attackable only there.
+    scene.wilderness = Some(nav_planner::transport::WildernessRules {
+        zones: vec![nav_planner::transport::WildernessZone {
+            x1: 2500,
+            z1: 3150,
+            x2: 2700,
+            z2: 3300,
+            level1: 0,
+            level2: 3,
+            origin_z: 3150,
+        }],
+        divisor: 8,
+        offset: 1,
+    });
     let mut request = scene.request();
     request.target = Target::Attacker {
         npcs: false,
@@ -1039,25 +1067,19 @@ fn attacker_player_slot_reuse_cannot_retarget_an_existing_engagement() {
 }
 
 #[test]
-fn fail_closed_flick_and_pvp_modes_have_no_host_work() {
+fn fail_closed_flick_mode_has_no_host_work() {
     let scene = Scene::new("imp");
-    for change in [2, 3] {
-        let mut request = scene.request();
-        match change {
-            2 => request.prayer_mode = PrayerMode::Flick,
-            _ => {
-                request.target = Target::Player {
-                    name: Arc::from("someone"),
-                }
-            }
-        }
-        let mut harness = Harness::new(&scene, scene.request());
-        let result = harness.runtime.context(&scene.snapshot, 1, 1, |_, cx| {
-            Combat::begin((Arc::new(request), Arc::clone(&scene.tables)), cx)
-        });
-        assert!(matches!(result, Err(ActionError::Unavailable(_))));
-        assert!(harness.take().is_none());
-    }
+    let mut request = scene.request();
+    request.prayer_mode = PrayerMode::Flick;
+    let mut harness = Harness::new(&scene, scene.request());
+    let result = harness.runtime.context(&scene.snapshot, 1, 1, |_, cx| {
+        Combat::begin(
+            (Arc::new(request), Arc::clone(&scene.tables), scene.globals),
+            cx,
+        )
+    });
+    assert!(matches!(result, Err(ActionError::Unavailable(_))));
+    assert!(harness.take().is_none());
 }
 
 #[test]
@@ -1482,7 +1504,7 @@ fn case20_steady_nonemitting_combat_ticks_allocate_nothing() {
     assert_eq!(allocations.count_total, 0);
     assert!(harness.machine.counters.swings >= 50);
     assert_eq!(harness.machine.counters.food, 0);
-    assert!(std::mem::size_of::<Combat>() <= 512);
+    assert!(std::mem::size_of::<Combat>() <= 520);
     assert!(std::mem::size_of::<CombatReport>() <= 80);
     println!("Combat={} CombatReport={} CombatRequest={} ArcRequest={} ActionHandle={} HostAction={} Ledger={} InteractionReceipt={} WalkReceipt={}",
         std::mem::size_of::<Combat>(), std::mem::size_of::<CombatReport>(), std::mem::size_of::<CombatRequest>(), std::mem::size_of::<Arc<CombatRequest>>(),
@@ -2049,7 +2071,14 @@ fn case34_unattackable_rows_are_threats_not_targets_and_terminal_food_is_allowed
     assert_eq!(report.food, 1);
     assert_eq!(report.restorations, 0);
     let unavailable = harness.runtime.context(&scene.snapshot, 3, 3, |_, cx| {
-        Combat::begin((Arc::new(scene.request()), Arc::clone(&scene.tables)), cx)
+        Combat::begin(
+            (
+                Arc::new(scene.request()),
+                Arc::clone(&scene.tables),
+                scene.globals,
+            ),
+            cx,
+        )
     });
     assert!(matches!(unavailable, Err(ActionError::Unavailable(_))));
     assert!(harness.take().is_none());
@@ -5015,3 +5044,6 @@ fn ranged_begin_does_not_count_a_previous_fights_instruction() {
 
 #[path = "magic_machine_tests.rs"]
 mod magic_tests;
+
+#[path = "pvp_machine_tests.rs"]
+mod pvp_tests;

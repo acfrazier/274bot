@@ -24,6 +24,9 @@ pub struct Frame<'a> {
     pub prayers: [bool; 15],
     pub varps: &'a [VarpView],
     pub in_combat: CombatView,
+    /// The selected pack's wilderness rules for this frame; `None` without a
+    /// nav pack (every tile then reads as outside the Wilderness).
+    pub wilderness: Option<&'a nav_planner::transport::WildernessRules>,
 }
 
 impl<'a> Frame<'a> {
@@ -68,7 +71,18 @@ impl<'a> Frame<'a> {
             prayers,
             varps,
             in_combat,
+            wilderness: None,
         })
+    }
+
+    /// Attach the host's wilderness rules to this frame.
+    #[must_use]
+    pub fn with_wilderness(
+        mut self,
+        wilderness: Option<&'a nav_planner::transport::WildernessRules>,
+    ) -> Self {
+        self.wilderness = wilderness;
+        self
     }
 
     #[inline]

@@ -431,3 +431,101 @@ fn thrown(scope: &mut v8::HandleScope, value: v8::Local<v8::Value>) -> Thrown {
     let message = error.message.unwrap_or(error.exception_message);
     Thrown::js(message, v8::Global::new(scope, value))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rustyscript::RuntimeOptions;
+    use script::api_combat::{CombatEnd, CombatSummary, ReportEnd};
+    use script::combat::PvpSource;
+
+    /// V8 used heap after a full collection.
+    fn collected_used_heap(runtime: &mut Runtime) -> usize {
+        let isolate = runtime.deno_runtime().v8_isolate();
+        isolate.low_memory_notification();
+        isolate.get_heap_statistics().used_heap_size()
+    }
+
+    fn summary(index: u64) -> CombatSummary {
+        CombatSummary {
+            end: ReportEnd::Killed,
+            reason: None,
+            npc_type: 81,
+            ticks: 40,
+            swings: 9,
+            casts: 0,
+            damage_taken: 3,
+            food: 1,
+            prayer_doses: 0,
+            boost_doses: 0,
+            antifire_doses: 0,
+            protect_switches: 0,
+            pvp_source: match index % 4 {
+                0 => None,
+                1 => Some(PvpSource::Request),
+                2 => Some(PvpSource::Global),
+                _ => Some(PvpSource::Both),
+            },
+        }
+    }
+
+    /// PVP-DESIGN-1026 §9.6: 1 000 `api.combat.fight` summaries, built by the
+    /// host's own `outcome_envelope` from the same JSON the host publishes and
+    /// retained in one array, grow the collected V8 used heap by no more than
+    /// the bound, and every one carries all thirteen report fields (`pvpSource`
+    /// is present, as `null`, when no player fight was started).
+    #[test]
+    fn a_thousand_combat_summaries_bound_the_collected_v8_heap() {
+        const SUMMARIES: u64 = 1_000;
+        // Measured: about 1.3 MiB (each summary is three dictionary-mode objects
+        // from the shared `serde_v8` path); the bound is 1.5x of that.
+        const HEAP_GROWTH_LIMIT: usize = 2 * 1024 * 1024;
+        crate::platform::bootstrap_test_v8_platform();
+        let mut runtime = Runtime::new(RuntimeOptions::default()).unwrap();
+        callback_v8::install_ops(&mut runtime).unwrap();
+        install(&mut runtime).unwrap();
+        runtime.eval::<()>("globalThis.__kept = null;").unwrap();
+        let baseline = collected_used_heap(&mut runtime);
+        {
+            let context = runtime.deno_runtime().main_context();
+            let mut scope = runtime.deno_runtime().handle_scope();
+            let global = context.open(&mut scope).global(&mut scope);
+            let kept = v8::Array::new(&mut scope, 0);
+            for index in 0..SUMMARIES {
+                let end = CombatEnd::Fought {
+                    token: index + 1,
+                    report: summary(index),
+                };
+                let envelope = outcome_envelope(&mut scope, Outcome::Done(Value::from(end)))
+                    .unwrap_or_else(|_| panic!("summary {index} materializes"));
+                kept.set_index(&mut scope, index as u32, envelope);
+            }
+            let key = callback_v8::string(&mut scope, "__kept");
+            global.set(&mut scope, key.into(), kept.into());
+        }
+        let after = collected_used_heap(&mut runtime);
+        let growth = after.saturating_sub(baseline);
+        println!(
+            "combat summary heap: summaries={SUMMARIES} baseline={baseline} after={after} growth={growth} limit={HEAP_GROWTH_LIMIT}"
+        );
+        assert!(
+            growth <= HEAP_GROWTH_LIMIT,
+            "{SUMMARIES} retained summaries grew the collected V8 heap by {growth} bytes (limit {HEAP_GROWTH_LIMIT})"
+        );
+        let all_keys = runtime
+            .eval::<bool>(
+                r#"(() => {
+                    const want = ['end','reason','npcType','ticks','swings','casts','damageTaken','food',
+                        'prayerDoses','boostDoses','antifireDoses','protectSwitches','pvpSource'].join();
+                    return __kept.length === 1000 && __kept.every((r, i) =>
+                        r.kind === 'done' && r.value.report && Object.keys(r.value.report).join() === want
+                        && r.value.report.pvpSource === [null, 'request', 'global', 'both'][i % 4]);
+                })()"#,
+            )
+            .unwrap();
+        assert!(
+            all_keys,
+            "every summary has all thirteen report fields in order"
+        );
+    }
+}

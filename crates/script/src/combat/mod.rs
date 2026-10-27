@@ -34,7 +34,9 @@ pub use prayer::{
 };
 pub use request::*;
 pub use risk::{RiskInput, RouteAssessment};
-pub use select::{facts, ident, retaliate, taken_by_another};
+pub use select::{
+    attack_label, facts, ident, pvp_initiation_allowed, retaliate, taken_by_another, PvpSource,
+};
 pub use tables::CombatTables;
 pub use threats::{HitOnset, HitOnsets, Threat, ThreatSet};
 /// `%option_nodef`: zero means auto-retaliation is on.

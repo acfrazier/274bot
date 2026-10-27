@@ -2583,10 +2583,21 @@ pub(crate) struct CapturedStatusLine {
 }
 
 #[derive(Default)]
-struct StatusLineSink(std::sync::Mutex<Vec<CapturedStatusLine>>);
+struct StatusLineSink(
+    std::sync::Mutex<Vec<CapturedStatusLine>>,
+    // Every line the combat machine logs for a refused fight with a player
+    // (PVP-DESIGN-1026 §2.7), whatever its slot.
+    std::sync::Mutex<Vec<(api::hostlog::Level, String)>>,
+);
 
 impl api::hostlog::Sink for StatusLineSink {
     fn record(&self, record: &api::hostlog::Record<'_>) {
+        if record.message.contains("fight with a player refused") {
+            self.1
+                .lock()
+                .unwrap()
+                .push((record.level, record.message.to_owned()));
+        }
         let Some(slot) = record.slot.filter(|slot| slot.starts_with("status-")) else {
             return;
         };
@@ -2599,7 +2610,15 @@ impl api::hostlog::Sink for StatusLineSink {
     }
 }
 
-static STATUS_LINE_SINK: StatusLineSink = StatusLineSink(std::sync::Mutex::new(Vec::new()));
+static STATUS_LINE_SINK: StatusLineSink = StatusLineSink(
+    std::sync::Mutex::new(Vec::new()),
+    std::sync::Mutex::new(Vec::new()),
+);
+
+/// Every refused-fight-with-a-player line the combat machine has logged.
+pub(crate) fn pvp_refusal_lines() -> Vec<(api::hostlog::Level, String)> {
+    STATUS_LINE_SINK.1.lock().unwrap().clone()
+}
 
 pub(crate) fn install_status_line_sink() {
     let _ = api::hostlog::install_sink(&STATUS_LINE_SINK);

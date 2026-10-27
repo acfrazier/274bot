@@ -49,6 +49,9 @@ fn report(end: CombatEnd) -> CombatReport {
         flick_resets: 0,
         flick_misses: 0,
         flick_fallback: false,
+        pvp_blocked: 0,
+        pvp_source: None,
+        kill_line_seen: false,
     }
 }
 

@@ -3251,6 +3251,11 @@
           "minimum": 0,
           "maximum": 255
         },
+        "pvp": {
+          "type": "boolean",
+          "description": "Opt in to START a fight with the named `target.player`. The global\noperator setting `pvp.start_fights` also opts in; without either the\nstep is refused (`pvp-not-allowed`). Fighting back needs neither.",
+          "default": false
+        },
         "kill_budget_ticks": {
           "type": "integer",
           "description": "Maximum game ticks to spend on a combat attempt.",
@@ -3334,7 +3339,11 @@
           "description": "Select NPCs or players that are already attacking the player."
         },
         "player": {
-          "description": "Player targeting is represented in the wire format but is unsupported.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "A named player to fight. Where the game allows player combat (the\nWilderness and a duel pen) and the step or the global setting opts in.",
           "default": null
         },
         "not_targeting_others": {

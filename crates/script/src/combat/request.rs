@@ -105,6 +105,7 @@ pub struct CompiledKit {
 pub struct SpellRef {
     pub alias: Arc<str>,
 }
+/// What the machine may do on the bot's behalf. Every flag defaults to allowed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Allowances {
     pub prayer: bool,
@@ -112,6 +113,12 @@ pub struct Allowances {
     pub potions: bool,
     pub equipment: bool,
     pub retaliate_toggle: bool,
+    /// Wear positions the machine must never change, one bit per slot
+    /// (`player/configs/equip.constant:2-15`): the duel rules `NoWeapons`,
+    /// `NoArmour` and `NoJewelry` lock slots. A locked slot has no wanted item.
+    pub locked_slots: u16,
+    /// Whether a special attack may be used (false under the duel's `no_specs`).
+    pub special: bool,
 }
 impl Default for Allowances {
     fn default() -> Self {
@@ -121,6 +128,8 @@ impl Default for Allowances {
             potions: true,
             equipment: true,
             retaliate_toggle: true,
+            locked_slots: 0,
+            special: true,
         }
     }
 }
@@ -176,6 +185,11 @@ pub struct CombatRequest {
     pub retaliate: bool,
     pub prayer_mode: PrayerMode,
     pub until_ticks: u16,
+    /// The script's opt-in to START a fight with a named player. The global
+    /// operator setting `pvp.start_fights` is the other source; one predicate,
+    /// [`super::select::pvp_initiation_allowed`], reads both at `begin` and only
+    /// for [`Target::Player`]. Self-defence never reads this field.
+    pub pvp: bool,
 }
 impl Default for CombatRequest {
     fn default() -> Self {
@@ -202,6 +216,7 @@ impl Default for CombatRequest {
             retaliate: true,
             prayer_mode: PrayerMode::Hold,
             until_ticks: 0,
+            pvp: false,
         }
     }
 }
@@ -226,6 +241,58 @@ pub enum PrepReadiness {
     CombatRootWrong,
     StyleEchoMissing,
 }
+/// Why a player cannot be fought now (PVP-DESIGN-1026 §2.1). Carried by
+/// `ActionError::PvpRefused` at `begin` and by [`AbortReason::PvpRefused`]
+/// after it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, thiserror::Error)]
+pub enum PvpRefusal {
+    /// `Target::Player` with neither `request.pvp` nor the global setting.
+    #[error("pvp-not-allowed")]
+    NotOptedIn,
+    /// The player row has neither the "Attack" nor the "Fight" op.
+    #[error("pvp-no-attack-op")]
+    NoAttackOp,
+    /// The bot stands outside the Wilderness and outside a duel pen.
+    #[error("pvp-outside-wilderness")]
+    OutsideWilderness,
+    /// The opponent stands outside the Wilderness.
+    #[error("pvp-opponent-outside")]
+    OpponentOutside,
+    /// The level difference exceeds the Wilderness level.
+    #[error("pvp-level-range")]
+    LevelRange {
+        /// The lower of the two Wilderness levels.
+        wilderness: u8,
+        /// The absolute combat-level difference.
+        difference: u8,
+    },
+    /// In the duel challenge area, not in a pen.
+    #[error("pvp-challenge-area")]
+    ChallengeArea,
+    /// The arena refused: the player is not the duel partner.
+    #[error("pvp-not-opponent")]
+    NotOpponent,
+    /// The duel has not started.
+    #[error("pvp-duel-not-started")]
+    DuelNotStarted,
+}
+
+impl PvpRefusal {
+    /// The stable code scripts match, equal to the variant's display text.
+    pub const fn code(self) -> &'static str {
+        match self {
+            Self::NotOptedIn => "pvp-not-allowed",
+            Self::NoAttackOp => "pvp-no-attack-op",
+            Self::OutsideWilderness => "pvp-outside-wilderness",
+            Self::OpponentOutside => "pvp-opponent-outside",
+            Self::LevelRange { .. } => "pvp-level-range",
+            Self::ChallengeArea => "pvp-challenge-area",
+            Self::NotOpponent => "pvp-not-opponent",
+            Self::DuelNotStarted => "pvp-duel-not-started",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum AbortReason {
     Unprotected(Unprotected),
@@ -236,6 +303,9 @@ pub enum AbortReason {
     PrepFailed(PrepItem),
     PrepReadiness(PrepReadiness),
     Unresponsive,
+    /// A mid-fight refusal: the server or the zone gate stopped the attack on
+    /// a player.
+    PvpRefused(PvpRefusal),
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum CombatEnd {
@@ -272,6 +342,12 @@ pub struct CombatReport {
     pub flick_resets: u8,
     pub flick_misses: u8,
     pub flick_fallback: bool,
+    /// Player targets the candidate check refused to engage this run.
+    pub pvp_blocked: u8,
+    /// Which source authorised STARTING a fight; `None` for self-defence.
+    pub pvp_source: Option<super::select::PvpSource>,
+    /// Whether a server kill line was seen (never a gate; the zero bar is).
+    pub kill_line_seen: bool,
 }
 const _: () = assert!(std::mem::size_of::<CombatReport>() <= 80);
 

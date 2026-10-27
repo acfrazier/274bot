@@ -202,6 +202,7 @@ fn with_tick_output_reach<R>(
     let mut actions = NativeActions { _private: () };
     let mut native = NativeTick {
         walk_danger: Some(&crate::native::AllowWalkDanger),
+        pvp_globals: None,
         state: None,
         service_authority: None,
         prompt_port: None,
@@ -213,6 +214,7 @@ fn with_tick_output_reach<R>(
             evidence,
             observed_walk_outcome_seq: 0,
             observed_walk_cancel_reason: crate::native::WalkCancelReason::None,
+            wilderness: None,
             pin: &pin,
             snapshot: SnapshotView::new(Some(snapshot), evidence)
                 .with_reach(reach)
@@ -238,6 +240,8 @@ fn with_tick_output_reach<R>(
                 poison_unknown_pulse: None,
                 cure_poison: crate::survival::CurePoison::WhenNeeded,
                 walk_danger: Some(&crate::native::AllowWalkDanger),
+                wilderness: None,
+                pvp_globals: None,
                 selected: Some(&data),
                 reach: None,
                 reach_flood: None,

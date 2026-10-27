@@ -5053,6 +5053,21 @@ fn config_section(ui: &Ui, session: &mut Session, id: &str, body: impl FnOnce(&U
     }
 }
 
+/// General config row: the global "Start fights with players" setting
+/// (`pvp.start_fights`), shared with the TUI. It is off by default; bots always
+/// fight back when a player attacks them.
+fn pvp_start_fights_row(ui: &Ui, session: &mut Session) {
+    session
+        .pvp_start_fights
+        .adopt(session.core.pvp_start_fights());
+    let mut on = session.pvp_start_fights.shown();
+    if ui.checkbox(frontend_core::START_FIGHTS_LABEL, &mut on) {
+        session.set_pvp_start_fights(on);
+    }
+    ui.set_item_tooltip(frontend_core::START_FIGHTS_NOTE);
+    ui.text_wrapped(frontend_core::START_FIGHTS_NOTE);
+}
+
 fn global_capture_section(ui: &Ui, session: &mut Session) {
     let on = session.focus.lock().unwrap().capture;
     let mut cur = on;
@@ -5196,6 +5211,7 @@ fn global_config_section(ui: &Ui, session: &mut Session) {
     ui.text_colored(session.ui.chrome.accent_rgba(), slot);
     global_capture_section(ui, session);
     crate::log_pane::session_log_row(ui, session);
+    pvp_start_fights_row(ui, session);
     let mut sidecar = session.focus.lock().unwrap().sidecar_50;
     if ui.checkbox("sidecar 50 fps", &mut sidecar) {
         session.set_sidecar_50(sidecar);

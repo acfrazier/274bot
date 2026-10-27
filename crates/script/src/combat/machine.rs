@@ -12,7 +12,7 @@ use super::style::magic::{self, CastMode, Refusal};
 use super::style::ranged;
 use super::tables::{CombatTab, CombatTables, PotionKind, PrayerRole};
 use super::threats::{StyleObs, ThreatSet};
-use crate::native::{ActionContext, ActionError, NativeMachine, WalkEnd, WalkRequest};
+use crate::native::{ActionContext, ActionError, NativeMachine, PvpGlobals, WalkEnd, WalkRequest};
 use crate::shim::InteractReq;
 use crate::survival::cure::{self, CureDecision, CureInputs};
 use api::prayer::PrayerObservation;
@@ -59,6 +59,7 @@ struct Counters {
     locked: u8,
     multi: u8,
     ammo: u8,
+    pvp_blocked: u8,
 }
 
 /// Server-effect identity survives the host's rotating dispatch-receipt ring.
@@ -192,6 +193,18 @@ pub struct Combat {
     rhand_pick: i32,
     suspended_type: i32,
     chat_since: i32,
+    /// The source that authorised STARTING a fight; `None` for self-defence.
+    pvp_source: Option<select::PvpSource>,
+    /// The tick until which an attack row is held after a single-way line.
+    pvp_hold_until: u16,
+    /// Out-of-scope refusal lines seen this engagement (bounded).
+    oos_retries: u8,
+    /// Consecutive "Someone else is already fighting your opponent." lines.
+    single_way_lines: u8,
+    /// "The duel has not started yet!" lines seen this engagement.
+    duel_wait_lines: u8,
+    /// `PVP_*` bits; `flags` has all sixteen bits in use.
+    flags2: u16,
     engaged: Option<ActorRef>,
     suspended: Option<ActorRef>,
     end: Option<CombatEnd>,
@@ -219,16 +232,32 @@ const TERMINAL_FOOD: u16 = 4096;
 const PREP_RETALIATE: u16 = 8192;
 const SKIP_RETALIATE: u16 = 16384;
 const LEASH_WALKED: u16 = 32768;
+/// An attack row is held (a single-way or duel-start line is being waited out).
+const PVP_HOLD: u16 = 1;
+/// A server kill line was seen for the engaged player.
+const PVP_KILL_LINE: u16 = 2;
+/// Ticks an attack row stays held after a single-way line (`add(%lastcombat, 8)`,
+/// `skill_combat/scripts/pvp/pvp_combat.rs2:102`).
+const SINGLE_WAY_WINDOW: u16 = 8;
+/// Out-of-scope refusal lines tolerated before `Aborted(Unattackable)`.
+const OOS_RETRY: u8 = 3;
+/// Consecutive "already fighting your opponent" lines that end the run.
+const SINGLE_WAY_END: u8 = 3;
+/// "The duel has not started yet!" lines that end the run.
+const DUEL_WAIT_END: u8 = 3;
 const POTION_PREP_SHIFT: u32 = 42;
 const POTION_SKIP_SHIFT: u32 = 49;
-const _: () = assert!(std::mem::size_of::<Combat>() <= 512);
+// PvP V1 adds the opt-in source, the single-way hold, three bounded line
+// counters, the PvP flag bits and the blocked-engagement count: 512 -> 520 B
+// (measured, no new heap). The exact per-bot pin is in host-play.
+const _: () = assert!(std::mem::size_of::<Combat>() <= 520);
 const BASELINE_READY: u16 = 1 << api::prayer::PRAYER_COUNT;
 
 impl NativeMachine for Combat {
-    type Args = (Arc<CombatRequest>, Arc<CombatTables>);
+    type Args = (Arc<CombatRequest>, Arc<CombatTables>, PvpGlobals);
     type Output = CombatReport;
     fn begin(
-        (request, tables): Self::Args,
+        (request, tables, globals): Self::Args,
         cx: &mut ActionContext<'_>,
     ) -> Result<Self, ActionError> {
         if !matches!(request.style, Style::Melee | Style::Ranged | Style::Mage) {
@@ -237,9 +266,22 @@ impl NativeMachine for Combat {
         if request.prayer_mode != PrayerMode::Hold {
             return Err(unavailable("flick slice"));
         }
-        if matches!(request.target, Target::Player { .. }) {
-            return Err(unavailable("pvp slice"));
-        }
+        let pvp_source = match &request.target {
+            Target::Player { .. } => Some(
+                select::pvp_initiation_allowed(&request, globals).ok_or_else(|| {
+                    api::host_log!(
+                        api::hostlog::Category::ScriptLifecycle,
+                        api::hostlog::Level::Info,
+                        "combat: fight with a player refused ({}): request.pvp = {}, pvp.start_fights = {} (off, or not read yet)",
+                        PvpRefusal::NotOptedIn,
+                        request.pvp,
+                        globals.start_fights
+                    );
+                    ActionError::PvpRefused(PvpRefusal::NotOptedIn)
+                })?,
+            ),
+            Target::Npc { .. } | Target::Attacker { .. } => None,
+        };
         if request.tactic != Tactic::Open || matches!(request.fallback, Fallback::FaceTank { .. }) {
             return Err(unavailable("tactic slice"));
         }
@@ -267,6 +309,13 @@ impl NativeMachine for Combat {
             && (tables.selected().spells().is_empty() || tables.selected().spells().len() > 32)
         {
             return Err(unavailable("combat spell facts"));
+        }
+        let begin_frame =
+            Frame::borrow(cx.snapshot()).map(|frame| frame.with_wilderness(cx.wilderness()));
+        if let (Target::Player { name }, Some(frame)) = (&request.target, begin_frame.as_ref()) {
+            if let Some(refusal) = select::begin_refusal(name, frame, &tables) {
+                return Err(ActionError::PvpRefused(refusal));
+            }
         }
         let ticks = if request.budget_ticks == 0 {
             1500
@@ -327,6 +376,12 @@ impl NativeMachine for Combat {
             rhand_pick: -1,
             suspended_type: -1,
             chat_since: -1,
+            pvp_source,
+            pvp_hold_until: 0,
+            oos_retries: 0,
+            single_way_lines: 0,
+            duel_wait_lines: 0,
+            flags2: 0,
             engaged: None,
             suspended: None,
             end: None,
@@ -358,7 +413,7 @@ impl NativeMachine for Combat {
                 .max()
                 .unwrap_or(-1);
         }
-        if let Some(frame) = Frame::borrow(cx.snapshot()) {
+        if let Some(frame) = begin_frame {
             machine.capture_prayer_baseline(&prayer_observation(&frame));
             let picked = select::pick_target(
                 &machine.request,
@@ -386,7 +441,9 @@ impl NativeMachine for Combat {
             return Poll::Ready(Err(ActionError::UserInput));
         }
         let snapshot = cx.snapshot();
-        let Some(frame) = Frame::borrow(snapshot) else {
+        let Some(frame) =
+            Frame::borrow(snapshot).map(|frame| frame.with_wilderness(cx.wilderness()))
+        else {
             return Poll::Pending;
         };
         let Some(chat) = snapshot.chat_lines(self.chat_since) else {
@@ -405,6 +462,9 @@ impl NativeMachine for Combat {
         }
         self.capture_prayer_baseline(&prayer_observation(&frame));
         let tick = evidence.tick as u16;
+        if self.flags2 & PVP_HOLD != 0 && reached(tick, self.pvp_hold_until) {
+            self.flags2 &= !PVP_HOLD;
+        }
         self.advance_prayer_ready(tick);
         let gap = self.flags & OBSERVED == 0 || elapsed(tick, self.last_tick) > 1;
         self.sequence = evidence.sequence;
@@ -494,6 +554,19 @@ impl NativeMachine for Combat {
                 if let Some(reason) = self.ranged_readiness_abort(&frame, None) {
                     self.finish(CombatEnd::Aborted(AbortReason::PrepReadiness(reason)), tick);
                 }
+            }
+        }
+        if self.player_ident().is_some() {
+            if self.engaged.is_some_and(|actor| {
+                frame
+                    .in_combat
+                    .target
+                    .is_some_and(|target| actor.matches(target))
+            }) {
+                self.single_way_lines = 0;
+            }
+            for line in chat.value.iter() {
+                self.pvp_line(&frame, tick, &line.text);
             }
         }
         if self.phase == Phase::Escape {
@@ -678,6 +751,9 @@ impl Combat {
             flick_resets: 0,
             flick_misses: 0,
             flick_fallback: false,
+            pvp_blocked: self.counters.pvp_blocked,
+            pvp_source: self.pvp_source,
+            kill_line_seen: self.flags2 & PVP_KILL_LINE != 0,
         }
     }
     fn clear_pending_cast(&mut self) {
@@ -702,6 +778,93 @@ impl Combat {
             state.rune_seen = false;
         }
         self.clear_pending_cast();
+    }
+    /// The engaged player's row on this frame, matched by slot and name hash.
+    fn engaged_player<'f>(&self, frame: &Frame<'f>) -> Option<&'f api::snapshot::PlayerView> {
+        let actor = self
+            .engaged
+            .filter(|actor| actor.kind == ActorKind::Player)?;
+        frame.players.iter().find(|row| {
+            row.index == usize::from(actor.index)
+                && self.player_ident().is_some()
+                && row.actor.name.as_deref().map(select::ident::fnv1a) == self.player_ident()
+        })
+    }
+    fn pvp_abort(&mut self, reason: PvpRefusal, tick: u16) {
+        self.finish(CombatEnd::Aborted(AbortReason::PvpRefused(reason)), tick);
+    }
+    /// The level-range refusal with the values the machine computes itself.
+    fn level_refusal(&self, frame: &Frame<'_>) -> PvpRefusal {
+        let (wilderness, difference) = self.engaged_player(frame).map_or((0, 0), |row| {
+            let level = |tile| frame.wilderness.map_or(0, |rules| rules.level(tile));
+            (
+                level(frame.here).min(level(row.actor.tile)),
+                frame.local.player.combat_level.abs_diff(row.combat_level),
+            )
+        });
+        PvpRefusal::LevelRange {
+            wilderness: u8::try_from(wilderness).unwrap_or(u8::MAX),
+            difference: u8::try_from(difference).unwrap_or(u8::MAX),
+        }
+    }
+    /// One server line while a player is engaged (PVP-DESIGN-1026 §2.4): every
+    /// `mes` of `pvp_combat.rs2` and `duel_arena.rs2` an attack can produce has
+    /// a reaction here, matched byte for byte, never by substring.
+    fn pvp_line(&mut self, frame: &Frame<'_>, tick: u16, line: &str) {
+        match line {
+            "You can't attack players who aren't in the wilderness." => {
+                self.pvp_abort(PvpRefusal::OpponentOutside, tick);
+            }
+            "Your level difference is too great!"
+            | "You need to move deeper into the wilderness." => {
+                let refusal = self.level_refusal(frame);
+                self.pvp_abort(refusal, tick);
+            }
+            "Saradomin won't let you attack your allies!"
+            | "Zamorak wants you to kill your enemies!"
+            | "Kolodion allows only magical combat within the arena." => {
+                self.oos_retries = self.oos_retries.saturating_add(1);
+                if self.oos_retries >= OOS_RETRY {
+                    self.finish(CombatEnd::Aborted(AbortReason::Unattackable), tick);
+                }
+            }
+            "I'm already under attack." => self.hold_attack(tick, SINGLE_WAY_WINDOW),
+            "Someone else is already fighting your opponent." => {
+                self.hold_attack(tick, SINGLE_WAY_WINDOW);
+                self.single_way_lines = self.single_way_lines.saturating_add(1);
+                if self.single_way_lines >= SINGLE_WAY_END {
+                    self.finish(CombatEnd::TargetGone, tick);
+                }
+            }
+            "You cannot attack players in the challenge area." => {
+                self.pvp_abort(PvpRefusal::ChallengeArea, tick);
+            }
+            "You can only attack your opponent!" => {
+                self.pvp_abort(PvpRefusal::NotOpponent, tick);
+            }
+            "The duel has not started yet!" => {
+                self.duel_wait_lines = self.duel_wait_lines.saturating_add(1);
+                if self.duel_wait_lines >= DUEL_WAIT_END {
+                    self.pvp_abort(PvpRefusal::DuelNotStarted, tick);
+                } else {
+                    self.hold_attack(tick, 1);
+                }
+            }
+            other => {
+                if self
+                    .engaged_player(frame)
+                    .and_then(|row| row.actor.name.as_deref())
+                    .is_some_and(|name| select::is_kill_line(other, name))
+                {
+                    self.flags2 |= PVP_KILL_LINE;
+                }
+            }
+        }
+    }
+    /// Keep the attack row out of the plans for `ticks` ticks from `tick`.
+    fn hold_attack(&mut self, tick: u16, ticks: u16) {
+        self.pvp_hold_until = tick.wrapping_add(ticks);
+        self.flags2 |= PVP_HOLD;
     }
     fn magic_refusal(&mut self, line: &str) {
         let Some(index) = self.magic().selected else {
@@ -992,7 +1155,24 @@ impl Combat {
             base.max(1)
         }
     }
-    fn engage(&mut self, actor: ActorRef, frame: &Frame<'_>) {
+    /// Engage `actor`. A player is engaged only when the one candidate check
+    /// (`select::player_candidate`: the attack label and the zone gate) passes
+    /// on this frame; otherwise this is a no-op that counts `pvp_blocked`
+    /// and leaves the row a threat. It never reads the opt-in.
+    fn engage(&mut self, actor: ActorRef, frame: &Frame<'_>) -> bool {
+        if actor.kind == ActorKind::Player {
+            let Some(row) = frame
+                .players
+                .iter()
+                .find(|row| row.index == usize::from(actor.index))
+            else {
+                return false;
+            };
+            if select::player_candidate(row, frame, &self.tables).is_err() {
+                self.counters.pvp_blocked = self.counters.pvp_blocked.saturating_add(1);
+                return false;
+            }
+        }
         if self.engaged != Some(actor) {
             if let StyleState::Magic(state) = &mut self.style_state {
                 state.reset_for_engagement();
@@ -1023,6 +1203,7 @@ impl Combat {
         (self.identity_kind, self.identity) = identity.unwrap_or((EngagementKind::None, 0));
         self.schedule.interaction = Interaction::Unknown;
         self.resolve_worth(frame);
+        true
     }
     fn resolve_worth(&mut self, frame: &Frame<'_>) {
         let carries_boost = self.request.kit.as_ref().is_some_and(|kit| {
@@ -1139,6 +1320,7 @@ impl Combat {
         }
         let mut present = false;
         let mut killed = false;
+        let mut refused = None;
         if let Some(actor) = self.engaged {
             match actor.kind {
                 ActorKind::Npc => {
@@ -1181,6 +1363,9 @@ impl Combat {
                             distance(row.actor.tile, self.request.stand.unwrap_or(frame.here))
                                 <= i32::from(self.request.lost_radius);
                         killed = row.actor.total_health > 0 && row.actor.health == 0;
+                        if present && !killed {
+                            refused = select::player_candidate(row, frame, &self.tables).err();
+                        }
                     }
                 }
             }
@@ -1190,6 +1375,12 @@ impl Combat {
                 return;
             }
             self.finish(CombatEnd::Killed, tick);
+            return;
+        }
+        if let Some(reason) = refused {
+            if !self.resume_suspended(frame) {
+                self.finish(CombatEnd::Aborted(AbortReason::PvpRefused(reason)), tick);
+            }
             return;
         }
         if self.engaged.is_some() && !present {
@@ -1236,11 +1427,13 @@ impl Combat {
                 .find(|threat| threat.actor.kind == ActorKind::Player)
                 .map(|threat| threat.actor);
             if let Some(actor) = player {
-                self.suspended = self.engaged;
-                self.suspended_type = self.engaged_type();
-                self.engage(actor, frame);
-                self.counters.intruders = self.counters.intruders.saturating_add(1);
-                self.phase = Phase::Fight;
+                let (was, was_type) = (self.engaged, self.engaged_type());
+                if self.engage(actor, frame) {
+                    self.suspended = was;
+                    self.suspended_type = was_type;
+                    self.counters.intruders = self.counters.intruders.saturating_add(1);
+                    self.phase = Phase::Fight;
+                }
             }
         }
     }
@@ -2307,6 +2500,7 @@ impl Combat {
                 }
             }
             if self.engaged.is_some()
+                && self.flags2 & PVP_HOLD == 0
                 && (plan.len != 0
                     || (!self.pending_row(RowKind::Attack)
                         && self.schedule.ready(OpKind::Attack, tick)))
@@ -2422,6 +2616,7 @@ impl Combat {
         });
         if !plan.closed(&self.tables)
             && self.engaged.is_some()
+            && self.flags2 & PVP_HOLD == 0
             && (plan.len != 0
                 || (!self.pending_row(RowKind::Attack)
                     && (self.schedule.restore_ready(tick)
@@ -3181,7 +3376,7 @@ impl Combat {
                             }
                         }
                         ActorKind::Player => {
-                            let name = frame
+                            let row = frame
                                 .players
                                 .iter()
                                 .find(|row| {
@@ -3190,11 +3385,19 @@ impl Combat {
                                         && row.actor.name.as_deref().map(select::ident::fnv1a)
                                             == self.player_ident()
                                 })
-                                .and_then(|row| row.actor.name.as_deref())
                                 .ok_or_else(|| unavailable("player identity"))?;
+                            let name = row
+                                .actor
+                                .name
+                                .as_deref()
+                                .ok_or_else(|| unavailable("player identity"))?;
+                            // The verb is the label the content gave the row:
+                            // "Attack" in the Wilderness, "Fight" in a duel.
+                            let label = select::attack_label(&row.actor.actions)
+                                .ok_or_else(|| unavailable("player attack label"))?;
                             InteractReq::Player {
                                 name: name.to_owned(),
-                                action: "Attack".into(),
+                                action: label.into(),
                             }
                         }
                     }

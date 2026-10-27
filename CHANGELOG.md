@@ -23,6 +23,16 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   real max hit. A cow's max hit is 1, so a bot eats at 3 hitpoints and
   stops for lack of food at 2. Imps cannot damage the bot at all (max hit
   0), so the bot does not raise Protect from Melee against them.
+- Scripts can now start fights with other players where the game allows it:
+  in the Wilderness and in a Duel Arena fight pen. A script starts such a
+  fight only when it asks for it (`pvp: true` on the request) or the new
+  global setting **Start fights with players** allows it. The setting is off
+  by default, is saved with the other preferences, and has a row in both the
+  panel and the terminal app. Without either, the fight does not start and the
+  script gets the refusal `not opted in`. Bots still defend themselves
+  against players: a bot that a player attacks fights back whatever the
+  request or the setting says. The attack uses the game's own label for the
+  player (`Attack` in the Wilderness, `Fight` in a duel).
 
 ## [0.2.7] — 2026-10-26 — Beta 2
 

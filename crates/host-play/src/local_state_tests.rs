@@ -3660,6 +3660,75 @@ fn preference_patch_rebases_nested_intent_and_refreshes_walk_projection() {
 }
 
 #[test]
+fn the_pvp_setting_projects_off_by_default_and_follows_one_member_write() {
+    let scratch = IsolatedEnv::enter("local-state-pvp-projection");
+    let preferences = preferences(&scratch);
+    write_private(&preferences.path(), br#"{"nav":{"allow_teleports":true}}"#);
+    preferences.reload().unwrap();
+    assert!(
+        !preferences.pvp_globals().unwrap().start_fights,
+        "absent = off"
+    );
+
+    // One write of the member is one audit line, and the projection follows it.
+    let audits = audits(preferences.service());
+    let patch =
+        PreferencePatch::member(&["pvp", "start_fights"], Some(serde_json::json!(true))).unwrap();
+    match preferences.begin_patch(patch).unwrap() {
+        Update::Durable => {}
+        Update::Queued(mut watch) => watch
+            .wait(WAIT)
+            .expect("the accepted write settles")
+            .expect("the accepted write is durable"),
+    }
+    assert!(preferences.pvp_globals().unwrap().start_fights);
+    assert!(
+        preferences.walk_globals().unwrap().allow_teleports,
+        "nav is kept"
+    );
+    let audits = audits.lock().unwrap();
+    assert_eq!(audits.len(), 1, "one write, one audit line");
+    assert_eq!(audits[0].action(), CommitAction::PreferencesWrite);
+}
+
+#[test]
+fn a_malformed_pvp_member_fails_closed_with_a_safe_typed_cause() {
+    for (label, document) in [
+        (
+            "string",
+            br#"{"pvp":{"start_fights":"private-sensitive-value"}}"#.as_slice(),
+        ),
+        ("not-an-object", br#"{"pvp":true}"#.as_slice()),
+    ] {
+        let scratch = IsolatedEnv::enter(&format!("local-state-pvp-projection-error-{label}"));
+        let preferences = preferences(&scratch);
+        write_private(&preferences.path(), document);
+        preferences.reload().unwrap();
+        let error = preferences
+            .pvp_globals()
+            .expect_err("a malformed pvp member is not a setting");
+        assert!(error.path().ends_with("panel-ui.json"));
+        assert!(error.cause().contains("pvp"), "{label}");
+        assert!(!error.cause().contains("private-sensitive-value"));
+        // The rest of the document stays readable and the walk view is not hurt.
+        assert!(preferences.document().is_ok());
+        assert!(preferences.walk_globals().is_ok());
+    }
+}
+
+#[test]
+fn the_pvp_setting_is_not_ready_while_the_store_is_cold_or_refused() {
+    let scratch = IsolatedEnv::enter("local-state-pvp-cold");
+    let preferences = preferences(&scratch);
+    write_private(&preferences.path(), b"{not-json");
+    assert!(preferences.reload().is_err());
+    assert!(
+        preferences.pvp_globals().is_err(),
+        "a refused store is no setting"
+    );
+}
+
+#[test]
 fn malformed_walk_projection_reports_safe_typed_cause() {
     let scratch = IsolatedEnv::enter("local-state-walk-projection-error");
     let preferences = preferences(&scratch);

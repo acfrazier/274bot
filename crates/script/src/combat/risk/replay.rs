@@ -825,6 +825,7 @@ where
                         in_combat: false,
                         target: None,
                     },
+                    wilderness: None,
                 };
                 // The replay's own line already charges the poison term
                 // (`intended` above), so it passes no second fire here, or

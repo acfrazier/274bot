@@ -1,0 +1,171 @@
+//! The global PvP setting of the shared preferences document: `pvp.start_fights`
+//! (PVP-DESIGN-1026 §2.7). It lets any script start a fight with a player
+//! where the game allows player combat. Fighting back is never affected.
+//!
+//! The process service projects the member for the host (`pvp_globals`); the
+//! `SetPvpStartFights` command writes it. Both front ends show the same row.
+
+use host_play::local_state::Update;
+
+use crate::prefs::{PreferenceError, PreferencePatch, UiPreferences};
+
+/// The row label both front ends show.
+pub const START_FIGHTS_LABEL: &str = "Start fights with players";
+
+/// What the row means, shown beside it. It is off by default.
+pub const START_FIGHTS_NOTE: &str = "Lets any script start a fight with a player in the Wilderness or a duel pen. Bots always fight back when a player attacks them.";
+
+/// The saved value, read from the host's cached projection. `Err` while the
+/// store is cold or refused, or when the member is malformed: show it as off.
+pub fn pvp_start_fights(preferences: &UiPreferences) -> Result<bool, PreferenceError> {
+    preferences
+        .inner()
+        .pvp_globals()
+        .map(|globals| globals.start_fights)
+}
+
+/// Submit the member without waiting. The service merges only
+/// `pvp.start_fights` into its latest durable document, and logs one audit
+/// line for the durable write (profile, action, operation id, `old -> new`).
+pub(crate) fn write_pvp_start_fights(
+    preferences: &UiPreferences,
+    enabled: bool,
+) -> Result<Update, PreferenceError> {
+    preferences.begin_patch(PreferencePatch::member(
+        &["pvp", "start_fights"],
+        Some(serde_json::Value::Bool(enabled)),
+    )?)
+}
+
+/// The value a front end shows for the row. A click shows its new value at
+/// once; the view keeps it until the saved value agrees, so a slow write does
+/// not flip the row back.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct PvpSettingView {
+    shown: bool,
+    pending: Option<bool>,
+}
+
+impl PvpSettingView {
+    /// A view that shows `shown` with no write waiting.
+    pub const fn new(shown: bool) -> Self {
+        Self {
+            shown,
+            pending: None,
+        }
+    }
+
+    /// The value the row shows.
+    pub const fn shown(&self) -> bool {
+        self.shown
+    }
+
+    /// Whether a click is waiting for its saved value.
+    pub const fn pending(&self) -> bool {
+        self.pending.is_some()
+    }
+
+    /// The operator set the row to `enabled`: show it now and wait for the save.
+    pub fn begin(&mut self, enabled: bool) {
+        self.shown = enabled;
+        self.pending = Some(enabled);
+    }
+
+    /// The operator's click was refused or its write failed: show the saved
+    /// value again on the next [`Self::adopt`].
+    pub fn refuse(&mut self) {
+        self.pending = None;
+    }
+
+    /// Adopt the saved value read now (`None` while the store is not ready).
+    pub fn adopt(&mut self, saved: Option<bool>) {
+        let Some(saved) = saved else {
+            return;
+        };
+        if self.pending == Some(saved) {
+            self.pending = None;
+        }
+        if self.pending.is_none() {
+            self.shown = saved;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::prefs::settled_for_test;
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    fn scratch(label: &str) -> (PathBuf, UiPreferences) {
+        static NEXT: AtomicUsize = AtomicUsize::new(0);
+        let id = NEXT.fetch_add(1, Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!(
+            "274bot-frontend-pvp-prefs-{}-{label}-{id}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let preferences = UiPreferences::open_for_test(dir.clone());
+        (dir, preferences)
+    }
+
+    #[test]
+    fn the_setting_is_off_by_default_and_a_write_keeps_other_members() {
+        let (dir, prefs) = scratch("roundtrip");
+        vault::write_private_file(
+            &prefs.path(),
+            br#"{"last_focus":"alice","nav":{"allow_teleports":true}}"#,
+        )
+        .unwrap();
+        prefs.reload().unwrap();
+        assert_eq!(pvp_start_fights(&prefs).ok(), Some(false), "absent = off");
+
+        settled_for_test(write_pvp_start_fights(&prefs, true)).unwrap();
+        assert_eq!(pvp_start_fights(&prefs).ok(), Some(true));
+        let saved: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(prefs.path()).unwrap()).unwrap();
+        assert_eq!(saved["pvp"]["start_fights"], true);
+        assert_eq!(saved["last_focus"], "alice");
+        assert_eq!(saved["nav"]["allow_teleports"], true);
+
+        settled_for_test(write_pvp_start_fights(&prefs, false)).unwrap();
+        assert_eq!(pvp_start_fights(&prefs).ok(), Some(false));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_malformed_member_is_an_error_a_caller_reads_as_off() {
+        let (dir, prefs) = scratch("malformed");
+        vault::write_private_file(&prefs.path(), br#"{"pvp":{"start_fights":"yes"}}"#).unwrap();
+        prefs.reload().unwrap();
+        assert!(pvp_start_fights(&prefs).is_err());
+        let (dir2, prefs2) = scratch("not-object");
+        vault::write_private_file(&prefs2.path(), br#"{"pvp":true}"#).unwrap();
+        prefs2.reload().unwrap();
+        assert!(pvp_start_fights(&prefs2).is_err());
+        std::fs::remove_dir_all(dir).unwrap();
+        std::fs::remove_dir_all(dir2).unwrap();
+    }
+
+    #[test]
+    fn a_click_stays_shown_until_the_saved_value_agrees() {
+        let mut view = PvpSettingView::new(false);
+        view.adopt(Some(false));
+        view.begin(true);
+        assert!(view.shown() && view.pending());
+        // A read of the old value while the write is queued does not flip it.
+        view.adopt(Some(false));
+        assert!(view.shown() && view.pending());
+        view.adopt(Some(true));
+        assert!(view.shown() && !view.pending());
+        // A refused click shows the saved value again.
+        view.begin(false);
+        view.refuse();
+        view.adopt(Some(true));
+        assert!(view.shown() && !view.pending());
+        // A cold store keeps what is shown.
+        view.adopt(None);
+        assert!(view.shown());
+    }
+}

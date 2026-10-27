@@ -4136,6 +4136,86 @@ fn walk_permission_changes_in_the_settings_popup_are_saved_through_the_commands(
     let _iso = iso;
 }
 
+/// PVP-V1 (design §2.7): the popup's "Start fights with players" row writes
+/// `pvp.start_fights` through `SetPvpStartFights`, the row shows the saved
+/// value, and a `--live` run (settings are not saved) refuses the click at the
+/// command boundary instead of writing.
+#[test]
+fn start_fights_with_players_in_the_settings_popup_is_saved_through_its_command() {
+    let iso = IsolatedStores::enter("tui-pvp-start-fights");
+    let mut session = TuiSession::new(dummy_options());
+    session.preferences.reload().unwrap();
+    let mut app = TuiApp::new("tui");
+    Seam::restore_preferences(&mut app, session.preferences.share());
+    assert!(!app.pvp_start_fights.shown(), "off by default");
+
+    app.settings_state.open = true;
+    app.settings_state.row = 16;
+    assert_eq!(
+        app.on_key(settings_key(crossterm::event::KeyCode::Enter)),
+        AppAction::None
+    );
+    assert!(app.pvp_start_fights.shown(), "the click shows at once");
+    settle_preferences(&mut session, &mut app);
+    assert_eq!(app.error, None);
+    let prefs: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(session.preferences.path()).unwrap()).unwrap();
+    assert_eq!(prefs["pvp"]["start_fights"], true);
+    assert!(app.pvp_start_fights.shown());
+    assert!(
+        frontend_core::pvp_start_fights(&session.preferences).unwrap(),
+        "the host's projection follows the saved member"
+    );
+
+    // Off again is the same command.
+    assert_eq!(
+        app.on_key(settings_key(crossterm::event::KeyCode::Enter)),
+        AppAction::None
+    );
+    settle_preferences(&mut session, &mut app);
+    let prefs: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(session.preferences.path()).unwrap()).unwrap();
+    assert_eq!(prefs["pvp"]["start_fights"], false);
+    assert!(!app.pvp_start_fights.shown());
+    let _iso = iso;
+}
+
+#[test]
+fn a_live_run_refuses_the_start_fights_row_without_writing() {
+    let iso = IsolatedStores::enter("tui-pvp-start-fights-live");
+    let mut session = TuiSession::new(dummy_options());
+    session.persist_ui = false;
+    session.preferences.reload().unwrap();
+    let mut app = TuiApp::new("tui");
+    Seam::restore_preferences(&mut app, session.preferences.share());
+    let refusals = session.core.refusals();
+
+    app.settings_state.open = true;
+    app.settings_state.row = 16;
+    assert_eq!(
+        app.on_key(settings_key(crossterm::event::KeyCode::Enter)),
+        AppAction::None
+    );
+    settle_preferences(&mut session, &mut app);
+    assert!(
+        app.error
+            .as_deref()
+            .is_some_and(|error| error.starts_with("settings: start fights with players:")),
+        "{:?}",
+        app.error
+    );
+    assert!(
+        !app.pvp_start_fights.shown(),
+        "the row shows the saved value again"
+    );
+    assert_eq!(session.core.refusals(), refusals + 1, "one refusal");
+    assert!(
+        !session.preferences.path().exists(),
+        "nothing was written in a --live run"
+    );
+    let _iso = iso;
+}
+
 #[test]
 fn tui_refresh_preserves_unsaved_checkbox_and_folder_draft() {
     let _iso = IsolatedStores::enter("tui-preference-draft-refresh");

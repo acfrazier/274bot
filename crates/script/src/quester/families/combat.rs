@@ -164,6 +164,11 @@ pub(super) struct CombatArgs {
     area: Option<AreaArg>,
     /// Maximum distance in tiles before the target is considered lost.
     lost_radius: u8,
+    /// Opt in to START a fight with the named `target.player`. The global
+    /// operator setting `pvp.start_fights` also opts in; without either the
+    /// step is refused (`pvp-not-allowed`). Fighting back needs neither.
+    #[serde(default)]
+    pvp: bool,
     /// Maximum game ticks to spend on a combat attempt.
     kill_budget_ticks: u16,
     /// Optional loot configs with per-kill inventory thresholds, not total requirements.
@@ -243,9 +248,10 @@ struct TargetArgs {
     /// Select NPCs or players that are already attacking the player.
     #[serde(default)]
     attacker: Option<AttackerArgs>,
-    /// Player targeting is represented in the wire format but is unsupported.
+    /// A named player to fight. Where the game allows player combat (the
+    /// Wilderness and a duel pen) and the step or the global setting opts in.
     #[serde(default)]
-    player: Option<serde_json::Value>,
+    player: Option<String>,
     /// Require the chosen NPC not to be targeting another player.
     #[serde(default)]
     not_targeting_others: Option<bool>,
@@ -480,6 +486,7 @@ fn compile_plan(args: CombatArgs, cx: &CompileContext<'_>) -> Result<CombatPlan,
         intruder: IntruderPolicy::default(),
         retaliate: args.tactic.auto_retaliate,
         prayer_mode: PrayerMode::Hold,
+        pvp: args.pvp,
         ..CombatRequest::default()
     };
 
@@ -514,8 +521,17 @@ fn compile_target(args: TargetArgs, cx: &CompileContext<'_>) -> Result<Target, C
     if target_count != 1 {
         return Err(CompileError::code("invalid-combat-target"));
     }
-    if args.player.is_some() {
-        return Err(CompileError::code("unsupported-combat-player-target"));
+    if let Some(name) = args.player {
+        let name = name.trim();
+        if name.is_empty() || name.len() > crate::api_combat::MAX_NAME_BYTES {
+            return Err(CompileError::code("invalid-combat-target"));
+        }
+        if args.pick.is_some() || args.not_targeting_others.is_some() {
+            return Err(CompileError::code("invalid-combat-target"));
+        }
+        return Ok(Target::Player {
+            name: Arc::from(name),
+        });
     }
     if let Some(npc) = args.npc {
         let not_targeting_others = args
@@ -1202,7 +1218,13 @@ impl CombatRun {
         self.finish_ticks_elapsed = 0;
         self.finish_last_tick = None;
         let handle = cx.tick.actions.begin::<Combat>(
-            (Arc::clone(&self.request), Arc::clone(&self.tables)),
+            (
+                Arc::clone(&self.request),
+                Arc::clone(&self.tables),
+                cx.tick
+                    .pvp_globals
+                    .unwrap_or_else(crate::native::PvpGlobals::fail_closed),
+            ),
             &mut cx.tick.cx,
         )?;
         self.phase = Phase::Combat;

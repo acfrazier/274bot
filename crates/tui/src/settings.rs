@@ -46,7 +46,8 @@ pub struct SettingsState {
     /// 0=random events, 1=lamp skill, 2=lamp auto, 3=event, 4=event policy,
     /// 5=teleports, 6=wilderness, 7=bank fetch, 8=danger zones,
     /// 9=manual-walk pause, 10=map bake, 11=memory, 12=folder gate,
-    /// 13=paths folder, 14=reload paths, 15=cure poison.
+    /// 13=paths folder, 14=reload paths, 15=cure poison,
+    /// 16=start fights with players.
     pub row: usize,
     /// Selected per-event policy row.
     pub random_event_index: usize,
@@ -57,7 +58,7 @@ pub struct SettingsState {
     /// A process-owned shared-preferences save has not settled yet.
     pub preferences_pending: bool,
     /// Hit targets from the last drawn viewport, including wrapped rows.
-    pub row_areas: [Rect; 16],
+    pub row_areas: [Rect; 17],
 }
 
 impl SettingsState {
@@ -103,6 +104,8 @@ pub enum SettingsKey {
     SurvivableRoutingNoticeAck,
     /// The global manual-walk pause preference changed and needs persistence.
     PauseScriptOnManualWalkAbort,
+    /// The global PvP setting changed; the value is what the row now shows.
+    PvpStartFights(bool),
     /// The Quester folder settings changed and need shared persistence.
     QuesterPathsChanged,
     /// Reload the shared Path registry without starting a Path.
@@ -128,6 +131,7 @@ pub struct SettingsPane<'a> {
     pub map_bake: &'a mut MapBakeChoice,
     pub state: &'a mut SettingsState,
     pub pause_script_on_manual_walk_abort: Option<&'a mut bool>,
+    pub pvp_start_fights: Option<&'a mut frontend_core::PvpSettingView>,
     pub script_scope_notice_ack: Option<&'a mut bool>,
     pub survivable_routing_notice_ack: Option<&'a mut bool>,
     pub quester_paths: Option<&'a mut QuesterPathsView>,
@@ -155,6 +159,7 @@ impl<'a> SettingsPane<'a> {
             notice: None,
             memory: None,
             pause_script_on_manual_walk_abort: None,
+            pvp_start_fights: None,
             script_scope_notice_ack: None,
             survivable_routing_notice_ack: None,
             quester_paths: None,
@@ -178,6 +183,12 @@ impl<'a> SettingsPane<'a> {
     /// Bind the shared global pause preference to the settings row.
     pub fn pause_script_on_manual_walk_abort(mut self, value: &'a mut bool) -> Self {
         self.pause_script_on_manual_walk_abort = Some(value);
+        self
+    }
+
+    /// Bind the global "Start fights with players" setting to its row.
+    pub fn pvp_start_fights(mut self, value: &'a mut frontend_core::PvpSettingView) -> Self {
+        self.pvp_start_fights = Some(value);
         self
     }
 
@@ -222,7 +233,7 @@ impl<'a> SettingsPane<'a> {
                 SettingsKey::Consumed
             }
             KeyCode::Down | KeyCode::Char('j') => {
-                self.state.row = (self.state.row + 1).min(15);
+                self.state.row = (self.state.row + 1).min(16);
                 SettingsKey::Consumed
             }
             KeyCode::Enter => self.activate(),
@@ -334,6 +345,14 @@ impl<'a> SettingsPane<'a> {
             15 => SettingsKey::Changed(SettingsEdit::CurePoison(
                 self.settings.survival().cure_poison().next(),
             )),
+            16 => match self.pvp_start_fights.as_deref_mut() {
+                Some(view) => {
+                    let next = !view.shown();
+                    view.begin(next);
+                    SettingsKey::PvpStartFights(next)
+                }
+                None => SettingsKey::Consumed,
+            },
             _ => SettingsKey::Consumed,
         }
     }
@@ -421,7 +440,7 @@ impl Widget for SettingsPane<'_> {
             .as_deref()
             .is_some_and(|ack| !*ack);
         let danger_level = self.nav.danger_level();
-        let selected_row = self.state.row.min(15);
+        let selected_row = self.state.row.min(16);
         let danger_help = (selected_row == 8
             && danger_level == frontend_core::DangerLevel::WhenSurvivable)
             .then_some(frontend_core::walk_permissions::survivable_routing_tooltip());
@@ -520,13 +539,22 @@ impl Widget for SettingsPane<'_> {
                 marker(15),
                 self.settings.survival().cure_poison().label()
             ),
+            format!(
+                "{}{}: {}",
+                marker(16),
+                frontend_core::START_FIGHTS_LABEL,
+                self.pvp_start_fights
+                    .as_deref()
+                    .is_some_and(frontend_core::PvpSettingView::shown)
+            ),
         ];
         let quester_heading = format!("{QUESTER_HEADING}: {QUEST_PATHS_HEADING}");
+        let combat_note = format!("Combat: {}", frontend_core::START_FIGHTS_NOTE);
         let note_style = Style::default().fg(Color::DarkGray);
         let heading_style = Style::default().add_modifier(Modifier::BOLD);
         // Lead-ins sit above their first row. A lead-in adds to its row's block
         // height, but the row keeps its own index, hit target, and scroll slot.
-        let headers: [Option<(&str, Style)>; 16] = [
+        let headers: [Option<(&str, Style)>; 17] = [
             None,
             None,
             None,
@@ -546,13 +574,14 @@ impl Widget for SettingsPane<'_> {
             None,
             None,
             Some(("Survival and supplies", heading_style)),
+            Some((combat_note.as_str(), note_style)),
         ];
         let width = area.width.min(100);
         let columns = usize::from(width - 2);
         let row_heights = rows.each_ref().map(|row| wrapped_rows(row, columns));
         let header_heights =
             headers.map(|header| header.map_or(0, |(text, _)| wrapped_rows(text, columns)));
-        let block_heights: [u16; 16] =
+        let block_heights: [u16; 17] =
             std::array::from_fn(|index| header_heights[index] + row_heights[index]);
         let selected = self.state.row.min(rows.len() - 1);
         let memory_height = wrapped_rows(memory_note, columns);
@@ -880,6 +909,77 @@ mod tests {
                 "{w}x{h}: the selected cure poison row paints:\n{text}"
             );
         }
+    }
+
+    /// PVP-V1: the global PvP row paints at both capture sizes with its
+    /// group note, shows the saved value, and the popup toggles it.
+    #[test]
+    fn start_fights_row_is_visible_at_common_sizes_and_toggles() {
+        for (w, h) in [(80u16, 24u16), (120, 40)] {
+            let settings = SettingsDraft::default();
+            let mut nav = WalkGlobals::default();
+            let mut bake = MapBakeChoice::Ask;
+            let mut view = frontend_core::PvpSettingView::new(false);
+            let mut state = SettingsState {
+                open: true,
+                row: 16,
+                ..Default::default()
+            };
+            let text = render_lines(
+                SettingsPane::new(&settings, &mut nav, &mut bake, &mut state)
+                    .pvp_start_fights(&mut view),
+                w,
+                h,
+            );
+            println!("--- settings popup {w}x{h}, row 16 selected, off ---\n{text}");
+            assert!(
+                text.contains("> Start fights with players: false"),
+                "{w}x{h}: the selected row paints:\n{text}"
+            );
+            assert!(
+                text.contains("Combat: Lets any script start a fight with a player"),
+                "{w}x{h}: the note paints:\n{text}"
+            );
+        }
+
+        let settings = SettingsDraft::default();
+        let mut nav = WalkGlobals::default();
+        let mut bake = MapBakeChoice::Ask;
+        let mut view = frontend_core::PvpSettingView::new(false);
+        let mut state = SettingsState {
+            open: true,
+            row: 16,
+            ..Default::default()
+        };
+        let key_result = SettingsPane::new(&settings, &mut nav, &mut bake, &mut state)
+            .pvp_start_fights(&mut view)
+            .on_key(key(KeyCode::Enter));
+        assert_eq!(key_result, SettingsKey::PvpStartFights(true));
+        assert!(view.shown(), "the row shows the new value at once");
+        let text = render_lines(
+            SettingsPane::new(&settings, &mut nav, &mut bake, &mut state)
+                .pvp_start_fights(&mut view),
+            120,
+            40,
+        );
+        println!("--- settings popup 120x40, row 16 selected, on ---\n{text}");
+        assert!(text.contains("> Start fights with players: true"), "{text}");
+    }
+
+    /// Without a setting view (a `--live` run) the row does nothing.
+    #[test]
+    fn start_fights_row_without_a_view_is_consumed() {
+        let settings = SettingsDraft::default();
+        let mut nav = WalkGlobals::default();
+        let mut bake = MapBakeChoice::Ask;
+        let mut state = SettingsState {
+            open: true,
+            row: 16,
+            ..Default::default()
+        };
+        let result = SettingsPane::new(&settings, &mut nav, &mut bake, &mut state)
+            .on_key(key(KeyCode::Enter));
+        assert_eq!(result, SettingsKey::Consumed);
     }
 
     /// The popup returns the selected profile edit for its caller to stage.

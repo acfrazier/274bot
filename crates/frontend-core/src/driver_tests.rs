@@ -706,6 +706,68 @@ fn a_held_preference_write_stays_pending_and_settles_done_when_it_lands() {
     );
 }
 
+/// PVP-V1 (design §2.7): `pvp.start_fights` is one member of the shared
+/// preferences document. Writing it settles `Done`, the file holds it, a new
+/// session reads it back, and the write logs exactly one audit info line
+/// that names the setting. A front end's refusal of the command (the TUI in
+/// `--live`, which has no preferences store) logs one `command refused` line.
+#[test]
+fn the_pvp_setting_writes_one_member_logs_one_audit_line_and_a_refusal_logs_one_line() {
+    use crate::log::{global, LogScope, LogView};
+    let dir = scratch("pvp-setting");
+    let mut d = driver_in(&dir, &["pvp1-alice"]);
+    let lines_with = |filter: &str, needle: &str| -> Vec<String> {
+        let mut view = LogView::new(LogScope::Process);
+        view.edit_filter(|f| f.set_text(filter));
+        global().refresh(&mut view);
+        view.rows()
+            .iter()
+            .map(|row| row.message().to_owned())
+            .filter(|line| line.contains(needle))
+            .collect()
+    };
+    assert_eq!(
+        crate::pvp_prefs::pvp_start_fights(&d.session().preferences().expect("bound")).ok(),
+        Some(false),
+        "off until the operator turns it on"
+    );
+
+    let on = d
+        .submit(
+            OperatorCommand::SetPvpStartFights(true),
+            Targets::Application,
+        )
+        .expect("admitted");
+    assert_eq!(settled_app(&mut d, on.request()), Some(done()));
+    assert_eq!(
+        preferences_file(&d)["pvp"]["start_fights"],
+        serde_json::Value::Bool(true)
+    );
+    let audit = lines_with("pvp.start_fights", "pvp.start_fights");
+    assert_eq!(audit.len(), 1, "one write, one audit line: {audit:?}");
+    assert!(audit[0].contains("true"), "{audit:?}");
+    assert!(
+        crate::pvp_prefs::pvp_start_fights(&d.session().preferences().expect("bound"))
+            .expect("the projection is ready"),
+    );
+    let again = open_driver(&dir);
+    assert_eq!(
+        crate::pvp_prefs::pvp_start_fights(&again.session().preferences().expect("bound")).ok(),
+        Some(true),
+        "a new session over the same state root"
+    );
+
+    let before = d.session().refusals();
+    d.session_mut().refuse_unsubmitted(
+        OperatorCommand::SetPvpStartFights(true),
+        &[],
+        "pvp-v1 test: no preferences store in this mode",
+    );
+    assert_eq!(d.session().refusals(), before + 1);
+    let refusal = lines_with("command refused: SetPvpStartFights", "pvp-v1 test");
+    assert_eq!(refusal.len(), 1, "{refusal:?}");
+}
+
 /// T3.3 r5 (review finding 5): the newest command for a setting wins. An
 /// older write the disk held settles after a newer command for the same
 /// setting was accepted and made durable; the running session keeps the

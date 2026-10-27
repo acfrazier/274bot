@@ -124,6 +124,7 @@ impl Delegation {
             retaliate: true,
             prayer_mode: PrayerMode::Hold,
             until_ticks: 0,
+            pvp: false,
         }
     }
 }
@@ -281,7 +282,9 @@ fn abort_reason(reason: AbortReason) -> u8 {
         AbortReason::Unprotected(Unprotected::Dragonfire) => REASON_DRAGONFIRE,
         AbortReason::Unprotected(Unprotected::NoAmmo) => REASON_NO_AMMO,
         AbortReason::Unprotected(Unprotected::NoRunes) => REASON_NO_RUNES,
-        AbortReason::Unattackable => REASON_UNATTACKABLE,
+        // A player intruder that stops being attackable ends the fight like
+        // any target that cannot be attacked.
+        AbortReason::Unattackable | AbortReason::PvpRefused(_) => REASON_UNATTACKABLE,
         AbortReason::PrepFailed(_) => REASON_PREP_FAILED,
         AbortReason::PrepReadiness(PrepReadiness::CombatRootMissing) => {
             REASON_PREP_COMBAT_ROOT_MISSING

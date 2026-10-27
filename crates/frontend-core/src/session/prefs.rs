@@ -41,6 +41,7 @@ pub(crate) enum PrefRow {
     Nav(NavPreference, bool),
     Danger(DangerLevel),
     SessionLog(bool),
+    PvpStartFights(bool),
     MapBake(MapBakeChoice),
     QuesterPaths,
     ReloadQuesterPaths,
@@ -55,6 +56,7 @@ impl PrefRow {
             Self::Nav(pref, on) => OperatorCommand::SetNavPreference(pref, on),
             Self::Danger(level) => OperatorCommand::SetDangerLevel(level),
             Self::SessionLog(on) => OperatorCommand::SetSessionLog(on),
+            Self::PvpStartFights(on) => OperatorCommand::SetPvpStartFights(on),
             Self::MapBake(choice) => OperatorCommand::SetMapBakeChoice(choice),
             Self::QuesterPaths => OperatorCommand::SetQuesterPaths,
             Self::ReloadQuesterPaths => OperatorCommand::ReloadQuesterPaths,
@@ -282,6 +284,13 @@ impl<Io> OperatorSession<Io> {
             .map(|preferences| crate::log_file::session_log_setting(&preferences))
     }
 
+    /// The saved global PvP setting (`pvp.start_fights`); `None` while the
+    /// preferences are unbound, cold or refused, or the member is malformed.
+    pub fn pvp_start_fights(&self) -> Option<bool> {
+        let preferences = self.preferences()?;
+        crate::pvp_prefs::pvp_start_fights(&preferences).ok()
+    }
+
     /// The saved map-bake choice; `None` without a bound preferences
     /// document.
     pub fn map_bake_preference(&self) -> Option<MapBakeChoice> {
@@ -340,6 +349,7 @@ impl<Io> OperatorSession<Io> {
             }
             PrefRow::Danger(level) => self.set_danger_level(request, level, surface),
             PrefRow::SessionLog(on) => self.set_session_log(request, on),
+            PrefRow::PvpStartFights(on) => self.set_pvp_start_fights(request, on),
             PrefRow::MapBake(choice) => self.set_map_bake_choice(request, choice, surface),
             PrefRow::QuesterPaths => self.set_quester_paths(request, surface),
             PrefRow::ReloadQuesterPaths => self.reload_quester_paths(request, surface),
@@ -565,6 +575,21 @@ impl<Io> OperatorSession<Io> {
                 PrefEffect::SessionLog(on),
             ),
             Err(error) => write_failed("session file setting", &error),
+        }
+    }
+
+    fn set_pvp_start_fights(&mut self, request: RequestId, on: bool) -> Applied {
+        let Some(preferences) = self.preferences() else {
+            return no_store();
+        };
+        match crate::pvp_prefs::write_pvp_start_fights(&preferences, on) {
+            Ok(write) => self.after_write(
+                request,
+                write,
+                "start fights with players",
+                PrefEffect::None,
+            ),
+            Err(error) => write_failed("start fights with players", &error),
         }
     }
 

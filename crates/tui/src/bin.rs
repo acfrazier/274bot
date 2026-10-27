@@ -3234,6 +3234,44 @@ impl TuiSession {
         }
     }
 
+    /// Submit the global "Start fights with players" setting
+    /// (`SetPvpStartFights`) the popup changed. A refused or failed save shows
+    /// its reason, and the row shows the saved value again.
+    fn project_pvp_start_fights(&mut self, app: &mut TuiApp) {
+        let Some(on) = app.pvp_start_fights_request.take() else {
+            return;
+        };
+        if !self.persist_ui {
+            // A `--live` run keeps its settings ephemeral: say so, once, at
+            // the shared command boundary, and show the saved value again.
+            const REASON: &str = "settings are not saved in a --live run";
+            self.core
+                .refuse_unsubmitted(OperatorCommand::SetPvpStartFights(on), &[], REASON);
+            app.error = Some(format!("settings: start fights with players: {REASON}"));
+            app.pvp_start_fights.refuse();
+            return;
+        }
+        match self.submit_with(
+            app,
+            OperatorCommand::SetPvpStartFights(on),
+            Targets::Application,
+        ) {
+            Ok(_) => {
+                if app
+                    .error
+                    .as_deref()
+                    .is_some_and(|error| error.starts_with("settings: start fights with players:"))
+                {
+                    app.error = None;
+                }
+            }
+            Err(error) => {
+                app.error = Some(format!("settings: start fights with players: {error}"));
+                app.pvp_start_fights.refuse();
+            }
+        }
+    }
+
     /// Submit the shared manual-walk pause preference
     /// (`SetNavPreference`): the core applies it to the current and future
     /// slots once it is saved. A refused save shows its reason and the
@@ -3429,6 +3467,7 @@ impl TuiSession {
         self.project_preference_error(app);
         self.project_walk_globals(app);
         self.project_manual_walk_pause(app);
+        self.project_pvp_start_fights(app);
         self.project_quester_paths(app);
         // The benchmark's focus follows its run: select the member it
         // moved to.

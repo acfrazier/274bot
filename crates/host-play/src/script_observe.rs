@@ -1022,12 +1022,17 @@ pub(crate) fn script_observe_cached_with_channels(
                     )
                 });
                 // Copy only the small fact, not the slot owner or its tables.
-                let (condition, poison_unknown_pulse) = {
+                let (condition, poison_unknown_pulse, pvp_globals) = {
                     let navs = navs.lock().unwrap();
                     let bot = navs.get(name);
                     (
                         bot.and_then(|bot| bot.condition.current().copied()),
                         bot.map(|bot| bot.condition.unknown_pulse()),
+                        // The cached, worker-built projection of the shared
+                        // preferences; a cold or refused store reads as no
+                        // setting, which a combat request then treats as off.
+                        bot.and_then(|bot| bot.walk_globals_store.as_ref())
+                            .and_then(|preferences| preferences.pvp_globals().ok()),
                     )
                 };
                 let mut ctx = ScriptCtx {
@@ -1051,6 +1056,11 @@ pub(crate) fn script_observe_cached_with_channels(
                         collision: world
                             .as_deref()
                             .and_then(|world| nav_planner::producer::collision_view(world).ok()),
+                        wilderness: world
+                            .as_deref()
+                            .and_then(|world| nav_planner::producer::wilderness_view(world).ok())
+                            .map(nav_planner::contract::WildernessView::rules),
+                        pvp_globals,
                         walk_danger: walk_danger
                             .as_ref()
                             .map(|query| query as &dyn script::native::WalkDangerQuery),

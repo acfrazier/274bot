@@ -49,6 +49,7 @@ use api::local_state::{
     DomainIdentity, FailureReason, LeaseSnapshot, LoadoutEdit, LoadoutOp, LocalStateDomain,
     PreferenceChange, PreferenceRow,
 };
+use script::native::PvpGlobals;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
@@ -223,6 +224,9 @@ pub(super) enum Rewrite {
 pub(super) struct PreferenceProjection {
     pub(super) document: Arc<Map<String, Value>>,
     pub(super) walk_globals: Result<WalkGlobals, Arc<str>>,
+    /// The `pvp` member (`pvp.start_fights`): a non-object member or a
+    /// non-boolean value is a projection error, which readers treat as off.
+    pub(super) pvp_globals: Result<PvpGlobals, Arc<str>>,
 }
 
 impl Default for PreferenceProjection {
@@ -230,6 +234,7 @@ impl Default for PreferenceProjection {
         Self {
             document: Arc::default(),
             walk_globals: Ok(WalkGlobals::default()),
+            pvp_globals: Ok(PvpGlobals::default()),
         }
     }
 }
@@ -239,10 +244,29 @@ pub(super) fn project_preferences(document: Map<String, Value>) -> PreferencePro
         Some(value) => project_walk_globals(value).map_err(Arc::<str>::from),
         None => Ok(WalkGlobals::default()),
     };
+    let pvp_globals = match document.get("pvp") {
+        Some(value) => project_pvp_globals(value).map_err(Arc::<str>::from),
+        None => Ok(PvpGlobals::default()),
+    };
     PreferenceProjection {
         document: Arc::new(document),
         walk_globals,
+        pvp_globals,
     }
+}
+
+fn project_pvp_globals(value: &Value) -> Result<PvpGlobals, &'static str> {
+    let Some(pvp) = value.as_object() else {
+        return Err("pvp preferences must be an object");
+    };
+    Ok(PvpGlobals {
+        start_fights: walk_boolean(
+            pvp,
+            "start_fights",
+            PvpGlobals::default().start_fights,
+            "pvp.start_fights must be a boolean",
+        )?,
+    })
 }
 
 fn project_walk_globals(value: &Value) -> Result<WalkGlobals, &'static str> {

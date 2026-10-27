@@ -50,6 +50,7 @@ pub mod profile_order;
 pub mod profile_saves;
 mod profiles;
 pub mod progress;
+pub mod pvp_prefs;
 pub mod quester_paths;
 pub mod resources;
 pub mod rs2b0t_import;
@@ -102,6 +103,7 @@ pub use profile_form::{
 };
 pub use profile_order::{Placement, ProfileOrder, ReorderOp, PROFILE_ORDER_KEY};
 pub use profile_saves::{SaveRecord, SaveResult, SaveSettled, WriteFailure};
+pub use pvp_prefs::{pvp_start_fights, PvpSettingView, START_FIGHTS_LABEL, START_FIGHTS_NOTE};
 pub use quester_paths::{
     QuesterPathsController, QuesterPathsView, LOAD_PATHS_LABEL, QUESTER_HEADING,
     QUEST_PATHS_HEADING, RELOAD_PATHS_LABEL,

@@ -102,6 +102,7 @@ fn error_reason(error: ActionError) -> Arc<str> {
         }
         ActionError::WalkGoals(reason) => format!("walk-goals:{reason:?}").into(),
         ActionError::ServerOrdered(reason) => format!("server-ordered:{reason}").into(),
+        ActionError::PvpRefused(refusal) => format!("pvp-refused:{}", refusal.code()).into(),
     }
 }
 

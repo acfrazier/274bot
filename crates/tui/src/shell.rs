@@ -166,6 +166,7 @@ impl TuiApp {
                 &mut self.settings_state,
             )
             .pause_script_on_manual_walk_abort(&mut self.pause_script_on_manual_walk_abort)
+            .pvp_start_fights(&mut self.pvp_start_fights)
             .script_scope_notice_ack(&mut self.script_scope_notice_ack)
             .survivable_routing_notice_ack(&mut self.survivable_routing_notice_ack)
             .quester_paths(&mut self.quester_paths);

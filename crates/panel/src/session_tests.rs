@@ -3743,6 +3743,48 @@ fn quest_paths_checkbox_does_not_persist_lossy_non_utf8_folder() {
 }
 
 #[test]
+fn start_fights_with_players_is_saved_through_its_command_and_follows_a_peer_write() {
+    let _isolated = IsolatedStores::enter("pvp-start-fights-row");
+    let mut session = Session::new();
+    session.preferences.reload().unwrap();
+    session.refresh_walk_permissions();
+    assert!(!session.pvp_start_fights.shown(), "off by default");
+
+    // The panel row's click: the same `SetPvpStartFights` command the TUI sends.
+    session.set_pvp_start_fights(true);
+    assert!(session.pvp_start_fights.shown(), "the click shows at once");
+    let start = std::time::Instant::now();
+    loop {
+        session.refresh_walk_permissions();
+        if session.preferences.value("pvp") == Some(serde_json::json!({"start_fights": true})) {
+            break;
+        }
+        assert!(
+            start.elapsed() < std::time::Duration::from_secs(60),
+            "the write never became durable: {:?}",
+            session.preferences.value("pvp")
+        );
+        std::thread::yield_now();
+    }
+    assert_eq!(session.error, None);
+    assert!(session.pvp_start_fights.shown());
+    assert!(
+        frontend_core::pvp_start_fights(&session.preferences).unwrap(),
+        "the host's projection holds the saved value"
+    );
+
+    // The other front end turns it off: the panel row follows.
+    let peer = thread_preferences();
+    set_patiently(&peer, "pvp", serde_json::json!({"start_fights": false}));
+    session.preferences.reload().unwrap();
+    session.refresh_walk_permissions();
+    assert!(
+        !session.pvp_start_fights.shown(),
+        "the row follows a peer write"
+    );
+}
+
+#[test]
 fn walk_permissions_projection_follows_a_peer_write() {
     let _isolated = IsolatedStores::enter("walk-permissions-peer-refresh");
     let mut session = Session::new();
