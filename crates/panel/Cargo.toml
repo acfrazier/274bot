@@ -14,7 +14,7 @@ client = { workspace = true, features = ["audio"] }
 dear-imgui-rs = "0.15"
 dear-imgui-wgpu = "0.15"
 dear-imgui-winit = "0.15"
-frontend-core = { path = "../frontend-core", features = ["debug-catalog", "live-harness"] }
+frontend-core = { path = "../frontend-core", default-features = false, features = ["debug-catalog", "live-harness"] }
 nav-planner = { path = "../nav-planner" }
 serde = { version = "=1.0.219", features = ["derive"] }
 serde_json = "=1.0.140"
@@ -45,6 +45,18 @@ windows-sys = { version = "0.52", features = [
 name = "panel-play"
 path = "src/main.rs"
 
+[[example]]
+name = "catalog_watch"
+required-features = ["js"]
+
+[[example]]
+name = "pair_watch"
+required-features = ["js"]
+
+[[example]]
+name = "external_watch"
+required-features = ["js"]
+
 # Winit requires the OS main thread on macOS, unlike libtest's worker threads.
 [[test]]
 name = "ime_frame"
@@ -52,14 +64,16 @@ path = "tests/ime_frame.rs"
 harness = false
 
 [features]
+default = ["js"]
+js = ["frontend-core/js"]
 render-diagnostics = ["client/render-diagnostics", "frontend-core/render-diagnostics"]
 memory-profile = ["frontend-core/memory-profile"]
 # CPU diagnostic: use System directly, report allocator metrics unavailable.
 memory-profile-no-alloc = ["memory-profile", "frontend-core/memory-profile-no-alloc"]
 
 [dev-dependencies]
-frontend-core = { path = "../frontend-core", features = ["test-support"] }
-host-play = { path = "../host-play", features = ["live-probe"] }
+frontend-core = { path = "../frontend-core", default-features = false, features = ["test-support"] }
+host-play = { path = "../host-play", default-features = false, features = ["live-probe"] }
 nav-bake = { path = "../nav-bake" }
 proc-macro2 = "1"
 syn = "2"

@@ -41,9 +41,12 @@ use crate::play_status::{
     WorkerTerminal,
 };
 use crate::play_wires::{dispatch_wires, WireCmd};
+#[cfg(feature = "js")]
 use crate::script_runtime::{
-    deliver_channel_events, hold_script_nav, nav_world_state_for_observe, observe_script_inv,
-    project_npc_boxes_for_isolate_snapshot, projected_npc_boxes, publish_script_paint,
+    deliver_channel_events, project_npc_boxes_for_isolate_snapshot, projected_npc_boxes,
+};
+use crate::script_runtime::{
+    hold_script_nav, nav_world_state_for_observe, observe_script_inv, publish_script_paint,
     reset_script_nav, script_active, script_frame, script_observe_cached_with_channels,
     script_paint_of, script_slot, script_slot_or_insert, slot_arrival_reach, step_nav_bot,
     take_manual_walk_ownership, NavBot, ScriptSlot, ScriptWall,
@@ -613,6 +616,7 @@ impl Play {
             Arc::clone(&self.queue),
             Arc::clone(&self.statuses),
             Arc::clone(&self.scripts),
+            #[cfg(feature = "js")]
             self.channels.clone(),
             Arc::clone(&self.cheats),
             Arc::clone(&self.wires),
@@ -696,6 +700,7 @@ struct BoundaryWork<'a> {
     cheats: &'a Arc<Mutex<HashMap<String, VecDeque<String>>>>,
     wires: &'a Arc<Mutex<HashMap<String, VecDeque<WireCmd>>>>,
     navs: &'a Arc<Mutex<HashMap<String, NavBot>>>,
+    #[cfg(feature = "js")]
     channels: &'a super::script_channels::SlotChannels,
 }
 
@@ -723,12 +728,14 @@ fn reset_slot_session_boundary(
         cheats,
         wires,
         navs,
+        #[cfg(feature = "js")]
         channels,
     } = work;
     let deliberate_logout = arm.take_logout_work_reset();
     let stopping = arm.stop.load(Ordering::Relaxed);
     let keep_work = !deliberate_logout && !stopping && keep_for_exit;
     reset_slot_session_work(name, scripts, cheats, wires, navs, keep_work);
+    #[cfg(feature = "js")]
     if channels.tracks() {
         let (generation, kept) = script_slot(scripts, name)
             .and_then(|slot| {
@@ -771,7 +778,7 @@ pub(super) fn end_slot_session(
     cheats: &Arc<Mutex<HashMap<String, VecDeque<String>>>>,
     wires: &Arc<Mutex<HashMap<String, VecDeque<WireCmd>>>>,
     navs: &Arc<Mutex<HashMap<String, NavBot>>>,
-    channels: &super::script_channels::SlotChannels,
+    #[cfg(feature = "js")] channels: &super::script_channels::SlotChannels,
 ) {
     // Reduce a fallback exit exactly once if the pump left without a client
     // exit reason; otherwise consume the decision recorded before that fact.
@@ -785,6 +792,7 @@ pub(super) fn end_slot_session(
             cheats,
             wires,
             navs,
+            #[cfg(feature = "js")]
             channels,
         },
         keep_for_exit,
@@ -802,7 +810,7 @@ pub(super) fn apply_offline_logout_reset(
     cheats: &Arc<Mutex<HashMap<String, VecDeque<String>>>>,
     wires: &Arc<Mutex<HashMap<String, VecDeque<WireCmd>>>>,
     navs: &Arc<Mutex<HashMap<String, NavBot>>>,
-    channels: &super::script_channels::SlotChannels,
+    #[cfg(feature = "js")] channels: &super::script_channels::SlotChannels,
 ) {
     if !arm.take_logout_work_reset() {
         return;
@@ -818,6 +826,7 @@ pub(super) fn apply_offline_logout_reset(
                 cheats,
                 wires,
                 navs,
+                #[cfg(feature = "js")]
                 channels,
             },
             false,
@@ -941,6 +950,7 @@ fn spawn_slot_thread(
     slot_queue: SharedLoginQueue,
     slot_statuses: Arc<Mutex<Vec<SlotStatus>>>,
     slot_scripts: ScriptWall,
+    #[cfg(feature = "js")]
     slot_channels: super::script_channels::ChannelBroker,
     slot_cheats: Arc<Mutex<HashMap<String, VecDeque<String>>>>,
     slot_wires: Arc<Mutex<HashMap<String, VecDeque<WireCmd>>>>,
@@ -962,6 +972,7 @@ fn spawn_slot_thread(
     let username = profile.username.clone();
     let uid = profile.uid;
     let connection = connection.clone();
+    #[cfg(feature = "js")]
     let public_world_profile = connection
         .profile()
         .and_then(|profile| profile.public_worlds())
@@ -970,6 +981,7 @@ fn spawn_slot_thread(
         PlayConnection::Direct(options) => options.mainland,
         PlayConnection::Bound { mainland, .. } => *mainland,
     };
+    #[cfg(feature = "js")]
     let slot_channels = slot_channels.slot(&username);
 
     handles.insert(
@@ -1094,6 +1106,7 @@ fn spawn_slot_thread(
                         &slot_cheats,
                         &slot_wires,
                         &slot_navs,
+                        #[cfg(feature = "js")]
                         &slot_channels,
                     );
                     if !should_handshake(&arm, client.ingame) {
@@ -1459,6 +1472,7 @@ fn spawn_slot_thread(
                         let slot_navs = Arc::clone(&slot_navs);
                         let slot_manual_abort_pause = Arc::clone(&slot_manual_abort_pause);
                         let slot_world = slot_world.clone();
+                        #[cfg(feature = "js")]
                         let observe_channels = slot_channels.clone();
                         // Borrowed, not cloned: the slot thread's one handle
                         // on the account's bank memory and hint file.
@@ -1504,6 +1518,7 @@ fn spawn_slot_thread(
                                     &slot_cheats,
                                     &slot_wires,
                                     &slot_navs,
+                                    #[cfg(feature = "js")]
                                     &observe_channels,
                                 );
                                 if should_handshake(&arm_latch_obs, c.ingame) {
@@ -1541,6 +1556,7 @@ fn spawn_slot_thread(
                                             cheats: &slot_cheats,
                                             wires: &slot_wires,
                                             navs: &slot_navs,
+                                            #[cfg(feature = "js")]
                                             channels: &observe_channels,
                                         },
                                         arm_latch_obs.keeps_script_work_after_exit(),
@@ -1557,6 +1573,7 @@ fn spawn_slot_thread(
                                         &slot_cheats,
                                         &slot_wires,
                                         &slot_navs,
+                                        #[cfg(feature = "js")]
                                         &observe_channels,
                                     );
                                     slot_bank.session_ended();
@@ -1817,6 +1834,9 @@ fn spawn_slot_thread(
                                 }
                                 (up, here, active_world)
                             };
+                            #[cfg(not(feature = "js"))]
+                            let _ = active_world;
+                            #[cfg(feature = "js")]
                             let broker_world = if public_world_profile {
                                 active_world.map_or(
                                     super::script_channels::BrokerWorld::Unavailable,
@@ -1833,6 +1853,7 @@ fn spawn_slot_thread(
                                 nav_armed,
                                 map_members,
                             );
+                            #[cfg(feature = "js")]
                             let npc_boxes = project_npc_boxes_for_isolate_snapshot(
                                 &slot_scripts,
                                 name,
@@ -1855,6 +1876,7 @@ fn spawn_slot_thread(
                                 state,
                                 Some(&nav_snapshot),
                                 Some(slot_bank.memory()),
+                                #[cfg(feature = "js")]
                                 npc_boxes.as_deref(),
                                 Some(slot_obj_names.as_ref()),
                                 &slot_scripts,
@@ -1868,7 +1890,9 @@ fn spawn_slot_thread(
                                 Some(slot_input.as_ref()),
                                 Some(Arc::clone(&slot_cache)),
                                 Some(Arc::clone(&slot_obj_names)),
+                                #[cfg(feature = "js")]
                                 Some(&observe_channels),
+                                #[cfg(feature = "js")]
                                 broker_world,
                                 Some(&mut *run_policy),
                                 Some(&mut debug_replies),
@@ -2048,6 +2072,7 @@ fn spawn_slot_thread(
                         &slot_cheats,
                         &slot_wires,
                         &slot_navs,
+                        #[cfg(feature = "js")]
                         &slot_channels,
                     );
                     slot_bank.session_ended();
@@ -2061,6 +2086,7 @@ fn spawn_slot_thread(
             // No later session observes this slot, however the worker
             // ended (a Stop while parked at the title never reaches the
             // boundary above): its channel member leaves the party now.
+            #[cfg(feature = "js")]
             if slot_channels.tracks() {
                 deliver_channel_events(&slot_scripts, slot_channels.leave());
             }

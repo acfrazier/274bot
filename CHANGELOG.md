@@ -5,6 +5,17 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
 
 ## Unreleased
 
+### Panel and terminal app
+
+- Source builds can now omit the JavaScript runtime with
+  `--no-default-features`. These builds keep Gatherer, Grinch and Quester,
+  their settings, and native Start, Pause, Stop and paint controls. They do
+  not offer Load, Reload, catalog or rs2b0t profile import. Default builds
+  still include JavaScript. Sherlock needs the JS-runtime build until its
+  native clue rewrite, although Sherlock itself creates no V8 isolate.
+- The terminal app's script pane now marks the selected compiled (native)
+  script card with `>` the same way as a selected JavaScript card.
+
 ### Combat
 
 - Bots now know how hard common monsters such as cows, chickens, rats and

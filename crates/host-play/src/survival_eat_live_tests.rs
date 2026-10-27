@@ -47,6 +47,7 @@ const LOBSTER_ID: i32 = 379;
 const PROTECT_FROM_MELEE_VARP: i32 = 97;
 const PREPARATION_DEADLINE: Duration = Duration::from_secs(180);
 const WALK_CELL_WALL_LIMIT: Duration = Duration::from_secs(360);
+#[cfg(feature = "js")]
 const COMBAT_CELL_WALL_LIMIT: Duration = Duration::from_secs(300);
 const CELL_TICK_LIMIT: u32 = 100;
 const POISON_PREFIX_TICKS: u32 = 31;
@@ -62,6 +63,7 @@ const WALK_TARGET: WorldTile = WorldTile {
     z: 3170,
     level: 0,
 };
+#[cfg(feature = "js")]
 const COW_FIELD: WorldTile = WorldTile {
     x: 3255,
     z: 3278,
@@ -84,6 +86,7 @@ const FRUIT_SEED: &[&str] = &[
     "give lobster 5",
     "give macro_triffidfruit 1",
 ];
+#[cfg(feature = "js")]
 const COMBAT_SEED: &[&str] = &[
     "setstat attack 1",
     "setstat strength 1",
@@ -94,6 +97,7 @@ const COMBAT_SEED: &[&str] = &[
     "give lobster 5",
     "setvar prayer14 1",
 ];
+#[cfg(feature = "js")]
 const COMBAT_FRUIT_SEED: &[&str] = &[
     "setstat attack 1",
     "setstat strength 1",
@@ -565,6 +569,7 @@ fn fruit_seed_ready(snapshot: &GameSnapshot) -> bool {
     full_hp_seed_ready(snapshot) && bank_core_live::count(snapshot.inventory(), fruit_id()) == 1
 }
 
+#[cfg(feature = "js")]
 fn combat_seed_ready(snapshot: &GameSnapshot) -> bool {
     [0, 1, 2, 3, 5].into_iter().all(|index| {
         let expected = match index {
@@ -579,6 +584,7 @@ fn combat_seed_ready(snapshot: &GameSnapshot) -> bool {
         && varp(snapshot, PROTECT_FROM_MELEE_VARP) == 1
 }
 
+#[cfg(feature = "js")]
 fn combat_fruit_seed_ready(snapshot: &GameSnapshot) -> bool {
     combat_seed_ready(snapshot) && bank_core_live::count(snapshot.inventory(), fruit_id()) == 1
 }
@@ -1696,6 +1702,7 @@ fn run_walk_case(case: EatCase, fruit_delay: bool) {
     );
 }
 
+#[cfg(feature = "js")]
 const FIGHT_CONSUMER: &str = r#"export const apiVersion = 2;
 export function tick(api) {
   if (!globalThis.__eatFight) {
@@ -1713,6 +1720,7 @@ export function tick(api) {
   }
 }"#;
 
+#[cfg(feature = "js")]
 fn run_combat_cell(fruit_delay: bool) {
     let label = if fruit_delay {
         "L-CURE-FRUIT-API-COMBAT"
@@ -1947,6 +1955,7 @@ fn run_combat_cell(fruit_delay: bool) {
     );
 }
 
+#[cfg(feature = "js")]
 fn script_slot_probe(play: &super::Play, account: &str, expression: &str) -> Value {
     let Some(slot) = super::script_slot(&play.scripts, account) else {
         return Value::Null;
@@ -1975,12 +1984,14 @@ fn live_survival_strange_fruit_after_bite() {
     run_walk_case(EatCase::FullHp, true);
 }
 
+#[cfg(feature = "js")]
 #[test]
 #[ignore = "requires LIVE=1, Engine A at 600 ms, and the accepted R289 cache/nav fixtures"]
 fn live_survival_eat_poison_through_api_combat_fight() {
     run_combat_cell(false);
 }
 
+#[cfg(feature = "js")]
 #[test]
 #[ignore = "requires LIVE=1, Engine A at 600 ms, and the accepted R289 cache/nav fixtures"]
 fn live_survival_strange_fruit_through_api_combat_fight() {

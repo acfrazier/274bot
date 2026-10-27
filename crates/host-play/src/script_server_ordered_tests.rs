@@ -220,6 +220,7 @@ impl Rig {
             None,
             Some(&self.snapshot),
             None,
+            #[cfg(feature = "js")]
             None,
             Some(&self.names),
             &self.scripts,
@@ -233,7 +234,9 @@ impl Rig {
             Some(&self.input),
             Some(cache),
             Some(Arc::clone(&self.names)),
+            #[cfg(feature = "js")]
             None,
+            #[cfg(feature = "js")]
             crate::script_channels::BrokerWorld::Local,
             None,
             None,
@@ -1790,6 +1793,7 @@ fn ordered_observation_survives_real_client_socket_adoption_without_reset() {
     );
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn ordered_existing_compat_loop_keeps_twenty_eight_immediate_true_drops_without_host_rate_refusal()
 {

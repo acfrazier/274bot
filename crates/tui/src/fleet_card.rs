@@ -59,7 +59,11 @@ impl CardPicker {
                 current: now.is_focused(),
             },
         ];
-        for line in browse_lines(&app.script_cards, &app.script_category_order, false) {
+        #[cfg(feature = "js")]
+        let lines = browse_lines(&app.script_cards, &app.script_category_order, false);
+        #[cfg(not(feature = "js"))]
+        let lines = browse_lines(&app.script_cards, &app.script_category_order);
+        for line in lines {
             match line {
                 BrowseLine::Category(name) => entries.push(Entry::Heading(name)),
                 BrowseLine::Card(index) => {
@@ -69,12 +73,15 @@ impl CardPicker {
                     ) else {
                         continue;
                     };
-                    let mut label = format!(
+                    let label = format!(
                         "{}  [{}] [{}]",
                         card.name,
                         kind_badge(card.kind),
                         source_badge(card.source)
                     );
+                    #[cfg(feature = "js")]
+                    let mut label = label;
+                    #[cfg(feature = "js")]
                     if card.unloadable.is_some() {
                         label.push_str(" (unloadable)");
                     }
@@ -85,7 +92,9 @@ impl CardPicker {
                         card: pinned,
                     });
                 }
-                BrowseLine::ImportCatalog | BrowseLine::Empty => {}
+                #[cfg(feature = "js")]
+                BrowseLine::ImportCatalog => {}
+                BrowseLine::Empty => {}
             }
         }
         let cursor = entries

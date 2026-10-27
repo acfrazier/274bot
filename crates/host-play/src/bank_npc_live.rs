@@ -3432,8 +3432,16 @@ fn bank_pick_burst_percentile(values: &[u128], percentile: usize) -> Option<u128
     ignore = "requires LIVE=1, BOT_LIVE_NAME_PREFIX, LIVE_EVIDENCE_DIR, local 289 assets and Engine A on 127.0.0.1:44594/1080"
 )]
 pub fn live_ten_guest_shared_bank_pick_full_retry_burst() {
+    // Keep Sherlock as the full-build holder. Without JS, the real Gatherer
+    // card's empty settings bag below supplies its compiled defaults.
+    #[cfg(feature = "js")]
     script_js::install_cards()
         .expect("install canonical Sherlock card for native preparation burst");
+    #[cfg(feature = "js")]
+    let holder_card = script::CompiledId("Sherlock");
+    #[cfg(not(feature = "js"))]
+    let holder_card = script::CompiledId("Gatherer");
+    let holder_card_name = holder_card.0;
     assert!(
         live(),
         "live_ten_guest_shared_bank_pick_full_retry_burst requires LIVE=1"
@@ -3629,12 +3637,8 @@ pub fn live_ten_guest_shared_bank_pick_full_retry_burst() {
                 let bag = Arc::new(script::native::SettingsBag::new());
                 for revision in 1..=BANK_PICK_BURST_HOLDERS as u64 {
                     saturation_holders.push(
-                        play.script_prepare_config(
-                            script::CompiledId("Sherlock"),
-                            revision,
-                            Arc::clone(&bag),
-                        )
-                        .expect("admit an actual native configuration preparation"),
+                        play.script_prepare_config(holder_card, revision, Arc::clone(&bag))
+                            .expect("admit an actual native configuration preparation"),
                     );
                 }
             }
@@ -3646,7 +3650,7 @@ pub fn live_ten_guest_shared_bank_pick_full_retry_burst() {
                     let identity = holder.identity();
                     holder_receipts.push(serde_json::json!({
                         "api": "Play::script_prepare_config",
-                        "card": "Sherlock",
+                        "card": holder_card_name,
                         "family": "ProfilePreparation",
                         "job_id": identity.job().get(),
                         "identity": format!("{identity:?}"),

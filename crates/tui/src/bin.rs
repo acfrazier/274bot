@@ -38,10 +38,9 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 
 use frontend_core::resources::background_ack_text;
-use frontend_core::scripts::{
-    CardSource, CatalogActionKind, CompiledCardId, LoadoutForm, OwnedSchema, PaintFrame,
-    ScriptChoice,
-};
+#[cfg(feature = "js")]
+use frontend_core::scripts::{CardSource, CatalogActionKind, OwnedSchema};
+use frontend_core::scripts::{CompiledCardId, LoadoutForm, PaintFrame, ScriptChoice};
 use frontend_core::selection::ProfileIdentity;
 #[cfg(test)]
 use frontend_core::test_support::VaultFixture;
@@ -61,10 +60,12 @@ use crate::chat::ChatAction;
 use crate::commands::Unavailable;
 use crate::loadouts::LoadoutsIntent;
 use crate::overlay::{ConfirmKind, Modal};
+#[cfg(feature = "js")]
 use crate::profile_import::ImportAction;
-use crate::script_shape::{
-    categories_present, resolve_category_order, rs2b0t_root_has_index, BrowseCard,
-};
+#[cfg(feature = "js")]
+use crate::script_shape::rs2b0t_root_has_index;
+use crate::script_shape::{categories_present, resolve_category_order, BrowseCard};
+#[cfg(feature = "js")]
 use frontend_core::rs2b0t_import::Stage;
 
 /// What `tui-play` should do this run.
@@ -405,11 +406,15 @@ pub struct TuiSession {
     /// same owner the panel uses.
     scripts: frontend_core::Scripts,
     /// First-run rs2b0t clone-root folder browser.
+    #[cfg(feature = "js")]
     rs2b0t_catalog_open: bool,
+    #[cfg(feature = "js")]
     rs2b0t_catalog_dir: PathBuf,
     /// The rs2b0t profile import shown by [`Modal::ProfileImport`].
+    #[cfg(feature = "js")]
     profile_import: frontend_core::rs2b0t_import::ProfileImport,
     /// Preview waiting for the first asynchronous catalog scan.
+    #[cfg(feature = "js")]
     profile_import_preview_pending: bool,
     /// The shared profile form behind [`Modal::NewProfile`]: the same
     /// editor the panel's Profiles window binds, opened only on its
@@ -430,6 +435,7 @@ pub struct TuiSession {
     /// local-state service (slots read the same file through it).
     loadouts: LoadoutForm,
     /// Last directory visited in the out-of-tree Load file browser.
+    #[cfg(feature = "js")]
     script_load_last_dir: Option<PathBuf>,
     /// Core projection generations the app last copied (fleet rows, the
     /// whole view, the resource meter, the capacity warning): a pump copies
@@ -679,15 +685,20 @@ impl TuiSession {
             live_stop_wait_started: None,
             script_sel: None,
             scripts,
+            #[cfg(feature = "js")]
             rs2b0t_catalog_open: false,
+            #[cfg(feature = "js")]
             rs2b0t_catalog_dir: Self::default_catalog_browse_dir(),
+            #[cfg(feature = "js")]
             profile_import: frontend_core::rs2b0t_import::ProfileImport::new(),
+            #[cfg(feature = "js")]
             profile_import_preview_pending: false,
             profile_editor: frontend_core::ProfileEditor::new(),
             new_profile_pending: None,
             script_category_order: Vec::new(),
             preferences: preferences.share(),
             loadouts,
+            #[cfg(feature = "js")]
             script_load_last_dir: None,
             copied_rows: None,
             copied_view: None,
@@ -733,6 +744,7 @@ impl TuiSession {
         )
     }
 
+    #[cfg(feature = "js")]
     fn catalog_root(&self) -> Option<PathBuf> {
         match self.bound() {
             Some(profile) => profile.catalog_root().map(Path::to_path_buf),
@@ -743,6 +755,7 @@ impl TuiSession {
     /// Live harness bag: schema defaults + legacy overrides + inject.
     /// Empty schema still keeps inject keys (Thiever `target: Guard`).
     /// `None` only when the merged bag is empty.
+    #[cfg(feature = "js")]
     fn pending_settings_bag(
         &self,
         source: CardSource,
@@ -757,6 +770,7 @@ impl TuiSession {
         (!merged.is_empty()).then_some(merged)
     }
 
+    #[cfg(feature = "js")]
     fn default_catalog_browse_dir() -> PathBuf {
         let home = frontend_core::scripts::paths::bot_home();
         if home.as_os_str() == "." {
@@ -900,10 +914,12 @@ impl TuiSession {
             TuiSurface {
                 walk_cleared: &mut self.walk_reset,
                 map_desk: &mut self.map_desk,
-                models: frontend_core::Models::none()
-                    .with_scripts(&mut self.scripts)
-                    .with_import(&mut self.profile_import)
-                    .with_loadouts(&mut self.loadouts),
+                models: {
+                    let models = frontend_core::Models::none().with_scripts(&mut self.scripts);
+                    #[cfg(feature = "js")]
+                    let models = models.with_import(&mut self.profile_import);
+                    models.with_loadouts(&mut self.loadouts)
+                },
                 frame_hook: None,
             },
         )
@@ -922,14 +938,17 @@ impl TuiSession {
             TuiSurface {
                 walk_cleared: &mut self.walk_reset,
                 map_desk: &mut self.map_desk,
-                models: frontend_core::Models::none()
-                    .with_scripts(&mut self.scripts)
-                    .with_import(&mut self.profile_import)
-                    .with_loadouts(&mut self.loadouts)
-                    .with_fleet(&mut app.fleet_model)
-                    .with_quester(&mut app.quester_paths_controller)
-                    .with_walk_globals(&mut app.walk_permissions)
-                    .with_form_save(&mut app.settings_save),
+                models: {
+                    let models = frontend_core::Models::none().with_scripts(&mut self.scripts);
+                    #[cfg(feature = "js")]
+                    let models = models.with_import(&mut self.profile_import);
+                    models
+                        .with_loadouts(&mut self.loadouts)
+                        .with_fleet(&mut app.fleet_model)
+                        .with_quester(&mut app.quester_paths_controller)
+                        .with_walk_globals(&mut app.walk_permissions)
+                        .with_form_save(&mut app.settings_save)
+                },
                 frame_hook: None,
             },
         )
@@ -988,14 +1007,17 @@ impl TuiSession {
             TuiSurface {
                 walk_cleared: &mut self.walk_reset,
                 map_desk: &mut self.map_desk,
-                models: frontend_core::Models::none()
-                    .with_scripts(&mut self.scripts)
-                    .with_import(&mut self.profile_import)
-                    .with_loadouts(&mut self.loadouts)
-                    .with_fleet(&mut app.fleet_model)
-                    .with_quester(&mut app.quester_paths_controller)
-                    .with_walk_globals(&mut app.walk_permissions)
-                    .with_editor(&mut self.profile_editor),
+                models: {
+                    let models = frontend_core::Models::none().with_scripts(&mut self.scripts);
+                    #[cfg(feature = "js")]
+                    let models = models.with_import(&mut self.profile_import);
+                    models
+                        .with_loadouts(&mut self.loadouts)
+                        .with_fleet(&mut app.fleet_model)
+                        .with_quester(&mut app.quester_paths_controller)
+                        .with_walk_globals(&mut app.walk_permissions)
+                        .with_editor(&mut self.profile_editor)
+                },
                 frame_hook: None,
             },
         )
@@ -1278,20 +1300,47 @@ impl TuiSession {
         let start_script = view.start_script().map(str::to_owned);
         let start_file = view.start_file().map(str::to_owned);
         let fleet_start = view.fleet_start();
+        #[cfg(feature = "js")]
         let inject_companion_as = view.inject_companion_as().map(str::to_owned);
-        let mut settings_inject = scenario.settings_inject();
+        let settings_inject = scenario.settings_inject();
+        #[cfg(feature = "js")]
+        let mut settings_inject = settings_inject;
+        #[cfg(feature = "js")]
         let fixture_loadouts = scenario.fixture_loadouts();
+        #[cfg(not(feature = "js"))]
+        if fleet_start.is_some() || start_file.is_some() {
+            return Err("live file/fleet starts require JavaScript support".into());
+        }
+        #[cfg(not(feature = "js"))]
+        if let Some(card_name) = start_script.as_deref() {
+            if CompiledCardId::lookup(card_name).is_none() {
+                return Err(format!(
+                    "live script {card_name} requires JavaScript support"
+                ));
+            }
+        }
+        #[cfg(feature = "js")]
         let live_core = self.core.resolve_live_core(
             &name,
             profile_count,
             self.live_catalog_core,
             self.live_pair_core,
         )?;
+        #[cfg(not(feature = "js"))]
+        {
+            self.core.resolve_live_core(
+                &name,
+                profile_count,
+                self.live_catalog_core,
+                self.live_pair_core,
+            )?;
+        }
         let profiles = frontend_core::live::LiveProfiles::mint(profile_count);
         let names = profiles.names();
         // The driven slot's bag names its companion, exactly as the panel
         // injects it; the companion's own bag is built by the Start plan.
         // A pair-core run builds both bags itself.
+        #[cfg(feature = "js")]
         if live_core != frontend_core::live::LiveCoreMode::Pair {
             if let Some(key) = inject_companion_as.as_deref() {
                 if names.len() > 1 {
@@ -1304,6 +1353,7 @@ impl TuiSession {
                 }
             }
         }
+        #[cfg(feature = "js")]
         let fleet_cards = scenario.fleet_cards(names)?;
         let path = profiles.tui_vault();
         self.unlock_at(&path, profiles.passphrase())?;
@@ -1330,89 +1380,31 @@ impl TuiSession {
             self.load_and_login(name);
         }
         self.focus(&names[0]);
-        if let Some(fleet) = fleet_start {
-            self.fill_rs2b0t_cards_for_live_start()?;
-            for card in fleet_cards {
-                self.scripts
-                    .transpile_blocking(CardSource::Catalog, card)
-                    .map_err(|error| error.to_string())?;
-            }
-            let plan = frontend_core::live::StartPlan::fleet_catalog(
-                &mut self.scripts,
-                fleet,
-                names,
-                &fixture_loadouts,
-            )?;
-            self.core.live_runner().stage(plan);
-        } else if let Some(file_name) = start_file {
-            let identity = self.scripts.load_live_example_identity(&file_name)?;
-            let choice = self
-                .scripts
-                .card(CardSource::File, &identity)
-                .ok_or_else(|| format!("file example {file_name} missing after identity load"))?
-                .choice();
-            self.script_sel = Some(choice);
-            let bag = self.pending_settings_bag(CardSource::File, &identity);
-            let selected = self
-                .script_sel
-                .as_ref()
-                .expect("live loaded-card selection is set");
-            self.core.live_runner().stage_loaded_card(
-                &mut self.scripts,
-                names,
-                selected,
-                bag,
-                inject_companion_as.as_deref(),
-                fixture_loadouts,
-            )?;
-        } else if let Some(card_name) = start_script {
-            if let Some(id) = CompiledCardId::lookup(&card_name) {
-                self.script_sel = Some(ScriptChoice::compiled(id));
-                let bag = self.scripts.compiled_bag(&self.core, &names[0], id)?;
-                self.core
-                    .live_runner()
-                    .stage(frontend_core::live::StartPlan::compiled(
-                        names[0].clone(),
-                        id,
-                        bag,
-                    ));
-            } else if let Some((fixture, stem)) = frontend_core::live::live_file_fixture(&card_name)
-            {
-                // The checked-in live file fixture (TradeBot): the panel
-                // loads it as a File card; the catalog has no such card,
-                // so the TUI must take the same branch instead of
-                // failing with `no card (Catalog, TradeBot)`.
-                self.scripts.stage_load_file(fixture);
-                let submitted = self
-                    .submit_raw(OperatorCommand::LoadScriptFile, Targets::Application)
-                    .map_err(|error| format!("load {card_name} fixture: {error}"))?;
-                if let Some(error) = self.core.command_failure(submitted.request()) {
-                    return Err(format!("load {card_name} fixture: {error}"));
-                }
-                if self.scripts.card(CardSource::File, &stem).is_none() {
-                    return Err(format!("file fixture {card_name} missing after load"));
-                }
-                self.script_sel = Some(ScriptChoice::loaded(CardSource::File, &stem));
-                let bag = self.pending_settings_bag(CardSource::File, &stem);
-                let selected = self
-                    .script_sel
-                    .as_ref()
-                    .expect("live loaded-card selection is set");
-                self.core.live_runner().stage_loaded_card(
-                    &mut self.scripts,
-                    names,
-                    selected,
-                    bag,
-                    inject_companion_as.as_deref(),
-                    fixture_loadouts,
-                )?;
-            } else {
+        #[cfg(feature = "js")]
+        {
+            if let Some(fleet) = fleet_start {
                 self.fill_rs2b0t_cards_for_live_start()?;
-                self.scripts
-                    .transpile_blocking(CardSource::Catalog, &card_name)
-                    .map_err(|error| error.to_string())?;
-                self.script_sel = Some(ScriptChoice::loaded(CardSource::Catalog, &card_name));
-                let bag = self.pending_settings_bag(CardSource::Catalog, &card_name);
+                for card in fleet_cards {
+                    self.scripts
+                        .transpile_blocking(CardSource::Catalog, card)
+                        .map_err(|error| error.to_string())?;
+                }
+                let plan = frontend_core::live::StartPlan::fleet_catalog(
+                    &mut self.scripts,
+                    fleet,
+                    names,
+                    &fixture_loadouts,
+                )?;
+                self.core.live_runner().stage(plan);
+            } else if let Some(file_name) = start_file {
+                let identity = self.scripts.load_live_example_identity(&file_name)?;
+                let choice = self
+                    .scripts
+                    .card(CardSource::File, &identity)
+                    .ok_or_else(|| format!("file example {file_name} missing after identity load"))?
+                    .choice();
+                self.script_sel = Some(choice);
+                let bag = self.pending_settings_bag(CardSource::File, &identity);
                 let selected = self
                     .script_sel
                     .as_ref()
@@ -1425,7 +1417,83 @@ impl TuiSession {
                     inject_companion_as.as_deref(),
                     fixture_loadouts,
                 )?;
+            } else if let Some(card_name) = start_script {
+                if let Some(id) = CompiledCardId::lookup(&card_name) {
+                    self.script_sel = Some(ScriptChoice::compiled(id));
+                    let bag = self.scripts.compiled_bag(&self.core, &names[0], id)?;
+                    self.core
+                        .live_runner()
+                        .stage(frontend_core::live::StartPlan::compiled(
+                            names[0].clone(),
+                            id,
+                            bag,
+                        ));
+                } else if let Some((fixture, stem)) =
+                    frontend_core::live::live_file_fixture(&card_name)
+                {
+                    // The checked-in live file fixture (TradeBot): the panel
+                    // loads it as a File card; the catalog has no such card,
+                    // so the TUI must take the same branch instead of
+                    // failing with `no card (Catalog, TradeBot)`.
+                    self.scripts.stage_load_file(fixture);
+                    let submitted = self
+                        .submit_raw(OperatorCommand::LoadScriptFile, Targets::Application)
+                        .map_err(|error| format!("load {card_name} fixture: {error}"))?;
+                    if let Some(error) = self.core.command_failure(submitted.request()) {
+                        return Err(format!("load {card_name} fixture: {error}"));
+                    }
+                    if self.scripts.card(CardSource::File, &stem).is_none() {
+                        return Err(format!("file fixture {card_name} missing after load"));
+                    }
+                    self.script_sel = Some(ScriptChoice::loaded(CardSource::File, &stem));
+                    let bag = self.pending_settings_bag(CardSource::File, &stem);
+                    let selected = self
+                        .script_sel
+                        .as_ref()
+                        .expect("live loaded-card selection is set");
+                    self.core.live_runner().stage_loaded_card(
+                        &mut self.scripts,
+                        names,
+                        selected,
+                        bag,
+                        inject_companion_as.as_deref(),
+                        fixture_loadouts,
+                    )?;
+                } else {
+                    self.fill_rs2b0t_cards_for_live_start()?;
+                    self.scripts
+                        .transpile_blocking(CardSource::Catalog, &card_name)
+                        .map_err(|error| error.to_string())?;
+                    self.script_sel = Some(ScriptChoice::loaded(CardSource::Catalog, &card_name));
+                    let bag = self.pending_settings_bag(CardSource::Catalog, &card_name);
+                    let selected = self
+                        .script_sel
+                        .as_ref()
+                        .expect("live loaded-card selection is set");
+                    self.core.live_runner().stage_loaded_card(
+                        &mut self.scripts,
+                        names,
+                        selected,
+                        bag,
+                        inject_companion_as.as_deref(),
+                        fixture_loadouts,
+                    )?;
+                }
             }
+        }
+        #[cfg(not(feature = "js"))]
+        if let Some(card_name) = start_script {
+            let id = CompiledCardId::lookup(&card_name)
+                .expect("no-JS live script was checked before starting");
+            self.script_sel = Some(ScriptChoice::compiled(id));
+            let bag = self.scripts.compiled_bag(&self.core, &names[0], id)?;
+            self.core
+                .live_runner()
+                .stage(frontend_core::live::StartPlan::compiled(
+                    names[0].clone(),
+                    id,
+                    bag,
+                ));
         }
         let live_started = Instant::now();
         self.live_core_deadline =
@@ -1798,6 +1866,7 @@ impl TuiSession {
         }
     }
 
+    #[cfg(feature = "js")]
     fn fill_rs2b0t_cards_for_live_start(&mut self) -> Result<(), String> {
         if self.scripts.catalog_filled() {
             return Ok(());
@@ -1822,6 +1891,7 @@ impl TuiSession {
     }
 
     /// Fill the JS library's cards from the known catalog root once.
+    #[cfg(feature = "js")]
     fn fill_rs2b0t_cards_once(&mut self, app: &mut TuiApp) {
         if self.scripts.catalog_filled() {
             return;
@@ -1841,6 +1911,7 @@ impl TuiSession {
 
     /// Opening Browse: fill from `$RS2B0T`/persisted root, or prompt for a
     /// clone root, or honour a prior defer (panel parity).
+    #[cfg(feature = "js")]
     fn on_script_browse_open(&mut self, app: &mut TuiApp) {
         if self.scripts.catalog_filled() {
             return;
@@ -1873,6 +1944,7 @@ impl TuiSession {
         app.catalog_sel = 0;
     }
 
+    #[cfg(feature = "js")]
     fn defer_rs2b0t_catalog(&mut self, app: &mut TuiApp) {
         self.scripts
             .stage_defer_catalog(frontend_core::scripts::paths::rs2b0t_import_file());
@@ -1889,6 +1961,7 @@ impl TuiSession {
 
     /// Run one step of the rs2b0t profile import on the shared flow, then
     /// show the result in the overlay.
+    #[cfg(feature = "js")]
     fn profile_import(&mut self, app: &mut TuiApp, action: ImportAction) {
         // Script names map through the catalog. If its first scan is still
         // running, hold this preview until the worker publishes the catalog.
@@ -2069,6 +2142,7 @@ impl TuiSession {
     /// Copy the import flow into its open overlay. A flow whose overlay was
     /// closed is dropped (with any parsed file and its passwords); a report
     /// follows its writes until they settle.
+    #[cfg(feature = "js")]
     fn project_profile_import(&mut self, app: &mut TuiApp) {
         match app.modal.as_ref() {
             Some(Modal::ProfileImport(view)) => {
@@ -2084,6 +2158,7 @@ impl TuiSession {
         }
     }
 
+    #[cfg(feature = "js")]
     fn show_profile_import(&self, app: &mut TuiApp) {
         let Some(Modal::ProfileImport(view)) = app.modal.as_mut() else {
             return;
@@ -2303,6 +2378,7 @@ impl TuiSession {
         self.queue_startup_focus(&pending);
     }
 
+    #[cfg(feature = "js")]
     fn import_rs2b0t_catalog(&mut self, app: &mut TuiApp, root: &Path) -> Result<(), String> {
         if !rs2b0t_root_has_index(root) {
             return Err(format!(
@@ -2328,6 +2404,7 @@ impl TuiSession {
     }
 
     /// The catalog root a Start may fill the catalog from (first use only).
+    #[cfg(feature = "js")]
     fn start_catalog_root(&self) -> Option<PathBuf> {
         if self.scripts.catalog_filled() {
             None
@@ -2364,6 +2441,7 @@ impl TuiSession {
             app.error = Some(error);
             return;
         }
+        #[cfg(feature = "js")]
         self.scripts
             .stage_start_catalog_root(self.start_catalog_root());
         if let Err(error) =
@@ -2373,6 +2451,7 @@ impl TuiSession {
             self.apply_script_notice(app);
             return;
         }
+        #[cfg(feature = "js")]
         self.scripts.show_load_failures();
 
         self.apply_script_notice(app);
@@ -2383,6 +2462,7 @@ impl TuiSession {
     /// pump.
     fn poll_scripts(&mut self, app: &mut TuiApp) {
         self.scripts.poll(&mut self.core);
+        #[cfg(feature = "js")]
         if let Some((root, result)) = self.scripts.take_catalog_import_update() {
             match result {
                 Ok(_) => {
@@ -2398,6 +2478,7 @@ impl TuiSession {
                 Err(error) => app.error = Some(error),
             }
         }
+        #[cfg(feature = "js")]
         if self.profile_import_preview_pending && !self.scripts.catalog_work_pending() {
             self.profile_import_preview_pending = false;
             if let Err(error) = self.submit_with(
@@ -2411,7 +2492,10 @@ impl TuiSession {
         }
         self.scripts.take_start_failures();
         self.apply_script_notice(app);
-        app.reload_confirm = self.scripts.reload_awaiting_confirm();
+        #[cfg(feature = "js")]
+        {
+            app.reload_confirm = self.scripts.reload_awaiting_confirm();
+        }
         // Follow an Apply-to-all report shown in the popup as its writes
         // settle (rewritten in place; nothing allocates while unchanged).
         if let (Some(shown), Some(report)) = (
@@ -2477,6 +2561,7 @@ impl TuiSession {
         if let Some(name) = target {
             self.core.stage_plan_target(name);
         }
+        #[cfg(feature = "js")]
         if matches!(
             action,
             frontend_core::FleetAction::Start
@@ -2575,7 +2660,10 @@ impl TuiSession {
             }
             Err(error) => app.error = Some(error),
         }
-        app.reload_confirm = self.scripts.reload_awaiting_confirm();
+        #[cfg(feature = "js")]
+        {
+            app.reload_confirm = self.scripts.reload_awaiting_confirm();
+        }
         self.apply_script_notice(app);
     }
 
@@ -2589,6 +2677,7 @@ impl TuiSession {
     }
 
     /// Reload the focused heading's card, or confirm a shown warning.
+    #[cfg(feature = "js")]
     fn script_reload(&mut self, app: &mut TuiApp) {
         let focused = app.focused_name();
         let target =
@@ -2607,6 +2696,7 @@ impl TuiSession {
         self.apply_script_notice(app);
     }
 
+    #[cfg(feature = "js")]
     fn script_reload_cancel(&mut self, app: &mut TuiApp) {
         if let Err(error) =
             self.submit_with(app, OperatorCommand::CancelReload, Targets::Application)
@@ -2617,6 +2707,7 @@ impl TuiSession {
         self.apply_script_notice(app);
     }
 
+    #[cfg(feature = "js")]
     fn loaded_params_card(&self, app: &TuiApp) -> Option<(CardSource, String, PathBuf)> {
         let choice = app.params_card()?;
         let (source, lookup) = choice.loaded_card()?;
@@ -2634,19 +2725,25 @@ impl TuiSession {
                 .scripts
                 .compiled_edit_bag(&self.core, Some(profile), id);
         }
-        let (source, name, path) = self
-            .loaded_params_card(app)
-            .ok_or("parameters unavailable")?;
-        Ok(self.scripts.merged_profile_bag(
-            &mut self.core,
-            profile,
-            source,
-            &name,
-            &path,
-            app.params_schema.as_ref(),
-        ))
+        #[cfg(feature = "js")]
+        {
+            let (source, name, path) = self
+                .loaded_params_card(app)
+                .ok_or("parameters unavailable")?;
+            Ok(self.scripts.merged_profile_bag(
+                &mut self.core,
+                profile,
+                source,
+                &name,
+                &path,
+                app.params_schema.as_ref(),
+            ))
+        }
+        #[cfg(not(feature = "js"))]
+        {
+            Err("parameters unavailable".into())
+        }
     }
-
     /// Open the params popup over the focused profile's bag for the card.
     fn open_params(&mut self, app: &mut TuiApp) {
         let Some(profile) = app.focused_name() else {
@@ -2942,6 +3039,7 @@ impl TuiSession {
 
     /// Load a local JS bot file into the library, select it for Start,
     /// and persist the store. Errors land on the strip.
+    #[cfg(feature = "js")]
     fn script_load(&mut self, app: &mut TuiApp, path: &Path) {
         self.scripts.stage_load_file(path.to_path_buf());
         match self.submit_with(app, OperatorCommand::LoadScriptFile, Targets::Application) {
@@ -3171,7 +3269,7 @@ impl TuiSession {
 
     /// Set the global pause policy before binding or arming a TUI live run
     /// (`SetNavPreference`).
-    #[cfg(test)]
+    #[cfg(all(test, feature = "js"))]
     fn set_pause_script_on_manual_walk_abort(&mut self, enabled: bool) -> Result<(), String> {
         let command = OperatorCommand::SetNavPreference(
             frontend_core::NavPreference::PauseScriptOnManualWalkAbort,
@@ -3372,6 +3470,7 @@ impl TuiSession {
         self.refresh_session_log_status(app);
         app.settings_state.preferences_pending = self.core.preferences_pending();
         self.poll_scripts(app);
+        #[cfg(feature = "js")]
         self.project_profile_import(app);
 
         // The strip is the fleet: a removed member leaves it at once (its
@@ -3448,6 +3547,7 @@ impl TuiSession {
             let heading = focused
                 .as_deref()
                 .and_then(|n| self.scripts.heading(&self.core, n));
+            #[cfg(feature = "js")]
             if heading.as_ref().is_some_and(|sel| {
                 sel.loaded_card()
                     .is_some_and(|(source, _)| source == CardSource::Catalog)
@@ -3518,25 +3618,34 @@ impl TuiSession {
         app.params_unavailable = None;
         match app.script_sel.as_ref() {
             Some(sel) => {
-                if let Some((source, name)) = sel.loaded_card() {
+                #[cfg(feature = "js")]
+                let loaded = if let Some((source, name)) = sel.loaded_card() {
                     if let Some(card) = self.scripts.card(source, name) {
                         app.params_schema.copy_from(card.schema());
                     } else {
                         app.params_schema.clear();
                         app.params_unavailable = Some("script parameters unavailable");
                     }
-                } else if let Some(id) = sel.compiled_id() {
-                    match self.scripts.compiled_schema(
-                        &self.core,
-                        app.focused_name().as_deref(),
-                        id,
-                    ) {
-                        frontend_core::scripts::SchemaView::Ready { fields, .. } => {
-                            app.params_schema.copy_from(fields);
-                        }
-                        frontend_core::scripts::SchemaView::Unavailable(reason) => {
-                            app.params_schema.clear();
-                            app.params_unavailable = Some(reason);
+                    true
+                } else {
+                    false
+                };
+                #[cfg(not(feature = "js"))]
+                let loaded = false;
+                if !loaded {
+                    if let Some(id) = sel.compiled_id() {
+                        match self.scripts.compiled_schema(
+                            &self.core,
+                            app.focused_name().as_deref(),
+                            id,
+                        ) {
+                            frontend_core::scripts::SchemaView::Ready { fields, .. } => {
+                                app.params_schema.copy_from(fields);
+                            }
+                            frontend_core::scripts::SchemaView::Unavailable(reason) => {
+                                app.params_schema.clear();
+                                app.params_unavailable = Some(reason);
+                            }
                         }
                     }
                 }
@@ -3547,12 +3656,15 @@ impl TuiSession {
             app.params_state.open = false;
         }
         self.refresh_params_errors(app);
-        app.rs2b0t_catalog_open = self.rs2b0t_catalog_open;
-        app.script_load_last_dir = self.script_load_last_dir.clone();
-        if !app.rs2b0t_catalog_open {
-            app.rs2b0t_catalog_dir = self.rs2b0t_catalog_dir.clone();
-        } else {
-            self.rs2b0t_catalog_dir.clone_from(&app.rs2b0t_catalog_dir);
+        #[cfg(feature = "js")]
+        {
+            app.rs2b0t_catalog_open = self.rs2b0t_catalog_open;
+            app.script_load_last_dir = self.script_load_last_dir.clone();
+            if !app.rs2b0t_catalog_open {
+                app.rs2b0t_catalog_dir = self.rs2b0t_catalog_dir.clone();
+            } else {
+                self.rs2b0t_catalog_dir.clone_from(&app.rs2b0t_catalog_dir);
+            }
         }
         // The map paints `Play`'s packed collision, not the live loc
         // snapshot. Copy the session world each pump (an `Arc` clone)
@@ -4669,18 +4781,23 @@ fn dispatch(session: &mut TuiSession, app: &mut TuiApp, action: AppAction) {
         AppAction::ScriptStart(sel) => session.script_start(app, &sel),
         AppAction::ScriptPause => session.script_toggle_pause(app),
         AppAction::ScriptStop => session.script_stop(app),
-        AppAction::ScriptBrowse => {
+        AppAction::ScriptBrowse =>
+        {
+            #[cfg(feature = "js")]
             if app.script_browse_open {
                 session.on_script_browse_open(app);
             }
         }
+        #[cfg(feature = "js")]
         AppAction::ScriptImportCatalog => {
             session.rs2b0t_catalog_open = true;
             session.rs2b0t_catalog_dir = app.rs2b0t_catalog_dir.clone();
             app.rs2b0t_catalog_open = true;
             app.catalog_sel = 0;
         }
+        #[cfg(feature = "js")]
         AppAction::ScriptDeferCatalog => session.defer_rs2b0t_catalog(app),
+        #[cfg(feature = "js")]
         AppAction::ScriptUseCatalog => {
             let root = app.rs2b0t_catalog_dir.clone();
             session.rs2b0t_catalog_dir = root.clone();
@@ -4695,6 +4812,7 @@ fn dispatch(session: &mut TuiSession, app: &mut TuiApp, action: AppAction) {
                 Err(error) => Some(error),
             };
         }
+        #[cfg(feature = "js")]
         AppAction::ScriptLoad(path) => session.script_load(app, &path),
         AppAction::ScriptParams => session.open_params(app),
         AppAction::PlanFleet(action) => session.plan_fleet_action(app, action, None),
@@ -4706,7 +4824,9 @@ fn dispatch(session: &mut TuiSession, app: &mut TuiApp, action: AppAction) {
         ),
         AppAction::RunFleetPlan(action) => session.run_fleet_plan(app, action),
         AppAction::CancelFleetPlan => session.cancel_fleet_plan(app),
+        #[cfg(feature = "js")]
         AppAction::ScriptReload => session.script_reload(app),
+        #[cfg(feature = "js")]
         AppAction::ScriptReloadCancel => session.script_reload_cancel(app),
         AppAction::ScriptSyncPrepare => session.prepare_settings_sync(app),
         AppAction::ScriptSyncApply => session.apply_settings_sync(app),
@@ -4720,8 +4840,11 @@ fn dispatch(session: &mut TuiSession, app: &mut TuiApp, action: AppAction) {
             }
         }
         AppAction::ScriptRestartSettings => {
-            let root = session.start_catalog_root();
-            session.scripts.stage_start_catalog_root(root);
+            #[cfg(feature = "js")]
+            {
+                let root = session.start_catalog_root();
+                session.scripts.stage_start_catalog_root(root);
+            }
             if let Err(error) = session.submit_with(
                 app,
                 OperatorCommand::RestartForSettings,
@@ -4772,6 +4895,7 @@ fn dispatch(session: &mut TuiSession, app: &mut TuiApp, action: AppAction) {
                 app.error = Some(error);
             }
         }
+        #[cfg(feature = "js")]
         AppAction::ProfileImport(action) => session.profile_import(app, action),
         AppAction::OpenNewProfile => session.open_new_profile(app),
         AppAction::NewProfileKey(key) => session.new_profile_key(app, key),

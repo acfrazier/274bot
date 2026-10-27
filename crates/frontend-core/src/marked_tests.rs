@@ -2,23 +2,34 @@
 //! [`host_play::Play`] (no server contact), real script slots and the real
 //! profile writer over a temp vault.
 
+#[cfg(feature = "js")]
 use std::path::PathBuf;
-use std::time::{Duration, Instant};
+#[cfg(feature = "js")]
+use std::time::Duration;
+use std::time::Instant;
 
 use host_play::{InstancePermit, Play, PlayOptions, SlotStatus};
 use vault::{Profile, ProfileSettings, Vault};
 
+#[cfg(feature = "js")]
 use super::{
-    assign_and_restart_marked, assign_marked, combined_bulk_scope, marked_availability,
-    prepare_apply_settings_marked, restart_scope, BulkScope, MarkedAction, MarkedBlock,
-    RestartScope,
+    assign_and_restart_marked, assign_marked, prepare_apply_settings_marked, restart_scope,
 };
-use crate::scripts::{CardSource, ScriptChoice, ScriptRunState, ScriptStartErrorKind, Scripts};
-use crate::selection::{marked_startable, start_marked, MarkedSelection, ProfileIdentity};
+use super::{
+    combined_bulk_scope, marked_availability, BulkScope, MarkedAction, MarkedBlock, RestartScope,
+};
+#[cfg(feature = "js")]
+use crate::scripts::ScriptStartErrorKind;
+use crate::scripts::{CardSource, ScriptChoice, ScriptRunState, Scripts};
+#[cfg(feature = "js")]
+use crate::selection::start_marked;
+use crate::selection::{marked_startable, MarkedSelection, ProfileIdentity};
 use crate::session::OperatorSession;
 use crate::surface::HeadlessSurface;
 
+#[cfg(feature = "js")]
 const LOOPING: &str = "export default class T extends LoopingBot { override loop() {} }\n";
+#[cfg(feature = "js")]
 const THIEVER: &str = "export const SETTINGS = { target: { type: 'string', default: 'Guard' } };\nexport default class T extends LoopingBot { override loop() {} }\n";
 
 /// Hang guard for every wait in this file, never a pass condition and never a
@@ -28,11 +39,13 @@ const THIEVER: &str = "export const SETTINGS = { target: { type: 'string', defau
 /// worker with every other test in this binary, so a wait on a loaded host
 /// queues behind all of them. The guard only stops a deadlocked test and is
 /// minutes, not the expected duration.
+#[cfg(feature = "js")]
 const HANG_GUARD: Duration = Duration::from_secs(600);
 
 struct Fixture {
     core: OperatorSession<()>,
     scripts: Scripts,
+    #[cfg(feature = "js")]
     dir: PathBuf,
     surface: HeadlessSurface<fn(&str)>,
     _iso: script::IsolatedEnv,
@@ -76,13 +89,17 @@ fn fixture(test: &str, profiles: &[&str], loaded: usize) -> Fixture {
     for name in &profiles[..loaded] {
         core.load(name, &mut surface);
     }
+    #[cfg(feature = "js")]
     let scripts = Scripts::new(
         script_js::JsLibrary::with_cache(dir.join("js-scripts.json"), dir.join("js-cache")),
         script::ScriptSettingsStore::at(dir.join("script-settings.json")),
     );
+    #[cfg(not(feature = "js"))]
+    let scripts = Scripts::new();
     Fixture {
         core,
         scripts,
+        #[cfg(feature = "js")]
         dir,
         surface,
         _iso: iso,
@@ -90,10 +107,12 @@ fn fixture(test: &str, profiles: &[&str], loaded: usize) -> Fixture {
 }
 
 impl Fixture {
+    #[cfg(feature = "js")]
     fn card(&mut self, file: &str) -> (script_js::JsCard, ScriptChoice) {
         self.card_src(file, LOOPING)
     }
 
+    #[cfg(feature = "js")]
     fn card_src(&mut self, file: &str, src: &str) -> (script_js::JsCard, ScriptChoice) {
         let path = self.dir.join(file);
         std::fs::write(&path, src).unwrap();
@@ -103,6 +122,7 @@ impl Fixture {
         (card, sel)
     }
 
+    #[cfg(feature = "js")]
     fn assign(&mut self, name: &str, card: &script_js::JsCard) {
         assert!(self
             .scripts
@@ -110,6 +130,16 @@ impl Fixture {
         self.core.flush_writes();
     }
 
+    #[cfg(not(feature = "js"))]
+    fn assign_compiled(&mut self, name: &str, id: script::CompiledId) {
+        assert!(self.scripts.persist_assignment(
+            &mut self.core,
+            name,
+            script::compiled_assignment(id)
+        ));
+        self.core.flush_writes();
+    }
+    #[cfg(feature = "js")]
     fn pump(&mut self) {
         self.core.poll();
         self.scripts.poll(&mut self.core);
@@ -121,6 +151,7 @@ impl Fixture {
     /// Pump the core and the coordinator until `done` holds. The pass condition
     /// is the product's own settlement signal; the only time bound is
     /// `HANG_GUARD`.
+    #[cfg(feature = "js")]
     fn until(&mut self, what: &str, mut done: impl FnMut(&Self) -> bool) {
         let guard = Instant::now() + HANG_GUARD;
         while !done(self) {
@@ -132,6 +163,7 @@ impl Fixture {
 
     /// Pump until the slot reaches `want`. A slot that ends in `Error` when
     /// another state was wanted has failed, which fails the test now.
+    #[cfg(feature = "js")]
     fn until_state(&mut self, name: &str, want: ScriptRunState) {
         self.until(name, |f| {
             let state = f.state(name);
@@ -143,10 +175,12 @@ impl Fixture {
         });
     }
 
+    #[cfg(feature = "js")]
     fn state(&self, name: &str) -> ScriptRunState {
         ScriptRunState::from_script(self.core.play().unwrap().script_state(name))
     }
 
+    #[cfg(feature = "js")]
     fn start_running(&mut self, name: &str) {
         self.scripts
             .start_profile(&mut self.core, name, None)
@@ -155,6 +189,7 @@ impl Fixture {
         self.until_state(name, ScriptRunState::Running);
     }
 
+    #[cfg(feature = "js")]
     fn generation(&self, name: &str) -> u64 {
         self.core
             .play()
@@ -163,10 +198,12 @@ impl Fixture {
             .unwrap()
     }
 
+    #[cfg(feature = "js")]
     fn assignment_key(&self, name: &str) -> Option<String> {
         Scripts::assignment(&self.core, name).map(|a| a.key())
     }
 
+    #[cfg(feature = "js")]
     fn run_has_bag(&self, name: &str, bag: &serde_json::Map<String, serde_json::Value>) -> bool {
         let play = self.core.play().unwrap();
         let identity = play.script_source_identity(name).unwrap();
@@ -174,6 +211,7 @@ impl Fixture {
     }
 }
 
+#[cfg(feature = "js")]
 fn marks(uids: &[i32]) -> MarkedSelection {
     let mut selection = MarkedSelection::default();
     selection.mark_all(uids.iter().copied().map(ProfileIdentity::uid));
@@ -183,6 +221,7 @@ fn marks(uids: &[i32]) -> MarkedSelection {
 /// Assign saves the card on idle marked bots and nothing else: an active bot
 /// keeps running its card, an unmarked bot is untouched, and a mark whose
 /// profile is gone is named.
+#[cfg(feature = "js")]
 #[test]
 fn assign_saves_the_card_on_idle_marked_bots_and_skips_active_ones() {
     let mut f = fixture("assign", &["alice", "bob", "carol"], 3);
@@ -239,6 +278,7 @@ fn assign_saves_the_card_on_idle_marked_bots_and_skips_active_ones() {
 
 /// A card that cannot start is refused once for every marked bot, and
 /// nothing is saved.
+#[cfg(feature = "js")]
 #[test]
 fn assign_of_a_missing_card_fails_every_marked_bot_and_saves_nothing() {
     let mut f = fixture("assign-missing", &["alice", "bob"], 2);
@@ -256,6 +296,7 @@ fn assign_of_a_missing_card_fails_every_marked_bot_and_saves_nothing() {
 /// Assign & restart stops the active bots, then starts the new card on each
 /// marked bot through the paced permit: the run is a new one on the new card,
 /// no bot is counted twice and none fails for the stop still in flight.
+#[cfg(feature = "js")]
 #[test]
 fn assign_and_restart_replaces_running_cards_and_starts_idle_ones() {
     let mut f = fixture("restart", &["alice", "bob", "carol", "dave"], 3);
@@ -296,6 +337,7 @@ fn assign_and_restart_replaces_running_cards_and_starts_idle_ones() {
 }
 
 /// A Logout while a restart still waits for the stop drops the restart.
+#[cfg(feature = "js")]
 #[test]
 fn logout_while_a_restart_waits_for_the_stop_cancels_it() {
     let mut f = fixture("restart-logout", &["alice"], 1);
@@ -508,6 +550,7 @@ fn marked_logout_cancels_a_memory_relog_login_half() {
 /// Apply the focused bot's card settings to the marked bots only: an
 /// unmarked same-card bot keeps its own and is only counted, and every
 /// marked bot that cannot take the copy is named with its reason.
+#[cfg(feature = "js")]
 #[test]
 fn apply_settings_to_marked_copies_only_to_marked_same_card_members() {
     let names = ["alice", "bob", "carol", "dave", "erin", "frank"];
@@ -591,6 +634,7 @@ fn apply_settings_to_marked_copies_only_to_marked_same_card_members() {
 
 /// A mark set with nothing to copy to is refused with the reason for each
 /// marked row, and leaves nothing prepared to apply.
+#[cfg(feature = "js")]
 #[test]
 fn apply_settings_to_marked_refuses_when_no_marked_bot_can_take_it() {
     let mut f = fixture("apply-marked-refuse", &["alice", "bob", "carol"], 3);
@@ -631,6 +675,7 @@ fn apply_settings_to_marked_refuses_when_no_marked_bot_can_take_it() {
 /// byte-identical and the source profile stays unclaimed, while the frozen
 /// bag still carries what the first read would have migrated. Confirming
 /// copies that bag to the marked target and still leaves the source alone.
+#[cfg(feature = "js")]
 #[test]
 fn apply_settings_to_marked_prepare_and_cancel_write_nothing() {
     let mut f = fixture("apply-marked-readonly", &["alice", "bob"], 2);
@@ -698,6 +743,7 @@ fn apply_settings_to_marked_prepare_and_cancel_write_nothing() {
 /// The Fleet window's progress columns read the host: a started run reports
 /// its runtime, a stopped or never-started slot reports none, and a new Start
 /// begins a new run.
+#[cfg(feature = "js")]
 #[test]
 fn a_started_run_reports_progress_and_a_stopped_one_does_not() {
     let mut f = fixture("progress", &["alice"], 1);
@@ -727,6 +773,7 @@ fn a_started_run_reports_progress_and_a_stopped_one_does_not() {
 /// Apply to marked is the only settings shortcut that treats an unassigned
 /// bot as a target. The confirmation names the assignment; unmarked
 /// unassigned wall members stay unassigned.
+#[cfg(feature = "js")]
 #[test]
 fn apply_to_marked_assigns_unassigned_and_says_so() {
     let mut f = fixture("apply-marked-assign", &["alice", "bob", "carol", "dave"], 4);
@@ -800,6 +847,7 @@ fn apply_to_marked_assigns_unassigned_and_says_so() {
 /// a pending copy confirm, ordinary Start, then Apply and Start. Start is
 /// blocked until Apply or Cancel; after Apply it runs the copied Knight
 /// bag, not the card default.
+#[cfg(feature = "js")]
 #[test]
 fn operator_apply_assign_start_does_not_start_on_defaults() {
     let mut f = fixture("operator-apply", &["alice", "bob", "carol"], 3);
@@ -1024,6 +1072,7 @@ fn restart_scope_prompt_bounds_each_list_and_counts_the_rest() {
     );
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn marked_startable_follows_card_then_saved_assignment() {
     let mut f = fixture("startable", &["alice", "bob"], 2);
@@ -1046,6 +1095,33 @@ fn marked_startable_follows_card_then_saved_assignment() {
     );
     assert!(
         !marked_startable(&MarkedSelection::default(), &f.core, Some(&sel)),
+        "nothing marked starts nothing"
+    );
+}
+
+#[cfg(not(feature = "js"))]
+#[test]
+fn marked_native_startable_follows_loaded_choice_then_compiled_assignment() {
+    let mut f = fixture("startable", &["alice", "bob"], 2);
+    let loaded = ScriptChoice::loaded(CardSource::File, "looper.ts");
+    let mut marks = MarkedSelection::default();
+    marks.set(ProfileIdentity::uid(1), true);
+    marks.set(ProfileIdentity::uid(2), true);
+    assert!(
+        marked_startable(&marks, &f.core, Some(&loaded)),
+        "a card starts any mark"
+    );
+    assert!(
+        !marked_startable(&marks, &f.core, None),
+        "no card and no saved assignment starts nothing"
+    );
+    f.assign_compiled("bob", script::CompiledId("Gatherer"));
+    assert!(
+        marked_startable(&marks, &f.core, None),
+        "one marked saved assignment is enough"
+    );
+    assert!(
+        !marked_startable(&MarkedSelection::default(), &f.core, Some(&loaded)),
         "nothing marked starts nothing"
     );
 }

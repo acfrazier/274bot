@@ -5983,6 +5983,10 @@
       "owner": "T1"
     },
     {
+      "path": "tools/architecture/native_dependencies.py",
+      "owner": "T1"
+    },
+    {
       "path": "tools/architecture/nav_clippy.py",
       "owner": "T1"
     },

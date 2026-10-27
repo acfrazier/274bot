@@ -2197,6 +2197,7 @@ impl InspectNav {
         Some(revision)
     }
 }
+#[cfg(feature = "js")]
 #[derive(Clone, Default)]
 pub(crate) struct PostedInspect {
     pub(super) latest: Option<InspectTerminal>,
@@ -2364,6 +2365,7 @@ impl InspectNav {
         }
     }
 
+    #[cfg(feature = "js")]
     pub(super) fn posted(&self) -> PostedInspect {
         PostedInspect {
             latest: self.latest.clone(),
@@ -3479,11 +3481,12 @@ fn op_at_obj(ops: &[Option<String>; 5], option: i32) -> String {
     op_at(ops.as_slice(), option)
 }
 
+#[cfg(feature = "js")]
 pub(super) fn terminal_to_input<'a>(
     term: &'a InspectTerminal,
-    hops: &'a [script_js::wire::InspectHopInput<'a>],
-) -> script_js::wire::RouteInspectTerminalInput<'a> {
-    script_js::wire::RouteInspectTerminalInput {
+    hops: &'a [script::native::snapshot_source::InspectHopInput<'a>],
+) -> script::native::snapshot_source::RouteInspectTerminalInput<'a> {
+    script::native::snapshot_source::RouteInspectTerminalInput {
         seq: term.seq,
         generation: term.generation,
         request_id: term.request_id,
@@ -3495,9 +3498,12 @@ pub(super) fn terminal_to_input<'a>(
     }
 }
 
-pub(super) fn hop_inputs(hops: &InspectHops) -> Vec<script_js::wire::InspectHopInput<'_>> {
+#[cfg(feature = "js")]
+pub(super) fn hop_inputs(
+    hops: &InspectHops,
+) -> Vec<script::native::snapshot_source::InspectHopInput<'_>> {
     hops.iter()
-        .map(|hop| script_js::wire::InspectHopInput {
+        .map(|hop| script::native::snapshot_source::InspectHopInput {
             kind: hop.kind,
             loc_id: hop.loc_id,
             loc_name: hop.loc_name,

@@ -267,7 +267,10 @@ pub(crate) fn start_marked<Io>(
             );
             continue;
         };
-        if scripts.start_queue_place(name).is_some() || scripts.has_start_preparation(name) {
+        let waiting = scripts.start_queue_place(name).is_some();
+        #[cfg(feature = "js")]
+        let waiting = waiting || scripts.has_start_preparation(name);
+        if waiting {
             accepted.push(name.clone());
             continue;
         }

@@ -9,18 +9,24 @@ use std::time::{Duration, Instant};
 use serde_json::{Map, Value};
 
 use crate::catalog_core::CoreWatch;
-use crate::paired_core::{pair_settings, PairCase, PairWatch, StartBarrier};
+#[cfg(feature = "js")]
+use crate::paired_core::{pair_settings, PairCase};
+use crate::paired_core::{PairWatch, StartBarrier};
 use crate::ScriptStartHandle;
 
-/// One isolate Start the live prepare stashes for the StartScript pump.
-/// Fleet runs stash one entry per started slot.
+/// One stashed script Start for the live prepare/StartScript pump.
+/// Compiled cards and JS builds' loaded cards share the same lifecycle.
 #[derive(Clone)]
 pub struct PendingCatalogStart {
     pub slot: String,
+    #[cfg(feature = "js")]
     pub js: String,
+    #[cfg(feature = "js")]
     pub shape: script_js::LoadShape,
     pub bag: Option<Map<String, Value>>,
+    #[cfg(feature = "js")]
     pub siblings: Vec<(String, String)>,
+    #[cfg(feature = "js")]
     /// Scenario-owned loadouts for harness Start; empty uses operator store.
     pub loadouts: Vec<api::loadout::Loadout>,
     /// Compiled registry card; when set, Start uses `start_compiled`.
@@ -37,6 +43,7 @@ pub struct PendingCatalogStart {
 }
 
 impl PendingCatalogStart {
+    #[cfg(feature = "js")]
     /// A loaded JS card (catalog, File or fixture) not yet started.
     pub fn load(
         slot: impl Into<String>,
@@ -77,10 +84,14 @@ impl PendingCatalogStart {
     ) -> Self {
         Self {
             slot: slot.into(),
+            #[cfg(feature = "js")]
             js: String::new(),
+            #[cfg(feature = "js")]
             shape: script_js::LoadShape::Reject,
             bag: Some(bag),
+            #[cfg(feature = "js")]
             siblings: Vec::new(),
+            #[cfg(feature = "js")]
             loadouts: Vec::new(),
             compiled: Some(id),
             started: false,
@@ -121,6 +132,7 @@ impl PendingCatalogStart {
     }
 }
 
+#[cfg(feature = "js")]
 /// The same-folder sibling modules a card's isolate resolves at Start.
 pub fn card_siblings(
     library: &script_js::JsLibrary,
@@ -145,7 +157,7 @@ pub fn card_siblings(
 /// `settings` overrides, `inject`) with the member's own settings last,
 /// plus sibling modules and fixture `loadouts`, in the plan's Start order.
 /// The live harness Starts a card past its catalog dim.
-#[cfg(feature = "live-harness")]
+#[cfg(all(feature = "js", feature = "live-harness"))]
 pub fn fleet_catalog_starts(
     fleet: scenario::FleetStart,
     names: &[String],
@@ -203,6 +215,7 @@ fn start_stashed_catalog_card(
     before_start: impl FnOnce() -> Result<(), String>,
 ) -> Result<(), script::StartLoadError> {
     use crate::play_scripts::StartRequest;
+    #[cfg(feature = "js")]
     let request = || {
         if let Some(id) = card.compiled {
             StartRequest::Compiled {
@@ -219,7 +232,21 @@ fn start_stashed_catalog_card(
             }
         }
     };
+    #[cfg(not(feature = "js"))]
+    let Some(id) = card.compiled
+    else {
+        return Err(
+            script::surface::SurfaceError::NoFactory(script::surface::SurfaceKind::Js).into(),
+        );
+    };
+    #[cfg(not(feature = "js"))]
+    let request = || StartRequest::Compiled {
+        id,
+        bag: card.bag.clone().unwrap_or_default(),
+        _lifetime: std::marker::PhantomData,
+    };
     let result = handle.dispatch_start(&card.slot, request, before_start);
+    #[cfg(feature = "js")]
     if result.is_ok() && crate::debug_enabled() {
         let fixture_names = card
             .loadouts
@@ -446,6 +473,7 @@ fn settle_started_catalog_cards(
     settle_pump
 }
 
+#[cfg(feature = "js")]
 /// Both slots of a paired proof with complementary role bags. The same bags
 /// go through the pair watch so its receipt reports the settings the
 /// isolates actually started with.

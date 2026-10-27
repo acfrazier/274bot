@@ -6,19 +6,26 @@ use std::num::NonZeroU64;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
+#[cfg(feature = "js")]
+use super::CatalogError;
+#[cfg(feature = "js")]
+use super::{parse_parameter_text, CardSource, SchemaRef};
 use super::{
-    parse_parameter_text, CardRuntime, CardSource, CatalogError, CompiledCardId, Notice,
-    ParameterCommit, ParameterEditKey, SchemaRef, ScriptChoice, ScriptRunState,
-    ScriptStartErrorKind, Scripts, SettingView,
+    CardRuntime, CompiledCardId, Notice, ParameterCommit, ParameterEditKey, ScriptChoice,
+    ScriptRunState, ScriptStartErrorKind, Scripts, SettingView,
 };
+#[cfg(feature = "js")]
+use crate::command::Pending;
 use crate::command::{
-    CardKind, CommandBook, CommandFailure, Completion, OperatorCommand, Pending, Stage, Subject,
+    CardKind, CommandBook, CommandFailure, Completion, OperatorCommand, Stage, Subject,
 };
 use crate::marked::prepare_apply_settings_marked;
 use crate::operations::{ActionKind, Outcome};
 use crate::selection::{start_marked, stop_marked, MarkedSelection, ProfileIdentity};
 use crate::session::OperatorSession;
-use crate::surface::{HeadlessSurface, SlotAttach, SlotSurface, SpawnProfile};
+use crate::surface::HeadlessSurface;
+#[cfg(feature = "js")]
+use crate::surface::{SlotAttach, SlotSurface, SpawnProfile};
 use api::identity::{ProcessIncarnation, ProcessTime, RequestIdMinter, Scope, Settlement};
 use api::process_condition::{
     ConditionCause, ConditionId, ProcessCapability, ProcessConditions, ProcessServiceCode,
@@ -28,6 +35,7 @@ use host_play::{InstancePermit, Play, PlayOptions};
 use serde_json::{json, Map, Value};
 
 use vault::{Profile, ProfileSettings, Vault};
+#[cfg(feature = "js")]
 const LOOPING: &str = "export default class T extends LoopingBot { override loop() {} }\n";
 
 #[test]
@@ -57,6 +65,56 @@ fn surface_start_errors_keep_runtime_and_refusal_classification() {
         let converted = super::ScriptStartError::from(error);
         assert_eq!(converted.kind(), expected);
         assert_eq!(converted.message, diagnostic);
+    }
+}
+
+#[cfg(not(feature = "js"))]
+#[test]
+fn saved_loaded_assignments_keep_their_identity_without_a_js_factory() {
+    for (source_kind, source, identity) in [
+        ("catalog", script::ScriptSource::Catalog, "SavedCatalogCard"),
+        ("file", script::ScriptSource::File, "saved-script.js"),
+    ] {
+        let mut f = fixture("saved-loaded-no-js", &["alice"]);
+        let assignment = vault::ScriptAssignment {
+            source_kind: source_kind.into(),
+            identity: identity.into(),
+            display_name: "Saved script".into(),
+            unavailable: None,
+        };
+        let saved = serde_json::to_string(&assignment).unwrap();
+        let restored: vault::ScriptAssignment = serde_json::from_str(&saved).unwrap();
+        assert_eq!(restored, assignment);
+        assert!(super::assignment_has_sel(&restored));
+        let selection = super::sel_from_assignment(&restored).expect("saved selection parses");
+        assert_eq!(
+            selection,
+            script::ScriptSel::Loaded(source, identity.into())
+        );
+        assert!(f
+            .scripts
+            .persist_assignment(&mut f.core, "alice", restored.clone()));
+        f.core.flush_writes();
+        let error = f
+            .scripts
+            .start_sel(
+                &mut f.core,
+                "alice",
+                &selection,
+                None,
+                super::StartKind::Start,
+                false,
+            )
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            script::StartLoadError::Surface(script::surface::SurfaceError::NoFactory(
+                script::surface::SurfaceKind::Js
+            ))
+        ));
+        assert_eq!(f.state("alice"), ScriptRunState::Idle);
+        assert!(!f.scripts.starts_pending());
+        assert_eq!(Scripts::assignment(&f.core, "alice"), Some(restored));
     }
 }
 
@@ -96,6 +154,7 @@ fn empty_play() -> Play {
 
 /// Members loaded (arms attached, no worker threads) from a fresh vault.
 fn fixture(test: &str, members: &[&str]) -> Fixture {
+    #[cfg(feature = "js")]
     crate::test_support::scripts::install_catalog_cards();
     let iso = script::IsolatedEnv::enter(&format!("frontend-core-scripts-{test}"));
     let dir = iso.dir.clone();
@@ -117,10 +176,13 @@ fn fixture(test: &str, members: &[&str]) -> Fixture {
     for name in members {
         core.load(name, &mut surface);
     }
+    #[cfg(feature = "js")]
     let scripts = Scripts::new(
         script_js::JsLibrary::with_cache(dir.join("js-scripts.json"), dir.join("js-cache")),
         script::ScriptSettingsStore::at(dir.join("script-settings.json")),
     );
+    #[cfg(not(feature = "js"))]
+    let scripts = Scripts::new();
     Fixture {
         core,
         scripts,
@@ -129,8 +191,10 @@ fn fixture(test: &str, members: &[&str]) -> Fixture {
     }
 }
 
+#[cfg(feature = "js")]
 struct ScriptSurface<'a>(&'a mut Scripts);
 
+#[cfg(feature = "js")]
 impl SlotSurface for ScriptSurface<'_> {
     type Io = ();
 
@@ -153,22 +217,35 @@ impl SlotSurface for ScriptSurface<'_> {
 }
 
 impl Fixture {
+    #[cfg(feature = "js")]
     fn submit(&mut self, command: OperatorCommand, targets: crate::session::Targets<'_>) {
         self.core
             .submit(command, targets, &mut ScriptSurface(&mut self.scripts))
             .unwrap();
     }
 
+    #[cfg(feature = "js")]
     fn card(&mut self, file: &str, src: &str) -> script_js::JsCard {
         let path = self.dir.join(file);
         std::fs::write(&path, src).unwrap();
         self.scripts.js_mut().load(&path).unwrap()
     }
 
+    #[cfg(feature = "js")]
     fn assign(&mut self, name: &str, card: &script_js::JsCard) {
         assert!(self
             .scripts
             .persist_assignment(&mut self.core, name, card.assignment()));
+        self.core.flush_writes();
+    }
+
+    #[cfg(not(feature = "js"))]
+    fn assign_compiled(&mut self, name: &str, id: script::CompiledId) {
+        assert!(self.scripts.persist_assignment(
+            &mut self.core,
+            name,
+            script::compiled_assignment(id),
+        ));
         self.core.flush_writes();
     }
 
@@ -192,6 +269,7 @@ impl Fixture {
         });
     }
 
+    #[cfg(feature = "js")]
     fn settle_catalog_work(&mut self) {
         self.pump_until("catalog work did not settle", |f| {
             !f.scripts.catalog_work_pending()
@@ -241,6 +319,7 @@ impl Fixture {
             .cloned()
     }
 
+    #[cfg(feature = "js")]
     fn set(&mut self, name: &str, card: &script_js::JsCard, id: &str, value: Value) {
         self.scripts
             .set_profile_setting(
@@ -255,6 +334,7 @@ impl Fixture {
             .unwrap();
     }
 
+    #[cfg(feature = "js")]
     fn prepare(&mut self, source: &str, card: &script_js::JsCard) {
         self.scripts.prepare_settings_sync(
             &self.core,
@@ -346,6 +426,7 @@ fn newer_native_edit_keeps_the_copy_drafts_assignment() {
     );
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn parameter_text_is_deferred_until_commit_and_unchanged_is_a_noop() {
     let mut f = fixture("parameter-text-commit", &["alice"]);
@@ -533,6 +614,7 @@ fn parameter_text_is_deferred_until_commit_and_unchanged_is_a_noop() {
     assert_eq!(f.core.last_operation().map(|report| report.id()), Some(op));
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn failed_parameter_save_releases_start_and_allows_the_same_value_to_retry() {
     let mut f = fixture("parameter-save-retry", &["alice"]);
@@ -595,6 +677,7 @@ fn failed_parameter_save_releases_start_and_allows_the_same_value_to_retry() {
     f.start_running("alice");
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn typed_parameter_save_failure_restores_saved_text_and_exposes_error() {
     let mut f = fixture("typed-parameter-save-failure", &["alice"]);
@@ -644,6 +727,7 @@ fn typed_parameter_save_failure_restores_saved_text_and_exposes_error() {
     assert!(!f.scripts.parameter_edit_blocks_start("alice"));
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn cancelled_parameter_save_restores_durable_text_and_releases_start() {
     let mut f = fixture("parameter-save-cancelled", &["alice"]);
@@ -705,6 +789,7 @@ fn cancelled_parameter_save_restores_durable_text_and_releases_start() {
     f.start_running("alice");
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn typed_parameter_commands_hold_start_until_durable_and_log_each_saved_change() {
     let mut f = fixture("parameter-typed-command", &["prefs-script-save"]);
@@ -784,6 +869,7 @@ fn typed_parameter_commands_hold_start_until_durable_and_log_each_saved_change()
     }));
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn combined_profile_setting_writes_log_the_durable_transition() {
     let name = "settings-log-coalesced-alice";
@@ -823,6 +909,7 @@ fn combined_profile_setting_writes_log_the_durable_transition() {
     assert_ne!(superseded, final_write);
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn legacy_parameter_save_logs_card_field_and_both_values() {
     let mut f = fixture("legacy-parameter-log", &["alice"]);
@@ -863,6 +950,7 @@ fn legacy_parameter_save_logs_card_field_and_both_values() {
         .any(|row| { row.level() == api::hostlog::Level::Info && row.message() == expected }));
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn discard_recovers_hidden_card_drafts_without_cancelling_an_accepted_save() {
     let mut f = fixture("parameter-hidden-discard", &["alice", "bob"]);
@@ -1092,22 +1180,25 @@ fn bag(pairs: &[(&str, Value)]) -> Map<String, Value> {
 
 #[test]
 fn browse_card_list_includes_compiled_cards() {
-    let f = fixture("compiled-card-list", &["alice"]);
-    assert!(
-        script::compiled_id("Sherlock").is_some(),
-        "canonical Sherlock card is installed for Browse"
-    );
+    let f = native_fixture("compiled-card-list", &["alice"]);
     let cards: Vec<_> = f.scripts.browse_cards().collect();
-    let sherlock = cards
-        .iter()
-        .find(|card| card.name() == "Sherlock")
-        .expect("compiled Sherlock is available to Browse when registered");
-    assert_eq!(sherlock.kind(), CardRuntime::Compiled);
-    assert_eq!(sherlock.category(), "Treasure Trails");
-    assert_eq!(
-        sherlock.selection(),
-        ScriptChoice::from_script(script::ScriptSel::Compiled(script::CompiledId("Sherlock")))
-    );
+    #[cfg(feature = "js")]
+    {
+        assert!(
+            script::compiled_id("Sherlock").is_some(),
+            "canonical Sherlock card is installed for Browse"
+        );
+        let sherlock = cards
+            .iter()
+            .find(|card| card.name() == "Sherlock")
+            .expect("compiled Sherlock is available to Browse when registered");
+        assert_eq!(sherlock.kind(), CardRuntime::Compiled);
+        assert_eq!(sherlock.category(), "Treasure Trails");
+        assert_eq!(
+            sherlock.selection(),
+            ScriptChoice::from_script(script::ScriptSel::Compiled(script::CompiledId("Sherlock")))
+        );
+    }
     let grinch = cards
         .iter()
         .find(|card| card.name() == "Grinch")
@@ -1291,6 +1382,7 @@ fn grinch_mask_ids_survive_the_shared_panel_tui_settings_editor_path() {
     assert_eq!(config.ids.as_ref(), &[1053, 1055, 1057]);
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn merged_profile_bag_carries_profile_global_clue_partner() {
     let mut f = fixture("clue-global", &["alice"]);
@@ -1328,6 +1420,7 @@ fn merged_profile_bag_carries_profile_global_clue_partner() {
     );
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn apply_to_all_reaches_same_card_members_and_skips_other_cards() {
     let mut f = fixture("sync", &["alice", "bob", "carol", "dave"]);
@@ -1382,6 +1475,7 @@ fn apply_to_all_reaches_same_card_members_and_skips_other_cards() {
     let summary = report.summary().to_string();
     assert_eq!(f.scripts.take_notice(), Some(Notice::show(summary)));
 }
+#[cfg(feature = "js")]
 #[test]
 fn apply_to_all_logs_each_profile_settings_write() {
     let mut f = fixture("sync-profile-settings-log", &["alice", "bob", "dave"]);
@@ -1429,6 +1523,7 @@ fn apply_to_all_logs_each_profile_settings_write() {
 
 /// Wall-wide Apply to all copies same-card members only: unassigned members
 /// are skipped and not assigned.
+#[cfg(feature = "js")]
 #[test]
 fn apply_to_all_skips_unassigned_members() {
     let mut f = fixture("sync-unassigned-skip", &["alice", "bob", "carol"]);
@@ -1467,6 +1562,7 @@ fn apply_to_all_skips_unassigned_members() {
 
 /// Focused Start and per-profile Start refuse while a copy confirm is waiting,
 /// the same as Fleet Start / Start all.
+#[cfg(feature = "js")]
 #[test]
 fn focused_and_profile_start_wait_for_pending_copy() {
     let mut f = fixture("sync-start-pending", &["alice", "bob"]);
@@ -1510,6 +1606,7 @@ fn focused_and_profile_start_wait_for_pending_copy() {
     f.wait_state("bob", ScriptRunState::Running);
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn queued_start_waits_for_copy_confirmation() {
     for apply in [false, true] {
@@ -1562,6 +1659,7 @@ fn queued_start_waits_for_copy_confirmation() {
     }
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn queued_js_copy_releases_start_after_staging_without_waiting_for_commit() {
     let mut f = fixture("queued-js-copy-staged", &["alice", "bob"]);
@@ -1586,6 +1684,7 @@ fn queued_js_copy_releases_start_after_staging_without_waiting_for_commit() {
     f.core.flush_writes();
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn scenario_start_script_waits_for_copy_confirmation() {
     use host_play::live_start::{
@@ -1643,6 +1742,7 @@ fn scenario_start_script_waits_for_copy_confirmation() {
     }
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn compiled_scenario_start_script_holds_without_failing_preparation() {
     use host_play::live_start::{
@@ -1695,9 +1795,63 @@ fn compiled_scenario_start_script_holds_without_failing_preparation() {
     assert!(f.run_has_bag("bob", &want));
 }
 
+#[cfg(not(feature = "js"))]
+#[test]
+fn native_compiled_scenario_start_script_holds_without_failing_preparation() {
+    use host_play::live_start::{
+        fire_pending_catalog_start, PendingCatalogStart, StartArming, StartScriptPump,
+    };
+    let mut f = native_fixture("compiled-scenario-copy", &["alice", "bob"]);
+    let id = script::CompiledId("Gatherer");
+    for name in ["alice", "bob"] {
+        start_gatherer(&mut f, name);
+        f.core.stop_script(name);
+        f.wait_state(name, ScriptRunState::Idle);
+    }
+    f.scripts
+        .prepare_compiled_settings_sync(&f.core, "alice", CompiledCardId::from_script(id), None)
+        .unwrap();
+    let handle = f.core.play().unwrap().script_start_handle();
+    let arming = || StartArming {
+        handle: Some(handle.clone()),
+        ..Default::default()
+    };
+    let want = f
+        .scripts
+        .compiled_bag(&f.core, "bob", CompiledCardId::from_script(id))
+        .unwrap();
+    let mut pending = vec![PendingCatalogStart::compiled("bob", id, want.clone())];
+    assert_eq!(
+        fire_pending_catalog_start(&mut pending, true, false, arming),
+        StartScriptPump::Hold
+    );
+    assert!(!pending[0].started);
+    assert_eq!(f.state("bob"), ScriptRunState::Idle);
+    f.scripts.cancel_settings_sync();
+    assert_eq!(
+        fire_pending_catalog_start(&mut pending, true, false, arming),
+        StartScriptPump::Continue
+    );
+    let guard = Instant::now() + HANG_GUARD;
+    loop {
+        match fire_pending_catalog_start(&mut pending, true, false, arming) {
+            StartScriptPump::CompiledRunning => break,
+            StartScriptPump::Failed(error) => panic!("{error}"),
+            _ => assert!(
+                Instant::now() < guard,
+                "compiled scenario did not settle: hang guard expired"
+            ),
+        }
+        std::thread::yield_now();
+    }
+    assert_eq!(f.state("bob"), ScriptRunState::Running);
+    assert!(f.run_has_bag("bob", &want));
+}
+
 /// Apply to all shares the prepare path: freezing it for a newly assigned
 /// card (no per-card key in the source profile yet) writes nothing, and the
 /// bag it freezes is the migrated legacy overrides.
+#[cfg(feature = "js")]
 #[test]
 fn apply_to_all_prepare_and_cancel_write_nothing_for_an_unclaimed_source() {
     let mut f = fixture("sync-readonly", &["alice", "bob"]);
@@ -1736,6 +1890,7 @@ fn apply_to_all_prepare_and_cancel_write_nothing_for_an_unclaimed_source() {
 
 /// Apply to all posts the whole bag to each live target: its own
 /// profile-global clue duel partner survives the card-parameter copy.
+#[cfg(feature = "js")]
 #[test]
 fn apply_to_all_keeps_each_live_targets_global_clue_partner() {
     let mut f = fixture("sync-partner", &["alice", "bob", "dave"]);
@@ -1778,6 +1933,7 @@ fn apply_to_all_keeps_each_live_targets_global_clue_partner() {
 
 /// A profile save that changes the clue duel partner reaches the running
 /// script once durable, as frozen reads the Global partner live.
+#[cfg(feature = "js")]
 #[test]
 fn a_saved_partner_reaches_the_running_script() {
     let mut f = fixture("partner-live", &["alice"]);
@@ -1800,6 +1956,7 @@ fn a_saved_partner_reaches_the_running_script() {
 /// Two partner saves of one profile committed together: the newer one
 /// replaces the older, which is superseded rather than delivered, and the
 /// running script ends on the newer partner.
+#[cfg(feature = "js")]
 #[test]
 fn coalesced_partner_saves_settle_on_the_newest_partner() {
     let mut f = fixture("partner-coalesced", &["alice"]);
@@ -1834,6 +1991,7 @@ fn coalesced_partner_saves_settle_on_the_newest_partner() {
     assert!(f.run_has_bag("alice", &bag(&[("clueDuelPartner", json!("Second"))])));
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn a_removed_catalog_card_marks_its_assignments_unavailable() {
     let mut f = fixture("catalog-removed", &["alice", "bob"]);
@@ -1854,6 +2012,7 @@ fn a_removed_catalog_card_marks_its_assignments_unavailable() {
 }
 
 #[test]
+#[cfg(feature = "js")]
 fn a_failed_write_is_reported_and_never_reaches_the_run() {
     let mut f = fixture("sync-fail", &["alice", "bob"]);
     let thiever = f.card("thiever.ts", LOOPING);
@@ -1907,6 +2066,7 @@ fn a_failed_write_is_reported_and_never_reaches_the_run() {
     );
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn a_run_replaced_before_the_write_is_durable_is_not_posted() {
     let mut f = fixture("sync-stale", &["alice", "bob"]);
@@ -1939,6 +2099,7 @@ fn a_run_replaced_before_the_write_is_durable_is_not_posted() {
     );
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn an_assignment_is_saved_only_once_its_start_is_ready() {
     let mut f = fixture("assign-ready", &["alice", "bob"]);
@@ -1977,6 +2138,7 @@ fn an_assignment_is_saved_only_once_its_start_is_ready() {
     assert!(failures[0].1.contains("setup-fails"), "{failures:?}");
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn start_all_and_stop_all_cover_every_member() {
     let mut f = fixture("bulk", &["alice", "bob", "carol"]);
@@ -2025,6 +2187,7 @@ fn start_all_and_stop_all_cover_every_member() {
     );
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn a_parameter_edit_reaches_the_run_once_durable() {
     let mut f = fixture("edit-live", &["alice"]);
@@ -2050,6 +2213,7 @@ fn a_parameter_edit_reaches_the_run_once_durable() {
 /// setting on the same member counts as saved, not superseded: its bag is
 /// durable. A member running the card receives it; an idle one counts as
 /// not running.
+#[cfg(feature = "js")]
 #[test]
 fn a_sync_saved_together_with_another_edit_counts_as_saved_and_reaches_a_run() {
     for running in [true, false] {
@@ -2110,6 +2274,7 @@ fn a_sync_saved_together_with_another_edit_counts_as_saved_and_reaches_a_run() {
 /// Two Apply-to-all runs overlap (the first one's writes still queued when
 /// the second applies): each operation settles on its own writes, and the
 /// newest report is the one shown.
+#[cfg(feature = "js")]
 #[test]
 fn overlapping_syncs_each_settle_their_own_operation() {
     let mut f = fixture("sync-overlap", &["alice", "bob"]);
@@ -2146,6 +2311,7 @@ fn overlapping_syncs_each_settle_their_own_operation() {
 
 /// A Start that clears a card's earlier load failure does not replace an
 /// unrelated banner: the Start all report stays shown.
+#[cfg(feature = "js")]
 #[test]
 fn a_ready_start_keeps_the_start_all_report_shown() {
     let mut f = fixture("ready-keeps-report", &["alice"]);
@@ -2174,6 +2340,7 @@ fn a_ready_start_keeps_the_start_all_report_shown() {
 /// Start with a prior load failure: the banner lists the failure, then the
 /// front end shows its own error; the Start settling Ready leaves that newer
 /// error alone. Without the newer error the listing is cleared.
+#[cfg(feature = "js")]
 #[test]
 fn a_ready_start_never_erases_a_newer_front_end_banner() {
     for newer in [Some("map: no route to 3200,3200"), None] {
@@ -2221,6 +2388,7 @@ fn a_ready_start_never_erases_a_newer_front_end_banner() {
 /// Each Start's operation id reaches its member's fleet row and slot log
 /// from acceptance to settlement; a failed setup stays on the row as that
 /// operation's failure.
+#[cfg(feature = "js")]
 #[test]
 fn a_start_carries_its_operation_to_the_row_and_the_log() {
     let mut f = fixture("start-op-ids", &["opid-alice", "opid-bob"]);
@@ -2305,6 +2473,7 @@ fn a_start_carries_its_operation_to_the_row_and_the_log() {
     f.core.play().unwrap().script_stop("opid-alice");
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn marked_start_skips_active_rows_and_duplicate_start_is_idempotent() {
     let mut f = fixture("bulk-selection", &["alice", "bob", "carol"]);
@@ -2365,6 +2534,71 @@ fn marked_start_skips_active_rows_and_duplicate_start_is_idempotent() {
         .skipped()
         .iter()
         .any(|skip| skip.reason().contains("stopping")));
+}
+
+#[cfg(not(feature = "js"))]
+#[test]
+fn native_marked_start_skips_active_rows_and_duplicate_start_is_idempotent() {
+    let mut f = native_fixture("bulk-selection", &["alice", "bob", "carol"]);
+    let id = script::CompiledId("Gatherer");
+    f.assign_compiled("alice", id);
+    f.start_running("alice");
+
+    let mut selected = MarkedSelection::default();
+    selected.mark_all([
+        ProfileIdentity::uid(1),
+        ProfileIdentity::uid(2),
+        ProfileIdentity::uid(3),
+    ]);
+    let card_sel = ScriptChoice::from_script(script::ScriptSel::Compiled(id));
+    start_marked(
+        &selected,
+        &mut f.core,
+        &mut f.scripts,
+        Some(&card_sel),
+        None,
+    );
+    assert_eq!(
+        shown_bulk(&f),
+        "Start selected: started 1, queued 1, skipped 1: alice: already active"
+    );
+
+    f.settle();
+    f.wait_state("bob", ScriptRunState::Running);
+    f.wait_state("carol", ScriptRunState::Running);
+    assert_eq!(
+        shown_bulk(&f),
+        "Start selected: started 2, skipped 1: alice: already active"
+    );
+
+    // The first report finished, so the repeat is a fresh report.
+    start_marked(
+        &selected,
+        &mut f.core,
+        &mut f.scripts,
+        Some(&card_sel),
+        None,
+    );
+    assert_eq!(
+        shown_bulk(&f),
+        "Start selected: started 0, skipped 3: alice: already active, \
+         bob: already active, carol: already active"
+    );
+    for name in ["alice", "bob", "carol"] {
+        assert_eq!(start_accepted(&f, name), 1, "{name}");
+    }
+
+    let stop = stop_marked(&selected, &mut f.core, &mut f.scripts);
+    assert_eq!((stop.stopped(), stop.cancelled()), (3, 0));
+    let duplicate_stop = stop_marked(&selected, &mut f.core, &mut f.scripts);
+    assert_eq!(duplicate_stop.stopped(), 0);
+    assert_eq!(duplicate_stop.cancelled(), 0);
+    assert!(duplicate_stop.operation().is_none());
+    assert_eq!(duplicate_stop.skipped().len(), 3);
+    assert!(duplicate_stop
+        .skipped()
+        .iter()
+        .all(|skip| skip.reason() == "no script"));
 }
 
 fn native_fixture(test: &str, members: &[&str]) -> Fixture {
@@ -2537,12 +2771,12 @@ fn cancelling_a_new_prompt_does_not_release_an_accepted_native_copy() {
     assert!(f.run_has_bag("bob", &want));
 }
 
-fn start_sherlock(f: &mut Fixture, name: &str) {
+fn start_compiled(f: &mut Fixture, name: &str, id: script::CompiledId) {
     f.scripts
         .start_sel(
             &mut f.core,
             name,
-            &script::ScriptSel::Compiled(script::CompiledId("Sherlock")),
+            &script::ScriptSel::Compiled(id),
             None,
             super::StartKind::Start,
             false,
@@ -2553,6 +2787,17 @@ fn start_sherlock(f: &mut Fixture, name: &str) {
     assert_eq!(f.state(name), ScriptRunState::Running);
 }
 
+#[cfg(not(feature = "js"))]
+fn start_gatherer(f: &mut Fixture, name: &str) {
+    start_compiled(f, name, script::CompiledId("Gatherer"));
+}
+
+#[cfg(feature = "js")]
+fn start_sherlock(f: &mut Fixture, name: &str) {
+    start_compiled(f, name, script::CompiledId("Sherlock"));
+}
+
+#[cfg(feature = "js")]
 fn save_native_partner(f: &mut Fixture, name: &str, partner: &str) {
     let mut row = f.core.profile_for_edit(name).unwrap().clone();
     row.settings.clue_duel_partner = partner.into();
@@ -2565,9 +2810,71 @@ fn save_native_partner(f: &mut Fixture, name: &str, partner: &str) {
         .unwrap();
 }
 
+#[cfg(not(feature = "js"))]
+fn gatherer_native_values(
+    radius: u64,
+    allow_teleports: bool,
+    allow_wilderness: bool,
+    allow_danger_zones: bool,
+) -> Map<String, Value> {
+    bag(&[
+        ("radius", json!(radius)),
+        ("allowTeleports", json!(allow_teleports)),
+        ("allowWilderness", json!(allow_wilderness)),
+        ("allowDangerZones", json!(allow_danger_zones)),
+    ])
+}
+
+#[cfg(not(feature = "js"))]
+fn set_gatherer_config(
+    f: &mut Fixture,
+    name: &str,
+    radius: u64,
+    allow_teleports: bool,
+    allow_wilderness: bool,
+    allow_danger_zones: bool,
+) {
+    let _ = f
+        .scripts
+        .set_compiled_overrides(
+            &mut f.core,
+            name,
+            CompiledCardId::from_script(script::CompiledId("Gatherer")),
+            gatherer_native_values(
+                radius,
+                allow_teleports,
+                allow_wilderness,
+                allow_danger_zones,
+            ),
+        )
+        .unwrap();
+}
+
+#[cfg(not(feature = "js"))]
+fn gatherer_settings_record(
+    radius: u64,
+    allow_teleports: bool,
+    allow_wilderness: bool,
+    allow_danger_zones: bool,
+) -> Map<String, Value> {
+    let card =
+        script::compiled_card(script::CompiledId("Gatherer")).expect("Gatherer is core-registered");
+    vault::CompiledSettingsRecord {
+        schema_version: card.schema_version,
+        values: gatherer_native_values(
+            radius,
+            allow_teleports,
+            allow_wilderness,
+            allow_danger_zones,
+        ),
+    }
+    .into_entry()
+}
+
+#[cfg(feature = "js")]
 #[test]
 fn compiled_restore_keeps_legacy_sherlock_permissions_and_refuses_malformed_schema() {
-    let mut f = fixture("native-restore", &["alice"]);
+    let mut f = native_fixture("native-restore", &["alice"]);
     let id = script::CompiledId("Sherlock");
     let key = script::compiled_identity_key(id);
     for entry in [
@@ -2647,6 +2954,7 @@ fn compiled_restore_keeps_legacy_sherlock_permissions_and_refuses_malformed_sche
     ));
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn native_invalid_preparation_keeps_assignment_and_durable_settings() {
     let mut f = native_fixture("native-invalid", &["alice"]);
@@ -2687,6 +2995,51 @@ fn native_invalid_preparation_keeps_assignment_and_durable_settings() {
     assert_eq!(
         Scripts::assignment(&f.core, "alice"),
         Some(previous.assignment())
+    );
+    assert!(f.core.play().unwrap().script_last_error("alice").is_some());
+}
+
+#[cfg(not(feature = "js"))]
+#[test]
+fn native_gatherer_invalid_preparation_keeps_assignment_and_durable_settings() {
+    let mut f = native_fixture("native-invalid", &["alice"]);
+    let previous = script::CompiledId("Grinch");
+    f.assign_compiled("alice", previous);
+    let id = script::CompiledId("Gatherer");
+    f.scripts
+        .set_compiled_overrides(
+            &mut f.core,
+            "alice",
+            CompiledCardId::from_script(id),
+            bag(&[("unknown", json!(1))]),
+        )
+        .unwrap();
+    f.core.flush_writes();
+    assert!(matches!(
+        f.core.take_settings_writes().as_slice(),
+        [super::SettingsWrite { result, .. }] if result.error().is_some()
+    ));
+    assert_eq!(
+        f.saved_bag("alice", &script::compiled_identity_key(id)),
+        None
+    );
+    f.scripts.inject = Some(bag(&[("unknown", json!(1))]));
+    f.scripts
+        .start_sel(
+            &mut f.core,
+            "alice",
+            &script::ScriptSel::Compiled(id),
+            None,
+            super::StartKind::Start,
+            false,
+        )
+        .unwrap();
+    f.settle();
+    f.core.flush_writes();
+    assert_eq!(f.state("alice"), ScriptRunState::Idle);
+    assert_eq!(
+        Scripts::assignment(&f.core, "alice"),
+        Some(script::compiled_assignment(previous))
     );
     assert!(f.core.play().unwrap().script_last_error("alice").is_some());
 }
@@ -2779,6 +3132,7 @@ fn gatherer_profile_loads_integral_legacy_float_and_rejects_fraction() {
     }
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn native_settings_wait_for_durability_and_remain_per_account() {
     let mut f = native_fixture("native-durable", &["alice", "bob"]);
@@ -2854,6 +3208,100 @@ fn native_settings_wait_for_durability_and_remain_per_account() {
     assert_eq!(revision(&f, "bob"), bob_revision);
 }
 
+#[cfg(not(feature = "js"))]
+#[test]
+fn native_settings_wait_for_durability_and_remain_per_account() {
+    let mut f = native_fixture("native-durable", &["alice", "bob"]);
+    start_gatherer(&mut f, "alice");
+    start_gatherer(&mut f, "bob");
+    let revision = |f: &Fixture, name| {
+        f.core
+            .play()
+            .unwrap()
+            .script_native_settings_revision(name)
+            .unwrap()
+    };
+    let alice_original = revision(&f, "alice");
+    let bob_original = revision(&f, "bob");
+    let key = script::compiled_identity_key(script::CompiledId("Gatherer"));
+    let durable_before = f
+        .core
+        .durable_profile("alice")
+        .unwrap()
+        .settings
+        .script_settings
+        .get(&key)
+        .cloned();
+    let vault_path = f.dir.join("vault");
+    let aside = vault_path.with_extension("aside");
+    std::fs::rename(&vault_path, &aside).unwrap();
+    std::fs::create_dir(&vault_path).unwrap();
+    set_gatherer_config(&mut f, "alice", 13, true, false, false);
+    assert_eq!(
+        f.core
+            .durable_profile("alice")
+            .unwrap()
+            .settings
+            .script_settings
+            .get(&key)
+            .cloned(),
+        durable_before
+    );
+    f.core.flush_writes();
+    std::fs::remove_dir(&vault_path).unwrap();
+    std::fs::rename(&aside, &vault_path).unwrap();
+    assert_eq!(revision(&f, "alice"), alice_original);
+    assert_eq!(revision(&f, "bob"), bob_original);
+    assert_eq!(
+        f.core
+            .durable_profile("alice")
+            .unwrap()
+            .settings
+            .script_settings
+            .get(&key)
+            .cloned(),
+        durable_before
+    );
+    assert!(!f.core.take_write_failures().is_empty());
+
+    set_gatherer_config(&mut f, "alice", 14, true, false, false);
+    set_gatherer_config(&mut f, "bob", 15, false, true, true);
+    f.core.flush_writes();
+    let alice_revision = revision(&f, "alice");
+    let bob_revision = revision(&f, "bob");
+    assert!(alice_revision > alice_original);
+    assert!(bob_revision > bob_original);
+    let alice = f
+        .scripts
+        .compiled_bag(
+            &f.core,
+            "alice",
+            CompiledCardId::from_script(script::CompiledId("Gatherer")),
+        )
+        .unwrap();
+    assert_eq!(alice["radius"], json!(14));
+    assert_eq!(alice["allowTeleports"], json!(true));
+    assert_eq!(alice["allowWilderness"], json!(false));
+    assert_eq!(alice["allowDangerZones"], json!(false));
+    let bob = f
+        .scripts
+        .compiled_bag(
+            &f.core,
+            "bob",
+            CompiledCardId::from_script(script::CompiledId("Gatherer")),
+        )
+        .unwrap();
+    assert_eq!(bob["radius"], json!(15));
+    assert_eq!(bob["allowTeleports"], json!(false));
+    assert_eq!(bob["allowWilderness"], json!(true));
+    assert_eq!(bob["allowDangerZones"], json!(true));
+    set_gatherer_config(&mut f, "alice", 16, false, false, false);
+    f.core.flush_writes();
+    assert!(revision(&f, "alice") > alice_revision);
+    assert_eq!(revision(&f, "bob"), bob_revision);
+}
+
+#[cfg(feature = "js")]
 #[test]
 fn native_settings_reply_loses_to_profile_recreation() {
     let mut f = native_fixture("native-stale-preparation", &["alice"]);
@@ -2893,6 +3341,40 @@ fn native_settings_reply_loses_to_profile_recreation() {
     );
 }
 
+#[cfg(not(feature = "js"))]
+#[test]
+fn native_settings_reply_loses_to_profile_recreation() {
+    let mut f = native_fixture("native-stale-preparation", &["alice"]);
+    start_gatherer(&mut f, "alice");
+    let mut replacement = f.core.vault().unwrap().get("alice").unwrap().clone();
+    replacement.settings = ProfileSettings::default();
+    set_gatherer_config(&mut f, "alice", 13, true, false, false);
+    f.core
+        .submit_detached(
+            OperatorCommand::DeleteProfile,
+            crate::Targets::Profile("alice"),
+        )
+        .unwrap()
+        .operation()
+        .expect("the delete opened an operation");
+    f.core
+        .create_profile(replacement, crate::ArmMirror::none(), "recreate")
+        .unwrap();
+    f.core.flush_writes();
+    assert!(matches!(
+        f.core.take_settings_writes().as_slice(),
+        [super::SettingsWrite {
+            result: super::SettingsResult::Superseded,
+            ..
+        }]
+    ));
+    assert_eq!(
+        f.core.durable_profile("alice").unwrap().settings,
+        ProfileSettings::default()
+    );
+}
+
+#[cfg(feature = "js")]
 #[test]
 fn profile_form_save_survives_stop_and_restart_with_stale_live_delivery() {
     for restart in [false, true] {
@@ -2934,6 +3416,61 @@ fn profile_form_save_survives_stop_and_restart_with_stale_live_delivery() {
     }
 }
 
+#[cfg(not(feature = "js"))]
+#[test]
+fn profile_form_save_survives_stop_and_restart_with_stale_live_delivery() {
+    let id = script::CompiledId("Gatherer");
+    let key = script::compiled_identity_key(id);
+    for restart in [false, true] {
+        let mut f = native_fixture("native-form-control-race", &["alice"]);
+        start_gatherer(&mut f, "alice");
+        let mut row = f.core.vault().unwrap().get("alice").unwrap().clone();
+        row.password = "updated-password".into();
+        row.settings
+            .script_settings
+            .insert(key.clone(), gatherer_settings_record(13, true, false, true));
+        let live = f
+            .scripts
+            .profile_save_live(&f.core, "alice", &row.settings)
+            .unwrap();
+        let op = f
+            .core
+            .save_profile(row, crate::ArmMirror::remember(Some(live)), "form")
+            .unwrap();
+        f.core.stop_script("alice");
+        if restart {
+            f.core
+                .start_script(
+                    "alice",
+                    crate::ScriptStart::compiled(CompiledCardId::from_script(id), Map::new()),
+                    None,
+                )
+                .unwrap();
+        }
+        f.core.flush_writes();
+        let saved = f.core.durable_profile("alice").unwrap();
+        assert_eq!(saved.password, "updated-password");
+        assert_eq!(
+            saved.settings.script_settings[&key]["values"]["radius"],
+            json!(13)
+        );
+        assert_eq!(
+            saved.settings.script_settings[&key]["values"]["allowTeleports"],
+            json!(true)
+        );
+        assert_eq!(
+            saved.settings.script_settings[&key]["values"]["allowDangerZones"],
+            json!(true)
+        );
+        assert!(
+            matches!(f.core.take_settings_writes().as_slice(), [super::SettingsWrite {
+            op: saved_op, result, ..
+        }] if *saved_op == op && result.delivery() == Some(&super::LiveDelivery::Stale))
+        );
+    }
+}
+
+#[cfg(feature = "js")]
 #[test]
 fn unrelated_writes_never_persist_invalid_native_drafts_or_poison_start() {
     for writer in ["assignment", "ready", "loaded"] {
@@ -2987,6 +3524,68 @@ fn unrelated_writes_never_persist_invalid_native_drafts_or_poison_start() {
     }
 }
 
+#[cfg(not(feature = "js"))]
+#[test]
+fn native_gatherer_unrelated_writes_never_persist_invalid_drafts_or_poison_start() {
+    #[cfg(feature = "js")]
+    let writers = ["assignment", "ready", "loaded"];
+    #[cfg(not(feature = "js"))]
+    let writers = ["assignment", "ready"];
+    for writer in writers {
+        let mut f = native_fixture("native-draft-isolation", &["alice"]);
+        let id = script::CompiledId("Gatherer");
+        if writer == "ready" {
+            f.scripts
+                .start_sel(
+                    &mut f.core,
+                    "alice",
+                    &script::ScriptSel::Compiled(id),
+                    None,
+                    super::StartKind::Start,
+                    false,
+                )
+                .unwrap();
+            wait_core_state(&mut f, "alice", ScriptRunState::Running);
+        }
+        f.scripts
+            .set_compiled_overrides(
+                &mut f.core,
+                "alice",
+                CompiledCardId::from_script(id),
+                bag(&[("unknown", json!(1))]),
+            )
+            .unwrap();
+        match writer {
+            "ready" => f.scripts.poll(&mut f.core),
+            #[cfg(feature = "js")]
+            "loaded" => {
+                let card = f.card("other.ts", LOOPING);
+                f.set("alice", &card, "target", json!("Guard"));
+            }
+            _ => {
+                assert!(f.scripts.persist_assignment(
+                    &mut f.core,
+                    "alice",
+                    script::compiled_assignment(id)
+                ));
+            }
+        }
+        f.core.flush_writes();
+        let entry = f.saved_bag("alice", &script::compiled_identity_key(id));
+        assert!(entry
+            .as_ref()
+            .is_none_or(|entry| entry["values"].get("unknown").is_none()));
+        assert!(f
+            .core
+            .take_write_failures()
+            .iter()
+            .any(|failure| failure.error().contains("unknown")));
+        f.core.stop_script("alice");
+        start_gatherer(&mut f, "alice");
+    }
+}
+
+#[cfg(feature = "js")]
 #[test]
 fn valid_native_draft_survives_unrelated_writes() {
     for writer in ["assignment", "ready", "loaded"] {
@@ -3059,6 +3658,83 @@ fn valid_native_draft_survives_unrelated_writes() {
     }
 }
 
+#[cfg(not(feature = "js"))]
+#[test]
+fn native_gatherer_valid_draft_survives_unrelated_writes() {
+    #[cfg(feature = "js")]
+    let writers = ["assignment", "ready", "loaded"];
+    #[cfg(not(feature = "js"))]
+    let writers = ["assignment", "ready"];
+    for writer in writers {
+        let mut f = native_fixture("native-valid-draft", &["alice"]);
+        let id = script::CompiledId("Gatherer");
+        if writer == "ready" {
+            f.scripts
+                .start_sel(
+                    &mut f.core,
+                    "alice",
+                    &script::ScriptSel::Compiled(id),
+                    None,
+                    super::StartKind::Start,
+                    false,
+                )
+                .unwrap();
+            wait_core_state(&mut f, "alice", ScriptRunState::Running);
+        }
+        let op = f
+            .scripts
+            .set_compiled_overrides(
+                &mut f.core,
+                "alice",
+                CompiledCardId::from_script(id),
+                bag(&[("radius", json!(12))]),
+            )
+            .unwrap();
+        match writer {
+            "ready" => f.scripts.poll(&mut f.core),
+            #[cfg(feature = "js")]
+            "loaded" => {
+                let card = f.card("other.ts", LOOPING);
+                f.set("alice", &card, "target", json!("Guard"));
+            }
+            _ => {
+                assert!(f.scripts.persist_assignment(
+                    &mut f.core,
+                    "alice",
+                    script::compiled_assignment(id),
+                ));
+            }
+        }
+        let mut expected = f
+            .core
+            .vault()
+            .unwrap()
+            .get("alice")
+            .unwrap()
+            .settings
+            .clone();
+        f.core.flush_writes();
+        let entry = f
+            .saved_bag("alice", &script::compiled_identity_key(id))
+            .unwrap();
+        assert_eq!(entry["values"]["radius"], json!(12), "{writer}");
+        expected
+            .script_settings
+            .insert(script::compiled_identity_key(id), entry);
+        assert_eq!(
+            f.core.durable_profile("alice").unwrap().settings,
+            expected,
+            "{writer}"
+        );
+        assert!(f
+            .core
+            .take_settings_writes()
+            .iter()
+            .any(|write| write.op == op && write.result.is_saved()));
+    }
+}
+
+#[cfg(feature = "js")]
 #[test]
 fn profile_partner_delivery_survives_unrelated_write() {
     let mut f = native_fixture("native-partner-unrelated", &["alice"]);
@@ -3092,6 +3768,7 @@ fn profile_partner_delivery_survives_unrelated_write() {
             && write.result.delivery() == Some(&super::LiveDelivery::Applied)));
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn rejected_native_live_preparation_does_not_reject_profile_form_durability() {
     let mut f = native_fixture("native-form-preparation-failure", &["alice"]);
@@ -3119,6 +3796,46 @@ fn rejected_native_live_preparation_does_not_reject_profile_form_durability() {
     ));
 }
 
+#[cfg(not(feature = "js"))]
+#[test]
+fn rejected_native_live_preparation_does_not_reject_profile_form_durability() {
+    let mut f = native_fixture("native-form-preparation-failure", &["alice"]);
+    start_gatherer(&mut f, "alice");
+    let mut row = f.core.vault().unwrap().get("alice").unwrap().clone();
+    row.password = "new-password".into();
+    let key = script::compiled_identity_key(script::CompiledId("Gatherer"));
+    row.settings.script_settings.insert(
+        key.clone(),
+        gatherer_settings_record(13, false, true, false),
+    );
+    let mut live = f
+        .scripts
+        .profile_save_live(&f.core, "alice", &row.settings)
+        .unwrap();
+    live.bag = std::sync::Arc::new(bag(&[("unknown", json!(1))]));
+    f.core
+        .save_profile(row, crate::ArmMirror::remember(Some(live)), "form")
+        .unwrap();
+    f.core.flush_writes();
+    let disk = Vault::unlock(&f.dir.join("vault"), "test-passphrase-01").unwrap();
+    let saved = disk.get("alice").unwrap();
+    assert_eq!(saved.password, "new-password");
+    assert_eq!(
+        saved.settings.script_settings[&key]["values"]["radius"],
+        json!(13)
+    );
+    assert_eq!(
+        saved.settings.script_settings[&key]["values"]["allowWilderness"],
+        json!(true)
+    );
+    assert!(matches!(
+        f.core.take_settings_writes().as_slice(),
+        [super::SettingsWrite { result, .. }]
+            if result.delivery().and_then(|live| live.rejection()).is_some()
+    ));
+}
+
+#[cfg(feature = "js")]
 #[test]
 fn durable_native_reply_never_configures_a_replacement_run() {
     let mut f = native_fixture("native-stale-durable", &["alice"]);
@@ -3166,6 +3883,59 @@ fn durable_native_reply_never_configures_a_replacement_run() {
     );
 }
 
+#[cfg(not(feature = "js"))]
+#[test]
+fn durable_native_reply_never_configures_a_replacement_run() {
+    let mut f = native_fixture("native-stale-durable", &["alice"]);
+    start_gatherer(&mut f, "alice");
+    let old = f.core.play().unwrap().script_native_run("alice").unwrap();
+    let gate = f.core.write_gate();
+    let held = gate.lock().unwrap();
+    let id = script::CompiledId("Gatherer");
+    let key = script::compiled_identity_key(id);
+    let durable_before = f.saved_bag("alice", &key);
+    set_gatherer_config(&mut f, "alice", 13, true, true, false);
+    pump_core_until(&mut f.core, "validated edit was never staged", |core| {
+        core.vault()
+            .unwrap()
+            .get("alice")
+            .unwrap()
+            .settings
+            .script_settings
+            .get(&key)
+            .and_then(|entry| vault::CompiledSettingsRecord::view(entry).ok())
+            .is_some_and(|(_, values)| {
+                values.get("radius").and_then(Value::as_u64) == Some(13)
+                    && values.get("allowWilderness").and_then(Value::as_bool) == Some(true)
+            })
+    });
+    assert_eq!(f.saved_bag("alice", &key), durable_before);
+    f.core.stop_script("alice");
+    f.scripts.start_profile(&mut f.core, "alice", None).unwrap();
+    f.settle();
+    assert_ne!(f.core.play().unwrap().script_native_run("alice"), Some(old));
+    drop(held);
+    f.core.flush_writes();
+    assert!(matches!(
+        f.core.take_settings_writes().as_slice(),
+        [super::SettingsWrite { result, .. }]
+            if result.delivery() == Some(&super::LiveDelivery::Stale)
+    ));
+    assert_eq!(
+        f.core
+            .play()
+            .unwrap()
+            .script_native_settings_revision("alice"),
+        Some(1)
+    );
+    let saved = f
+        .saved_bag("alice", &key)
+        .expect("validated settings are durable");
+    assert_eq!(saved["values"]["radius"], json!(13));
+    assert_eq!(saved["values"]["allowWilderness"], json!(true));
+}
+
+#[cfg(feature = "js")]
 #[test]
 fn deleting_a_profile_cancels_its_unsettled_native_start() {
     let mut f = native_fixture("native-start-removal", &["alice"]);
@@ -3193,6 +3963,35 @@ fn deleting_a_profile_cancels_its_unsettled_native_start() {
     assert!(f.core.durable_profile("alice").is_none());
 }
 
+#[cfg(not(feature = "js"))]
+#[test]
+fn native_gatherer_profile_deletion_cancels_unsettled_start() {
+    let mut f = native_fixture("native-start-removal", &["alice"]);
+    f.scripts
+        .start_sel(
+            &mut f.core,
+            "alice",
+            &script::ScriptSel::Compiled(script::CompiledId("Gatherer")),
+            None,
+            super::StartKind::Start,
+            false,
+        )
+        .unwrap();
+    f.core
+        .submit_detached(
+            OperatorCommand::DeleteProfile,
+            crate::Targets::Profile("alice"),
+        )
+        .unwrap()
+        .operation()
+        .expect("the delete opened an operation");
+    f.settle();
+    f.core.flush_writes();
+    assert_eq!(f.state("alice"), ScriptRunState::Idle);
+    assert!(f.core.durable_profile("alice").is_none());
+}
+
+#[cfg(feature = "js")]
 #[test]
 fn native_bulk_reports_and_preserves_each_account_partner() {
     let mut f = native_fixture("native-bulk", &["alice", "bob"]);
@@ -3249,10 +4048,67 @@ fn native_bulk_reports_and_preserves_each_account_partner() {
 
 /// A compiled copy that the target cannot accept must not persist an
 /// assignment on an unassigned bot.
+#[cfg(feature = "js")]
 #[test]
 fn failed_native_copy_does_not_assign_an_unassigned_bot() {
     let mut f = fixture("native-copy-no-assign", &["alice", "bob"]);
     let id = script::CompiledId("Sherlock");
+    let key = script::compiled_identity_key(id);
+    assert!(f
+        .scripts
+        .persist_assignment(&mut f.core, "alice", script::compiled_assignment(id)));
+    f.core.flush_writes();
+    let mut row = f.core.vault().unwrap().get("bob").unwrap().clone();
+    row.settings.script_settings.insert(
+        key.clone(),
+        json!({"schema_version": 999, "values": {}})
+            .as_object()
+            .unwrap()
+            .clone(),
+    );
+    f.core
+        .save_profile(row, crate::ArmMirror::none(), "plant")
+        .unwrap();
+    f.core.flush_writes();
+    assert!(Scripts::assignment(&f.core, "bob").is_none());
+
+    let sel = ScriptChoice::from_script(script::ScriptSel::Compiled(id));
+    prepare_apply_settings_marked(&mark_uids(&[2]), &f.core, &mut f.scripts, "alice", &sel)
+        .unwrap();
+    f.scripts.apply_settings_sync(&mut f.core).unwrap();
+    f.core.flush_writes();
+    f.scripts.poll(&mut f.core);
+    let report = f.scripts.last_settings_sync().unwrap();
+    assert_eq!(report.saved, 0, "{report:?}");
+    assert_eq!(report.failed.len(), 1, "{report:?}");
+    assert!(
+        Scripts::assignment(&f.core, "bob").is_none(),
+        "failed copy assigned {:?}",
+        Scripts::assignment(&f.core, "bob")
+    );
+    let disk = Vault::unlock(&f.dir.join("vault"), "test-passphrase-01").unwrap();
+    assert!(disk
+        .get("bob")
+        .unwrap()
+        .settings
+        .script_assignment
+        .is_none());
+    assert_eq!(
+        f.saved_bag("bob", &key),
+        Some(
+            json!({"schema_version": 999, "values": {}})
+                .as_object()
+                .unwrap()
+                .clone()
+        )
+    );
+}
+
+#[cfg(not(feature = "js"))]
+#[test]
+fn failed_native_gatherer_copy_does_not_assign_an_unassigned_bot() {
+    let mut f = native_fixture("native-copy-no-assign", &["alice", "bob"]);
+    let id = script::CompiledId("Gatherer");
     let key = script::compiled_identity_key(id);
     assert!(f
         .scripts
@@ -3493,6 +4349,7 @@ fn restart_prompt_skips_logout_latch_at_click() {
     ));
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn restart_prompt_skips_reassigned_profile_without_reassigning_or_starting() {
     let mut f = single_gatherer_restart_prompt("restart-click-reassigned");
@@ -3517,6 +4374,39 @@ fn restart_prompt_skips_reassigned_profile_without_reassigning_or_starting() {
     assert_eq!(
         super::sel_from_assignment(&Scripts::assignment(&f.core, "alice").unwrap()),
         Some(script::ScriptSel::Compiled(script::CompiledId("Sherlock")))
+    );
+    assert!(!f.scripts.restart_required_for("alice", &selection));
+    assert!(matches!(
+        f.scripts.take_notice(),
+        Some(notice) if notice.text() == Some("Skipped alice: reassigned")
+    ));
+}
+
+#[cfg(not(feature = "js"))]
+#[test]
+fn native_gatherer_restart_prompt_skips_reassigned_profile_without_reassigning_or_starting() {
+    let mut f = single_gatherer_restart_prompt("restart-click-reassigned");
+    let selection =
+        ScriptChoice::from_script(script::ScriptSel::Compiled(script::CompiledId("Gatherer")));
+    let run = f.generation("alice");
+    let starts_before = start_accepted(&f, "alice");
+    assert!(f.scripts.persist_assignment(
+        &mut f.core,
+        "alice",
+        script::compiled_assignment(script::CompiledId("Grinch")),
+    ));
+    f.core.flush_writes();
+
+    f.scripts
+        .restart_pending_settings(&mut f.core, None)
+        .unwrap();
+
+    assert_eq!(f.state("alice"), ScriptRunState::Running);
+    assert_eq!(f.generation("alice"), run);
+    assert_eq!(start_accepted(&f, "alice"), starts_before);
+    assert_eq!(
+        super::sel_from_assignment(&Scripts::assignment(&f.core, "alice").unwrap()),
+        Some(script::ScriptSel::Compiled(script::CompiledId("Grinch")))
     );
     assert!(!f.scripts.restart_required_for("alice", &selection));
     assert!(matches!(
@@ -3553,6 +4443,7 @@ fn restart_badge_clears_after_logout() {
     assert!(f.scripts.pending_restart_prompt().is_none());
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn restart_badge_clears_after_assignment_changes() {
     let mut f = single_gatherer_restart_prompt("restart-badge-reassigned");
@@ -3560,6 +4451,23 @@ fn restart_badge_clears_after_assignment_changes() {
         &mut f.core,
         "alice",
         script::compiled_assignment(script::CompiledId("Sherlock")),
+    ));
+    f.core.flush_writes();
+
+    f.scripts.poll(&mut f.core);
+
+    assert!(!f.scripts.has_restart_badge("alice"));
+    assert!(f.scripts.pending_restart_prompt().is_none());
+}
+
+#[cfg(not(feature = "js"))]
+#[test]
+fn native_gatherer_restart_badge_clears_after_assignment_changes() {
+    let mut f = single_gatherer_restart_prompt("restart-badge-reassigned");
+    assert!(f.scripts.persist_assignment(
+        &mut f.core,
+        "alice",
+        script::compiled_assignment(script::CompiledId("Grinch")),
     ));
     f.core.flush_writes();
 
@@ -3856,6 +4764,7 @@ fn idle_among<'a>(f: &Fixture, names: &'a [String]) -> Vec<&'a str> {
 
 /// Start all over more members than one frame may admit must not dispatch
 /// every isolate in the click. The rest wait for later [`Scripts::poll`]s.
+#[cfg(feature = "js")]
 #[test]
 fn start_all_over_n_members_dispatches_at_most_the_permit_budget_in_the_click_frame() {
     let names = bulk_names(5);
@@ -3915,8 +4824,71 @@ fn start_all_over_n_members_dispatches_at_most_the_permit_budget_in_the_click_fr
         f.core.play().unwrap().script_stop(name);
     }
 }
+/// Start all over more members than one frame may admit must not dispatch
+/// every isolate in the click. The rest wait for later [`Scripts::poll`]s.
+#[cfg(not(feature = "js"))]
+#[test]
+fn native_start_all_over_n_members_dispatches_at_most_the_permit_budget_in_the_click_frame() {
+    let names = bulk_names(5);
+    let name_refs: Vec<&str> = names.iter().map(String::as_str).collect();
+    let mut f = native_fixture("pace-click", &name_refs);
+    let id = script::CompiledId("Gatherer");
+    for name in &names {
+        f.assign_compiled(name, id);
+    }
+
+    f.core.poll();
+    f.scripts.start_all(&mut f.core, None);
+    let starting = starting_among(&f, &names);
+    let idle = idle_among(&f, &names);
+    assert!(
+        starting <= super::START_ADMIT_PER_FRAME,
+        "Start all dispatched {starting} in the click frame (budget {})",
+        super::START_ADMIT_PER_FRAME
+    );
+    assert!(f.scripts.starts_pending(), "Start all admitted no work");
+    assert_eq!(shown_bulk(&f), "Start all: started 1, queued 4, skipped 0");
+    assert_eq!(starting + idle.len(), names.len());
+    let waiting = names
+        .iter()
+        .find(|name| f.scripts.start_queue_place(name).is_some())
+        .expect("a second member still waits for a permit");
+    let brief = f
+        .core
+        .fleet_view()
+        .row(waiting)
+        .map(|row| row.brief())
+        .unwrap_or("");
+    assert!(
+        brief.starts_with("queued "),
+        "{waiting} should reuse the login-queue brief, got {brief:?}"
+    );
+    f.core.poll();
+    f.scripts.poll(&mut f.core);
+    let after_poll = shown_bulk(&f);
+    assert!(
+        after_poll.starts_with("Start all: started 2, queued 3, skipped 0"),
+        "the later frame grants another waiting member: {after_poll}"
+    );
+    let notice = f.scripts.take_notice();
+    let text = match notice.as_ref().and_then(Notice::text) {
+        Some(text) => text,
+        other => panic!("{other:?}"),
+    };
+    assert!(
+        text.contains("queued"),
+        "the Start all report names the waiting members: {text}"
+    );
+
+    f.settle();
+    for name in &names {
+        f.wait_state(name, ScriptRunState::Running);
+        f.core.play().unwrap().script_stop(name);
+    }
+}
 
 /// Stop all must drop queued-but-not-yet-admitted Starts so they never run.
+#[cfg(feature = "js")]
 #[test]
 fn stop_all_cancels_queued_starts() {
     let names = bulk_names(5);
@@ -3951,9 +4923,46 @@ fn stop_all_cancels_queued_starts() {
         );
     }
 }
+/// Stop all must drop queued-but-not-yet-admitted Starts so they never run.
+#[cfg(not(feature = "js"))]
+#[test]
+fn native_stop_all_cancels_queued_starts() {
+    let names = bulk_names(5);
+    let name_refs: Vec<&str> = names.iter().map(String::as_str).collect();
+    let mut f = native_fixture("pace-stop", &name_refs);
+    let id = script::CompiledId("Gatherer");
+    for name in &names {
+        f.assign_compiled(name, id);
+    }
+
+    f.scripts.start_all(&mut f.core, None);
+    let queued: Vec<String> = idle_among(&f, &names)
+        .into_iter()
+        .map(str::to_string)
+        .collect();
+    assert!(
+        !queued.is_empty(),
+        "need members still waiting for a permit"
+    );
+
+    f.scripts.stop_all(&mut f.core);
+    for _ in 0..40 {
+        f.core.poll();
+        f.scripts.poll(&mut f.core);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    for name in &queued {
+        assert_eq!(
+            f.state(name),
+            ScriptRunState::Idle,
+            "{name} started after Stop all cancelled its place"
+        );
+    }
+}
 
 /// Re-assigning a member that still holds a Start-all place must not start
 /// the card captured at the click.
+#[cfg(feature = "js")]
 #[test]
 fn reassign_while_queued_does_not_start_stale_work() {
     let names = bulk_names(5);
@@ -3988,9 +4997,92 @@ fn reassign_while_queued_does_not_start_stale_work() {
         Some(first.identity_key().as_str())
     );
 }
+/// Removing a member that still holds a Start-all place must not start it.
+#[cfg(feature = "js")]
+#[test]
+fn remove_while_queued_does_not_start_stale_work() {
+    let names = bulk_names(5);
+    let name_refs: Vec<&str> = names.iter().map(String::as_str).collect();
+    let mut f = fixture("pace-remove", &name_refs);
+    let card = f.card("loop.ts", LOOPING);
+    for name in &names {
+        f.assign(name, &card);
+    }
+
+    f.scripts.start_all(&mut f.core, None);
+    let queued = names
+        .iter()
+        .find(|name| f.scripts.start_queue_place(name).is_some())
+        .expect("need a member still waiting for a permit")
+        .clone();
+    let mut surface = crate::surface::HeadlessSurface::new();
+    f.core.remove(&queued, Instant::now(), &mut surface);
+
+    f.settle();
+    assert_eq!(
+        start_accepted(&f, &queued),
+        0,
+        "frontend dispatched a Start for removed {queued}"
+    );
+    assert_ne!(
+        f.state(&queued),
+        ScriptRunState::Running,
+        "{queued} started after it was removed from the wall"
+    );
+    let report = f
+        .scripts
+        .last_bulk_report()
+        .expect("Start all report after a queued remove");
+    assert!(
+        report.contains(&format!("{queued}: removed")),
+        "grant-time remove must name the member: {report}"
+    );
+    assert!(
+        !report.contains("no slot"),
+        "a wall-member refuse must not reach start_script: {report}"
+    );
+}
+/// Re-assigning a member that still holds a Start-all place must not start
+/// the card captured at the click.
+#[cfg(not(feature = "js"))]
+#[test]
+fn native_reassign_while_queued_does_not_start_stale_work() {
+    let names = bulk_names(5);
+    let name_refs: Vec<&str> = names.iter().map(String::as_str).collect();
+    let mut f = native_fixture("pace-reassign", &name_refs);
+    let first = script::CompiledId("Gatherer");
+    let second = script::CompiledId("Grinch");
+    for name in &names {
+        f.assign_compiled(name, first);
+    }
+
+    f.scripts.start_all(&mut f.core, None);
+    let queued = names
+        .iter()
+        .find(|name| f.scripts.start_queue_place(name).is_some())
+        .expect("need a member still waiting for a permit")
+        .clone();
+    f.assign_compiled(&queued, second);
+
+    f.settle();
+    assert_eq!(
+        f.state(&queued),
+        ScriptRunState::Idle,
+        "{queued} started after its assignment changed"
+    );
+    assert_ne!(
+        f.core
+            .play()
+            .unwrap()
+            .script_source_identity(&queued)
+            .as_deref(),
+        Some(script::compiled_identity_key(first).as_str())
+    );
+}
 
 /// Once the permit has admitted a worker but before it publishes the Start,
 /// a changed assignment or departing member must still fence the old card.
+#[cfg(feature = "js")]
 #[test]
 fn prepared_start_rechecks_assignment_removal_and_logout_before_dispatch() {
     for (scenario, reason) in [
@@ -4046,15 +5138,121 @@ fn prepared_start_rechecks_assignment_removal_and_logout_before_dispatch() {
     }
 }
 
-/// Removing a member that still holds a Start-all place must not start it.
+/// A native permit dispatch starts preparation at once. Stale changes to a
+/// queued member must fence it before its Start reaches the compiled slot.
+#[cfg(not(feature = "js"))]
 #[test]
-fn remove_while_queued_does_not_start_stale_work() {
+fn native_queued_start_rechecks_assignment_removal_and_logout_before_dispatch() {
+    for (scenario, reason) in [
+        ("reassigned", "reassigned"),
+        ("removed", "removed"),
+        ("logged-out", "logged out"),
+    ] {
+        let mut f = native_fixture(
+            &format!("pace-inflight-{scenario}"),
+            &["inflight-alice", "inflight-bob"],
+        );
+        let first = script::CompiledId("Gatherer");
+        let replacement = script::CompiledId("Grinch");
+        for name in ["inflight-alice", "inflight-bob"] {
+            f.assign_compiled(name, first);
+        }
+        f.scripts.start_all(&mut f.core, None);
+        assert_eq!(
+            f.state("inflight-alice"),
+            ScriptRunState::Starting,
+            "native preparation owns the first slot before run commit"
+        );
+        assert!(
+            f.core
+                .play()
+                .unwrap()
+                .script_native_run("inflight-alice")
+                .is_none(),
+            "Starting does not publish an unprepared native run"
+        );
+        let queued = "inflight-bob";
+        assert!(
+            f.scripts.start_queue_place(queued).is_some(),
+            "the second member still waits for a permit"
+        );
+        match scenario {
+            "reassigned" => f.assign_compiled(queued, replacement),
+            "removed" => {
+                let mut surface = HeadlessSurface::new();
+                f.core.remove(queued, Instant::now(), &mut surface);
+            }
+            "logged-out" => f.core.play().unwrap().arm(queued).unwrap().request_logout(),
+            _ => unreachable!(),
+        }
+        f.settle();
+        let report = shown_bulk(&f);
+        assert!(
+            report.contains(&format!("{queued}: {reason}")),
+            "{scenario}: {report}"
+        );
+        assert_eq!(start_accepted(&f, queued), 0, "{scenario}");
+        assert_eq!(f.state(queued), ScriptRunState::Idle, "{scenario}");
+        assert!(
+            f.core.play().unwrap().script_native_run(queued).is_none(),
+            "{scenario}: stale native run was committed"
+        );
+        f.wait_state("inflight-alice", ScriptRunState::Running);
+        assert!(
+            f.core
+                .play()
+                .unwrap()
+                .script_native_run("inflight-alice")
+                .is_some(),
+            "the unaffected compiled Start commits"
+        );
+        f.core.play().unwrap().script_stop("inflight-alice");
+    }
+}
+
+/// Operator logout while a member is still waiting for a Start-all permit
+/// must not start that member.
+#[cfg(feature = "js")]
+#[test]
+fn logout_while_queued_does_not_start_stale_work() {
     let names = bulk_names(5);
     let name_refs: Vec<&str> = names.iter().map(String::as_str).collect();
-    let mut f = fixture("pace-remove", &name_refs);
+    let mut f = fixture("pace-logout", &name_refs);
     let card = f.card("loop.ts", LOOPING);
     for name in &names {
         f.assign(name, &card);
+    }
+
+    f.scripts.start_all(&mut f.core, None);
+    let queued = names
+        .iter()
+        .find(|name| f.scripts.start_queue_place(name).is_some())
+        .expect("need a member still waiting for a permit")
+        .clone();
+    f.core
+        .play()
+        .unwrap()
+        .arm(&queued)
+        .expect("loaded member")
+        .request_logout();
+
+    f.settle();
+    assert_eq!(
+        f.state(&queued),
+        ScriptRunState::Idle,
+        "{queued} started after logout while queued"
+    );
+}
+/// Removing a member that still holds a Start-all place must not start it.
+#[cfg(not(feature = "js"))]
+#[test]
+fn native_remove_while_queued_does_not_start_stale_work() {
+    let names = bulk_names(5);
+    let name_refs: Vec<&str> = names.iter().map(String::as_str).collect();
+    let mut f = native_fixture("pace-remove", &name_refs);
+    let id = script::CompiledId("Gatherer");
+    for name in &names {
+        f.assign_compiled(name, id);
     }
 
     f.scripts.start_all(&mut f.core, None);
@@ -4093,14 +5291,15 @@ fn remove_while_queued_does_not_start_stale_work() {
 
 /// Operator logout while a member is still waiting for a Start-all permit
 /// must not start that member.
+#[cfg(not(feature = "js"))]
 #[test]
-fn logout_while_queued_does_not_start_stale_work() {
+fn native_logout_while_queued_does_not_start_stale_work() {
     let names = bulk_names(5);
     let name_refs: Vec<&str> = names.iter().map(String::as_str).collect();
-    let mut f = fixture("pace-logout", &name_refs);
-    let card = f.card("loop.ts", LOOPING);
+    let mut f = native_fixture("pace-logout", &name_refs);
+    let id = script::CompiledId("Gatherer");
     for name in &names {
-        f.assign(name, &card);
+        f.assign_compiled(name, id);
     }
 
     f.scripts.start_all(&mut f.core, None);
@@ -4125,6 +5324,7 @@ fn logout_while_queued_does_not_start_stale_work() {
 }
 
 /// Single Start of a queued member bypasses the remaining permit wait.
+#[cfg(feature = "js")]
 #[test]
 fn single_start_of_a_queued_member_is_immediate() {
     let names = bulk_names(5);
@@ -4166,8 +5366,56 @@ fn single_start_of_a_queued_member_is_immediate() {
     f.core.play().unwrap().script_stop(&queued);
 }
 
+#[cfg(not(feature = "js"))]
+#[test]
+fn native_single_start_of_a_queued_member_dispatches_before_preparation() {
+    let names = bulk_names(5);
+    let name_refs: Vec<&str> = names.iter().map(String::as_str).collect();
+    let mut f = native_fixture("pace-single", &name_refs);
+    let id = script::CompiledId("Gatherer");
+    for name in &names {
+        f.assign_compiled(name, id);
+    }
+
+    f.scripts.start_all(&mut f.core, None);
+    let queued = names
+        .iter()
+        .find(|name| f.scripts.start_queue_place(name).is_some())
+        .expect("need a member still waiting for a permit")
+        .clone();
+    f.scripts.start_profile(&mut f.core, &queued, None).unwrap();
+    assert_eq!(
+        f.state(&queued),
+        ScriptRunState::Starting,
+        "single Start dispatches before native preparation commits"
+    );
+    assert!(
+        f.core.play().unwrap().script_native_run(&queued).is_none(),
+        "the accepted Start has not published a native run yet"
+    );
+    assert!(f.scripts.start_queue_place(&queued).is_none());
+    assert!(f.scripts.starts_pending());
+    f.settle();
+    f.wait_state(&queued, ScriptRunState::Running);
+    assert_eq!(
+        start_accepted(&f, &queued),
+        1,
+        "{queued} must receive exactly one Start"
+    );
+    let report = f
+        .scripts
+        .last_bulk_report()
+        .expect("Start all report after a single-start handoff");
+    assert!(
+        report.starts_with("Start all: started 5, skipped 0"),
+        "the handoff credits the member once: {report}"
+    );
+    f.core.play().unwrap().script_stop(&queued);
+}
+
 /// A marked Start with a missing card must not count the click as started,
 /// and every later dispatch error must appear with its reason.
+#[cfg(feature = "js")]
 #[test]
 fn marked_start_missing_card_reports_each_skip_as_grants_land() {
     let mut f = fixture("pace-marked-missing", &["alice", "bob", "carol"]);
@@ -4197,6 +5445,7 @@ fn marked_start_missing_card_reports_each_skip_as_grants_land() {
     }
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn assigned_catalog_card_missing_from_loaded_catalog_names_scanned_root() {
     let mut f = fixture("assigned-catalog-missing", &["alice"]);
@@ -4244,6 +5493,7 @@ fn assigned_catalog_card_missing_from_loaded_catalog_names_scanned_root() {
     assert_ne!(f.state("alice"), ScriptRunState::Running);
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn failed_catalog_fill_does_not_latch_root_or_block_later_fill() {
     let mut f = fixture("catalog-fill-retry-after-registration-error", &["alice"]);
@@ -4288,6 +5538,7 @@ fn failed_catalog_fill_does_not_latch_root_or_block_later_fill() {
     );
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn catalog_request_refusals_name_their_failure_kind() {
     let mut f = fixture("catalog-typed-errors", &["alice"]);
@@ -4328,6 +5579,7 @@ fn catalog_request_refusals_name_their_failure_kind() {
     );
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn catalog_typed_failures_keep_their_byte_identical_display() {
     use {script_js::CatalogSnapshotError, script_js::CatalogWorkerError};
@@ -4539,6 +5791,7 @@ fn catalog_typed_failures_keep_their_byte_identical_display() {
     }
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn loaded_start_preparation_bounds_pending_demands_and_preserves_accepted_work() {
     const LIMIT: usize = 64;
@@ -4608,6 +5861,7 @@ fn loaded_start_preparation_bounds_pending_demands_and_preserves_accepted_work()
     f.settle_catalog_work();
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn marked_catalog_assignment_reports_pending_until_scan_settles() {
     let mut f = fixture("marked-catalog-assignment-pending", &["alice", "bob"]);
@@ -4651,6 +5905,7 @@ fn marked_catalog_assignment_reports_pending_until_scan_settles() {
 
 /// A member removed while waiting for a marked Start is named as skipped
 /// and the frontend never dispatches a Start for it.
+#[cfg(feature = "js")]
 #[test]
 fn marked_start_removed_member_is_named_and_never_dispatched() {
     let mut f = fixture("pace-marked-remove", &["alice", "bob", "carol"]);
@@ -4688,9 +5943,50 @@ fn marked_start_removed_member_is_named_and_never_dispatched() {
         }
     }
 }
+/// A member removed while waiting for a marked Start is named as skipped
+/// and the frontend never dispatches a Start for it.
+#[cfg(not(feature = "js"))]
+#[test]
+fn native_marked_start_removed_member_is_named_and_never_dispatched() {
+    let mut f = native_fixture("pace-marked-remove", &["alice", "bob", "carol"]);
+    let id = script::CompiledId("Gatherer");
+    for name in ["alice", "bob", "carol"] {
+        f.assign_compiled(name, id);
+    }
+    let sel = ScriptChoice::from_script(script::ScriptSel::Compiled(id));
+    let selected = mark_uids(&[1, 2, 3]);
+    start_marked(&selected, &mut f.core, &mut f.scripts, Some(&sel), None);
+    let click_report = shown_bulk(&f);
+    assert!(
+        click_report.contains("queued") && !click_report.contains("started 3"),
+        "click must not count waiting members as started: {click_report}"
+    );
+    let queued = ["alice", "bob", "carol"]
+        .into_iter()
+        .find(|name| f.scripts.start_queue_place(name).is_some())
+        .expect("need a member still waiting for a permit")
+        .to_string();
+    let mut surface = crate::surface::HeadlessSurface::new();
+    f.core.remove(&queued, Instant::now(), &mut surface);
+    f.settle();
+    let report = shown_bulk(&f);
+    assert!(
+        report.contains(&format!("{queued}: removed")),
+        "grant-time remove must name the member: {report}"
+    );
+    assert_eq!(start_accepted(&f, &queued), 0);
+    assert_ne!(f.state(&queued), ScriptRunState::Running);
+    for name in ["alice", "bob", "carol"] {
+        if name != queued {
+            f.wait_state(name, ScriptRunState::Running);
+            f.core.play().unwrap().script_stop(name);
+        }
+    }
+}
 
 /// Start all while a marked batch is still waiting joins its report: the
 /// waiting members are neither dropped from it nor counted twice.
+#[cfg(feature = "js")]
 #[test]
 fn start_all_while_a_marked_batch_waits_joins_its_report() {
     let names = bulk_names(5);
@@ -4701,6 +5997,39 @@ fn start_all_while_a_marked_batch_waits_joins_its_report() {
         f.assign(name, &card);
     }
     let sel = ScriptChoice::from_script(script::ScriptSel::Loaded(card.source, card.identity_id()));
+    let selected = mark_uids(&[1, 2, 3]);
+    start_marked(&selected, &mut f.core, &mut f.scripts, Some(&sel), None);
+    assert_eq!(
+        shown_bulk(&f),
+        "Start selected: started 1, queued 2, skipped 0"
+    );
+    f.scripts.start_all(&mut f.core, None);
+    assert_eq!(
+        shown_bulk(&f),
+        "Start all: started 2, queued 3, skipped 0",
+        "the marked rows still waiting stay counted, the started one is not skipped"
+    );
+    f.settle();
+    assert_eq!(shown_bulk(&f), "Start all: started 5, skipped 0");
+    for name in &names {
+        f.wait_state(name, ScriptRunState::Running);
+        assert_eq!(start_accepted(&f, name), 1, "{name}");
+        f.core.play().unwrap().script_stop(name);
+    }
+}
+/// Start all while a marked batch is still waiting joins its report: the
+/// waiting members are neither dropped from it nor counted twice.
+#[cfg(not(feature = "js"))]
+#[test]
+fn native_start_all_while_a_marked_batch_waits_joins_its_report() {
+    let names = bulk_names(5);
+    let name_refs: Vec<&str> = names.iter().map(String::as_str).collect();
+    let mut f = native_fixture("pace-overlap-marked", &name_refs);
+    let id = script::CompiledId("Gatherer");
+    for name in &names {
+        f.assign_compiled(name, id);
+    }
+    let sel = ScriptChoice::from_script(script::ScriptSel::Compiled(id));
     let selected = mark_uids(&[1, 2, 3]);
     start_marked(&selected, &mut f.core, &mut f.scripts, Some(&sel), None);
     assert_eq!(
@@ -4735,6 +6064,7 @@ fn slot_lines(slot: &str) -> Vec<(api::hostlog::Level, String)> {
 /// click's later failures: they stay on the report (failures before
 /// skips), a setup failure reaches `take_start_failures`, and a dispatch
 /// failure reaches the bot's log.
+#[cfg(feature = "js")]
 #[test]
 fn start_all_twice_keeps_every_outcome_of_the_first_click() {
     let names: Vec<String> = (0..6).map(|i| format!("dbl-bot{i}")).collect();
@@ -4801,6 +6131,7 @@ fn start_all_twice_keeps_every_outcome_of_the_first_click() {
 /// A file card whose file was deleted is refused as missing even when its
 /// stored path still names it exactly (a canonical directory, as Linux temp
 /// dirs are): Start never runs the copy loaded before the delete.
+#[cfg(feature = "js")]
 #[test]
 fn a_deleted_file_card_is_refused_even_when_its_stored_path_matches() {
     let mut f = fixture("deleted-canonical", &["alice"]);
@@ -4827,6 +6158,7 @@ fn a_deleted_file_card_is_refused_even_when_its_stored_path_matches() {
 
 /// A bot logged out while it still waits after a second Start all is
 /// named on the running report and in its own log, and never starts.
+#[cfg(feature = "js")]
 #[test]
 fn logout_while_waiting_after_a_second_start_all_is_reported() {
     let names: Vec<String> = (0..4).map(|i| format!("lgo-bot{i}")).collect();
@@ -4859,9 +6191,45 @@ fn logout_while_waiting_after_a_second_start_all_is_reported() {
         f.core.play().unwrap().script_stop(name);
     }
 }
+/// A bot logged out while it still waits after a second Start all is
+/// named on the running report and in its own log, and never starts.
+#[cfg(not(feature = "js"))]
+#[test]
+fn native_logout_while_waiting_after_a_second_start_all_is_reported() {
+    let names: Vec<String> = (0..4).map(|i| format!("lgo-bot{i}")).collect();
+    let name_refs: Vec<&str> = names.iter().map(String::as_str).collect();
+    let mut f = native_fixture("pace-overlap-logout", &name_refs);
+    let id = script::CompiledId("Gatherer");
+    for name in &names {
+        f.assign_compiled(name, id);
+    }
+    f.scripts.start_all(&mut f.core, None);
+    f.scripts.start_all(&mut f.core, None);
+    let last = &names[3];
+    assert!(f.scripts.cancel_queued_as(last, "logged out"));
+    f.core.logout(last);
+    f.settle();
+    assert_eq!(
+        shown_bulk(&f),
+        "Start all: started 3, skipped 1: lgo-bot3: logged out"
+    );
+    assert!(
+        slot_lines(last)
+            .iter()
+            .any(|(_, line)| line == "Start all skipped: logged out"),
+        "{:?}",
+        slot_lines(last)
+    );
+    assert_eq!(start_accepted(&f, last), 0);
+    for name in &names[..3] {
+        f.wait_state(name, ScriptRunState::Running);
+        f.core.play().unwrap().script_stop(name);
+    }
+}
 
 /// Stop on marked rows cancels the rows still waiting for their Start and
 /// says so, instead of counting them as stopped.
+#[cfg(feature = "js")]
 #[test]
 fn stop_on_marked_rows_reports_waiting_rows_as_cancelled() {
     let mut f = fixture("pace-stop-marked", &["alice", "bob", "carol"]);
@@ -4892,6 +6260,46 @@ fn stop_on_marked_rows_reports_waiting_rows_as_cancelled() {
     }
 }
 
+/// A native permit dispatch starts preparation immediately. Stop reports
+/// that Start as stopped and counts only rows still in the queue as cancelled.
+#[cfg(not(feature = "js"))]
+#[test]
+fn native_stop_on_marked_rows_stops_preparation_and_cancels_queued_starts() {
+    let mut f = native_fixture("pace-stop-marked", &["alice", "bob", "carol"]);
+    let id = script::CompiledId("Gatherer");
+    for name in ["alice", "bob", "carol"] {
+        f.assign_compiled(name, id);
+    }
+    let sel = ScriptChoice::from_script(script::ScriptSel::Compiled(id));
+    let selected = mark_uids(&[1, 2, 3]);
+    start_marked(&selected, &mut f.core, &mut f.scripts, Some(&sel), None);
+    assert_eq!(f.state("alice"), ScriptRunState::Starting);
+    assert!(f.core.play().unwrap().script_native_run("alice").is_none());
+    for name in ["bob", "carol"] {
+        assert!(f.scripts.start_queue_place(name).is_some(), "{name}");
+    }
+    let stop = stop_marked(&selected, &mut f.core, &mut f.scripts);
+    assert_eq!(
+        stop.summary(),
+        "Stop selected: stopped 1, cancelled 2, skipped 0"
+    );
+    assert_eq!(
+        shown_bulk(&f),
+        "Start selected: started 1, skipped 2: bob: cancelled, carol: cancelled"
+    );
+    f.settle();
+    for name in ["alice", "bob", "carol"] {
+        assert_eq!(f.state(name), ScriptRunState::Idle, "{name}");
+        assert!(
+            f.core.play().unwrap().script_native_run(name).is_none(),
+            "{name}: Stop allowed an unprepared native run to commit"
+        );
+        if name != "alice" {
+            assert_eq!(start_accepted(&f, name), 0, "{name}");
+        }
+    }
+}
+
 /// A frozen command book with one latched process condition.
 fn frozen_book(code: Option<ProcessServiceCode>) -> (CommandBook, ProcessConditions) {
     let incarnation = ProcessIncarnation::from_start_nonce(NonZeroU64::MIN);
@@ -4913,6 +6321,7 @@ fn frozen_book(code: Option<ProcessServiceCode>) -> (CommandBook, ProcessConditi
 /// JS card's parameter save is staged at once and taken by the durable
 /// writer, so its frozen row is admitted under a latched work-admission
 /// outage and the writer's result settles it; the saved value is on disk.
+#[cfg(feature = "js")]
 #[test]
 fn a_ready_js_settings_save_is_admitted_and_written_under_a_work_outage() {
     let mut f = fixture("frozen-js-save", &["alice"]);

@@ -1,33 +1,39 @@
-//! Script pane (spec `2026-09-01-headless-tui-design.md`): the
-//! Browse/Start/Pause/Stop/Load widgets, the Browse picker over registry
-//! cards (description, category, tags, kind, source), and the Load path
-//! input. The pane is a plain widget over owned view data; clicks map to [`crate::app::AppAction`]s that `tui-play`
-//! dispatches onto `Play::script_start_load` / pause / stop.
+//! Script pane for native and JavaScript script controls. The shared widget
+//! owns only view data; clicks map to app actions dispatched by `tui-play`.
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::Style;
+#[cfg(feature = "js")]
+use ratatui::style::{Color, Modifier};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Widget, Wrap};
 
 use frontend_core::scripts::{
-    CardRuntime, CardSource, CompiledCardId, LoadStage, LoadedCard, ScriptChoice, ScriptRunState,
-    StatusView,
+    CardRuntime, CardSource, CompiledCardId, ScriptChoice, ScriptRunState, StatusView,
 };
+#[cfg(feature = "js")]
+use frontend_core::scripts::{LoadStage, LoadedCard};
 use frontend_core::views::{script_status_label, script_status_reason, script_status_rows};
 
 /// The script button labels, left to right (Pause slot is dynamic — see
 /// [`pause_button_label`]).
+#[cfg(feature = "js")]
 pub const SCRIPT_BUTTONS: [&str; 5] = ["Browse", "Start", "Pause", "Stop", "Load"];
+#[cfg(not(feature = "js"))]
+pub const SCRIPT_BUTTONS: [&str; 4] = ["Browse", "Start", "Pause", "Stop"];
 
-/// The bulk row under the buttons (after `[Params]` when a schema
-/// exists). The first slot reads "Confirm" while a reload warning awaits
-/// confirmation, followed by a "Cancel" button.
+/// The bulk row under the buttons (after `[Params]` when a schema exists).
+#[cfg(feature = "js")]
 pub const SCRIPT_BULK_BUTTONS: [&str; 3] = ["Reload", "Start fleet", "Stop fleet"];
+#[cfg(not(feature = "js"))]
+/// Native fleet actions under the script buttons.
+pub const SCRIPT_BULK_BUTTONS: [&str; 2] = ["Start fleet", "Stop fleet"];
 
 /// Every script command's key (shown in its button as `[Label k]`): the
 /// same commands the buttons emit, reachable when the pane is clipped.
-/// Pause also toggles Resume; Reload also confirms a shown warning.
+/// Pause also toggles Resume.
+#[cfg(feature = "js")]
 pub const SCRIPT_KEYS: [(&str, char); 10] = [
     ("Browse", 'b'),
     ("Start", 't'),
@@ -40,8 +46,18 @@ pub const SCRIPT_KEYS: [(&str, char); 10] = [
     ("Start fleet", 'T'),
     ("Stop fleet", 'E'),
 ];
+#[cfg(not(feature = "js"))]
+pub const SCRIPT_KEYS: [(&str, char); 7] = [
+    ("Browse", 'b'),
+    ("Start", 't'),
+    ("Pause", 'P'),
+    ("Stop", 'e'),
+    ("Params", 'v'),
+    ("Start fleet", 'T'),
+    ("Stop fleet", 'E'),
+];
 
-/// The key of a button label (`Resume` shares Pause's, `Confirm` Reload's).
+/// The key associated with a script-pane button label.
 pub fn script_key(label: &str) -> char {
     let command = match label {
         "Resume" => "Pause",
@@ -121,9 +137,11 @@ pub struct BrowseCard {
     pub tags: Vec<String>,
     pub kind: CardRuntime,
     pub source: CardSource,
+    #[cfg(feature = "js")]
     pub unloadable: Option<String>,
 }
 
+#[cfg(feature = "js")]
 impl From<LoadedCard<'_>> for BrowseCard {
     fn from(card: LoadedCard<'_>) -> Self {
         Self {
@@ -137,7 +155,6 @@ impl From<LoadedCard<'_>> for BrowseCard {
         }
     }
 }
-
 /// The selection represented by a Browse card.
 pub fn card_selection(card: &BrowseCard) -> Option<ScriptChoice> {
     if card.kind == CardRuntime::Compiled {
@@ -156,6 +173,7 @@ impl<'a> From<frontend_core::scripts::BrowseCard<'a>> for BrowseCard {
             tags: card.tags().map_or_else(Vec::new, ToOwned::to_owned),
             kind: card.kind(),
             source: card.source(),
+            #[cfg(feature = "js")]
             unloadable: card.unloadable().map(str::to_owned),
         }
     }
@@ -190,22 +208,24 @@ pub fn resolve_category_order(saved: &[String], present: &[String]) -> Vec<Strin
     out
 }
 
-/// One logical line in the Browse list (maps to one terminal row).
+/// One logical line in the Browse list.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BrowseLine {
+    #[cfg(feature = "js")]
     ImportCatalog,
     Category(String),
     Card(usize),
     Empty,
 }
 
-/// Build grouped Browse lines: optional Import row, category headers, cards.
+/// Build grouped Browse lines.
 pub fn browse_lines(
     cards: &[BrowseCard],
     category_order: &[String],
-    catalog_deferred: bool,
+    #[cfg(feature = "js")] catalog_deferred: bool,
 ) -> Vec<BrowseLine> {
     let mut lines = Vec::new();
+    #[cfg(feature = "js")]
     if catalog_deferred {
         lines.push(BrowseLine::ImportCatalog);
     }
@@ -231,16 +251,11 @@ pub fn browse_lines(
     lines
 }
 
-/// Paint rows for one card (name+badges, optional description, category,
-/// tags, and — for an unloadable card — the load failure the panel's
-/// `browse_script_card` retains: `failed {stage}` plus the diagnostic naming
-/// the failing specifier). The pane wraps (`Paragraph` + `Wrap`), so the
-/// specifier stays readable at narrow widths instead of clipping like the
-/// one-row message strip. The rows are selection-independent so click
-/// mapping (`card_index_at_row`) and `browse_section_height` agree with the
-/// paint.
+/// Paint rows for one card. The pane wraps the description and tags, so
+/// click mapping and section height share the same layout.
 pub fn card_detail_lines(card: &BrowseCard, selected: bool) -> Vec<Line<'static>> {
     let mark = if selected { "> " } else { "  " };
+    #[cfg(feature = "js")]
     let style = if card.unloadable.is_some() {
         Style::default()
             .fg(Color::DarkGray)
@@ -248,6 +263,8 @@ pub fn card_detail_lines(card: &BrowseCard, selected: bool) -> Vec<Line<'static>
     } else {
         Style::default()
     };
+    #[cfg(not(feature = "js"))]
+    let style = Style::default();
     let mut out = vec![Line::from(Span::styled(
         format!(
             "{mark}{}  [{}] [{}]",
@@ -273,6 +290,7 @@ pub fn card_detail_lines(card: &BrowseCard, selected: bool) -> Vec<Line<'static>
             style,
         )));
     }
+    #[cfg(feature = "js")]
     if let Some(spec) = card.unloadable.as_deref() {
         // An `unloadable` card always fails import resolution with this
         // diagnostic (`JsLibrary::note_card_outcome`), the same text the
@@ -294,7 +312,9 @@ pub fn browse_section_height(lines: &[BrowseLine], cards: &[BrowseCard]) -> u16 
     let mut h = 0u16;
     for line in lines {
         h += match line {
-            BrowseLine::ImportCatalog | BrowseLine::Category(_) | BrowseLine::Empty => 1,
+            #[cfg(feature = "js")]
+            BrowseLine::ImportCatalog => 1,
+            BrowseLine::Category(_) | BrowseLine::Empty => 1,
             BrowseLine::Card(idx) => card_detail_lines(&cards[*idx], false).len() as u16,
         };
     }
@@ -310,7 +330,9 @@ pub fn card_index_at_row(
     let mut y = 0u16;
     for line in lines {
         let h = match line {
-            BrowseLine::ImportCatalog | BrowseLine::Category(_) | BrowseLine::Empty => 1,
+            #[cfg(feature = "js")]
+            BrowseLine::ImportCatalog => 1,
+            BrowseLine::Category(_) | BrowseLine::Empty => 1,
             BrowseLine::Card(idx) => {
                 let card_h = card_detail_lines(&cards[*idx], false).len() as u16;
                 if list_row >= y && list_row < y + card_h {
@@ -325,6 +347,7 @@ pub fn card_index_at_row(
 }
 
 /// True when `root/src/bot/scripts/index.ts` exists.
+#[cfg(feature = "js")]
 pub fn rs2b0t_root_has_index(root: &std::path::Path) -> bool {
     frontend_core::scripts::paths::registry_index_path(root).is_file()
 }
@@ -338,6 +361,7 @@ pub enum ScriptClick {
     /// A Browse picker row hit: index into `cards`.
     Pick(usize),
     /// Import catalog… row while deferred.
+    #[cfg(feature = "js")]
     ImportCatalog,
     /// `[Params]` row when the selected card has a settings schema.
     Params,
@@ -351,28 +375,25 @@ pub struct ScriptPane<'a> {
     pub sel: Option<&'a ScriptChoice>,
     pub cards: &'a [BrowseCard],
     pub category_order: &'a [String],
+    #[cfg(feature = "js")]
     pub catalog_deferred: bool,
     pub browse_open: bool,
+    #[cfg(feature = "js")]
     pub load_open: bool,
-    pub load_path: &'a str,
     pub params_available: bool,
-    /// A reload warning awaits confirmation.
+    #[cfg(feature = "js")]
     pub reload_confirm: bool,
     pub native_status: Option<StatusView<'a>>,
     pub walk_risk: Option<&'a str>,
 }
 
 impl<'a> ScriptPane<'a> {
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         state: ScriptRunState,
         sel: Option<&'a ScriptChoice>,
         cards: &'a [BrowseCard],
         category_order: &'a [String],
-        catalog_deferred: bool,
         browse_open: bool,
-        load_open: bool,
-        load_path: &'a str,
         params_available: bool,
     ) -> Self {
         Self {
@@ -380,19 +401,29 @@ impl<'a> ScriptPane<'a> {
             sel,
             cards,
             category_order,
-            catalog_deferred,
+            #[cfg(feature = "js")]
+            catalog_deferred: false,
             browse_open,
-            load_open,
-            load_path,
+            #[cfg(feature = "js")]
+            load_open: false,
             params_available,
+            #[cfg(feature = "js")]
             reload_confirm: false,
             native_status: None,
             walk_risk: None,
         }
     }
 
-    pub fn with_reload_confirm(mut self, confirm: bool) -> Self {
-        self.reload_confirm = confirm;
+    #[cfg(feature = "js")]
+    pub fn with_js_controls(
+        mut self,
+        catalog_deferred: bool,
+        load_open: bool,
+        reload_confirm: bool,
+    ) -> Self {
+        self.catalog_deferred = catalog_deferred;
+        self.load_open = load_open;
+        self.reload_confirm = reload_confirm;
         self
     }
 
@@ -421,31 +452,57 @@ impl<'a> ScriptPane<'a> {
 
     /// The bulk row's buttons, left to right.
     fn bulk_buttons(&self) -> impl Iterator<Item = &'static str> {
-        let reload = if self.reload_confirm {
-            "Confirm"
-        } else {
-            "Reload"
-        };
-        let cancel = self.reload_confirm.then_some("Cancel");
-        std::iter::once(reload)
-            .chain(cancel)
-            .chain(SCRIPT_BULK_BUTTONS[1..].iter().copied())
+        #[cfg(feature = "js")]
+        {
+            let reload = if self.reload_confirm {
+                "Confirm"
+            } else {
+                "Reload"
+            };
+            let cancel = self.reload_confirm.then_some("Cancel");
+            std::iter::once(reload)
+                .chain(cancel)
+                .chain(SCRIPT_BULK_BUTTONS[1..].iter().copied())
+        }
+        #[cfg(not(feature = "js"))]
+        {
+            SCRIPT_BULK_BUTTONS.iter().copied()
+        }
     }
 
-    /// Whether the bulk row (and `[Params]`) is shown: not while Browse or
-    /// Load owns the rows under the buttons.
+    /// Whether the bulk row (and `[Params]`) is shown under the active view.
     fn bulk_row_shown(&self) -> bool {
-        !self.browse_open && !self.load_open
+        #[cfg(feature = "js")]
+        {
+            !self.browse_open && !self.load_open
+        }
+        #[cfg(not(feature = "js"))]
+        {
+            !self.browse_open
+        }
     }
 
     fn browse_lines(&self) -> Vec<BrowseLine> {
-        browse_lines(self.cards, self.category_order, self.catalog_deferred)
+        #[cfg(feature = "js")]
+        {
+            browse_lines(self.cards, self.category_order, self.catalog_deferred)
+        }
+        #[cfg(not(feature = "js"))]
+        {
+            browse_lines(self.cards, self.category_order)
+        }
     }
 
     fn card_selected(&self, card: &BrowseCard) -> bool {
-        self.sel
-            .and_then(ScriptChoice::loaded_card)
-            .is_some_and(|(source, name)| card.source == source && card.name == name)
+        self.sel.is_some_and(|selection| {
+            if let Some(id) = selection.compiled_id() {
+                card.kind == CardRuntime::Compiled && CompiledCardId::lookup(&card.name) == Some(id)
+            } else {
+                selection
+                    .loaded_card()
+                    .is_some_and(|(source, name)| card.source == source && card.name == name)
+            }
+        })
     }
 
     /// The click inside the pane. Buttons live on the second inner line;
@@ -485,6 +542,7 @@ impl<'a> ScriptPane<'a> {
                 let mut y = 0u16;
                 for line in &lines {
                     match line {
+                        #[cfg(feature = "js")]
                         BrowseLine::ImportCatalog => {
                             if list_row == y {
                                 return ScriptClick::ImportCatalog;
@@ -511,9 +569,16 @@ impl<'a> ScriptPane<'a> {
 
 impl Widget for ScriptPane<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
+        #[cfg(feature = "js")]
         let title = if self.load_open {
             "script — load"
         } else if self.browse_open {
+            "script — browse"
+        } else {
+            "script"
+        };
+        #[cfg(not(feature = "js"))]
+        let title = if self.browse_open {
             "script — browse"
         } else {
             "script"
@@ -552,19 +617,26 @@ impl Widget for ScriptPane<'_> {
         if let Some(reason) = self.walk_risk {
             lines.push(Line::from(format!("Walk risk: {reason}")));
         }
+        #[cfg(feature = "js")]
         if self.load_open {
             lines.push(Line::from("load: browse for .ts/.js file"));
         }
         if self.browse_open {
             for line in self.browse_lines() {
                 match line {
+                    #[cfg(feature = "js")]
                     BrowseLine::ImportCatalog => {
                         lines.push(Line::from("[Import catalog…]"));
                     }
+                    #[cfg(feature = "js")]
                     BrowseLine::Empty => {
                         lines.push(Line::from(
                             "browse: (no cards — Load a JS file or import catalog)",
                         ));
+                    }
+                    #[cfg(not(feature = "js"))]
+                    BrowseLine::Empty => {
+                        lines.push(Line::from("browse: (no cards)"));
                     }
                     BrowseLine::Category(cat) => {
                         lines.push(Line::from(format!("— {cat} —")));
@@ -595,9 +667,11 @@ mod tests {
     };
     use frontend_core::test_support::scripts::NativeStatus;
 
+    #[cfg(feature = "js")]
+    use super::card_detail_lines;
     use super::{
-        browse_lines, card_category, card_detail_lines, categories_present, resolve_category_order,
-        BrowseCard, BrowseLine, ScriptClick, ScriptPane, SCRIPT_BUTTONS,
+        browse_lines, card_category, categories_present, resolve_category_order, BrowseCard,
+        BrowseLine, ScriptClick, ScriptPane, SCRIPT_BUTTONS,
     };
 
     fn sample_file_card() -> BrowseCard {
@@ -608,6 +682,7 @@ mod tests {
             tags: vec!["mining".into()],
             kind: CardRuntime::Compat,
             source: CardSource::File,
+            #[cfg(feature = "js")]
             unloadable: None,
         }
     }
@@ -626,20 +701,26 @@ mod tests {
             .collect()
     }
 
+    fn browse_lines_for_test(
+        cards: &[BrowseCard],
+        category_order: &[String],
+        catalog_deferred: bool,
+    ) -> Vec<BrowseLine> {
+        #[cfg(feature = "js")]
+        {
+            browse_lines(cards, category_order, catalog_deferred)
+        }
+        #[cfg(not(feature = "js"))]
+        {
+            let _ = catalog_deferred;
+            browse_lines(cards, category_order)
+        }
+    }
+
     #[test]
     fn the_script_widgets_render() {
         let text = render(
-            ScriptPane::new(
-                ScriptRunState::Idle,
-                None,
-                &[],
-                &[],
-                false,
-                false,
-                false,
-                "",
-                false,
-            ),
+            ScriptPane::new(ScriptRunState::Idle, None, &[], &[], false, false),
             60,
             4,
         );
@@ -655,17 +736,7 @@ mod tests {
     #[test]
     fn clicking_start_maps_to_the_start_button() {
         let area = Rect::new(0, 0, 60, 4);
-        let pane = ScriptPane::new(
-            ScriptRunState::Idle,
-            None,
-            &[],
-            &[],
-            false,
-            false,
-            false,
-            "",
-            false,
-        );
+        let pane = ScriptPane::new(ScriptRunState::Idle, None, &[], &[], false, false);
         let start = pane.on_click(area, 14, 2);
         assert_eq!(
             start,
@@ -677,21 +748,12 @@ mod tests {
     /// The bulk row under the buttons: Reload / Start fleet / Stop fleet after
     /// `[Params]`; a pending reload warning turns Reload into Confirm and
     /// adds Cancel, shifting the rest.
+    #[cfg(feature = "js")]
     #[test]
     fn bulk_row_clicks_follow_the_painted_labels() {
         let pane = |confirm: bool| {
-            ScriptPane::new(
-                ScriptRunState::Running,
-                None,
-                &[],
-                &[],
-                false,
-                false,
-                false,
-                "",
-                true,
-            )
-            .with_reload_confirm(confirm)
+            ScriptPane::new(ScriptRunState::Running, None, &[], &[], false, true)
+                .with_js_controls(false, false, confirm)
         };
         let area = Rect::new(0, 0, 80, 6);
         let row = 3;
@@ -735,17 +797,7 @@ mod tests {
 
     #[test]
     fn click_between_buttons_misses() {
-        let pane = ScriptPane::new(
-            ScriptRunState::Idle,
-            None,
-            &[],
-            &[],
-            false,
-            false,
-            false,
-            "",
-            false,
-        );
+        let pane = ScriptPane::new(ScriptRunState::Idle, None, &[], &[], false, false);
         let area = Rect::new(0, 0, 60, 4);
         assert_eq!(pane.on_click(area, 9, 3), ScriptClick::None);
     }
@@ -754,17 +806,7 @@ mod tests {
     fn browse_card_paints_description_kind_and_source() {
         let cards = vec![sample_file_card()];
         let text = render(
-            ScriptPane::new(
-                ScriptRunState::Idle,
-                None,
-                &cards,
-                &[],
-                false,
-                true,
-                false,
-                "",
-                false,
-            ),
+            ScriptPane::new(ScriptRunState::Idle, None, &cards, &[], true, false),
             80,
             12,
         );
@@ -776,6 +818,7 @@ mod tests {
         assert!(text.contains("tags: mining"), "tags: {text:?}");
     }
 
+    #[cfg(feature = "js")]
     #[test]
     fn unloadable_card_detail_lines_use_dim_style() {
         let mut card = sample_file_card();
@@ -791,6 +834,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "js")]
     #[test]
     fn unloadable_card_detail_lines_name_the_failing_specifier() {
         let mut card = sample_file_card();
@@ -822,6 +866,7 @@ mod tests {
     /// The bad-import error must survive the pane's wrap at the PTY sizes
     /// the operators use (120x40, 80x24) instead of clipping like the
     /// one-row message strip: the full specifier stays in the cells.
+    #[cfg(feature = "js")]
     #[test]
     fn unloadable_specifier_stays_visible_when_the_pane_wraps() {
         let mut ghost = sample_file_card();
@@ -832,17 +877,7 @@ mod tests {
         let cards = vec![ghost];
         let sel = ScriptChoice::loaded(CardSource::File, "K0DiscScriptGhost");
         for (w, h) in [(120, 40), (80, 24), (40, 24)] {
-            let pane = ScriptPane::new(
-                ScriptRunState::Idle,
-                Some(&sel),
-                &cards,
-                &[],
-                false,
-                true,
-                false,
-                "",
-                false,
-            );
+            let pane = ScriptPane::new(ScriptRunState::Idle, Some(&sel), &cards, &[], true, false);
             let text = render(pane, w, h);
             assert!(
                 text.contains("failed import"),
@@ -865,6 +900,7 @@ mod tests {
                 tags: Vec::new(),
                 kind: CardRuntime::Compat,
                 source: CardSource::Catalog,
+                #[cfg(feature = "js")]
                 unloadable: None,
             },
             BrowseCard {
@@ -874,11 +910,14 @@ mod tests {
                 tags: Vec::new(),
                 kind: CardRuntime::Compat,
                 source: CardSource::Catalog,
+                #[cfg(feature = "js")]
                 unloadable: None,
             },
         ];
-        let prayer_first = browse_lines(&cards, &["Prayer".into(), "Combat".into()], false);
-        let combat_first = browse_lines(&cards, &["Combat".into(), "Prayer".into()], false);
+        let prayer_first =
+            browse_lines_for_test(&cards, &["Prayer".into(), "Combat".into()], false);
+        let combat_first =
+            browse_lines_for_test(&cards, &["Combat".into(), "Prayer".into()], false);
         let idx = |lines: &[BrowseLine]| {
             lines
                 .iter()
@@ -907,6 +946,7 @@ mod tests {
                 tags: Vec::new(),
                 kind: CardRuntime::Compat,
                 source: CardSource::File,
+                #[cfg(feature = "js")]
                 unloadable: None,
             }]),
             vec!["Uncategorized"]
@@ -919,6 +959,7 @@ mod tests {
                 tags: Vec::new(),
                 kind: CardRuntime::Compat,
                 source: CardSource::File,
+                #[cfg(feature = "js")]
                 unloadable: None,
             }),
             "Uncategorized"
@@ -935,21 +976,22 @@ mod tests {
                 tags: Vec::new(),
                 kind: CardRuntime::Compat,
                 source: CardSource::Catalog,
+                #[cfg(feature = "js")]
                 unloadable: None,
             },
             sample_file_card(),
+            BrowseCard {
+                name: "Gatherer".into(),
+                description: String::new(),
+                category: "Skilling".into(),
+                tags: Vec::new(),
+                kind: CardRuntime::Compiled,
+                source: CardSource::Builtin,
+                #[cfg(feature = "js")]
+                unloadable: None,
+            },
         ];
-        let pane = ScriptPane::new(
-            ScriptRunState::Idle,
-            None,
-            &cards,
-            &[],
-            false,
-            true,
-            false,
-            "",
-            false,
-        );
+        let pane = ScriptPane::new(ScriptRunState::Idle, None, &cards, &[], true, false);
         let area = Rect::new(0, 0, 80, 16);
         // Category header occupies the first browse row; card name is next.
         assert_eq!(
@@ -963,32 +1005,40 @@ mod tests {
                 Some(&ScriptChoice::loaded(CardSource::Catalog, "BoneBurier")),
                 &cards,
                 &[],
-                false,
                 true,
-                false,
-                "",
                 false,
             ),
             80,
             16,
         );
         assert!(text.contains('>'), "selected card is marked: {text:?}");
-    }
-
-    #[test]
-    fn deferred_browse_shows_import_catalog() {
+        let selection = ScriptChoice::compiled(
+            CompiledCardId::lookup("Gatherer").expect("compiled Gatherer card"),
+        );
         let text = render(
             ScriptPane::new(
                 ScriptRunState::Idle,
-                None,
-                &[],
+                Some(&selection),
+                &cards,
                 &[],
                 true,
-                true,
-                false,
-                "",
                 false,
             ),
+            80,
+            16,
+        );
+        assert!(
+            text.contains("> Gatherer"),
+            "the compiled selection is marked in both builds: {text:?}"
+        );
+    }
+
+    #[cfg(feature = "js")]
+    #[test]
+    fn deferred_browse_shows_import_catalog() {
+        let text = render(
+            ScriptPane::new(ScriptRunState::Idle, None, &[], &[], true, false)
+                .with_js_controls(true, false, false),
             80,
             8,
         );
@@ -1001,17 +1051,7 @@ mod tests {
     #[test]
     fn paused_state_shows_resume_not_pause() {
         let text = render(
-            ScriptPane::new(
-                ScriptRunState::Paused,
-                None,
-                &[],
-                &[],
-                false,
-                false,
-                false,
-                "",
-                false,
-            ),
+            ScriptPane::new(ScriptRunState::Paused, None, &[], &[], false, false),
             60,
             4,
         );
@@ -1028,17 +1068,7 @@ mod tests {
     #[test]
     fn running_state_shows_pause_not_resume() {
         let text = render(
-            ScriptPane::new(
-                ScriptRunState::Running,
-                None,
-                &[],
-                &[],
-                false,
-                false,
-                false,
-                "",
-                false,
-            ),
+            ScriptPane::new(ScriptRunState::Running, None, &[], &[], false, false),
             60,
             4,
         );
@@ -1052,17 +1082,7 @@ mod tests {
     #[test]
     fn clicking_resume_when_paused_returns_resume_button() {
         let area = Rect::new(0, 0, 60, 4);
-        let pane = ScriptPane::new(
-            ScriptRunState::Paused,
-            None,
-            &[],
-            &[],
-            false,
-            false,
-            false,
-            "",
-            false,
-        );
+        let pane = ScriptPane::new(ScriptRunState::Paused, None, &[], &[], false, false);
         assert_eq!(
             pane.on_click(area, 23, 2),
             ScriptClick::Button("Resume"),
@@ -1077,18 +1097,8 @@ mod tests {
             "quest list unavailable; log in normally, then Stop/Start Quester",
         );
         let text = render(
-            ScriptPane::new(
-                ScriptRunState::Running,
-                None,
-                &[],
-                &[],
-                false,
-                false,
-                false,
-                "",
-                false,
-            )
-            .with_native_status(Some(status.view())),
+            ScriptPane::new(ScriptRunState::Running, None, &[], &[], false, false)
+                .with_native_status(Some(status.view())),
             90,
             10,
         );
@@ -1101,18 +1111,8 @@ mod tests {
     #[test]
     fn retained_walk_assessment_has_a_walk_risk_row_without_native_status() {
         let text = render(
-            ScriptPane::new(
-                ScriptRunState::Idle,
-                None,
-                &[],
-                &[],
-                false,
-                false,
-                false,
-                "",
-                false,
-            )
-            .with_walk_risk(Some("Route assessment unknown: Poison")),
+            ScriptPane::new(ScriptRunState::Idle, None, &[], &[], false, false)
+                .with_walk_risk(Some("Route assessment unknown: Poison")),
             90,
             10,
         );
@@ -1141,18 +1141,8 @@ mod tests {
             .with_text_field("step_comment", "Step comment", comment);
         for (width, height) in [(80, 24), (120, 40)] {
             let text = render(
-                ScriptPane::new(
-                    ScriptRunState::Running,
-                    None,
-                    &[],
-                    &[],
-                    false,
-                    false,
-                    false,
-                    "",
-                    false,
-                )
-                .with_native_status(Some(status.view())),
+                ScriptPane::new(ScriptRunState::Running, None, &[], &[], false, false)
+                    .with_native_status(Some(status.view())),
                 width,
                 height,
             );

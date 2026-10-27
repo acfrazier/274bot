@@ -1,22 +1,27 @@
 use super::*;
 use crate::bin::seam::Seam;
 
-use frontend_core::scripts::{
-    CardSource, CompiledCardId, LoadShape, LoadStage, Loadouts, ScriptChoice, ScriptRunState,
-};
+use frontend_core::scripts::{CardSource, CompiledCardId, Loadouts, ScriptChoice, ScriptRunState};
+#[cfg(feature = "js")]
+use frontend_core::scripts::{LoadShape, LoadStage};
 use frontend_core::test_support::live::{
     passing_runner_for_test, runner_status_for_test, tick_scenario_runner_for_test,
 };
+#[cfg(feature = "js")]
 use frontend_core::test_support::paint::TestPaint;
+use frontend_core::test_support::scripts::{assign_compiled, reset_quester_registry};
+#[cfg(feature = "js")]
 use frontend_core::test_support::scripts::{
-    assign_compiled, assign_loaded, file_identity, live_example_path, raw_content_fingerprint,
-    reset_quester_registry, LoadedCardSnapshot,
+    assign_loaded, file_identity, live_example_path, raw_content_fingerprint, LoadedCardSnapshot,
 };
 use frontend_core::test_support::session::install_vault;
 use frontend_core::test_support::tui::{
-    arm_random_event_policy, card_api_family, play_script_state, quester_draft_path_ids,
-    quester_folder_path_ids, remove_saved_profile, saved_script_bag, saved_script_settings,
-    start_script_source,
+    arm_random_event_policy, play_script_state, quester_draft_path_ids, quester_folder_path_ids,
+    remove_saved_profile,
+};
+#[cfg(feature = "js")]
+use frontend_core::test_support::tui::{
+    card_api_family, saved_script_bag, saved_script_settings, start_script_source,
 };
 use frontend_core::test_support::{FixtureProfile, IsolatedStores};
 use host_play::profile::ProfileEnvironment;
@@ -718,6 +723,7 @@ fn only_the_witness_a_live_run_armed_decides_it() {
     );
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn paired_proof_refuses_a_live_run_without_the_pair_gate() {
     let _iso = IsolatedStores::enter("tui-pair-refusal");
@@ -740,6 +746,7 @@ fn paired_proof_refuses_a_live_run_without_the_pair_gate() {
         .is_empty());
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn pair_gate_stashes_both_slots_with_complementary_role_bags() {
     let iso = IsolatedStores::enter("tui-pair-gate");
@@ -2049,6 +2056,7 @@ fn tui_reach_layer_uses_shared_lazy_sidecar_and_releases_its_lease() {
     );
 }
 
+#[cfg(feature = "js")]
 fn fake_rs2b0t_tree(dir: &Path, include_jive_kq: bool) -> PathBuf {
     let root = dir.join("rs2b0t");
     let scripts = root.join("src/bot/scripts");
@@ -2104,6 +2112,7 @@ fn live_scenario_looks_up_v2_file_ids_and_keeps_v1() {
     assert!(live_scenario("script_nope").is_err());
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn live_prepare_bone_burier_selects_the_rs2b0t_card_without_starting() {
     let iso = IsolatedStores::enter("tui-bone-live");
@@ -2137,6 +2146,7 @@ fn live_prepare_bone_burier_selects_the_rs2b0t_card_without_starting() {
     );
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn live_prepare_script_trade_loads_the_file_fixture_without_a_catalog_card() {
     // TradeBot is a checked-in file fixture, not a catalog card: prepare
@@ -2193,6 +2203,7 @@ fn live_prepare_script_trade_loads_the_file_fixture_without_a_catalog_card() {
     );
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn live_prepare_jive_kq_stashes_four_starts_with_the_same_roster() {
     let iso = IsolatedStores::enter("tui-jive-kq-fleet");
@@ -2236,6 +2247,7 @@ fn live_prepare_jive_kq_stashes_four_starts_with_the_same_roster() {
     }
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn live_prepare_bone_burier_v2_selects_each_example_by_identity() {
     let ts = live_example_path("bone_burier_v2.ts").expect("ts example");
@@ -2289,6 +2301,7 @@ fn live_prepare_bone_burier_v2_selects_each_example_by_identity() {
     }
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn live_prepare_thiever_posts_guard_target_when_schema_empty() {
     let iso = IsolatedStores::enter("tui-thiever-bag");
@@ -2334,6 +2347,7 @@ ScriptRegistry.register({ name: 'Thiever', create: () => new ThievingBot() });
     );
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn first_browse_without_rs2b0t_opens_catalog_prompt() {
     let iso = IsolatedStores::enter("tui-browse");
@@ -2351,6 +2365,7 @@ fn first_browse_without_rs2b0t_opens_catalog_prompt() {
     );
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn defer_rs2b0t_catalog_leaves_no_path_and_zero_catalog_cards() {
     let iso = IsolatedStores::enter("tui-defer");
@@ -2375,6 +2390,7 @@ fn defer_rs2b0t_catalog_leaves_no_path_and_zero_catalog_cards() {
     );
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn import_rs2b0t_catalog_persists_path_and_registers_cards() {
     let iso = IsolatedStores::enter("tui-import");
@@ -2412,6 +2428,7 @@ fn pump_leaves_app_world_none_when_no_pack_loaded() {
 /// preparation, then loaded and logged in before a loaded script starts on it.
 /// The same check as the panel's unlock focus (F4 rs2b2t live session:
 /// `script: no slot: <name>` on the auto-logged-in bot).
+#[cfg(feature = "js")]
 #[test]
 fn the_boot_focus_is_a_fleet_member_and_starts_a_loaded_script() {
     let iso = IsolatedStores::enter("tui-boot-focus");
@@ -2453,6 +2470,7 @@ fn settle_starts(session: &mut TuiSession, app: &mut TuiApp) {
     );
 }
 
+#[cfg(feature = "js")]
 /// Flush writes and pump until the latest fleet result has settled.
 fn settle_fleet_result(session: &mut TuiSession, app: &mut TuiApp) {
     let deadline = Instant::now() + Duration::from_secs(10);
@@ -2467,6 +2485,7 @@ fn settle_fleet_result(session: &mut TuiSession, app: &mut TuiApp) {
     }
 }
 
+#[cfg(feature = "js")]
 fn settle_catalog_work(session: &mut TuiSession, app: &mut TuiApp) {
     let deadline = Instant::now() + Duration::from_secs(10);
     while session.scripts.catalog_work_pending() && Instant::now() < deadline {
@@ -2499,6 +2518,7 @@ fn settle_preferences(session: &mut TuiSession, app: &mut TuiApp) {
     }
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn initial_runtime_failure_survives_success_and_refusals_in_tui_output() {
     let iso = IsolatedStores::enter("tui-initial-load");
@@ -2623,6 +2643,7 @@ fn initial_runtime_failure_survives_success_and_refusals_in_tui_output() {
 /// by default instead of hidden behind the game-chat toggle.
 /// TR-TUI-001: dispatching ScriptPause toggles pause/resume like the
 /// panel's `script_toggle_pause` (Resume when Paused, Pause when Running).
+#[cfg(feature = "js")]
 #[test]
 fn script_pause_toggle_resumes_when_paused_and_pauses_when_running() {
     let mut play = empty_play();
@@ -2652,6 +2673,7 @@ fn script_pause_toggle_resumes_when_paused_and_pauses_when_running() {
     );
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn paint_button_action_does_not_queue_a_wire_cmd() {
     let mut play = empty_play();
@@ -2681,6 +2703,7 @@ fn paint_button_action_does_not_queue_a_wire_cmd() {
     );
 }
 
+#[cfg(feature = "js")]
 /// The frame the standard paint-controls helper records, published on
 /// `name`'s status row as the slot's observe does after a tick.
 fn publish_helper_paint(session: &mut TuiSession, name: &str, generation: u64) {
@@ -2691,6 +2714,7 @@ fn publish_helper_paint(session: &mut TuiSession, name: &str, generation: u64) {
     session.core.poll();
 }
 
+#[cfg(feature = "js")]
 fn running_play(names: &[&str]) -> Play {
     let mut play = empty_play();
     for (uid, name) in names.iter().enumerate() {
@@ -2705,6 +2729,7 @@ fn running_play(names: &[&str]) -> Play {
 /// Digits, the focused Enter/Space and a mouse click on the drawn row run
 /// the helper's host controls through the same core activation as the
 /// panel: Pause, the retained frame's Resume, and Stop.
+#[cfg(feature = "js")]
 #[test]
 fn tui_keys_and_mouse_run_the_paint_host_controls() {
     use crate::layout::Screen;
@@ -2761,6 +2786,7 @@ fn tui_keys_and_mouse_run_the_paint_host_controls() {
 }
 
 /// A control drawn for alice never controls bob after the focus moves.
+#[cfg(feature = "js")]
 #[test]
 fn tui_paint_control_shown_for_one_profile_is_refused_for_another() {
     let mut session = TuiSession::new(dummy_options());
@@ -5375,7 +5401,9 @@ fn removing_the_focused_member_focuses_its_neighbour() {
     );
 }
 
+#[cfg(feature = "js")]
 const LOOPING_TS: &str = "export default class T extends LoopingBot { override loop() {} }\n";
+#[cfg(feature = "js")]
 const THIEVER_TS: &str = "export const SETTINGS = { target: { type: 'string', default: 'Man' } };\nexport default class T extends LoopingBot { override loop() {} }\n";
 
 /// A TUI session over a real vault and an empty play: members loaded
@@ -5395,6 +5423,7 @@ fn tui_with_loaded(iso: &IsolatedStores, names: &[&str], loaded: &[&str]) -> (Tu
     }
     install_vault(&mut session.core, vault);
     session.inject_play(empty_play());
+    #[cfg(feature = "js")]
     session.scripts.use_library_at(
         iso.dir().join("js-scripts.json"),
         iso.dir().join("js-cache"),
@@ -5409,6 +5438,7 @@ fn tui_with_loaded(iso: &IsolatedStores, names: &[&str], loaded: &[&str]) -> (Tu
     (session, app)
 }
 
+#[cfg(feature = "js")]
 fn assign(session: &mut TuiSession, name: &str, card: &LoadedCardSnapshot) {
     assert!(assign_loaded(
         &mut session.scripts,
@@ -6029,6 +6059,7 @@ fn a_refused_persist_shows_in_the_popup_until_the_next_edit() {
     );
 }
 
+#[cfg(feature = "js")]
 fn press(session: &mut TuiSession, app: &mut TuiApp, code: crossterm::event::KeyCode) {
     let key = crossterm::event::KeyEvent::new(code, crossterm::event::KeyModifiers::NONE);
     let action = session.params_key(app, key);
@@ -6039,6 +6070,7 @@ fn press(session: &mut TuiSession, app: &mut TuiApp, code: crossterm::event::Key
 /// pane go through the same coordinator as the panel: assigned members
 /// start, the warning names both runs, Confirm replaces both, Stop fleet
 /// stops both.
+#[cfg(feature = "js")]
 #[test]
 fn tui_start_all_reload_and_stop_all_use_the_shared_coordinator() {
     let iso = IsolatedStores::enter("tui-bulk-scripts");
@@ -6152,6 +6184,7 @@ fn tui_start_all_reload_and_stop_all_use_the_shared_coordinator() {
 
 /// The TUI params popup edits the focused profile's own bag (not the
 /// global store) and `a`/`y` apply it to the same-card member only.
+#[cfg(feature = "js")]
 #[test]
 fn tui_params_edit_the_focused_profile_and_apply_to_all_skips_other_cards() {
     use crossterm::event::KeyCode;
@@ -6215,6 +6248,7 @@ fn tui_params_edit_the_focused_profile_and_apply_to_all_skips_other_cards() {
     session.core.play_for_test().unwrap().script_stop("bob");
 }
 
+#[cfg(feature = "js")]
 #[test]
 #[cfg(unix)]
 fn failed_typed_parameter_saves_restore_the_value_and_show_the_field_error() {
@@ -6300,6 +6334,7 @@ fn failed_typed_parameter_saves_restore_the_value_and_show_the_field_error() {
 
 /// Start with a prior load failure lists it on the strip; a newer front-end
 /// error replaces it; the Start settling Ready leaves that error shown.
+#[cfg(feature = "js")]
 #[test]
 fn tui_ready_start_keeps_a_newer_error_on_the_strip() {
     let iso = IsolatedStores::enter("tui-ready-newer-error");
@@ -6334,6 +6369,7 @@ fn tui_ready_start_keeps_a_newer_error_on_the_strip() {
     session.core.play_for_test().unwrap().script_stop("alice");
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn tui_start_all_paces_admission_through_the_shared_coordinator() {
     let iso = IsolatedStores::enter("tui-start-pace");
@@ -6380,6 +6416,7 @@ fn screen_text(app: &mut TuiApp, w: u16, h: u16) -> String {
         .join("\n")
 }
 
+#[cfg(feature = "js")]
 /// The screen's words at `w`x`h`: borders and padding collapse to single
 /// spaces, so a prompt that wraps across rows still reads as one line.
 fn screen_words(app: &mut TuiApp, w: u16, h: u16) -> String {
@@ -6405,6 +6442,7 @@ fn screen_words(app: &mut TuiApp, w: u16, h: u16) -> String {
 /// card lives under a long path so the confirm text wraps at both sizes
 /// (the Windows nightly condition on every OS); the screen check reads the
 /// words without requiring one unbroken row.
+#[cfg(feature = "js")]
 #[test]
 fn palette_apply_settings_to_marked_copies_only_to_marked_same_card_bots() {
     let iso = IsolatedStores::enter("tui-apply-marked");
@@ -6572,6 +6610,7 @@ fn palette_apply_settings_to_marked_copies_only_to_marked_same_card_bots() {
 /// to the focused bot (no per-card key in its profile yet, only a legacy
 /// global override) and cancelling leaves the vault byte-identical, as the
 /// dialog promises, while the frozen scope still carries the migrated bag.
+#[cfg(feature = "js")]
 #[test]
 fn palette_apply_settings_to_marked_prepare_and_cancel_leave_a_fresh_source_unwritten() {
     let iso = IsolatedStores::enter("tui-apply-marked-fresh");
@@ -6630,16 +6669,19 @@ fn palette_apply_settings_to_marked_prepare_and_cancel_leave_a_fresh_source_unwr
     assert_eq!(std::fs::read(&vault_file).unwrap(), bytes_before);
 }
 
+#[cfg(feature = "js")]
 type SettingsRows = Vec<(
     String,
     std::collections::BTreeMap<String, serde_json::Map<String, serde_json::Value>>,
 )>;
 
 /// Every profile's per-card settings map, by name.
+#[cfg(feature = "js")]
 fn script_settings_rows(session: &TuiSession) -> SettingsRows {
     saved_script_settings(&session.core)
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn memory_relog_warns_before_cancelling_a_queued_start() {
     let iso = IsolatedStores::enter("tui-relog-queued-start");
@@ -6696,6 +6738,7 @@ fn memory_relog_warns_before_cancelling_a_queued_start() {
 /// Start, and the original fleet Start command's member for that bot
 /// settles cancelled (`ScopeInvalidated`: the relog retires the session it
 /// was issued under): it never starts later.
+#[cfg(feature = "js")]
 #[test]
 fn confirmed_relog_settles_the_queued_start_member_and_it_never_starts() {
     use api::identity::{Cancellation, Settlement};
@@ -6824,6 +6867,7 @@ fn settings_memory_row_persists_and_arms_the_handshake() {
     );
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn memory_relog_confirms_while_a_script_runs() {
     let mut play = empty_play();
@@ -6884,6 +6928,7 @@ fn memory_relog_confirms_while_a_script_runs() {
 /// whose password is repeated as the account's tab holds no copy of the
 /// password, so its derived `Debug` shows none. (The redaction registry is
 /// process-wide: this test's password is its own.)
+#[cfg(feature = "js")]
 #[test]
 fn import_overlay_debug_holds_no_export_password() {
     const SECRET: &str = "r4t-tui-pw-60234";
@@ -6934,6 +6979,7 @@ fn import_overlay_debug_holds_no_export_password() {
     assert!(!shown.contains(SECRET), "{shown}");
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn profile_import_preview_waits_for_first_catalog_scan() {
     let iso = IsolatedStores::enter("tui-import-catalog-pending");
@@ -6978,6 +7024,7 @@ fn profile_import_preview_waits_for_first_catalog_scan() {
 
 /// One headless fleet session end to end: type a filter, mark the shown
 /// rows, then run a marked bulk action (Assign) and read its report.
+#[cfg(feature = "js")]
 #[test]
 fn fleet_session_filters_marks_shown_and_assigns_marked() {
     let iso = IsolatedStores::enter("tui-fleet-session");
@@ -7337,6 +7384,7 @@ fn press_key(session: &mut TuiSession, app: &mut TuiApp, key: crossterm::event::
     dispatch(session, app, action);
 }
 
+#[cfg(feature = "js")]
 /// Open the fleet-card picker with `c`, walk to `card` with Down and pick
 /// it with Enter.
 fn pick_fleet_card_with_keys(session: &mut TuiSession, app: &mut TuiApp, card: &ScriptChoice) {
@@ -7359,6 +7407,7 @@ fn pick_fleet_card_with_keys(session: &mut TuiSession, app: &mut TuiApp, card: &
 /// touches the Script tab's Browse pick, the focused bot's pending
 /// heading, an assignment or a run. The header names the card and
 /// follows the focus for the Focused card.
+#[cfg(feature = "js")]
 #[test]
 fn c_picks_a_fleet_card_with_keys_and_esc_keeps_it_without_touching_the_browse_pick() {
     use crate::test_support::{ch, key};
@@ -7557,6 +7606,7 @@ fn a_and_capital_a_mark_only_shown_rows_and_a_status_mark_picks_the_right_rows()
 /// core's prompt as it is, Esc runs nothing and leaves no plan, and
 /// confirming runs the Stop and shows its settled result on the message
 /// line.
+#[cfg(feature = "js")]
 #[test]
 fn e_with_nothing_marked_shows_the_core_prompt_and_confirm_runs_it() {
     use crate::test_support::{ch, key};
@@ -7677,6 +7727,7 @@ fn e_with_nothing_marked_shows_the_core_prompt_and_confirm_runs_it() {
 /// A marked Assign with a pinned card needs no confirmation and assigns
 /// only the marked profiles. A plan made first does not take a profile
 /// marked after it: drive it plan, then mark, then confirm.
+#[cfg(feature = "js")]
 #[test]
 fn a_marked_assign_runs_at_once_and_a_late_mark_never_joins_the_plan() {
     let iso = IsolatedStores::enter("tui-fleet-assign-plan");
@@ -7820,6 +7871,7 @@ fn a_second_identical_emptied_plan_shows_its_result_again() {
 /// panel's test. The Fleet pane draws the label the core projects, Stop
 /// retires the three script walks, and the Stop decision comes from the same
 /// facts the label does.
+#[cfg(feature = "js")]
 #[test]
 fn tui_fleet_pane_and_stop_agree_with_the_core_after_nine_bots_stop() {
     use crate::fleet::{FleetState, FleetTable};
@@ -8373,6 +8425,23 @@ fn the_message_line_shows_and_expires_refusals_at_both_sizes() {
     );
     assert_eq!(frames, 20);
     let _iso = iso;
+}
+
+/// The `p` toggle needs a script paint to toggle: with none the command is
+/// unavailable and its refusal says what is missing. The key must not toggle
+/// game chat with nothing to toggle.
+#[test]
+fn toggle_game_chat_refuses_without_a_script_paint() {
+    let mut app = crate::test_support::fleet_app(&["alice"]);
+    app.chat_data.script_paint = None;
+    assert_eq!(
+        crate::commands::Command::ToggleGameChat.availability(&app),
+        Err(crate::commands::Unavailable::NoScriptPaint)
+    );
+    assert_eq!(
+        crate::commands::Unavailable::NoScriptPaint.text(),
+        "no script paint to toggle"
+    );
 }
 
 /// Whether the process log holds a refusal line containing `line`. The log

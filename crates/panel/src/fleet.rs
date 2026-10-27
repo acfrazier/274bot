@@ -725,16 +725,21 @@ mod tests {
         assert!(session.fleet_model.marks().contains(bob));
         // Bulk action: a pinned card is assigned to the marked bot only, at
         // once (one click: a marked Assign needs no confirmation).
-        let path = dir.join("looper.ts");
-        std::fs::write(
-            &path,
-            "export default class T extends LoopingBot { override loop() {} }\n",
-        )
-        .unwrap();
-        let card = session.scripts.load_card(&path).unwrap();
-        session
-            .fleet_model
-            .stage_card(FleetCard::pinned(card.choice()));
+        #[cfg(feature = "js")]
+        let choice = {
+            let path = dir.join("looper.ts");
+            std::fs::write(
+                &path,
+                "export default class T extends LoopingBot { override loop() {} }\n",
+            )
+            .unwrap();
+            session.scripts.load_card(&path).unwrap().choice()
+        };
+        #[cfg(not(feature = "js"))]
+        let choice = frontend_core::scripts::ScriptChoice::compiled(
+            frontend_core::scripts::CompiledCardId::lookup("Gatherer").unwrap(),
+        );
+        session.fleet_model.stage_card(FleetCard::pinned(choice));
         session.submit(OperatorCommand::SetFleetCard, Targets::Application);
         session.plan_fleet_action(FleetAction::Assign);
         session.core.flush_writes();

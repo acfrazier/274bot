@@ -11,16 +11,22 @@
 //! only with an accepted settings copy, never on its own.
 
 use std::collections::{HashMap, VecDeque};
+#[cfg(feature = "js")]
 use std::path::Path;
 use std::sync::Arc;
 
 use serde_json::{Map, Value};
 
-use super::{CardSource, CompiledCardId, ScriptChoice, SyncCommandInput};
-use super::{LiveDeliveryKind, LiveSettings, Scripts, SettingsWrite};
+#[cfg(feature = "js")]
+use super::{CardSource, LiveSettings};
+use super::{
+    CompiledCardId, LiveDeliveryKind, ScriptChoice, Scripts, SettingsWrite, SyncCommandInput,
+};
 use crate::command::CardKind;
 use crate::operations::{ActionKind, OperationId, Outcome};
-use crate::session::{ArmMirror, NativeCopyCancellation, OperatorSession};
+#[cfg(feature = "js")]
+use crate::session::ArmMirror;
+use crate::session::{NativeCopyCancellation, OperatorSession};
 
 const OTHER_CARD: &str = "assigned another card";
 const UNASSIGNED: &str = "no assignment";
@@ -977,6 +983,7 @@ fn fold(report: &mut SyncReport, write: &SettingsWrite) -> Outcome {
 }
 
 impl Scripts {
+    #[cfg(feature = "js")]
     /// Freeze an Apply-to-all of `source`'s parameters for one card: wall
     /// members already on the card. Unassigned members are skipped; *Apply
     /// to marked* promotes marked unassigned rows afterwards. Read-only: a
@@ -1453,7 +1460,7 @@ impl Scripts {
                 (prepared_name.clone(), row)
             }
         };
-        let Some(mut row) = row else {
+        let Some(row) = row else {
             return CopyStep::Failed(target, "no profile".to_string());
         };
         let unassigned = row.settings.script_assignment.is_none();
@@ -1488,7 +1495,9 @@ impl Scripts {
                     Err(error) => Err(error),
                 }
             }
+            #[cfg(feature = "js")]
             script::ScriptSel::Loaded(source, lookup) => {
+                let mut row = row;
                 if let Some(assignment) = assign {
                     row.settings.script_assignment = Some(assignment);
                 }
@@ -1521,6 +1530,11 @@ impl Scripts {
                 }
                 result
             }
+            #[cfg(not(feature = "js"))]
+            script::ScriptSel::Loaded(..) => Err(script::surface::SurfaceError::NoFactory(
+                script::surface::SurfaceKind::Js,
+            )
+            .to_string()),
         };
         match result {
             Ok(write) => {

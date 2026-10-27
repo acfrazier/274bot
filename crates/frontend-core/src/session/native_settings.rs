@@ -783,6 +783,7 @@ mod tests {
     }
 
     fn native_fixture(test: &str) -> Fixture {
+        #[cfg(feature = "js")]
         crate::test_support::scripts::install_catalog_cards();
         let iso = script::IsolatedEnv::enter(&format!("frontend-core-native-settings-{test}"));
         let dir = iso.dir.clone();
@@ -807,10 +808,13 @@ mod tests {
         }
         let data = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
         core.play_mut().unwrap().bind_script_test_data(data);
+        #[cfg(feature = "js")]
         let scripts = Scripts::new(
             script_js::JsLibrary::with_cache(dir.join("js-scripts.json"), dir.join("js-cache")),
             script::ScriptSettingsStore::at(dir.join("script-settings.json")),
         );
+        #[cfg(not(feature = "js"))]
+        let scripts = Scripts::new();
         Fixture {
             core,
             scripts,
@@ -1345,7 +1349,10 @@ mod tests {
             "second-copy-finishes-last"
         });
         let gatherer = script::CompiledId("Gatherer");
+        #[cfg(feature = "js")]
         let sherlock = script::CompiledId("Sherlock");
+        #[cfg(not(feature = "js"))]
+        let sherlock = script::CompiledId("Grinch");
         f.scripts
             .set_compiled_overrides_assigning(
                 &mut f.core,

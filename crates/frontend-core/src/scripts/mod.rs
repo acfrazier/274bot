@@ -1,8 +1,8 @@
 //! Script coordination shared by the panel and the TUI: the card library
 //! and catalog, per-profile assignment and pending Browse selection,
 //! per-profile parameter bags (legacy migration, typed edits, live push),
-//! Start / Start all (paced through a login-FIFO-style permit) / Stop all with their settlement, the reload and
-//! catalog-refresh transaction ([`reload`]) and bulk parameter sync
+//! Start / Start all (paced through a login-FIFO-style permit) / Stop all with their settlement,
+//! the JS reload and catalog-refresh transaction, and bulk parameter sync
 //! ([`sync`]).
 //!
 //! [`Scripts`] holds coordination state only; every operation takes the
@@ -37,13 +37,15 @@ pub use paint_layout::{
     RowItem, TabItem,
 };
 pub use vocab::{
-    format_setting_value, CardRuntime, CardSource, CompiledCardId, LoadFailureView, LoadShape,
-    LoadStage, LoadedCard, OwnedSchema, SchemaRef, ScriptChoice, ScriptRunState, SettingView,
-    StatusView,
+    format_setting_value, CardRuntime, CardSource, CompiledCardId, OwnedSchema, SchemaRef,
+    ScriptChoice, ScriptRunState, SettingView, StatusView,
 };
+#[cfg(feature = "js")]
+pub use vocab::{LoadFailureView, LoadShape, LoadStage, LoadedCard};
 
 mod marked;
 mod parameter_edit;
+#[cfg(feature = "js")]
 mod reload;
 mod start_admit;
 mod start_tally;
@@ -55,7 +57,9 @@ pub use parameter_edit::{
 
 mod sync;
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
+#[cfg(feature = "js")]
+use std::collections::VecDeque;
 use std::fmt::Write as _;
 
 use std::path::{Path, PathBuf};
@@ -104,6 +108,7 @@ impl ScriptSettingsLog {
     }
 }
 
+#[cfg(feature = "js")]
 pub use reload::{
     CatalogError, PendingReload, PendingReloadKind, ReloadOutcome, ReloadWarning, TranspileError,
 };
@@ -412,6 +417,7 @@ impl Notice {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum StartKind {
     Start,
+    #[cfg(feature = "js")]
     Reload,
     RestartSettings,
 }
@@ -477,6 +483,7 @@ impl From<script::StartLoadError> for ScriptStartError {
 #[derive(Debug, Clone)]
 enum PendingCard {
     Compiled(script::CompiledId),
+    #[cfg(feature = "js")]
     Loaded(Box<script_js::JsCard>),
 }
 
@@ -514,7 +521,8 @@ pub struct BrowseCard<'a>(BrowseCardKind<'a>);
 
 #[derive(Debug, Clone, Copy)]
 enum BrowseCardKind<'a> {
-    Compiled(&'static script::native::CompiledCard),
+    Compiled(&'a script::native::CompiledCard),
+    #[cfg(feature = "js")]
     Loaded(&'a script_js::JsCard),
 }
 
@@ -522,6 +530,7 @@ impl<'a> BrowseCard<'a> {
     pub fn name(self) -> &'a str {
         match self.0 {
             BrowseCardKind::Compiled(card) => card.name,
+            #[cfg(feature = "js")]
             BrowseCardKind::Loaded(card) => card.name.as_str(),
         }
     }
@@ -529,6 +538,7 @@ impl<'a> BrowseCard<'a> {
     pub fn description(self) -> &'a str {
         match self.0 {
             BrowseCardKind::Compiled(card) => card.description,
+            #[cfg(feature = "js")]
             BrowseCardKind::Loaded(card) => card.description.as_str(),
         }
     }
@@ -536,6 +546,7 @@ impl<'a> BrowseCard<'a> {
     pub fn category(self) -> &'a str {
         match self.0 {
             BrowseCardKind::Compiled(card) => card.category,
+            #[cfg(feature = "js")]
             BrowseCardKind::Loaded(card) => card.category.as_str(),
         }
     }
@@ -543,6 +554,7 @@ impl<'a> BrowseCard<'a> {
     pub fn tags(self) -> Option<&'a [String]> {
         match self.0 {
             BrowseCardKind::Compiled(_) => None,
+            #[cfg(feature = "js")]
             BrowseCardKind::Loaded(card) => Some(&card.tags),
         }
     }
@@ -551,6 +563,7 @@ impl<'a> BrowseCard<'a> {
     pub fn kind(self) -> CardRuntime {
         match self.0 {
             BrowseCardKind::Compiled(_) => CardRuntime::Compiled,
+            #[cfg(feature = "js")]
             BrowseCardKind::Loaded(card) => CardRuntime::from_script(card.kind),
         }
     }
@@ -559,6 +572,7 @@ impl<'a> BrowseCard<'a> {
     pub fn source(self) -> CardSource {
         match self.0 {
             BrowseCardKind::Compiled(_) => CardSource::Builtin,
+            #[cfg(feature = "js")]
             BrowseCardKind::Loaded(card) => CardSource::from_script(card.source),
         }
     }
@@ -566,10 +580,12 @@ impl<'a> BrowseCard<'a> {
     pub fn unloadable(self) -> Option<&'a str> {
         match self.0 {
             BrowseCardKind::Compiled(_) => None,
+            #[cfg(feature = "js")]
             BrowseCardKind::Loaded(card) => card.unloadable.as_deref(),
         }
     }
 
+    #[cfg(feature = "js")]
     /// The loaded JS card, if this is one.
     pub fn loaded(self) -> Option<LoadedCard<'a>> {
         match self.0 {
@@ -582,6 +598,7 @@ impl<'a> BrowseCard<'a> {
     pub fn compiled_id(self) -> Option<CompiledCardId> {
         match self.0 {
             BrowseCardKind::Compiled(card) => Some(CompiledCardId::from_script(card.id)),
+            #[cfg(feature = "js")]
             BrowseCardKind::Loaded(_) => None,
         }
     }
@@ -590,6 +607,7 @@ impl<'a> BrowseCard<'a> {
     pub fn selection(self) -> ScriptChoice {
         ScriptChoice::from_script(match self.0 {
             BrowseCardKind::Compiled(card) => script::ScriptSel::Compiled(card.id),
+            #[cfg(feature = "js")]
             BrowseCardKind::Loaded(card) => {
                 script::ScriptSel::Loaded(card.source, card.identity_id())
             }
@@ -657,6 +675,7 @@ pub(crate) struct StagedParameterValidation {
     pub(crate) options: Vec<String>,
 }
 
+#[cfg(feature = "js")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CatalogActionKind {
     Fill,
@@ -664,6 +683,7 @@ pub enum CatalogActionKind {
     Refresh,
 }
 
+#[cfg(feature = "js")]
 #[derive(Debug)]
 pub(crate) struct StagedCatalogAction {
     pub(crate) kind: CatalogActionKind,
@@ -684,6 +704,7 @@ pub(crate) struct StagedSyncCommand {
     pub(crate) selection: ScriptChoice,
 }
 
+#[cfg(feature = "js")]
 #[derive(Debug)]
 struct StagedReloadTarget {
     source: CardSource,
@@ -704,8 +725,11 @@ struct PendingStartCommand {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PendingApplicationWait {
+    #[cfg(feature = "js")]
     CatalogFill,
+    #[cfg(feature = "js")]
     CatalogImport,
+    #[cfg(feature = "js")]
     Reload,
     RestartSettings,
 }
@@ -716,6 +740,7 @@ struct PendingApplicationCommand {
     wait: PendingApplicationWait,
 }
 
+#[cfg(feature = "js")]
 #[derive(Debug)]
 struct PendingCatalogAssignmentCommand {
     request: api::identity::RequestId,
@@ -747,6 +772,7 @@ pub(crate) enum AssignmentCommandResult {
     Rejected(String),
 }
 
+#[cfg(feature = "js")]
 #[derive(Debug)]
 struct TranspileEntry {
     source: CardSource,
@@ -759,30 +785,45 @@ pub struct Scripts {
     browse_selection: Option<ScriptChoice>,
     staged_browse_pick: Option<Option<ScriptChoice>>,
     staged_cancel_reason: Option<&'static str>,
+    #[cfg(feature = "js")]
     staged_file_path: Option<PathBuf>,
     staged_paint_input: Option<PaintInput>,
     staged_setting: Option<StagedSetting>,
     staged_parameter_validation: Option<StagedParameterValidation>,
+    #[cfg(feature = "js")]
     staged_catalog_action: Option<StagedCatalogAction>,
+    #[cfg(feature = "js")]
     staged_defer_catalog: Option<PathBuf>,
     staged_sync: Option<StagedSyncCommand>,
     staged_start_catalog_root: Option<PathBuf>,
+    #[cfg(feature = "js")]
     staged_reload_target: Option<StagedReloadTarget>,
+    #[cfg(feature = "js")]
     staged_transpile_target: Option<(CardSource, String)>,
+    #[cfg(feature = "js")]
     pending_catalog_assignment_commands: Vec<PendingCatalogAssignmentCommand>,
     pending_assignment_writes: HashMap<OperationId, Vec<PendingAssignmentWrite>>,
     restart_settings_failure: Option<String>,
     staged_parameter_discard: Option<StagedParameterDiscard>,
+    #[cfg(feature = "js")]
     transpile_queue: VecDeque<TranspileEntry>,
+    #[cfg(feature = "js")]
     transpile_armed: bool,
+    #[cfg(feature = "js")]
     transpile_done: usize,
+    #[cfg(feature = "js")]
     transpile_total: usize,
+    #[cfg(feature = "js")]
     transpile_all_request: Option<api::identity::RequestId>,
+    #[cfg(feature = "js")]
     transpile_all_failure: Option<String>,
     pending_start_commands: HashMap<String, Vec<PendingStartCommand>>,
     pending_application_commands: Vec<PendingApplicationCommand>,
+    #[cfg(feature = "js")]
     catalog_fill_update: Option<Result<(), String>>,
+    #[cfg(feature = "js")]
     catalog_import_update: Option<(PathBuf, Result<usize, String>)>,
+    #[cfg(feature = "js")]
     catalog_import_command_result: Option<Result<usize, String>>,
     start_command_failures: Vec<(String, String)>,
     /// Queued Starts that left the queue skipped: their commands settle
@@ -791,8 +832,10 @@ pub struct Scripts {
     /// Assign & restart commands whose restart was withdrawn before it
     /// started, with the reason: they settle on the next poll.
     withdrawn_restart_commands: Vec<(PendingStartCommand, String)>,
+    #[cfg(feature = "js")]
     /// The card library: catalog, loaded files, transpile cache.
     js: script_js::JsLibrary,
+    #[cfg(feature = "js")]
     /// Legacy global per-card overrides (`script-settings.json`), claimed
     /// into a profile's bag on its first use of a card.
     legacy: script::ScriptSettingsStore,
@@ -817,11 +860,15 @@ pub struct Scripts {
     /// dispatched: the tally or sync report it opens reports through the
     /// plan's one result line, not the banner.
     planned_run: bool,
+    #[cfg(feature = "js")]
     catalog_filled: bool,
+    #[cfg(feature = "js")]
     /// Root of the most recent catalog registry scan.
     catalog_root: Option<PathBuf>,
+    #[cfg(feature = "js")]
     /// Bounded WorkAdmission jobs for catalog scans, loaded Starts, and warmup.
     async_work: reload::ScriptWorkState,
+    #[cfg(feature = "js")]
     reload: reload::ReloadState,
     sync: sync::SyncState,
     notice: Option<Notice>,
@@ -830,47 +877,75 @@ pub struct Scripts {
     /// list it changes.
     shown: Option<String>,
     start_failures: Vec<(String, String)>,
+    #[cfg(feature = "js")]
     /// Test-only: fail the replacement Start for this profile after it
     /// passed eligibility and was stopped.
     #[cfg(any(test, feature = "test-support"))]
     fail_reload_start_for: Option<String>,
 }
 
+#[cfg(not(feature = "js"))]
+impl Default for Scripts {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Scripts {
-    pub fn new(js: script_js::JsLibrary, legacy: script::ScriptSettingsStore) -> Self {
+    pub fn new(
+        #[cfg(feature = "js")] js: script_js::JsLibrary,
+        #[cfg(feature = "js")] legacy: script::ScriptSettingsStore,
+    ) -> Self {
         Self {
             browse_selection: None,
             staged_browse_pick: None,
             staged_cancel_reason: None,
+            #[cfg(feature = "js")]
             staged_file_path: None,
             staged_paint_input: None,
             staged_setting: None,
             staged_parameter_validation: None,
+            #[cfg(feature = "js")]
             staged_catalog_action: None,
+            #[cfg(feature = "js")]
             staged_defer_catalog: None,
             staged_sync: None,
             staged_start_catalog_root: None,
             staged_parameter_discard: None,
+            #[cfg(feature = "js")]
             transpile_queue: VecDeque::new(),
+            #[cfg(feature = "js")]
             staged_reload_target: None,
+            #[cfg(feature = "js")]
             staged_transpile_target: None,
+            #[cfg(feature = "js")]
             pending_catalog_assignment_commands: Vec::new(),
             pending_assignment_writes: HashMap::new(),
             restart_settings_failure: None,
+            #[cfg(feature = "js")]
             transpile_armed: false,
+            #[cfg(feature = "js")]
             transpile_done: 0,
+            #[cfg(feature = "js")]
             transpile_total: 0,
+            #[cfg(feature = "js")]
             transpile_all_request: None,
+            #[cfg(feature = "js")]
             transpile_all_failure: None,
             pending_start_commands: HashMap::new(),
             pending_application_commands: Vec::new(),
+            #[cfg(feature = "js")]
             catalog_import_update: None,
+            #[cfg(feature = "js")]
             catalog_import_command_result: None,
+            #[cfg(feature = "js")]
             catalog_fill_update: None,
             start_command_failures: Vec::new(),
             start_command_skips: Vec::new(),
             withdrawn_restart_commands: Vec::new(),
+            #[cfg(feature = "js")]
             js,
+            #[cfg(feature = "js")]
             legacy,
             inject: None,
             pending_browse: HashMap::new(),
@@ -884,14 +959,19 @@ impl Scripts {
             tally: None,
             last_bulk_report: None,
             planned_run: false,
+            #[cfg(feature = "js")]
             catalog_filled: false,
+            #[cfg(feature = "js")]
             catalog_root: None,
+            #[cfg(feature = "js")]
             async_work: reload::ScriptWorkState::default(),
+            #[cfg(feature = "js")]
             reload: reload::ReloadState::default(),
             sync: sync::SyncState::default(),
             notice: None,
             shown: None,
             start_failures: Vec::new(),
+            #[cfg(feature = "js")]
             #[cfg(any(test, feature = "test-support"))]
             fail_reload_start_for: None,
         }
@@ -929,11 +1009,13 @@ impl Scripts {
         self.browse_selection = selection;
     }
 
+    #[cfg(feature = "js")]
     /// Stage a local script path for `LoadScriptFile`.
     pub fn stage_load_file(&mut self, path: PathBuf) {
         self.staged_file_path = Some(path);
     }
 
+    #[cfg(feature = "js")]
     pub(crate) fn take_staged_file_path(&mut self) -> Option<PathBuf> {
         self.staged_file_path.take()
     }
@@ -1007,6 +1089,7 @@ impl Scripts {
         self.staged_parameter_validation.take()
     }
 
+    #[cfg(feature = "js")]
     /// Stage catalogue work for `ImportCatalog`.
     pub fn stage_catalog_action(
         &mut self,
@@ -1021,15 +1104,18 @@ impl Scripts {
         });
     }
 
+    #[cfg(feature = "js")]
     pub(crate) fn take_staged_catalog_action(&mut self) -> Option<StagedCatalogAction> {
         self.staged_catalog_action.take()
     }
 
+    #[cfg(feature = "js")]
     /// Stage the durable Not now marker path.
     pub fn stage_defer_catalog(&mut self, path: PathBuf) {
         self.staged_defer_catalog = Some(path);
     }
 
+    #[cfg(feature = "js")]
     pub(crate) fn take_staged_defer_catalog(&mut self) -> Option<PathBuf> {
         self.staged_defer_catalog.take()
     }
@@ -1060,21 +1146,25 @@ impl Scripts {
         self.staged_start_catalog_root.take()
     }
 
+    #[cfg(feature = "js")]
     pub fn stage_reload_target(&mut self, target: Option<(CardSource, String)>) {
         self.staged_reload_target =
             target.map(|(source, lookup)| StagedReloadTarget { source, lookup });
     }
 
+    #[cfg(feature = "js")]
     pub(crate) fn take_staged_reload_target(&mut self) -> Option<(CardSource, String)> {
         self.staged_reload_target
             .take()
             .map(|target| (target.source, target.lookup))
     }
 
+    #[cfg(feature = "js")]
     pub fn stage_transpile_target(&mut self, source: CardSource, lookup: &str) {
         self.staged_transpile_target = Some((source, lookup.to_owned()));
     }
 
+    #[cfg(feature = "js")]
     pub(crate) fn take_staged_transpile_target(&mut self) -> Option<(CardSource, String)> {
         self.staged_transpile_target.take()
     }
@@ -1115,6 +1205,7 @@ impl Scripts {
             .push(PendingApplicationCommand { request, wait });
     }
 
+    #[cfg(feature = "js")]
     pub(crate) fn defer_assignment_command(
         &mut self,
         request: api::identity::RequestId,
@@ -1159,6 +1250,7 @@ impl Scripts {
         let selected_script = selection.as_script().clone();
         let assignment = match self.assignment_for(&selected_script, catalog_root.as_deref()) {
             Ok(Some(assignment)) => assignment,
+            #[cfg(feature = "js")]
             Ok(None) => {
                 self.defer_assignment_command(
                     request,
@@ -1169,6 +1261,13 @@ impl Scripts {
                     restart,
                 );
                 return AssignmentCommandResult::Later;
+            }
+            #[cfg(not(feature = "js"))]
+            Ok(None) => {
+                return AssignmentCommandResult::Rejected(
+                    script::surface::SurfaceError::NoFactory(script::surface::SurfaceKind::Js)
+                        .to_string(),
+                );
             }
             Err(reason) => {
                 if restart {
@@ -1233,6 +1332,7 @@ impl Scripts {
         }
     }
 
+    #[cfg(feature = "js")]
     pub(crate) fn queue_transpile_command(
         &mut self,
         request: api::identity::RequestId,
@@ -1249,6 +1349,7 @@ impl Scripts {
         Ok(true)
     }
 
+    #[cfg(feature = "js")]
     pub(crate) fn queue_transpile_all_command(
         &mut self,
         request: api::identity::RequestId,
@@ -1273,16 +1374,19 @@ impl Scripts {
         Ok(true)
     }
 
+    #[cfg(feature = "js")]
     pub fn transpile_front(&self) -> Option<(CardSource, &str)> {
         self.transpile_queue
             .front()
             .map(|entry| (entry.source, entry.lookup.as_str()))
     }
 
+    #[cfg(feature = "js")]
     pub fn transpile_progress(&self) -> (usize, usize) {
         (self.transpile_done, self.transpile_total)
     }
 
+    #[cfg(feature = "js")]
     fn enqueue_transpile(
         &mut self,
         source: CardSource,
@@ -1327,46 +1431,59 @@ impl Scripts {
         self.transpile_armed = true;
     }
 
+    #[cfg(feature = "js")]
     pub fn take_catalog_import_update(&mut self) -> Option<(PathBuf, Result<usize, String>)> {
         self.catalog_import_update.take()
     }
 
-    /// The operator's card library and legacy per-card store at their
-    /// default paths. A missing library store is a first run; a refused or
-    /// corrupt one is returned as text for the front end to say out loud
-    /// (nothing is saved over a refused store).
+    /// Initialize shared script coordination. With JS, restore the card
+    /// library and open the legacy per-card store. A missing library is a
+    /// first run; a refused or corrupt library is returned for the front
+    /// end to report. Nothing is saved over a refused store.
     pub fn open_default() -> (Self, Option<String>) {
-        let mut js = script_js::JsLibrary::new(script_js::default_js_store());
-        let restore_error = js.restore().err();
-        (
-            Self::new(js, script::ScriptSettingsStore::with_default_path()),
-            restore_error,
-        )
+        #[cfg(feature = "js")]
+        {
+            let mut js = script_js::JsLibrary::new(script_js::default_js_store());
+            let restore_error = js.restore().err();
+            (
+                Self::new(js, script::ScriptSettingsStore::with_default_path()),
+                restore_error,
+            )
+        }
+        #[cfg(not(feature = "js"))]
+        {
+            (Self::new(), None)
+        }
     }
 
+    #[cfg(feature = "js")]
     /// The card library, inside this crate.
     pub(crate) fn library(&self) -> &script_js::JsLibrary {
         &self.js
     }
 
+    #[cfg(feature = "js")]
     /// The card library.
     #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn js(&self) -> &script_js::JsLibrary {
         &self.js
     }
 
+    #[cfg(feature = "js")]
     /// The card library, for load/transpile.
     #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn js_mut(&mut self) -> &mut script_js::JsLibrary {
         &mut self.js
     }
 
+    #[cfg(feature = "js")]
     /// Replace the card library (tests).
     #[cfg(any(test, feature = "test-support"))]
     pub fn set_js(&mut self, js: script_js::JsLibrary) {
         self.js = js;
     }
 
+    #[cfg(feature = "js")]
     /// Use a fresh card library stored at `store` with its transpile cache
     /// under `cache_root` (tests).
     #[cfg(any(test, feature = "test-support"))]
@@ -1374,33 +1491,39 @@ impl Scripts {
         self.js = script_js::JsLibrary::with_cache(store, cache_root);
     }
 
+    #[cfg(feature = "js")]
     /// Replace the legacy global per-card store (tests).
     #[cfg(any(test, feature = "test-support"))]
     pub fn set_legacy(&mut self, legacy: script::ScriptSettingsStore) {
         self.legacy = legacy;
     }
 
+    #[cfg(feature = "js")]
     /// The loaded card `name` (a File card's lookup is its path).
     pub fn card(&self, source: CardSource, name: &str) -> Option<LoadedCard<'_>> {
         self.js.get(source.to_script(), name).map(LoadedCard::new)
     }
 
+    #[cfg(feature = "js")]
     /// Every loaded card, in library order.
     pub fn cards(&self) -> impl ExactSizeIterator<Item = LoadedCard<'_>> + '_ {
         self.js.cards().iter().map(LoadedCard::new)
     }
 
+    #[cfg(feature = "js")]
     /// Whether the library holds any card from `source`.
     pub fn has_cards_from(&self, source: CardSource) -> bool {
         let source = source.to_script();
         self.js.cards().iter().any(|card| card.source == source)
     }
 
+    #[cfg(feature = "js")]
     /// The recorded load failure for a card identity key.
     pub fn load_failure(&self, identity_key: &str) -> Option<LoadFailureView<'_>> {
         self.js.load_failure(identity_key).map(LoadFailureView::new)
     }
 
+    #[cfg(feature = "js")]
     /// Every recorded load failure.
     pub fn load_failures(&self) -> impl Iterator<Item = LoadFailureView<'_>> + '_ {
         self.js
@@ -1409,16 +1532,19 @@ impl Scripts {
             .map(LoadFailureView::new)
     }
 
+    #[cfg(feature = "js")]
     /// How many load failures are recorded.
     pub fn load_failure_count(&self) -> usize {
         self.js.load_failures().len()
     }
 
+    #[cfg(feature = "js")]
     /// The recorded load failures as named, copyable lines.
     pub fn named_failure_output(&self) -> String {
         self.js.named_failure_output()
     }
 
+    #[cfg(feature = "js")]
     /// Loaded cards whose JavaScript is not yet prepared, by lookup.
     pub fn cards_needing_transpile(&self) -> Vec<(CardSource, String)> {
         self.js
@@ -1428,11 +1554,13 @@ impl Scripts {
             .collect()
     }
 
+    #[cfg(feature = "js")]
     /// Whether a loaded card's JavaScript is prepared.
     pub fn card_is_prepared(&self, source: CardSource, name: &str) -> bool {
         self.js.js_is_ready(source.to_script(), name)
     }
 
+    #[cfg(feature = "js")]
     /// Load a local JS/TS file into the library (registering a picker card
     /// and persisting the library store). Returns the loaded card.
     pub(crate) fn load_file(&mut self, path: &Path) -> Result<LoadedCard<'_>, String> {
@@ -1444,6 +1572,7 @@ impl Scripts {
             .ok_or_else(|| format!("loaded card {lookup} is missing from the library"))
     }
 
+    #[cfg(feature = "js")]
     /// Load one exact in-tree example and return its canonical File-card identity.
     pub fn load_live_example_identity(&mut self, file_name: &str) -> Result<String, String> {
         let path = script_js::live_example_path(file_name)
@@ -1459,6 +1588,7 @@ impl Scripts {
             .ok_or_else(|| format!("file example {file_name} missing after identity load"))
     }
 
+    #[cfg(feature = "js")]
     /// Same-folder `./Foo.js` sibling modules a loaded card imports, read
     /// for an isolate Start.
     pub fn card_siblings(
@@ -1473,6 +1603,7 @@ impl Scripts {
         host_play::live_start::card_siblings(&self.js, card)
     }
 
+    #[cfg(feature = "js")]
     /// Write one legacy global per-card override and save the store.
     pub(crate) fn set_legacy_value<Io>(
         &mut self,
@@ -1495,7 +1626,7 @@ impl Scripts {
     }
 
     /// Disjoint library, legacy store and inject bag for live Start.
-    #[cfg(feature = "live-harness")]
+    #[cfg(all(feature = "js", feature = "live-harness"))]
     pub(crate) fn live_start_parts(
         &mut self,
     ) -> (
@@ -1506,12 +1637,14 @@ impl Scripts {
         (&mut self.js, &self.legacy, self.inject.as_ref())
     }
 
+    #[cfg(feature = "js")]
     /// Legacy global per-card overrides.
     #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn legacy(&self) -> &script::ScriptSettingsStore {
         &self.legacy
     }
 
+    #[cfg(feature = "js")]
     /// Legacy global per-card overrides, for writes (tests).
     #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn legacy_mut(&mut self) -> &mut script::ScriptSettingsStore {
@@ -1523,6 +1656,7 @@ impl Scripts {
         self.inject = inject;
     }
 
+    #[cfg(feature = "js")]
     /// Fail the replacement Start for this profile (tests).
     #[cfg(any(test, feature = "test-support"))]
     pub fn set_fail_reload_start_for(&mut self, profile: Option<String>) {
@@ -1706,6 +1840,7 @@ impl Scripts {
         self.notice = Some(Notice::Clear);
     }
 
+    #[cfg(feature = "js")]
     /// Show the library's load-failure list (or clear the banner when there
     /// is none): what an operator Start reports once it is accepted.
     pub fn show_load_failures(&mut self) {
@@ -1726,10 +1861,12 @@ impl Scripts {
 
     /// Whether the `$RS2B0T` catalog has been registered (or its first-run
     /// prompt handled) this session.
+    #[cfg(feature = "js")]
     pub fn catalog_filled(&self) -> bool {
         self.catalog_filled
     }
 
+    #[cfg(feature = "js")]
     #[cfg(test)]
     /// Queue the catalog's first source-only scan once per root. The shared
     /// WorkAdmission worker performs all registry and source-file reads.
@@ -1749,15 +1886,17 @@ impl Scripts {
     /// The shared Browse card sequence: compiled registry cards first, then
     /// loaded JS/catalog cards in library order.
     pub fn browse_cards(&self) -> impl Iterator<Item = BrowseCard<'_>> {
-        script::compiled_cards()
+        let cards = script::compiled_cards()
             .iter()
-            .map(|card| BrowseCard(BrowseCardKind::Compiled(card)))
-            .chain(
-                self.js
-                    .cards()
-                    .iter()
-                    .map(|card| BrowseCard(BrowseCardKind::Loaded(card))),
-            )
+            .map(|card| BrowseCard(BrowseCardKind::Compiled(card)));
+        #[cfg(feature = "js")]
+        let cards = cards.chain(
+            self.js
+                .cards()
+                .iter()
+                .map(|card| BrowseCard(BrowseCardKind::Loaded(card))),
+        );
+        cards
     }
 
     // ---- assignment and Browse selection -------------------------------
@@ -1884,7 +2023,9 @@ impl Scripts {
                     schema: (card.schema)().to_vec(),
                 };
             }
-        } else if let Some((source, lookup)) = identity.split_once(':') {
+        }
+        #[cfg(feature = "js")]
+        if let Some((source, lookup)) = identity.split_once(':') {
             if let Some(card) =
                 script::parse_source_kind(source).and_then(|source| self.js.get(source, lookup))
             {
@@ -1954,6 +2095,7 @@ impl Scripts {
             .is_ok()
     }
 
+    #[cfg(feature = "js")]
     pub(crate) fn mark_assignment_unavailable<Io>(
         &mut self,
         core: &mut OperatorSession<Io>,
@@ -1976,6 +2118,7 @@ impl Scripts {
 
     // ---- per-profile parameters ----------------------------------------
 
+    #[cfg(feature = "js")]
     /// Copy the legacy global overrides for `card_name` into `profile`'s
     /// bag on its first use of the card.
     fn claim_legacy_for<Io>(
@@ -2004,6 +2147,7 @@ impl Scripts {
         );
     }
 
+    #[cfg(feature = "js")]
     /// `profile`'s overrides bag for the card `key`, claiming the legacy
     /// global overrides into the profile on its first use of the card. That
     /// claim queues a durable write; a read that must not write (a
@@ -2020,6 +2164,7 @@ impl Scripts {
         self.peek_profile_overrides(core, profile, key, card_name)
     }
 
+    #[cfg(feature = "js")]
     /// The bag [`Self::profile_overrides`] returns, without the claim: the
     /// profile's own overrides for the card, or, before its first use of the
     /// card, the migrated legacy overrides the claim would store. Writes
@@ -2042,6 +2187,7 @@ impl Scripts {
         }
     }
 
+    #[cfg(feature = "js")]
     /// The legacy global overrides for the card `key` names.
     fn legacy_overrides_for(&self, key: &str, card_name: &str) -> Map<String, Value> {
         self.legacy.overrides(
@@ -2051,6 +2197,7 @@ impl Scripts {
         )
     }
 
+    #[cfg(feature = "js")]
     /// What a Start of this card on `profile` receives: schema defaults,
     /// the profile's overrides, then the inject.
     pub fn merged_profile_bag<Io>(
@@ -2123,6 +2270,7 @@ impl Scripts {
         let key = assignment.key();
         let (identity, generation) = live_fence(core, profile, &key)?;
         let (schema, overrides) = match sel_from_assignment(assignment)? {
+            #[cfg(feature = "js")]
             script::ScriptSel::Loaded(source, lookup) => (
                 self.js
                     .get(source, &lookup)
@@ -2134,6 +2282,8 @@ impl Scripts {
                     .cloned()
                     .unwrap_or_default(),
             ),
+            #[cfg(not(feature = "js"))]
+            script::ScriptSel::Loaded(..) => return None,
             script::ScriptSel::Compiled(id) => {
                 let card = script::compiled_card(id)?;
                 let values = match settings.script_settings.get(&key) {
@@ -2158,6 +2308,7 @@ impl Scripts {
         })
     }
 
+    #[cfg(feature = "js")]
     /// The legacy global bag for a card (no profile focused).
     pub fn legacy_bag(
         &self,
@@ -2180,6 +2331,7 @@ impl Scripts {
         field: &str,
     ) -> Option<Value> {
         match selection.as_script() {
+            #[cfg(feature = "js")]
             script::ScriptSel::Loaded(source, lookup) => {
                 let card = self.js.get(*source, lookup)?;
                 let overrides = match profile {
@@ -2203,6 +2355,8 @@ impl Scripts {
                     .get(field)
                     .cloned()
             }
+            #[cfg(not(feature = "js"))]
+            script::ScriptSel::Loaded(..) => None,
             script::ScriptSel::Compiled(id) => {
                 let profile = profile?;
                 let card = script::compiled_card(*id)?;
@@ -2225,6 +2379,7 @@ impl Scripts {
         }
     }
 
+    #[cfg(feature = "js")]
     /// Set one typed parameter on `profile`'s bag for a card. The write is
     /// queued at once; the matching run (same card identity, generation
     /// captured now) receives the merged bag only once it is durable, and
@@ -2276,6 +2431,7 @@ impl Scripts {
         result
     }
 
+    #[cfg(feature = "js")]
     /// The run of card `key` on `profile` a parameter write is for, with
     /// the bag it would receive; `None` when no run of that card exists.
     #[allow(clippy::too_many_arguments)]
@@ -2307,10 +2463,13 @@ impl Scripts {
 
     // ---- Start / Start all / Stop all ----------------------------------
 
-    /// Whether any Load Start has not settled, including paced Starts still
-    /// waiting for a permit.
+    /// Whether any Start has not settled, including paced Starts still
+    /// waiting for a permit and, with JS, loaded-card preparation.
     pub fn starts_pending(&self) -> bool {
-        !self.starts.is_empty() || !self.admit.is_empty() || self.start_preparation_pending()
+        let pending = !self.starts.is_empty() || !self.admit.is_empty();
+        #[cfg(feature = "js")]
+        let pending = pending || self.start_preparation_pending();
+        pending
     }
 
     /// k-of-n place while `profile` waits for a Start-all (or marked) permit.
@@ -2324,13 +2483,16 @@ impl Scripts {
     /// for the catalog scan or for its assignment write. Each of these is
     /// what [`Self::cancel_queued_as`] withdraws.
     pub fn start_waiting(&self, profile: &str) -> bool {
-        self.admit.status(profile).is_some()
+        let waiting = self.admit.status(profile).is_some();
+        #[cfg(feature = "js")]
+        let waiting = waiting
             || self.has_start_preparation(profile)
             || self.pending_marked_restart(profile)
             || self
                 .pending_catalog_assignment_commands
                 .iter()
-                .any(|command| command.restart && command.profile == profile)
+                .any(|command| command.restart && command.profile == profile);
+        waiting
             || self
                 .pending_assignment_writes
                 .values()
@@ -2349,6 +2511,7 @@ impl Scripts {
     /// tally and settle each withdrawn Start's command on the next poll.
     pub(crate) fn cancel_queued_as(&mut self, profile: &str, reason: &str) -> bool {
         let mut cancelled = false;
+        #[cfg(feature = "js")]
         if self
             .cancel_pending_catalog_assignment(Some(profile))
             .is_some()
@@ -2360,6 +2523,7 @@ impl Scripts {
             self.credit_skipped(profile, reason);
             cancelled = true;
         }
+        #[cfg(feature = "js")]
         if let Some((kind, tallied)) = self.cancel_start_preparation(profile) {
             if tallied {
                 self.skip_unstarted_tally(profile, reason);
@@ -2387,14 +2551,17 @@ impl Scripts {
     fn withdraw_assignment_restarts(&mut self, profile: Option<&str>, reason: &str) -> bool {
         let matches = |restart: bool, name: &str| restart && profile.is_none_or(|p| p == name);
         let mut withdrawn = Vec::new();
-        let mut index = 0;
-        while index < self.pending_catalog_assignment_commands.len() {
-            let command = &self.pending_catalog_assignment_commands[index];
-            if matches(command.restart, &command.profile) {
-                let command = self.pending_catalog_assignment_commands.swap_remove(index);
-                withdrawn.push((command.profile, command.request, command.subject));
-            } else {
-                index += 1;
+        #[cfg(feature = "js")]
+        {
+            let mut index = 0;
+            while index < self.pending_catalog_assignment_commands.len() {
+                let command = &self.pending_catalog_assignment_commands[index];
+                if matches(command.restart, &command.profile) {
+                    let command = self.pending_catalog_assignment_commands.swap_remove(index);
+                    withdrawn.push((command.profile, command.request, command.subject));
+                } else {
+                    index += 1;
+                }
             }
         }
         for commands in self.pending_assignment_writes.values_mut() {
@@ -2426,8 +2593,9 @@ impl Scripts {
     /// the banner: the plan's result line reports it.
     pub(crate) fn open_tally(&mut self, label: &'static str) {
         let open = self.tally.as_ref().is_some_and(StartTally::waiting)
-            || self.starts.values().any(|pending| pending.tallied)
-            || self.tallied_start_preparation_pending();
+            || self.starts.values().any(|pending| pending.tallied);
+        #[cfg(feature = "js")]
+        let open = open || self.tallied_start_preparation_pending();
         match self.tally.as_mut() {
             Some(tally) if open => tally.relabel(label),
             _ => self.tally = Some(StartTally::new(label)),
@@ -2457,6 +2625,7 @@ impl Scripts {
     pub(crate) fn tally_fail(&mut self, profile: &str, reason: &str) {
         self.tally_record(profile, Outcome::Failed(reason.to_string()), LogTo::Slot);
     }
+    #[cfg(feature = "js")]
     pub(crate) fn tally_queued_pending(&mut self, profile: &str) {
         self.tally_record(
             profile,
@@ -2544,6 +2713,7 @@ impl Scripts {
             .map_err(ScriptStartError::from)
     }
 
+    #[cfg(feature = "js")]
     /// The loaded card `(source, lookup)` names, if it can start. A file
     /// card whose file is gone is refused as missing, the same on every
     /// platform: Start never runs a deleted script from the copy loaded
@@ -2642,6 +2812,7 @@ impl Scripts {
                 );
                 Ok(Some(op))
             }
+            #[cfg(feature = "js")]
             script::ScriptSel::Loaded(..) => {
                 if let Some(reason) = core
                     .play()
@@ -2653,6 +2824,14 @@ impl Scripts {
                 }
                 self.queue_loaded_start(core, profile, sel, catalog_root, kind, tallied)
                     .map(|()| None)
+            }
+            #[cfg(not(feature = "js"))]
+            script::ScriptSel::Loaded(..) => {
+                let _ = catalog_root;
+                Err(
+                    script::surface::SurfaceError::NoFactory(script::surface::SurfaceKind::Js)
+                        .into(),
+                )
             }
         }
     }
@@ -2678,7 +2857,10 @@ impl Scripts {
         self.open_tally("Start all");
         let mut accepted = Vec::new();
         for name in members {
-            if self.admit.contains(&name) || self.has_start_preparation(&name) {
+            let waiting = self.admit.contains(&name);
+            #[cfg(feature = "js")]
+            let waiting = waiting || self.has_start_preparation(&name);
+            if waiting {
                 accepted.push(name);
                 continue;
             }
@@ -2720,6 +2902,7 @@ impl Scripts {
         if self.admit.contains(profile) {
             return Ok(());
         }
+        #[cfg(feature = "js")]
         if self.has_start_preparation(profile) {
             self.tally_skip(profile, "already starting");
             return Ok(());
@@ -2768,29 +2951,31 @@ impl Scripts {
         for entry in &cancelled {
             self.withdraw_start(&entry.profile, "cancelled");
         }
-        let preparing = self.cancel_all_start_preparations();
-        for (profile, _, tallied) in &preparing {
-            if *tallied {
-                if let Some(tally) = &mut self.tally {
-                    tally.retract_unstarted(profile);
+        let cancelled_any = !cancelled.is_empty();
+        #[cfg(feature = "js")]
+        let cancelled_any = {
+            let preparing = self.cancel_all_start_preparations();
+            for (profile, _, tallied) in &preparing {
+                if *tallied {
+                    if let Some(tally) = &mut self.tally {
+                        tally.retract_unstarted(profile);
+                    }
+                    self.withdraw_start(profile, "cancelled");
+                } else {
+                    self.start_command_skips
+                        .push((profile.clone(), "cancelled".to_string()));
                 }
-                self.withdraw_start(profile, "cancelled");
-            } else {
-                self.start_command_skips
-                    .push((profile.clone(), "cancelled".to_string()));
             }
-        }
-        let pending_marked = self
-            .cancel_pending_catalog_assignment(None)
-            .unwrap_or_default();
-        for profile in &pending_marked {
-            self.withdraw_start(profile, "cancelled");
-        }
+            let pending_marked = self
+                .cancel_pending_catalog_assignment(None)
+                .unwrap_or_default();
+            for profile in &pending_marked {
+                self.withdraw_start(profile, "cancelled");
+            }
+            cancelled_any || !preparing.is_empty() || !pending_marked.is_empty()
+        };
         let restarts = self.withdraw_assignment_restarts(None, "cancelled");
-        let cancelled_any = !cancelled.is_empty()
-            || !preparing.is_empty()
-            || !pending_marked.is_empty()
-            || restarts;
+        let cancelled_any = cancelled_any || restarts;
         if cancelled_any {
             self.publish_bulk();
         }
@@ -2802,6 +2987,7 @@ impl Scripts {
             let (operation, stopped) = core.stop_scripts(&names);
             (stopped, Some(operation))
         };
+        #[cfg(feature = "js")]
         self.reload.invalidate();
         let report = format!("Stop all: stopped {stopped}");
         if self.last_bulk_report.as_deref() != Some(report.as_str()) {
@@ -2819,6 +3005,7 @@ impl Scripts {
         self.last_bulk_report.as_deref()
     }
 
+    #[cfg(feature = "js")]
     fn pump_transpile_queue<Io>(&mut self, core: &mut OperatorSession<Io>) {
         let settled = if let Some((source, lookup, result)) = self.take_transpile_result() {
             let index = self
@@ -2859,6 +3046,7 @@ impl Scripts {
         }
     }
 
+    #[cfg(feature = "js")]
     fn finish_transpile_entry<Io>(
         &mut self,
         core: &mut OperatorSession<Io>,
@@ -2890,6 +3078,7 @@ impl Scripts {
         }
     }
 
+    #[cfg(feature = "js")]
     fn retain_catalog_fill_result(&mut self) {
         if self.catalog_fill_update.is_none() {
             self.catalog_fill_update = self
@@ -2898,6 +3087,7 @@ impl Scripts {
         }
     }
 
+    #[cfg(feature = "js")]
     fn settle_pending_catalog_assignment_commands<Io>(&mut self, core: &mut OperatorSession<Io>) {
         if self.pending_catalog_assignment_commands.is_empty() || self.catalog_work_pending() {
             return;
@@ -3092,24 +3282,28 @@ impl Scripts {
     }
 
     fn settle_pending_application_commands<Io>(&mut self, core: &mut OperatorSession<Io>) {
-        self.retain_catalog_fill_result();
-        // Only an ImportCatalog row collects the import receipt; a request
-        // made without one keeps it for its caller.
-        let import_pending = self
-            .pending_application_commands
-            .iter()
-            .any(|pending| pending.wait == PendingApplicationWait::CatalogImport);
-        if let Some((root, result)) = import_pending
-            .then(|| self.take_catalog_import_result())
-            .flatten()
+        #[cfg(feature = "js")]
         {
-            let result = result.map_err(|error| error.to_string());
-            self.catalog_import_command_result = Some(result.clone());
-            self.catalog_import_update = Some((root, result));
+            self.retain_catalog_fill_result();
+            // Only an ImportCatalog row collects the import receipt; a request
+            // made without one keeps it for its caller.
+            let import_pending = self
+                .pending_application_commands
+                .iter()
+                .any(|pending| pending.wait == PendingApplicationWait::CatalogImport);
+            if let Some((root, result)) = import_pending
+                .then(|| self.take_catalog_import_result())
+                .flatten()
+            {
+                let result = result.map_err(|error| error.to_string());
+                self.catalog_import_command_result = Some(result.clone());
+                self.catalog_import_update = Some((root, result));
+            }
         }
         let pending = std::mem::take(&mut self.pending_application_commands);
         for command in pending {
             let result = match command.wait {
+                #[cfg(feature = "js")]
                 PendingApplicationWait::CatalogFill => {
                     self.catalog_fill_update
                         .as_ref()
@@ -3121,6 +3315,7 @@ impl Scripts {
                             ),
                         })
                 }
+                #[cfg(feature = "js")]
                 PendingApplicationWait::CatalogImport => self
                     .catalog_import_command_result
                     .as_ref()
@@ -3131,6 +3326,7 @@ impl Scripts {
                             Some(reason.clone()),
                         ),
                     }),
+                #[cfg(feature = "js")]
                 PendingApplicationWait::Reload => self.reload_outcome().map(|outcome| {
                     outcome.failure().map_or_else(
                         || (Settlement::Completed(Completion::Done), None),
@@ -3159,44 +3355,54 @@ impl Scripts {
                     terminal,
                     detail.as_deref(),
                 );
-            } else if command.wait == PendingApplicationWait::Reload
-                && !self.reload_validation_pending()
-            {
-                core.settle_later(
-                    command.request,
-                    Subject::Application,
-                    Settlement::Cancelled(api::identity::Cancellation::Operator),
-                    None,
-                );
-            } else if matches!(
-                command.wait,
-                PendingApplicationWait::CatalogFill | PendingApplicationWait::CatalogImport
-            ) && !self.catalog_work_pending()
-            {
-                core.settle_later(
-                    command.request,
-                    Subject::Application,
-                    Settlement::Completed(Completion::Done),
-                    None,
-                );
             } else {
+                #[cfg(feature = "js")]
+                {
+                    if command.wait == PendingApplicationWait::Reload
+                        && !self.reload_validation_pending()
+                    {
+                        core.settle_later(
+                            command.request,
+                            Subject::Application,
+                            Settlement::Cancelled(api::identity::Cancellation::Operator),
+                            None,
+                        );
+                        continue;
+                    }
+                    if matches!(
+                        command.wait,
+                        PendingApplicationWait::CatalogFill | PendingApplicationWait::CatalogImport
+                    ) && !self.catalog_work_pending()
+                    {
+                        core.settle_later(
+                            command.request,
+                            Subject::Application,
+                            Settlement::Completed(Completion::Done),
+                            None,
+                        );
+                        continue;
+                    }
+                }
                 self.pending_application_commands.push(command);
             }
         }
-        if !self
-            .pending_application_commands
-            .iter()
-            .any(|pending| pending.wait == PendingApplicationWait::CatalogImport)
+        #[cfg(feature = "js")]
         {
-            self.catalog_import_command_result = None;
-        }
-        if self.pending_catalog_assignment_commands.is_empty()
-            && !self
+            if !self
                 .pending_application_commands
                 .iter()
-                .any(|pending| pending.wait == PendingApplicationWait::CatalogFill)
-        {
-            self.catalog_fill_update = None;
+                .any(|pending| pending.wait == PendingApplicationWait::CatalogImport)
+            {
+                self.catalog_import_command_result = None;
+            }
+            if self.pending_catalog_assignment_commands.is_empty()
+                && !self
+                    .pending_application_commands
+                    .iter()
+                    .any(|pending| pending.wait == PendingApplicationWait::CatalogFill)
+            {
+                self.catalog_fill_update = None;
+            }
         }
     }
 
@@ -3208,11 +3414,14 @@ impl Scripts {
     /// Call once per UI frame, after [`OperatorSession::poll`].
     pub fn poll<Io>(&mut self, core: &mut OperatorSession<Io>) {
         self.settle_parameter_edits(core);
-        self.poll_script_work(core);
-        self.pump_transpile_queue(core);
-        self.settle_pending_catalog_assignment_commands(core);
-        self.poll_reload_preparation(core);
-        self.poll_reload_validation(core);
+        #[cfg(feature = "js")]
+        {
+            self.poll_script_work(core);
+            self.pump_transpile_queue(core);
+            self.settle_pending_catalog_assignment_commands(core);
+            self.poll_reload_preparation(core);
+            self.poll_reload_validation(core);
+        }
         self.release_stopped_restarts(core);
         if !self.admit.is_empty() {
             self.admit_ready(core);
@@ -3327,6 +3536,7 @@ impl Scripts {
                             },
                         );
                     }
+                    #[cfg(feature = "js")]
                     PendingCard::Loaded(card) => {
                         let key = card.identity_key();
                         let had_failure = self.js.load_failure(&key).is_some();
@@ -3350,6 +3560,7 @@ impl Scripts {
                 },
                 Some(script::StartOutcome::Failed(error)) => {
                     let diagnostic = match pending.card {
+                        #[cfg(feature = "js")]
                         PendingCard::Loaded(card) => self
                             .js
                             .record_start_result(
@@ -3464,9 +3675,13 @@ impl Scripts {
         tallied: bool,
         diagnostic: String,
     ) {
-        if kind == StartKind::Reload {
-            self.show(format!("reload: {name}: {diagnostic}"));
-            return;
+        match kind {
+            #[cfg(feature = "js")]
+            StartKind::Reload => {
+                self.show(format!("reload: {name}: {diagnostic}"));
+                return;
+            }
+            StartKind::Start | StartKind::RestartSettings => {}
         }
         let message = format!("script: {diagnostic}");
         if tallied
@@ -3596,6 +3811,7 @@ impl Scripts {
         self.start_command_skips
             .push((profile.to_string(), reason.to_string()));
     }
+    #[cfg(feature = "js")]
     /// The permit was credited, but the worker had not dispatched a script.
     fn skip_unstarted_tally(&mut self, profile: &str, reason: &str) {
         if let Some(tally) = &mut self.tally {
@@ -3803,6 +4019,7 @@ pub(crate) fn refill<T: Clone>(dst: &mut Vec<T>, src: &[T]) {
     dst.extend_from_slice(&src[kept..]);
 }
 
+#[cfg(feature = "js")]
 /// The library lookup for a card: a File card by path, others by name.
 fn lookup_name(source: script::ScriptSource, name: &str, path: &Path) -> String {
     match source {

@@ -1111,7 +1111,7 @@ fn terminal_blocked_resets_all_navigation_once_per_generation() {
         let bot = navs.get_mut("alice").unwrap();
         bot.inspect.generation = 9;
         bot.inspect.pending_id = 17;
-        bot.bank_pick.posted = script_js::wire::BankSelectionInput {
+        bot.bank_pick.posted = script::native::snapshot_source::BankSelectionInput {
             request_id: 23,
             generation: 4,
             bank_index: 2,
@@ -1133,7 +1133,7 @@ fn terminal_blocked_resets_all_navigation_once_per_generation() {
         assert_eq!(bot.inspect.pending_id, 0);
         assert_eq!(
             bot.bank_pick.posted,
-            script_js::wire::BankSelectionInput::default()
+            script::native::snapshot_source::BankSelectionInput::default()
         );
         assert_eq!(bot.duel_offer_partner, None);
         assert!(!bot.walk_outcome_failed);
@@ -1143,7 +1143,7 @@ fn terminal_blocked_resets_all_navigation_once_per_generation() {
         assert!(bot.walk_guard_off.is_some());
         assert_eq!(bot.terminal_nav_reset_generation, Some(generation));
 
-        let sentinel = script_js::wire::BankSelectionInput {
+        let sentinel = script::native::snapshot_source::BankSelectionInput {
             request_id: 29,
             generation: 5,
             bank_index: 3,
@@ -1166,7 +1166,7 @@ fn terminal_blocked_resets_all_navigation_once_per_generation() {
     assert_eq!(bot.inspect.pending_id, 99);
     assert_eq!(
         bot.bank_pick.posted,
-        script_js::wire::BankSelectionInput {
+        script::native::snapshot_source::BankSelectionInput {
             request_id: 29,
             generation: 5,
             bank_index: 3,
@@ -3438,6 +3438,7 @@ fn native_protect_alone_does_not_grant_danger_and_invalid_cross_still_refuses() 
     }
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn sherlock_bool_walk_inherits_committed_bits_while_isolate_wiring_stays_frozen() {
     script_js::install_cards().expect("install canonical Sherlock card for native walk test");
@@ -4007,6 +4008,7 @@ fn manual_takeover_of_carried_walk_keeps_its_receipt_identity() {
     }
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn manual_click_terminal_resets_on_stop_before_the_next_load_snapshot() {
     let mut play = run_with_io(
@@ -4300,6 +4302,7 @@ fn takeover_is_refused_for_an_absent_revoked_or_completed_owner() {
     }
 }
 
+#[cfg(feature = "js")]
 fn in_place_load_rig() -> Rig {
     let mut rig = open_rig(false);
     rig.slot().lock().unwrap().stop();
@@ -4327,6 +4330,7 @@ fn in_place_load_rig() -> Rig {
     rig
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn takeover_with_pause_on_pauses_a_load_script_without_a_walk() {
     let mut rig = in_place_load_rig();
@@ -4363,6 +4367,7 @@ fn takeover_with_pause_on_pauses_a_load_script_without_a_walk() {
     );
 }
 
+#[cfg(feature = "js")]
 #[test]
 fn takeover_with_pause_off_leaves_a_load_script_without_a_walk_alone() {
     let rig = in_place_load_rig();
@@ -6019,6 +6024,7 @@ mod s2b_admission_contract {
         );
     }
 
+    #[cfg(feature = "js")]
     #[test]
     fn real_v1_metadata_routes_across_derived_zones_with_boolean_only_and_no_host_guard() {
         for hp in [14, 45] {
@@ -6087,6 +6093,7 @@ mod s2b_admission_contract {
         }
     }
 
+    #[cfg(feature = "js")]
     /// FlourCollector (v1) walked out of Sinclair Mansion past the
     /// Highwayman and Wolf zones on its compiled Reach.locOp walk, then its
     /// Banking.open stand walk, a machine-owned native walk, was refused by
@@ -6417,6 +6424,7 @@ mod s2b_admission_contract {
     }
 
     #[test]
+    #[cfg(feature = "js")]
     fn frame_projection_freezes_an_armed_walk_through_script_start_pause_and_stop() {
         let scripts: ScriptWall = Arc::new(Mutex::new(HashMap::new()));
         let slot = crate::script_runtime::script_slot_or_insert(&scripts, "alice");
@@ -6494,6 +6502,7 @@ fn observe_full(rig: &mut Rig, tick: u64) -> crate::script_runtime::ScriptObserv
         None,
         Some(&rig.snapshot),
         None,
+        #[cfg(feature = "js")]
         None,
         None,
         &rig.scripts,
@@ -6507,7 +6516,9 @@ fn observe_full(rig: &mut Rig, tick: u64) -> crate::script_runtime::ScriptObserv
         None,
         None,
         None,
+        #[cfg(feature = "js")]
         None,
+        #[cfg(feature = "js")]
         crate::script_channels::BrokerWorld::Unavailable,
         None,
         None,

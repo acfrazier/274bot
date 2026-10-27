@@ -1288,16 +1288,62 @@ impl<Io> OperatorSession<Io> {
                 };
                 if admitted {
                     let mut models = surface.models();
-                    let imported = match models.import.as_deref_mut() {
-                        Some(import) => match import.take_staged_account(command) {
-                            Ok(imported) => imported,
-                            Err(error) => {
-                                let applied = Applied::Rejected(
-                                    Rejection::NotStaged,
-                                    Some(error.to_string()),
-                                );
+                    #[cfg(feature = "js")]
+                    {
+                        let imported = match models.import.as_deref_mut() {
+                            Some(import) => match import.take_staged_account(command) {
+                                Ok(imported) => imported,
+                                Err(error) => {
+                                    let applied = Applied::Rejected(
+                                        Rejection::NotStaged,
+                                        Some(error.to_string()),
+                                    );
+                                    if command == OperatorCommand::CreateProfile {
+                                        self.settle_app(request, command, applied, submitted);
+                                    } else {
+                                        for name in &names {
+                                            self.settle_member(
+                                                request,
+                                                command,
+                                                name,
+                                                Applied::Rejected(
+                                                    Rejection::NotStaged,
+                                                    Some(error.to_string()),
+                                                ),
+                                                submitted,
+                                            );
+                                        }
+                                    }
+                                    return;
+                                }
+                            },
+                            None => None,
+                        };
+                        if let Some(imported) = imported {
+                            let crate::rs2b0t_import::StagedImportAccount {
+                                index,
+                                username,
+                                write,
+                            } = imported;
+                            let matches_target = if command == OperatorCommand::CreateProfile {
+                                write.profile.username.as_str() == username
+                            } else {
+                                names.len() == 1 && names[0].as_str() == username
+                            };
+                            if !matches_target {
+                                let reason = format!(
+                                "profile import account {username} does not match the writer target"
+                            );
+                                if let Some(import) = models.import.as_deref_mut() {
+                                    import.record_write_result(index, Err(&reason));
+                                }
                                 if command == OperatorCommand::CreateProfile {
-                                    self.settle_app(request, command, applied, submitted);
+                                    self.settle_app(
+                                        request,
+                                        command,
+                                        Applied::Rejected(Rejection::NotStaged, Some(reason)),
+                                        submitted,
+                                    );
                                 } else {
                                     for name in &names {
                                         self.settle_member(
@@ -1306,7 +1352,7 @@ impl<Io> OperatorSession<Io> {
                                             name,
                                             Applied::Rejected(
                                                 Rejection::NotStaged,
-                                                Some(error.to_string()),
+                                                Some(reason.clone()),
                                             ),
                                             submitted,
                                         );
@@ -1314,88 +1360,50 @@ impl<Io> OperatorSession<Io> {
                                 }
                                 return;
                             }
-                        },
-                        None => None,
-                    };
-                    if let Some(imported) = imported {
-                        let crate::rs2b0t_import::StagedImportAccount {
-                            index,
-                            username,
-                            write,
-                        } = imported;
-                        let matches_target = if command == OperatorCommand::CreateProfile {
-                            write.profile.username.as_str() == username
-                        } else {
-                            names.len() == 1 && names[0].as_str() == username
-                        };
-                        if !matches_target {
-                            let reason = format!(
-                                "profile import account {username} does not match the writer target"
-                            );
-                            if let Some(import) = models.import.as_deref_mut() {
-                                import.record_write_result(index, Err(&reason));
-                            }
-                            if command == OperatorCommand::CreateProfile {
-                                self.settle_app(
-                                    request,
-                                    command,
-                                    Applied::Rejected(Rejection::NotStaged, Some(reason)),
-                                    submitted,
-                                );
-                            } else {
-                                for name in &names {
-                                    self.settle_member(
-                                        request,
-                                        command,
-                                        name,
-                                        Applied::Rejected(
-                                            Rejection::NotStaged,
-                                            Some(reason.clone()),
-                                        ),
-                                        submitted,
-                                    );
+
+                            self.stage_profile_write(write);
+                            let write = self
+                                .commands
+                                .profile_write
+                                .take()
+                                .expect("the imported account was just staged");
+                            let result = match write.rename_from.as_deref() {
+                                Some(old) => {
+                                    let old = old.to_string();
+                                    self.rename_profile(
+                                        &old,
+                                        write.profile,
+                                        write.mirror,
+                                        write.label,
+                                    )
                                 }
+                                None if write.creating => {
+                                    self.create_profile(write.profile, write.mirror, write.label)
+                                }
+                                None => self.save_profile(write.profile, write.mirror, write.label),
+                            };
+                            if let Some(import) = models.import.as_deref_mut() {
+                                import.record_write_result(
+                                    index,
+                                    match &result {
+                                        Ok(op) => Ok(*op),
+                                        Err(reason) => Err(reason),
+                                    },
+                                );
+                            }
+                            let applied = match &result {
+                                Ok(op) => Applied::Operation(*op),
+                                Err(reason) => {
+                                    Applied::Rejected(rejection(reason), Some(reason.clone()))
+                                }
+                            };
+                            if command == OperatorCommand::CreateProfile {
+                                self.settle_app(request, command, applied, submitted);
+                            } else {
+                                self.settle_member(request, command, &username, applied, submitted);
                             }
                             return;
                         }
-
-                        self.stage_profile_write(write);
-                        let write = self
-                            .commands
-                            .profile_write
-                            .take()
-                            .expect("the imported account was just staged");
-                        let result = match write.rename_from.as_deref() {
-                            Some(old) => {
-                                let old = old.to_string();
-                                self.rename_profile(&old, write.profile, write.mirror, write.label)
-                            }
-                            None if write.creating => {
-                                self.create_profile(write.profile, write.mirror, write.label)
-                            }
-                            None => self.save_profile(write.profile, write.mirror, write.label),
-                        };
-                        if let Some(import) = models.import.as_deref_mut() {
-                            import.record_write_result(
-                                index,
-                                match &result {
-                                    Ok(op) => Ok(*op),
-                                    Err(reason) => Err(reason),
-                                },
-                            );
-                        }
-                        let applied = match &result {
-                            Ok(op) => Applied::Operation(*op),
-                            Err(reason) => {
-                                Applied::Rejected(rejection(reason), Some(reason.clone()))
-                            }
-                        };
-                        if command == OperatorCommand::CreateProfile {
-                            self.settle_app(request, command, applied, submitted);
-                        } else {
-                            self.settle_member(request, command, &username, applied, submitted);
-                        }
-                        return;
                     }
 
                     let editor_submission = if models.editor.is_some() {
