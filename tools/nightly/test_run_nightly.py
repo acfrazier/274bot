@@ -41,6 +41,16 @@ from unittest import mock
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
+# The tests judge the runner's defaults, not the calling host's service
+# settings. A runner machine's environment (latency bands, a cells file,
+# the 274 revision) changes run_nightly's import-time constants and
+# would fail tests that assume the defaults - which is how malbec's
+# self-check rejected good candidates when the installed checker still
+# inherited the service environment. Drop NIGHTLY_* here, in this test
+# process only, before importing the runner; keep the self-check guard.
+for _key in [key for key in os.environ if key.startswith("NIGHTLY_")]:
+    if _key != "NIGHTLY_SELF_CHECK_ACTIVE":
+        del os.environ[_key]
 os.environ.setdefault("NIGHTLY_ROOT", str(Path(tempfile.gettempdir()) / "run-nightly-test-root"))
 
 import run_nightly as rn
@@ -1130,6 +1140,18 @@ class RevisionImportTests(unittest.TestCase):
         out = self.import_constants({"NIGHTLY_REVISION": "377"})
         self.assertNotEqual(out.returncode, 0)
         self.assertIn("NIGHTLY_REVISION", out.stderr)
+
+    def test_the_test_file_ignores_the_service_environment(self):
+        env = dict(os.environ)
+        env.update({"NIGHTLY_LATENCY_BANDS": "50,100,150",
+                    "NIGHTLY_REVISION": "274",
+                    "NIGHTLY_CELLS_FILE": "cells-274.conf"})
+        out = subprocess.run(
+            [sys.executable, "-c",
+             "import test_run_nightly as t; print(t.rn.LATENCY_BANDS, t.rn.REVISION)"],
+            cwd=HERE, env=env, capture_output=True, text=True)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertEqual(out.stdout.split(), ["[]", "289"])
 
 
 class CellsFileTests(unittest.TestCase):
