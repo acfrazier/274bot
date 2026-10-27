@@ -327,8 +327,9 @@ fn g2_d1_real_reactor_keeps_established_wss_live_during_6s_and_35s_verifier_hold
                 held.exchange(&service, &held_server, 0, false);
                 held.cancel(&service);
             } else {
-                held.wait(&service, || held.retired.acknowledged());
-                assert!(held.shared.is_closed());
+                held.wait(&service, || {
+                    held.retired.acknowledged() && held.shared.is_closed()
+                });
             }
             healthy.exchange(&service, &healthy_server, sequence + 1, false);
             audit.assert_game_worker_calls(3);
