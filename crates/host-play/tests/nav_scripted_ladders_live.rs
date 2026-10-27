@@ -1,4 +1,7 @@
 //! Fresh local-289 account proof of content-derived Mage Arena cellar routing.
+#[path = "support/network_composition.rs"]
+mod network_composition;
+
 use std::cell::Cell;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -76,6 +79,8 @@ fn wait_for(
 #[ignore = "requires LIVE=1, WORLD_ENGINE_DIR, WORLD_NAV_PACK, NAV_SCRIPTED_LADDERS_RECEIPT and disposable HOME"]
 fn live_mage_arena_webs_cellar_and_gundai_arrive() {
     assert_eq!(std::env::var("LIVE").as_deref(), Ok("1"));
+    let _network_driver = network_composition::ensure_started();
+
     let serial = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
@@ -290,6 +295,8 @@ fn live_mage_arena_webs_cellar_and_gundai_arrive() {
 #[ignore = "requires LIVE=1, WORLD_ENGINE_DIR, WORLD_NAV_PACK, NAV_RELATIVE_LADDER_RECEIPT and disposable HOME"]
 fn live_viking_seer_ladder_uses_player_relative_landing() {
     assert_eq!(std::env::var("LIVE").as_deref(), Ok("1"));
+    let _network_driver = network_composition::ensure_started();
+
     let serial = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
@@ -496,6 +503,8 @@ fn live_viking_seer_ladder_uses_player_relative_landing() {
 #[ignore = "requires LIVE=1, WORLD_ENGINE_DIR, WORLD_NAV_PACK, BOT_CACHE_DIR, NAV_GANGPLANK_RECEIPT, NAV_GANGPLANK_EVIDENCE_DIR and disposable HOME"]
 fn live_karamja_gangplank_2084_uses_player_relative_landing() {
     assert_eq!(std::env::var("LIVE").as_deref(), Ok("1"));
+    let _network_driver = network_composition::ensure_started();
+
     let serial = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()

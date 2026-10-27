@@ -193,6 +193,8 @@ fn run_condition_cell(super_dose: bool, deposit: bool) {
     let evidence = root.join(format!("{label}_{account}_utc-{epoch}Z"));
     let scratch = evidence.join("scratch");
     std::fs::create_dir_all(&scratch).unwrap();
+    let _composition =
+        crate::PlayComposition::start().expect("start slot condition fixture network composition");
     let profile = bank_core_live::live_profile(&scratch)
         .unwrap()
         .resolve(None)

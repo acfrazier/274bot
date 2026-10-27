@@ -767,6 +767,8 @@ fn live_native_walk_arrival_retains_arrived_receipt() {
         nav_pack: Some(nav_pack),
         ..ProfileOptions::default()
     };
+    let _composition = crate::PlayComposition::start()
+        .expect("start navigation arrival fixture network composition");
     let template = options
         .resolve(None)
         .expect("resolve explicit local-289 profile")

@@ -1,5 +1,8 @@
 //! Live Engine A proofs for the four newly routed, content-gated gathering entrances.
 //! Every route uses the selected navigation pack, `find_with`, and `Traveller`.
+#[path = "support/network_composition.rs"]
+mod network_composition;
+
 use std::cell::Cell;
 use std::collections::HashSet;
 use std::fs;
@@ -1029,6 +1032,8 @@ fn route_moves_beyond_entrance(route: &Route, case: EntranceCase) -> bool {
 
 fn run_case(case: EntranceCase) {
     assert_eq!(std::env::var("LIVE").as_deref(), Ok("1"));
+    let _network_driver = network_composition::ensure_started();
+
     assert_eq!(std::env::var("BOT_CPU").as_deref(), Ok("1"));
     assert_eq!(std::env::var("BOT_NAV_BUILD").as_deref(), Ok("skip"));
     assert!(std::env::var_os("HOME").is_some(), "set a disposable HOME");

@@ -203,6 +203,7 @@ struct LiveCell {
     live: Arc<Mutex<LiveObserver>>,
     capture: Arc<StdMutex<CombatCapture>>,
     _capture_registration: CaptureRegistration,
+    _composition: crate::PlayComposition,
 }
 
 #[derive(Debug, Clone)]
@@ -421,6 +422,8 @@ fn start_cell(
     let scratch = evidence.join("scratch");
     std::fs::create_dir_all(&scratch).expect("create per-account scratch directory");
 
+    let composition =
+        crate::PlayComposition::start().expect("start survival eat fixture network composition");
     let profile = bank_core_live::live_profile(&scratch)
         .expect("live profile inputs")
         .resolve(None)
@@ -493,6 +496,7 @@ fn start_cell(
         live,
         capture,
         _capture_registration: capture_registration,
+        _composition: composition,
     }
 }
 

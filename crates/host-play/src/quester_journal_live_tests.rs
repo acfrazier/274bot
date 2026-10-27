@@ -1296,9 +1296,12 @@ fn launch_live(
     Arc<Mutex<SetupState>>,
     String,
     Option<CaptureHandle>,
+    crate::PlayComposition,
 ) {
     let home = ThrowawayHome::enter(label);
     let options = live_options(&home.path);
+    let _composition =
+        crate::PlayComposition::start().expect("start Quester fixture network composition");
     let template = options
         .resolve(None)
         .expect("resolve local-289 profile")
@@ -1323,7 +1326,7 @@ fn launch_live(
         frame_hook(hook, mode, headed),
     )
     .expect("start live Quester Play");
-    (home, play, state, name, capture)
+    (home, play, state, name, capture, _composition)
 }
 
 fn wait_until(label: &str, timeout: Duration, mut ready: impl FnMut() -> bool) {
@@ -1666,7 +1669,8 @@ fn live_quester_journal_synthetic_runemysteries() {
         live(),
         "live_quester_journal_synthetic_runemysteries requires LIVE=1"
     );
-    let (home, play, setup, name, capture) = launch_live(SetupMode::Synthetic, "journal");
+    let (home, play, setup, name, capture, _composition) =
+        launch_live(SetupMode::Synthetic, "journal");
     wait_relogged(&play, &setup);
     assert_synthetic_pre_teleport(&setup);
 
@@ -1970,10 +1974,11 @@ struct SyntheticLive {
     quests: Arc<QuestCatalog>,
     path: Arc<script::quester::compile::CompiledPath>,
     expected_title: String,
+    _composition: crate::PlayComposition,
 }
 
 fn prepare_synthetic_live(label: &str, mode: SetupMode) -> SyntheticLive {
-    let (home, play, setup, name, _capture) = launch_live(mode, label);
+    let (home, play, setup, name, _capture, _composition) = launch_live(mode, label);
     wait_relogged(&play, &setup);
     assert_synthetic_pre_teleport(&setup);
     let selected = api::game_data::for_revision(ClientRevision::R289).expect("R289 game data");
@@ -2011,6 +2016,7 @@ fn prepare_synthetic_live(label: &str, mode: SetupMode) -> SyntheticLive {
         quests,
         path,
         expected_title,
+        _composition,
     }
 }
 
@@ -2105,6 +2111,7 @@ fn live_quester_journal_debug_reply_does_not_take_modal_ownership() {
         quests,
         path,
         expected_title,
+        _composition,
     } = prepare_synthetic_live("journal-debug", SetupMode::Synthetic);
     let log = &*JOURNAL_DEBUG_LOG;
     *log.state.lock().expect("debug journal state") = Some(Arc::clone(&setup));
@@ -2192,6 +2199,7 @@ fn live_quester_journal_stop_start_recovers_stranded_page() {
         quests,
         path,
         expected_title,
+        _composition,
     } = prepare_synthetic_live("journal-stop", SetupMode::Synthetic);
     let handle = play.script_start_handle();
     let first_run = start_synthetic(&handle, &play, &name, Arc::clone(&path), &quests, &selected);
@@ -2289,6 +2297,7 @@ fn live_quester_journal_pause_resume_recovers_stranded_page() {
         quests,
         path,
         expected_title,
+        _composition,
     } = prepare_synthetic_live("journal-pause", SetupMode::Synthetic);
     let handle = play.script_start_handle();
     let run = start_synthetic(&handle, &play, &name, Arc::clone(&path), &quests, &selected);
@@ -2377,7 +2386,7 @@ fn live_quester_journal_pause_resume_recovers_stranded_page() {
 #[ignore = "requires LIVE=1 and the shared tunnelled local R289 engine"]
 fn live_quester_cook_reaches_complete() {
     assert!(live(), "live_quester_cook_reaches_complete requires LIVE=1");
-    let (home, play, setup, name, capture) = launch_live(SetupMode::Cook, "cook");
+    let (home, play, setup, name, capture, _composition) = launch_live(SetupMode::Cook, "cook");
     wait_relogged(&play, &setup);
 
     let handle = play.script_start_handle();

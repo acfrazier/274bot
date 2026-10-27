@@ -1,5 +1,8 @@
 //! Live proof of content-derived Black Knights Fortress disguise doors and push-wall routing.
 //! The account is seeded outside the fortress; every ingress movement uses the production router and Traveller.
+#[path = "support/network_composition.rs"]
+mod network_composition;
+
 use std::cell::Cell;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -371,6 +374,8 @@ fn live_fortress_disguise_and_secret_wall_use_content_navigation() {
         "secret_wall": {"config": secret_wall.config, "id": secret_wall.id},
     });
     write_receipt(&receipt_path, &receipt);
+
+    let _network_driver = network_composition::ensure_started();
 
     let mut client = template
         .prepare_client((serial % i32::MAX as u128) as i32, true)

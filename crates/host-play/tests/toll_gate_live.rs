@@ -12,6 +12,9 @@
 //!   cargo test -p host-play --test toll_gate_live -- --ignored --nocapture --test-threads=1
 //! ```
 
+#[path = "support/network_composition.rs"]
+mod network_composition;
+
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -172,6 +175,8 @@ fn login_fresh(
     template: &SharedClientTemplate,
     prefix: &str,
 ) -> (String, client::client::Client, GameSnapshot, Pump) {
+    let _network_driver = network_composition::ensure_started();
+
     let serial = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("clock")

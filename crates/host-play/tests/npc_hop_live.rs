@@ -11,6 +11,9 @@
 //!   cargo test -p host-play --test npc_hop_live -- --ignored --nocapture --test-threads=1
 //! ```
 
+#[path = "support/network_composition.rs"]
+mod network_composition;
+
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -309,6 +312,8 @@ fn npc_hop_live_boat_routes() {
     if std::env::var("LIVE").as_deref() != Ok("1") {
         return;
     }
+    let _network_driver = network_composition::ensure_started();
+
     let (_profile, template) = selected();
     let world = template.world().expect("selected nav world");
     let serial = SystemTime::now()

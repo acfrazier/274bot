@@ -618,6 +618,8 @@ fn run_guard_cure_live(
     trace: Arc<Mutex<Trace>>,
     stop_after_mirror: bool,
 ) -> Result<(), String> {
+    let _composition = host_play::PlayComposition::start()
+        .map_err(|error| format!("start Engine A network composition: {error}"))?;
     let nav_pack = required_path("NAV_PACK")?;
     let nav_flags = std::env::var_os("NAV_FLAGS")
         .map(PathBuf::from)

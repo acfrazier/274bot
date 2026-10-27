@@ -22,10 +22,10 @@ use std::time::{Duration, Instant};
 
 use api::hostlog::{Record, Sink};
 use client::io::{JagFile, Packet};
-use client_adapter::service::{MaintenanceDriver, NetworkService};
+use client_adapter::service::NetworkService;
 use host_play::profile::{ProfileEnvironment, ProfileSelection};
 use host_play::progress::{ProfileProgressObserver, ProfileProgressStage};
-use host_play::{ProfileOptions, TemplateStep, TEMPLATE_STEP_WAIT};
+use host_play::{PlayComposition, ProfileOptions, TemplateStep, TEMPLATE_STEP_WAIT};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 
 /// A game host whose lookup fails at once.
@@ -404,7 +404,7 @@ fn attempt_counter() -> (ProfileProgressObserver, Arc<AtomicUsize>) {
 fn prepare_until(
     selection: &ProfileSelection,
     observer: &ProfileProgressObserver,
-    driver: &MaintenanceDriver,
+    driver: &PlayComposition,
     done: impl Fn() -> bool,
 ) -> Result<Duration, String> {
     let started = Instant::now();
@@ -419,7 +419,7 @@ fn prepare_until(
         {
             return Err(format!("completed early: {:?}", result.map(|_| ())));
         }
-        driver.maintain(Instant::now());
+        driver.maintain_services(Instant::now());
     }
     let dropped = Instant::now();
     drop(preparation);
@@ -428,10 +428,10 @@ fn prepare_until(
 
 /// can admit a network operation. Keep one driver registered for the entire
 /// integration-test process to avoid gaps between concurrently running tests.
-fn start_network_service() -> &'static MaintenanceDriver {
-    static DRIVER: LazyLock<MaintenanceDriver> = LazyLock::new(|| {
+fn start_network_service() -> &'static PlayComposition {
+    static DRIVER: LazyLock<PlayComposition> = LazyLock::new(|| {
         trust_test_certificate();
-        NetworkService::start_composition().expect("start host network service")
+        PlayComposition::start().expect("start host network service")
     });
     &DRIVER
 }
@@ -621,7 +621,7 @@ fn a_failed_asset_host_is_looked_up_once_in_each_preparation() {
         {
             break result.err().expect("the asset host lookup fails");
         }
-        driver.maintain(Instant::now());
+        driver.maintain_services(Instant::now());
     };
     drop(preparation);
     let stepped_lookups = FAILED_ASSET_LOOKUPS.load(Ordering::Relaxed) - before;

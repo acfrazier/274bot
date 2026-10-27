@@ -53,6 +53,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
 - A refused game connection on macOS keeps its connection-refused error.
   The new transport sets TCP_NODELAY only after the connection succeeds,
   so a socket-option error cannot replace the connection failure.
+- Direct cache-preparation examples and test fixtures now start their network
+  composition before preparing a profile. A missing composition still returns
+  a typed error, with instructions to start the composition first.
+- The WSS soak measures its script-start timeout from the actual Start tick.
+  Waiting for the other accounts does not consume the existing 50-tick budget.
 
 ## [0.2.7] — 2026-10-26 — Beta 2
 

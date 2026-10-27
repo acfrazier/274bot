@@ -1,6 +1,9 @@
 //! Live Lumbridge-stairs WalkTo proof through the native map arm.
 //! Requires an explicitly authorized local engine/pack and writes its receipt even on route failure.
 
+#[path = "support/network_composition.rs"]
+mod network_composition;
+
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -86,6 +89,8 @@ fn env_port(name: &str, default: u16) -> u16 {
 #[ignore = "requires LIVE=1, NAV_STAIRS_PACK, WORLD_ENGINE_DIR and NAV_STAIRS_RECEIPT; account names come from BOT_LIVE_NAME_PREFIX via the common minter"]
 fn live_lumbridge_stairs_walk_arm_reaches_operable_stand() {
     assert_eq!(std::env::var("LIVE").as_deref(), Ok("1"));
+    let _network_driver = network_composition::ensure_started();
+
     let receipt_path =
         PathBuf::from(std::env::var_os("NAV_STAIRS_RECEIPT").expect("NAV_STAIRS_RECEIPT"));
     let serial = SystemTime::now()

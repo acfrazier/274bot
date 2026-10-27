@@ -5,8 +5,14 @@
 //! extracted from its completed rustls connection; it never mutates plaintext
 //! socket bytes or substitutes a test verifier.
 
+#[cfg(target_os = "linux")]
+use std::alloc::{GlobalAlloc, Layout, System};
+#[cfg(target_os = "linux")]
+use std::fs::{self, OpenOptions};
 use std::io::{self, Read, Write};
 use std::net::{TcpListener, TcpStream};
+#[cfg(target_os = "linux")]
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, SyncSender};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
@@ -20,6 +26,8 @@ use client_adapter::handoff::{
 use client_adapter::health::ReactorHealth;
 use client_adapter::park::Park;
 use client_adapter::shared::SharedConnection;
+#[cfg(target_os = "linux")]
+use client_adapter::soak_observer::wss_ledger_samples;
 use client_adapter::tcp::TcpStop;
 use client_adapter::tls_handshake::{
     build_test_client_config_with_roots, GameTlsLane, GameTlsResource,
@@ -30,10 +38,19 @@ use rcgen::{
     BasicConstraints, CertificateParams, DistinguishedName, DnType, ExtendedKeyUsagePurpose, IsCa,
     KeyPair, KeyUsagePurpose,
 };
+#[cfg(target_os = "linux")]
+use rustls::client::{
+    ClientSessionMemoryCache, ClientSessionStore, Resumption, Tls12ClientSessionValue,
+    Tls13ClientSessionValue,
+};
 use rustls::crypto::cipher::{
     InboundOpaqueMessage, MessageDecrypter, MessageEncrypter, OutboundChunks, OutboundPlainMessage,
 };
+#[cfg(target_os = "linux")]
+use rustls::pki_types::ServerName;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+#[cfg(target_os = "linux")]
+use rustls::NamedGroup;
 use rustls::{
     CipherSuite, ClientConfig, ConnectionTrafficSecrets, ContentType, ProtocolVersion,
     ServerConfig, ServerConnection, SupportedCipherSuite,
@@ -56,6 +73,91 @@ const HELLO_REQUEST: [u8; 4] = [0x00, 0x00, 0x00, 0x00];
 const KEY_UPDATE_REQUESTED: [u8; 5] = [0x18, 0x00, 0x00, 0x01, 0x01];
 const KEY_UPDATE_NOT_REQUESTED: [u8; 5] = [0x18, 0x00, 0x00, 0x01, 0x00];
 const TLS_CLOSE_NOTIFY: [u8; 2] = [0x01, 0x00];
+
+#[cfg(target_os = "linux")]
+static G5E_ALLOCATOR_LIVE_BYTES: AtomicUsize = AtomicUsize::new(0);
+#[cfg(target_os = "linux")]
+static G5E_ALLOCATOR_PEAK_BYTES: AtomicUsize = AtomicUsize::new(0);
+
+#[cfg(target_os = "linux")]
+struct G5eCountingAllocator;
+
+#[cfg(target_os = "linux")]
+// SAFETY: every allocator operation forwards its original pointer/layout to
+// System; the atomics only account requested bytes and never allocate.
+unsafe impl GlobalAlloc for G5eCountingAllocator {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        // SAFETY: the caller supplied the layout required by GlobalAlloc.
+        let pointer = unsafe { System.alloc(layout) };
+        if !pointer.is_null() {
+            let live = G5E_ALLOCATOR_LIVE_BYTES
+                .fetch_add(layout.size(), Ordering::Relaxed)
+                .wrapping_add(layout.size());
+            G5E_ALLOCATOR_PEAK_BYTES.fetch_max(live, Ordering::Relaxed);
+        }
+        pointer
+    }
+
+    unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
+        // SAFETY: the caller supplied the layout required by GlobalAlloc.
+        let pointer = unsafe { System.alloc_zeroed(layout) };
+        if !pointer.is_null() {
+            let live = G5E_ALLOCATOR_LIVE_BYTES
+                .fetch_add(layout.size(), Ordering::Relaxed)
+                .wrapping_add(layout.size());
+            G5E_ALLOCATOR_PEAK_BYTES.fetch_max(live, Ordering::Relaxed);
+        }
+        pointer
+    }
+
+    unsafe fn realloc(&self, pointer: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+        // SAFETY: the caller supplied the original allocation and layout;
+        // System preserves GlobalAlloc's realloc contract.
+        let replacement = unsafe { System.realloc(pointer, layout, new_size) };
+        if !replacement.is_null() {
+            let live = if new_size >= layout.size() {
+                G5E_ALLOCATOR_LIVE_BYTES
+                    .fetch_add(new_size - layout.size(), Ordering::Relaxed)
+                    .wrapping_add(new_size - layout.size())
+            } else {
+                G5E_ALLOCATOR_LIVE_BYTES
+                    .fetch_sub(layout.size() - new_size, Ordering::Relaxed)
+                    .saturating_sub(layout.size() - new_size)
+            };
+            G5E_ALLOCATOR_PEAK_BYTES.fetch_max(live, Ordering::Relaxed);
+        }
+        replacement
+    }
+
+    unsafe fn dealloc(&self, pointer: *mut u8, layout: Layout) {
+        G5E_ALLOCATOR_LIVE_BYTES
+            .fetch_sub(layout.size(), Ordering::Relaxed)
+            .saturating_sub(layout.size());
+        // SAFETY: the caller supplied the pointer and matching layout returned
+        // by this allocator.
+        unsafe { System.dealloc(pointer, layout) };
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[global_allocator]
+static G5E_ALLOCATOR: G5eCountingAllocator = G5eCountingAllocator;
+
+#[cfg(target_os = "linux")]
+fn reset_g5e_allocator_peak() {
+    G5E_ALLOCATOR_PEAK_BYTES.store(
+        G5E_ALLOCATOR_LIVE_BYTES.load(Ordering::Acquire),
+        Ordering::Release,
+    );
+}
+
+#[cfg(target_os = "linux")]
+fn g5e_allocator_snapshot() -> (usize, usize) {
+    (
+        G5E_ALLOCATOR_LIVE_BYTES.load(Ordering::Acquire),
+        G5E_ALLOCATOR_PEAK_BYTES.load(Ordering::Acquire),
+    )
+}
 struct ServerIdentity {
     certificate: CertificateDer<'static>,
     key: PrivateKeyDer<'static>,
@@ -122,6 +224,88 @@ impl TestPki {
     }
 }
 
+#[cfg(target_os = "linux")]
+#[derive(Debug, Default)]
+struct TicketMetrics {
+    inserted: AtomicUsize,
+    taken: AtomicUsize,
+    allocator_live_after_insert_high_water_bytes: AtomicUsize,
+    allocator_live_growth_per_insert_high_water_bytes: AtomicUsize,
+}
+
+#[cfg(target_os = "linux")]
+#[derive(Debug)]
+struct TicketCountingStore {
+    inner: ClientSessionMemoryCache,
+    metrics: Arc<TicketMetrics>,
+}
+
+#[cfg(target_os = "linux")]
+impl ClientSessionStore for TicketCountingStore {
+    fn set_kx_hint(&self, server_name: ServerName<'static>, group: NamedGroup) {
+        self.inner.set_kx_hint(server_name, group);
+    }
+
+    fn kx_hint(&self, server_name: &ServerName<'_>) -> Option<NamedGroup> {
+        self.inner.kx_hint(server_name)
+    }
+
+    fn set_tls12_session(&self, server_name: ServerName<'static>, value: Tls12ClientSessionValue) {
+        self.inner.set_tls12_session(server_name, value);
+    }
+
+    fn tls12_session(&self, server_name: &ServerName<'_>) -> Option<Tls12ClientSessionValue> {
+        self.inner.tls12_session(server_name)
+    }
+
+    fn remove_tls12_session(&self, server_name: &ServerName<'static>) {
+        self.inner.remove_tls12_session(server_name);
+    }
+
+    fn insert_tls13_ticket(
+        &self,
+        server_name: ServerName<'static>,
+        value: Tls13ClientSessionValue,
+    ) {
+        let live_before = G5E_ALLOCATOR_LIVE_BYTES.load(Ordering::Relaxed);
+        self.inner.insert_tls13_ticket(server_name, value);
+        let live_after = G5E_ALLOCATOR_LIVE_BYTES.load(Ordering::Relaxed);
+        self.metrics.inserted.fetch_add(1, Ordering::Relaxed);
+        self.metrics
+            .allocator_live_after_insert_high_water_bytes
+            .fetch_max(live_after, Ordering::Relaxed);
+        self.metrics
+            .allocator_live_growth_per_insert_high_water_bytes
+            .fetch_max(live_after.saturating_sub(live_before), Ordering::Relaxed);
+    }
+
+    fn take_tls13_ticket(
+        &self,
+        server_name: &ServerName<'static>,
+    ) -> Option<Tls13ClientSessionValue> {
+        let ticket = self.inner.take_tls13_ticket(server_name);
+        if ticket.is_some() {
+            self.metrics.taken.fetch_add(1, Ordering::Relaxed);
+        }
+        ticket
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn client_config_with_ticket_metrics(
+    pki: &TestPki,
+    metrics: Arc<TicketMetrics>,
+) -> Arc<ClientConfig> {
+    let mut config = pki.client_config();
+    Arc::get_mut(&mut config)
+        .expect("the test owns the OS-verifying client config before sharing it")
+        .resumption = Resumption::store(Arc::new(TicketCountingStore {
+        inner: ClientSessionMemoryCache::new(256),
+        metrics,
+    }));
+    config
+}
+
 fn server_config(
     identity: ServerIdentity,
     version: ProtocolVersion,
@@ -154,6 +338,14 @@ fn server_config(
     config.enable_secret_extraction = true;
     config.send_tls13_tickets = 0;
     Arc::new(config)
+}
+#[cfg(target_os = "linux")]
+fn configure_tls13_with_tickets(identity: ServerIdentity) -> Arc<ServerConfig> {
+    let mut config = configure_tls13(identity);
+    Arc::get_mut(&mut config)
+        .expect("the test owns its TLS 1.3 server config before sharing it")
+        .send_tls13_tickets = 2;
+    config
 }
 
 #[derive(Debug)]
@@ -453,6 +645,7 @@ fn serve_control_server(
     socket.set_write_timeout(Some(IO_TIMEOUT))?;
     socket.set_nodelay(true)?;
 
+    let send_tls13_tickets = config.send_tls13_tickets;
     let mut connection = ServerConnection::new(config)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
     let mut handshake_failure = None;
@@ -485,6 +678,9 @@ fn serve_control_server(
         .negotiated_cipher_suite()
         .expect("successful test handshake has a cipher suite");
     let mut tls = rustls::StreamOwned::new(connection, socket);
+    if send_tls13_tickets > 0 {
+        tls.flush()?;
+    }
     let request = read_http_head(&mut tls)?;
     let request = std::str::from_utf8(&request)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
@@ -1073,6 +1269,14 @@ fn g2_m2_authenticated_tls_close_notify_is_distinct_from_excessive_request() {
 /// output. Returns how many records it took; 0 when the writer was already
 /// blocked by such an outcome.
 fn fill_until_tls_blocked(attempt: &mut LaneAttempt, endpoint: &mut WssEndpoint) -> usize {
+    fill_until_tls_blocked_observed(attempt, endpoint, || {})
+}
+
+fn fill_until_tls_blocked_observed(
+    attempt: &mut LaneAttempt,
+    endpoint: &mut WssEndpoint,
+    mut observe: impl FnMut(),
+) -> usize {
     let mut published = 0usize;
     while !endpoint.tls_output_blocked_for_test() {
         assert!(
@@ -1104,7 +1308,91 @@ fn fill_until_tls_blocked(attempt: &mut LaneAttempt, endpoint: &mut WssEndpoint)
         assert!(attempt.shared.outbound.is_empty());
         published += 1;
     }
+    observe();
     published
+}
+
+#[cfg(target_os = "linux")]
+#[derive(Default)]
+struct G5eLedgerPeaks {
+    sample_count: usize,
+    connection_count: usize,
+    total_reserved_bytes: usize,
+    pending_tls_output_high_water_bytes: usize,
+    outbound_ring_high_water_bytes: usize,
+    inbound_ring_high_water_bytes: usize,
+    target_pending_tls_output_bytes: usize,
+}
+
+#[cfg(target_os = "linux")]
+fn sample_g5e_wss_ledger(
+    peaks: &mut G5eLedgerPeaks,
+    target: BindingId,
+    expected_connections: usize,
+) -> usize {
+    let samples = wss_ledger_samples();
+    assert_eq!(
+        samples.len(),
+        expected_connections,
+        "ledger reports each live adapter WSS connection"
+    );
+    peaks.sample_count += 1;
+    peaks.connection_count = samples.len();
+    peaks.total_reserved_bytes = samples
+        .iter()
+        .map(|sample| sample.reserved_total_bytes)
+        .sum();
+
+    let mut target_pending = None;
+    for sample in samples {
+        assert!(!sample.overrun, "WSS ledger exceeded a named reservation");
+        let pending = sample
+            .pending_tls_output_bytes
+            .expect("rustls exposes exact pending TLS output bytes");
+        peaks.pending_tls_output_high_water_bytes =
+            peaks.pending_tls_output_high_water_bytes.max(pending);
+        peaks.outbound_ring_high_water_bytes = peaks
+            .outbound_ring_high_water_bytes
+            .max(sample.outbound_ring_bytes);
+        peaks.inbound_ring_high_water_bytes = peaks
+            .inbound_ring_high_water_bytes
+            .max(sample.inbound_ring_bytes);
+        if sample.binding == target {
+            target_pending = Some(pending);
+        }
+    }
+    let target_pending =
+        target_pending.expect("ledger retains the backpressured connection identity");
+    peaks.target_pending_tls_output_bytes = target_pending;
+    target_pending
+}
+
+#[cfg(target_os = "linux")]
+fn g5e_current_rss_bytes() -> Option<u64> {
+    let status = fs::read_to_string("/proc/self/status").ok()?;
+    let resident_kib = status
+        .lines()
+        .find(|line| line.starts_with("VmRSS:"))?
+        .split_whitespace()
+        .nth(1)?
+        .parse::<u64>()
+        .ok()?;
+    resident_kib.checked_mul(1024)
+}
+
+#[cfg(target_os = "linux")]
+fn g5e_task_count() -> usize {
+    fs::read_dir("/proc/self/task")
+        .expect("Linux procfs exposes this test process task directory")
+        .count()
+}
+
+#[cfg(target_os = "linux")]
+fn g5e_fd_count() -> usize {
+    fs::read_dir("/proc/self/fd")
+        .expect("Linux procfs exposes this test process fd directory")
+        .count()
+        .saturating_sub(1)
 }
 
 #[test]
@@ -1303,6 +1591,302 @@ fn g2_m3_authenticated_requested_key_update_waits_for_real_writable_recovery() {
     sibling_endpoint.close(sibling_attempt.poll.registry());
     server.stop();
     sibling_server.stop();
+}
+
+/// Run with a fresh, disjoint receipt path:
+///
+/// ```text
+/// BOT_T14_G5E_ADAPTER_OUTPUT=/abs/path/receipt.json cargo test -p client-adapter --features test-support --test rustls_authenticated_control g5e_tls13_wss_keyupdate_backpressure_memory_receipt -- --ignored --test-threads=1
+/// ```
+///
+/// The receipt covers two local adapter WSS lanes. The response is observed
+/// queued under backpressure; writable recovery remains covered by the G2-M3
+/// functional test above.
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore = "opt-in G5-E memory receipt for the actual adapter TLS/WSS path"]
+fn g5e_tls13_wss_keyupdate_backpressure_memory_receipt() {
+    const EMPTY_BINARY_TURNS: usize = 32;
+    const QUEUED_BACKPRESSURE_RECORDS: usize = 8;
+
+    let output_path = std::env::var_os("BOT_T14_G5E_ADAPTER_OUTPUT")
+        .expect("set a disjoint BOT_T14_G5E_ADAPTER_OUTPUT receipt path");
+    let pki = TestPki::new();
+    let ticket_metrics = Arc::new(TicketMetrics::default());
+    let client_config = client_config_with_ticket_metrics(&pki, Arc::clone(&ticket_metrics));
+    let server_config = configure_tls13_with_tickets(pki.identity.duplicate());
+    let server =
+        ControlServer::spawn_with_receive_buffer(Arc::clone(&server_config), Some(4 * 1024));
+    let sibling_server = ControlServer::spawn(Arc::clone(&server_config));
+
+    let allocator_before_connect = G5E_ALLOCATOR_LIVE_BYTES.load(Ordering::Acquire);
+    let rss_setup = g5e_current_rss_bytes().expect("read current Linux process RSS");
+    let tasks_setup = g5e_task_count();
+    let fds_setup = g5e_fd_count();
+    reset_g5e_allocator_peak();
+
+    let (mut attempt, mut endpoint, handshake) =
+        connect_wss_with_send_buffer(&server, Arc::clone(&client_config), Some(16 * 1024));
+    assert_negotiated(&handshake, ProtocolVersion::TLSv1_3, TLS13_SUITE);
+    assert_eq!(
+        ticket_metrics.inserted.load(Ordering::Acquire),
+        2,
+        "the first TLS 1.3 connection receives both configured tickets"
+    );
+    let (mut sibling_attempt, mut sibling_endpoint, sibling_handshake) =
+        connect_wss(&sibling_server, Arc::clone(&client_config));
+    assert_negotiated(&sibling_handshake, ProtocolVersion::TLSv1_3, TLS13_SUITE);
+    assert_eq!(
+        ticket_metrics.inserted.load(Ordering::Acquire),
+        4,
+        "both TLS 1.3 connections retain their configured tickets"
+    );
+
+    let lane_config = attempt
+        .lane
+        .config()
+        .expect("first real TLS lane retains the shared client config");
+    let sibling_lane_config = sibling_attempt
+        .lane
+        .config()
+        .expect("sibling real TLS lane retains the shared client config");
+    assert!(Arc::ptr_eq(&client_config, &lane_config));
+    assert!(Arc::ptr_eq(&client_config, &sibling_lane_config));
+    drop(lane_config);
+    drop(sibling_lane_config);
+    let shared_config_strong_count = Arc::strong_count(&client_config);
+
+    let target_binding = attempt.binding;
+    let mut ledger = G5eLedgerPeaks::default();
+    sample_g5e_wss_ledger(&mut ledger, target_binding, 1);
+    sample_g5e_wss_ledger(&mut ledger, target_binding, 2);
+    let (allocator_after_connect, allocator_connect_peak) = g5e_allocator_snapshot();
+    let rss_after_connect = g5e_current_rss_bytes().expect("read connected Linux process RSS");
+    let tasks_after_connect = g5e_task_count();
+    let fds_after_connect = g5e_fd_count();
+
+    let allocator_before_backpressure = G5E_ALLOCATOR_LIVE_BYTES.load(Ordering::Acquire);
+    reset_g5e_allocator_peak();
+    let filled = fill_until_tls_blocked_observed(&mut attempt, &mut endpoint, || {
+        let pending = sample_g5e_wss_ledger(&mut ledger, target_binding, 2);
+        assert!(pending > 0, "blocked TLS writer retains encrypted output");
+    });
+    assert!(
+        filled > 0,
+        "the real WSS socket refused an encrypted game write"
+    );
+    let mut settle_rounds = 0usize;
+    loop {
+        assert!(
+            settle_rounds < MAX_SETTLE_ROUNDS,
+            "the client socket never settled into stable backpressure"
+        );
+        settle_rounds += 1;
+        server.send_record(
+            ContentType::ApplicationData,
+            &server_binary_frame(SETTLE_RECORD),
+        );
+        take_game_payload(&mut attempt, &mut endpoint, SETTLE_RECORD);
+        if fill_until_tls_blocked_observed(&mut attempt, &mut endpoint, || {
+            let pending = sample_g5e_wss_ledger(&mut ledger, target_binding, 2);
+            assert!(pending > 0, "stable blocked writer retains TLS output");
+        }) == 0
+        {
+            break;
+        }
+    }
+    assert!(endpoint.tls_output_blocked_for_test());
+    let bytes_in_before = attempt.shared.bytes_in();
+    for _ in 0..QUEUED_BACKPRESSURE_RECORDS {
+        attempt
+            .shared
+            .publish_record(attempt.binding, &BACKPRESSURE_GAME_RECORD)
+            .expect("bounded WSS output ring accepts the queued memory sample");
+    }
+    endpoint.kick_output();
+    let bytes_out_before = attempt.shared.bytes_out();
+    let queued_pending = sample_g5e_wss_ledger(&mut ledger, target_binding, 2);
+    assert!(
+        queued_pending > 0,
+        "TLS output remains blocked with queued game data"
+    );
+    assert!(
+        ledger.outbound_ring_high_water_bytes
+            >= QUEUED_BACKPRESSURE_RECORDS * BACKPRESSURE_GAME_RECORD.len(),
+        "ledger samples queued application bytes before the endpoint drains them"
+    );
+
+    for _ in 0..EMPTY_BINARY_TURNS {
+        server.send_record(ContentType::ApplicationData, &server_binary_frame(&[]));
+        let turn = next_readable_turn(&mut attempt, &mut endpoint)
+            .expect("process an authenticated empty binary message under backpressure");
+        assert_eq!(
+            turn.read_bytes, 0,
+            "empty binary messages carry no game bytes"
+        );
+        assert!(attempt.shared.inbound.is_empty());
+        assert_eq!(attempt.shared.bytes_in(), bytes_in_before);
+        assert_eq!(attempt.shared.bytes_out(), bytes_out_before);
+        assert!(
+            endpoint.tls_output_blocked_for_test(),
+            "the empty binary turn does not clear real TLS socket backpressure"
+        );
+        sample_g5e_wss_ledger(&mut ledger, target_binding, 2);
+    }
+    let (allocator_while_blocked, allocator_backpressure_peak) = g5e_allocator_snapshot();
+    let rss_while_blocked = g5e_current_rss_bytes().expect("read backpressured Linux process RSS");
+    let tasks_while_blocked = g5e_task_count();
+    let fds_while_blocked = g5e_fd_count();
+
+    let allocator_before_key_update = G5E_ALLOCATOR_LIVE_BYTES.load(Ordering::Acquire);
+    reset_g5e_allocator_peak();
+    server.send_record(ContentType::Handshake, &KEY_UPDATE_REQUESTED);
+    let key_update_turn = next_readable_turn(&mut attempt, &mut endpoint)
+        .expect("process the authenticated TLS 1.3 KeyUpdate request");
+    assert_eq!(key_update_turn.read_bytes, 0);
+    assert!(endpoint.is_connected());
+    assert!(endpoint.tls_output_blocked_for_test());
+    assert_eq!(attempt.shared.bytes_in(), bytes_in_before);
+    assert_eq!(attempt.shared.bytes_out(), bytes_out_before);
+    assert!(attempt.shared.inbound.is_empty());
+    let pending_after_key_update = sample_g5e_wss_ledger(&mut ledger, target_binding, 2);
+    assert!(
+        pending_after_key_update > 0,
+        "KeyUpdate response remains queued behind the real blocked TLS writer"
+    );
+    let (allocator_after_key_update, allocator_key_update_peak) = g5e_allocator_snapshot();
+    let rss_after_key_update =
+        g5e_current_rss_bytes().expect("read post-KeyUpdate Linux process RSS");
+    let tasks_after_key_update = g5e_task_count();
+    let fds_after_key_update = g5e_fd_count();
+
+    let tickets_inserted = ticket_metrics.inserted.load(Ordering::Relaxed);
+    let tickets_taken = ticket_metrics.taken.load(Ordering::Relaxed);
+    let ticket_live_high_water = ticket_metrics
+        .allocator_live_after_insert_high_water_bytes
+        .load(Ordering::Relaxed);
+    let ticket_growth_high_water = ticket_metrics
+        .allocator_live_growth_per_insert_high_water_bytes
+        .load(Ordering::Relaxed);
+    let allocator_before_cleanup = G5E_ALLOCATOR_LIVE_BYTES.load(Ordering::Acquire);
+    reset_g5e_allocator_peak();
+    endpoint.close(attempt.poll.registry());
+    sibling_endpoint.close(sibling_attempt.poll.registry());
+    drop(endpoint);
+    drop(sibling_endpoint);
+    drop(attempt);
+    drop(sibling_attempt);
+    server.stop();
+    sibling_server.stop();
+    drop(server_config);
+    drop(client_config);
+    drop(ticket_metrics);
+    drop(pki);
+    let (allocator_after_cleanup, allocator_cleanup_peak) = g5e_allocator_snapshot();
+    let active_connections_after_cleanup = wss_ledger_samples().len();
+    assert_eq!(
+        active_connections_after_cleanup, 0,
+        "test teardown retires both WSS ledger registrations"
+    );
+
+    let receipt = format!(
+        concat!(
+            "{{\"schema\":\"t1.4-g5e-rustls-adapter-receipt-v1\",",
+            "\"target_os\":\"{}\",\"target_arch\":\"{}\",",
+            "\"measurement_subject\":\"actual client-adapter GameTlsLane and WssEndpoint with local TLS 1.3 fixture\",",
+            "\"client_verifier\":\"platform verifier with generated fixture CA root\",",
+            "\"connection_count\":2,\"client_config_identity_count\":1,",
+            "\"initial_backpressure_records\":{},\"stable_backpressure_settle_rounds\":{},",
+            "\"client_config_generation_count\":1,\"shared_config_strong_count_after_connect\":{},",
+            "\"tls13_tickets_configured_per_connection\":2,\"tls13_tickets_inserted\":{},",
+            "\"tls13_tickets_taken_for_resumption\":{},",
+            "\"allocator_live_after_ticket_insert_high_water_bytes\":{},",
+            "\"allocator_live_growth_per_ticket_insert_high_water_bytes\":{},",
+            "\"allocator_requested_live_before_connect_bytes\":{},",
+            "\"allocator_requested_live_after_connect_bytes\":{},",
+            "\"allocator_requested_peak_during_connect_bytes\":{},",
+            "\"allocator_peak_delta_during_connect_bytes\":{},",
+            "\"allocator_requested_live_while_blocked_bytes\":{},",
+            "\"allocator_requested_peak_during_backpressure_bytes\":{},",
+            "\"allocator_peak_delta_during_backpressure_bytes\":{},",
+            "\"allocator_requested_live_after_key_update_bytes\":{},",
+            "\"allocator_requested_peak_during_key_update_bytes\":{},",
+            "\"allocator_peak_delta_during_key_update_bytes\":{},",
+            "\"allocator_requested_live_before_cleanup_bytes\":{},",
+            "\"allocator_requested_live_after_cleanup_bytes\":{},",
+            "\"allocator_peak_delta_during_cleanup_bytes\":{},",
+            "\"rss_current_setup_bytes\":{},\"rss_current_after_connect_bytes\":{},",
+            "\"rss_current_while_blocked_bytes\":{},\"rss_current_after_key_update_bytes\":{},",
+            "\"tasks_setup\":{},\"tasks_after_connect\":{},\"tasks_while_blocked\":{},",
+            "\"tasks_after_key_update\":{},\"fds_setup\":{},\"fds_after_connect\":{},",
+            "\"fds_while_blocked\":{},\"fds_after_key_update\":{},",
+            "\"wss_ledger_sample_count\":{},\"wss_ledger_active_connections\":{},",
+            "\"wss_ledger_reserved_total_bytes\":{},",
+            "\"wss_pending_tls_output_high_water_bytes\":{},",
+            "\"wss_target_pending_tls_output_after_key_update_bytes\":{},",
+            "\"wss_outbound_ring_high_water_bytes\":{},",
+            "\"wss_inbound_ring_high_water_bytes\":{},",
+            "\"wss_ledger_overrun\":false,\"empty_binary_turns_while_blocked\":{},",
+            "\"key_update_request_processed_while_blocked\":true,",
+            "\"key_update_response_recovery_observed\":false,",
+            "\"active_connections_after_cleanup\":{},",
+            "\"v8_metrics\":\"not_applicable_in_client_adapter_test_process\",",
+            "\"allocation_measurement\":\"global requested bytes include test harness, fixture, and observer allocations; not usable capacity\",",
+            "\"configuration_scope\":\"one test-provided Arc<ClientConfig> shared by two GameTlsLane instances; no rotation\"}}\n"
+        ),
+        std::env::consts::OS,
+        std::env::consts::ARCH,
+        filled,
+        settle_rounds,
+        shared_config_strong_count,
+        tickets_inserted,
+        tickets_taken,
+        ticket_live_high_water,
+        ticket_growth_high_water,
+        allocator_before_connect,
+        allocator_after_connect,
+        allocator_connect_peak,
+        allocator_connect_peak.saturating_sub(allocator_before_connect),
+        allocator_while_blocked,
+        allocator_backpressure_peak,
+        allocator_backpressure_peak.saturating_sub(allocator_before_backpressure),
+        allocator_after_key_update,
+        allocator_key_update_peak,
+        allocator_key_update_peak.saturating_sub(allocator_before_key_update),
+        allocator_before_cleanup,
+        allocator_after_cleanup,
+        allocator_cleanup_peak.saturating_sub(allocator_before_cleanup),
+        rss_setup,
+        rss_after_connect,
+        rss_while_blocked,
+        rss_after_key_update,
+        tasks_setup,
+        tasks_after_connect,
+        tasks_while_blocked,
+        tasks_after_key_update,
+        fds_setup,
+        fds_after_connect,
+        fds_while_blocked,
+        fds_after_key_update,
+        ledger.sample_count,
+        ledger.connection_count,
+        ledger.total_reserved_bytes,
+        ledger.pending_tls_output_high_water_bytes,
+        pending_after_key_update,
+        ledger.outbound_ring_high_water_bytes,
+        ledger.inbound_ring_high_water_bytes,
+        EMPTY_BINARY_TURNS,
+        active_connections_after_cleanup,
+    );
+    let mut receipt_file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&output_path)
+        .expect("create a unique G5-E adapter receipt file");
+    receipt_file
+        .write_all(receipt.as_bytes())
+        .expect("write the G5-E adapter receipt");
+    println!("G5E_MEMORY_RECEIPT {receipt}");
 }
 
 #[test]

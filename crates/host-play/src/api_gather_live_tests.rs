@@ -612,6 +612,8 @@ fn live_gather_api_receipt_tracks_memory_reconnect_and_wire_shadow() {
     api::hostlog::set_debug(true);
     let home = ThrowawayHome::enter("receipt", &evidence_dir);
     let options = live_options(&home.path);
+    let _composition =
+        crate::PlayComposition::start().expect("start Gather API fixture network composition");
     let template = options
         .resolve(None)
         .expect("resolve local-289 profile")
@@ -935,6 +937,8 @@ fn live_quest_progress_complete_cook_through_load_api() {
         std::env::var_os("BOT_EVIDENCE_DIR").expect("progress live evidence directory"),
     );
     let home = ThrowawayHome::enter("progress", &evidence_dir);
+    let _composition =
+        crate::PlayComposition::start().expect("start Quest progress fixture network composition");
     let template = live_options(&home.path)
         .resolve(None)
         .expect("resolve local profile")

@@ -341,6 +341,8 @@ fn run_live(fault: Fault, label: &str) {
         vault_path: Some(home.join(format!("vault-relog-{label}"))),
         ..ProfileOptions::default()
     };
+    let _composition =
+        crate::PlayComposition::start().expect("start relog fixture network composition");
     let template = options
         .resolve(None)
         .expect("resolve local-289 profile")

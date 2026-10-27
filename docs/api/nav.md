@@ -185,6 +185,12 @@ packed hashes remain exact; compatibility uses revision-bound `274DCI01` decoded
 identity. Offline `ProfileSelection::bind()` retains legacy packed binding;
 application callers use `prepare_template()` or `bind_runtime()`.
 
+Start `host_play::PlayComposition` before either runtime preparation entry point.
+Retain the composition while preparation runs, and drive its maintenance turn
+from the owning event loop. Cache preparation without a registered composition
+returns `NetworkStartError::NotStarted` before network admission. It does not
+start an implicit service.
+
 Headerless Jagex archives are decoded without copying their compressed payload
 just to restore a header. The normal decoder uses the engine's 100k block size,
 avoiding a 900k libbz2 workspace for each stream. Any block-data error (which

@@ -1,19 +1,229 @@
-//! Live: N headless Clients, every slot `set_draw(false)`, print peak RSS
-//! plus OnDemand worker count, TCP to the engine port, and (Linux) task/fd
-//! census for the D1 footprint comparison.
+//! Live memory qualification: N headless Clients using the selected hosted WSS
+//! profile, each with one tiny Load card. Emits process RSS, Rust allocator,
+//! V8 heap, task/fd and network counters for the matched native-tls comparator.
 //!
-//! The old `paint_n`/`skip_n`/`game_draw_enters` asserts are gone with the
-//! `SlotStatus` draw counters (M2); the surviving regression is the RSS
-//! ladder across N headless `Client` slots.
+//! One N per process (peak RSS is process-lifetime). Use `BOT_SERVER_PROFILE`
+//! to select the checked 289 WSS profile override and `SSL_CERT_FILE` /
+//! `SSL_CERT_DIR` for its isolated private CA. The candidate installs that CA
+//! through the adapter's test-support platform-verifier path; origin/dev's
+//! native-tls path reads the same `SSL_CERT_FILE`.
 //!
-//! One N per process (peak RSS is process-lifetime). `RSS_LOAD=1` starts one
-//! tiny Load card per headless slot, measuring J=N and the JS singleton slope.
-//! Use the checked 289 template: `ENGINE_DIR`, `WORLD_ENGINE_DIR`,
-//! `WORLD_NAV_PACK`, `BOT_CACHE_DIR`, and `BOT_GAME_PORT=44594` point at the
-//! local Engine A inputs. `LIVE=1 RSS_LOAD=1 RSS_N=10
-//! BOT_LIVE_NAME_PREFIX=<unique1-4char> cargo test -p host-play --test
-//! rss_ladder -- --ignored --test-threads=1 --nocapture`. Accepted N:
-//! 1, 2, 4, 10. The prefix owns all minted accounts (12-char engine limit).
+//! `ENGINE_DIR`, `WORLD_ENGINE_DIR`, `WORLD_NAV_PACK`, `BOT_CACHE_DIR`,
+//! `BOT_GAME_PORT`, and `BOT_HTTP_PORT` point at the local Engine A proxy
+//! inputs. `LIVE=1 RSS_LOAD=1 RSS_N=10 BOT_LIVE_NAME_PREFIX=<unique1-4char>
+//! cargo test -p host-play --features memory-profile,soak-observers --test
+//! rss_ladder -- --ignored --test-threads=1 --nocapture`. Accepted N: 1, 2, 4,
+//! 10. The prefix owns all minted accounts (12-char engine limit).
+
+#[cfg(feature = "memory-profile")]
+use std::alloc::{GlobalAlloc, Layout};
+#[cfg(feature = "memory-profile")]
+use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
+
+#[cfg(feature = "memory-profile")]
+static QUALIFICATION_RUST_LIVE_BYTES: AtomicU64 = AtomicU64::new(0);
+#[cfg(feature = "memory-profile")]
+static QUALIFICATION_RUST_PEAK_BYTES: AtomicU64 = AtomicU64::new(0);
+
+#[cfg(feature = "memory-profile")]
+struct QualificationAllocator;
+
+#[cfg(feature = "memory-profile")]
+#[global_allocator]
+static QUALIFICATION_ALLOCATOR: QualificationAllocator = QualificationAllocator;
+
+#[cfg(feature = "memory-profile")]
+unsafe impl GlobalAlloc for QualificationAllocator {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        // SAFETY: the allocator contract is supplied by GlobalAlloc's caller;
+        // the exact layout is forwarded to the existing benchmark allocator.
+        let pointer = unsafe { host_play::memory::BENCHMARK_ALLOCATOR.alloc(layout) };
+        if !pointer.is_null() {
+            note_rust_allocation(layout.size());
+        }
+        pointer
+    }
+
+    unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
+        // SAFETY: the allocator contract is supplied by GlobalAlloc's caller;
+        // the exact layout is forwarded to the existing benchmark allocator.
+        let pointer = unsafe { host_play::memory::BENCHMARK_ALLOCATOR.alloc_zeroed(layout) };
+        if !pointer.is_null() {
+            note_rust_allocation(layout.size());
+        }
+        pointer
+    }
+
+    unsafe fn dealloc(&self, pointer: *mut u8, layout: Layout) {
+        // SAFETY: pointer/layout are the matching allocation pair required by
+        // GlobalAlloc and are forwarded unchanged to the existing allocator.
+        unsafe { host_play::memory::BENCHMARK_ALLOCATOR.dealloc(pointer, layout) };
+        QUALIFICATION_RUST_LIVE_BYTES.fetch_sub(layout.size() as u64, Relaxed);
+    }
+
+    unsafe fn realloc(&self, pointer: *mut u8, layout: Layout, size: usize) -> *mut u8 {
+        // SAFETY: pointer/layout are the matching allocation pair required by
+        // GlobalAlloc and are forwarded unchanged to the existing allocator.
+        let replacement =
+            unsafe { host_play::memory::BENCHMARK_ALLOCATOR.realloc(pointer, layout, size) };
+        if !replacement.is_null() {
+            let old_size = layout.size() as u64;
+            let new_size = size as u64;
+            if new_size >= old_size {
+                note_rust_allocation((new_size - old_size) as usize);
+            } else {
+                QUALIFICATION_RUST_LIVE_BYTES.fetch_sub(old_size - new_size, Relaxed);
+            }
+        }
+        replacement
+    }
+}
+
+#[cfg(feature = "memory-profile")]
+fn note_rust_allocation(size: usize) {
+    let live = QUALIFICATION_RUST_LIVE_BYTES
+        .fetch_add(size as u64, Relaxed)
+        .saturating_add(size as u64);
+    QUALIFICATION_RUST_PEAK_BYTES.fetch_max(live, Relaxed);
+}
+
+#[cfg(feature = "memory-profile")]
+fn current_rust_live_bytes() -> Option<u64> {
+    Some(QUALIFICATION_RUST_LIVE_BYTES.load(Relaxed))
+}
+
+#[cfg(not(feature = "memory-profile"))]
+fn current_rust_live_bytes() -> Option<u64> {
+    None
+}
+
+#[cfg(feature = "memory-profile")]
+fn reset_rust_peak_bytes() -> Option<u64> {
+    let live = QUALIFICATION_RUST_LIVE_BYTES.load(Relaxed);
+    QUALIFICATION_RUST_PEAK_BYTES.store(live, Relaxed);
+    Some(live)
+}
+
+#[cfg(not(feature = "memory-profile"))]
+fn reset_rust_peak_bytes() -> Option<u64> {
+    None
+}
+
+#[cfg(feature = "memory-profile")]
+fn current_rust_peak_bytes() -> Option<u64> {
+    Some(QUALIFICATION_RUST_PEAK_BYTES.load(Relaxed))
+}
+
+#[cfg(not(feature = "memory-profile"))]
+fn current_rust_peak_bytes() -> Option<u64> {
+    None
+}
+
+#[cfg(feature = "memory-profile")]
+fn rust_allocator_counts() -> Option<(u64, u64, u64)> {
+    (!cfg!(feature = "memory-profile-no-alloc")).then(host_play::memory::rust_allocator_counts)
+}
+
+#[cfg(not(feature = "memory-profile"))]
+fn rust_allocator_counts() -> Option<(u64, u64, u64)> {
+    None
+}
+
+#[cfg(feature = "memory-profile")]
+fn v8_heap_metrics() -> (u64, u64, Option<u64>, Option<u64>) {
+    let samples = script_js::memory_profile::snapshots();
+    let active = samples
+        .iter()
+        .filter(|sample| sample["v8_live"] == 1)
+        .count() as u64;
+    let sampled = samples
+        .iter()
+        .filter(|sample| {
+            sample["v8_live"] == 1 && sample["v8_heap_samples"].as_u64().unwrap_or(0) > 0
+        })
+        .count() as u64;
+    let sum = |key: &str| {
+        samples
+            .iter()
+            .filter_map(|sample| sample[key].as_u64())
+            .sum::<u64>()
+    };
+    let complete = active > 0 && sampled == active;
+    (
+        active,
+        sampled,
+        complete.then(|| sum("v8_used_bytes")),
+        complete.then(|| sum("v8_total_bytes")),
+    )
+}
+
+#[cfg(not(feature = "memory-profile"))]
+fn v8_heap_metrics() -> (u64, u64, Option<u64>, Option<u64>) {
+    (0, 0, None, None)
+}
+
+fn isolated_ca() -> (std::path::PathBuf, String) {
+    use sha2::Digest;
+
+    let home = std::env::var_os("HOME")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| fail("rss_ladder: isolated HOME is required"));
+    let home = std::fs::canonicalize(home)
+        .unwrap_or_else(|error| fail(&format!("rss_ladder: canonicalize HOME: {error}")));
+    let ca = std::env::var_os("SSL_CERT_FILE")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| fail("rss_ladder: SSL_CERT_FILE must name the isolated private CA"));
+    let ca = std::fs::canonicalize(ca)
+        .unwrap_or_else(|error| fail(&format!("rss_ladder: canonicalize SSL_CERT_FILE: {error}")));
+    if !ca.starts_with(&home) || !ca.is_file() {
+        fail("rss_ladder: SSL_CERT_FILE must be a file inside the isolated HOME");
+    }
+    let cert_dir = std::env::var_os("SSL_CERT_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| fail("rss_ladder: SSL_CERT_DIR must remain inside isolated HOME"));
+    let cert_dir = std::fs::canonicalize(cert_dir)
+        .unwrap_or_else(|error| fail(&format!("rss_ladder: canonicalize SSL_CERT_DIR: {error}")));
+    if !cert_dir.starts_with(&home) {
+        fail("rss_ladder: SSL_CERT_DIR must remain inside isolated HOME");
+    }
+    let ca_bytes = std::fs::read(&ca)
+        .unwrap_or_else(|error| fail(&format!("rss_ladder: read private CA: {error}")));
+    let ca_sha256 = format!("{:x}", sha2::Sha256::digest(&ca_bytes));
+
+    #[cfg(feature = "soak-observers")]
+    {
+        use rustls::pki_types::{pem::PemObject, CertificateDer};
+
+        let certificates = CertificateDer::pem_file_iter(&ca)
+            .unwrap_or_else(|error| fail(&format!("rss_ladder: parse private CA: {error}")))
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap_or_else(|error| {
+                fail(&format!("rss_ladder: read private CA certificate: {error}"))
+            });
+        if certificates.len() != 1 {
+            fail(&format!(
+                "rss_ladder: private CA must contain exactly one certificate, got {}",
+                certificates.len()
+            ));
+        }
+        let config =
+            client_adapter::tls_handshake::build_test_client_config_with_roots(&certificates)
+                .unwrap_or_else(|error| {
+                    fail(&format!(
+                        "rss_ladder: build private-CA WSS verifier: {error}"
+                    ))
+                });
+        client_adapter::service::NetworkService::install_test_tls_config(config).unwrap_or_else(
+            |error| {
+                fail(&format!(
+                    "rss_ladder: install private-CA WSS verifier: {error}"
+                ))
+            },
+        );
+    }
+
+    (ca, ca_sha256)
+}
 
 mod common;
 
@@ -166,22 +376,24 @@ fn live_rss_ladder_headless() {
             .to_string_lossy()
             .into_owned();
     }
-    // Use the same revision-289 checked template as the product and the
-    // Script API live cells. Direct PlayOptions uses the legacy 274 wire
-    // profile, which cannot log into Engine A even with the correct port.
+    // Use the selected WSS profile override, not the legacy TCP PlayOptions
+    // transport. The candidate's private root is installed before the process
+    // network starts; origin/dev's native-tls path consumes the same SSL_CERT_FILE.
+    let (_ca_path, ca_sha256) = isolated_ca();
+    let profile_name = std::env::var("BOT_SERVER_PROFILE")
+        .unwrap_or_else(|_| fail("rss_ladder: BOT_SERVER_PROFILE must select the WSS profile"));
     let home = std::path::PathBuf::from(std::env::var_os("HOME").expect("throwaway HOME"));
-    let template = ProfileOptions {
-        profile: Some("local-289".into()),
+    let http_port = std::env::var("BOT_HTTP_PORT")
+        .ok()
+        .and_then(|port| port.parse().ok())
+        .unwrap_or(2080);
+    let selection = ProfileOptions {
+        profile: Some(profile_name.clone()),
         revision: Some("289".into()),
         host: Some(opts.host.clone()),
         asset_host: Some(opts.host.clone()),
         port: Some(opts.port),
-        http_port: Some(
-            std::env::var("BOT_HTTP_PORT")
-                .ok()
-                .and_then(|port| port.parse().ok())
-                .unwrap_or(2080),
-        ),
+        http_port: Some(http_port),
         cache_dir: Some((&opts.cache_dir).into()),
         unpack_dir: Some(home.join(".274bot/unpack-289")),
         vault_path: Some(home.join("vault")),
@@ -198,13 +410,34 @@ fn live_rss_ladder_headless() {
         ..ProfileOptions::default()
     }
     .resolve(None)
-    .expect("local-289 profile")
-    .prepare_template()
-    .expect("cached revision-289 template");
+    .unwrap_or_else(|error| fail(&format!("rss_ladder: resolve WSS profile: {error}")));
+    if selection.profile_class() != host_play::ProfileClass::Remote
+        || selection.transport() != client::Transport::Wss
+        || selection.game_host() != opts.host.as_str()
+        || selection.game_port() != opts.port
+    {
+        fail("rss_ladder: selected profile override is not the configured remote WSS endpoint");
+    }
+    // Accepted G2a caller ordering: start and retain the process network before
+    // cache preparation; this is not a product-path workaround.
+    #[cfg(feature = "soak-observers")]
+    let _network_driver = host_play::PlayComposition::start().unwrap_or_else(|error| {
+        fail(&format!(
+            "rss_ladder: start process network before WSS cache preparation: {error}"
+        ))
+    });
+    let template = selection
+        .prepare_template()
+        .unwrap_or_else(|error| fail(&format!("rss_ladder: prepare WSS template: {error}")));
+    let profiles = ladder_profiles(n);
+    let allocation_baseline = rust_allocator_counts();
+    let rust_live_baseline = current_rust_live_bytes();
+    reset_rust_peak_bytes();
+
     let play = run_with_template(
         template,
         false,
-        ladder_profiles(n),
+        profiles,
         |_| (None, None),
         |c, _, _hold| c.set_draw(false),
     )
@@ -241,7 +474,8 @@ fn live_rss_ladder_headless() {
             thread::sleep(Duration::from_millis(50));
         }
     }
-    // Give the wall a beat to settle before sampling peak RSS.
+    // Give the wall a beat to settle before sampling peak RSS and the
+    // independent Rust/V8 domains.
     common::maintain_for(&play, Duration::from_secs(10));
     let (rss, _) = sample_process();
     if rss == 0 {
@@ -259,16 +493,85 @@ fn live_rss_ladder_headless() {
         .statuses()
         .iter()
         .fold((0, 0), |(i, o), s| (i + s.bytes_in, o + s.bytes_out));
-    let tcp_s = tcp.map(|c| c.to_string()).unwrap_or_else(|| "?".into());
-    let current = host_play::current_resident_bytes().unwrap_or(0);
-    let fds = fd_count()
-        .map(|c| c.to_string())
+    let tcp_s = tcp
+        .map(|count| count.to_string())
         .unwrap_or_else(|| "?".into());
-    let (tasks_s, tasks_hist) = task_census()
-        .map(|(total, hist)| (total.to_string(), format!(" tasks_hist=[{hist}]")))
-        .unwrap_or_else(|| ("?".into(), String::new()));
+    let current = host_play::current_resident_bytes();
+    let current_s = current
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "?".into());
+    let fds = fd_count();
+    let fds_s = fds
+        .map(|count| count.to_string())
+        .unwrap_or_else(|| "?".into());
+    let (tasks, tasks_hist) = task_census()
+        .map(|(total, hist)| (Some(total), format!(" tasks_hist=[{hist}]")))
+        .unwrap_or_else(|| (None, String::new()));
+    let tasks_s = tasks
+        .map(|total| total.to_string())
+        .unwrap_or_else(|| "?".into());
+    let allocation_after = rust_allocator_counts();
+    let allocation_delta = allocation_after
+        .zip(allocation_baseline)
+        .map(|(after, before)| {
+            (
+                after.0.saturating_sub(before.0),
+                after.1.saturating_sub(before.1),
+            )
+        });
+    let rust_live_after = current_rust_live_bytes();
+    let rust_peak = current_rust_peak_bytes();
+    let rust_peak_delta = rust_peak
+        .zip(rust_live_baseline)
+        .map(|(peak, baseline)| peak.saturating_sub(baseline));
+    let (v8_active_isolates, v8_sampled_isolates, v8_used_bytes, v8_total_bytes) =
+        v8_heap_metrics();
+    let ready_slots = play
+        .statuses()
+        .iter()
+        .filter(|status| status.ingame && status.scene_state == 2)
+        .count();
+    let receipt = serde_json::json!({
+        "schema": "t1.4.g5e-memory-ladder.v1",
+        "n": n,
+        "load": load,
+        "ready_slots": ready_slots,
+        "profile": profile_name,
+        "profile_class": "remote",
+        "transport": "wss",
+        "game_host": opts.host,
+        "game_port": opts.port,
+        "asset_host": opts.host,
+        "http_port": http_port,
+        "private_ca_sha256": ca_sha256,
+        "rss_peak_bytes": rss,
+        "resident_current_bytes": current,
+        "rust_allocations_since_play": allocation_delta.map(|delta| delta.0),
+        "rust_allocated_bytes_since_play": allocation_delta.map(|delta| delta.1),
+        "rust_live_bytes": rust_live_after,
+        "rust_live_bytes_before_play": rust_live_baseline,
+        "rust_live_peak_bytes": rust_peak,
+        "rust_live_peak_delta_bytes": rust_peak_delta,
+        "v8_active_isolates": v8_active_isolates,
+        "v8_sampled_isolates": v8_sampled_isolates,
+        "v8_used_bytes": v8_used_bytes,
+        "v8_total_bytes": v8_total_bytes,
+        "ondemand_workers": workers,
+        "wss_tcp_connections": tcp,
+        "tasks": tasks,
+        "fds": fds,
+        "bytes_in": bytes_in,
+        "bytes_out": bytes_out,
+        "allocation_counting": allocation_after.is_some(),
+        "wss_private_ca_installed": true,
+        "measurement_scope": "whole process; per-WSS slope is calculated by the matched N ladder",
+    });
     println!(
-        "rss_ladder n={n} load={load} rss={rss} current={current} ondemand={workers} tcp={tcp_s} tasks={tasks_s}{tasks_hist} fds={fds} bytes_in={bytes_in} bytes_out={bytes_out}"
+        "G5E_MEMORY_RECEIPT {}",
+        serde_json::to_string(&receipt).expect("serialize memory ladder receipt")
+    );
+    println!(
+        "rss_ladder n={n} load={load} rss={rss} current={current_s} ondemand={workers} tcp={tcp_s} tasks={tasks_s}{tasks_hist} fds={fds_s} bytes_in={bytes_in} bytes_out={bytes_out}"
     );
     // Connection contract: one OnDemand worker for every N. Do not fail on RSS size.
     if workers != 1 {
@@ -285,7 +588,7 @@ fn live_rss_ladder_headless() {
             ));
         }
     }
-    println!("PASS: rss_ladder n={n} load={load} rss={rss} current={current} ondemand={workers} tcp={tcp_s} tasks={tasks_s} fds={fds}");
+    println!("PASS: rss_ladder n={n} load={load} rss={rss} current={current_s} ondemand={workers} tcp={tcp_s} tasks={tasks_s} fds={fds_s}");
 }
 
 // keep parse_rss unit tests from Task 3 below this

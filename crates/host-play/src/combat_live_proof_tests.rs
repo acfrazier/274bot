@@ -8027,6 +8027,8 @@ fn run_case(case: Case) {
         Ok(options) => options,
         Err(error) => panic!("{} live prerequisites: {error}", case.key()),
     };
+    let _composition =
+        crate::PlayComposition::start().expect("start combat proof network composition");
     let template = options
         .resolve(None)
         .expect("resolve local-289 combat profile")
@@ -10152,6 +10154,8 @@ fn ranged_protection_controls_a_through_i_gate_ranged_kill_cells() {
 #[ignore = "offline baked-collision probe requires the selected engine, cache and nav pack"]
 fn magic_no_fallback_corridor_uses_validated_baked_collision() {
     let home = ThrowawayHome::enter("cm-G2-no-fallback-collision").unwrap();
+    let _composition =
+        crate::PlayComposition::start().expect("start collision fixture network composition");
     let template = profile_options(&home.path)
         .unwrap()
         .resolve(None)

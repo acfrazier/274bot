@@ -9,6 +9,9 @@
 //! this test's cache, unpack and home roots are temporary, never the
 //! operator's cache.
 
+#[path = "support/network_composition.rs"]
+mod network_composition;
+
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
@@ -18,7 +21,6 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use client::io::Packet;
-use client_adapter::service::NetworkService;
 use host_play::cache::CacheAvailability;
 use host_play::profile::{ProfileEnvironment, ProfileSelection};
 use host_play::progress::ProfileProgressObserver;
@@ -177,7 +179,7 @@ fn reject_crc() -> (u16, thread::JoinHandle<String>) {
 
 #[test]
 fn failed_cold_preparation_is_reported_with_missing_archive() {
-    let _driver = NetworkService::start_composition().unwrap();
+    let _network_driver = network_composition::ensure_started();
     let root = TempRoot::new("cache-rejected-crc");
     let cache = root.join("cache");
     assert!(!cache.exists(), "the cache root starts absent");
@@ -263,7 +265,7 @@ fn serve_packs(packs: Arc<Vec<(String, Vec<u8>)>>) -> (u16, thread::JoinHandle<V
 /// the fetched packs.
 #[test]
 fn empty_cache_is_fetched_through_normal_profile_preparation() {
-    let _driver = NetworkService::start_composition().unwrap();
+    let _network_driver = network_composition::ensure_started();
     let root = TempRoot::new("cache-prepare");
     let cache = root.join("cache");
     std::fs::create_dir_all(&cache).unwrap();

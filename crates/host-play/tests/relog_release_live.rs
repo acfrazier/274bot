@@ -15,6 +15,9 @@
 //! Example command, with the repository's `isohome` wrapper:
 //! `isohome env LIVE=1 BOT_DEBUG=1 BOT_CPU=1 BOT_NAV_BUILD=skip BOT_LIVE_NAME_PREFIX=rc5c ENGINE_DIR=/path/to/engine-r289 NAV_PACK=/path/to/bake-r2-a.navpack NAV_FLAGS=/path/to/bake-r2-a.navflags BOT_EVIDENCE_DIR=/path/to/evidence-output/concurrent-live cargo test --locked -p host-play --features live-harness,test-support --test relog_release_live relog_release_concurrent_bot_is_not_stalled -- --ignored --nocapture --test-threads=1`
 
+#[path = "support/network_composition.rs"]
+mod network_composition;
+
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
@@ -356,6 +359,8 @@ fn relog_release_fixed_eight_account_cohort() {
         api::hostlog::install_sink(&CAPTURE),
         "run this live proof in its own test process"
     );
+
+    let _network_driver = network_composition::ensure_started();
 
     let home = PathBuf::from(std::env::var_os("HOME").expect("isohome must provide HOME"));
     let engine_dir = engine_a_dir();
@@ -728,6 +733,8 @@ fn relog_release_concurrent_bot_is_not_stalled() {
         api::hostlog::install_sink(&CAPTURE),
         "run this live proof in its own test process"
     );
+
+    let _network_driver = network_composition::ensure_started();
 
     let home = PathBuf::from(std::env::var_os("HOME").expect("isohome must provide HOME"));
     let engine_dir = engine_a_dir();

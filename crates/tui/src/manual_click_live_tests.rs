@@ -208,6 +208,7 @@ fn walk_source(destination: Tile) -> String {
 
 fn run_manual_click(cols: u16, rows: u16, pause_owner: bool, recovery: bool) -> Result<(), String> {
     let inputs = live_inputs()?;
+    let composition = host_play::PlayComposition::start().map_err(|error| error.to_string())?;
     prime_local_cache(&inputs.cache)?;
     let profile = host_play::ProfileOptions {
         profile: Some("local-289".into()),
@@ -235,6 +236,7 @@ fn run_manual_click(cols: u16, rows: u16, pause_owner: bool, recovery: bool) -> 
     let vault_path = profiles.tui_vault();
 
     let mut session = TuiSession::new_bound(template);
+    session.core.adopt_network_composition(composition);
     session.mainland = true;
     session.persist_ui = false;
     session.unlock_at(&vault_path, &passphrase)?;

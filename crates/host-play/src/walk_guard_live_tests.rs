@@ -1772,6 +1772,8 @@ fn run_live_w1(mode: W1Mode, food: Option<bool>) {
         options.port = Some(44_594);
         options.http_port = Some(1_080);
     }
+    let _composition =
+        crate::PlayComposition::start().expect("start walk guard fixture network composition");
     let template = options
         .resolve(None)
         .expect("resolve local-289 profile")

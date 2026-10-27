@@ -1,5 +1,8 @@
 //! Seeded revision-289 manual WalkTo: chained tolls and native Shilo cart fares.
 //! Uses only per-account setup cheats; never changes shared engine content.
+#[path = "support/network_composition.rs"]
+mod network_composition;
+
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -120,6 +123,8 @@ fn live_manual_walk_two_fares_sixty_to_zero_and_thirty_refused() {
     let evidence =
         PathBuf::from(std::env::var_os("NAV_FARES_EVIDENCE").expect("explicit evidence"));
     std::fs::create_dir_all(&evidence).unwrap();
+    let _network_driver = network_composition::ensure_started();
+
     let profile = live_profile_options()
         .resolve(None)
         .unwrap()
@@ -378,6 +383,8 @@ fn live_shilo_cart_ten_coins_to_zero() {
     assert_eq!(std::env::var("BOT_CPU").as_deref(), Ok("1"));
     let evidence_root =
         PathBuf::from(std::env::var_os("NAV_FARES_EVIDENCE").expect("explicit evidence"));
+    let _network_driver = network_composition::ensure_started();
+
     let profile = live_profile_options()
         .resolve(None)
         .unwrap()

@@ -2,6 +2,9 @@
 //! The caller supplies a script and the exact JSON row it must log. This uses
 //! production Play and selected content, not a second gameplay runtime.
 
+#[path = "support/network_composition.rs"]
+mod network_composition;
+
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -273,6 +276,8 @@ fn required(name: &str) -> PathBuf {
 #[ignore = "requires LIVE=1, isolated HOME/cache, a T2 probe, and Engine A"]
 fn local_family_reads_real_content() {
     assert_eq!(std::env::var("LIVE").as_deref(), Ok("1"));
+    let _network_driver = network_composition::ensure_started();
+
     let evidence = required("BOT_EVIDENCE_DIR");
     let home = required("HOME");
     assert!(

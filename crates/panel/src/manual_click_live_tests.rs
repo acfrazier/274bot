@@ -265,8 +265,10 @@ fn prepare_session_n(
     pause_owner: bool,
     count: usize,
 ) -> Result<(Session, String), String> {
+    let composition = host_play::PlayComposition::start().map_err(|error| error.to_string())?;
     prime_local_cache(&inputs.cache)?;
     let mut session = Session::with_instance(frontend_core::launch::InstancePermit::skip());
+    session.core.adopt_network_composition(composition);
     session.persist_ui = false;
     session.ui.nav.pause_script_on_manual_walk_abort = pause_owner;
     session

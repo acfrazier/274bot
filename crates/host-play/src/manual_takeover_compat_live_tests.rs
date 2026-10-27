@@ -1214,6 +1214,7 @@ fn run_cell_inner(pause_on: bool, run_dir: &Path, receipt: &mut Receipt) -> Resu
     let (options, mut profile_environment, profile_facts) = profile_options(&home, &frozen.root)?;
     profile_environment.home = Some(home.clone());
     receipt.profile = Some(profile_facts);
+    let _composition = crate::PlayComposition::start().map_err(|error| error.to_string())?;
     let template = options
         .resolve_with_env(None, &profile_environment)?
         .prepare_template()?;

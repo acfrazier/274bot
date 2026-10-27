@@ -18,6 +18,9 @@
 //! engine root and the selected cache manifest for a non-default layout.
 //! Bounded: two actors, one selected profile, no catalog or script work.
 
+#[path = "support/network_composition.rs"]
+mod network_composition;
+
 mod common;
 
 use std::path::PathBuf;
@@ -105,6 +108,8 @@ fn cache_live() {
         cache_manifest: std::env::var_os("BOT_CACHE_MANIFEST").map(PathBuf::from),
         ..ProfileOptions::default()
     };
+    let _network_driver = network_composition::ensure_started();
+
     let profile = options
         .resolve(None)
         .and_then(|selection| selection.bind_with_progress(&ProfileProgressObserver::default()))

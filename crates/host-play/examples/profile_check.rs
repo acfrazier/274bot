@@ -12,6 +12,8 @@ fn check() -> Result<serde_json::Value, String> {
     let mut client = template.prepare_client(0, false)?;
     let initialize = rest.iter().any(|arg| arg == "--initialize");
     if initialize {
+        let _composition = host_play::PlayComposition::start()
+            .map_err(|error| format!("network composition startup: {error}"))?;
         client.maininit();
         if client.error_loading {
             return Err(format!(

@@ -28,4 +28,10 @@ fn cache_prepare_reports_service_not_started_before_network_admission() {
             client_adapter::service::NetworkStartError::NotStarted,
         )),
     );
+
+    let display = result.as_ref().unwrap_err().to_string();
+    assert!(
+        display.contains("Start the composition before cache preparation or transport admission"),
+        "{display}"
+    );
 }

@@ -321,6 +321,7 @@ struct Cell {
     observed: Arc<Mutex<Observed>>,
     evidence: PathBuf,
     started: Instant,
+    _composition: crate::PlayComposition,
 }
 
 fn start_cell(
@@ -338,6 +339,8 @@ fn start_cell(
     let evidence = env_path("LIVE_EVIDENCE_DIR");
     std::fs::create_dir_all(&evidence).expect("create evidence dir");
     let home = std::env::var_os("HOME").map(PathBuf::from).expect("HOME");
+    let composition =
+        crate::PlayComposition::start().expect("start combat fixture network composition");
     let template = profile_options(&home)
         .resolve(None)
         .expect("resolve local-289 profile")
@@ -370,6 +373,7 @@ fn start_cell(
         observed,
         evidence,
         started,
+        _composition: composition,
     };
     cell.play
         .try_spawn_slot(

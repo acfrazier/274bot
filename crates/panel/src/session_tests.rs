@@ -508,6 +508,10 @@ fn explicit_profile_wins_saved_revision_and_bound_session_refuses_changes() {
         &root,
     )
     .unwrap();
+    session
+        .core
+        .start_network_composition()
+        .expect("panel binding fixture starts Play network composition");
     session.bind_profile().unwrap();
     assert!(session.server_label().starts_with("local-274"));
     assert_eq!(session.catalog_root().unwrap(), None);
@@ -1206,6 +1210,10 @@ fn revision_and_binding_allow_already_loaded_scripts_and_source_edits() {
         .card(CardSource::Catalog, "Chosen")
         .is_some());
     session.set_server_revision(274).unwrap();
+    session
+        .core
+        .start_network_composition()
+        .expect("panel revision fixture starts Play network composition");
     session.bind_profile().unwrap();
     let another = write_looping_catalog(&root.join("another"), &[("Another", "Another")]);
     session.import_rs2b0t_catalog(&another).unwrap();
@@ -8646,6 +8654,9 @@ fn live_load_all_keeps_focus_on_engine_a() {
         ..host_play::ProfileOptions::default()
     }))
     .expect("configure Engine A");
+    s.core
+        .start_network_composition()
+        .expect("live Engine A panel fixture starts Play network composition");
     s.bind_profile().expect("bind Engine A");
     assert!(s.unlock_at(&vault_path, &pass), "{:?}", s.error);
     s.set_multibox(true);

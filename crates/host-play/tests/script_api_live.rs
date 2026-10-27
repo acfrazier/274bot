@@ -1,6 +1,9 @@
 //! Public Load-script witnesses for Script API slices C and D (local revision 289).
 //! Each cell runs in a child test process so the production Driver's stderr-only
 //! packet trace is captured without changing logging policy or sharing HOME state.
+#[path = "support/network_composition.rs"]
+mod network_composition;
+
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -499,6 +502,8 @@ fn start_fixture_at(
     script_js::install_cards().expect("install canonical Sherlock card for live API fixtures");
     api::hostlog::set_debug(true);
     assert!(api::hostlog::install_sink(&ADMISSION));
+    let _network_driver = network_composition::ensure_started();
+
     let home = PathBuf::from(std::env::var_os("HOME").expect("throwaway HOME"));
     assert!(
         home.starts_with(evidence()),

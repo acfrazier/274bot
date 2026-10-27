@@ -98,6 +98,8 @@ struct Actor {
     script_requested: bool,
     script_started_at: Option<Instant>,
     script_started_unix_ms: Option<u128>,
+    script_start_tick: Option<u32>,
+    script_start_budget_ticks: u32,
     script_running_observed: bool,
     last_tile: Option<(i32, i32, i32)>,
     walk_tile_changes: u64,
@@ -118,6 +120,84 @@ struct Actor {
     script_running_monotonic_ns: Option<u64>,
     task_status_monotonic_ns: Option<u64>,
     failure: Option<String>,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+enum ScriptStartObservation {
+    Waiting,
+    Running,
+    Expired,
+}
+
+fn script_start_observation(
+    start_tick: Option<u32>,
+    observed_tick: u32,
+    running: bool,
+    budget_ticks: u32,
+) -> ScriptStartObservation {
+    let Some(start_tick) = start_tick else {
+        return ScriptStartObservation::Waiting;
+    };
+    let elapsed = observed_tick.wrapping_sub(start_tick);
+    if elapsed > budget_ticks || (!running && elapsed == budget_ticks) {
+        ScriptStartObservation::Expired
+    } else if running {
+        ScriptStartObservation::Running
+    } else {
+        ScriptStartObservation::Waiting
+    }
+}
+
+#[test]
+fn script_start_budget_excludes_the_cohort_barrier() {
+    let scenario = scenario::get("gatherer").expect("Gatherer scenario");
+    let budget = scenario
+        .steps
+        .iter()
+        .find(|step| matches!(step.kind, StepKind::StartScript))
+        .expect("compiled Start step")
+        .wait
+        .budget_ticks;
+    assert_eq!(budget, 50);
+    for barrier_tick in [0, 50, 500, 10_000] {
+        assert_eq!(
+            script_start_observation(None, barrier_tick, false, budget),
+            ScriptStartObservation::Waiting
+        );
+    }
+    let actual_start = 10_000;
+    assert_eq!(
+        script_start_observation(Some(actual_start), actual_start + 49, false, budget),
+        ScriptStartObservation::Waiting
+    );
+    for elapsed in [0, 49, 50] {
+        assert_eq!(
+            script_start_observation(Some(actual_start), actual_start + elapsed, true, budget),
+            ScriptStartObservation::Running
+        );
+    }
+}
+
+#[test]
+fn script_start_budget_expires_without_running_after_actual_start() {
+    let budget = 50;
+    let actual_start = 10_000;
+    assert_eq!(
+        script_start_observation(None, actual_start, false, budget),
+        ScriptStartObservation::Waiting
+    );
+    assert_eq!(
+        script_start_observation(Some(actual_start), actual_start + 49, false, budget),
+        ScriptStartObservation::Waiting
+    );
+    assert_eq!(
+        script_start_observation(Some(actual_start), actual_start + 50, false, budget),
+        ScriptStartObservation::Expired
+    );
+    assert_eq!(
+        script_start_observation(Some(actual_start), actual_start + 51, true, budget),
+        ScriptStartObservation::Expired
+    );
 }
 
 #[derive(Clone)]
@@ -820,6 +900,10 @@ fn event_base(event: &str, actor: &Actor, started: Instant, wall_ms: u128) -> Va
         "process_elapsed_seconds": started.elapsed().as_secs(),
         "event_monotonic_ns": monotonic_now_ns().ok(),
         "wall_clock_unix_ms": wall_ms,
+        "game_tick": actor.snapshot.tick(),
+        "scenario_game_ticks": actor.runner.total_ticks(),
+        "script_start_game_tick": actor.script_start_tick,
+        "script_start_budget_ticks": actor.script_start_budget_ticks,
     })
 }
 
@@ -911,6 +995,16 @@ fn make_actor(
 ) -> Result<Actor, String> {
     let mut scenario = scenario_for(&site, run_duration)?;
     scenario.seed.profiles = vec![("soak", "unused")];
+    let script_start_budget_ticks = scenario
+        .steps
+        .iter()
+        .find(|step| matches!(step.kind, StepKind::StartScript))
+        .ok_or("Gatherer scenario has no compiled Start step")?
+        .wait
+        .budget_ticks;
+    if script_start_budget_ticks != 50 {
+        return Err("the soak requires the existing 50-game-tick compiled Start budget".into());
+    }
     let mut runner = ScenarioRunner::with_world(scenario, template.world());
     runner.set_deadline(run_duration);
     runner.set_live_names(std::slice::from_ref(&account));
@@ -927,6 +1021,8 @@ fn make_actor(
         script_requested: false,
         script_started_at: None,
         script_started_unix_ms: None,
+        script_start_tick: None,
+        script_start_budget_ticks,
         script_running_observed: false,
         script_running_monotonic_ns: None,
         last_tile: None,
@@ -1024,9 +1120,9 @@ fn drive_frame(
         }
         return;
     }
-    if actor.script_requested && actor.script_started_at.is_none() {
-        // The first ready slot waits for the entire cohort's real setup;
-        // do not spend its StartScript step budget on the cohort barrier.
+    if actor.script_requested && !actor.script_running_observed {
+        // The host loop measures the real Start-to-Running budget. Do not
+        // let the runner charge the cohort barrier's unobserved tick delta.
         return;
     }
     let at_relog = actor.runner.record_step().2 == GATHERER_RELOG_STEP && client.ingame;
@@ -1352,6 +1448,8 @@ fn run_live(config_path: &Path, output: &Path) -> Result<(), String> {
     candidate_observers::install_tls(&config.ca_pem)?;
     #[cfg(feature = "soak-observers")]
     let candidate_payloads = candidate_observers::CandidateObservers::install(&output)?;
+    // The native-TLS baseline lacks this API. Candidate runs enable the
+    // observer feature, which also installs their private test trust.
     #[cfg(feature = "soak-observers")]
     let _network_driver = host_play::PlayComposition::start()
         .map_err(|error| format!("T1.4 network composition startup: {error}"))?;
@@ -1569,7 +1667,29 @@ fn run_live(config_path: &Path, output: &Path) -> Result<(), String> {
                         event_writer.write(&event)?;
                     }
                     if actor.script_started_at.is_some() {
-                        match play.script_state(account) {
+                        let script_state = play.script_state(account);
+                        if !actor.script_running_observed
+                            && script_start_observation(
+                                actor.script_start_tick,
+                                actor.snapshot.tick(),
+                                matches!(script_state, script::RunState::Running),
+                                actor.script_start_budget_ticks,
+                            ) == ScriptStartObservation::Expired
+                        {
+                            let message = format!(
+                                "script_running not seen within {} game ticks after actual Start",
+                                actor.script_start_budget_ticks
+                            );
+                            fail_actor(
+                                &mut actor,
+                                &event_writer,
+                                run_started,
+                                "script-start-budget",
+                                &message,
+                            );
+                            continue;
+                        }
+                        match script_state {
                             script::RunState::Running if !actor.script_running_observed => {
                                 actor.script_running_observed = true;
                                 actor.script_running_monotonic_ns = Some(now_monotonic_ns);
@@ -1692,7 +1812,7 @@ fn run_live(config_path: &Path, output: &Path) -> Result<(), String> {
                             let actor = actor_ref.lock().map_err(|_| "actor state poisoned")?;
                             actor.site.clone()
                         };
-                        {
+                        let start_tick = {
                             let actor = actor_ref.lock().map_err(|_| "actor state poisoned")?;
                             event_writer.write(&event_base(
                                 "script-start-requested",
@@ -1700,7 +1820,8 @@ fn run_live(config_path: &Path, output: &Path) -> Result<(), String> {
                                 run_started,
                                 time_ms()?,
                             ))?;
-                        }
+                            actor.snapshot.tick()
+                        };
                         match play.script_start(
                             account,
                             script::CompiledId("Gatherer"),
@@ -1723,6 +1844,7 @@ fn run_live(config_path: &Path, output: &Path) -> Result<(), String> {
                                     actor_ref.lock().map_err(|_| "actor state poisoned")?;
                                 actor.script_started_at = Some(Instant::now());
                                 actor.script_started_unix_ms = Some(wall_ms);
+                                actor.script_start_tick = Some(start_tick);
                                 let mut event =
                                     event_base("script-started", &actor, run_started, wall_ms);
                                 event["script_start_monotonic_ns"] = json!(observed_ns);

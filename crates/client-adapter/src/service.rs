@@ -24,7 +24,7 @@ static TEST_TLS_CONFIG: OnceLock<Arc<rustls::ClientConfig>> = OnceLock::new();
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum NetworkStartError {
-    #[error("network service was not started by this composition")]
+    #[error("network service was not started by this composition. Start the composition before cache preparation or transport admission")]
     NotStarted,
     #[error("game reactor startup failed: {0:?}")]
     Reactor(io::ErrorKind),

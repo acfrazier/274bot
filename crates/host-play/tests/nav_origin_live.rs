@@ -1,6 +1,9 @@
 //! Real map WalkTo and production WalkArm follow from the Ardougne shop pocket.
 //! Requires LIVE=1 and NAV_ORIGIN_ENGINE; never reconfigures the shared engine.
 
+#[path = "support/network_composition.rs"]
+mod network_composition;
+
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -56,6 +59,8 @@ fn env_port(name: &str, default: u16) -> u16 {
 #[ignore = "LIVE=1, NAV_ORIGIN_ENGINE and NAV_ORIGIN_PACK required; absence fails"]
 fn live_walkto_from_ardougne_pocket_near_and_far() {
     assert_eq!(std::env::var("LIVE").as_deref(), Ok("1"));
+    let _network_driver = network_composition::ensure_started();
+
     let engine_dir =
         PathBuf::from(std::env::var_os("NAV_ORIGIN_ENGINE").expect("NAV_ORIGIN_ENGINE"));
     // The shared-engine convention: WORLD_GAME_PORT/WORLD_HTTP_PORT select

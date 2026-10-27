@@ -55,6 +55,8 @@
     dead_code,
     reason = "shared live runner across quester cells; each cell uses a subset, so expect would misfire"
 )]
+#[path = "../support/network_composition.rs"]
+mod network_composition;
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -365,6 +367,8 @@ fn selected_profile(
         catalog_root: Some(catalog_root),
         ..ProfileOptions::default()
     };
+    let _network_driver = network_composition::ensure_started();
+
     let profile = options.resolve(None)?.bind_runtime()?;
     if profile.profile_class() != host_play::ProfileClass::Local
         || profile.client().game_host() != "127.0.0.1"

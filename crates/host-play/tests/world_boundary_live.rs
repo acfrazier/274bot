@@ -5,6 +5,9 @@
 //! and then drives the existing ScenarioRunner/Traveller or Guardian.
 
 use std::path::PathBuf;
+#[path = "support/network_composition.rs"]
+mod network_composition;
+
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -47,6 +50,8 @@ fn selected() -> (Arc<host_play::ServerProfile>, Arc<SharedClientTemplate>) {
         engine_dir: std::env::var_os("WORLD_ENGINE_DIR").map(PathBuf::from),
         ..ProfileOptions::default()
     };
+    let _network_driver = network_composition::ensure_started();
+
     let profile = options
         .resolve(None)
         .expect("profile resolve")

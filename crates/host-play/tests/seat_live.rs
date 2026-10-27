@@ -1,5 +1,8 @@
 #![cfg(feature = "test-support")]
 
+#[path = "support/network_composition.rs"]
+mod network_composition;
+
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::{Arc, Mutex};
@@ -232,6 +235,8 @@ fn start_fixture(random_events: bool) -> LiveCell {
         Ok("1"),
         "ignored live cells require LIVE=1"
     );
+    let _network_driver = network_composition::ensure_started();
+
     let evidence = evidence_dir();
     std::fs::create_dir_all(&evidence).expect("create BOT_EVIDENCE_DIR");
     let home = PathBuf::from(std::env::var_os("HOME").expect("throwaway HOME"));

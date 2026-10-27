@@ -1,5 +1,8 @@
 //! S2b advisory admission on real revision-289 content. No poison-clear
 //! observer, preflight movement or survivability claim is manufactured here.
+#[path = "support/network_composition.rs"]
+mod network_composition;
+
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -284,6 +287,8 @@ fn real_unknown_poison_explicit_forbid_then_opt_in_and_default_escape() {
     assert_eq!(std::env::var("LIVE").as_deref(), Ok("1"));
     assert_eq!(std::env::var("BOT_CPU").as_deref(), Ok("1"));
     install_nav_logs();
+    let _network_driver = network_composition::ensure_started();
+
     let prefix = std::env::var("BOT_LIVE_NAME_PREFIX").expect("owned account prefix");
     assert!(!prefix.is_empty() && prefix.len() <= 4);
     let directory =

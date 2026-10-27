@@ -7,6 +7,9 @@
 //! `BOT_LIVE_NAME_PREFIX` (1-4 chars), `WORLD_NAV_PACK`, `WORLD_ENGINE_DIR`,
 //! and `LIVE_EVIDENCE_DIR` set to the WEB-CUT-2 evidence root.
 
+#[path = "support/network_composition.rs"]
+mod network_composition;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -136,6 +139,8 @@ fn login_fresh(
     username: &str,
     uid: i32,
 ) -> (client::client::Client, GameSnapshot, Pump) {
+    let _network_driver = network_composition::ensure_started();
+
     let mut client = template
         .prepare_client(uid, true)
         .expect("prepare disposable R289 client");

@@ -2,10 +2,9 @@
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, LazyLock, Mutex};
+use std::sync::{Arc, Mutex};
 
 use client::io::{ClientRevision, Packet};
-use client_adapter::service::{MaintenanceDriver, NetworkService};
 use host_play::nav_identity::NavFlagsOrigin;
 use host_play::profile::{CacheManifest, NavAvailability, NavManifest, ProfileEnvironment};
 use host_play::progress::{ProfileProgress, ProfileProgressObserver, ProfileProgressStage};
@@ -14,16 +13,14 @@ use host_play::{
     SharedClientTemplate,
 };
 
+#[path = "support/network_composition.rs"]
+mod network_composition;
+
 #[path = "support/upgrade_home.rs"]
 mod upgrade_home;
 
 static NEXT: AtomicUsize = AtomicUsize::new(0);
 static CLIENTS: Mutex<()> = Mutex::new(());
-// Profile binding now admits cold cache lookups only through a composition
-// driver. Keep it registered across concurrently running fixture tests.
-static NETWORK: LazyLock<MaintenanceDriver> = LazyLock::new(|| {
-    NetworkService::start_composition().expect("start session-profile network composition")
-});
 const ARCHIVES: [&str; 8] = [
     "title",
     "config",
@@ -38,7 +35,7 @@ const ARCHIVES: [&str; 8] = [
 struct Fixture(PathBuf);
 impl Fixture {
     fn new() -> Self {
-        let _ = &*NETWORK;
+        let _network_driver = network_composition::ensure_started();
         let path = std::env::temp_dir().join(format!(
             "274bot-session-{}-{}",
             std::process::id(),

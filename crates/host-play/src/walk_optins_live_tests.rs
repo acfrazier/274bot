@@ -301,6 +301,8 @@ fn live_quester_walk_optins() {
         vault_path: Some(home.join("vault-walk-optins")),
         ..Default::default()
     };
+    let _composition =
+        crate::PlayComposition::start().expect("start walk opt-ins fixture network composition");
     let template = options.resolve(None).unwrap().prepare_template().unwrap();
     let names = mint_live_names(2);
     let entries = mint_live_entries(&names);

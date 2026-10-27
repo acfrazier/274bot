@@ -2,6 +2,9 @@
 //! interaction driver and snapshot. This never starts Play slots or guardians.
 //! Run one revision per process with LIVE=1 and BOUNDARY_REVISION=274|289.
 
+#[path = "support/network_composition.rs"]
+mod network_composition;
+
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -148,6 +151,8 @@ fn walk_leg(
 }
 
 fn run() -> Result<(), String> {
+    let _network_driver = network_composition::ensure_started();
+
     let revision =
         std::env::var("BOUNDARY_REVISION").map_err(|_| "BOUNDARY_REVISION=274|289 is required")?;
     if revision != "274" && revision != "289" {

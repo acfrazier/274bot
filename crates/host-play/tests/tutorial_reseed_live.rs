@@ -13,6 +13,9 @@
 //! `BOT_CACHE_DIR` (writable clone), `LIVE_EVIDENCE_DIR`, and
 //! `WORLD_GAME_PORT`/`WORLD_HTTP_PORT` pointing at the shared engine.
 
+#[path = "support/network_composition.rs"]
+mod network_composition;
+
 use std::path::PathBuf;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -97,6 +100,8 @@ fn live_tutorial_reseed_wields_bow() {
     assert!((1..=4).contains(&prefix.len()), "prefix must be 1-4 chars");
     let evidence_root =
         PathBuf::from(std::env::var_os("LIVE_EVIDENCE_DIR").expect("LIVE_EVIDENCE_DIR"));
+
+    let _network_driver = network_composition::ensure_started();
 
     let template = selected_template();
     let serial = SystemTime::now()

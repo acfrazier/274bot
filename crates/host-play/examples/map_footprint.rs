@@ -138,6 +138,8 @@ fn run() -> Result<(), String> {
         }
     }
     let cache_root = cache_root.ok_or("--cache-root DIR is required (scratch directory)")?;
+    let _composition = host_play::PlayComposition::start()
+        .map_err(|error| format!("network composition startup: {error}"))?;
     let profile = options.resolve(None)?.bind_runtime()?;
     let descriptor = map_profile_descriptor(&profile).map_err(|e| e.to_string())?;
     let root = MapCacheRoot::from_root(cache_root);
