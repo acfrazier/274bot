@@ -1222,6 +1222,10 @@ struct TalkRow {
     tile: Tile,
 }
 
+fn npc_name_matches(name: Option<&str>, want: &str) -> bool {
+    name.is_some_and(|name| name.trim().eq_ignore_ascii_case(want))
+}
+
 fn talk_row(npc: &str) -> Option<TalkRow> {
     let want = npc.trim();
     if want.is_empty() {
@@ -1230,11 +1234,7 @@ fn talk_row(npc: &str) -> Option<TalkRow> {
     observed::with(|scene| {
         let rows = scene.since_login().npcs()?;
         rows.iter()
-            .filter(|row| {
-                row.name
-                    .as_deref()
-                    .is_some_and(|name| name.trim().eq_ignore_ascii_case(want))
-            })
+            .filter(|row| npc_name_matches(row.name.as_deref(), want))
             .filter_map(|row| crate::dialog::talk_op(&row.actions).map(|op| (row, op)))
             .min_by_key(|(row, _)| row.distance)
             .map(|(row, op)| TalkRow {
@@ -1246,6 +1246,26 @@ fn talk_row(npc: &str) -> Option<TalkRow> {
                     z: row.z,
                     level: row.level,
                 },
+            })
+    })
+}
+
+/// The nearest posted tile for an NPC with a talk operation.
+pub(crate) fn nearest_npc_tile(npc: &str) -> Option<WorldTile> {
+    let want = npc.trim();
+    if want.is_empty() {
+        return None;
+    }
+    observed::with(|scene| {
+        let rows = scene.since_login().npcs()?;
+        rows.iter()
+            .filter(|row| npc_name_matches(row.name.as_deref(), want))
+            .filter(|row| crate::dialog::talk_op(&row.actions).is_some())
+            .min_by_key(|row| row.distance)
+            .map(|row| WorldTile {
+                x: row.x,
+                z: row.z,
+                level: row.level,
             })
     })
 }

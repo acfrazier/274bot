@@ -46,7 +46,7 @@
 use crate::machine::{Begin, Call, Cx, Family, Reply, Step};
 use crate::observed;
 use crate::reach_entity::{
-    chat_mark, chat_state, npc_talkable, NpcReach, NpcReachOpts, TalkExpect,
+    chat_mark, chat_state, nearest_npc_tile, npc_talkable, NpcReach, NpcReachOpts, TalkExpect,
 };
 use crate::supply_v2;
 use crate::walk::{
@@ -68,8 +68,8 @@ const LEG_ATTEMPTS: u32 = 3;
 const LEG_MS: u64 = 180_000;
 /// Reuse the content-backed three-attempt budget for Karamja resilient legs.
 const TALK_ATTEMPTS: u32 = LEG_ATTEMPTS;
-/// Adjacent stand offsets, one for each retry after the first approach.
-const TALK_RETRY_STANDS: [(i32, i32); (TALK_ATTEMPTS - 1) as usize] = [(1, 1), (1, -1)];
+/// Signed offsets for orthogonal retry stands around Luthas's observed tile.
+const TALK_RETRY_OFFSETS: [i32; (TALK_ATTEMPTS - 1) as usize] = [1, -1];
 /// Frozen `settleScene` (`prompts.ts:30–32`).
 const SETTLE_TICKS: u32 = 2;
 /// Frozen `searchBananaCrate` message wait (`crate.ts:52`).
@@ -1099,11 +1099,13 @@ enum Stage {
     TalkWalk {
         second: bool,
         attempt: u32,
+        retry_axis: Option<usize>,
         walk: Walk,
     },
     Talk {
         second: bool,
         attempt: u32,
+        retry_axis: Option<usize>,
         talk: Talk,
     },
     Fill(Fill),
@@ -1140,7 +1142,7 @@ impl Recover {
             "no boat fare: earning {} coins at {}'s plantation",
             facts.coin_payout, facts.luthas_name
         ));
-        let stage = Self::talk(&facts, false, 1, cx, logs)?;
+        let stage = Self::talk(&facts, false, 1, None, cx, logs)?;
         Ok(Self {
             facts,
             stage,
@@ -1153,6 +1155,7 @@ impl Recover {
         facts: &BoatFacts,
         second: bool,
         mut attempt: u32,
+        mut retry_axis: Option<usize>,
         cx: &mut Cx<'_>,
         logs: &mut VecDeque<String>,
     ) -> Result<Stage, bool> {
@@ -1163,19 +1166,42 @@ impl Recover {
             let (dest, radius) = if attempt == 1 {
                 (facts.luthas_anchor, 2)
             } else {
-                let Some((dx, dz)) = attempt
+                let Some(offset) = attempt
                     .checked_sub(2)
                     .and_then(|index| usize::try_from(index).ok())
-                    .and_then(|index| TALK_RETRY_STANDS.get(index))
+                    .and_then(|index| TALK_RETRY_OFFSETS.get(index))
                     .copied()
                 else {
                     return Err(false);
                 };
+                let target =
+                    nearest_npc_tile(&facts.luthas_name).unwrap_or(facts.luthas_anchor);
+                let axis = match retry_axis {
+                    Some(axis) => axis,
+                    None => {
+                        let Some(from) = here() else {
+                            return Err(false);
+                        };
+                        // Step perpendicular to the original approach, avoiding its stand.
+                        let axis = if from.x.abs_diff(target.x) >= from.z.abs_diff(target.z) {
+                            1
+                        } else {
+                            0
+                        };
+                        retry_axis = Some(axis);
+                        axis
+                    }
+                };
+                let (dx, dz) = match axis {
+                    0 => (offset, 0),
+                    1 => (0, offset),
+                    _ => return Err(false),
+                };
                 (
                     WorldTile {
-                        x: facts.luthas_anchor.x.saturating_add(dx),
-                        z: facts.luthas_anchor.z.saturating_add(dz),
-                        level: facts.luthas_anchor.level,
+                        x: target.x.saturating_add(dx),
+                        z: target.z.saturating_add(dz),
+                        level: target.level,
                     },
                     0,
                 )
@@ -1193,6 +1219,7 @@ impl Recover {
                     return Ok(Stage::TalkWalk {
                         second,
                         attempt,
+                        retry_axis,
                         walk,
                     });
                 }
@@ -1200,6 +1227,7 @@ impl Recover {
                     return Ok(Stage::Talk {
                         second,
                         attempt,
+                        retry_axis,
                         talk: Talk::start(facts, logs)?,
                     });
                 }
@@ -1244,6 +1272,7 @@ impl Recover {
             Stage::TalkWalk {
                 second,
                 attempt,
+                retry_axis,
                 walk,
             } => {
                 let arrived = walk.step(cx)?;
@@ -1251,7 +1280,7 @@ impl Recover {
                     if *attempt >= TALK_ATTEMPTS {
                         return Some(false);
                     }
-                    match Self::talk(&self.facts, *second, *attempt + 1, cx, logs) {
+                    match Self::talk(&self.facts, *second, *attempt + 1, *retry_axis, cx, logs) {
                         Ok(stage) => stage,
                         Err(done) => return Some(done),
                     }
@@ -1259,6 +1288,7 @@ impl Recover {
                     Stage::Talk {
                         second: *second,
                         attempt: *attempt,
+                        retry_axis: *retry_axis,
                         talk: match Talk::start(&self.facts, logs) {
                             Ok(talk) => talk,
                             Err(done) => return Some(done),
@@ -1269,11 +1299,12 @@ impl Recover {
             Stage::Talk {
                 second,
                 attempt,
+                retry_axis,
                 talk,
             } => match talk.step(&self.facts, cx, logs) {
                 TalkProgress::Pending => return None,
                 TalkProgress::Unreachable if *attempt < TALK_ATTEMPTS => {
-                    match Self::talk(&self.facts, *second, *attempt + 1, cx, logs) {
+                    match Self::talk(&self.facts, *second, *attempt + 1, *retry_axis, cx, logs) {
                         Ok(stage) => stage,
                         Err(done) => return Some(done),
                     }
@@ -1297,7 +1328,7 @@ impl Recover {
                 if !fill.step(cx, logs)? {
                     return Some(false);
                 }
-                match Self::talk(&self.facts, true, 1, cx, logs) {
+                match Self::talk(&self.facts, true, 1, None, cx, logs) {
                     Ok(stage) => stage,
                     Err(done) => return Some(done),
                 }
