@@ -3287,6 +3287,7 @@ pub struct QueuedQuester {
     choices: super::choices::QuestChoices,
     queue: super::queue::Queue,
     active: Option<Box<Quester>>,
+    skip_requested: bool,
     active_index: Option<usize>,
     preparing: Option<PreparedTask<Result<Arc<CompiledPath>, Arc<str>>>>,
     gang_reader: super::gang::GangRead,
@@ -3328,6 +3329,7 @@ impl QueuedQuester {
             choices: super::choices::QuestChoices::default(),
             queue,
             active: None,
+            skip_requested: false,
             active_index: None,
             preparing: None,
             gang_reader: super::gang::GangRead::default(),
@@ -3674,6 +3676,17 @@ impl Script for QueuedQuester {
             self.quest_status_since = None;
             self.refresh_fields();
         }
+        // Revoking the old step is safe even during a host hold. Prayer
+        // cleanup still waits for eligible gameplay through the park path.
+        if self.skip_requested {
+            if let Some(active) = self.active.as_mut().filter(|active| !active.parked) {
+                active.cancel_step(tick);
+                active.parked = true;
+                active.park_reason = "skipped by operator";
+                active.clear_last_error();
+                active.dirty = true;
+            }
+        }
         if !tick.cx.eligible {
             if let Some(active) = self.active.as_mut() {
                 active.watchdog = Watchdog::default();
@@ -3696,7 +3709,8 @@ impl Script for QueuedQuester {
             match &flow {
                 ScriptFlow::Continue => return Ok(ScriptFlow::Continue),
                 ScriptFlow::Blocked(failure)
-                    if matches!(failure.code.as_ref(), "manual-movement" | "max-deaths") =>
+                    if !self.skip_requested
+                        && matches!(failure.code.as_ref(), "manual-movement" | "max-deaths") =>
                 {
                     return Ok(flow);
                 }
@@ -3711,13 +3725,23 @@ impl Script for QueuedQuester {
                             self.anchor = None;
                             self.queue.refresh_blocked();
                         }
-                        ScriptFlow::Blocked(failure) => {
-                            self.queue.mark_parked(index, failure.message)
-                        }
+                        ScriptFlow::Blocked(failure) => self.queue.mark_parked(
+                            index,
+                            if self.skip_requested {
+                                Arc::from("skipped by operator")
+                            } else {
+                                failure.message
+                            },
+                        ),
                         ScriptFlow::Continue => unreachable!(),
                     }
                     self.refresh_fields();
                     self.sync_retained(tick);
+                    if std::mem::take(&mut self.skip_requested) {
+                        self.active_index = None;
+                        self.publish(tick.output, NativePhase::Working);
+                        return Ok(ScriptFlow::Continue);
+                    }
                 }
             }
         }
@@ -3949,6 +3973,34 @@ impl Script for QueuedQuester {
         self.active
             .as_ref()
             .map_or_else(RaisedPrayers::empty, |active| active.prayer_cleanup())
+    }
+
+    fn skip_quest(&mut self) -> Result<crate::native::SkippedQuest, ScriptFailure> {
+        let active = self.active.as_ref().ok_or_else(|| ScriptFailure {
+            code: Arc::from("no-active-quest"),
+            message: Arc::from(if self.preparing.is_some() {
+                "quest is still preparing; no quest is active"
+            } else {
+                "no quest is active"
+            }),
+        })?;
+        if self.skip_requested || active.parked {
+            return Err(ScriptFailure {
+                code: Arc::from("skip-unavailable"),
+                message: Arc::from(if self.skip_requested {
+                    "skip already requested"
+                } else {
+                    "active quest is already parked"
+                }),
+            });
+        }
+        self.skip_requested = true;
+        Ok(crate::native::SkippedQuest {
+            quest_id: Arc::clone(&active.path.id.0),
+            step_id: active
+                .current_step()
+                .map_or_else(|| Arc::from(""), |step| Arc::clone(&step.id.0)),
+        })
     }
 
     fn read_journal(&mut self) -> Result<(), ScriptFailure> {
