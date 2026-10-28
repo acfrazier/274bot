@@ -653,13 +653,19 @@ fn operator_skip_cancels_active_step_and_activates_next_quest_on_later_tick() {
     let accepted = queued.skip_quest().unwrap();
     assert_eq!(accepted.quest_id.as_ref(), "cook");
     assert_eq!(accepted.step_id, step_id);
-    assert_eq!(queued.skip_quest().unwrap_err().message.as_ref(), "skip already requested");
+    assert_eq!(
+        queued.skip_quest().unwrap_err().message.as_ref(),
+        "skip already requested"
+    );
     with_tick_output(&snapshot, &mut ledger, 3, &mut output, |native| {
         assert_eq!(queued.tick(native).unwrap(), ScriptFlow::Continue);
     });
     assert_eq!(cancelled.load(std::sync::atomic::Ordering::Relaxed), 1);
     assert!(queued.active.is_none());
-    assert!(queued.preparing.is_none(), "the next quest must wait for a later tick");
+    assert!(
+        queued.preparing.is_none(),
+        "the next quest must wait for a later tick"
+    );
     assert_eq!(queued.queue.status(0), Some(QueueStatus::Parked));
     assert_eq!(queued.queue.reason(0), Some("skipped by operator"));
     assert!(output.0.last().unwrap().failure.is_none());
@@ -675,7 +681,10 @@ fn operator_skip_cancels_active_step_and_activates_next_quest_on_later_tick() {
     queued.queue.mark_done(sheep);
     queued.queue.refresh_blocked();
     with_tick_output(&snapshot, &mut ledger, 6, &mut output, |native| {
-        assert!(matches!(queued.tick(native).unwrap(), ScriptFlow::Blocked(_)));
+        assert!(matches!(
+            queued.tick(native).unwrap(),
+            ScriptFlow::Blocked(_)
+        ));
     });
     assert_eq!(queued.queue.next_candidate(), None);
     assert_eq!(queued.queue.status(0), Some(QueueStatus::Parked));
@@ -708,7 +717,10 @@ fn operator_skip_last_row_keeps_existing_blocked_end_rule() {
 #[test]
 fn operator_skip_refuses_before_activation_and_during_preparation() {
     let (mut queued, snapshot) = skip_fixture(false);
-    assert_eq!(queued.skip_quest().unwrap_err().message.as_ref(), "no quest is active");
+    assert_eq!(
+        queued.skip_quest().unwrap_err().message.as_ref(),
+        "no quest is active"
+    );
     let mut ledger = None;
     let mut output = Capture::default();
     with_tick_output(&snapshot, &mut ledger, 1, &mut output, |native| {
@@ -727,7 +739,10 @@ fn operator_skip_refuses_before_activation_and_during_preparation() {
 fn operator_skip_waits_for_owned_prayer_cleanup_before_next_quest() {
     let (mut queued, mut snapshot) = skip_fixture(true);
     let (protect_varp, protect_button) = {
-        let protect = queued.selected.prayer_by_name("Protect from Melee").unwrap();
+        let protect = queued
+            .selected
+            .prayer_by_name("Protect from Melee")
+            .unwrap();
         (protect.varp, protect.button_com)
     };
     let varps = |raised| {
@@ -762,7 +777,10 @@ fn operator_skip_waits_for_owned_prayer_cleanup_before_next_quest() {
         with_tick_output(&snapshot, &mut ledger, tick, &mut output, |native| {
             assert_eq!(queued.tick(native).unwrap(), ScriptFlow::Continue);
         });
-        assert!(queued.active.is_some(), "cleanup must retain the old executor");
+        assert!(
+            queued.active.is_some(),
+            "cleanup must retain the old executor"
+        );
         assert!(queued.preparing.is_none());
         if let Some(action) = ledger.as_mut().and_then(|ledger| ledger.outbox.pop()) {
             cleanup = Some((tick, action));
@@ -813,8 +831,7 @@ fn operator_skip_revokes_active_step_during_host_hold() {
     });
     activate_preparing(&mut queued, &snapshot, &mut ledger, &mut output, 2);
     let cancelled = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    queued.active.as_mut().unwrap().step =
-        Some(Box::new(SkipCancellation(Arc::clone(&cancelled))));
+    queued.active.as_mut().unwrap().step = Some(Box::new(SkipCancellation(Arc::clone(&cancelled))));
     queued.skip_quest().unwrap();
     with_tick_output(&snapshot, &mut ledger, 3, &mut output, |native| {
         native.cx.eligible = false;

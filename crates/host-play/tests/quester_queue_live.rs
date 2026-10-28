@@ -372,7 +372,6 @@ const SKIP_CELL: &str = "qs_quester_skip";
 const SKIP_QUESTS: &[&str] = &["cook", "sheep"];
 
 #[cfg(feature = "test-support")]
-
 #[derive(Debug, Clone)]
 struct SkipActionReceipt {
     quest_id: String,
@@ -383,7 +382,6 @@ struct SkipActionReceipt {
 }
 
 #[cfg(feature = "test-support")]
-
 #[derive(Debug, Clone)]
 struct SkipStatusReceipt {
     phase: String,
@@ -398,7 +396,6 @@ struct SkipStatusReceipt {
 }
 
 #[cfg(feature = "test-support")]
-
 #[derive(Debug, Clone)]
 struct SkipRequestReceipt {
     quest_id: String,
@@ -407,7 +404,6 @@ struct SkipRequestReceipt {
 }
 
 #[cfg(feature = "test-support")]
-
 #[derive(Debug, Clone, Copy)]
 struct SkipCleanupOwnership {
     script_walk: Option<(i32, i32, i32)>,
@@ -418,7 +414,6 @@ struct SkipCleanupOwnership {
 }
 
 #[cfg(feature = "test-support")]
-
 #[derive(Default)]
 struct SkipQueueEvidence {
     skip: Option<SkipRequestReceipt>,
@@ -431,7 +426,6 @@ struct SkipQueueEvidence {
     sheep_completed: bool,
     latest: Option<SkipStatusReceipt>,
 }
-
 
 #[cfg(feature = "test-support")]
 
@@ -450,9 +444,7 @@ fn queue_row_letter(queue: &str, id: &str) -> Result<char, String> {
 #[cfg(feature = "test-support")]
 
 impl SkipQueueEvidence {
-    fn active_cook_action(
-        status: &ScriptStatus,
-    ) -> Result<Option<SkipActionReceipt>, String> {
+    fn active_cook_action(status: &ScriptStatus) -> Result<Option<SkipActionReceipt>, String> {
         if status.card != script::CompiledId("Quester")
             || !matches!(status.phase, NativePhase::Working | NativePhase::Waiting)
             || text_field(status, "quest_id")?.as_deref() != Some("cook")
@@ -562,10 +554,7 @@ impl SkipQueueEvidence {
             return Ok(());
         }
         if status.card != script::CompiledId("Quester") {
-            return Err(format!(
-                "quester skip status belongs to {:?}",
-                status.card
-            ));
+            return Err(format!("quester skip status belongs to {:?}", status.card));
         }
         let queue = text_field(status, "queue")?.ok_or("Quester status is missing queue text")?;
         let completed = integer_field(status, "completed")?;
@@ -599,7 +588,9 @@ impl SkipQueueEvidence {
                     ));
                 }
                 if id == "sheep" && !self.cancellation_observed {
-                    return Err("Sheep activated before the Cook action cancellation was observed".into());
+                    return Err(
+                        "Sheep activated before the Cook action cancellation was observed".into(),
+                    );
                 }
                 self.active_order.push(id.to_owned());
             }
@@ -625,7 +616,6 @@ impl SkipQueueEvidence {
                 ));
             }
             self.cook_parked = true;
-
         }
         if quest_id.as_deref() == Some("sheep") && cook_state != 'P' {
             return Err(format!(
@@ -683,7 +673,12 @@ impl SkipQueueEvidence {
         {
             return Err(format!("invalid active Cook skip receipt: {skip:?}"));
         }
-        if self.active_order.iter().map(String::as_str).ne(SKIP_QUESTS.iter().copied()) {
+        if self
+            .active_order
+            .iter()
+            .map(String::as_str)
+            .ne(SKIP_QUESTS.iter().copied())
+        {
             return Err(format!(
                 "active Quester rows were not exactly Cook then Sheep: {:?}",
                 self.active_order
@@ -1032,7 +1027,6 @@ fn run_quester_queue() -> Result<(), String> {
     result
 }
 
-
 #[cfg(feature = "test-support")]
 
 fn run_quester_skip() -> Result<(), String> {
@@ -1111,7 +1105,9 @@ fn run_quester_skip() -> Result<(), String> {
         },
     )?;
     {
-        let mut slot = state.lock().map_err(|_| "Quester skip live state poisoned")?;
+        let mut slot = state
+            .lock()
+            .map_err(|_| "Quester skip live state poisoned")?;
         slot.runner.set_obj_names(play.obj_names());
         slot.start_handle = Some(play.script_start_handle());
     }
@@ -1151,7 +1147,9 @@ fn run_quester_skip() -> Result<(), String> {
             }
         }
         let (runner_status, start_count, error) = {
-            let mut slot = state.lock().map_err(|_| "Quester skip live state poisoned")?;
+            let mut slot = state
+                .lock()
+                .map_err(|_| "Quester skip live state poisoned")?;
             if run_state == script::RunState::Running {
                 slot.runner.observe_script_running();
             }
@@ -1232,9 +1230,7 @@ fn run_quester_skip() -> Result<(), String> {
                 script::ScriptTerminalState::Completed
                 | script::ScriptTerminalState::Cancelled
                 | script::ScriptTerminalState::Stopped => {
-                    break Err(format!(
-                        "quester skip run ended unexpectedly: {receipt:?}"
-                    ));
+                    break Err(format!("quester skip run ended unexpectedly: {receipt:?}"));
                 }
             }
         }
@@ -1271,7 +1267,6 @@ fn run_quester_skip() -> Result<(), String> {
     result
 }
 #[cfg(feature = "test-support")]
-
 #[test]
 #[ignore = "requires LIVE=1, BOT_LIVE_NAME_PREFIX=qsk, explicit WORLD_NAV_PACK/WORLD_ENGINE_DIR/RS2B0T/BOT_CACHE_DIR and Engine L"]
 fn quester_skip_active_cook_parks_then_sheep_completes() {
