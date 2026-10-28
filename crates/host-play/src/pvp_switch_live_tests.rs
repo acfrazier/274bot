@@ -158,7 +158,7 @@ impl Script for SwitchFight {
         };
         let mut shared = self.shared.lock().expect("shared lock");
         if shared.last != Some(state) {
-            let snapshot = tick.frame.snapshot;
+            let snapshot = tick.frame().snapshot;
             let own = snapshot.and_then(|snapshot| snapshot.local_player());
             let partner = snapshot.and_then(|snapshot| {
                 let own_index = own.map(|local| local.player.index)?;
@@ -285,7 +285,7 @@ fn partner_step(
                 let result = Interactions::new(&snapshot, client).set_run(true);
                 shared.lock().expect("shared lock").actions.push(ActionRow {
                     tick,
-                    what: format!("run on: {}", result.is_sent()),
+                    what: format!("run on: {}", matches!(result, api::interact::SendResult::Sent { .. })),
                 });
                 return;
             }
@@ -313,7 +313,12 @@ fn partner_step(
                 let result = Interactions::new(&snapshot, client).walk_nearest(far);
                 shared.lock().expect("shared lock").actions.push(ActionRow {
                     tick,
-                    what: format!("walk to {},{}: {}", far.x, far.z, result.is_sent()),
+                    what: format!(
+                        "walk to {},{}: {}",
+                        far.x,
+                        far.z,
+                        matches!(result, api::interact::SendResult::Sent { .. })
+                    ),
                 });
             }
         }
@@ -470,7 +475,7 @@ fn live_pvp_switch_t2_t3_t4_in_a_pen() {
     let hook_drives = [Arc::clone(&drives[0]), Arc::clone(&drives[1])];
     let hook_shared = Arc::clone(&shared);
     let hook_partner = Arc::clone(&partner_state);
-    let play = run_with_template(
+    let mut play = run_with_template(
         template,
         false,
         vec![],
