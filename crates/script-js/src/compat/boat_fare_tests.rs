@@ -187,6 +187,7 @@ impl World {
                     distance: 1,
                     actions: vec!["Talk-to".into()].into(),
                     reachable_adj: true,
+                    ..EntityRow::default()
                 }])
                 .locs(locs);
         });
@@ -252,7 +253,6 @@ fn start_recovery() -> (Recover, InstantTaskClock, VecDeque<String>, Vec<Interac
     };
     (recover, clock, logs, ops)
 }
-
 
 /// Tick until an op matches, with no other op on the way; the match.
 fn until(world: &mut World, what: &str, want: impl Fn(&InteractReq) -> bool) -> InteractReq {
@@ -322,9 +322,7 @@ fn install_luthas_reach_view(anchor: WorldTile, blocked: Option<WorldTile>) {
     };
     let base_x = npc.x - 2;
     let base_z = npc.z - 2;
-    let index = |tile: WorldTile| {
-        ((tile.x - base_x) as usize) * 5 + (tile.z - base_z) as usize
-    };
+    let index = |tile: WorldTile| ((tile.x - base_x) as usize) * 5 + (tile.z - base_z) as usize;
     let mut walkable = vec![0; 1];
     let mut reachable = vec![0; 1];
     let mut reachable_adj = vec![0; 1];
@@ -365,7 +363,6 @@ fn install_luthas_reach_view(anchor: WorldTile, blocked: Option<WorldTile>) {
         canlight: Vec::new(),
     });
 }
-
 
 fn is_talk(name: String) -> impl Fn(&InteractReq) -> bool {
     move |op| {
@@ -751,9 +748,11 @@ fn retries_skip_a_blocked_luthas_stand() {
     ));
 
     world.here = luthas;
-    assert!(recovery_step(&mut world, &mut recover, &mut clock, &mut logs)
-        .1
-        .is_empty());
+    assert!(
+        recovery_step(&mut world, &mut recover, &mut clock, &mut logs)
+            .1
+            .is_empty()
+    );
     let talk_ops = recovery_step(&mut world, &mut recover, &mut clock, &mut logs).1;
     assert!(matches!(
         talk_ops.as_slice(),
@@ -764,7 +763,10 @@ fn retries_skip_a_blocked_luthas_stand() {
     assert_eq!(result, None);
     assert!(matches!(ops.as_slice(), [InteractReq::Walk { .. }]));
     let stand = walk_tile(&ops[0]);
-    assert_ne!(stand, blocked, "the blocked orthogonal stand is never selected");
+    assert_ne!(
+        stand, blocked,
+        "the blocked orthogonal stand is never selected"
+    );
     assert!(orthogonally_adjacent(stand, npc));
 }
 
@@ -787,9 +789,11 @@ fn dialogue_timeout_retries_within_the_talk_budget() {
         } else {
             walk_tile(&walk)
         };
-        assert!(recovery_step(&mut world, &mut recover, &mut clock, &mut logs)
-            .1
-            .is_empty());
+        assert!(
+            recovery_step(&mut world, &mut recover, &mut clock, &mut logs)
+                .1
+                .is_empty()
+        );
         let talk_ops = recovery_step(&mut world, &mut recover, &mut clock, &mut logs).1;
         assert!(matches!(
             talk_ops.as_slice(),
@@ -814,7 +818,7 @@ fn dialogue_timeout_retries_within_the_talk_budget() {
             .count(),
         3
     );
-    assert!(logs.last().is_some_and(|line| {
+    assert!(logs.back().is_some_and(|line| {
         line.contains("recovery ended after approach 3/3")
             && line.contains("never opened a dialogue")
     }));
@@ -838,8 +842,7 @@ fn a_failed_talk_walk_retries_and_logs_the_terminal_failure() {
         let radius = if attempt == 0 { 2 } else { 0 };
         world.tick += 1;
         post_walk_outcome(world.tick, token(&walk), world.here, dest, radius, true);
-        let (result, ops) =
-            recovery_step_observed(&mut recover, &mut clock, &mut logs);
+        let (result, ops) = recovery_step_observed(&mut recover, &mut clock, &mut logs);
         if attempt < 2 {
             assert_eq!(result, None, "failed walk {attempt} retries");
             assert!(matches!(ops.as_slice(), [InteractReq::Walk { .. }]));
@@ -866,7 +869,7 @@ fn a_failed_talk_walk_retries_and_logs_the_terminal_failure() {
             .count(),
         3
     );
-    assert!(logs.last().is_some_and(|line| {
+    assert!(logs.back().is_some_and(|line| {
         line.contains("recovery ended after approach 3/3")
             && line.contains("did not reach the selected stand")
     }));
