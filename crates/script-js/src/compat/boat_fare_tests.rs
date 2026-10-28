@@ -3,8 +3,8 @@
 //! payment and the re-walk to the boat. Driven through the registered
 //! machine families and synthetic posts only.
 
-use super::{grove_anchor, recovery_facts, BoatFacts};
-use crate::machine::{self, Outcome, Started, Take};
+use super::{grove_anchor, recovery_facts, BoatFacts, Recover};
+use crate::machine::{self, Cx, Outcome, Started, Take};
 use crate::observed::{self, CarryRow, ChatLine, EntityRow, ItemRow, SceneRow};
 use crate::walk::tests::{post_walk_outcome, reset, NoJs};
 use api::snapshot::WorldTile;
@@ -12,6 +12,7 @@ use script::shim::InteractReq;
 use serde_json::json;
 use std::collections::VecDeque;
 use std::rc::Rc;
+use crate::task_clock::InstantTaskClock;
 const MUSA: WorldTile = WorldTile {
     x: 2954,
     z: 3147,
@@ -218,6 +219,20 @@ fn tick() -> Vec<InteractReq> {
     machine::step(&mut NoJs);
     machine::merge_ops(Vec::new())
 }
+fn recovery_step(
+    world: &mut World,
+    recover: &mut Recover,
+    clock: &mut InstantTaskClock,
+    logs: &mut VecDeque<String>,
+) -> (Option<bool>, Vec<InteractReq>) {
+    world.post();
+    let mut ops = Vec::new();
+    let result = {
+        let mut cx = Cx::test(&mut ops, clock, None);
+        recover.step(&mut cx, logs)
+    };
+    (result, ops)
+}
 
 /// Tick until an op matches, with no other op on the way; the match.
 fn until(world: &mut World, what: &str, want: impl Fn(&InteractReq) -> bool) -> InteractReq {
@@ -322,7 +337,7 @@ fn start_walk_to(world: &mut World) -> machine::Handle {
 
 /// The whole plantation job up to the re-walk to the boat; returns the
 /// row, the world, the first walk and the re-walk.
-fn earn_the_fare() -> (machine::Handle, World, InteractReq, InteractReq) {
+fn earn_the_fare(retry_luthas_once: bool) -> (machine::Handle, World, InteractReq, InteractReq) {
     reset();
     let mut world = World::new(MUSA, 5);
     let luthas = world.facts.luthas_anchor;
@@ -355,6 +370,38 @@ fn earn_the_fare() -> (machine::Handle, World, InteractReq, InteractReq) {
     let walk_to_luthas = until(&mut world, "walk to Luthas", walk_near(luthas, 2));
     assert_ne!(token(&walk_to_luthas), token(&first[0]));
     world.here = luthas;
+    if retry_luthas_once {
+        let name = world.facts.luthas_name.clone();
+        until(&mut world, "first talk to Luthas", is_talk(name));
+        world.say("I can't reach that!");
+        world.post();
+        let ops = tick();
+        let stand = match ops.as_slice() {
+            [InteractReq::WalkNear {
+                x,
+                z,
+                level,
+                radius: 0,
+                compat_tile_intent: true,
+                ..
+            }] => WorldTile {
+                x: *x,
+                z: *z,
+                level: *level,
+            },
+            other => panic!("failed Luthas reach starts a fresh stand walk: {other:?}"),
+        };
+        let npc = WorldTile {
+            x: luthas.x + 1,
+            z: luthas.z,
+            level: luthas.level,
+        };
+        assert_ne!(stand, luthas, "retry uses another Luthas stand");
+        assert_eq!(stand.level, npc.level);
+        assert!((stand.x - npc.x).abs() <= 1 && (stand.z - npc.z).abs() <= 1);
+        world.here = stand;
+    }
+
 
     // Employment (luthas.rs2:8–10, the multi2's first line).
     let employment_options = [
@@ -443,7 +490,7 @@ fn earn_the_fare() -> (machine::Handle, World, InteractReq, InteractReq) {
 
 #[test]
 fn walk_to_earns_the_fare_at_the_plantation_then_takes_the_boat() {
-    let (h, mut world, first, again) = earn_the_fare();
+    let (h, mut world, first, again) = earn_the_fare(false);
     assert_eq!(machine::take(h), Take::Pending);
     world.here = PORT_SARIM;
     world.post();
@@ -453,9 +500,98 @@ fn walk_to_earns_the_fare_at_the_plantation_then_takes_the_boat() {
 }
 
 #[test]
+fn walk_to_retries_a_failed_luthas_approach_and_completes() {
+    let (h, mut world, first, again) = earn_the_fare(true);
+    assert_eq!(machine::take(h), Take::Pending);
+    world.here = PORT_SARIM;
+    world.post();
+    assert!(tick().is_empty());
+    assert_ne!(token(&again), token(&first));
+    assert_eq!(machine::take(h), Take::Settled(Outcome::Done(json!(true))));
+}
+
+#[test]
+fn failed_luthas_approaches_spend_the_budget_and_keep_the_last_detail() {
+    reset();
+    let mut world = World::new(MUSA, 5);
+    let coins = world.facts.coins;
+    let fare = world.facts.coin_payout;
+    let luthas = world.facts.luthas_anchor;
+    fail_short(&mut world, 1, PORT_SARIM, 2, (coins, fare));
+
+    let mut ops = Vec::new();
+    let mut clock = InstantTaskClock::new();
+    let mut logs = VecDeque::new();
+    let mut recover = {
+        let mut cx = Cx::test(&mut ops, &mut clock, None);
+        Recover::start(PORT_SARIM, &mut cx, &mut logs).expect("fare recovery starts")
+    };
+    assert!(
+        matches!(ops.as_slice(), [op] if walk_near(luthas, 2)(op)),
+        "the initial approach targets the selected Luthas anchor: {ops:?}"
+    );
+
+    world.here = luthas;
+    assert!(recovery_step(&mut world, &mut recover, &mut clock, &mut logs)
+        .1
+        .is_empty());
+
+    let mut retry_stand = None;
+    for attempt in 0..3 {
+        if let Some(stand) = retry_stand.take() {
+            world.here = stand;
+            assert!(recovery_step(&mut world, &mut recover, &mut clock, &mut logs)
+                .1
+                .is_empty());
+        }
+        let ops = recovery_step(&mut world, &mut recover, &mut clock, &mut logs).1;
+        assert!(
+            matches!(ops.as_slice(), [InteractReq::Npc { action, .. }] if action == "Talk-to"),
+            "approach {attempt} talks to Luthas: {ops:?}"
+        );
+        world.say("I can't reach that!");
+        let (result, ops) = recovery_step(&mut world, &mut recover, &mut clock, &mut logs);
+        if attempt < 2 {
+            assert_eq!(result, None, "a failed approach is not terminal");
+            let stand = match ops.as_slice() {
+                [InteractReq::WalkNear {
+                    x,
+                    z,
+                    level,
+                    radius: 0,
+                    compat_tile_intent: true,
+                    ..
+                }] => WorldTile {
+                    x: *x,
+                    z: *z,
+                    level: *level,
+                },
+                other => panic!("failure starts a fresh walk to another stand: {other:?}"),
+            };
+            assert_ne!(stand, luthas);
+            retry_stand = Some(stand);
+        } else {
+            assert_eq!(result, Some(false), "the final failed approach is terminal");
+            assert!(ops.is_empty());
+        }
+    }
+    assert!(
+        logs.back().is_some_and(|line| line.contains("server can't reach it")),
+        "terminal log keeps the final reach detail: {logs:?}"
+    );
+    assert_eq!(
+        logs.iter()
+            .filter(|line| line.contains("server can't reach it"))
+            .count(),
+        3,
+        "each of the three approach failures keeps its reach detail"
+    );
+}
+
+#[test]
 fn an_interrupt_during_the_re_walk_stops_it_and_ends_false() {
     // Frozen follow pass: EventSignal.pending ends the walk (WalkExecutor.ts:844-853).
-    let (h, mut world, _, again) = earn_the_fare();
+    let (h, mut world, _, again) = earn_the_fare(false);
     world.ours = true;
     world.post();
     assert_eq!(
