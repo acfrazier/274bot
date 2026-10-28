@@ -34,6 +34,23 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   against players: a bot that a player attacks fights back whatever the
   request or the setting says. The attack uses the game's own label for the
   player (`Attack` in the Wilderness, `Fight` in a duel).
+- The combat machine can now fight with one loadout per style (melee, ranged,
+  magic) and change style in the middle of a fight, through the same wear
+  repair it already used. It switches when its ammunition or runes run out
+  (instead of ending the fight), when the player it fights protects against its
+  style (it rotates to the next style that is not protected), back to its
+  first preference once the opponent shows no protection and stands within
+  reach, and from melee to a ranged or magic style when the opponent stays out
+  of melee reach for two attack intervals. A switch starts only when the style
+  has a loadout and can attack now (its weapon is held or worn, its arrows or
+  runes exist; a thrown weapon needs no quiver) and never while equipment
+  changes are not allowed. Duel rules that lock the right hand leave unarmed
+  melee and manual spells. Melee weapons are now picked from the pack by the
+  game's own weapon category and attack tier, not by display name. The new
+  loadouts and switches are available to native callers; the script API does
+  not expose them yet.
+- A Path combat loadout that lists a two-handed weapon and a shield is now
+  refused when the Path is compiled.
 
 ## [0.2.7] — 2026-10-26 — Beta 2
 

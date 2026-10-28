@@ -7621,6 +7621,18 @@
     {
       "path": "crates/script/src/combat/pvp_machine_tests.rs",
       "owner": "T2"
+    },
+    {
+      "path": "crates/script/src/combat/switch.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/script/src/combat/switch_machine_tests.rs",
+      "owner": "T2"
+    },
+    {
+      "path": "crates/host-play/src/pvp_switch_live_tests.rs",
+      "owner": "T1"
     }
   ]
 }
