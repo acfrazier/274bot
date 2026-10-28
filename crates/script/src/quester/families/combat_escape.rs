@@ -26,8 +26,8 @@ const AWAY: usize = 2;
 /// An escape makes at most two passes over its three tiers. It keeps one
 /// compact record per request. Later requests never send a tile from an
 /// earlier failed request, including in the second pass after food runs out.
-/// Six 32-byte records plus a one-byte count use 193 fixed bytes per escape.
-/// The records do not grow on game ticks.
+/// Six 32-byte records and a one-byte count add 200 bytes to each bot's run
+/// state after alignment. The records do not grow on game ticks.
 pub(super) const ESCAPE_PASS_ATTEMPTS: usize = 3;
 const ESCAPE_PASS_COUNT: usize = 2;
 const MAX_ESCAPE_REQUESTS: usize = ESCAPE_PASS_ATTEMPTS * ESCAPE_PASS_COUNT;
@@ -218,6 +218,9 @@ pub(super) struct AbortEscape {
     requested_count: u8,
 }
 
+const _: [(); 256] = [(); std::mem::size_of::<AbortEscape>()];
+// 256 bytes: fixed retry regions avoid allocations during an abort.
+
 impl AbortEscape {
     pub(super) fn new() -> Self {
         Self {
@@ -256,11 +259,8 @@ impl AbortEscape {
             return None;
         }
 
-        let mut tiers = tier_tiles(geometry, collision);
         let requested = &self.requested_regions[..count];
-        for tier in &mut tiers {
-            tier.retain(|tile| requested.iter().all(|region| !region.contains(*tile)));
-        }
+        let mut tiers = tier_tiles(geometry, collision, requested);
         let preferred =
             (self.next_tier..ESCAPE_PASS_ATTEMPTS).find(|&tier| !tiers[tier].is_empty())?;
         self.next_tier = preferred + 1;
@@ -357,18 +357,21 @@ fn squared_gap(a: WorldTile, b: WorldTile) -> i64 {
     dx * dx + dz * dz
 }
 
-/// The tiles of each tier. A tile is a candidate when the world has it and,
-/// with a baked collision view, it is standable. Without a nav pack the host
-/// cannot route either, so every in-bounds tile stays a candidate, as in the
-/// Gatherer's hazard retreat.
+/// The usable tiles of each tier. A tile is a candidate when the world has it,
+/// it was not requested earlier and, with a baked collision view, it is
+/// standable. Without a nav pack the host cannot route either, so every
+/// in-bounds, unrequested tile stays a candidate, as in the Gatherer's hazard
+/// retreat.
 fn tier_tiles(
     geometry: &EscapeGeometry,
     collision: Option<CollisionView<'_>>,
+    requested: &[GoalRegion],
 ) -> [Vec<WorldTile>; ESCAPE_PASS_ATTEMPTS] {
     let usable = |tile: WorldTile| {
         (0..=16_383).contains(&tile.x)
             && (0..=16_383).contains(&tile.z)
             && collision.is_none_or(|collision| collision.standable(tile))
+            && requested.iter().all(|region| !region.contains(tile))
     };
     let mut tiers: [Vec<WorldTile>; ESCAPE_PASS_ATTEMPTS] = Default::default();
     let envelope = geometry.chase_range.max(0).saturating_add(1);

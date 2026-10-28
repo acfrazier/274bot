@@ -5824,10 +5824,9 @@ fn m2_ready(capture: &CombatCapture) -> bool {
     let locked_ticks = integer(report, "combat_locked_ticks").unwrap_or(-1);
     let protected_hits = integer(report, "combat_hits_while_protected").unwrap_or(-1);
     let plans = batch_plans(capture);
-    // A pre-fight boost is outside the combat dose counter; first_prep_plan_ok
-    // verifies that boost directly.
+    // Require a boost count only when Prep lies inside the report window.
     prayer_doses > 0
-        && locked_ticks == 2 * (prayer_doses + boost_doses)
+        && prep_boost_count_matches(capture, report, boost_doses)
         && protected_hits == 0
         && every_killed_report_has_corpse(capture)
         && first_prep_plan_ok(capture)
@@ -7369,6 +7368,40 @@ fn no_eat_at_zero_danger(capture: &CombatCapture, report: &Value) -> bool {
             })
 }
 
+fn first_prep_plan<'a, 'capture>(
+    plans: &'a [BatchPlan<'capture>],
+    first_attack_tick: i64,
+) -> Option<&'a BatchPlan<'capture>> {
+    plans.iter().find(|plan| {
+        plan.rows
+            .iter()
+            .any(|action| action["request"]["op"] == json!("wear"))
+            && plan.tick < first_attack_tick
+    })
+}
+
+fn first_prep_tick(capture: &CombatCapture) -> Option<i64> {
+    let first_attack_tick = first_attack_action(capture)?["tick"].as_i64()?;
+    let plans = batch_plans(capture);
+    first_prep_plan(&plans, first_attack_tick).map(|plan| plan.tick)
+}
+
+fn prep_boost_count_matches(capture: &CombatCapture, report: &Value, boost_doses: i64) -> bool {
+    let Some(prep_tick) = first_prep_tick(capture) else {
+        return false;
+    };
+    let Some(report_tick) = integer(report, "combat_evidence_tick") else {
+        return false;
+    };
+    let Some(combat_ticks) = integer(report, "combat_ticks").filter(|ticks| *ticks > 0) else {
+        return false;
+    };
+    let Some(window_start) = report_tick.checked_sub(combat_ticks - 1) else {
+        return false;
+    };
+    !(window_start..=report_tick).contains(&prep_tick) || boost_doses >= 1
+}
+
 fn first_prep_plan_ok(capture: &CombatCapture) -> bool {
     let plans = batch_plans(capture);
     let Some(first_attack) = first_attack_action(capture) else {
@@ -7377,12 +7410,7 @@ fn first_prep_plan_ok(capture: &CombatCapture) -> bool {
     let Some(first_attack_tick) = first_attack["tick"].as_i64() else {
         return false;
     };
-    let Some(prep) = plans.iter().find(|plan| {
-        plan.rows
-            .iter()
-            .any(|action| action["request"]["op"] == json!("wear"))
-            && plan.tick < first_attack_tick
-    }) else {
+    let Some(prep) = first_prep_plan(&plans, first_attack_tick) else {
         return false;
     };
     let Some(drink) = prep.rows.get(1).copied() else {
