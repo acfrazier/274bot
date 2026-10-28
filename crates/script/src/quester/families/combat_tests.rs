@@ -3980,22 +3980,34 @@ fn target_gone_walk_without_observed_arrival_blocks_reengagement() {
     })
     .is_pending());
 
-    let result = with_step_context(&snapshot, &mut ledger, 13, |cx| {
-        run.on_return_walk(
-            WalkReceipt {
-                goal: None,
-                request_id: 1,
-                evidence: cx.tick.cx.evidence(),
-                end: WalkEnd::RouteEnded,
-                blocked: None,
-                detail: None,
-                refusal: None,
-                assessment: None,
-                escape: None,
-            },
-            cx,
-        )
-    });
+    // A route that ends without observed arrival is not arrival: combat
+    // does not re-engage. The walk is planned again within the bounded
+    // count, and only the last failure blocks the step.
+    let route_ended = |run: &mut CombatRun, tick: u64| {
+        with_step_context(&snapshot, &mut ledger, tick, |cx| {
+            run.on_return_walk(
+                WalkReceipt {
+                    goal: None,
+                    request_id: 1,
+                    evidence: cx.tick.cx.evidence(),
+                    end: WalkEnd::RouteEnded,
+                    blocked: None,
+                    detail: None,
+                    refusal: None,
+                    assessment: None,
+                    escape: None,
+                },
+                cx,
+            )
+        })
+    };
+    for tick in [13, 14] {
+        assert!(route_ended(&mut run, tick).is_pending());
+        assert_eq!(run.target_gone_restarts, 0);
+        assert!(matches!(&run.phase, Phase::ReturningToStand));
+        assert!(matches!(run.action.as_ref(), Some(Action::Walk(_))));
+    }
+    let result = route_ended(&mut run, 15);
     assert!(matches!(result, Poll::Ready(Err(ActionError::Blocked(_)))));
     assert_eq!(run.target_gone_restarts, 0);
     assert!(run.action.is_none());
