@@ -99,7 +99,7 @@ pub(super) fn settle_waits_seat(
             runtime,
             None,
             "__rs2b0t_settle_machines",
-            json_args!(handles),
+            &(handles,),
         )?;
     }
     Ok(())
