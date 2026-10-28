@@ -1017,6 +1017,7 @@ fn an_emergency_eat_and_a_protect_leave_room_for_one_wear() {
     while first_wear.is_none() {
         let batch = step(&mut harness, &mut scene, tick);
         all.push((tick, rows(&batch)));
+        eprintln!("DBGEAT t={tick} {:?} state={:?}", rows(&batch), harness.machine.switch_state());
         if !wear_names(&batch).is_empty() {
             first_wear = Some((tick, batch));
         }
