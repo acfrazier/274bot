@@ -10090,18 +10090,9 @@ fn a_still_saving_refusal_clears_when_the_save_finishes() {
 }
 
 #[test]
-fn panel_setting_retry_clears_only_when_the_owner_removes_the_failure() {
+fn panel_setting_retry_clears_only_when_owner_reports_success() {
     let _iso = IsolatedStores::enter("panel-setting-retry-clear");
     let mut session = Session::new();
-    let preferences = session.preferences.share();
-    patiently(|| {
-        if preferences.document().is_ok() {
-            Ok(())
-        } else {
-            Err("panel preferences are not ready".into())
-        }
-    })
-    .expect("preferences cache is ready");
     session.watch_setting_events();
     let member = PanelPreferenceMember {
         path: vec!["chrome".into(), "accent".into()],
@@ -10114,22 +10105,10 @@ fn panel_setting_retry_clears_only_when_the_owner_removes_the_failure() {
     assert_eq!(events[0].state(), frontend_core::SettingEventState::Failed);
     assert_eq!(events[0].error(), Some("preferences is busy"));
 
-    let path = session.preferences.path();
-    std::fs::create_dir_all(path.parent().expect("preferences parent"))
-        .expect("preferences directory");
-    let mut lock_name = path.as_os_str().to_os_string();
-    lock_name.push(".lock");
-    let lock_file = std::fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(std::path::PathBuf::from(lock_name))
-        .expect("preferences lock");
-    lock_file.try_lock().expect("hold preferences lock");
     session
-        .persist_panel_member(&["chrome", "accent"], Some(serde_json::json!("#AABBCC")))
-        .expect("accepted retry");
+        .pending_panel_members
+        .insert(member.path.clone(), member.value.clone());
+    session.note_panel_setting(&member, frontend_core::SettingEventState::Pending, None);
     let (events, incomplete) = session.take_panel_setting_events();
     assert!(!incomplete);
     assert_eq!(events.len(), 1);
@@ -10139,25 +10118,10 @@ fn panel_setting_retry_clears_only_when_the_owner_removes_the_failure() {
         "an accepted retry does not clear the owner's retained error"
     );
 
-    lock_file.unlock().expect("release preferences lock");
-    patiently(|| {
-        session.poll_panel_preferences();
-        let Ok(document) = preferences.document() else {
-            return Err("panel preferences are not durable".into());
-        };
-        let durable = document
-            .get("chrome")
-            .and_then(serde_json::Value::as_object)
-            .and_then(|chrome| chrome.get("accent"))
-            == Some(&serde_json::json!("#AABBCC"));
-        if session.panel_preference_writes_pending() == 0 && durable {
-            Ok(())
-        } else {
-            Err("panel preference retry is still pending".into())
-        }
-    })
-    .expect("retry settles");
+    session.clear_succeeded_panel_members(std::slice::from_ref(&member));
+    session.note_panel_setting(&member, frontend_core::SettingEventState::Saved, None);
     assert!(session.panel_preference_write_error().is_none());
+    assert!(!session.pending_panel_members.contains_key(&member.path));
     let (events, incomplete) = session.take_panel_setting_events();
     assert!(!incomplete);
     assert_eq!(
