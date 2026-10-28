@@ -1661,6 +1661,65 @@ fn m4_escape_hands_the_router_exact_standable_goals_in_two_tiers() {
 }
 
 #[test]
+fn m4_escape_filters_unreachable_live_goals_and_retries_a_distinct_tier() {
+    let geometry = escape::EscapeGeometry {
+        here: M4_HERE,
+        threat: Some(M4_TREE),
+        stand: None,
+        chase_range: 14,
+    };
+    let mut reach = open_flood(M4_HERE, 32);
+    let index = ((M4_THICKET.x - reach.base_x) * reach.height
+        + (M4_THICKET.z - reach.base_z)) as usize;
+    let word = index / u32::BITS as usize;
+    let mask = !(1u32 << (index % u32::BITS as usize));
+    reach.walkable[word] &= mask;
+    reach.reachable[word] &= mask;
+    reach.reachable_adj[word] &= mask;
+    reach.exact_rank[index] = u16::MAX;
+    reach.adjacent_rank[index] = u16::MAX;
+    reach.step[index] = 0;
+
+    let mut pass = escape::AbortEscape::new();
+    let first = pass
+        .next_goals(&geometry, None, Some(&reach))
+        .expect("the live flood has other reachable escape goals");
+    assert!(
+        !first.goals.as_slice().contains(&M4_THICKET),
+        "the collision-blocked Reach goal is not offered to the router"
+    );
+    assert!(
+        first.goals.fallback().is_empty(),
+        "a failed tier must not be retried as the next tier's fallback"
+    );
+    assert!(
+        first.goals.as_slice().iter().all(|goal| {
+            crate::reach_route::nearest_depth(&reach, std::slice::from_ref(goal)).is_some()
+        }),
+        "every submitted goal is reachable in the live flood"
+    );
+
+    let first_tier = first.goals.preferred().to_vec();
+    let second = pass
+        .next_goals(&geometry, None, Some(&reach))
+        .expect("the bounded pass has another reachable tier");
+    assert!(
+        second.goals.preferred().iter().all(|goal| !first_tier.contains(goal)),
+        "a retry chooses other goals"
+    );
+    assert!(
+        second.goals.as_slice().iter().all(|goal| {
+            crate::reach_route::nearest_depth(&reach, std::slice::from_ref(goal)).is_some()
+        }),
+        "the retry also uses only reachable goals"
+    );
+    assert!(
+        pass.next_goals(&geometry, None, Some(&reach)).is_none(),
+        "the pass spends a finite request budget"
+    );
+}
+
+#[test]
 fn m4_failed_escape_walk_replans_one_tier_lower_before_food_runs_out() {
     let collision = m4_collision();
     let lease = crate::gatherer::select::tests::test_nav_lease_for_collision(&collision);
