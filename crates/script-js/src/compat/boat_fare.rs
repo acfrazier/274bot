@@ -66,6 +66,10 @@ const TALK_WALK_MS: u64 = 120_000;
 /// Frozen `walkResilient(..., { attempts: 3, timeoutMs: 180_000 })` legs.
 const LEG_ATTEMPTS: u32 = 3;
 const LEG_MS: u64 = 180_000;
+/// Reuse the content-backed three-attempt budget for Karamja resilient legs.
+const TALK_ATTEMPTS: u32 = LEG_ATTEMPTS;
+/// Adjacent stand offsets, one for each retry after the first approach.
+const TALK_RETRY_STANDS: [(i32, i32); (TALK_ATTEMPTS - 1) as usize] = [(1, 1), (1, -1)];
 /// Frozen `settleScene` (`prompts.ts:30–32`).
 const SETTLE_TICKS: u32 = 2;
 /// Frozen `searchBananaCrate` message wait (`crate.ts:52`).
@@ -582,27 +586,37 @@ impl Talk {
         facts: &BoatFacts,
         cx: &mut Cx<'_>,
         logs: &mut VecDeque<String>,
-    ) -> Option<bool> {
+    ) -> TalkProgress {
         match self {
             Self::Open(reach) => {
                 let status = reach.step(cx);
                 while let Some(line) = reach.pop_log() {
                     logs.push_back(line);
                 }
-                match status? {
-                    "done" => {
+                match status {
+                    None => TalkProgress::Pending,
+                    Some("done") => {
                         *self = Self::Drive(Pages::new(true, &facts.preferences));
                         self.step(facts, cx, logs)
                     }
-                    _ => {
+                    Some("unreachable") => TalkProgress::Unreachable,
+                    Some(_) => {
                         logs.push_back(format!("'{}' never opened a dialogue", facts.luthas_name));
-                        Some(false)
+                        TalkProgress::Done(false)
                     }
                 }
             }
-            Self::Drive(pages) => pages.step(cx, logs),
+            Self::Drive(pages) => pages
+                .step(cx, logs)
+                .map_or(TalkProgress::Pending, TalkProgress::Done),
         }
     }
+}
+
+enum TalkProgress {
+    Pending,
+    Unreachable,
+    Done(bool),
 }
 
 /// Frozen `searchBananaCrate` (`crate.ts:36–60`).
@@ -1082,8 +1096,16 @@ impl Fill {
 }
 
 enum Stage {
-    TalkWalk { second: bool, walk: Walk },
-    Talk { second: bool, talk: Talk },
+    TalkWalk {
+        second: bool,
+        attempt: u32,
+        walk: Walk,
+    },
+    Talk {
+        second: bool,
+        attempt: u32,
+        talk: Talk,
+    },
     Fill(Fill),
 }
 
@@ -1118,7 +1140,7 @@ impl Recover {
             "no boat fare: earning {} coins at {}'s plantation",
             facts.coin_payout, facts.luthas_name
         ));
-        let stage = Self::talk(&facts, false, cx, logs)?;
+        let stage = Self::talk(&facts, false, 1, cx, logs)?;
         Ok(Self {
             facts,
             stage,
@@ -1126,32 +1148,65 @@ impl Recover {
         })
     }
 
-    /// Frozen `talk()` (`karamjaRecovery.ts:36–41`).
+    /// Frozen `talk()`'s first route, with bounded retries from fresh plans.
     fn talk(
         facts: &BoatFacts,
         second: bool,
+        mut attempt: u32,
         cx: &mut Cx<'_>,
         logs: &mut VecDeque<String>,
     ) -> Result<Stage, bool> {
-        if interrupted(cx) {
-            return Err(false);
+        while attempt <= TALK_ATTEMPTS {
+            if interrupted(cx) {
+                return Err(false);
+            }
+            let (dest, radius) = if attempt == 1 {
+                (facts.luthas_anchor, 2)
+            } else {
+                let Some((dx, dz)) = attempt
+                    .checked_sub(2)
+                    .and_then(|index| usize::try_from(index).ok())
+                    .and_then(|index| TALK_RETRY_STANDS.get(index))
+                    .copied()
+                else {
+                    return Err(false);
+                };
+                (
+                    WorldTile {
+                        x: facts.luthas_anchor.x.saturating_add(dx),
+                        z: facts.luthas_anchor.z.saturating_add(dz),
+                        level: facts.luthas_anchor.level,
+                    },
+                    0,
+                )
+            };
+            match Walk::begin_compat_avoiding(
+                dest,
+                radius,
+                TALK_WALK_MS,
+                false,
+                Vec::new(),
+                Vec::new(),
+                cx,
+            ) {
+                Ok(walk) => {
+                    return Ok(Stage::TalkWalk {
+                        second,
+                        attempt,
+                        walk,
+                    });
+                }
+                Err(true) => {
+                    return Ok(Stage::Talk {
+                        second,
+                        attempt,
+                        talk: Talk::start(facts, logs)?,
+                    });
+                }
+                Err(false) => attempt += 1,
+            }
         }
-        match Walk::begin_compat_avoiding(
-            facts.luthas_anchor,
-            2,
-            TALK_WALK_MS,
-            false,
-            Vec::new(),
-            Vec::new(),
-            cx,
-        ) {
-            Ok(walk) => Ok(Stage::TalkWalk { second, walk }),
-            Err(true) => Ok(Stage::Talk {
-                second,
-                talk: Talk::start(facts, logs)?,
-            }),
-            Err(false) => Err(false),
-        }
+        Err(false)
     }
 
     /// The op that stops the native walk this recovery has in flight.
@@ -1186,39 +1241,65 @@ impl Recover {
             return Some(false);
         }
         let next = match &mut self.stage {
-            Stage::TalkWalk { second, walk } => {
-                if !walk.step(cx)? {
-                    return Some(false);
-                }
-                Stage::Talk {
-                    second: *second,
-                    talk: match Talk::start(&self.facts, logs) {
-                        Ok(talk) => talk,
+            Stage::TalkWalk {
+                second,
+                attempt,
+                walk,
+            } => {
+                let Some(arrived) = walk.step(cx) else {
+                    return None;
+                };
+                if !arrived {
+                    if *attempt >= TALK_ATTEMPTS {
+                        return Some(false);
+                    }
+                    match Self::talk(&self.facts, *second, *attempt + 1, cx, logs) {
+                        Ok(stage) => stage,
                         Err(done) => return Some(done),
-                    },
+                    }
+                } else {
+                    Stage::Talk {
+                        second: *second,
+                        attempt: *attempt,
+                        talk: match Talk::start(&self.facts, logs) {
+                            Ok(talk) => talk,
+                            Err(done) => return Some(done),
+                        },
+                    }
                 }
             }
-            Stage::Talk { second, talk } => {
-                if !talk.step(&self.facts, cx, logs)? {
-                    return Some(false);
+            Stage::Talk {
+                second,
+                attempt,
+                talk,
+            } => match talk.step(&self.facts, cx, logs) {
+                TalkProgress::Pending => return None,
+                TalkProgress::Unreachable if *attempt < TALK_ATTEMPTS => {
+                    match Self::talk(&self.facts, *second, *attempt + 1, cx, logs) {
+                        Ok(stage) => stage,
+                        Err(done) => return Some(done),
+                    }
                 }
-                let coins = held(self.facts.coins);
-                if *second || coins >= self.facts.coin_payout {
-                    return Some(coins >= self.facts.coin_payout);
+                TalkProgress::Unreachable | TalkProgress::Done(false) => return Some(false),
+                TalkProgress::Done(true) => {
+                    let coins = held(self.facts.coins);
+                    if *second || coins >= self.facts.coin_payout {
+                        return Some(coins >= self.facts.coin_payout);
+                    }
+                    if interrupted(cx) {
+                        return Some(false);
+                    }
+                    match Fill::start(self.facts.clone(), cx, logs) {
+                        Ok(fill) => Stage::Fill(fill),
+                        Err(_) => return Some(false),
+                    }
                 }
-                if interrupted(cx) {
-                    return Some(false);
-                }
-                match Fill::start(self.facts.clone(), cx, logs) {
-                    Ok(fill) => Stage::Fill(fill),
-                    Err(_) => return Some(false),
-                }
-            }
+            },
             Stage::Fill(fill) => {
                 if !fill.step(cx, logs)? {
                     return Some(false);
                 }
-                match Self::talk(&self.facts, true, cx, logs) {
+                match Self::talk(&self.facts, true, 1, cx, logs) {
                     Ok(stage) => stage,
                     Err(done) => return Some(done),
                 }
