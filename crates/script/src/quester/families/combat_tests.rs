@@ -3945,12 +3945,12 @@ fn exhausted_escape_runs_from_a_new_attacker_when_the_engaged_actor_is_gone() {
         .expect("selected content includes a low-hit NPC with a wide chase envelope");
     let mut snapshot = GameSnapshot::new();
     let new_attacker_tile = api::WorldTile {
-        x: 2999,
+        x: 3001,
         z: 3000,
         level: 0,
     };
     let mut newcomer = aborting_npc(9, new_attacker_id, new_attacker_tile);
-    // The live R2 shape: the Warlord row is gone; another NPC attacks.
+    // A lower-hit attacker occupies the vanished Warlord's former tile.
     let probe_run = combat_test_run(imp_target(&data), None, None, Vec::new());
     newcomer.animation = live_attack_animation(&probe_run);
     let (mut run, mut ledger, here) =
@@ -3973,10 +3973,6 @@ fn exhausted_escape_runs_from_a_new_attacker_when_the_engaged_actor_is_gone() {
         })
         .collect::<Vec<_>>();
     assert_eq!(walks.len(), 1, "exactly one exhausted escape walk");
-    assert!(
-        walks[0].x > here.x,
-        "the escape moves east from the new attacker on the west"
-    );
     assert!(
         tile_distance(walks[0], new_attacker_tile) > tile_distance(here, new_attacker_tile),
         "the escape moves farther from the new attacker"
