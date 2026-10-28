@@ -3535,10 +3535,7 @@ fn escape_walks_that_never_settle_end_on_their_observed_tick_budget() {
             );
         };
 
-        let first_pass_count = walks
-            .iter()
-            .take_while(|(_, walk)| walk.food_guard)
-            .count();
+        let first_pass_count = walks.iter().take_while(|(_, walk)| walk.food_guard).count();
         assert_eq!(
             first_pass_count, pass,
             "the guarded pass requests each available tier"
