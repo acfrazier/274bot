@@ -68,6 +68,10 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   before the bot reached the bank. The host now checks the route generation
   before it sends a walk result to a native action.
 
+- The chicken bank check now uses a guaranteed Bones drop for its pickup and
+  deposit checks. It requires fresh combat XP after the bank return instead
+  of waiting for a random Feather drop.
+
 - The script API documentation now states that moving the bot by hand during a
   fight ends `api.combat.fight` as `aborted` with reason `user-input`. The host
   has settled it that way since 0.2.4; the declarations and pages still
