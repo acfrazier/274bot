@@ -545,6 +545,17 @@ pub enum StepKind {
         stand: WorldTile,
         guard_ready: Proof,
     },
+    /// Observe fresh XP after a bank return. A fresh bank visit starts a
+    /// bounded return leg; its closed-bank arrival at `stand` restarts the
+    /// XP baseline and the same game-tick budget. At most `max_restarts`
+    /// further bank returns may restart the watch. Each bank/return phase
+    /// has the same finite budget. Sends no actions.
+    /// The scenario's whole-run wall-clock deadline remains the outer limit.
+    ObserveCombatAcrossBankReturns {
+        stand: WorldTile,
+        radius: i32,
+        max_restarts: u8,
+    },
     /// Wait for the card's selected combat style (`wait.arm`, a varp proof)
     /// across the Loot-count bank trips that may come before it. A card that
     /// selects its style only out of combat, after its restock and its bank

@@ -2723,16 +2723,16 @@ fn gold_scripts_start_the_catalog_after_the_last_seed_wait() {
     assert!(chickens.settings.require_mainland_base);
 
     // chicken_killer_bank: Falador pen after seed, loot-count inject, then
-    // combat / exact feather / fresh deposit / return r6 / new feathers.
+    // combat / exact Bones / fresh deposit / return r6 / fresh Strength XP.
     let bank = get("chicken_killer_bank").unwrap();
     let i = start_idx("chicken_killer_bank");
     assert_eq!(
         bank.steps[i - 1].wait.arm,
         Proof::ItemIdAtMost {
-            id: FEATHER_ID,
+            id: BONES_ID,
             count: 0
         },
-        "chicken_killer_bank StartScript follows empty-feather ack"
+        "chicken_killer_bank StartScript follows empty-Bones ack"
     );
     assert_eq!(
         bank.steps[i - 4].wait.arm,
@@ -6710,9 +6710,14 @@ fn superheater_cases_register_exact_ids_and_bank_cycles() {
 }
 
 #[test]
-fn chicken_killer_bank_registers_loot_count_feather_trip() {
+fn chicken_killer_bank_registers_guaranteed_bones_trip_and_fresh_combat() {
     let bank = get("chicken_killer_bank").expect("chicken_killer_bank");
     assert_eq!(bank.settings.start_script, Some("ChickenKiller"));
+    assert_eq!(
+        bank.settings.deadline,
+        Duration::from_secs(720),
+        "the whole-run deadline covers the permitted bank-return restarts"
+    );
     let inject = settings_inject_map(bank.settings.script_settings_inject).unwrap();
     assert_eq!(
         inject.get("bankStrategy"),
@@ -6721,13 +6726,13 @@ fn chicken_killer_bank_registers_loot_count_feather_trip() {
     assert_eq!(inject.get("bankEveryItems"), Some(&Value::from(1.0)));
     assert_eq!(
         inject.get("lootMatch"),
-        Some(&Value::String("feather".into()))
+        Some(&Value::String("bones".into()))
     );
     assert_eq!(
         inject.get("combatStyle"),
         Some(&Value::String("melee".into()))
     );
-    assert!(inject.get("buryBones").is_none());
+    assert_eq!(inject.get("buryBones"), Some(&Value::Bool(false)));
     let start = bank
         .steps
         .iter()
@@ -6749,7 +6754,7 @@ fn chicken_killer_bank_registers_loot_count_feather_trip() {
         radius: 8,
     }));
     assert!(seed.contains(&Proof::ItemIdAtMost {
-        id: FEATHER_ID,
+        id: BONES_ID,
         count: 0,
     }));
     let watch = bank.steps[start + 1..]
@@ -6764,15 +6769,15 @@ fn chicken_killer_bank_registers_loot_count_feather_trip() {
                 min: 1
             },
             Proof::ItemId {
-                id: FEATHER_ID,
+                id: BONES_ID,
                 count: 1
             },
             Proof::BankItemId {
-                id: FEATHER_ID,
+                id: BONES_ID,
                 count: 1
             },
             Proof::ItemIdAtMost {
-                id: FEATHER_ID,
+                id: BONES_ID,
                 count: 0
             },
             Proof::ArrivedNear {
@@ -6782,19 +6787,33 @@ fn chicken_killer_bank_registers_loot_count_feather_trip() {
                 radius: 6,
             },
             Proof::BankClosed,
-            Proof::ItemId {
-                id: FEATHER_ID,
-                count: 1
+            Proof::FreshStatXpGain {
+                id: STRENGTH_STAT,
+                min: 1
             },
         ]
     );
     assert_eq!(
         bank.proof,
-        Proof::ItemId {
-            id: FEATHER_ID,
-            count: 1
+        Proof::FreshStatXpGain {
+            id: STRENGTH_STAT,
+            min: 1
         }
     );
+    let continuation = bank.steps.last().unwrap();
+    assert_eq!(continuation.wait.budget_ticks, SCRIPT_GOLD_WATCH_TICKS);
+    assert!(matches!(
+        continuation.kind,
+        StepKind::ObserveCombatAcrossBankReturns {
+            stand: WorldTile {
+                x: 3029,
+                z: 3294,
+                level: 0
+            },
+            radius: 6,
+            max_restarts: api::CHICKEN_BANK_MAX_RESTARTS,
+        }
+    ));
     let core = get("chicken_killer").unwrap();
     assert!(
         core.settings
