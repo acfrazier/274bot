@@ -412,19 +412,25 @@ fn exit_after_work_shutdown(code: i32) -> ! {
     std::process::exit(code)
 }
 
-fn fail_startup(session: &mut Session, fatal: bool, error: String) {
+fn fail_startup(session: &mut Session, fatal: bool, error: String) -> Option<window::PanelError> {
     session.set_profile_preparing(false);
     session.error = Some(error.clone());
     if fatal {
+        session.retire_play();
         eprintln!("FAIL: {error}");
-        exit_after_work_shutdown(1);
+        Some(window::PanelError::StartupFailure(error))
+    } else {
+        None
     }
 }
 
 /// Poll the two sequential WorkAdmission preparations. Resource-heavy phases
 /// run away from the event loop; profile/template installation and all vault,
 /// Play, GPU, JS-store and slot ownership remain on this UI thread.
-fn drive_startup(state: &mut PanelState, startup: &mut StartupPreparation) {
+fn drive_startup(
+    state: &mut PanelState,
+    startup: &mut StartupPreparation,
+) -> Option<window::PanelError> {
     if let Some(pass) = state.session.take_requested_unlock() {
         if let Some(job) = startup
             .validate
@@ -486,7 +492,9 @@ fn drive_startup(state: &mut PanelState, startup: &mut StartupPreparation) {
                     .as_ref()
                     .is_some_and(boot_failure_is_fatal);
                 let error = state.session.error.clone().unwrap_or_default();
-                fail_startup(&mut state.session, fatal, error);
+                if let Some(error) = fail_startup(&mut state.session, fatal, error) {
+                    return Some(error);
+                }
                 if !fatal {
                     startup.pending_boot = None;
                 }
@@ -504,16 +512,22 @@ fn drive_startup(state: &mut PanelState, startup: &mut StartupPreparation) {
         let result = job.job.join();
         state.session.set_profile_preparing(false);
         if job_generation != state.session.profile_generation() {
-            return;
+            return None;
         }
         let fatal = boot_failure_is_fatal(&job.boot);
         match result.and_then(|ticket| state.session.install_validated_template(ticket)) {
             Ok(()) => {
                 if let Err(error) = boot_execute(state, job.boot) {
-                    fail_startup(&mut state.session, fatal, error);
+                    if let Some(error) = fail_startup(&mut state.session, fatal, error) {
+                        return Some(error);
+                    }
                 }
             }
-            Err(error) => fail_startup(&mut state.session, fatal, error.to_string()),
+            Err(error) => {
+                if let Some(error) = fail_startup(&mut state.session, fatal, error.to_string()) {
+                    return Some(error);
+                }
+            }
         }
     }
 
@@ -534,7 +548,10 @@ fn drive_startup(state: &mut PanelState, startup: &mut StartupPreparation) {
                         .pending_boot
                         .as_ref()
                         .is_some_and(boot_failure_is_fatal);
-                    fail_startup(&mut state.session, fatal, error.to_string());
+                    if let Some(error) = fail_startup(&mut state.session, fatal, error.to_string())
+                    {
+                        return Some(error);
+                    }
                 }
             }
         }
@@ -553,7 +570,10 @@ fn drive_startup(state: &mut PanelState, startup: &mut StartupPreparation) {
                         .pending_boot
                         .as_ref()
                         .is_some_and(boot_failure_is_fatal);
-                    fail_startup(&mut state.session, fatal, error.to_string());
+                    if let Some(error) = fail_startup(&mut state.session, fatal, error.to_string())
+                    {
+                        return Some(error);
+                    }
                 }
             }
         }
@@ -575,7 +595,11 @@ fn drive_startup(state: &mut PanelState, startup: &mut StartupPreparation) {
                     pending: ValidationPending::new(generation, template),
                 });
             }
-            Err(error) => fail_startup(&mut state.session, fatal, error.to_string()),
+            Err(error) => {
+                if let Some(error) = fail_startup(&mut state.session, fatal, error.to_string()) {
+                    return Some(error);
+                }
+            }
         }
     }
 
@@ -598,10 +622,13 @@ fn drive_startup(state: &mut PanelState, startup: &mut StartupPreparation) {
                     .take()
                     .expect("validation demand retained");
                 let fatal = boot_failure_is_fatal(&pending.boot);
-                fail_startup(&mut state.session, fatal, error.to_string());
+                if let Some(error) = fail_startup(&mut state.session, fatal, error.to_string()) {
+                    return Some(error);
+                }
             }
         }
     }
+    None
 }
 
 /// One rail/grid tile's GPU texture (uploaded when the slot's `FrameBuf`
@@ -7794,17 +7821,13 @@ fn instance_conflict_choice(ui: &Ui, conflict: &InstanceConflict) -> Option<bool
     }
 }
 
-/// Resolve a normal event-loop return against any failure latched by `--live`.
-/// A live failure remains fatal if the window closes before the frame exits.
+/// Resolve a normal event-loop return against a failure latched by a terminal
+/// frame. The failure remains fatal if the window closes during that frame.
 fn finish_panel_run(
     result: Result<(), window::PanelError>,
-    live_failure: Option<String>,
+    failure: Option<window::PanelError>,
 ) -> Result<(), window::PanelError> {
-    match (result, live_failure) {
-        (Err(error), _) => Err(error),
-        (Ok(()), Some(message)) => Err(window::PanelError::LiveHarnessFailure(message)),
-        (Ok(()), None) => Ok(()),
-    }
+    result.and_then(|()| failure.map_or(Ok(()), Err))
 }
 
 /// Exit status for a live terminal decision; failure takes precedence.
@@ -7863,8 +7886,8 @@ pub fn run_panel(args: PanelArgs) -> Result<(), window::PanelError> {
     cfg.window_title.clone_from(&window_title);
     let os_window: Arc<Mutex<Option<Arc<winit::window::Window>>>> = Arc::new(Mutex::new(None));
     let os_window_init = Arc::clone(&os_window);
-    let live_failure = Arc::new(Mutex::new(None));
-    let live_failure_frame = Arc::clone(&live_failure);
+    let terminal_failure = Arc::new(Mutex::new(None));
+    let terminal_failure_frame = Arc::clone(&terminal_failure);
     let frame_running = Rc::clone(&running);
     let result = window::run(
         cfg,
@@ -7902,7 +7925,10 @@ pub fn run_panel(args: PanelArgs) -> Result<(), window::PanelError> {
                 return false;
             };
             if presented {
-                drive_startup(state, startup);
+                if let Some(error) = drive_startup(state, startup) {
+                    *terminal_failure_frame.lock().unwrap() = Some(error);
+                    return true;
+                }
             }
             presented = true;
             if state.os_window.is_none() {
@@ -7924,10 +7950,10 @@ pub fn run_panel(args: PanelArgs) -> Result<(), window::PanelError> {
                 }
             }
             let progress = startup_progress(startup, state.session.profile_generation());
-            ui_frame(ui, gpu, state, progress, &live_failure_frame)
+            ui_frame(ui, gpu, state, progress, &terminal_failure_frame)
         },
     );
-    let failure = live_failure.lock().unwrap().take();
+    let failure = terminal_failure.lock().unwrap().take();
     finish_panel_run(result, failure)
 }
 
@@ -8260,7 +8286,10 @@ fn record_presented_upload(
 /// right after it resets the input staging and before it draws anything; the
 /// order of these calls is the frame's contract (the pump publishes the
 /// status the live tick reads).
-fn frame_pumps(state: &mut PanelState, live_failure: &Mutex<Option<String>>) -> bool {
+fn frame_pumps(
+    state: &mut PanelState,
+    terminal_failure: &Mutex<Option<window::PanelError>>,
+) -> bool {
     state.session.poll_panel_preferences();
     apply_amber_current(&state.session.ui.chrome);
     let wrote_shots = pump_shots(state);
@@ -8271,13 +8300,18 @@ fn frame_pumps(state: &mut PanelState, live_failure: &Mutex<Option<String>>) -> 
         state.session.memory_focus(run);
         match run.poll(&state.session.core) {
             Ok(true) => {
+                // Quit joins workers before the GPU window and driver close.
+                state.session.retire_play();
                 eprintln!("PASS: memory panel observation complete");
-                exit_after_work_shutdown(0);
+                return true;
             }
             Ok(false) => {}
             Err(error) => {
+                state.session.retire_play();
                 eprintln!("FAIL: memory panel: {error}");
-                exit_after_work_shutdown(1);
+                *terminal_failure.lock().unwrap() =
+                    Some(window::PanelError::MemoryRunFailure(error.to_string()));
+                return true;
             }
         }
     }
@@ -8304,7 +8338,8 @@ fn frame_pumps(state: &mut PanelState, live_failure: &Mutex<Option<String>>) -> 
             if code == 1 {
                 if let Some(msg) = failure.as_deref().or_else(|| live.failure()) {
                     eprintln!("FAIL: {msg}");
-                    *live_failure.lock().unwrap() = Some(msg.to_owned());
+                    *terminal_failure.lock().unwrap() =
+                        Some(window::PanelError::LiveHarnessFailure(msg.to_owned()));
                 }
             }
             return true;
@@ -8320,10 +8355,10 @@ fn ui_frame(
     gpu: &mut Gpu,
     state: &mut PanelState,
     progress: Option<StartupProgressView>,
-    live_failure: &Mutex<Option<String>>,
+    terminal_failure: &Mutex<Option<window::PanelError>>,
 ) -> bool {
     state.session.map_desk.begin_game_input_frame();
-    if frame_pumps(state, live_failure) {
+    if frame_pumps(state, terminal_failure) {
         return true;
     }
     // Interactive whole-window capture: F12 enqueues one shot per press

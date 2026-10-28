@@ -1970,6 +1970,13 @@ impl Run {
         result
     }
 
+    /// Put a test run at the terminal observation boundary without a live server.
+    #[cfg(feature = "test-support")]
+    pub fn finish_for_test(&mut self) {
+        self.teardown = Some(Instant::now());
+        self.config.teardown = Duration::ZERO;
+    }
+
     fn poll_inner(&mut self, play: &Play) -> Result<bool, String> {
         let now = Instant::now();
         let statuses = play.statuses();
@@ -2374,8 +2381,8 @@ impl Run {
             value["proved"] = seed_counts.map(|(_, proved)| proved).into();
             value["game_data"] = self.game_data_json(play);
             writeln!(self.output, "{value}").map_err(|e| e.to_string())?;
-            // Frontends finish with process::exit, which skips destructors:
-            // each complete row must be visible before this poll returns.
+            // Flush complete rows before returning a terminal result; a
+            // frontend may exit without running destructors.
             self.output.flush().map_err(|e| e.to_string())?;
             if self.diagnostics {
                 self.write_diagnostics(play, None)?;
