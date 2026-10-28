@@ -106,7 +106,7 @@ fn panel_exit_status_child() {
                     host: "127.0.0.1".into(),
                     transport: client::Transport::Tcp,
                     port: 1,
-                    cache_dir: std::env::temp_dir(),
+                    cache_dir: std::env::temp_dir().to_string_lossy().into_owned(),
                     lowmem: true,
                     mainland: false,
                 },
