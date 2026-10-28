@@ -993,6 +993,31 @@ fn scenario_for(
         .position(|step| matches!(step.kind, StepKind::StartScript))
         .expect("Quester stage has StartScript");
     scenario.steps.truncate(start_index + 1);
+
+    // M2 must start outside melee range. Wait at distance eight so one
+    // Warlord step still leaves the Start baseline within the accepted range.
+    if case == Case::M2 {
+        scenario.steps.insert(
+            start_index,
+            Step {
+                name: "wait for the M2 Warlord start distance",
+                kind: StepKind::Await {
+                    evidence: "natural Warlord at distance eight",
+                    ready: Box::new(|snapshot| {
+                        let baseline = combat_proof::snapshot_facts(snapshot, None);
+                        let warlords = named_npcs(&baseline, "khazard warlord");
+                        warlords.len() == 1
+                            && warlords[0]["distance"].as_i64() == Some(8)
+                    }),
+                    summary: None,
+                },
+                wait: Wait {
+                    arm: Proof::Stat { id: 0, min: 1 },
+                    budget_ticks: u32::MAX,
+                },
+            },
+        );
+    }
     let ready_capture = Arc::clone(&capture);
     scenario.steps.push(Step {
         name: "wait for the bounded combat proof",
