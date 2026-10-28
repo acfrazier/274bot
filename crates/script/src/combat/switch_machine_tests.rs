@@ -1147,7 +1147,7 @@ fn a_drink_on_the_trigger_tick_admits_no_wear_and_starts_nothing() {
     let (mut scene, kits) = sword_and_bow();
     let mut harness = start(&mut scene, request(kits));
     give(&mut scene, "1doseprayerrestore", 1);
-    scene.stat(5, 30, 50);
+    scene.stat(5, 50, 50);
     scene.players[0].actor.target = Some(ActorTargetView {
         kind: ActorKind::Player,
         index: scene.local.player.index,
