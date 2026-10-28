@@ -44,17 +44,45 @@ pub(super) struct NativeCopyHold {
     _token: Arc<String>,
     deadline: Instant,
     cancellation: NativeCopyCancellation,
+    target: crate::selection::ProfileIdentity,
+    member_name: String,
 }
 
 impl NativeCopyHold {
     const TIMEOUT: Duration = Duration::from_secs(30);
 
-    fn new(token: Arc<String>, cancellation: NativeCopyCancellation) -> Self {
+    fn new(
+        target: crate::selection::ProfileIdentity,
+        member_name: String,
+        token: Arc<String>,
+        cancellation: NativeCopyCancellation,
+    ) -> Self {
         Self {
             _token: token,
             deadline: Instant::now() + Self::TIMEOUT,
             cancellation,
+            target,
+            member_name,
         }
+    }
+
+    fn target_available(
+        &self,
+        play_available: bool,
+        vault: Option<&vault::Vault>,
+        members: &[String],
+    ) -> bool {
+        if !play_available {
+            return false;
+        }
+        let Some(profile) = vault.and_then(|vault| {
+            vault
+                .profiles()
+                .find(|profile| crate::selection::ProfileIdentity::uid(profile.uid) == self.target)
+        }) else {
+            return false;
+        };
+        members.contains(&self.member_name) || members.contains(&profile.username)
     }
 }
 
@@ -366,11 +394,18 @@ impl<Io> OperatorSession<Io> {
     pub(crate) fn hold_native_copy_start(
         &mut self,
         op: OperationId,
+        target: crate::selection::ProfileIdentity,
+        member_name: String,
         token: Arc<String>,
         cancellation: NativeCopyCancellation,
     ) {
         if let Some(pending) = self.preparations.get_mut(&op) {
-            pending.copy_start_hold = Some(NativeCopyHold::new(token, cancellation));
+            pending.copy_start_hold = Some(NativeCopyHold::new(
+                target,
+                member_name,
+                token,
+                cancellation,
+            ));
         }
     }
 
@@ -533,9 +568,11 @@ impl<Io> OperatorSession<Io> {
                     pending.copy_start_hold.as_ref().is_some_and(|hold| {
                         now >= hold.deadline
                             || hold.cancellation.is_cancelled()
-                            || self.play.is_none()
-                            || self.vault.is_none()
-                            || !self.members().contains(&pending.profile.username)
+                            || !hold.target_available(
+                                self.play.is_some(),
+                                self.vault.as_ref(),
+                                self.members(),
+                            )
                     })
                 })
                 .map(|(op, _)| *op)
@@ -564,11 +601,9 @@ impl<Io> OperatorSession<Io> {
                     .is_some_and(|hold| hold.cancellation.is_cancelled())
                 {
                     Err("settings copy cancelled".to_string())
-                } else if pending.copy_start_hold.is_some()
-                    && (self.play.is_none()
-                        || self.vault.is_none()
-                        || !self.members().contains(&name))
-                {
+                } else if pending.copy_start_hold.as_ref().is_some_and(|hold| {
+                    !hold.target_available(self.play.is_some(), self.vault.as_ref(), self.members())
+                }) {
                     Err("settings copy cancelled: bot or vault unavailable".to_string())
                 } else if let Some(error) = pending.failure.take() {
                     Err(error)
@@ -700,9 +735,11 @@ impl<Io> OperatorSession<Io> {
             let Some(hold) = pending.copy_start_hold.as_ref() else {
                 continue;
             };
-            let unavailable = self.play.is_none()
-                || self.vault.is_none()
-                || !self.fleet.members().contains(&pending.member);
+            let unavailable = !hold.target_available(
+                self.play.is_some(),
+                self.vault.as_ref(),
+                self.fleet.members(),
+            );
             let cancelled = hold.cancellation.is_cancelled();
             if now < hold.deadline && !unavailable && !cancelled {
                 continue;
@@ -1087,6 +1124,31 @@ mod tests {
     }
 
     #[test]
+    fn deleted_native_copy_target_releases_its_hold_with_unavailable_error() {
+        let mut f = preparing_copy("copy-deleted-target");
+        let release = block_preparation(&mut f);
+        f.core
+            .vault_remove("bob")
+            .unwrap()
+            .expect("delete bob profile");
+        f.core.poll();
+        f.scripts.poll(&mut f.core);
+
+        let report = f.scripts.last_settings_sync().unwrap();
+        assert_eq!(
+            (report.saved, report.failed.len(), report.pending()),
+            (0, 1, 0),
+            "{report:?}"
+        );
+        assert_eq!(
+            report.failed[0].1,
+            "settings copy cancelled: bot or vault unavailable"
+        );
+        release.store(true, Ordering::Release);
+        f.core.flush_writes();
+    }
+
+    #[test]
     fn locked_vault_releases_its_native_preparation_hold() {
         let mut f = preparing_copy("copy-locked");
         let id = script::CompiledId("Gatherer");
@@ -1108,7 +1170,12 @@ mod tests {
             f.configure_expected_bag("bob", id, before),
             script::CompiledDelivery::Unchanged
         );
-        assert_eq!(f.scripts.last_settings_sync().unwrap().failed.len(), 1);
+        let report = f.scripts.last_settings_sync().unwrap();
+        assert_eq!(report.failed.len(), 1);
+        assert_eq!(
+            report.failed[0].1,
+            "settings copy cancelled: bot or vault unavailable"
+        );
         release.store(true, Ordering::Release);
     }
 
@@ -1148,6 +1215,74 @@ mod tests {
             json!("Nearest")
         );
         assert_eq!(f.scripts.last_settings_sync().unwrap().saved, 0);
+    }
+
+    #[test]
+    fn fleet_copy_follows_a_renamed_native_target_before_confirm() {
+        let mut f = native_fixture("copy-rename-before-confirm");
+        let id = script::CompiledId("Gatherer");
+        for name in ["alice", "bob"] {
+            assert!(f.scripts.persist_assignment(
+                &mut f.core,
+                name,
+                script::compiled_assignment(id)
+            ));
+        }
+        f.core.flush_writes();
+        f.scripts
+            .set_compiled_overrides(
+                &mut f.core,
+                "alice",
+                CompiledCardId::from_script(id),
+                json!({"targetPreference": "Nearest"})
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            )
+            .unwrap();
+        f.core.flush_writes();
+
+        let target = ProfileIdentity::uid(2);
+        let mut marked = MarkedSelection::default();
+        marked.set(target, true);
+        prepare_apply_settings_marked(
+            &marked,
+            &f.core,
+            &mut f.scripts,
+            "alice",
+            &ScriptChoice::from_script(script::ScriptSel::Compiled(id)),
+        )
+        .unwrap();
+        f.scripts
+            .freeze_settings_sync_targets(vec![(target, "bob".into())]);
+
+        let mut renamed = f.core.vault().unwrap().get("bob").unwrap().clone();
+        renamed.username = "bobby".into();
+        f.core
+            .rename_profile("bob", renamed, ArmMirror::none(), "profile")
+            .unwrap();
+        f.core.flush_writes();
+
+        f.scripts.apply_settings_sync(&mut f.core).unwrap();
+        let release = block_preparation(&mut f);
+        f.core.poll();
+        f.scripts.poll(&mut f.core);
+        release.store(true, Ordering::Release);
+        f.core.flush_writes();
+        f.scripts.poll(&mut f.core);
+
+        let report = f.scripts.last_settings_sync().unwrap();
+        assert_eq!(
+            (report.saved, report.failed.len(), report.pending()),
+            (1, 0, 0),
+            "{report:?}"
+        );
+        let profile = f.core.vault().unwrap().get("bobby").unwrap();
+        let entry = &profile.settings.script_settings[&script::compiled_identity_key(id)];
+        assert_eq!(
+            vault::CompiledSettingsRecord::view(entry).unwrap().1["targetPreference"],
+            json!("Nearest")
+        );
     }
 
     #[test]
