@@ -505,6 +505,7 @@ fn live_pvp_switch_t2_t3_t4_in_a_pen() {
     let hook_drives = [Arc::clone(&drives[0]), Arc::clone(&drives[1])];
     let hook_shared = Arc::clone(&shared);
     let hook_partner = Arc::clone(&partner_state);
+    let hook_walk_set = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let mut play = run_with_template(
         template,
         false,
@@ -531,6 +532,16 @@ fn live_pvp_switch_t2_t3_t4_in_a_pen() {
                     &mut hook_drives[*index].lock().expect("duel drive lock"),
                     &partners[*index],
                 );
+                if !*is_holder
+                    && client.ingame
+                    && client.scene_state == 2
+                    && !hook_walk_set.swap(true, std::sync::atomic::Ordering::Relaxed)
+                {
+                    // The machine's account walks, so a runner can leave its reach.
+                    let mut snapshot = api::snapshot::GameSnapshot::new();
+                    snapshot.rebuild(client);
+                    let _ = api::interact::Interactions::new(&snapshot, client).set_run(false);
+                }
                 if *is_holder {
                     partner_step(
                         client,
