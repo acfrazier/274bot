@@ -112,18 +112,21 @@ fn panel_exit_status_child() {
                 lowmem: true,
                 mainland: false,
             });
-            let exited = play.attach_stop_observed_worker_for_test(
-                "startup",
-                host_play::SlotArm::new(1, false),
-            );
+            let exited = play
+                .attach_stop_observed_worker_for_test("startup", host_play::SlotArm::new(1, false));
             session.core.fleet_mut().add("startup");
             session.core.set_play(Some(play));
-            let error =
-                super::fail_startup(&mut session, true, "synthetic boot error".into())
-                    .expect("fatal boot must report its error to the event loop");
-            assert!(matches!(&error, crate::window::PanelError::StartupFailure(_)));
+            let error = super::fail_startup(&mut session, true, "synthetic boot error".into())
+                .expect("fatal boot must report its error to the event loop");
+            assert!(matches!(
+                &error,
+                crate::window::PanelError::StartupFailure(_)
+            ));
             assert!(!session.core.has_play(), "fatal startup must retire Play");
-            assert!(exited.try_recv().is_ok(), "fatal startup must join its worker");
+            assert!(
+                exited.try_recv().is_ok(),
+                "fatal startup must join its worker"
+            );
             assert!(
                 session.core.commands().reports().any(|report| {
                     report.command() == frontend_core::OperatorCommand::Quit && report.is_settled()
@@ -169,15 +172,20 @@ fn panel_exit_status_child() {
                 exited.try_recv().is_ok(),
                 "PASS must join its worker before frame_pumps returns"
             );
-            assert!(failure.lock().unwrap().is_none(), "PASS must exit successfully");
+            assert!(
+                failure.lock().unwrap().is_none(),
+                "PASS must exit successfully"
+            );
             assert!(
                 state
                     .session
                     .core
                     .commands()
                     .reports()
-                    .any(|report| report.command() == frontend_core::OperatorCommand::Quit
-                        && report.is_settled()),
+                    .any(
+                        |report| report.command() == frontend_core::OperatorCommand::Quit
+                            && report.is_settled()
+                    ),
                 "PASS must use the Quit settlement before window teardown"
             );
             ctx.render();
@@ -186,19 +194,20 @@ fn panel_exit_status_child() {
         #[cfg(feature = "memory-profile")]
         Ok("memory_fail") => {
             let mut state = PanelState::default();
-            state
-                .session
-                .core
-                .set_play(Some(frontend_core::test_support::empty_play(
-                    &host_play::PlayOptions {
-                        host: "127.0.0.1".into(),
-                        transport: client::Transport::Tcp,
-                        port: 1,
-                        cache_dir: std::env::temp_dir().to_string_lossy().into_owned(),
-                        lowmem: true,
-                        mainland: false,
-                    },
-                )));
+            let mut play = frontend_core::test_support::empty_play(&host_play::PlayOptions {
+                host: "127.0.0.1".into(),
+                transport: client::Transport::Tcp,
+                port: 1,
+                cache_dir: std::env::temp_dir().to_string_lossy().into_owned(),
+                lowmem: true,
+                mainland: false,
+            });
+            // A worker without a fleet or status row has no Quit target.
+            let exited = play.attach_stop_observed_worker_for_test(
+                "unreported",
+                host_play::SlotArm::new(1, false),
+            );
+            state.session.core.set_play(Some(play));
             let config = frontend_core::bench::BenchConfig::from_env()
                 .expect("benchmark configuration")
                 .expect("memory benchmark enabled");
@@ -218,7 +227,15 @@ fn panel_exit_status_child() {
                 !state.session.core.has_play(),
                 "slot threads must retire before the window GPU is released"
             );
-            let failure = failure.lock().unwrap().take().expect("memory error latched");
+            assert!(
+                exited.try_recv().is_ok(),
+                "FAIL must join workers even if Quit has no targets"
+            );
+            let failure = failure
+                .lock()
+                .unwrap()
+                .take()
+                .expect("memory error latched");
             assert!(
                 matches!(
                     &failure,
@@ -309,7 +326,8 @@ fn successful_memory_run_joins_worker_before_frame_returns() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(
-        String::from_utf8_lossy(&output.stderr).contains("PASS worker joined before window teardown"),
+        String::from_utf8_lossy(&output.stderr)
+            .contains("PASS worker joined before window teardown"),
         "the worker must finish before the window closes"
     );
 }
