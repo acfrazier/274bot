@@ -349,14 +349,7 @@ fn fail_luthas_reach(world: &mut World, what: &str) -> WorldTile {
     world.post();
     let ops = tick();
     let stand = match ops.as_slice() {
-        [InteractReq::WalkNear {
-            x,
-            z,
-            level,
-            radius: 0,
-            compat_tile_intent: true,
-            ..
-        }] => WorldTile {
+        [InteractReq::Walk { x, z, level, .. }] => WorldTile {
             x: *x,
             z: *z,
             level: *level,
@@ -377,7 +370,9 @@ fn fail_luthas_reach(world: &mut World, what: &str) -> WorldTile {
 
 /// The whole plantation job up to the re-walk to the boat; returns the
 /// row, the world, the first walk and the re-walk.
-fn earn_the_fare(retry_point: Option<RetryPoint>) -> (machine::Handle, World, InteractReq, InteractReq) {
+fn earn_the_fare(
+    retry_point: Option<RetryPoint>,
+) -> (machine::Handle, World, InteractReq, InteractReq) {
     reset();
     let mut world = World::new(MUSA, 5);
     let luthas = world.facts.luthas_anchor;
@@ -413,7 +408,6 @@ fn earn_the_fare(retry_point: Option<RetryPoint>) -> (machine::Handle, World, In
     if retry_point == Some(RetryPoint::InitialTalk) {
         fail_luthas_reach(&mut world, "first talk to Luthas");
     }
-
 
     // Employment (luthas.rs2:8–10, the multi2's first line).
     let employment_options = [
@@ -488,12 +482,6 @@ fn earn_the_fare(retry_point: Option<RetryPoint>) -> (machine::Handle, World, In
         "That customs officer is annoying isn't she?".into(),
     ];
     if retry_point == Some(RetryPoint::PostFillTalk) {
-        until(
-            &mut world,
-            "walk to Luthas after filling",
-            walk_near(luthas, 2),
-        );
-        world.here = luthas;
         fail_luthas_reach(&mut world, "first post-fill talk to Luthas");
     }
 
@@ -565,18 +553,21 @@ fn failed_luthas_approaches_spend_the_budget_and_keep_the_last_detail() {
     );
 
     world.here = luthas;
-    assert!(recovery_step(&mut world, &mut recover, &mut clock, &mut logs)
-        .1
-        .is_empty());
-
+    assert!(
+        recovery_step(&mut world, &mut recover, &mut clock, &mut logs)
+            .1
+            .is_empty()
+    );
     let mut retry_stand = None;
     let mut last_stand = luthas;
     for attempt in 0..3 {
         if let Some(stand) = retry_stand.take() {
             world.here = stand;
-            assert!(recovery_step(&mut world, &mut recover, &mut clock, &mut logs)
-                .1
-                .is_empty());
+            assert!(
+                recovery_step(&mut world, &mut recover, &mut clock, &mut logs)
+                    .1
+                    .is_empty()
+            );
         }
         let ops = recovery_step(&mut world, &mut recover, &mut clock, &mut logs).1;
         assert!(
@@ -588,14 +579,7 @@ fn failed_luthas_approaches_spend_the_budget_and_keep_the_last_detail() {
         if attempt < 2 {
             assert_eq!(result, None, "a failed approach is not terminal");
             let stand = match ops.as_slice() {
-                [InteractReq::WalkNear {
-                    x,
-                    z,
-                    level,
-                    radius: 0,
-                    compat_tile_intent: true,
-                    ..
-                }] => WorldTile {
+                [InteractReq::Walk { x, z, level, .. }] => WorldTile {
                     x: *x,
                     z: *z,
                     level: *level,
@@ -618,7 +602,8 @@ fn failed_luthas_approaches_spend_the_budget_and_keep_the_last_detail() {
         }
     }
     assert!(
-        logs.back().is_some_and(|line| line.contains("server can't reach it")),
+        logs.back()
+            .is_some_and(|line| line.contains("server can't reach it")),
         "terminal log keeps the final reach detail: {logs:?}"
     );
     assert_eq!(

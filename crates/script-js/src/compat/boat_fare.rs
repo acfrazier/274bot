@@ -1246,9 +1246,7 @@ impl Recover {
                 attempt,
                 walk,
             } => {
-                let Some(arrived) = walk.step(cx) else {
-                    return None;
-                };
+                let arrived = walk.step(cx)?;
                 if !arrived {
                     if *attempt >= TALK_ATTEMPTS {
                         return Some(false);
