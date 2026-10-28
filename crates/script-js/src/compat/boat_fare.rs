@@ -1174,8 +1174,7 @@ impl Recover {
                 else {
                     return Err(false);
                 };
-                let target =
-                    nearest_npc_tile(&facts.luthas_name).unwrap_or(facts.luthas_anchor);
+                let target = nearest_npc_tile(&facts.luthas_name).unwrap_or(facts.luthas_anchor);
                 let axis = match retry_axis {
                     Some(axis) => axis,
                     None => {
