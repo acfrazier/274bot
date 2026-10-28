@@ -419,11 +419,24 @@ impl ScriptStartHandle {
         script: Box<dyn script::native::Script>,
         selected: Option<Arc<api::game_data::SelectedGameData>>,
     ) -> Result<api::selected::RunKey, String> {
+        self.start_test_script_with_card(name, script::CompiledId("test"), script, selected)
+    }
+
+    /// Install a fixture under an explicit compiled card identity.
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
+    pub fn start_test_script_with_card(
+        &self,
+        name: &str,
+        card: script::CompiledId,
+        script: Box<dyn script::native::Script>,
+        selected: Option<Arc<api::game_data::SelectedGameData>>,
+    ) -> Result<api::selected::RunKey, String> {
         let slot = script_slot_or_insert(&self.scripts, name);
         let mut slot = slot
             .lock()
             .map_err(|_| format!("script slot retiring: {name}"))?;
-        slot.start_test_script(script, selected)?;
+        slot.start_test_script_with_card(card, script, selected)?;
         slot.native_run()
             .ok_or_else(|| format!("test script did not publish a run: {name}"))
     }
