@@ -3967,11 +3967,6 @@ impl SteppedRows {
     fn as_slice(&self) -> &[Handle] {
         &self.handles[..self.len]
     }
-
-    #[cfg(test)]
-    pub(crate) fn handles(&self) -> &[Handle] {
-        self.as_slice()
-    }
 }
 
 /// Rows are taken out of the host while they step, so a callback may
@@ -4463,6 +4458,22 @@ pub(crate) mod tests {
     use serde::Deserialize;
     use serde_json::json;
     use std::time::Duration;
+
+    /// The isolate thread's per-row and per-settled-entry state, pinned with
+    /// the sizes measured on a 64-bit target (ADR 0017 section 7.1): a seat
+    /// page's one flag fits the padding of `Row`, and a settled entry grows by
+    /// its 8-byte stamp. They live on the isolate thread, one per live row
+    /// or per outcome that waits for its `await`.
+    #[test]
+    #[cfg(target_pointer_width = "64")]
+    fn machine_host_state_sizes_are_pinned() {
+        println!(
+            "SIZES Row={} Settled={} entry_tuple={}",
+            std::mem::size_of::<Row>(),
+            std::mem::size_of::<Settled>(),
+            std::mem::size_of::<(Handle, Outcome)>(),
+        );
+    }
 
     #[test]
     fn seat_terminal_values_use_the_bounded_channel_codec_not_json_text() {

@@ -557,13 +557,240 @@ fn destructive_reset_zeroes_stamps_and_the_first_new_result_qualifies() {
     // of the old session qualifies, so no old await is released by it.
     dispatch(&iso, 1, 0);
     assert_eq!(iso.executed_seat_pages_for_test(), executed + 1);
-    let released: Vec<String> =
-        serde_json::from_value(iso.probe("Object.keys(globalThis.__got)").unwrap()).unwrap();
-    // A v2 or compat reset settles the aborted awaits itself; the seat page
-    // adds none of C's old outcome beyond what the reset already delivered.
+    // Every stamp is cleared, so the seat page releases nothing of the old
+    // session: a compat script's awaits settle at the next global settle.
+    let keys = |iso: &LoadIsolate| iso.probe("Object.keys(globalThis.__got).sort()").unwrap();
+    let after_page = keys(&iso);
+    assert_eq!(after_page, keys(&iso));
+    assert_eq!(
+        iso.machine_host_for_test()["settled"]
+            .as_array()
+            .map(Vec::len),
+        Some(3),
+        "C, N and N3 still wait for the global settle"
+    );
+    iso.join();
+}
+
+/// `IsolateCmd` must not grow with the seat page mode (ADR 0017 section 7.1).
+#[test]
+#[cfg(target_pointer_width = "64")]
+fn isolate_cmd_size_is_pinned() {
+    println!("SIZES IsolateCmd={}", std::mem::size_of::<IsolateCmd>());
+}
+
+/// The names of the hooks a script recorded, in call order.
+fn called(iso: &LoadIsolate) -> Vec<serde_json::Value> {
+    iso.probe("globalThis.__calls")
+        .unwrap()
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+}
+
+fn family_row(iso: &LoadIsolate, family: &str) -> serde_json::Value {
+    iso.machine_host_for_test()["rows"]
+        .as_array()
+        .and_then(|rows| rows.iter().find(|row| row["family"] == family).cloned())
+        .unwrap_or_else(|| panic!("a live {family} row"))
+}
+
+/// ADR 0017 N10 (Main's ruling), `periodic_bank`: a seat page that advances
+/// the prompt of the embedded child steps the row that owns it, through
+/// `TaskPhase::Run` and the child alone. After the child's terminal the same
+/// step continues into the family's `Log` hook and nothing else. An unrelated
+/// local row, the parked wait and the game tick stay where they were.
+#[test]
+fn an_embedded_periodic_bank_child_steps_only_its_owner_and_continues_into_the_log() {
+    let iso = spawn_bank_machine_card(
+        "globalThis.__calls = [];
+         globalThis.__wait_done = false;
+         const rec = (name) => (...args) => { globalThis.__calls.push([name, ...args]); };
+         runMachine('periodic_bank', {}, {
+             setStatus: rec('setStatus'),
+             deposit: (name) => { globalThis.__calls.push(['deposit', name]); return false; },
+             afterDeposit: rec('afterDeposit'),
+             destination: rec('destination'),
+             commonJunk: rec('commonJunk'),
+             returnTo: rec('returnTo'),
+             log: rec('log'),
+         });
+         runMachine('probe', { button: 7, steps: 99 });
+         Execution.delayTicks(50).then(() => { globalThis.__wait_done = true; });",
+    );
+    let ids = started(&iso);
+    assert_eq!(ids.len(), 1, "the embedded child is the only seat start");
+    let child = ids[0];
+    let mut buffer = crate::wire::IsolateBuf::default();
+    let probe_row = family_row(&iso, "probe")["handle"].as_u64().unwrap();
+    let steps_of_probe = |iso: &LoadIsolate| {
+        iso.machine_host_for_test()["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["handle"] == probe_row)
+            .map_or(0, |row| row["steps"].as_u64().unwrap())
+    };
+    let startup = called(&iso).len();
+    let tick = iso.probe("__rs2b0t_host.tick").unwrap();
+
+    post_page(&iso, &mut buffer, 1, &[live(child, NativeKind::BankNearest)], &[]);
+    dispatch(&iso, 1, 0);
+    assert_eq!(called(&iso).len(), startup, "admission calls no hook");
+
+    let probe_steps = steps_of_probe(&iso);
+    let owner_steps = family_row(&iso, "periodic_bank")["steps"].as_u64().unwrap();
+    post_page(
+        &iso,
+        &mut buffer,
+        1,
+        &[prompted(
+            child,
+            NativeKind::BankNearest,
+            1,
+            "deposit",
+            serde_json::json!(["Item"]),
+        )],
+        &[],
+    );
+    dispatch(&iso, 1, 0);
+    assert_eq!(
+        called(&iso)[startup..],
+        [serde_json::json!(["deposit", "Item"])],
+        "the next embedded prompt executes once and nothing else runs"
+    );
     assert!(
-        released.iter().all(|name| name != "c") || iso.probe("globalThis.__got.c").unwrap() == serde_json::json!("done"),
-        "{released:?}"
+        family_row(&iso, "periodic_bank")["steps"].as_u64().unwrap() > owner_steps,
+        "the owning row stepped"
+    );
+    assert_eq!(steps_of_probe(&iso), probe_steps, "the unrelated row stayed inactive");
+
+    // The terminal: the owner continues into its own `log` hook, once.
+    let after_prompt = called(&iso).len();
+    post_page(
+        &iso,
+        &mut buffer,
+        1,
+        &[],
+        &[result(child, 1, SeatTerminal::Done)],
+    );
+    dispatch(&iso, 1, 0);
+    let delta = &called(&iso)[after_prompt..];
+    assert_eq!(delta.len(), 1, "one continuation hook: {delta:?}");
+    assert_eq!(delta[0][0], "log");
+    assert_eq!(steps_of_probe(&iso), probe_steps, "still inactive");
+    assert_eq!(iso.probe("globalThis.__wait_done").unwrap(), serde_json::json!(false));
+    assert_eq!(iso.probe("__rs2b0t_host.tick").unwrap(), tick, "no tick time moved");
+    iso.join();
+}
+
+/// ADR 0017 N10, `bank_withdraw_to`: its children carry no prompts. While the
+/// child is live a seat page steps nothing. The child's terminal steps the
+/// owner once, and it continues into its own `count` read and nothing else.
+#[test]
+fn an_embedded_withdraw_child_delivers_its_terminal_to_its_owner_only() {
+    let iso = spawn_bank_machine_card(
+        "globalThis.__calls = [];
+         runMachine('bank_withdraw_to', { name: 'Shark', target: 5 }, {
+             count: () => { globalThis.__calls.push(['count']); return 0; },
+         });
+         runMachine('probe', { button: 7, steps: 99 });",
+    );
+    let ids = started(&iso);
+    assert_eq!(ids.len(), 1, "the withdraw child is the only seat start");
+    let child = ids[0];
+    let mut buffer = crate::wire::IsolateBuf::default();
+    let probe_row = family_row(&iso, "probe")["handle"].as_u64().unwrap();
+    let probe_steps = |iso: &LoadIsolate| {
+        iso.machine_host_for_test()["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["handle"] == probe_row)
+            .map_or(0, |row| row["steps"].as_u64().unwrap())
+    };
+    let startup = called(&iso).len();
+    assert_eq!(startup, 1, "the start reads the count once");
+    post_page(&iso, &mut buffer, 1, &[live(child, NativeKind::BankPlan)], &[]);
+    dispatch(&iso, 1, 0);
+    assert_eq!(called(&iso).len(), startup, "a live child with no prompt steps nothing");
+    let before = probe_steps(&iso);
+    post_page(
+        &iso,
+        &mut buffer,
+        1,
+        &[],
+        &[result(child, 1, SeatTerminal::Done)],
+    );
+    dispatch(&iso, 1, 0);
+    assert_eq!(
+        called(&iso).len(),
+        startup + 1,
+        "the owner stepped once and read its count: {:?}",
+        called(&iso)
+    );
+    assert_eq!(probe_steps(&iso), before, "the unrelated row stayed inactive");
+    iso.join();
+}
+
+/// Sol N1 and Grok F1: a slow tick makes the thread skip every queued game
+/// tick and evidence wake of its window, but never an accepted seat page. The
+/// retained page runs after the slow tick, with its own floor, and its paired
+/// snapshot applied first.
+#[test]
+fn slow_tick_skip_keeps_the_queued_seat_page() {
+    let iso = spawn_bank_machine_card(
+        "globalThis.__visits = 0;
+         runMachine('bank_deposit', {}, { match: () => { globalThis.__visits += 1; return false; } });
+         const spun = Date.now();
+         while (Date.now() - spun < 700) {}",
+    );
+    let id = RequestId::isolate(1).expect("the first machine handle");
+    let mut buffer = crate::wire::IsolateBuf::default();
+    // The slow tick is running (or about to). Everything below queues behind it,
+    // in the order of one host frame: the seat page with prompt 1 and its
+    // dispatch, then the next tick's snapshot and its game tick.
+    iso.on_game_tick(1);
+    post_page(
+        &iso,
+        &mut buffer,
+        1,
+        &[prompted(id, NativeKind::BankPlan, 1, "match", serde_json::json!(["Item"]))],
+        &[],
+    );
+    iso.enqueue_seat_page_without_watchdog_for_test(1, 0);
+    let tick_two = buffer.encode_snapshot_with_native(
+        &crate::wire::tests::empty_input(2),
+        crate::wire::NativeFactsInput::default(),
+    );
+    assert!(iso.post_snapshot(tick_two));
+    iso.enqueue_tick_without_watchdog_for_test(2);
+    assert_eq!(
+        iso.probe("globalThis.__visits").unwrap(),
+        serde_json::json!(1),
+        "the retained seat page ran its prompt hook once, after the slow tick"
+    );
+    let logs = iso.drain_logs();
+    assert!(
+        logs.iter().any(|line| line == "skipped stale ticks -> 2"),
+        "{logs:?}"
+    );
+    assert_eq!(
+        iso.probe("__rs2b0t_host.tick").unwrap(),
+        serde_json::json!(1),
+        "tick 2 was skipped as stale, so it did not run"
+    );
+    assert_eq!(
+        iso.probe("__rs2b0t_host.snapshot.tick").unwrap(),
+        serde_json::json!(2),
+        "its snapshot still applied"
+    );
+    assert_eq!(iso.executed_seat_pages_for_test(), 1);
+    machine_tick(&iso, 3);
+    assert_eq!(
+        iso.probe("__rs2b0t_host.tick").unwrap(),
+        serde_json::json!(3),
+        "a fresh tick runs"
     );
     iso.join();
 }
