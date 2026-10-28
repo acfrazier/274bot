@@ -473,6 +473,34 @@ impl ChatData {
     }
 }
 
+/// What the settings popup and the notices show beside a saved setting.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SettingFeedback {
+    /// An accepted write has not reached its terminal result.
+    Pending,
+    /// The retained failure the core holds for the setting.
+    Failed(String),
+}
+
+/// The saved settings whose write the core holds pending. `all` stands for
+/// a run that saves nothing (a live harness run): every draft stays.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct PendingSettings {
+    pub(crate) all: bool,
+    pub(crate) teleports: bool,
+    pub(crate) wilderness: bool,
+    pub(crate) bank_fetch: bool,
+    pub(crate) danger: bool,
+    pub(crate) scope_ack: bool,
+    pub(crate) survivable_ack: bool,
+    pub(crate) pause: bool,
+    pub(crate) special_areas: bool,
+    pub(crate) map_bake: bool,
+    pub(crate) quester: bool,
+    /// The saved Load order (it has no popup row: the message line says so).
+    pub(crate) load_order: bool,
+}
+
 /// Headless panel view model.
 pub struct TuiApp {
     title: String,
@@ -590,6 +618,12 @@ pub struct TuiApp {
     /// The global manual-movement pause preference changed; the session persists it.
     pub pause_script_on_manual_walk_abort_dirty: bool,
     shared_preferences: Option<frontend_core::UiPreferences>,
+    /// Which saved settings have a write the core still holds pending
+    /// (copied from the core each pump): their drafts stay the operator's.
+    pending: PendingSettings,
+    /// What the popup and the notices show beside a saved setting: pending
+    /// or the retained failure (copied from the core each pump).
+    pub(crate) setting_feedback: Vec<(frontend_core::Setting, SettingFeedback)>,
     preferences_adopted: bool,
     pub loadouts_state: LoadoutsState,
     /// The focused slot's script lifecycle (shape display only).
@@ -729,6 +763,8 @@ impl TuiApp {
             pause_script_on_manual_walk_abort: true,
             pause_script_on_manual_walk_abort_dirty: false,
             shared_preferences: None,
+            pending: PendingSettings::default(),
+            setting_feedback: Vec::new(),
             preferences_adopted: false,
             map_bake_dirty: false,
             loadouts_state: LoadoutsState::default(),
@@ -777,8 +813,11 @@ impl TuiApp {
         }
     }
 
-    /// Bind the shared process-service preferences. Walk permissions are
-    /// refreshed again for every relevant render and admission.
+    /// Bind the shared process-service preferences. Every draft follows the
+    /// durable value again on each refresh (for every relevant render and
+    /// admission), except while a change of its own is unsubmitted or its
+    /// write is pending ([`Self::set_pending_settings`]): a failed write
+    /// puts the durable value back at its setting.
     pub fn restore_preferences(&mut self, preferences: frontend_core::UiPreferences) {
         self.shared_preferences = Some(preferences.share());
         if !preferences.ready() {
@@ -788,33 +827,85 @@ impl TuiApp {
             return;
         }
         self.preferences_adopted = true;
-        let preserve_folder = self.settings_state.folder_changed || self.quester_paths_dirty;
-        let preserve_enabled = self.quester_paths_dirty;
         self.quester_paths_controller.restore(&preferences);
-        let enabled = self.quester_paths_controller.settings().enabled();
-        let folder = self
-            .quester_paths_controller
-            .settings()
-            .folder()
-            .to_path_buf();
-        if !preserve_enabled {
+        self.follow_saved_drafts(&preferences);
+        self.refresh_walk_permissions();
+    }
+
+    /// Which saved settings have a write the core still holds pending (or
+    /// every one of them, for a run that saves nothing): their drafts are
+    /// the operator's change, not yet the durable value.
+    pub(crate) fn set_pending_settings(&mut self, pending: PendingSettings) {
+        self.pending = pending;
+    }
+
+    /// Whether the saved Load order is being written: the message line
+    /// says so while it is the only thing to say.
+    pub(crate) fn load_order_saving(&self) -> bool {
+        self.pending.load_order
+    }
+
+    /// Whether the draft of `preference` is held: unsubmitted, or its write
+    /// is pending.
+    pub(crate) fn holds(&self, preference: NavPreference) -> bool {
+        let pending = match preference {
+            NavPreference::AllowTeleports => self.pending.teleports,
+            NavPreference::AllowWilderness => self.pending.wilderness,
+            NavPreference::AllowBankFetch => self.pending.bank_fetch,
+            NavPreference::AllowDangerZones | NavPreference::SurvivableRouting => {
+                self.pending.danger
+            }
+            NavPreference::ScriptScopeNoticeAck => self.pending.scope_ack,
+            NavPreference::SurvivableRoutingNoticeAck => self.pending.survivable_ack,
+            NavPreference::PauseScriptOnManualWalkAbort => {
+                self.pending.pause || self.pause_script_on_manual_walk_abort_dirty
+            }
+            NavPreference::ShowSpecialAreas => self.pending.special_areas,
+        };
+        let dirty = match preference {
+            NavPreference::AllowDangerZones | NavPreference::SurvivableRouting => {
+                self.nav_preferences_dirty.iter().any(|p| {
+                    matches!(
+                        p,
+                        NavPreference::AllowDangerZones | NavPreference::SurvivableRouting
+                    )
+                })
+            }
+            other => self.nav_preferences_dirty.contains(&other),
+        };
+        self.pending.all || pending || dirty
+    }
+
+    /// Drafts of the saved settings that are not walk permissions follow
+    /// their durable values: the manual-walk pause, the map-bake choice, the
+    /// special-areas overlay and the Quester source (the controller holds
+    /// the source the core adopted from the snapshot).
+    fn follow_saved_drafts(&mut self, preferences: &frontend_core::UiPreferences) {
+        if !(self.pending.all || self.pending.quester || self.quester_paths_dirty) {
+            let settings = self.quester_paths_controller.settings();
+            let enabled = settings.enabled();
+            let follow_folder =
+                !self.settings_state.folder_changed && !self.settings_state.folder_editing;
+            let folder_differs = self.quester_paths.folder() != settings.folder();
+            let folder = (follow_folder && folder_differs).then(|| settings.folder().to_path_buf());
             self.quester_paths.set_enabled(enabled);
+            if let Some(folder) = folder {
+                self.quester_paths.set_folder(folder);
+            }
         }
-        if !preserve_folder {
-            self.quester_paths.set_folder(folder);
-        }
-        if !self.pause_script_on_manual_walk_abort_dirty {
+        if !self.holds(NavPreference::PauseScriptOnManualWalkAbort) {
             self.pause_script_on_manual_walk_abort = frontend_core::nav_preference(
-                &preferences,
-                frontend_core::NavPreference::PauseScriptOnManualWalkAbort,
+                preferences,
+                NavPreference::PauseScriptOnManualWalkAbort,
             )
             .unwrap_or(true);
         }
-        if !self.map_bake_dirty {
-            self.map_bake = frontend_core::load_map_bake_choice(&preferences);
+        if !(self.pending.all || self.pending.map_bake || self.map_bake_dirty) {
+            self.map_bake = frontend_core::load_map_bake_choice(preferences);
         }
-        self.refresh_walk_permissions();
-        self.map.restore_persisted_wilderness(&preferences);
+        if !self.holds(NavPreference::ShowSpecialAreas) {
+            self.map.restore_persisted_wilderness(preferences);
+        }
     }
 
     /// Refresh all TUI views of the shared walk permissions from their
@@ -841,54 +932,62 @@ impl TuiApp {
         );
         if !self.preferences_adopted && self.shared_preferences.is_some() {
             self.walk_permissions = view;
-        } else if view != self.walk_permissions {
+        } else {
             self.adopt_walk_permissions(view);
+            if let Some(preferences) = self
+                .shared_preferences
+                .as_ref()
+                .filter(|prefs| prefs.ready())
+                .map(frontend_core::UiPreferences::share)
+            {
+                self.follow_saved_drafts(&preferences);
+            }
         }
     }
 
     /// Adopt `view`, the durable walk permissions the core just read, into
     /// every TUI view of them (the edit buffer, the acknowledgements, the
-    /// one-shot zone grant and an open parameters popup).
+    /// one-shot zone grant and an open parameters popup). A draft the
+    /// operator changed whose write is not settled stays; every other draft
+    /// is the durable value, so a failed write shows the saved value again.
     pub(crate) fn adopt_walk_permissions(&mut self, view: WalkGlobalsView) {
-        let before = self.walk_permissions;
-        let old = before.globals();
         let next = view.globals();
-        let changed = |draft, old, next| if old == next { draft } else { next };
+        let keep = |held: bool, draft: bool, next: bool| if held { draft } else { next };
         self.nav = frontend_core::WalkGlobals::new(
-            changed(
+            keep(
+                self.holds(NavPreference::AllowTeleports),
                 self.nav.allow_teleports(),
-                old.allow_teleports(),
                 next.allow_teleports(),
             ),
-            changed(
+            keep(
+                self.holds(NavPreference::AllowWilderness),
                 self.nav.allow_wilderness(),
-                old.allow_wilderness(),
                 next.allow_wilderness(),
             ),
-            changed(
+            keep(
+                self.holds(NavPreference::AllowBankFetch),
                 self.nav.allow_bank_fetch(),
-                old.allow_bank_fetch(),
                 next.allow_bank_fetch(),
             ),
-            changed(
+            keep(
+                self.holds(NavPreference::AllowDangerZones),
                 self.nav.allow_danger_zones(),
-                old.allow_danger_zones(),
                 next.allow_danger_zones(),
             ),
-            changed(
+            keep(
+                self.holds(NavPreference::SurvivableRouting),
                 self.nav.survivable_routing(),
-                old.survivable_routing(),
                 next.survivable_routing(),
             ),
         );
-        self.script_scope_notice_ack = changed(
+        self.script_scope_notice_ack = keep(
+            self.holds(NavPreference::ScriptScopeNoticeAck),
             self.script_scope_notice_ack,
-            before.script_scope_notice_ack(),
             view.script_scope_notice_ack(),
         );
-        self.survivable_routing_notice_ack = changed(
+        self.survivable_routing_notice_ack = keep(
+            self.holds(NavPreference::SurvivableRoutingNoticeAck),
             self.survivable_routing_notice_ack,
-            before.survivable_routing_notice_ack(),
             view.survivable_routing_notice_ack(),
         );
         self.walk_permissions = view;
@@ -902,6 +1001,49 @@ impl TuiApp {
 
     pub(crate) fn shared_preferences(&self) -> Option<&frontend_core::UiPreferences> {
         self.shared_preferences.as_ref()
+    }
+
+    /// What is shown beside `setting`: `None` once it is saved.
+    pub fn setting_feedback(&self, setting: frontend_core::Setting) -> Option<&SettingFeedback> {
+        self.setting_feedback
+            .iter()
+            .find(|(shown, _)| *shown == setting)
+            .map(|(_, feedback)| feedback)
+    }
+
+    /// Show `status` beside `setting` (the core's state of it). Allocates
+    /// only when the failure text changed.
+    pub(crate) fn show_setting_status(
+        &mut self,
+        setting: frontend_core::Setting,
+        status: frontend_core::SettingStatus<'_>,
+    ) {
+        let position = self
+            .setting_feedback
+            .iter()
+            .position(|(shown, _)| *shown == setting);
+        let next = match status {
+            frontend_core::SettingStatus::Saved => {
+                if let Some(position) = position {
+                    self.setting_feedback.swap_remove(position);
+                }
+                return;
+            }
+            frontend_core::SettingStatus::Pending => SettingFeedback::Pending,
+            frontend_core::SettingStatus::Failed(text) => {
+                if let Some(position) = position {
+                    if matches!(&self.setting_feedback[position].1, SettingFeedback::Failed(shown) if shown == text)
+                    {
+                        return;
+                    }
+                }
+                SettingFeedback::Failed(text.to_owned())
+            }
+        };
+        match position {
+            Some(position) => self.setting_feedback[position].1 = next,
+            None => self.setting_feedback.push((setting, next)),
+        }
     }
 
     /// Flip the map's special-areas overlay. Saving the choice (shared with

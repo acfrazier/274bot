@@ -60,10 +60,19 @@ impl QuesterPathsView {
 
     /// Read the host-wide settings object without touching any Path files.
     fn read(preferences: &UiPreferences) -> Self {
-        let Some(value) = preferences.value("quester_paths") else {
-            return Self::default();
-        };
-        let Some(settings) = value.as_object() else {
+        match preferences.document() {
+            Ok(document) => Self::read_document(&document),
+            Err(_) => Self::default(),
+        }
+    }
+
+    /// The host-wide settings a preference document holds (the defaults
+    /// for a member that is absent or the wrong type).
+    pub(crate) fn read_document(document: &serde_json::Map<String, serde_json::Value>) -> Self {
+        let Some(settings) = document
+            .get("quester_paths")
+            .and_then(serde_json::Value::as_object)
+        else {
             return Self::default();
         };
         Self {
@@ -293,6 +302,9 @@ pub struct QuesterPathsController {
     reload: ReloadPaths,
     notice: Option<Result<Arc<str>, Arc<str>>>,
     reload_when_ready: bool,
+    /// A changed source asked for a reload before any game data was
+    /// supplied: [`Self::advance`] says so once.
+    profile_notice_due: bool,
     /// The `ReloadQuesterPaths` command the running reload answers.
     reload_request: Option<api::identity::RequestId>,
     /// That command's outcome, once the reload finished, until the
@@ -325,42 +337,49 @@ impl QuesterPathsController {
         &self.settings
     }
 
-    /// Persist (when requested), apply and reload a changed source. The
-    /// settings apply once the write is accepted. A pending write returns
-    /// [`Update::Queued`] for the command to settle from the service-owned result.
-    pub(crate) fn apply_changed(
-        &mut self,
+    /// Submit the source members that differ between `before` (the source
+    /// the last accepted write asked for, or the active one) and `after`.
+    /// Nothing is applied here: the source takes effect when the write is
+    /// durable ([`Self::adopt_durable`]), and a failed write leaves the prior
+    /// source active.
+    pub(crate) fn submit_changed(
         preferences: &UiPreferences,
+        before: &QuesterPathsView,
         after: &QuesterPathsView,
-        selected: Option<Arc<api::game_data::SelectedGameData>>,
-        persist: bool,
-    ) -> Result<Update, String> {
-        if after == &self.settings {
-            return Ok(Update::Durable);
-        }
-        let mut write = Update::Durable;
-        if persist {
-            match QuesterPathsView::persist_changed(preferences, &self.settings, after) {
-                Ok(update) => write = update,
-                Err(error) => {
-                    let message = format!("Quest Paths settings were not saved: {error}");
-                    self.set_notice(Err(Arc::from(message.clone())));
-                    return Err(message);
-                }
-            }
-        }
+    ) -> Result<Update, PreferenceError> {
+        QuesterPathsView::persist_changed(preferences, before, after)
+    }
 
+    /// Apply and reload `after` at once without saving it (a live harness
+    /// run, whose source is never the operator's).
+    pub(crate) fn apply_unsaved(&mut self, after: &QuesterPathsView) {
+        if after == &self.settings {
+            return;
+        }
         self.settings.enabled = after.enabled;
         self.settings.folder.clone_from(&after.folder);
         self.settings.apply();
         self.reload_when_ready = true;
-        if selected.is_none() {
-            self.set_notice(Err(Arc::from(
-                "Load a profile before reloading quest Paths.",
-            )));
+        self.profile_notice_due = true;
+    }
+
+    /// Follow the durable source: apply it to the process registry and
+    /// reload it when it differs from the active one. The first adoption
+    /// is the restore at startup (an enabled source reloads once game data
+    /// is supplied to [`Self::advance`]).
+    pub(crate) fn adopt_durable(&mut self, durable: QuesterPathsView, first: bool) {
+        if !first && durable == self.settings {
+            return;
         }
-        self.advance(selected);
-        Ok(write)
+        self.settings = durable;
+        self.settings.apply();
+        if first {
+            self.reload_when_ready = self.settings.enabled;
+            self.notice = None;
+        } else {
+            self.reload_when_ready = true;
+            self.profile_notice_due = true;
+        }
     }
 
     /// Handle an explicit Reload Paths action (`ReloadQuesterPaths`
@@ -421,8 +440,14 @@ impl QuesterPathsController {
         if self.reload_when_ready && !self.reload.is_running() {
             if let Some(selected) = selected {
                 self.reload_when_ready = false;
+                self.profile_notice_due = false;
                 self.start_reload(selected);
                 return;
+            }
+            if std::mem::take(&mut self.profile_notice_due) {
+                self.set_notice(Err(Arc::from(
+                    "Load a profile before reloading quest Paths.",
+                )));
             }
         }
         if self.reload.worker.is_none() {

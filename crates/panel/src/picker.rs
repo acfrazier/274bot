@@ -720,13 +720,20 @@ fn map_layers(map: &WalkMapRenderer, view: nav_planner::map::spatial::View) -> O
         special_areas: map.show_special_areas,
     }
 }
-
-fn persist_special_area_toggle(session: &mut Session, map: &WalkMapRenderer) {
+fn persist_special_area_toggle(session: &mut Session, map: &mut WalkMapRenderer) {
+    // A choice whose write ended (failed, or landed) leaves the saved value
+    // showing: the map's own toggle follows it, and nothing is submitted
+    // again for the stale choice.
+    if session.take_special_areas_dropped() {
+        map.show_special_areas = session.ui.nav.show_special_areas;
+        return;
+    }
     if session.ui.nav.show_special_areas == map.show_special_areas {
         return;
     }
     session.ui.nav.show_special_areas = map.show_special_areas;
     if session.persist_ui {
+        session.remember_nav_preference("show_special_areas", map.show_special_areas);
         session.submit(
             frontend_core::OperatorCommand::SetNavPreference(
                 frontend_core::NavPreference::ShowSpecialAreas,
@@ -1678,6 +1685,9 @@ fn draw_map_bake_banner(ui: &Ui, session: &mut Session) {
             if ui.button("Not now") {
                 session.decline_map_bake();
             }
+            // "Always bake" also saves the choice: that is durable-only and
+            // says here when it is pending or failed.
+            crate::app::setting_feedback_line(ui, session, frontend_core::Setting::MapBake);
             ui.separator();
         }
         MapBakePrompt::Declined => {

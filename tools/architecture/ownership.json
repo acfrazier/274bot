@@ -639,6 +639,10 @@
       "owner": "T3"
     },
     {
+      "path": "crates/frontend-core/src/setting.rs",
+      "owner": "T3"
+    },
+    {
       "path": "crates/frontend-core/src/surface.rs",
       "owner": "T3"
     },
@@ -700,6 +704,10 @@
     },
     {
       "path": "crates/frontend-core/tests/password_handshake.rs",
+      "owner": "T3"
+    },
+    {
+      "path": "crates/frontend-core/tests/setting_book_alloc.rs",
       "owner": "T3"
     },
     {

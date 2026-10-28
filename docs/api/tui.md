@@ -111,6 +111,31 @@ pending. The process writer keeps the accepted save after you close the popup.
 Refresh does not replace an unsaved checkbox or folder draft with an unchanged
 saved value.
 
+A saved row (permissions, danger routing, the manual-walk pause, map bake, the
+Quest Paths gate and folder, the session log file, and the background-bots
+notice) takes effect only after its save has reached the disk. While it is
+pending the row shows your choice followed by `— saving…`. If the save fails the
+row shows the saved value again followed by the reason, for example
+`— Not saved: …`. The reason leaves when you act on that row again, or after 15
+seconds. When the selected row with its reason is taller than the popup (a long
+path on an 80x24 terminal), the popup shows part of that row and its last line
+says more is below or above: Up and Down then scroll through the row before
+they move to the next one. The popup always keeps two lines for the selected
+row, so that sign always has a line. When the notices under the rows (with the
+reason of a failed dismiss) need more lines than the popup leaves them, the
+notice area shows the last notices and its first line says
+`↑ more notices above (PgUp)`, `↓ more notices below (PgDn)` or both: PgUp and
+PgDn scroll through every notice line without moving the row. A failed
+**Got it** keeps the background-bots notice on screen with the reason after
+it. The saved Load order has no row: its
+message line says
+`Load order: saving…` while a reorder is written, and a failed save shows its
+reason there. The Logs status line follows the session file whoever changed
+it (you, an earlier run that left it on, or another program copy): it says
+`session file: saving…` while the choice is pending, then whether the file
+opened or could not be opened or written, also after it had been writing. The
+failure leaves with the same 15 seconds, and nothing replaces it.
+
 ## Keys
 
 One routing model: an open popup or overlay takes every key (the Script

@@ -15,17 +15,34 @@ use ratatui::text::Span;
 use ratatui::widgets::{Block, Borders, Clear, Widget};
 
 use frontend_core::quester_paths::{QuesterPathsView, LOAD_PATHS_LABEL, RELOAD_PATHS_LABEL};
-use frontend_core::{CurePoison, GuardianPolicy, SettingsDraft, GUARDIAN_EVENTS};
+use frontend_core::{CurePoison, GuardianPolicy, Setting, SettingsDraft, GUARDIAN_EVENTS};
 use frontend_core::{
     FormNotice, MapBakeChoice, MemoryNotice, NavPreference, BANK_FETCH_PERMISSION_SCOPE,
     GLOBAL_DANGER_WARNING, GLOBAL_PERMISSION_LABELS, NOTHING_SAVED, QUESTER_HEADING,
     QUEST_PATHS_HEADING, ROUTING_SCOPE_NOTE, SCRIPT_SCOPE_NOTICE,
 };
 
+use crate::app::SettingFeedback;
+
 /// The popup's title while no profile is bound to it.
 pub const TITLE: &str = "settings";
 const EVENT_POLICY_UNAVAILABLE: &str =
     "Fight and Ignore are unavailable; the Guardian treats saved choices as Flee.";
+
+/// The last line of a selected setting taller than the viewport: which of
+/// its lines are hidden and the key that shows them.
+const MORE_BELOW: &str = "↓ more of this setting below (Down)";
+const MORE_ABOVE: &str = "↑ more of this setting above (Up)";
+const MORE_ABOVE_AND_BELOW: &str = "↕ more of this setting above (Up) and below (Down)";
+/// The first line of the notice area under the rows when the notices need
+/// more lines than the popup leaves them: which notices are hidden and the
+/// key that shows them.
+const NOTICES_ABOVE: &str = "↑ more notices above (PgUp)";
+const NOTICES_BELOW: &str = "↓ more notices below (PgDn)";
+const NOTICES_ABOVE_AND_BELOW: &str = "↕ more notices above (PgUp) and below (PgDn)";
+/// Drawn on the popup's bottom border when the popup leaves no line for any
+/// notice under the rows.
+const NOTICES_CUT: &str = " not every notice fits: make the terminal taller ";
 
 /// Lamp skills the popup cycles, in display order.
 pub const LAMP_SKILLS: [&str; 7] = [
@@ -58,6 +75,25 @@ pub struct SettingsState {
     pub preferences_pending: bool,
     /// Hit targets from the last drawn viewport, including wrapped rows.
     pub row_areas: [Rect; 16],
+    /// The row whose own lines [`Self::detail_scroll`] scrolls.
+    pub detail_row: usize,
+    /// Lines of the selected setting scrolled out above the viewport when
+    /// the setting (with its saved state or failure) is taller than the
+    /// viewport. Up and Down scroll these lines before they move the row.
+    pub detail_scroll: u16,
+    /// The largest [`Self::detail_scroll`] the last drawn viewport allowed
+    /// (0 when the selected setting fits).
+    pub detail_max: u16,
+    /// Notice lines hidden below the notice area under the rows, when the
+    /// notices need more lines than the popup leaves them. PageUp and
+    /// PageDown scroll them. The area first shows the last notices.
+    pub notice_scroll: u16,
+    /// The largest [`Self::notice_scroll`] the last drawn popup allowed (0
+    /// when every notice fits).
+    pub notice_max: u16,
+    /// Lines one PageUp or PageDown scrolls: the height of the last drawn
+    /// notice window.
+    pub notice_page: u16,
 }
 
 impl SettingsState {
@@ -137,6 +173,9 @@ pub struct SettingsPane<'a> {
     pub title: &'a str,
     pub notice: Option<&'a FormNotice>,
     pub memory: Option<MemoryNotice>,
+    /// What the core shows beside each saved setting: pending, or the
+    /// retained failure (copied from the core each pump).
+    pub feedback: &'a [(Setting, SettingFeedback)],
 }
 
 impl<'a> SettingsPane<'a> {
@@ -154,6 +193,7 @@ impl<'a> SettingsPane<'a> {
             title: TITLE,
             notice: None,
             memory: None,
+            feedback: &[],
             pause_script_on_manual_walk_abort: None,
             script_scope_notice_ack: None,
             survivable_routing_notice_ack: None,
@@ -187,11 +227,13 @@ impl<'a> SettingsPane<'a> {
         self
     }
 
-    /// One key while the popup is open. Up/Down move the row; Enter/Space
-    /// toggles settings, `d` dismisses the script-scope notice, and `n`
-    /// dismisses the independent survivable-routing notice; `r` relogs the
-    /// bound member only while its login mode differs and no relog is queued.
-    /// Esc closes.
+    /// One key while the popup is open. Up/Down move the row; when the
+    /// selected setting (with its saved state or failure) is taller than the
+    /// viewport they scroll its own lines first. PageUp/PageDown scroll the
+    /// notices under the rows when they do not all fit. Enter/Space toggles
+    /// settings, `d` dismisses the script-scope notice, and `n` dismisses the
+    /// independent survivable-routing notice; `r` relogs the bound member
+    /// only while its login mode differs and no relog is queued. Esc closes.
     pub fn on_key(&mut self, key: KeyEvent) -> SettingsKey {
         if self.state.folder_editing {
             return self.folder_key(key);
@@ -218,11 +260,38 @@ impl<'a> SettingsPane<'a> {
                 SettingsKey::SurvivableRoutingNoticeAck
             }
             KeyCode::Up | KeyCode::Char('k') => {
-                self.state.row = self.state.row.saturating_sub(1);
+                if self.state.detail_row == self.state.row && self.state.detail_scroll > 0 {
+                    self.state.detail_scroll -= 1;
+                } else {
+                    self.state.row = self.state.row.saturating_sub(1);
+                    self.reset_detail();
+                }
                 SettingsKey::Consumed
             }
             KeyCode::Down | KeyCode::Char('j') => {
-                self.state.row = (self.state.row + 1).min(15);
+                if self.state.detail_row == self.state.row
+                    && self.state.detail_scroll < self.state.detail_max
+                {
+                    self.state.detail_scroll += 1;
+                } else {
+                    self.state.row = (self.state.row + 1).min(15);
+                    self.reset_detail();
+                }
+                SettingsKey::Consumed
+            }
+            KeyCode::PageUp => {
+                self.state.notice_scroll = self
+                    .state
+                    .notice_scroll
+                    .saturating_add(self.state.notice_page.max(1))
+                    .min(self.state.notice_max);
+                SettingsKey::Consumed
+            }
+            KeyCode::PageDown => {
+                self.state.notice_scroll = self
+                    .state
+                    .notice_scroll
+                    .saturating_sub(self.state.notice_page.max(1));
                 SettingsKey::Consumed
             }
             KeyCode::Enter => self.activate(),
@@ -234,6 +303,13 @@ impl<'a> SettingsPane<'a> {
             }
             _ => SettingsKey::Ignored,
         }
+    }
+
+    /// The selected row changed: its own lines start at its top.
+    fn reset_detail(&mut self) {
+        self.state.detail_row = self.state.row;
+        self.state.detail_scroll = 0;
+        self.state.detail_max = 0;
     }
 
     fn folder_key(&mut self, key: KeyEvent) -> SettingsKey {
@@ -405,7 +481,9 @@ impl<'a> SettingsPane<'a> {
 impl Widget for SettingsPane<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         self.state.row_areas.fill(Rect::default());
-        if !self.state.open || area.width < 3 || area.height < 4 {
+        // The popup needs two lines inside its border: a line of the
+        // selected setting and the line that says what of it is hidden.
+        if !self.state.open || area.width < 3 || area.height < 5 {
             return;
         }
         let memory_note = self
@@ -521,6 +599,15 @@ impl Widget for SettingsPane<'_> {
                 self.settings.survival().cure_poison().label()
             ),
         ];
+        // What follows each row while its setting is pending or failed:
+        // pieces borrowed from the retained feedback and drawn after the
+        // row's own text, so a frame copies none of it.
+        let row_feedback: [Feedback<'_>; 16] = std::array::from_fn(|index| {
+            row_settings(index)
+                .iter()
+                .find_map(|setting| feedback_parts(self.feedback, *setting))
+                .unwrap_or(NO_FEEDBACK)
+        });
         let quester_heading = format!("{QUESTER_HEADING}: {QUEST_PATHS_HEADING}");
         let note_style = Style::default().fg(Color::DarkGray);
         let heading_style = Style::default().add_modifier(Modifier::BOLD);
@@ -549,24 +636,44 @@ impl Widget for SettingsPane<'_> {
         ];
         let width = area.width.min(100);
         let columns = usize::from(width - 2);
-        let row_heights = rows.each_ref().map(|row| wrapped_rows(row, columns));
+        let row_heights: [u16; 16] = std::array::from_fn(|index| {
+            wrapped_rows_parts(
+                [
+                    rows[index].as_str(),
+                    row_feedback[index][0],
+                    row_feedback[index][1],
+                ],
+                columns,
+            )
+        });
         let header_heights =
             headers.map(|header| header.map_or(0, |(text, _)| wrapped_rows(text, columns)));
         let block_heights: [u16; 16] =
             std::array::from_fn(|index| header_heights[index] + row_heights[index]);
         let selected = self.state.row.min(rows.len() - 1);
         let memory_height = wrapped_rows(memory_note, columns);
+        let scope_dismiss = dismiss_parts(
+            "[d] dismiss this notice",
+            self.feedback,
+            Setting::Nav(frontend_core::NavPreference::ScriptScopeNoticeAck),
+        );
+        let migration_dismiss = dismiss_parts(
+            "[n] dismiss this notice",
+            self.feedback,
+            Setting::Nav(frontend_core::NavPreference::SurvivableRoutingNoticeAck),
+        );
         let scope_height = if show_scope_notice {
-            wrapped_rows(SCRIPT_SCOPE_NOTICE, columns) + 1
+            wrapped_rows(SCRIPT_SCOPE_NOTICE, columns) + wrapped_rows_parts(scope_dismiss, columns)
         } else {
             0
         };
-        // One extra row for "[n] dismiss this notice", as for the scope notice.
+        // The dismiss line sits under its notice and carries the notice's
+        // saving state or failure.
         let migration_notice_height = if show_survivable_routing_notice {
             wrapped_rows(
                 frontend_core::walk_permissions::survivable_routing_notice(),
                 columns,
-            ) + 1
+            ) + wrapped_rows_parts(migration_dismiss, columns)
         } else {
             0
         };
@@ -602,130 +709,192 @@ impl Widget for SettingsPane<'_> {
         }
         let inner = block.inner(popup);
         block.render(popup, buf);
-
-        // Preserve one row for the selected setting while keeping feedback
-        // visible when the terminal is too small for every notice.
-        let mut footer_capacity = inner.height.saturating_sub(1);
-        let path_notice_height = path_notice_height.min(footer_capacity);
-        footer_capacity -= path_notice_height;
-        let notice_height = notice_height.min(footer_capacity);
-        footer_capacity -= notice_height;
-        let memory_height = memory_height.min(footer_capacity);
-        footer_capacity -= memory_height;
-        let help_height = help_height.min(footer_capacity);
-        footer_capacity -= help_height;
-        let migration_notice_height = migration_notice_height.min(footer_capacity);
-        footer_capacity -= migration_notice_height;
-        let scope_height = scope_height.min(footer_capacity);
-        let rows_height = inner.height
-            - path_notice_height
-            - notice_height
-            - memory_height
-            - help_height
-            - migration_notice_height
-            - scope_height;
-        let mut first = 0;
-        let mut through_selected = block_heights[..=selected].iter().sum::<u16>();
-        while first < selected && through_selected > rows_height {
-            through_selected -= block_heights[first];
-            first += 1;
-        }
+        // The notices below the rows share the popup with at least two lines
+        // of the rows: a window of the selected setting and its sign. When
+        // the notices need more lines than that leaves, their area shows a
+        // window of them (its newest lines, at the bottom, first) under a
+        // sign that says which part is hidden and the key that shows it.
+        // PageUp and PageDown scroll that window. Nothing is cut silently.
+        let footer_need = memory_height
+            + help_height
+            + migration_notice_height
+            + scope_height
+            + notice_height
+            + path_notice_height;
+        let footer_height = footer_need.min(inner.height.saturating_sub(2));
+        let notices_cut = footer_need > footer_height;
+        // The sign takes the area's first line when the area has a line for
+        // it and one more for the notices; else it goes on the bottom border.
+        let sign_inside = notices_cut && footer_height >= 2;
+        let notice_window = footer_height - u16::from(sign_inside);
+        let notice_max = footer_need - notice_window;
+        let notice_scroll = self.state.notice_scroll.min(notice_max);
+        self.state.notice_scroll = notice_scroll;
+        self.state.notice_max = notice_max;
+        self.state.notice_page = notice_window.max(1);
+        let rows_height = inner.height - footer_height;
         let rows_bottom = inner.y + rows_height;
-        let mut y = inner.y;
-        for (index, text) in rows.iter().enumerate().skip(first) {
-            if y >= rows_bottom {
-                break;
+        if notices_cut {
+            let hidden_above = notice_max > notice_scroll;
+            let sign = match (hidden_above, notice_scroll > 0) {
+                (true, true) => NOTICES_ABOVE_AND_BELOW,
+                (true, false) => NOTICES_ABOVE,
+                (false, _) => NOTICES_BELOW,
+            };
+            let yellow = Style::default().fg(Color::Yellow);
+            if sign_inside {
+                buf.set_stringn(
+                    inner.x,
+                    rows_bottom,
+                    sign,
+                    usize::from(inner.width),
+                    Style::default().fg(Color::DarkGray),
+                );
+            } else if footer_height == 1 {
+                buf.set_stringn(
+                    popup.x + 1,
+                    popup.bottom() - 1,
+                    sign,
+                    usize::from(popup.width.saturating_sub(2)),
+                    yellow,
+                );
+            } else {
+                // No line is left for any notice (a popup with two lines
+                // inside its border).
+                let marker = Span::raw(NOTICES_CUT).width();
+                let marker = u16::try_from(marker).unwrap_or(u16::MAX);
+                buf.set_stringn(
+                    popup.x + popup.width.saturating_sub(marker.saturating_add(1)).max(1),
+                    popup.bottom() - 1,
+                    NOTICES_CUT,
+                    usize::from(popup.width.saturating_sub(2)),
+                    yellow,
+                );
             }
-            if let Some((header, style)) = headers[index] {
-                y = draw_wrapped(buf, inner, y, rows_bottom, header, style);
-                if y >= rows_bottom {
-                    break;
-                }
-            }
-            let bottom = (y + row_heights[index]).min(rows_bottom);
-            self.state.row_areas[index] = Rect::new(inner.x, y, inner.width, bottom - y);
-            let row_style = if index == 8 && danger_level == frontend_core::DangerLevel::Always {
+        }
+
+        let row_style = |index: usize| {
+            if index == 8 && danger_level == frontend_core::DangerLevel::Always {
                 Style::default().fg(Color::Red)
             } else {
                 Style::default()
-            };
-            y = draw_wrapped(buf, inner, y, bottom, text, row_style);
+            }
+        };
+        if self.state.detail_row != selected {
+            self.state.detail_row = selected;
+            self.state.detail_scroll = 0;
         }
-
-        let yellow = Style::default().fg(Color::Yellow);
-        let memory_bottom = rows_bottom + memory_height;
-        draw_wrapped(buf, inner, rows_bottom, memory_bottom, memory_note, yellow);
-        let help_bottom = memory_bottom + help_height;
-        if let Some(help) = danger_help {
-            draw_wrapped(buf, inner, memory_bottom, help_bottom, help, yellow);
-        }
-        let migration_bottom = help_bottom + migration_notice_height;
-        if show_survivable_routing_notice && migration_notice_height > 0 {
-            let dismiss_y = migration_bottom.saturating_sub(1);
-            draw_wrapped(
+        let selected_height = block_heights[selected];
+        if selected_height > rows_height {
+            // The selected setting (a long failure on a small terminal) is
+            // taller than the viewport. The viewport shows a window of its
+            // own lines, Up and Down scroll that window before they move the
+            // row, and the last line says which part is hidden, so nothing
+            // of the setting is lost without a sign. The rows always have a
+            // line for the window and a line for the sign.
+            let window = rows_height - 1;
+            let max_scroll = selected_height - window;
+            let scroll = self.state.detail_scroll.min(max_scroll);
+            self.state.detail_scroll = scroll;
+            self.state.detail_max = max_scroll;
+            self.state.row_areas[selected] = Rect::new(inner.x, inner.y, inner.width, window);
+            draw_scrolled_block(
                 buf,
                 inner,
-                help_bottom,
-                dismiss_y,
+                inner.y + window,
+                headers[selected],
+                [
+                    rows[selected].as_str(),
+                    row_feedback[selected][0],
+                    row_feedback[selected][1],
+                ],
+                row_style(selected),
+                scroll,
+            );
+            let hint = match (scroll > 0, scroll < max_scroll) {
+                (true, true) => MORE_ABOVE_AND_BELOW,
+                (true, false) => MORE_ABOVE,
+                (false, _) => MORE_BELOW,
+            };
+            buf.set_stringn(
+                inner.x,
+                rows_bottom - 1,
+                hint,
+                usize::from(inner.width),
+                Style::default().fg(Color::DarkGray),
+            );
+        } else {
+            self.state.detail_scroll = 0;
+            self.state.detail_max = 0;
+            let mut first = 0;
+            let mut through_selected = block_heights[..=selected].iter().sum::<u16>();
+            while first < selected && through_selected > rows_height {
+                through_selected -= block_heights[first];
+                first += 1;
+            }
+            let mut y = inner.y;
+            for (index, text) in rows.iter().enumerate().skip(first) {
+                if y >= rows_bottom {
+                    break;
+                }
+                if let Some((header, style)) = headers[index] {
+                    y = draw_wrapped(buf, inner, y, rows_bottom, header, style);
+                    if y >= rows_bottom {
+                        break;
+                    }
+                }
+                let bottom = (y + row_heights[index]).min(rows_bottom);
+                self.state.row_areas[index] = Rect::new(inner.x, y, inner.width, bottom - y);
+                y = draw_wrapped_parts(
+                    buf,
+                    inner,
+                    y,
+                    bottom,
+                    [
+                        text.as_str(),
+                        row_feedback[index][0],
+                        row_feedback[index][1],
+                    ],
+                    row_style(index),
+                );
+            }
+        }
+
+        // The notices, in order, as one column of lines of which the area
+        // shows the window `notice_scroll` lines above its end.
+        let yellow = Style::default().fg(Color::Yellow);
+        let mut notices = NoticeArea {
+            x: inner.x,
+            width: usize::from(inner.width).max(1),
+            top: rows_bottom + u16::from(sign_inside),
+            bottom: inner.bottom(),
+            first: notice_max - notice_scroll,
+            line: 0,
+        };
+        notices.text(buf, memory_note, yellow);
+        if let Some(help) = danger_help {
+            notices.text(buf, help, yellow);
+        }
+        if show_survivable_routing_notice {
+            notices.text(
+                buf,
                 frontend_core::walk_permissions::survivable_routing_notice(),
                 yellow,
             );
-            draw_wrapped(
-                buf,
-                inner,
-                dismiss_y,
-                migration_bottom,
-                "[n] dismiss this notice",
-                yellow,
-            );
+            notices.parts(buf, migration_dismiss, yellow);
         }
-        let scope_bottom = migration_bottom + scope_height;
-        if show_scope_notice && scope_height > 0 {
-            let dismiss_y = scope_bottom.saturating_sub(1);
-            draw_wrapped(
-                buf,
-                inner,
-                migration_bottom,
-                dismiss_y,
-                SCRIPT_SCOPE_NOTICE,
-                yellow,
-            );
-            draw_wrapped(
-                buf,
-                inner,
-                dismiss_y,
-                scope_bottom,
-                "[d] dismiss this notice",
-                yellow,
-            );
+        if show_scope_notice {
+            notices.text(buf, SCRIPT_SCOPE_NOTICE, yellow);
+            notices.parts(buf, scope_dismiss, yellow);
         }
-        let profile_notice_bottom = inner.bottom().saturating_sub(path_notice_height);
         if let Some(notice) = self.notice {
             match notice.error() {
                 Some(reason) => {
                     let red = Style::default().fg(Color::Red);
-                    let saved_y =
-                        profile_notice_bottom.saturating_sub(wrapped_rows(NOTHING_SAVED, columns));
-                    draw_wrapped(buf, inner, scope_bottom, saved_y, reason, red);
-                    draw_wrapped(
-                        buf,
-                        inner,
-                        saved_y,
-                        profile_notice_bottom,
-                        NOTHING_SAVED,
-                        red,
-                    );
+                    notices.text(buf, reason, red);
+                    notices.text(buf, NOTHING_SAVED, red);
                 }
-                None => {
-                    draw_wrapped(
-                        buf,
-                        inner,
-                        scope_bottom,
-                        profile_notice_bottom,
-                        notice.text(),
-                        Style::default().fg(Color::Green),
-                    );
-                }
+                None => notices.text(buf, notice.text(), Style::default().fg(Color::Green)),
             }
         }
         if let Some(notice) = self.quester_paths_notice {
@@ -734,14 +903,47 @@ impl Widget for SettingsPane<'_> {
             } else {
                 Color::Green
             };
-            draw_wrapped(
-                buf,
-                inner,
-                profile_notice_bottom,
-                inner.bottom(),
-                notice,
-                Style::default().fg(color),
-            );
+            notices.text(buf, notice, Style::default().fg(color));
+        }
+    }
+}
+
+/// The notices under the popup's rows as one column of wrapped lines, of
+/// which the lines `first..` show from `top` down to `bottom`. Each piece of
+/// text follows the one before it. Borrows the text: allocates nothing.
+struct NoticeArea {
+    x: u16,
+    width: usize,
+    top: u16,
+    bottom: u16,
+    /// The first line of the column the area shows.
+    first: u16,
+    /// The column line the next piece of text starts on.
+    line: u16,
+}
+
+impl NoticeArea {
+    /// The row `y` the column line `line` shows on, if it shows.
+    fn row(&self, line: u16) -> Option<u16> {
+        let y = self.top.checked_add(line.checked_sub(self.first)?)?;
+        (y < self.bottom).then_some(y)
+    }
+
+    fn text(&mut self, buf: &mut Buffer, text: &str, style: Style) {
+        for line in wrapped_lines(text, self.width) {
+            if let Some(y) = self.row(self.line) {
+                buf.set_stringn(self.x, y, line, self.width, style);
+            }
+            self.line = self.line.saturating_add(1);
+        }
+    }
+
+    fn parts<const N: usize>(&mut self, buf: &mut Buffer, parts: [&str; N], style: Style) {
+        for row in wrapped_parts(parts, self.width) {
+            if let Some(y) = self.row(self.line) {
+                draw_slices(buf, self.x, y, self.width, row, style);
+            }
+            self.line = self.line.saturating_add(1);
         }
     }
 }
@@ -778,6 +980,175 @@ pub(crate) fn wrapped_lines(text: &str, width: usize) -> impl Iterator<Item = &s
 /// How many character-wrapped rows `text` takes. Empty text takes none.
 pub(crate) fn wrapped_rows(text: &str, width: usize) -> u16 {
     u16::try_from(wrapped_lines(text, width).count()).unwrap_or(u16::MAX)
+}
+
+/// The saved settings a popup row changes (the core shows their pending
+/// and failed state beside the row).
+fn row_settings(row: usize) -> &'static [Setting] {
+    use NavPreference as N;
+    match row {
+        5 => &[Setting::Nav(N::AllowTeleports)],
+        6 => &[Setting::Nav(N::AllowWilderness)],
+        7 => &[Setting::Nav(N::AllowBankFetch)],
+        8 => &[Setting::DangerRouting],
+        9 => &[Setting::Nav(N::PauseScriptOnManualWalkAbort)],
+        10 => &[Setting::MapBake],
+        12 | 13 => &[Setting::QuesterPaths],
+        _ => &[],
+    }
+}
+
+/// What follows a row's text: nothing, or the separator and the state of the
+/// row's setting (pending, or its retained failure).
+type Feedback<'a> = [&'a str; 2];
+
+const NO_FEEDBACK: Feedback<'static> = ["", ""];
+
+/// The pieces that follow a row's text when its setting is pending or
+/// failed, borrowed from the retained feedback.
+fn feedback_parts(
+    feedback: &[(Setting, SettingFeedback)],
+    setting: Setting,
+) -> Option<Feedback<'_>> {
+    feedback
+        .iter()
+        .find(|(shown, _)| *shown == setting)
+        .map(|(_, state)| match state {
+            SettingFeedback::Pending => [" — ", "saving…"],
+            SettingFeedback::Failed(text) => [" — ", text.as_str()],
+        })
+}
+
+/// A notice's dismiss line and its setting's pending or failed state, as
+/// the pieces one wrapped line is made of.
+fn dismiss_parts<'a>(
+    text: &'a str,
+    feedback: &'a [(Setting, SettingFeedback)],
+    setting: Setting,
+) -> [&'a str; 3] {
+    let [separator, state] = feedback_parts(feedback, setting).unwrap_or(NO_FEEDBACK);
+    [text, separator, state]
+}
+
+/// Borrow character-wrapped rows of the text `parts` make up in order,
+/// without copying any of it. Each row holds, per part, the slice of it
+/// that row shows (empty when none).
+pub(crate) fn wrapped_parts<const N: usize>(
+    parts: [&str; N],
+    width: usize,
+) -> impl Iterator<Item = [&str; N]> {
+    let mut rest = parts;
+    let width = width.max(1);
+    std::iter::from_fn(move || {
+        if rest.iter().all(|part| part.is_empty()) {
+            return None;
+        }
+        let mut row = [""; N];
+        let mut used = 0;
+        let mut full = false;
+        for (shown, part) in row.iter_mut().zip(rest.iter_mut()) {
+            if full {
+                break;
+            }
+            let mut end = part.len();
+            for (at, ch) in part.char_indices() {
+                let columns = char_width(part, at, ch);
+                if used > 0 && used + columns > width {
+                    end = at;
+                    full = true;
+                    break;
+                }
+                used += columns;
+            }
+            let (head, tail) = part.split_at(end);
+            *shown = head;
+            *part = tail;
+        }
+        Some(row)
+    })
+}
+
+/// How many wrapped rows the text `parts` make up take.
+fn wrapped_rows_parts<const N: usize>(parts: [&str; N], width: usize) -> u16 {
+    u16::try_from(wrapped_parts(parts, width).count()).unwrap_or(u16::MAX)
+}
+
+/// [`draw_wrapped`] for text made of pieces: each wrapped row draws its
+/// slices one after the other. Allocates nothing.
+fn draw_wrapped_parts<const N: usize>(
+    buf: &mut Buffer,
+    inner: Rect,
+    mut y: u16,
+    bottom: u16,
+    parts: [&str; N],
+    style: Style,
+) -> u16 {
+    let width = usize::from(inner.width).max(1);
+    for row in wrapped_parts(parts, width) {
+        if y < bottom {
+            draw_slices(buf, inner.x, y, width, row, style);
+        }
+        y += 1;
+    }
+    y
+}
+
+/// Draw the slices of one wrapped row one after the other from `x`, at
+/// most `width` columns.
+fn draw_slices<const N: usize>(
+    buf: &mut Buffer,
+    mut x: u16,
+    y: u16,
+    width: usize,
+    row: [&str; N],
+    style: Style,
+) {
+    let mut left = width;
+    for slice in row {
+        if slice.is_empty() || left == 0 {
+            continue;
+        }
+        let (next, _) = buf.set_stringn(x, y, slice, left, style);
+        left = left.saturating_sub(usize::from(next.saturating_sub(x)));
+        x = next;
+    }
+}
+
+/// Draw one setting's block (its lead-in `header`, then its row text and
+/// feedback `parts`) from the top of `inner` to `bottom`, with its first
+/// `skip` wrapped lines scrolled out above. Allocates nothing.
+fn draw_scrolled_block(
+    buf: &mut Buffer,
+    inner: Rect,
+    bottom: u16,
+    header: Option<(&str, Style)>,
+    parts: [&str; 3],
+    style: Style,
+    skip: u16,
+) {
+    let width = usize::from(inner.width).max(1);
+    let mut skip = usize::from(skip);
+    let mut y = inner.y;
+    if let Some((text, header_style)) = header {
+        for line in wrapped_lines(text, width) {
+            if skip > 0 {
+                skip -= 1;
+                continue;
+            }
+            if y >= bottom {
+                return;
+            }
+            buf.set_stringn(inner.x, y, line, width, header_style);
+            y += 1;
+        }
+    }
+    for row in wrapped_parts(parts, width).skip(skip) {
+        if y >= bottom {
+            return;
+        }
+        draw_slices(buf, inner.x, y, width, row, style);
+        y += 1;
+    }
 }
 
 /// Draw `text` into `buf` inside `inner` from row `y`, wrapped at the
@@ -1438,5 +1809,306 @@ mod tests {
         };
         assert_eq!(back, SettingsKey::MapBake);
         assert_eq!(bake, MapBakeChoice::Ask);
+    }
+
+    /// One drawn frame of the popup with the scope and routing notices up
+    /// and `feedback` beside its settings, one string per terminal line.
+    fn draw_with_notices(
+        state: &mut SettingsState,
+        feedback: &[(frontend_core::Setting, crate::app::SettingFeedback)],
+        w: u16,
+        h: u16,
+    ) -> Vec<String> {
+        let settings = SettingsDraft::default();
+        let mut nav = WalkGlobals::default();
+        let mut bake = MapBakeChoice::Ask;
+        let mut scope_ack = false;
+        let mut survivable_ack = false;
+        let mut pane = SettingsPane::new(&settings, &mut nav, &mut bake, state)
+            .script_scope_notice_ack(&mut scope_ack)
+            .survivable_routing_notice_ack(&mut survivable_ack);
+        pane.feedback = feedback;
+        render_lines(pane, w, h)
+            .lines()
+            .map(|line| line.trim_matches(|c| c == '│' || c == ' ').to_string())
+            .collect()
+    }
+
+    fn press(state: &mut SettingsState, code: KeyCode) -> SettingsKey {
+        let settings = SettingsDraft::default();
+        let mut nav = WalkGlobals::default();
+        let mut bake = MapBakeChoice::Ask;
+        SettingsPane::new(&settings, &mut nav, &mut bake, state).on_key(key(code))
+    }
+
+    /// The selected setting's whole failure can be read at 80x24 and
+    /// 120x40. A permission failure with a long path and its remedy is
+    /// taller than the compact viewport: the viewport shows a window of the
+    /// setting and a line that says more is hidden, and Down scrolls through
+    /// every line of it to the end of the remedy before it moves to the next
+    /// row. Up scrolls back before it moves the row.
+    #[test]
+    fn settings_feedback_a_long_failure_at_the_selected_setting_is_readable_to_its_end() {
+        use crate::app::SettingFeedback;
+        let folders: String = (0..42).map(|i| format!("/directory-{i:02}")).collect();
+        let file = format!("/home/alice{folders}/panel-ui.json");
+        assert!(file.len() < 1024);
+        let failure = format!(
+            "Not saved: {file}: Permission denied (os error 13). Make the file writable: \
+             chmod 600 {file} END-OF-DIAGNOSTIC"
+        );
+        let feedback = [(
+            frontend_core::Setting::Nav(NavPreference::AllowTeleports),
+            SettingFeedback::Failed(failure.clone()),
+        )];
+        let row_text = format!("> {}: false", frontend_core::GLOBAL_PERMISSION_LABELS[0].1);
+        for (w, h) in [(80u16, 24u16), (120, 40)] {
+            let columns = usize::from(w.min(100) - 2);
+            let expected: Vec<String> =
+                super::wrapped_parts([row_text.as_str(), " — ", failure.as_str()], columns)
+                    .map(|[a, b, c]| format!("{a}{b}{c}").trim_end().to_string())
+                    .collect();
+            let mut state = SettingsState {
+                open: true,
+                row: 5,
+                ..Default::default()
+            };
+            let mut seen: Vec<String> = Vec::new();
+            let mut screens = 0;
+            loop {
+                let screen = draw_with_notices(&mut state, &feedback, w, h);
+                if screens == 0 && w == 80 {
+                    assert!(
+                        screen.iter().any(|line| line == super::MORE_BELOW),
+                        "{w}x{h}: the hidden part is announced:\n{}",
+                        screen.join("\n")
+                    );
+                }
+                let at_end = screen.iter().any(|line| line.contains("END-OF-DIAGNOSTIC"));
+                seen.extend(screen);
+                screens += 1;
+                if at_end {
+                    break;
+                }
+                assert!(screens < 80, "{w}x{h}: the end of the failure never showed");
+                assert_eq!(press(&mut state, KeyCode::Down), SettingsKey::Consumed);
+                assert_eq!(state.row, 5, "{w}x{h}: Down scrolls the setting first");
+            }
+            for line in &expected {
+                assert!(
+                    seen.iter().any(|shown| shown == line),
+                    "{w}x{h}: the line {line:?} of the setting never showed"
+                );
+            }
+            if w == 80 {
+                assert!(screens > 1, "80x24 needs the scroll");
+                let last = draw_with_notices(&mut state, &feedback, w, h);
+                assert!(last.iter().any(|line| line == super::MORE_ABOVE));
+                assert_eq!(press(&mut state, KeyCode::Up), SettingsKey::Consumed);
+                assert_eq!(state.row, 5, "Up scrolls back first");
+                let back = draw_with_notices(&mut state, &feedback, w, h);
+                assert!(back.iter().any(|line| line == super::MORE_ABOVE_AND_BELOW));
+                assert_eq!(press(&mut state, KeyCode::Down), SettingsKey::Consumed);
+            }
+            press(&mut state, KeyCode::Down);
+            assert_eq!(state.row, 6, "{w}x{h}: past the end, Down moves the row");
+        }
+    }
+
+    /// Notices under the rows that need more lines than the popup leaves
+    /// them are never cut silently: the first line of their area says which
+    /// notices are hidden and the key that shows them. When the popup leaves
+    /// no line for any notice, the bottom border says so. When every notice
+    /// fits, nothing says so.
+    #[test]
+    fn settings_feedback_notices_that_do_not_fit_say_so() {
+        use crate::app::SettingFeedback;
+        use frontend_core::Setting;
+        let long = format!("Not saved: {}", "the disk is full; free space ".repeat(12));
+        let failed = [
+            (
+                Setting::Nav(NavPreference::ScriptScopeNoticeAck),
+                SettingFeedback::Failed(long.clone()),
+            ),
+            (
+                Setting::Nav(NavPreference::SurvivableRoutingNoticeAck),
+                SettingFeedback::Failed(long),
+            ),
+        ];
+        let has = |screen: &[String], text: &str| screen.iter().any(|line| line.contains(text));
+        let mut state = SettingsState {
+            open: true,
+            ..Default::default()
+        };
+        let small = draw_with_notices(&mut state, &failed, 80, 18);
+        assert!(
+            small
+                .iter()
+                .any(|line| line == "↑ more notices above (PgUp)"),
+            "80x18:\n{}",
+            small.join("\n")
+        );
+        let tiny = draw_with_notices(&mut state, &failed, 80, 5);
+        assert!(
+            has(&tiny, super::NOTICES_CUT.trim()),
+            "80x5:\n{}",
+            tiny.join("\n")
+        );
+        for (w, h) in [(80u16, 24u16), (120, 40)] {
+            let fits = draw_with_notices(&mut state, &[], w, h);
+            assert!(
+                !has(&fits, "more notices") && !has(&fits, super::NOTICES_CUT.trim()),
+                "{w}x{h}:\n{}",
+                fits.join("\n")
+            );
+        }
+    }
+
+    /// Every line of a failed notice acknowledgement can be read at 80x24
+    /// and 120x40, to the end of its remedy. Both acknowledgements fail with
+    /// a long path: the notices need more lines than the popup has, so
+    /// their area shows the last ones under a sign, and PageUp and PageDown
+    /// scroll through all of them without moving the row.
+    #[test]
+    fn settings_feedback_notice_failures_are_readable_to_their_end_at_supported_sizes() {
+        use crate::app::SettingFeedback;
+        use frontend_core::Setting;
+        let folders: String = (0..42).map(|i| format!("/directory-{i:02}")).collect();
+        let file = format!("/home/alice{folders}/panel-ui.json");
+        assert!(file.len() < 1024);
+        let failure = |end: &str| {
+            format!(
+                "Not saved: {file}: Permission denied (os error 13). Make the file writable: \
+                 chmod 600 {file} {end}"
+            )
+        };
+        let scope = failure("END-SCOPE");
+        let routing = failure("END-ROUTING");
+        let feedback = [
+            (
+                Setting::Nav(NavPreference::ScriptScopeNoticeAck),
+                SettingFeedback::Failed(scope.clone()),
+            ),
+            (
+                Setting::Nav(NavPreference::SurvivableRoutingNoticeAck),
+                SettingFeedback::Failed(routing.clone()),
+            ),
+        ];
+        for (w, h) in [(80u16, 24u16), (120, 40)] {
+            let columns = usize::from(w.min(100) - 2);
+            let expected: Vec<String> = [
+                ("[d] dismiss this notice", scope.as_str()),
+                ("[n] dismiss this notice", routing.as_str()),
+            ]
+            .into_iter()
+            .flat_map(|(dismiss, failure)| {
+                super::wrapped_parts([dismiss, " — ", failure], columns)
+                    .map(|[a, b, c]| format!("{a}{b}{c}").trim().to_string())
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+            let mut state = SettingsState {
+                open: true,
+                ..Default::default()
+            };
+            let first = draw_with_notices(&mut state, &feedback, w, h);
+            let mut seen = first.clone();
+            let mut top = Vec::new();
+            let mut keys = Vec::new();
+            for _ in 0..40 {
+                keys.push(press(&mut state, KeyCode::PageUp));
+                top = draw_with_notices(&mut state, &feedback, w, h);
+                seen.extend(top.iter().cloned());
+            }
+            for _ in 0..40 {
+                keys.push(press(&mut state, KeyCode::PageDown));
+                seen.extend(draw_with_notices(&mut state, &feedback, w, h));
+            }
+            for line in &expected {
+                assert!(
+                    seen.iter().any(|shown| shown == line),
+                    "{w}x{h}: the notice line {line:?} never showed"
+                );
+            }
+            assert!(keys.iter().all(|key| *key == SettingsKey::Consumed));
+            assert_eq!(state.row, 0, "{w}x{h}: PageUp and PageDown keep the row");
+            if w == 80 {
+                assert!(
+                    first
+                        .iter()
+                        .any(|line| line == "↑ more notices above (PgUp)"),
+                    "{w}x{h}: the hidden notices are announced:\n{}",
+                    first.join("\n")
+                );
+                assert!(
+                    top.iter().any(|line| line == "↓ more notices below (PgDn)"),
+                    "{w}x{h}: at the first notice the rest is below:\n{}",
+                    top.join("\n")
+                );
+            }
+        }
+    }
+
+    /// However few lines the notices leave the rows, a selected setting
+    /// taller than them says that more of it is hidden, on every screen
+    /// that does not show its end, and Down reaches its end.
+    #[test]
+    fn settings_feedback_a_cut_selected_setting_always_says_more_is_hidden() {
+        use crate::app::SettingFeedback;
+        use frontend_core::Setting;
+        let long = |end: &str| {
+            format!(
+                "Not saved: {}{end}",
+                "the store is busy; try again later ".repeat(8)
+            )
+        };
+        let feedback = [
+            (
+                Setting::Nav(NavPreference::AllowTeleports),
+                SettingFeedback::Failed(long("END-OF-TELEPORTS")),
+            ),
+            (
+                Setting::Nav(NavPreference::ScriptScopeNoticeAck),
+                SettingFeedback::Failed(long("END-SCOPE")),
+            ),
+            (
+                Setting::Nav(NavPreference::SurvivableRoutingNoticeAck),
+                SettingFeedback::Failed(long("END-ROUTING")),
+            ),
+        ];
+        // Grok's case first (80x18: the notices leave the rows one line on
+        // the old popup), then the supported sizes, then every height.
+        let sizes = [(80u16, 18u16), (80, 24), (120, 40)]
+            .into_iter()
+            .chain((6u16..=40).map(|h| (80u16, h)));
+        for (w, h) in sizes {
+            let mut state = SettingsState {
+                open: true,
+                row: 5,
+                ..Default::default()
+            };
+            let mut presses = 0;
+            loop {
+                let screen = draw_with_notices(&mut state, &feedback, w, h);
+                if screen.iter().any(|line| line.contains("END-OF-TELEPORTS")) {
+                    break;
+                }
+                assert!(
+                    screen.iter().any(|line| {
+                        line == super::MORE_BELOW || line == super::MORE_ABOVE_AND_BELOW
+                    }),
+                    "{w}x{h}: part of the selected setting is hidden without a sign \
+                     (after {presses} Down):\n{}",
+                    screen.join("\n")
+                );
+                assert!(
+                    presses < 200,
+                    "{w}x{h}: the end of the setting never showed"
+                );
+                assert_eq!(press(&mut state, KeyCode::Down), SettingsKey::Consumed);
+                assert_eq!(state.row, 5, "{w}x{h}: Down scrolls the setting first");
+                presses += 1;
+            }
+        }
     }
 }

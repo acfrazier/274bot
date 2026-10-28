@@ -13,6 +13,10 @@ pub struct Wall {
     pub render_all_warn_open: bool,
     /// "I understand" checkbox state inside that confirm.
     pub render_all_understood: bool,
+    /// "Don't show again" was submitted and its acknowledgement is not
+    /// durable yet: the confirm stays open, showing its saving state or its
+    /// failure, and closes when the saved value holds it.
+    pub render_all_confirming: bool,
 }
 
 impl Wall {
@@ -30,6 +34,7 @@ impl Wall {
         self.grid = false;
         self.chooser_open = false;
         self.render_all_warn_open = false;
+        self.render_all_confirming = false;
     }
 }
 

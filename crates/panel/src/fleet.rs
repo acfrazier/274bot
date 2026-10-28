@@ -283,6 +283,7 @@ fn column_toggles(ui: &Ui, session: &mut Session) {
             let _ = session.persist_panel_member(&["fleet_columns", column.id()], value);
         }
     }
+    crate::app::panel_member_feedback_line(ui, session, &["fleet_columns"]);
 }
 
 /// Continue the current line with an item `width` wide when it still fits
@@ -598,6 +599,10 @@ pub fn window(ui: &Ui, session: &mut Session) {
             column_toggles(ui, session);
             ui.separator();
             table(ui, session);
+            // A Load-order write that is pending or failed (a reorder, or
+            // the quiet write after a rename or delete) says so below the
+            // table, so the rows never move while it saves.
+            crate::app::setting_feedback_line(ui, session, frontend_core::Setting::ProfileOrder);
             #[cfg(test)]
             record_window_layout(ui);
         });

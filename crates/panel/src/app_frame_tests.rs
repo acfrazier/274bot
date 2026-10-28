@@ -1656,3 +1656,65 @@ scenario!(
     stopped_rail_labels,
     stopped_scripts_leave_no_walking_label_on_the_rail
 );
+
+/// A rail tile's and a Grid cell's preview fold show their own saved state
+/// inside that tile, under its cap: "Saving…" while the fold's write is
+/// held, then the failure; the other tile shows neither.
+#[test]
+fn a_preview_fold_shows_its_saving_and_failure_in_its_own_tile() {
+    for grid in [false, true] {
+        let label = if grid {
+            "grid-fold-feedback"
+        } else {
+            "rail-fold-feedback"
+        };
+        let Some((mut rig, _dir)) = world_rig(label, grid, None) else {
+            eprintln!("a_preview_fold_shows_its_saving_and_failure_in_its_own_tile: no headless GPU, skipped");
+            return;
+        };
+        let session = rig.session();
+        session.persist_ui = true;
+        session.preferences.reload().unwrap();
+        session.poll_panel_preferences();
+        assert!(session.panel_preferences_ready());
+        let service = session
+            .core
+            .local_state_for_test()
+            .expect("the panel owns its process state service")
+            .clone();
+        let (release, gate) = std::sync::mpsc::channel::<()>();
+        let gate = Mutex::new(gate);
+        service.set_write_stall_for_test(Arc::new(move || {
+            let _ = gate.lock().unwrap().recv();
+        }));
+        service.set_write_fault_for_test(Arc::new(|| true));
+        session
+            .persist_panel_member(
+                &["rail_preview", "alice"],
+                Some(serde_json::Value::Bool(false)),
+            )
+            .unwrap();
+        // The text one tile drew: from its cap to the next tile's cap.
+        let alice_tile = |text: &str| -> String {
+            let start = text.find("alice: ").expect("alice's cap is drawn");
+            let end = text[start..]
+                .find("bob: ")
+                .map_or(text.len(), |at| start + at);
+            text[start..end].to_string()
+        };
+        rig.frame(Pointer::Away);
+        let tile = alice_tile(&rig.text);
+        assert!(tile.contains("Saving…"), "grid={grid}: {tile}");
+        assert!(!rig.text[rig.text.find("bob: ").unwrap()..].contains("Saving…"));
+        drop(release);
+        rig.frames_until("the fold's write failed", |rig| {
+            !rig.session().preferences_pending()
+        });
+        rig.frame(Pointer::Away);
+        let tile = alice_tile(&rig.text);
+        assert!(
+            tile.contains("Preferences not saved") && !tile.contains("Saving…"),
+            "grid={grid}: {tile}"
+        );
+    }
+}

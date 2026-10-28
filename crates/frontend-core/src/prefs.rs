@@ -11,7 +11,7 @@ use std::io;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-pub use host_play::local_state::{PreferenceError, PreferencePatch, Update};
+pub use host_play::local_state::{PreferenceError, PreferencePatch, PreferenceSnapshot, Update};
 use serde_json::{Map, Value};
 
 /// A handle on the preferences document. [`Self::share`] gives another
@@ -42,6 +42,13 @@ impl UiPreferences {
     /// The cached document, or its cold/refused state. This never waits.
     pub fn document(&self) -> Result<Arc<Map<String, Value>>, PreferenceError> {
         self.inner.document()
+    }
+
+    /// The cached document with its durable version (the applied-version
+    /// key of the core's reconciliation), or its cold/refused state. This
+    /// never waits.
+    pub fn snapshot(&self) -> Result<PreferenceSnapshot, PreferenceError> {
+        self.inner.snapshot()
     }
 
     /// One top-level preference; `None` when it is absent or the store

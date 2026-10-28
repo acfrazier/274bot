@@ -116,6 +116,47 @@ pub(crate) fn thread_preferences() -> frontend_core::UiPreferences {
         thread_state_root(),
     ))
 }
+
+/// Hold the real `panel-ui.json.lock` beside `preferences`' file, as a
+/// second program does: each preference write waits the writer's bounded
+/// lock wait and then fails busy. Dropping the file releases the lock.
+pub(crate) fn hold_preferences_lock(preferences: &frontend_core::UiPreferences) -> std::fs::File {
+    let file_path = preferences.path();
+    if let Some(parent) = file_path.parent() {
+        let mut dirs = std::fs::DirBuilder::new();
+        dirs.recursive(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::DirBuilderExt;
+            dirs.mode(0o700);
+        }
+        dirs.create(parent).expect("create the state directory");
+    }
+    let mut path = file_path.into_os_string();
+    path.push(".lock");
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(path)
+        .expect("open the preferences lock");
+    file.lock().expect("hold the preferences lock");
+    file
+}
+
+/// The preferences file of `preferences` as it is on disk now (empty when
+/// it does not exist): what a relaunch would read.
+pub(crate) fn preferences_on_disk(
+    preferences: &frontend_core::UiPreferences,
+) -> serde_json::Map<String, serde_json::Value> {
+    let path = preferences.path();
+    match std::fs::read(&path) {
+        Ok(bytes) => serde_json::from_slice(&bytes).expect("the preferences file is JSON"),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => serde_json::Map::new(),
+        Err(error) => panic!("read {}: {error}", path.display()),
+    }
+}
 /// Retry a frontend-backed write while it reports the write queued past
 /// the frontend's bounded durability wait: under machine load a write
 /// stays queued past 5 s and settles later. Any other error returns at
@@ -248,6 +289,13 @@ pub(crate) fn imgui_context_guard() -> MutexGuard<'static, ()> {
         "lock order: imgui_context_guard taken while holding a picker nav lock"
     );
     lock_unpoisoned(&crate::IMGUI_CTX_TEST_GUARD)
+}
+
+/// The process has one session file: a test that opens, fails or closes it
+/// holds this, so another test cannot close it underneath.
+pub(crate) fn session_file_lock() -> MutexGuard<'static, ()> {
+    static LOCK: Mutex<()> = Mutex::new(());
+    lock_unpoisoned(&LOCK)
 }
 
 /// A Dear ImGui context for a test, with the `.ini` settings file off.

@@ -245,9 +245,12 @@ then FIFO-queue **warn**, else grey. **only render focused** mirrors
 `Focus.only_render_selected`: when off, unfocused wall members also
 `set_draw` (the tile body shows their raster); when on, only the focused
 member paints. Unchecking it opens a **Render all wall members?** confirm:
-**OK** (once **I understand** is ticked) applies for this launch, and **Don't
-show again** does the same and saves `render_all_warning_ack` in
-`panel-ui.json`, after which unchecking applies at once. The box starts
+**OK** (once **I understand** is ticked) applies for this launch. **Don't
+show again** saves `render_all_warning_ack` in `panel-ui.json` and renders
+all only when that save lands: while it is pending the box stays checked and
+only the focused member paints, and if it fails the dialog shows the reason
+and nothing changes. After the saved acknowledgement, unchecking applies at
+once. The box starts
 checked on every launch and is never saved. The mark checkbox's tooltip says
 "Fleet and Debug actions" on servers that allow Debug and "Fleet actions"
 elsewhere. The Game pane always follows **focus** — a rail-Off
@@ -632,6 +635,46 @@ accepted save. Reopening it retains the pending save. Until the first read
 finishes, displayed defaults are provisional and walk permissions stay closed.
 Refresh preserves unsaved checkbox and folder entries when their saved values
 did not change.
+
+A saved operational choice (capture input, the sidecar and focused 50 fps
+switches, the walk and danger permissions, the manual-walk pause, the map-bake
+choice, the Quest Paths source, the session log file, and "Don't show again" on
+the notices) takes effect only from the saved state. So do the remembered
+launch choices: the server revision, the Game pane's none/GPU/CPU raster and
+its highmem/lowmem mode. Until the save lands, the profile's saved raster and
+memory mode, the slot's GPU/CPU latch and the revision a session binds with
+stay as they were, and the control shows your choice. While its save is pending
+a control shows your choice with **Saving…**. If the save fails, the control
+shows the saved value again and the reason (for example "Not saved: …") appears
+beside it. The reason leaves when you act on the setting again, or after 15
+seconds. A failed "Don't show again" keeps its dialog open with the reason
+under the buttons. The state belongs to the session, so closing and reopening a
+window shows it again. A change another program copy saved reaches every
+control each time it saves (a control you are typing in, or one whose own save
+is still pending, keeps what you typed or chose until its save ends). The
+raster and memory controls follow it while no bot is focused; with a bot
+focused they show that bot's own saved modes. When focus ends (for example
+you remove the last focused bot), they show the saved value at once, also a
+value another copy saved while the bot was focused. The server revision follows it
+while no profile is bound; a bound session keeps the revision it bound with.
+A pending raster or memory
+choice, its **Saving…** and its reason belong to the bot it was made for:
+focus another bot and its controls show that bot's values, and a choice made
+there is that bot's own. When several saves of one setting end at once, the
+newest raster or memory choice takes effect, and an older save that landed
+never clears a newer one's failure. Layout, colour, order, fold and
+remembered-folder choices show at once and go back to the saved value if their
+save fails; each shows **Saving…** and the reason at its own control (the
+section order, the category chips, the folds, the rail and Grid preview folds
+inside their tile, the file dialogs, the Debug tab and the Fleet toolbar fold
+included). A failed save is final: the panel never tries it again by itself,
+also not after the other program releases the file. Only a new change of
+that setting starts a new save. The Browse window saves the category order
+only when you drop a chip; a category that the saved order does not name
+shows after the named ones and is not saved. With the session
+log file on, the Log window also says if the file could not be opened or
+written, also after it had opened.
+
 The table's columns share the
 window's width, so it never scrolls sideways, and the toolbar and column
 toggles wrap at a narrow width.

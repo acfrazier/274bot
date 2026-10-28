@@ -351,10 +351,6 @@ pub(super) struct CommandDesk {
     setting_events_overflowed: bool,
     /// Whether a front end drains `setting_events`.
     watch_setting_events: bool,
-    /// The walk view a queued Nav or danger write adopted when it
-    /// settled, for a front end that does not re-read it each frame (the
-    /// headless driver) to take into its lent model.
-    settled_walk_globals: Option<crate::walk_permissions::WalkGlobalsView>,
     /// The Quester Paths settings (and whether to write them) the next
     /// SetQuesterPaths applies.
     quester_paths: Option<(crate::quester_paths::QuesterPathsView, bool)>,
@@ -493,16 +489,6 @@ impl CommandDesk {
             std::mem::take(&mut self.setting_events),
             std::mem::take(&mut self.setting_events_overflowed),
         )
-    }
-
-    pub(super) fn settle_walk_globals(&mut self, view: crate::walk_permissions::WalkGlobalsView) {
-        self.settled_walk_globals = Some(view);
-    }
-
-    pub(super) fn take_settled_walk_globals(
-        &mut self,
-    ) -> Option<crate::walk_permissions::WalkGlobalsView> {
-        self.settled_walk_globals.take()
     }
 
     pub(super) fn stage_quester_paths(

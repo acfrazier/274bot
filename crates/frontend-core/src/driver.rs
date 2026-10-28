@@ -47,9 +47,17 @@ pub struct DriverModels {
     walk_globals: WalkGlobalsView,
     draw: DrawPolicy,
     map: crate::session::map::MapDesk,
+    /// How many `draw_changed` callbacks the surface received.
+    draw_changes: u32,
 }
 
 impl DriverModels {
+    /// How many times the surface was told a draw switch changed (a saved
+    /// switch changes only when the durable value does).
+    pub fn draw_changes(&self) -> u32 {
+        self.draw_changes
+    }
+
     /// The script coordinator.
     pub fn scripts(&self) -> &Scripts {
         &self.scripts
@@ -156,15 +164,17 @@ impl SlotSurface for DriverSurface<'_> {
         self.models.lend()
     }
 
-    /// No renderer and no input devices: nothing to apply.
-    fn draw_changed(&mut self, _switch: DrawSwitch, _on: bool) {}
+    /// No renderer and no input devices: the driver only counts the call,
+    /// as a renderer mirror would apply it ([`DriverModels::draw_changes`]).
+    fn draw_changed(&mut self, _switch: DrawSwitch, _on: bool) {
+        self.models.draw_changes = self.models.draw_changes.wrapping_add(1);
+    }
 }
 
 /// An operator session driven without a window.
 pub struct HeadlessDriver {
     session: OperatorSession<()>,
     models: DriverModels,
-    preferences_adopted: bool,
 }
 
 impl HeadlessDriver {
@@ -180,7 +190,6 @@ impl HeadlessDriver {
         let preferences = session
             .preferences()
             .expect("the driver bound its local state just now");
-        let preferences_adopted = preferences.ready();
         let walk_globals = session.adopt_operator_preferences();
         let mut quester = QuesterPathsController::default();
         quester.restore(&preferences);
@@ -196,12 +205,9 @@ impl HeadlessDriver {
             walk_globals,
             draw: DrawPolicy::restore(&preferences, true),
             map: crate::MapDesk::new(crate::map_bake::load_map_bake_choice(&preferences)),
+            draw_changes: 0,
         };
-        Self {
-            session,
-            models,
-            preferences_adopted,
-        }
+        Self { session, models }
     }
 
     /// Open the vault at `vault` with `passphrase` (`UnlockVault`), or
@@ -239,29 +245,25 @@ impl HeadlessDriver {
     }
 
     /// One headless tick, as a front end's frame: [`OperatorSession::poll`],
-    /// then the script coordinator's ([`Scripts::poll`]), which settles
-    /// Starts and their commands. A queued Nav or danger write that settled
-    /// hands its durable walk view to the lent model, as a write durable at
-    /// submission does.
+    /// then [`OperatorSession::poll_preferences`] over the driver's own
+    /// models (every saved setting settles by its request and every model
+    /// follows the latest durable snapshot, the cold start included), then
+    /// the script coordinator's ([`Scripts::poll`]), which settles Starts
+    /// and their commands.
     pub fn poll(&mut self) {
-        self.session.poll();
-        if !self.preferences_adopted {
-            if let Some(preferences) = self.session.preferences().filter(|prefs| prefs.ready()) {
-                self.models.quester.restore(&preferences);
-                self.models.draw = DrawPolicy::restore(&preferences, true);
-                self.models
-                    .map
-                    .bake_gate_mut()
-                    .set_choice(crate::map_bake::load_map_bake_choice(&preferences));
-                self.models.walk_globals = self.session.adopt_operator_preferences();
-                self.preferences_adopted = true;
-            }
-        }
+        self.poll_at(std::time::Instant::now());
+    }
+
+    /// [`Self::poll`] at `now` (a front end's clock: the retained setting
+    /// failures expire against it).
+    pub fn poll_at(&mut self, now: std::time::Instant) {
+        self.session.poll_at(now);
+        let mut surface = DriverSurface {
+            models: &mut self.models,
+        };
+        self.session.poll_preferences_at(&mut surface, now);
         self.models.scripts.poll(&mut self.session);
         self.models.fleet.refresh(&self.session);
-        if let Some(view) = self.session.take_settled_walk_globals() {
-            self.models.walk_globals = view;
-        }
     }
 
     /// The report of `request`, while the book retains it.

@@ -877,14 +877,169 @@ impl WalkSendState {
         }
     }
 }
+/// One accepted panel-owned write: the request that carries it (its
+/// identity, unique in this session), the member it changes, the value it
+/// asks for (`None` removes the member) and the view its feedback belongs to.
+#[derive(Clone)]
 struct PanelPreferenceMember {
+    request: u64,
     path: Vec<String>,
     value: Option<serde_json::Value>,
+    owner: FeedbackOwner,
+}
+
+/// The view where a panel-owned write shows its "Saving…" and its failure.
+#[derive(Clone, PartialEq, Eq)]
+enum FeedbackOwner {
+    /// Every view: a setting of the panel itself.
+    Panel,
+    /// The raster or memory choice made for this bot (`None`: no bot was
+    /// focused). Its feedback shows only while that bot is focused.
+    Bot(Option<String>),
+}
+
+impl FeedbackOwner {
+    fn of(effect: Option<&LaunchEffect>) -> Self {
+        match effect {
+            Some(LaunchEffect::Raster { profile, .. } | LaunchEffect::Lowmem { profile, .. }) => {
+                Self::Bot(profile.clone())
+            }
+            Some(LaunchEffect::ServerRevision(_)) | None => Self::Panel,
+        }
+    }
+
+    fn shows_for(&self, focused: Option<&str>) -> bool {
+        match self {
+            Self::Panel => true,
+            Self::Bot(bot) => bot.as_deref() == focused,
+        }
+    }
+}
+
+/// Whether the member at `path` lies under `prefix`.
+fn under_prefix(path: &[String], prefix: &[&str]) -> bool {
+    path.len() >= prefix.len() && path.iter().zip(prefix).all(|(a, b)| a == b)
 }
 
 struct PanelPreferenceWrite {
     update: Update,
     members: Vec<PanelPreferenceMember>,
+    /// What a remembered launch choice does once this write is durable.
+    effect: Option<LaunchEffect>,
+}
+
+/// What a panel-owned write became on submit.
+enum PanelSubmit {
+    /// Durable already: there was nothing to wait for.
+    Done,
+    /// Queued under this request identity.
+    Pending(u64),
+}
+
+/// A remembered launch choice and what it does once its write is durable.
+/// `profile` is the bot that was focused when the choice was made.
+#[derive(Clone)]
+enum LaunchEffect {
+    /// The Game-pane raster: the profile's saved raster, the focused
+    /// client's renderer and the slot's GPU/CPU latch.
+    Raster {
+        raster: RasterMode,
+        profile: Option<String>,
+    },
+    /// The memory mode of the profile's next login.
+    Lowmem {
+        lowmem: bool,
+        profile: Option<String>,
+    },
+    /// The server revision the next session binds with.
+    ServerRevision(u16),
+}
+
+impl LaunchEffect {
+    /// Whether this (newer) durable choice replaces `older`: the same
+    /// setting for the same bot.
+    fn supersedes(&self, older: &Self) -> bool {
+        match (self, older) {
+            (Self::Raster { profile, .. }, Self::Raster { profile: other, .. })
+            | (Self::Lowmem { profile, .. }, Self::Lowmem { profile: other, .. }) => {
+                profile == other
+            }
+            (Self::ServerRevision(_), Self::ServerRevision(_)) => true,
+            _ => false,
+        }
+    }
+}
+
+/// What the launch controls show while their save is pending: each pending
+/// request's choice under its identity (a result ends only its own
+/// preview). A raster or memory choice shows only while the bot it was made
+/// for is focused; the newest one for that bot wins.
+#[derive(Default)]
+struct LaunchPreviews(Vec<(u64, LaunchEffect)>);
+
+impl LaunchPreviews {
+    fn show(&mut self, request: u64, effect: LaunchEffect) {
+        self.0.push((request, effect));
+    }
+
+    /// The request ended (durable or failed): its preview goes.
+    fn settle(&mut self, request: u64) {
+        self.0.retain(|(shown, _)| *shown != request);
+    }
+
+    /// The pending raster choice made for `focused`.
+    fn raster(&self, focused: Option<&str>) -> Option<RasterMode> {
+        self.0.iter().rev().find_map(|(_, effect)| match effect {
+            LaunchEffect::Raster { raster, profile } if profile.as_deref() == focused => {
+                Some(*raster)
+            }
+            _ => None,
+        })
+    }
+
+    /// The pending memory choice made for `focused`.
+    fn lowmem(&self, focused: Option<&str>) -> Option<bool> {
+        self.0.iter().rev().find_map(|(_, effect)| match effect {
+            LaunchEffect::Lowmem { lowmem, profile } if profile.as_deref() == focused => {
+                Some(*lowmem)
+            }
+            _ => None,
+        })
+    }
+
+    /// The pending server revision choice.
+    fn server_revision(&self) -> Option<u16> {
+        self.0.iter().rev().find_map(|(_, effect)| match effect {
+            LaunchEffect::ServerRevision(revision) => Some(*revision),
+            _ => None,
+        })
+    }
+}
+
+/// A failed panel-owned write kept at its setting, in the view it belongs
+/// to: the request that failed (a later request's success ends it, an older
+/// one's never does).
+struct PanelWriteError {
+    path: Vec<String>,
+    owner: FeedbackOwner,
+    request: u64,
+    text: String,
+    since: Instant,
+}
+
+/// The operator's unsettled change of each saved operational setting
+/// (`None`: the control shows the saved value). Set when the command is
+/// submitted; dropped once the core no longer holds a write for the setting
+/// pending, whichever way it ended, so the control then shows the saved
+/// value ([`Session::settle_setting_drafts`]).
+#[derive(Debug, Default, Clone, Copy)]
+pub(crate) struct SettingDrafts {
+    pub(crate) capture: Option<bool>,
+    pub(crate) sidecar_50: Option<bool>,
+    pub(crate) focused_50: Option<bool>,
+    pub(crate) quester_enabled: Option<bool>,
+    pub(crate) map_bake: Option<MapBakeChoice>,
+    pub(crate) session_log: Option<bool>,
 }
 
 enum StartupFocus {
@@ -960,27 +1115,52 @@ pub struct Session {
     /// Service-owned writes remain watched by the panel even when the
     /// settings surface that submitted them is closed.
     panel_preference_writes: Vec<PanelPreferenceWrite>,
-    /// Latest panel edits kept over a cold-to-ready cache adoption.
-    pending_panel_members: HashMap<Vec<String>, Option<serde_json::Value>>,
+    /// The panel-owned writes accepted and not yet settled, oldest first:
+    /// each previews its value until its own result arrives.
+    pending_panel_members: Vec<PanelPreferenceMember>,
+    /// The last request identity handed out.
+    panel_request_seq: u64,
+    /// The durable version the panel-owned members last followed, and
+    /// whether a bot was focused then. The raster and memory controls show
+    /// the focused bot's modes or, with no bot focused, the saved document:
+    /// a change of either part rebases them.
+    panel_rebased: (Option<api::local_state::StoreVersion>, bool),
+    /// What the launch controls show while their save is pending.
+    launch_previews: LaunchPreviews,
     /// Shared Nav values changed by an accepted command but not yet durable.
     pending_nav_members: HashMap<&'static str, bool>,
-    /// A failed write remains visible until a later write to that member
-    /// succeeds.
-    preference_write_error: Option<(Vec<String>, String)>,
-    /// Saved-setting transitions of the panel-owned members, recorded
-    /// only while the headed recorder watches (see
-    /// `watch_setting_events`); it drains them each frame. Always empty
-    /// while not watching.
+    /// Failed panel-owned writes, one per member path, each kept at its
+    /// setting until a later write of it lands or the error timeout passes.
+    preference_write_errors: Vec<PanelWriteError>,
+    /// Panel-owned setting transitions retained for the headed recorder.
     setting_events: Vec<frontend_core::SettingEvent>,
-    /// Set when the bounded queue drops at least one transition.
+    /// Set when the bounded event queue drops at least one transition.
     setting_events_overflowed: bool,
-    /// Whether `setting_events` is recorded.
+    /// Whether setting transitions are recorded.
     record_setting_events: bool,
+    /// Scratch the frame composes a labelled feedback line in (`label:
+    /// text`), kept so a pending or failed row builds no string per frame.
+    pub(crate) feedback_scratch: String,
+    /// The operator's unsettled change of a saved operational setting: what
+    /// its control shows while the write is pending. The saved value (the
+    /// draw mirror, the Quester controller, the bake gate) follows the
+    /// durable snapshot only, so a failed write shows the saved value again.
+    pub(crate) setting_drafts: SettingDrafts,
+    /// What the capture-input devices were last set up for; they follow the
+    /// saved capture preference ([`Self::sync_capture_devices`]).
+    capture_devices: Option<bool>,
     /// Shared Quester Paths settings and reload lifecycle.
     pub(crate) quester_paths: frontend_core::QuesterPathsController,
     pub(crate) quester_paths_folder_edit: String,
     /// Preserve uncommitted text while the durable controller is adopted.
     pub(crate) quester_paths_folder_dirty: bool,
+    /// The folder text the last committed write carries while it is pending;
+    /// the field keeps it until the write ends.
+    quester_folder_submitted: Option<String>,
+    /// A pending special-areas preview was dropped (its write ended).
+    special_areas_dropped: bool,
+    /// The durable version the shared Nav members last followed.
+    nav_rebased: Option<api::local_state::StoreVersion>,
     /// Separate Fleet window open.
     pub fleet_open: bool,
     /// The one fleet model (rows, marks, filter, order) the Fleet window,
@@ -1432,6 +1612,22 @@ impl frontend_core::frames::FrameHook for PanelFrameHook {
     }
 }
 
+/// The saved setting a shared Nav member belongs to.
+fn nav_member_setting(key: &str) -> frontend_core::Setting {
+    use frontend_core::{NavPreference as N, Setting};
+    match key {
+        "allow_teleports" => Setting::Nav(N::AllowTeleports),
+        "allow_wilderness" => Setting::Nav(N::AllowWilderness),
+        "allow_bank_fetch" => Setting::Nav(N::AllowBankFetch),
+        "allow_danger_zones" | "survivable_routing" => Setting::DangerRouting,
+        "script_scope_notice_ack" => Setting::Nav(N::ScriptScopeNoticeAck),
+        "survivable_routing_notice_ack" => Setting::Nav(N::SurvivableRoutingNoticeAck),
+        "show_special_areas" => Setting::Nav(N::ShowSpecialAreas),
+        "pause_script_on_manual_walk_abort" => Setting::Nav(N::PauseScriptOnManualWalkAbort),
+        _ => unreachable!("only shared Nav members are retained"),
+    }
+}
+
 fn apply_walk_permissions_to_nav(
     nav: &mut NavSettings,
     view: frontend_core::WalkGlobalsView,
@@ -1513,29 +1709,6 @@ fn apply_pending_nav_members(nav: &mut NavSettings, pending: &HashMap<&'static s
             }
             _ => unreachable!("only shared Nav members are retained"),
         }
-    }
-}
-
-fn json_member_matches(
-    document: &serde_json::Map<String, serde_json::Value>,
-    path: &[String],
-    expected: &Option<serde_json::Value>,
-) -> bool {
-    let mut object = document;
-    let mut value = None;
-    for (index, key) in path.iter().enumerate() {
-        value = object.get(key);
-        if index + 1 < path.len() {
-            let Some(next) = value.and_then(serde_json::Value::as_object) else {
-                return expected.is_none();
-            };
-            object = next;
-        }
-    }
-    match (value, expected) {
-        (None, None) => true,
-        (Some(value), Some(expected)) => value == expected,
-        _ => false,
     }
 }
 
@@ -1655,15 +1828,24 @@ impl Session {
             preferences_ready,
             startup_focus_pending: None,
             panel_preference_writes: Vec::new(),
-            pending_panel_members: HashMap::new(),
+            pending_panel_members: Vec::new(),
+            panel_request_seq: 0,
             pending_nav_members,
-            preference_write_error: None,
+            preference_write_errors: Vec::new(),
             setting_events: Vec::new(),
             setting_events_overflowed: false,
             record_setting_events: false,
+            feedback_scratch: String::new(),
+            setting_drafts: SettingDrafts::default(),
+            capture_devices: Some(capture_pref),
             quester_paths,
             quester_paths_folder_edit,
             quester_paths_folder_dirty: false,
+            quester_folder_submitted: None,
+            panel_rebased: (None, false),
+            launch_previews: LaunchPreviews::default(),
+            special_areas_dropped: false,
+            nav_rebased: None,
             map_desk,
             map_model: frontend_core::walk_map::WalkMap::new(),
             map_catalogue: None,
@@ -1758,6 +1940,7 @@ impl Session {
     /// Refresh the durable policy before rendering or admitting a manual walk.
     pub(crate) fn refresh_walk_permissions(&mut self) {
         self.adopt_panel_preferences_if_ready();
+        self.prune_pending_nav_members();
         self.walk_permissions = self.core.refresh_walk_globals();
         apply_walk_permissions_to_nav(
             &mut self.ui.nav,
@@ -1769,8 +1952,176 @@ impl Session {
             .danger_this_walk(self.route_through_zones);
     }
 
+    /// One reconciliation of the saved operator settings: the core settles
+    /// every accepted write by its request and lets every lent model follow
+    /// the latest durable snapshot ([`OperatorSession::poll_preferences`]),
+    /// calling back through the surface when a saved draw switch changes;
+    /// the panel's own mirrors, drafts and capture devices then follow.
+    fn follow_core_preferences(&mut self) {
+        {
+            let (core, mut surface) = self.core_and_surface();
+            core.poll_preferences(&mut surface);
+        }
+        self.settle_setting_drafts();
+        self.sync_capture_devices();
+    }
+
+    /// Drop each unsettled draft whose write is no longer pending (it landed
+    /// or failed: the control then shows the saved value), and mirror the
+    /// saved values the panel keeps in its own view model.
+    pub(crate) fn settle_setting_drafts(&mut self) {
+        use frontend_core::{Setting, SettingStatus};
+        let pending = |core: &OperatorSession<SlotIo>, setting| {
+            matches!(core.setting_status(setting), SettingStatus::Pending)
+        };
+        let core = &self.core;
+        let drafts = &mut self.setting_drafts;
+        if !pending(core, Setting::Draw(DrawSwitch::CaptureInput)) {
+            drafts.capture = None;
+        }
+        if !pending(core, Setting::Draw(DrawSwitch::SidecarFullRate)) {
+            drafts.sidecar_50 = None;
+        }
+        if !pending(core, Setting::Draw(DrawSwitch::FocusedFullRate)) {
+            drafts.focused_50 = None;
+        }
+        if !pending(core, Setting::QuesterPaths) {
+            drafts.quester_enabled = None;
+        }
+        if !pending(core, Setting::MapBake) {
+            drafts.map_bake = None;
+        }
+        if !pending(core, Setting::SessionLog) {
+            drafts.session_log = None;
+        }
+        self.prune_pending_nav_members();
+        if !matches!(
+            self.core.setting_status(Setting::QuesterPaths),
+            SettingStatus::Pending
+        ) {
+            // The folder write ended: the field shows the saved folder
+            // (what landed, or the prior one when it failed) unless the
+            // operator has typed something newer.
+            if let Some(submitted) = self.quester_folder_submitted.take() {
+                if self.quester_paths_folder_edit == submitted {
+                    self.quester_paths_folder_dirty = false;
+                    self.quester_paths_folder_edit = self
+                        .quester_paths
+                        .settings()
+                        .folder()
+                        .to_string_lossy()
+                        .into_owned();
+                }
+            }
+        }
+        if !self.quester_paths_folder_dirty && self.quester_folder_submitted.is_none() {
+            // A clean field shows the saved folder: another process's save
+            // reaches it. Typed or submitted text stays.
+            let folder = self.quester_paths.settings().folder();
+            if Path::new(&self.quester_paths_folder_edit) != folder {
+                self.quester_paths_folder_edit = folder.to_string_lossy().into_owned();
+            }
+        }
+        self.ui.capture = self.draw.capture();
+        self.ui.sidecar_50 = self.draw.sidecar_50();
+        self.ui.focused_50 = self.draw.focused_50();
+        self.ui.map_bake = self.map_desk.bake_gate().choice();
+        if let Ok(document) = self.preferences.document() {
+            self.ui.session_log_file = document
+                .get(frontend_core::log_file::SESSION_LOG_KEY)
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false);
+            self.ui.background_bots_ack = document
+                .get("background_bots_ack")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false);
+            self.ui.render_all_warning_ack = document
+                .get(frontend_core::session::RENDER_ALL_WARNING_ACK_KEY)
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false);
+            // The two shared Nav members the panel holds beside the walk
+            // grants follow the saved value (when a new version arrived)
+            // unless the operator's own change of them is still pending.
+            let version = self
+                .preferences
+                .snapshot()
+                .ok()
+                .map(|snapshot| snapshot.version());
+            if version != self.nav_rebased {
+                self.nav_rebased = version;
+                self.rebase_shared_nav_members();
+            }
+        }
+        self.settle_notice_windows();
+    }
+
+    /// A notice window that waits for its durable acknowledgement closes
+    /// when the saved value holds it; a failed write leaves it open with
+    /// the failure beside "Don't show again" / "Got it". The render-all
+    /// warning's "Don't show again" renders every wall member only then: a
+    /// pending or failed acknowledgement changes nothing.
+    fn settle_notice_windows(&mut self) {
+        use frontend_core::{OperatorNotice, Setting, SettingStatus};
+        if self.background_ack_open
+            && self.ui.background_bots_ack
+            && !matches!(
+                self.core
+                    .setting_status(Setting::Notice(OperatorNotice::BackgroundBots)),
+                SettingStatus::Pending
+            )
+        {
+            self.background_ack_open = false;
+        }
+        if self.wall.render_all_confirming
+            && !matches!(
+                self.core
+                    .setting_status(Setting::Notice(OperatorNotice::RenderAllWarning)),
+                SettingStatus::Pending
+            )
+        {
+            self.wall.render_all_confirming = false;
+            if self.ui.render_all_warning_ack {
+                self.wall.render_all_warn_open = false;
+                self.set_render_all(true);
+            }
+        }
+    }
+
+    /// The capture-input devices follow the saved capture preference: on
+    /// attaches the focused slot's drain, off detaches user input. They
+    /// change when the draw mirror changes, never at a submit.
+    fn sync_capture_devices(&mut self) {
+        let capture = self.focus.lock().unwrap().capture;
+        if self.capture_devices == Some(capture) {
+            return;
+        }
+        self.capture_devices = Some(capture);
+        let name = self.focused_name();
+        if capture {
+            match name.as_deref() {
+                Some(name) => self.capture_on(name),
+                None => {
+                    self.map_desk.set_input_sender(None);
+                }
+            }
+        } else {
+            self.capture_off();
+        }
+        // The channel is attached after the core woke the slot; kick it
+        // again so the drain change lands within a frame.
+        if let Some(name) = name {
+            self.core.wake_slot(&name);
+        }
+    }
+
     /// Poll accepted panel writes and adopt the first cached snapshot.
     pub(crate) fn poll_panel_preferences(&mut self) {
+        self.follow_core_preferences();
+        self.expire_panel_write_errors(Instant::now());
+        // Completed writes end in request order (the order the writer made
+        // them durable), whatever order their results are read in. Only the
+        // newest durable choice of each launch setting takes effect.
+        let mut durable_effects = Vec::new();
         let mut index = 0;
         while index < self.panel_preference_writes.len() {
             let outcome = match &mut self.panel_preference_writes[index].update {
@@ -1781,7 +2132,7 @@ impl Session {
                 index += 1;
                 continue;
             };
-            let write = self.panel_preference_writes.swap_remove(index);
+            let write = self.panel_preference_writes.remove(index);
             match outcome {
                 Ok(()) => {
                     self.clear_succeeded_panel_members(&write.members);
@@ -1792,17 +2143,39 @@ impl Session {
                             None,
                         );
                     }
+                    if let Some(effect) = write.effect {
+                        durable_effects.retain(|older: &LaunchEffect| !effect.supersedes(older));
+                        durable_effects.push(effect);
+                    }
                 }
-                Err(error) => {
-                    self.set_preference_write_error(write.members.first(), error.to_string())
-                }
+                Err(error) => self.fail_panel_members(&write.members, &error.to_string()),
             }
+        }
+        for effect in durable_effects {
+            self.apply_launch_effect(effect);
         }
 
         if let Ok(document) = self.preferences.document() {
-            self.clear_cached_panel_members(&document);
             self.clear_cached_nav_members(&document);
             self.adopt_panel_preferences(&document);
+            // Every later durable version (another process's save, or this
+            // panel's own landing) rebases the panel-owned members over the
+            // new document, keeping the previews of requests still pending.
+            // So does the end (or start) of focus: with no bot focused, the
+            // raster and memory controls show the saved document at once,
+            // without a later version.
+            if self.preferences_ready {
+                let version = self
+                    .preferences
+                    .snapshot()
+                    .ok()
+                    .map(|snapshot| snapshot.version());
+                let context = (version, self.core.selected().is_some());
+                if context != self.panel_rebased {
+                    self.panel_rebased = context;
+                    self.rebase_panel_members();
+                }
+            }
             // Startup selection is a between-command effect. Lazy policy
             // reads may adopt preferences, but must not replace a command's
             // captured profile or map context.
@@ -1828,10 +2201,37 @@ impl Session {
         self.core.preferences_pending() || !self.panel_preference_writes.is_empty()
     }
 
+    /// The newest panel-write failure of the focused view (the global config
+    /// shows it).
     pub(crate) fn panel_preference_write_error(&self) -> Option<&str> {
-        self.preference_write_error
-            .as_ref()
-            .map(|(_, message)| message.as_str())
+        let focused = self.core.selected();
+        self.preference_write_errors
+            .iter()
+            .rev()
+            .find(|error| error.owner.shows_for(focused))
+            .map(|error| error.text.as_str())
+    }
+
+    /// The retained failure of the panel-owned setting whose members lie
+    /// under `prefix`, shown at that setting (a bot's raster or memory
+    /// failure only while that bot is focused).
+    pub(crate) fn panel_member_error(&self, prefix: &[&str]) -> Option<&str> {
+        let focused = self.core.selected();
+        self.preference_write_errors
+            .iter()
+            .rev()
+            .find(|error| error.owner.shows_for(focused) && under_prefix(&error.path, prefix))
+            .map(|error| error.text.as_str())
+    }
+
+    /// Whether a panel-owned write of a member under `prefix` is accepted
+    /// and not yet settled: the setting's control says "Saving…" (a bot's
+    /// raster or memory choice only while that bot is focused).
+    pub(crate) fn panel_member_pending(&self, prefix: &[&str]) -> bool {
+        let focused = self.core.selected();
+        self.pending_panel_members
+            .iter()
+            .any(|member| member.owner.shows_for(focused) && under_prefix(&member.path, prefix))
     }
 
     /// Record saved-setting transitions (the core's and this session's
@@ -1858,7 +2258,17 @@ impl Session {
         &mut self,
         member: &PanelPreferenceMember,
         state: frontend_core::SettingEventState,
-        error: Option<String>,
+        error: Option<&str>,
+    ) {
+        self.note_panel_setting_for(&member.path, &member.owner, state, error);
+    }
+
+    fn note_panel_setting_for(
+        &mut self,
+        path: &[String],
+        owner: &FeedbackOwner,
+        state: frontend_core::SettingEventState,
+        error: Option<&str>,
     ) {
         if !self.record_setting_events {
             return;
@@ -1867,10 +2277,16 @@ impl Session {
             self.setting_events_overflowed = true;
             return;
         }
+        let path = path.join(".");
+        let setting = match owner {
+            FeedbackOwner::Panel => path,
+            FeedbackOwner::Bot(Some(profile)) => format!("bot:{profile}:{path}"),
+            FeedbackOwner::Bot(None) => format!("bot:unfocused:{path}"),
+        };
         self.setting_events.push(frontend_core::SettingEvent::new(
-            member.path.join("."),
+            setting,
             state,
-            error,
+            error.map(str::to_owned),
         ));
     }
 
@@ -1883,41 +2299,112 @@ impl Session {
         if !self.persist_ui {
             return Ok(());
         }
+        self.submit_panel_member(path, value, None).map(|_| ())
+    }
+
+    /// Submit one remembered launch choice: it takes effect (`effect`) only
+    /// when its write is durable, and the control shows it meanwhile. A run
+    /// that saves nothing has no write to wait for: the effect is applied
+    /// at once. `false` when the write was refused before it was accepted
+    /// (the failure shows at the setting).
+    fn choose_launch(
+        &mut self,
+        path: &[&str],
+        value: Option<serde_json::Value>,
+        effect: LaunchEffect,
+    ) -> bool {
+        if !self.persist_ui {
+            self.apply_launch_effect(effect);
+            return true;
+        }
+        match self.submit_panel_member(path, value, Some(effect.clone())) {
+            Ok(PanelSubmit::Done) => true,
+            Ok(PanelSubmit::Pending(request)) => {
+                self.launch_previews.show(request, effect);
+                true
+            }
+            Err(_) => false,
+        }
+    }
+
+    /// Apply what a remembered launch choice does now that it is durable.
+    fn apply_launch_effect(&mut self, effect: LaunchEffect) {
+        match effect {
+            LaunchEffect::ServerRevision(revision) => {
+                // A profile bound while the save was pending keeps what it
+                // bound with: the revision changes only for the next session.
+                if self.launcher.bound().is_none() {
+                    self.ui.server_revision = revision;
+                    self.launcher.bump_generation();
+                }
+            }
+            LaunchEffect::Raster { raster, profile } => self.apply_raster_choice(raster, profile),
+            LaunchEffect::Lowmem { lowmem, profile } => self.apply_lowmem_choice(lowmem, profile),
+        }
+    }
+
+    /// The request a panel-owned write became: durable already (nothing was
+    /// left to wait for), or queued under its identity.
+    fn submit_panel_member(
+        &mut self,
+        path: &[&str],
+        value: Option<serde_json::Value>,
+        effect: Option<LaunchEffect>,
+    ) -> Result<PanelSubmit, String> {
+        self.panel_request_seq += 1;
         let member = PanelPreferenceMember {
+            request: self.panel_request_seq,
             path: path.iter().map(|part| (*part).to_owned()).collect(),
             value: value.clone(),
+            owner: FeedbackOwner::of(effect.as_ref()),
         };
-        self.pending_panel_members
-            .insert(member.path.clone(), value.clone());
+        // A new write of the member is the action that resolves its failure.
+        let failures_before = self.preference_write_errors.len();
+        self.preference_write_errors
+            .retain(|error| error.path != member.path || error.owner != member.owner);
+        if self.preference_write_errors.len() != failures_before {
+            self.note_panel_setting(&member, frontend_core::SettingEventState::Cleared, None);
+        }
+        self.pending_panel_members.push(member.clone());
         let patch = match PreferencePatch::member(path, value) {
             Ok(patch) => patch,
             Err(error) => {
                 let message = error.to_string();
-                self.set_preference_write_error(Some(&member), message.clone());
+                self.fail_panel_members(std::slice::from_ref(&member), &message);
                 return Err(message);
             }
         };
         if patch.is_empty() {
-            self.pending_panel_members.remove(&member.path);
-            return Ok(());
+            // The document already holds the value: there is nothing to wait for.
+            self.pending_panel_members
+                .retain(|pending| pending.request != member.request);
+            if let Some(effect) = effect {
+                self.apply_launch_effect(effect);
+            }
+            return Ok(PanelSubmit::Done);
         }
         match self.preferences.begin_patch(patch) {
             Ok(Update::Durable) => {
                 self.clear_succeeded_panel_members(std::slice::from_ref(&member));
                 self.note_panel_setting(&member, frontend_core::SettingEventState::Saved, None);
-                Ok(())
+                if let Some(effect) = effect {
+                    self.apply_launch_effect(effect);
+                }
+                Ok(PanelSubmit::Done)
             }
             Ok(update @ Update::Queued(_)) => {
+                let request = member.request;
                 self.note_panel_setting(&member, frontend_core::SettingEventState::Pending, None);
                 self.panel_preference_writes.push(PanelPreferenceWrite {
                     update,
                     members: vec![member],
+                    effect,
                 });
-                Ok(())
+                Ok(PanelSubmit::Pending(request))
             }
             Err(error) => {
                 let message = error.to_string();
-                self.set_preference_write_error(Some(&member), message.clone());
+                self.fail_panel_members(std::slice::from_ref(&member), &message);
                 Err(message)
             }
         }
@@ -1931,11 +2418,18 @@ impl Session {
             Ok(value) => self.persist_panel_member(path, Some(value)),
             Err(error) => {
                 let member = PanelPreferenceMember {
+                    request: 0,
                     path: path.iter().map(|part| (*part).to_owned()).collect(),
                     value: None,
+                    owner: FeedbackOwner::Panel,
                 };
                 let message = error.to_string();
-                self.set_preference_write_error(Some(&member), message.clone());
+                self.set_preference_write_error(&member, &message, Instant::now());
+                self.note_panel_setting(
+                    &member,
+                    frontend_core::SettingEventState::Failed,
+                    Some(&message),
+                );
                 Err(message)
             }
         }
@@ -1947,10 +2441,64 @@ impl Session {
         self.pending_nav_members.insert(key, value);
     }
 
+    /// A shared Nav value the operator changed stays over refreshes only
+    /// while its command's write is pending; a write that failed or never
+    /// started leaves the durable value showing again.
+    fn prune_pending_nav_members(&mut self) {
+        let core = &self.core;
+        let special_areas = &mut self.special_areas_dropped;
+        let mut dropped_any = false;
+        self.pending_nav_members.retain(|key, _| {
+            let pending = matches!(
+                core.setting_status(nav_member_setting(key)),
+                frontend_core::SettingStatus::Pending
+            );
+            if !pending {
+                dropped_any = true;
+                if *key == "show_special_areas" {
+                    *special_areas = true;
+                }
+            }
+            pending
+        });
+        if dropped_any {
+            self.rebase_shared_nav_members();
+        }
+    }
+
+    /// The two shared Nav members the panel holds beside the walk grants (the
+    /// special-areas overlay and the manual-walk pause) take the saved value,
+    /// except where the operator's own change is still pending.
+    fn rebase_shared_nav_members(&mut self) {
+        let Ok(document) = self.preferences.document() else {
+            return;
+        };
+        let saved = crate::ui_state::load_snapshot(&document).nav;
+        if !self.pending_nav_members.contains_key("show_special_areas") {
+            self.ui.nav.show_special_areas = saved.show_special_areas;
+        }
+        if !self
+            .pending_nav_members
+            .contains_key("pause_script_on_manual_walk_abort")
+        {
+            self.ui.nav.pause_script_on_manual_walk_abort = saved.pause_script_on_manual_walk_abort;
+        }
+    }
+
+    /// Whether a pending special-areas preview was dropped since the last
+    /// call (its write ended): the map's own toggle then follows the saved
+    /// value instead of submitting its stale choice again.
+    pub(crate) fn take_special_areas_dropped(&mut self) -> bool {
+        std::mem::take(&mut self.special_areas_dropped)
+    }
+
     fn adopt_panel_preferences_if_ready(&mut self) {
         if self.preferences_ready {
             return;
         }
+        // The core adopts the durable snapshot into the draw policy, the
+        // bake gate and the Quester source before the panel's own view does.
+        self.follow_core_preferences();
         let Ok(document) = self.preferences.document() else {
             return;
         };
@@ -1963,13 +2511,15 @@ impl Session {
         }
         self.ui = crate::ui_state::apply_pending_members(
             crate::ui_state::load_snapshot(document),
-            &self.pending_panel_members,
+            self.pending_panel_members
+                .iter()
+                .filter(|member| !crate::ui_state::is_launch_choice(&member.path))
+                .map(|member| (member.path.as_slice(), &member.value)),
         );
         apply_pending_nav_members(&mut self.ui.nav, &self.pending_nav_members);
         self.preferences_ready = true;
 
         let preserve_folder_draft = self.quester_paths_folder_dirty;
-        self.quester_paths.restore(&self.preferences);
         if !preserve_folder_draft {
             self.quester_paths_folder_edit = self
                 .quester_paths
@@ -1978,83 +2528,153 @@ impl Session {
                 .to_string_lossy()
                 .into_owned();
         }
-        self.draw = frontend_core::DrawPolicy::restore(&self.preferences, self.persist_ui);
-        {
-            let mut focus = self
-                .focus
-                .lock()
-                .expect("panel focus mutex is not poisoned");
-            focus.capture = self.draw.capture();
-            focus.sidecar_50 = self.draw.sidecar_50();
-            focus.focused_50 = self.draw.focused_50();
-        }
         self.ui.capture = self.draw.capture();
         self.ui.sidecar_50 = self.draw.sidecar_50();
         self.ui.focused_50 = self.draw.focused_50();
-        self.map_desk
-            .adopt_bake_choice(frontend_core::load_map_bake_choice(&self.preferences));
-        #[cfg(feature = "js")]
-        {
-            self.script_load_dir = crate::script_picker::default_load_browse_dir(
-                self.ui.script_load_last_dir.as_deref(),
-            );
-            self.rs2b0t_catalog_dir = crate::script_picker::default_load_browse_dir(
-                self.ui.script_catalog_last_dir.as_deref(),
-            );
-        }
-        crate::log_pane::apply_session_log_pref(self);
+        self.ui.map_bake = self.map_desk.bake_gate().choice();
+        self.script_load_dir =
+            crate::script_picker::default_load_browse_dir(self.ui.script_load_last_dir.as_deref());
+        self.rs2b0t_catalog_dir = crate::script_picker::default_load_browse_dir(
+            self.ui.script_catalog_last_dir.as_deref(),
+        );
 
-        self.clear_cached_panel_members(document);
         self.clear_cached_nav_members(document);
     }
 
+    /// A panel-owned write became durable: its request ends (the document
+    /// holds its value, and a newer request of the same member keeps
+    /// previewing its own) and an older request's failure shown at the
+    /// setting is resolved; a newer request's failure stays. Requests are
+    /// matched by identity, never by the value they carry.
     fn clear_succeeded_panel_members(&mut self, members: &[PanelPreferenceMember]) {
         for member in members {
-            if self.pending_panel_members.get(&member.path) == Some(&member.value) {
-                self.pending_panel_members.remove(&member.path);
-                #[cfg(test)]
-                crate::ui_state::commit_test_member(&member.path, &member.value);
-            }
-            if self
-                .preference_write_error
-                .as_ref()
-                .is_some_and(|(path, _)| path == &member.path)
-            {
-                self.preference_write_error = None;
+            self.launch_previews.settle(member.request);
+            self.pending_panel_members
+                .retain(|pending| pending.request != member.request);
+            #[cfg(test)]
+            crate::ui_state::commit_test_member(&member.path, &member.value);
+            let mut cleared = false;
+            self.preference_write_errors.retain(|error| {
+                let keep = error.path != member.path
+                    || error.owner != member.owner
+                    || error.request > member.request;
+                cleared |= !keep;
+                keep
+            });
+            if cleared {
                 self.note_panel_setting(member, frontend_core::SettingEventState::Cleared, None);
+            }
+        }
+        self.rebase_panel_members();
+    }
+
+    /// A panel-owned write was refused or failed: its request ends, the
+    /// control shows the latest durable value (and the preview of any other
+    /// request still pending) again, and the failure stays at the setting
+    /// until a later write of it lands or the error timeout passes. Every
+    /// request has its own outcome, whatever the others carried.
+    fn fail_panel_members(&mut self, members: &[PanelPreferenceMember], error: &str) {
+        let now = Instant::now();
+        for member in members {
+            self.launch_previews.settle(member.request);
+            self.pending_panel_members
+                .retain(|pending| pending.request != member.request);
+            self.set_preference_write_error(member, error, now);
+            self.note_panel_setting(
+                member,
+                frontend_core::SettingEventState::Failed,
+                Some(error),
+            );
+        }
+        self.rebase_panel_members();
+    }
+
+    /// The panel view after a request settled: the latest durable document
+    /// with the previews of the requests still pending laid over it
+    /// ([`crate::ui_state::rebased`]). A run that saves nothing, and a
+    /// panel whose first snapshot has not arrived, have nothing to rebase.
+    fn rebase_panel_members(&mut self) {
+        if !self.persist_ui || !self.preferences_ready {
+            return;
+        }
+        let Ok(document) = self.preferences.document() else {
+            return;
+        };
+        self.ui = crate::ui_state::rebased(
+            &self.ui,
+            &document,
+            self.pending_panel_members
+                .iter()
+                .map(|member| (member.path.as_slice(), &member.value)),
+            self.core.selected().is_some(),
+        );
+        // The server revision the next session binds with follows a durable
+        // value another process saved (while this panel has no choice of its
+        // own pending and no profile is bound).
+        let durable = document
+            .get("server_revision")
+            .and_then(serde_json::Value::as_u64)
+            .and_then(|revision| u16::try_from(revision).ok())
+            .filter(|revision| matches!(revision, 274 | 289));
+        if let Some(durable) = durable {
+            if self.launch_previews.server_revision().is_none()
+                && self.launcher.bound().is_none()
+                && durable != self.ui.server_revision
+            {
+                self.ui.server_revision = durable;
+                self.launcher.bump_generation();
             }
         }
     }
 
     fn set_preference_write_error(
         &mut self,
-        member: Option<&PanelPreferenceMember>,
-        error: String,
+        member: &PanelPreferenceMember,
+        error: &str,
+        now: Instant,
     ) {
-        if let Some(member) = member {
-            let event_error = self.record_setting_events.then(|| error.clone());
-            self.note_panel_setting(
-                member,
-                frontend_core::SettingEventState::Failed,
-                event_error,
-            );
+        let request = member.request;
+        let text = format!("Preferences not saved: {error}");
+        match self
+            .preference_write_errors
+            .iter_mut()
+            .find(|shown| shown.path == member.path && shown.owner == member.owner)
+        {
+            // A newer request's failure already shows: it stays.
+            Some(shown) if shown.request > request => {}
+            Some(shown) => {
+                shown.request = request;
+                shown.text = text;
+                shown.since = now;
+            }
+            None => self.preference_write_errors.push(PanelWriteError {
+                path: member.path.clone(),
+                owner: member.owner.clone(),
+                request,
+                text,
+                since: now,
+            }),
         }
-        let path = member.map_or_else(Vec::new, |member| member.path.clone());
-        self.preference_write_error = Some((path, format!("Preferences not saved: {error}")));
     }
 
-    fn clear_cached_panel_members(
-        &mut self,
-        document: &serde_json::Map<String, serde_json::Value>,
-    ) {
-        self.pending_panel_members.retain(|path, value| {
-            let stored = json_member_matches(document, path, value);
-            #[cfg(test)]
-            if stored {
-                crate::ui_state::commit_test_member(path, value);
+    /// Drop every panel-write failure that has stood for the error timeout.
+    pub(crate) fn expire_panel_write_errors(&mut self, now: Instant) {
+        let mut index = 0;
+        while index < self.preference_write_errors.len() {
+            if now.saturating_duration_since(self.preference_write_errors[index].since)
+                >= frontend_core::ERROR_MESSAGE_TIMEOUT
+            {
+                let error = self.preference_write_errors.remove(index);
+                self.note_panel_setting_for(
+                    &error.path,
+                    &error.owner,
+                    frontend_core::SettingEventState::Cleared,
+                    None,
+                );
+            } else {
+                index += 1;
             }
-            !stored
-        });
+        }
     }
 
     fn clear_cached_nav_members(&mut self, document: &serde_json::Map<String, serde_json::Value>) {
@@ -2267,6 +2887,11 @@ impl Session {
             .map_or(Ok(()), BoundProfile::require_bot_operation)
     }
 
+    /// Choose the server revision for the next session. It is a remembered
+    /// launch choice, so it takes effect only when its write is durable: the
+    /// preparation and the binding read the durable value
+    /// ([`Self::apply_launch_effect`]), and the revision control shows the
+    /// choice meanwhile ([`Self::revision_choice_label`]).
     pub fn set_server_revision(&mut self, revision: u16) -> Result<(), String> {
         if self.launcher.bound().is_some() {
             return Err("server profile is already bound; restart to change revision".into());
@@ -2274,9 +2899,11 @@ impl Session {
         if !matches!(revision, 274 | 289) {
             return Err(format!("unsupported revision {revision}; use 274 or 289"));
         }
-        self.ui.server_revision = revision;
-        self.launcher.bump_generation();
-        let _ = self.persist_panel_serializable(&["server_revision"], &revision);
+        self.choose_launch(
+            &["server_revision"],
+            Some(serde_json::Value::from(revision)),
+            LaunchEffect::ServerRevision(revision),
+        );
         Ok(())
     }
 
@@ -2295,6 +2922,16 @@ impl Session {
 
     pub fn effective_revision_label(&self) -> Result<String, ProfileError> {
         self.launcher.revision_label(self.ui.server_revision)
+    }
+
+    /// The revision the revision control shows: the operator's choice while
+    /// its save is pending, else the effective one.
+    pub fn revision_choice_label(&self) -> Result<String, ProfileError> {
+        let shown = self
+            .launch_previews
+            .server_revision()
+            .unwrap_or(self.ui.server_revision);
+        self.launcher.revision_label(shown)
     }
 
     pub(crate) fn profile_class(&self) -> ProfileClass {
@@ -3516,35 +4153,29 @@ impl Session {
         self.background_ack_open = true;
     }
 
-    /// Persist "Got it, don't show again" for the background-bots notice.
+    /// Submit "Got it, don't show again" for the background-bots notice.
+    /// The acknowledgement is durable-only: the dialog stays, saying
+    /// "Saving…" or the failure beside the button, and closes when the saved
+    /// value holds it ([`Self::settle_notice_windows`]).
     pub fn ack_background_bots(&mut self) {
         if self.persist_ui {
             self.core
                 .stage_notice(frontend_core::OperatorNotice::BackgroundBots);
-            let failure = self
-                .submit(OperatorCommand::AcknowledgeNotice, Targets::Application)
-                .map(|submitted| {
-                    self.core
-                        .command_failure(submitted.request())
-                        .map(str::to_string)
-                });
-            match failure {
-                Some(None) => {
-                    self.background_ack_open = false;
-                    self.ui.background_bots_ack = true;
-                    frontend_core::resources::clear_background_bots_ack_error(&mut self.error);
-                }
-                Some(Some(error)) => self.error = Some(error),
-                None => {}
-            }
+            self.submit(OperatorCommand::AcknowledgeNotice, Targets::Application);
+            frontend_core::resources::clear_background_bots_ack_error(&mut self.error);
         } else {
             self.background_ack_open = false;
         }
     }
 
     /// Dismiss the notice this time; it can appear again on the next trigger.
+    /// Closing it resolves a failed save the dialog showed.
     pub fn dismiss_background_ack(&mut self) {
         self.background_ack_open = false;
+        self.core
+            .dismiss_setting_failure(frontend_core::Setting::Notice(
+                frontend_core::OperatorNotice::BackgroundBots,
+            ));
     }
 
     fn cancel_startup_focus(&mut self) {
@@ -3641,41 +4272,63 @@ impl Session {
         self.submit_draw(DrawSwitch::FocusedFullRate, on);
     }
 
-    /// Submit a saved draw switch and mirror the policy onto the panel's
-    /// preference view.
+    /// Submit a saved draw switch. The control shows the operator's choice
+    /// while the write is pending ([`Self::setting_drafts`]); the policy and
+    /// the render mirror change only when the saved value does.
     fn submit_draw(&mut self, switch: DrawSwitch, on: bool) {
-        if let Some(submitted) =
-            self.submit(OperatorCommand::SetDraw(switch, on), Targets::Application)
-        {
-            if let Some(error) = self.core.command_failure(submitted.request()) {
-                self.error = Some(error.to_string());
-            }
+        match switch {
+            DrawSwitch::CaptureInput => self.setting_drafts.capture = Some(on),
+            DrawSwitch::SidecarFullRate => self.setting_drafts.sidecar_50 = Some(on),
+            DrawSwitch::FocusedFullRate => self.setting_drafts.focused_50 = Some(on),
+            DrawSwitch::GameRenderer | DrawSwitch::LiveFullRate => {}
         }
-        self.ui.capture = self.draw.capture();
-        self.ui.sidecar_50 = self.draw.sidecar_50();
-        self.ui.focused_50 = self.draw.focused_50();
+        self.submit(OperatorCommand::SetDraw(switch, on), Targets::Application);
+        self.settle_setting_drafts();
     }
 
-    /// Confirm the render-all warning: wall members draw from now on. With
-    /// `remember`, also save "Don't show again", after which unchecking
-    /// "only render focused" applies at once. Without it the choice lasts
-    /// this launch only.
+    /// What a saved draw switch's checkbox shows: the operator's choice
+    /// while its write is pending, else the saved value.
+    pub(crate) fn draw_shown(&self, switch: DrawSwitch) -> bool {
+        let focus = self.focus.lock().unwrap();
+        match switch {
+            DrawSwitch::CaptureInput => self.setting_drafts.capture.unwrap_or(focus.capture),
+            DrawSwitch::SidecarFullRate => {
+                self.setting_drafts.sidecar_50.unwrap_or(focus.sidecar_50)
+            }
+            DrawSwitch::FocusedFullRate => {
+                self.setting_drafts.focused_50.unwrap_or(focus.focused_50)
+            }
+            DrawSwitch::GameRenderer => focus.renderer,
+            DrawSwitch::LiveFullRate => focus.live_full_rate,
+        }
+    }
+
+    /// Confirm the render-all warning. Without `remember` (OK), wall members
+    /// draw from now on (this launch only) and the confirm closes. With
+    /// `remember` ("Don't show again"), submit the acknowledgement, after
+    /// which unchecking "only render focused" applies at once. That is
+    /// durable-only, and so is its effect: the confirm stays open saying
+    /// "Saving…" or the failure beside the button, the box and the render
+    /// policy stay at "only render focused", and only when the saved
+    /// acknowledgement holds it do the members draw and the confirm close
+    /// ([`Self::settle_notice_windows`]).
     pub fn confirm_render_all(&mut self, remember: bool) {
-        self.set_render_all(true);
-        self.wall.render_all_warn_open = false;
         if remember && self.persist_ui {
             self.core
                 .stage_notice(frontend_core::OperatorNotice::RenderAllWarning);
-            if let Some(submitted) =
-                self.submit(OperatorCommand::AcknowledgeNotice, Targets::Application)
-            {
-                match self.core.command_failure(submitted.request()) {
-                    Some(error) => self.error = Some(error.to_string()),
-                    None => self.ui.render_all_warning_ack = true,
-                }
+            self.submit(OperatorCommand::AcknowledgeNotice, Targets::Application);
+            self.wall.render_all_confirming = true;
+            self.settle_notice_windows();
+        } else {
+            self.set_render_all(true);
+            self.wall.render_all_warn_open = false;
+            self.core
+                .dismiss_setting_failure(frontend_core::Setting::Notice(
+                    frontend_core::OperatorNotice::RenderAllWarning,
+                ));
+            if remember {
+                self.ui.render_all_warning_ack = true;
             }
-        } else if remember {
-            self.ui.render_all_warning_ack = true;
         }
     }
 
@@ -3759,28 +4412,14 @@ impl Session {
         }
     }
 
-    /// Capture checkbox ([`DrawSwitch::CaptureInput`]). On: attach a fresh
-    /// channel and enable the focused slot's drain. Off: detach user input;
-    /// the consumer releases its own held keys/buttons even without queued
-    /// ups or before reattachment.
+    /// Capture checkbox ([`DrawSwitch::CaptureInput`]): submits the saved
+    /// choice. The input devices follow the saved value
+    /// ([`Self::sync_capture_devices`]): on attaches a fresh channel and
+    /// enables the focused slot's drain, off detaches user input (the
+    /// consumer releases its own held keys/buttons even without queued ups
+    /// or before reattachment).
     pub fn set_capture(&mut self, on: bool) {
         self.submit_draw(DrawSwitch::CaptureInput, on);
-        let name = self.focused_name();
-        if on {
-            match name.as_deref() {
-                Some(name) => self.capture_on(name),
-                None => {
-                    self.map_desk.set_input_sender(None);
-                }
-            }
-        } else {
-            self.capture_off();
-        }
-        // The channel is attached after the core woke the slot; kick it
-        // again so the drain change lands within a frame.
-        if let Some(name) = name {
-            self.core.wake_slot(&name);
-        }
     }
 
     fn capture_on(&mut self, name: &str) {
@@ -3999,73 +4638,104 @@ impl Session {
         self.apply_result(result)
     }
 
-    /// Queued mode for the focused bot's next login, including a session override.
+    /// What the Game pane's memory control shows: the operator's choice for
+    /// the focused bot while its save is pending, else the queued mode for
+    /// the focused bot's next login (including a session override). The mode
+    /// itself changes only when the choice is durable
+    /// ([`Self::apply_lowmem_choice`]). Another bot's pending choice never
+    /// shows here.
     pub fn focused_lowmem(&self) -> bool {
-        self.focused_name()
-            .and_then(|name| self.core.memory_mode(&name))
+        let focused = self.core.selected();
+        self.launch_previews
+            .lowmem(focused)
+            .or_else(|| focused.and_then(|name| self.core.memory_mode(name)))
             .unwrap_or(self.ui.lowmem)
     }
 
-    /// Game-pane none/GPU/CPU (General config). Rail members stay GPU
-    /// (CPU/none only as fallback via `set_draw` / `prefer_cpu`).
+    /// What the Game-pane none/GPU/CPU control shows (General config): the
+    /// operator's choice for the focused bot while its save is pending, else
+    /// the applied mode. Another bot's pending choice never shows here.
+    /// Rail members stay GPU (CPU/none only as fallback via `set_draw` /
+    /// `prefer_cpu`).
     pub fn focused_raster(&self) -> RasterMode {
-        self.ui.raster
+        self.launch_previews
+            .raster(self.core.selected())
+            .unwrap_or(self.ui.raster)
     }
 
-    fn persist_game_render_prefs(&mut self) {
-        let raster = self.ui.raster;
-        if self.persist_ui {
-            let _ = self.persist_panel_serializable(&["raster"], &raster);
+    /// Choose the Game-pane raster. A remembered launch choice takes effect
+    /// only when its write is durable ([`Self::apply_raster_choice`]); until
+    /// then the control shows the choice and nothing else changes, and a
+    /// failed write changes nothing. Returns whether the choice was accepted.
+    pub fn set_focused_raster(&mut self, raster: RasterMode) -> bool {
+        let effect = LaunchEffect::Raster {
+            raster,
+            profile: self.focused_name(),
+        };
+        self.choose_launch(&["raster"], serde_json::to_value(raster).ok(), effect)
+    }
+
+    /// Apply a durable Game-pane raster. Off is `set_draw` on the focused
+    /// client only. Gpu↔Cpu flips the slot's `prefer_cpu` latch; the host drops
+    /// the `Renderer` and reattaches the right backend on the **same**
+    /// client — never a restart. Rail members are not touched. `profile` is
+    /// the bot that was focused when the choice was made: its saved raster
+    /// and latch change, and the focused client follows only while it is
+    /// still the focused one.
+    fn apply_raster_choice(&mut self, raster: RasterMode, profile: Option<String>) {
+        let focused = self.focused_name() == profile;
+        if focused {
+            self.ui.raster = raster;
         }
-        let Some(name) = self.focused_name() else {
+        if let Some(name) = &profile {
+            if let Err(error) = self.submit_profile_write(OperatorCommand::SetRaster(raster), name)
+            {
+                self.error = Some(error);
+            }
+        }
+        if focused {
+            self.set_renderer(raster != RasterMode::Off);
+        }
+        let Some(name) = profile else {
             return;
         };
-        if let Err(e) = self.submit_profile_write(OperatorCommand::SetRaster(raster), &name) {
-            self.error = Some(e);
-        }
-    }
-
-    /// Apply Game-pane raster. Off is `set_draw` on the focused client
-    /// only. Gpu↔Cpu flips the slot's `prefer_cpu` latch; the host drops
-    /// the `Renderer` and reattaches the right backend on the **same**
-    /// client — never a restart. Rail members are not touched.
-    pub fn set_focused_raster(&mut self, raster: RasterMode) -> bool {
-        self.ui.raster = raster;
-        self.persist_game_render_prefs();
-        self.set_renderer(raster != RasterMode::Off);
-        let Some(name) = self.focused_name() else {
-            return true;
-        };
         if raster == RasterMode::Off {
-            return true;
+            return;
         }
-        let want_cpu = raster == RasterMode::Cpu;
         if let Some(slot) = self.core.slot_io(&name) {
-            slot.input.set_prefer_cpu(want_cpu);
+            slot.input.set_prefer_cpu(raster == RasterMode::Cpu);
         }
-        true
     }
 
+    /// Choose the Game pane's memory mode for its next login. Durable-only
+    /// like [`Self::set_focused_raster`] ([`Self::apply_lowmem_choice`]).
     pub fn set_focused_lowmem(&mut self, lowmem: bool) -> bool {
-        self.ui.lowmem = lowmem;
-        let _ = self.persist_panel_member(&["lowmem"], Some(serde_json::Value::Bool(lowmem)));
         self.error = None;
-        let Some(name) = self.focused_name() else {
-            return true;
+        let effect = LaunchEffect::Lowmem {
+            lowmem,
+            profile: self.focused_name(),
         };
-        // The shared command only queues the next login mode. Neither the
-        // client nor its speaker changes while this setting is saved.
+        self.choose_launch(&["lowmem"], Some(serde_json::Value::Bool(lowmem)), effect)
+    }
+
+    /// Apply a durable memory choice: the shared command queues the next
+    /// login mode of `profile`, the bot that was focused when it was made.
+    /// Neither the client nor its speaker changes while this setting is
+    /// saved.
+    fn apply_lowmem_choice(&mut self, lowmem: bool, profile: Option<String>) {
+        if self.focused_name() == profile {
+            self.ui.lowmem = lowmem;
+        }
+        let Some(name) = profile else {
+            return;
+        };
         let mode = if lowmem {
             api::lifecycle::MemoryMode::Low
         } else {
             api::lifecycle::MemoryMode::High
         };
-        match self.submit_profile_write(OperatorCommand::SetMemoryMode(mode), &name) {
-            Ok(()) => true,
-            Err(error) => {
-                self.error = Some(error);
-                false
-            }
+        if let Err(error) = self.submit_profile_write(OperatorCommand::SetMemoryMode(mode), &name) {
+            self.error = Some(error);
         }
     }
 
@@ -4524,17 +5194,25 @@ impl Session {
         self.submit(OperatorCommand::DeclineMapBake, Targets::Application);
     }
 
-    /// Remembered bake choice, persisted with the other panel prefs.
+    /// Remembered bake choice. Durable-only: the bake gate takes it from the
+    /// saved value, the control shows the choice while its write is pending
+    /// ([`Self::map_bake_shown`]), and a failed write shows the saved choice
+    /// again with the failure beside the control.
     pub fn set_map_bake_choice(&mut self, choice: MapBakeChoice) {
-        if let Some(submitted) = self.submit(
+        self.setting_drafts.map_bake = Some(choice);
+        self.submit(
             OperatorCommand::SetMapBakeChoice(choice),
             Targets::Application,
-        ) {
-            match self.core.command_failure(submitted.request()) {
-                Some(error) => self.error = Some(error.to_string()),
-                None => self.ui.map_bake = choice,
-            }
-        }
+        );
+        self.settle_setting_drafts();
+    }
+
+    /// The remembered bake choice a control shows: the operator's choice
+    /// while its write is pending, else the saved choice.
+    pub fn map_bake_shown(&self) -> MapBakeChoice {
+        self.setting_drafts
+            .map_bake
+            .unwrap_or_else(|| self.map_desk.bake_gate().choice())
     }
 
     pub fn release_walk_map(&mut self) {
@@ -4982,9 +5660,12 @@ impl Session {
         profile.game_data()
     }
 
-    /// Persist a Quest Paths form change. The folder field is used only in
-    /// the frame the operator commits it; a checkbox toggle keeps the saved
-    /// folder.
+    /// Submit a Quest Paths form change. The folder field is used only in
+    /// the frame the operator commits it; a checkbox toggle keeps the folder
+    /// last submitted (or saved). Durable-only: the controller applies and
+    /// reloads the source when the saved value holds it, the checkbox shows
+    /// the choice and the field keeps its text while the write is pending,
+    /// and a failed write shows the saved source again with the failure.
     pub(crate) fn persist_quester_paths_change(
         &mut self,
         enabled: bool,
@@ -4992,20 +5673,18 @@ impl Session {
     ) -> Result<(), String> {
         let folder = if folder_committed {
             PathBuf::from(self.quester_paths_folder_edit.as_str())
+        } else if let Some(submitted) = &self.quester_folder_submitted {
+            PathBuf::from(submitted.as_str())
         } else {
             self.quester_paths.settings().folder().to_path_buf()
         };
+        if folder_committed {
+            self.quester_folder_submitted = Some(self.quester_paths_folder_edit.clone());
+        }
+        self.setting_drafts.quester_enabled = Some(enabled);
         let result =
             self.persist_quester_paths(frontend_core::QuesterPathsView::new(enabled, folder));
-        if result.is_ok() && folder_committed {
-            self.quester_paths_folder_dirty = false;
-            self.quester_paths_folder_edit = self
-                .quester_paths
-                .settings()
-                .folder()
-                .to_string_lossy()
-                .into_owned();
-        }
+        self.settle_setting_drafts();
         result
     }
 
@@ -5015,22 +5694,21 @@ impl Session {
     ) -> Result<(), String> {
         let selected = self.selected_game_data();
         self.core.stage_quester_paths(after, true, selected);
-        let result = match self.submit(OperatorCommand::SetQuesterPaths, Targets::Application) {
+        match self.submit(OperatorCommand::SetQuesterPaths, Targets::Application) {
             Some(submitted) => match self.core.command_failure(submitted.request()) {
                 Some(error) => Err(error.to_string()),
                 None => Ok(()),
             },
             None => Err(self.error.clone().unwrap_or_default()),
-        };
-        if result.is_ok() && !self.quester_paths_folder_dirty {
-            self.quester_paths_folder_edit = self
-                .quester_paths
-                .settings()
-                .folder()
-                .to_string_lossy()
-                .into_owned();
         }
-        result
+    }
+
+    /// What the Quest Paths checkbox shows: the operator's choice while its
+    /// write is pending, else the saved source's switch.
+    pub(crate) fn quester_enabled_shown(&self) -> bool {
+        self.setting_drafts
+            .quester_enabled
+            .unwrap_or_else(|| self.quester_paths.settings().enabled())
     }
 
     pub(crate) fn start_quester_paths_reload(&mut self) {

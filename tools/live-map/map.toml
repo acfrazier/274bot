@@ -51,6 +51,7 @@ globs = [
   "**/*_tests.rs",
   "**/*_test.rs",
   "**/test_support/**",
+  "crates/panel/src/test_support.rs",
   "**/fixtures/**",
   "**/tests.rs",
   "**/test.rs",
@@ -86,6 +87,19 @@ cells = [
   "frontend-core.startup-order-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p frontend-core --lib o1_ -- --nocapture",
   "panel.startup-order-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p panel --lib o1_ -- --nocapture",
   "tui.startup-order-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p tui --lib o1_ -- --nocapture",
+]
+
+# Saved settings take effect from the durable snapshot, and a pending or failed
+# save shows at its setting (T5.3-S3). The cells drive a held, then failed, disk
+# through the headless driver, the panel session and dialogs, and the terminal
+# app's popup at 120x40 and 80x24. See README.md "Saved settings".
+[[cover]]
+globs = ["crates/frontend-core/src/command.rs", "crates/frontend-core/src/log.rs", "crates/frontend-core/src/log_file.rs", "crates/frontend-core/src/map_bake.rs", "crates/frontend-core/src/prefs.rs", "crates/frontend-core/src/quester_paths.rs", "crates/frontend-core/src/session/prefs.rs", "crates/frontend-core/src/setting.rs", "crates/host-play/src/local_state.rs", "crates/host-play/src/local_state/frontend.rs", "crates/panel/src/fleet_toolbar.rs", "crates/panel/src/log_pane.rs", "crates/panel/src/picker.rs", "crates/panel/src/ui_state.rs", "crates/panel/src/wall.rs", "crates/tui/src/lib.rs", "crates/tui/src/settings.rs", "crates/tui/src/shell.rs"]
+cells = [
+  "frontend-core.driver-command-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p frontend-core --lib driver::tests::",
+  "host-play.local-state-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p host-play --lib local_state::",
+  "panel.settings-feedback-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p panel --lib settings_feedback_",
+  "tui.settings-feedback-headless|${ISOHOME:?} nice -n 10 cargo test --locked -p tui --lib settings_feedback_",
 ]
 
 # These UI paths have controlled-state driver proof, not game-world fixtures.

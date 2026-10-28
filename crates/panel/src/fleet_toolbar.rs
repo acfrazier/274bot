@@ -272,6 +272,7 @@ pub(crate) fn header(ui: &Ui, session: &mut Session, label: &str) -> bool {
         let _ = session
             .persist_panel_member(&["fleet_toolbar_open"], Some(serde_json::Value::Bool(open)));
     }
+    crate::app::panel_member_feedback_line(ui, session, &["fleet_toolbar_open"]);
     open
 }
 

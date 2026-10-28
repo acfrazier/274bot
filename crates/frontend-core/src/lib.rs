@@ -56,6 +56,7 @@ pub mod rs2b0t_import;
 pub mod scripts;
 pub mod selection;
 pub mod session;
+pub mod setting;
 pub mod slot_view;
 pub mod surface;
 #[cfg(any(test, feature = "test-support"))]
@@ -118,6 +119,7 @@ pub use session::{
     SettingEventState, SlotTransition, StartSettled, SubmitError, Submitted, SurvivalEdit, Targets,
     Transition, SLOT_REMOVE_TIMEOUT,
 };
+pub use setting::{Setting, SettingStatus};
 pub use slot_view::{SlotView, StatusBuf};
 pub use surface::{HeadlessSurface, SlotAttach, SlotSurface, SpawnProfile};
 pub use views::{FleetCounts, FleetRow, FleetView, Light, OpBrief, Phase, QueuePlace, SlotDetail};

@@ -180,6 +180,19 @@ no game engine.
 |---|---|
 | `frontend-core/src/bot_projection.rs` (`LogoutEligibility`), `frontend-core/src/slot_view.rs`, `panel/src/app.rs`, `tui/src/app.rs` | `frontend-core.logout-retry-refused` (above). `frontend-core.logout-retry-headless` runs the projection table, the Fleet and Log out marked plans, the poll test and the repeat-guard tests (guard trip, operator Log out then Log in, a worker that ends, a reaped worker). `panel.logout-retry-headless` runs the button gate, the drawn side-panel Log out button, the focused-slot projection and the Fleet window's Log out all. `tui.logout-retry-headless` runs the `u` key, the dim and lit `[Log out u]` button and Fleet Log out at 120x40 and 80x24 (set `LIVE_EVIDENCE_DIR` to retain captures). |
 
+## Saved settings
+
+A saved setting (draw switches, walk and danger permissions, the map-bake
+choice, the Quest Paths source, the session log file, notice
+acknowledgements) takes effect only from the latest durable preference
+snapshot, and a pending or failed save shows at its setting. The cells hold
+the disk, fail the write, and check the applied models and the setting's
+state through the real seams after `submit` has returned.
+
+| Changed paths | Proof |
+|---|---|
+| `frontend-core/src/{command,log,log_file,map_bake,prefs,quester_paths,setting}.rs`, `frontend-core/src/session/prefs.rs`, `host-play/src/local_state.rs`, `host-play/src/local_state/frontend.rs`, `panel/src/{fleet_toolbar,log_pane,picker,ui_state,wall}.rs`, `tui/src/{lib,settings,shell}.rs` | `frontend-core.driver-command-headless` runs the held-then-failed table over every saved setting, the A-durable/B-failed case with a second process between, the session-file sink and the failure expiry through `HeadlessDriver`. `host-play.local-state-headless` runs the preference snapshot version test with the rest of the service. `panel.settings-feedback-headless` runs the same sequence through the panel session, the render-all dialog's drawn failure and the cold start. `tui.settings-feedback-headless` runs the popup row at 120x40 and 80x24, its expiry and the cold start. |
+
 ## Essence router call paths
 
 The essence files and the shared `navigation.rs` file select the 289

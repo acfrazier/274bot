@@ -172,6 +172,7 @@ impl TuiApp {
             pane.title = &self.settings_title;
             pane.notice = self.settings_save.notice();
             pane.memory = self.settings_memory;
+            pane.feedback = &self.setting_feedback;
             pane.quester_paths_notice = self
                 .quester_paths_controller
                 .notice_text()
@@ -555,6 +556,10 @@ impl TuiApp {
                 put(buf, &mut x, area.y, right, "msg: ", dim());
                 put(buf, &mut x, area.y, right, message, Style::default());
                 self.regions.message = Rect::new(area.x, area.y, area.width, 1);
+            }
+            None if self.load_order_saving() => {
+                put(buf, &mut x, area.y, right, "msg: ", dim());
+                put(buf, &mut x, area.y, right, "Load order: saving…", dim());
             }
             None => put(buf, &mut x, area.y, right, "msg: —", dim()),
         }

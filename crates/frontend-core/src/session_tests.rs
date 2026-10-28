@@ -3237,6 +3237,202 @@ fn o1_same_length_uid_name_projection_invalidates_without_a_save() {
             .collect::<Vec<_>>(),
         ["B", "A"]
     );
-    assert_eq!(session.order_write_seq, 0, "no rank changed");
     assert!(session.order_writes.is_empty());
+}
+
+/// T5.3-S3: a quiet Load-order write (the reconcile after the vault gained
+/// a profile) that fails is reported at the Load order setting. The shown
+/// order keeps the vault's truth, the stored order (the file) stays what it
+/// was, the error expires, and a later reorder saves the new order.
+#[test]
+fn a_failed_quiet_load_order_write_is_reported_and_the_stored_order_stays() {
+    use std::sync::atomic::AtomicBool;
+    let iso = crate::test_support::IsolatedStores::enter("s3-quiet-order");
+    let root = iso.dir().join("state");
+    {
+        let preferences = crate::UiPreferences::open_for_test(root.clone());
+        preferences
+            .set(
+                crate::PROFILE_ORDER_KEY,
+                serde_json::json!({"1": 10, "2": 20}),
+            )
+            .unwrap();
+    }
+    let service = host_play::local_state::LocalStateService::open_process(
+        host_play::local_state::StateRoot::new(root),
+    );
+    let fail = Arc::new(AtomicBool::new(true));
+    let refusing = Arc::clone(&fail);
+    service.set_write_fault_for_test(Arc::new(move || refusing.load(Ordering::SeqCst)));
+    let mut session = OperatorSession::<u32>::new(InstancePermit::SkipLock);
+    session.set_spawn_workers(false);
+    session.bind_local_state(service);
+    session.preferences().unwrap().reload().unwrap();
+    session.adopt_operator_preferences();
+    session.start(
+        vault_with("s3-quiet-order", &[("A", 1, false), ("B", 2, false)]),
+        empty_play(),
+    );
+    assert_eq!(session.profile_names(), ["A", "B"]);
+    let path = session.preferences().unwrap().path();
+    let stored = std::fs::read(&path).unwrap();
+    session.watch_setting_events(true);
+
+    // The vault gains C: the reconcile appends it and writes the order.
+    session
+        .vault
+        .as_mut()
+        .unwrap()
+        .upsert(Profile {
+            username: "C".into(),
+            password: "pw".into(),
+            uid: 3,
+            settings: ProfileSettings::default(),
+        })
+        .unwrap();
+    session.order_reconciled_at = None;
+    session.reconcile_profile_order();
+    assert!(
+        !session.order_writes.is_empty(),
+        "the quiet write was queued"
+    );
+    assert!(matches!(
+        session.setting_status(crate::Setting::ProfileOrder),
+        crate::SettingStatus::Pending
+    ));
+    let (events, incomplete) = session.take_setting_events();
+    assert!(!incomplete);
+    assert_eq!(
+        events.iter().map(|event| event.state()).collect::<Vec<_>>(),
+        [crate::SettingEventState::Pending]
+    );
+    assert_eq!(events[0].setting(), "profile order");
+    let mut surface = Recorder::default();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while session
+        .setting_failure(crate::Setting::ProfileOrder)
+        .is_none()
+    {
+        session.poll_preferences(&mut surface);
+        assert!(
+            Instant::now() < deadline,
+            "the failed write is never reported"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(session
+        .setting_failure(crate::Setting::ProfileOrder)
+        .is_some_and(|text| text.starts_with("Load order not saved: ")));
+    let (events, incomplete) = session.take_setting_events();
+    assert!(!incomplete);
+    assert_eq!(
+        events.iter().map(|event| event.state()).collect::<Vec<_>>(),
+        [crate::SettingEventState::Failed]
+    );
+    assert_eq!(events[0].setting(), "profile order");
+    assert!(
+        events[0].error().is_some_and(|error| error.contains("busy")),
+        "{events:?}"
+    );
+    session.poll_preferences_at(
+        &mut surface,
+        Instant::now() + crate::ERROR_MESSAGE_TIMEOUT,
+    );
+    assert_eq!(
+        session.setting_failure(crate::Setting::ProfileOrder),
+        None,
+        "the error timeout clears the failure"
+    );
+    let (events, incomplete) = session.take_setting_events();
+    assert!(!incomplete);
+    assert_eq!(
+        events.iter().map(|event| event.state()).collect::<Vec<_>>(),
+        [crate::SettingEventState::Cleared]
+    );
+    assert_eq!(events[0].setting(), "profile order");
+    assert_eq!(
+        session.profile_order().names(),
+        ["A", "B", "C"],
+        "the shown order keeps the vault's truth"
+    );
+    assert_eq!(
+        std::fs::read(&path).unwrap(),
+        stored,
+        "the stored order is what it was"
+    );
+    assert!(session.order_writes.is_empty());
+
+    // The disk recovers: a reorder is the action that resolves the failure.
+    fail.store(false, Ordering::SeqCst);
+    let (c, a) = (
+        session.profile_identity("C").unwrap(),
+        session.profile_identity("A").unwrap(),
+    );
+    session.stage_reorder(crate::ReorderOp::Move {
+        moving: c,
+        to: crate::Placement::Before(a),
+    });
+    struct FleetLend<'a>(&'a mut crate::FleetModel);
+    impl SlotSurface for FleetLend<'_> {
+        type Io = u32;
+        fn attach(
+            &mut self,
+            _name: &str,
+            _profile: &mut crate::SpawnProfile<'_>,
+            _retained: Option<u32>,
+        ) -> SlotAttach<u32> {
+            SlotAttach::new(0, None, None)
+        }
+        fn lifetime_reset(&mut self, _name: &str, _walk_was_armed: bool) {}
+        fn released(&mut self, _name: &str) {}
+        fn models(&mut self) -> crate::Models<'_> {
+            crate::Models::none().with_fleet(&mut *self.0)
+        }
+        fn draw_changed(&mut self, _switch: crate::command::DrawSwitch, _on: bool) {}
+    }
+    let mut fleet = crate::FleetModel::new();
+    fleet.refresh(&session);
+    let submitted = session
+        .submit(
+            OperatorCommand::ReorderProfiles,
+            crate::session::Targets::Application,
+            &mut FleetLend(&mut fleet),
+        )
+        .expect("the reorder is admitted");
+    assert_eq!(
+        session.command_failure(submitted.request()),
+        None,
+        "the reorder is not refused"
+    );
+    assert_eq!(
+        session.setting_failure(crate::Setting::ProfileOrder),
+        None,
+        "the new write clears the failure it resolves"
+    );
+    let (events, incomplete) = session.take_setting_events();
+    assert!(!incomplete);
+    assert_eq!(
+        events.iter().map(|event| event.state()).collect::<Vec<_>>(),
+        [crate::SettingEventState::Pending]
+    );
+    assert_eq!(events[0].setting(), "profile order");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !matches!(
+        session.setting_status(crate::Setting::ProfileOrder),
+        crate::SettingStatus::Saved
+    ) {
+        session.poll_preferences(&mut surface);
+        assert!(Instant::now() < deadline, "the retry never settled");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let (events, incomplete) = session.take_setting_events();
+    assert!(!incomplete);
+    assert_eq!(
+        events.iter().map(|event| event.state()).collect::<Vec<_>>(),
+        [crate::SettingEventState::Saved]
+    );
+    assert_eq!(events[0].setting(), "profile order");
+    let file: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    let order = file[crate::PROFILE_ORDER_KEY].as_object().unwrap();
+    assert_eq!(order.len(), 3, "the stored order now holds every profile");
 }

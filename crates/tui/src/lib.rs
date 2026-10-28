@@ -44,7 +44,7 @@ pub(crate) mod stderr_capture;
 pub(crate) mod test_support;
 pub mod world_picker;
 
-pub use app::{AppAction, TuiApp};
+pub use app::{AppAction, SettingFeedback, TuiApp};
 pub use bin::RunMode;
 pub use chat::{Chat, ChatAction, ChatState, ChatView};
 pub use commands::Command;
