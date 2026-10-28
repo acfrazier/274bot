@@ -1425,10 +1425,7 @@ fn m2_out_of_range_receipts_pass_the_full_oracle() {
                 .expect("M2 receipt retains its Killed report");
             let fields = status["fields"].as_object_mut().unwrap();
             fields.insert("combat_boost_doses".to_owned(), json!(0));
-            fields.insert(
-                "combat_locked_ticks".to_owned(),
-                locked_ticks - 2 * boost_doses,
-            );
+            fields.insert("combat_locked_ticks".to_owned(), json!(locked_ticks - 2 * boost_doses));
             assert!(
                 !m2_ready(&parse_capture(&mutant)),
                 "zero reported boost dose does not pass for in-window Prep in {path}"

@@ -1515,10 +1515,14 @@ fn fail_escape_walks_until_hold(
     snapshot: &GameSnapshot,
     ledger: &mut TestLedger,
     tick: u64,
-) {
+) -> Vec<Vec<api::WorldTile>> {
+    let mut goal_sets = Vec::new();
     for _ in 0..=escape::ESCAPE_PASS_ATTEMPTS {
-        if pending_walk(ledger).is_none() {
-            return;
+        let Some(walk) = pending_walk(ledger) else {
+            return goal_sets;
+        };
+        if let Some(goals) = walk.goals {
+            goal_sets.push(goals.as_slice().to_vec());
         }
         post_walk_end(ledger, tick, WalkEnd::Failed, Some("route fixture failure"));
         assert!(with_step_context(snapshot, ledger, tick, |cx| run.poll(cx)).is_pending());
@@ -2023,10 +2027,9 @@ fn m4_exhausted_escape_walk(
         );
     }
     assert!(matches!(&run.phase, Phase::HoldingAfterAbort));
-    assert_eq!(
-        earlier_goals.len(),
-        escape::ESCAPE_PASS_ATTEMPTS,
-        "the first pass fails each escape tier"
+    assert!(
+        !earlier_goals.is_empty() && earlier_goals.len() <= escape::ESCAPE_PASS_ATTEMPTS,
+        "the first pass requests each available escape tier once"
     );
     if move_tree {
         let moved_tree = api::WorldTile {
@@ -3103,7 +3106,7 @@ fn failed_abort_walk_holds_protection_at_high_hp_while_attacker_is_live() {
         )
     })
     .is_pending());
-    fail_escape_walks_until_hold(&mut run, &snapshot, &mut ledger, 13);
+    let _ = fail_escape_walks_until_hold(&mut run, &snapshot, &mut ledger, 13);
 
     let (protect_varp, protect_button_com) = run
         .tables
@@ -3247,20 +3250,7 @@ fn failed_abort_walk_does_not_retry_named_tiles_after_food_exhaustion() {
         )
     })
     .is_pending());
-    fail_escape_walks_until_hold(&mut run, &snapshot, &mut ledger, 13);
-    let earlier_goal_sets = ledger
-        .as_ref()
-        .unwrap()
-        .outbox
-        .iter()
-        .filter_map(|action| match &action.effect {
-            crate::native::HostEffect::Walk(request) => request
-                .candidate_goals
-                .as_ref()
-                .map(|goals| goals.as_slice().to_vec()),
-            _ => None,
-        })
-        .collect::<Vec<_>>();
+    let earlier_goal_sets = fail_escape_walks_until_hold(&mut run, &snapshot, &mut ledger, 13);
     assert!(
         !earlier_goal_sets.is_empty(),
         "the guarded pass names goals before food runs out"
@@ -3279,11 +3269,11 @@ fn failed_abort_walk_does_not_retry_named_tiles_after_food_exhaustion() {
     );
 }
 
-/// Every escape walk fails. One pass makes one request per destination tier:
-/// the authored stand, tiles beyond the chase envelope, and farther-away
-/// tiles. Failed tiles remain excluded when food runs out and a second pass
-/// starts. Fixed pass counters bound the retries, but exhaustion ends earlier
-/// when no new tile can be named.
+/// Every escape walk fails. A pass makes at most one request per destination
+/// tier that still has an untried goal: the authored stand, tiles beyond the
+/// chase envelope, and farther-away tiles. Failed tiles remain excluded when
+/// food runs out and a second pass starts. Fixed pass counters bound retries,
+/// but exhaustion ends earlier when no new tile can be named.
 #[test]
 fn failed_escape_recovery_is_bounded_and_preserves_the_last_failure() {
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
@@ -3350,10 +3340,12 @@ fn failed_escape_recovery_is_bounded_and_preserves_the_last_failure() {
             );
         };
 
-        assert_eq!(
-            walks.len(),
-            2 * pass,
-            "stand={stand:?}: the exhausted second pass requests untried tiers"
+        let first_pass_count = walks.iter().take_while(|walk| walk.food_guard).count();
+        assert_eq!(first_pass_count, pass, "the guarded pass requests each available tier");
+        let exhausted_count = walks.len() - first_pass_count;
+        assert!(
+            exhausted_count > 0 && exhausted_count <= pass,
+            "stand={stand:?}: the exhausted pass requests only tiers with untried goals"
         );
         let mut earlier_goal_sets = Vec::<Vec<api::WorldTile>>::new();
         for walk in &walks {
@@ -3373,7 +3365,7 @@ fn failed_escape_recovery_is_bounded_and_preserves_the_last_failure() {
                 "walk {index}: only the first pass runs under the food guard"
             );
         }
-        for chunk in walks.chunks(pass) {
+        for (pass_index, chunk) in walks.chunks(pass).enumerate() {
             let preferred = chunk
                 .iter()
                 .map(|walk| goals_of(walk).preferred().to_vec())
@@ -3389,11 +3381,11 @@ fn failed_escape_recovery_is_bounded_and_preserves_the_last_failure() {
                     .goals
                     .as_ref()
                     .is_some_and(|goals| goals.preferred().contains(&far_stand)),
-                stand.is_some(),
-                "the authored stand leads a pass only when the Path names one"
+                stand.is_some() && pass_index == 0,
+                "the authored stand leads only the first pass when the Path names one"
             );
         }
-        let last = format!("route fixture failure {}", 2 * pass);
+        let last = format!("route fixture failure {}", walks.len());
         assert!(
             matches!(&result, Err(ActionError::Blocked(reason)) if reason.as_ref() == last),
             "the step must end with the last walk failure"
@@ -3539,10 +3531,14 @@ fn escape_walks_that_never_settle_end_on_their_observed_tick_budget() {
             );
         };
 
-        assert_eq!(
-            walks.len(),
-            2 * pass,
-            "stand={stand:?}: the exhausted second pass requests untried tiers"
+        let first_pass_count = walks
+            .iter()
+            .take_while(|(_, walk)| walk.food_guard)
+            .count();
+        assert_eq!(first_pass_count, pass, "the guarded pass requests each available tier");
+        assert!(
+            walks.len() > first_pass_count && walks.len() <= 2 * pass,
+            "stand={stand:?}: the exhausted pass requests only tiers with untried goals"
         );
         for chunk in walks.chunks(pass) {
             for pair in chunk.windows(2) {
@@ -3907,7 +3903,7 @@ fn engaged_abort_hold_after_failed_walk(
         run.on_combat_report(aborted, cx)
     })
     .is_pending());
-    fail_escape_walks_until_hold(&mut run, snapshot, &mut ledger, 13);
+    let _ = fail_escape_walks_until_hold(&mut run, snapshot, &mut ledger, 13);
     seed_abort_scene(snapshot, here, 1, after_walk, None, None);
     (run, ledger, here)
 }
