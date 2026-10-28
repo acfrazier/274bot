@@ -2,7 +2,7 @@
 
 fn main() {
     frontend_core::process::bootstrap().expect("protected V8 bootstrap on process main thread");
-    let mut args = match panel::parse_args(std::env::args().skip(1), None) {
+    let args = match panel::parse_args(std::env::args().skip(1), None) {
         Ok(args) => args,
         Err((code, message)) => {
             eprintln!("{message}");
@@ -13,7 +13,6 @@ fn main() {
         eprintln!("FAIL: quester_skip requires --live script_quester_skip");
         std::process::exit(1);
     }
-    args.catalog_core = true;
     let catalog_root = frontend_core::test_support::catalog_root();
     let stores = frontend_core::test_support::IsolatedStores::enter(&format!(
         "quester-skip-panel-{}",
