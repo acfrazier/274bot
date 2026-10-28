@@ -5824,8 +5824,9 @@ fn m2_ready(capture: &CombatCapture) -> bool {
     let locked_ticks = integer(report, "combat_locked_ticks").unwrap_or(-1);
     let protected_hits = integer(report, "combat_hits_while_protected").unwrap_or(-1);
     let plans = batch_plans(capture);
+    // A pre-fight boost is outside the combat dose counter; first_prep_plan_ok
+    // verifies that boost directly.
     prayer_doses > 0
-        && boost_doses > 0
         && locked_ticks == 2 * (prayer_doses + boost_doses)
         && protected_hits == 0
         && every_killed_report_has_corpse(capture)
