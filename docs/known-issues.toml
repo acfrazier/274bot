@@ -387,14 +387,18 @@ owner = "T2.rest walking"
 id = "boat-fare-post-payout-unreachable"
 kind = "known-issue"
 area = "Scripts"
-text = """A transient engine-side "I can't reach that!" report has also been
-  observed after Luthas pays the fare and before boarding, with no Luthas reach
-  failure in the host log. Its cause is unknown; it is tracked separately from
-  the host's bounded Luthas approach retries."""
+text = """During a Karamja trip to the mainland without the 30-coin boat fare,
+  the bot earns the fare by working for Luthas. You may see "I can't reach
+  that!" during the conversation with Luthas or after he pays and before the
+  boat boards. During the conversation, the bot can make up to three attempts
+  to reach Luthas. If all three fail, the fare is not paid and the trip does
+  not cross.
+  After payment, the fare is already paid; in observed cases the bot still
+  boards. No workaround is known."""
 first = "0.2.8"
 target = "none"
 severity = "medium"
-owner = "engine"
+owner = "T2.rest walking"
 
 [[item]]
 id = "copy-settings-renamed-target"
