@@ -1,5 +1,5 @@
 //! Escape-goal planning for a quest fight that cannot attack its target.
-
+//!
 //! The planner sends exact, standable goals to the route planner. Baked
 //! collision removes blocked tiles. The route planner decides reachability.
 //! A live Reach flood measures the selected tier's walking depth but does not
@@ -23,27 +23,26 @@ const STAND: usize = 0;
 const BEYOND: usize = 1;
 const AWAY: usize = 2;
 
-/// An escape pass makes at most one request per non-empty tier. Each request
-/// names one tier, so a retry cannot repeat goals from an earlier request in
-/// the pass. The tiers are disjoint, and each request is planned from the
-/// observed position. A request ends with its walk receipt or, when none comes,
-/// with its observed-tick budget ([`ESCAPE_SLACK_TICKS`]) when the walk has a
-/// measured depth. An unmeasured walk has no tick budget; the walk machine's
-/// ten-minute active-clock deadline stays as the outer backstop.
+/// An escape makes at most two passes over its three tiers. It keeps one
+/// compact record per request. Later requests never send a tile from an
+/// earlier failed request, including in the second pass after food runs out.
+/// Six 16-byte regions plus a one-byte count use 97 fixed bytes per escape.
+/// The records do not grow on game ticks.
 pub(super) const ESCAPE_PASS_ATTEMPTS: usize = 3;
+const ESCAPE_PASS_COUNT: usize = 2;
+const MAX_ESCAPE_REQUESTS: usize = ESCAPE_PASS_ATTEMPTS * ESCAPE_PASS_COUNT;
 
 /// Chebyshev margin around the authored stand that still counts as standing
 /// at it. It is the radius the stand walk used before goal tiers.
 const STAND_RADIUS: i32 = 1;
 
-/// Largest ring radius of the beyond tier around the attacker. A ring of this
-/// radius has 512 tiles, which is a whole tier. The away tier does not use
-/// it: its rings lie inside the chase envelope.
+/// Largest ring radius of the beyond tier around the attacker. A ring at this
+/// radius has 512 tiles. The away tier does not use it because its rings are
+/// inside the chase envelope.
 const MAX_RING: i32 = 64;
 
-/// Maximum number of candidate tiles in one tier. A request sends one tier,
-/// so every request remains below the router's goal cap.
-const TIER_CAP: usize = WalkGoals::MAX / 2;
+/// Maximum number of candidate tiles in one tier. One request sends one tier.
+const TIER_CAP: usize = WalkGoals::MAX;
 
 /// Observed ticks, beyond the measured walking depth, that one escape walk
 /// may stay unsettled before it is abandoned and the next tier starts. The
@@ -66,14 +65,100 @@ struct WalkClock {
     last_tick: u64,
     remaining: u64,
 }
+#[repr(u8)]
+#[derive(Clone, Copy)]
+enum GoalRegionShape {
+    Unused,
+    Stand,
+    Rings,
+}
 
-/// Escape state of one abort: where the next request of the pass starts, the
-/// clock of the walk in flight, and the last walk failure. A new pass keeps
-/// the failure, so an exhausted recovery can report it.
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct GoalRegion {
+    center_x: i32,
+    center_z: i32,
+    level: i32,
+    min_radius: u8,
+    max_radius: u8,
+    shape: GoalRegionShape,
+}
+
+impl GoalRegion {
+    const EMPTY: Self = Self {
+        center_x: 0,
+        center_z: 0,
+        level: 0,
+        min_radius: 0,
+        max_radius: 0,
+        shape: GoalRegionShape::Unused,
+    };
+
+    fn for_request(
+        tier: usize,
+        geometry: &EscapeGeometry,
+        goals: &[WorldTile],
+    ) -> Option<Self> {
+        let (center, min_radius, max_radius, shape) = if tier == STAND {
+            (
+                geometry.stand?,
+                0,
+                u8::try_from(STAND_RADIUS).ok()?,
+                GoalRegionShape::Stand,
+            )
+        } else {
+            let center = geometry.threat?;
+            let mut min_radius = i32::MAX;
+            let mut max_radius = 0;
+            for goal in goals {
+                let radius = tile_distance(center, *goal);
+                min_radius = min_radius.min(radius);
+                max_radius = max_radius.max(radius);
+            }
+            (
+                center,
+                u8::try_from(min_radius).ok()?,
+                u8::try_from(max_radius).ok()?,
+                GoalRegionShape::Rings,
+            )
+        };
+        Some(Self {
+            center_x: center.x,
+            center_z: center.z,
+            level: center.level,
+            min_radius,
+            max_radius,
+            shape,
+        })
+    }
+
+    fn contains(&self, tile: WorldTile) -> bool {
+        let center = WorldTile {
+            x: self.center_x,
+            z: self.center_z,
+            level: self.level,
+        };
+        let radius = tile_distance(center, tile);
+        match self.shape {
+            GoalRegionShape::Unused => false,
+            GoalRegionShape::Stand => radius <= i32::from(self.max_radius),
+            GoalRegionShape::Rings => {
+                (i32::from(self.min_radius)..=i32::from(self.max_radius)).contains(&radius)
+            }
+        }
+    }
+}
+
+const _: [(); 16] = [(); std::mem::size_of::<GoalRegion>()];
+
+/// Escape state of one abort: the pass tier, the walk clock, the last failure
+/// and the fixed list of goal regions already requested.
 pub(super) struct AbortEscape {
     next_tier: usize,
     walk: Option<WalkClock>,
     last_failure: Option<crate::native::ActionError>,
+    requested_regions: [GoalRegion; MAX_ESCAPE_REQUESTS],
+    requested_count: u8,
 }
 
 impl AbortEscape {
@@ -82,10 +167,12 @@ impl AbortEscape {
             next_tier: 0,
             walk: None,
             last_failure: None,
+            requested_regions: [GoalRegion::EMPTY; MAX_ESCAPE_REQUESTS],
+            requested_count: 0,
         }
     }
 
-    /// Start a fresh pass from a newly observed position.
+    /// Start the second pass. Keep the failed request regions from the first.
     pub(super) fn begin_pass(&mut self) {
         self.next_tier = 0;
     }
@@ -98,16 +185,25 @@ impl AbortEscape {
         self.last_failure.as_ref()
     }
 
-    /// `None` when every tier from the current one down is empty. `reach` is
-    /// the live posted flood, when there is one. It measures walking depth
-    /// only.
+    /// Build the next exact goal request, or return `None` when no tier remains.
+    /// `reach` is the live posted flood, when there is one. It measures walking
+    /// depth only.
     pub(super) fn next_goals(
         &mut self,
         geometry: &EscapeGeometry,
         collision: Option<CollisionView<'_>>,
         reach: Option<&ReachQueryView>,
     ) -> Option<EscapeGoals> {
-        let tiers = tier_tiles(geometry, collision);
+        let count = usize::from(self.requested_count);
+        if count == MAX_ESCAPE_REQUESTS {
+            return None;
+        }
+
+        let mut tiers = tier_tiles(geometry, collision);
+        let requested = &self.requested_regions[..count];
+        for tier in &mut tiers {
+            tier.retain(|tile| requested.iter().all(|region| !region.contains(*tile)));
+        }
         let preferred =
             (self.next_tier..ESCAPE_PASS_ATTEMPTS).find(|&tier| !tiers[tier].is_empty())?;
         self.next_tier = preferred + 1;
@@ -121,7 +217,10 @@ impl AbortEscape {
             .copied()
             .min_by_key(|tile| (tile_distance(focus, *tile), squared_gap(focus, *tile)))?;
         let depth = reach.and_then(|view| reach_route::nearest_depth(view, &tiers[preferred]));
-        let goals = WalkGoals::new(tiers[preferred].clone()).ok()?;
+        let region = GoalRegion::for_request(preferred, geometry, &tiers[preferred])?;
+        let goals = WalkGoals::new(std::mem::take(&mut tiers[preferred])).ok()?;
+        self.requested_regions[count] = region;
+        self.requested_count += 1;
         Some(EscapeGoals {
             target,
             goals,

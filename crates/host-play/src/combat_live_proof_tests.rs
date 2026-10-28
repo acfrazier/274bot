@@ -61,6 +61,7 @@ const WARLORD_ANCHOR: WorldTile = WorldTile {
     level: 0,
 };
 const WARLORD_WANDER_RANGE: i32 = 9;
+const M2_OUT_OF_RANGE_MIN_DISTANCE: i64 = 7;
 const RANGED_STAGE_DISTANCE: i32 = 9;
 const R2_STAGE_DISTANCE: i32 = 1;
 const R2_START_DISTANCE_MAX: i32 = R2_STAGE_DISTANCE + 1;
@@ -2239,13 +2240,31 @@ fn start_preflight(case: Case, baseline: &Value) -> Option<String> {
                 ));
             }
             let warlords = named_npcs(baseline, "khazard warlord");
-            if warlords.len() != 1
-                || warlords[0]["distance"]
-                    .as_i64()
-                    .is_none_or(|distance| distance > 9)
-            {
+            let expected_range = if case == Case::M2 {
+                "seven to nine"
+            } else {
+                "within nine"
+            };
+            if warlords.len() != 1 {
                 return Some(format!(
-                    "{} natural-area interference: expected one natural, roaming Khazard Warlord within nine tiles of the stand near {WARLORD_ANCHOR:?}, observed {warlords:?}",
+                    "{} natural-area interference: expected one natural, roaming Khazard Warlord near {WARLORD_ANCHOR:?}, observed {warlords:?}",
+                    case.key()
+                ));
+            }
+            let distance_is_valid = warlords[0]["distance"]
+                .as_i64()
+                .is_some_and(|distance| {
+                    distance <= i64::from(WARLORD_WANDER_RANGE)
+                        && (case != Case::M2 || distance >= M2_OUT_OF_RANGE_MIN_DISTANCE)
+                });
+            if !distance_is_valid {
+                let reason = if case == Case::M2 {
+                    "start-range mismatch"
+                } else {
+                    "natural-area interference"
+                };
+                return Some(format!(
+                    "{} {reason}: expected a natural, roaming Khazard Warlord {expected_range} tiles from the stand near {WARLORD_ANCHOR:?}, observed {warlords:?}",
                     case.key()
                 ));
             }
@@ -6744,9 +6763,29 @@ fn last_is_attack_or_drink(plan: &BatchPlan<'_>) -> bool {
         .last()
         .is_some_and(|action| is_npc_attack(action) || is_drink(action))
 }
+fn first_prep_drink<'a>(
+    capture: &'a CombatCapture,
+    plans: &[BatchPlan<'a>],
+) -> Option<&'a Value> {
+    let first_attack_tick = first_attack_action(capture)?["tick"].as_i64()?;
+    let prep = plans.iter().find(|plan| {
+        plan.tick < first_attack_tick
+            && plan
+                .rows
+                .iter()
+                .any(|action| action["request"]["op"] == json!("wear"))
+    })?;
+    if prep.rows.len() != 2 || prep.rows[0]["request"]["op"] != json!("wear") {
+        return None;
+    }
+    let drink = prep.rows[1];
+    is_drink(drink).then_some(drink)
+}
+
 
 fn all_drinks_respect_lock(capture: &CombatCapture) -> bool {
     let plans = batch_plans(capture);
+    let prep_drink = first_prep_drink(capture, &plans);
     let drinks = capture
         .actions
         .iter()
@@ -6762,7 +6801,8 @@ fn all_drinks_respect_lock(capture: &CombatCapture) -> bool {
                 && !capture.actions.iter().any(|action| {
                     action["tick"] == json!(tick + 1) || action["tick"] == json!(tick + 2)
                 })
-                && batch_plan_at(&plans, tick + 3).is_some_and(last_is_attack_or_drink)
+                && (prep_drink.is_some_and(|prep| std::ptr::eq(*drink, prep))
+                    || batch_plan_at(&plans, tick + 3).is_some_and(last_is_attack_or_drink))
         })
 }
 

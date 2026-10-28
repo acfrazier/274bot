@@ -1409,6 +1409,24 @@ fn last_walk(ledger: &TestLedger) -> WalkOut {
     pending_walk(ledger).expect("the abort must have requested a native walk")
 }
 
+fn prior_walk_goals(ledger: &TestLedger, request_id: u64) -> Vec<Vec<api::WorldTile>> {
+    let Some(ledger) = ledger.as_ref() else {
+        return Vec::new();
+    };
+    ledger
+        .outbox
+        .iter()
+        .filter(|action| action.request_id.get() < request_id)
+        .filter_map(|action| match &action.effect {
+            crate::native::HostEffect::Walk(request) => request
+                .candidate_goals
+                .as_ref()
+                .map(|goals| goals.as_slice().to_vec()),
+            _ => None,
+        })
+        .collect()
+}
+
 /// The walk's goals. The adapter names exact Area goals and the host router
 /// owns reachability, as in the Gatherer's observation walks.
 fn goals_of(walk: &WalkOut) -> &crate::native::WalkGoals {
@@ -1561,12 +1579,23 @@ fn seed_m4_scene(
     attack_animation: i32,
     food: bool,
 ) {
+    seed_m4_scene_at(snapshot, here, M4_TREE, attacked, attack_animation, food);
+}
+
+fn seed_m4_scene_at(
+    snapshot: &mut GameSnapshot,
+    here: api::WorldTile,
+    tree_tile: api::WorldTile,
+    attacked: bool,
+    attack_animation: i32,
+    food: bool,
+) {
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let tree = data.npc_by_config("nasty_tree").unwrap();
     let lobster = data.item_by_alias("lobster").unwrap();
     let mut attackers = Vec::new();
     if attacked {
-        let mut npc = aborting_npc(4328, tree.id, M4_TREE);
+        let mut npc = aborting_npc(4328, tree.id, tree_tile);
         npc.actions = Vec::new();
         npc.animation = attack_animation;
         attackers.push(npc);
@@ -1940,6 +1969,37 @@ fn m4_disconnected_authored_stand_is_still_sent_to_the_router() {
                 routed_goal(&collision, &lease, &first).is_none(),
                 "{name}: the route planner rejects the disconnected stand"
             );
+            post_walk_end(
+                &mut ledger,
+                13,
+                WalkEnd::Failed,
+                Some("the authored stand has no route"),
+            );
+            let retried = with_step_context_collision(
+                &snapshot,
+                lease.collision(),
+                &mut ledger,
+                13,
+                |cx| run.poll(cx),
+            );
+            assert!(
+                retried.is_pending(),
+                "{name}: a disconnected stand must not finish the escape"
+            );
+            let next = last_walk(&ledger);
+            assert!(
+                goals_of(&next)
+                    .preferred()
+                    .iter()
+                    .all(|goal| tile_distance(*goal, M4_TREE) > M4_ENVELOPE),
+                "{name}: after a disconnected stand the run sends its next Beyond tier"
+            );
+            let routed = routed_goal(&collision, &lease, &next)
+                .unwrap_or_else(|| panic!("{name}: the next Beyond tier must route"));
+            assert!(
+                tile_distance(routed, M4_TREE) > M4_ENVELOPE,
+                "{name}: the route leaves the attack envelope, got {routed:?}"
+            );
         }
     }
 }
@@ -1975,6 +2035,18 @@ fn m4_exhausted_escape_walk(
         );
     }
     assert!(matches!(&run.phase, Phase::HoldingAfterAbort));
+    let moved_tree = api::WorldTile {
+        x: M4_TREE.x + 1,
+        ..M4_TREE
+    };
+    seed_m4_scene_at(
+        &mut snapshot,
+        M4_HERE,
+        moved_tree,
+        true,
+        live_attack_animation(&run),
+        false,
+    );
     for tick in 14..=40 {
         assert!(with_step_context_collision(
             &snapshot,
@@ -1985,6 +2057,18 @@ fn m4_exhausted_escape_walk(
         )
         .is_pending());
         if pending_walk(&ledger).is_some_and(|walk| !walk.allow_food) {
+            let moved_again = api::WorldTile {
+                x: M4_TREE.x + 2,
+                ..M4_TREE
+            };
+            seed_m4_scene_at(
+                &mut snapshot,
+                M4_HERE,
+                moved_again,
+                true,
+                live_attack_animation(&run),
+                false,
+            );
             return (run, ledger, snapshot);
         }
     }
@@ -2001,6 +2085,17 @@ fn exhausted_m4_escape_arrival_with_a_live_attacker_replans_and_completes_only_w
     let (mut run, mut ledger, live) = m4_exhausted_escape_walk(&lease);
     let first = last_walk(&ledger);
     assert!(!first.food_guard && !first.allow_food);
+    let previous = prior_walk_goals(&ledger, first.request_id);
+    assert!(!previous.is_empty(), "the exhausted pass follows failed walks");
+    assert!(
+        previous.iter().all(|goals| {
+            goals_of(&first)
+                .as_slice()
+                .iter()
+                .all(|goal| !goals.contains(goal))
+        }),
+        "the exhausted pass does not repeat a goal from the food-supported pass"
+    );
     let goal = arrival_goal(&first);
 
     post_walk_receipt(&mut ledger, 41, WalkEnd::Arrived, None, Some(goal));
@@ -2014,12 +2109,16 @@ fn exhausted_m4_escape_arrival_with_a_live_attacker_replans_and_completes_only_w
     let second = last_walk(&ledger);
     assert_ne!(second.request_id, first.request_id);
     assert!(goals_of(&first).fallback().is_empty() && goals_of(&second).fallback().is_empty());
+    let previous = prior_walk_goals(&ledger, second.request_id);
+    assert!(!previous.is_empty(), "the attacker moved after the first retry");
     assert!(
-        goals_of(&second)
-            .as_slice()
-            .iter()
-            .all(|goal| !goals_of(&first).as_slice().contains(goal)),
-        "the next request uses a distinct tier"
+        previous.iter().all(|goals| {
+            goals_of(&second)
+                .as_slice()
+                .iter()
+                .all(|goal| !goals.contains(goal))
+        }),
+        "the moving attacker cannot make either pass repeat any earlier goal"
     );
 
     let mut safe = GameSnapshot::new();
@@ -2103,8 +2202,67 @@ fn escape_goals_never_exceed_the_router_cap_and_requests_use_distinct_tiers() {
     }
     assert_eq!(request_goals.len(), escape::ESCAPE_PASS_ATTEMPTS);
     assert!(
+        request_goals[1].len() > crate::native::WalkGoals::MAX / 2,
+        "the Beyond tier must use more than the old half-cap"
+    );
+    assert!(
         request_goals[0].contains(&stand),
         "the authored stand is the first preference"
+    );
+}
+
+#[test]
+fn moving_attacker_cannot_repeat_an_earlier_failed_escape_goal() {
+    let mut pass = escape::AbortEscape::new();
+    let before_move = escape::EscapeGeometry {
+        here: api::WorldTile {
+            x: 3002,
+            z: 3000,
+            level: 0,
+        },
+        threat: Some(api::WorldTile {
+            x: 3000,
+            z: 3000,
+            level: 0,
+        }),
+        stand: None,
+        chase_range: 4,
+    };
+    let failed = pass
+        .next_goals(&before_move, None, None)
+        .expect("the initial geometry offers an escape region");
+    let repeated_under_new_geometry = api::WorldTile {
+        x: 3006,
+        z: 3000,
+        level: 0,
+    };
+    assert!(
+        failed.goals.as_slice().contains(&repeated_under_new_geometry),
+        "the first Beyond region includes the moving-attacker probe tile"
+    );
+
+    let after_move = escape::EscapeGeometry {
+        threat: Some(api::WorldTile {
+            x: 3001,
+            z: 3000,
+            level: 0,
+        }),
+        ..before_move
+    };
+    let next = pass
+        .next_goals(&after_move, None, None)
+        .expect("fresh goals remain after the attacker moves");
+    assert!(
+        !next.goals.as_slice().contains(&repeated_under_new_geometry),
+        "the failed goal is excluded even when the moving threat changes its region"
+    );
+    assert!(
+        failed
+            .goals
+            .as_slice()
+            .iter()
+            .all(|goal| !next.goals.as_slice().contains(goal)),
+        "successive requests in one escape have no repeated tiles"
     );
 }
 

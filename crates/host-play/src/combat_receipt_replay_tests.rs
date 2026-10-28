@@ -1210,3 +1210,97 @@ fn replay_all_retained_combat_receipts() {
     std::fs::write(output, serde_json::to_vec_pretty(&results).unwrap()).unwrap();
     println!("Replayed {} retained receipt files", results.len());
 }
+fn m2_lock_action(tick: i64, batch: u64, sequence: u64, request: Value) -> Value {
+    json!({
+        "kind": "interaction",
+        "tick": tick,
+        "batch": batch,
+        "sequence": sequence,
+        "request": request,
+    })
+}
+
+#[test]
+fn m2_prep_drink_before_a_late_first_attack_needs_no_tick_three_plan() {
+    let mut capture = CombatCapture::default();
+    capture.actions = vec![
+        m2_lock_action(40, 2, 1, json!({"op": "wear"})),
+        m2_lock_action(40, 2, 2, json!({"op": "held", "action": "drink"})),
+        m2_lock_action(51, 4, 3, json!({"op": "npc", "action": "Attack"})),
+    ];
+    assert!(
+        all_drinks_respect_lock(&capture),
+        "the Prep drink stays valid when the first attack occurs after tick 43"
+    );
+
+    for (tick, batch, sequence) in [(41, 3, 4), (42, 5, 5)] {
+        capture
+            .actions
+            .push(m2_lock_action(tick, batch, sequence, json!({"op": "held", "action": "eat"})));
+        assert!(
+            !all_drinks_respect_lock(&capture),
+            "the Prep drink still blocks actions at tick {tick}"
+        );
+        assert!(capture.actions.pop().is_some());
+    }
+}
+
+#[test]
+fn m2_in_fight_drink_still_needs_a_tick_three_attack_or_drink() {
+    let mut capture = CombatCapture::default();
+    capture.actions = vec![
+        m2_lock_action(40, 2, 1, json!({"op": "wear"})),
+        m2_lock_action(40, 2, 2, json!({"op": "held", "action": "drink"})),
+        m2_lock_action(43, 4, 3, json!({"op": "npc", "action": "Attack"})),
+        m2_lock_action(60, 6, 4, json!({"op": "held", "action": "drink"})),
+    ];
+    assert!(
+        !all_drinks_respect_lock(&capture),
+        "the in-fight drink has no attack or drink plan at tick 63"
+    );
+}
+
+#[test]
+#[ignore = "requires M2_OUT_OF_RANGE_RECEIPTS with two retained M2 receipts"]
+fn m2_out_of_range_receipts_pass_the_full_oracle() {
+    let paths = std::env::var("M2_OUT_OF_RANGE_RECEIPTS").expect("M2_OUT_OF_RANGE_RECEIPTS");
+    let mut count = 0;
+    for path in paths.split(',') {
+        let value: Value =
+            serde_json::from_slice(&std::fs::read(path).expect("read M2 receipt")).unwrap();
+        let capture = capture(&value);
+        let baseline = capture
+            .start_baseline
+            .as_ref()
+            .expect("receipt has an M2 Start baseline");
+        let distance = named_npcs(baseline, "khazard warlord")
+            .first()
+            .and_then(|warlord| warlord["distance"].as_i64())
+            .expect("receipt has a Warlord distance");
+        assert!(
+            (7_i64..=i64::from(WARLORD_WANDER_RANGE)).contains(&distance),
+            "receipt {path} starts out of range at distance {distance}"
+        );
+        assert_eq!(start_preflight(Case::M2, baseline), None, "{path}");
+        assert!(m2_ready(&capture), "receipt {path}");
+
+        let mut in_range = baseline.clone();
+        let warlord = in_range["nearby_npcs"]
+            .as_array_mut()
+            .expect("baseline has nearby NPCs")
+            .iter_mut()
+            .find(|npc| {
+                npc["name"]
+                    .as_str()
+                    .is_some_and(|name| name.eq_ignore_ascii_case("khazard warlord"))
+            })
+            .expect("baseline has one Warlord");
+        warlord["distance"] = json!(6);
+        assert!(
+            start_preflight(Case::M2, &in_range).is_some(),
+            "the live M2 gate rejects an in-range start"
+        );
+        count += 1;
+    }
+    assert_eq!(count, 2, "supply the two out-of-range reviewer receipts");
+}
