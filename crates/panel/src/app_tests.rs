@@ -63,7 +63,11 @@ fn panel_exit_status_child() {
             let repeated_failure = live.tick(&mut session, &ShotStatus::Missing, None, 0);
             assert!(repeated_failure.is_none());
             assert_eq!(live_exit_code(&live, repeated_failure.as_deref()), Some(1));
-            let result = finish_panel_run(Ok(()), live.failure().map(str::to_owned));
+            let result = finish_panel_run(
+                Ok(()),
+                live.failure()
+                    .map(|failure| crate::window::PanelError::LiveHarnessFailure(failure.into())),
+            );
             std::process::exit(if result.is_ok() { 0 } else { 1 });
         }
         Ok("pass") => {
@@ -114,9 +118,19 @@ fn panel_exit_status_child() {
             );
             session.core.fleet_mut().add("startup");
             session.core.set_play(Some(play));
-            let _ = super::fail_startup(&mut session, true, "synthetic boot error".into());
+            let error =
+                super::fail_startup(&mut session, true, "synthetic boot error".into())
+                    .expect("fatal boot must report its error to the event loop");
+            assert!(matches!(&error, crate::window::PanelError::StartupFailure(_)));
             assert!(!session.core.has_play(), "fatal startup must retire Play");
             assert!(exited.try_recv().is_ok(), "fatal startup must join its worker");
+            assert!(
+                session.core.commands().reports().any(|report| {
+                    report.command() == frontend_core::OperatorCommand::Quit && report.is_settled()
+                }),
+                "fatal startup must settle Quit before window teardown"
+            );
+            assert!(finish_panel_run(Ok(()), Some(error)).is_err());
             eprintln!("startup worker retired before window teardown");
         }
         #[cfg(feature = "memory-profile")]
@@ -204,15 +218,16 @@ fn panel_exit_status_child() {
                 !state.session.core.has_play(),
                 "slot threads must retire before the window GPU is released"
             );
+            let failure = failure.lock().unwrap().take().expect("memory error latched");
             assert!(
-                failure
-                    .lock()
-                    .unwrap()
-                    .as_deref()
-                    .unwrap()
-                    .contains("missing seed for"),
-                "benchmark errors must still produce a failing exit status"
+                matches!(
+                    &failure,
+                    crate::window::PanelError::MemoryRunFailure(error)
+                        if error.contains("missing seed for")
+                ),
+                "benchmark errors must remain typed memory failures"
             );
+            assert!(finish_panel_run(Ok(()), Some(failure)).is_err());
             ctx.render();
             eprintln!("memory workers retired before window teardown");
         }

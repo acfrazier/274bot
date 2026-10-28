@@ -628,6 +628,11 @@ impl<Io> OperatorSession<Io> {
         if let Err(error) = &submitted {
             let bots = self.refused_bots(targets);
             self.record_refusal(command, &bots, &error.to_string());
+            if command == OperatorCommand::Quit {
+                // A refused Quit has no report to dispatch, but must still
+                // retire Play (including workers without a status row).
+                self.close_play();
+            }
         }
         submitted
     }
