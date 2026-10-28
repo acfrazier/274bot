@@ -645,7 +645,24 @@ fn live_pvp_switch_t2_t3_t4_in_a_pen() {
                 break;
             }
         }
-        assert!(Instant::now() < limit, "the cell timed out");
+        if Instant::now() >= limit {
+            let shared = shared.lock().expect("shared lock");
+            let dump = json!({
+                "phase": shared.phase,
+                "phase_since": shared.phase_since,
+                "begun_tick": shared.begun_tick,
+                "failure": shared.failure,
+                "trace": shared.trace,
+                "actions": shared.actions,
+                "states": states(),
+            });
+            std::fs::write(
+                evidence.join("pvp-switch-timeout.json"),
+                serde_json::to_vec_pretty(&dump).expect("timeout json"),
+            )
+            .expect("write timeout dump");
+            panic!("the cell timed out: phase {:?}, begun tick {:?}", shared.phase, shared.begun_tick);
+        }
         thread::sleep(Duration::from_millis(100));
     }
     // Let the last frames land, then write the receipt.
