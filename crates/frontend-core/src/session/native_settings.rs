@@ -1151,6 +1151,74 @@ mod tests {
     }
 
     #[test]
+    fn fleet_copy_follows_a_renamed_native_target_before_confirm() {
+        let mut f = native_fixture("copy-rename-before-confirm");
+        let id = script::CompiledId("Gatherer");
+        for name in ["alice", "bob"] {
+            assert!(f.scripts.persist_assignment(
+                &mut f.core,
+                name,
+                script::compiled_assignment(id)
+            ));
+        }
+        f.core.flush_writes();
+        f.scripts
+            .set_compiled_overrides(
+                &mut f.core,
+                "alice",
+                CompiledCardId::from_script(id),
+                json!({"targetPreference": "Nearest"})
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            )
+            .unwrap();
+        f.core.flush_writes();
+
+        let target = ProfileIdentity::uid(2);
+        let mut marked = MarkedSelection::default();
+        marked.set(target, true);
+        prepare_apply_settings_marked(
+            &marked,
+            &f.core,
+            &mut f.scripts,
+            "alice",
+            &ScriptChoice::from_script(script::ScriptSel::Compiled(id)),
+        )
+        .unwrap();
+        f.scripts
+            .freeze_settings_sync_targets(vec![(target, "bob".into())]);
+
+        let mut renamed = f.core.vault().unwrap().get("bob").unwrap().clone();
+        renamed.username = "bobby".into();
+        f.core
+            .rename_profile("bob", renamed, ArmMirror::none(), "profile")
+            .unwrap();
+        f.core.flush_writes();
+
+        f.scripts.apply_settings_sync(&mut f.core).unwrap();
+        let release = block_preparation(&mut f);
+        f.core.poll();
+        f.scripts.poll(&mut f.core);
+        release.store(true, Ordering::Release);
+        f.core.flush_writes();
+        f.scripts.poll(&mut f.core);
+
+        let report = f.scripts.last_settings_sync().unwrap();
+        assert_eq!(
+            (report.saved, report.failed.len(), report.pending()),
+            (1, 0, 0),
+            "{report:?}"
+        );
+        let profile = f.core.vault().unwrap().get("bobby").unwrap();
+        let entry = &profile.settings.script_settings[&script::compiled_identity_key(id)];
+        assert_eq!(
+            vault::CompiledSettingsRecord::view(entry).unwrap().1["targetPreference"],
+            json!("Nearest")
+        );
+    }
+
+    #[test]
     fn accepted_marked_native_copy_commits_assignment_and_settings_before_start() {
         let mut f = native_fixture("accepted-copy");
         let id = script::CompiledId("Gatherer");
