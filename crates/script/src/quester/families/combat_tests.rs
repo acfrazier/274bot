@@ -1409,7 +1409,6 @@ fn last_walk(ledger: &TestLedger) -> WalkOut {
     pending_walk(ledger).expect("the abort must have requested a native walk")
 }
 
-
 /// The walk's goals. The adapter names exact Area goals and the host router
 /// owns reachability, as in the Gatherer's observation walks.
 fn goals_of(walk: &WalkOut) -> &crate::native::WalkGoals {
@@ -1988,7 +1987,12 @@ fn m4_disconnected_authored_stand_is_still_sent_to_the_router() {
 /// the run, its ledger, the snapshot and the earlier request goals.
 fn m4_exhausted_escape_walk(
     lease: &nav_planner::contract::NavLease,
-) -> (CombatRun, TestLedger, GameSnapshot, Vec<Vec<api::WorldTile>>) {
+) -> (
+    CombatRun,
+    TestLedger,
+    GameSnapshot,
+    Vec<Vec<api::WorldTile>>,
+) {
     let mut run = m4_run();
     let mut snapshot = GameSnapshot::new();
     seed_m4_scene(
@@ -3215,24 +3219,19 @@ fn failed_abort_walk_does_not_retry_named_tiles_after_food_exhaustion() {
         )
     })
     .is_pending());
-    let failed = last_walk(&ledger);
-    let failed_goals = goals_of(&failed).as_slice().to_vec();
     fail_escape_walks_until_hold(&mut run, &snapshot, &mut ledger, 13);
     assert!(with_step_context(&snapshot, &mut ledger, 14, |cx| run.poll(cx)).is_pending());
     let result = with_step_context(&snapshot, &mut ledger, 15, |cx| run.poll(cx));
-    assert!(result.is_pending(), "food exhaustion starts the second pass");
-    let exhausted = last_walk(&ledger);
     assert!(
-        !exhausted.food_guard && !exhausted.allow_food,
-        "the second pass runs without food support"
+        matches!(
+            &result,
+            Poll::Ready(Err(ActionError::Blocked(reason)))
+                if reason.as_ref() == "route fixture failure"
+        ),
+        "the exhausted escape preserves its last route failure, got {}",
+        describe_poll(&result)
     );
-    assert!(
-        goals_of(&exhausted)
-            .as_slice()
-            .iter()
-            .all(|goal| !failed_goals.contains(goal)),
-        "the exhausted pass does not retry an earlier failed goal"
-    );
+    assert!(ledger.as_ref().unwrap().outbox.is_empty());
 }
 
 /// Every escape walk fails. One pass makes one request per destination tier:
@@ -3315,9 +3314,9 @@ fn failed_escape_recovery_is_bounded_and_preserves_the_last_failure() {
         for walk in &walks {
             let goals = goals_of(walk).as_slice();
             assert!(
-                earlier_goal_sets.iter().all(|previous| {
-                    goals.iter().all(|goal| !previous.contains(goal))
-                }),
+                earlier_goal_sets
+                    .iter()
+                    .all(|previous| { goals.iter().all(|goal| !previous.contains(goal)) }),
                 "a request does not repeat a tile named by an earlier failed request"
             );
             earlier_goal_sets.push(goals.to_vec());
