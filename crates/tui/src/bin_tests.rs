@@ -5052,8 +5052,7 @@ fn settings_feedback_tui_teleports_retry_after_file_lock_timeout_is_durable() {
         assert!(!words.contains("saving…"), "{words}");
         assert!(!words.contains("Not saved:"), "{words}");
     }
-    let durable: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+    let durable: serde_json::Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
     assert_eq!(durable["nav"]["allow_teleports"], true);
 }
 
