@@ -143,8 +143,7 @@ fn worksite_exit(
     previous: Option<(i32, i32, i32)>,
     tile: (i32, i32, i32),
 ) -> bool {
-    previous.is_some_and(|last| safe_walk_contains(areas, last))
-        && !safe_walk_contains(areas, tile)
+    previous.is_some_and(|last| safe_walk_contains(areas, last)) && !safe_walk_contains(areas, tile)
 }
 
 fn work_route_escape(outer_bounds: &[SafeWalk], tile: (i32, i32, i32)) -> bool {
