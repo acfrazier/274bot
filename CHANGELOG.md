@@ -73,6 +73,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   An offline checker tests complete host-router paths, client interaction paths,
   client walk aims, replan origins, bank alternatives and actual hazard retreats against every
   authored hunter envelope. The fixture remains blocked after a diagnostic stop.
+  Unroutable client alternatives count as nonmovement. Each resource and bank
+  loc still requires an accepted approach witness. Consumer-only corrections
+  can recheck retained native routes with identical inputs and request batches.
 
 - A refused game connection on macOS keeps its connection-refused error.
   The new transport sets TCP_NODELAY only after the connection succeeds,

@@ -186,14 +186,43 @@ def client_walks(origins, blocked, checked, recoveries=()):
 
 
 def run_probe(args, name, sources, targets, retreats=(), approaches=(), walks=()):
+    payload = [dict(name=name, sources=sorted(sources), targets=sorted(targets),
+                    retreats=list(retreats), approaches=list(approaches), walks=list(walks))]
+    if args.replay:
+        inputs = args.replay / f"{name}-batches.json"
+        # JSON normalizes the generated coordinate tuples to the stored arrays.
+        if json.loads(inputs.read_text()) != json.loads(json.dumps(payload)):
+            raise ValueError(f"replay requests differ from the actual producer input: {inputs}")
+        routes = args.replay / f"{name}-routes.jsonl"
+        if not routes.is_file():
+            raise FileNotFoundError(f"replay route output missing: {routes}")
+        return routes
     inputs = args.output / f"{name}-batches.json"
-    inputs.write_text(json.dumps([dict(name=name, sources=sorted(sources), targets=sorted(targets),
-                                      retreats=list(retreats), approaches=list(approaches),
-                                      walks=list(walks))]) + "\n")
+    inputs.write_text(json.dumps(payload) + "\n")
     routes = args.output / f"{name}-routes.jsonl"
     subprocess.run([str(path.resolve()) for path in
                     (args.router, args.pack, args.flags, args.cache, inputs, routes)], check=True)
     return routes
+
+
+def client_route_error(row):
+    # tryMove returns false before encoding movement for either request kind.
+    return row.get("kind") in ("client-approach", "client-walk") and row["error"] != "client-no-route"
+
+
+def loc_key(row):
+    return row["id"], tuple(row.get("target", row.get("origin"))), row["shape"], row["angle"]
+
+
+def missing_client_approaches(locs, witnesses):
+    return [f"loc has no actual client approach witness: {loc['id']} at {loc['origin']}"
+            for loc in locs if loc_key(loc) not in witnesses]
+
+
+def verify_replay_sources(replay, sources):
+    previous = json.loads((replay / "result.json").read_text())
+    if previous["sources"] != sources:
+        raise ValueError("replay inputs differ from the actual producer's selected inputs")
 
 
 def main():
@@ -204,6 +233,7 @@ def main():
     parser.add_argument("--flags", type=Path, help="raw flags paired with PACK (default: its .navflags)")
     parser.add_argument("--cache", type=Path, help="real immutable client cache (default: CONTENT/../engine/data/pack/client)")
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--replay", type=Path, help="recheck retained native outputs with identical inputs and request batches")
     args = parser.parse_args()
     args.flags = args.flags or args.pack.with_suffix(".navflags")
     args.cache = args.cache or args.content.parent / "engine/data/pack/client"
@@ -215,6 +245,11 @@ def main():
     sites = json.loads(config.read_text())["workload"]["site_names"]
     starts, maple_start, rectangles = fixture(source)
     resources, hunters, maps, bank_locs = census(args.content, game, starts, rectangles, sites[1])
+    sources = {str(p): digest(p) for p in [
+        source, catalog, config, args.pack, args.flags, args.cache / "config", *sorted(maps)]}
+    if args.replay:
+        args.replay = args.replay.resolve(strict=True)
+        verify_replay_sources(args.replay, sources)
     anchors = {(*start, 0) for start in starts} | {(*maple_start, 0)}
     targets = set(anchors)
     for resource in resources:
@@ -230,6 +265,7 @@ def main():
                        client_approaches([*resources, *bank_locs]))]
     checked, no_path, retreat_count, client_count, walk_count = 0, 0, 0, 0, 0
     client_errors = []
+    approach_witnesses = set()
     walk_pairs, transport_routes = set(), []
     walk_recoveries = set()
     blocked, processed, bank_reachable, resource_reached = set(), set(), set(), set()
@@ -250,8 +286,7 @@ def main():
             if row.get("error") == "source-not-standable":
                 blocked.add(origin)
             elif "error" in row:
-                if row.get("kind") == "client-approach" or (
-                        row.get("kind") == "client-walk" and row["error"] != "client-no-route"):
+                if client_route_error(row):
                     client_errors.append(row)
                 no_path += 1
             else:
@@ -259,6 +294,7 @@ def main():
                 target = tuple(row["target"])
                 if row["kind"] == "client-approach":
                     client_count += 1
+                    approach_witnesses.add(loc_key(row))
                 if row["kind"] == "client-walk":
                     walk_count += 1
                     walk_recoveries.update((tuple(point), target) for point in row["tiles"])
@@ -292,8 +328,7 @@ def main():
             files.append(run_probe(args, f"client-walk-{walk_rounds}", (), (), walks=walks))
             walk_rounds += 1
     errors = [f"client route has no verified witness: {row}" for row in client_errors[:10]]
-    if not client_count:
-        errors.append("no actual client loc-approach witnesses")
+    errors.extend(missing_client_approaches([*resources, *bank_locs], approach_witnesses))
     if not walk_count:
         errors.append("no actual client Traveller-walk witnesses")
     if transport_routes:
@@ -323,7 +358,7 @@ def main():
                   client_walk_rounds=walk_rounds, transport_routes=len(transport_routes),
                   closure_complete=not pending, rectangles=rectangles, normal_starts=starts,
                   maple_start=maple_start, resources=resources, hunters_checked=len(hunters),
-                  sources={str(p): digest(p) for p in [source, catalog, config, args.pack, args.flags, args.cache / "config", *sorted(maps)]},
+                  sources=sources, replay_source=str(args.replay) if args.replay else None,
                   violation_count=len(violations), violations=violations[:30], errors=errors,
                   scope="Production host-router replan closure plus actual client loc-approach BFS for every resource/bank access origin and scene base. Actual client ground-walk BFS covers every closure-origin pair within Chebyshev 20, including Traveller click-ahead and recovery. Includes blocked-origin escape and production hazard retreats. Transport interactions fail closed. Random-event interiors remain separate product travel.")
     (args.output / "result.json").write_text(json.dumps(result, indent=2) + "\n")

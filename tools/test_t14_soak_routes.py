@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Two-way oracle tests. Real-pack route coverage runs through t14_soak_routes.py."""
 
+import argparse
+import json
 import tempfile
 from pathlib import Path
 import unittest
@@ -92,6 +94,54 @@ class RouteSafetyTests(unittest.TestCase):
             audit.client_walks({detour, aim}, set(), checked, {(detour, aim), (aim, aim)}),
             [dict(source=detour, target=aim)],
         )
+
+    def test_unroutable_client_alternatives_encode_no_movement(self):
+        for kind in ("client-approach", "client-walk"):
+            self.assertFalse(audit.client_route_error(dict(kind=kind, error="client-no-route")))
+            self.assertTrue(audit.client_route_error(dict(kind=kind, error="loc-id-not-in-cache")))
+            self.assertTrue(audit.client_route_error(dict(kind=kind, error="client-route-path-empty")))
+        self.assertFalse(audit.client_route_error(dict(kind="walk", error="NoPath")))
+
+    def test_each_resource_and_bank_loc_requires_an_actual_client_witness(self):
+        tree = dict(id=1276, origin=[2695, 3474, 0], shape=10, angle=2)
+        bank = dict(id=2213, origin=[2721, 3494, 0], shape=10, angle=2)
+        tree_route = dict(id=1276, target=[2695, 3474, 0], shape=10, angle=2)
+        witnessed = {audit.loc_key(tree_route)}
+        self.assertEqual(audit.missing_client_approaches([tree, bank], witnessed), [
+            "loc has no actual client approach witness: 2213 at [2721, 3494, 0]",
+        ])
+        witnessed.add(audit.loc_key(bank))
+        self.assertEqual(audit.missing_client_approaches([tree, bank], witnessed), [])
+        self.assertTrue(audit.missing_client_approaches([dict(tree, angle=1)], witnessed))
+
+    def test_replay_requires_identical_requests_and_retained_output(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            args = argparse.Namespace(replay=root, output=root / "fresh")
+            inputs = root / "example-batches.json"
+            routes = root / "example-routes.jsonl"
+            inputs.write_text(json.dumps([dict(
+                name="example", sources=[[1, 2, 0]], targets=[[2, 2, 0]],
+                retreats=[], approaches=[], walks=[],
+            )]))
+            routes.write_text('{"kind":"walk","tiles":[[1,2,0],[2,2,0]]}\n')
+            self.assertEqual(
+                audit.run_probe(args, "example", {(1, 2, 0)}, {(2, 2, 0)}), routes)
+            self.assertFalse(args.output.exists())
+            with self.assertRaisesRegex(ValueError, "replay requests differ"):
+                audit.run_probe(args, "example", {(1, 3, 0)}, {(2, 2, 0)})
+            routes.unlink()
+            with self.assertRaisesRegex(FileNotFoundError, "replay route output missing"):
+                audit.run_probe(args, "example", {(1, 2, 0)}, {(2, 2, 0)})
+
+    def test_replay_rechecks_failed_verdicts_but_rejects_changed_inputs(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            sources = {"actual-selected-config": "original-input"}
+            (root / "result.json").write_text(json.dumps(dict(verdict="FAIL", sources=sources)))
+            audit.verify_replay_sources(root, sources)
+            with self.assertRaisesRegex(ValueError, "replay inputs differ"):
+                audit.verify_replay_sources(root, {"actual-selected-config": "changed-input"})
 
     def test_authored_map_rotation_is_optional(self):
         with tempfile.TemporaryDirectory() as folder:

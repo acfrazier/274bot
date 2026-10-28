@@ -48,9 +48,10 @@ These failures do not justify a transport threshold change.
 ## Workload route check
 
 The proposed fixture is not approved for qualification.
-Its baseline diagnostic stopped at `(2678,3471,0)` before thirty minutes.
-The report below records the unresolved movement cause.
-Do not use the qualification commands until the failure is classified and corrected.
+The baseline diagnostic stopped at `(2678,3471,0)` before thirty minutes.
+The candidate diagnostic stopped on native `resource-unavailable` after approximately 376 phase-zero seconds.
+Neither diagnostic satisfies the thirty-minute requirement.
+Do not use the qualification commands until these failures are classified and corrected.
 
 Ten accounts gather normal logs west of Seers in `woodcutting.seers_village`.
 Each account retains one radius-two Start anchor from `NORMAL_STARTS`.
@@ -94,6 +95,17 @@ This includes blocked-origin escape after a resource changes.
 The checker examines complete walk legs and rejects routes that require transport interactions.
 It rejects routes outside the area or inside any hunter envelope.
 The result retains source, content-map, catalogue, v17 pack, raw-flag and client-config hashes.
+
+An unroutable client alternative returns before movement encoding.
+The checker counts this outcome as nonmovement for loc approaches and ordinary walk aims.
+Every selected resource and bank loc must still have an actual accepted client approach witness.
+Other client errors fail the check.
+
+After a consumer-only correction, add `--replay "$SOAK_EVIDENCE_DIR/route-audit"` to the same checker command.
+Use a fresh `--output` directory.
+Replay requires identical selected input hashes and identical generated request batches.
+It reads every retained native output row again without executing the unchanged native producer.
+It does not convert an earlier verdict into a pass without checking the rows.
 
 The old Catherby fixture did not constrain route geometry.
 The Gatherer bounds resource origins, not every approach or bank-return tile.
