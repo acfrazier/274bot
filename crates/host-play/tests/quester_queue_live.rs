@@ -365,10 +365,8 @@ impl QueueEvidence {
 }
 
 #[cfg(feature = "test-support")]
-
 const SKIP_CELL: &str = "qs_quester_skip";
 #[cfg(feature = "test-support")]
-
 const SKIP_QUESTS: &[&str] = &["cook", "sheep"];
 
 #[cfg(feature = "test-support")]
@@ -428,7 +426,6 @@ struct SkipQueueEvidence {
 }
 
 #[cfg(feature = "test-support")]
-
 fn queue_row_letter(queue: &str, id: &str) -> Result<char, String> {
     let position = script::quester::registry::BUNDLED_INDEX
         .paths
@@ -442,7 +439,6 @@ fn queue_row_letter(queue: &str, id: &str) -> Result<char, String> {
 }
 
 #[cfg(feature = "test-support")]
-
 impl SkipQueueEvidence {
     fn active_cook_action(status: &ScriptStatus) -> Result<Option<SkipActionReceipt>, String> {
         if status.card != script::CompiledId("Quester")
@@ -473,8 +469,6 @@ impl SkipQueueEvidence {
             phase: format!("{:?}", status.phase),
         }))
     }
-
-    #[cfg(feature = "test-support")]
 
     fn observe_cancel_ownership(
         &mut self,
@@ -595,7 +589,7 @@ impl SkipQueueEvidence {
                 self.active_order.push(id.to_owned());
             }
         }
-        if completed < 0 || completed > 1 {
+        if !(0..=1).contains(&completed) {
             return Err(format!(
                 "Quester completed count is outside the Cook-skip/Sheep fixture: {completed}"
             ));
@@ -776,7 +770,6 @@ impl SkipQueueEvidence {
 }
 
 #[cfg(feature = "test-support")]
-
 fn quester_skip_scenario() -> Result<(scenario::Scenario, Map<String, Value>), String> {
     let mut scenario =
         scenario::get("quester_queue").ok_or("scenario registry has no quester_queue")?;
@@ -1028,7 +1021,6 @@ fn run_quester_queue() -> Result<(), String> {
 }
 
 #[cfg(feature = "test-support")]
-
 fn run_quester_skip() -> Result<(), String> {
     if std::env::var("LIVE").as_deref() != Ok("1") {
         return Ok(());
