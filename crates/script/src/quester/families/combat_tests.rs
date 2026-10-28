@@ -3871,8 +3871,7 @@ fn engaged_abort_hold_after_failed_walk(
     Option<Box<crate::native::ledger::Ledger>>,
     api::WorldTile,
     Vec<Vec<api::WorldTile>>,
-)
-{
+) {
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let warlord = data.npc_by_config("khazard_warlord").unwrap();
     let here = api::WorldTile {
@@ -3990,6 +3989,7 @@ fn exhausted_escape_runs_from_a_new_attacker_when_the_engaged_actor_is_gone() {
         "the plan leaves the new attacker's chase envelope of {chase_envelope} tiles"
     );
 }
+
 #[test]
 fn exhausted_hold_without_any_attacker_parks_only_after_the_threat_free_horizon() {
     let mut snapshot = GameSnapshot::new();
