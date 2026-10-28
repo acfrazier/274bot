@@ -1949,9 +1949,22 @@ impl BankingOpen {
                     }
                     Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
                     Poll::Ready(Ok(None)) => {
+                        api::host_log!(
+                            api::hostlog::Category::BankOp,
+                            api::hostlog::Level::Warn,
+                            "[DEBUG-cbf] selection none tick={} here={:?}",
+                            cx.evidence().tick, current_tile(cx),
+                        );
                         self.phase = BankingPhase::Access(self.default_access());
                     }
                     Poll::Ready(Ok(Some(selection))) => {
+                        api::host_log!(
+                            api::hostlog::Category::BankOp,
+                            api::hostlog::Level::Warn,
+                            "[DEBUG-cbf] selection bank={} tile={:?} kind={:?} tick={} here={:?}",
+                            selection.bank.name, selection.tile, selection.selected.kind,
+                            cx.evidence().tick, current_tile(cx),
+                        );
                         self.walk_to(
                             cx,
                             selection.tile,
@@ -2070,6 +2083,12 @@ impl BankingOpen {
         let scene_booth = nearest_scene_booth_distance(cx, &self.booth_name, &self.booth_op);
         let nearest =
             here.and_then(|here| nearest_eligible_bank(facts, self.preferences, cx, here));
+        api::host_log!(
+            api::hostlog::Category::BankOp,
+            api::hostlog::Level::Warn,
+            "[DEBUG-cbf] choose tick={} here={here:?} scene_booth={scene_booth:?} nearest={nearest:?}",
+            cx.evidence().tick,
+        );
         if self.prefer_nearby
             && scene_booth.is_some_and(|distance| f64::from(distance) <= self.nearby_radius)
         {

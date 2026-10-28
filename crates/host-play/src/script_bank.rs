@@ -2076,6 +2076,25 @@ fn queue_bank(
         fishing_base,
         native.as_ref().map(|native| &native.request),
     );
+    if let Some(native) = native.as_ref() {
+        api::host_log!(
+            api::hostlog::Category::BankOp,
+            api::hostlog::Level::Warn,
+            slot = name,
+            "[DEBUG-cbf] pick tick={} from={from:?} eligible={:?} candidates={} targets={target_count}",
+            native.evidence.tick, native.request.eligible, order.len(),
+        );
+        for candidate in &order {
+            api::host_log!(
+                api::hostlog::Category::BankOp,
+                api::hostlog::Level::Warn,
+                slot = name,
+                "[DEBUG-cbf] bank={} access={:?}",
+                facts.banks()[candidate.index].name,
+                candidate.access.as_ref().map(|(tiles, _)| tiles),
+            );
+        }
+    }
     opts.essence = bot.traveller.essence();
     let first = order.first().map(|candidate| candidate.index);
     let generation = pick.generation;
