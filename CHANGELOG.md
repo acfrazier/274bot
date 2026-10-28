@@ -7,10 +7,6 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
 
 ### Panel and terminal app
 
-- TUI tests now serialize sessions that share the process-wide Quester folder
-  registry, preventing one test's preference restoration from clearing another
-  test's loaded folder snapshot.
-
 - Source builds can now omit the JavaScript runtime with
   `--no-default-features`. These builds keep Gatherer, Grinch and Quester,
   their settings, and native Start, Pause, Stop and paint controls. They do
