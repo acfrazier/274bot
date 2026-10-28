@@ -1320,29 +1320,50 @@ fn m2_out_of_range_receipts_pass_the_full_oracle() {
             let protected_hits = integer(report, "combat_hits_while_protected").unwrap_or(-1);
             let plans = batch_plans(&capture);
             let checks = [
-                ("prayer dose count exists", integer(report, "combat_prayer_doses").is_some()),
-                ("boost dose count exists", integer(report, "combat_boost_doses").is_some()),
+                (
+                    "prayer dose count exists",
+                    integer(report, "combat_prayer_doses").is_some(),
+                ),
+                (
+                    "boost dose count exists",
+                    integer(report, "combat_boost_doses").is_some(),
+                ),
                 ("prayer doses are positive", prayer_doses > 0),
                 (
                     "locked ticks match doses",
                     locked_ticks == 2 * (prayer_doses + boost_doses),
                 ),
                 ("no protected hits", protected_hits == 0),
-                ("killed report has corpse", every_killed_report_has_corpse(&capture)),
+                (
+                    "killed report has corpse",
+                    every_killed_report_has_corpse(&capture),
+                ),
                 ("first prep plan", first_prep_plan_ok(&capture)),
                 ("drink lock", all_drinks_respect_lock(&capture)),
                 ("prayer floor", all_prayer_drinks_at_floor(&capture, 26)),
-                ("first-floor sip timing", m2_first_floor_sip_timing_ok(&capture)),
+                (
+                    "first-floor sip timing",
+                    m2_first_floor_sip_timing_ok(&capture),
+                ),
                 ("protection timing", protection_timing_ok(&capture)),
                 ("restoration runs", m2_restoration_runs_ok(&capture, report)),
-                ("prayer off after corpse", prayer_off_plan_after_corpse(&capture, report)),
-                ("no eat at zero danger", no_eat_at_zero_danger(&capture, report)),
+                (
+                    "prayer off after corpse",
+                    prayer_off_plan_after_corpse(&capture, report),
+                ),
+                (
+                    "no eat at zero danger",
+                    no_eat_at_zero_danger(&capture, report),
+                ),
                 ("offensive plan", m2_offensive_plan_ok(&capture)),
                 (
                     "multi-op count is at least two",
                     integer(report, "combat_multi_op_plans").is_some_and(|count| count >= 2),
                 ),
-                ("multi-op count matches", report_multi_op_count_matches(&capture, report)),
+                (
+                    "multi-op count matches",
+                    report_multi_op_count_matches(&capture, report),
+                ),
                 (
                     "multi-op plan has four or five events",
                     plans.iter().any(|plan| {
@@ -1350,14 +1371,21 @@ fn m2_out_of_range_receipts_pass_the_full_oracle() {
                             && plan_event_count(plan).is_some_and(|count| (4..=5).contains(&count))
                     }),
                 ),
-                ("native interactions are wire-valid", native_interactions_wire_valid(&capture)),
+                (
+                    "native interactions are wire-valid",
+                    native_interactions_wire_valid(&capture),
+                ),
                 ("batch plan contract", batch_plan_contract(&capture, &plans)),
-                ("no attack after report", no_attack_after_report(&capture, report)),
+                (
+                    "no attack after report",
+                    no_attack_after_report(&capture, report),
+                ),
                 (
                     "no death report",
-                    !capture.statuses.iter().any(|status| {
-                        status["fields"]["combat_end"].as_str() == Some("Died")
-                    }),
+                    !capture
+                        .statuses
+                        .iter()
+                        .any(|status| status["fields"]["combat_end"].as_str() == Some("Died")),
                 ),
                 ("real attack packet", has_real_attack_packet(&capture)),
             ];
