@@ -556,6 +556,17 @@ fn live_pvp_switch_t2_t3_t4_in_a_pen() {
                 "fixture: holder step {} ready {}, fighter step {} ready {}",
                 both["holder"]["step"], both["holder"]["ready"], both["fighter"]["step"], both["fighter"]["ready"]
             );
+            for status in play.statuses().iter() {
+                println!(
+                    "  slot {}: phase {:?} connected {} ingame {} scene {} error {:?}",
+                    status.username,
+                    status.startup_phase,
+                    status.connected,
+                    status.ingame,
+                    status.scene_state,
+                    status.error
+                );
+            }
         }
         assert!(
             Instant::now() < deadline,
