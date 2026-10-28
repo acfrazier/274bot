@@ -257,9 +257,9 @@ impl Script for SwitchFight {
             {
                 shared.advance(Phase::Away, now)
             }
-            Phase::Away
-                if switches >= 3 && active == Style::Ranged && shared.quiet >= QUIET_TICKS =>
-            {
+            // The third completed switch is the out-of-reach one; a later return to
+            // melee (the chaser is adjacent again) is the machine behaving.
+            Phase::Away if switches >= 3 => {
                 shared.advance(Phase::Done, now)
             }
             Phase::Hold | Phase::Drop | Phase::Away if waited > PHASE_TICKS => {
@@ -419,7 +419,7 @@ fn holder_seed() -> Vec<String> {
 fn fighter_seed() -> Vec<String> {
     [
         "setstat attack 60",
-        "setstat strength 60",
+        "setstat strength 1",
         "setstat defence 99",
         "setstat ranged 60",
         "setstat hitpoints 99",
