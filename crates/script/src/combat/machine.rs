@@ -425,10 +425,7 @@ impl NativeMachine for Combat {
         self.flags |= OBSERVED;
         self.counters.ticks = self.counters.ticks.saturating_add(1);
         if self.phase != Phase::Escape {
-            if let Some(receipt) = self
-                .pending_walk
-                .and_then(|id| cx.walk_receipt(id.get()))
-            {
+            if let Some(receipt) = self.pending_walk.and_then(|id| cx.walk_receipt(id.get())) {
                 // A stand-approach walk is identified by its context, as
                 // `pending_walk` also carries leash and escape walks:
                 // no engaged target yet, still in Prep/Engage, and the
@@ -454,8 +451,7 @@ impl NativeMachine for Combat {
                             return Poll::Ready(Err(ActionError::UserInput));
                         }
                         end => {
-                            self.stand_walk_failures =
-                                self.stand_walk_failures.saturating_add(1);
+                            self.stand_walk_failures = self.stand_walk_failures.saturating_add(1);
                             if self.stand_walk_failures >= MAX_STAND_WALK_FAILURES {
                                 if let Some(stand) = self.request.stand {
                                     api::host_log!(

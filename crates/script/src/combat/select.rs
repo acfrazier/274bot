@@ -336,9 +336,7 @@ pub fn pick_target(
             // over a fence the flood cannot cross. An unknown flood
             // keeps the straight-line behaviour.
             let reach = (request.style == Style::Melee)
-                .then(|| {
-                    crate::reach_route::live(frame.reach, Some(frame.local.player.network))
-                })
+                .then(|| crate::reach_route::live(frame.reach, Some(frame.local.player.network)))
                 .flatten();
             let mut best: Option<(&NpcView, u64, u64)> = None;
             let mut random_state = seed | 1;
@@ -359,10 +357,7 @@ pub fn pick_target(
                 seen = seen.saturating_add(1);
                 let distance = reach
                     .and_then(|view| npc_route_steps(view, npc))
-                    .map_or_else(
-                        || u64::from(tile_distance(npc.tile, origin)),
-                        u64::from,
-                    );
+                    .map_or_else(|| u64::from(tile_distance(npc.tile, origin)), u64::from);
                 let health = health_rank(npc);
                 let replace = match (pick, best) {
                     (Pick::Nearest, Some((_, best_distance, _))) => distance < best_distance,

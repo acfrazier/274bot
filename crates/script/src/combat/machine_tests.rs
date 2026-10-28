@@ -3867,12 +3867,7 @@ fn melee_pick_never_takes_a_target_behind_a_closed_pen() {
     scene.refresh();
     let mut request = scene.request();
     request.stand = Some(here);
-    let reach = flood_view(
-        tile(here.x - 10, here.z - 10),
-        32,
-        &pen_flags(penned),
-        here,
-    );
+    let reach = flood_view(tile(here.x - 10, here.z - 10), 32, &pen_flags(penned), here);
     let harness = Harness::new_with_reach(&scene, request.clone(), reach);
     assert_eq!(
         harness.machine.engaged(),
@@ -3889,12 +3884,7 @@ fn melee_pick_never_takes_a_target_behind_a_closed_pen() {
     scene.npcs[0].network = penned;
     scene.npcs[0].distance = 3;
     scene.refresh();
-    let reach = flood_view(
-        tile(here.x - 10, here.z - 10),
-        32,
-        &pen_flags(penned),
-        here,
-    );
+    let reach = flood_view(tile(here.x - 10, here.z - 10), 32, &pen_flags(penned), here);
     let mut harness = Harness::new_with_reach(&scene, request, reach);
     assert_eq!(harness.machine.engaged(), None);
     assert!(
