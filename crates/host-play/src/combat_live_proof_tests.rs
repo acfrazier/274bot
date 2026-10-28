@@ -1006,8 +1006,7 @@ fn scenario_for(
                     ready: Box::new(|snapshot| {
                         let baseline = combat_proof::snapshot_facts(snapshot, None);
                         let warlords = named_npcs(&baseline, "khazard warlord");
-                        warlords.len() == 1
-                            && warlords[0]["distance"].as_i64() == Some(8)
+                        warlords.len() == 1 && warlords[0]["distance"].as_i64() == Some(8)
                     }),
                     summary: None,
                 },
