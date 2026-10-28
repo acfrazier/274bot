@@ -1261,6 +1261,30 @@ fn m2_in_fight_drink_still_needs_a_tick_three_attack_or_drink() {
 }
 
 #[test]
+fn m2_post_attack_super_attack_does_not_qualify_as_prep() {
+    let mut capture = CombatCapture::default();
+    let mut boost = m2_lock_action(
+        43,
+        4,
+        3,
+        json!({"op": "held", "action": "drink", "slot": 0}),
+    );
+    boost["snapshot"] = json!({
+        "inventory": [{"slot": 0, "id": SUPER_ATTACK_4_ID}]
+    });
+    capture.actions = vec![
+        m2_lock_action(40, 2, 1, json!({"op": "npc", "action": "Attack"})),
+        m2_lock_action(43, 4, 2, json!({"op": "wear"})),
+        boost,
+    ];
+
+    assert!(
+        !first_prep_plan_ok(&capture),
+        "a Super Attack potion after the first attack cannot count as Prep"
+    );
+}
+
+#[test]
 #[ignore = "requires M2_OUT_OF_RANGE_RECEIPTS with two retained M2 receipts"]
 fn m2_out_of_range_receipts_pass_the_full_oracle() {
     let paths = std::env::var("M2_OUT_OF_RANGE_RECEIPTS").expect("M2_OUT_OF_RANGE_RECEIPTS");
