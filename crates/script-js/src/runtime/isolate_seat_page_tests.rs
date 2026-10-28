@@ -269,7 +269,7 @@ fn seat_page_stamps_a_pass_settled_native_outcome() {
     let batches = iso.drain_seat_batches();
     let failed = batches
         .iter()
-        .flat_map(|batch| &batch.batch.machine_events)
+        .flat_map(|batch| &batch.machine_events)
         .any(|event| format!("{event:?}").contains("Failed"));
     assert!(failed, "the batch carries the Failed event: {batches:?}");
     let entries = settled(&iso);
