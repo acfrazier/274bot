@@ -532,7 +532,7 @@ pub(crate) mod seam {
             const { std::cell::Cell::new(0) };
         static QUESTER_PATHS_TEST_MUTEX_GUARD: std::cell::RefCell<
             Option<std::sync::MutexGuard<'static, ()>>,
-        > = std::cell::RefCell::new(None);
+        > = const { std::cell::RefCell::new(None) };
     }
 
     pub(crate) struct QuesterPathsTestGuard {
