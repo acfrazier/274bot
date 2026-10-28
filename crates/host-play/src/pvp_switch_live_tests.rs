@@ -286,6 +286,7 @@ fn partner_step(
     state: &mut PartnerState,
     protect_varp: i32,
     protect_button: i32,
+    chaser_name: &str,
 ) {
     use api::interact::Interactions;
     let mut snapshot = api::snapshot::GameSnapshot::new();
@@ -341,24 +342,37 @@ fn partner_step(
             let Some(own) = snapshot.tile() else {
                 return;
             };
-            let Some((min_x, max_x, _, _)) = crate::paired_core::fight_pen(Some(own)) else {
+            let Some((min_x, max_x, min_z, max_z)) = crate::paired_core::fight_pen(Some(own))
+            else {
                 return;
             };
-            let far = *state.far.get_or_insert_with(|| {
-                // Along the pen's long side, to the end farther from where we stand.
-                let x = if own.0 - min_x > max_x - own.0 {
-                    min_x + 1
-                } else {
-                    max_x - 1
-                };
-                api::snapshot::WorldTile {
-                    x,
-                    z: own.1,
-                    level: own.2,
-                }
-            });
-            if !pace(&state.walked_tick, 12) {
+            // The corner of the pen farthest from the machine's account, chosen
+            // again every few ticks, so the runner keeps its lead on a walker.
+            let Some(chaser) = snapshot
+                .players()
+                .iter()
+                .find(|row| row.actor.name.as_deref() == Some(chaser_name))
+                .map(|row| (row.actor.tile.x, row.actor.tile.z))
+            else {
+                return;
+            };
+            let far = [
+                (min_x + 1, min_z + 1),
+                (min_x + 1, max_z - 1),
+                (max_x - 1, min_z + 1),
+                (max_x - 1, max_z - 1),
+            ]
+            .into_iter()
+            .max_by_key(|corner| (corner.0 - chaser.0).abs().max((corner.1 - chaser.1).abs()))
+            .map(|(x, z)| api::snapshot::WorldTile {
+                x,
+                z,
+                level: own.2,
+            })
+            .expect("four corners");
+            if !pace(&state.walked_tick, 4) && state.far != Some(far) {
                 state.walked_tick = Some(tick);
+                state.far = Some(far);
                 let result = Interactions::new(&snapshot, client).walk_nearest(far);
                 shared.lock().expect("shared lock").actions.push(ActionRow {
                     tick,
@@ -559,6 +573,7 @@ fn live_pvp_switch_t2_t3_t4_in_a_pen() {
                         &mut hook_partner.lock().expect("partner lock"),
                         protect_varp,
                         protect_button,
+                        &partners[*index],
                     );
                 }
             }
