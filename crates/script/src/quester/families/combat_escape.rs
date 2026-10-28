@@ -26,7 +26,7 @@ const AWAY: usize = 2;
 /// An escape makes at most two passes over its three tiers. It keeps one
 /// compact record per request. Later requests never send a tile from an
 /// earlier failed request, including in the second pass after food runs out.
-/// Six 16-byte regions plus a one-byte count use 97 fixed bytes per escape.
+/// Six 32-byte records plus a one-byte count use 193 fixed bytes per escape.
 /// The records do not grow on game ticks.
 pub(super) const ESCAPE_PASS_ATTEMPTS: usize = 3;
 const ESCAPE_PASS_COUNT: usize = 2;
@@ -82,6 +82,10 @@ struct GoalRegion {
     min_radius: u8,
     max_radius: u8,
     shape: GoalRegionShape,
+    stand_x: i32,
+    stand_z: i32,
+    stand_level: i32,
+    stand_mask: u16,
 }
 
 impl GoalRegion {
@@ -92,19 +96,27 @@ impl GoalRegion {
         min_radius: 0,
         max_radius: 0,
         shape: GoalRegionShape::Unused,
+        stand_x: 0,
+        stand_z: 0,
+        stand_level: 0,
+        stand_mask: 0,
     };
 
     fn for_request(
         tier: usize,
         geometry: &EscapeGeometry,
         goals: &[WorldTile],
+        stand_goals: &[WorldTile],
     ) -> Option<Self> {
-        let (center, min_radius, max_radius, shape) = if tier == STAND {
+        let (center, min_radius, max_radius, shape, stand_center, stand_mask) = if tier == STAND {
+            let center = geometry.stand?;
             (
-                geometry.stand?,
+                center,
                 0,
                 u8::try_from(STAND_RADIUS).ok()?,
                 GoalRegionShape::Stand,
+                None,
+                stand_goal_mask(center, goals),
             )
         } else {
             let center = geometry.threat?;
@@ -115,11 +127,17 @@ impl GoalRegion {
                 min_radius = min_radius.min(radius);
                 max_radius = max_radius.max(radius);
             }
+            let (stand_center, stand_mask) = geometry.stand.map_or((None, 0), |stand| {
+                let mask = stand_goal_mask(stand, stand_goals);
+                ((mask != 0).then_some(stand), mask)
+            });
             (
                 center,
                 u8::try_from(min_radius).ok()?,
                 u8::try_from(max_radius).ok()?,
                 GoalRegionShape::Rings,
+                stand_center,
+                stand_mask,
             )
         };
         Some(Self {
@@ -129,6 +147,10 @@ impl GoalRegion {
             min_radius,
             max_radius,
             shape,
+            stand_x: stand_center.map_or(0, |stand| stand.x),
+            stand_z: stand_center.map_or(0, |stand| stand.z),
+            stand_level: stand_center.map_or(0, |stand| stand.level),
+            stand_mask,
         })
     }
 
@@ -138,18 +160,53 @@ impl GoalRegion {
             z: self.center_z,
             level: self.level,
         };
+        if tile.level != center.level {
+            return false;
+        }
         let radius = tile_distance(center, tile);
         match self.shape {
             GoalRegionShape::Unused => false,
-            GoalRegionShape::Stand => radius <= i32::from(self.max_radius),
+            GoalRegionShape::Stand => stand_goal_mask_contains(center, self.stand_mask, tile),
             GoalRegionShape::Rings => {
-                (i32::from(self.min_radius)..=i32::from(self.max_radius)).contains(&radius)
+                if !(i32::from(self.min_radius)..=i32::from(self.max_radius)).contains(&radius) {
+                    return false;
+                }
+                let stand = WorldTile {
+                    x: self.stand_x,
+                    z: self.stand_z,
+                    level: self.stand_level,
+                };
+                !stand_goal_mask_contains(stand, self.stand_mask, tile)
             }
         }
     }
 }
 
-const _: [(); 16] = [(); std::mem::size_of::<GoalRegion>()];
+fn stand_goal_mask(center: WorldTile, goals: &[WorldTile]) -> u16 {
+    goals.iter().fold(0, |mask, goal| {
+        let dx = goal.x.saturating_sub(center.x);
+        let dz = goal.z.saturating_sub(center.z);
+        if goal.level == center.level && (-1..=1).contains(&dx) && (-1..=1).contains(&dz) {
+            let bit = ((dx + 1) * 3 + (dz + 1)) as u32;
+            mask | (1_u16 << bit)
+        } else {
+            mask
+        }
+    })
+}
+
+fn stand_goal_mask_contains(center: WorldTile, mask: u16, tile: WorldTile) -> bool {
+    let dx = tile.x.saturating_sub(center.x);
+    let dz = tile.z.saturating_sub(center.z);
+    if mask == 0 || tile.level != center.level || !(-1..=1).contains(&dx) || !(-1..=1).contains(&dz)
+    {
+        return false;
+    }
+    let bit = ((dx + 1) * 3 + (dz + 1)) as u32;
+    mask & (1_u16 << bit) != 0
+}
+
+const _: [(); 32] = [(); std::mem::size_of::<GoalRegion>()];
 
 /// Escape state of one abort: the pass tier, the walk clock, the last failure
 /// and the fixed list of goal regions already requested.
@@ -217,7 +274,8 @@ impl AbortEscape {
             .copied()
             .min_by_key(|tile| (tile_distance(focus, *tile), squared_gap(focus, *tile)))?;
         let depth = reach.and_then(|view| reach_route::nearest_depth(view, &tiers[preferred]));
-        let region = GoalRegion::for_request(preferred, geometry, &tiers[preferred])?;
+        let region =
+            GoalRegion::for_request(preferred, geometry, &tiers[preferred], &tiers[STAND])?;
         let goals = WalkGoals::new(std::mem::take(&mut tiers[preferred])).ok()?;
         self.requested_regions[count] = region;
         self.requested_count += 1;
