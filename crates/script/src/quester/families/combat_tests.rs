@@ -3983,7 +3983,7 @@ fn target_gone_walk_without_observed_arrival_blocks_reengagement() {
     // A route that ends without observed arrival is not arrival: combat
     // does not re-engage. The walk is planned again within the bounded
     // count, and only the last failure blocks the step.
-    let route_ended = |run: &mut CombatRun, tick: u64| {
+    let mut route_ended = |run: &mut CombatRun, tick: u64| {
         with_step_context(&snapshot, &mut ledger, tick, |cx| {
             run.on_return_walk(
                 WalkReceipt {
