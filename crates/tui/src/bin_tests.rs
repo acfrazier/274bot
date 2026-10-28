@@ -4999,6 +4999,63 @@ fn settings_feedback_tui_row_shows_saving_then_the_failure_then_clears_on_retry(
     }
 }
 
+/// A real file-lock timeout leaves the saved grant unchanged. A second
+/// operator action after the lock is released must reach durable storage.
+#[test]
+fn settings_feedback_tui_teleports_retry_after_file_lock_timeout_is_durable() {
+    use crossterm::event::KeyCode;
+    use frontend_core::{NavPreference, Setting, SettingStatus};
+
+    let iso = IsolatedStores::enter("tui-s3-lock-timeout-retry");
+    let (mut session, mut app) = tui_with_profiles(&iso, &["alice"]);
+    session.preferences.reload().unwrap();
+    app.restore_preferences(session.preferences.share());
+    settle_preferences(&mut session, &mut app);
+    open_settings(&mut session, &mut app);
+    app.settings_state.row = 5;
+    let setting = Setting::Nav(NavPreference::AllowTeleports);
+    let path = session.preferences.path();
+    let lock_path = path.with_extension("json.lock");
+    crate::test_support::write_private_fixture(&lock_path, b"").unwrap();
+    let lock = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(lock_path)
+        .unwrap();
+    lock.lock().unwrap();
+
+    settings_press(&mut session, &mut app, KeyCode::Enter);
+    session.pump(&mut app);
+    assert!(matches!(
+        session.core.setting_status(setting),
+        SettingStatus::Pending
+    ));
+    settle_preferences(&mut session, &mut app);
+    assert!(
+        matches!(session.core.setting_status(setting), SettingStatus::Failed(text) if text.contains("busy")),
+        "the real writer must time out while the file lock is held"
+    );
+    assert!(!app.walk_permissions.globals().allow_teleports());
+    assert!(!app.nav.allow_teleports());
+
+    drop(lock);
+    settings_press(&mut session, &mut app, KeyCode::Enter);
+    settle_preferences(&mut session, &mut app);
+    assert!(matches!(
+        session.core.setting_status(setting),
+        SettingStatus::Saved
+    ));
+    assert!(app.walk_permissions.globals().allow_teleports());
+    for (width, height) in SIZES {
+        let words = screen_words(&mut app, width, height);
+        assert!(words.contains("allow teleports: true"), "{words}");
+        assert!(!words.contains("saving…"), "{words}");
+        assert!(!words.contains("Not saved:"), "{words}");
+    }
+    let durable: serde_json::Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+    assert_eq!(durable["nav"]["allow_teleports"], true);
+}
+
 /// A failed row feedback leaves by itself after the error timeout.
 #[test]
 fn settings_feedback_tui_row_failure_expires_by_itself() {
