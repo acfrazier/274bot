@@ -4459,20 +4459,18 @@ pub(crate) mod tests {
     use serde_json::json;
     use std::time::Duration;
 
-    /// The isolate thread's per-row and per-settled-entry state, pinned with
-    /// the sizes measured on a 64-bit target (ADR 0017 section 7.1): a seat
-    /// page's one flag fits the padding of `Row`, and a settled entry grows by
-    /// its 8-byte stamp. They live on the isolate thread, one per live row
-    /// or per outcome that waits for its `await`.
+    /// The isolate thread's per-row and per-settled-entry state (ADR 0017
+    /// section 7.1), measured on a 64-bit target against `d65c6bdd8`. A seat
+    /// page's one flag fits the padding of `Row` (304 B, unchanged), and a
+    /// settled entry grows by its 8-byte stamp (a `(Handle, Outcome)` tuple of
+    /// 80 B becomes 88 B). Rows are bounded by the live rows, and an entry
+    /// lives until its `await` takes it.
     #[test]
     #[cfg(target_pointer_width = "64")]
     fn machine_host_state_sizes_are_pinned() {
-        println!(
-            "SIZES Row={} Settled={} entry_tuple={}",
-            std::mem::size_of::<Row>(),
-            std::mem::size_of::<Settled>(),
-            std::mem::size_of::<(Handle, Outcome)>(),
-        );
+        assert_eq!(std::mem::size_of::<Row>(), 304);
+        assert_eq!(std::mem::size_of::<(Handle, Outcome)>(), 80);
+        assert_eq!(std::mem::size_of::<Settled>(), 88);
     }
 
     #[test]

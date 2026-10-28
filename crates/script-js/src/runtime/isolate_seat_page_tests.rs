@@ -572,11 +572,12 @@ fn destructive_reset_zeroes_stamps_and_the_first_new_result_qualifies() {
     iso.join();
 }
 
-/// `IsolateCmd` must not grow with the seat page mode (ADR 0017 section 7.1).
+/// The `Tick` variant carries a mode instead of a flag, and `IsolateCmd` is
+/// still 80 B, as on `d65c6bdd8` (ADR 0017 section 7.1).
 #[test]
 #[cfg(target_pointer_width = "64")]
 fn isolate_cmd_size_is_pinned() {
-    println!("SIZES IsolateCmd={}", std::mem::size_of::<IsolateCmd>());
+    assert_eq!(std::mem::size_of::<IsolateCmd>(), 80);
 }
 
 /// The names of the hooks a script recorded, in call order.
@@ -710,7 +711,7 @@ fn an_embedded_withdraw_child_delivers_its_terminal_to_its_owner_only() {
             .map_or(0, |row| row["steps"].as_u64().unwrap())
     };
     let startup = called(&iso).len();
-    assert_eq!(startup, 1, "the start reads the count once");
+    assert_eq!(startup, 3, "the start phases Start, Check and Before each read the count");
     post_page(&iso, &mut buffer, 1, &[live(child, NativeKind::BankPlan)], &[]);
     dispatch(&iso, 1, 0);
     assert_eq!(called(&iso).len(), startup, "a live child with no prompt steps nothing");

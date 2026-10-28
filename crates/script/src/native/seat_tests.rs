@@ -1121,17 +1121,15 @@ fn seat_counters_follow_each_publish_and_each_boundary() {
     );
 }
 
-/// The seat is boxed in the slot, so its three counters and its receipt
-/// counts are heap. Pinned with the measured size and its predecessor.
+/// The seat is boxed in the slot, so its three answer counters (24 B) and its
+/// receipt counts (three `u32`) are heap. Measured on a 64-bit target: 864 B,
+/// 32 B above the 832 B of `d65c6bdd8`. The row payload type does not move it.
 #[test]
 #[cfg(target_pointer_width = "64")]
 fn gameplay_seat_size_is_pinned() {
-    // 24 B of seat answer counters and 12 B of dispatch counts (padded to
-    // 40 B) on top of the 464 B of the base seat.
+    assert_eq!(std::mem::size_of::<GameplaySeat<u32>>(), 864);
     assert_eq!(
         std::mem::size_of::<GameplaySeat<u32>>(),
-        std::mem::size_of::<GameplaySeat<u8>>(),
-        "the row payload type does not move the seat's size"
+        std::mem::size_of::<GameplaySeat<u8>>()
     );
-    println!("size_of GameplaySeat = {}", std::mem::size_of::<GameplaySeat<u32>>());
 }
