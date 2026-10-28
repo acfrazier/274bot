@@ -1614,7 +1614,7 @@ fn start_m4_abort(
 }
 
 #[test]
-fn m4_escape_hands_the_router_exact_standable_goals_in_two_tiers() {
+fn m4_escape_hands_the_router_exact_standable_goals_in_one_tier() {
     let collision = m4_collision();
     let lease = crate::gatherer::select::tests::test_nav_lease_for_collision(&collision);
     let mut run = m4_run();
@@ -1635,7 +1635,7 @@ fn m4_escape_hands_the_router_exact_standable_goals_in_two_tiers() {
         first.food_guard,
         "low Prayer: the escape runs under the food guard"
     );
-    assert!(!goals.preferred().is_empty() && !goals.fallback().is_empty());
+    assert!(!goals.preferred().is_empty() && goals.fallback().is_empty());
     for goal in goals.as_slice() {
         assert!(lease.collision().standable(*goal), "{goal:?} is standable");
     }
@@ -1649,77 +1649,61 @@ fn m4_escape_hands_the_router_exact_standable_goals_in_two_tiers() {
             "{goal:?} lies outside the chase envelope"
         );
     }
-    for goal in goals.fallback() {
-        let gap = tile_distance(*goal, M4_TREE);
-        assert!(
-            gap > tile_distance(M4_HERE, M4_TREE) && gap <= M4_ENVELOPE,
-            "{goal:?} is farther than the player but still inside the envelope"
-        );
-    }
     let routed = routed_goal(&collision, &lease, &first).expect("the router finds a goal");
     assert!(tile_distance(routed, M4_TREE) > M4_ENVELOPE);
 }
 
 #[test]
-fn m4_escape_filters_unreachable_live_goals_and_retries_a_distinct_tier() {
-    let geometry = escape::EscapeGeometry {
-        here: M4_HERE,
-        threat: Some(M4_TREE),
-        stand: None,
-        chase_range: 14,
+fn m4_escape_keeps_a_goal_beyond_a_closed_door_in_the_live_flood() {
+    let here = api::WorldTile {
+        x: 3000,
+        z: 3000,
+        level: 0,
     };
-    let mut reach = open_flood(M4_HERE, 32);
-    let index =
-        ((M4_THICKET.x - reach.base_x) * reach.height + (M4_THICKET.z - reach.base_z)) as usize;
-    let word = index / u32::BITS as usize;
-    let mask = !(1u32 << (index % u32::BITS as usize));
-    reach.walkable[word] &= mask;
-    reach.reachable[word] &= mask;
-    reach.reachable_adj[word] &= mask;
-    reach.exact_rank[index] = u16::MAX;
-    reach.adjacent_rank[index] = u16::MAX;
-    reach.step[index] = 0;
+    let stand = api::WorldTile {
+        x: here.x + 5,
+        ..here
+    };
+    let door_x = here.x + 3;
+    let mut reach = open_flood(here, 8);
+    // The closed door blocks the only route into the flood region to its east.
+    for x in door_x..reach.base_x + reach.width {
+        for z in reach.base_z..reach.base_z + reach.height {
+            let index = ((x - reach.base_x) * reach.height + z - reach.base_z) as usize;
+            let word = index / u32::BITS as usize;
+            let mask = !(1u32 << (index % u32::BITS as usize));
+            if x == door_x {
+                reach.walkable[word] &= mask;
+            }
+            reach.reachable[word] &= mask;
+            reach.reachable_adj[word] &= mask;
+            reach.exact_rank[index] = u16::MAX;
+            reach.adjacent_rank[index] = u16::MAX;
+            reach.step[index] = 0;
+        }
+    }
+    let door = api::WorldTile {
+        x: door_x,
+        ..here
+    };
+    assert!(!crate::reach_route::reach_bit(&reach, &reach.walkable, door));
+    assert!(
+        crate::reach_route::nearest_depth(&reach, std::slice::from_ref(&stand)).is_none(),
+        "the closed door keeps the goal outside the live flood"
+    );
 
-    let mut pass = escape::AbortEscape::new();
-    let first = pass
+    let geometry = escape::EscapeGeometry {
+        here,
+        threat: None,
+        stand: Some(stand),
+        chase_range: 0,
+    };
+    let goals = escape::AbortEscape::new()
         .next_goals(&geometry, None, Some(&reach))
-        .expect("the live flood has other reachable escape goals");
+        .expect("the route planner receives the goal beyond the closed door");
     assert!(
-        !first.goals.as_slice().contains(&M4_THICKET),
-        "the collision-blocked Reach goal is not offered to the router"
-    );
-    assert!(
-        first.goals.fallback().is_empty(),
-        "a failed tier must not be retried as the next tier's fallback"
-    );
-    assert!(
-        first.goals.as_slice().iter().all(|goal| {
-            crate::reach_route::nearest_depth(&reach, std::slice::from_ref(goal)).is_some()
-        }),
-        "every submitted goal is reachable in the live flood"
-    );
-
-    let first_tier = first.goals.preferred().to_vec();
-    let second = pass
-        .next_goals(&geometry, None, Some(&reach))
-        .expect("the bounded pass has another reachable tier");
-    assert!(
-        second
-            .goals
-            .preferred()
-            .iter()
-            .all(|goal| !first_tier.contains(goal)),
-        "a retry chooses other goals"
-    );
-    assert!(
-        second.goals.as_slice().iter().all(|goal| {
-            crate::reach_route::nearest_depth(&reach, std::slice::from_ref(goal)).is_some()
-        }),
-        "the retry also uses only reachable goals"
-    );
-    assert!(
-        pass.next_goals(&geometry, None, Some(&reach)).is_none(),
-        "the pass spends a finite request budget"
+        goals.goals.preferred().contains(&stand),
+        "the live flood does not remove a goal the router can evaluate"
     );
 }
 
@@ -1758,12 +1742,17 @@ fn m4_failed_escape_walk_replans_one_tier_lower_before_food_runs_out() {
     );
     let second = last_walk(&ledger);
     let (first_goals, second_goals) = (goals_of(&first), goals_of(&second));
-    assert_eq!(
-        second_goals.preferred(),
-        first_goals.fallback(),
-        "the replan prefers the tier the first request held back"
+    assert!(
+        first_goals.fallback().is_empty() && second_goals.fallback().is_empty(),
+        "each request sends one tier"
     );
-    assert!(second_goals.fallback().is_empty());
+    assert!(
+        second_goals
+            .as_slice()
+            .iter()
+            .all(|goal| !first_goals.as_slice().contains(goal)),
+        "a retry uses goals from a distinct tier"
+    );
     assert!(
         second.food_guard,
         "food protection continues on the retry while food remains"
@@ -1905,11 +1894,10 @@ fn m4_escape_reaches_an_exit_beyond_any_ray_or_local_window() {
     );
 }
 
-/// The authored stand is an open tile in a closed room: it is standable and
-/// has a legal arrival goal, but no route reaches it. The first escape request
-/// must still route, by the fallback tier, and an open stand must still win.
+/// An authored stand can be standable but disconnected from the player. With
+/// no live flood, the planner still sends that exact tier to the route planner.
 #[test]
-fn m4_authored_stand_in_a_disconnected_room_does_not_block_the_first_route() {
+fn m4_disconnected_authored_stand_is_still_sent_to_the_router() {
     let stand = api::WorldTile {
         x: 3109,
         z: 3329,
@@ -1933,19 +1921,24 @@ fn m4_authored_stand_in_a_disconnected_room_does_not_block_the_first_route() {
         start_m4_abort(&mut run, &lease, &snapshot, &mut ledger);
 
         let first = last_walk(&ledger);
-        let routed = routed_goal(&collision, &lease, &first)
-            .unwrap_or_else(|| panic!("{name}: the first escape request must route"));
+        let goals = goals_of(&first);
+        assert!(goals.fallback().is_empty());
+        assert!(
+            goals.preferred().contains(&stand),
+            "{name}: the authored stand remains in the request"
+        );
         if name == "open ground" {
+            let routed = routed_goal(&collision, &lease, &first)
+                .unwrap_or_else(|| panic!("{name}: the route planner finds the open stand"));
             assert!(
                 tile_distance(routed, stand) <= 1,
                 "{name}: a reachable authored stand wins, got {routed:?}"
             );
         } else {
             assert!(
-                tile_distance(routed, stand) > 1,
-                "{name}: the unreachable room is skipped, got {routed:?}"
+                routed_goal(&collision, &lease, &first).is_none(),
+                "{name}: the route planner rejects the disconnected stand"
             );
-            assert!(tile_distance(routed, M4_TREE) > M4_ENVELOPE);
         }
     }
 }
@@ -1998,9 +1991,8 @@ fn m4_exhausted_escape_walk(
 }
 
 /// Arrival is not safety: the exhausted pass has neither prayer nor food, and
-/// its fallback tier names tiles that are only farther than the player is. An
-/// arrival with the attacker still live plans the next tier. The step
-/// completes only when no attacker is observed.
+/// the next request uses a distinct tier. An arrival with the attacker still
+/// live plans that tier. The step completes only when no attacker is observed.
 #[test]
 fn exhausted_m4_escape_arrival_with_a_live_attacker_replans_and_completes_only_when_safe() {
     let collision = m4_collision();
@@ -2020,10 +2012,15 @@ fn exhausted_m4_escape_arrival_with_a_live_attacker_replans_and_completes_only_w
     );
     let second = last_walk(&ledger);
     assert_ne!(second.request_id, first.request_id);
-    assert_eq!(
-        goals_of(&second).preferred(),
-        goals_of(&first).fallback(),
-        "the next request plans one tier lower"
+    assert!(
+        goals_of(&first).fallback().is_empty() && goals_of(&second).fallback().is_empty()
+    );
+    assert!(
+        goals_of(&second)
+            .as_slice()
+            .iter()
+            .all(|goal| !goals_of(&first).as_slice().contains(goal)),
+        "the next request uses a distinct tier"
     );
 
     let mut safe = GameSnapshot::new();
@@ -2077,7 +2074,8 @@ fn exhausted_m4_escape_that_never_loses_the_attacker_ends_with_the_unsafe_arriva
 }
 
 #[test]
-fn escape_goals_never_exceed_the_router_cap_and_each_request_prefers_a_new_tier() {
+fn escape_goals_never_exceed_the_router_cap_and_requests_use_distinct_tiers() {
+    let mut pass = escape::AbortEscape::new();
     let stand = api::WorldTile {
         x: M4_TREE.x + 16,
         ..M4_TREE
@@ -2088,22 +2086,22 @@ fn escape_goals_never_exceed_the_router_cap_and_each_request_prefers_a_new_tier(
         stand: Some(stand),
         chase_range: 14,
     };
-    let mut pass = escape::AbortEscape::new();
-    let mut preferred_tiers: Vec<Vec<api::WorldTile>> = Vec::new();
+    let mut request_goals: Vec<Vec<api::WorldTile>> = Vec::new();
     while let Some(next) = pass.next_goals(&geometry, None, None) {
         assert!(next.goals.as_slice().len() <= crate::native::WalkGoals::MAX);
-        let preferred = next.goals.preferred().to_vec();
+        assert!(next.goals.fallback().is_empty(), "each request sends one tier");
+        let goals = next.goals.as_slice().to_vec();
         assert!(
-            preferred_tiers
-                .iter()
-                .all(|previous| preferred.iter().all(|goal| !previous.contains(goal))),
-            "each retry names a disjoint next tier"
+            request_goals.iter().all(|previous| {
+                goals.iter().all(|goal| !previous.contains(goal))
+            }),
+            "each retry names goals from a distinct tier"
         );
-        preferred_tiers.push(preferred);
+        request_goals.push(goals);
     }
-    assert_eq!(preferred_tiers.len(), escape::ESCAPE_PASS_ATTEMPTS);
+    assert_eq!(request_goals.len(), escape::ESCAPE_PASS_ATTEMPTS);
     assert!(
-        preferred_tiers[0].contains(&stand),
+        request_goals[0].contains(&stand),
         "the authored stand is the first preference"
     );
 }
@@ -3576,7 +3574,7 @@ fn a_stalled_guarded_escape_walk_keeps_eating_and_ends_with_supplies_left() {
     );
     assert!(
         goals_of(first).fallback().is_empty() && goals_of(second).fallback().is_empty(),
-        "a live flood sends one tier per request"
+        "each request sends one tier"
     );
     assert!(
         goals_of(second)

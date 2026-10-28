@@ -26,30 +26,28 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   stops for lack of food at 2. Imps cannot damage the bot at all (max hit
   0), so the bot does not raise Protect from Melee against them.
 - When a quest fight cannot attack its target, the bot asks the route planner
-  for an escape route. It offers the quest's stand first, then tiles beyond
-  the attacker's chase range, then tiles farther from the attacker than the
-  player is. The route planner picks the nearest reachable goal. A live Reach
-  flood removes goals inside its view that it proves unreachable. The route
-  planner checks goals outside the flood. The tree thicket near Draynor Manor
-  is one such unreachable goal. Before, the bot could select that tile, stand
-  still, eat all its food, and die.
+  to choose among exact escape goals. It offers the quest's stand first, then
+  tiles beyond the attacker's chase range, then tiles farther from the attacker
+  than the player is. The baked collision check removes blocked tiles,
+  including the dead-tree thicket near Draynor Manor. The route planner decides
+  which remaining goals it can reach.
 
-  After a route failure, the bot plans again from its current tile and prefers
-  the next tier. Each tier has different goals. A live Reach request sends one
-  tier, so a retry does not repeat a goal. Without a live Reach flood, the
-  request also offers the next tier as a route fallback. A route that neither
-  arrives nor fails ends after the measured walk depth plus 12 game ticks.
-  The bot counts game ticks. When it cannot measure walk depth, this tick
-  limit does not apply. The route planner's own length limit applies, and the
-  walk machine's ten-minute deadline ends the walk first.
+  After a walk fails, the bot plans again from its current tile and sends the
+  next tier. Each request names one tier. Within a pass, each retry names
+  different goals. The live Reach flood measures the depth to a goal in that
+  tier. It does not remove goals. A walk that neither arrives nor fails ends
+  after the measured depth plus 12 game ticks. The bot counts game ticks. When
+  it cannot measure the depth, this tick limit does not apply. The route
+  planner's own length limit applies, and the walk machine's ten-minute
+  deadline ends the walk first.
 
   Each pass makes one request for each tier with goals. It makes up to three
   requests, or two when the quest gives no stand. A second pass can follow
-  when food runs out, so the bot makes at most six requests. While food
-  remains, the first pass keeps eating during each walk. The second pass does
-  not eat after food runs out. The quest's own walk starts only after the bot
-  sees that the attacker is gone. If every route fails, the quest stops with
-  the last route failure. The bot does not promise that an escape exists.
+  when food runs out, so the bot makes at most six requests. The first pass
+  keeps eating during each walk while food remains. The second pass does not
+  eat after food runs out. The quest's own walk starts only after the bot sees
+  that the attacker is gone. If every route fails, the quest stops with the
+  last route failure. The bot does not promise that an escape exists.
 
 ### Navigation
 

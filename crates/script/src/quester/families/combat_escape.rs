@@ -1,12 +1,9 @@
-//! Escape-goal planning for an aborted Quester fight.
-//!
-//! The old adapter could pick a tile inside a tree footprint, which has no
-//! legal Reach arrival goal and made the bot stand still.
-//!
-//! This module builds exact candidate tiles in three tiers. A live Reach flood
-//! removes goals it proves unreachable; the host router still checks collision,
-//! transports and account restrictions, and handles goals outside its view.
-//! Without a live flood, the router receives the next tier as a fallback.
+//! Escape-goal planning for a quest fight that cannot attack its target.
+
+//! The planner sends exact, standable goals to the route planner. Baked
+//! collision removes blocked tiles. The route planner decides reachability.
+//! A live Reach flood measures the selected tier's walking depth but does not
+//! filter goals.
 use super::tile_distance;
 use crate::native::WalkGoals;
 use crate::reach_route;
@@ -26,10 +23,9 @@ const STAND: usize = 0;
 const BEYOND: usize = 1;
 const AWAY: usize = 2;
 
-/// An escape pass makes at most one request per non-empty preferred tier.
-/// Without a live flood, each request also offers the next tier as a router
-/// fallback. With a live flood, it offers one tier so a retry cannot repeat
-/// that fallback. The tiers are disjoint, and each request is planned from the
+/// An escape pass makes at most one request per non-empty tier. Each request
+/// names one tier, so a retry cannot repeat goals from an earlier request in
+/// the pass. The tiers are disjoint, and each request is planned from the
 /// observed position. A request ends with its walk receipt or, when none comes,
 /// with its observed-tick budget ([`ESCAPE_SLACK_TICKS`]) when the walk has a
 /// measured depth. An unmeasured walk has no tick budget; the walk machine's
@@ -45,9 +41,8 @@ const STAND_RADIUS: i32 = 1;
 /// it: its rings lie inside the chase envelope.
 const MAX_RING: i32 = 64;
 
-/// Goals one tier may name. The router's cap applies to the union of both
-/// tiers of a request, so each tier gets half of it and the union of any two
-/// tiers always fits.
+/// Maximum number of candidate tiles in one tier. A request sends one tier,
+/// so every request remains below the router's goal cap.
 const TIER_CAP: usize = WalkGoals::MAX / 2;
 
 /// Observed ticks, beyond the measured walking depth, that one escape walk
@@ -103,33 +98,19 @@ impl AbortEscape {
         self.last_failure.as_ref()
     }
 
-    /// The next request of the pass, planned from the observed `geometry`.
     /// `None` when every tier from the current one down is empty. `reach` is
-    /// the live posted flood, when there is one. It removes in-view goals it
-    /// proves unreachable and measures walking depth.
+    /// the live posted flood, when there is one. It measures walking depth
+    /// only.
     pub(super) fn next_goals(
         &mut self,
         geometry: &EscapeGeometry,
         collision: Option<CollisionView<'_>>,
         reach: Option<&ReachQueryView>,
     ) -> Option<EscapeGoals> {
-        let mut tiers = tier_tiles(geometry, collision);
-        if let Some(view) = reach {
-            for tier in &mut tiers {
-                tier.retain(|tile| {
-                    goal_is_reachable(view, *tile)
-                        || reach_route::local_index(view, *tile).is_none()
-                });
-            }
-        }
+        let tiers = tier_tiles(geometry, collision);
         let preferred =
             (self.next_tier..ESCAPE_PASS_ATTEMPTS).find(|&tier| !tiers[tier].is_empty())?;
         self.next_tier = preferred + 1;
-        let fallback = if reach.is_none() {
-            (preferred + 1..ESCAPE_PASS_ATTEMPTS).find(|&tier| !tiers[tier].is_empty())
-        } else {
-            None
-        };
         let focus = if preferred == STAND {
             geometry.stand.unwrap_or(geometry.here)
         } else {
@@ -140,15 +121,7 @@ impl AbortEscape {
             .copied()
             .min_by_key(|tile| (tile_distance(focus, *tile), squared_gap(focus, *tile)))?;
         let depth = reach.and_then(|view| reach_route::nearest_depth(view, &tiers[preferred]));
-        let fallback_tiles = fallback.map_or_else(Vec::new, |tier| tiers[tier].clone());
-        // Each tier holds at most `TIER_CAP` tiles, so the union fits the cap
-        // and construction cannot fail.
-        let goals = if fallback_tiles.is_empty() {
-            WalkGoals::new(tiers[preferred].clone())
-        } else {
-            WalkGoals::with_preferred(fallback_tiles, &tiers[preferred])
-        }
-        .ok()?;
+        let goals = WalkGoals::new(tiers[preferred].clone()).ok()?;
         Some(EscapeGoals {
             target,
             goals,
@@ -188,15 +161,14 @@ impl AbortEscape {
 /// game tick at walk speed and two at run speed (`PathingEntity.ts:144-149`,
 /// with `Player.ts:729-731` choosing walk or run). So a walk to a goal at
 /// flood depth `d` needs at most `d` observed ticks. A measured budget is the
-/// flood depth to the nearest goal of the preferred tier (of the fallback
-/// tier when no preferred goal is in the flood) plus [`ESCAPE_SLACK_TICKS`].
-/// The reach flood has no depth limit of its own (`SceneQuery::flood_reach`,
-/// `api/src/query/reach.rs:612-614`: "No 400-step cap"), and the `script`
-/// crate reaches nav only through `nav_planner::contract`, so it has no
-/// router search bound to use. Without a measured depth (no live flood, or no
-/// goal in it) the walk has no tick budget (`None`). It has no
-/// [`WalkClock`], so it ends only by its receipt or by the existing
-/// ten-minute walk deadline (Main ruling
+/// flood depth to the nearest goal of the selected tier plus
+/// [`ESCAPE_SLACK_TICKS`]. The Reach flood has no depth limit of its own
+/// (`SceneQuery::flood_reach`, `api/src/query/reach.rs:612-614`: "No 400-step
+/// cap"), and the `script` crate reaches nav only through
+/// `nav_planner::contract`, so it has no router search bound to use.
+/// Without a measured depth (no live flood, or no goal in it), the walk has
+/// no tick budget (`None`). It has no [`WalkClock`], so it ends only by its
+/// receipt or by the existing ten-minute walk deadline (Main ruling
 /// `FIX-ABORT-ESCAPE/r4/MAIN-RULING.md`, 2026-10-27).
 fn walk_budget_ticks(depth: Option<u32>) -> Option<u64> {
     depth.map(|depth| u64::from(depth) + ESCAPE_SLACK_TICKS)
@@ -226,18 +198,6 @@ pub(super) struct EscapeGoals {
 fn squared_gap(a: WorldTile, b: WorldTile) -> i64 {
     let (dx, dz) = (i64::from(a.x - b.x), i64::from(a.z - b.z));
     dx * dx + dz * dz
-}
-
-/// Return true when the live flood proves that an exact goal is reachable.
-fn goal_is_reachable(view: &ReachQueryView, tile: WorldTile) -> bool {
-    let Some(index) = reach_route::local_index(view, tile) else {
-        return false;
-    };
-    reach_route::reach_bit(view, &view.reachable, tile)
-        && view
-            .exact_rank
-            .get(index)
-            .is_some_and(|rank| *rank != u16::MAX)
 }
 
 /// The tiles of each tier. A tile is a candidate when the world has it and,
