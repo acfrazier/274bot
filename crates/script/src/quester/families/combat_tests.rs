@@ -3930,7 +3930,7 @@ fn exhausted_escape_runs_from_a_new_attacker_when_the_engaged_actor_is_gone() {
         .npc_names()
         .unwrap()
         .rows
-        .into_iter()
+        .iter()
         .find(|row| {
             crate::combat::facts::npc_max_hit(row) == Some(4)
                 && row
