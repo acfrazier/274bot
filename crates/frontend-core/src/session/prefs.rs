@@ -1123,4 +1123,27 @@ mod setting_event_outcome_tests {
             .iter()
             .all(|event| event.setting() == "profile order"));
     }
+
+    #[test]
+    fn a_refused_s3_write_emits_failed_with_its_identity() {
+        let mut session = session();
+        session.watch_setting_events(true);
+
+        let applied = session.refused(
+            Setting::ProfileOrder,
+            write_refused("preferences busy".into()),
+        );
+        assert!(matches!(applied, Applied::Rejected(_, _)));
+
+        let (events, incomplete) = session.take_setting_events();
+        assert!(!incomplete);
+        assert_eq!(
+            events,
+            vec![SettingEvent::new(
+                "profile order".into(),
+                SettingEventState::Failed,
+                Some("preferences busy".into()),
+            )]
+        );
+    }
 }
