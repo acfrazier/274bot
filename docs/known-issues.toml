@@ -363,6 +363,7 @@ text = """If WalkTo is open while you change Fleet marks, WalkTo keeps the earli
   selection until you click **Walk N bots**. **Workaround:** after changing
   Fleet marks, click **Walk N bots**, or close and reopen WalkTo."""
 first = "0.2.6"
+fixed = "0.2.8"
 target = "none"
 severity = "low"
 owner = "panel"

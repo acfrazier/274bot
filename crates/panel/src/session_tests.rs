@@ -4329,6 +4329,131 @@ fn walk_count_follows_marks_made_elsewhere_while_the_picker_is_open() {
     assert_eq!(label_after_frame(&mut s), "Walk 0 bots");
 }
 
+/// A Fleet mark change while WalkTo is open updates the count and checked rows.
+/// Confirming then walks the current marks, not the set from when the picker opened.
+#[test]
+fn picker_group_walk_uses_fleet_marks_changed_while_open() {
+    let _guard = crate::test_support::imgui_context_guard();
+    let _statics = crate::picker::lock_nav_statics();
+    let mut s = session_with_vault("walk-live-targets.vault", &["alice", "bob", "carol"]);
+    let world = open_world(3, 3);
+    let origin = Tile {
+        x: 0,
+        z: 1,
+        level: 0,
+    };
+    let dest = Tile {
+        x: 2,
+        z: 2,
+        level: 0,
+    };
+    let _fixture = bind_picker_session(&mut s, &world, origin);
+    push_session_slot(
+        &mut s,
+        "bob",
+        Tile {
+            x: 1,
+            z: 1,
+            level: 0,
+        },
+        None,
+        true,
+        true,
+    );
+    push_session_slot(
+        &mut s,
+        "carol",
+        Tile {
+            x: 2,
+            z: 1,
+            level: 0,
+        },
+        None,
+        true,
+        true,
+    );
+    s.statuses.refresh_from_play(&s.core);
+    for name in ["alice", "bob", "carol"] {
+        s.core.fleet_mut().add(name);
+    }
+    assert!(
+        s.submit(
+            frontend_core::OperatorCommand::SetMark(true),
+            frontend_core::Targets::Profile("alice"),
+        )
+        .is_some(),
+        "initial Fleet mark"
+    );
+    s.open_walkto_for_fleet();
+    s.walk_send.open = true;
+
+    let mut ctx = crate::test_support::imgui_context();
+    let mut label_after_frame = |s: &mut Session| {
+        ctx.prepare_frame(
+            dear_imgui_rs::FramePrepareOptions::new([900.0, 700.0], 1.0 / 60.0)
+                .renderer_has_textures(),
+        );
+        {
+            let mut open = true;
+            let mut map = crate::walk_map::WalkMapRenderer::new();
+            crate::picker::picker_map_window(ctx.frame(), s, &world, &mut open, None, &mut map);
+        }
+        ctx.render();
+        s.walk_send.walk_label().to_string()
+    };
+    assert_eq!(label_after_frame(&mut s), "Walk 1 bots");
+
+    assert!(
+        s.submit(
+            frontend_core::OperatorCommand::SetMark(false),
+            frontend_core::Targets::Profile("alice"),
+        )
+        .is_some(),
+        "unmark alice in Fleet"
+    );
+    assert_eq!(label_after_frame(&mut s), "Walk 0 bots");
+    assert!(
+        s.submit(
+            frontend_core::OperatorCommand::SetMark(true),
+            frontend_core::Targets::Profile("bob"),
+        )
+        .is_some(),
+        "mark bob in Fleet"
+    );
+    assert_eq!(label_after_frame(&mut s), "Walk 1 bots");
+    assert!(
+        s.submit(
+            frontend_core::OperatorCommand::SetMark(true),
+            frontend_core::Targets::Profile("carol"),
+        )
+        .is_some(),
+        "mark carol in Fleet"
+    );
+    assert_eq!(label_after_frame(&mut s), "Walk 2 bots");
+
+    let checked: Vec<(&str, bool)> = s
+        .walk_send
+        .rows()
+        .iter()
+        .map(|row| (row.name(), row.checked(s.fleet_model.marks())))
+        .collect();
+    assert_eq!(checked, [("alice", false), ("bob", true), ("carol", true)]);
+    assert_eq!(s.select_picker_tile(&world, dest), Some(dest));
+    assert!(s.confirm_picker_group_walk(&world));
+
+    assert!(
+        !s.core.walk_route_armed("alice"),
+        "the picker no longer walks the mark that was set when it opened"
+    );
+    for name in ["bob", "carol"] {
+        assert_eq!(
+            s.core.manual_walk_route(name).unwrap().dest,
+            world_tile(dest),
+            "the current Fleet mark for {name} receives the group walk"
+        );
+    }
+}
+
 /// The 50 fps choices are saved when changed and restored at the next launch;
 /// a preferences file without them behaves as it did before they were saved
 /// (sidecar off, focused on).
