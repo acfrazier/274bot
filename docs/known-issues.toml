@@ -412,3 +412,17 @@ listed = "0.2.7"
 target = "none"
 severity = "medium"
 owner = "upstream rs2b0t FireGiant / survival phase 3"
+
+[[item]]
+id = "gnome-magic-chopper-full-pack-fruit"
+kind = "known-issue"
+area = "Scripts"
+text = """The rs2b0t GnomeMagicChopper script can stop chopping when a Strange
+  fruit from a random event fills the last free backpack slot before it holds
+  a Magic log: it only goes to the bank when it holds logs. Clear one backpack
+  slot and the script resumes. The fix is in review upstream; update your
+  rs2b0t folder once it is merged."""
+first = "0.2.7"
+target = "0.2.9"
+severity = "low"
+owner = "upstream rs2b0t GnomeMagicChopper (rs2b2t/rs2b0t#897)"
