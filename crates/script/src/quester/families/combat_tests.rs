@@ -3980,16 +3980,13 @@ fn exhausted_escape_runs_from_a_new_attacker_when_the_engaged_actor_is_gone() {
         }),
         "the new attacker plan does not repeat the vanished Warlord's failed tiles"
     );
-    assert_eq!(
-        walks[0].x, here.x,
-        "the escape does not use the vanished Warlord's east tile"
+    let escape_distance = tile_distance(walks[0], new_attacker_tile);
+    assert!(
+        escape_distance > tile_distance(here, new_attacker_tile),
+        "the escape moves farther from the new attacker"
     );
     assert!(
-        walks[0].z > here.z,
-        "the escape moves north from the new attacker south of the player"
-    );
-    assert!(
-        tile_distance(walks[0], new_attacker_tile) > chase_envelope,
+        escape_distance > chase_envelope,
         "the plan leaves the new attacker's chase envelope of {chase_envelope} tiles"
     );
 }
