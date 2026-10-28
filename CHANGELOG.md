@@ -392,10 +392,6 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
   Quester fights. With the setting on, any running rs2b0t script pauses. A
   built-in script pauses while it walks or acts, but not between actions. 0.2.6
   has the same problem.
-- **Panel:** If WalkTo is open while you change Fleet marks, WalkTo keeps the
-  earlier selection until you click **Walk N bots**. **Workaround:** after
-  changing Fleet marks, click **Walk N bots**, or close and reopen WalkTo. 0.2.6
-  has the same problem.
 - **Scripts:** When a script walks from Karamja to the mainland without the 30
   coins for the boat (`Traversal.walkTo`), the host earns the fare by working
   for Luthas. If the bot cannot reach Luthas once after filling the banana
