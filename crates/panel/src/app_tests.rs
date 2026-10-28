@@ -101,16 +101,19 @@ fn panel_exit_status_child() {
         #[cfg(feature = "memory-profile")]
         Ok("memory_fail") => {
             let mut state = PanelState::default();
-            state.session.core.set_play(Some(frontend_core::test_support::empty_play(
-                &host_play::PlayOptions {
-                    host: "127.0.0.1".into(),
-                    transport: client::Transport::Tcp,
-                    port: 1,
-                    cache_dir: std::env::temp_dir().to_string_lossy().into_owned(),
-                    lowmem: true,
-                    mainland: false,
-                },
-            )));
+            state
+                .session
+                .core
+                .set_play(Some(frontend_core::test_support::empty_play(
+                    &host_play::PlayOptions {
+                        host: "127.0.0.1".into(),
+                        transport: client::Transport::Tcp,
+                        port: 1,
+                        cache_dir: std::env::temp_dir().to_string_lossy().into_owned(),
+                        lowmem: true,
+                        mainland: false,
+                    },
+                )));
             let config = frontend_core::bench::BenchConfig::from_env()
                 .expect("benchmark configuration")
                 .expect("memory benchmark enabled");
@@ -131,7 +134,12 @@ fn panel_exit_status_child() {
                 "slot threads must retire before the window GPU is released"
             );
             assert!(
-                failure.lock().unwrap().as_deref().unwrap().contains("missing seed for"),
+                failure
+                    .lock()
+                    .unwrap()
+                    .as_deref()
+                    .unwrap()
+                    .contains("missing seed for"),
                 "benchmark errors must still produce a failing exit status"
             );
             ctx.render();
@@ -178,21 +186,22 @@ fn normal_interactive_window_close_remains_successful() {
 #[test]
 fn failed_memory_run_retires_play_before_the_gpu_window_is_released() {
     let dir = TestDir::new("memory-panel-exit");
-    let output = std::process::Command::new(std::env::current_exe().expect("current test executable"))
-        .args([
-            "--ignored",
-            "--exact",
-            "--nocapture",
-            "app::tests::panel_exit_status_child",
-        ])
-        .env("PANEL_EXIT_CHILD", "memory_fail")
-        .env("BOT_MEMORY_N", "1")
-        .env("BOT_MEMORY_WORKLOAD", "seeded-idle")
-        .env("BOT_MEMORY_OUTPUT", dir.join("samples.jsonl"))
-        .env("BOT_LIVE_NAME_PREFIX", "pex")
-        .env_remove("RS2B0T")
-        .output()
-        .expect("run memory exit child");
+    let output =
+        std::process::Command::new(std::env::current_exe().expect("current test executable"))
+            .args([
+                "--ignored",
+                "--exact",
+                "--nocapture",
+                "app::tests::panel_exit_status_child",
+            ])
+            .env("PANEL_EXIT_CHILD", "memory_fail")
+            .env("BOT_MEMORY_N", "1")
+            .env("BOT_MEMORY_WORKLOAD", "seeded-idle")
+            .env("BOT_MEMORY_OUTPUT", dir.join("samples.jsonl"))
+            .env("BOT_LIVE_NAME_PREFIX", "pex")
+            .env_remove("RS2B0T")
+            .output()
+            .expect("run memory exit child");
     assert!(
         output.status.success(),
         "terminal memory run must return to the caller before process exit:\n{}",
