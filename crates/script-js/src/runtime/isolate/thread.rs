@@ -1697,8 +1697,9 @@ fn tick_loop(
                 if !machines_halted(&teardown) {
                     let _ = call_interruptible(&mut runtime, &teardown, |runtime| {
                         if seat_page.is_some() {
-                            stepped =
-                                super::machine_v8::seat_step(runtime, &|| machines_halted(&teardown));
+                            stepped = super::machine_v8::seat_step(runtime, &|| {
+                                machines_halted(&teardown)
+                            });
                         } else if wait_only {
                             super::machine_v8::snapshot_step(
                                 runtime,

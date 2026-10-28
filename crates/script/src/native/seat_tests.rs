@@ -1042,7 +1042,11 @@ fn seat_counters_follow_each_publish_and_each_boundary() {
     let point = deposit_point();
     assert!(!seat.answer_page_owed());
     start(&mut seat, 1, None, NativeKind::BankPlan);
-    assert_eq!(seat.answer_seq(), 0, "an admission is not an answer page change");
+    assert_eq!(
+        seat.answer_seq(),
+        0,
+        "an admission is not an answer page change"
+    );
 
     // A prompt, a consumed decision and a completion each raise it once.
     seat.prompt_with_details(id(1), point, &[1]).unwrap();
@@ -1061,17 +1065,30 @@ fn seat_counters_follow_each_publish_and_each_boundary() {
     );
     assert_eq!(seat.answer_seq(), 2);
     seat.take_answer(id(1)).unwrap();
-    assert_eq!(seat.answer_seq(), 2, "taking an answer is not a page change");
+    assert_eq!(
+        seat.answer_seq(),
+        2,
+        "taking an answer is not a page change"
+    );
     seat.complete(id(1), false).unwrap();
     assert_eq!(counters(&seat), (3, 0, 0, 1));
 
     // Every other way to publish a terminal moves it too.
     start(&mut seat, 2, None, NativeKind::BankPlan);
     seat.cancel(id(2), CallbackCancelReason::HookThrew).unwrap();
-    assert_eq!(counters(&seat), (4, 0, 0, 2), "cancel(HookThrew) publishes Failed");
+    assert_eq!(
+        counters(&seat),
+        (4, 0, 0, 2),
+        "cancel(HookThrew) publishes Failed"
+    );
     start(&mut seat, 3, None, NativeKind::BankPlan);
-    seat.cancel(id(3), CallbackCancelReason::ParentAborted).unwrap();
-    assert_eq!(counters(&seat), (5, 0, 0, 3), "cancel(ParentAborted) revokes");
+    seat.cancel(id(3), CallbackCancelReason::ParentAborted)
+        .unwrap();
+    assert_eq!(
+        counters(&seat),
+        (5, 0, 0, 3),
+        "cancel(ParentAborted) revokes"
+    );
     start(&mut seat, 4, None, NativeKind::Walk);
     start(&mut seat, 5, Some(4), NativeKind::BankPlan);
     seat.manual_walk(id(4)).unwrap();
@@ -1116,7 +1133,11 @@ fn seat_counters_follow_each_publish_and_each_boundary() {
     seat.reset(run());
     assert!(!seat.answer_page_owed());
     assert_eq!(
-        (seat.answer_dispatched(), seat.terminal_dispatched(), seat.result_seq()),
+        (
+            seat.answer_dispatched(),
+            seat.terminal_dispatched(),
+            seat.result_seq()
+        ),
         (seat.answer_seq(), 0, 0)
     );
 }

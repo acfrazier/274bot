@@ -240,7 +240,10 @@ impl Frames {
     }
 
     fn settled(&self) -> Vec<serde_json::Value> {
-        self.host()["settled"].as_array().cloned().unwrap_or_default()
+        self.host()["settled"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
     }
 
     /// Record every machine take, so a test can see which await received
@@ -515,7 +518,10 @@ fn seat_answer_final_terminal_survives_a_refused_dispatch() {
     frames.frame(tick, false);
     let refused = frames.seat();
     assert_eq!(refused.untaken_answers, 0);
-    assert!(refused.result_seq > before.result_seq, "the terminal was published");
+    assert!(
+        refused.result_seq > before.result_seq,
+        "the terminal was published"
+    );
     assert!(refused.answer_seq > before.answer_seq);
     assert_eq!(refused.answer_dispatched, before.answer_dispatched);
     assert_eq!(refused.terminal_dispatched, before.terminal_dispatched);
@@ -523,7 +529,10 @@ fn seat_answer_final_terminal_survives_a_refused_dispatch() {
         refused.seat_pages.refused_dispatch,
         before.seat_pages.refused_dispatch + 1
     );
-    assert_eq!(refused.seat_pages.refused_page, before.seat_pages.refused_page);
+    assert_eq!(
+        refused.seat_pages.refused_page,
+        before.seat_pages.refused_page
+    );
     drop(block);
     let settled = frames.settled();
     assert_eq!(settled.len(), 1, "the page settled the row: {settled:?}");
@@ -550,7 +559,10 @@ fn seat_answer_final_terminal_survives_a_refused_dispatch() {
     assert_eq!(takes.len(), 1, "one take, once: {takes:?}");
     assert_eq!(takes[0]["kind"], "done", "not an abort: {takes:?}");
     for _ in 0..8 {
-        assert!(!frames.frame(tick, false), "nothing is owed after completion");
+        assert!(
+            !frames.frame(tick, false),
+            "nothing is owed after completion"
+        );
     }
     assert_eq!(frames.seat().seat_pages.accepted, after.seat_pages.accepted);
 }
@@ -569,7 +581,11 @@ fn seat_answer_throwing_predicate_rejects_with_identity_on_frozen_frames() {
     );
     assert_eq!(frames.probe("__rs2b0t_host.tick"), serde_json::json!(tick));
     frames.run_to_done(tick);
-    assert_eq!(frames.matches(), 2, "the second visit threw: no third visit");
+    assert_eq!(
+        frames.matches(),
+        2,
+        "the second visit threw: no third visit"
+    );
 }
 
 /// Boundary scenarios: a kept reconnect, as production calls it.
@@ -583,7 +599,12 @@ fn kept_reconnect(frames: &Frames) -> script::slot::SeatProbe {
     let held = frames.seat();
     assert!(held.held);
     assert_eq!(
-        (held.answer_seq, held.answer_dispatched, held.terminal_dispatched, held.result_seq),
+        (
+            held.answer_seq,
+            held.answer_dispatched,
+            held.terminal_dispatched,
+            held.result_seq
+        ),
         (
             before.answer_seq,
             before.answer_dispatched,
@@ -621,17 +642,28 @@ fn seat_answer_kept_reconnect_delivers_at_the_first_full_tick() {
                 break;
             }
         }
-        assert!(frames.seat().seat_pages.accepted > accepted, "prompt 3 was dispatched");
+        assert!(
+            frames.seat().seat_pages.accepted > accepted,
+            "prompt 3 was dispatched"
+        );
         kept_reconnect(&frames);
         drop(block);
         frames.probe("true");
-        assert_eq!(frames.matches(), 2, "the old-generation dispatch ran nothing");
+        assert_eq!(
+            frames.matches(),
+            2,
+            "the old-generation dispatch ran nothing"
+        );
         reup(&frames);
         for _ in 0..6 {
             frames.frame(tick, false);
             frames.probe("true");
         }
-        assert_eq!(frames.matches(), 2, "no hook runs before the first full tick");
+        assert_eq!(
+            frames.matches(),
+            2,
+            "no hook runs before the first full tick"
+        );
         assert!(!frames.done());
         frames.frame(tick + 1, true);
         frames.probe("true");
@@ -661,7 +693,10 @@ fn seat_answer_kept_reconnect_delivers_at_the_first_full_tick() {
         let block = frames.iso(script_js::LoadIsolate::block_thread_for_test);
         let before = frames.seat();
         frames.frame(tick, false);
-        assert!(frames.seat().result_seq > before.result_seq, "terminal published");
+        assert!(
+            frames.seat().result_seq > before.result_seq,
+            "terminal published"
+        );
         assert!(
             frames.seat().seat_pages.accepted > before.seat_pages.accepted,
             "its dispatch was accepted before the boundary"
@@ -674,7 +709,10 @@ fn seat_answer_kept_reconnect_delivers_at_the_first_full_tick() {
             frames.frame(tick, false);
             frames.probe("true");
         }
-        assert!(!frames.done(), "nothing releases before the first full tick");
+        assert!(
+            !frames.done(),
+            "nothing releases before the first full tick"
+        );
         frames.frame(tick + 1, true);
         frames.probe("true");
         frames.run_to_done(tick + 1);
@@ -732,11 +770,17 @@ fn seat_answer_wake_owes_nothing_across_a_destructive_boundary() {
     assert_eq!(reset.answer_dispatched, reset.answer_seq, "nothing is owed");
     assert_eq!(reset.terminal_dispatched, 0);
     assert_eq!(reset.result_seq, 0);
-    assert_eq!((reset.live, reset.results, reset.untaken_answers), (0, 0, 0));
+    assert_eq!(
+        (reset.live, reset.results, reset.untaken_answers),
+        (0, 0, 0)
+    );
     drop(block);
     frames.probe("true");
     for entry in frames.settled() {
-        assert_eq!(entry["seat_seq"], 0, "the reset zeroed every stamp: {entry:?}");
+        assert_eq!(
+            entry["seat_seq"], 0,
+            "the reset zeroed every stamp: {entry:?}"
+        );
     }
     reup(&frames);
     for _ in 0..6 {

@@ -3045,14 +3045,14 @@ fn settle_seat_result(host: &mut Host, id: RequestId, terminal_seq: u64, outcome
         return;
     };
     let handle = handle.get();
-    let (orphaned, owner) = if let Some(mirror) = host.bank_mirrors.iter_mut().find(|row| row.id == id)
-    {
-        mirror.prompt = None;
-        mirror.terminal = Some(outcome.clone());
-        (mirror.orphaned, Some(mirror.owner))
-    } else {
-        (false, None)
-    };
+    let (orphaned, owner) =
+        if let Some(mirror) = host.bank_mirrors.iter_mut().find(|row| row.id == id) {
+            mirror.prompt = None;
+            mirror.terminal = Some(outcome.clone());
+            (mirror.orphaned, Some(mirror.owner))
+        } else {
+            (false, None)
+        };
     if orphaned {
         host.bank_mirrors.retain(|mirror| mirror.id != id);
         host.pending_decisions.retain(|decision| decision.of != id);
@@ -3957,7 +3957,10 @@ impl Default for SteppedRows {
 
 impl SteppedRows {
     fn push(&mut self, handle: Handle) {
-        debug_assert!(self.len < self.handles.len(), "every stepped row holds a seat entry");
+        debug_assert!(
+            self.len < self.handles.len(),
+            "every stepped row holds a seat entry"
+        );
         if let Some(slot) = self.handles.get_mut(self.len) {
             *slot = handle;
             self.len += 1;

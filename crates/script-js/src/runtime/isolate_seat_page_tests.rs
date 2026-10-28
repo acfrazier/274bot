@@ -81,23 +81,23 @@ fn post_page(
             prompt: row.prompt.as_ref().map(|(sequence, _, _)| *sequence),
         })
         .collect();
-    let details: Vec<crate::wire::SeatLiveDetails<'_>> = rows
-        .iter()
-        .zip(&encoded)
-        .map(|(row, args)| crate::wire::SeatLiveDetails {
-            id: row.id,
-            phase: script::native::NativePhase::Waiting,
-            prompt: row.prompt.as_ref().zip(args.as_ref()).map(
-                |((sequence, point, _), args)| crate::wire::SeatPromptInput {
-                    sequence: DecisionSequence::from_raw(*sequence).expect("nonzero sequence"),
-                    point,
-                    args,
-                },
-            ),
-        })
-        .collect();
-    let page = crate::wire::SeatPageInput::new(&entries, results, &details, 0)
-        .expect("valid seat page");
+    let details: Vec<crate::wire::SeatLiveDetails<'_>> =
+        rows.iter()
+            .zip(&encoded)
+            .map(|(row, args)| crate::wire::SeatLiveDetails {
+                id: row.id,
+                phase: script::native::NativePhase::Waiting,
+                prompt: row.prompt.as_ref().zip(args.as_ref()).map(
+                    |((sequence, point, _), args)| crate::wire::SeatPromptInput {
+                        sequence: DecisionSequence::from_raw(*sequence).expect("nonzero sequence"),
+                        point,
+                        args,
+                    },
+                ),
+            })
+            .collect();
+    let page =
+        crate::wire::SeatPageInput::new(&entries, results, &details, 0).expect("valid seat page");
     let snapshot = crate::wire::tests::empty_input(tick);
     let bytes = buffer.encode_snapshot_with_native(
         &snapshot,
@@ -185,7 +185,12 @@ fn seat_answer_wake_releases_its_obligation_and_nothing_older() {
     post_page(&iso, &mut buffer, 1, &[], &results);
     let stamps: Vec<_> = settled(&iso)
         .iter()
-        .map(|entry| (entry["handle"].as_u64().unwrap(), entry["seat_seq"].as_u64().unwrap()))
+        .map(|entry| {
+            (
+                entry["handle"].as_u64().unwrap(),
+                entry["seat_seq"].as_u64().unwrap(),
+            )
+        })
         .collect();
     assert_eq!(
         stamps,
@@ -219,7 +224,8 @@ fn seat_answer_wake_releases_its_obligation_and_nothing_older() {
     );
     // The next global settle releases what is left, whatever the stamp.
     machine_tick(&iso, 2);
-    let mut got: Vec<String> = serde_json::from_value(iso.probe("Object.keys(globalThis.__got)").unwrap()).unwrap();
+    let mut got: Vec<String> =
+        serde_json::from_value(iso.probe("Object.keys(globalThis.__got)").unwrap()).unwrap();
     got.sort();
     assert_eq!(got, vec!["a", "c", "o"]);
     iso.join();
@@ -248,7 +254,10 @@ fn seat_page_stamps_a_pass_settled_native_outcome() {
         &iso,
         &mut buffer,
         1,
-        &[live(x, NativeKind::BankPlan), live(u, NativeKind::BankNearest)],
+        &[
+            live(x, NativeKind::BankPlan),
+            live(u, NativeKind::BankNearest),
+        ],
         &[],
     );
     dispatch(&iso, 1, 0);
@@ -258,13 +267,22 @@ fn seat_page_stamps_a_pass_settled_native_outcome() {
         &iso,
         &mut buffer,
         1,
-        &[prompted(x, NativeKind::BankPlan, 1, "match", serde_json::json!(["Item"]))],
+        &[prompted(
+            x,
+            NativeKind::BankPlan,
+            1,
+            "match",
+            serde_json::json!(["Item"]),
+        )],
         &[result(u, 1, SeatTerminal::Done)],
     );
     assert_eq!(
         settled(&iso)
             .iter()
-            .map(|entry| (entry["handle"].as_u64().unwrap(), entry["seat_seq"].as_u64().unwrap()))
+            .map(|entry| (
+                entry["handle"].as_u64().unwrap(),
+                entry["seat_seq"].as_u64().unwrap()
+            ))
             .collect::<Vec<_>>(),
         vec![(2, 1)]
     );
@@ -278,7 +296,10 @@ fn seat_page_stamps_a_pass_settled_native_outcome() {
         .any(|event| format!("{event:?}").contains("Failed"));
     assert!(failed, "the batch carries the Failed event: {batches:?}");
     let entries = settled(&iso);
-    let x_entry = entries.iter().find(|entry| entry["handle"] == 1).expect("X's entry");
+    let x_entry = entries
+        .iter()
+        .find(|entry| entry["handle"] == 1)
+        .expect("X's entry");
     assert_eq!(x_entry["kind"], "failed");
     assert_eq!(x_entry["seat_seq"], 0, "a pass settle carries no stamp yet");
     assert_eq!(
@@ -293,10 +314,16 @@ fn seat_page_stamps_a_pass_settled_native_outcome() {
         &mut buffer,
         1,
         &[],
-        &[result(u, 1, SeatTerminal::Done), result(x, 2, SeatTerminal::Failed)],
+        &[
+            result(u, 1, SeatTerminal::Done),
+            result(x, 2, SeatTerminal::Failed),
+        ],
     );
     let entries = settled(&iso);
-    let x_entry = entries.iter().find(|entry| entry["handle"] == 1).expect("X's entry");
+    let x_entry = entries
+        .iter()
+        .find(|entry| entry["handle"] == 1)
+        .expect("X's entry");
     assert_eq!(x_entry["kind"], "failed", "the stored outcome is kept");
     assert_eq!(x_entry["seat_seq"], 2);
     dispatch(&iso, 1, 1);
@@ -329,7 +356,13 @@ fn seat_page_dispatches_carry_the_awaited_call_budget() {
     let ids = started(&iso);
     let id = ids[0];
     let mut buffer = crate::wire::IsolateBuf::default();
-    post_page(&iso, &mut buffer, 1, &[live(id, NativeKind::BankNearest)], &[]);
+    post_page(
+        &iso,
+        &mut buffer,
+        1,
+        &[live(id, NativeKind::BankNearest)],
+        &[],
+    );
     dispatch(&iso, 1, 0);
     for sequence in 1..=300u32 {
         post_page(
@@ -354,7 +387,10 @@ fn seat_page_dispatches_carry_the_awaited_call_budget() {
     );
     let row = row_of(&iso, id);
     assert_eq!(row["calls"], 256);
-    assert_eq!(row["seat_changed"], true, "the 257th prompt still waits for a step");
+    assert_eq!(
+        row["seat_changed"], true,
+        "the 257th prompt still waits for a step"
+    );
     // Full ticks refill the budget: the first consumes the 256th reply, the
     // next calls the hook for the prompt that waited.
     machine_tick(&iso, 2);
@@ -393,7 +429,10 @@ fn seat_dispatch_runs_ready_js_continuations_but_resumes_no_other_row() {
         &iso,
         &mut buffer,
         1,
-        &[live(a, NativeKind::BankPlan), live(b, NativeKind::BankNearest)],
+        &[
+            live(a, NativeKind::BankPlan),
+            live(b, NativeKind::BankNearest),
+        ],
         &[],
     );
     dispatch(&iso, 1, 0);
@@ -404,7 +443,13 @@ fn seat_dispatch_runs_ready_js_continuations_but_resumes_no_other_row() {
         1,
         &[
             live(a, NativeKind::BankPlan),
-            prompted(b, NativeKind::BankNearest, 1, "afterDeposit", serde_json::json!(["Item"])),
+            prompted(
+                b,
+                NativeKind::BankNearest,
+                1,
+                "afterDeposit",
+                serde_json::json!(["Item"]),
+            ),
         ],
         &[],
     );
@@ -419,14 +464,29 @@ fn seat_dispatch_runs_ready_js_continuations_but_resumes_no_other_row() {
             &mut buffer,
             1,
             &[
-                prompted(a, NativeKind::BankPlan, sequence, "match", serde_json::json!(["Item"])),
-                prompted(b, NativeKind::BankNearest, 1, "afterDeposit", serde_json::json!(["Item"])),
+                prompted(
+                    a,
+                    NativeKind::BankPlan,
+                    sequence,
+                    "match",
+                    serde_json::json!(["Item"]),
+                ),
+                prompted(
+                    b,
+                    NativeKind::BankNearest,
+                    1,
+                    "afterDeposit",
+                    serde_json::json!(["Item"]),
+                ),
             ],
             &[],
         );
         dispatch(&iso, 1, 0);
     }
-    assert_eq!(iso.probe("globalThis.__visits").unwrap(), serde_json::json!(2));
+    assert_eq!(
+        iso.probe("globalThis.__visits").unwrap(),
+        serde_json::json!(2)
+    );
     assert_eq!(
         iso.probe("globalThis.__b_continued").unwrap(),
         serde_json::json!(1),
@@ -458,7 +518,10 @@ fn seat_answer_wake_steps_only_the_changed_row() {
         &iso,
         &mut buffer,
         1,
-        &[live(a, NativeKind::BankPlan), live(s, NativeKind::BankNearest)],
+        &[
+            live(a, NativeKind::BankPlan),
+            live(s, NativeKind::BankNearest),
+        ],
         &[],
     );
     dispatch(&iso, 1, 0);
@@ -480,29 +543,53 @@ fn seat_answer_wake_steps_only_the_changed_row() {
             .find(|row| row["handle"] == handle)
             .map_or(0, |row| row["steps"].as_u64().unwrap())
     };
-    let (s_before, p_before) = (steps(s.get() - RequestId::ISOLATE_FIRST + 1), steps(probe_handle));
+    let (s_before, p_before) = (
+        steps(s.get() - RequestId::ISOLATE_FIRST + 1),
+        steps(probe_handle),
+    );
     for sequence in 1..=5u32 {
         post_page(
             &iso,
             &mut buffer,
             1,
             &[
-                prompted(a, NativeKind::BankPlan, sequence, "match", serde_json::json!(["Item"])),
+                prompted(
+                    a,
+                    NativeKind::BankPlan,
+                    sequence,
+                    "match",
+                    serde_json::json!(["Item"]),
+                ),
                 live(s, NativeKind::BankNearest),
             ],
             &[],
         );
         dispatch(&iso, 1, 0);
     }
-    assert_eq!(iso.probe("globalThis.__visits").unwrap(), serde_json::json!(5));
-    assert_eq!(steps(s.get() - RequestId::ISOLATE_FIRST + 1), s_before, "the sibling row was not stepped");
-    assert_eq!(steps(probe_handle), p_before, "the snapshot-sensitive row was not stepped");
+    assert_eq!(
+        iso.probe("globalThis.__visits").unwrap(),
+        serde_json::json!(5)
+    );
+    assert_eq!(
+        steps(s.get() - RequestId::ISOLATE_FIRST + 1),
+        s_before,
+        "the sibling row was not stepped"
+    );
+    assert_eq!(
+        steps(probe_handle),
+        p_before,
+        "the snapshot-sensitive row was not stepped"
+    );
     assert_eq!(
         iso.probe("globalThis.__wait_done").unwrap(),
         serde_json::json!(false),
         "the parked wait is still parked"
     );
-    assert_eq!(iso.probe("__rs2b0t_host.tick").unwrap(), tick, "no tick time moved");
+    assert_eq!(
+        iso.probe("__rs2b0t_host.tick").unwrap(),
+        tick,
+        "no tick time moved"
+    );
     iso.join();
 }
 
@@ -531,10 +618,21 @@ fn destructive_reset_zeroes_stamps_and_the_first_new_result_qualifies() {
     post_page(&iso, &mut buffer, 1, &rows, &[]);
     dispatch(&iso, 1, 0);
     // Page P0 carries C's terminal with sequence 5 and nothing dispatches it.
-    post_page(&iso, &mut buffer, 1, &rows[1..], &[result(c, 5, SeatTerminal::Done)]);
+    post_page(
+        &iso,
+        &mut buffer,
+        1,
+        &rows[1..],
+        &[result(c, 5, SeatTerminal::Done)],
+    );
     let before: Vec<_> = settled(&iso)
         .iter()
-        .map(|entry| (entry["handle"].as_u64().unwrap(), entry["seat_seq"].as_u64().unwrap()))
+        .map(|entry| {
+            (
+                entry["handle"].as_u64().unwrap(),
+                entry["seat_seq"].as_u64().unwrap(),
+            )
+        })
         .collect();
     assert_eq!(before, vec![(1, 5)]);
     iso.reset_session_work(None);
@@ -635,7 +733,13 @@ fn an_embedded_periodic_bank_child_steps_only_its_owner_and_continues_into_the_l
     let startup = called(&iso).len();
     let tick = iso.probe("__rs2b0t_host.tick").unwrap();
 
-    post_page(&iso, &mut buffer, 1, &[live(child, NativeKind::BankNearest)], &[]);
+    post_page(
+        &iso,
+        &mut buffer,
+        1,
+        &[live(child, NativeKind::BankNearest)],
+        &[],
+    );
     dispatch(&iso, 1, 0);
     assert_eq!(called(&iso).len(), startup, "admission calls no hook");
 
@@ -664,7 +768,11 @@ fn an_embedded_periodic_bank_child_steps_only_its_owner_and_continues_into_the_l
         family_row(&iso, "periodic_bank")["steps"].as_u64().unwrap() > owner_steps,
         "the owning row stepped"
     );
-    assert_eq!(steps_of_probe(&iso), probe_steps, "the unrelated row stayed inactive");
+    assert_eq!(
+        steps_of_probe(&iso),
+        probe_steps,
+        "the unrelated row stayed inactive"
+    );
 
     // The terminal: the owner continues into its own `log` hook, once.
     let after_prompt = called(&iso).len();
@@ -680,8 +788,15 @@ fn an_embedded_periodic_bank_child_steps_only_its_owner_and_continues_into_the_l
     assert_eq!(delta.len(), 1, "one continuation hook: {delta:?}");
     assert_eq!(delta[0][0], "log");
     assert_eq!(steps_of_probe(&iso), probe_steps, "still inactive");
-    assert_eq!(iso.probe("globalThis.__wait_done").unwrap(), serde_json::json!(false));
-    assert_eq!(iso.probe("__rs2b0t_host.tick").unwrap(), tick, "no tick time moved");
+    assert_eq!(
+        iso.probe("globalThis.__wait_done").unwrap(),
+        serde_json::json!(false)
+    );
+    assert_eq!(
+        iso.probe("__rs2b0t_host.tick").unwrap(),
+        tick,
+        "no tick time moved"
+    );
     iso.join();
 }
 
@@ -711,10 +826,23 @@ fn an_embedded_withdraw_child_delivers_its_terminal_to_its_owner_only() {
             .map_or(0, |row| row["steps"].as_u64().unwrap())
     };
     let startup = called(&iso).len();
-    assert_eq!(startup, 3, "the start phases Start, Check and Before each read the count");
-    post_page(&iso, &mut buffer, 1, &[live(child, NativeKind::BankPlan)], &[]);
+    assert_eq!(
+        startup, 3,
+        "the start phases Start, Check and Before each read the count"
+    );
+    post_page(
+        &iso,
+        &mut buffer,
+        1,
+        &[live(child, NativeKind::BankPlan)],
+        &[],
+    );
     dispatch(&iso, 1, 0);
-    assert_eq!(called(&iso).len(), startup, "a live child with no prompt steps nothing");
+    assert_eq!(
+        called(&iso).len(),
+        startup,
+        "a live child with no prompt steps nothing"
+    );
     let before = probe_steps(&iso);
     post_page(
         &iso,
@@ -730,7 +858,11 @@ fn an_embedded_withdraw_child_delivers_its_terminal_to_its_owner_only() {
         "the owner stepped once and read its count: {:?}",
         called(&iso)
     );
-    assert_eq!(probe_steps(&iso), before, "the unrelated row stayed inactive");
+    assert_eq!(
+        probe_steps(&iso),
+        before,
+        "the unrelated row stayed inactive"
+    );
     iso.join();
 }
 
@@ -756,7 +888,13 @@ fn slow_tick_skip_keeps_the_queued_seat_page() {
         &iso,
         &mut buffer,
         1,
-        &[prompted(id, NativeKind::BankPlan, 1, "match", serde_json::json!(["Item"]))],
+        &[prompted(
+            id,
+            NativeKind::BankPlan,
+            1,
+            "match",
+            serde_json::json!(["Item"]),
+        )],
         &[],
     );
     iso.enqueue_seat_page_without_watchdog_for_test(1, 0);

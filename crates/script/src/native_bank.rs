@@ -1480,10 +1480,7 @@ impl NativeMachine for BankMachine {
                     }
                     BankAction::Close => unreachable!("close is handled before opening"),
                 },
-                Phase::ReconcileDeposit {
-                    evidence,
-                    reason,
-                } => {
+                Phase::ReconcileDeposit { evidence, reason } => {
                     if !self.same_session(cx) {
                         self.session_lost(cx, "bank closed before the transfer settled")?;
                         continue;
@@ -2471,9 +2468,11 @@ impl NativeMachine for Select {
             }
             return Poll::Ready(Ok(receipt.selected.clone()));
         }
-        if self.fallback.as_ref().is_some_and(|fallback| {
-            fallback.deadline.reached(cx.evidence().tick)
-        }) {
+        if self
+            .fallback
+            .as_ref()
+            .is_some_and(|fallback| fallback.deadline.reached(cx.evidence().tick))
+        {
             return Poll::Ready(Ok(self.fallback.take().expect("checked fallback").selected));
         }
         if self.request_id.is_none() {
@@ -2641,12 +2640,12 @@ impl NativeMachine for Close {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Duration;
     use crate::native::{ActionContext, HostEffect, InteractionReceipt};
     use crate::quester::families::tests::{
         local_player, with_tick, with_tick_reach, with_tick_snapshots,
     };
     use api::snapshot::{GameSnapshot, ItemActionFamily, ItemContainer, ItemView, SnapshotView};
+    use std::time::Duration;
 
     fn catalog_bank(name: &str) -> NamedBank {
         let definition = api::named_banks::BANK_CATALOG
@@ -2809,8 +2808,14 @@ mod tests {
     fn select_only_waiter_counts_observed_ticks_not_elapsed_time() {
         let (snapshot, mut ledger, handle) = select_waiter(true);
         assert!(
-            poll_select_waiter(&snapshot, &mut ledger, &handle, 2, Duration::from_secs(3_600))
-                .is_pending(),
+            poll_select_waiter(
+                &snapshot,
+                &mut ledger,
+                &handle,
+                2,
+                Duration::from_secs(3_600)
+            )
+            .is_pending(),
             "an hour of active time does not settle a wait of eight observed ticks"
         );
         let result = poll_select_waiter(

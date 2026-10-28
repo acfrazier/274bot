@@ -757,7 +757,12 @@ impl LoadIsolate {
         input_identity: u64,
         evidence_sequence: u64,
     ) {
-        self.dispatch_tick(snap_tick, input_identity, evidence_sequence, TickMode::WaitOnly);
+        self.dispatch_tick(
+            snap_tick,
+            input_identity,
+            evidence_sequence,
+            TickMode::WaitOnly,
+        );
     }
 
     /// Dispatch the page that the host posted for a seat answer: step,
@@ -767,12 +772,7 @@ impl LoadIsolate {
     /// `release_floor`. `false`: the thread is stopped or tearing down, the
     /// paired page was refused, or the queue is backlogged; nothing was
     /// queued, so the caller keeps its obligation and retries.
-    pub fn on_seat_page_at(
-        &self,
-        snap_tick: u64,
-        input_identity: u64,
-        release_floor: u64,
-    ) -> bool {
+    pub fn on_seat_page_at(&self, snap_tick: u64, input_identity: u64, release_floor: u64) -> bool {
         self.dispatch_tick(
             snap_tick,
             input_identity,
@@ -889,9 +889,7 @@ impl LoadIsolate {
         let (lock, cv) = &*entered;
         let mut seen = lock.lock().unwrap();
         while !*seen {
-            let (next, timeout) = cv
-                .wait_timeout(seen, Duration::from_secs(10))
-                .unwrap();
+            let (next, timeout) = cv.wait_timeout(seen, Duration::from_secs(10)).unwrap();
             seen = next;
             assert!(
                 !timeout.timed_out(),

@@ -3862,12 +3862,19 @@ impl SlotScript {
         {
             return false;
         }
-        if self.seat.as_ref().is_some_and(|seat| seat.has_untaken_answers()) {
+        if self
+            .seat
+            .as_ref()
+            .is_some_and(|seat| seat.has_untaken_answers())
+        {
             self.tick_bank_scoped(ctx, bank_seat::BankPoll::Answered);
             self.capture_native_seat_rows();
         }
         debug_assert!(
-            !self.seat.as_ref().is_some_and(|seat| seat.has_untaken_answers()),
+            !self
+                .seat
+                .as_ref()
+                .is_some_and(|seat| seat.has_untaken_answers()),
             "a seat answer has an owner runtime that on_seat_answer polls"
         );
         true
@@ -3895,7 +3902,9 @@ impl SlotScript {
 
     /// The release floor of the next seat page dispatch.
     pub fn seat_terminal_dispatched(&self) -> u64 {
-        self.seat.as_ref().map_or(0, |seat| seat.terminal_dispatched())
+        self.seat
+            .as_ref()
+            .map_or(0, |seat| seat.terminal_dispatched())
     }
 
     /// Record an accepted `SeatPage` dispatch: it carried every change up to
