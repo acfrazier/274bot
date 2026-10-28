@@ -698,7 +698,7 @@ impl SkipQueueEvidence {
             ));
         }
         if lifecycle.state != script::ScriptTerminalState::Failed
-            || run_state != script::RunState::Error
+            || run_state != script::RunState::Idle
             || status.phase != NativePhase::Blocked
         {
             return Err(format!(
