@@ -1853,11 +1853,11 @@ impl Session {
         if !self.record_setting_events || self.setting_events.len() >= 256 {
             return;
         }
-        self.setting_events.push(frontend_core::SettingEvent {
-            setting: member.path.join("."),
+        self.setting_events.push(frontend_core::SettingEvent::new(
+            member.path.join("."),
             state,
             error,
-        });
+        ));
     }
 
     /// Submit one exact panel-owned preference member without waiting.

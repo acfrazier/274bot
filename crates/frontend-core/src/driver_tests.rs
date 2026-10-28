@@ -741,11 +741,11 @@ fn watched_setting_events_report_pending_failed_then_saved() {
     d.poll();
     assert_eq!(
         d.session_mut().take_setting_events(),
-        vec![SettingEvent {
-            setting: "navigation preference".into(),
-            state: SettingEventState::Pending,
-            error: None,
-        }],
+        vec![SettingEvent::new(
+            "navigation preference".into(),
+            SettingEventState::Pending,
+            None,
+        )],
         "the held write is pending"
     );
 
@@ -771,10 +771,10 @@ fn watched_setting_events_report_pending_failed_then_saved() {
     );
     let events = d.session_mut().take_setting_events();
     assert_eq!(events.len(), 1, "{events:?}");
-    assert_eq!(events[0].setting, "navigation preference");
-    assert_eq!(events[0].state, SettingEventState::Failed);
+    assert_eq!(events[0].setting(), "navigation preference");
+    assert_eq!(events[0].state(), SettingEventState::Failed);
     assert!(
-        events[0].error.as_deref().is_some_and(|e| !e.is_empty()),
+        events[0].error().is_some_and(|e| !e.is_empty()),
         "the failure carries the writer's reason: {events:?}"
     );
 
@@ -791,9 +791,9 @@ fn watched_setting_events_report_pending_failed_then_saved() {
     let events = d.session_mut().take_setting_events();
     assert!(
         events.iter().any(|event| {
-            event.setting == "navigation preference"
-                && event.state == SettingEventState::Saved
-                && event.error.is_none()
+            event.setting() == "navigation preference"
+                && event.state() == SettingEventState::Saved
+                && event.error().is_none()
         }),
         "the retry reports saved: {events:?}"
     );

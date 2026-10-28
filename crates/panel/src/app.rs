@@ -7945,17 +7945,17 @@ fn pump_record_settings(state: &mut PanelState) {
     let core_events = state.session.core.take_setting_events();
     for event in &core_events {
         state.record.note_setting(
-            &event.setting,
-            record_setting_state(event.state),
-            event.error.as_deref().unwrap_or(""),
+            event.setting(),
+            record_setting_state(event.state()),
+            event.error().unwrap_or(""),
         );
     }
     let panel_events = state.session.take_panel_setting_events();
     for event in &panel_events {
         state.record.note_setting(
-            &event.setting,
-            record_setting_state(event.state),
-            event.error.as_deref().unwrap_or(""),
+            event.setting(),
+            record_setting_state(event.state()),
+            event.error().unwrap_or(""),
         );
     }
 }

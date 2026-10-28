@@ -104,14 +104,38 @@ pub enum SettingEventState {
 /// [`OperatorSession::take_setting_events`]. `setting` is the write's own
 /// name (the `what` a failure's detail uses: a preference key such as
 /// `capture`, or `navigation preference`, `profile order`, and friends).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct SettingEvent {
+    setting: String,
+    state: SettingEventState,
+    error: Option<String>,
+}
+
+impl SettingEvent {
+    /// One transition of `setting` into `state`; `error` is the failure
+    /// text for [`SettingEventState::Failed`], `None` otherwise.
+    pub fn new(setting: String, state: SettingEventState, error: Option<String>) -> Self {
+        Self {
+            setting,
+            state,
+            error,
+        }
+    }
+
     /// The setting the write saves.
-    pub setting: String,
+    pub fn setting(&self) -> &str {
+        &self.setting
+    }
+
     /// The state the write entered.
-    pub state: SettingEventState,
+    pub fn state(&self) -> SettingEventState {
+        self.state
+    }
+
     /// The failure text; `Some` only for [`SettingEventState::Failed`].
-    pub error: Option<String>,
+    pub fn error(&self) -> Option<&str> {
+        self.error.as_deref()
+    }
 }
 
 /// The panel's draw policy: the saved draw switches and the run-only full

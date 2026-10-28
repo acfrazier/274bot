@@ -478,11 +478,11 @@ impl CommandDesk {
         if self.setting_events.len() >= super::prefs::SETTING_EVENTS_CAP {
             return;
         }
-        self.setting_events.push(super::prefs::SettingEvent {
-            setting: setting.to_owned(),
+        self.setting_events.push(super::prefs::SettingEvent::new(
+            setting.to_owned(),
             state,
             error,
-        });
+        ));
     }
 
     pub(super) fn take_setting_events(&mut self) -> Vec<super::prefs::SettingEvent> {

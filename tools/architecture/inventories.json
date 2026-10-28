@@ -2744,6 +2744,22 @@
       "classification": "scalar",
       "owner": "T3",
       "reason": "F0-5 frontend seam; register in the introducing commit, no allowance."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/session/prefs.rs|SettingEvent",
+      "path": "crates/frontend-core/src/session/prefs.rs",
+      "symbol": "SettingEvent",
+      "classification": "owning",
+      "owner": "T3",
+      "reason": "F0-5 frontend seam; register in the introducing commit, no allowance."
+    },
+    {
+      "id": "seam_type|crates/frontend-core/src/session/prefs.rs|SettingEventState",
+      "path": "crates/frontend-core/src/session/prefs.rs",
+      "symbol": "SettingEventState",
+      "classification": "scalar",
+      "owner": "T3",
+      "reason": "F0-5 frontend seam; register in the introducing commit, no allowance."
     }
   ],
   "violations": [
