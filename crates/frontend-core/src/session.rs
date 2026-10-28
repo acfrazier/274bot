@@ -1129,7 +1129,7 @@ impl<Io> OperatorSession<Io> {
     }
 
     /// Drop the play (joins its workers). Final teardown only.
-    pub(crate) fn close_play(&mut self) {
+    pub fn close_play(&mut self) {
         self.deferred.clear();
         self.mem_relog.clear();
         self.public_worlds = None;
