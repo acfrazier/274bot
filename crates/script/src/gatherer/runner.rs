@@ -2585,7 +2585,8 @@ mod tests {
         use api::selected::{EntityId, FamilyPreparation};
 
         let (config, mut snapshot) = FamilyPreparation::run(|families| {
-            let selected = api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
+            let selected =
+                api::game_data::for_revision(api::selected::ClientRevision::R289).unwrap();
             let mut cx = crate::native::PrepareContext {
                 pin: selected.selected_pin().unwrap(),
                 selected,
