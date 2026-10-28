@@ -118,6 +118,12 @@ fn panel_exit_status_child() {
                 frontend_core::bench::BenchRun::prepare(config, "panel")
                     .expect("unseeded benchmark"),
             );
+            let mut ctx = crate::test_support::imgui_context();
+            ctx.prepare_frame(
+                dear_imgui_rs::FramePrepareOptions::new([800.0, 600.0], 1.0 / 60.0)
+                    .renderer_has_textures(),
+            );
+            let _ui = ctx.frame();
             let failure = std::sync::Mutex::new(None);
             assert!(super::frame_pumps(&mut state, &failure));
             assert!(
@@ -128,6 +134,7 @@ fn panel_exit_status_child() {
                 failure.lock().unwrap().as_deref().unwrap().contains("missing seed for"),
                 "benchmark errors must still produce a failing exit status"
             );
+            ctx.render();
             eprintln!("memory workers retired before window teardown");
         }
         other => panic!("unknown child mode {other:?}"),
