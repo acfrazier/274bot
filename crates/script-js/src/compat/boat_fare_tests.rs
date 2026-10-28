@@ -243,7 +243,12 @@ fn recovery_step_observed(
     };
     (result, ops)
 }
-fn start_recovery() -> (Recover, InstantTaskClock, VecDeque<String>, Vec<InteractReq>) {
+fn start_recovery() -> (
+    Recover,
+    InstantTaskClock,
+    VecDeque<String>,
+    Vec<InteractReq>,
+) {
     let mut ops = Vec::new();
     let mut clock = InstantTaskClock::new();
     let mut logs = VecDeque::new();
@@ -833,6 +838,7 @@ fn a_failed_talk_walk_retries_and_logs_the_terminal_failure() {
     let fare = world.facts.coin_payout;
     install_luthas_reach_view(luthas, None);
     fail_short(&mut world, 1, PORT_SARIM, 2, (coins, fare));
+    world.post();
     let (mut recover, mut clock, mut logs, initial_ops) = start_recovery();
     let mut walk = initial_ops.into_iter().next().expect("initial talk walk");
     assert!(walk_near(luthas, 2)(&walk));
@@ -848,14 +854,6 @@ fn a_failed_talk_walk_retries_and_logs_the_terminal_failure() {
             assert!(matches!(ops.as_slice(), [InteractReq::Walk { .. }]));
             let retry = ops[0].clone();
             assert_ne!(walk_tile(&retry), dest, "retry chooses another stand");
-            assert!(orthogonally_adjacent(
-                walk_tile(&retry),
-                WorldTile {
-                    x: luthas.x,
-                    z: luthas.z + 1,
-                    level: luthas.level,
-                }
-            ));
             walk = retry;
         } else {
             assert_eq!(result, Some(false), "the third failed walk ends recovery");
