@@ -15,7 +15,7 @@
 //! opponent's head icons and the distance between the two players.
 //!
 //! ```sh
-//! LIVE=1 BOT_CPU=1 BOT_LIVE_NAME_PREFIX=<pfx> BOT_GAME_HOST=<engine host> \
+//! LIVE=1 BOT_CPU=1 BOT_LIVE_NAME_PREFIX=<pfx> \
 //!   BOT_GAME_PORT=44594 BOT_HTTP_PORT=1080 BOT_ENGINE_DIR=<engine> \
 //!   BOT_NAV_PACK=<274bot.navpack> BOT_CACHE_DIR=<writable cache clone> \
 //!   LIVE_EVIDENCE_DIR=<dir> cargo test -p host-play \
@@ -396,15 +396,6 @@ fn fighter_ready(snapshot: &api::snapshot::GameSnapshot) -> bool {
         && held("iron_arrow")
 }
 
-fn engine_options(home: &std::path::Path) -> ProfileOptions {
-    let mut options = profile_options(home);
-    if let Ok(host) = std::env::var("BOT_GAME_HOST") {
-        options.host = Some(host.clone());
-        options.asset_host = Some(host);
-    }
-    options
-}
-
 fn kit(worn: &[(u8, i32)]) -> Arc<CompiledKit> {
     Arc::new(CompiledKit {
         worn: Arc::from(worn),
@@ -423,7 +414,7 @@ fn live_pvp_switch_t2_t3_t4_in_a_pen() {
     let evidence = env_path("LIVE_EVIDENCE_DIR");
     std::fs::create_dir_all(&evidence).expect("create evidence dir");
     let home = std::env::var_os("HOME").map(PathBuf::from).expect("HOME");
-    let template = engine_options(&home)
+    let template = profile_options(&home)
         .resolve(None)
         .expect("resolve the engine profile")
         .prepare_template()
@@ -654,7 +645,7 @@ fn live_pvp_switch_t2_t3_t4_in_a_pen() {
         && refusals.is_empty();
     let receipt = json!({
         "cell": "live_pvp_switch_t2_t3_t4_in_a_pen",
-        "engine": std::env::var("BOT_GAME_HOST").unwrap_or_else(|_| "127.0.0.1".into()),
+        "engine": std::env::var("PVP_ENGINE_LABEL").unwrap_or_else(|_| "127.0.0.1".into()),
         "game_port": std::env::var("BOT_GAME_PORT").ok(),
         "accounts": names,
         "holder": holder,
