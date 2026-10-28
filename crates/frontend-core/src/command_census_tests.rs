@@ -224,6 +224,10 @@ const CORE: &[(&str, Decision)] = &[
     ("resources.rs::background_bots_acked", Excluded("reads the background-bots acknowledgement; no state change")),
     ("resources.rs::clear_background_bots_ack_error", Excluded("drops a stale banner line; presentation")),
     ("session.rs::OperatorSession::open_process_state", Excluded(STARTUP)),
+    (
+        "session.rs::OperatorSession::close_play",
+        Excluded("final frontend shutdown: retire Play workers before GPU driver release; no operator decision"),
+    ),
     ("session/commands.rs::OperatorSession::stage_new_profile", Staged(C::CreateProfile)),
     ("session/commands.rs::OperatorSession::stage_guardian", Staged(C::SetGuardian)),
     ("session/commands.rs::OperatorSession::stage_survival", Staged(C::SetSurvival)),
