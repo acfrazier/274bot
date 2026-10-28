@@ -45,6 +45,22 @@ pub(super) fn snapshot_step(
     machine::snapshot_step(&mut RuntimeJs { runtime, claimed }, tick, evidence_sequence);
 }
 
+/// Step only the native rows that the posted seat page changed and no pass
+/// has read, keeping the callback budget. Returns the rows it stepped.
+pub(super) fn seat_step(runtime: &mut Runtime, claimed: &dyn Fn() -> bool) -> machine::SteppedRows {
+    machine::seat_step(&mut RuntimeJs { runtime, claimed })
+}
+
+/// After a seat page step and its drain, resume the stepped rows whose
+/// callback promise settled. No other row resumes.
+pub(super) fn resume_callbacks_seat(
+    runtime: &mut Runtime,
+    stepped: &machine::SteppedRows,
+    claimed: &dyn Fn() -> bool,
+) {
+    machine::resume_seat(&mut RuntimeJs { runtime, claimed }, stepped);
+}
+
 /// After the tick's pump, resume rows whose callback promise settled.
 /// Kept separate from [`settle_waits`] because callbacks are not the script
 /// loop continuation and must not inherit its interrupt stage.
@@ -63,6 +79,27 @@ pub(super) fn settle_waits(
             None,
             "__rs2b0t_settle_machines",
             json_args!(),
+        )?;
+    }
+    Ok(())
+}
+
+/// Settle only the awaits of outcomes whose seat terminal is above
+/// `release_floor`: the terminals the seat published after the last accepted
+/// seat answer dispatch. The handle list is built for this call and dropped
+/// with it; the shim re-parks every other machine wait without taking it.
+pub(super) fn settle_waits_seat(
+    runtime: &mut Runtime,
+    release_floor: u64,
+    claimed: &dyn Fn() -> bool,
+) -> Result<(), rustyscript::Error> {
+    let handles = machine::settled_above(release_floor);
+    if !handles.is_empty() && !claimed() {
+        super::lineage_v8::call_function_immediate::<()>(
+            runtime,
+            None,
+            "__rs2b0t_settle_machines",
+            json_args!(handles),
         )?;
     }
     Ok(())

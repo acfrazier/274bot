@@ -1633,6 +1633,12 @@ struct BankMirror {
     terminal: Option<Outcome>,
     admitted: bool,
     orphaned: bool,
+    /// The row whose step reads this mirror: the native bank row itself, or
+    /// the row whose task owns an embedded child. A seat page that advances
+    /// the mirror's prompt or delivers its terminal steps this row only.
+    owner: Handle,
+    /// The newest prompt sequence a page has carried for this mirror.
+    prompt_seq_seen: u32,
 }
 
 /// One isolate-side continuation over an admitted native bank seat row.
@@ -1697,6 +1703,7 @@ fn enqueue_bank_child(
     family: &'static str,
     args: script::bank::request::BankSeatArgs,
     context: StartContext,
+    owner: Handle,
 ) -> Result<(), String> {
     let descriptor =
         bank_family_descriptor(family).ok_or_else(|| format!("unknown bank family {family:?}"))?;
@@ -1739,6 +1746,8 @@ fn enqueue_bank_child(
             terminal: None,
             admitted: false,
             orphaned: false,
+            owner,
+            prompt_seq_seen: 0,
         });
         Ok(())
     })
@@ -1778,7 +1787,7 @@ impl NativeBankChild {
             .ok_or_else(|| "native bank seat identity exhausted".to_owned())?;
         let id = RequestId::isolate(handle)
             .map_err(|error| format!("native bank seat identity: {error}"))?;
-        enqueue_bank_child(id, family, args, cx.context)?;
+        enqueue_bank_child(id, family, args, cx.context, cx.handle)?;
         Ok(Self {
             id,
             family,
@@ -2178,6 +2187,11 @@ struct Row {
     walking_operation: bool,
     /// Rebaseline only an uncancelled operator-paused walk on resume.
     rebaseline_on_resume: bool,
+    /// The seat page this host applied advanced a prompt or delivered a
+    /// terminal that only this row's next step reads. A `SeatPage` pass steps
+    /// the rows with this flag and clears it, as does every pass that steps
+    /// the row: so it stays set across a refused dispatch and its retry.
+    seat_changed: bool,
 }
 impl Row {
     fn capture(&self) -> CapturedLineage {
@@ -2237,6 +2251,29 @@ impl Row {
     }
 }
 
+/// One outcome that waits for its JavaScript `await`.
+struct Settled {
+    handle: Handle,
+    outcome: Outcome,
+    /// The seat result sequence of this request's terminal once a page has
+    /// carried it (`settle_seat_result`), else 0. A `SeatPage` dispatch
+    /// releases the entry only when this is above its release floor, so it
+    /// never releases an outcome outside the seat publication it carries.
+    seat_seq: u64,
+}
+
+impl Settled {
+    /// An outcome no seat result has named yet (and that no seat result
+    /// names at all when its row is local).
+    fn unstamped(handle: Handle, outcome: Outcome) -> Self {
+        Self {
+            handle,
+            outcome,
+            seat_seq: 0,
+        }
+    }
+}
+
 struct Host {
     next: Handle,
     rows: Vec<Row>,
@@ -2244,7 +2281,7 @@ struct Host {
     stepping: Vec<SteppingRow>,
     /// The newest running row of each exclusive group.
     newest: Vec<(&'static str, Handle)>,
-    settled: Vec<(Handle, Outcome)>,
+    settled: Vec<Settled>,
     ops: Vec<PlacedOp>,
     pending_starts: Vec<PendingSeatStart>,
     pending_decisions: Vec<PendingSeatDecision>,
@@ -2731,8 +2768,10 @@ impl Host {
                 row.awaiting_seat_terminal = true;
                 self.rows.push(row);
             } else {
-                self.settled
-                    .push((row.handle, Outcome::Aborted(AbortReason::ParentAborted)));
+                self.settled.push(Settled::unstamped(
+                    row.handle,
+                    Outcome::Aborted(AbortReason::ParentAborted),
+                ));
             }
         }
     }
@@ -2791,7 +2830,7 @@ impl Host {
             Outcome::Refused(_) => {}
         }
         self.free_completed_walk(row.handle);
-        self.settled.push((row.handle, outcome));
+        self.settled.push(Settled::unstamped(row.handle, outcome));
     }
 
     fn superseded(&self, row: &Row) -> bool {
@@ -2818,17 +2857,39 @@ impl Host {
                 self.revoke_row(&row, AbortReason::Superseded, at);
                 row.machine.abort(AbortReason::Superseded);
                 self.free_completed_walk(row.handle);
-                self.settled
-                    .push((row.handle, Outcome::Aborted(AbortReason::Superseded)));
+                self.settled.push(Settled::unstamped(
+                    row.handle,
+                    Outcome::Aborted(AbortReason::Superseded),
+                ));
             } else {
                 i += 1;
             }
         }
     }
 
+    /// A seat result for a request whose row already ended in a pass: the
+    /// entry that pass pushed keeps its real outcome and gains the stamp,
+    /// once. An entry that a global settle already took has nothing to stamp.
+    fn stamp_settled(&mut self, handle: Handle, terminal_seq: u64) {
+        if let Some(entry) = self
+            .settled
+            .iter_mut()
+            .find(|entry| entry.handle == handle && entry.seat_seq == 0)
+        {
+            entry.seat_seq = terminal_seq;
+        }
+    }
+
+    /// The row's next step reads a prompt or terminal that a page carried.
+    fn mark_seat_changed(&mut self, handle: Handle) {
+        if let Some(row) = self.rows.iter_mut().find(|row| row.handle == handle) {
+            row.seat_changed = true;
+        }
+    }
+
     fn take(&mut self, handle: Handle) -> Take {
-        if let Some(i) = self.settled.iter().position(|(h, _)| *h == handle) {
-            return Take::Settled(self.settled.remove(i).1);
+        if let Some(i) = self.settled.iter().position(|entry| entry.handle == handle) {
+            return Take::Settled(self.settled.remove(i).outcome);
         }
         if self.rows.iter().any(|row| row.handle == handle) {
             return Take::Pending;
@@ -2848,8 +2909,15 @@ impl Host {
     fn reset(&mut self) {
         for mut row in self.rows.drain(..) {
             row.machine.abort(AbortReason::Reset);
-            self.settled
-                .push((row.handle, Outcome::Aborted(AbortReason::Reset)));
+            self.settled.push(Settled::unstamped(
+                row.handle,
+                Outcome::Aborted(AbortReason::Reset),
+            ));
+        }
+        // A destructive boundary clears every stamp: the result sequence
+        // starts again at 1, so an old stamp could qualify for a new floor.
+        for entry in &mut self.settled {
+            entry.seat_seq = 0;
         }
         self.newest.clear();
         self.stepping.clear();
@@ -2966,28 +3034,42 @@ fn seat_result_outcome(
     Ok((id, row.terminal_seq(), result))
 }
 
-fn settle_seat_result(host: &mut Host, id: RequestId, outcome: Outcome) {
-    let orphaned = if let Some(mirror) = host.bank_mirrors.iter_mut().find(|row| row.id == id) {
-        mirror.prompt = None;
-        mirror.terminal = Some(outcome.clone());
-        mirror.orphaned
-    } else {
-        false
-    };
-    if orphaned {
-        host.bank_mirrors.retain(|mirror| mirror.id != id);
-        host.pending_decisions.retain(|decision| decision.of != id);
-        return;
-    }
+/// Apply one seat result to the machine host. `terminal_seq` is the seat's
+/// result sequence for this request (never 0 on the wire). It stamps the
+/// request's entry of `host.settled` on both routes by which a native outcome
+/// reaches it: the push of a live row, and the entry that a pass pushed
+/// earlier for a row that already ended there. A `SeatPage` dispatch
+/// releases an entry only when its stamp is above the dispatch's floor.
+fn settle_seat_result(host: &mut Host, id: RequestId, terminal_seq: u64, outcome: Outcome) {
     let Ok(handle) = RequestId::isolate(id.get()) else {
         return;
     };
     let handle = handle.get();
+    let (orphaned, owner) = if let Some(mirror) = host.bank_mirrors.iter_mut().find(|row| row.id == id)
+    {
+        mirror.prompt = None;
+        mirror.terminal = Some(outcome.clone());
+        (mirror.orphaned, Some(mirror.owner))
+    } else {
+        (false, None)
+    };
+    if orphaned {
+        host.bank_mirrors.retain(|mirror| mirror.id != id);
+        host.pending_decisions.retain(|decision| decision.of != id);
+        host.stamp_settled(handle, terminal_seq);
+        return;
+    }
+    // An embedded child's terminal is consumed by the step of the row that
+    // owns it, so that row steps once more.
+    if let Some(owner) = owner.filter(|owner| *owner != handle) {
+        host.mark_seat_changed(owner);
+    }
     let Some(position) = host
         .rows
         .iter()
         .position(|row| row.handle == handle && row.native_kind.is_some())
     else {
+        host.stamp_settled(handle, terminal_seq);
         return;
     };
     let native_kind = host.rows[position].native_kind;
@@ -3051,7 +3133,11 @@ fn settle_seat_result(host: &mut Host, id: RequestId, outcome: Outcome) {
     host.ops
         .retain(|op| op.lineage.lineage != Some(id) && op.lineage.mirror_owner != Some(id));
     host.free_completed_walk(row.handle);
-    host.settled.push((row.handle, outcome));
+    host.settled.push(Settled {
+        handle: row.handle,
+        outcome,
+        seat_seq: terminal_seq,
+    });
 }
 
 pub(crate) fn set_execution(execution: Option<ExecutionId>) {
@@ -3208,9 +3294,21 @@ pub(crate) fn on_snapshot(snapshot: &isolate_fb::Snapshot<'_>) -> Result<(), Str
             }
         }
         for (id, _, prompt) in &bank_live_rows {
+            let mut advanced_owner = None;
             if let Some(mirror) = host.bank_mirrors.iter_mut().find(|mirror| mirror.id == *id) {
                 mirror.admitted = true;
+                // A prompt above the last one this mirror saw is the next
+                // hook call of its owner: only that row steps for it.
+                if let Some(sequence) = prompt.as_ref().map(|prompt| prompt.sequence.get()) {
+                    if sequence > mirror.prompt_seq_seen {
+                        mirror.prompt_seq_seen = sequence;
+                        advanced_owner = Some(mirror.owner);
+                    }
+                }
                 mirror.prompt = prompt.clone();
+            }
+            if let Some(owner) = advanced_owner {
+                host.mark_seat_changed(owner);
             }
         }
         let result_ids: Vec<_> = result_rows.iter().map(|(id, _, _)| *id).collect();
@@ -3239,8 +3337,8 @@ pub(crate) fn on_snapshot(snapshot: &isolate_fb::Snapshot<'_>) -> Result<(), Str
                 .iter()
                 .any(|(_, seq, _)| *seq <= host.consumed_terminal_seq);
         }
-        for (id, _, outcome) in result_rows {
-            settle_seat_result(&mut host, id, outcome);
+        for (id, seq, outcome) in result_rows {
+            settle_seat_result(&mut host, id, seq, outcome);
         }
     });
     Ok(())
@@ -3452,6 +3550,7 @@ fn begin_row<F: Family>(handle: Handle, args: Value, hooks: Vec<Hook>, at: usize
                     carries_walk_baseline,
                     walking_operation,
                     rebaseline_on_resume: false,
+                    seat_changed: false,
                 });
                 host.publish_walking();
                 Started::Running(handle)
@@ -3561,7 +3660,7 @@ fn start_bank_family(
         Ok(id) => id,
         Err(_) => return Started::Refused("native bank seat identity exhausted".into()),
     };
-    if let Err(error) = enqueue_bank_child(id, family, args, context) {
+    if let Err(error) = enqueue_bank_child(id, family, args, context, handle) {
         return Started::Refused(error);
     }
     let hooks = hooks.into_iter().map(Rc::new).collect();
@@ -3608,6 +3707,7 @@ fn start_bank_family(
             carries_walk_baseline,
             walking_operation: false,
             rebaseline_on_resume: false,
+            seat_changed: false,
         });
         host.publish_walking();
         Started::Running(handle)
@@ -3736,25 +3836,95 @@ pub(crate) fn snapshot_step(js: &mut impl Js, tick: u64, evidence_sequence: u64)
     );
 }
 
+/// Step the rows that the posted seat page changed and no pass has read:
+/// each row whose bank prompt advanced or whose embedded child delivered a
+/// terminal. No other row is stepped, and no budget is reset.
+pub(crate) fn seat_step(js: &mut impl Js) -> SteppedRows {
+    pass(js, Pass::Seat)
+}
+
+/// Resume only the rows that [`seat_step`] stepped and that now wait on a
+/// callback promise. The budget carries over.
+pub(crate) fn resume_seat(js: &mut impl Js, stepped: &SteppedRows) {
+    pass(js, Pass::ResumeSeat(stepped.as_slice()));
+}
+
+/// The handles of the outcomes whose seat terminal is above `release_floor`:
+/// the terminals the seat published after the last accepted seat answer
+/// dispatch. An unstamped outcome and an older one stay for the next global
+/// settle.
+pub(crate) fn settled_above(release_floor: u64) -> Vec<Handle> {
+    HOST.with(|host| {
+        host.borrow()
+            .settled
+            .iter()
+            .filter(|entry| entry.seat_seq > release_floor)
+            .map(|entry| entry.handle)
+            .collect()
+    })
+}
+
 /// Whether an outcome waits for its JS await.
 pub(crate) fn any_settled() -> bool {
     HOST.with(|host| !host.borrow().settled.is_empty())
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum Pass {
+enum Pass<'a> {
     /// Every row; starts the tick's callback budget.
     Step,
     /// Rows waiting on a promise; the budget carries over.
     Resume,
     /// Opted-in rows, once per distinct changed snapshot; carries the budget.
     Snapshot { tick: u64, evidence_sequence: u64 },
+    /// The rows whose posted prompt or delivered terminal no pass has read
+    /// yet (`Row::seat_changed`); the budget carries over.
+    Seat,
+    /// Resume only the listed rows, which [`Pass::Seat`] stepped in this
+    /// dispatch and which now wait on a callback promise.
+    ResumeSeat(&'a [Handle]),
+}
+
+/// The rows a [`Pass::Seat`] stepped, kept on the stack: each holds a live
+/// seat entry, and the seat holds at most `MAX_LIVE` of them.
+pub(crate) struct SteppedRows {
+    handles: [Handle; api::script_contract::MAX_LIVE],
+    len: usize,
+}
+
+impl Default for SteppedRows {
+    fn default() -> Self {
+        Self {
+            handles: [0; api::script_contract::MAX_LIVE],
+            len: 0,
+        }
+    }
+}
+
+impl SteppedRows {
+    fn push(&mut self, handle: Handle) {
+        debug_assert!(self.len < self.handles.len(), "every stepped row holds a seat entry");
+        if let Some(slot) = self.handles.get_mut(self.len) {
+            *slot = handle;
+            self.len += 1;
+        }
+    }
+
+    fn as_slice(&self) -> &[Handle] {
+        &self.handles[..self.len]
+    }
+
+    #[cfg(test)]
+    pub(crate) fn handles(&self) -> &[Handle] {
+        self.as_slice()
+    }
 }
 
 /// Rows are taken out of the host while they step, so a callback may
 /// start another machine; the host is borrowed only between JS calls.
 /// [`Host::stepping`] keeps those rows visible to [`live`].
-fn pass(js: &mut impl Js, pass: Pass) {
+fn pass(js: &mut impl Js, pass: Pass<'_>) -> SteppedRows {
+    let mut stepped = SteppedRows::default();
     let entered_scene = crate::observed::with(crate::observed::Scene::entered_scene);
     let Some(mut rows) = HOST.with(|host| {
         let mut host = host.borrow_mut();
@@ -3765,7 +3935,7 @@ fn pass(js: &mut impl Js, pass: Pass) {
         host.stepping = rows.iter().map(Row::stepping_record).collect();
         Some(rows)
     }) else {
-        return;
+        return stepped;
     };
     TERMINATED.with(|flag| flag.set(false));
     // Script code may have queued rows before this pass (a probe, the
@@ -3782,6 +3952,16 @@ fn pass(js: &mut impl Js, pass: Pass) {
             Pass::Step => row.calls = 0,
             Pass::Resume if row.pending.is_none() => return true,
             Pass::Resume => {}
+            Pass::Seat => {
+                if !row.seat_changed || row.pending.is_some() {
+                    return true;
+                }
+            }
+            Pass::ResumeSeat(rows) => {
+                if row.pending.is_none() || !rows.contains(&row.handle) {
+                    return true;
+                }
+            }
             Pass::Snapshot {
                 tick,
                 evidence_sequence,
@@ -3817,9 +3997,12 @@ fn pass(js: &mut impl Js, pass: Pass) {
         if entered_scene && row.machine.snapshot_sensitive() {
             return true;
         }
+        if matches!(pass, Pass::Seat) {
+            stepped.push(row.handle);
+        }
         let outcome = match pass {
             Pass::Snapshot { .. } => drive_snapshot(row, js, &mut at),
-            Pass::Step | Pass::Resume => drive(row, js, &mut at),
+            Pass::Step | Pass::Resume | Pass::Seat | Pass::ResumeSeat(_) => drive(row, js, &mut at),
         };
         match outcome {
             Some(outcome) => {
@@ -3838,6 +4021,7 @@ fn pass(js: &mut impl Js, pass: Pass) {
         host.abort_superseded(at);
         host.publish_walking();
     });
+    stepped
 }
 
 fn settle(row: &Row, outcome: Outcome, at: usize) {
@@ -3860,6 +4044,8 @@ fn drive_in_pass(
     at: &mut usize,
     snapshot: bool,
 ) -> Option<Outcome> {
+    // Every pass that steps a row has read what a seat page left for it.
+    row.seat_changed = false;
     if row.rebaseline_on_resume {
         // Pause and reconnect holds produce no runnable observations. Refresh
         // on the first eligible resumed step, after its Running snapshot.

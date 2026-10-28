@@ -23,6 +23,15 @@ use std::sync::Mutex;
 use std::task::Poll;
 use std::time::Duration;
 
+/// Which bank rows one poll visits.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum BankPoll {
+    /// Every row: a game tick or an evidence wake.
+    All,
+    /// Only the rows whose answer the seat holds: a seat answer wake.
+    Answered,
+}
+
 #[derive(Default)]
 pub(super) struct BankSeat {
     rows: Vec<BankRow>,
@@ -656,7 +665,7 @@ impl SlotScript {
             .retain(|(id, _)| seat.results().iter().any(|result| result.id == *id));
     }
 
-    pub(super) fn tick_bank(&mut self, ctx: &mut ScriptCtx<'_>) {
+    pub(super) fn tick_bank_scoped(&mut self, ctx: &mut ScriptCtx<'_>, scope: BankPoll) {
         self.stop_cancelled_bank_work();
         let Some(mut bank) = self.bank.take() else {
             return;
@@ -712,7 +721,13 @@ impl SlotScript {
         while index < bank.rows.len() {
             let row = &mut bank.rows[index];
             let seat = self.seat.as_mut().expect("admitted bank seat");
-            if let Some(answer) = seat.take_answer(row.id) {
+            let answer = seat.take_answer(row.id);
+            if scope == BankPoll::Answered && answer.is_none() {
+                // A seat answer wake polls only the consumer of the answer.
+                index += 1;
+                continue;
+            }
+            if let Some(answer) = answer {
                 let value = crate::channel::decode(&answer.answer);
                 let mut hooks = row.hooks.lock().unwrap_or_else(|error| error.into_inner());
                 hooks.pending = None;

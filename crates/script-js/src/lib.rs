@@ -264,6 +264,10 @@ pub use isolate::{
     ValidationError,
 };
 
+#[cfg(feature = "test-hooks")]
+#[doc(hidden)]
+pub use isolate::ThreadBlock;
+
 pub use platform::bootstrap_v8_platform;
 
 pub(crate) use recovery_hints_v8::{
