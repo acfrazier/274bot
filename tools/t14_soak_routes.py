@@ -65,15 +65,16 @@ def fixture(source):
     text = source.read_text()
     starts = ast.literal_eval(re.search(r"const NORMAL_STARTS[^=]*= (\[.*?\]);", text, re.S)[1])
     maple_start = ast.literal_eval(re.search(r"const MAPLE_START[^=]*= (\(.*?\));", text)[1])
+    radius = int(re.search(r"const NORMAL_RADIUS: i32 = (\d+);", text)[1])
     area = re.search(r"const NORMAL_SAFE_WALK[^=]*= &(\[.*?\]);", text, re.S)[1]
     rectangles = [tuple(map(int, match)) for match in re.findall(
         r"min_x: (\d+),\s*max_x: (\d+),\s*min_z: (\d+),\s*max_z: (\d+)", area)]
     if len(starts) != 10 or len(set(starts)) != 10 or not rectangles:
         raise ValueError("fixture requires ten distinct Start anchors and explicit route areas")
-    return starts, maple_start, rectangles
+    return starts, maple_start, rectangles, radius
 
 
-def census(content, game, starts, rectangles, maple_site):
+def census(content, game, starts, rectangles, maple_site, normal_radius):
     locs = {row["id"]: row["config"] for row in game["loc_names"]["rows"]}
     tables = blocks(content / "scripts/skill_woodcutting/configs/trees.dbrow")
     normal = set(re.findall(r"^data=tree,(.+)$", tables["normal_tree_table"], re.M))
@@ -109,24 +110,20 @@ def census(content, game, starts, rectangles, maple_site):
                 if level or kind is None:
                     continue
                 if kind == "normal":
-                    owners = [i for i, (sx, sz) in enumerate(starts) if max(abs(x - sx), abs(z - sz)) <= 2]
+                    owners = [i for i, (sx, sz) in enumerate(starts)
+                              if max(abs(x - sx), abs(z - sz)) <= normal_radius]
                 else:
                     # Cover the whole Site, not only its first retained anchor.
                     r = site["region"]
                     owners = ["maple"] if r["min_x"] <= x <= r["max_x"] and r["min_z"] <= z <= r["max_z"] else []
                 if not owners:
                     continue
-                if kind == "normal" and len(owners) != 1:
-                    raise ValueError(f"normal resource shared by patches: {(x, z)}")
                 width, height = dimensions[name]
                 if len(values) > 2 and values[2] % 2:
                     width, height = height, width
                 resources.append(dict(kind=kind, id=ident, origin=[x, z, 0], width=width,
                                       height=height, owners=owners, source=f"{path}:{number}",
                                       shape=values[1], angle=values[2] if len(values) > 2 else 0))
-    for index in range(10):
-        if not any(index in row["owners"] for row in resources):
-            raise ValueError(f"normal patch {index} contains no authored resource")
     if not any(row["kind"] == "maple" for row in resources):
         raise ValueError("no authored maple resources")
     # Ignore combat-level immunity and collision shielding: audit every hunter.
@@ -141,6 +138,15 @@ def census(content, game, starts, rectangles, maple_site):
     if len(bank_locs) != len(bank_rows):
         raise ValueError("selected-content maps do not contain every Seers bank loc")
     return resources, hunters, sources, bank_locs
+
+
+def normal_patch_capacity(resources, patch_count):
+    counts = [sum(row["kind"] == "normal" and index in row["owners"] for row in resources)
+              for index in range(patch_count)]
+    for index, count in enumerate(counts):
+        if count < 2:
+            raise ValueError(f"normal patch {index} requires at least two eligible trees, found {count}")
+    return counts
 
 
 def goals_for(resource):
@@ -243,8 +249,10 @@ def main():
     config = ROOT / "T1.4/soak-config.json"
     game = json.loads(catalog.read_text())
     sites = json.loads(config.read_text())["workload"]["site_names"]
-    starts, maple_start, rectangles = fixture(source)
-    resources, hunters, maps, bank_locs = census(args.content, game, starts, rectangles, sites[1])
+    starts, maple_start, rectangles, normal_radius = fixture(source)
+    resources, hunters, maps, bank_locs = census(
+        args.content, game, starts, rectangles, sites[1], normal_radius)
+    patch_counts = normal_patch_capacity(resources, len(starts))
     sources = {str(p): digest(p) for p in [
         source, catalog, config, args.pack, args.flags, args.cache / "config", *sorted(maps)]}
     if args.replay:
@@ -357,6 +365,7 @@ def main():
                   replan_origins=len(processed), closure_rounds=round_number,
                   client_walk_rounds=walk_rounds, transport_routes=len(transport_routes),
                   closure_complete=not pending, rectangles=rectangles, normal_starts=starts,
+                  normal_radius=normal_radius, normal_patch_trees=patch_counts,
                   maple_start=maple_start, resources=resources, hunters_checked=len(hunters),
                   sources=sources, replay_source=str(args.replay) if args.replay else None,
                   violation_count=len(violations), violations=violations[:30], errors=errors,

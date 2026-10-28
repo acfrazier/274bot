@@ -37,7 +37,7 @@ const GATHERER_SITE_STEP: &str = "stand at the live Draynor normal tree before S
 const GATHERER_TREE_PROOF_STEP: &str = "confirm the selected-289 normal tree is live before Start";
 const GATHERER_RELOG_STEP: &str = "relog successfully so the inventory tab binds before Start";
 
-// Ten resource-disjoint radius-two normal-tree patches west of Seers.
+// Ten radius-five normal-tree patches west of Seers, each with alternatives.
 // The offline audit checks complete production routes, their replan closure,
 // all resource/return/bank access alternatives, and actual hazard retreats.
 const NORMAL_STARTS: [(i32, i32); 10] = [
@@ -52,6 +52,7 @@ const NORMAL_STARTS: [(i32, i32); 10] = [
     (2711, 3456),
     (2712, 3461),
 ];
+const NORMAL_RADIUS: i32 = 5;
 const MAPLE_START: (i32, i32) = (2726, 3500);
 
 #[derive(Clone, Copy)]
@@ -105,8 +106,8 @@ fn work_route_guard_distinguishes_random_event_travel_from_escape() {
 #[test]
 fn safe_walk_accepts_worksites_and_seers_bank() {
     for (x, z) in NORMAL_STARTS {
-        for dx in -2..=2 {
-            for dz in -2..=2 {
+        for dx in -NORMAL_RADIUS..=NORMAL_RADIUS {
+            for dz in -NORMAL_RADIUS..=NORMAL_RADIUS {
                 assert!(safe_walk_contains(NORMAL_SAFE_WALK, (x + dx, z + dz, 0)));
             }
         }
@@ -945,7 +946,7 @@ fn bank_settings(site: &BankSite) -> Map<String, Value> {
     settings.insert("site".into(), json!(site.id));
     settings.insert(
         "radius".into(),
-        json!(if site.resource == "normal" { 2 } else { 12 }),
+        json!(if site.resource == "normal" { NORMAL_RADIUS } else { 12 }),
     );
     settings.insert("disposition".into(), json!("Bank"));
     settings.insert("bank".into(), json!(site.bank));

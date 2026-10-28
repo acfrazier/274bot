@@ -69,7 +69,9 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
 
 ### Fixed during development
 
-- The T1.4 transport soak uses independent normal-tree patches west of Seers.
+- The T1.4 transport soak uses radius-five normal-tree patches west of Seers.
+  Each account must have at least two eligible trees. This avoids a separate
+  Gatherer wait finding without changing the product's bounded-wait policy.
   An offline checker tests complete host-router paths, client interaction paths,
   client walk aims, replan origins, bank alternatives and actual hazard retreats against every
   authored hunter envelope. The fixture remains blocked after a diagnostic stop.

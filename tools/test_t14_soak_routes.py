@@ -95,6 +95,19 @@ class RouteSafetyTests(unittest.TestCase):
             [dict(source=detour, target=aim)],
         )
 
+    def test_normal_patch_capacity_rejects_single_tree_and_counts_shared_alternatives(self):
+        trees = [dict(kind="normal", owners=[0, 1]), dict(kind="maple", owners=["maple"])]
+        with self.assertRaisesRegex(ValueError, "at least two eligible trees, found 1"):
+            audit.normal_patch_capacity(trees, 2)
+        trees.append(dict(kind="normal", owners=[0, 1]))
+        self.assertEqual(audit.normal_patch_capacity(trees, 2), [2, 2])
+
+    def test_route_audit_reads_the_actual_live_card_radius(self):
+        starts, _, _, radius = audit.fixture(
+            audit.ROOT / "crates/host-play/tests/t14_soak_live.rs")
+        self.assertEqual(len(starts), 10)
+        self.assertEqual(radius, 5)
+
     def test_unroutable_client_alternatives_encode_no_movement(self):
         for kind in ("client-approach", "client-walk"):
             self.assertFalse(audit.client_route_error(dict(kind=kind, error="client-no-route")))

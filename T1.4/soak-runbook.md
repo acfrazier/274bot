@@ -54,7 +54,10 @@ Neither diagnostic satisfies the thirty-minute requirement.
 Do not use the qualification commands until these failures are classified and corrected.
 
 Ten accounts gather normal logs west of Seers in `woodcutting.seers_village`.
-Each account retains one radius-two Start anchor from `NORMAL_STARTS`.
+Each account retains one radius-five Start anchor from `NORMAL_STARTS`.
+The checker requires at least two eligible normal trees for each account.
+Patches can share trees. The result records each account's eligible tree count.
+This avoids the separate Gatherer wait finding without changing that product behavior.
 The other ten accounts use the `woodcutting.seers` maple Site and radius twelve.
 Both groups use Seers bank.
 Each account receives Woodcutting 99, one rune axe, and 64 banked spare rune axes.
@@ -81,7 +84,7 @@ python3 -B -m unittest discover -s tools -p test_t14_soak_routes.py -v
 ```
 
 The checker enumerates all authored resources in each normal patch.
-No normal resource may belong to two patches.
+It rejects a normal patch with fewer than two eligible trees.
 It includes every maple origin in the selected Site.
 It checks every footprint, Reach alternative, return observation, Start, and bank access goal.
 It calls the production hazard-retreat selector for every resource access stand.
