@@ -72,7 +72,7 @@ Build the offline probe and check the actual routes before either arm:
 ```sh
 BOT_NAV_BUILD=skip cargo build --release --locked -p host-play --example soak_routes
 python3 -B -m unittest discover -s tools -p test_t14_soak_routes.py -v
-python3 -B tools/t14_soak_routes.py \
+"$HOME/experiments/274bot/.superpowers/bin/isohome" python3 -B tools/t14_soak_routes.py \
   --router target/release/examples/soak_routes \
   --pack "$NAV_PACK" --flags "$NAV_FLAGS" \
   --cache "$ENGINE_DIR/data/pack/client" --content "$ENGINE_DIR/../content" \

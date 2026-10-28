@@ -1,10 +1,10 @@
 //! Offline T1.4 fixture witnesses from production routing and hazard retreat.
 
 use api::snapshot::WorldTile;
+use client::client::{Client, ClientConfig};
 use client::config::{Cache, IfType, IfTypeMut};
 use client::dash3d::{BuildArea, CollisionMap, LocAngle, LocShape};
 use client::io::{ClientRevision, JagFile};
-use client::{Client, ClientConfig};
 use nav_planner::router::{find_many_with, FindOptions, Leg};
 use nav_planner::world::NavWorld;
 use nav_planner::world_state::WorldState;
@@ -203,13 +203,7 @@ fn write_client_route(
     let source = tile(source);
     let target = tile(target);
     if source.level != target.level {
-        return write_client_error(
-            batch,
-            route,
-            None,
-            "source-target-level-mismatch",
-            out,
-        );
+        return write_client_error(batch, route, None, "source-target-level-mismatch", out);
     }
     if !(0..BuildArea::LEVELS).contains(&source.level) {
         return write_client_error(batch, route, None, "invalid-level", out);
@@ -292,8 +286,10 @@ fn write_client_route(
                 collision.reset();
                 for x in 1..BuildArea::SIZE - 1 {
                     for z in 1..BuildArea::SIZE - 1 {
-                        let index =
-                            plane_offset + (grid_z + z as usize) * flags_width + grid_x + x as usize;
+                        let index = plane_offset
+                            + (grid_z + z as usize) * flags_width
+                            + grid_x
+                            + x as usize;
                         collision.flags[x as usize][z as usize] = flags[index] as i32;
                     }
                 }
@@ -321,13 +317,7 @@ fn write_client_route(
                     move_type,
                 );
                 if !reached {
-                    write_client_error(
-                        batch,
-                        route,
-                        Some(scene_base),
-                        "client-no-route",
-                        out,
-                    )?;
+                    write_client_error(batch, route, Some(scene_base), "client-no-route", out)?;
                 } else if client.try_move_path.is_empty() {
                     write_client_error(
                         batch,
@@ -447,13 +437,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .map(ClientRoute::Approach)
             .chain(batch.walks.into_iter().map(ClientRoute::Walk))
         {
-            write_client_route(
-                &mut client,
-                &loaded_flags,
-                &batch.name,
-                route,
-                &mut out,
-            )?;
+            write_client_route(&mut client, &loaded_flags, &batch.name, route, &mut out)?;
         }
     }
     out.flush()?;
