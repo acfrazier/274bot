@@ -1080,12 +1080,12 @@ fn slot_condition_size_of_pinned() {
             std::mem::size_of::<client::client::ClientGens>(),
             std::mem::size_of::<script::combat::risk::RiskInput>(),
         ),
-        (112, 28, 8, 120, 120),
-        "SlotCondition is 112 B: the inline fact, reducer, cursors, latches and one pending fruit signal; no allocation"
+        (104, 28, 8, 120, 120),
+        "SlotCondition is 104 B: pending fruit uses existing padding; no allocation"
     );
     assert!(
         std::mem::size_of::<SlotCondition>() <= 160,
-        "measured 112 B leaves 48 B under the 160 B owner ceiling"
+        "measured 104 B leaves 56 B under the 160 B owner ceiling"
     );
 }
 
