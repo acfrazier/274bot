@@ -687,6 +687,8 @@ const CORE: &[(&str, Decision)] = &[
     ("session/prefs.rs::OperatorSession::stage_log_save", Staged(C::SaveLog)),
     ("session/prefs.rs::OperatorSession::stage_quester_paths", Staged(C::SetQuesterPaths)),
     ("session/prefs.rs::OperatorSession::stage_quester_reload", Staged(C::ReloadQuesterPaths)),
+    ("session/prefs.rs::OperatorSession::watch_setting_events", Excluded(HARNESS)),
+    ("session/prefs.rs::OperatorSession::take_setting_events", Excluded(HARNESS)),
     ("session/prefs.rs::OperatorSession::advance_quester_paths", Excluded(PUMP)),
     ("session/prefs.rs::OperatorSession::adopt_operator_preferences", Excluded(STARTUP)),
     ("session/prefs.rs::OperatorSession::refresh_walk_globals", Excluded(PUMP)),
