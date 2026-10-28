@@ -31007,15 +31007,18 @@ mod skip_quest_tests {
         );
         complete.store(true, Ordering::Relaxed);
         tick(&slot, 2);
-        let status = slot.lock().unwrap().native_status().unwrap();
-        assert_eq!(status.phase, NativePhase::Complete);
+        assert_eq!(
+            slot.lock().unwrap().lifecycle_receipt().unwrap().state,
+            script::ScriptTerminalState::Completed
+        );
         assert_eq!(slot.lock().unwrap().state(), script::RunState::Idle);
 
         let failure = play.script_skip_quest("alice").unwrap_err();
         assert_not_quester(&failure);
         assert_eq!(calls.load(Ordering::Relaxed), 0);
         let slot = slot.lock().unwrap();
-        assert_eq!(slot.native_status().as_deref(), Some(status.as_ref()));
+        assert_eq!(slot.state(), script::RunState::Idle);
+        assert!(slot.native_status().is_none());
     }
 
     #[test]
