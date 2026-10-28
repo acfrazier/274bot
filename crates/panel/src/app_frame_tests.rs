@@ -86,7 +86,7 @@ impl dear_imgui_rs::ClipboardBackend for DrawnText {
 struct Rig {
     state: PanelState,
     gpu: Option<GpuRig>,
-    live_failure: Mutex<Option<String>>,
+    terminal_failure: Mutex<Option<crate::window::PanelError>>,
     drawn: DrawnText,
     /// What the last `UiFrame` frame drew.
     text: String,
@@ -135,7 +135,7 @@ impl Rig {
                 Arc::new(Mutex::new(crate::window::ShotState::default())),
             ),
             gpu,
-            live_failure: Mutex::new(None),
+            terminal_failure: Mutex::new(None),
             drawn,
             text: String::new(),
             game_centre: None,
@@ -189,13 +189,13 @@ impl Rig {
                         ui.log_to_clipboard(0u32);
                         let mut gpu = Gpu::new(&rig.device, &rig.queue, &mut rig.renderer);
                         let exit =
-                            ui_frame(ui, &mut gpu, &mut self.state, None, &self.live_failure);
+                            ui_frame(ui, &mut gpu, &mut self.state, None, &self.terminal_failure);
                         ui.log_finish();
                         (exit, ui.with_bound_context(|| window_centre(&title)))
                     }
                     None => {
                         self.state.session.map_desk.begin_game_input_frame();
-                        let exit = frame_pumps(&mut self.state, &self.live_failure);
+                        let exit = frame_pumps(&mut self.state, &self.terminal_failure);
                         if !exit {
                             // The capture sites run between the pump phase and
                             // the submit: the pointer over the image stages a
