@@ -488,10 +488,59 @@ fn switch_right_hand_vanishes_before_completion() {
         .unwrap();
     scene.inventory.remove(bow);
     scene.refresh();
+    // The wear row of the bow is still awaiting its echo: not yet a vanished
+    // weapon (see the next test); its four-tick window decides.
     step_without_server(&mut harness, &mut scene, 6);
-    assert_eq!(harness.machine.switch_failures(), 1);
+    assert_eq!(harness.machine.switch_failures(), 0);
+    let mut tick = 7;
+    while harness.machine.switch_failures() == 0 {
+        step_without_server(&mut harness, &mut scene, tick);
+        tick += 1;
+        assert!(tick < 14, "a bow that never shows up fails the switch");
+    }
     assert_eq!(harness.machine.switches(), 0);
     assert_eq!(harness.machine.active_style(), Style::Melee);
+}
+
+#[test]
+fn items_between_the_pack_and_the_worn_container_are_not_vanished() {
+    // The server moves a wear in one tick, but the client applies the pack and the
+    // worn container in separate packets: one frame can show the bow and the
+    // arrows in neither. The wear rows are still in flight, so nothing fails.
+    let (mut scene, kits) = sword_and_bow();
+    let mut harness = start(&mut scene, request(kits));
+    protect(&mut scene, MELEE_PROTECT);
+    step(&mut harness, &mut scene, 3);
+    let polled = harness.poll(&scene.snapshot, 4);
+    assert!(matches!(polled, Poll::Pending));
+    let batch = harness.drain(None);
+    assert_eq!(wear_names(&batch), ["Maple shortbow", "Iron arrow"]);
+    let bow_id = id(&scene, "maple_shortbow");
+    let arrows_id = id(&scene, "iron_arrow");
+    let mut moved: Vec<_> = Vec::new();
+    for item in [bow_id, arrows_id] {
+        let at = scene
+            .inventory
+            .iter()
+            .position(|row| row.def.id == item)
+            .unwrap();
+        moved.push(scene.inventory.remove(at));
+    }
+    scene.refresh();
+    step_without_server(&mut harness, &mut scene, 5);
+    assert_eq!(harness.machine.switch_failures(), 0);
+    assert_eq!(converging_to(&harness), Some(Style::Ranged));
+    // The worn container arrives a frame later: the switch completes.
+    for (mut row, slot) in moved.into_iter().zip([3, 13]) {
+        row.container = ItemContainer::Equipment;
+        row.slot = slot;
+        scene.equipment.push(row);
+    }
+    scene.refresh();
+    step_without_server(&mut harness, &mut scene, 6);
+    assert_eq!(harness.machine.switch_failures(), 0);
+    assert_eq!(harness.machine.switches(), 1);
+    assert_eq!(harness.machine.active_style(), Style::Ranged);
 }
 
 #[test]
@@ -1594,7 +1643,6 @@ fn a_completed_switch_allocates_exactly_its_style_box() {
     assert_eq!(allocations.count_total, 1, "{allocations:?}");
     // Ranged -> Melee: the melee state is inline, no allocation at all (the
     // boxed ranged state is freed, which the counter does not count as one).
-    let mut scene = scene;
     protect(&mut scene, RANGED_PROTECT);
     let mut tick = 6;
     while converging_to(&harness) != Some(Style::Melee) {

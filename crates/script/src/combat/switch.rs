@@ -290,14 +290,16 @@ impl Combat {
                 .chain(frame.equipment)
                 .filter(|row| row.def.id == weapon_id)
                 .fold(0i32, |sum, row| sum.saturating_add(row.count));
-            return (quantity >= 1).then_some(RangedNeed::Thrown { weapon: weapon_id });
+            return (quantity >= 1 || self.in_flight(weapon_id))
+                .then_some(RangedNeed::Thrown { weapon: weapon_id });
         }
         let held_or_worn = |id: i32| {
-            frame
-                .equipment
-                .iter()
-                .chain(frame.inventory)
-                .any(|row| row.def.id == id && row.count > 0)
+            self.in_flight(id)
+                || frame
+                    .equipment
+                    .iter()
+                    .chain(frame.inventory)
+                    .any(|row| row.def.id == id && row.count > 0)
         };
         let literal = self.request.kits.get(to).and_then(|kit| {
             kit.worn
@@ -368,6 +370,15 @@ impl Combat {
         (self.prep_failures >> (slot * 3)) & 3 >= 2
     }
 
+    /// Whether a wear row for `id` is still awaiting its echo. The server moves
+    /// the item out of the pack and into the worn container in the same tick, but
+    /// the client applies the two container updates in separate packets, so a
+    /// frame can show the item in neither; the row's own window (four ticks,
+    /// `settle()`) decides whether it vanished.
+    fn in_flight(&self, id: i32) -> bool {
+        self.pending_id(RowKind::Wear, id)
+    }
+
     /// §4.3: whether `style` can attack now: its weapon is held or worn and its
     /// resources exist (ranged: its need; magic: a castable spell).
     pub(super) fn style_usable(&self, style: Style, frame: &Frame<'_>) -> bool {
@@ -375,7 +386,7 @@ impl Combat {
             return false;
         }
         if let Some(id) = self.desired_for(style, 3, frame) {
-            if arbiter::count(frame, id) == 0 && !self.worn(frame, 3, id) {
+            if arbiter::count(frame, id) == 0 && !self.worn(frame, 3, id) && !self.in_flight(id) {
                 return false;
             }
         }
