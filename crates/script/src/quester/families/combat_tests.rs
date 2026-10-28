@@ -3862,7 +3862,7 @@ fn a_measured_escape_walk_is_abandoned_after_its_flood_depth_plus_the_slack() {
 }
 
 /// Abort with the engaged Warlord live, then fail the abort walk so the hold
-/// starts. Returns the run, its ledger and the abort tile.
+/// starts. Returns the run, its ledger, the abort tile and earlier goal sets.
 fn engaged_abort_hold_after_failed_walk(
     snapshot: &mut GameSnapshot,
     after_walk: Vec<api::snapshot::NpcView>,
@@ -3870,7 +3870,9 @@ fn engaged_abort_hold_after_failed_walk(
     CombatRun,
     Option<Box<crate::native::ledger::Ledger>>,
     api::WorldTile,
-) {
+    Vec<Vec<api::WorldTile>>,
+)
+{
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
     let warlord = data.npc_by_config("khazard_warlord").unwrap();
     let here = api::WorldTile {
@@ -3907,9 +3909,9 @@ fn engaged_abort_hold_after_failed_walk(
         run.on_combat_report(aborted, cx)
     })
     .is_pending());
-    let _ = fail_escape_walks_until_hold(&mut run, snapshot, &mut ledger, 13);
+    let earlier_goals = fail_escape_walks_until_hold(&mut run, snapshot, &mut ledger, 13);
     seed_abort_scene(snapshot, here, 1, after_walk, None, None);
-    (run, ledger, here)
+    (run, ledger, here, earlier_goals)
 }
 
 fn live_attack_animation(run: &CombatRun) -> i32 {
@@ -3924,42 +3926,32 @@ fn live_attack_animation(run: &CombatRun) -> i32 {
 #[test]
 fn exhausted_escape_runs_from_a_new_attacker_when_the_engaged_actor_is_gone() {
     let data = api::game_data::for_revision(ClientRevision::R289).unwrap();
-    let escape_envelope = |maxrange: i32, attackrange: i32| {
-        maxrange
-            .saturating_mul(2)
-            .saturating_add(attackrange)
-            .max(0)
-            .saturating_add(1)
-    };
     let warlord = data.npc_by_config("khazard_warlord").unwrap();
     let warlord_row = data
         .npc_name(warlord.id)
         .expect("selected content includes the engaged Warlord");
-    let old_envelope = escape_envelope(warlord_row.maxrange, warlord_row.attackrange);
-    let new_attacker = data
-        .npc_names()
-        .unwrap()
-        .rows
-        .iter()
-        .filter(|row| {
-            row.id != warlord.id
-                && escape_envelope(row.maxrange, row.attackrange) > old_envelope
-                && escape_envelope(row.maxrange, row.attackrange) < 64
-        })
-        .max_by_key(|row| escape_envelope(row.maxrange, row.attackrange))
-        .expect("selected content includes a wider-range replacement within the escape ring bound");
+    let chase_envelope = warlord_row
+        .maxrange
+        .saturating_mul(2)
+        .saturating_add(warlord_row.attackrange)
+        .max(0)
+        .saturating_add(1);
     let mut snapshot = GameSnapshot::new();
     let new_attacker_tile = api::WorldTile {
         x: 3000,
         z: 2999,
         level: 0,
     };
-    let mut newcomer = aborting_npc(9, new_attacker.id, new_attacker_tile);
-    // The live R2 shape: the Warlord row is gone; another NPC attacks.
+    let mut newcomer = aborting_npc(9, warlord.id, new_attacker_tile);
+    // A new actor index attacks after the reported Warlord disappears.
     let probe_run = combat_test_run(imp_target(&data), None, None, Vec::new());
     newcomer.animation = live_attack_animation(&probe_run);
-    let (mut run, mut ledger, here) =
+    let (mut run, mut ledger, here, earlier_goals) =
         engaged_abort_hold_after_failed_walk(&mut snapshot, vec![newcomer]);
+    assert!(
+        !earlier_goals.is_empty(),
+        "the vanished Warlord's failed walks must name goal tiles"
+    );
     for tick in 14..=16 {
         let polled = with_step_context(&snapshot, &mut ledger, tick, |cx| run.poll(cx));
         assert!(
@@ -3978,6 +3970,16 @@ fn exhausted_escape_runs_from_a_new_attacker_when_the_engaged_actor_is_gone() {
         })
         .collect::<Vec<_>>();
     assert_eq!(walks.len(), 1, "exactly one exhausted escape walk");
+    let new_walk = last_walk(&ledger);
+    let new_goals = goals_of(&new_walk).as_slice();
+    assert!(
+        earlier_goals.iter().all(|previous| {
+            new_goals
+                .iter()
+                .all(|goal| !previous.contains(goal))
+        }),
+        "the new attacker plan does not repeat the vanished Warlord's failed tiles"
+    );
     assert_eq!(
         walks[0].x, here.x,
         "the escape does not use the vanished Warlord's east tile"
@@ -3986,8 +3988,6 @@ fn exhausted_escape_runs_from_a_new_attacker_when_the_engaged_actor_is_gone() {
         walks[0].z > here.z,
         "the escape moves north from the new attacker south of the player"
     );
-    let chase_envelope =
-        escape_envelope(new_attacker.maxrange, new_attacker.attackrange);
     assert!(
         tile_distance(walks[0], new_attacker_tile) > chase_envelope,
         "the plan leaves the new attacker's chase envelope of {chase_envelope} tiles"
@@ -3996,7 +3996,8 @@ fn exhausted_escape_runs_from_a_new_attacker_when_the_engaged_actor_is_gone() {
 #[test]
 fn exhausted_hold_without_any_attacker_parks_only_after_the_threat_free_horizon() {
     let mut snapshot = GameSnapshot::new();
-    let (mut run, mut ledger, _) = engaged_abort_hold_after_failed_walk(&mut snapshot, vec![]);
+    let (mut run, mut ledger, _, _) =
+        engaged_abort_hold_after_failed_walk(&mut snapshot, vec![]);
     let mut ended = None;
     for tick in 14..=20 {
         let polled = with_step_context(&snapshot, &mut ledger, tick, |cx| run.poll(cx));
