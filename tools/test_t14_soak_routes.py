@@ -59,7 +59,7 @@ class RouteSafetyTests(unittest.TestCase):
     def test_historical_bank_resource_route_passes_and_envelope_edge_fails(self):
         areas = [(2680, 2753, 3440, 3506)]
         highwayman = {"name": "highwayman", "spawn": [2735, 3521, 0], "envelope": 14}
-        # Complete v17 route from the maple Start to a Seers bank stand.
+        # Historical route from the second-tier Start to a Seers bank stand.
         points = [
             (2726, 3500), (2726, 3500), (2725, 3501), (2724, 3501),
             (2723, 3500), (2722, 3500), (2721, 3500), (2720, 3499),
@@ -88,7 +88,7 @@ class RouteSafetyTests(unittest.TestCase):
             (2677, 3457), (2677, 3456), (2677, 3455),
         ]
         source = audit.ROOT / "crates/host-play/tests/t14_soak_live.rs"
-        _, _, work_areas, _ = audit.fixture(source)
+        _, _, work_areas, _, _ = audit.fixture(source)
         outer = audit.outer_walk_bounds(source)
         game = json.loads((audit.ROOT / "crates/api/data/game-data/289.json").read_text())
         hunters = audit.hunter_envelopes(game)
@@ -164,17 +164,100 @@ class RouteSafetyTests(unittest.TestCase):
         )
 
     def test_normal_patch_capacity_rejects_single_tree_and_counts_shared_alternatives(self):
-        trees = [dict(kind="normal", owners=[0, 1]), dict(kind="maple", owners=["maple"])]
+        trees = [dict(kind="normal", owners=[0, 1]), dict(kind="second-tier", owners=["second-tier"])]
         with self.assertRaisesRegex(ValueError, "at least two eligible trees, found 1"):
             audit.normal_patch_capacity(trees, 2)
         trees.append(dict(kind="normal", owners=[0, 1]))
         self.assertEqual(audit.normal_patch_capacity(trees, 2), [2, 2])
 
-    def test_route_audit_reads_the_actual_live_card_radius(self):
-        starts, _, _, radius = audit.fixture(
-            audit.ROOT / "crates/host-play/tests/t14_soak_live.rs")
-        self.assertEqual(len(starts), 10)
-        self.assertEqual(radius, 5)
+    def test_fixture_reads_second_tier_constants_and_key(self):
+        with tempfile.TemporaryDirectory() as folder:
+            source = Path(folder) / "fixture.rs"
+            starts = [(100 + index, 200) for index in range(10)]
+            source.write_text(
+                f"const NORMAL_STARTS: [(i32, i32); 10] = {starts!r};\n"
+                "const SECOND_TIER_START: (i32, i32) = (120, 220);\n"
+                "const SECOND_TIER_KEY: &str = \"willow\";\n"
+                "const NORMAL_RADIUS: i32 = 5;\n"
+                "const SECOND_TIER_RADIUS: i32 = 12;\n"
+                "const NORMAL_SAFE_WALK: &[Rect] = &[Rect { min_x: 1, max_x: 2, "
+                "min_z: 3, max_z: 4 }];\n"
+            )
+            self.assertEqual(audit.fixture(source),
+                             (starts, (120, 220), [(1, 2, 3, 4)], 5, 12))
+            self.assertEqual(audit.second_tier_key(source), "willow")
+
+    def test_second_tier_census_uses_radius_and_selected_oak_or_willow_table(self):
+        starts = [(10 + index, 10) for index in range(10)]
+        second_start = (40, 40)
+        with tempfile.TemporaryDirectory() as folder:
+            content = Path(folder)
+            configs = content / "scripts/skill_woodcutting/configs"
+            trees = configs / "trees"
+            trees.mkdir(parents=True)
+            tables = ["[normal_tree_table]\ndata=tree,NormalTree"]
+            for key in ("oak", "willow"):
+                tables.append(f"[{key}_tree_table]\ndata=tree,{key.title()}Tree")
+                (trees / f"{key}.loc").write_text(
+                    f"[{key.title()}Tree]\nwidth=1\nlength=1\n")
+            (configs / "trees.dbrow").write_text("\n".join(tables) + "\n")
+            (trees / "normal.loc").write_text("[NormalTree]\nwidth=1\nlength=1\n")
+            (content / "maps").mkdir()
+            (content / "maps/m0_0.jm2").write_text(
+                "==== LOC ====\n"
+                "0 40 40: 2 10\n"
+                "0 52 40: 2 10\n"
+                "0 53 40: 2 10\n"
+                "0 40 40: 3 10\n"
+                "0 52 40: 3 10\n"
+                "0 53 40: 3 10\n"
+                "0 10 10: 1 10\n"
+                "==== NPC ====\n"
+            )
+            game = {
+                "loc_names": {"rows": [
+                    {"id": 1, "config": "NormalTree"},
+                    {"id": 2, "config": "OakTree"},
+                    {"id": 3, "config": "WillowTree"},
+                ]},
+                "gather_sites": [
+                    {"id": "normal-site", "region": dict(min_x=0, min_z=0, max_x=100, max_z=100),
+                     "keys": [{"key": "normal"}]},
+                    {"id": "second-site", "region": dict(min_x=40, min_z=40, max_x=40, max_z=40),
+                     "keys": [{"key": "oak"}, {"key": "willow"}]},
+                ],
+                "bank_placements": {"rows": []},
+                "npc_names": {"rows": []},
+                "npc_placements": {"rows": []},
+            }
+            for key in ("oak", "willow"):
+                with self.subTest(key=key):
+                    resources, _, _, _ = audit.census(
+                        content, game, starts, second_start, 5, 12,
+                        key, "normal-site", "second-site", "Test bank")
+                    selected = [row for row in resources if row["kind"] == "second-tier"]
+                    self.assertEqual({tuple(row["origin"]) for row in selected},
+                                     {(40, 40, 0), (52, 40, 0)})
+                    self.assertTrue(all(row["owners"] == ["second-tier"] for row in selected))
+                    self.assertEqual({row["id"] for row in selected},
+                                     {2 if key == "oak" else 3})
+
+    def test_route_audit_reads_normal_and_second_tier_radii(self):
+        with tempfile.TemporaryDirectory() as folder:
+            source = Path(folder) / "fixture.rs"
+            starts = [(100 + index, 200) for index in range(10)]
+            source.write_text(
+                f"const NORMAL_STARTS: [(i32, i32); 10] = {starts!r};\n"
+                "const SECOND_TIER_START: (i32, i32) = (120, 220);\n"
+                "const SECOND_TIER_KEY: &str = \"oak\";\n"
+                "const NORMAL_RADIUS: i32 = 5;\n"
+                "const SECOND_TIER_RADIUS: i32 = 12;\n"
+                "const NORMAL_SAFE_WALK: &[Rect] = &[Rect { min_x: 1, max_x: 2, "
+                "min_z: 3, max_z: 4 }];\n"
+            )
+            self.assertEqual(audit.fixture(source),
+                             (starts, (120, 220), [(1, 2, 3, 4)], 5, 12))
+            self.assertEqual(audit.second_tier_key(source), "oak")
 
     def test_unroutable_client_alternatives_encode_no_movement(self):
         for kind in ("client-approach", "client-walk", "guardian-flee",

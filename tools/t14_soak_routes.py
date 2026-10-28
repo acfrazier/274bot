@@ -80,18 +80,124 @@ def blocks(path):
     return dict(re.findall(r"^\[([^]]+)\]\n(.*?)(?=^\[|\Z)", path.read_text(), re.M | re.S))
 
 
+def rust_constant(text, name, pattern):
+    match = re.search(rf"const {name}\b[^=]*= {pattern};", text)
+    if not match:
+        raise ValueError(f"fixture is missing {name}")
+    return match[1]
+
+
 def fixture(source):
     text = source.read_text()
-    starts = ast.literal_eval(re.search(r"const NORMAL_STARTS[^=]*= (\[.*?\]);", text, re.S)[1])
-    maple_start = ast.literal_eval(re.search(r"const MAPLE_START[^=]*= (\(.*?\));", text)[1])
-    radius = int(re.search(r"const NORMAL_RADIUS: i32 = (\d+);", text)[1])
+    starts = ast.literal_eval(rust_constant(text, "NORMAL_STARTS", r"(\[.*?\])"))
+    second_start = ast.literal_eval(rust_constant(text, "SECOND_TIER_START", r"(\(.*?\))"))
+    normal_radius = int(rust_constant(text, "NORMAL_RADIUS", r"(\d+)"))
+    second_radius = int(rust_constant(text, "SECOND_TIER_RADIUS", r"(\d+)"))
     area = re.search(r"const NORMAL_SAFE_WALK[^=]*= &(\[.*?\]);", text, re.S)[1]
     rectangles = [tuple(map(int, match)) for match in re.findall(
         r"min_x: (\d+),\s*max_x: (\d+),\s*min_z: (\d+),\s*max_z: (\d+)", area)]
     if len(starts) != 10 or len(set(starts)) != 10 or not rectangles:
         raise ValueError("fixture requires ten distinct Start anchors and explicit route areas")
-    return starts, maple_start, rectangles, radius
+    if normal_radius < 0 or second_radius < 0:
+        raise ValueError("fixture radii must be nonnegative")
+    return starts, second_start, rectangles, normal_radius, second_radius
 
+
+def second_tier_key(source):
+    key = rust_constant(source.read_text(), "SECOND_TIER_KEY", r'"([^"]+)"')
+    if key not in {"maple", "willow", "oak"}:
+        raise ValueError(f"unsupported second-tier tree key: {key}")
+    return key
+
+
+def contains_xy(region, tile):
+    x, z = tile
+    return region["min_x"] <= x <= region["max_x"] and region["min_z"] <= z <= region["max_z"]
+
+
+def census(content, game, starts, second_start, normal_radius, second_radius,
+           second_key, normal_site_id, second_site_id, bank_name):
+    locs = {row["id"]: row["config"] for row in game["loc_names"]["rows"]}
+    tables = blocks(content / "scripts/skill_woodcutting/configs/trees.dbrow")
+    normal_table = tables["normal_tree_table"]
+    second_table_name = f"{second_key}_tree_table"
+    if second_table_name not in tables:
+        raise ValueError(f"selected content has no {second_table_name}")
+    normal = set(re.findall(r"^data=tree,(.+)$", normal_table, re.M))
+    second_tier = set(re.findall(r"^data=tree,(.+)$", tables[second_table_name], re.M))
+    dimensions = {}
+    for path in (content / "scripts/skill_woodcutting/configs/trees").glob("*.loc"):
+        for name, body in blocks(path).items():
+            values = dict(re.findall(r"^(width|length)=(\d+)$", body, re.M))
+            dimensions[name] = (int(values.get("width", 1)), int(values.get("length", 1)))
+    sites = {site["id"]: site for site in game["gather_sites"]}
+    normal_site = sites[normal_site_id]
+    second_site = sites[second_site_id]
+    if not any(row["key"].casefold() == "normal" for row in normal_site["keys"]):
+        raise ValueError(f"authored normal site {normal_site_id} does not support normal")
+    if not any(row["key"].casefold() == second_key for row in second_site["keys"]):
+        raise ValueError(f"authored second-tier site {second_site_id} does not support {second_key}")
+    if any(not contains_xy(normal_site["region"], start) for start in starts):
+        raise ValueError(f"authored normal site {normal_site_id} does not contain every Start")
+    if not contains_xy(second_site["region"], second_start):
+        raise ValueError(f"authored second-tier site {second_site_id} does not contain its Start")
+    resources = []
+    sources = set()
+    bank_rows = {
+        (bank["x"], bank["z"], bank["level"]): bank
+        for bank in game["bank_placements"]["rows"]
+        if bank["name"] == bank_name and bank["kind"] == "object"
+    }
+    bank_locs = []
+    anchors = [(*start, 0) for start in starts] + [(*second_start, 0)]
+    min_x = min(x - (normal_radius if index < len(starts) else second_radius)
+                for index, (x, _, _) in enumerate(anchors))
+    max_x = max(x + (normal_radius if index < len(starts) else second_radius)
+                for index, (x, _, _) in enumerate(anchors))
+    min_z = min(z - (normal_radius if index < len(starts) else second_radius)
+                for index, (_, z, _) in enumerate(anchors))
+    max_z = max(z + (normal_radius if index < len(starts) else second_radius)
+                for index, (_, z, _) in enumerate(anchors))
+    if bank_rows:
+        min_x = min(min_x, min(x for x, _, _ in bank_rows))
+        max_x = max(max_x, max(x for x, _, _ in bank_rows))
+        min_z = min(min_z, min(z for _, z, _ in bank_rows))
+        max_z = max(max_z, max(z for _, z, _ in bank_rows))
+    for mx in range(min_x // 64, max_x // 64 + 1):
+        for mz in range(min_z // 64, max_z // 64 + 1):
+            path = content / f"maps/m{mx}_{mz}.jm2"
+            sources.add(path)
+            for number, (level, x, z), values in map_rows(path, "LOC"):
+                ident = values[0]
+                name = locs.get(ident)
+                x, z = mx * 64 + x, mz * 64 + z
+                bank = bank_rows.get((x, z, level))
+                if bank is not None and ident == bank["id"]:
+                    bank_locs.append(dict(kind="bank", id=ident, origin=[x, z, level],
+                                          width=bank["width"], height=bank["length"],
+                                          shape=values[1], angle=values[2] if len(values) > 2 else 0))
+                kind = "normal" if name in normal else "second-tier" if name in second_tier else None
+                if level or kind is None:
+                    continue
+                if kind == "normal":
+                    owners = [i for i, (sx, sz) in enumerate(starts)
+                              if max(abs(x - sx), abs(z - sz)) <= normal_radius]
+                else:
+                    owners = ["second-tier"] if max(
+                        abs(x - second_start[0]), abs(z - second_start[1])) <= second_radius else []
+                if not owners:
+                    continue
+                width, height = dimensions[name]
+                if len(values) > 2 and values[2] % 2:
+                    width, height = height, width
+                resources.append(dict(kind=kind, id=ident, origin=[x, z, 0], width=width,
+                                      height=height, owners=owners, source=f"{path}:{number}",
+                                      shape=values[1], angle=values[2] if len(values) > 2 else 0))
+    if not any(row["kind"] == "second-tier" for row in resources):
+        raise ValueError(f"no authored second-tier {second_key} resources within its Start radius")
+    if len(bank_locs) != len(bank_rows):
+        raise ValueError(f"selected-content maps do not contain every {bank_name} bank loc")
+    return resources, hunter_envelopes(game), sources, bank_locs
 
 def outer_walk_bounds(source):
     text = source.read_text()
@@ -107,61 +213,6 @@ def fixture_bank(source):
     return re.search(r'const SOAK_BANK: &str = "([^"]+)";', source.read_text())[1]
 
 
-def census(content, game, starts, rectangles, maple_site, normal_radius, bank_name):
-    locs = {row["id"]: row["config"] for row in game["loc_names"]["rows"]}
-    tables = blocks(content / "scripts/skill_woodcutting/configs/trees.dbrow")
-    normal = set(re.findall(r"^data=tree,(.+)$", tables["normal_tree_table"], re.M))
-    maple = set(re.findall(r"^data=tree,(.+)$", tables["maple_tree_table"], re.M))
-    dimensions = {}
-    for path in (content / "scripts/skill_woodcutting/configs/trees").glob("*.loc"):
-        for name, body in blocks(path).items():
-            values = dict(re.findall(r"^(width|length)=(\d+)$", body, re.M))
-            dimensions[name] = (int(values.get("width", 1)), int(values.get("length", 1)))
-    site = next(s for s in game["gather_sites"] if s["id"] == maple_site)
-    resources = []
-    sources = set()
-    bank_rows = {
-        (bank["x"], bank["z"], bank["level"]): bank
-        for bank in game["bank_placements"]["rows"]
-        if bank["name"] == bank_name and bank["kind"] == "object"
-    }
-    bank_locs = []
-    for mx in range(min(r[0] for r in rectangles) // 64, max(r[1] for r in rectangles) // 64 + 1):
-        for mz in range(min(r[2] for r in rectangles) // 64, max(r[3] for r in rectangles) // 64 + 1):
-            path = content / f"maps/m{mx}_{mz}.jm2"
-            sources.add(path)
-            for number, (level, x, z), values in map_rows(path, "LOC"):
-                ident = values[0]
-                name = locs.get(ident)
-                x, z = mx * 64 + x, mz * 64 + z
-                bank = bank_rows.get((x, z, level))
-                if bank is not None and ident == bank["id"]:
-                    bank_locs.append(dict(kind="bank", id=ident, origin=[x, z, level],
-                                          width=bank["width"], height=bank["length"],
-                                          shape=values[1], angle=values[2] if len(values) > 2 else 0))
-                kind = "normal" if name in normal else "maple" if name in maple else None
-                if level or kind is None:
-                    continue
-                if kind == "normal":
-                    owners = [i for i, (sx, sz) in enumerate(starts)
-                              if max(abs(x - sx), abs(z - sz)) <= normal_radius]
-                else:
-                    # Cover the whole Site, not only its first retained anchor.
-                    r = site["region"]
-                    owners = ["maple"] if r["min_x"] <= x <= r["max_x"] and r["min_z"] <= z <= r["max_z"] else []
-                if not owners:
-                    continue
-                width, height = dimensions[name]
-                if len(values) > 2 and values[2] % 2:
-                    width, height = height, width
-                resources.append(dict(kind=kind, id=ident, origin=[x, z, 0], width=width,
-                                      height=height, owners=owners, source=f"{path}:{number}",
-                                      shape=values[1], angle=values[2] if len(values) > 2 else 0))
-    if not any(row["kind"] == "maple" for row in resources):
-        raise ValueError("no authored maple resources")
-    if len(bank_locs) != len(bank_rows):
-        raise ValueError(f"selected-content maps do not contain every {bank_name} bank loc")
-    return resources, hunter_envelopes(game), sources, bank_locs
 
 
 def hunter_envelopes(game):
@@ -328,11 +379,13 @@ def main():
     config = ROOT / "T1.4/soak-config.json"
     game = json.loads(catalog.read_text())
     sites = json.loads(config.read_text())["workload"]["site_names"]
-    starts, maple_start, rectangles, normal_radius = fixture(source)
+    starts, second_start, rectangles, normal_radius, second_radius = fixture(source)
+    second_key = second_tier_key(source)
     outer_bounds = outer_walk_bounds(source)
     bank_name = fixture_bank(source)
     resources, hunters, maps, bank_locs = census(
-        args.content, game, starts, rectangles, sites[1], normal_radius, bank_name)
+        args.content, game, starts, second_start, normal_radius, second_radius,
+        second_key, sites[0], sites[1], bank_name)
     patch_counts = normal_patch_capacity(resources, len(starts))
     sources = {str(p): digest(p) for p in [
         source, catalog, config, args.pack, args.flags, args.cache / "config", *sorted(maps),
@@ -344,7 +397,7 @@ def main():
     if args.replay:
         args.replay = args.replay.resolve(strict=True)
         verify_replay_sources(args.replay, sources)
-    anchors = {(*start, 0) for start in starts} | {(*maple_start, 0)}
+    anchors = {(*start, 0) for start in starts} | {(*second_start, 0)}
     targets = set(anchors)
     for resource in resources:
         targets.update(goals_for(resource))
@@ -375,7 +428,7 @@ def main():
     access = {}
     for index, resource in enumerate(resources):
         for owner in resource["owners"]:
-            start = (*maple_start, 0) if owner == "maple" else (*starts[owner], 0)
+            start = (*second_start, 0) if owner == "second-tier" else (*starts[owner], 0)
             for target in goals_for(resource):
                 access.setdefault((start, target), set()).add(index)
     violations, tile_cache = [], {}
@@ -476,7 +529,8 @@ def main():
                   guardian_scenarios=len(guardian_scenarios), guardian_work_bank_tiles=len(guardian_origins),
                   guardian_ranges=guardian_ranges,
                   normal_radius=normal_radius, normal_patch_trees=patch_counts,
-                  maple_start=maple_start, bank=bank_name, resources=resources,
+                  second_tier_key=second_key, second_tier_start=second_start,
+                  second_tier_radius=second_radius, bank=bank_name, resources=resources,
                   hunters_checked=len(hunters),
                   sources=sources, replay_source=str(args.replay) if args.replay else None,
                   violation_count=len(violations), violations=violations[:30], errors=errors,
