@@ -407,8 +407,20 @@ struct SkipCleanupOwnership {
     script_walk: Option<(i32, i32, i32)>,
     seat_held: bool,
     live_actions: usize,
+    compiled_owner_live: bool,
     seat_results: usize,
     reserved_releases: usize,
+}
+
+#[cfg(feature = "test-support")]
+impl SkipCleanupOwnership {
+    fn step_released(self) -> bool {
+        self.script_walk.is_none()
+            && !self.seat_held
+            && self.compiled_owner_live
+            && self.live_actions == 1
+            && self.reserved_releases == 0
+    }
 }
 
 #[cfg(feature = "test-support")]
@@ -506,14 +518,11 @@ impl SkipQueueEvidence {
             script_walk: slot_status.script_walk(),
             seat_held: seat.held,
             live_actions: seat.live,
+            compiled_owner_live: seat.compiled_owner_live,
             seat_results: seat.results,
             reserved_releases: seat.reserved_releases,
         };
-        if ownership.script_walk.is_none()
-            && !ownership.seat_held
-            && ownership.live_actions == 0
-            && ownership.reserved_releases == 0
-        {
+        if ownership.step_released() {
             self.cleanup_ownership = Some(ownership);
             self.cancellation_observed = true;
         }
@@ -749,6 +758,7 @@ impl SkipQueueEvidence {
                 "script_walk": ownership.script_walk,
                 "seat_held": ownership.seat_held,
                 "live_actions": ownership.live_actions,
+                "compiled_owner_live": ownership.compiled_owner_live,
                 "seat_results": ownership.seat_results,
                 "reserved_releases": ownership.reserved_releases,
             })),
@@ -1268,4 +1278,43 @@ fn quester_skip_active_cook_parks_then_sheep_completes() {
 #[ignore = "requires LIVE=1, BOT_LIVE_NAME_PREFIX=qs, explicit WORLD_NAV_PACK/WORLD_ENGINE_DIR/RS2B0T/BOT_CACHE_DIR and local 289 engine"]
 fn quester_queue() {
     run_quester_queue().unwrap();
+}
+
+#[cfg(feature = "test-support")]
+#[test]
+fn skip_cleanup_keeps_only_the_compiled_run_owner() {
+    let released = SkipCleanupOwnership {
+        script_walk: None,
+        seat_held: false,
+        live_actions: 1,
+        compiled_owner_live: true,
+        seat_results: 0,
+        reserved_releases: 0,
+    };
+    assert!(released.step_released());
+    assert!(!SkipCleanupOwnership {
+        live_actions: 2,
+        ..released
+    }
+    .step_released());
+    assert!(!SkipCleanupOwnership {
+        compiled_owner_live: false,
+        ..released
+    }
+    .step_released());
+    assert!(!SkipCleanupOwnership {
+        script_walk: Some((3209, 3215, 0)),
+        ..released
+    }
+    .step_released());
+    assert!(!SkipCleanupOwnership {
+        reserved_releases: 1,
+        ..released
+    }
+    .step_released());
+    assert!(!SkipCleanupOwnership {
+        seat_held: true,
+        ..released
+    }
+    .step_released());
 }
