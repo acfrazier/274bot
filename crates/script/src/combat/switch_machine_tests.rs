@@ -1332,7 +1332,15 @@ fn the_same_protect_mask_never_switches_twice() {
 
 #[test]
 fn no_equipment_allowance_means_no_wear_and_no_switch_evaluation() {
-    let (mut scene, kits) = sword_and_bow();
+    // A bow to wear and a runes-only mage kit that would switch with no wear at
+    // all: with equipment changes forbidden neither may ever happen.
+    let (mut scene, mut kits) = sword_and_bow();
+    give(&mut scene, "mindrune", 50);
+    give(&mut scene, "airrune", 50);
+    kits.mage = Some(kit(
+        &[],
+        &[(id(&scene, "mindrune"), 50), (id(&scene, "airrune"), 50)],
+    ));
     let mut req = request(kits);
     req.allow.equipment = false;
     let mut harness = start(&mut scene, req);
@@ -1343,6 +1351,7 @@ fn no_equipment_allowance_means_no_wear_and_no_switch_evaluation() {
         assert_eq!(harness.machine.switch_state(), SwitchState::Idle);
     }
     assert_eq!(harness.machine.active_style(), Style::Melee);
+    assert_eq!(harness.machine.switches(), 0);
 }
 
 #[test]

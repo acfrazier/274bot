@@ -566,6 +566,12 @@ fn live_pvp_switch_t2_t3_t4_in_a_pen() {
                     status.scene_state,
                     status.error
                 );
+                assert!(
+                    status.error.is_none(),
+                    "slot {} cannot log in: {:?}",
+                    status.username,
+                    status.error
+                );
             }
         }
         assert!(
