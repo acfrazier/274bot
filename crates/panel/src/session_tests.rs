@@ -2,8 +2,8 @@ use super::{
     combo_index, debug_dest_cheats, debug_main_buttons_for, debug_maxme_cheats, live_client_trail,
     live_or_walk_paint, null_raster_live_entries, parse_getvar_line, publish_nav_debug,
     retire_client_trail, script_active, script_pause_enabled, script_stop_enabled,
-    seed_on_first_world, stress_live_entries, temp_live_vault_from, PreparationCompletion,
-    SceneRoutePaint, Session, SlotIo,
+    seed_on_first_world, stress_live_entries, temp_live_vault_from, PanelPreferenceMember,
+    PANEL_SETTING_EVENTS_CAP, PreparationCompletion, SceneRoutePaint, Session, SlotIo,
 };
 use crate::focus::draw_for_slot;
 use crate::picker::{
@@ -10087,4 +10087,113 @@ fn a_still_saving_refusal_clears_when_the_save_finishes() {
     s.pump_status();
     assert!(!s.core.profile_saving("bob"));
     assert_eq!(s.error, None, "the finished save resolved the message");
+}
+
+#[test]
+fn panel_setting_retry_clears_only_when_the_owner_removes_the_failure() {
+    let _iso = IsolatedStores::enter("panel-setting-retry-clear");
+    let mut session = Session::new();
+    let preferences = session.preferences.share();
+    patiently(|| {
+        if preferences.document().is_ok() {
+            Ok(())
+        } else {
+            Err("panel preferences are not ready".into())
+        }
+    })
+    .expect("preferences cache is ready");
+    session.watch_setting_events();
+    let member = PanelPreferenceMember {
+        path: vec!["chrome".into(), "accent".into()],
+        value: Some(serde_json::json!("#AABBCC")),
+    };
+    session.set_preference_write_error(Some(&member), "preferences is busy".into());
+    let (events, incomplete) = session.take_panel_setting_events();
+    assert!(!incomplete);
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].state(), frontend_core::SettingEventState::Failed);
+    assert_eq!(events[0].error(), Some("preferences is busy"));
+
+    let path = session.preferences.path();
+    let mut lock_name = path.as_os_str().to_os_string();
+    lock_name.push(".lock");
+    let lock_file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(std::path::PathBuf::from(lock_name))
+        .expect("preferences lock");
+    lock_file.try_lock().expect("hold preferences lock");
+    session
+        .persist_panel_member(&["chrome", "accent"], Some(serde_json::json!("#AABBCC")))
+        .expect("accepted retry");
+    let (events, incomplete) = session.take_panel_setting_events();
+    assert!(!incomplete);
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].state(), frontend_core::SettingEventState::Pending);
+    assert!(
+        session.panel_preference_write_error().is_some(),
+        "an accepted retry does not clear the owner's retained error"
+    );
+
+    lock_file.unlock().expect("release preferences lock");
+    patiently(|| {
+        session.poll_panel_preferences();
+        let Ok(document) = preferences.document() else {
+            return Err("panel preferences are not durable".into());
+        };
+        let durable = document
+            .get("chrome")
+            .and_then(serde_json::Value::as_object)
+            .and_then(|chrome| chrome.get("accent"))
+            == Some(&serde_json::json!("#AABBCC"));
+        if session.panel_preference_writes_pending() == 0 && durable {
+            Ok(())
+        } else {
+            Err("panel preference retry is still pending".into())
+        }
+    })
+    .expect("retry settles");
+    assert!(session.panel_preference_write_error().is_none());
+    let (events, incomplete) = session.take_panel_setting_events();
+    assert!(!incomplete);
+    assert_eq!(
+        events.iter().map(|event| event.state()).collect::<Vec<_>>(),
+        [
+            frontend_core::SettingEventState::Cleared,
+            frontend_core::SettingEventState::Saved,
+        ]
+    );
+}
+
+#[test]
+fn panel_setting_event_overflow_marks_the_drained_batch_incomplete() {
+    let _iso = IsolatedStores::enter("panel-setting-event-overflow");
+    let mut session = Session::new();
+    session.watch_setting_events();
+    let member = PanelPreferenceMember {
+        path: vec!["chrome".into(), "accent".into()],
+        value: Some(serde_json::json!("#AABBCC")),
+    };
+    for _ in 0..PANEL_SETTING_EVENTS_CAP {
+        session.note_panel_setting(&member, frontend_core::SettingEventState::Pending, None);
+    }
+    session.note_panel_setting(
+        &member,
+        frontend_core::SettingEventState::Failed,
+        Some("preferences is busy".into()),
+    );
+
+    let (events, incomplete) = session.take_panel_setting_events();
+    assert_eq!(events.len(), PANEL_SETTING_EVENTS_CAP);
+    assert!(
+        incomplete,
+        "the dropped terminal failure makes the batch unsuitable as complete evidence"
+    );
+    assert_eq!(
+        session.take_panel_setting_events(),
+        (Vec::new(), false),
+        "draining clears the queue and its overflow flag"
+    );
 }

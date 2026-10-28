@@ -7898,9 +7898,12 @@ fn pump_record(state: &mut PanelState) {
                 match frontend_core::live::create_shot_run_dir() {
                     Ok(dir) => state.shot_dir = Some(dir),
                     Err(error) => {
-                        eprintln!(
-                            "[panel] headed record: shot directory unavailable: {error}; \
-                             continuing without recording"
+                        crate::headed_record::log_diagnostic(
+                            api::hostlog::Level::Warn,
+                            format_args!(
+                                "headed record: shot directory unavailable: {error}; \
+                                 continuing without recording"
+                            ),
                         );
                         state.record.abandon();
                     }
@@ -7942,7 +7945,11 @@ fn pump_record(state: &mut PanelState) {
 /// only while a recording is active; both queues are empty in a frame
 /// where no setting changed.
 fn pump_record_settings(state: &mut PanelState) {
-    let core_events = state.session.core.take_setting_events();
+    let (core_events, core_incomplete) = state.session.core.take_setting_events();
+    let (panel_events, panel_incomplete) = state.session.take_panel_setting_events();
+    if core_incomplete || panel_incomplete {
+        state.record.note_settings_incomplete();
+    }
     for event in &core_events {
         state.record.note_setting(
             event.setting(),
@@ -7950,7 +7957,6 @@ fn pump_record_settings(state: &mut PanelState) {
             event.error().unwrap_or(""),
         );
     }
-    let panel_events = state.session.take_panel_setting_events();
     for event in &panel_events {
         state.record.note_setting(
             event.setting(),
@@ -7964,6 +7970,7 @@ fn record_setting_state(state: frontend_core::SettingEventState) -> SettingState
     match state {
         frontend_core::SettingEventState::Pending => SettingState::Pending,
         frontend_core::SettingEventState::Failed => SettingState::Failed,
+        frontend_core::SettingEventState::Cleared => SettingState::Cleared,
         frontend_core::SettingEventState::Saved => SettingState::Saved,
     }
 }

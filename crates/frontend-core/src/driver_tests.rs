@@ -725,8 +725,9 @@ fn watched_setting_events_report_pending_failed_then_saved() {
         )
         .expect("admitted");
     assert_eq!(settled_app(&mut d, submitted.request()), Some(done()));
-    assert!(
-        d.session_mut().take_setting_events().is_empty(),
+    assert_eq!(
+        d.session_mut().take_setting_events(),
+        (Vec::new(), false),
         "no watcher, no recorded transitions"
     );
 
@@ -739,14 +740,16 @@ fn watched_setting_events_report_pending_failed_then_saved() {
         )
         .expect("admitted");
     d.poll();
+    let (events, incomplete) = d.session_mut().take_setting_events();
+    assert!(!incomplete);
     assert_eq!(
-        d.session_mut().take_setting_events(),
+        events,
         vec![SettingEvent::new(
-            "navigation preference".into(),
+            "nav.allow_teleports".into(),
             SettingEventState::Pending,
             None,
         )],
-        "the held write is pending"
+        "the held write is pending under its stable setting identity"
     );
 
     // Hold the preferences file's write lock so the held write fails when
@@ -769,18 +772,34 @@ fn watched_setting_events_report_pending_failed_then_saved() {
         matches!(terminal, Some(Settlement::Failed(_))),
         "the blocked write settles failed: {terminal:?}"
     );
-    let events = d.session_mut().take_setting_events();
+    let (events, incomplete) = d.session_mut().take_setting_events();
+    assert!(!incomplete);
     assert_eq!(events.len(), 1, "{events:?}");
-    assert_eq!(events[0].setting(), "navigation preference");
+    assert_eq!(events[0].setting(), "nav.allow_teleports");
     assert_eq!(events[0].state(), SettingEventState::Failed);
     assert!(
         events[0].error().is_some_and(|e| !e.is_empty()),
         "the failure carries the writer's reason: {events:?}"
     );
 
-    // Release the lock and retry: the same setting saves.
+    // Saving another navigation setting must not share the failed setting's
+    // history or clear it.
     lock_file.unlock().expect("release the write lock");
     drop(lock_file);
+    let other = d
+        .submit(
+            OperatorCommand::SetNavPreference(NavPreference::AllowWilderness, true),
+            Targets::Application,
+        )
+        .expect("admitted");
+    assert_eq!(settled_app(&mut d, other.request()), Some(done()));
+    let (events, incomplete) = d.session_mut().take_setting_events();
+    assert!(!incomplete);
+    assert_eq!(events.len(), 1, "{events:?}");
+    assert_eq!(events[0].setting(), "nav.allow_wilderness");
+    assert_eq!(events[0].state(), SettingEventState::Saved);
+
+    // A retry of the original setting reports its own durable result.
     let submitted = d
         .submit(
             OperatorCommand::SetNavPreference(NavPreference::AllowTeleports, false),
@@ -788,10 +807,11 @@ fn watched_setting_events_report_pending_failed_then_saved() {
         )
         .expect("admitted");
     assert_eq!(settled_app(&mut d, submitted.request()), Some(done()));
-    let events = d.session_mut().take_setting_events();
+    let (events, incomplete) = d.session_mut().take_setting_events();
+    assert!(!incomplete);
     assert!(
         events.iter().any(|event| {
-            event.setting() == "navigation preference"
+            event.setting() == "nav.allow_teleports"
                 && event.state() == SettingEventState::Saved
                 && event.error().is_none()
         }),
@@ -807,7 +827,7 @@ fn watched_setting_events_report_pending_failed_then_saved() {
         )
         .expect("admitted");
     assert_eq!(settled_app(&mut d, submitted.request()), Some(done()));
-    assert!(d.session_mut().take_setting_events().is_empty());
+    assert_eq!(d.session_mut().take_setting_events(), (Vec::new(), false));
 }
 
 /// T3.3 r5 (review finding 5): the newest command for a setting wins. An
