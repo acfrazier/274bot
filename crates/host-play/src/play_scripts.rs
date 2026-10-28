@@ -961,7 +961,7 @@ impl Play {
         &self,
         name: &str,
     ) -> Result<script::native::SkippedQuest, script::native::ScriptFailure> {
-        let failure = |code, message| script::native::ScriptFailure {
+        let failure = |code: &str, message: &str| script::native::ScriptFailure {
             code: code.into(),
             message: message.into(),
         };
