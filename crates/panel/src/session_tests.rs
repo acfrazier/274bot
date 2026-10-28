@@ -5754,7 +5754,10 @@ fn memory_stress_policies_keep_seed_placement_by_workload() {
         let focus = session.focus.lock().unwrap();
         let full_rate = policy == "stress50-full";
         assert_eq!(focus.live_full_rate, full_rate, "{case} with {policy}");
-        assert_eq!(focus.only_render_selected, !full_rate, "{case} with {policy}");
+        assert_eq!(
+            focus.only_render_selected, !full_rate,
+            "{case} with {policy}"
+        );
         let drawn = run
             .run()
             .names()
@@ -5775,7 +5778,6 @@ fn memory_stress_policies_keep_seed_placement_by_workload() {
                 .all(|name| crate::focus::full_rate_for(&focus, name)));
         }
         drop(focus);
-
     }
 }
 
