@@ -1072,7 +1072,8 @@ fn a_drink_on_the_trigger_tick_admits_no_wear_and_starts_nothing() {
             assert_eq!(converging_to(&harness), None, "no switch under a drink plan");
             // The sip lands: points are back, the vial is gone.
             scene.stat(5, 30, 50);
-            scene.inventory.retain(|row| row.def.id != id(&scene, "1doseprayerrestore"));
+            let vial = id(&scene, "1doseprayerrestore");
+            scene.inventory.retain(|row| row.def.id != vial);
             scene.refresh();
         } else if drank && converging_to(&harness).is_some() && started.is_none() {
             started = Some(tick);
@@ -1177,7 +1178,8 @@ fn exhaustion_of_the_target_during_a_convergence_fails_the_switch() {
     step_without_server(&mut harness, &mut scene, 4);
     assert_eq!(converging_to(&harness), Some(Style::Ranged));
     // The arrows vanish before anything is worn.
-    scene.inventory.retain(|row| row.def.id != id(&scene, "iron_arrow"));
+    let arrows = id(&scene, "iron_arrow");
+    scene.inventory.retain(|row| row.def.id != arrows);
     scene.refresh();
     step_without_server(&mut harness, &mut scene, 5);
     assert_eq!(harness.machine.switch_failures(), 1);
