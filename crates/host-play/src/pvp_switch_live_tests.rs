@@ -786,8 +786,11 @@ fn live_pvp_switch_t2_t3_t4_in_a_pen() {
         "t3_completed_with_sword_worn": t3.is_some_and(|row| worn(row, 3, sword)),
         "t3_partner_showed_no_protect": t3_start.is_some_and(|row| row.partner_headicons & 0b11_1000 == 0),
         "t4_started_by_reach": t4_start.is_some(),
-        // The machine counts ticks out of reach from its own frames; the same
-        // distance in the last ten ticks up to the switch is the evidence.
+        // The machine counts eight ticks out of reach from its own frames, which
+        // the cell cannot sample (its distance lags the machine's by a tick or two
+        // while the runner moves): the cause `Reach` proves the count, and this
+        // reads the cell's own series as corroboration, at least five of the ten
+        // ticks up to the switch more than one tile apart.
         "t4_partner_out_of_reach": t4_start.is_some_and(|start| {
             shared
                 .series
@@ -796,7 +799,7 @@ fn live_pvp_switch_t2_t3_t4_in_a_pen() {
                     *at + 9 >= start.tick && *at <= start.tick && *distance > 1
                 })
                 .count()
-                >= 8
+                >= 5
         }),
         "t4_completed_with_bow_worn": t4.is_some_and(|row| worn(row, 3, bow)),
         "switch_failures": rows.last().map_or(0, |row| row.failures),
