@@ -8,6 +8,7 @@ use crate::machine::{self, Cx, Outcome, Started, Take};
 use crate::observed::{self, CarryRow, ChatLine, EntityRow, ItemRow, SceneRow};
 use crate::task_clock::InstantTaskClock;
 use crate::walk::tests::{post_walk_outcome, reset, NoJs};
+use api::query::ReachQueryView;
 use api::snapshot::WorldTile;
 use script::shim::InteractReq;
 use serde_json::json;
@@ -185,7 +186,7 @@ impl World {
                     level: self.facts.luthas_anchor.level,
                     distance: 1,
                     actions: vec!["Talk-to".into()].into(),
-                    ..EntityRow::default()
+                    reachable_adj: true,
                 }])
                 .locs(locs);
         });
@@ -226,6 +227,14 @@ fn recovery_step(
     logs: &mut VecDeque<String>,
 ) -> (Option<bool>, Vec<InteractReq>) {
     world.post();
+    recovery_step_observed(recover, clock, logs)
+}
+
+fn recovery_step_observed(
+    recover: &mut Recover,
+    clock: &mut InstantTaskClock,
+    logs: &mut VecDeque<String>,
+) -> (Option<bool>, Vec<InteractReq>) {
     let mut ops = Vec::new();
     let result = {
         let mut cx = Cx::test(&mut ops, clock, None);
@@ -233,6 +242,17 @@ fn recovery_step(
     };
     (result, ops)
 }
+fn start_recovery() -> (Recover, InstantTaskClock, VecDeque<String>, Vec<InteractReq>) {
+    let mut ops = Vec::new();
+    let mut clock = InstantTaskClock::new();
+    let mut logs = VecDeque::new();
+    let recover = {
+        let mut cx = Cx::test(&mut ops, &mut clock, None);
+        Recover::start(PORT_SARIM, &mut cx, &mut logs).expect("fare recovery starts")
+    };
+    (recover, clock, logs, ops)
+}
+
 
 /// Tick until an op matches, with no other op on the way; the match.
 fn until(world: &mut World, what: &str, want: impl Fn(&InteractReq) -> bool) -> InteractReq {
@@ -272,6 +292,80 @@ fn token(op: &InteractReq) -> u64 {
         other => panic!("not a walk: {other:?}"),
     }
 }
+fn walk_tile(op: &InteractReq) -> WorldTile {
+    match op {
+        InteractReq::Walk { x, z, level, .. } | InteractReq::WalkNear { x, z, level, .. } => {
+            WorldTile {
+                x: *x,
+                z: *z,
+                level: *level,
+            }
+        }
+        other => panic!("not a walk: {other:?}"),
+    }
+}
+
+fn orthogonally_adjacent(left: WorldTile, right: WorldTile) -> bool {
+    left.level == right.level
+        && u64::from(left.x.abs_diff(right.x)) + u64::from(left.z.abs_diff(right.z)) == 1
+}
+
+fn set_reach_bit(bits: &mut [u32], index: usize) {
+    bits[index / 32] |= 1 << (index % 32);
+}
+
+fn install_luthas_reach_view(anchor: WorldTile, blocked: Option<WorldTile>) {
+    let npc = WorldTile {
+        x: anchor.x,
+        z: anchor.z + 1,
+        level: anchor.level,
+    };
+    let base_x = npc.x - 2;
+    let base_z = npc.z - 2;
+    let index = |tile: WorldTile| {
+        ((tile.x - base_x) as usize) * 5 + (tile.z - base_z) as usize
+    };
+    let mut walkable = vec![0; 1];
+    let mut reachable = vec![0; 1];
+    let mut reachable_adj = vec![0; 1];
+    let mut exact_rank = vec![u16::MAX; 25];
+    let mut adjacent_rank = vec![u16::MAX; 25];
+    for (dx, dz) in [(0, -1), (1, 0), (0, 1), (-1, 0)] {
+        let stand = WorldTile {
+            x: npc.x + dx,
+            z: npc.z + dz,
+            level: npc.level,
+        };
+        if blocked == Some(stand) {
+            continue;
+        }
+        let i = index(stand);
+        set_reach_bit(&mut walkable, i);
+        set_reach_bit(&mut reachable, i);
+        set_reach_bit(&mut reachable_adj, i);
+        exact_rank[i] = 1;
+        adjacent_rank[i] = 1;
+    }
+    let npc_index = index(npc);
+    set_reach_bit(&mut reachable_adj, npc_index);
+    adjacent_rank[npc_index] = 1;
+    crate::reach_query::set_view_for_tests(ReachQueryView {
+        available: true,
+        base_x,
+        base_z,
+        level: npc.level,
+        width: 5,
+        height: 5,
+        walkable,
+        reachable,
+        reachable_adj,
+        exact_rank,
+        adjacent_rank,
+        step: vec![0; 25],
+        canlight: Vec::new(),
+    });
+}
+
 
 fn is_talk(name: String) -> impl Fn(&InteractReq) -> bool {
     move |op| {
@@ -357,13 +451,15 @@ fn fail_luthas_reach(world: &mut World, what: &str) -> WorldTile {
         other => panic!("failed Luthas reach starts a fresh stand walk: {other:?}"),
     };
     let npc = WorldTile {
-        x: luthas.x + 1,
-        z: luthas.z,
+        x: luthas.x,
+        z: luthas.z + 1,
         level: luthas.level,
     };
     assert_ne!(stand, luthas, "retry uses another Luthas stand");
-    assert_eq!(stand.level, npc.level);
-    assert!((stand.x - npc.x).abs() <= 1 && (stand.z - npc.z).abs() <= 1);
+    assert!(
+        orthogonally_adjacent(stand, npc),
+        "retry stand {stand:?} is orthogonally adjacent to posted Luthas {npc:?}"
+    );
     world.here = stand;
     stand
 }
@@ -375,6 +471,9 @@ fn earn_the_fare(
 ) -> (machine::Handle, World, InteractReq, InteractReq) {
     reset();
     let mut world = World::new(MUSA, 5);
+    if retry_point.is_some() {
+        install_luthas_reach_view(world.facts.luthas_anchor, None);
+    }
     let luthas = world.facts.luthas_anchor;
     let crate_tile = world.facts.crate_tile;
     let grove_tile = world.facts.grove_tile;
@@ -535,6 +634,7 @@ fn walk_to_retries_a_failed_post_fill_luthas_approach_and_completes() {
 fn failed_luthas_approaches_spend_the_budget_and_keep_the_last_detail() {
     reset();
     let mut world = World::new(MUSA, 5);
+    install_luthas_reach_view(world.facts.luthas_anchor, None);
     let coins = world.facts.coins;
     let fare = world.facts.coin_payout;
     let luthas = world.facts.luthas_anchor;
@@ -593,9 +693,10 @@ fn failed_luthas_approaches_spend_the_budget_and_keep_the_last_detail() {
                 level: luthas.level,
             };
             assert_ne!(stand, luthas, "retry does not reuse the initial stand");
-            assert_eq!(stand.level, npc.level);
-            assert_eq!(stand.z, npc.z, "retry uses the other adjacent axis");
-            assert_eq!(stand.x.abs_diff(npc.x), 1);
+            assert!(
+                orthogonally_adjacent(stand, npc),
+                "retry stand {stand:?} is orthogonally adjacent to posted Luthas {npc:?}"
+            );
             last_stand = stand;
             retry_stand = Some(stand);
         } else {
@@ -610,11 +711,165 @@ fn failed_luthas_approaches_spend_the_budget_and_keep_the_last_detail() {
     );
     assert_eq!(
         logs.iter()
-            .filter(|line| line.contains("server can't reach it"))
+            .filter(|line| line.starts_with("reach: 'Luthas' at"))
             .count(),
         3,
-        "each of the three approach failures keeps its reach detail"
+        "each failed approach keeps its reach detail"
     );
+    assert_eq!(
+        logs.iter()
+            .filter(|line| line.contains("failed cause=reach"))
+            .count(),
+        3,
+        "each failed approach has a diagnostic line"
+    );
+}
+
+#[test]
+fn retries_skip_a_blocked_luthas_stand() {
+    reset();
+    let mut world = World::new(MUSA, 5);
+    let luthas = world.facts.luthas_anchor;
+    let coins = world.facts.coins;
+    let fare = world.facts.coin_payout;
+    let npc = WorldTile {
+        x: luthas.x,
+        z: luthas.z + 1,
+        level: luthas.level,
+    };
+    let blocked = WorldTile {
+        x: npc.x + 1,
+        z: npc.z,
+        level: npc.level,
+    };
+    install_luthas_reach_view(luthas, Some(blocked));
+    fail_short(&mut world, 1, PORT_SARIM, 2, (coins, fare));
+    let (mut recover, mut clock, mut logs, initial_ops) = start_recovery();
+    assert!(matches!(
+        initial_ops.as_slice(),
+        [op] if walk_near(luthas, 2)(op)
+    ));
+
+    world.here = luthas;
+    assert!(recovery_step(&mut world, &mut recover, &mut clock, &mut logs)
+        .1
+        .is_empty());
+    let talk_ops = recovery_step(&mut world, &mut recover, &mut clock, &mut logs).1;
+    assert!(matches!(
+        talk_ops.as_slice(),
+        [InteractReq::Npc { action, .. }] if action == "Talk-to"
+    ));
+    world.say("I can't reach that!");
+    let (result, ops) = recovery_step(&mut world, &mut recover, &mut clock, &mut logs);
+    assert_eq!(result, None);
+    assert!(matches!(ops.as_slice(), [InteractReq::Walk { .. }]));
+    let stand = walk_tile(&ops[0]);
+    assert_ne!(stand, blocked, "the blocked orthogonal stand is never selected");
+    assert!(orthogonally_adjacent(stand, npc));
+}
+
+#[test]
+fn dialogue_timeout_retries_within_the_talk_budget() {
+    reset();
+    let mut world = World::new(MUSA, 5);
+    let luthas = world.facts.luthas_anchor;
+    let coins = world.facts.coins;
+    let fare = world.facts.coin_payout;
+    install_luthas_reach_view(luthas, None);
+    fail_short(&mut world, 1, PORT_SARIM, 2, (coins, fare));
+    let (mut recover, mut clock, mut logs, initial_ops) = start_recovery();
+    let mut walk = initial_ops.into_iter().next().expect("initial talk walk");
+    assert!(walk_near(luthas, 2)(&walk));
+
+    for attempt in 0..3 {
+        world.here = if attempt == 0 {
+            luthas
+        } else {
+            walk_tile(&walk)
+        };
+        assert!(recovery_step(&mut world, &mut recover, &mut clock, &mut logs)
+            .1
+            .is_empty());
+        let talk_ops = recovery_step(&mut world, &mut recover, &mut clock, &mut logs).1;
+        assert!(matches!(
+            talk_ops.as_slice(),
+            [InteractReq::Npc { action, .. }] if action == "Talk-to"
+        ));
+
+        clock.deadline = Some(clock.now());
+        let (result, ops) = recovery_step(&mut world, &mut recover, &mut clock, &mut logs);
+        if attempt < 2 {
+            assert_eq!(result, None, "dialogue timeout {attempt} retries");
+            assert!(matches!(ops.as_slice(), [InteractReq::Walk { .. }]));
+            walk = ops[0].clone();
+        } else {
+            assert_eq!(result, Some(false), "the third timeout ends recovery");
+            assert!(ops.is_empty());
+        }
+    }
+
+    assert_eq!(
+        logs.iter()
+            .filter(|line| line.contains("failed cause=dialogue-timeout"))
+            .count(),
+        3
+    );
+    assert!(logs.last().is_some_and(|line| {
+        line.contains("recovery ended after approach 3/3")
+            && line.contains("never opened a dialogue")
+    }));
+}
+
+#[test]
+fn a_failed_talk_walk_retries_and_logs_the_terminal_failure() {
+    reset();
+    let mut world = World::new(MUSA, 5);
+    let luthas = world.facts.luthas_anchor;
+    let coins = world.facts.coins;
+    let fare = world.facts.coin_payout;
+    install_luthas_reach_view(luthas, None);
+    fail_short(&mut world, 1, PORT_SARIM, 2, (coins, fare));
+    let (mut recover, mut clock, mut logs, initial_ops) = start_recovery();
+    let mut walk = initial_ops.into_iter().next().expect("initial talk walk");
+    assert!(walk_near(luthas, 2)(&walk));
+
+    for attempt in 0..3 {
+        let dest = walk_tile(&walk);
+        let radius = if attempt == 0 { 2 } else { 0 };
+        world.tick += 1;
+        post_walk_outcome(world.tick, token(&walk), world.here, dest, radius, true);
+        let (result, ops) =
+            recovery_step_observed(&mut recover, &mut clock, &mut logs);
+        if attempt < 2 {
+            assert_eq!(result, None, "failed walk {attempt} retries");
+            assert!(matches!(ops.as_slice(), [InteractReq::Walk { .. }]));
+            let retry = ops[0].clone();
+            assert_ne!(walk_tile(&retry), dest, "retry chooses another stand");
+            assert!(orthogonally_adjacent(
+                walk_tile(&retry),
+                WorldTile {
+                    x: luthas.x,
+                    z: luthas.z + 1,
+                    level: luthas.level,
+                }
+            ));
+            walk = retry;
+        } else {
+            assert_eq!(result, Some(false), "the third failed walk ends recovery");
+            assert!(ops.is_empty());
+        }
+    }
+
+    assert_eq!(
+        logs.iter()
+            .filter(|line| line.contains("failed cause=walk"))
+            .count(),
+        3
+    );
+    assert!(logs.last().is_some_and(|line| {
+        line.contains("recovery ended after approach 3/3")
+            && line.contains("did not reach the selected stand")
+    }));
 }
 
 #[test]
