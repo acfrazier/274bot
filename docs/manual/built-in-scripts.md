@@ -100,6 +100,18 @@ next quest. Two stops need your action:
 | `quest list was not observed within 30 seconds: log out and log in normally outside the tutorial (finish it if needed), then Stop/Start Quester` | Do what the message says. |
 | `cancelled by user input` | You moved the bot while the Quester walked or acted, so it stopped. Click **Start**; [Pause, resume and stop](running-scripts.md#pause-resume-and-stop) explains. |
 
+If the active quest is stuck, select its bot and use **Skip quest** beside the
+Quester status. In the terminal app, press **k** on the **Script** screen.
+The command cancels the active walk or action and releases the quest's prayers
+and holds. The row becomes parked (`P`) with the reason `skipped by operator`.
+The queue starts its next candidate on a later tick, without Stop/Start.
+
+The skipped quest does not run again during this run. A new **Start** refreshes
+parked rows. If no candidate remains, the normal end rules apply: all done
+means Complete, but a parked row means Blocked with its reason.
+The command refuses if the bot does not run the Quester queue or has no active
+quest, including while it prepares a guide. Both apps show a temporary reason.
+
 The Log window shows the run in more detail. When a guide starts, the Log names
 the guide, where it loaded from, a fingerprint of the exact file, and the first
 step's comment. Stage changes, step starts, step skips and step finishes follow.
