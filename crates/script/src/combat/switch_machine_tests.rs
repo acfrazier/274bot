@@ -1018,6 +1018,20 @@ fn an_emergency_eat_and_a_protect_leave_room_for_one_wear() {
         let batch = step(&mut harness, &mut scene, tick);
         all.push((tick, rows(&batch)));
         eprintln!("DBGEAT t={tick} {:?} state={:?}", rows(&batch), harness.machine.switch_state());
+        {
+            let frame = frame_of(&harness, &scene);
+            let m = &harness.machine;
+            eprintln!(
+                "DBGEAT   opp={} prev={} trig={:?} usable={} wearset={:b} wearready={} phase={:?}",
+                m.opp_protect,
+                m.opp_protect_prev,
+                m.switch_trigger(&frame, false),
+                m.style_usable(Style::Ranged, &frame),
+                m.wear_set(Style::Ranged, &frame),
+                m.schedule.ready(OpKind::Wear, tick as u16),
+                m.phase
+            );
+        }
         if !wear_names(&batch).is_empty() {
             first_wear = Some((tick, batch));
         }
