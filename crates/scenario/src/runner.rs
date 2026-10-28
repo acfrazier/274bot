@@ -145,6 +145,14 @@ struct LootTripObservation {
     progress_xp: Option<i32>,
 }
 
+/// Bounded continuation for [`StepKind::ObserveCombatAcrossBankReturns`].
+#[derive(Debug, Clone, Copy, Default)]
+struct CombatBankReturnObservation {
+    bank_open_seen: bool,
+    bank_generation: u64,
+    restarts: u8,
+}
+
 const PROTECT_MAGIC_VARP: i32 = 95;
 const ZAMORAK_WIZARD: usize = 1007;
 
@@ -477,6 +485,8 @@ pub struct ScenarioRunner {
     stall_combat: Option<StallCombatObservation>,
     /// Pre-style Loot-count trips for the current style watch.
     loot_trips: Option<LootTripObservation>,
+    /// Fresh combat windows anchored on completed bank returns.
+    combat_bank_returns: Option<CombatBankReturnObservation>,
     /// Random-event Guardian episode, armed by an
     /// [`StepKind::ObserveRandomEvent`] step and kept for the terminal receipt.
     random_event: Option<RandomEventEpisode>,
@@ -599,6 +609,7 @@ impl ScenarioRunner {
             maze_episode: None,
             stall_combat: None,
             loot_trips: None,
+            combat_bank_returns: None,
             random_event: None,
             protect_window: None,
             death_chat_baseline: None,
@@ -1112,6 +1123,17 @@ impl ScenarioRunner {
                 ));
                 return;
             }
+            let bank_return_ready = match self.observe_combat_bank_returns(arm) {
+                Ok(ready) => ready,
+                Err(message) => {
+                    self.finish_fail(&format!(
+                        "step {} ({}): {message}",
+                        self.step + 1,
+                        self.current_step().name
+                    ));
+                    return;
+                }
+            };
             let waited_game_ticks = if matches!(arm, Proof::GroundItemIdsAbsentNear { .. }) {
                 self.ground_guard
                     .as_ref()
@@ -1152,7 +1174,8 @@ impl ScenarioRunner {
             let native_episode_holds = random_event_holds
                 && self.observe_lamp_redemption(hold).unwrap_or(true)
                 && self.observe_maze_completion(hold).unwrap_or(true)
-                && stall_combat_holds;
+                && stall_combat_holds
+                && bank_return_ready;
             let arm_holds = match &self.current_step().kind {
                 StepKind::Await { ready, .. } => ready(&self.snapshot),
                 StepKind::Relog => {
@@ -1366,6 +1389,14 @@ impl ScenarioRunner {
             StepKind::ObserveStyleAcrossLootTrips { .. }
         )
         .then(LootTripObservation::default);
+        self.combat_bank_returns = matches!(
+            self.current_step().kind,
+            StepKind::ObserveCombatAcrossBankReturns { .. }
+        )
+        .then_some(CombatBankReturnObservation {
+            bank_generation: self.snapshot.bank_session_generation(),
+            ..CombatBankReturnObservation::default()
+        });
         if let StepKind::ObserveRandomEvent { cell } = self.current_step().kind {
             // The cells run on the 289 engine (`tools/engine-patches/289`);
             // missing content data leaves the evade range unknown, which the
@@ -1537,6 +1568,56 @@ impl ScenarioRunner {
             self.game_ticks_waited = 0;
         }
         Ok(())
+    }
+
+    fn observe_combat_bank_returns(&mut self, arm: Proof) -> Result<bool, &'static str> {
+        let StepKind::ObserveCombatAcrossBankReturns {
+            stand,
+            radius,
+            max_restarts,
+        } = self.current_step().kind
+        else {
+            return Ok(true);
+        };
+        let Proof::FreshStatXpGain { id, .. } = arm else {
+            return Err("bank-return combat watch requires a fresh XP arm");
+        };
+        let at_stand = Proof::ArrivedNear {
+            x: stand.x,
+            z: stand.z,
+            level: stand.level,
+            radius,
+        }
+        .check(&self.snapshot, None);
+        let fresh_bank = Proof::BankOpen.check(&self.snapshot, None);
+        let bank_closed = Proof::BankClosed.check(&self.snapshot, None);
+        let bank_generation = self.snapshot.bank_session_generation();
+        let xp = self.stat_xp(id);
+        let Some(state) = self.combat_bank_returns.as_mut() else {
+            return Ok(false);
+        };
+        if !state.bank_open_seen
+            && fresh_bank
+            && !at_stand
+            && bank_generation > state.bank_generation
+        {
+            if state.restarts >= max_restarts {
+                return Err("bank-return restart limit spent without fresh combat XP");
+            }
+            state.bank_open_seen = true;
+            state.bank_generation = bank_generation;
+            self.game_ticks_waited = 0;
+        }
+        if state.bank_open_seen {
+            if bank_closed && at_stand && bank_generation > state.bank_generation {
+                state.bank_open_seen = false;
+                state.restarts += 1;
+                self.fresh_xp_baseline = xp.map(|xp| (id, xp));
+                self.game_ticks_waited = 0;
+            }
+            return Ok(false);
+        }
+        Ok(bank_closed && at_stand)
     }
 
     fn observe_stall_combat(&mut self, xp_gained: bool) -> Result<bool, &'static str> {
@@ -2024,6 +2105,7 @@ impl ScenarioRunner {
             | StepKind::ObserveLampRedemption { .. }
             | StepKind::ObserveStallCombat { .. }
             | StepKind::ObserveStyleAcrossLootTrips { .. }
+            | StepKind::ObserveCombatAcrossBankReturns { .. }
             | StepKind::ObserveRandomEvent { .. } => Ok(()),
             StepKind::Relog => {
                 self.relog_session.get_or_insert(client.gens.session);

@@ -6795,6 +6795,20 @@ fn chicken_killer_bank_registers_guaranteed_bones_trip_and_fresh_combat() {
             min: 1
         }
     );
+    let continuation = bank.steps.last().unwrap();
+    assert_eq!(continuation.wait.budget_ticks, SCRIPT_GOLD_WATCH_TICKS);
+    assert!(matches!(
+        continuation.kind,
+        StepKind::ObserveCombatAcrossBankReturns {
+            stand: WorldTile {
+                x: 3029,
+                z: 3294,
+                level: 0
+            },
+            radius: 6,
+            max_restarts: 3,
+        }
+    ));
     let core = get("chicken_killer").unwrap();
     assert!(
         core.settings
