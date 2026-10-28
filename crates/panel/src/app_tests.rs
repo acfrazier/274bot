@@ -98,6 +98,38 @@ fn panel_exit_status_child() {
             });
             std::process::exit(live_exit_code(&live, None).expect("PASS exits immediately"));
         }
+        #[cfg(feature = "memory-profile")]
+        Ok("memory_fail") => {
+            let mut state = PanelState::default();
+            state.session.core.set_play(Some(frontend_core::test_support::empty_play(
+                &host_play::PlayOptions {
+                    host: "127.0.0.1".into(),
+                    transport: client::Transport::Tcp,
+                    port: 1,
+                    cache_dir: std::env::temp_dir(),
+                    lowmem: true,
+                    mainland: false,
+                },
+            )));
+            let config = frontend_core::bench::BenchConfig::from_env()
+                .expect("benchmark configuration")
+                .expect("memory benchmark enabled");
+            state.memory = Some(
+                frontend_core::bench::BenchRun::prepare(config, "panel")
+                    .expect("unseeded benchmark"),
+            );
+            let failure = std::sync::Mutex::new(None);
+            assert!(super::frame_pumps(&mut state, &failure));
+            assert!(
+                !state.session.core.has_play(),
+                "slot threads must retire before the window GPU is released"
+            );
+            assert!(
+                failure.lock().unwrap().as_deref().unwrap().contains("missing seed for"),
+                "benchmark errors must still produce a failing exit status"
+            );
+            eprintln!("memory workers retired before window teardown");
+        }
         other => panic!("unknown child mode {other:?}"),
     }
 }
@@ -133,6 +165,37 @@ fn live_pass_exits_the_process_successfully() {
 #[test]
 fn normal_interactive_window_close_remains_successful() {
     assert!(finish_panel_run(Ok(()), None).is_ok());
+}
+
+#[cfg(feature = "memory-profile")]
+#[test]
+fn failed_memory_run_retires_play_before_the_gpu_window_is_released() {
+    let dir = TestDir::new("memory-panel-exit");
+    let output = std::process::Command::new(std::env::current_exe().expect("current test executable"))
+        .args([
+            "--ignored",
+            "--exact",
+            "--nocapture",
+            "app::tests::panel_exit_status_child",
+        ])
+        .env("PANEL_EXIT_CHILD", "memory_fail")
+        .env("BOT_MEMORY_N", "1")
+        .env("BOT_MEMORY_WORKLOAD", "seeded-idle")
+        .env("BOT_MEMORY_OUTPUT", dir.join("samples.jsonl"))
+        .env("BOT_LIVE_NAME_PREFIX", "pex")
+        .env_remove("RS2B0T")
+        .output()
+        .expect("run memory exit child");
+    assert!(
+        output.status.success(),
+        "terminal memory run must return to the caller before process exit:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("memory workers retired before window teardown"),
+        "the child must observe the owned Play retire before window teardown"
+    );
 }
 
 fn live_exit_child(mode: &str) -> std::process::Output {
