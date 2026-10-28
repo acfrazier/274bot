@@ -39,6 +39,31 @@ impl RenderPolicy {
     }
 }
 
+/// Which benchmark workload runs on the prepared slots.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Workload {
+    /// Unseeded idle slots.
+    Idle,
+    /// Idle slots with the seeded-idle setup.
+    SeededIdle,
+    /// Active slots running the selected scenario.
+    Active,
+    /// Slots that repeatedly start and stop the selected scenario.
+    Lifecycle,
+}
+
+impl Workload {
+    fn from_host(workload: host_play::memory::Workload) -> Self {
+        use host_play::memory::Workload as W;
+        match workload {
+            W::Idle => Self::Idle,
+            W::SeededIdle => Self::SeededIdle,
+            W::Active => Self::Active,
+            W::Lifecycle => Self::Lifecycle,
+        }
+    }
+}
+
 /// The benchmark configuration read from the environment.
 #[derive(Debug)]
 pub struct BenchConfig(Box<host_play::memory::Config>);
@@ -113,6 +138,11 @@ impl BenchRun {
     /// Which slots draw.
     pub fn render_policy(&self) -> RenderPolicy {
         RenderPolicy::from_host(self.0.render_policy)
+    }
+
+    /// The workload selected for this run.
+    pub fn workload(&self) -> Workload {
+        Workload::from_host(self.0.config.workload)
     }
 
     /// The index of the name to focus now.
