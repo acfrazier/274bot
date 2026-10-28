@@ -395,6 +395,11 @@ impl NativeMachine for Combat {
         let Some(frame) = Frame::borrow(snapshot) else {
             return Poll::Pending;
         };
+        // begin can lack a complete frame. Resolve the weapon choice before
+        // Prep, even when the target is not yet in engage range.
+        if self.rhand_pick < 0 {
+            self.pick_weapon(&frame);
+        }
         let Some(chat) = snapshot.chat_lines(self.chat_since) else {
             return Poll::Pending;
         };

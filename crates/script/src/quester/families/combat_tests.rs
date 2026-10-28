@@ -1669,8 +1669,8 @@ fn m4_escape_filters_unreachable_live_goals_and_retries_a_distinct_tier() {
         chase_range: 14,
     };
     let mut reach = open_flood(M4_HERE, 32);
-    let index = ((M4_THICKET.x - reach.base_x) * reach.height
-        + (M4_THICKET.z - reach.base_z)) as usize;
+    let index =
+        ((M4_THICKET.x - reach.base_x) * reach.height + (M4_THICKET.z - reach.base_z)) as usize;
     let word = index / u32::BITS as usize;
     let mask = !(1u32 << (index % u32::BITS as usize));
     reach.walkable[word] &= mask;
@@ -1704,7 +1704,11 @@ fn m4_escape_filters_unreachable_live_goals_and_retries_a_distinct_tier() {
         .next_goals(&geometry, None, Some(&reach))
         .expect("the bounded pass has another reachable tier");
     assert!(
-        second.goals.preferred().iter().all(|goal| !first_tier.contains(goal)),
+        second
+            .goals
+            .preferred()
+            .iter()
+            .all(|goal| !first_tier.contains(goal)),
         "a retry chooses other goals"
     );
     assert!(
