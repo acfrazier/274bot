@@ -320,6 +320,18 @@ fn set_reach_bit(bits: &mut [u32], index: usize) {
 }
 
 fn install_luthas_reach_view(anchor: WorldTile, blocked: Option<WorldTile>) {
+    install_luthas_reach_view_with(anchor, blocked, None);
+}
+
+fn install_only_walkable_unreachable_luthas_stand(anchor: WorldTile, stand: WorldTile) {
+    install_luthas_reach_view_with(anchor, None, Some(stand));
+}
+
+fn install_luthas_reach_view_with(
+    anchor: WorldTile,
+    blocked: Option<WorldTile>,
+    only_walkable_unreachable: Option<WorldTile>,
+) {
     let npc = WorldTile {
         x: anchor.x,
         z: anchor.z + 1,
@@ -339,11 +351,16 @@ fn install_luthas_reach_view(anchor: WorldTile, blocked: Option<WorldTile>) {
             z: npc.z + dz,
             level: npc.level,
         };
-        if blocked == Some(stand) {
+        if blocked == Some(stand)
+            || only_walkable_unreachable.is_some_and(|only| only != stand)
+        {
             continue;
         }
         let i = index(stand);
         set_reach_bit(&mut walkable, i);
+        if only_walkable_unreachable == Some(stand) {
+            continue;
+        }
         set_reach_bit(&mut reachable, i);
         set_reach_bit(&mut reachable_adj, i);
         exact_rank[i] = 1;
@@ -724,6 +741,75 @@ fn failed_luthas_approaches_spend_the_budget_and_keep_the_last_detail() {
             .count(),
         3,
         "each failed approach has a diagnostic line"
+    );
+}
+
+#[test]
+fn a_walkable_but_unreachable_luthas_stand_is_not_selected() {
+    reset();
+    let mut world = World::new(MUSA, 5);
+    let luthas = world.facts.luthas_anchor;
+    let unreachable = luthas;
+    install_only_walkable_unreachable_luthas_stand(luthas, unreachable);
+    world.post();
+    let coins = world.facts.coins;
+    let fare = world.facts.coin_payout;
+    fail_short(&mut world, 1, PORT_SARIM, 2, (coins, fare));
+
+    crate::reach_query::with_view(|view| {
+        assert!(view.walkable(unreachable));
+        assert!(!view.can_reach(
+            unreachable,
+            &api::query::SceneReachOptions {
+                max_steps: Some(400),
+                adjacent_ok: false,
+            },
+        ));
+    });
+
+    let mut ops = Vec::new();
+    let mut clock = InstantTaskClock::new();
+    let mut logs = VecDeque::new();
+    let recovery = {
+        let mut cx = Cx::test(&mut ops, &mut clock, None);
+        Recover::start(PORT_SARIM, &mut cx, &mut logs)
+    };
+    assert!(
+        recovery.is_err(),
+        "a walkable but unreachable stand must not start an approach"
+    );
+    assert!(ops.is_empty(), "no unreachable stand walk is emitted: {ops:?}");
+}
+
+#[test]
+fn first_luthas_approach_uses_an_orthogonal_stand_from_a_diagonal_tile() {
+    reset();
+    let mut world = World::new(MUSA, 5);
+    let luthas = world.facts.luthas_anchor;
+    let npc = WorldTile {
+        x: luthas.x,
+        z: luthas.z + 1,
+        level: luthas.level,
+    };
+    world.here = WorldTile {
+        x: npc.x + 1,
+        z: npc.z + 1,
+        level: npc.level,
+    };
+    assert_eq!(world.here.x.abs_diff(npc.x), 1);
+    assert_eq!(world.here.z.abs_diff(npc.z), 1);
+    install_luthas_reach_view(luthas, None);
+    world.post();
+    let coins = world.facts.coins;
+    let fare = world.facts.coin_payout;
+    fail_short(&mut world, 1, PORT_SARIM, 2, (coins, fare));
+
+    let (_, _, _, ops) = start_recovery();
+    assert!(matches!(ops.as_slice(), [InteractReq::Walk { .. }]));
+    let stand = walk_tile(&ops[0]);
+    assert!(
+        orthogonally_adjacent(stand, npc),
+        "first approach stand {stand:?} must be orthogonal to posted Luthas {npc:?}"
     );
 }
 
