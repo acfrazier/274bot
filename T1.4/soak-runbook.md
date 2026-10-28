@@ -57,9 +57,12 @@ Ten accounts gather normal logs from `woodcutting.hemenster`.
 Each account retains one radius-five Start anchor from `NORMAL_STARTS`.
 The checker requires at least two eligible normal trees for each account.
 The source selection ranks patches by their minimum access-tile clearance.
-The selected clearances range from 48 to 27 tiles.
-A matching assigns two distinct authored trees per account.
-Actual Gatherers still choose their own trees, so patches can share candidates.
+The selected clearances range from 45 to 23 tiles.
+Selection includes the radius-one NPC spawn offset, so the initial flee margin is twenty tiles.
+The eligible normal pool contains eighteen trees.
+A matching assigns one distinct tree per account, not twenty independent alternatives.
+Each Start still has at least two eligible trees.
+Actual Gatherers choose their own trees, so shared selection and contention remain possible.
 The fixture does not change the product's bounded-wait policy.
 The other ten accounts use the `woodcutting.flax` maple Site and radius twelve.
 Both groups use Catherby bank.

@@ -41,16 +41,16 @@ const GATHERER_RELOG_STEP: &str = "relog successfully so the inventory tab binds
 // The offline audit checks sampled production routes and initial Guardian
 // travel. It does not prove the worst-case scene-box flee bound.
 const NORMAL_STARTS: [(i32, i32); 10] = [
-    (2659, 3415),
-    (2657, 3416),
-    (2654, 3416),
     (2680, 3417),
-    (2652, 3417),
-    (2685, 3417),
+    (2652, 3418),
+    (2650, 3418),
+    (2651, 3418),
     (2685, 3418),
-    (2649, 3423),
     (2686, 3429),
     (2686, 3432),
+    (2649, 3423),
+    (2686, 3433),
+    (2681, 3436),
 ];
 const NORMAL_RADIUS: i32 = 5;
 const MAPLE_START: (i32, i32) = (2748, 3464);
@@ -79,8 +79,8 @@ const NORMAL_SAFE_WALK: &[SafeWalk] = &[
     SafeWalk {
         min_x: 2644,
         max_x: 2691,
-        min_z: 3410,
-        max_z: 3437,
+        min_z: 3412,
+        max_z: 3441,
     },
     SafeWalk {
         min_x: 2743,
