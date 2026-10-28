@@ -20,7 +20,6 @@ use serde_json::{json, Value};
 use std::num::NonZeroU64;
 use std::sync::Arc;
 use std::task::Poll;
-use std::time::Duration;
 
 /// Frozen bound of a required side-view wait, in server ticks (12 s at 600 ms).
 /// Separate from the 2-tick until-empty side-view wait.
@@ -2642,6 +2641,7 @@ impl NativeMachine for Close {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
     use crate::native::{ActionContext, HostEffect, InteractionReceipt};
     use crate::quester::families::tests::{
         local_player, with_tick, with_tick_reach, with_tick_snapshots,

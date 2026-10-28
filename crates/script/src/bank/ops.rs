@@ -16,7 +16,6 @@
 use crate::shim::InteractReq;
 use api::snapshot::{ItemView, LocView, NpcView, WorldTile};
 use std::sync::Arc;
-use std::time::Duration;
 
 /// The production world tick duration. Server content advances on the 600 ms
 /// engine tick; observed packet bursts can contain several such ticks at once.

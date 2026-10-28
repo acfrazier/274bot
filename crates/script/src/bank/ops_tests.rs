@@ -662,27 +662,17 @@ fn load_click_prefers_the_rows_all_op() {
 }
 
 #[test]
-fn bank_wait_requires_observed_ticks_and_server_tick_time() {
+fn native_bank_wait_expires_on_observed_ticks_alone() {
     let started = 100;
     let limit = TRANSFER_OBSERVED_TICK_LIMIT;
-    assert!(!observed_wait_expired(
-        started,
-        started + limit,
-        Duration::from_millis(limit * SERVER_TICK_MS - 1),
-        limit,
-    ));
-    assert!(!observed_wait_expired(
-        started,
-        started + limit - 1,
-        Duration::from_secs(60),
-        limit,
-    ));
-    assert!(observed_wait_expired(
-        started,
-        started + limit,
-        Duration::from_millis(limit * SERVER_TICK_MS),
-        limit,
-    ));
+    assert!(!observed_wait_expired(started, started + limit - 1, limit));
+    assert!(observed_wait_expired(started, started + limit, limit));
+    assert!(
+        observed_wait_expired(started, started + limit + 5, limit),
+        "later observed ticks stay expired"
+    );
+    assert!(!observed_wait_expired(started, started, limit));
+    // The JavaScript seat rows keep the frozen dual bound of their `Bank` API.
     assert!(!observed_wait_expired_with_time_bound(
         started,
         started + limit,
@@ -702,6 +692,8 @@ fn bank_wait_requires_observed_ticks_and_server_tick_time() {
         limit,
     ));
     assert_eq!(observed_ticks_for_millis(12_000), 20);
+    assert_eq!(observed_ticks_for_millis(1_200), 2);
+    assert_eq!(observed_ticks_for_millis(5_000), 9);
 }
 
 #[test]
