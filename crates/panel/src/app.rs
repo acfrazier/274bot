@@ -8031,13 +8031,17 @@ fn frame_pumps(state: &mut PanelState, live_failure: &Mutex<Option<String>>) -> 
         state.session.memory_focus(run);
         match run.poll(&state.session.core) {
             Ok(true) => {
+                // Join the slot workers before the process tears down the GPU driver.
+                state.session.core.set_play(None);
                 eprintln!("PASS: memory panel observation complete");
-                exit_after_work_shutdown(0);
+                return true;
             }
             Ok(false) => {}
             Err(error) => {
+                state.session.core.set_play(None);
                 eprintln!("FAIL: memory panel: {error}");
-                exit_after_work_shutdown(1);
+                *live_failure.lock().unwrap() = Some(format!("memory panel: {error}"));
+                return true;
             }
         }
     }
