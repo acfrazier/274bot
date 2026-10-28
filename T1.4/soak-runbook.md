@@ -42,7 +42,6 @@ Smoke runs use two accounts for 180 seconds and only the **first** approved late
 The earlier Catherby fixtures also failed real resource routes.
 `smoke-baseline-289144-r/summary.json:95-105` records an unreachable western oak approach.
 `qual-1027/baseline-soak-qualification-attempt-12/events.jsonl:457` records the later normal-tree route outside the audited area.
-The current workload replaces those Catherby tree patches, not Catherby bank.
 These failures do not justify a transport threshold change.
 
 ## Workload route check
@@ -53,25 +52,22 @@ The candidate diagnostic stopped on native `resource-unavailable` after approxim
 Neither diagnostic satisfies the thirty-minute requirement.
 Qualification requires the corrected scoped audit and the remaining authorized diagnostic.
 
-Ten accounts gather normal logs from `woodcutting.hemenster`.
+Ten accounts gather normal logs from the configured real content site.
 Each account retains one radius-five Start anchor from `NORMAL_STARTS`.
 The checker requires at least two eligible normal trees for each account.
 The source selection ranks patches by their minimum access-tile clearance.
-The selected clearances range from 45 to 23 tiles.
 Selection includes the radius-one NPC spawn offset, so the initial flee margin is twenty tiles.
-The eligible normal pool contains eighteen trees.
-A matching assigns one distinct tree per account, not twenty independent alternatives.
-Each Start still has at least two eligible trees.
 Actual Gatherers choose their own trees, so shared selection and contention remain possible.
 The fixture does not change the product's bounded-wait policy.
-The other ten accounts use the `woodcutting.flax` maple Site and radius twelve.
-Both groups use Catherby bank.
+The other ten accounts gather `SECOND_TIER_KEY` within radius twelve of `SECOND_TIER_START`.
+Both groups use Start selection and the configured bank.
+The cohorts may share a real content site when it supports both resource keys.
 Each account receives Woodcutting 99, one rune axe, and 64 banked spare rune axes.
 
-`NORMAL_SAFE_WALK` defines the Hemenster and Flax resource-census rectangles.
+`NORMAL_SAFE_WALK` defines both resource-census rectangles.
 It is not a movement stop condition.
 The guard rejects every authored danger envelope and movement outside `OUTER_WALK_BOUNDS`.
-The outer bound is `x=2624..2879,z=3392..3583,level=0`.
+The selected region has its own outer bound in the shared harness.
 The product-classified Maze and Mime interiors retain their separate travel rules.
 The guard records a `worksite-exit` event when a bot leaves these rectangles.
 That event does not fail the arm.
@@ -83,8 +79,11 @@ It does not exempt a route because a random event caused it.
 Main selected this oracle from source evidence before diagnostic launch 3.
 Real Guardian/client queries rejected Seers maple access and Seers bank.
 A Swarm flee from `(2724,3493)` enters a highwayman envelope at `(2738,3507)`.
-The replacement retains maple gathering at the authored Flax site and uses Catherby bank.
-Flax's best usable maple access stand is `(2748,3464,0)`, with 43-tile clearance.
+Hemenster also failed ordinary replans from accepted Guardian endpoints.
+Main requires a global comparison of bank regions before the final diagnostic.
+The comparison includes actual Guardian routes and their ordinary bank/resource replans.
+It may replace maples with willow or oak logs when the safer region lacks usable maples.
+The report records the selected region and the rejected alternatives.
 Miscellania's 140-tile maple placement is not usable for this workload.
 Its content grants kingdom approval instead of logs.
 See `woodcut.rs2:69-76,140-148` and `lumberjack_leif.rs2:29-40`.
@@ -98,13 +97,13 @@ Main accepts this residual risk before launch 3, with the same rule for both arm
 An adjacent ordinary gate or door may pass the physical-route check.
 The edge must have typed Door identity, no requirements, one-tile adjacency, and no level change.
 Every approach, crossing endpoint, and exit walk must stay clear.
-The Catherby crossing uses loc 1551 at `content/maps/m43_53.jm2:5172`.
-`general_use/configs/gates.loc:1-22` defines its ordinary closed/open pair.
-`general_use/scripts/gates.rs2:45-62,84-94` changes the gate locs without moving the player.
-It has no teleport or skill, item, quest, or level-change requirement.
+Each accepted crossing requires the corresponding content placement and dispatch evidence.
+The report identifies those locs when the chosen region uses gates or doors.
+The region does not need a gate crossing to qualify.
 Stairs, ladders, teleports, agility shortcuts, and nonadjacent transports still fail closed.
 
-Build the offline probe and check the actual routes before either arm:
+Run the following commands in a worker driver through `aubaine.sh`.
+Do not build or query routes on merlot.
 
 ```sh
 BOT_NAV_BUILD=skip cargo build --release --locked -p host-play --example soak_routes
@@ -118,7 +117,7 @@ python3 -B -m unittest discover -s tools -p test_t14_soak_routes.py -v
 
 The checker enumerates all authored resources in each normal patch.
 It rejects a normal patch with fewer than two eligible trees.
-It includes every maple origin in the selected Site.
+It includes every second-tier resource within the retained Start radius.
 It checks every footprint, Reach alternative, return observation, Start, and bank access goal.
 It calls the production hazard-retreat selector for every resource access stand.
 It calls the actual revision-289 client interaction BFS with cached loc geometry and raw collision flags.

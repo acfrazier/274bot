@@ -76,7 +76,7 @@ class RouteSafetyTests(unittest.TestCase):
         self.assertEqual(audit.route_violations(route, areas, [highwayman], cache), [])
         self.assertTrue(audit.route_violations({"tiles": [[2735, 3507, 0]]}, areas, [highwayman]))
 
-    def test_actual_guardian_flee_outside_worksite_passes_but_danger_and_outer_escape_fail(self):
+    def test_historical_guardian_flee_outside_worksite_passes_but_danger_and_outer_escape_fail(self):
         # Complete native-client/v17 receipt, scene base 2600,3376.
         points = [
             (2695, 3473), (2695, 3472), (2695, 3471), (2694, 3470),
@@ -87,11 +87,11 @@ class RouteSafetyTests(unittest.TestCase):
             (2679, 3460), (2678, 3460), (2677, 3459), (2677, 3458),
             (2677, 3457), (2677, 3456), (2677, 3455),
         ]
-        source = audit.ROOT / "crates/host-play/tests/t14_soak_live.rs"
-        _, _, work_areas, _, _ = audit.fixture(source)
-        outer = audit.outer_walk_bounds(source)
+        work_areas = [(2680, 2753, 3440, 3506)]
+        outer = [(2624, 2879, 3392, 3583)]
         game = json.loads((audit.ROOT / "crates/api/data/game-data/289.json").read_text())
         hunters = audit.hunter_envelopes(game)
+        self.assertTrue(audit.contains(work_areas, (*points[0], 0)))
         self.assertFalse(audit.contains(work_areas, (*points[20], 0)))
         self.assertEqual(audit.route_violations(
             {"tiles": [[x, z, 0] for x, z in points]}, outer, hunters), [])
@@ -175,7 +175,8 @@ class RouteSafetyTests(unittest.TestCase):
             source = Path(folder) / "fixture.rs"
             starts = [(100 + index, 200) for index in range(10)]
             source.write_text(
-                f"const NORMAL_STARTS: [(i32, i32); 10] = {starts!r};\n"
+                "const NORMAL_STARTS: [(i32, i32); 10] = [\n"
+                f"    {', '.join(map(str, starts))},\n];\n"
                 "const SECOND_TIER_START: (i32, i32) = (120, 220);\n"
                 "const SECOND_TIER_KEY: &str = \"willow\";\n"
                 "const NORMAL_RADIUS: i32 = 5;\n"

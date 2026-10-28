@@ -69,13 +69,13 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
 
 ### Fixed during development
 
-- The T1.4 transport soak uses radius-five normal-tree Start patches in
-  Hemenster, the authored Flax maple Site, and Catherby bank. Each normal
-  account has at least two eligible trees. The best usable maple stand has
-  43-tile danger-envelope clearance. Miscellania gives approval, not logs.
-  Initial flee selection includes the adjacent NPC spawn offset. The eighteen
-  eligible normal trees can overlap across accounts, so contention remains
-  possible. No Gatherer wait policy changes.
+- The T1.4 transport soak compares real bank regions globally, including
+  Guardian flee/return routes and ordinary replans from their endpoints.
+  It uses radius-five normal-tree Start patches and a radius-twelve Start
+  patch for maple, willow, or oak logs. Each normal account needs at least
+  two eligible trees. Both arms use the same region, tree tiers, bank, and
+  outer bound. Shared tree selection and contention remain possible.
+  No Gatherer wait policy changes.
   The checker tests actual host-router routes, client BFS, Gatherer retreats,
   and initial Guardian flee/return samples. The conservative movement bound
   remains unproved, including continued flee growth and worst-case scene-box

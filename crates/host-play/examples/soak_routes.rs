@@ -552,7 +552,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             host: "127.0.0.1".into(),
             port: 0,
             cache_dir,
-            members: true,
+            members: false,
             lowmem: false,
         },
         cache,
@@ -571,7 +571,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     client.npc_count = 1;
     let batches: Vec<Batch> = serde_json::from_slice(&std::fs::read(&args[3])?)?;
     let mut state = WorldState::empty();
-    state.map_members = true;
+    // The custom WSS roster has no membership declaration. Its Remote
+    // profile resolves Unknown as false, independently of local world.json.
+    state.map_members = false;
     state.combat_level = Some(3);
     let mut out = BufWriter::new(std::fs::File::create(&args[4])?);
     let mut guardian_audit = GuardianAudit {

@@ -30,7 +30,6 @@ const CONFIG_ENV: &str = "BOT_T14_SOAK_CONFIG";
 const OUTPUT_ENV: &str = "BOT_T14_SOAK_OUTPUT";
 const TICK_MS: u64 = 100;
 const NORMAL_LOG_ID: i32 = 1511;
-const MAPLE_LOG_ID: i32 = 1517;
 const WOODCUTTING_STAT_ID: i32 = 8;
 const GATHERER_PREP_STEP: &str = "prepare Woodcutting 1 and a real bronze axe before Start";
 const GATHERER_SITE_STEP: &str = "stand at the live Draynor normal tree before Start";
@@ -53,7 +52,13 @@ const NORMAL_STARTS: [(i32, i32); 10] = [
     (2681, 3436),
 ];
 const NORMAL_RADIUS: i32 = 5;
-const MAPLE_START: (i32, i32) = (2748, 3464);
+const NORMAL_SITE_ID: &str = "woodcutting.hemenster";
+const SECOND_TIER_SITE_ID: &str = "woodcutting.flax";
+const SECOND_TIER_START: (i32, i32) = (2748, 3464);
+const SECOND_TIER_KEY: &str = "maple";
+const SECOND_TIER_LOG_ID: i32 = 1517;
+const SECOND_TIER_LEVEL: i32 = 45;
+const SECOND_TIER_RADIUS: i32 = 12;
 const SOAK_BANK: &str = "Catherby";
 const SOAK_BANK_PREFIX: &str = "Catherby; Reachable;";
 
@@ -208,10 +213,14 @@ fn worksite_census_and_bank_guard_use_distinct_bounds() {
     }
     assert!(!safe_walk_contains(NORMAL_SAFE_WALK, (2808, 3443, 0)));
     assert!(!work_route_escape(OUTER_WALK_BOUNDS, (2808, 3443, 0)));
-    assert!(safe_walk_contains(
-        NORMAL_SAFE_WALK,
-        (MAPLE_START.0, MAPLE_START.1, 0)
-    ));
+    for dx in -SECOND_TIER_RADIUS..=SECOND_TIER_RADIUS {
+        for dz in -SECOND_TIER_RADIUS..=SECOND_TIER_RADIUS {
+            assert!(safe_walk_contains(
+                NORMAL_SAFE_WALK,
+                (SECOND_TIER_START.0 + dx, SECOND_TIER_START.1 + dz, 0)
+            ));
+        }
+    }
 }
 
 #[test]
@@ -643,89 +652,42 @@ fn site_has_key(site: &GatherSiteOption, key: &str) -> bool {
 fn select_sites(root: &Value) -> Result<[BankSite; 2], String> {
     let selected = game_data::for_revision(ClientRevision::R289)
         .map_err(|error| format!("selected 289 game data: {error}"))?;
-    let names = match required(root, "workload.site_names")? {
-        Value::Array(values) => values
-            .iter()
-            .map(|value| {
-                value
-                    .as_str()
-                    .filter(|name| !name.is_empty())
-                    .map(ToOwned::to_owned)
-                    .ok_or_else(|| {
-                        "workload.site_names entries must be non-empty strings".to_owned()
-                    })
-            })
-            .collect::<Result<Vec<_>, _>>()?,
-        _ => return Err("workload.site_names must be an explicit array".into()),
-    };
-    if names.len() != 2 || names[0] == names[1] {
-        return Err("workload.site_names must resolve to two distinct real content sites".into());
-    }
-
-    let mut normal = None;
-    let mut maple = None;
-    for name in names {
+    let names = required(root, "workload.site_names")?
+        .as_array()
+        .filter(|names| names.len() == 2)
+        .ok_or("workload.site_names must contain the two reviewed content sites")?;
+    let select = |index: usize, expected: &str, resource: &'static str| {
+        let name = names[index]
+            .as_str()
+            .filter(|name| *name == expected)
+            .ok_or_else(|| format!("workload.site_names[{index}] must be {expected:?}"))?;
         let site = selected
-            .gather_site("woodcutting", &name)
+            .gather_site("woodcutting", name)
             .ok_or_else(|| format!("selected 289 content lacks woodcutting site {name:?}"))?;
-        match site.id.as_str() {
-            "woodcutting.hemenster" if site_has_key(site, "normal") => {
-                normal = Some(make_site(site, "normal")?);
-            }
-            "woodcutting.flax" if site_has_key(site, "maple") => {
-                maple = Some(make_site(site, "maple")?);
-            }
-            _ => {
-                return Err(format!(
-                    "no reviewed normal/maple live bank seed for {}",
-                    site.id
-                ))
-            }
-        }
-    }
-    match (normal, maple) {
-        (Some(normal), Some(maple)) if normal.id != maple.id => Ok([normal, maple]),
-        _ => Err(
-            "workload.site_names must contain one normal-logs and one maple site from selected 289 content"
-                .into(),
-        ),
-    }
+        make_site(site, resource)
+    };
+    Ok([
+        select(0, NORMAL_SITE_ID, "normal")?,
+        select(1, SECOND_TIER_SITE_ID, SECOND_TIER_KEY)?,
+    ])
 }
 
 fn make_site(site: &GatherSiteOption, resource: &'static str) -> Result<BankSite, String> {
-    let (start, product_id, level, bank, bank_prefix, outer_bounds) =
-        match (site.id.as_str(), resource) {
-            ("woodcutting.hemenster", "normal") => (
-                WorldTile {
-                    x: NORMAL_STARTS[0].0,
-                    z: NORMAL_STARTS[0].1,
-                    level: 0,
-                },
-                NORMAL_LOG_ID,
-                1,
-                SOAK_BANK,
-                SOAK_BANK_PREFIX,
-                OUTER_WALK_BOUNDS,
-            ),
-            ("woodcutting.flax", "maple") => (
-                WorldTile {
-                    x: MAPLE_START.0,
-                    z: MAPLE_START.1,
-                    level: 0,
-                },
-                MAPLE_LOG_ID,
-                45,
-                SOAK_BANK,
-                SOAK_BANK_PREFIX,
-                OUTER_WALK_BOUNDS,
-            ),
-            _ => {
-                return Err(format!(
-                    "no reviewed live bank seed is available for {} ({resource})",
-                    site.id
-                ))
-            }
-        };
+    if !site_has_key(site, resource) {
+        return Err(format!("selected content site {} lacks {resource}", site.id));
+    }
+    let (anchor, product_id, level) = if resource == "normal" {
+        (NORMAL_STARTS[0], NORMAL_LOG_ID, 1)
+    } else if resource == SECOND_TIER_KEY {
+        (SECOND_TIER_START, SECOND_TIER_LOG_ID, SECOND_TIER_LEVEL)
+    } else {
+        return Err(format!("no reviewed live bank seed for {resource}"));
+    };
+    let start = WorldTile {
+        x: anchor.0,
+        z: anchor.1,
+        level: 0,
+    };
     let region = &site.region;
     // A real resource access stand may sit one tile outside its Site rectangle.
     if start.x < region.min_x - 1
@@ -744,10 +706,10 @@ fn make_site(site: &GatherSiteOption, resource: &'static str) -> Result<BankSite
         resource,
         product_id,
         level,
-        bank,
-        bank_prefix,
+        bank: SOAK_BANK,
+        bank_prefix: SOAK_BANK_PREFIX,
         start,
-        outer_bounds,
+        outer_bounds: OUTER_WALK_BOUNDS,
     })
 }
 
@@ -1010,7 +972,7 @@ fn scenario_for(site: &BankSite, duration: Duration) -> Result<Scenario, String>
 #[test]
 fn soak_seed_proves_rune_axe_without_inherited_bronze_equipment() {
     let sites = select_sites(&json!({
-        "workload": {"site_names": ["woodcutting.hemenster", "woodcutting.flax"]}
+        "workload": {"site_names": [NORMAL_SITE_ID, SECOND_TIER_SITE_ID]}
     }))
     .expect("selected content sites");
     for site in sites {
@@ -1049,21 +1011,14 @@ fn bank_settings(site: &BankSite) -> Map<String, Value> {
     settings.insert("skill".into(), json!("Woodcutting"));
     settings.insert("woodcuttingResources".into(), json!([site.resource]));
     settings.insert("targetPreference".into(), json!("Nearest"));
-    settings.insert(
-        "location".into(),
-        json!(if site.resource == "normal" {
-            "Start"
-        } else {
-            "Site"
-        }),
-    );
+    settings.insert("location".into(), json!("Start"));
     settings.insert("site".into(), json!(site.id));
     settings.insert(
         "radius".into(),
         json!(if site.resource == "normal" {
             NORMAL_RADIUS
         } else {
-            12
+            SECOND_TIER_RADIUS
         }),
     );
     settings.insert("disposition".into(), json!("Bank"));
@@ -1073,6 +1028,24 @@ fn bank_settings(site: &BankSite) -> Map<String, Value> {
     settings.insert("deathPolicy".into(), json!("Stop"));
     settings.insert("maxDeaths".into(), json!(2));
     settings
+}
+
+#[test]
+fn bank_settings_pin_both_tree_tiers_to_their_start_radius() {
+    let sites = select_sites(&json!({
+        "workload": {"site_names": [NORMAL_SITE_ID, SECOND_TIER_SITE_ID]}
+    }))
+    .expect("selected content sites");
+    for (site, radius) in sites.iter().zip([NORMAL_RADIUS, SECOND_TIER_RADIUS]) {
+        let settings = bank_settings(site);
+        assert_eq!(settings["location"], json!("Start"));
+        assert_eq!(settings["radius"], json!(radius));
+        assert_eq!(settings["woodcuttingResources"], json!([site.resource]));
+        assert_eq!(settings["bank"], json!(SOAK_BANK));
+        assert_eq!(settings["disposition"], json!("Bank"));
+        assert_eq!(settings["allowTeleports"], json!(false));
+        assert_eq!(settings["allowWilderness"], json!(false));
+    }
 }
 
 fn write_pid_atomic(output: &Path) -> Result<(), String> {
@@ -1265,13 +1238,12 @@ fn make_actor(
         return Err("the soak requires the existing 50-game-tick compiled Start budget".into());
     }
     let world = template.world();
-    if site.resource == "normal"
-        && !world
-            .as_ref()
-            .is_some_and(|world| world.collision.standable(site.start))
+    if !world
+        .as_ref()
+        .is_some_and(|world| world.collision.standable(site.start))
     {
         return Err(format!(
-            "normal-tree fixture Start is not standable: {:?}",
+            "woodcutting fixture Start is not standable: {:?}",
             site.start
         ));
     }

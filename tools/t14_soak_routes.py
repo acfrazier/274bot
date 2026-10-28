@@ -81,7 +81,7 @@ def blocks(path):
 
 
 def rust_constant(text, name, pattern):
-    match = re.search(rf"const {name}\b[^=]*= {pattern};", text)
+    match = re.search(rf"const {name}\b[^=]*= {pattern};", text, re.S)
     if not match:
         raise ValueError(f"fixture is missing {name}")
     return match[1]
