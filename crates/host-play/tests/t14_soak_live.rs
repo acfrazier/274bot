@@ -37,21 +37,22 @@ const GATHERER_SITE_STEP: &str = "stand at the live Draynor normal tree before S
 const GATHERER_TREE_PROOF_STEP: &str = "confirm the selected-289 normal tree is live before Start";
 const GATHERER_RELOG_STEP: &str = "relog successfully so the inventory tab binds before Start";
 
-// Ten resource-disjoint radius-two normal-tree patches west of Seers.
-// tools/t14_soak_routes.py checks authored resources, all access alternatives,
-// bank return goals, and replans from every tile in NORMAL_SAFE_WALK.
+// Ten resource-disjoint radius-two normal-tree patches in Seers.
+// The offline audit checks complete production routes, their replan closure,
+// all resource/return/bank access alternatives, and actual hazard retreats.
 const NORMAL_STARTS: [(i32, i32); 10] = [
-    (2683, 3452),
-    (2692, 3452),
-    (2698, 3452),
-    (2682, 3465),
-    (2685, 3468),
-    (2691, 3475),
-    (2695, 3473),
-    (2705, 3465),
-    (2711, 3456),
-    (2711, 3466),
+    (2721, 3475),
+    (2722, 3483),
+    (2723, 3468),
+    (2724, 3471),
+    (2725, 3479),
+    (2725, 3484),
+    (2730, 3494),
+    (2731, 3478),
+    (2736, 3483),
+    (2740, 3493),
 ];
+const MAPLE_START: (i32, i32) = (2683, 3540);
 
 #[derive(Clone, Copy)]
 struct SafeWalk {
@@ -72,12 +73,26 @@ impl SafeWalk {
 // This area excludes every authored hunter envelope, independently of combat
 // level. It is not route evidence by itself. The offline router audit checks
 // complete paths and every alternative resource, return, and bank stand.
-const NORMAL_SAFE_WALK: &[SafeWalk] = &[SafeWalk {
-    min_x: 2680,
-    max_x: 2740,
-    min_z: 3448,
-    max_z: 3506,
-}];
+const NORMAL_SAFE_WALK: &[SafeWalk] = &[
+    SafeWalk {
+        min_x: 2660,
+        max_x: 2698,
+        min_z: 3512,
+        max_z: 3560,
+    },
+    SafeWalk {
+        min_x: 2680,
+        max_x: 2720,
+        min_z: 3485,
+        max_z: 3558,
+    },
+    SafeWalk {
+        min_x: 2706,
+        max_x: 2753,
+        min_z: 3460,
+        max_z: 3506,
+    },
+];
 
 fn safe_walk_contains(areas: &[SafeWalk], tile: (i32, i32, i32)) -> bool {
     areas.iter().any(|area| area.contains(tile))
@@ -111,16 +126,19 @@ fn safe_walk_accepts_worksites_and_seers_bank() {
         }
     }
     assert!(safe_walk_contains(NORMAL_SAFE_WALK, (2724, 3493, 0)));
-    assert!(safe_walk_contains(NORMAL_SAFE_WALK, (2727, 3501, 0)));
+    assert!(safe_walk_contains(
+        NORMAL_SAFE_WALK,
+        (MAPLE_START.0, MAPLE_START.1, 0)
+    ));
 }
 
 #[test]
 fn safe_walk_rejects_every_boundary_and_old_unsafe_route() {
     for tile in [
-        (2679, 3480, 0),
-        (2741, 3480, 0),
-        (2700, 3447, 0),
-        (2700, 3507, 0),
+        (2659, 3540, 0),
+        (2754, 3480, 0),
+        (2730, 3459, 0),
+        (2680, 3561, 0),
         (2700, 3480, 1),
         (2735, 3521, 0),
         (2811, 3473, 0),
@@ -551,10 +569,10 @@ fn select_sites(root: &Value) -> Result<[BankSite; 2], String> {
             .gather_site("woodcutting", &name)
             .ok_or_else(|| format!("selected 289 content lacks woodcutting site {name:?}"))?;
         match site.id.as_str() {
-            "woodcutting.seers_village" if site_has_key(site, "normal") => {
+            "woodcutting.seers" if site_has_key(site, "normal") => {
                 normal = Some(make_site(site, "normal")?);
             }
-            "woodcutting.seers" if site_has_key(site, "maple") => {
+            "woodcutting.seers.nw" if site_has_key(site, "maple") => {
                 maple = Some(make_site(site, "maple")?);
             }
             _ => {
@@ -577,7 +595,7 @@ fn select_sites(root: &Value) -> Result<[BankSite; 2], String> {
 fn make_site(site: &GatherSiteOption, resource: &'static str) -> Result<BankSite, String> {
     let (start, product_id, level, bank, bank_prefix, safe_walk) =
         match (site.id.as_str(), resource) {
-            ("woodcutting.seers_village", "normal") => (
+            ("woodcutting.seers", "normal") => (
                 WorldTile {
                     x: NORMAL_STARTS[0].0,
                     z: NORMAL_STARTS[0].1,
@@ -589,10 +607,10 @@ fn make_site(site: &GatherSiteOption, resource: &'static str) -> Result<BankSite
                 "Seers; Reachable;",
                 Some(NORMAL_SAFE_WALK),
             ),
-            ("woodcutting.seers", "maple") => (
+            ("woodcutting.seers.nw", "maple") => (
                 WorldTile {
-                    x: 2727,
-                    z: 3501,
+                    x: MAPLE_START.0,
+                    z: MAPLE_START.1,
                     level: 0,
                 },
                 MAPLE_LOG_ID,
@@ -2094,6 +2112,8 @@ fn run_live(config_path: &Path, output: &Path) -> Result<(), String> {
                     end_monotonic_ns = Some(run_deadline_ns);
                     outcome = if config.qualification {
                         "workload-window-complete-awaiting-external-evaluation"
+                    } else if config.slots == 20 {
+                        "diagnostic-complete-nonqualifying"
                     } else {
                         "smoke-complete-nonqualifying"
                     };

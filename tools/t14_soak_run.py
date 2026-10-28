@@ -194,7 +194,13 @@ def main() -> int:
     parser.add_argument("--config", type=Path, default=SOURCE_CONFIG)
     parser.add_argument("--output", type=Path, required=True, help="new absent per-run evidence directory")
     parser.add_argument("--seed", type=int, required=True, help="same value for dev baseline and candidate")
-    parser.add_argument("--smoke", action="store_true", help="nonqualifying two-slot infrastructure smoke")
+    run_mode = parser.add_mutually_exclusive_group()
+    run_mode.add_argument("--smoke", action="store_true", help="nonqualifying two-slot infrastructure smoke")
+    run_mode.add_argument("--diagnostic-seconds", type=int,
+                          help="nonqualifying full-cohort window from the actual phase-zero Start")
+    parser.add_argument("--engine-dir", type=Path, help="diagnostic/smoke engine tree, read only")
+    parser.add_argument("--upstream-port", type=int, help="diagnostic/smoke engine HTTP/WS port")
+    parser.add_argument("--name-prefix", help="private live-account namespace, 1 to 4 ASCII characters")
     parser.add_argument("--smoke-duration-seconds", type=int,
                         help="duration of a nonqualifying smoke (default: 180 seconds)")
     parser.add_argument("--repo", type=Path, default=ROOT, help="repo with the T1.4 live test installed")
@@ -215,6 +221,27 @@ def main() -> int:
         raise ValueError("--smoke-duration-seconds requires --smoke")
     if args.smoke_duration_seconds is not None and args.smoke_duration_seconds <= 0:
         raise ValueError("--smoke-duration-seconds must be positive")
+    if args.diagnostic_seconds is not None and args.diagnostic_seconds <= 0:
+        raise ValueError("--diagnostic-seconds must be positive")
+    diagnostic = args.diagnostic_seconds is not None
+    if (args.engine_dir is not None or args.upstream_port is not None) and not (args.smoke or diagnostic):
+        raise ValueError("engine overrides are diagnostic/smoke-only")
+    if args.upstream_port is not None and not 1 <= args.upstream_port <= 65535:
+        raise ValueError("--upstream-port must be a valid TCP port")
+    if args.name_prefix is not None:
+        if not args.name_prefix.isascii() or not args.name_prefix.isalnum() or not 1 <= len(args.name_prefix) <= 4:
+            raise ValueError("--name-prefix must contain 1 to 4 ASCII letters or digits")
+        config["run"]["name_prefix"] = args.name_prefix
+    if args.engine_dir is not None:
+        config["profile"]["engine_dir"] = str(args.engine_dir.resolve(strict=True))
+    if args.upstream_port is not None:
+        config["proxy"]["upstream_port"] = args.upstream_port
+    if diagnostic:
+        config["run"]["duration_seconds"] = args.diagnostic_seconds
+        config["_sources"]["diagnostic_override"] = (
+            f"nonqualifying full 20-account diagnostic for {args.diagnostic_seconds} phase-zero seconds; "
+            "source duration, workload, fault phases and all acceptance limits remain unchanged"
+        )
     if args.smoke:
         config["run"]["slots"] = 2
         config["run"]["duration_seconds"] = args.smoke_duration_seconds or 180
@@ -224,7 +251,7 @@ def main() -> int:
         config["_sources"]["smoke_override"] = (
             f"nonqualifying two-slot infrastructure smoke for {config['run']['duration_seconds']} seconds"
         )
-    else:
+    elif not diagnostic:
         if config["run"]["slots"] != 20 or config["run"]["duration_seconds"] != 7200:
             raise ValueError("qualification cohort must remain 20 slots for 7200 seconds")
     if args.diagnostic_no_ws_faults and not args.smoke:
@@ -283,7 +310,7 @@ def main() -> int:
         "read-only Engine A data/config/private.pem public RSA modulus; "
         "local HTTPS /client/client.js fixture only, identical dev/candidate"
     )
-    config["run"]["qualification"] = not args.smoke
+    config["run"]["qualification"] = not (args.smoke or diagnostic)
     config["run"]["source_config"] = str(source)
     effective = output / "effective-config.json"
     proxy_output = output / "proxy"
@@ -314,7 +341,7 @@ def main() -> int:
             check=True, text=True, capture_output=True,
         ).stdout.strip()
         (output / "run-manifest.json").write_text(json.dumps({
-            "mode": "smoke" if args.smoke else "qualification",
+            "mode": "diagnostic" if diagnostic else "smoke" if args.smoke else "qualification",
             "build": args.mode, "profile": "release",
             "repo": str(repo), "config": str(effective),
             "roster": str(roster), "seed": args.seed,

@@ -23,6 +23,16 @@ pub use card::CARD;
 #[cfg(feature = "test-hooks")]
 pub use drop::{DropBatch, DropBatchArgs, DropEnd, DropResult};
 pub use runner::Gatherer;
+
+/// The production hazard-retreat target, exposed for offline fixture audits.
+#[cfg(feature = "test-hooks")]
+pub fn test_hazard_retreat_stand(
+    here: api::snapshot::WorldTile,
+    hazard: api::snapshot::WorldTile,
+    collision: nav_planner::contract::CollisionView<'_>,
+) -> Option<api::snapshot::WorldTile> {
+    runner::hazard_retreat_stand(here, hazard, Some(collision))
+}
 pub use settings::{GathererSettings, Skill};
 /// Test-only view of the inventory rows Gatherer will deposit at a bank.
 ///

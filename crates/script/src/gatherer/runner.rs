@@ -138,7 +138,7 @@ fn walk_failure_message(receipt: &WalkReceipt) -> String {
 /// router can actually step to from `here` inside that bound, ranked
 /// toward the away-from-hazard direction. Missing collision treats every
 /// in-bound tile as reachable so the one-step away tile still wins.
-fn hazard_retreat_stand(
+pub(super) fn hazard_retreat_stand(
     here: WorldTile,
     hazard: WorldTile,
     collision: Option<nav_planner::contract::CollisionView<'_>>,

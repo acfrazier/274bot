@@ -69,6 +69,11 @@ All notable public changes to 274bot. Host workspace crate versions are `0.2.7` 
 
 ### Fixed during development
 
+- The T1.4 transport soak uses independent normal-tree patches in Seers and
+  northwest Seers maples. An offline checker tests complete router paths,
+  replan origins, bank alternatives and actual hazard retreats against every
+  authored hunter envelope before a run.
+
 - A refused game connection on macOS keeps its connection-refused error.
   The new transport sets TCP_NODELAY only after the connection succeeds,
   so a socket-option error cannot replace the connection failure.

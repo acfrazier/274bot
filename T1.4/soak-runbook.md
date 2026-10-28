@@ -4,9 +4,9 @@ This is a **local candidate gate**, not a claim that the two-hour run has alread
 
 ## Build identity and comparison
 
-`soak-baseline-clean` is a disposable **local branch** rooted at `dev` commit `93df024a86327fa19b49884710df06cdb05c8e22`. Its only source changes are the byte-for-byte identical shared `crates/host-play/tests/t14_soak_live.rs` and the corresponding `[[test]]` declaration in `crates/host-play/Cargo.toml`. It must never be merged into `dev` or pushed. Record its commit and the SHA-256 of the shared source from each tree before interpreting results. Both binaries use the same release profile, feature flags `live-harness,test-support`, workload file, proxy/terminator script, seed, Engine A, asset cache, nav pack, and external process sampler. The candidate additionally enables `soak-observers` in its **separate** test-support module; the dev binary does not contain candidate observer code. The baseline's OpenSSL client trusts the isolated CA through `SSL_CERT_FILE`/`SSL_CERT_DIR` in a per-run HOME; the candidate's rustls config trusts exactly that CA via `NetworkService::install_test_tls_config` before network startup. No OS trust store or installed Engine binary is changed.
+The route diagnostic comparator is a disposable local branch rooted at `41f14629b92060dd5954e1b80ca963e76e237a76`. Apply only the byte-identical shared `crates/host-play/tests/t14_soak_live.rs` and its Cargo test declaration. Do not merge or push this comparator. Record both commits and shared-source SHA-256 values before interpreting a pair. Both arms use the same release profile, features `live-harness,test-support`, committed workload, proxy, seed, asset cache, navigation bytes, and process sampler. The candidate also enables its separate `soak-observers` module.
 
-The final shared Play source in both branches is byte-identical at SHA-256 `c68c2657ac3b42e6bb573e928512143fcc89101d65cb2bdc1d58ee583afd040b`; the disposable baseline's shared-source correction is commit `acf1e1836`. The preceding nonqualifying `-s` smoke used an earlier byte-identical version before formatting and the Clippy-only `SummaryTiming` argument grouping. It proves that earlier infrastructure run only; the qualifying pair must record and compare **its own** final shared-source digests.
+Each pair must record its own source digests. Earlier smoke and qualification attempts used older fixtures; their digests do not identify the current route-safe workload. The baseline trusts the private CA through `SSL_CERT_FILE` and `SSL_CERT_DIR`; the candidate installs that CA in its test TLS configuration before startup. Neither arm changes the OS trust store or Engine binaries.
 
 The runner creates a new private output directory per run. It generates a private CA and leaf for `127.0.0.1`, copies Engine A's immutable client pack into a per-run HOME, and writes the WSS server roster there with the read-only Engine `world.json` node ID. The common path is **client → A (ciphertext segmentation/latency/stall) → TLS terminator → B (plaintext WebSocket re-framing, fragmentation and ping) → Engine A**. Proxy B consumes the unique matching Pong for each Ping it injects, forwarding other Pongs unchanged. HTTPS assets share the A/TLS path but bypass WebSocket re-framing; only `/client/client.js` is served as an explicit local test fixture using the **public** RSA modulus extracted from Engine A's read-only `private.pem`, because its bundled JS lacks that modulus. The effective config and proxy receipt commit the source and served-body hashes. No game payload or password bytes are logged: only counts, transport fingerprints, per-message/cumulative SHA-256, compartment samples and native scene/bank status. A proxy peer port correlates its connection with the candidate observer binding; source-port collisions are a failure, not a reason to guess identity.
 The runner binds the **production runtime WSS profile** rather than a static metadata-free remote profile: compiled Gatherer needs audited selected game data. Both builds set `BOT_NAV_BUILD=require` and use the same complete offline `BOT_NAV_SNAPSHOT_ROOT` (default: the operator's `~/.274bot/unpack-289`, resolved **before** HOME isolation); the build checks the Engine A cache/content provenance and publishes a trusted navigation identity row. The manifest records the selected snapshot root and build mode. The WSS runtime profile uses that build's attested staged 289 pack and flags; `nav-identity.json` requires their SHA-256 bytes to equal the fixed external pack/flags in `soak-config.json` and the other cohort's selected bytes. This changes only source provenance, not navigation content. The actual bot process still uses a fresh per-run HOME and the copied immutable client cache. A missing source, mismatched cache identity, or withheld game data fails before the workload; no synthetic game facts are substituted.
@@ -39,40 +39,81 @@ Smoke runs use two accounts for 180 seconds and only the **first** approved late
 
 **Woodcutting fixture correction, after the nonqualifying candidate smoke:** `smoke-candidate-289144-m/events.jsonl:33-39` records the Draynor oak slot at `(3115,3242,0)`, followed by one death, respawn at `(3222,3218,0)`, and an unexpected script stop at t0+101 s. Engine `content/maps/m48_50.jm2:6688-6694` places jail guard NPC 917 at `(3120,3238,0)` (map origin `(3072,3200)`); `content/pack/npc.pack:918` identifies it, and `content/scripts/areas/area_draynor/configs/draynor.npc:152-182` sets `huntrange=5` and `huntmode=aggressive_melee`. The observed tile was within its range. No transport payload divergence or unexpected connection exit was observed. Main approved replacing this unsafe workload site, not changing a fault value or ignoring the death.
 
-The replacement **Catherby normal-logs** site is paired with the unchanged **Seers maple** site. An initial Catherby oak fixture was unsafe for a different, real-content reason: `smoke-baseline-289144-r/summary.json:95-105` records Gatherer's typed `walk-failed` after five logs, with native Reach arrival failing from `(2798,3444,0)` to the western oak at `(2793,3444,0)` within radius one. The earlier matched oak-only three-minute smoke `smoke-comparison-289144-q.json` had passed but proved no bank cycles, and therefore cannot establish that site's long-run suitability. This is a resource/route fixture correction, **not** a transport error, threshold change, or suppressed unexpected exit.
+The earlier Catherby fixtures also failed real resource routes.
+`smoke-baseline-289144-r/summary.json:95-105` records an unreachable western oak approach.
+`qual-1027/baseline-soak-qualification-attempt-12/events.jsonl:457` records the later normal-tree route outside the audited area.
+The current workload below replaces Catherby.
+These failures do not justify a transport threshold change.
 
-The next paragraph describes the historical single-cluster smoke fixture. The current qualification fixture uses the independent patches described below.
+## Route-safe workload
 
-The selected 289 catalogue `crates/api/data/game-data/289.json:96289-96311` includes 36 normal trees in the Catherby site. Immutable Engine `content/maps/m43_54.jm2:6765,6787,6833-6838,6883` and `crates/api/data/game-data/289.json` loc IDs 1276/1278 place a tight cluster at `(2799,3460)`, `(2800,3466)`, `(2802,3461)`, `(2802,3463)`, `(2802,3466)` and `(2804,3460)`; `crates/api/data/game-data/bank-catalog.rs:11` locates the Catherby bank at `(2809,3441)`. The fixture seeds `(2802,3462)` at the cluster, sets this site's resource radius to three (Seers remains twelve), and fails if an in-window actor leaves `x=2788..2814,z=3436..3468,level=0`. `crates/script/src/gatherer/area.rs:46-80` makes Site radius a tile-bounded square about its real resource anchor, and `widen.rs:163-196` selects the resource nearest the Catherby cluster's centroid; the failed western oak is not a selected resource. The nearby Engine `m43_53.jm2:7261-7275`, `m43_54.jm2:8268-8277`, `m44_53.jm2:5559-5563`, and `m44_54.jm2:5693-5701` NPC rows identify only non-hunting townspeople, bankers, unicorns and a dwarf within twelve tiles of the wider generated site rectangle `x=2791..2814,z=3438..3475`; their config blocks in `content/scripts/_unpack/225/all.npc:1-165,2197-2221`, `content/scripts/areas/area_catherby/configs/catherby.npc:1-175`, `content/scripts/interface_bank/configs/banker.npc:1-60` and `content/scripts/areas/area_white_wolf_mountain/configs/white_wolf_mountain.npc:1-32` have no autonomous hunt. The closest roaming hostile pack wolf 142 spawns at `(2836,3495)` (`m44_54.jm2:5700`); `all.npc:3585-3605` gives wander 20 and hunt 2, while its minimum Chebyshev separation from the corridor is 27 tiles. Other nearby hunting NPCs are farther than their authored wander + hunt (white-wolf sentry `(2842,3450)` vs 3+2 in `all.npc:2405-2425`; ice giant `(2804,3507)` vs 3+2 in `all.npc:2836-2855`). These are read-only Engine A sources under `$ENGINE_DIR/../content`; the per-frame corridor guard fails any unreviewed path rather than assuming it is safe.
+Ten accounts gather normal logs in `woodcutting.seers`.
+Each account retains one radius-two Start anchor from `NORMAL_STARTS`.
+The other ten accounts use the `woodcutting.seers.nw` maple Site and radius twelve.
+Both groups use Seers bank.
+Each account receives Woodcutting 99, one rune axe, and 64 banked spare rune axes.
 
-The matched final normal-logs/maple infrastructure smoke is `smoke-comparison-289144-s.json`: comparator verdict `NONQUALIFYING_SMOKE_OK`, both slots completed 180 seconds without a death or unexpected exit, with 22 matched candidate/proxy cumulative binary-hash prefixes. Catherby collected nine logs and walked nineteen tiles; Seers collected five maple logs. Neither slot completed a bank trip in three minutes. This is **not** evidence of the required per-slot real bank cycle or the two-hour 20-account qualification; the full candidate/baseline gate must prove those independently.
+Both groups must remain inside the three level-zero areas in `NORMAL_SAFE_WALK`: the normal patches, the northwest maple stand, and their Seers-bank corridor.
+The guard still permits only the production-classified Maze and Mime interiors outside this area.
+It does not permit an ordinary route outside the area.
 
-**Current qualification fixture (qual-1027):** Ten accounts use separate radius-two Start patches. Their anchors are in `CATHERBY_STARTS` in `crates/host-play/tests/t14_soak_live.rs`. The other ten accounts use Seers maple. Each account receives Woodcutting level 99, a rune axe and 64 banked spare rune axes before Start. Both arms use this same account seed.
+The area excludes every authored hunter envelope, independently of combat-level immunity.
+The checker uses each hunter's `wanderrange + huntrange + size`.
+It checks all selected-content hunter placements, not only mountain wolves.
+Rectangle separation alone does not establish route safety.
 
-Baseline attempt 5 stopped after 2939 seconds at game tick 4732. Its account `soakwxg62_10` reached `(2816,3447,0)` during a bank return. The old east boundary, `x=2814`, excluded this town route. This was an oracle defect, not a transport failure. See `qual-1027/baseline-soak-qualification-attempt-5/artifacts/events.jsonl:547`.
+Build the offline probe and check the actual routes before either arm:
 
-Baseline attempt 6 stopped at game tick 4651 at `(2821,3449,0)` after a bank deposit. The `x=2820` guard again excluded a safe bank return tile. The content audit of 25 nearby mountain hunters permits the southern rectangle through `x=2834`; `x=2835` touches the sentry's conservative envelope and stays excluded. See `qual-1027/baseline-soak-qualification-attempt-6/artifacts/events.jsonl:530` and `qual-1027/catherby-safe-corridor-attempt7.json`.
+```sh
+BOT_NAV_BUILD=skip cargo build --release --locked -p host-play --example soak_routes
+python3 -B -m unittest discover -s tools -p test_t14_soak_routes.py -v
+python3 -B tools/t14_soak_routes.py \
+  --router target/release/examples/soak_routes \
+  --pack "$NAV_PACK" --content "$ENGINE_DIR/../content" \
+  --output "$SOAK_EVIDENCE_DIR/route-audit"
+```
 
-The safety guard now admits the union of two ground-level rectangles:
+The checker enumerates all authored resources in each normal patch.
+No normal resource may belong to two patches.
+It includes every maple origin in the selected Site.
+It checks every footprint, Reach alternative, return observation, Start, and bank access goal.
+It calls the production hazard-retreat selector for every resource access stand.
+It queries every alternative goal from all starts, access stands, and retreat destinations.
+It repeats those queries from every intermediate route tile until the replan-origin set is closed.
+This includes blocked-origin escape after a resource changes.
+The checker examines complete walk legs and transport endpoints.
+It rejects routes outside the area or inside any hunter envelope.
+The result retains the source, content-map, catalogue, and v17 pack hashes.
 
-- Southern bank corridor: `x=2788..2834,z=3436..3468`.
-- Northern resource corridor: `x=2788..2811,z=3436..3476`.
+The old Catherby fixture did not constrain route geometry.
+The Gatherer bounds resource origins, not every approach or bank-return tile.
+Baseline attempt 12 reached `(2813,3477,0)`, inside the wolf's retained envelope.
+Candidate attempt 1 reached `(2811,3473,0)`, outside its then-approved rectangle.
+Do not enlarge a guard to admit either old route.
+Evidence and the route analysis are in `TRACK-T1/T1.4/soak-route-1028/report.md`.
 
-The northeastern corner remains excluded. Pack wolf `(2836,3495)` has wander 20, hunt 2 and size 2 (`m44_54.jm2:5700`, `all.npc:3585-3605`). Its minimum Chebyshev separation is 27 tiles from the southern rectangle and 25 from the northern rectangle. Both exceed the conservative sum of 24. The eastern sentry `(2842,3450)` remains at least eight tiles away. Its corresponding sum is seven. The northern ice giant `(2804,3507)` remains at least 31 tiles away, also with sum seven.
+## Nonqualifying diagnostics
 
-Candidate attempt 1 stopped at tick 6197 when the normal-tree account anchored at `(2802,3469,0)` reached `(2811,3473,0)`. This northern work route lies outside the former x=2810 guard but beyond the wolf envelope. The corrected eastern bound is derived as `2836 - (20 + 2 + 2) - 1 = 2811`. The next column, x=2812 at z=3473, touches the envelope and stays excluded. The other bounds retain the audited resource patches and bank corridor. See `qual-1027/candidate-soak-qualification-attempt-1/events.jsonl:676`, `finding.json`, and `qual-1027/catherby-safe-corridor-candidate2.json`.
+Engine L diagnostics retain all twenty accounts and all committed fault phases.
+Run the arms one after the other.
+Use an owned three-character account prefix.
+The diagnostic duration starts at the first script Start after the setup barrier:
 
-Guard tests admit all radius-two work patches, the observed bank detours, the northern work-route tile and the audited eastern edge. They reject each outer boundary, the northeast corner and nearby hostile spawns. Both qualification arms must use the same corrected fixture. Main requires both arms to run again after the shutdown window. Baseline attempt 11 remains historical evidence; it does not form a matched pair with this corrected fixture. Candidate attempt 1 and baseline attempts 5 and 6 do not count as completed soaks.
+```sh
+python3 -B tools/t14_soak_run.py --mode baseline --repo "$BASELINE_REPO" \
+  --seed 1027 --diagnostic-seconds 1800 --name-prefix srt \
+  --engine-dir /Volumes/dev-scratch/engines/lostcity-289-l/engine \
+  --upstream-port 3080 --output "$SOAK_EVIDENCE_DIR/diagnostic-baseline"
+python3 -B tools/t14_soak_run.py --mode candidate --repo "$CANDIDATE_REPO" \
+  --seed 1027 --diagnostic-seconds 1800 --name-prefix srt \
+  --engine-dir /Volumes/dev-scratch/engines/lostcity-289-l/engine \
+  --upstream-port 3080 --output "$SOAK_EVIDENCE_DIR/diagnostic-candidate"
+```
 
-Baseline attempt 7 stopped at game tick 258 because one maple account gained no fresh XP within 240 ticks. All ten maple accounts shared the same final tile; the other nine gained logs. The retained finding is `qual-1027/baseline-soak-qualification-attempt-7/finding.md`. Main approved the level-99/rune-axe account seed to reduce chance variance under this contention. No deadline, target, bank route, two-hour duration or transport oracle changed.
-
-The content basis is `content/scripts/skill_woodcutting/configs/trees.dbrow:115-128`: maple has bronze-axe chance endpoints 8/25 and rune-axe endpoints 28/87. `engine/src/engine/script/handlers/PlayerOps.ts:590-599` computes `floor(low*(99-level)/98) + floor(high*(level-1)/98) + 1`, compared with a uniform integer from 0 through 255. Thus the former level-45 bronze seed succeeds on 16/256 (6.25%) of eligible rolls; the level-99 rune seed succeeds on 88/256 (34.375%). These are per-roll probabilities, not a guarantee of XP by a deadline. Tree depletion and contention still apply. `woodcut.rs2:127-151` applies that roll and the maple depletion chance. Attempt 7 remains a failed, incomplete soak.
-
-Baseline attempt 8 stopped before Start at game tick 126. The changed seed gave a rune axe, but the inherited Gatherer wait still required bronze item 1351. The corrected soak fixture requires rune item 1359 in inventory, with the same 120-tick budget. It removes the inherited bronze-only equip step: the rune axe works from inventory, and equipping it would require an unrelated Attack-level seed. The level-99 skill proof, relog proof, Start proof and workload proofs remain in place. A regression test checks both content sites for the rune inventory proof and the absence of bronze-only inventory or equipment proofs. Attempt 8 remains a retained fixture failure.
-
-Baseline attempt 9 stopped before Start at game tick 14. One account requested logout, disconnected, returned to scene2 and reached its worksite. The health sampler did not record that return because its rule required a sampled earlier stream epoch. The corrected oracle also accepts a connected status after the observed setup logout. It still requires the logout request and disconnect evidence. Stream-epoch changes still detect reconnects when the sampler misses the disconnect. Attempt 9 remains a retained oracle failure.
-
-Baseline attempt 10 stopped at game tick 8227 when the server teleported an account to maze spawn `(2891,4597,0)`. All twenty accounts had qualified for warmup. The old guard treated this random-event teleport as a work-route escape. The corrected guard uses the production `api::random::trapped_area` classifier to distinguish Maze and Mime travel from ordinary routes. It does not enlarge the Catherby corridors or permit other out-of-bounds travel. Samples include the trapped event kind. The two-hour duration, progress checks and exit checks remain unchanged. Both arms use the same correction; attempt 10 remains a retained oracle failure.
+These runs cannot qualify the gate.
+The committed qualification remains twenty accounts for 7200 seconds.
+Its workload, account seed, fault phases, warmup, progress budgets, and limits remain unchanged.
+Run the next Engine A arms without diagnostic or engine-override arguments.
 
 Each run preserves `effective-config.json`, `run-manifest.json`, `nav-identity.json`, `cohort.log`, `cohort-exit.json`, `pid.json`, external `process-samples.jsonl` (10-second `/proc` RSS, monotonic clock, task count and every task's `comm`), the Play test's per-slot events/summary, `proxy/ready.json`, `proxy/soak-start.json`, `proxy/connections.jsonl`, and `proxy.log`. Candidate additionally records `candidate-five-compartment-ledger.jsonl` at every ten-second sample and `candidate-wss-payloads.jsonl` SHA snapshots each minute and at shutdown. The ledger's **250,760 bytes are only five named logical reservations**: 16 KiB received plaintext, 128 KiB pending TLS output, 64 KiB handshake deframer, 5000-byte outbound ring and 32 KiB inbound ring. Known actual ring occupancy and accessible TLS bytes are separate fields; unavailable private rustls/tungstenite occupancy is null, never fabricated as zero. This is **not** an actual whole-connection allocation measurement. Compare whole-process RSS slope/final against baseline, and perform the separate G5-E deterministic scoped counting-allocator test for requested-layout bytes, high-water and unexplained deltas. Allocator requested bytes are not allocator usable bytes.
 
