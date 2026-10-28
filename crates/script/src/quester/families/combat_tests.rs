@@ -3860,7 +3860,9 @@ fn return_to_stand_walk_retries_blocked_failures_to_a_bound() {
         Poll::Ready(Err(ActionError::Blocked(reason))) => {
             assert_eq!(reason.as_ref(), "the last route failure");
         }
-        other => panic!("expected the last blocked walk error, got {other:?}"),
+        Poll::Ready(Err(other)) => panic!("expected the last blocked walk error, got {other:?}"),
+        Poll::Ready(Ok(_)) => panic!("expected the last blocked walk error, got a step outcome"),
+        Poll::Pending => panic!("expected the last blocked walk error, got Pending"),
     }
     assert_eq!(run.target_gone_restarts, 0);
     assert!(run.action.is_none());
