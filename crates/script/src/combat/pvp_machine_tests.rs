@@ -50,11 +50,11 @@ fn wilderness_scene(at: api::WorldTile) -> Scene {
 }
 
 /// The bot inside a duel pen (x 3333-3357, z 3244-3258).
-fn pen_scene() -> Scene {
+pub(super) fn pen_scene() -> Scene {
     wilderness_scene(tile(3340, 3250))
 }
 
-fn player(
+pub(super) fn player(
     index: usize,
     name: &str,
     at: api::WorldTile,
@@ -79,7 +79,7 @@ fn attack_ops() -> [Option<&'static str>; 2] {
     [None, Some("Attack")]
 }
 
-fn fight_ops() -> [Option<&'static str>; 2] {
+pub(super) fn fight_ops() -> [Option<&'static str>; 2] {
     [None, Some("Fight")]
 }
 
@@ -126,7 +126,7 @@ fn refused(result: Result<Harness, ActionError>) -> Option<PvpRefusal> {
     }
 }
 
-fn player_attack(effect: Option<HostEffect>, who: &str, label: &str) {
+pub(super) fn player_attack(effect: Option<HostEffect>, who: &str, label: &str) {
     assert!(
         matches!(&effect, Some(HostEffect::Interaction(InteractReq::Player { name, action })) if name == who && action == label),
         "expected {label} on {who}, got a different effect (present: {})",
@@ -172,7 +172,7 @@ fn installed_pen_fight(pvp: bool) -> (Scene, Harness) {
     (scene, harness)
 }
 
-const BOB: &str = "bob";
+pub(super) const BOB: &str = "bob";
 
 // --- Case 1: the opt-in ------------------------------------------------------
 
