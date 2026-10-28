@@ -5881,7 +5881,6 @@ fn skip_quest_acceptance_uses_the_shared_driver_command_and_reports_the_identity
     assert_eq!(calls.load(Ordering::Relaxed), 1);
     assert_eq!(d.session().refusals(), refusals);
     assert_eq!(d.session().script_state("alice"), ScriptRunState::Running);
-
 }
 
 #[test]

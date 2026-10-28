@@ -1572,7 +1572,6 @@ impl Scenario {
         scenario::is_registered(name)
     }
 
-
     #[cfg(feature = "js")]
     /// Create the external-loader prerequisite scenario.
     pub fn external_loader_fixture() -> Self {

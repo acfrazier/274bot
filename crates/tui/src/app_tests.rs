@@ -1906,10 +1906,7 @@ fn running_quester_skip_control_is_clickable_at_both_terminal_sizes_and_in_help(
         }
         let (x, y) = find(&rows, "[Skip quest X]").expect("running Quester button");
         assert!(
-            matches!(
-                app.on_click(x + 1, y),
-                AppAction::ScriptSkipQuest(Some(_))
-            ),
+            matches!(app.on_click(x + 1, y), AppAction::ScriptSkipQuest(Some(_))),
             "{width}x{height}: click"
         );
         assert!(
